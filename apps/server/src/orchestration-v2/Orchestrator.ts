@@ -476,6 +476,9 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "checkpoint.rollback.fail":
     case "thread.background-work.settle":
     case "thread.stop":
+    case "thread.project-move.record":
+    case "thread.project.adopt":
+    case "thread.move-to-project":
     case "provider.switch":
       return command.threadId;
     case "delegated_task.request":
@@ -2489,6 +2492,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     >,
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
     effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
+    /** Fields a composite command sets in the same event (a move archives with its link). */
+    extra?: Pick<OrchestrationV2AppThread, "movedTo">,
   ) {
     const thread = yield* projectionStore.getThread(command.threadId).pipe(
       Effect.mapError(
@@ -2585,6 +2590,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           commandType: command.type,
           cause: `Thread ${command.threadId} is no longer empty.`,
         });
+    }
+    if (
+      command.type === "thread.pull-request.watch" &&
+      command.watching &&
+      thread.movedTo != null
+    ) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: "This thread moved to another project, so it no longer watches pull requests.",
+      });
     }
     if (command.type === "thread.archive" && thread.archivedAt !== null) {
       return yield* new OrchestratorDispatchError({
@@ -3360,7 +3376,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       threadId: command.threadId,
       providerInstanceId: updatedThread.providerInstanceId,
       occurredAt: now,
-      payload: updatedThread,
+      payload: extra === undefined ? updatedThread : { ...updatedThread, ...extra },
     });
 
     if (command.type === "thread.metadata.update" && command.regenerateTitle === true) {
@@ -4620,6 +4636,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   ) =>
     Effect.gen(function* () {
       let projection = yield* getProjectionWithPendingEvents(command.threadId, events);
+      // A thread moved to another project would work in the wrong project's
+      // folder and memory, whatever starts the turn: a send, a wake or an
+      // answer to a question it asked. Its replacement thread takes the work.
+      const movedTo = projection.thread.movedTo;
+      if (movedTo != null) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: `This thread moved to another project. Continue in its new thread "${movedTo.title}" (${movedTo.threadId}).`,
+        });
+      }
       if (command.manualContinuationOfRunId !== undefined) {
         const source = projection.runs.find((run) => run.id === command.manualContinuationOfRunId);
         const limited = latestRootProviderFailure(source ?? null, projection.turnItems);
@@ -9445,6 +9472,114 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       return undefined;
     });
 
+  /** A Scratch thread given to a project in place; see `thread.project.adopt`. */
+  const dispatchProjectAdopt = Effect.fn("orchestrationV2.dispatch.projectAdopt")(function* (
+    command: Extract<OrchestrationV2ServerCommand, { readonly type: "thread.project.adopt" }>,
+    events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+  ) {
+    const thread = yield* projectionStore
+      .getThread(command.threadId)
+      .pipe(
+        Effect.mapError(
+          (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
+        ),
+      );
+    if (thread.deletedAt !== null) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: `Thread ${command.threadId} is deleted.`,
+      });
+    }
+    if (thread.projectId === command.projectId) return;
+    if (thread.projectId !== command.fromProjectId) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: `Thread ${command.threadId} moved to another project while this move was pending.`,
+      });
+    }
+    const now = yield* DateTime.now;
+    yield* emit(
+      events,
+      command,
+    )({
+      type: "thread.metadata-updated",
+      threadId: command.threadId,
+      providerInstanceId: thread.providerInstanceId,
+      occurredAt: now,
+      payload: { ...thread, projectId: command.projectId, updatedAt: now },
+    });
+  });
+
+  /** One end of a move between projects; see `thread.project-move.record`. */
+  const dispatchProjectMoveRecord = Effect.fn("orchestrationV2.dispatch.projectMoveRecord")(
+    function* (
+      command: Extract<
+        OrchestrationV2ServerCommand,
+        { readonly type: "thread.project-move.record" }
+      >,
+      events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+      effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
+    ) {
+      const thread = yield* projectionStore
+        .getThread(command.threadId)
+        .pipe(
+          Effect.mapError(
+            (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
+          ),
+        );
+      const reject = (cause: string) =>
+        new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause,
+        });
+      if (thread.deletedAt !== null) {
+        return yield* reject(`Thread ${command.threadId} is deleted.`);
+      }
+      if (command.link.threadId === command.threadId) {
+        return yield* reject("A thread cannot be moved onto itself.");
+      }
+      const current = command.side === "source" ? thread.movedTo : thread.movedFrom;
+      if (current != null) {
+        // Repeating the same move records nothing; a different one is refused.
+        if (current.threadId === command.link.threadId) return;
+        return yield* reject(
+          command.side === "source"
+            ? `Thread ${command.threadId} already moved to ${current.threadId}.`
+            : `Thread ${command.threadId} already replaced ${current.threadId}.`,
+        );
+      }
+      if (command.side === "source" && thread.archivedAt === null) {
+        // Archiving cancels the queue and ends pull request watches, so nothing
+        // the source still holds can start in the wrong project.
+        yield* dispatchThreadMutation(
+          { type: "thread.archive", commandId: command.commandId, threadId: command.threadId },
+          events,
+          effects,
+          { movedTo: command.link },
+        );
+        return;
+      }
+      const now = yield* DateTime.now;
+      yield* emit(
+        events,
+        command,
+      )({
+        type: "thread.metadata-updated",
+        threadId: command.threadId,
+        providerInstanceId: thread.providerInstanceId,
+        occurredAt: now,
+        payload: {
+          ...thread,
+          ...(command.side === "source" ? { movedTo: command.link } : { movedFrom: command.link }),
+          updatedAt: now,
+        },
+      });
+    },
+  );
+
   const dispatchCheckpointRollback = (
     command: Extract<OrchestrationV2Command, { readonly type: "checkpoint.rollback" }>,
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
@@ -10650,6 +10785,12 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "thread.stop":
         cancelUnsettledEffects = yield* dispatchThreadStop(command, events, effects);
         break;
+      case "thread.project-move.record":
+        yield* dispatchProjectMoveRecord(command, events, effects);
+        break;
+      case "thread.project.adopt":
+        yield* dispatchProjectAdopt(command, events);
+        break;
       case "queued-message.promote-to-steer":
         yield* dispatchQueuedMessagePromoteToSteer(command, events, effects);
         break;
@@ -10845,7 +10986,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         // its expected outcome, not a failure.
         planned.events.length > 0 ||
         command.type === "thread.background-work.settle" ||
-        command.type === "thread.stop"
+        command.type === "thread.stop" ||
+        command.type === "thread.project-move.record" ||
+        command.type === "thread.project.adopt"
           ? Effect.succeed(planned)
           : Effect.fail(
               new OrchestratorDispatchError({

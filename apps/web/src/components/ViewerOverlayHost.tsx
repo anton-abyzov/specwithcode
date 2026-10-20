@@ -23,10 +23,14 @@ import {
   InViewerOverlay,
   threadOwnerKey,
   type ViewerCrumb,
+  type ViewerLinkTarget,
   type ViewerOverlayEntry,
   useViewerOverlayStore,
 } from "~/viewerOverlayStore";
+import { useLocation } from "@tanstack/react-router";
+
 import { ArtifactViewer, ThreadArtifactStrip, useThreadViewables } from "./chat/ThreadArtifacts";
+import { ViewerLinkedPane, viewerLinkHeader } from "./chat/ViewerLinkedPane";
 import { RenderErrorBoundary } from "./RenderErrorBoundary";
 import { Button } from "./ui/button";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
@@ -112,7 +116,8 @@ function escapeIsTaken(target: EventTarget | null): boolean {
 }
 
 /**
- * Escape closes the overlay wherever focus is inside it, the thread beside
+ * Escape steps back from a link target to the viewer, else closes the
+ * overlay, wherever focus is inside it, the thread beside
  * the viewer and code blocks included, which would otherwise keep the key.
  * It listens in the capture phase so nothing inside can swallow it first.
  */
@@ -138,7 +143,10 @@ function useEscapeCloses(active: ViewerOverlayEntry | null, close: (key: string)
       if (escapeIsTaken(target)) return;
       event.preventDefault();
       event.stopPropagation();
-      close(key);
+      // A link target steps back to the viewer first, as Back does.
+      const store = useViewerOverlayStore.getState();
+      if (store.linked !== null) store.closeLinked();
+      else close(key);
     };
     window.addEventListener("keydown", onKeyDown, true);
     return () => window.removeEventListener("keydown", onKeyDown, true);
@@ -157,13 +165,26 @@ function crumbLabel(crumb: ViewerCrumb, source: string | null): string {
  */
 function OverlayHeader(props: {
   readonly entry: ViewerOverlayEntry;
+  /** A link target in the viewer's place: the header names it and Back returns to the viewer. */
+  readonly linked: ViewerLinkTarget | null;
+  readonly onCloseLinked: () => void;
   readonly showThreadToggle: boolean;
   readonly threadCollapsed: boolean;
   readonly onThreadCollapsedChange: (collapsed: boolean) => void;
   readonly setActionsSlot: (element: HTMLElement | null) => void;
+  readonly setLinkedActionsSlot: (element: HTMLElement | null) => void;
   readonly onClose: () => void;
 }) {
-  const { entry } = props;
+  const { linked } = props;
+  const linkedHeader = linked ? viewerLinkHeader(linked) : null;
+  const entry: ViewerOverlayEntry = linkedHeader
+    ? {
+        ...props.entry,
+        ...linkedHeader,
+        trail: [...props.entry.trail, { kind: props.entry.kind, title: props.entry.title }],
+        onBack: props.onCloseLinked,
+      }
+    : props.entry;
   const shell = useThreadShell(entry.threadRef);
   const source = entry.threadRef
     ? isCoordinator(entry.threadRef)
@@ -222,7 +243,15 @@ function OverlayHeader(props: {
         </ol>
       </nav>
       {entry.detail ? <span className="viewer-overlay-detail">{entry.detail}</span> : null}
-      <div ref={props.setActionsSlot} className="viewer-overlay-actions" />
+      {/* The viewer's actions stay mounted while a link target is in front, out of sight. */}
+      <div ref={props.setActionsSlot} className="viewer-overlay-actions" hidden={linked !== null} />
+      {linked ? (
+        <div
+          ref={props.setLinkedActionsSlot}
+          className="viewer-overlay-actions"
+          data-viewer-linked-actions="true"
+        />
+      ) : null}
       {props.showThreadToggle ? (
         <span className="viewer-overlay-thread-toggle">
           <Tooltip>
@@ -276,6 +305,23 @@ function OverlayHeader(props: {
 }
 
 /**
+ * A link inside the overlay that goes to another page (a thread, a project,
+ * the pull requests list) changes the route behind it. The overlay steps
+ * aside then, so the page the reader asked for is the one in front.
+ */
+export function ViewerOverlayRouteGuard() {
+  const pathname = useLocation({ select: (location) => location.pathname });
+  const previous = useRef(pathname);
+  useEffect(() => {
+    if (previous.current === pathname) return;
+    previous.current = pathname;
+    const { active, close } = useViewerOverlayStore.getState();
+    if (active) close(active.key);
+  }, [pathname]);
+  return null;
+}
+
+/**
  * The app's one viewer overlay. Reports, artifacts, documents and files open
  * here, wherever they were clicked: a card over nearly the whole window with
  * one header that says where you are, the viewer on the left and the thread
@@ -293,6 +339,9 @@ export function ViewerOverlayHost(props: {
   const collapsed = useViewerOverlayStore((state) => state.threadCollapsed);
   const setCollapsed = useViewerOverlayStore((state) => state.setThreadCollapsed);
   const setThreadComposerSlot = useViewerOverlayStore((state) => state.setThreadComposerSlot);
+  const linked = useViewerOverlayStore((state) => state.linked);
+  const closeLinked = useViewerOverlayStore((state) => state.closeLinked);
+  const [linkedActions, setLinkedActions] = useState<HTMLElement | null>(null);
   const contentRef = useRef<HTMLDivElement | null>(null);
   const open = active !== null;
   const threadRef = useStableThreadRef(active?.threadRef ?? null);
@@ -341,10 +390,13 @@ export function ViewerOverlayHost(props: {
         {active ? (
           <OverlayHeader
             entry={active}
+            linked={linked}
+            onCloseLinked={closeLinked}
             showThreadToggle={hasThread}
             threadCollapsed={collapsed}
             onThreadCollapsedChange={setCollapsed}
             setActionsSlot={setActionsSlot}
+            setLinkedActionsSlot={setLinkedActions}
             onClose={() => close(active.key)}
           />
         ) : null}
@@ -357,7 +409,10 @@ export function ViewerOverlayHost(props: {
             tabIndex={-1}
             className="viewer-overlay-content"
             data-viewer-overlay-content="true"
+            // Kept mounted under a link target, so Back returns to the same place.
+            hidden={linked !== null}
           />
+          {linked ? <ViewerLinkedPane target={linked} actionsSlot={linkedActions} /> : null}
           {hasThread && !collapsed ? (
             <aside className="viewer-overlay-thread" aria-label="Thread">
               <InViewerOverlay value>

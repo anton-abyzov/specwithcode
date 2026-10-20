@@ -53,6 +53,7 @@ export function withCreationProvenance(
 ): OrchestrationV2Command {
   switch (command.type) {
     case "thread.create":
+    case "thread.move-to-project":
     case "message.dispatch":
     case "thread.fork":
     case "thread.merge_back":

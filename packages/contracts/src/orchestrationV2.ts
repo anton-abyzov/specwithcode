@@ -359,6 +359,19 @@ export const OrchestrationV2ThreadSettledNote = TrimmedNonEmptyString.check(
   Schema.isMaxLength(500),
 );
 
+/**
+ * One end of a move between projects. A move never carries a conversation:
+ * the source thread is stopped and archived, and a fresh thread starts in the
+ * target project, so each side only points at the other.
+ */
+export const OrchestrationV2ThreadProjectMoveLink = Schema.Struct({
+  threadId: ThreadId,
+  projectId: ProjectId,
+  title: TrimmedNonEmptyString,
+  movedAt: IsoDateTime,
+});
+export type OrchestrationV2ThreadProjectMoveLink = typeof OrchestrationV2ThreadProjectMoveLink.Type;
+
 export const OrchestrationV2AppThread = Schema.Struct({
   ...OrchestrationV2CreationFields,
   id: ThreadId,
@@ -435,6 +448,10 @@ export const OrchestrationV2AppThread = Schema.Struct({
       }),
     ),
   ),
+  /** Set once this thread was moved to another project; it then takes no new turns. */
+  movedTo: Schema.optional(Schema.NullOr(OrchestrationV2ThreadProjectMoveLink)),
+  /** The thread this one replaced when it was moved here from another project. */
+  movedFrom: Schema.optional(Schema.NullOr(OrchestrationV2ThreadProjectMoveLink)),
   deletedAt: Schema.NullOr(Schema.DateTimeUtc),
 });
 export type OrchestrationV2AppThread = typeof OrchestrationV2AppThread.Type;
@@ -2004,6 +2021,9 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
       }),
     ),
   ),
+  /** Omitted by servers that predate moving threads between projects. */
+  movedTo: Schema.optional(Schema.NullOr(OrchestrationV2ThreadProjectMoveLink)),
+  movedFrom: Schema.optional(Schema.NullOr(OrchestrationV2ThreadProjectMoveLink)),
   deletedAt: Schema.NullOr(Schema.DateTimeUtc),
 });
 export type OrchestrationV2ThreadShell = typeof OrchestrationV2ThreadShell.Type;
@@ -3087,6 +3107,27 @@ export const OrchestrationV2Command = Schema.Union([
     title: Schema.optional(TrimmedNonEmptyString),
     createdAt: Schema.optional(Schema.DateTimeUtc),
   }),
+  /**
+   * Move a thread to another project on this machine by restarting it there:
+   * the source is stopped, its queue discarded and the thread archived; a fresh
+   * thread with no history, files or memory from the source is created in the
+   * target project. `start` sends its opening request; without it the new
+   * thread waits for the user.
+   */
+  Schema.Struct({
+    type: Schema.Literal("thread.move-to-project"),
+    ...OrchestrationV2CreationFields,
+    commandId: CommandId,
+    threadId: ThreadId,
+    targetProjectId: ProjectId,
+    targetThreadId: ThreadId,
+    start: Schema.optional(
+      Schema.Struct({
+        messageId: MessageId,
+        text: TrimmedNonEmptyString,
+      }),
+    ),
+  }),
   Schema.Struct({
     type: Schema.Literal("thread.merge_back"),
     ...OrchestrationV2CreationFields,
@@ -3199,6 +3240,30 @@ const OrchestrationV2InternalCommand = Schema.Union([
     threadId: ThreadId,
     providerThreadId: ProviderThreadId,
     providerTurnId: ProviderTurnId,
+  }),
+  /**
+   * Records one end of a thread's move between projects. The source side also
+   * archives the thread and ends its pull request watches; from then on it
+   * refuses new turns. Repeating the same link is a no-op.
+   */
+  Schema.Struct({
+    type: Schema.Literal("thread.project-move.record"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    side: Schema.Literals(["source", "target"]),
+    link: OrchestrationV2ThreadProjectMoveLink,
+  }),
+  /**
+   * Gives a thread outside every project (the Scratch project) to a project as
+   * it is: conversation, folder, runs and queue stay. Already there is a no-op.
+   * Refused when the thread is no longer in `fromProjectId` (a concurrent move won).
+   */
+  Schema.Struct({
+    type: Schema.Literal("thread.project.adopt"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    fromProjectId: ProjectId,
+    projectId: ProjectId,
   }),
   /**
    * Stop for one thread, whatever it is doing: interrupts its running turn, holds its queue,

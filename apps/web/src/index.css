@@ -865,13 +865,24 @@ code {
   flex: 1;
 }
 
-.viewer-overlay-content {
+.viewer-overlay-content,
+.viewer-overlay-linked {
   display: flex;
   min-height: 0;
   min-width: 0;
   flex: 1;
   flex-direction: column;
   outline: none;
+}
+
+/* A link target in the viewer's place; the viewer stays mounted, hidden. */
+.viewer-overlay-content[hidden],
+.viewer-overlay-actions[hidden] {
+  display: none;
+}
+
+.viewer-overlay-linked {
+  background: var(--background);
 }
 
 .viewer-overlay-frame {

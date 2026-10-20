@@ -14,6 +14,7 @@ import type {
   OrchestrationV2RunStatus,
   OrchestrationV2ProviderFailureClass,
   OrchestrationV2ThreadProjection,
+  OrchestrationV2ThreadProjectMoveLink,
   OrchestrationV2ThreadShell,
   PlanId,
   ProjectId,
@@ -108,6 +109,10 @@ export interface EnvironmentThreadShell {
   readonly worktreePath: string | null;
   readonly lineage: OrchestrationV2ThreadShell["lineage"];
   readonly forkedFrom: OrchestrationV2ThreadShell["forkedFrom"];
+  /** Set once the thread moved to another project; it is then archived and takes no turns. */
+  readonly movedTo: OrchestrationV2ThreadProjectMoveLink | null;
+  /** The thread this one restarted from, in another project. */
+  readonly movedFrom: OrchestrationV2ThreadProjectMoveLink | null;
   readonly activeProviderThreadId: OrchestrationV2ThreadShell["activeProviderThreadId"];
   readonly latestRun: ThreadRunSummary | null;
   readonly runtime: ThreadRuntimeSummary | null;
@@ -246,7 +251,10 @@ export function scopeProject(
  * are answered by the app, so a run waiting on one is not waiting on the person.
  */
 const AWAITING_PERSON_BY_REQUEST_KIND: Partial<
-  Record<NonNullable<OrchestrationV2ThreadShell["pendingRuntimeRequest"]>["kind"], RunAwaitingPerson>
+  Record<
+    NonNullable<OrchestrationV2ThreadShell["pendingRuntimeRequest"]>["kind"],
+    RunAwaitingPerson
+  >
 > = {
   command: "approval",
   "file-read": "approval",
@@ -298,6 +306,8 @@ export function presentThreadShell(
     branchPullRequest: thread.branchPullRequest ?? null,
     lineage: thread.lineage,
     forkedFrom: thread.forkedFrom,
+    movedTo: thread.movedTo ?? null,
+    movedFrom: thread.movedFrom ?? null,
     activeProviderThreadId: thread.activeProviderThreadId,
     latestRun,
     runtime: shellRuntime(thread),

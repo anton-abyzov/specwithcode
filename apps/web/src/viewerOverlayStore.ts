@@ -1,4 +1,4 @@
-import type { ScopedThreadRef } from "@specweave-studio/contracts";
+import type { EnvironmentId, PullRequestRef, ScopedThreadRef } from "@specweave-studio/contracts";
 import { createContext, type ReactNode, useCallback, useEffect, useId, useRef } from "react";
 import { createPortal } from "react-dom";
 import { create } from "zustand";
@@ -35,6 +35,52 @@ export interface ViewerOverlayEntry {
 
 export type ViewerOverlayDetails = Omit<ViewerOverlayEntry, "key" | "threadRef">;
 
+/** A file a link inside the overlay points at, as the link resolved it. */
+export interface ViewerFileTarget {
+  readonly threadRef: ScopedThreadRef;
+  /** The workspace the path is relative to; an absolute host path ignores it. */
+  readonly cwd: string;
+  readonly path: string;
+  readonly line: number | undefined;
+  /** Every path that was looked in, when the file was found in none of them. */
+  readonly tried?: ReadonlyArray<string>;
+  readonly openInEditor?: () => void;
+  readonly reveal?: () => void;
+  /** "Reveal in Finder" and the like, for `reveal`. */
+  readonly revealLabel?: string;
+}
+
+/** A pull request a link inside the overlay points at. */
+export interface ViewerPullRequestTarget {
+  /** The server that reads it. */
+  readonly environmentId: EnvironmentId;
+  /** The thread it was opened beside, if any. */
+  readonly threadRef: ScopedThreadRef | null;
+  readonly reference: PullRequestRef;
+  readonly url: string;
+  /** Where "Open in panel" puts it; null when there is no panel to put it in. */
+  readonly panel: {
+    readonly ref: ScopedThreadRef;
+    readonly target: {
+      readonly environmentId?: string;
+      readonly projectId: string;
+      readonly host?: string;
+      readonly repository: string;
+      readonly number: number;
+      readonly url?: string;
+    };
+  } | null;
+}
+
+/**
+ * What a link inside the overlay opened. The overlay is in front of the app,
+ * so a file or pull request the app would show in its side panel shows here,
+ * in the viewer's place, with Back to the viewer, which stays mounted.
+ */
+export type ViewerLinkTarget =
+  | { readonly kind: "file"; readonly file: ViewerFileTarget }
+  | { readonly kind: "pull-request"; readonly pullRequest: ViewerPullRequestTarget };
+
 interface ViewerOverlayState {
   readonly active: ViewerOverlayEntry | null;
   /** Where the active viewer renders its content. */
@@ -50,6 +96,10 @@ interface ViewerOverlayState {
   readonly composerOwners: ReadonlyArray<string>;
   /** The source thread is folded away, so the viewer takes the whole overlay. */
   readonly threadCollapsed: boolean;
+  /** A link target shown in the viewer's place; the viewer stays mounted behind it. */
+  readonly linked: ViewerLinkTarget | null;
+  /** Where focus was when the link opened, so Back can return it there. */
+  readonly linkedFrom: HTMLElement | null;
   readonly open: (entry: ViewerOverlayEntry) => void;
   readonly update: (key: string, details: ViewerOverlayDetails) => void;
   readonly close: (key: string) => void;
@@ -58,6 +108,15 @@ interface ViewerOverlayState {
   readonly setThreadComposerSlot: (slot: HTMLElement | null) => void;
   readonly ownComposer: (threadKey: string) => () => void;
   readonly setThreadCollapsed: (collapsed: boolean) => void;
+  readonly showLinked: (target: ViewerLinkTarget) => void;
+  /** Back to the viewer: the link target goes and focus returns to the link. */
+  readonly closeLinked: () => void;
+}
+
+/** What holds focus now, when there is a page to ask. */
+function focusedElement(): HTMLElement | null {
+  if (typeof document === "undefined" || typeof HTMLElement === "undefined") return null;
+  return document.activeElement instanceof HTMLElement ? document.activeElement : null;
 }
 
 /** A thread's key among `composerOwners`. */
@@ -72,12 +131,17 @@ export const useViewerOverlayStore = create<ViewerOverlayState>()((set) => ({
   threadComposerSlot: null,
   composerOwners: [],
   threadCollapsed: false,
-  open: (entry) => set({ active: entry }),
+  linked: null,
+  linkedFrom: null,
+  open: (entry) => set({ active: entry, linked: null, linkedFrom: null }),
   update: (key, details) =>
     set((state) =>
       state.active?.key === key ? { active: { ...state.active, ...details } } : state,
     ),
-  close: (key) => set((state) => (state.active?.key === key ? { active: null } : state)),
+  close: (key) =>
+    set((state) =>
+      state.active?.key === key ? { active: null, linked: null, linkedFrom: null } : state,
+    ),
   setSlot: (slot) => set({ slot }),
   setActionsSlot: (actionsSlot) => set({ actionsSlot }),
   setThreadComposerSlot: (threadComposerSlot) => set({ threadComposerSlot }),
@@ -90,6 +154,22 @@ export const useViewerOverlayStore = create<ViewerOverlayState>()((set) => ({
       });
   },
   setThreadCollapsed: (threadCollapsed) => set({ threadCollapsed }),
+  showLinked: (linked) =>
+    set((state) =>
+      state.active === null
+        ? state
+        : {
+            linked,
+            // Stepping from one link target to another keeps the original link.
+            linkedFrom: state.linked !== null ? state.linkedFrom : focusedElement(),
+          },
+    ),
+  closeLinked: () =>
+    set((state) => {
+      const from = state.linkedFrom;
+      if (from?.isConnected) requestAnimationFrame(() => from.focus({ preventScroll: true }));
+      return { linked: null, linkedFrom: null };
+    }),
 }));
 
 /** Where a viewer renders: its content, and its actions in the overlay's header. */

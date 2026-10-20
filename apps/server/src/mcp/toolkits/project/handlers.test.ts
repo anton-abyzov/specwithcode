@@ -186,7 +186,31 @@ it.effect("launches a scratch thread into the Scratch project", () =>
         .handle("studio_thread_launch", params)
         .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(layerDependencies));
 
-    const result = yield* handle({ title: "Notes", scratch: true, message: "Draft a list" });
+    // Asked for in a project, the work stays there unless the user wanted no project.
+    const kept = yield* handle({ title: "Notes", scratch: true, message: "Draft a list" });
+    expect(kept.at(-1)?.result).toMatchObject({ code: "invalid_request" });
+    expect(String((kept.at(-1)?.result as { message: string }).message)).toContain(
+      "the threads it starts stay there",
+    );
+    expect(launched).toHaveLength(0);
+    // With a machine too, the refusal still names the project, not its id.
+    const keptOnMachine = yield* handle({
+      title: "Notes",
+      scratch: true,
+      machine: "local",
+      message: "Draft a list",
+    });
+    expect(String((keptOnMachine.at(-1)?.result as { message: string }).message)).toContain(
+      'project "Fixture"',
+    );
+    expect(launched).toHaveLength(0);
+
+    const result = yield* handle({
+      title: "Notes",
+      scratch: true,
+      projectless: true,
+      message: "Draft a list",
+    });
     expect(result.at(-1)?.result).toMatchObject({ projectId: scratchProjectId });
     expect(launched.map((input) => [input.projectId, input.workspaceStrategy])).toEqual([
       [scratchProjectId, { type: "root" }],
@@ -199,6 +223,11 @@ it.effect("launches a scratch thread into the Scratch project", () =>
     });
     expect(rejected.at(-1)?.result).toMatchObject({ code: "invalid_request" });
     expect(launched).toHaveLength(1);
+
+    // A chat outside any project may start more of them.
+    Object.assign(caller, { projectId: scratchProjectId });
+    yield* handle({ title: "More notes", scratch: true, message: "Draft another" });
+    expect(launched).toHaveLength(2);
   }),
 );
 

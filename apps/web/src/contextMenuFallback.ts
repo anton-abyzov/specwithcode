@@ -137,6 +137,16 @@ const ICON_PATHS: Record<string, ReadonlyArray<{ tag: string; attrs: Record<stri
     },
     { tag: "circle", attrs: { cx: "12", cy: "12", r: "3" } },
   ],
+  "folder-input": [
+    {
+      tag: "path",
+      attrs: {
+        d: "M2 9V5a2 2 0 0 1 2-2h3.9a2 2 0 0 1 1.69.9l.81 1.2a2 2 0 0 0 1.67.9H20a2 2 0 0 1 2 2v10a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2v-1",
+      },
+    },
+    { tag: "path", attrs: { d: "M2 13h10" } },
+    { tag: "path", attrs: { d: "m9 16 3-3-3-3" } },
+  ],
   "folder-tree": [
     {
       tag: "path",
