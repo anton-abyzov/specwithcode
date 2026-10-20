@@ -28,6 +28,7 @@ import {
   screenshotSize,
   toScreenshotPoint,
 } from "./computerUseSteps.ts";
+import { isResettableBundleId, TCC_SERVICE, waitForPermission } from "./permissionWait.ts";
 
 const execFile = (file: string, args: ReadonlyArray<string>, timeoutMs: number) =>
   new Promise<string>((resolve, reject) => {
@@ -100,6 +101,8 @@ const COMPUTER_USE_PERMISSION_KEYS = {
   accessibility: "accessibility",
 } as const satisfies Record<ComputerUsePermission, keyof ComputerUsePermissions>;
 
+const PERMISSION_WAIT_MARGIN_MS = 5_000;
+
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /** Asks for a permission at most once a minute, however often an agent retries. */
@@ -140,18 +143,47 @@ async function ensurePermission(
   if (Date.now() - (lastPermissionPrompt.get(permission) ?? 0) >= 60_000) {
     await requestPermission(permission, onPrompt);
   }
-  const deadline = Date.now() + COMPUTER_USE_PERMISSION_WAIT_MS;
-  while (Date.now() < deadline) {
-    await sleep(1_000);
-    if (await permissionGranted(permission)) return;
+  const granted = await waitForPermission({
+    granted: () => permissionGranted(permission),
+    // Stop a little before the server does, leaving the last check and the
+    // action itself inside the server's deadline.
+    waitMs: COMPUTER_USE_PERMISSION_WAIT_MS - PERMISSION_WAIT_MARGIN_MS,
+    now: Date.now,
+    sleep,
+  });
+  if (!granted) throw new Error(PERMISSION_REASON[permission]);
+}
+
+async function ownBundleId(): Promise<string> {
+  // process.execPath is <App>.app/Contents/MacOS/<name>; Info.plist sits in Contents.
+  const info = NodePath.join(NodePath.dirname(NodePath.dirname(process.execPath)), "Info");
+  return (await execFile("/usr/bin/defaults", ["read", info, "CFBundleIdentifier"], 5_000)).trim();
+}
+
+/**
+ * Clears this app's own entry in a Privacy & Security list, then asks again.
+ * macOS keeps a switch tied to the build that first asked: after a build
+ * signed another way (a local development build, an older ad-hoc release),
+ * the switch can read as on while this app is still refused. Resetting drops
+ * that stale entry, and asking again adds one for this build.
+ */
+export async function resetPermission(
+  permission: ComputerUsePermission,
+  onPrompt: (permission: MacPermission) => void,
+): Promise<ComputerUsePermissions> {
+  const bundleId = await ownBundleId();
+  if (!isResettableBundleId(bundleId)) {
+    throw new Error(`Refusing to reset permissions for ${bundleId || "an unknown app"}.`);
   }
-  throw new Error(PERMISSION_REASON[permission]);
+  await execFile("/usr/bin/tccutil", ["reset", TCC_SERVICE[permission], bundleId], 10_000);
+  lastPermissionPrompt.delete(permission);
+  return requestPermission(permission, onPrompt);
 }
 
 // Each reason opens with the contract's phrase, which threads use to show the permission card.
 const PERMISSION_REASON: Record<ComputerUsePermission, string> = {
-  "screen-recording": `${COMPUTER_USE_PERMISSION_ERROR_PHRASES["screen-recording"]} to see the screen, and the user did not allow it within two minutes. SpecWithCode shows a card in this thread with an Allow button and live status. Tell the user to allow Screen Recording for SpecWithCode there (choosing Quit & Reopen if macOS asks), then try again when they say it is done.`,
-  accessibility: `${COMPUTER_USE_PERMISSION_ERROR_PHRASES.accessibility} to click and type, and the user did not allow it within two minutes. SpecWithCode shows a card in this thread with an Allow button and live status. Tell the user to allow Accessibility for SpecWithCode there, then try again when they say it is done.`,
+  "screen-recording": `${COMPUTER_USE_PERMISSION_ERROR_PHRASES["screen-recording"]} to see the screen, and macOS still refused it after two minutes. SpecWithCode shows a card in this thread with live status. If the user already turned SpecWithCode on in the list, macOS may need the app reopened (Quit & Reopen on the card), or it is holding that switch for another build of SpecWithCode: Reset on the card clears it so the user can turn it on again. Tell the user which step the card shows, then try again when they say it is done.`,
+  accessibility: `${COMPUTER_USE_PERMISSION_ERROR_PHRASES.accessibility} to click and type, and macOS still refused it after two minutes. SpecWithCode shows a card in this thread with live status. If the user already turned SpecWithCode on in the list, macOS is holding that switch for another build of SpecWithCode: Reset on the card clears it so the user can turn it on again. Tell the user, then try again when they say it is done.`,
 };
 
 async function captureScreen(display: DisplayGeometry) {

@@ -1,6 +1,8 @@
 import {
   CommandId,
   DEFAULT_PROJECT_WORKSPACE_SETTINGS,
+  type ChatAttachment,
+  type MessageId,
   ProjectWorkspaceError,
   ThreadId,
   type ModelSelection,
@@ -8,6 +10,8 @@ import {
   type ProjectCoordinatorSendInput,
   type ProjectCoordinatorStartInput,
   type ProjectId,
+  type ProviderInteractionMode,
+  type RuntimeMode,
 } from "@specweave-studio/contracts";
 import { resolveCoordinatorModelSelection } from "@specweave-studio/shared/coordinatorDefault";
 import { resolveProjectSettings } from "@specweave-studio/shared/projectSettings";
@@ -45,6 +49,16 @@ import {
   ProviderFallbackEnv,
 } from "../orchestration-v2/ProviderFallbackWorker.ts";
 
+export interface ProjectCoordinatorRouteInput {
+  readonly projectId: ProjectId;
+  readonly commandId: CommandId;
+  /** The routing header and the user's words. */
+  readonly text: string;
+  readonly senderThreadId: ThreadId;
+  /** Pending uploads only, staged for this route. */
+  readonly attachments: ReadonlyArray<ChatAttachment>;
+}
+
 export class ProjectCoordinatorService extends Context.Service<
   ProjectCoordinatorService,
   {
@@ -54,6 +68,29 @@ export class ProjectCoordinatorService extends Context.Service<
     readonly send: (
       input: ProjectCoordinatorSendInput,
     ) => Effect.Effect<ProjectCoordinatorResult, ProjectWorkspaceError>;
+    /**
+     * A request another project's agent routed here (the personal assistant):
+     * the same durable send as the user's own, with `senderThreadId` naming the
+     * routing thread in that other project. The caller checks its authority.
+     */
+    readonly route: (
+      input: ProjectCoordinatorRouteInput,
+    ) => Effect.Effect<
+      ProjectCoordinatorResult & { readonly messageId: MessageId },
+      ProjectWorkspaceError
+    >;
+    /**
+     * The modes the project's coordinator runs in, or will start in when it
+     * does not exist yet, so a caller can refuse to hand it broader work.
+     */
+    readonly coordinatorModes: (projectId: ProjectId) => Effect.Effect<
+      {
+        readonly threadId: ThreadId | null;
+        readonly runtimeMode: RuntimeMode;
+        readonly interactionMode: ProviderInteractionMode;
+      },
+      ProjectWorkspaceError
+    >;
     /** Null asks for the project's coordinator, whichever thread that is. */
     readonly nextTurnModel: (
       projectId: ProjectId,
@@ -296,23 +333,27 @@ const make = Effect.gen(function* () {
         return yield* fail(projectId, "unsupported_provider");
       return selection;
     });
-  const send = (input: ProjectCoordinatorSendInput) =>
+  /**
+   * The user's words into the coordinator's conversation, once per command.
+   * `checkSender` runs again under the admission lock; `text` builds the stored
+   * text from the message ID.
+   */
+  const deliver = <E>(
+    input: ProjectCoordinatorSendInput,
+    sender: {
+      readonly threadId: ThreadId | undefined;
+      readonly check: Effect.Effect<void, E>;
+      readonly text: (messageId: MessageId) => string;
+    },
+  ) =>
     Effect.gen(function* () {
       yield* CoordinatorAttachments.validate(input);
-      if (input.sourceThreadId !== undefined) {
-        const source = yield* threads.getThreadShell(input.sourceThreadId);
-        if (!source || source.deletedAt !== null || source.projectId !== input.projectId)
-          return yield* fail(input.projectId, "invalid_source_thread");
-      }
+      yield* sender.check;
       const result = yield* ensure(input);
       return yield* admission.withLock(
         input.projectId,
         Effect.gen(function* () {
-          if (input.sourceThreadId !== undefined) {
-            const source = yield* threads.getThreadShell(input.sourceThreadId);
-            if (!source || source.deletedAt !== null || source.projectId !== input.projectId)
-              return yield* fail(input.projectId, "invalid_source_thread");
-          }
+          yield* sender.check;
           yield* workspace.assertAdmission(input.projectId);
           const settings = (yield* workspace.readWorkspace(input)).settings;
           const modelSelection = yield* turnSelection(input.projectId, result.threadId, settings);
@@ -322,11 +363,8 @@ const make = Effect.gen(function* () {
             threadId: result.threadId,
             commandId: CommandId.make(`coordinator-send:${input.projectId}:${input.commandId}`),
             messageId,
-            ...(input.sourceThreadId === undefined ? {} : { senderThreadId: input.sourceThreadId }),
-            text:
-              input.sourceThreadId === undefined
-                ? input.prompt
-                : workerFollowUpPrefix(input.sourceThreadId, messageId) + input.prompt,
+            ...(sender.threadId === undefined ? {} : { senderThreadId: sender.threadId }),
+            text: sender.text(messageId),
             ...(modelSelection ? { modelSelection } : {}),
             attachments: input.attachments ?? [],
             mode: "queue",
@@ -338,10 +376,85 @@ const make = Effect.gen(function* () {
             Effect.provideService(ServerConfig.ServerConfig, config),
             Effect.provideService(ThreadManagementService.ThreadManagementService, threads),
           );
-          return result;
+          return { ...result, messageId };
         }),
       );
-    }).pipe(mapProjectFailure(input.projectId, "coordinator.send"));
+    });
+  const send = (input: ProjectCoordinatorSendInput) => {
+    const sourceThreadId = input.sourceThreadId;
+    return deliver(input, {
+      threadId: sourceThreadId,
+      check:
+        sourceThreadId === undefined
+          ? Effect.void
+          : threads
+              .getThreadShell(sourceThreadId)
+              .pipe(
+                Effect.flatMap((source) =>
+                  !source || source.deletedAt !== null || source.projectId !== input.projectId
+                    ? Effect.fail(fail(input.projectId, "invalid_source_thread"))
+                    : Effect.void,
+                ),
+              ),
+      text: (messageId) =>
+        sourceThreadId === undefined
+          ? input.prompt
+          : workerFollowUpPrefix(sourceThreadId, messageId) + input.prompt,
+    }).pipe(
+      Effect.map(({ threadId, created }) => ({ threadId, created })),
+      mapProjectFailure(input.projectId, "coordinator.send"),
+    );
+  };
+  const route = (input: ProjectCoordinatorRouteInput) =>
+    deliver(
+      {
+        projectId: input.projectId,
+        commandId: input.commandId,
+        prompt: input.text,
+        attachments: input.attachments,
+      },
+      {
+        threadId: input.senderThreadId,
+        // The sender belongs to another project by design; it must still exist.
+        check: threads
+          .getThreadShell(input.senderThreadId)
+          .pipe(
+            Effect.flatMap((source) =>
+              !source || source.deletedAt !== null || source.projectId === input.projectId
+                ? Effect.fail(fail(input.projectId, "invalid_source_thread"))
+                : Effect.void,
+            ),
+          ),
+        text: () => input.text,
+      },
+    ).pipe(mapProjectFailure(input.projectId, "coordinator.route"));
+  const coordinatorModes = (projectId: ProjectId) =>
+    Effect.gen(function* () {
+      const found = yield* projects.getById(projectId);
+      if (Option.isNone(found)) return yield* fail(projectId, "not_found");
+      const settings = found.value.workspaceSettings ?? DEFAULT_PROJECT_WORKSPACE_SETTINGS;
+      const shell =
+        settings.coordinatorThreadId === null
+          ? null
+          : yield* threads.getThreadShell(settings.coordinatorThreadId);
+      if (shell && shell.deletedAt === null)
+        return {
+          threadId: shell.id,
+          runtimeMode: shell.runtimeMode,
+          interactionMode: shell.interactionMode,
+        };
+      // What ensure() launches it with.
+      const defaults = resolveProjectSettings(
+        yield* serverSettings.getSettings,
+        projectId,
+        found.value,
+      ).settings;
+      return {
+        threadId: null,
+        runtimeMode: defaults.defaultRuntimeMode,
+        interactionMode: "default" as const,
+      };
+    }).pipe(mapProjectFailure(projectId, "coordinator.modes"));
   const start = (input: ProjectCoordinatorStartInput) =>
     input.prompt?.trim() ? send({ ...input, prompt: input.prompt }) : ensure(input);
   /**
@@ -359,7 +472,7 @@ const make = Effect.gen(function* () {
         return undefined;
       return (yield* turnSelection(projectId, coordinatorThreadId, settings)) ?? undefined;
     }).pipe(Effect.orElseSucceed(() => undefined));
-  return ProjectCoordinatorService.of({ start, send, nextTurnModel });
+  return ProjectCoordinatorService.of({ start, send, route, coordinatorModes, nextTurnModel });
 });
 export const layer = Layer.effect(ProjectCoordinatorService, make).pipe(
   Layer.provide(ProjectAdmission.layer),

@@ -159,6 +159,10 @@
       "types": "./src/coordinatorDefault.ts",
       "import": "./src/coordinatorDefault.ts"
     },
+    "./routedMessage": {
+      "types": "./src/routedMessage.ts",
+      "import": "./src/routedMessage.ts"
+    },
     "./projectStarterSuggestions": {
       "types": "./src/projectStarterSuggestions.ts",
       "import": "./src/projectStarterSuggestions.ts"

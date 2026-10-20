@@ -543,3 +543,41 @@ it("tells a coordinator how to run workers on another machine and where this pro
   });
   assert.notInclude(worker, "studio_machine_list");
 });
+it("makes the personal assistant route owned work and every other coordinator accept it", () => {
+  const settings = {
+    ...DEFAULT_PROJECT_WORKSPACE_SETTINGS,
+    coordinatorThreadId: ThreadId.make("c"),
+  };
+  const assistant = Workspace.projectContextText({
+    projectId: "p",
+    threadId: "c",
+    settings: { ...settings, kind: "personal" },
+    files: [],
+    index: "",
+  });
+  assert.include(assistant, "studio_route_targets");
+  assert.include(assistant, "studio_project_route");
+  assert.include(assistant, "ask the user once with ask_user");
+  assert.include(assistant, "route it once to each owning project");
+  assert.include(assistant, "Never add approved folders");
+  assert.notInclude(assistant, "Routed from personal assistant");
+  const coordinator = Workspace.projectContextText({
+    projectId: "p",
+    threadId: "c",
+    settings,
+    files: [],
+    index: "",
+  });
+  assert.include(coordinator, "Routed from personal assistant");
+  assert.include(coordinator, "Never restart or revive a cancelled or stopped thread");
+  assert.notInclude(coordinator, "studio_route_targets");
+  // Workers get neither.
+  const worker = Workspace.projectContextText({
+    projectId: "p",
+    threadId: "w",
+    settings: { ...settings, kind: "personal" },
+    files: [],
+    index: "",
+  });
+  assert.notInclude(worker, "studio_project_route");
+});

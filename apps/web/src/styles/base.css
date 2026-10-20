@@ -1110,3 +1110,21 @@ html[data-mobile-composer-route-transition="true"]::view-transition-old(studio-m
   transition-duration: 0s !important;
   animation-duration: 0s !important;
 }
+
+@keyframes live-dot-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+/* The working header's dot breathes only while events keep arriving. */
+@utility live-dot-pulse {
+  @media (prefers-reduced-motion: no-preference) {
+    animation: live-dot-pulse 2s ease-in-out infinite;
+    animation-play-state: var(--visible-animation-state, paused);
+  }
+}

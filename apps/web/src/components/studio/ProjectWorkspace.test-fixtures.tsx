@@ -620,6 +620,7 @@ vi.mock("../ChatView", async () => {
   };
 });
 import { ProjectWorkspace } from "./ProjectWorkspace";
+import { forgetCoordinatorPlaces } from "./CoordinatorConversation";
 import { enqueueProjectCoordinatorDraft } from "../../studio/projectCoordinatorDraft";
 import { getProjectCoordinatorComposer } from "../../studio/projectCoordinatorComposer";
 let root: Root, container: HTMLDivElement;
@@ -652,6 +653,7 @@ function shell(
 }
 beforeEach(() => {
   (globalThis as Record<string, unknown>).IS_REACT_ACT_ENVIRONMENT = true;
+  forgetCoordinatorPlaces();
   Element.prototype.scrollIntoView = vi.fn<FixtureProcedure>();
   const composer = getProjectCoordinatorComposer("host", "project");
   composer.setPrompt("");

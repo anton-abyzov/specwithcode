@@ -124,6 +124,8 @@ export function useComputerUsePermissions(enabled = true) {
     live ? snapshot : idleSnapshot,
   );
   const [requested, setRequested] = useState<ReadonlySet<ComputerUsePermission>>(new Set());
+  const [reset, setReset] = useState<ReadonlySet<ComputerUsePermission>>(new Set());
+  const [resetError, setResetError] = useState<string | null>(null);
   return {
     available,
     status,
@@ -134,6 +136,30 @@ export function useComputerUsePermissions(enabled = true) {
       setRequested((current) => new Set(current).add(permission));
       void bridge?.requestComputerUsePermission?.(permission).then(() => refreshSharedStatus());
     },
+    /** Permissions the user reset in this view. */
+    resetDone: reset,
+    resetError,
+    reset: bridge?.resetComputerUsePermission
+      ? (permission: ComputerUsePermission) => {
+          setReset((current) => new Set(current).add(permission));
+          setResetError(null);
+          void bridge
+            .resetComputerUsePermission?.(permission)
+            .catch((error: unknown) => {
+              setReset((current) => {
+                const next = new Set(current);
+                next.delete(permission);
+                return next;
+              });
+              setResetError(
+                `Could not reset ${COMPUTER_USE_PERMISSION_COPY[permission].title}: ${
+                  error instanceof Error ? error.message : String(error)
+                }. Remove SpecWithCode from the list with the minus button, then click Allow.`,
+              );
+            })
+            .finally(() => void refreshSharedStatus());
+        }
+      : undefined,
     relaunch: bridge?.relaunchForComputerUse
       ? () => void bridge.relaunchForComputerUse?.()
       : undefined,
@@ -152,10 +178,14 @@ export function ComputerUsePermissionChecklist({
   permissions?: readonly ComputerUsePermission[];
   state: ReturnType<typeof useComputerUsePermissions>;
 }) {
-  const screenRecordingPending =
-    permissions.includes("screen-recording") &&
-    state.requested.has("screen-recording") &&
-    !state.status.screenRecording;
+  const pending = (permission: ComputerUsePermission) =>
+    permissions.includes(permission) &&
+    state.requested.has(permission) &&
+    !state.status[COMPUTER_USE_PERMISSION_COPY[permission].key];
+  const screenRecordingPending = pending("screen-recording");
+  // A switch that reads as on while macOS still refuses belongs to another
+  // build of the app; only a reset ties a new switch to this one.
+  const stale = permissions.filter(pending);
   return (
     <div className="space-y-2">
       <PermissionChecklist
@@ -181,6 +211,28 @@ export function ComputerUsePermissionChecklist({
           <Button size="xs" variant="outline" onClick={state.relaunch}>
             Quit &amp; Reopen
           </Button>
+        </p>
+      ) : null}
+      {state.reset
+        ? stale.map((permission) => (
+            <p
+              key={permission}
+              className="flex flex-wrap items-center gap-x-2 gap-y-1 text-xs text-muted-foreground"
+            >
+              {state.resetDone.has(permission)
+                ? `Reset. Turn SpecWithCode on again in the ${COMPUTER_USE_PERMISSION_COPY[permission].title} list.`
+                : `SpecWithCode already on in the ${COMPUTER_USE_PERMISSION_COPY[permission].title} list? macOS is keeping that switch for another build of the app.`}
+              {state.resetDone.has(permission) ? null : (
+                <Button size="xs" variant="outline" onClick={() => state.reset?.(permission)}>
+                  Reset and ask again
+                </Button>
+              )}
+            </p>
+          ))
+        : null}
+      {state.resetError ? (
+        <p role="status" className="text-xs text-muted-foreground">
+          {state.resetError}
         </p>
       ) : null}
       {state.error ? (

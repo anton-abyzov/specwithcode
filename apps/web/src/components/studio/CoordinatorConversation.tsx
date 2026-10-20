@@ -8,6 +8,7 @@ import { useProviderEntries } from "./shell/ModelBadge";
 import {
   projectCoordinatorMessageDisplay,
   projectMessageAuthor,
+  type RoutedFrom,
   isWorkerCompletionWake,
   projectReportMessageIds,
   projectSystemNotice,
@@ -68,7 +69,8 @@ import { prepareProjectMarkdown } from "../../studio/projectWorkspaceModel";
 import { type CoordinatorAttention } from "../../studio/projectCoordinatorThreads";
 import { ProjectThreadCard, ProjectThreadChip } from "./ProjectThreadCards";
 import { RemoteWorkerCards } from "./RemoteWorkerCards";
-import { useConversationFollow } from "./useConversationFollow";
+import { forgetReadingPlaces, useConversationFollow } from "./useConversationFollow";
+import { JumpToLatestButton } from "../chat/JumpToLatestButton";
 import { linkedThreadIds, newThreadsByMessage } from "../../studio/projectThreadMentions";
 import { resolveStudioThreadLink } from "../../studio/studioThreadLinks";
 import { type CoordinatorTurnFailure } from "../../studio/coordinatorTurnState";
@@ -106,6 +108,14 @@ const EMPTY_IDS: readonly ThreadId[] = [];
  */
 export const COORDINATOR_MESSAGE_WINDOW = 30;
 const COORDINATOR_MESSAGE_WINDOW_STEP = 40;
+/** How many messages each coordinator conversation mounted, for the page's lifetime. */
+const keptMessageWindows = new Map<string, number>();
+
+/** Forgets every conversation's kept window and place, as a fresh page load would. */
+export function forgetCoordinatorPlaces(): void {
+  keptMessageWindows.clear();
+  forgetReadingPlaces();
+}
 
 /**
  * The project's threads by ID, for the chips, cards and links inside messages.
@@ -378,13 +388,29 @@ export function CoordinatorConversation({
       !message.senderThreadId &&
       !message.scheduledTaskId,
   );
+  const placeKey = `${project.environmentId}:${coordinatorId}`;
   const latest = useConversationFollow(scope, {
     contentKey: `${messages.length}:${lastMessage?.id}:${lastMessage?.updatedAt}:${working}:${failure?.runId}:${attention?.reason}`,
     ownSendKey: ownSend?.id ?? null,
-    resetKey: coordinatorId,
+    resetKey: placeKey,
   });
   const findQuery = useConversationFindQuery(scope);
-  const [windowSize, setWindowSize] = useState(COORDINATOR_MESSAGE_WINDOW);
+  // A page unmounted after the reader went further back mounts as many again,
+  // so the message they were reading is there to return to.
+  const [windowSize, setWindowSize] = useState(
+    () => keptMessageWindows.get(placeKey) ?? COORDINATOR_MESSAGE_WINDOW,
+  );
+  // A reader further up keeps every message mounted: what arrives grows the
+  // window instead of pushing the oldest out from above the message they read.
+  const [mountedRows, setMountedRows] = useState(rows.length);
+  if (rows.length !== mountedRows) {
+    setMountedRows(rows.length);
+    if (latest.away && rows.length > mountedRows)
+      setWindowSize(windowSize + rows.length - mountedRows);
+  }
+  useEffect(() => {
+    keptMessageWindows.set(placeKey, windowSize);
+  }, [placeKey, windowSize]);
   if (findQuery && windowSize < rows.length) setWindowSize(rows.length);
   const firstShown = findQuery ? 0 : Math.max(0, rows.length - windowSize);
   // Where the reader was, measured from the end, while older messages are on their
@@ -402,6 +428,8 @@ export function CoordinatorConversation({
     if (scope === null) return;
     const track = () => {
       const kept = keptPlace.current;
+      // A hidden page's conversation reads as scrolled to the top.
+      if (scope.clientHeight === 0) return;
       if (kept !== null)
         keptPlace.current = { ...kept, fromEnd: scope.scrollHeight - scope.scrollTop };
     };
@@ -425,6 +453,9 @@ export function CoordinatorConversation({
       if (typeof IntersectionObserver === "undefined") return;
       const observer = new IntersectionObserver(
         (entries) => {
+          // A page kept hidden for another project reads as scrolled to its top;
+          // mounting older messages then would push the reader back on return.
+          if (sentinel.parentElement?.clientHeight === 0) return;
           if (entries.some((entry) => entry.isIntersecting)) showEarlier();
         },
         { root: sentinel.parentElement, rootMargin: "400px 0px 0px 0px" },
@@ -480,6 +511,7 @@ export function CoordinatorConversation({
             displayText={row.display.text}
             sourceThreadId={row.display.sourceThread?.id ?? null}
             sourceThreadTitle={row.display.sourceThread?.title ?? null}
+            routedFrom={row.display.routedFrom}
             senderTitle={row.senderTitle}
             executionLabel={row.executionLabel}
             announcedKey={row.announcedKey}
@@ -568,10 +600,7 @@ export function CoordinatorConversation({
         )}
         {latest.away ? (
           <div className="project-conversation-latest" data-coordinator-latest="">
-            <Button size="xs" variant="glass" onClick={latest.jumpToLatest}>
-              <ChevronDownIcon className="size-3.5" aria-hidden />
-              {latest.unseen ? "New messages" : "Jump to latest"}
-            </Button>
+            <JumpToLatestButton unseen={latest.unseen} onJump={latest.jumpToLatest} />
           </div>
         ) : null}
       </div>
@@ -591,6 +620,7 @@ const CoordinatorMessageRow = memo(function CoordinatorMessageRow({
   displayText,
   sourceThreadId,
   sourceThreadTitle,
+  routedFrom,
   senderTitle,
   executionLabel,
   announcedKey,
@@ -621,6 +651,8 @@ const CoordinatorMessageRow = memo(function CoordinatorMessageRow({
   readonly displayText: string;
   readonly sourceThreadId: ThreadId | null;
   readonly sourceThreadTitle: string | null;
+  /** Set when the personal assistant routed this request here from its own conversation. */
+  readonly routedFrom: RoutedFrom | null;
   readonly senderTitle: string | null;
   readonly executionLabel: string | null;
   /** The threads this message announces with cards, one ID per line. */
@@ -699,7 +731,7 @@ const CoordinatorMessageRow = memo(function CoordinatorMessageRow({
     return (
       <>
         {separator}
-        <div className="project-inline-notice" role="status">
+        <div className="project-inline-notice" role="status" data-follow-anchor={message.id}>
           <ChatMarkdown
             formatDates={message.role === "assistant"}
             text={text}
@@ -717,7 +749,10 @@ const CoordinatorMessageRow = memo(function CoordinatorMessageRow({
   return (
     <>
       {separator}
-      <article className={`project-message project-message-${message.role}`}>
+      <article
+        className={`project-message project-message-${message.role}`}
+        data-follow-anchor={message.id}
+      >
         <h3>{author}</h3>
         {turn?.workedFor ? (
           // The turn's tool calls live on the coordinator's page, like a folded turn.
@@ -742,6 +777,12 @@ const CoordinatorMessageRow = memo(function CoordinatorMessageRow({
             fallbackLabel="View sending thread"
             onOpen={() => onOpenThread(message.senderThreadId!)}
           />
+        )}
+        {routedFrom !== null && (
+          <p className="project-muted" data-routed-from>
+            Routed by {routedFrom.assistantTitle}
+            {routedFrom.note ? ` · ${routedFrom.note}` : ""}
+          </p>
         )}
         {sourceThreadId !== null && (
           <MessageThreadLink

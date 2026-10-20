@@ -1,4 +1,5 @@
 import type { ThreadId } from "@specweave-studio/contracts";
+import { parseRoutedMessage } from "@specweave-studio/shared/routedMessage";
 
 type Message = {
   readonly id: string;
@@ -15,14 +16,33 @@ type Worker = {
   readonly deletedAt: string | null;
 };
 
+export type RoutedFrom = {
+  readonly assistantTitle: string;
+  readonly note: string | null;
+};
+
 /** Presentation only: retain the stored routing prompt and its receipt identity. */
 export function projectCoordinatorMessageDisplay(
   message: Message,
   project: { readonly id: string; readonly environmentId: string },
   workers: readonly Worker[],
-): { text: string; sourceThread: Worker | null } {
-  const unchanged = { text: message.text, sourceThread: null };
+): { text: string; sourceThread: Worker | null; routedFrom: RoutedFrom | null } {
+  const unchanged = { text: message.text, sourceThread: null, routedFrom: null };
   const idPrefix = `coordinator-send:${project.id}:`;
+  // A request the personal assistant routed here: the user's words, and who routed them.
+  const routed =
+    message.role === "user" &&
+    message.createdBy === "user" &&
+    message.senderThreadId &&
+    message.id.startsWith(idPrefix)
+      ? parseRoutedMessage(message.text)
+      : null;
+  if (routed && routed.threadId === message.senderThreadId)
+    return {
+      text: routed.words,
+      sourceThread: null,
+      routedFrom: { assistantTitle: routed.assistantTitle, note: routed.note ?? null },
+    };
   if (
     message.role !== "user" ||
     message.createdBy !== "user" ||
@@ -40,7 +60,7 @@ export function projectCoordinatorMessageDisplay(
   );
   if (!sourceThread) return unchanged;
   const text = stripWorkerFollowUp(message.text, sourceThread.id, message.id);
-  return text === null ? unchanged : { text, sourceThread };
+  return text === null ? unchanged : { text, sourceThread, routedFrom: null };
 }
 
 /** The server's one-line wrapper around a worker follow-up, current form or the one before message IDs. */

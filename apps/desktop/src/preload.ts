@@ -146,6 +146,14 @@ contextBridge.exposeInMainWorld("desktopBridge", {
           ipcRenderer.invoke(IpcChannels.GET_COMPUTER_USE_PERMISSIONS_CHANNEL, undefined),
         requestComputerUsePermission: (permission) =>
           ipcRenderer.invoke(IpcChannels.REQUEST_COMPUTER_USE_PERMISSION_CHANNEL, permission),
+        resetComputerUsePermission: async (permission) => {
+          const result = await ipcRenderer.invoke(
+            IpcChannels.RESET_COMPUTER_USE_PERMISSION_CHANNEL,
+            permission,
+          );
+          if (!result.ok) throw new Error(result.error);
+          return result.permissions;
+        },
         relaunchForComputerUse: () =>
           ipcRenderer.invoke(IpcChannels.RELAUNCH_FOR_COMPUTER_USE_CHANNEL, undefined),
       }

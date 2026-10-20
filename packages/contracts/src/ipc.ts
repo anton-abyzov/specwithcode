@@ -1274,6 +1274,16 @@ export interface DesktopBridge {
   requestComputerUsePermission?: (
     permission: ComputerUsePermission,
   ) => Promise<ComputerUsePermissions>;
+  /**
+   * Clears this app's own entry in the permission's Privacy & Security list
+   * and asks again. macOS ties a switch to the build that first asked, so a
+   * switch made for another build (a local development build, an older
+   * release) can read as on while this app is still refused. Rejects with
+   * the reason when the reset fails.
+   */
+  resetComputerUsePermission?: (
+    permission: ComputerUsePermission,
+  ) => Promise<ComputerUsePermissions>;
   /** Quits and reopens the app, which macOS needs before a new Screen Recording grant applies. */
   relaunchForComputerUse?: () => Promise<void>;
   /** Voice calls; all absent on desktop builds predating them. */

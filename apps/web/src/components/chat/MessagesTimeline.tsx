@@ -26,6 +26,14 @@ import {
   revealCollapsedTop,
 } from "./CollapsibleReport";
 import { WorkLogBlock, WorkLogButton, WorkLogDetails, WorkLogList, WorkLogRow } from "./WorkLog";
+import {
+  formatActivityDuration,
+  isQuiet,
+  runLiveSignal,
+  liveStepStartedAtMs,
+  quietForMs,
+  toolCallCountLabel,
+} from "./liveActivity";
 import { PullRequestGlyph } from "../pullRequest/pullRequestIcons";
 import type { TimelineDetail, WorktreeSetupSnapshot } from "@specweave-studio/contracts";
 import { ReadOnlySourcePreview } from "../files/AttachmentFilePreview";
@@ -156,6 +164,7 @@ import {
   ChevronRightIcon,
   ChevronUpIcon,
   CircleAlertIcon,
+  Clock3Icon,
   DownloadIcon,
   EyeIcon,
   GitForkIcon,
@@ -249,6 +258,7 @@ import {
   toolGroupAction,
   workEntryDisplayLabel,
   workEntryReadOutput,
+  workEntryIsActiveTurnActivity,
   workEntryIsVisibleInGroup,
   worktreeSetupAgentStarted,
   workingStepLabel,
@@ -463,10 +473,47 @@ interface TimelineRowActivityState {
   onStopStalledRun: (() => void) | undefined;
   onContinueStalledRun: (() => void) | undefined;
   workingPlan: WorkingPlanProgress | null;
+  activeHost: TimelineActiveHost | null;
+}
+
+/** The machine running the thread, as the working header names it. */
+export interface TimelineActiveHost {
+  label: string;
+  connected: boolean;
 }
 
 const TimelineRowCtx = createContext<TimelineRowSharedState>(null!);
 const TimelineRowActivityCtx = createContext<TimelineRowActivityState>(null!);
+/**
+ * What the running turn's own items say about liveness, to the second, and
+ * whether its host is reachable. Only the live rows read it, and its value
+ * changes only when one of these does.
+ */
+interface LiveSignal {
+  /** The newest provider event; null while the run's items are not loaded. */
+  lastActivityMs: number | null;
+  /** When the current step began: the latest item start or finish. */
+  phaseStartedMs: number | null;
+  hostOffline: boolean;
+}
+const NO_LIVE_SIGNAL: LiveSignal = {
+  lastActivityMs: null,
+  phaseStartedMs: null,
+  hostOffline: false,
+};
+const LiveSignalCtx = createContext<LiveSignal>(NO_LIVE_SIGNAL);
+
+function TimelineActivityProviders(props: {
+  activity: TimelineRowActivityState;
+  liveSignal: LiveSignal;
+  children: ReactNode;
+}) {
+  return (
+    <TimelineRowActivityCtx value={props.activity}>
+      <LiveSignalCtx value={props.liveSignal}>{props.children}</LiveSignalCtx>
+    </TimelineRowActivityCtx>
+  );
+}
 
 interface WorkGroupViewState {
   scrollPositions: Map<string, WorkGroupScrollAnchor>;
@@ -539,6 +586,7 @@ interface MessagesTimelineProps {
   runHealth?: RunHealth | null;
   /** The plan card's progress; the working row names the step in progress. */
   workingPlan?: WorkingPlanProgress | null;
+  activeHost?: TimelineActiveHost | null;
   onStopStalledRun?: () => void;
   onContinueStalledRun?: () => void;
   worktreeSetup?: WorktreeSetupSnapshot | null;
@@ -639,6 +687,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   activeTurnStartedAt = null,
   runHealth = null,
   workingPlan = null,
+  activeHost = null,
   onStopStalledRun,
   onContinueStalledRun,
   worktreeSetup = null,
@@ -1435,6 +1484,19 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     latestRun?.startedAt != null
       ? worktreeSetup
       : null;
+  const activityRunId = isWorking ? (runningRunId ?? latestRun?.runId ?? null) : null;
+  const runSignal = useMemo(
+    () => runLiveSignal(recoveryItems, activityRunId),
+    [activityRunId, recoveryItems],
+  );
+  // Whole seconds, so a token streamed within the same second changes nothing.
+  const lastActivityMs = runSignal === null ? null : toWholeSecond(runSignal.lastActivityMs);
+  const phaseStartedMs = runSignal === null ? null : toWholeSecond(runSignal.phaseStartedMs);
+  const hostOffline = activeHost?.connected === false;
+  const liveSignal = useMemo<LiveSignal>(
+    () => ({ lastActivityMs, phaseStartedMs, hostOffline }),
+    [hostOffline, lastActivityMs, phaseStartedMs],
+  );
   const activityState = useMemo<TimelineRowActivityState>(
     () => ({
       isWorking,
@@ -1451,9 +1513,11 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onStopStalledRun,
       onContinueStalledRun,
       workingPlan,
+      activeHost,
     }),
     [
       workingPlan,
+      activeHost,
       runHealth,
       onStopStalledRun,
       onContinueStalledRun,
@@ -1522,7 +1586,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
 
   return (
     <TimelineRowCtx value={sharedState}>
-      <TimelineRowActivityCtx value={activityState}>
+      <TimelineActivityProviders activity={activityState} liveSignal={liveSignal}>
         <TooltipScrollDismissArea
           ref={setTimelineViewportElement}
           className="relative h-full min-h-0"
@@ -1604,7 +1668,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
             }}
           />
         </TooltipScrollDismissArea>
-      </TimelineRowActivityCtx>
+      </TimelineActivityProviders>
     </TimelineRowCtx>
   );
 });
@@ -3815,6 +3879,91 @@ function toolIconAcceptsTint(
   return toolIcon === undefined && iconName !== "computer";
 }
 
+function toWholeSecond(ms: number): number {
+  return Math.floor(ms / 1000) * 1000;
+}
+
+/** Re-renders the caller each second while `enabled`, starting from a fresh reading. */
+function useNowMs(enabled: boolean): number {
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  useEffect(() => {
+    if (!enabled) return;
+    const tick = () => setNowMs(Date.now());
+    const first = setTimeout(tick, 0);
+    const id = setInterval(tick, 1000);
+    return () => {
+      clearTimeout(first);
+      clearInterval(id);
+    };
+  }, [enabled]);
+  return nowMs;
+}
+
+/** Counts up from `sinceMs` in place, without re-rendering its row. */
+function elapsedSince(sinceMs: number): string {
+  return formatActivityDuration(Date.now() - sinceMs);
+}
+
+function LiveDuration({ sinceMs }: { sinceMs: number }) {
+  const textRef = useRef<HTMLSpanElement>(null);
+  useEffect(() => {
+    const update = () => {
+      if (textRef.current) {
+        textRef.current.textContent = elapsedSince(sinceMs);
+      }
+    };
+    update();
+    const id = setInterval(update, 1000);
+    return () => clearInterval(id);
+  }, [sinceMs]);
+  return (
+    <span ref={textRef} className="tabular-nums">
+      {elapsedSince(sinceMs)}
+    </span>
+  );
+}
+
+/** fresh: an event arrived in the last minute. quiet: none since. offline: host unreachable. */
+type LiveState = "fresh" | "quiet" | "offline";
+
+function LiveStateDot({ state }: { state: LiveState }) {
+  return (
+    <span
+      aria-hidden
+      ref={state === "fresh" ? observeVisibleAnimation : undefined}
+      data-live-dot={state}
+      className={cn(
+        "relative top-px inline-flex size-1.5 shrink-0 self-center rounded-full",
+        state === "fresh"
+          ? "live-dot-pulse bg-success"
+          : state === "quiet"
+            ? "bg-warning"
+            : "bg-muted-foreground/50",
+      )}
+    />
+  );
+}
+
+/**
+ * Opens the run of tool calls a group header stands for. Its words join the
+ * header's own text, so the button's name keeps the live step and its time.
+ */
+function ToolGroupDisclosure({ count, expanded }: { count: number; expanded: boolean }) {
+  return (
+    <span className="flex shrink-0 items-center gap-0.5 text-xs text-muted-foreground group-hover/live-work:text-foreground">
+      {count > 1 ? (
+        <span className="tabular-nums" aria-hidden>
+          {toolCallCountLabel(count)}
+        </span>
+      ) : null}
+      <span className="sr-only">
+        {`${expanded ? "hide" : "show"} ${count > 1 ? `these ${count} tool calls` : "tool call details"}`}
+      </span>
+      <MorphIcon className="size-3.5" icon={expanded ? ChevronDown : ChevronRight} />
+    </span>
+  );
+}
+
 function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "working" }> }) {
   const {
     isCompacting,
@@ -3824,7 +3973,16 @@ function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "workin
     onStopStalledRun,
     onContinueStalledRun,
     workingPlan,
+    activeHost,
   } = use(TimelineRowActivityCtx);
+  const { lastActivityMs } = use(LiveSignalCtx);
+  const nowMs = useNowMs(lastActivityMs !== null);
+  const liveState: LiveState =
+    activeHost !== null && !activeHost.connected
+      ? "offline"
+      : isQuiet(lastActivityMs, nowMs)
+        ? "quiet"
+        : "fresh";
   const step = isPreparingWorktree || isCompacting ? null : workingStepLabel(workingPlan);
   // One span for every label so the setup-to-working handoff swaps text in
   // place instead of remounting the row.
@@ -3841,8 +3999,9 @@ function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "workin
     "Working..."
   );
   return (
-    <div className="border-b border-border/60 pb-2 pt-1">
+    <div className="border-b border-border/60 pb-2 pt-1" data-live-state={liveState}>
       <div className="flex h-6 min-w-0 items-baseline gap-2 px-1 text-sm leading-relaxed text-muted-foreground tabular-nums">
+        {shimmer ? null : <LiveStateDot state={liveState} />}
         <span
           ref={shimmer ? observeVisibleAnimation : undefined}
           className="relative shrink-0 overflow-hidden whitespace-nowrap"
@@ -3853,6 +4012,12 @@ function WorkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "workin
         {step ? (
           <span className="min-w-0 truncate text-foreground/75" data-working-step title={step}>
             · {step}
+          </span>
+        ) : null}
+        {activeHost !== null && !shimmer ? (
+          <span className="min-w-0 shrink truncate" data-working-host>
+            · {activeHost.label}
+            {activeHost.connected ? null : " offline, status may be stale"}
           </span>
         ) : null}
         {backgroundWorktreeSetup ? (
@@ -4006,20 +4171,49 @@ function CompactingLabel() {
 
 function ThinkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "thinking" }> }) {
   const ctx = use(TimelineRowCtx);
-  const { isCompacting, isPreparingWorktree } = use(TimelineRowActivityCtx);
+  const { isCompacting, isPreparingWorktree, runHealth } = use(TimelineRowActivityCtx);
+  const { lastActivityMs, phaseStartedMs, hostOffline } = use(LiveSignalCtx);
+  const nowMs = useNowMs(lastActivityMs !== null && !hostOffline);
   // Reserve the activity row during setup so the handoff keeps the same height.
   if (isPreparingWorktree || isCompacting) return <WorkLogRow label="" />;
-  const activity = <LiveActivityRow label="Thinking" iconName="brain" active shimmer />;
+  const awaitingPerson = runHealth?.state === "waiting" && runHealth.awaitingPerson !== undefined;
+  // "Thinking" is only claimed while events keep arriving; after a quiet
+  // minute the row says what the app knows: nothing new has come in.
+  const quiet = !awaitingPerson && (hostOffline || isQuiet(lastActivityMs, nowMs));
+  const quietMs = quietForMs(lastActivityMs, nowMs);
+  const activity = (
+    <LiveActivityRow
+      label={
+        awaitingPerson ? `Waiting for ${runHealth.label}` : quiet ? "No new events" : "Thinking"
+      }
+      iconName={awaitingPerson ? "message-circle" : quiet ? "clock" : "brain"}
+      active={!quiet && !awaitingPerson}
+      shimmer
+      liveState={quiet ? "quiet" : "fresh"}
+      trailing={
+        phaseStartedMs !== null && !awaitingPerson && !hostOffline ? (
+          <span className="shrink-0 text-xs text-muted-foreground" data-live-elapsed>
+            {quiet && quietMs !== null ? (
+              `for ${formatActivityDuration(quietMs)}`
+            ) : (
+              <LiveDuration sinceMs={phaseStartedMs} />
+            )}
+          </span>
+        ) : null
+      }
+    />
+  );
   const { groupId } = row;
   if (groupId === undefined) return activity;
   return (
     <button
       type="button"
-      className="group/live-work flex min-h-6 w-full max-w-full cursor-pointer items-center rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
+      className="group/live-work flex min-h-6 w-full max-w-full cursor-pointer items-center gap-1.5 rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
       aria-expanded={row.expanded === true}
       onClick={() => ctx.onToggleWorkGroup(groupId, row.id)}
     >
       {activity}
+      <ToolGroupDisclosure count={row.groupCount ?? 0} expanded={row.expanded === true} />
     </button>
   );
 }
@@ -4031,6 +4225,8 @@ function LiveActivityRow({
   failed = false,
   active = false,
   shimmer = false,
+  liveState,
+  trailing,
 }: {
   label: ReactNode;
   iconName?: WorkEntryIconName;
@@ -4038,27 +4234,41 @@ function LiveActivityRow({
   failed?: boolean;
   active?: boolean;
   shimmer?: boolean;
+  liveState?: LiveState;
+  /** Elapsed time; stays outside the shimmer so it reads steadily. */
+  trailing?: ReactNode;
 }) {
   const animated = active && !failed;
   const showShimmer = animated && shimmer;
   return (
     <div
-      ref={animated ? observeVisibleAnimation : undefined}
-      className="relative min-h-6 w-fit max-w-full min-w-0 overflow-hidden rounded-md text-sm leading-relaxed"
+      className="flex min-h-6 max-w-full min-w-0 items-center gap-2"
+      data-live-activity={liveState}
     >
-      <LiveActivityContent
-        label={label}
-        iconName={iconName}
-        toolIcon={toolIcon}
-        failed={failed}
-        announceFailure={failed}
-        active={animated && !shimmer}
-      />
-      {showShimmer ? (
-        <ActivityShimmerOverlay>
-          <LiveActivityContent label={label} iconName={iconName} toolIcon={toolIcon} highlighted />
-        </ActivityShimmerOverlay>
-      ) : null}
+      <div
+        ref={animated ? observeVisibleAnimation : undefined}
+        className="relative min-h-6 w-fit max-w-full min-w-0 overflow-hidden rounded-md text-sm leading-relaxed"
+      >
+        <LiveActivityContent
+          label={label}
+          iconName={iconName}
+          toolIcon={toolIcon}
+          failed={failed}
+          announceFailure={failed}
+          active={animated && !shimmer}
+        />
+        {showShimmer ? (
+          <ActivityShimmerOverlay>
+            <LiveActivityContent
+              label={label}
+              iconName={iconName}
+              toolIcon={toolIcon}
+              highlighted
+            />
+          </ActivityShimmerOverlay>
+        ) : null}
+      </div>
+      {trailing}
     </div>
   );
 }
@@ -4141,16 +4351,52 @@ function LiveWorkEntryTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "
       row.active,
     );
   const failed = workEntryDisplayIndicatesToolFailure(row.entry);
+  const callCount = row.groupedEntries.filter(workLogEntryIsToolLike).length;
+  // An unreachable host sends no events: nothing here may look like progress.
+  const { lastActivityMs, phaseStartedMs, hostOffline } = use(LiveSignalCtx);
+  const live = row.active && !failed && !hostOffline;
+  const stepRunning = live && workEntryIsActiveTurnActivity(row.entry);
+  const stepStartedAtMs = stepRunning ? liveStepStartedAtMs(row.entry) : null;
+  // Between calls the row keeps the last call; what follows it is the model's
+  // turn, said only as far as events show it.
+  const betweenCalls = live && !stepRunning && lastActivityMs !== null && phaseStartedMs !== null;
+  const nowMs = useNowMs(betweenCalls);
+  const quiet = betweenCalls && isQuiet(lastActivityMs, nowMs);
+  const quietMs = quietForMs(lastActivityMs, nowMs);
 
   return (
     <button
       type="button"
-      className="group/live-work flex min-h-6 w-full max-w-full cursor-pointer items-center rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
-      aria-label={failed ? `${label}, tool call failed` : undefined}
+      className="group/live-work flex min-h-6 w-full max-w-full cursor-pointer items-center gap-1.5 rounded-md text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
       aria-expanded={row.expanded}
+      data-tool-group-header="live"
       onClick={() => ctx.onToggleWorkGroup(row.groupId, row.id)}
     >
       <LiveActivityRow
+        liveState={quiet ? "quiet" : "fresh"}
+        trailing={
+          stepStartedAtMs !== null ? (
+            <span className="shrink-0 text-xs text-muted-foreground" data-live-elapsed>
+              <LiveDuration sinceMs={stepStartedAtMs} />
+            </span>
+          ) : betweenCalls ? (
+            <span
+              className={cn(
+                "shrink-0 text-xs",
+                quiet ? "text-warning-foreground" : "text-muted-foreground",
+              )}
+              data-live-elapsed
+            >
+              {quiet && quietMs !== null ? (
+                `No new events for ${formatActivityDuration(quietMs)}`
+              ) : (
+                <>
+                  Thinking <LiveDuration sinceMs={phaseStartedMs ?? lastActivityMs ?? 0} />
+                </>
+              )}
+            </span>
+          ) : null
+        }
         label={
           row.entry.questionAnswer && hasQuestionAnswer(row.entry.questionAnswer) ? (
             <span className="flex min-w-0 gap-1.5">
@@ -4175,8 +4421,9 @@ function LiveWorkEntryTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "
         iconName={workEntryIconName(row.entry)}
         toolIcon={row.entry.toolIcon ?? row.entry.toolSource?.icon}
         failed={failed}
-        active={row.active}
+        active={live && !quiet}
       />
+      <ToolGroupDisclosure count={callCount} expanded={row.expanded} />
     </button>
   );
 }
@@ -4343,7 +4590,16 @@ function WorkGroupHeader(props: {
         </span>
       }
       trailing={
-        <TimelineRowTimestamp createdAt={props.createdAt} timestampFormat={props.timestampFormat} />
+        <span className="flex shrink-0 items-center gap-1">
+          <TimelineRowTimestamp
+            createdAt={props.createdAt}
+            timestampFormat={props.timestampFormat}
+          />
+          <MorphIcon
+            className="size-3.5 text-muted-foreground"
+            icon={props.expanded ? ChevronDown : ChevronRight}
+          />
+        </span>
       }
     />
   );
@@ -5255,6 +5511,7 @@ type WorkEntryIconName =
   | "browser"
   | "check"
   | "circle-alert"
+  | "clock"
   | "computer"
   | "device"
   | "eye"
@@ -5473,6 +5730,8 @@ function WorkEntryIcon({ name, className }: { name: WorkEntryIconName; className
       return <SearchIcon className={className} aria-hidden />;
     case "message-circle":
       return <MessageCircleIcon className={className} aria-hidden />;
+    case "clock":
+      return <Clock3Icon className={className} aria-hidden />;
     case "square-pen":
       return <SquarePenIcon className={className} aria-hidden />;
     case "terminal":

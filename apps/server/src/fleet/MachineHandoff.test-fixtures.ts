@@ -265,6 +265,8 @@ const makeHarness = (
     Layer.succeed(ProjectCoordinatorService.ProjectCoordinatorService, {
       start: () => Effect.die("must use send"),
       nextTurnModel: () => Effect.succeed(undefined),
+      route: () => Effect.die("unused"),
+      coordinatorModes: () => Effect.die("unused"),
       send: (input) =>
         Effect.gen(function* () {
           if (state.launchFailure) return yield* Effect.fail({} as never);

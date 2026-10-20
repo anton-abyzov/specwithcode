@@ -185,7 +185,7 @@ function shell(
     pullRequests: [],
     archivedAt: null,
     deletedAt: null,
-    createdAt: iso(40),
+    createdAt: iso(0),
     updatedAt: iso(0),
     modelSelection: { instanceId: "codex", model: "gpt-6-astra" },
     ...overrides,
@@ -230,7 +230,7 @@ beforeEach(() => {
       hasPendingUserInput: true,
       projectId: "p2" as EnvironmentThreadShell["projectId"],
     }),
-    shell("old", { updatedAt: iso(45) }),
+    shell("old", { createdAt: iso(45) }),
     shell("done", { settledOverride: "settled" }),
     shell("project-coordinator:p1"),
   ];
@@ -376,7 +376,7 @@ describe("projects and chats sidebar", () => {
         forkedFrom: { type: "run", threadId: "thread:delegated-task:abc", runId: "run-1" },
       } as never),
       // Started with New chat in a project that has a coordinator: still a chat.
-      shell("mine", { createdBy: "user", updatedAt: iso(1) }),
+      shell("mine", { createdBy: "user", createdAt: iso(1) }),
       shell("plain", { projectId: "p2" as EnvironmentThreadShell["projectId"] }),
     ];
     await render();
@@ -445,11 +445,11 @@ describe("projects and chats sidebar", () => {
     };
     state.groups[1]!.memberProjects[0]!.workspaceSettings = { kind: "code" };
     state.shells = [
-      shell("worker", { title: "Worker", createdBy: "agent", updatedAt: iso(0) }),
-      shell("first", { projectId: "p2" as EnvironmentThreadShell["projectId"], updatedAt: iso(0) }),
+      shell("worker", { title: "Worker", createdBy: "agent", createdAt: iso(0) }),
+      shell("first", { projectId: "p2" as EnvironmentThreadShell["projectId"], createdAt: iso(0) }),
       shell("second", {
         projectId: "p2" as EnvironmentThreadShell["projectId"],
-        updatedAt: iso(3),
+        createdAt: iso(3),
       }),
     ];
     state.keybindings = [
@@ -482,14 +482,14 @@ describe("projects and chats sidebar", () => {
     };
     state.shells = [
       // The newest thread is the project's: it must not take the first slot.
-      shell("worker", { title: "Worker", createdBy: "agent", updatedAt: iso(0) }),
+      shell("worker", { title: "Worker", createdBy: "agent", createdAt: iso(0) }),
       shell("first", {
         projectId: "p2" as EnvironmentThreadShell["projectId"],
-        updatedAt: iso(0.5),
+        createdAt: iso(0.5),
       }),
       shell("second", {
         projectId: "p2" as EnvironmentThreadShell["projectId"],
-        updatedAt: iso(1),
+        createdAt: iso(1),
       }),
     ];
     state.keybindings = [
@@ -513,6 +513,68 @@ describe("projects and chats sidebar", () => {
       to: "/$environmentId/$threadId",
       params: { environmentId: "host", threadId: "first" },
     });
+  });
+  it("holds the chat order and the open chat in place while live updates arrive", async () => {
+    const at = (minutesAgo: number) => new Date(Date.now() - minutesAgo * 60_000).toISOString();
+    state.shells = [
+      shell("lane-a", { title: "0949 Folder copy", createdAt: at(30) }),
+      shell("lane-b", { title: "0948 Link projects", createdAt: at(20) }),
+      shell("lane-c", { title: "0951 Machine grants", createdAt: at(10) }),
+    ];
+    state.keybindings = [
+      {
+        command: "thread.next",
+        shortcut: {
+          key: "]",
+          metaKey: false,
+          ctrlKey: true,
+          shiftKey: false,
+          altKey: false,
+          modKey: false,
+        },
+      },
+    ];
+    state.params = { environmentId: "host", threadId: "lane-b" };
+    await render();
+    const order = ["0951 Machine grants", "0948 Link projects", "0949 Folder copy"];
+    expect(chats()).toEqual(order);
+    const current = () =>
+      container.querySelector('.sws-chat-row [aria-current="page"] .sws-side-row-label');
+    const openRow = current();
+    expect(openRow?.textContent).toBe("0948 Link projects");
+    // Tool calls, streamed items and status changes, interleaved across the three lanes.
+    const update = async (id: string, change: Partial<EnvironmentThreadShell>, minute: number) => {
+      state.shells = state.shells.map((t) =>
+        t.id === id ? { ...t, ...change, updatedAt: at(-minute) } : t,
+      );
+      await render();
+      expect(chats()).toEqual(order);
+      expect(current()?.textContent).toBe("0948 Link projects");
+    };
+    await update("lane-a", { runtime: { status: "running" } as never }, 1);
+    await update("lane-b", { pendingBackgroundTasks: [{}] as never }, 2);
+    await update("lane-a", { hasPendingApprovals: true }, 3);
+    // The person moves to the next chat between updates: it is the next row on screen.
+    await act(async () => {
+      window.dispatchEvent(new KeyboardEvent("keydown", { key: "]", ctrlKey: true }));
+    });
+    expect(state.navigate).toHaveBeenLastCalledWith({
+      to: "/$environmentId/$threadId",
+      params: { environmentId: "host", threadId: "lane-a" },
+    });
+    await update("lane-c", { runtime: { status: "running" } as never }, 4);
+    await update("lane-a", { hasPendingApprovals: false, runtime: null }, 5);
+    // The open row is the same element, updated in place rather than re-created.
+    expect(current()).toBe(openRow);
+    expect(container.querySelectorAll(".sws-chat-row")[2]!.getAttribute("data-tone")).not.toBe(
+      "waiting",
+    );
+    // The person sends a message in the oldest lane: that one moves up.
+    state.shells = state.shells.map((t) =>
+      t.id === "lane-a" ? { ...t, latestUserMessageAt: at(-6) } : t,
+    );
+    await render();
+    expect(chats()).toEqual(["0949 Folder copy", "0951 Machine grants", "0948 Link projects"]);
   });
   it("opens a chat on its own route", async () => {
     await render();

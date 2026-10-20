@@ -79,7 +79,7 @@ function timelineEntryRunId(entry: TimelineEntry): RunId | null {
 }
 
 /** Whether the entry still represents live activity, not a settled result. */
-function workEntryIsActiveTurnActivity(entry: WorkLogEntry): boolean {
+export function workEntryIsActiveTurnActivity(entry: WorkLogEntry): boolean {
   return (
     entry.toolLifecycleStatus === "inProgress" ||
     (entry.toolLifecycleStatus === undefined &&
@@ -529,6 +529,7 @@ type MessagesTimelineRowContent =
       createdAt: string | null;
       /** Tool calls this row stands in for after the latest one failed. */
       groupId?: string;
+      groupCount?: number;
       expanded?: boolean;
     }
   | {
@@ -1970,6 +1971,8 @@ export function deriveMessagesTimelineRows(input: {
         id: LIVE_ACTIVITY_ROW_ID,
         createdAt: input.activeTurnStartedAt ?? null,
         groupId,
+        groupCount: visibleActiveToolEntries.filter((entry) => workLogEntryIsToolLike(entry.entry))
+          .length,
         expanded,
       });
       if (expanded) {

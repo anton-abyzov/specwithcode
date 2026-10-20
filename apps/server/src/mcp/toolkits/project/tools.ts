@@ -3,6 +3,7 @@ import {
   NonNegativeInt,
   ModelSelection,
   TrimmedNonEmptyString,
+  MessageId,
   ThreadId,
   RunId,
   OrchestrationV2RunStatus,
@@ -27,6 +28,7 @@ import * as Schema from "effect/Schema";
 import { Tool, Toolkit } from "effect/ai";
 import * as ProjectActionRequests from "../../../project/ProjectActionRequests.ts";
 import * as ProjectService from "../../../project/ProjectService.ts";
+import * as ProjectCoordinatorService from "../../../project/ProjectCoordinatorService.ts";
 import * as ProviderRegistry from "../../../provider/ProviderRegistry.ts";
 import * as ManagedProjectFolders from "../../../project/ManagedProjectFolders.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
@@ -239,6 +241,81 @@ const ThreadLaunchTool = Tool.make("studio_thread_launch", {
   .annotate(Tool.Destructive, true)
   .annotate(Tool.OpenWorld, true);
 
+const RouteTargetsTool = Tool.make("studio_route_targets", {
+  ...shared,
+  description:
+    "Personal assistant coordinators only. List the projects in this environment you may hand the user's requests to: those whose folder is your own or inside a folder the user approved for you (grantedBy names it). Each target has its goal, its coordinator link and its latest threads' titles and statuses, to judge which project owns a request; another project's memory is not shared. unavailable lists the other projects with why they cannot take work. Call it before studio_project_route when the owner is not already certain.",
+  // No `parameters`: an explicit Schema.Struct({}) encodes to `anyOf: [object, array]`,
+  // which MCP registration refuses (see studio_worktree_status).
+  success: Schema.Struct({
+    assistant: Schema.String,
+    turnMessageId: Schema.NullOr(MessageId).annotate({
+      description:
+        "The user's message that started this turn. Keep it: after an ask_user answer, pass it to studio_project_route as forwardMessageId, since the answer starts a new turn.",
+    }),
+    targets: Schema.Array(
+      Schema.Struct({
+        projectId: ProjectId,
+        title: Schema.String,
+        kind: Schema.String,
+        workspaceRoot: Schema.String,
+        grantedBy: Schema.String,
+        goal: Schema.String,
+        coordinatorLink: Schema.NullOr(Schema.String),
+        recentThreads: Schema.Array(
+          Schema.Struct({ title: Schema.String, status: Schema.String, threadLink: Schema.String }),
+        ),
+      }),
+    ),
+    unavailable: Schema.Array(
+      Schema.Struct({ projectId: ProjectId, title: Schema.String, reason: Schema.String }),
+    ),
+  }),
+  dependencies: [...shared.dependencies, FileSystem.FileSystem],
+})
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Destructive, false);
+const ProjectRouteTool = Tool.make("studio_project_route", {
+  ...shared,
+  description:
+    "Personal assistant coordinators only. Hand one message the user wrote in this conversation to the coordinator of the project that owns it; that coordinator starts or reuses its own workers. The user's message that started this turn is routed (or pass forwardMessageId for an earlier one): their words and files arrive unchanged, shown as theirs and routed by you. The project must be one studio_route_targets lists; nothing here grants a folder or account. Routing the same message to the same project again delivers it once. For a request that spans projects, route it once to each, with a note naming that project's part. Answer the user in one line with the returned coordinatorLink copied verbatim.",
+  parameters: Schema.Struct({
+    projectId: ProjectId,
+    forwardMessageId: Schema.optional(
+      MessageId.annotate({
+        description:
+          "The user's message in this conversation to route. Omit it for the message that started this turn, which is almost always the one to route.",
+      }),
+    ),
+    note: Schema.optional(
+      Schema.String.check(Schema.isMaxLength(500)).annotate({
+        description:
+          "One line from you for the target coordinator, such as which part of a multi-project request is theirs. Never restate the user's words.",
+      }),
+    ),
+  }),
+  success: Schema.Struct({
+    projectId: ProjectId,
+    projectTitle: Schema.String,
+    grantedBy: Schema.String,
+    coordinatorThreadId: ThreadId,
+    coordinatorLink: Schema.String.annotate({
+      description: "Ready-made Markdown link to the target coordinator. Copy it verbatim.",
+    }),
+    coordinatorCreated: Schema.Boolean,
+    messageId: MessageId,
+    attachments: NonNegativeInt,
+  }),
+  dependencies: [
+    ...shared.dependencies,
+    ProjectCoordinatorService.ProjectCoordinatorService,
+    FileSystem.FileSystem,
+    ServerConfig.ServerConfig,
+  ],
+})
+  .annotate(Tool.Destructive, true)
+  .annotate(Tool.OpenWorld, false);
+
 export const ProjectToolkit = Toolkit.make(
   ThreadLaunchTool,
   ProjectListTool,
@@ -248,4 +325,6 @@ export const ProjectToolkit = Toolkit.make(
   ProjectRequestTool,
   ProjectDeleteTool,
   ProjectCloneTool,
+  RouteTargetsTool,
+  ProjectRouteTool,
 );
