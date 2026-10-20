@@ -180,6 +180,7 @@ const makeHarness = Effect.fn("TestRemoteAuthorization.makeHarness")(function* (
     createEnvironmentLinkChallenge: unexpected,
     linkEnvironment: unexpected,
     unlinkEnvironment: unexpected,
+    deleteAccount: unexpected,
     getEnvironmentStatus: unexpected,
     connectEnvironment: (request) =>
       Effect.gen(function* () {

@@ -94,7 +94,7 @@ final class AppRouter {
   static func isValid(_ target: ChatTarget, in model: AppModel) -> Bool {
     switch target {
     case let .aide(ref): model.aide?.ref == ref && model.aide?.archived == false
-    case let .project(ref): model.projects.contains { $0.ref == ref && !$0.archived }
+    case let .project(ref): model.projects.contains { $0.contains(ref) && !$0.archived }
     case let .thread(ref): model.machine(ref.environmentId) != nil
     }
   }
@@ -130,14 +130,20 @@ final class AppRouter {
         isDrawerOpen = true
         isDrawerSearching = route == .search
       }
-    case .overview, .projectSettings, .thread:
+    case .overview, .projectSettings, .thread, .coordinator, .orchestrator:
       guard !model.isLoading else { return false }
-      let project = model.projects.first { !$0.archived }?.ref ?? model.aide?.ref
+      let first = model.projects.first { !$0.archived }
+      let project = first?.ref ?? model.aide?.ref
       switch route {
       case .overview:
         if let project { main.path = [.overview(project)] }
       case .projectSettings:
         if let project { sheet = .projectSettings(project) }
+      // Switching orchestrators changes the root chat, as the switcher does.
+      case .coordinator:
+        if let first { open(.project(first.ref)) }
+      case .orchestrator:
+        if let first { open(.project(first.members.first { !$0.isCoordinator }?.ref ?? first.ref)) }
       default:
         let threads = model.recentThreads
         if let thread = threads.first(where: { $0.activity == .needsYou }) ?? threads.first {

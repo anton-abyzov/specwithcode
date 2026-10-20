@@ -3,6 +3,10 @@ import {
   getProjectFaviconResourceKey,
   isProjectFaviconFallbackUrl,
 } from "@specweave-studio/shared/projectFavicon";
+import {
+  projectEmojiForDisplay,
+  projectIconNameForDisplay,
+} from "@specweave-studio/shared/projectIconLegacy";
 import { FolderCodeIcon } from "lucide-react";
 import type { IconName } from "lucide-react/dynamic";
 import type { ComponentType } from "react";
@@ -57,7 +61,7 @@ export function ProjectFavicon(input: {
       <ProjectFaviconFallback
         className={input.className}
         icon={FolderCodeIcon}
-        emoji={project.projectIcon.emoji}
+        emoji={projectEmojiForDisplay(project.projectIcon.emoji)}
       />
     );
   }
@@ -72,7 +76,7 @@ export function ProjectFavicon(input: {
       <span aria-hidden="true" className={iconClassName}>
         <Suspense fallback={<DynamicProjectIconFallback />}>
           <DynamicIcon
-            name={project.projectIcon.name as IconName}
+            name={projectIconNameForDisplay(project.projectIcon.name) as IconName}
             className={cn("size-full", colorClassName)}
             fallback={DynamicProjectIconFallback}
           />

@@ -16,6 +16,7 @@ import { Pressable, View, type ColorValue } from "react-native";
 
 import { SymbolView, type AppSymbolName } from "../../components/AppSymbol";
 import { AppText as Text, AppTextInput as TextInput } from "../../components/AppText";
+import { MaskedFieldGlyph } from "../../components/CraftedGlyphs";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { RequestActionButton } from "./RequestActionButton";
@@ -25,8 +26,7 @@ import { RequestActionButton } from "./RequestActionButton";
  * only in this component's state and the RPC payload: it is never logged,
  * alerted, or persisted, and the field clears once the answer is sent.
  */
-const LOCK_SYMBOL: AppSymbolName = { ios: "lock", android: "lock" };
-const PRIVATE_SYMBOL: AppSymbolName = { ios: "checkmark.shield", android: "lock" };
+const PRIVATE_SYMBOL: AppSymbolName = { ios: "checkmark.shield", android: "verified_user" };
 
 export function SecretRequestCard(props: {
   readonly environmentId: EnvironmentId;
@@ -45,15 +45,18 @@ export function SecretRequestCard(props: {
       />
     );
   }
-  const icon: AppSymbolName =
-    display.kind === "pending-elsewhere"
-      ? LOCK_SYMBOL
-      : display.outcome === "saved"
-        ? "checkmark"
-        : "minus";
   return (
     <View className="mb-3 min-h-9 flex-row items-center gap-2 px-1">
-      <SymbolView name={icon} size={13} tintColor={props.iconColor} type="monochrome" />
+      {display.kind === "pending-elsewhere" ? (
+        <MaskedFieldGlyph size={13} color={props.iconColor} />
+      ) : (
+        <SymbolView
+          name={display.outcome === "saved" ? "checkmark" : "minus"}
+          size={13}
+          tintColor={props.iconColor}
+          type="monochrome"
+        />
+      )}
       <Text className="flex-1 font-sans text-sm text-foreground-muted" numberOfLines={2}>
         {item.label} · {display.label}
       </Text>

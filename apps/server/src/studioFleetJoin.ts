@@ -341,6 +341,8 @@ export async function removeFleetMachineEverywhere(input: {
   readonly machine: string;
   readonly fetcher: FleetFetch;
   readonly revokeWorkerAccess: (target: FleetTarget) => Promise<FleetRemoteRevoke>;
+  /** Revokes the phone sessions this machine linked there; must not throw. */
+  readonly unlinkPhones?: (target: FleetTarget) => Promise<void>;
 }): Promise<FleetRemoveResult> {
   const source = await readFleetConfigSource(input.baseDir);
   if (source === null) throw new FleetJoinError("unknown-machine");
@@ -351,6 +353,8 @@ export async function removeFleetMachineEverywhere(input: {
   );
   if (!target) throw new FleetJoinError("unknown-machine");
   const workerAccess = await input.revokeWorkerAccess(target);
+  // Before the management token goes: it is what reaches the phone links there.
+  await input.unlinkPhones?.(target).catch(() => undefined);
   const management = await revokeManagementToken(input.fetcher, target);
   const removed = await removeFleetMachine({ baseDir: input.baseDir, machine: target.id });
   return {

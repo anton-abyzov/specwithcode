@@ -9,6 +9,11 @@ import {
   machineHandoffRpcs,
 } from "./machineHandoffRpc.ts";
 import { PROJECT_LINK_RPC_METHODS, projectLinkRpcs } from "./projectLinkRpc.ts";
+import { LINKED_MEMORY_RPC_METHODS, linkedMemoryRpcs } from "./linkedMemoryRpc.ts";
+import { HANDOFF_MODE_RPC_METHODS, handoffModeRpcs } from "./handoffModeRpc.ts";
+import { PROJECT_PLAN_LINK_RPC_METHODS, projectPlanLinkRpcs } from "./projectPlanLinkRpc.ts";
+import { LIMIT_HANDOFF_RPC_METHODS, limitHandoffRpcs } from "./limitHandoff.ts";
+import { provisionRpcs } from "./provision.ts";
 import { BROWSER_BRIDGE_RPC_METHODS, browserBridgeRpcs } from "./browserBridge.ts";
 import { BROWSER_EXTENSION_RPC_METHODS, browserExtensionRpcs } from "./browserExtension.ts";
 import { COMPUTER_USE_RPC_METHODS, computerUseRpcs } from "./computerUse.ts";
@@ -385,6 +390,10 @@ import {
 } from "./projectClone.ts";
 import {
   SourceControlCloneRepositoryInput,
+  SourceControlRemoteAccessInput,
+  SourceControlRemoteAccessResult,
+  SourceControlInspectDestinationInput,
+  SourceControlInspectDestinationResult,
   SourceControlCloneRepositoryResult,
   SourceControlDiscoveryResult,
   SourceControlPublishRepositoryInput,
@@ -400,6 +409,10 @@ export const WS_METHODS = {
   ...PROJECT_WORKSPACE_RPC_METHODS,
   ...MACHINE_HANDOFF_RPC_METHODS,
   ...PROJECT_LINK_RPC_METHODS,
+  ...LINKED_MEMORY_RPC_METHODS,
+  ...HANDOFF_MODE_RPC_METHODS,
+  ...PROJECT_PLAN_LINK_RPC_METHODS,
+  ...LIMIT_HANDOFF_RPC_METHODS,
   ...MANAGED_UPDATES_RPC_METHODS,
   ...PROJECT_CONNECTION_RPC_METHODS,
   ...BROWSER_BRIDGE_RPC_METHODS,
@@ -621,6 +634,8 @@ export const WS_METHODS = {
   // Source control methods
   sourceControlLookupRepository: "sourceControl.lookupRepository",
   sourceControlCloneRepository: "sourceControl.cloneRepository",
+  sourceControlCheckRemoteAccess: "sourceControl.checkRemoteAccess",
+  sourceControlInspectDestination: "sourceControl.inspectDestination",
   sourceControlPublishRepository: "sourceControl.publishRepository",
   projectCloneStart: "projectClone.start",
   projectCloneCancel: "projectClone.cancel",
@@ -1315,6 +1330,18 @@ const WsSourceControlLookupRepositoryRpc = Rpc.make(WS_METHODS.sourceControlLook
 const WsSourceControlCloneRepositoryRpc = Rpc.make(WS_METHODS.sourceControlCloneRepository, {
   payload: SourceControlCloneRepositoryInput,
   success: SourceControlCloneRepositoryResult,
+  error: Schema.Union([SourceControlRepositoryError, EnvironmentAuthorizationError]),
+});
+
+const WsSourceControlCheckRemoteAccessRpc = Rpc.make(WS_METHODS.sourceControlCheckRemoteAccess, {
+  payload: SourceControlRemoteAccessInput,
+  success: SourceControlRemoteAccessResult,
+  error: Schema.Union([SourceControlRepositoryError, EnvironmentAuthorizationError]),
+});
+
+const WsSourceControlInspectDestinationRpc = Rpc.make(WS_METHODS.sourceControlInspectDestination, {
+  payload: SourceControlInspectDestinationInput,
+  success: SourceControlInspectDestinationResult,
   error: Schema.Union([SourceControlRepositoryError, EnvironmentAuthorizationError]),
 });
 
@@ -2212,7 +2239,18 @@ export const WsComputerUseRpcGroup = RpcGroup.make(...computerUseRpcs).middlewar
 );
 
 /** Linking a project with its copy on another machine; its own group for the same depth reason. */
-export const WsProjectLinkRpcGroup = RpcGroup.make(...projectLinkRpcs).middleware(
+export const WsProjectLinkRpcGroup = RpcGroup.make(
+  ...projectLinkRpcs,
+  ...linkedMemoryRpcs,
+).middleware(RpcScopeAuthorization);
+
+/** Linked projects' plan replication; its own group for the same depth reason. */
+export const WsProjectPlanLinkRpcGroup = RpcGroup.make(...projectPlanLinkRpcs).middleware(
+  RpcScopeAuthorization,
+);
+
+/** Machine targets for a thread near its usage limit; its own group for the same depth reason. */
+export const WsLimitHandoffRpcGroup = RpcGroup.make(...limitHandoffRpcs).middleware(
   RpcScopeAuthorization,
 );
 
@@ -2221,8 +2259,24 @@ export const WsFolderCopyRpcGroup = RpcGroup.make(...folderCopyRpcs).middleware(
   RpcScopeAuthorization,
 );
 
+/** Clone pre-checks for Add to another machine; its own group for the same depth reason. */
+export const WsCloneDestinationRpcGroup = RpcGroup.make(
+  WsSourceControlCheckRemoteAccessRpc,
+  WsSourceControlInspectDestinationRpc,
+).middleware(RpcScopeAuthorization);
+
 /** Project knowledge status, search and rebuild; its own group for the same depth reason. */
 export const WsProjectKnowledgeRpcGroup = RpcGroup.make(...projectKnowledgeRpcs).middleware(
+  RpcScopeAuthorization,
+);
+
+/** Handoff mode checkpoints, leases and hand-offs; its own group for the same depth reason. */
+export const WsHandoffModeRpcGroup = RpcGroup.make(...handoffModeRpcs).middleware(
+  RpcScopeAuthorization,
+);
+
+/** Provisioning a fleet machine's packages and service; its own group for the same depth reason. */
+export const WsProvisionRpcGroup = RpcGroup.make(...provisionRpcs).middleware(
   RpcScopeAuthorization,
 );
 
@@ -2234,5 +2288,10 @@ export const WsRpcGroup = WsCoreRpcGroup.merge(WsComposerDraftsRpcGroup)
   .merge(WsBrowserExtensionRpcGroup)
   .merge(WsComputerUseRpcGroup)
   .merge(WsProjectLinkRpcGroup)
+  .merge(WsProjectPlanLinkRpcGroup)
+  .merge(WsLimitHandoffRpcGroup)
   .merge(WsFolderCopyRpcGroup)
-  .merge(WsProjectKnowledgeRpcGroup);
+  .merge(WsProjectKnowledgeRpcGroup)
+  .merge(WsHandoffModeRpcGroup)
+  .merge(WsCloneDestinationRpcGroup)
+  .merge(WsProvisionRpcGroup);

@@ -202,10 +202,11 @@ describe("switching the coordinator machine", () => {
     });
     expect(state.savedMachines).toEqual({ atlas: "host:project" });
   });
-  it("works on a reachable checkout while the saved machine is offline, keeping the choice", async () => {
+  it("stays on a viewed machine that went offline, read-only, and sends nothing elsewhere", async () => {
     state.otherCheckouts = [
       { id: "remote-project", environmentId: "laptop", workspaceRoot: "/w/atlas" },
     ];
+    state.offlineHosts = ["laptop"];
     state.savedMachines = { atlas: "laptop:remote-project" };
     await act(async () =>
       root.render(
@@ -214,13 +215,13 @@ describe("switching the coordinator machine", () => {
         </UnreachableHostsContext.Provider>,
       ),
     );
-    expect(container.textContent).toContain("Saved machine offline");
-    await prompt("Keep working while the laptop is away");
-    await click("Send");
-    expect(state.send.mock.calls.at(-1)?.[0]).toMatchObject({
-      environmentId: "host",
-      input: { projectId: "project" },
-    });
+    const status = container.querySelector("[data-orchestrator-status]")?.textContent ?? "";
+    expect(status).toContain("laptop unreachable");
+    expect(status).toContain("read-only");
+    expect(container.textContent).toContain(
+      "laptop is unreachable, so its coordinator cannot take messages.",
+    );
+    expect(state.send).not.toHaveBeenCalled();
     expect(state.savedMachines).toEqual({ atlas: "laptop:remote-project" });
   });
   it("never substitutes a different checkout when a linked checkout is missing", async () => {
@@ -242,7 +243,29 @@ describe("switching the coordinator machine", () => {
     expect(onSelectCheckout).toHaveBeenCalledWith("host:project");
     expect(state.savedMachines).toEqual({ atlas: "host:project" });
   });
-  it("keeps the coordinator, worker and draft until the selected machine completes a handoff", async () => {
+  const openSwitcher = () =>
+    act(async () =>
+      container.querySelector<HTMLButtonElement>('[aria-label^="Viewing "]')!.click(),
+    );
+  const menuItem = (role: string, text: string) =>
+    [...document.querySelectorAll<HTMLElement>(`[role="${role}"]`)].find((element) =>
+      element.textContent?.includes(text),
+    );
+  it("views another machine's orchestrator without moving anything", async () => {
+    state.otherCheckouts = [{ id: "project", environmentId: "laptop", workspaceRoot: "/w/atlas" }];
+    state.shells.push(shell("old-checkout-thread"));
+    const onSelectCheckout = vi.fn();
+    await act(async () =>
+      root.render(<ProjectWorkspace projectKey="atlas" onSelectCheckout={onSelectCheckout} />),
+    );
+    await openSwitcher();
+    await act(async () => menuItem("menuitemradio", "View laptop's orchestrator")!.click());
+    expect(onSelectCheckout).toHaveBeenCalledWith("laptop:project");
+    expect(state.savedMachines).toEqual({ atlas: "laptop:project" });
+    expect(document.querySelector('[role="dialog"]')).toBeNull();
+    expect(state.send).not.toHaveBeenCalled();
+  });
+  it("keeps the coordinator, worker and draft until a confirmed move completes", async () => {
     state.otherCheckouts = [{ id: "project", environmentId: "laptop", workspaceRoot: "/w/atlas" }];
     state.shells.push(shell("old-checkout-thread"));
     const onSelectThread = vi.fn();
@@ -258,13 +281,8 @@ describe("switching the coordinator machine", () => {
       );
     await renderOpen();
     expect(container.querySelector('[data-native-thread="old-checkout-thread"]')).not.toBeNull();
-    await act(async () =>
-      container.querySelector<HTMLButtonElement>('[aria-label^="Coordinator runs on"]')!.click(),
-    );
-    const laptop = [...document.querySelectorAll<HTMLElement>('[role="menuitemradio"]')].find(
-      (element) => element.textContent?.includes("laptop"),
-    );
-    await act(async () => laptop!.click());
+    await openSwitcher();
+    await act(async () => menuItem("menuitem", "Move coordinator to laptop")!.click());
     expect(state.savedMachines).toEqual({});
     await renderOpen();
     expect(onSelectThread).not.toHaveBeenCalled();

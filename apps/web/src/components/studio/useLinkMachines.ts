@@ -8,6 +8,7 @@ import {
 import { useMemo } from "react";
 import { useEnvironments } from "../../state/environments";
 import { useEnvironmentsWithScope } from "../../state/session";
+import { useMachineNicknames } from "../../studio/machineNickname";
 import {
   linkMachineProblem,
   linkMachineState,
@@ -22,6 +23,8 @@ export interface LinkMachines {
   readonly connected: (environmentId: EnvironmentId) => boolean;
   /** Ready to link, and new enough to take over, give way and keep note replicas. */
   readonly takeoverReady: (environmentId: EnvironmentId) => boolean;
+  /** Ready to link, and new enough to run a coordinator next to the others' (0969). */
+  readonly startReady: (environmentId: EnvironmentId) => boolean;
 }
 
 /** Readiness of every connected machine for linking and unlinking projects. */
@@ -31,9 +34,11 @@ export function useLinkMachines(): LinkMachines {
   const operate = useEnvironmentsWithScope(environments, AuthOrchestrationOperateScope);
   const read = useEnvironmentsWithScope(environments, AuthOrchestrationReadScope);
   const files = useEnvironmentsWithScope(environments, AuthFilesystemReadScope);
+  const nickname = useMachineNicknames();
   return useMemo(() => {
     const byId = new Map(environments.map((item) => [item.environmentId, item]));
-    const label = (environmentId: EnvironmentId) => byId.get(environmentId)?.label ?? "Machine";
+    const label = (environmentId: EnvironmentId) =>
+      nickname(environmentId, byId.get(environmentId)?.label ?? "Machine");
     const state = (environmentId: EnvironmentId) => {
       const environment = byId.get(environmentId);
       return linkMachineState({
@@ -55,6 +60,10 @@ export function useLinkMachines(): LinkMachines {
         state(environmentId) === "ready" &&
         byId.get(environmentId)?.serverConfig?.environment.capabilities.coordinatorTakeover ===
           true,
+      startReady: (environmentId) =>
+        state(environmentId) === "ready" &&
+        byId.get(environmentId)?.serverConfig?.environment.capabilities.coordinatorPerMachine ===
+          true,
     };
-  }, [environments, settings, operate, read, files]);
+  }, [environments, settings, operate, read, files, nickname]);
 }

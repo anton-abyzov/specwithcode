@@ -35,6 +35,27 @@ describe("project coordinator surface", () => {
     // A project on one machine leaves the machine to the composer.
     expect(meta.querySelector(".sws-thread-machine")).toBeNull();
   });
+  it("names where a thread lives and runs once its execution moved", async () => {
+    state.shells = [
+      shell("coord"),
+      shell("worker", {
+        source: {
+          ownerMachineId: "host",
+          executionMachineId: "minis",
+          executionMachineLabel: "Anton's Minis",
+          executionState: "running",
+        },
+      } as never),
+    ];
+    await render();
+    const chip = container.querySelector("[data-thread-id='worker'] .sws-thread-machine")!;
+    expect(chip.querySelector("span[aria-hidden='true']")?.textContent).toBe("Test host → Minis");
+    expect(chip.querySelector(".sr-only")?.textContent).toBe(
+      "Lives on Test host · runs on Anton's Minis",
+    );
+    expect(chip.getAttribute("data-moved")).toBe("true");
+    expect(container.querySelector("[data-thread-id='coord'] .sws-thread-machine")).toBeNull();
+  });
   it("says which model runs next when the limit rule moved the coordinator", async () => {
     const saved = { instanceId: "claudeAgent", model: "claude-opus-5-5" };
     Object.assign(state.project, { workspaceSettings: { coordinatorModelSelection: saved } });
@@ -903,6 +924,42 @@ describe("project coordinator surface", () => {
       tabs()[2]!.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowLeft", bubbles: true })),
     );
     expect(container.textContent).toContain("Library pane");
+  });
+  it("lists pull requests from both machines' checkouts, naming each machine", async () => {
+    const pr = (number: number) =>
+      [
+        {
+          host: "github.com",
+          repository: "acme/atlas",
+          number,
+          url: `https://github.com/acme/atlas/pull/${number}`,
+          source: "created",
+          linkedAt: "2026-10-01T00:00:00.000Z",
+          snapshot: null,
+          stack: null,
+        },
+      ] as unknown as EnvironmentThreadShell["pullRequests"];
+    state.otherCheckouts = [
+      { id: "remote-project", environmentId: "laptop", workspaceRoot: "/w/atlas" },
+    ];
+    state.shells = [
+      shell("coord"),
+      shell("worker", { pullRequests: pr(21) }),
+      shell("laptop-worker", {
+        environmentId: "laptop" as never,
+        projectId: "remote-project" as never,
+        pullRequests: pr(22),
+      }),
+    ];
+    await render();
+    const prsTab = [...container.querySelectorAll<HTMLButtonElement>('[role="tab"]')][2]!;
+    await act(async () => prsTab.click());
+    const pane = container.querySelector("#sws-pane-prs")!;
+    expect(pane.querySelector("[data-prs-across-machines]")?.textContent).toBe(
+      "Pull requests from both machines",
+    );
+    expect(pane.textContent).toContain("acme/atlas #21 · Open · host");
+    expect(pane.textContent).toContain("acme/atlas #22 · Open · laptop");
   });
   it("widens the panel over the coordinator and back", async () => {
     await render();

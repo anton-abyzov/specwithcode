@@ -34,8 +34,9 @@ try {
         const provider = article.querySelector(".sws-model-provider");
         return {
           id: article.getAttribute("data-thread-id"),
-          machine: machine?.textContent ?? null,
-          title: machine?.getAttribute("title") ?? null,
+          machine: machine?.querySelector("span[aria-hidden='true']")?.textContent ?? null,
+          title: machine?.querySelector(".sr-only")?.textContent ?? null,
+          execution: machine?.getAttribute("data-execution") ?? null,
           providerClipped: provider ? provider.scrollWidth > provider.clientWidth + 1 : null,
         };
       }),
@@ -45,6 +46,13 @@ try {
       NodeAssert.ok(row.title, `${row.id} keeps the full machine name on hover`);
       NodeAssert.equal(row.providerClipped, false, `${row.id} keeps its provider whole`);
     }
+    // A thread names where it lives and where it runs once they differ.
+    const moved = rows.find((row) => row.id === "moved-worker");
+    NodeAssert.match(moved?.machine ?? "", / → Minis$/u, "a moved thread names both machines");
+    NodeAssert.match(moved?.title ?? "", /^Lives on .+ · runs on Anton's Minis$/u);
+    const unknown = rows.find((row) => row.id === "unknown-worker");
+    NodeAssert.equal(unknown?.execution, "unknown");
+    NodeAssert.match(unknown?.title ?? "", /· Unknown · Anton's Minis last seen /u);
     const boxes = await page.$$eval(".sws-thread-list", (lists) =>
       lists.map((list) => list.getBoundingClientRect().toJSON()),
     );
@@ -55,6 +63,14 @@ try {
       path: NodePath.join(output, `machine-label-${width}-${scheme}.png`),
       clip: { x: left - 8, y: top, width: listWidth + 16, height: bottom - top + 8 },
     });
+    if (width === 1440) {
+      await page.locator("[data-thread-id='moved-worker'] .sws-thread-machine").hover();
+      await page.locator("[data-slot='tooltip-popup']").waitFor();
+      await page.screenshot({
+        path: NodePath.join(output, `machine-label-moved-tooltip-${scheme}.png`),
+        clip: { x: left - 8, y: top, width: listWidth + 16, height: bottom - top + 48 },
+      });
+    }
     results.push({ width, scheme, rows });
     await page.close();
   }

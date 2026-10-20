@@ -30,6 +30,7 @@ import {
   CommandId,
   ContextHandoffId,
   ContextTransferId,
+  EnvironmentId,
   EventId,
   IsoDateTime,
   MessageId,
@@ -83,6 +84,7 @@ import {
 } from "./providerPolicy.ts";
 import { ProviderDriverKind, ProviderInstanceId } from "./providerInstance.ts";
 import { OrchestrationProjectShell } from "./orchestrationProject.ts";
+import { ThreadExecutionRecord, ThreadExecutionSummaryFields } from "./threadExecution.ts";
 import {
   TurnTokenUsage,
   ToolActivitySurface,
@@ -369,6 +371,15 @@ export const OrchestrationV2ThreadProjectMoveLink = Schema.Struct({
   projectId: ProjectId,
   title: TrimmedNonEmptyString,
   movedAt: IsoDateTime,
+  /**
+   * "handoff": the thread continued on another machine or model (handoff mode).
+   * The source stays readable and unarchived; it refuses new work and links on.
+   * Omitted for a project move.
+   */
+  kind: Schema.optional(Schema.Literals(["project", "handoff"])),
+  /** The machine that continued it; omitted when it is this one. */
+  environmentId: Schema.optional(EnvironmentId),
+  machineLabel: Schema.optional(TrimmedNonEmptyString),
 });
 export type OrchestrationV2ThreadProjectMoveLink = typeof OrchestrationV2ThreadProjectMoveLink.Type;
 
@@ -452,6 +463,11 @@ export const OrchestrationV2AppThread = Schema.Struct({
   movedTo: Schema.optional(Schema.NullOr(OrchestrationV2ThreadProjectMoveLink)),
   /** The thread this one replaced when it was moved here from another project. */
   movedFrom: Schema.optional(Schema.NullOr(OrchestrationV2ThreadProjectMoveLink)),
+  /**
+   * Owner and execution machines once the thread has moved or arrived through
+   * handoff mode. Absent: it lives and runs on the machine that stores it.
+   */
+  execution: Schema.optional(Schema.NullOr(ThreadExecutionRecord)),
   deletedAt: Schema.NullOr(Schema.DateTimeUtc),
 });
 export type OrchestrationV2AppThread = typeof OrchestrationV2AppThread.Type;
@@ -2024,6 +2040,12 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   /** Omitted by servers that predate moving threads between projects. */
   movedTo: Schema.optional(Schema.NullOr(OrchestrationV2ThreadProjectMoveLink)),
   movedFrom: Schema.optional(Schema.NullOr(OrchestrationV2ThreadProjectMoveLink)),
+  /**
+   * ownerMachineId, executionMachineId, executionState and friends. Omitted
+   * when the serving machine owns and runs the thread, and by older servers;
+   * read them through resolveThreadExecution.
+   */
+  ...ThreadExecutionSummaryFields,
   deletedAt: Schema.NullOr(Schema.DateTimeUtc),
 });
 export type OrchestrationV2ThreadShell = typeof OrchestrationV2ThreadShell.Type;

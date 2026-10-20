@@ -113,6 +113,15 @@ export interface EnvironmentThreadShell {
   readonly movedTo: OrchestrationV2ThreadProjectMoveLink | null;
   /** The thread this one restarted from, in another project. */
   readonly movedFrom: OrchestrationV2ThreadProjectMoveLink | null;
+  /**
+   * Where it lives and runs, when it moved through handoff mode. Absent means
+   * the serving machine (environmentId); read with resolveThreadExecution.
+   */
+  readonly ownerMachineId?: EnvironmentId;
+  readonly executionMachineId?: EnvironmentId;
+  readonly executionMachineLabel?: string;
+  readonly executionState?: OrchestrationV2ThreadShell["executionState"];
+  readonly executionLastSeenAt?: string | null;
   readonly activeProviderThreadId: OrchestrationV2ThreadShell["activeProviderThreadId"];
   readonly latestRun: ThreadRunSummary | null;
   readonly runtime: ThreadRuntimeSummary | null;
@@ -308,6 +317,17 @@ export function presentThreadShell(
     forkedFrom: thread.forkedFrom,
     movedTo: thread.movedTo ?? null,
     movedFrom: thread.movedFrom ?? null,
+    ...(thread.ownerMachineId === undefined ? {} : { ownerMachineId: thread.ownerMachineId }),
+    ...(thread.executionMachineId === undefined
+      ? {}
+      : { executionMachineId: thread.executionMachineId }),
+    ...(thread.executionMachineLabel === undefined
+      ? {}
+      : { executionMachineLabel: thread.executionMachineLabel }),
+    ...(thread.executionState === undefined ? {} : { executionState: thread.executionState }),
+    ...(thread.executionLastSeenAt === undefined
+      ? {}
+      : { executionLastSeenAt: thread.executionLastSeenAt }),
     activeProviderThreadId: thread.activeProviderThreadId,
     latestRun,
     runtime: shellRuntime(thread),

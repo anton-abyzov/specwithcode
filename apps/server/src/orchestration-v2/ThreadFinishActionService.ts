@@ -37,6 +37,7 @@ import type * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 
 import * as GitManager from "../git/GitManager.ts";
+import * as HandoffMode from "../handoff/HandoffMode.ts";
 import { createdPullRequestKey } from "../git/linkCreatedPullRequest.ts";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -190,6 +191,7 @@ export const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const crypto = yield* Crypto.Crypto;
   const updateHold = yield* ServiceUpdateHold.optional;
+  const handoff = yield* Effect.serviceOption(HandoffMode.HandoffMode);
 
   // Merges handed to the host, retried until they land or are refused.
   const pending = new Map<ThreadId, PendingMerge>();
@@ -248,6 +250,28 @@ export const make = Effect.gen(function* () {
     });
   });
 
+  /**
+   * Handoff mode: a copy fenced by another machine opens and merges nothing,
+   * and a side effect this turn (or the turn it continues) already did is
+   * reused, not repeated. Without handoff mode every action proceeds.
+   */
+  const sideEffect = (input: HandoffMode.SideEffectInput) =>
+    Option.match(handoff, {
+      onNone: () => Effect.succeed({ kind: "proceed" as const }),
+      onSome: (service) => service.guardSideEffect(input),
+    });
+
+  const journal = (input: HandoffMode.SideEffectInput, result: string | null) =>
+    Option.match(handoff, {
+      onNone: () => Effect.void,
+      onSome: (service) => service.recordSideEffect({ ...input, result }),
+    });
+
+  const latestRunId = (threadId: ThreadId) =>
+    projections
+      .getThreadRecords(threadId, ["runs"])
+      .pipe(Effect.map(({ runs }) => latestStartedRun(runs)?.id ?? null));
+
   const merge = Effect.fn("ThreadFinishActionService.merge")(function* (
     threadId: ThreadId,
     target: PendingMerge,
@@ -270,12 +294,33 @@ export const make = Effect.gen(function* () {
       yield* notice(threadId, step.notice, step.message);
       return;
     }
+    const runId = yield* latestRunId(threadId);
+    const effect = (suffix: string): HandoffMode.SideEffectInput | null =>
+      runId === null
+        ? null
+        : {
+            threadId,
+            runId,
+            kind: "pr-merge",
+            target: `${target.ref.repository}#${summary.number}${suffix}`,
+          };
+    const mergeEffect = effect("");
+    if (mergeEffect !== null) {
+      const verdict = yield* sideEffect(mergeEffect);
+      if (verdict.kind !== "proceed") {
+        pending.delete(threadId);
+        if (verdict.kind === "refuse")
+          yield* notice(threadId, "blocked", `Did not merge ${name}: ${verdict.message}`);
+        return;
+      }
+    }
     if (step.type === "merge") {
       const merged = yield* pullRequests
         .runAction({ ...target.ref, action: "merge", ...mergeMethod })
         .pipe(Effect.result);
       if (merged._tag === "Success") {
         pending.delete(threadId);
+        if (mergeEffect !== null) yield* journal(mergeEffect, "merged");
         yield* notice(threadId, "merged", `Merged ${name} into ${summary.baseBranch}`);
         return;
       }
@@ -290,6 +335,9 @@ export const make = Effect.gen(function* () {
       .runAction({ ...target.ref, action: "enable-auto-merge", ...mergeMethod })
       .pipe(Effect.result);
     pending.set(threadId, target);
+    const autoMergeEffect = effect("/auto-merge");
+    if (armed._tag === "Success" && autoMergeEffect !== null)
+      yield* journal(autoMergeEffect, "auto-merge");
     yield* notice(
       threadId,
       "auto-merge",
@@ -315,6 +363,18 @@ export const make = Effect.gen(function* () {
     const status = yield* git.status({ cwd });
     if (!branchReadyForPullRequest(status, thread.branch)) return;
     const project = Option.getOrUndefined(yield* projectStore.getShell(thread.projectId));
+    const runId = latestStartedRun(runs)?.id ?? null;
+    const createEffect: HandoffMode.SideEffectInput | null =
+      runId === null
+        ? null
+        : { threadId, runId, kind: "pr-create", target: `branch:${thread.branch}` };
+    if (createEffect !== null) {
+      const verdict = yield* sideEffect(createEffect);
+      if (verdict.kind === "refuse") {
+        yield* notice(threadId, "blocked", `Did not open a pull request: ${verdict.message}`);
+        return;
+      }
+    }
     const uuid = yield* crypto.randomUUIDv4;
     const result = yield* git
       .runStackedAction({
@@ -335,6 +395,8 @@ export const make = Effect.gen(function* () {
     }
     const key = createdPullRequestKey(result.success, project);
     if (key === null) return;
+    if (createEffect !== null)
+      yield* journal(createEffect, `${key.host}/${key.repository}#${key.number}`);
     yield* orchestrator
       .dispatch({
         type: "thread.pull-request.link",

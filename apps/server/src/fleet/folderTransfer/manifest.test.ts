@@ -174,6 +174,10 @@ describe("paths and secret-like files", () => {
     for (const path of [
       ".env",
       "apps/api/.env.local",
+      ".envrc",
+      "web/.env-local",
+      ".env_production",
+      ".environment",
       "certs/server.pem",
       "keys/id_ed25519",
       "sub/.npmrc",

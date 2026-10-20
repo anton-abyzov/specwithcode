@@ -377,3 +377,88 @@ export const StudioFleetRemoveResult = Schema.Struct({
   managementSessionId: Schema.NullOr(Schema.String),
 });
 export type StudioFleetRemoveResult = typeof StudioFleetRemoveResult.Type;
+
+/**
+ * Phone fleet links. A phone paired with one machine (the hub) asks it for
+ * the other machines it knows; each of them mints a phone-only pairing code
+ * on the hub's request, and the phone redeems it there itself, so no machine
+ * ever holds the phone's token for another (one token per machine).
+ */
+export const StudioFleetPhoneRouteKind = Schema.Literals(["lan", "tailnet", "fleet"]);
+export type StudioFleetPhoneRouteKind = typeof StudioFleetPhoneRouteKind.Type;
+
+export const StudioFleetPhoneRoute = Schema.Struct({
+  kind: StudioFleetPhoneRouteKind,
+  httpBaseUrl: Schema.String,
+});
+export type StudioFleetPhoneRoute = typeof StudioFleetPhoneRoute.Type;
+
+export const StudioFleetPhoneRosterInput = exactStruct({
+  /** Machines the phone has no working token for; each mints a pairing code for it. */
+  mint: Schema.optionalKey(Schema.Array(EnvironmentId).check(Schema.isMaxLength(16))),
+});
+export type StudioFleetPhoneRosterInput = typeof StudioFleetPhoneRosterInput.Type;
+
+/** Why a machine could not mint a phone code. */
+export const StudioFleetPhoneProblem = Schema.Literals([
+  "unreachable",
+  "identity_mismatch",
+  "pairing_unavailable",
+  "update_required",
+]);
+export type StudioFleetPhoneProblem = typeof StudioFleetPhoneProblem.Type;
+
+export const StudioFleetPhoneMachine = Schema.Struct({
+  environmentId: EnvironmentId,
+  label: Schema.String,
+  /** Where the phone may reach it: its private fleet address, then the addresses it reported. */
+  routes: Schema.Array(StudioFleetPhoneRoute),
+  pairing: Schema.optionalKey(Schema.Struct({ code: Schema.String, expiresAt: IsoDateTime })),
+  problem: Schema.optionalKey(StudioFleetPhoneProblem),
+});
+export type StudioFleetPhoneMachine = typeof StudioFleetPhoneMachine.Type;
+
+export const StudioFleetPhoneRoster = Schema.Struct({
+  hub: Schema.Struct({ environmentId: EnvironmentId, label: Schema.String }),
+  machines: Schema.Array(StudioFleetPhoneMachine),
+});
+export type StudioFleetPhoneRoster = typeof StudioFleetPhoneRoster.Type;
+
+/** Sent by the hub with its management token; the code's session is tied to the hub's phone session. */
+export const StudioFleetPhoneMintInput = exactStruct({
+  hubEnvironmentId: EnvironmentId,
+  hubSessionId: AuthSessionId,
+  label: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(120)),
+  scopes: Schema.Array(AuthGrantScope).check(Schema.isMinLength(1), Schema.isMaxLength(32)),
+});
+export type StudioFleetPhoneMintInput = typeof StudioFleetPhoneMintInput.Type;
+
+export const StudioFleetPhoneMintResult = Schema.Struct({
+  code: Schema.String,
+  expiresAt: IsoDateTime,
+  routes: Schema.Array(StudioFleetPhoneRoute),
+});
+export type StudioFleetPhoneMintResult = typeof StudioFleetPhoneMintResult.Type;
+
+/**
+ * The hub's phone sessions that are still active. Phone sessions here linked
+ * to any other session of that hub are revoked; the answer lists the rest.
+ */
+export const StudioFleetPhoneLinksInput = exactStruct({
+  hubEnvironmentId: EnvironmentId,
+  activeHubSessionIds: Schema.Array(AuthSessionId).check(Schema.isMaxLength(256)),
+});
+export type StudioFleetPhoneLinksInput = typeof StudioFleetPhoneLinksInput.Type;
+
+export const StudioFleetPhoneLink = Schema.Struct({
+  sessionId: AuthSessionId,
+  hubSessionId: AuthSessionId,
+  expiresAt: IsoDateTime,
+});
+export type StudioFleetPhoneLink = typeof StudioFleetPhoneLink.Type;
+
+export const StudioFleetPhoneLinksResult = Schema.Struct({
+  links: Schema.Array(StudioFleetPhoneLink),
+  revoked: Schema.Int,
+});
+export type StudioFleetPhoneLinksResult = typeof StudioFleetPhoneLinksResult.Type;

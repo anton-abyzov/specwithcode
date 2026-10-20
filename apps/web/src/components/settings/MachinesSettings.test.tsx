@@ -18,6 +18,7 @@ const runtime = vi.hoisted(() => ({
   projects: [] as unknown[],
   blocks: [] as unknown[],
   grants: null as unknown,
+  nicknames: {} as Record<string, string>,
   connect: vi.fn(async () => {}),
   createCredential: vi.fn(),
 }));
@@ -83,6 +84,11 @@ vi.mock("../../studio/fleet", () => ({
 }));
 vi.mock("../studio/shell/HostLimits", () => ({ useHostLimitBlocks: () => runtime.blocks }));
 vi.mock("../../connection/desktopLocal", () => ({ isThisMachineTarget: () => false }));
+vi.mock("../../studio/machineNickname", () => ({
+  useMachineNickname: (environmentId: string, label?: string) =>
+    runtime.nicknames[environmentId] ?? label ?? "",
+}));
+vi.mock("./RenameMachineDialog", () => ({ RenameMachineDialog: () => null }));
 vi.mock("../../environments/primary", () => ({
   createServerPairingCredential: runtime.createCredential,
   readPrimaryEnvironmentTarget: () => ({ target: { httpBaseUrl: "https://m4max.tailnet.ts.net" } }),
@@ -135,6 +141,7 @@ const member = (environmentId: EnvironmentId, projectId: string) => ({
 
 function setUp() {
   runtime.grants = null;
+  runtime.nicknames = {};
   runtime.fleet = {
     primaryEnvironmentId: m4,
     snapshot,
@@ -202,6 +209,16 @@ describe("Settings > Machines", () => {
     expect(html).toContain("someone@example.com · also on M4MAX");
     expect(html).toContain("Connect to see its accounts.");
     expect(html).toContain("Connect both ways");
+  });
+
+  it("names each machine by its nickname, keeps the host name beside it and offers Rename", () => {
+    setUp();
+    runtime.nicknames = { [m3]: "M3" };
+    const html = renderToStaticMarkup(<MachinesSettingsPanel />);
+    expect(html).toContain("M3");
+    expect(html).toContain(" · MacBook Pro");
+    expect(html).toContain('aria-label="Rename M3"');
+    expect(html).toContain('aria-label="Rename M4MAX"');
   });
 
   it("lists who can run work on this Mac and says it on that machine's row", () => {

@@ -20,6 +20,7 @@ import { hasCloudPublicConfig } from "./cloud/publicConfig.ts";
 import { sharedServerCommandFlags } from "./cli/config.ts";
 import { invokedCliName, type StudioCliName } from "./cli/cliName.ts";
 import { projectCommand } from "./cli/project.ts";
+import { provisionCommand } from "./cli/provision.ts";
 import { skillsCommand } from "./cli/skills.ts";
 import { runDefaultServerCommand, serveCommand, startCommand } from "./cli/server.ts";
 import { updateCommand } from "./cli/update.ts";
@@ -103,6 +104,7 @@ export const makeCli = <const Name extends StudioCliName = "specweave-studio">({
       doctorCommand,
       triageCommand,
       dbCommand,
+      provisionCommand,
       cloudEnabled ? connectCommand : connectUnavailableCommand,
     ]),
   );

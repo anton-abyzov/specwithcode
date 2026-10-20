@@ -3373,6 +3373,31 @@ describe("live activity", () => {
     expect(quiet).toContain('data-live-state="quiet"');
   });
 
+  it("marks Thinking with the thinking provider's logo, never a brain", () => {
+    const withProvider = render({
+      recoveryItems: [turnItem("2026-10-19T20:12:41.000Z")],
+      runs: [
+        {
+          id: runId,
+          ordinal: 1,
+          providerInstanceId: "claude_main",
+          modelSelection: { instanceId: "claude_main", model: "claude-opus-5.5" },
+        },
+      ] as unknown as Parameters<typeof MessagesTimeline>[0]["runs"],
+      providerStatuses: [
+        { instanceId: "claude_main", driver: "claudeAgent", displayName: "Claude" },
+      ] as unknown as Parameters<typeof MessagesTimeline>[0]["providerStatuses"],
+    });
+    expect(withProvider).toContain("Thinking");
+    expect(withProvider).toContain('data-thinking-mark="claudeAgent"');
+    expect(withProvider).toContain("thinking-mark-pulse");
+    expect(withProvider).not.toContain("lucide-brain");
+
+    const unknown = render({ recoveryItems: [turnItem("2026-10-19T20:12:41.000Z")] });
+    expect(unknown).toContain("data-thinking-dots-glyph");
+    expect(unknown).not.toContain("lucide-brain");
+  });
+
   it("claims no quiet state from other runs' items", () => {
     const markup = render({
       recoveryItems: [

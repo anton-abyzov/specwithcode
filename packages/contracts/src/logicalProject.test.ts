@@ -2,6 +2,8 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Schema from "effect/Schema";
 import {
   LogicalProject,
+  LogicalProjectMember,
+  logicalProjectMemberKey,
   logicalProjectTitle,
   ProjectCoordinatorBinding,
   projectCoordinatorIsFenced,
@@ -59,6 +61,39 @@ describe("logical project identity", () => {
     ).toBe(false);
     expect(Schema.is(ProjectCoordinatorBinding)({ state: "active", epoch: -1 })).toBe(false);
     expect(Schema.is(ProjectCoordinatorBinding)({ state: "active", epoch: 0.5 })).toBe(false);
+  });
+  it("records a member's folder at link time and still decodes members linked before it", () => {
+    const legacy = {
+      environmentId: "m2",
+      projectId: "easychamp-m2",
+      coordinatorThreadId: "project-coordinator:easychamp-m2",
+    };
+    const rooted = {
+      environmentId: "m4",
+      projectId: "easychamp-m4",
+      coordinatorThreadId: "project-coordinator:easychamp-m4",
+      workspaceRoot: "/Users/anton/Projects/sw-easychamp",
+    };
+    const identity = { id: "logical", title: "EasyChamp", coordinatorId: "c" };
+    const decoded = Schema.decodeUnknownSync(LogicalProject)({
+      ...identity,
+      members: [rooted, legacy],
+    });
+    expect(decoded.members).toEqual([rooted, legacy]);
+    expect("workspaceRoot" in decoded.members[1]!).toBe(false);
+    expect(Schema.is(LogicalProjectMember)({ ...legacy, workspaceRoot: "" })).toBe(false);
+    expect(Schema.is(LogicalProjectMember)({ ...legacy, workspaceRoot: "/".repeat(4097) })).toBe(
+      false,
+    );
+    // A folder never makes a second entry for the same machine and project.
+    expect(
+      Schema.is(LogicalProject)({
+        ...identity,
+        members: [legacy, { ...legacy, workspaceRoot: "/elsewhere" }],
+      }),
+    ).toBe(false);
+    const moved = { ...decoded.members[0]!, workspaceRoot: "/elsewhere" };
+    expect(logicalProjectMemberKey(moved)).toBe(logicalProjectMemberKey(decoded.members[0]!));
   });
 });
 

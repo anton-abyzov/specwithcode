@@ -85,6 +85,65 @@ export const SourceControlCloneRepositoryResult = Schema.Struct({
 });
 export type SourceControlCloneRepositoryResult = typeof SourceControlCloneRepositoryResult.Type;
 
+/** Asks this machine whether its own credentials can read a remote, before a clone starts. */
+export const SourceControlRemoteAccessInput = Schema.Struct({
+  remoteUrl: TrimmedNonEmptyString.check(Schema.isMaxLength(2048)),
+});
+export type SourceControlRemoteAccessInput = typeof SourceControlRemoteAccessInput.Type;
+
+export const SourceControlRemoteAccessStatus = Schema.Literals([
+  "ok",
+  "no-access",
+  "timeout",
+  "error",
+]);
+export type SourceControlRemoteAccessStatus = typeof SourceControlRemoteAccessStatus.Type;
+
+export const SourceControlRemoteAccessResult = Schema.Struct({
+  status: SourceControlRemoteAccessStatus,
+  /** Git's own words with credentials removed; null when access works. */
+  detail: Schema.NullOr(Schema.String),
+});
+export type SourceControlRemoteAccessResult = typeof SourceControlRemoteAccessResult.Type;
+
+/** A folder a clone or a folder copy may land in, `~` expanded on the machine that owns it. */
+export const SourceControlInspectDestinationInput = Schema.Struct({
+  path: TrimmedNonEmptyString.check(Schema.isMaxLength(4096)),
+  /** The repository the caller means to put there; `sameRepository` compares against it. */
+  remoteUrl: Schema.optionalKey(TrimmedNonEmptyString.check(Schema.isMaxLength(2048))),
+});
+export type SourceControlInspectDestinationInput = typeof SourceControlInspectDestinationInput.Type;
+
+/**
+ * missing and empty take a clone; repository is a Git checkout at the root
+ * (`originKey` is its canonical origin, null without one); not-repository is a
+ * folder with other files; unreadable is a file or a folder that can't be listed.
+ */
+export const SourceControlDestinationState = Schema.Literals([
+  "missing",
+  "empty",
+  "repository",
+  "not-repository",
+  "unreadable",
+]);
+export type SourceControlDestinationState = typeof SourceControlDestinationState.Type;
+
+export const SourceControlInspectDestinationResult = Schema.Struct({
+  path: TrimmedNonEmptyString,
+  state: SourceControlDestinationState,
+  originKey: Schema.NullOr(Schema.String),
+  /** A repository whose origin is the same repository as `remoteUrl`. */
+  sameRepository: Schema.Boolean,
+  /**
+   * A repository whose HEAD names a commit and whose index is written and not
+   * locked: git finished the checkout. A clone writes its origin before it
+   * fetches, so `sameRepository` alone does not prove a finished clone.
+   */
+  checkedOut: Schema.Boolean,
+});
+export type SourceControlInspectDestinationResult =
+  typeof SourceControlInspectDestinationResult.Type;
+
 export const SourceControlPublishRepositoryInput = Schema.Struct({
   cwd: TrimmedNonEmptyString,
   provider: SourceControlProviderKind,

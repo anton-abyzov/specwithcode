@@ -78,6 +78,7 @@ import {
   undoResult,
 } from "./FolderCopyHandoff.ts";
 import { checkMachineReadiness } from "./MachineReadiness.ts";
+import * as ProvisionRpc from "../provision/rpc.ts";
 import { DestinationCopies, type DestinationRecord } from "./folderTransfer/destinationService.ts";
 import {
   handleSourceRequest,
@@ -1380,6 +1381,7 @@ const make = Effect.gen(function* () {
                   providerLimitRedeemResets: false,
                   providerLimitSpendCredits: false,
                   providerLimitUseApiCredits: false,
+                  providerLimitMachineTargets: [],
                 },
               },
             };
@@ -1504,7 +1506,7 @@ const make = Effect.gen(function* () {
 export const layer = Layer.effect(MachineHandoff, make).pipe(Layer.provide(ProjectAdmission.layer));
 
 /** The folder copy handlers, registered apart from the rest of the WebSocket API (see `WsFolderCopyRpcGroup`). */
-export const layerRpcHandlers = WsFolderCopyRpcGroup.middleware(RpcInstrumentation).toLayer(
+const layerFolderCopyRpcHandlers = WsFolderCopyRpcGroup.middleware(RpcInstrumentation).toLayer(
   Effect.gen(function* () {
     const handoff = yield* MachineHandoff;
     return {
@@ -1524,4 +1526,10 @@ export const layerRpcHandlers = WsFolderCopyRpcGroup.middleware(RpcInstrumentati
       [WS_METHODS.machineHandoffReadiness]: handoff.readiness,
     };
   }),
+);
+
+/** Provisioning rides along here, so ws.ts registers it without a new import (TS2589). */
+export const layerRpcHandlers = Layer.merge(
+  layerFolderCopyRpcHandlers,
+  ProvisionRpc.layerRpcHandlers,
 );

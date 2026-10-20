@@ -7,6 +7,7 @@ import {
   DEFAULT_PROJECT_WORKSPACE_SETTINGS,
   EnvironmentId,
   EventId,
+  LogicalProject,
   type LogicalProjectMember,
   type Project,
   type ProjectCoordinatorReplica,
@@ -22,6 +23,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Result from "effect/Result";
+import * as Schema from "effect/Schema";
 
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import {
@@ -278,10 +280,29 @@ function machine(environment: string) {
 const legacyPair = () => {
   const m4 = machine("m4");
   const m3 = machine("m3");
-  m4.add("easychamp-m4", checkout("git@github.com:anton/sw-easychamp.git"));
-  m3.add("easychamp-m3", checkout("https://github.com/anton/sw-easychamp.git"));
-  return { m4, m3, kept: m4.member("easychamp-m4"), joining: m3.member("easychamp-m3") };
+  const keptRoot = m4.add(
+    "easychamp-m4",
+    checkout("git@github.com:anton/sw-easychamp.git"),
+  ).workspaceRoot;
+  const joiningRoot = m3.add(
+    "easychamp-m3",
+    checkout("https://github.com/anton/sw-easychamp.git"),
+  ).workspaceRoot;
+  // Each server records its own copy's folder in the member it builds.
+  return {
+    m4,
+    m3,
+    kept: { ...m4.member("easychamp-m4"), workspaceRoot: keptRoot },
+    joining: { ...m3.member("easychamp-m3"), workspaceRoot: joiningRoot },
+  };
 };
+
+/** A member as servers listed it before members recorded their folder. */
+const withoutRoot = (member: LogicalProjectMember): LogicalProjectMember => ({
+  environmentId: member.environmentId,
+  projectId: member.projectId,
+  coordinatorThreadId: member.coordinatorThreadId,
+});
 
 const link = async (pair: ReturnType<typeof legacyPair>) => {
   const prepared = await pair.m4.run((service) =>
@@ -328,6 +349,16 @@ describe("ProjectLink", () => {
     });
     expect(committed.logicalProject.members).toEqual([pair.kept, pair.joining]);
     expect(accepted.logicalProject.members).toEqual([pair.kept, pair.joining]);
+    // The kept copy records which folder on which machine each member maps to.
+    expect(
+      kept.workspaceSettings!.logicalProject!.members.map((member) => [
+        member.environmentId,
+        member.workspaceRoot,
+      ]),
+    ).toEqual([
+      ["m4", kept.workspaceRoot],
+      ["m3", joined.workspaceRoot],
+    ]);
     expect(pair.m4.ownershipModes).toEqual(["adopt-identity", "link-member"]);
     expect(pair.m3.ownershipModes).toEqual(["join-as-member"]);
     // Project ids never change; the remote worker path now admits the M3 copy from the M4.
@@ -620,6 +651,81 @@ describe("ProjectLink", () => {
     ).toBe("not_linked");
   });
 
+  it("matches, backfills and unlinks members recorded before folders, keyed by machine and project", async () => {
+    const pair = legacyPair();
+    const m2: LogicalProjectMember = {
+      environmentId: EnvironmentId.make("m2"),
+      projectId: ProjectId.make("easychamp-m2"),
+      coordinatorThreadId: ThreadId.make("project-coordinator:easychamp-m2"),
+    };
+    // Stored by an older server: no member records its folder.
+    const identity = Schema.decodeUnknownSync(LogicalProject)({
+      id: "logical:legacy",
+      title: "EasyChamp",
+      coordinatorId: "coordinator:logical:legacy",
+      members: [withoutRoot(pair.kept), m2],
+    });
+    expect(identity.members.some((member) => "workspaceRoot" in member)).toBe(false);
+    const project = pair.m4.projects.get(pair.kept.projectId)!;
+    pair.m4.projects.set(pair.kept.projectId, {
+      ...project,
+      workspaceSettings: { ...project.workspaceSettings!, logicalProject: identity },
+    });
+    const { prepared, accepted, committed } = await link(pair);
+    // The kept server fills its own folder in; the joining server fills in its own.
+    expect(prepared.kept).toEqual(pair.kept);
+    expect(prepared.logicalProject.members).toEqual([pair.kept, m2]);
+    expect(accepted.member).toEqual(pair.joining);
+    expect(accepted.logicalProject.members).toEqual([pair.kept, m2, pair.joining]);
+    expect(committed.logicalProject.members).toEqual([pair.kept, m2, pair.joining]);
+    const stored = () =>
+      pair.m4.projects.get(pair.kept.projectId)!.workspaceSettings!.logicalProject!.members;
+    expect(stored()).toEqual([pair.kept, m2, pair.joining]);
+    // Retries that carry no folders still match the rooted entries.
+    const retried = await pair.m3.run((service) =>
+      service.accept({
+        operationId,
+        projectId: pair.joining.projectId,
+        kept: withoutRoot(pair.kept),
+        logicalProject: identity,
+        coordinatorBinding: prepared.coordinatorBinding,
+        keptFingerprint: prepared.fingerprint,
+      }),
+    );
+    expect(retried.replayed).toBe(true);
+    const recommitted = await pair.m4.run((service) =>
+      service.commit({
+        operationId,
+        projectId: pair.kept.projectId,
+        joining: withoutRoot(pair.joining),
+        notes: [],
+      }),
+    );
+    expect(recommitted.replayed).toBe(true);
+    expect(stored()).toEqual([pair.kept, m2, pair.joining]);
+    // Unlinking matches by machine and project whether or not either side has a folder.
+    const removed = await pair.m4.run((service) =>
+      service.unlink({
+        side: "coordinator",
+        operationId: unlinkId,
+        projectId: pair.kept.projectId,
+        member: withoutRoot(pair.joining),
+      }),
+    );
+    expect(removed.logicalProject.members).toEqual([pair.kept, m2]);
+    const removedLegacy = await pair.m4.run((service) =>
+      service.unlink({
+        side: "coordinator",
+        operationId: "33333333-3333-4333-8333-333333333333",
+        projectId: pair.kept.projectId,
+        member: { ...m2, workspaceRoot: "/Users/anton/elsewhere" },
+      }),
+    );
+    expect(removedLegacy.logicalProject.members).toEqual([pair.kept]);
+    expect(stored()).toEqual([pair.kept]);
+    expect(pair.m4.ownershipModes).toEqual(["link-member", "remove-member", "remove-member"]);
+  });
+
   it("fingerprints a project or a folder, never both", async () => {
     const pair = legacyPair();
     const root = pair.m4.projects.get(pair.kept.projectId)!.workspaceRoot;
@@ -827,6 +933,128 @@ describe("ProjectLink", () => {
       expect(
         pair.m4.projects.get(pair.kept.projectId)!.workspaceSettings!.coordinatorBinding,
       ).toEqual({ epoch: 0, state: "active" });
+    });
+  });
+
+  describe("a coordinator on each machine", () => {
+    const startId = "44444444-4444-4444-8444-444444444444";
+    it("starts the member's own coordinator beside the active one, replacing nothing", async () => {
+      const pair = legacyPair();
+      const { prepared } = await link(pair);
+      pair.m4.notes(pair.kept.projectId).set("decisions.md", { content: "Ship 2.0", revision: 3 });
+      pair.m4
+        .notes(pair.kept.projectId)
+        .set("MEMORY.md", { content: "- decisions.md", revision: 1 });
+      const owner = await pair.m4.run((service) =>
+        service.preview({ projectId: pair.kept.projectId }),
+      );
+      const ownerDigest = await pair.m4.run((service) =>
+        service.digest({ projectId: pair.kept.projectId }),
+      );
+      await pair.m3.run((service) =>
+        service.replicate({
+          projectId: pair.joining.projectId,
+          replica: {
+            from: pair.kept,
+            logicalProjectId: prepared.logicalProject.id,
+            digest: ownerDigest.digest,
+            replicatedAt: "2026-10-19T12:00:00.000Z",
+            goal: owner.goal,
+            instructions: owner.instructions,
+            notes: owner.notes,
+            notesTruncated: owner.notesTruncated,
+          },
+        }),
+      );
+      // The member's own note stays as it is; memory replication reconciles it.
+      pair.m3
+        .notes(pair.joining.projectId)
+        .set("decisions.md", { content: "Minis plan", revision: 1 });
+      const started = await pair.m3.run((service) =>
+        service.startCoordinator({
+          operationId: startId,
+          projectId: pair.joining.projectId,
+          knownEpoch: 2,
+        }),
+      );
+      expect(started.replayed).toBe(false);
+      expect(started.notesWritten).toBe(1);
+      expect(started.coordinatorBinding).toEqual({
+        epoch: 3,
+        state: "active",
+        operationId: startId,
+      });
+      const notes = pair.m3.notes(pair.joining.projectId);
+      expect(notes.get("decisions.md")?.content).toBe("Minis plan");
+      expect(notes.get("MEMORY.md")?.content).toBe("- decisions.md");
+      expect(notes.has("decisions-before-takeover.md")).toBe(false);
+      const joined = pair.m3.projects.get(pair.joining.projectId)!.workspaceSettings!;
+      expect(joined.logicalProject?.members).toEqual([pair.kept, pair.joining]);
+      expect(pair.m3.ownershipModes).toEqual(["join-as-member", "start-coordinator"]);
+      // Both machines now run a coordinator; M4's binding was never touched.
+      expect(
+        pair.m4.projects.get(pair.kept.projectId)!.workspaceSettings!.coordinatorBinding,
+      ).toEqual({ epoch: 0, state: "active" });
+      const retried = await pair.m3.run((service) =>
+        service.startCoordinator({ operationId: startId, projectId: pair.joining.projectId }),
+      );
+      expect(retried.replayed).toBe(true);
+      expect(retried.coordinatorBinding).toEqual(started.coordinatorBinding);
+      // A started coordinator names no predecessor, so M4 is never asked to give way.
+      expect(
+        (
+          await pair.m4.fails(
+            pair.m4.run((service) =>
+              service.supersede({
+                projectId: pair.kept.projectId,
+                logicalProjectId: started.logicalProject.id,
+                successor: pair.joining,
+                coordinatorBinding: started.coordinatorBinding,
+              }),
+            ),
+          )
+        ).code,
+      ).toBe("invalid");
+    });
+
+    it("is a no-op on an active coordinator and refuses copies that are not linked members", async () => {
+      const pair = legacyPair();
+      await link(pair);
+      const kept = await pair.m4.run((service) =>
+        service.startCoordinator({ operationId: startId, projectId: pair.kept.projectId }),
+      );
+      expect(kept).toMatchObject({ replayed: true, coordinatorBinding: { state: "active" } });
+      expect(pair.m4.ownershipModes).toEqual(["adopt-identity", "link-member"]);
+      pair.m3.add("standalone", checkout("https://github.com/anton/other.git"));
+      expect(
+        (
+          await pair.m3.fails(
+            pair.m3.run((service) =>
+              service.startCoordinator({
+                operationId: startId,
+                projectId: ProjectId.make("standalone"),
+              }),
+            ),
+          )
+        ).code,
+      ).toBe("not_member");
+      const joined = pair.m3.projects.get(pair.joining.projectId)!;
+      pair.m3.projects.set(pair.joining.projectId, {
+        ...joined,
+        workspaceSettings: {
+          ...joined.workspaceSettings!,
+          coordinatorBinding: { epoch: 0, state: "transferring", operationId: startId },
+        },
+      });
+      expect(
+        (
+          await pair.m3.fails(
+            pair.m3.run((service) =>
+              service.startCoordinator({ operationId: startId, projectId: pair.joining.projectId }),
+            ),
+          )
+        ).code,
+      ).toBe("handoff_in_progress");
     });
   });
 });

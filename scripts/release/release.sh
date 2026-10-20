@@ -1153,6 +1153,30 @@ load_google_pair() {  # Exports only the two Google OAuth variables; never evalu
   done < "$GOOGLE_OAUTH_ENV_FILE"
 }
 
+# SpecWithCode Connect ships on only when all four public values are set (release.env, or the
+# STUDIO_* repository variables in release-macos.yml). Then the build bakes hosted services on
+# for the server and the web client; with any value missing the gate stays off and the values
+# are not passed, so the build matches a release without Connect.
+CONNECT_PUBLIC_KEYS="STUDIO_CLERK_PUBLISHABLE_KEY STUDIO_CLERK_JWT_TEMPLATE STUDIO_CLERK_CLI_OAUTH_CLIENT_ID STUDIO_RELAY_URL"
+connect_public_config_complete() {
+  local key
+  for key in $CONNECT_PUBLIC_KEYS; do [ -n "${!key:-}" ] || return 1; done
+  case "$STUDIO_RELAY_URL" in https://*) return 0 ;; *) return 1 ;; esac
+}
+
+load_connect_public_config() {
+  local key
+  if connect_public_config_complete; then
+    for key in $CONNECT_PUBLIC_KEYS; do export "$key=${!key}"; done
+    export STUDIO_ENABLE_HOSTED_SERVICES=true VITE_STUDIO_ENABLE_HOSTED_SERVICES=true
+    say "build: SpecWithCode Connect on (relay $STUDIO_RELAY_URL)"
+  else
+    for key in $CONNECT_PUBLIC_KEYS; do unset "$key"; done
+    unset STUDIO_ENABLE_HOSTED_SERVICES VITE_STUDIO_ENABLE_HOSTED_SERVICES
+    say "build: SpecWithCode Connect off (public values not configured)"
+  fi
+}
+
 stage_build() {
   need_file "${GOOGLE_OAUTH_ENV_FILE:-}" "the Google OAuth pair"
   # Again here: a staging folder whose candidate stage ran before this check existed (or an
@@ -1160,6 +1184,7 @@ stage_build() {
   electron_runtime
   (
     load_google_pair
+    load_connect_public_config
     x build-desktop -C "$BUILD" -- env APP_VERSION="$VERSION" node node_modules/vite-plus/bin/vp run build:desktop
   )
 }

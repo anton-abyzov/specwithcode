@@ -1440,6 +1440,14 @@
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
+@utility project-plan-claim-stale {
+  color: var(--warning-foreground);
+  font-weight: 600;
+}
+@utility project-plan-claim-conflict {
+  color: var(--destructive);
+  font-weight: 600;
+}
 @utility project-plan-evidence {
   border-top: 1px solid var(--desk-line);
   padding-top: 12px;

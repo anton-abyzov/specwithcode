@@ -11,7 +11,7 @@ import { useProjects } from "../../state/entities";
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { randomUUID } from "../../lib/utils";
-import { logicalCoordinator } from "../../studio/projectDomain";
+import { logicalCoordinator, logicalCoordinators } from "../../studio/projectDomain";
 import {
   departedMembers,
   highestEpoch,
@@ -44,7 +44,8 @@ import { useLinkMachines } from "./useLinkMachines";
 
 const ROLE_TEXT: Record<LinkedCopy["role"], string> = {
   coordinator: "Coordinator. Plans the work and can send it to every copy.",
-  workers: "Runs workers. Its own coordinator is read-only history.",
+  workers:
+    "Runs workers. Its own coordinator is read-only history until you start a coordinator here.",
   pending: "Coordinator handoff pending.",
 };
 
@@ -94,6 +95,7 @@ export function ProjectMachinesSettings({
   const preview = useAtomCommand(projectLink.preview, { reportFailure: false });
   const unlink = useAtomCommand(projectLink.unlink, { reportFailure: false });
   const takeover = useAtomCommand(projectLink.takeover, { reportFailure: false });
+  const startCoordinator = useAtomCommand(projectLink.startCoordinator, { reportFailure: false });
   const [takeoverOf, setTakeoverOf] = useState<EnvironmentProject | null>(null);
   const [review, setReview] = useState<{
     readonly machine: string;
@@ -120,7 +122,8 @@ export function ProjectMachinesSettings({
 
   const shared = members.filter((member) => member.workspaceSettings?.logicalProject);
   const coordinator = logicalCoordinator(shared)?.member;
-  const copies = shared.length > 0 ? linkedCopies(shared, coordinator) : [];
+  const coordinating = logicalCoordinators(shared)?.coordinators ?? [];
+  const copies = shared.length > 0 ? linkedCopies(shared, coordinator, coordinating) : [];
   const departed = useMemo(
     () => (coordinator ? departedMembers(coordinator, projects) : []),
     [coordinator, projects],
@@ -181,6 +184,42 @@ export function ProjectMachinesSettings({
       running.current = false;
       setBusy(false);
       setTakeoverOf(null);
+    }
+  };
+
+  // Each machine may run its own coordinator; nothing gives way and nothing waits 10 minutes.
+  const startHere = async (member: EnvironmentProject) => {
+    if (running.current) return;
+    running.current = true;
+    setBusy(true);
+    setMessage(null);
+    const memberLabel = machines.label(member.environmentId);
+    try {
+      const result = await startCoordinator({
+        environmentId: member.environmentId,
+        input: {
+          operationId: randomUUID(),
+          projectId: member.id,
+          knownEpoch: highestEpoch(shared),
+        },
+      });
+      if (result._tag === "Failure") throw squashAtomCommandFailure(result);
+      setMessage({
+        text: `${memberLabel} now runs its own coordinator next to the others. ${
+          result.value.replicaFrom
+            ? `It starts from the notes, goal and instructions copied ${formatTime(result.value.replicaFrom)}.`
+            : "It starts from its own notes."
+        } Each coordinator keeps the threads it started.`,
+        error: false,
+      });
+    } catch (cause) {
+      setMessage({
+        text: failureMessage(cause, "The coordinator did not start. Retry it."),
+        error: true,
+      });
+    } finally {
+      running.current = false;
+      setBusy(false);
     }
   };
 
@@ -372,7 +411,18 @@ export function ProjectMachinesSettings({
                       Review turns
                     </Button>
                   ) : null}
-                  {availability ? (
+                  {machines.startReady(copy.project.environmentId) ? (
+                    <Button
+                      size="sm"
+                      variant="outline"
+                      disabled={busy || problem !== null}
+                      title={problem ?? undefined}
+                      onClick={() => void startHere(copy.project)}
+                    >
+                      Start a coordinator here
+                    </Button>
+                  ) : null}
+                  {availability && !machines.startReady(copy.project.environmentId) ? (
                     <Button
                       size="sm"
                       variant="outline"

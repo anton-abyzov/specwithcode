@@ -51,6 +51,7 @@ import { projectCompatibleProviders } from "../project/ProjectProviderCompatibil
 import * as Projects from "../project/ProjectService.ts";
 import * as ProjectAdmission from "../project/ProjectAdmission.ts";
 import { SIMULATED_USAGE_LIMIT_MESSAGE, simulatedUsageLimitInstances } from "./ProviderFailure.ts";
+import { limitHandoffTrigger, MachineLimitHandoff } from "./MachineLimitHandoff.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import { SWEEP_SHELL_SNAPSHOT_MAX_AGE_MS } from "./ShellSnapshotCache.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
@@ -719,6 +720,7 @@ export const makeSweep = Effect.gen(function* () {
   const projects = yield* Projects.ProjectService;
   const admission = yield* ProjectAdmission.ProjectAdmission;
   const env = yield* ProviderFallbackEnv;
+  const machineHandoff = yield* MachineLimitHandoff;
   const lastRunAt = yield* Ref.make(0);
   // A user who switches back keeps their choice: each command is sent once.
   const sent = yield* Ref.make(new Set<string>());
@@ -1237,6 +1239,52 @@ export const makeSweep = Effect.gen(function* () {
         providers = yield* registry.getProviders;
         step = stepFor(thread);
       }
+      // Another machine whose provider has room goes first unless the
+      // project puts this machine's fallback models first (0968).
+      const triggerFor = (
+        current: OrchestrationV2ThreadShell,
+        own: ReadonlyArray<ServerProvider>,
+        rule: ServerSettingsValue,
+        localStep: string | null,
+        at: number,
+      ) => {
+        const provider = own.find((entry) => entry.instanceId === current.providerInstanceId);
+        const model = current.modelSelection?.model ?? null;
+        return limitHandoffTrigger({
+          thread: current,
+          rule,
+          nowMs: at,
+          stopped: stoppedOnLimit(current) && !waitsForReset(current, rule, at),
+          atThreshold: shouldSwitchBeforeTurn({ provider, model, rule, nowMs: at }),
+          localStep,
+          windowKey: usageWindowKey(provider, at, model),
+        });
+      };
+      const trigger = triggerFor(thread, providersFor(thread), resolved, step?.type ?? null, now);
+      const admitHandoff = withCurrentPolicy(thread, (current, rule, currentProject) =>
+        Effect.map(DateTime.now, (clock) => {
+          const at = DateTime.toEpochMillis(clock);
+          const own = providersFor(current, currentProject);
+          const local = providerLimitStep(current, own, rule, at, options)?.type ?? null;
+          return triggerFor(current, own, rule, local, at)?.key === trigger?.key;
+        }),
+      ).pipe(
+        Effect.map((admitted) => admitted === true),
+        Effect.orElseSucceed(() => false),
+      );
+      if (
+        trigger !== null &&
+        (yield* machineHandoff.consider({
+          thread,
+          rule: resolved,
+          trigger,
+          providers: providersFor(thread),
+          projectTitle: project.title,
+          nowMs: now,
+          admit: admitHandoff,
+        })) === "handled"
+      )
+        continue;
       if (step === null) {
         // Most threads have no way back to send. Judged on the snapshot first,
         // so they cost no lock, settings read or shell re-read each sweep.

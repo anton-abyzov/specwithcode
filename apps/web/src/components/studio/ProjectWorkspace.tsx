@@ -1,5 +1,5 @@
 import type { EnvironmentProject } from "@specweave-studio/client-runtime/state/shell";
-import { logicalCoordinator, projectExecutionScopes } from "../../studio/projectDomain";
+import { projectExecutionScopes } from "../../studio/projectDomain";
 import { ProjectHandoffRecovery } from "./ProjectHandoffRecovery";
 import { Activity, type ReactElement, useEffect, useState } from "react";
 import { Link } from "@tanstack/react-router";
@@ -9,6 +9,7 @@ import { derivePhysicalProjectKey, deriveLogicalProjectKey } from "../../logical
 import { useAllEnvironmentShellsBootstrapped, useProjects } from "../../state/entities";
 import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environments";
 import { useUnreachableHosts } from "../../studio/unreachableHosts";
+import { useMachineNicknames } from "../../studio/machineNickname";
 import { isHostedStaticApp } from "../../hostedPairing";
 import {
   useClientSettings,
@@ -16,12 +17,17 @@ import {
   useUpdateClientSettings,
 } from "../../hooks/useSettings";
 import {
+  chooseCoordinatorView,
   coordinatorMachineKey,
-  resolveCoordinatorMachine,
+  orchestratorCopies,
+  unloadedMachineRef,
+  unloadedMachineRefs,
 } from "../../studio/projectCoordinatorMachine";
+import { useLinkMachines } from "./useLinkMachines";
 import { type SelectProjectThread } from "../../studio/useProjectPaneSelection";
 import { WorkspacePageHeader } from "../WorkspacePageHeader";
 import { SidebarInset } from "../ui/sidebar";
+import { Button } from "../ui/button";
 import { isElectron } from "../../env";
 
 import { ProjectWorkspaceSurface } from "./ProjectWorkspaceSurface";
@@ -110,31 +116,38 @@ export function ProjectWorkspace({
   }, [projectKey, requestedKey, onProjectKeyMoved]);
   const members = group?.memberProjects ?? [];
   const shellsBootstrapped = useAllEnvironmentShellsBootstrapped();
-  const { isReady: environmentCatalogReady } = useEnvironments();
+  const { isReady: environmentCatalogReady, environments } = useEnvironments();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const savedMachines = useClientSettings((settings) => settings.projectCoordinatorMachines);
   const updateClientSettings = useUpdateClientSettings();
   // Before settings load the saved choices read as empty, and a pick would replace them all.
   const machinesLoaded = useClientSettingsHydrationStatus() === "ready";
-  // The coordinator runs on the chosen checkout's machine; the choice is saved per project.
-  const ownership = logicalCoordinator(members);
+  // Which machine's orchestrator is shown. Viewing reads that machine's server and
+  // never moves a thread or a coordinator; the last view is saved per project.
   const unreachable = useUnreachableHosts();
-  const { member, savedMachineMissing, savedMachineOffline } = ownership
-    ? { member: ownership.member, savedMachineMissing: false, savedMachineOffline: false }
-    : checkoutKey
-      ? {
-          member: members.find((candidate) => coordinatorMachineKey(candidate) === checkoutKey),
-          savedMachineMissing: !members.some(
-            (candidate) => coordinatorMachineKey(candidate) === checkoutKey,
-          ),
-          savedMachineOffline: false,
-        }
-      : resolveCoordinatorMachine({
-          members,
-          saved: savedMachines[projectKey],
-          primaryEnvironmentId,
-          unreachable,
-        });
+  const view = chooseCoordinatorView({
+    members,
+    checkoutKey,
+    lastViewed: savedMachines[projectKey],
+    primaryEnvironmentId,
+    unreachable,
+  });
+  const { member, missing: savedMachineMissing, problem: ownershipProblem } = view;
+  // A linked machine this device never synced has nothing to show: say so, never a stand-in.
+  const unknownRef = unloadedMachineRef(members, checkoutKey ?? savedMachines[projectKey]);
+  const nickname = useMachineNicknames();
+  const checkoutName = (checkout: EnvironmentProject & { environmentLabel?: string | null }) =>
+    nickname(checkout.environmentId, checkout.environmentLabel);
+  // A machine's nickname or host label; null when this device knows neither.
+  const machineName = (environmentId: string) => {
+    const label = environments.find((item) => item.environmentId === environmentId)?.label;
+    const name = nickname(environmentId, label);
+    return label || name !== environmentId ? name : null;
+  };
+  const unknownLabel = unknownRef
+    ? (machineName(unknownRef.environmentId) ?? "That machine")
+    : null;
+  const linkMachines = useLinkMachines();
   // The thread open when the checkout changed belongs to the old machine. The
   // panel closes, and until the URL catches up the new checkout does not see it,
   // or it would send the person to that machine's full page.
@@ -172,7 +185,7 @@ export function ProjectWorkspace({
     environmentCatalogReady &&
     (isHostedStaticApp() || primaryEnvironmentId !== null);
   // Until the hosts answer, a missing saved machine or unread choice may only be late.
-  if ((!project || savedMachineMissing || !machinesLoaded) && !hostsAnswered)
+  if ((!project || savedMachineMissing || unknownRef || !machinesLoaded) && !hostsAnswered)
     return (
       <SidebarInset className="h-dvh">
         <div className="project-surface flex min-h-0 flex-1 flex-col" aria-busy="true">
@@ -184,24 +197,52 @@ export function ProjectWorkspace({
         </div>
       </SidebarInset>
     );
+  if (unknownRef && unknownLabel)
+    return (
+      <SidebarInset className="h-dvh">
+        <div className="project-surface flex min-h-0 flex-1 flex-col" data-orchestrator-unknown="">
+          <WorkspacePageHeader electron={isElectron}>Project workspace</WorkspacePageHeader>
+          <div className="project-empty">
+            <h1>{unknownLabel}'s orchestrator: Unknown</h1>
+            <p className="mt-2 max-w-prose text-muted-foreground">
+              {unknownLabel} is unreachable and this device has no synced copy of its orchestrator.
+              Nothing is shown in its place, and nothing typed here is sent to another machine.
+            </p>
+            <div className="mt-5 flex flex-wrap items-center gap-2">
+              {onSelectCheckout && machinesLoaded
+                ? members.map((checkout) => (
+                    <Button
+                      key={coordinatorMachineKey(checkout)}
+                      variant="outline"
+                      size="sm"
+                      onClick={() => chooseMachine(coordinatorMachineKey(checkout))}
+                    >
+                      View {checkoutName(checkout)}'s orchestrator
+                    </Button>
+                  ))
+                : null}
+              <Link
+                to="/settings/projects"
+                className="ms-2 text-sm underline-offset-2 hover:underline"
+              >
+                Manage projects
+              </Link>
+            </div>
+          </div>
+        </div>
+      </SidebarInset>
+    );
   if (!project)
     return (
       <SidebarInset className="h-dvh">
         <div className="project-surface flex min-h-0 flex-1 flex-col">
           <WorkspacePageHeader electron={isElectron}>Project workspace</WorkspacePageHeader>
           <div className="project-empty">
-            <h1>
-              {ownership
-                ? "Coordinator unavailable"
-                : checkoutKey
-                  ? "Linked checkout unavailable"
-                  : "Project unavailable"}
-            </h1>
+            <h1>{checkoutKey ? "Linked checkout unavailable" : "Project unavailable"}</h1>
             <p>
-              {ownership?.problem ??
-                (checkoutKey
-                  ? "Connect the linked host, or choose an available checkout explicitly."
-                  : "Connect its host or select a registered project.")}
+              {checkoutKey
+                ? "Connect the linked host, or choose an available checkout explicitly."
+                : "Connect its host or select a registered project."}
             </p>
             {members[0] ? (
               <ProjectHandoffRecovery
@@ -209,7 +250,7 @@ export function ProjectWorkspace({
                 members={members}
               />
             ) : null}
-            {!ownership && checkoutKey && onSelectCheckout && machinesLoaded
+            {checkoutKey && onSelectCheckout && machinesLoaded
               ? members.map((checkout) => (
                   <button
                     key={coordinatorMachineKey(checkout)}
@@ -217,8 +258,7 @@ export function ProjectWorkspace({
                     className="project-control"
                     onClick={() => chooseMachine(coordinatorMachineKey(checkout))}
                   >
-                    Use {checkout.environmentLabel ?? checkout.environmentId} ·{" "}
-                    {checkout.workspaceRoot}
+                    Use {checkoutName(checkout)} · {checkout.workspaceRoot}
                   </button>
                 ))
               : null}
@@ -237,13 +277,13 @@ export function ProjectWorkspace({
       selectedEnvironmentId={
         onSelectThread ? selectedThreadEnvironmentId : localSelectedEnvironment
       }
-      ownershipProblem={ownership?.problem ?? null}
-      checkouts={members.map((m) => ({
-        key: coordinatorMachineKey(m),
-        machine: m.environmentLabel ?? m.environmentId,
-        folder: m.workspaceRoot,
+      ownershipProblem={ownershipProblem}
+      checkouts={orchestratorCopies(members, checkoutName, linkMachines.startReady)}
+      unknownMachines={unloadedMachineRefs(members).map((ref) => ({
+        key: `${ref.environmentId}:${ref.projectId}`,
+        machine: machineName(ref.environmentId) ?? "Linked machine",
       }))}
-      savedMachineMissing={savedMachineMissing || savedMachineOffline}
+      savedMachineMissing={savedMachineMissing}
       onCheckout={machinesLoaded ? chooseMachine : null}
       selected={paneSelected}
       setSelected={setSelected}

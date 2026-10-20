@@ -628,6 +628,23 @@ class AgentReap(agent_tests.AgentCase):
         between = [call for call in calls[positions[1]:positions[2]] if '--snapshot' in call['argv']]
         self.assertGreaterEqual(len(between), 12)
 
+    def test_a_newer_request_taken_on_late_in_a_pass_still_gets_its_reaps(self):
+        """Update now chosen again 12 minutes into a forced pass: past the first request's window,
+        within its own, so the leftover processes are still stopped for it."""
+        self.fake.add_release()
+        self.request(hold_minutes=15)
+        self.control(snapshotFail=True, snapshotError=TERMINALS, reapClears=False)
+        newer, started = '2026-10-12T20:30:00+00:00', update_agent.utcnow()
+
+        def pressed_again():
+            config = json.loads((self.updates / 'config.json').read_text())
+            if update_agent.utcnow() - started >= datetime.timedelta(minutes=12) and config['installRequestedAt'] != newer:
+                self.request(hold_minutes=15, requested=newer)
+        self.on_sleep = pressed_again
+        self.run_agent()
+        requests = [call['argv'][-1] for call in self.reap_calls()]
+        self.assertEqual(requests, ['2026-10-12T20:00:00+00:00'] * 2 + [newer] * 2)
+
     def test_no_reap_that_would_outlast_the_hold(self):
         self.fake.add_release()
         self.request(hold_minutes=3)  # At 2 minutes a reap could run past the hold's end.

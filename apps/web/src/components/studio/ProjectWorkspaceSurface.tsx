@@ -55,7 +55,11 @@ import {
   coordinatorOnLimitFallback,
 } from "@specweave-studio/shared/providerFallback";
 import { formatDuration } from "@specweave-studio/shared/usageLimits";
-import { useAllEnvironmentShellsBootstrapped, useThreadProjection } from "../../state/entities";
+import {
+  useAllEnvironmentShellsBootstrapped,
+  useThreadProjection,
+  useThreadShellsForProjectRefs,
+} from "../../state/entities";
 import { useEnvironment, usePrimaryEnvironmentId } from "../../state/environments";
 import { useEnvironmentScope } from "../../state/session";
 import { useEnvironmentQuery } from "../../state/query";
@@ -84,13 +88,7 @@ import {
   hostDisconnectedLabel,
   projectAdmissionReason,
 } from "../../studio/projectWorkspaceModel";
-import {
-  modelLabel,
-  shortMachineName,
-  THREAD_TONE_LABELS,
-  threadTone,
-  waitingCount,
-} from "../../studio/shellModel";
+import { modelLabel, THREAD_TONE_LABELS, threadTone, waitingCount } from "../../studio/shellModel";
 import {
   PULL_REQUEST_REQUEST_EXPIRED_REASON,
   PULL_REQUEST_REQUEST_TTL_MS,
@@ -157,7 +155,10 @@ import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { randomUUID } from "../../lib/utils";
 
-import { CoordinatorConversation, CoordinatorMachine } from "./CoordinatorConversation";
+import { CoordinatorConversation } from "./CoordinatorConversation";
+import { ProjectOrchestratorSwitcher } from "./OrchestratorSwitcher";
+import type { OrchestratorCopy } from "../../studio/projectCoordinatorMachine";
+import { useMachineNickname } from "../../studio/machineNickname";
 import { useUnreachableHosts } from "../../studio/unreachableHosts";
 import { isThisMachineTarget } from "../../connection/desktopLocal";
 import {
@@ -195,6 +196,7 @@ export function ProjectWorkspaceSurface({
   projectKey,
   iconCheckouts,
   checkouts,
+  unknownMachines = [],
   savedMachineMissing,
   onCheckout,
   selected,
@@ -207,10 +209,12 @@ export function ProjectWorkspaceSurface({
   /** Every checkout of this project; an icon change applies to all of them. */
   iconCheckouts: readonly EnvironmentProject[];
   /** The same project checked out on more than one machine or folder. */
-  checkouts: ReadonlyArray<{ key: string; machine: string; folder: string }>;
-  /** The saved coordinator machine is not listed, so this is another machine's coordinator. */
+  checkouts: readonly OrchestratorCopy[];
+  /** Linked machines this device never synced; viewing one shows Unknown. */
+  unknownMachines?: ReadonlyArray<{ key: string; machine: string }>;
+  /** The last viewed checkout is not listed, so the page shows a default one. */
   savedMachineMissing: boolean;
-  /** Saves the checkout whose machine runs this project's coordinator; null until saved choices load. */
+  /** Shows that checkout's orchestrator; moves nothing. Null until saved choices load. */
   onCheckout: ((key: string) => void) | null;
   selected: ThreadId | null;
   selectedEnvironmentId?: string | null;
@@ -219,6 +223,7 @@ export function ProjectWorkspaceSurface({
 }) {
   const projectTitle = logicalProjectTitle(project);
   const environment = useEnvironment(project.environmentId);
+  const machineName = useMachineNickname(project.environmentId, environment?.label);
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const canOperate = useEnvironmentScope(project.environmentId, AuthOrchestrationOperateScope);
   // "Create PR" runs the thread's source control action, a grant of its own.
@@ -443,15 +448,20 @@ export function ProjectWorkspaceSurface({
     graceElapsed:
       waitingEnvironmentId === null || graceElapsedEnvironmentId === waitingEnvironmentId,
   };
-  const blocked =
-    ownershipProblem ??
-    projectAdmissionReason(
-      snapshot?.settings ?? null,
-      connected,
-      canOperate,
-      environment?.connection,
-      hostAdmission,
-    );
+  const admission = projectAdmissionReason(
+    snapshot?.settings ?? null,
+    connected,
+    canOperate,
+    environment?.connection,
+    {
+      ...hostAdmission,
+      ...(environment?.label || machineName !== project.environmentId
+        ? { machineLabel: machineName }
+        : {}),
+    },
+  );
+  // An unreachable machine refuses first: a typed message is never sent elsewhere.
+  const blocked = (connected ? null : admission) ?? ownershipProblem ?? admission;
   // Memoized, not just computed: these feed memoized callbacks below, and the
   // React Compiler keeps those only for values it knows are not changed later.
   const coordinator = useMemo(
@@ -1017,8 +1027,34 @@ export function ProjectWorkspaceSurface({
 
   const waiting = waitingCount(workers, unreachableHosts);
   const openLink = useOpenLink(null);
+  const machineLabels = useMemo(
+    () =>
+      new Map(
+        iconCheckouts.map((member) => [
+          member.environmentId,
+          checkouts.find((checkout) => checkout.key === `${member.environmentId}:${member.id}`)
+            ?.machine ?? member.environmentId,
+        ]),
+      ),
+    [iconCheckouts, checkouts],
+  );
+  // Every copy of the repository, linked or not, merges through pull requests
+  // on the shared remote, so the PRs tab lists them all with their machine.
+  const prMachineCount = machineLabels.size;
+  const checkoutRefs = useMemo(
+    () =>
+      iconCheckouts.map((member) => ({
+        environmentId: member.environmentId,
+        projectId: member.id,
+      })),
+    [iconCheckouts],
+  );
+  const checkoutThreads = useThreadShellsForProjectRefs(checkoutRefs);
   const pullRequests = collectProjectPullRequests(
-    coordinator ? [coordinator, ...workers] : workers,
+    [...(coordinator ? [coordinator] : []), ...workers, ...checkoutThreads],
+    prMachineCount > 1
+      ? (environmentId) => machineLabels.get(environmentId) ?? environmentId
+      : undefined,
   );
   const openPullRequests = openPullRequestCount(pullRequests);
   const coordinatorIds = useMemo(() => {
@@ -1149,13 +1185,11 @@ export function ProjectWorkspaceSurface({
                 </Tip>
                 {primaryEnvironmentId !== null && project.environmentId !== primaryEnvironmentId ? (
                   // Another machine runs this project: its coordinator, workers and sign-ins.
-                  <Tip
-                    label={`Runs on ${environment?.label ?? "another machine"}, not this computer`}
-                  >
+                  <Tip label={`Runs on ${environment?.label ?? machineName}, not this computer`}>
                     <span className="sws-tag sws-project-machine" data-project-machine>
                       <LaptopIcon aria-hidden />
                       <span className="sr-only">Runs on </span>
-                      {shortMachineName(environment?.label ?? project.environmentId)}
+                      {machineName}
                     </span>
                   </Tip>
                 ) : null}
@@ -1409,25 +1443,30 @@ export function ProjectWorkspaceSurface({
                         </button>
                       </Tip>
                     ) : null}
-                    <CoordinatorMachine
+                    <ProjectOrchestratorSwitcher
+                      project={project}
+                      members={iconCheckouts}
                       label={environment?.label ?? "Host"}
                       connected={connected}
+                      isThisDevice={hostIsThisDevice}
                       disconnectedLabel={hostDisconnectedLabel(
                         environment?.connection,
                         hostAdmission,
                       )}
                       current={`${project.environmentId}:${project.id}`}
-                      checkouts={checkouts}
+                      copies={checkouts}
+                      unknown={unknownMachines}
                       savedMachineMissing={savedMachineMissing}
-                      onChoose={
+                      // Viewing only changes what this page shows.
+                      onView={
                         onCheckout
                           ? (key) => {
-                              if (key === `${project.environmentId}:${project.id}`) return;
-                              if (mainCoordinatorId) setHandoffTarget(key);
-                              else onCheckout(key);
+                              if (key !== `${project.environmentId}:${project.id}`) onCheckout(key);
                             }
                           : null
                       }
+                      // Moving is its own confirmed dialog, and needs a coordinator to move.
+                      onMove={mainCoordinatorId && canOperate ? setHandoffTarget : null}
                     />
                     <ProjectMachineHandoff
                       key={`${project.environmentId}:${project.id}`}
@@ -1538,6 +1577,7 @@ export function ProjectWorkspaceSurface({
                   pullRequests={pullRequests}
                   onOpenThread={openThread}
                   bar={paneBar}
+                  acrossMachines={prMachineCount > 1}
                 />
               ) : paneTab === "scheduled" ? (
                 <ScheduledPane
@@ -1566,16 +1606,7 @@ export function ProjectWorkspaceSurface({
                   canChangeThread={(thread) =>
                     thread.environmentId === project.environmentId && canOperate && connected
                   }
-                  machineLabels={
-                    new Map(
-                      iconCheckouts.map((member) => [
-                        member.environmentId,
-                        checkouts.find(
-                          (checkout) => checkout.key === `${member.environmentId}:${member.id}`,
-                        )?.machine ?? member.environmentId,
-                      ]),
-                    )
-                  }
+                  machineLabels={machineLabels}
                   starters={workers.length === 0 ? starterList : null}
                   bulk={
                     canOperate && connected

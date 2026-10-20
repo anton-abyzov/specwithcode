@@ -1,0 +1,262 @@
+// @effect-diagnostics nodeBuiltinImport:off - disposable real Git fixtures only.
+import * as NodeChildProcess from "node:child_process";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
+import * as NodeServices from "@effect/platform-node/NodeServices";
+import { afterEach, describe, expect, it } from "@effect/vitest";
+import {
+  EnvironmentId,
+  type OrchestrationV2Run,
+  ProjectId,
+  ThreadId,
+  threadTurnKey,
+} from "@specweave-studio/contracts";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+
+import * as ServerConfig from "../config.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
+import * as ProjectService from "../project/ProjectService.ts";
+import * as ServerSettings from "../serverSettings.ts";
+import * as TextGeneration from "../textGeneration/TextGeneration.ts";
+import * as HandoffMode from "./HandoffMode.ts";
+import * as HandoffModeStore from "./HandoffModeStore.ts";
+import { fenceRecord, emptyThreadRecord } from "./handoffState.ts";
+
+const temporary: Array<string> = [];
+const projectId = ProjectId.make("project-handoff");
+const threadId = ThreadId.make("thread-handoff");
+const environmentId = EnvironmentId.make("env-m4");
+
+afterEach(() => {
+  for (const path of temporary.splice(0)) NodeFS.rmSync(path, { recursive: true, force: true });
+});
+
+function repository(): string {
+  const root = NodeFS.realpathSync(
+    NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "swc-handoff-service-")),
+  );
+  temporary.push(root);
+  const git = (...args: Array<string>) =>
+    NodeChildProcess.execFileSync(
+      "git",
+      ["-c", "user.name=Handoff Test", "-c", "user.email=handoff@example.invalid", ...args],
+      {
+        cwd: root,
+        env: { ...process.env, GIT_CONFIG_GLOBAL: "/dev/null", GIT_CONFIG_NOSYSTEM: "1" },
+        stdio: "ignore",
+      },
+    );
+  git("init", "-q", "-b", "main");
+  NodeFS.writeFileSync(NodePath.join(root, "app.ts"), "export const a = 1;\n");
+  git("add", "-A");
+  git("commit", "-q", "-m", "base");
+  NodeFS.writeFileSync(NodePath.join(root, "app.ts"), "export const a = 2;\n");
+  return root;
+}
+
+interface Fixture {
+  runStatus: OrchestrationV2Run["status"];
+  activeRunId: string | null;
+  latestRunId: string | null;
+}
+
+function layerFor(root: string, fixture: Fixture) {
+  const stubs = Layer.mergeAll(
+    Layer.succeed(ServerEnvironment.ServerEnvironment, {
+      getEnvironmentId: Effect.succeed(environmentId),
+      getDescriptor: Effect.succeed({ label: "M4" }),
+    } as unknown as ServerEnvironment.ServerEnvironment["Service"]),
+    Layer.succeed(ProjectService.ProjectService, {
+      getById: () => Effect.succeed(Option.some({ id: projectId, workspaceRoot: root })),
+    } as unknown as ProjectService.ProjectService["Service"]),
+    Layer.succeed(ProjectionStore.ProjectionStoreV2, {
+      getThreadShell: (id: ThreadId) =>
+        Effect.succeed(
+          id === threadId
+            ? {
+                id,
+                projectId,
+                worktreePath: null,
+                activeRunId: fixture.activeRunId,
+                latestRunId: fixture.latestRunId,
+                lastErrorClass: null,
+                modelSelection: { instanceId: "claude", model: "claude-opus" },
+              }
+            : null,
+        ),
+      getThreadRecords: () =>
+        Effect.succeed({
+          messages: [
+            { role: "user", text: "Fix the login redirect.", streaming: false },
+            { role: "assistant", text: "Patched the redirect. A test is next.", streaming: false },
+          ],
+          runs: [{ id: fixture.latestRunId, status: fixture.runStatus }],
+          turnItems: [],
+        }),
+    } as unknown as ProjectionStore.ProjectionStoreV2["Service"]),
+    Layer.succeed(
+      ServerSettings.ServerSettingsService,
+      {} as unknown as ServerSettings.ServerSettingsService["Service"],
+    ),
+    Layer.succeed(
+      TextGeneration.TextGeneration,
+      {} as unknown as TextGeneration.TextGeneration["Service"],
+    ),
+  );
+  return Layer.effect(HandoffMode.HandoffMode, HandoffMode.make).pipe(
+    Layer.provideMerge(HandoffModeStore.layer),
+    Layer.provideMerge(stubs),
+    Layer.provideMerge(Layer.fresh(ServerConfig.layerTest(root, { prefix: "swc-handoff-state-" }))),
+    Layer.provideMerge(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer)),
+  );
+}
+
+const run = (id: string, status: OrchestrationV2Run["status"]) =>
+  ({ id, threadId, status }) as unknown as OrchestrationV2Run;
+
+const sideEffect = (runId: string) =>
+  ({ threadId, runId, kind: "pr-create", target: "anton/app#feature" }) as const;
+
+describe("HandoffMode", () => {
+  it.effect("does nothing for a thread whose project never turned handoff mode on", () => {
+    const fixture: Fixture = { runStatus: "running", activeRunId: "run-1", latestRunId: "run-1" };
+    return Effect.gen(function* () {
+      const handoff = yield* HandoffMode.HandoffMode;
+      yield* handoff.observeRun(run("run-1", "running"));
+      expect(yield* handoff.fence(threadId, "run-1")).toEqual({ kind: "unleased" });
+      expect(yield* handoff.guardSideEffect(sideEffect("run-1"))).toMatchObject({
+        kind: "proceed",
+        epoch: 0,
+      });
+      yield* handoff.recordSideEffect({ ...sideEffect("run-1"), result: "#12" });
+      expect((yield* handoff.snapshot).threads).toEqual([]);
+    }).pipe(Effect.provide(layerFor(repository(), fixture)));
+  });
+
+  it.effect("leases a running thread, journals its side effect and checkpoints at turn end", () => {
+    const fixture: Fixture = { runStatus: "running", activeRunId: "run-1", latestRunId: "run-1" };
+    const root = repository();
+    return Effect.gen(function* () {
+      const handoff = yield* HandoffMode.HandoffMode;
+      yield* handoff.updateConfig({ pushToOrigin: false });
+      yield* handoff.setProjectMode({ projectId, mode: "on" });
+      yield* handoff.observeRun(run("run-1", "running"));
+      expect(yield* handoff.fence(threadId, "run-1")).toEqual({ kind: "ok", epoch: 1 });
+
+      expect(yield* handoff.guardSideEffect(sideEffect("run-1"))).toEqual({
+        kind: "proceed",
+        epoch: 1,
+        turnKey: threadTurnKey(threadId, "run-1"),
+      });
+      yield* handoff.recordSideEffect({ ...sideEffect("run-1"), result: "#12" });
+      const reused = yield* handoff.guardSideEffect(sideEffect("run-1"));
+      expect(reused).toMatchObject({ kind: "reuse", effect: { result: "#12", epoch: 1 } });
+
+      fixture.runStatus = "completed";
+      fixture.activeRunId = null;
+      yield* handoff.observeRun(run("run-1", "completed"));
+      const [thread] = (yield* handoff.snapshot).threads;
+      const checkpoint = thread?.checkpoint;
+      expect(checkpoint).toMatchObject({
+        sequence: 1,
+        reason: "turn-end",
+        branch: "main",
+        epoch: 1,
+        latestRunId: "run-1",
+        turnKey: threadTurnKey(threadId, "run-1"),
+        runEnding: "completed",
+        transcriptMessageCount: 2,
+        pushedToOrigin: false,
+        sourceRoot: {
+          environmentId,
+          machineLabel: "M4",
+          projectId,
+          threadId,
+          workspaceRoot: root,
+          branch: "main",
+        },
+      });
+      expect(checkpoint?.sideEffects).toHaveLength(1);
+      expect(checkpoint?.note?.next).toContain("Fix the login redirect");
+      const ref = NodeChildProcess.execFileSync("git", ["rev-parse", checkpoint!.ref], {
+        cwd: root,
+        encoding: "utf8",
+      });
+      expect(ref.trim()).toBe(checkpoint?.commit);
+
+      expect(yield* handoff.checkpoint(threadId, "turn-end")).toBeNull();
+    }).pipe(Effect.provide(layerFor(root, fixture)));
+  });
+
+  it.effect(
+    "fences a copy another machine continued: no lease, no side effect, no checkpoint",
+    () => {
+      const fixture: Fixture = { runStatus: "running", activeRunId: "run-1", latestRunId: "run-1" };
+      return Effect.gen(function* () {
+        const handoff = yield* HandoffMode.HandoffMode;
+        const store = yield* HandoffModeStore.HandoffModeStore;
+        yield* handoff.updateConfig({ pushToOrigin: false });
+        yield* handoff.setProjectMode({ projectId, mode: "on" });
+        yield* handoff.observeRun(run("run-1", "running"));
+        yield* handoff.recordSideEffect({ ...sideEffect("run-1"), result: "#12" });
+
+        yield* store.update((document) => {
+          const current = document.threads[threadId] ?? emptyThreadRecord(projectId);
+          const fenced = fenceRecord(
+            current,
+            {
+              environmentId: EnvironmentId.make("env-mini"),
+              machineLabel: "Mini",
+              threadId: ThreadId.make("thread-on-mini"),
+              at: "2026-10-20T19:00:00.000Z",
+            },
+            "handoff",
+          );
+          const next = { ...document, threads: { ...document.threads, [threadId]: fenced } };
+          return [null, next] as const;
+        });
+
+        const fence = yield* handoff.fence(threadId, "run-1");
+        expect(fence.kind).toBe("fenced");
+        expect(yield* handoff.guardSideEffect(sideEffect("run-1"))).toMatchObject({
+          kind: "refuse",
+        });
+        expect(
+          yield* handoff.guardSideEffect({ ...sideEffect("run-1"), target: "anton/app#other" }),
+        ).toMatchObject({ kind: "refuse" });
+
+        yield* handoff.observeRun(run("run-2", "running"));
+        expect(yield* handoff.fence(threadId, "run-2")).toMatchObject({ kind: "fenced" });
+
+        fixture.runStatus = "interrupted";
+        fixture.activeRunId = null;
+        expect(yield* handoff.checkpoint(threadId, "turn-end")).toBeNull();
+        const failure = yield* handoff.checkpoint(threadId, "manual").pipe(Effect.flip);
+        expect(failure.code).toBe("fenced");
+      }).pipe(Effect.provide(layerFor(repository(), fixture)));
+    },
+  );
+
+  it.effect("keeps lease and journal across a restart of the service", () => {
+    const fixture: Fixture = { runStatus: "running", activeRunId: "run-1", latestRunId: "run-1" };
+    const root = repository();
+    return Effect.gen(function* () {
+      const handoff = yield* HandoffMode.HandoffMode;
+      yield* handoff.setProjectMode({ projectId, mode: "on" });
+      yield* handoff.observeRun(run("run-1", "running"));
+      yield* handoff.recordSideEffect({ ...sideEffect("run-1"), result: "#12" });
+
+      const restarted = yield* HandoffMode.make.pipe(Effect.provide(HandoffModeStore.layer));
+      expect(yield* restarted.fence(threadId, "run-1")).toEqual({ kind: "ok", epoch: 1 });
+      expect(yield* restarted.guardSideEffect(sideEffect("run-1"))).toMatchObject({
+        kind: "reuse",
+        effect: { result: "#12" },
+      });
+    }).pipe(Effect.provide(layerFor(root, fixture)));
+  });
+});

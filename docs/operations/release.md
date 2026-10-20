@@ -83,15 +83,10 @@ GitHub Actions environment before building desktop, CLI, or hosted web artifacts
 Required repository variables shared by relay deployments:
 
 - `CLOUDFLARE_ACCOUNT_ID`
-- `PLANETSCALE_ORGANIZATION`
-- `AXIOM_ORG_ID`
 
 Required repository secrets shared by relay deployments:
 
 - `CLOUDFLARE_API_TOKEN`
-- `PLANETSCALE_API_TOKEN_ID`
-- `PLANETSCALE_API_TOKEN`
-- `AXIOM_TOKEN`
 
 Required `production` environment variables:
 
@@ -121,14 +116,11 @@ Required `production` environment secrets:
 
 After changing a variable or secret, run the **Deploy Studio Connect relay** workflow manually from
 `main` with **force** unchecked. Alchemy compares the values the Worker reads and redeploys it when
-one changed. Check **force** only to redeploy resources with no detected change: a forced run also
-replaces the Postgres runtime role and its password
-([alchemy-run/alchemy#1832](https://github.com/alchemy-run/alchemy/issues/1832)).
+one changed. Check **force** only to redeploy resources with no detected change.
 
 The account-scoped repository credentials are consumed by Alchemy while provisioning relay stages; they
-are not bound into the relay Worker. The production deployment uses an Axiom personal access token,
-so `AXIOM_ORG_ID` must accompany `AXIOM_TOKEN`. The `prod` stage owns the retained PlanetScale
-database. Local personal stages provision isolated branches from it and are never deployed by CI.
+are not bound into the relay Worker. Each stage owns its own D1 database; the `prod` database is
+retained. Local personal stages are never deployed by CI.
 Production adopts the configured relay API and tunnel DNS zones as retained Cloudflare resources.
 Personal stages reference the production-owned zones.
 
@@ -149,9 +141,9 @@ because those builds register recovery and replace a deleted tunnel after wake.
 2. Release the server build and confirm current hosts register recovery. Older hosts stay marked
    legacy and are only candidates under the legacy switch below.
 3. Set `dry-run`, run a relay deploy, and read the sweep counters (`scanned`, `wouldDelete`,
-   `skippedLegacy`, `skippedOrphan`, `failed`, `truncated`) across several sweeps. Each sweep records
-   them, and the active `mode`, as `relay.managed_endpoint_reaper.*` attributes on its
-   `relay.managed_endpoint_reaper.sweep` span in Axiom.
+   `skippedLegacy`, `skippedOrphan`, `failed`, `truncated`) across several sweeps. Each sweep that
+   finds candidates logs them, and the active `mode`, on a `Finished managed tunnel cleanup` line
+   in the relay Worker's Workers Logs.
 4. Run the disposable-host canary below.
 5. Set `enabled` only after the canary recovers without a server restart.
 
@@ -202,16 +194,16 @@ column in its first deploy with this change; the legacy switch stays `off` until
    budget ran out or Cloudflare rate-limited a deletion. The counters don't say which; the relay
    logs a warning with the Cloudflare error for each failed deletion.
 
-In Axiom, filter the relay traces dataset on `name == "relay.managed_endpoint_reaper.sweep"` and
-chart the `attributes.custom.relay.managed_endpoint_reaper.*` fields over time.
+In the relay Worker's Workers Logs, filter on `Finished managed tunnel cleanup` and compare these
+fields across sweeps.
 
 Set the legacy mode back to `off` and deploy if any of these happen:
 
 - `failed` stays above a few per sweep. Read the warning log for the Cloudflare error.
 - Users report an environment that is offline with the update message after they have updated SpecWithCode
   Code on that computer and restarted it.
-- Relay request errors rise while sweeps run. Deletions share the Postgres connection pool with
-  request handlers.
+- Relay request errors rise while sweeps run. Deletions share the D1 database with request
+  handlers.
 
 Turning the legacy mode off stops new legacy deletions; `RELAY_TUNNEL_CLEANUP_MODE` keeps deleting
 tunnels of hosts with recovery while it is `enabled`. Deleted tunnels stay deleted; their hosts

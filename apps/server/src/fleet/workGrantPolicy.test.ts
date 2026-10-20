@@ -135,3 +135,86 @@ describe("work grant policy", () => {
     ).toBe(false);
   });
 });
+
+describe("two coordinators on one linked project, granting each other", () => {
+  const Minis = EnvironmentId.make("env-minis");
+  // EasyChamp is linked on M4 and Minis; each machine's grant to the other is scoped to linked projects.
+  const linked = {
+    id: "easychamp",
+    workspaceSettings: {
+      logicalProject: { members: [{ environmentId: M4 }, { environmentId: Minis }] },
+    },
+  };
+  // The same repository checked out on Minis without a link is a different project.
+  const independent = { id: "easychamp-minis", workspaceSettings: { logicalProject: null } };
+  const selfLimit = 2;
+
+  it("lets each coordinator start its own work on the other machine", () => {
+    for (const [from, to] of [
+      [M4, Minis],
+      [Minis, M4],
+    ] as const) {
+      const sent = outgoingDelegation({
+        localEnvironmentId: from,
+        targetEnvironmentId: to,
+        origin: undefined,
+      });
+      expect(sent).toEqual({ ok: true, delegation: { path: [from], hops: 1 } });
+      expect(
+        checkIncomingDelegation({
+          ownEnvironmentId: to,
+          coordinatorEnvironmentId: from,
+          delegation: sent.ok ? sent.delegation : undefined,
+          hopLimit: selfLimit,
+        }).ok,
+      ).toBe(true);
+      expect(projectInGrant({ kind: "linked" }, from, linked)).toBe(true);
+    }
+  });
+
+  it("refuses a worker sending work back to the machine whose coordinator started it, both ways", () => {
+    for (const [from, to] of [
+      [M4, Minis],
+      [Minis, M4],
+    ] as const) {
+      const origin = { coordinatorEnvironmentId: from, path: [from], hops: 1 };
+      // Refused before sending, on the worker's machine.
+      expect(
+        outgoingDelegation({ localEnvironmentId: to, targetEnvironmentId: from, origin }),
+      ).toMatchObject({ ok: false, code: "delegation_cycle", path: [from, to, from] });
+      // And by the receiving coordinator's machine, even when the sender skips its own check.
+      expect(
+        checkIncomingDelegation({
+          ownEnvironmentId: from,
+          coordinatorEnvironmentId: to,
+          delegation: { path: [from], hops: 1 },
+          hopLimit: selfLimit,
+        }),
+      ).toMatchObject({ ok: false, code: "delegation_cycle", path: [from, to] });
+    }
+  });
+
+  it("refuses a longer loop through a third machine and a path that drops the origin", () => {
+    const viaM1 = outgoingDelegation({
+      localEnvironmentId: M1,
+      targetEnvironmentId: M4,
+      origin: { coordinatorEnvironmentId: Minis, path: [M4, Minis], hops: 2 },
+    });
+    expect(viaM1).toMatchObject({ ok: false, code: "delegation_cycle" });
+    // A sender that claims a shorter path still has itself appended, and hops never shrink.
+    expect(
+      checkIncomingDelegation({
+        ownEnvironmentId: M4,
+        coordinatorEnvironmentId: Minis,
+        delegation: { path: [], hops: 3 },
+        hopLimit: selfLimit,
+      }),
+    ).toMatchObject({ ok: false, code: "delegation_limit", hops: 3 });
+  });
+
+  it("covers only the linked project, never an unlinked checkout of the same repository", () => {
+    expect(projectInGrant({ kind: "linked" }, M4, independent)).toBe(false);
+    expect(projectInGrant({ kind: "linked" }, Minis, independent)).toBe(false);
+    expect(projectInGrant({ kind: "linked" }, M3, linked)).toBe(false);
+  });
+});

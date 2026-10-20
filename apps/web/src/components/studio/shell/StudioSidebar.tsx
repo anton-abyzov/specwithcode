@@ -1,4 +1,3 @@
-import { logicalCoordinator } from "../../../studio/projectDomain";
 /**
  * The default sidebar: the personal assistant under Overview, then projects, then a
  * separate Chats section. A project
@@ -63,6 +62,7 @@ import type {
 import { useServerConfigs, useThreadShells } from "../../../state/entities";
 import { useEnvironments, usePrimaryEnvironmentId } from "../../../state/environments";
 import { projectEnvironment } from "../../../state/projects";
+import { threadLocation } from "../../../studio/threadLocation";
 import { primaryServerKeybindingsAtom } from "../../../state/server";
 import { readEnvironmentScope } from "../../../state/session";
 import { threadEnvironment } from "../../../state/threads";
@@ -76,10 +76,8 @@ import {
   partitionProjectGroups,
   sameNameHints,
 } from "../../../studio/projectListVisibility";
-import {
-  coordinatorMachineKey,
-  resolveCoordinatorMachine,
-} from "../../../studio/projectCoordinatorMachine";
+import { chooseCoordinatorView } from "../../../studio/projectCoordinatorMachine";
+import { useMachineNicknames } from "../../../studio/machineNickname";
 import { projectCoordinatorRole } from "../../../studio/projectCoordinatorThreads";
 import {
   arrangeProjects,
@@ -174,10 +172,16 @@ export default function StudioSidebar() {
   const threads = useThreadShells();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const { environments } = useEnvironments();
+  const nickname = useMachineNicknames();
   const machineLabels = useMemo(
     () =>
-      new Map(environments.map((environment) => [environment.environmentId, environment.label])),
-    [environments],
+      new Map(
+        environments.map((environment) => [
+          environment.environmentId,
+          nickname(environment.environmentId, environment.label),
+        ]),
+      ),
+    [environments, nickname],
   );
   const savedMachines = useClientSettings((settings) => settings.projectCoordinatorMachines);
   const providerEntries = useProviderEntriesByEnvironment();
@@ -240,31 +244,29 @@ export default function StudioSidebar() {
         map.set(`${member.environmentId}:${member.id}`, group);
     return map;
   }, [projectGroups]);
+  const unreachable = useUnreachableHosts();
   // The checkout each project page shows, as the page itself picks it.
   const displayedCheckouts = useMemo(() => {
     const map = new Map<string, SidebarProjectGroupMember>();
     for (const group of projectGroups) {
-      const ownership = logicalCoordinator(group.memberProjects);
-      if (ownership) {
-        if (ownership.member) map.set(group.projectKey, ownership.member);
-        continue;
-      }
-      if (group.projectKey === activeProjectKey && checkoutKey) {
-        const exact = group.memberProjects.find(
-          (member) => coordinatorMachineKey(member) === checkoutKey,
-        );
-        if (exact) map.set(group.projectKey, exact);
-        continue;
-      }
-      const { member } = resolveCoordinatorMachine({
+      const { member } = chooseCoordinatorView({
         members: group.memberProjects,
-        saved: savedMachines[group.projectKey],
+        checkoutKey: group.projectKey === activeProjectKey ? checkoutKey : null,
+        lastViewed: savedMachines[group.projectKey],
         primaryEnvironmentId,
+        unreachable,
       });
       if (member) map.set(group.projectKey, member);
     }
     return map;
-  }, [activeProjectKey, checkoutKey, primaryEnvironmentId, projectGroups, savedMachines]);
+  }, [
+    activeProjectKey,
+    checkoutKey,
+    primaryEnvironmentId,
+    projectGroups,
+    savedMachines,
+    unreachable,
+  ]);
   const threadByKey = useMemo(
     () => new Map(threads.map((thread) => [`${thread.environmentId}:${thread.id}`, thread])),
     [threads],
@@ -280,7 +282,6 @@ export default function StudioSidebar() {
       }),
     [openChatTarget],
   );
-  const unreachable = useUnreachableHosts();
   const waitingByProject = useMemo(() => {
     const counts = new Map<string, number>();
     for (const thread of threads) {
@@ -845,11 +846,28 @@ export default function StudioSidebar() {
                           thread.environmentId === primaryEnvironmentId
                             ? null
                             : (machineLabels.get(thread.environmentId) ?? null);
+                        // Once a chat runs away from the machine it lives on, the note
+                        // says both ("Lives on M4 · runs on Minis").
+                        const location = threadLocation({
+                          summary: thread.source,
+                          servingEnvironmentId: thread.environmentId,
+                          name: (environmentId, fallbackLabel) => {
+                            const known = machineLabels.get(environmentId as EnvironmentId);
+                            if (known !== undefined) return known;
+                            const name = nickname(environmentId, fallbackLabel);
+                            return fallbackLabel || name !== environmentId
+                              ? name
+                              : "another machine";
+                          },
+                          unreachable,
+                        });
                         const machineNote = hostOffline
                           ? `${machine ?? "Its machine"} can't be reached`
-                          : machine
-                            ? `On ${machine}`
-                            : null;
+                          : location.moved || location.state !== "running"
+                            ? location.description
+                            : machine
+                              ? `On ${machine}`
+                              : null;
                         const title = thread.title || "Untitled chat";
                         const project = projectByMember.get(
                           `${thread.environmentId}:${thread.projectId}`,
@@ -910,7 +928,7 @@ export default function StudioSidebar() {
                                 data-offline=""
                                 aria-hidden
                               />
-                            ) : machine ? (
+                            ) : machine || location.moved ? (
                               <LaptopIcon className="sws-row-machine" aria-hidden />
                             ) : null}
                             <span className="sr-only">

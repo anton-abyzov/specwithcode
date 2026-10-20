@@ -1,85 +1,53 @@
-import type { PgClient } from "@effect/sql-pg/PgClient";
+import type { D1Client } from "@effect/sql-d1/D1Client";
 import * as Cloudflare from "alchemy/Cloudflare";
 import * as Drizzle from "alchemy/Drizzle";
-import * as Planetscale from "alchemy/Planetscale";
 import * as Alchemy from "alchemy";
 import * as RemovalPolicy from "alchemy/RemovalPolicy";
-import type { EffectPgDatabase } from "drizzle-orm/effect-postgres";
+import type { EffectSQLiteD1Database } from "drizzle-orm/effect-d1";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
-import * as Layer from "effect/Layer";
+import type { SqlError } from "effect/sql/SqlError";
 
-import { relayDatabaseMode } from "./dbConfig.ts";
+export type RelayDatabase = EffectSQLiteD1Database & {
+  readonly $client: D1Client;
+};
 
-export class RelayDb extends Context.Service<
-  RelayDb,
-  EffectPgDatabase & {
-    readonly $client: PgClient;
-  }
->()("studio-relay/db/RelayDb") {}
+export class RelayDb extends Context.Service<RelayDb, RelayDatabase>()("studio-relay/db/RelayDb") {}
 
-export class RelayTransactions extends Context.Service<
-  RelayTransactions,
-  {
-    readonly withTransaction: RelayDb["Service"]["$client"]["withTransaction"];
-  }
->()("studio-relay/db/RelayTransactions") {
-  static readonly layer = Layer.effect(
-    RelayTransactions,
-    Effect.gen(function* () {
-      const db = yield* RelayDb;
-      return RelayTransactions.of({
-        withTransaction: db.$client.withTransaction,
-      });
-    }),
-  );
+/** A drizzle query that can be compiled without running it. */
+export interface BatchableQuery {
+  readonly toSQL: () => { readonly sql: string; readonly params: ReadonlyArray<unknown> };
 }
 
-export const PlanetscaleDatabase = Effect.gen(function* () {
+/**
+ * Runs the queries as one D1 batch: a single implicit transaction that
+ * commits or rolls back as a whole. D1 has no interactive transactions, so
+ * this replaces `withTransaction` for fixed sets of writes. Each result is the
+ * raw row list (database column names) of the matching statement.
+ */
+export const batch = (
+  db: RelayDatabase,
+  queries: ReadonlyArray<BatchableQuery>,
+): Effect.Effect<ReadonlyArray<ReadonlyArray<Record<string, unknown>>>, SqlError> =>
+  db.$client.batch(
+    queries.map((query) => {
+      const compiled = query.toSQL();
+      return db.$client.unsafe<Record<string, unknown>>(
+        compiled.sql,
+        compiled.params as Array<unknown>,
+      );
+    }),
+  );
+
+export const RelayD1Database = Effect.gen(function* () {
   const { stage } = yield* Alchemy.Stack;
   const schema = yield* Drizzle.Schema("RelaySchema", {
     schema: "./src/persistence/schema.ts",
-    out: "./migrations/postgres",
-    dialect: "postgres",
+    out: "./migrations/d1",
+    dialect: "sqlite",
   });
-
-  const mode = relayDatabaseMode(stage);
-  const database =
-    mode === "shared-database"
-      ? yield* Planetscale.PostgresDatabase("RelayPostgresDatabase", {
-          name: "studiorelay",
-          region: { slug: "us-west" },
-          clusterSize: "PS_80",
-          migrations: { dir: schema.out, table: "relay_migrations" },
-          replicas: 2,
-        }).pipe(RemovalPolicy.retain())
-      : yield* Planetscale.PostgresDatabase.ref("RelayPostgresDatabase", {
-          stage: "prod",
-        });
-  const branch =
-    mode === "stage-branch"
-      ? yield* Planetscale.PostgresBranch("RelayPostgresBranch", {
-          database,
-          migrations: { dir: schema.out, table: "relay_migrations" },
-        })
-      : undefined;
-
-  const runtimeRole = yield* Planetscale.PostgresRole("RelayPostgresRuntimeRole", {
-    database,
-    ...(branch ? { branch } : {}),
-    inheritedRoles: ["pg_read_all_data", "pg_write_all_data"],
-  });
-
-  return { branch, database, runtimeRole };
-});
-
-export const RelayHyperdrive = Effect.gen(function* () {
-  const { runtimeRole } = yield* PlanetscaleDatabase;
-  return yield* Cloudflare.Hyperdrive.Connection("RelayHyperdrive", {
-    origin: runtimeRole.origin,
-    caching: {
-      disabled: true,
-    },
-    originConnectionLimit: 40,
-  });
+  return yield* Cloudflare.D1.Database("RelayDatabase", {
+    primaryLocationHint: "wnam",
+    migrations: schema,
+  }).pipe(RemovalPolicy.retain(stage === "prod"));
 });

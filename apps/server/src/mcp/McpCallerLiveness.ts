@@ -30,6 +30,10 @@ export interface CallerLivenessInput {
     readonly archivedAt: unknown;
     /** The provider instance the thread runs on. */
     readonly providerInstanceId: ProviderInstanceId;
+    /** Set when the thread continued elsewhere; a "handoff" move fences this copy. */
+    readonly movedTo?: { readonly kind?: "project" | "handoff" | undefined } | null | undefined;
+    readonly executionState?: "running" | "fenced" | "unknown" | undefined;
+    readonly executionMachineLabel?: string | undefined;
   };
   /** The provider instance running the thread's live turn; undefined between turns. */
   readonly activeTurnProviderInstanceId: ProviderInstanceId | undefined;
@@ -42,7 +46,19 @@ export interface CallerLivenessInput {
 
 export type CallerLiveness =
   | { readonly live: true; readonly turn: "active" | "between_turns" }
-  | { readonly live: false; readonly message: string };
+  | {
+      readonly live: false;
+      readonly message: string;
+      /** "thread_fenced": the thread continues on another machine or model. */
+      readonly code?: "thread_fenced";
+    };
+
+/** Refusal for a copy whose work continues elsewhere (handoff mode). */
+export const fencedThreadVerdict = (threadId: ThreadId, where?: string): CallerLiveness => ({
+  live: false,
+  code: "thread_fenced",
+  message: `Thread ${threadId} continues ${where === undefined ? "on another machine" : `on ${where}`} (handoff mode), so this copy can only read. Its pushes, pull requests and other changes happen there now. Retrying here will not help.`,
+});
 
 export function callerLiveness(input: CallerLivenessInput): CallerLiveness {
   const { thread, caller } = input;
@@ -51,6 +67,9 @@ export function callerLiveness(input: CallerLivenessInput): CallerLiveness {
       live: false,
       message: `Thread ${thread.id} is archived, so this agent can only read. Restore the thread to change anything from it.`,
     };
+  }
+  if (thread.movedTo?.kind === "handoff" || thread.executionState === "fenced") {
+    return fencedThreadVerdict(thread.id, thread.executionMachineLabel);
   }
   const activeInstance = input.activeTurnProviderInstanceId;
   if (activeInstance !== undefined) {

@@ -28,7 +28,9 @@ Usage: install.sh [--join] [--no-service] [--standalone] [--dry-run] [--version 
                   [--node PATH]
 
 Installs SpecWithCode from its GitHub release, puts `specwithcode` (and its other name,
-`specweave-studio`) in ~/.local/bin and starts it as a background service.
+`specweave-studio`) in ~/.local/bin and starts it as a background service. To prepare a
+new machine as a worker (git, Tailscale, gh, Claude Code, Codex and this service, all at
+pinned, checksum-verified versions), run `specwithcode provision` afterwards.
 
   --join          after installing, set up Tailscale (installing it and opening its sign-in
                   page if needed) and run `specwithcode fleet invite`, which prints the line
@@ -900,6 +902,7 @@ print_next_steps() {
   else
     printf '  Run %sspecwithcode%s to start it, or %sspecwithcode service install%s to keep it running.\n\n' "$bold" "$reset" "$bold" "$reset" >&2
   fi
+  printf '  To make this a worker machine, run %sspecwithcode provision --dry-run%s to see what it would install.\n\n' "$bold" "$reset" >&2
 }
 
 main "$@"

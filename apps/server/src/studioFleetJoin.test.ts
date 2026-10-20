@@ -351,6 +351,36 @@ describe("adding machines to the fleet file", () => {
         managementSessionId: "management-session-1",
       });
       expect((await readFleetConfig(baseDir))?.machines).toEqual([]);
+
+      // Phone links there go before the management token that reaches them,
+      // and a failure to reach them never blocks the removal.
+      await NodeFSP.writeFile(
+        join(baseDir, "studio-fleet.json"),
+        JSON.stringify({
+          ...relayed,
+          machines: [{ ...relayed.machines[0], url: target.url, managementToken: token }],
+        }),
+        { mode: 0o600 },
+      );
+      const order: string[] = [];
+      const tracked = vi.fn<typeof globalThis.fetch>(async (input) => {
+        order.push(`fetch ${new URL(String(input)).pathname}`);
+        throw new TypeError("offline");
+      });
+      const unlinked = await removeFleetMachineEverywhere({
+        baseDir,
+        machine: "m1",
+        fetcher: tracked,
+        revokeWorkerAccess: async () => "kept",
+        unlinkPhones: async (machine) => {
+          order.push(`unlink ${machine.environmentId}`);
+          throw new Error("offline");
+        },
+      });
+      expect(unlinked.id).toBe("m1");
+      expect(order[0]).toBe("unlink environment-m1");
+      expect(order.length).toBeGreaterThan(1);
+      expect((await readFleetConfig(baseDir))?.machines).toEqual([]);
       const summary = fleetRemoveSummary(removed, "specwithcode");
       expect(summary).toContain("still valid on Mac M1");
       expect(summary).toContain("specwithcode auth session revoke management-session-1");

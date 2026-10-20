@@ -63,6 +63,30 @@ const tailscale = {
   spawns: [] as Array<ReadonlyArray<string>>,
 };
 const issuedSessions: Array<{ scopes?: unknown; label?: string; ttl?: Duration.Duration }> = [];
+/** The caller's own client, and what the phone endpoints asked of this machine's auth. */
+const phoneAuth = {
+  deviceType: "desktop" as "desktop" | "mobile",
+  otherSessions: [] as Array<{ sessionId: string; subject: string }>,
+  pairingLinks: [] as Array<{
+    ttl?: Duration.Duration;
+    label?: string;
+    scopes?: unknown;
+    subject?: string;
+  }>,
+  revoked: [] as string[],
+};
+const clientSession = (sessionId: string, subject: string, deviceType: string) => ({
+  sessionId: AuthSessionId.make(sessionId),
+  subject,
+  scopes: [],
+  method: "bearer-access-token" as const,
+  client: { deviceType, label: "Anton's iPhone" },
+  issuedAt: DateTime.makeUnsafe(Date.parse("2026-10-20T00:00:00.000Z")),
+  expiresAt: DateTime.makeUnsafe(Date.parse("2026-11-19T00:00:00.000Z")),
+  lastConnectedAt: null,
+  connected: true,
+  current: false,
+});
 const encoder = new TextEncoder();
 const fakeTailscale = Layer.merge(
   Layer.succeed(
@@ -203,6 +227,26 @@ async function api(
                 scopes,
               })
             : Effect.fail(new Auth.ServerAuthMissingCredentialError({})),
+        listSessions: () =>
+          Effect.succeed([
+            clientSession("synthetic-session", "fixture", phoneAuth.deviceType),
+            ...phoneAuth.otherSessions.map((entry) =>
+              clientSession(entry.sessionId, entry.subject, "mobile"),
+            ),
+          ] as never),
+        createPairingLink: (input) => {
+          phoneAuth.pairingLinks.push(input ?? {});
+          return Effect.succeed({
+            id: "pairing-phone",
+            credential: "PHONECODE",
+            expiresAt: DateTime.makeUnsafe(Date.parse("2026-10-20T18:10:00.000Z")),
+          } as never);
+        },
+        revokeSession: (sessionId) =>
+          Effect.sync(() => {
+            phoneAuth.revoked.push(sessionId);
+            return true;
+          }),
         issueSession: (input) => {
           issuedSessions.push(input ?? {});
           return Effect.succeed({
@@ -307,7 +351,19 @@ async function api(
         body: JSON.stringify(body),
       }),
     );
-  return { request, workers, add, invite, tailscaleStatus, signIn, dispose };
+  const phone = (
+    path: "" | "/mint" | "/links",
+    body: object,
+    headers: Record<string, string> = { authorization: "Bearer synthetic-session" },
+  ) =>
+    handler(
+      new Request(`http://localhost:8319/api/studio/fleet/phone${path}`, {
+        method: "POST",
+        headers: { "content-type": "application/json", host: "localhost:8319", ...headers },
+        body: JSON.stringify(body),
+      }),
+    );
+  return { request, workers, add, invite, tailscaleStatus, signIn, phone, dispose };
 }
 afterEach(() => {
   vi.unstubAllGlobals();
@@ -315,6 +371,10 @@ afterEach(() => {
   tailscale.up = null;
   tailscale.spawns.length = 0;
   issuedSessions.length = 0;
+  phoneAuth.deviceType = "desktop";
+  phoneAuth.otherSessions = [];
+  phoneAuth.pairingLinks.length = 0;
+  phoneAuth.revoked.length = 0;
 });
 describe("adding a machine over HTTP", () => {
   const invitation = encodeFleetJoinCode({
@@ -783,6 +843,183 @@ describe("Tailscale on the machine to invite", () => {
         loginUrl: "https://login.tailscale.com/a/synthetic42",
       });
       expect(tailscale.spawns).toEqual([["up"]]);
+    } finally {
+      await operator.dispose();
+      await owner.dispose();
+    }
+  });
+});
+describe("linking a phone to the other machines over HTTP", () => {
+  const PHONE_SCOPES = [AuthOrchestrationReadScope, AuthOrchestrationOperateScope];
+  /** M1 as a current machine: it answers its identity and mints a phone code. */
+  const m1 = () => {
+    const mints: Array<{ authorization: string | null; body: unknown }> = [];
+    const fetcher = vi.fn<typeof fetch>(async (input, init) => {
+      const url = new URL(String(input));
+      const json = (value: unknown) =>
+        new Response(JSON.stringify(value), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
+      if (url.origin !== ORIGIN) return new Response("{}", { status: 404 });
+      if (url.pathname === "/.well-known/studio/environment") return json(descriptor("env-m1"));
+      if (url.pathname === "/api/studio/fleet/phone/mint") {
+        mints.push({
+          authorization: new Headers(init?.headers).get("authorization"),
+          body: JSON.parse(String(init?.body)),
+        });
+        return json({
+          code: "M1CODE",
+          expiresAt: "2099-01-01T00:00:00.000Z",
+          routes: [{ kind: "lan", httpBaseUrl: "http://192.168.1.11:8319" }],
+        });
+      }
+      return new Response("{}", { status: 404 });
+    });
+    return { fetcher, mints };
+  };
+
+  it("gives the roster only to a phone paired here, with read access", async () => {
+    const { fetcher, mints } = m1();
+    vi.stubGlobal("fetch", fetcher);
+    const desktop = await api(PHONE_SCOPES, false, ORIGIN);
+    const unreadable = await api([AuthOrchestrationOperateScope], false, ORIGIN);
+    try {
+      expect((await desktop.phone("", { mint: ["env-m1"] })).status).toBe(403);
+      phoneAuth.deviceType = "mobile";
+      expect((await unreadable.phone("", { mint: ["env-m1"] })).status).toBe(403);
+      expect(
+        (
+          await desktop.phone(
+            "",
+            {},
+            { authorization: "Bearer synthetic-session", origin: "https://evil.invalid" },
+          )
+        ).status,
+      ).toBe(403);
+      expect(mints).toEqual([]);
+    } finally {
+      await desktop.dispose();
+      await unreadable.dispose();
+    }
+  });
+
+  it("lists the other machines and mints a code only on the ones the phone asks for", async () => {
+    const { fetcher, mints } = m1();
+    vi.stubGlobal("fetch", fetcher);
+    phoneAuth.deviceType = "mobile";
+    const phone = await api(PHONE_SCOPES, false, ORIGIN);
+    try {
+      const listed = await phone.phone("", {});
+      expect(listed.status).toBe(200);
+      expect(listed.headers.get("cache-control")).toBe("no-store");
+      expect(await listed.json()).toEqual({
+        hub: { environmentId: "env-m4", label: "Fixture Mac" },
+        machines: [
+          {
+            environmentId: "env-m1",
+            label: "Mac M1",
+            routes: [{ kind: "fleet", httpBaseUrl: ORIGIN }],
+          },
+        ],
+      });
+      expect(mints).toEqual([]);
+
+      const minted = await phone.phone("", { mint: ["env-m1"] });
+      expect(minted.status).toBe(200);
+      expect(await minted.json()).toEqual({
+        hub: { environmentId: "env-m4", label: "Fixture Mac" },
+        machines: [
+          {
+            environmentId: "env-m1",
+            label: "Mac M1",
+            routes: [
+              { kind: "fleet", httpBaseUrl: ORIGIN },
+              { kind: "lan", httpBaseUrl: "http://192.168.1.11:8319" },
+            ],
+            pairing: { code: "M1CODE", expiresAt: "2099-01-01T00:00:00.000Z" },
+          },
+        ],
+      });
+      expect(mints).toEqual([
+        {
+          authorization: "Bearer management-secret",
+          body: {
+            hubEnvironmentId: "env-m4",
+            hubSessionId: "synthetic-session",
+            label: "Anton's iPhone via Fixture Mac",
+            scopes: PHONE_SCOPES,
+          },
+        },
+      ]);
+    } finally {
+      await phone.dispose();
+    }
+  });
+
+  it("mints a phone-only code for a machine with access management, tied to the hub's phone session", async () => {
+    vi.stubGlobal("fetch", vi.fn<typeof fetch>());
+    const operator = await api(PHONE_SCOPES);
+    const owner = await api();
+    const mint = (scopes: ReadonlyArray<string>) => ({
+      hubEnvironmentId: "env-m4",
+      hubSessionId: "hub-phone-1",
+      label: "Anton's iPhone via M4",
+      scopes,
+    });
+    try {
+      expect((await operator.phone("/mint", mint([AuthOrchestrationReadScope]))).status).toBe(403);
+      expect(
+        (await owner.phone("/mint", mint([AuthOrchestrationReadScope, AuthAccessWriteScope])))
+          .status,
+      ).toBe(400);
+      expect((await owner.phone("/mint", mint([AuthOrchestrationOperateScope]))).status).toBe(400);
+      expect(phoneAuth.pairingLinks).toEqual([]);
+
+      const issued = await owner.phone("/mint", mint([AuthOrchestrationReadScope]));
+      expect(issued.status).toBe(200);
+      expect(issued.headers.get("cache-control")).toBe("no-store");
+      expect(await issued.json()).toEqual({
+        code: "PHONECODE",
+        expiresAt: "2026-10-20T18:10:00.000Z",
+        routes: [],
+      });
+      expect(phoneAuth.pairingLinks).toEqual([
+        {
+          ttl: Duration.minutes(10),
+          label: "Anton's iPhone via M4",
+          scopes: [AuthOrchestrationReadScope],
+          subject: "phone-link:env-m4:hub-phone-1",
+        },
+      ]);
+    } finally {
+      await operator.dispose();
+      await owner.dispose();
+    }
+  });
+
+  it("revokes the phone sessions a hub no longer has and lists the rest", async () => {
+    vi.stubGlobal("fetch", vi.fn<typeof fetch>());
+    phoneAuth.otherSessions = [
+      { sessionId: "linked-a", subject: "phone-link:env-m4:hub-a" },
+      { sessionId: "linked-b", subject: "phone-link:env-m4:hub-b" },
+      { sessionId: "other-hub", subject: "phone-link:env-m3:hub-b" },
+    ];
+    const operator = await api(PHONE_SCOPES);
+    const owner = await api();
+    try {
+      const body = { hubEnvironmentId: "env-m4", activeHubSessionIds: ["hub-a"] };
+      expect((await operator.phone("/links", body)).status).toBe(403);
+      expect(phoneAuth.revoked).toEqual([]);
+      const answered = await owner.phone("/links", body);
+      expect(answered.status).toBe(200);
+      expect(await answered.json()).toEqual({
+        links: [
+          { sessionId: "linked-a", hubSessionId: "hub-a", expiresAt: "2026-11-19T00:00:00.000Z" },
+        ],
+        revoked: 1,
+      });
+      expect(phoneAuth.revoked).toEqual(["linked-b"]);
     } finally {
       await operator.dispose();
       await owner.dispose();

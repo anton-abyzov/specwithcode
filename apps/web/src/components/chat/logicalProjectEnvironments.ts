@@ -24,6 +24,8 @@ export function buildLogicalProjectEnvironments(input: {
   readonly primaryEnvironmentId: EnvironmentId | null;
   readonly projectGroupingSettings: ProjectGroupingSettings;
   readonly scratchWorkspaceRootFor: ScratchRootLookup;
+  /** The user's short name for a machine (machineNickname); the host label otherwise. */
+  readonly nickname?: (environmentId: EnvironmentId, label: string) => string;
 }): EnvironmentOption[] {
   const {
     activeProject,
@@ -35,17 +37,20 @@ export function buildLogicalProjectEnvironments(input: {
     primaryEnvironmentId,
     projectGroupingSettings,
     scratchWorkspaceRootFor,
+    nickname,
   } = input;
   if (!activeProject) return [];
   const envs: EnvironmentOption[] = [];
   const pushEnvironment = (environmentId: EnvironmentId, projectId: ProjectId | null) => {
     const environment = environmentById.get(environmentId) ?? null;
+    const label = environment?.label ?? environmentId;
     envs.push({
       environmentId,
       projectId,
-      label: environment?.label ?? environmentId,
+      label: nickname ? nickname(environmentId, label) : label,
       isPrimary: environmentId === primaryEnvironmentId,
       machine: resolveEnvironmentMachineKind(environment?.serverConfig ?? null),
+      fleet: environments.length > 1,
     });
   };
   if (activeProjectIsScratch && draftId) {

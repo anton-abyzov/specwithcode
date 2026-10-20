@@ -147,6 +147,8 @@ export interface ProjectPullRequest {
   readonly updatedAt: string;
   readonly threadId: EnvironmentThreadShell["id"];
   readonly threadTitle: string;
+  /** The machines whose threads link it, when the list spans more than one machine. */
+  readonly machines?: readonly string[];
 }
 
 export const PROJECT_PULL_REQUEST_GROUPS = ["Open", "Merged", "Closed"] as const;
@@ -159,12 +161,16 @@ export function pullRequestGroup(state: ProjectPullRequestState): ProjectPullReq
 /**
  * Every pull request the project's threads opened or linked, once each. A
  * pull request two threads link is listed under the thread that linked it
- * last; the newest activity sorts first.
+ * last; the newest activity sorts first. With `machineOf`, each row also names
+ * every machine whose threads link it: two checkouts of one repository
+ * consolidate through the pull requests they open on the shared remote.
  */
 export function collectProjectPullRequests(
   threads: readonly EnvironmentThreadShell[],
+  machineOf?: (environmentId: EnvironmentThreadShell["environmentId"]) => string,
 ): ProjectPullRequest[] {
   const byKey = new Map<string, ProjectPullRequest & { linkedAt: string }>();
+  const machinesByKey = new Map<string, Set<string>>();
   for (const thread of threads) {
     if (thread.deletedAt !== null) continue;
     for (const link of thread.pullRequests ?? []) {
@@ -187,11 +193,19 @@ export function collectProjectPullRequests(
       };
       const existing = byKey.get(key);
       if (!existing || existing.linkedAt < candidate.linkedAt) byKey.set(key, candidate);
+      if (machineOf) {
+        const machines = machinesByKey.get(key) ?? new Set<string>();
+        machines.add(machineOf(thread.environmentId));
+        machinesByKey.set(key, machines);
+      }
     }
   }
   return [...byKey.values()]
     .toSorted((a, b) => b.updatedAt.localeCompare(a.updatedAt))
-    .map(({ linkedAt: _linkedAt, ...pullRequest }) => pullRequest);
+    .map(({ linkedAt: _linkedAt, ...pullRequest }) => {
+      const machines = machinesByKey.get(pullRequest.key);
+      return machines ? { ...pullRequest, machines: [...machines].toSorted() } : pullRequest;
+    });
 }
 
 export function openPullRequestCount(pullRequests: readonly ProjectPullRequest[]): number {

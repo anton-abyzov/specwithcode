@@ -40,7 +40,6 @@ import {
   GitBranchPlusIcon,
   GitCommitIcon,
   InfoIcon,
-  LockIcon,
   GlobeIcon,
 } from "lucide-react";
 import { Radio as RadioPrimitive } from "@base-ui/react/radio";
@@ -867,7 +866,7 @@ function PublishRepositoryDialog(props: PublishRepositoryDialogProps) {
                     value: "private" as const,
                     label: "Private",
                     description: "Only invited people",
-                    Icon: LockIcon,
+                    Icon: currentPublishProvider.Icon,
                   },
                   {
                     value: "public" as const,

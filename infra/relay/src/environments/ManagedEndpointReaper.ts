@@ -28,11 +28,10 @@ const MANAGED_ENDPOINT_LEGACY_AGE_BUCKET_DAYS = [7, 30, 90] as const;
 // returning host that has updated recovers the tunnel at the same hostname;
 // one that has not sees the client's "update SpecWithCode" message instead.
 const MANAGED_ENDPOINT_LEGACY_GRACE_PERIOD_DAYS = 7;
-// Deletions run a few at a time: each one is a row-locked database
-// transaction plus two Cloudflare calls, so one at a time cannot finish a
-// full attempt budget inside the cron's timeout. Each holds a Hyperdrive
-// connection while it runs; keep this well under the 20-connection origin
-// limit that request handlers share.
+// Deletions run a few at a time: each one is a few database writes plus two
+// Cloudflare calls, so one at a time cannot finish a full attempt budget
+// inside the cron's timeout. Keep it small so the sweep does not crowd out
+// request handlers' D1 writes.
 export const MANAGED_ENDPOINT_SWEEP_DELETE_CONCURRENCY = 4;
 // Stop starting deletions this long after the sweep starts, leaving room under
 // the cron's two-minute timeout to finish in-flight ones and record the
@@ -439,7 +438,7 @@ export const make = Effect.gen(function* () {
       truncated,
     };
   }).pipe(
-    // Dry-run rollout reads these counters from the exported span.
+    // Dry-run rollout reads these counters from the cron log line in Workers Logs.
     Effect.tap((result) =>
       Effect.annotateCurrentSpan(
         Object.fromEntries(

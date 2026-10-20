@@ -15,17 +15,23 @@ import {
   type SourceControlProviderKind,
   type SourceControlPublishRepositoryInput,
   type SourceControlPublishRepositoryResult,
+  type SourceControlInspectDestinationInput,
+  type SourceControlInspectDestinationResult,
+  type SourceControlRemoteAccessInput,
+  type SourceControlRemoteAccessResult,
   type SourceControlRepositoryCloneUrls,
   type SourceControlRepositoryInfo,
   type SourceControlRepositoryLookupInput,
 } from "@specweave-studio/contracts";
 
 import * as ServerConfig from "../config.ts";
+import { canonicalOrigin } from "../fleet/handoffGitTypes.ts";
 import { expandHomePathWith } from "../pathExpansion.ts";
 import {
   parseGitCloneProgressLine,
   type GitCloneProgressLine,
 } from "../project/gitCloneProgress.ts";
+import { originUrlFromConfig } from "../project/projectFingerprint.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
 import * as BitbucketApi from "./BitbucketApi.ts";
 import * as SourceControlProviderRegistry from "./SourceControlProviderRegistry.ts";
@@ -51,9 +57,28 @@ export class SourceControlRepositoryService extends Context.Service<
       input: SourceControlCloneRepositoryInput,
       options?: SourceControlCloneOptions,
     ) => Effect.Effect<SourceControlCloneRepositoryResult, SourceControlRepositoryError>;
-    /** Removes a partial or failed clone so the destination is empty again. */
+    /**
+     * `git ls-remote` against a URL with this machine's own credentials, never
+     * prompting. Answers whether a clone here would get past sign-in.
+     */
+    readonly checkRemoteAccess: (
+      input: SourceControlRemoteAccessInput,
+    ) => Effect.Effect<SourceControlRemoteAccessResult, SourceControlRepositoryError>;
+    /**
+     * What a folder holds before a clone or a folder copy lands there. Reads
+     * only the folder's own `.git`, never a parent's, and never runs Git.
+     */
+    readonly inspectDestination: (
+      input: SourceControlInspectDestinationInput,
+    ) => Effect.Effect<SourceControlInspectDestinationResult, SourceControlRepositoryError>;
+    /**
+     * Removes a partial or failed clone so the destination is empty again.
+     * With `removeDestination` the emptied directory goes too: for a
+     * destination the clone created whose project is being deleted.
+     */
     readonly discardClone: (
       destinationPath: string,
+      options?: SourceControlDiscardCloneOptions,
     ) => Effect.Effect<void, SourceControlRepositoryError>;
     readonly publishRepository: (
       input: SourceControlPublishRepositoryInput,
@@ -68,6 +93,12 @@ export interface SourceControlPreparedClone {
   /** What git is given; may carry embedded credentials. */
   readonly cloneUrl: string;
   readonly repository: SourceControlRepositoryInfo | null;
+  /** False when the destination did not exist, so the clone is what creates it. */
+  readonly destinationExisted: boolean;
+}
+
+export interface SourceControlDiscardCloneOptions {
+  readonly removeDestination?: boolean;
 }
 
 export interface SourceControlCloneOptions {
@@ -149,6 +180,47 @@ function redactUrlCredentials(text: string): string {
   return text.replace(URL_WITH_USERINFO, "$1");
 }
 
+const REMOTE_ACCESS_TIMEOUT_MS = 20_000;
+// No tty: every prompt (password, passphrase, host key, credential manager)
+// must fail at once instead of hanging the check.
+const REMOTE_ACCESS_ENV = {
+  GIT_TERMINAL_PROMPT: "0",
+  GCM_INTERACTIVE: "never",
+  GIT_ASKPASS: "",
+  SSH_ASKPASS: "",
+  LC_ALL: "C",
+} satisfies NodeJS.ProcessEnv;
+
+/** Canonical origins of one repository; hosted paths compare without case, local paths exactly. */
+export function sameOrigin(left: string, right: string): boolean {
+  if (left.startsWith("file://") || right.startsWith("file://")) return left === right;
+  return left.toLowerCase() === right.toLowerCase();
+}
+
+/** Transports that run commands (`ext::`, `fd::`) or URLs git would read as options. */
+export function isUnsafeRemoteUrl(remoteUrl: string): boolean {
+  const trimmed = remoteUrl.trim();
+  return (
+    trimmed.length === 0 ||
+    trimmed.startsWith("-") ||
+    /^(ext|fd)::/i.test(trimmed) ||
+    /[\0\r\n]/.test(trimmed)
+  );
+}
+
+/** Git's last meaningful lines, credential-free, for a person to read. */
+export function remoteAccessDetail(stderr: string): string | null {
+  const text = redactUrlCredentials(stderr)
+    .replace(/\b(gh[pousr]_[A-Za-z0-9]{8,}|github_pat_[A-Za-z0-9_]{8,})\b/g, "[redacted]")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .slice(-3)
+    .join(" ")
+    .slice(0, 1000);
+  return text.length > 0 ? text : null;
+}
+
 function selectRemoteUrl(
   urls: SourceControlRepositoryCloneUrls,
   protocol: SourceControlCloneProtocol | undefined,
@@ -220,7 +292,8 @@ export const make = Effect.gen(function* () {
   const prepareDestination = Effect.fn("SourceControlRepositoryService.prepareDestination")(
     function* (destinationPath: string) {
       const normalizedDestination = yield* normalizeDestinationPath(destinationPath);
-      if (yield* fileSystem.exists(normalizedDestination)) {
+      const existed = yield* fileSystem.exists(normalizedDestination);
+      if (existed) {
         const entries = yield* fileSystem
           .readDirectory(normalizedDestination, { recursive: false })
           .pipe(
@@ -249,6 +322,7 @@ export const make = Effect.gen(function* () {
         destinationPath: normalizedDestination,
         parentPath: path.dirname(normalizedDestination),
         directoryName: path.basename(normalizedDestination),
+        existed,
       };
     },
   );
@@ -281,6 +355,7 @@ export const make = Effect.gen(function* () {
 
     return {
       destinationPath: preparedDestination.destinationPath,
+      destinationExisted: preparedDestination.existed,
       remoteUrl: redactRemoteUrl(remoteUrl),
       cloneUrl: remoteUrl,
       repository,
@@ -351,8 +426,133 @@ export const make = Effect.gen(function* () {
     };
   });
 
+  const checkRemoteAccess = Effect.fn("SourceControlRepositoryService.checkRemoteAccess")(
+    function* (input: SourceControlRemoteAccessInput) {
+      const remoteUrl = input.remoteUrl.trim();
+      if (isUnsafeRemoteUrl(remoteUrl)) {
+        return yield* new SourceControlRepositoryError({
+          operation: "checkRemoteAccess",
+          provider: "unknown",
+          detail: "That clone URL is not allowed.",
+        });
+      }
+      const sshCommand = globalThis.process.env.GIT_SSH_COMMAND
+        ? {}
+        : { GIT_SSH_COMMAND: "ssh -o BatchMode=yes -o ConnectTimeout=10" };
+      return yield* git
+        .execute({
+          operation: "SourceControlRepositoryService.checkRemoteAccess",
+          cwd: config.cwd,
+          args: ["ls-remote", "--heads", "--quiet", "--", remoteUrl],
+          env: { ...REMOTE_ACCESS_ENV, ...sshCommand },
+          allowNonZeroExit: true,
+          timeoutMs: REMOTE_ACCESS_TIMEOUT_MS,
+          maxOutputBytes: 64 * 1024,
+          appendTruncationMarker: true,
+        })
+        .pipe(
+          Effect.map((result): SourceControlRemoteAccessResult =>
+            result.exitCode === 0
+              ? { status: "ok", detail: null }
+              : { status: "no-access", detail: remoteAccessDetail(result.stderr) },
+          ),
+          Effect.catch((cause) =>
+            Effect.succeed<SourceControlRemoteAccessResult>(
+              cause.detail === "Git command timed out."
+                ? {
+                    status: "timeout",
+                    detail: "The remote did not answer within 20 seconds.",
+                  }
+                : { status: "error", detail: "git could not run on this machine." },
+            ),
+          ),
+        );
+    },
+  );
+
+  /** The Git config of `folder`'s own `.git` (a directory, or a worktree's `gitdir:` file). */
+  const ownGitConfig = (folder: string) =>
+    Effect.gen(function* () {
+      const dotGit = path.join(folder, ".git");
+      const info = yield* fileSystem.stat(dotGit);
+      if (info.type === "Directory")
+        return yield* fileSystem.readFileString(path.join(dotGit, "config"));
+      const pointer = /^gitdir:\s*(.+?)\s*$/mu.exec(yield* fileSystem.readFileString(dotGit))?.[1];
+      if (!pointer) return null;
+      const gitDir = path.resolve(folder, pointer);
+      const common = yield* fileSystem
+        .readFileString(path.join(gitDir, "commondir"))
+        .pipe(Effect.orElseSucceed(() => ""));
+      const commonDir = common.trim() ? path.resolve(gitDir, common.trim()) : gitDir;
+      return yield* fileSystem.readFileString(path.join(commonDir, "config"));
+    }).pipe(Effect.orElseSucceed(() => null));
+
+  /** HEAD names a commit, the index exists and no git process holds its lock. */
+  const isCheckedOut = (folder: string) =>
+    Effect.gen(function* () {
+      const run = (operation: string, args: ReadonlyArray<string>) =>
+        git.execute({
+          operation: `SourceControlRepositoryService.inspectDestination.${operation}`,
+          cwd: folder,
+          args: [...args],
+          allowNonZeroExit: true,
+          timeoutMs: 10_000,
+          maxOutputBytes: 16 * 1024,
+        });
+      const head = yield* run("head", ["rev-parse", "--verify", "--quiet", "HEAD^{commit}"]);
+      if (head.exitCode !== 0) return false;
+      const paths = yield* run("index", [
+        "rev-parse",
+        "--git-path",
+        "index",
+        "--git-path",
+        "index.lock",
+      ]);
+      const [index, lock] = paths.stdout.split("\n").map((line) => line.trim());
+      if (paths.exitCode !== 0 || !index || !lock) return false;
+      const exists = (file: string) =>
+        fileSystem.exists(path.resolve(folder, file)).pipe(Effect.orElseSucceed(() => false));
+      return (yield* exists(index)) && !(yield* exists(lock));
+    }).pipe(Effect.orElseSucceed(() => false));
+
+  const inspectDestination = Effect.fn("SourceControlRepositoryService.inspectDestination")(
+    function* (input: SourceControlInspectDestinationInput) {
+      const target = path.resolve(expandHomePathWith(input.path.trim(), path));
+      const wanted = input.remoteUrl ? canonicalOrigin(input.remoteUrl.trim()) : null;
+      const result = (
+        state: SourceControlInspectDestinationResult["state"],
+        originKey: string | null = null,
+        checkedOut = false,
+      ): SourceControlInspectDestinationResult => ({
+        path: target,
+        state,
+        originKey,
+        sameRepository: wanted !== null && originKey !== null && sameOrigin(wanted, originKey),
+        checkedOut,
+      });
+      if (!path.isAbsolute(target)) return result("unreadable");
+      if (!(yield* fileSystem.exists(target).pipe(Effect.orElseSucceed(() => false))))
+        return result("missing");
+      const entries = yield* fileSystem
+        .readDirectory(target, { recursive: false })
+        .pipe(Effect.orElseSucceed(() => null));
+      if (entries === null) return result("unreadable");
+      if (entries.length === 0) return result("empty");
+      if (!entries.includes(".git")) return result("not-repository");
+      const config = yield* ownGitConfig(target);
+      if (config === null) return result("not-repository");
+      const url = originUrlFromConfig(config);
+      return result(
+        "repository",
+        url === null ? null : canonicalOrigin(url),
+        yield* isCheckedOut(target),
+      );
+    },
+  );
+
   const discardClone = Effect.fn("SourceControlRepositoryService.discardClone")(function* (
     destinationPath: string,
+    options?: SourceControlDiscardCloneOptions,
   ) {
     const normalized = yield* normalizeDestinationPath(destinationPath);
     // Only what git left behind may go. The destination was empty when the
@@ -382,11 +582,16 @@ export const make = Effect.gen(function* () {
         detail: "Destination path contains files that are not from the clone.",
       });
     }
-    // The directory itself is the project's workspace root and must stay;
+    // The directory itself is the project's workspace root and stays unless
+    // the caller says the clone created it and the project is going away;
     // only git's partial contents go. An interrupted git may still be closing
     // files, so removal retries briefly.
     yield* fileSystem.remove(normalized, { recursive: true, force: true }).pipe(
-      Effect.andThen(fileSystem.makeDirectory(normalized, { recursive: true })),
+      Effect.andThen(
+        options?.removeDestination
+          ? Effect.void
+          : fileSystem.makeDirectory(normalized, { recursive: true }),
+      ),
       Effect.retry({ schedule: Schedule.spaced("200 millis"), times: 5 }),
       Effect.mapError(
         (cause) =>
@@ -466,11 +671,31 @@ export const make = Effect.gen(function* () {
       cloneRepository(input, options).pipe(
         mapRepositoryError("cloneRepository", input.provider ?? "unknown"),
       ),
-    discardClone: (destinationPath) =>
-      discardClone(destinationPath).pipe(mapRepositoryError("discardClone", "unknown")),
+    checkRemoteAccess: (input) =>
+      checkRemoteAccess(input).pipe(mapRepositoryError("checkRemoteAccess", "unknown")),
+    inspectDestination: (input) =>
+      inspectDestination(input).pipe(mapRepositoryError("inspectDestination", "unknown")),
+    discardClone: (destinationPath, options) =>
+      discardClone(destinationPath, options).pipe(mapRepositoryError("discardClone", "unknown")),
     publishRepository: (input) =>
       publishRepository(input).pipe(mapRepositoryError("publishRepository", input.provider)),
   });
 });
 
 export const layer = Layer.effect(SourceControlRepositoryService, make);
+
+// The clone pre-checks register in ws.ts as single handlers, like `PullRequestCheckFailureLogRpc`:
+// more methods in the core group's `toLayer` trip TypeScript's instantiation limit. They live here
+// because a new import in ws.ts reorders its checking and trips the same limit.
+
+/** `sourceControl.checkRemoteAccess`: can this machine read the remote? */
+export const checkRemoteAccessHandler = Effect.gen(function* () {
+  const repositories = yield* SourceControlRepositoryService;
+  return repositories.checkRemoteAccess;
+});
+
+/** `sourceControl.inspectDestination`: what is already at a clone destination? */
+export const inspectDestinationHandler = Effect.gen(function* () {
+  const repositories = yield* SourceControlRepositoryService;
+  return repositories.inspectDestination;
+});

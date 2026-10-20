@@ -151,7 +151,7 @@ const ThreadLaunchTool = Tool.make("studio_thread_launch", {
     machine: Schema.optional(
       OrchestratorMcpMachineTarget.annotate({
         description:
-          "Run the thread on another machine in the owner's fleet: its id or label from studio_machine_list, or \"local\" for this one. Omitted means the project's worker machine when a project coordinator calls, otherwise this machine. The thread runs in the matching project there, with no broader modes than the user allowed for that machine; its completion wakes the caller unless reportBack is false.",
+          "Run the thread on another machine in the owner's fleet: its id or label from studio_machine_list, or \"local\" for this one; a named machine that cannot take it is refused, never substituted. Omitted means the project's worker machine when a project coordinator calls (this machine when that one is unreachable, not granted or lacks the model; placement.skipped says why), otherwise this machine. The thread runs in the matching project there, with no broader modes than the user allowed for that machine; its completion wakes the caller unless reportBack is false.",
       }),
     ),
     machineProjectId: Schema.optional(
@@ -244,6 +244,16 @@ const ThreadLaunchTool = Tool.make("studio_thread_launch", {
     delegationChecked: Schema.optional(
       Schema.Boolean.annotate({
         description: "Set by SpecWithCode between machines; ignore it.",
+      }),
+    ),
+    placement: Schema.optional(
+      Schema.Struct({
+        machine: Schema.String,
+        reason: Schema.Literals(["explicit", "project_worker_machine", "this_machine"]),
+        skipped: Schema.Array(Schema.Struct({ machine: Schema.String, reason: Schema.String })),
+      }).annotate({
+        description:
+          "Where the thread runs and why: the machine you named (explicit), the project's worker machine, or this machine. skipped lists machines that could not take it and why; tell the user when it is not empty.",
       }),
     ),
   }),

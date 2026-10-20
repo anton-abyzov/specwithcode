@@ -457,4 +457,76 @@ describe("canonical project thread inventory", () => {
       ]);
     }),
   );
+  it.effect("names the owner and execution machine of every listed thread", () =>
+    Effect.gen(function* () {
+      const serving = EnvironmentId.make("env-serving");
+      const minis = EnvironmentId.make("env-minis");
+      const base = {
+        projectId: local.projectId,
+        status: "idle",
+        activityRunStatus: null,
+        latestRunId: null,
+        modelSelection: { instanceId: provider, model: "gpt-6.1-sol" },
+        runtimeMode: "auto",
+        interactionMode: "default",
+        createdBy: "agent",
+        creationSource: "mcp",
+        settledOverride: null,
+        settledAt: null,
+        lineage: { parentThreadId: null, relationshipToParent: null },
+        visibleItemCount: 0,
+        createdAt: DateTime.makeUnsafe("2026-10-20T00:00:00Z"),
+        archivedAt: null,
+        deletedAt: null,
+      };
+      const shells = [
+        {
+          ...base,
+          id: ThreadId.make("local"),
+          title: "local",
+          updatedAt: DateTime.makeUnsafe("2026-10-20T00:00:03Z"),
+        },
+        {
+          ...base,
+          id: ThreadId.make("handed-off"),
+          title: "handed-off",
+          updatedAt: DateTime.makeUnsafe("2026-10-20T00:00:02Z"),
+          executionMachineId: minis,
+          executionMachineLabel: "Minis",
+          executionState: "fenced",
+        },
+        {
+          ...base,
+          id: ThreadId.make("arrived"),
+          title: "arrived",
+          updatedAt: DateTime.makeUnsafe("2026-10-20T00:00:01Z"),
+          ownerMachineId: minis,
+          executionMachineId: serving,
+          executionState: "running",
+        },
+      ] as unknown as ReadonlyArray<OrchestrationV2ThreadShell>;
+      const result = yield* listProjectThreadInventory({
+        projectId: local.projectId,
+        currentThreadId: null,
+        input: {},
+        servingEnvironmentId: serving,
+        threadManagement: {
+          listProjectThreads: () => Effect.succeed(shells),
+          getShellSnapshot: () => Effect.succeed({ threads: [] } as never),
+        },
+      });
+      expect(
+        result.threads.map((row) => [
+          row.threadId,
+          row.ownerMachineId,
+          row.executionMachineId,
+          row.executionState,
+        ]),
+      ).toEqual([
+        ["local", serving, serving, "running"],
+        ["handed-off", serving, minis, "fenced"],
+        ["arrived", minis, serving, "running"],
+      ]);
+    }),
+  );
 });

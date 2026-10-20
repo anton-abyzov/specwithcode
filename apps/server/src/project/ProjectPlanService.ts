@@ -1,7 +1,7 @@
 import { stringifyJson } from "../json.ts";
 import { sha256 } from "../nodeCrypto.ts";
 import * as DateTime from "effect/DateTime";
-import type { ProjectId } from "@specweave-studio/contracts";
+import type { EnvironmentId, ProjectId } from "@specweave-studio/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -12,7 +12,10 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import {
   PROJECT_PLAN_EVIDENCE_LIMIT,
+  PROJECT_PLAN_RELEASED_CLAIMS_LIMIT,
   ProjectPlanError,
+  ProjectPlanLinkExportInput,
+  ProjectPlanLinkMergeInput,
   ProjectPlanConfigureInput,
   ProjectPlanReplaceInput,
   ProjectPlanTaskInput,
@@ -21,11 +24,15 @@ import {
   ProjectPlanVerifyInput,
   type ProjectPlanActor,
   type ProjectPlanAuthorityReadResult,
+  type ProjectPlanClaim,
+  type ProjectPlanLinkExport,
+  type ProjectPlanLinkMergeResult,
   type ProjectPlanSnapshot,
   type ProjectPlanTask,
   type ProjectNativePlan,
   type ProjectPlanEvidence,
 } from "../../../../packages/contracts/src/projectPlan.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ProjectAdmission from "./ProjectAdmission.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
@@ -35,10 +42,14 @@ import {
   emptyDocument,
   emptyNative,
   equalDefinition,
+  foreignMachine,
+  ownerKey,
   sameOwner,
   validDefinition,
+  withOwnerMachine,
   withinDocumentLimit,
 } from "./plan/PlanDocument.ts";
+import { mergeNativePlans, normalizePlan } from "./plan/PlanMerge.ts";
 import { readSpecWeavePlan } from "./plan/SpecWeavePlanReader.ts";
 
 /** Actor identity must be derived by the transport from its authenticated caller.
@@ -71,6 +82,14 @@ export class ProjectPlanService extends Context.Service<
     readonly verify: (
       input: ProjectPlanVerifyInput,
     ) => Effect.Effect<ProjectPlanSnapshot, ProjectPlanError>;
+    /** This machine's native plan, for a linked copy of the project on another machine. */
+    readonly exportLinked: (
+      input: ProjectPlanLinkExportInput,
+    ) => Effect.Effect<ProjectPlanLinkExport, ProjectPlanError>;
+    /** Merges a linked copy's plan into this one; claims and evidence are never lost. */
+    readonly mergeLinked: (
+      input: ProjectPlanLinkMergeInput,
+    ) => Effect.Effect<ProjectPlanLinkMergeResult, ProjectPlanError>;
   }
 >()("specweave-studio/project/ProjectPlanService") {}
 
@@ -83,14 +102,28 @@ const isTaskInput = Schema.is(ProjectPlanTaskInput);
 const isReleaseInput = Schema.is(ProjectPlanReleaseInput);
 const isReportInput = Schema.is(ProjectPlanReportInput);
 const isVerifyInput = Schema.is(ProjectPlanVerifyInput);
-const taskStateHash = (task: ProjectPlanTask) =>
-  sha256([stringifyJson({ owner: task.owner, status: task.status, note: task.note })], "hex");
+const isLinkExportInput = Schema.is(ProjectPlanLinkExportInput);
+const isLinkMergeInput = Schema.is(ProjectPlanLinkMergeInput);
+/** A local owner hashes without its machine, so receipts from before machines were recorded stay current. */
+const localOwner = (owner: ProjectPlanActor | null, home: EnvironmentId) => {
+  if (owner?.kind !== "thread" || owner.environmentId !== home) return owner;
+  const { environmentId: _home, ...rest } = owner;
+  return rest;
+};
+const taskStateHash = (task: ProjectPlanTask, home: EnvironmentId) =>
+  sha256(
+    [stringifyJson({ owner: localOwner(task.owner, home), status: task.status, note: task.note })],
+    "hex",
+  );
+const nowIso = () => DateTime.formatIso(DateTime.nowUnsafe());
 const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const projects = yield* ProjectStore.ProjectStoreV2;
   const threads = yield* ProjectionStore.ProjectionStoreV2;
   const runner = yield* ProcessRunner.ProcessRunner;
   const admission = yield* ProjectAdmission.ProjectAdmission;
+  const self = yield* (yield* ServerEnvironment.ServerEnvironmentIdentity).getEnvironmentId;
+  const stamp = () => ({ at: nowIso(), environmentId: self });
   // Capture filesystem services at construction; the public service has no ambient requirements.
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -115,9 +148,19 @@ const make = Effect.gen(function* () {
             : Effect.fail(fail(projectId, "not_found")),
         ),
       );
+  /** A claim held by a thread on another machine binds here; only the user may release it. */
+  const claimedOn = (projectId: ProjectId, plan: ProjectNativePlan, machine: EnvironmentId) =>
+    new ProjectPlanError({
+      projectId,
+      code: "claimed",
+      machine:
+        plan.machines?.find((entry) => entry.environmentId === machine)?.label.trim() || machine,
+    });
   const actorAllowed = (projectId: ProjectId, actor: ProjectPlanActor) =>
     Effect.gen(function* () {
       if (actor.kind === "user") return;
+      if (actor.environmentId !== undefined && actor.environmentId !== self)
+        return yield* fail(projectId, "forbidden");
       const thread = yield* threads.getThreadShell(actor.threadId);
       if (
         !thread ||
@@ -164,7 +207,7 @@ const make = Effect.gen(function* () {
         )
           return yield* fail(projectId, "source_invalid");
       }
-      return { projectId, revision, ...document, external };
+      return { projectId, environmentId: self, revision, ...document, external };
     });
   const persist = (projectId: ProjectId, previous: StoredPlan, document: PlanDocument) =>
     Effect.gen(function* () {
@@ -222,9 +265,13 @@ const make = Effect.gen(function* () {
           if (
             previous.owner &&
             (!next || !equalDefinition(previous, next)) &&
-            !sameOwner(previous.owner, actor)
-          )
-            return yield* fail(projectId, "claimed");
+            !sameOwner(previous.owner, actor, self)
+          ) {
+            const machine = foreignMachine(previous.owner, self);
+            return yield* machine === null
+              ? fail(projectId, "claimed")
+              : claimedOn(projectId, plan, machine);
+          }
           // Receipts and claims survive deletion attempts; explicit release alone does not erase evidence.
           if (!next && (previous.owner || previous.evidence.length > 0))
             return yield* fail(projectId, "claimed");
@@ -239,20 +286,23 @@ const make = Effect.gen(function* () {
         if (!changed) return yield* snapshot(projectId, stored);
         const tasks: ProjectPlanTask[] = definition.tasks.map((task) => {
           const previous = plan.tasks.find((item) => item.id === task.id);
-          return {
-            ...task,
-            owner: previous?.owner ?? null,
-            note: previous?.note ?? "",
-            evidence: previous?.evidence ?? [],
-            status:
-              previous?.status === "verified" ? "reported_done" : (previous?.status ?? "planned"),
-          };
+          if (!previous) return { ...task, owner: null, note: "", evidence: [], status: "planned" };
+          // Claim times, conflicts and released claims stay with the task across edits.
+          return previous.status === "verified"
+            ? { ...previous, ...task, status: "reported_done", stateStamp: stamp() }
+            : { ...previous, ...task };
         });
         return yield* snapshot(
           projectId,
           yield* persist(projectId, stored, {
             authority: { kind: "native" },
-            native: { ...definition, tasks, contentRevision: plan.contentRevision + 1 },
+            native: {
+              ...definition,
+              tasks,
+              contentRevision: plan.contentRevision + 1,
+              definitionStamp: stamp(),
+              ...(plan.machines ? { machines: plan.machines } : {}),
+            },
           }),
         );
       }),
@@ -308,18 +358,17 @@ const make = Effect.gen(function* () {
         if (stored.revision !== input.expectedRevision) return yield* fail(projectId, "conflict");
         const plan = yield* nativePlan(projectId, stored);
         const task = yield* taskAt(projectId, plan, input.taskId);
+        const userRelease = releaseOwner !== undefined && actor.kind === "user";
+        const machine = foreignMachine(task.owner, self);
+        if (machine !== null && !userRelease) return yield* claimedOn(projectId, plan, machine);
         if (
           releaseOwner !== undefined &&
           (task.owner === null
             ? releaseOwner !== null
-            : releaseOwner === null || !sameOwner(task.owner, releaseOwner))
+            : releaseOwner === null || !sameOwner(task.owner, releaseOwner, self))
         )
           return yield* fail(projectId, "conflict");
-        if (
-          task.owner &&
-          !sameOwner(task.owner, actor) &&
-          !(releaseOwner !== undefined && actor.kind === "user")
-        )
+        if (task.owner && !sameOwner(task.owner, actor, self) && !userRelease)
           return yield* fail(projectId, "claimed");
         const updated = change(task);
         return yield* snapshot(
@@ -331,24 +380,66 @@ const make = Effect.gen(function* () {
         );
       }),
     );
+  /** Later than any released claim of the same owner, so the new claim is never mistaken for it. */
+  const claimTime = (task: ProjectPlanTask, owner: ProjectPlanActor) => {
+    let at = DateTime.toEpochMillis(DateTime.nowUnsafe());
+    for (const released of task.releasedClaims ?? [])
+      if (released.claimedAt && ownerKey(released.owner, self) === ownerKey(owner, self))
+        at = Math.max(at, Date.parse(released.claimedAt) + 1);
+    return DateTime.formatIso(DateTime.makeUnsafe(at));
+  };
+  const claimed = (task: ProjectPlanTask, actor: ProjectPlanActor) => {
+    const owner = withOwnerMachine(actor, self);
+    return task.owner && sameOwner(task.owner, owner, self)
+      ? { owner: withOwnerMachine(task.owner, self) }
+      : { owner, claimedAt: claimTime(task, owner) };
+  };
   const claim = (input: ProjectPlanTaskInput) =>
     updateTask(input, (task) => ({
       ...task,
-      owner: input.actor,
+      ...claimed(task, input.actor),
       status: task.status === "planned" ? "in_progress" : task.status,
+      stateStamp: stamp(),
     }));
   const release = (input: ProjectPlanReleaseInput) =>
     !isReleaseInput(input as unknown)
       ? Effect.fail(fail(input.projectId, "invalid"))
-      : updateTask(input, (task) => ({ ...task, owner: null }), input.expectedOwner);
+      : updateTask(
+          input,
+          (task) => {
+            const { claimedAt, claimConflict, ...rest } = task;
+            const released: ProjectPlanClaim[] = [
+              ...(task.releasedClaims ?? []),
+              ...(task.owner
+                ? [
+                    {
+                      owner: withOwnerMachine(task.owner, self),
+                      ...(claimedAt === undefined ? {} : { claimedAt }),
+                    },
+                  ]
+                : []),
+              ...(claimConflict ? [claimConflict] : []),
+            ];
+            return {
+              ...rest,
+              owner: null,
+              ...(released.length > 0
+                ? { releasedClaims: released.slice(-PROJECT_PLAN_RELEASED_CLAIMS_LIMIT) }
+                : {}),
+              stateStamp: stamp(),
+            };
+          },
+          input.expectedOwner,
+        );
   const report = (input: ProjectPlanReportInput) =>
     !isReportInput(input as unknown)
       ? Effect.fail(fail(input.projectId, "invalid"))
       : updateTask(input, (task) => ({
           ...task,
-          owner: task.owner ?? input.actor,
+          ...claimed(task, task.owner ?? input.actor),
           status: input.status,
           note: input.note,
+          stateStamp: stamp(),
         }));
   const verify = (input: ProjectPlanVerifyInput) =>
     Effect.gen(function* () {
@@ -380,7 +471,7 @@ const make = Effect.gen(function* () {
             commandId: input.commandId,
             taskId: task.id,
             contentRevision: plan.contentRevision,
-            taskStateSha256: taskStateHash(task),
+            taskStateSha256: taskStateHash(task, self),
             startedAt: DateTime.formatIso(DateTime.nowUnsafe()),
             finishedAt: null,
             outcome: "unknown",
@@ -451,19 +542,21 @@ const make = Effect.gen(function* () {
           const task = yield* taskAt(projectId, plan, input.taskId);
           const finalReceipt =
             plan.contentRevision !== receipt.contentRevision ||
-            taskStateHash(task) !== receipt.taskStateSha256
+            taskStateHash(task, self) !== receipt.taskStateSha256
               ? { ...completed, outcome: "stale" as const }
               : completed;
+          const status =
+            finalReceipt.outcome === "passed"
+              ? ("verified" as const)
+              : task.status === "verified"
+                ? ("reported_done" as const)
+                : task.status;
           const tasks = plan.tasks.map((t) =>
             t.id === task.id
               ? {
                   ...t,
-                  status:
-                    finalReceipt.outcome === "passed"
-                      ? ("verified" as const)
-                      : t.status === "verified"
-                        ? ("reported_done" as const)
-                        : t.status,
+                  status,
+                  ...(status === t.status ? {} : { stateStamp: stamp() }),
                   evidence: t.evidence.map((e) =>
                     e.commandId === completed.commandId ? finalReceipt : e,
                   ),
@@ -477,6 +570,64 @@ const make = Effect.gen(function* () {
         }),
       );
     }).pipe(mapFailure(input.projectId));
+  const linkedIdentity = (projectId: ProjectId) =>
+    Effect.gen(function* () {
+      const identity = (yield* requireProject(projectId)).workspaceSettings?.logicalProject;
+      if (
+        !identity?.members.some(
+          (member) => member.environmentId === self && member.projectId === projectId,
+        )
+      )
+        return yield* fail(projectId, "not_linked");
+      return identity;
+    });
+  const exportLinked = (input: ProjectPlanLinkExportInput) =>
+    locked(
+      input.projectId,
+      Effect.gen(function* () {
+        const { projectId } = input;
+        if (!isLinkExportInput(input)) return yield* fail(projectId, "invalid");
+        const identity = yield* linkedIdentity(projectId);
+        const plan = yield* nativePlan(projectId, yield* load(projectId));
+        return {
+          logicalProjectId: identity.id,
+          environmentId: self,
+          projectId,
+          plan: normalizePlan(plan, self),
+        };
+      }),
+    );
+  const mergeLinked = (input: ProjectPlanLinkMergeInput) =>
+    locked(
+      input.projectId,
+      Effect.gen(function* () {
+        const { projectId, peer } = input;
+        if (!isLinkMergeInput(input)) return yield* fail(projectId, "invalid");
+        const identity = yield* linkedIdentity(projectId);
+        if (
+          peer.environmentId === self ||
+          !identity.members.some(
+            (member) =>
+              member.environmentId === peer.environmentId && member.projectId === peer.projectId,
+          ) ||
+          input.export.logicalProjectId !== identity.id ||
+          input.export.environmentId !== peer.environmentId ||
+          input.export.projectId !== peer.projectId
+        )
+          return yield* fail(projectId, "not_linked");
+        const stored = yield* load(projectId);
+        const plan = yield* nativePlan(projectId, stored);
+        const merged = mergeNativePlans(
+          { plan, environmentId: self },
+          { plan: input.export.plan, environmentId: peer.environmentId },
+          peer.label,
+        );
+        if (!merged.changed) return { changed: false, revision: stored.revision };
+        if (!validDefinition(merged.plan)) return yield* fail(projectId, "invalid");
+        const next = yield* persist(projectId, stored, { ...stored.document, native: merged.plan });
+        return { changed: true, revision: next.revision };
+      }),
+    );
   return ProjectPlanService.of({
     readAuthority,
     read,
@@ -486,6 +637,8 @@ const make = Effect.gen(function* () {
     release,
     report,
     verify,
+    exportLinked,
+    mergeLinked,
   });
 });
 

@@ -29,6 +29,10 @@ public final class LiveEngine: AppEngine {
     /// the same socket; it doubles per failure up to `resubscribeMaximum`.
     public var resubscribeDelay: Duration
     public var resubscribeMaximum: Duration
+    /// How often one connected machine is asked for the rest of its fleet.
+    public var fleetLinkInterval: Duration
+    /// How often a live thread list is saved for when its machine is unreachable.
+    public var shellSaveInterval: Duration
 
     public init(
       clientLabel: @escaping @Sendable @MainActor () -> String = { "iPhone" },
@@ -40,7 +44,9 @@ public final class LiveEngine: AppEngine {
       connection: MachineConnection.Configuration = MachineConnection.Configuration(),
       monitorsNetwork: Bool = true,
       resubscribeDelay: Duration = .milliseconds(250),
-      resubscribeMaximum: Duration = .seconds(30)
+      resubscribeMaximum: Duration = .seconds(30),
+      fleetLinkInterval: Duration = .seconds(600),
+      shellSaveInterval: Duration = .seconds(30)
     ) {
       self.clientLabel = clientLabel
       self.publishInterval = publishInterval
@@ -52,6 +58,8 @@ public final class LiveEngine: AppEngine {
       self.monitorsNetwork = monitorsNetwork
       self.resubscribeDelay = resubscribeDelay
       self.resubscribeMaximum = resubscribeMaximum
+      self.fleetLinkInterval = fleetLinkInterval
+      self.shellSaveInterval = shellSaveInterval
     }
   }
 
@@ -79,6 +87,16 @@ public final class LiveEngine: AppEngine {
   var loadingDeadlinePassed = false
   /// SpecWithCode Connect, when the build is configured for it.
   let connect: ConnectRuntime?
+  /// Thread lists and last-seen times kept for unreachable machines.
+  let fleetCache: FleetCache?
+  /// Names of machines known from a fleet roster, by environment id.
+  var fleetNames: [String: String] = [:]
+  var fleetLinkedAt: [String: ContinuousClock.Instant] = [:]
+  /// The user's machine nicknames, merged from every machine's settings.
+  var fleetNicknames: [String: String] {
+    MachineNickname.merge(machineOrder.compactMap { machines[$0]?.settings?.machineNicknames })
+  }
+  var fleetLinking = false
   private var publishTask: Task<Void, Never>?
   private var pathMonitor: NWPathMonitor?
   private var lastPathSatisfied: Bool?
@@ -89,7 +107,8 @@ public final class LiveEngine: AppEngine {
     http: MachineHTTP = MachineHTTP(),
     connector: any WebSocketConnector = URLSessionWebSocketConnector(),
     options: Options = Options(),
-    connect: ConnectRuntime? = nil
+    connect: ConnectRuntime? = nil,
+    fleetCache: FleetCache? = nil
   ) {
     self.registry = registry
     self.credentials = credentials
@@ -97,6 +116,7 @@ public final class LiveEngine: AppEngine {
     self.connector = connector
     self.options = options
     self.connect = connect
+    self.fleetCache = fleetCache
   }
 
   /// The engine the app uses: the registry in Application Support and tokens in the Keychain.
@@ -110,7 +130,8 @@ public final class LiveEngine: AppEngine {
     let url = (try? MachineRegistry.defaultFileURL()) ?? FileManager.default.temporaryDirectory.appendingPathComponent("machines.json")
     let credentials = KeychainCredentialStore()
     let connect = account.map { ConnectRuntime(account: $0, credentials: credentials, clientLabel: clientLabel(), device: .current(label: clientLabel())) }
-    self.init(registry: MachineRegistry(fileURL: url), credentials: credentials, options: Options(clientLabel: clientLabel), connect: connect)
+    let cache = FleetCache(directory: url.deletingLastPathComponent().appendingPathComponent("Fleet", isDirectory: true))
+    self.init(registry: MachineRegistry(fileURL: url), credentials: credentials, options: Options(clientLabel: clientLabel), connect: connect, fleetCache: cache)
   }
 
   // MARK: - Lifecycle
@@ -139,6 +160,7 @@ public final class LiveEngine: AppEngine {
       adoptLegacyCredential(record)
       addMachine(record, credential: credentials.bestCredential(for: record))
     }
+    await loadFleetCache()
     publishNow()
   }
 
@@ -153,6 +175,7 @@ public final class LiveEngine: AppEngine {
 
   public func setActive(_ value: Bool) {
     active = value
+    if !value { saveFleetCache() }
     if value { refreshConnectIfStale() }
     for entry in machines.values {
       let connection = entry.connection
@@ -202,6 +225,7 @@ public final class LiveEngine: AppEngine {
 
   func statusChanged(_ env: String, _ status: MachineConnection.Status) {
     guard let entry = machines[env] else { return }
+    if entry.status.state == .connected, status.state != .connected { markSeen(entry) }
     entry.status = status
     if let days = status.tokenDaysLeft { entry.tokenDaysLeft = days }
     switch status.state {
@@ -226,8 +250,10 @@ public final class LiveEngine: AppEngine {
     entry.socket = socket
     entry.configTask?.cancel()
     entry.shellTask?.cancel()
+    entry.settingsTask?.cancel()
     entry.configTask = Task { [weak self] in await self?.loadConfig(entry, socket) }
     entry.shellTask = Task { [weak self] in await self?.subscribeShell(entry, socket) }
+    entry.settingsTask = Task { [weak self] in await self?.watchSettings(entry, socket) }
     pumpSessions(on: env)
   }
 
@@ -241,6 +267,7 @@ public final class LiveEngine: AppEngine {
       rename(entry, config.environment.label)
       learnRoutes(entry, socket, config.directEndpoints.map(\.httpBaseUrl))
       schedulePublish()
+      Task { [weak self] in await self?.linkFleet(via: entry) }
     } catch is CancellationError {
     } catch {
       Self.log.error("server.getConfig failed on \(entry.environmentId, privacy: .public): \(String(describing: error), privacy: .public)")
@@ -311,7 +338,9 @@ public final class LiveEngine: AppEngine {
     guard machines[entry.environmentId] === entry else { return }
     let first = entry.snapshot == nil && update.snapshot != nil
     entry.snapshot = update.snapshot
+    if update.snapshot != nil { entry.cachedSnapshot = nil }
     entry.isSynchronized = update.isSynchronized
+    if update.isSynchronized { saveShellIfDue(entry) }
     if update.snapshot != nil || update.isSynchronized { entry.answered = true }
     if first { pumpSessions(on: entry.environmentId) }
     schedulePublish()
@@ -372,11 +401,13 @@ public final class LiveEngine: AppEngine {
   func publish() {
     guard let model else { return }
     let entries = machineOrder.compactMap { machines[$0] }
-    assign(model, \.machines, entries.map(summary))
+    let nicknames = fleetNicknames
+    assign(model, \.machines, entries.map { summary($0, nicknames: nicknames) })
 
     let output = ShellSummaries.build(entries.filter(\.record.enabled).map { entry in
-      ShellSummaries.Machine(environmentId: entry.environmentId, label: entry.label, online: entry.isOnline, snapshot: entry.snapshot, projectOrder: entry.settings?.sidebarProjectOrder, scratchWorkspaceRoot: entry.config?.scratchWorkspaceRoot)
-    })
+      // A live list replaces the saved one wholesale, so a reconnect never doubles rows.
+      ShellSummaries.Machine(environmentId: entry.environmentId, label: entry.label, online: entry.isOnline, snapshot: entry.snapshot ?? entry.cachedSnapshot, projectOrder: entry.settings?.sidebarProjectOrder, scratchWorkspaceRoot: entry.config?.scratchWorkspaceRoot, lastSeenAt: entry.lastSeenAt)
+    }, names: fleetNames, nicknames: nicknames)
     assign(model, \.aide, output.aide)
     assign(model, \.projects, output.projects)
     assign(model, \.threadsByProject, output.threadsByProject)
@@ -397,11 +428,17 @@ public final class LiveEngine: AppEngine {
     }
   }
 
-  func summary(_ entry: MachineEntry) -> MachineSummary {
+  /// The name the machine goes by in rows, titles and notices.
+  func displayName(_ entry: MachineEntry, nicknames: [String: String]? = nil) -> String {
+    MachineNickname.resolve(environmentId: entry.environmentId, label: entry.label, nicknames: nicknames ?? fleetNicknames)
+  }
+
+  func summary(_ entry: MachineEntry, nicknames: [String: String]? = nil) -> MachineSummary {
     let status: MachineStatus = entry.record.enabled ? (MachineStatus(rawValue: entry.status.state.rawValue) ?? .offline) : .offline
     return MachineSummary(
       id: entry.environmentId,
       label: entry.label,
+      displayName: displayName(entry, nicknames: nicknames),
       status: status,
       platform: entry.config?.environment.platform.displayName ?? entry.status.descriptor?.platformLabel,
       serverVersion: entry.config?.environment.serverVersion ?? entry.status.descriptor?.serverVersion,
@@ -465,6 +502,11 @@ final class MachineEntry {
   var config: ServerConfig?
   var settings: ServerSettings?
   var snapshot: ShellSnapshot?
+  /// The thread list saved on the phone, shown until the live one arrives.
+  var cachedSnapshot: ShellSnapshot?
+  /// When the phone last had this machine connected.
+  var lastSeenAt: Date?
+  var shellSavedAt: ContinuousClock.Instant?
   var isSynchronized = false
   /// The machine answered once, or failed; `isLoading` waits for this.
   var answered = false
@@ -474,6 +516,7 @@ final class MachineEntry {
   var tasks: [Task<Void, Never>] = []
   var configTask: Task<Void, Never>?
   var shellTask: Task<Void, Never>?
+  var settingsTask: Task<Void, Never>?
 
   init(record: MachineRecord, connection: MachineConnection) {
     self.environmentId = record.environmentId
@@ -503,5 +546,6 @@ final class MachineEntry {
     tasks = []
     configTask?.cancel()
     shellTask?.cancel()
+    settingsTask?.cancel()
   }
 }

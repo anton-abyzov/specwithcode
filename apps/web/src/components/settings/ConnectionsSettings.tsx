@@ -3,6 +3,7 @@ import {
   ChevronRightIcon,
   ChevronsLeftRightEllipsisIcon,
   EllipsisIcon,
+  PencilIcon,
   PlusIcon,
   QrCodeIcon,
   RouteIcon,
@@ -102,6 +103,8 @@ import { LocalEnvironmentSetting } from "./LocalEnvironmentSetting";
 import { searchableSetting } from "./settingsSearch";
 import { setFleetEnvironmentSkipped } from "../../studio/fleetAutoConnect";
 import { EnvironmentIconMenu } from "./EnvironmentIconPicker";
+import { RenameMachineDialog } from "./RenameMachineDialog";
+import { useMachineNickname } from "../../studio/machineNickname";
 import { EnvironmentRoutesList } from "./EnvironmentRoutesList";
 import { usePreparedConnection } from "~/state/session";
 import {
@@ -110,6 +113,7 @@ import {
   formatDesktopSshTarget,
 } from "./EnvironmentRow";
 import { FoldedSettingsSection } from "./FoldedSettingsSection";
+import { PhoneConnectSettings } from "./PhoneConnectSettings";
 import { StudioFleetConnections, StudioListenerRow } from "./StudioFleetConnections";
 import { ConnectionsLibrarySettings } from "./ConnectionsLibrarySettings";
 import { PairPhoneSettings } from "./PairPhoneSettings";
@@ -1492,7 +1496,9 @@ function SavedBackendListRow({
   onAddRoute,
 }: SavedBackendListRowProps) {
   const [routesOpen, setRoutesOpen] = useState(false);
+  const [renaming, setRenaming] = useState(false);
   const environmentId = environment.environmentId;
+  const nickname = useMachineNickname(environmentId, environment.label);
   const unsupported = environment.connection.phase === "unsupported";
   const enabled = environment.entry.enabled && !unsupported;
   const isConnected = environment.connection.phase === "connected";
@@ -1624,7 +1630,8 @@ function SavedBackendListRow({
   return (
     <EnvironmentRow
       kind={machineKind}
-      label={environment.label}
+      label={nickname}
+      hostLabel={environment.label}
       dimmed={!enabled}
       subtitle={
         <span className="flex min-w-0 items-center gap-1">
@@ -1736,6 +1743,10 @@ function SavedBackendListRow({
           <EllipsisIcon className="size-3.5" />
         </MenuTrigger>
         <MenuPopup align="end">
+          <MenuItem onClick={() => setRenaming(true)}>
+            <PencilIcon />
+            Rename…
+          </MenuItem>
           <EnvironmentIconMenu
             environmentId={environmentId}
             serverConfig={environment.serverConfig}
@@ -1756,6 +1767,12 @@ function SavedBackendListRow({
           </MenuItem>
         </MenuPopup>
       </Menu>
+      <RenameMachineDialog
+        environmentId={environmentId}
+        hostLabel={environment.label}
+        open={renaming}
+        onOpenChange={setRenaming}
+      />
     </EnvironmentRow>
   );
 }
@@ -2193,6 +2210,8 @@ export function ConnectionsSettings() {
     DesktopServerExposureState["mode"] | null
   >(null);
   const primaryServerConfig = primaryEnvironment?.serverConfig ?? null;
+  const [renamingPrimary, setRenamingPrimary] = useState(false);
+  const primaryNickname = useMachineNickname(primaryEnvironmentId, primaryEnvironment?.label);
   const primaryVersionMismatch = resolveServerConfigVersionMismatch(primaryServerConfig);
   const primaryServerUpdateState = useAtomValue(
     serverEnvironment.updateStateAtom(primaryEnvironmentId),
@@ -3660,9 +3679,7 @@ export function ConnectionsSettings() {
         <>
           <SettingsSection
             {...searchableSetting("connections-environment")}
-            title={
-              primaryEnvironment?.label ?? (desktopBridge ? "This machine" : "Primary environment")
-            }
+            title={primaryNickname || (desktopBridge ? "This machine" : "Primary environment")}
             icon={
               <EnvironmentMachineIcon
                 aria-hidden
@@ -3676,26 +3693,38 @@ export function ConnectionsSettings() {
             }
             headerAction={
               primaryEnvironmentId !== null ? (
-                <Menu>
-                  <MenuTrigger
-                    render={
-                      <Button
-                        type="button"
-                        variant="ghost-muted"
-                        size="icon-xs"
-                        aria-label="More actions for this machine"
+                <>
+                  <Menu>
+                    <MenuTrigger
+                      render={
+                        <Button
+                          type="button"
+                          variant="ghost-muted"
+                          size="icon-xs"
+                          aria-label="More actions for this machine"
+                        />
+                      }
+                    >
+                      <EllipsisIcon className="size-3.5" />
+                    </MenuTrigger>
+                    <MenuPopup align="end">
+                      <MenuItem onClick={() => setRenamingPrimary(true)}>
+                        <PencilIcon />
+                        Rename…
+                      </MenuItem>
+                      <EnvironmentIconMenu
+                        environmentId={primaryEnvironmentId}
+                        serverConfig={primaryServerConfig}
                       />
-                    }
-                  >
-                    <EllipsisIcon className="size-3.5" />
-                  </MenuTrigger>
-                  <MenuPopup align="end">
-                    <EnvironmentIconMenu
-                      environmentId={primaryEnvironmentId}
-                      serverConfig={primaryServerConfig}
-                    />
-                  </MenuPopup>
-                </Menu>
+                    </MenuPopup>
+                  </Menu>
+                  <RenameMachineDialog
+                    environmentId={primaryEnvironmentId}
+                    hostLabel={primaryEnvironment?.label ?? "This machine"}
+                    open={renamingPrimary}
+                    onOpenChange={setRenamingPrimary}
+                  />
+                </>
               ) : null
             }
           >
@@ -4112,6 +4141,7 @@ export function ConnectionsSettings() {
           savedEnvironmentIds={savedEnvironments.map((environment) => environment.environmentId)}
         />
       ) : null}
+      {primaryEnvironmentId !== null ? <PhoneConnectSettings /> : null}
       {primaryEnvironmentId !== null ? (
         <PairPhoneSettings
           endpoint={defaultDesktopAdvertisedEndpoint}

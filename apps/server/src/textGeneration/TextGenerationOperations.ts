@@ -22,6 +22,7 @@ import type * as TextGeneration from "./TextGeneration.ts";
 import {
   buildBranchNamePrompt,
   buildCommitMessagePrompt,
+  buildHandoffNotePrompt,
   buildPrContentPrompt,
   buildThreadTitlePrompt,
 } from "./TextGenerationPrompts.ts";
@@ -32,6 +33,9 @@ import {
 } from "./TextGenerationUtils.ts";
 
 export type Operation = keyof TextGeneration.TextGeneration["Service"];
+
+type Service = TextGeneration.TextGeneration["Service"];
+type GenerateHandoffNote = NonNullable<Service["generateHandoffNote"]>;
 
 /** One prompt for a provider to run. */
 export interface Request<S extends Schema.Top> {
@@ -174,10 +178,27 @@ export function fromRunner(name: string, run: Runner): TextGeneration.TextGenera
       };
     });
 
+  const generateHandoffNote: GenerateHandoffNote = Effect.fn(`${name}.generateHandoffNote`)(
+    function* (input) {
+      const generated = yield* run({
+        operation: "generateHandoffNote",
+        cwd: input.cwd,
+        modelSelection: input.modelSelection,
+        ...buildHandoffNotePrompt({ transcript: input.transcript, maxWords: input.maxWords }),
+      });
+      return {
+        done: cleanGeneratedText(generated.done).trim(),
+        next: cleanGeneratedText(generated.next).trim(),
+        openQuestions: cleanGeneratedText(generated.openQuestions).trim(),
+      };
+    },
+  );
+
   return {
     generateCommitMessage,
     generatePrContent,
     generateBranchName,
     generateThreadTitle,
-  } satisfies TextGeneration.TextGeneration["Service"];
+    generateHandoffNote,
+  } satisfies Service;
 }

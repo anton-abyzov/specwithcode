@@ -62,7 +62,8 @@ export class ProjectCloneTracker extends Context.Service<
     readonly retry: (projectId: ProjectId) => Effect.Effect<boolean, SourceControlRepositoryError>;
     /**
      * Stops tracking a project's clone, interrupting it if it still runs and
-     * removing an unfinished checkout. Called when the project is deleted.
+     * removing an unfinished checkout, with its directory when the clone
+     * created it. Called when the project is deleted.
      */
     readonly discard: (projectId: ProjectId) => Effect.Effect<void>;
     readonly get: (projectId: ProjectId) => Effect.Effect<ProjectCloneSnapshot | null>;
@@ -108,6 +109,13 @@ interface TrackedClone {
     readonly cloneUrl: string;
     readonly destinationPath: string;
     readonly repository: SourceControlRepositoryInfo | null;
+    /**
+     * The destination did not exist before the clone. Deleting the project
+     * then removes the directory itself, not just git's partial contents.
+     * Memory only, like the snapshot: after a restart the tracker forgets the
+     * clone and a delete leaves the folder alone.
+     */
+    readonly createdDestination: boolean;
   };
 }
 
@@ -294,6 +302,7 @@ export const make = Effect.gen(function* () {
             cloneUrl: prepared.cloneUrl,
             destinationPath: prepared.destinationPath,
             repository: prepared.repository,
+            createdDestination: !prepared.destinationExisted,
           },
         });
         return [true, next] as const;
@@ -395,9 +404,15 @@ export const make = Effect.gen(function* () {
       if (tracked.fiber) yield* Fiber.interrupt(tracked.fiber);
       // Git may have finished while the interrupt was landing; the project
       // is going away either way, but a complete checkout is the user's.
+      // A destination the clone created goes with the project; one that was
+      // already there is left empty, as it was found.
       const after = yield* get(projectId);
       if (after?.phase !== "done") {
-        yield* repositories.discardClone(tracked.input.destinationPath).pipe(Effect.ignore);
+        yield* repositories
+          .discardClone(tracked.input.destinationPath, {
+            removeDestination: tracked.input.createdDestination,
+          })
+          .pipe(Effect.ignore);
       }
       yield* clearRetention(projectId);
       yield* remove(projectId);

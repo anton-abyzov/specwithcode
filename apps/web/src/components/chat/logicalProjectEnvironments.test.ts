@@ -74,3 +74,18 @@ it("retains the current archived machine when displaying existing conversation h
     }).map((target) => target.projectId),
   ).toEqual(["source"]);
 });
+
+it("labels each machine with its nickname and marks a saved fleet", () => {
+  const targets = buildLogicalProjectEnvironments({
+    ...input([source]),
+    nickname: (environmentId, label) => (environmentId === m4 ? "Studio" : label),
+  });
+  expect(targets).toEqual([
+    expect.objectContaining({ environmentId: m4, label: "Studio", fleet: true }),
+  ]);
+  const alone = buildLogicalProjectEnvironments({
+    ...input([source]),
+    environments: environments.slice(0, 1),
+  });
+  expect(alone).toEqual([expect.objectContaining({ label: "m4", fleet: false })]);
+});

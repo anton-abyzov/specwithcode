@@ -28,7 +28,7 @@ struct ThreadInfoSheet: View {
           WeaveRow("Machine", stacksTrailing: true) {
             EmptyView()
           } trailing: {
-            MachineBadge(status: machine?.status.weaveStatus ?? .offline, label: machine?.label ?? summary?.machineLabel)
+            MachineBadge(status: machine?.status.weaveStatus ?? .offline, label: machine?.displayName ?? summary?.machineLabel)
           }
           if let summary {
             WeaveRow("Status", trailingText: summary.isResolved ? "Resolved" : summary.activity.label)

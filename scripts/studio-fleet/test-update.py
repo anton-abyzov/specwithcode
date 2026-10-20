@@ -1225,6 +1225,23 @@ class ApplyRecovery(unittest.TestCase):
   result=json.loads(self.output.read_text())
   self.assertEqual((result['phase'],result['authHeartbeatWitness']['changedRows']),('verified',1))
   self.assertEqual(len(self.restart_calls),1)
+ def test_a_reconnect_between_the_rows_read_and_the_auth_proof_is_proven_not_refused(self):
+  # The proof reads the auth cells with their own hash, so a client connecting again after the
+  # rows were read is proven like the first reconnect instead of refusing as a changed read.
+  self.prepare_heartbeat();advance=self.on_restart;self.on_restart=lambda:None
+  for rows in (self.rows,self.before['rows']):rows[update.AUTH_INVARIANT_KEY]='i'*64
+  real_gate,real_rows,reads=update.write_install_gate,self.rows_since,[]
+  def gate_then_reconnect(own,home):real_gate(own,home);advance();self.rows[update.AUTH_INVARIANT_KEY]='i'*64
+  def read_then_reconnect(state,expected_rows):
+   value=real_rows(state,expected_rows);reads.append(value)
+   while len(reads)==1 and self.rows['hashes']['auth_sessions']==value[0]['hashes']['auth_sessions']:advance()
+   self.rows[update.AUTH_INVARIANT_KEY]='i'*64
+   return value
+  self.rows_since=read_then_reconnect
+  with patch.object(update,'write_install_gate',side_effect=gate_then_reconnect):self.execute(True)
+  result=json.loads(self.output.read_text())
+  self.assertEqual((result['phase'],result['authHeartbeatWitness']['changedRows']),('verified',1))
+  self.assertEqual((len(reads),len(self.restart_calls)),(2,1))
  def test_without_the_heartbeat_proof_any_reconnect_refuses_before_the_restart(self):
   # Auth stays byte-exact through the restart then, so a reconnect would only roll it back.
   with self.assertRaisesRegex(AssertionError,'Native work changed before restart'):

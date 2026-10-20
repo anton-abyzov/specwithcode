@@ -10,11 +10,18 @@ import {
 } from "@specweave-studio/contracts";
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 
 import type { OrchestratorV2Error } from "../orchestration-v2/Orchestrator.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as OrchestrationMcp from "./OrchestratorMcpService.ts";
-import { afterStop, callerLiveness, lastTurnWasStopped } from "./McpCallerLiveness.ts";
+import * as HandoffMode from "../handoff/HandoffMode.ts";
+import {
+  afterStop,
+  type CallerLiveness,
+  callerLiveness,
+  lastTurnWasStopped,
+} from "./McpCallerLiveness.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 
 export const unavailable = () =>
@@ -128,7 +135,7 @@ export const assertLiveCaller = Effect.fn("mcp.assertLiveCaller")(function* ({
   threads,
 }: Caller) {
   if (caller === undefined) return;
-  let verdict =
+  let verdict: CallerLiveness =
     scope.thread === undefined
       ? ({ live: false, message: "The calling provider has no thread." } as const)
       : callerLiveness({
@@ -146,9 +153,19 @@ export const assertLiveCaller = Effect.fn("mcp.assertLiveCaller")(function* ({
       .pipe(Effect.mapError(unavailable));
     verdict = afterStop(verdict, caller.id, lastTurnWasStopped(records));
   }
+  if (verdict.live) {
+    // Handoff mode: another machine took the thread, or this turn's lease epoch is stale.
+    const handoff = yield* Effect.serviceOption(HandoffMode.HandoffMode);
+    if (Option.isSome(handoff)) {
+      const epoch = yield* handoff.value.fence(caller.id, caller.activeRunId);
+      if (epoch.kind === "fenced" || epoch.kind === "stale") {
+        verdict = { live: false, code: "thread_fenced", message: epoch.message };
+      }
+    }
+  }
   if (!verdict.live) {
     return yield* new OrchestratorMcpFailure({
-      code: "parent_not_active",
+      code: verdict.code ?? "parent_not_active",
       message: verdict.message,
     });
   }

@@ -30,6 +30,7 @@ struct ProjectOverviewView: View {
         section("Needs you", groups.needsYou)
         section("Working", groups.working)
         section("Idle", groups.idle)
+        section("Unknown", groups.unknown)
         if !groups.resolved.isEmpty {
           resolvedToggle(count: groups.resolved.count).plainListRow()
           if showResolved || searching {
@@ -113,13 +114,14 @@ struct ProjectOverviewView: View {
             .accessibilityHidden(true)
         }
         if thread.isUnread { UnreadDot() }
-        if thread.activity == .failed, !thread.isResolved {
+        if thread.activity == .failed, !thread.isResolved, !thread.isUnknown {
           Image(systemName: "exclamationmark.triangle")
             .font(.system(size: 14, weight: .regular))
             .foregroundStyle(Color.weave.fail)
             .accessibilityHidden(true)
         }
-        MachineBadge(status: thread.machineOnline ? .online : .offline)
+        // Offline when the machine that answers for the thread is out, even if it lives elsewhere.
+        MachineBadge(status: thread.machineOnline && !thread.isUnknown ? .online : .offline)
           .accessibilityHidden(true)
       }
     }
@@ -145,6 +147,16 @@ struct ProjectOverviewView: View {
   }
 
   private func meta(_ thread: ThreadSummary) -> String {
+    Self.meta(thread)
+  }
+
+  /// "M4 → Minis · 2m · 3/5 tasks": where the thread lives and runs, then its state.
+  static func meta(_ thread: ThreadSummary, now: Date = .now) -> String {
+    if thread.isUnknown { return thread.placement.subtitle(now: now) }
+    return "\(thread.placement.label) · \(status(thread))"
+  }
+
+  private static func status(_ thread: ThreadSummary) -> String {
     switch thread.activity {
     case .working where !thread.isResolved:
       var parts = [Elapsed.short(since: thread.workStartedAt ?? thread.updatedAt)]
@@ -161,12 +173,15 @@ struct ProjectOverviewView: View {
   /// tasks"), which speech reads as units and fractions; status and time are
   /// spoken in full in the value instead.
   static func spokenLabel(_ thread: ThreadSummary) -> String {
-    if thread.activity == .working, !thread.isResolved { return thread.title }
+    if thread.isUnknown || (thread.activity == .working && !thread.isResolved) { return thread.title }
     guard let preview = thread.preview, !preview.isEmpty else { return thread.title }
     return "\(thread.title), \(preview)"
   }
 
   static func spoken(_ thread: ThreadSummary, now: Date = .now) -> String {
+    if !thread.isResolved, let unknown = thread.placement.unknownLabel(now: now) {
+      return [Self.spokenPlacement(thread.placement), unknown.replacingOccurrences(of: " · ", with: ", ")].joined(separator: ", ")
+    }
     var parts = [thread.isResolved ? "Resolved" : thread.activity.label]
     if thread.activity == .working, !thread.isResolved {
       parts.append("for \(Elapsed.spoken(since: thread.workStartedAt ?? thread.updatedAt, now: now))")
@@ -176,8 +191,14 @@ struct ProjectOverviewView: View {
     }
     if thread.isUnread { parts.append("Unread") }
     if thread.isPinned { parts.append("Pinned") }
-    parts.append("\(thread.machineLabel) \(thread.machineOnline ? "online" : "offline")")
+    parts.append(Self.spokenPlacement(thread.placement) + (thread.machineOnline ? " online" : " offline"))
     return parts.joined(separator: ", ")
+  }
+
+  /// "M4", or "M4, running on Minis".
+  static func spokenPlacement(_ placement: ThreadPlacement) -> String {
+    guard let runsOn = placement.runsOn else { return placement.owner }
+    return "\(placement.owner), running on \(runsOn)"
   }
 
   // MARK: Search and empty

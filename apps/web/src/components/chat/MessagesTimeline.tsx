@@ -112,6 +112,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type ComponentProps,
   type CSSProperties,
   type KeyboardEvent,
   type MouseEvent,
@@ -158,7 +159,6 @@ import { StudioWordmark } from "../StudioWordmark";
 import { ThreadContextChip } from "../ThreadContextChip";
 import {
   BotIcon,
-  BrainIcon,
   CheckIcon,
   ChevronDownIcon,
   ChevronRightIcon,
@@ -335,6 +335,7 @@ import {
   V2LifecycleRow,
   type HandoffTimelineRun,
 } from "./V2LifecycleRow";
+import { ThinkingMark } from "./ThinkingMark";
 import { SecretRequestCard } from "./SecretRequestCard";
 import { DecisionCard } from "./DecisionCard";
 import { linkifyQuestionPaths } from "./questionCard.logic";
@@ -4196,10 +4197,11 @@ function ThinkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "think
   const quietMs = quietForMs(lastActivityMs, nowMs);
   const activity = (
     <LiveActivityRow
+      thinking={LIVE_THINKING_SCOPE}
       label={
         awaitingPerson ? `Waiting for ${runHealth.label}` : quiet ? "No new events" : "Thinking"
       }
-      iconName={awaitingPerson ? "message-circle" : quiet ? "clock" : "brain"}
+      iconName={awaitingPerson ? "message-circle" : quiet ? "clock" : "thinking"}
       active={!quiet && !awaitingPerson}
       shimmer
       liveState={quiet ? "quiet" : "fresh"}
@@ -4232,6 +4234,14 @@ function ThinkingTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "think
 }
 
 function LiveActivityRow({
+  thinking,
+  ...props
+}: ComponentProps<typeof LiveActivityRowBody> & { thinking?: ThinkingMarkScope }) {
+  const row = <LiveActivityRowBody {...props} />;
+  return thinking ? <ThinkingMarkScopeCtx value={thinking}>{row}</ThinkingMarkScopeCtx> : row;
+}
+
+function LiveActivityRowBody({
   label,
   iconName,
   toolIcon,
@@ -4386,6 +4396,7 @@ function LiveWorkEntryTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "
       onClick={() => ctx.onToggleWorkGroup(row.groupId, row.id)}
     >
       <LiveActivityRow
+        thinking={{ runId: row.entry.runId ?? null, streaming: live && !quiet }}
         liveState={quiet ? "quiet" : "fresh"}
         trailing={
           stepStartedAtMs !== null ? (
@@ -4473,7 +4484,7 @@ function toolGroupSummaryIconName(
     case "dynamic-tool":
       return "hammer";
     case "reasoning":
-      return "brain";
+      return "thinking";
     case "agent-tool":
       return "bot";
     case "tone-tool":
@@ -4491,17 +4502,21 @@ function WorkGroupToggleTimelineRow({
 }) {
   const ctx = use(TimelineRowCtx);
   return (
-    <WorkGroupHeader
-      label={row.summary}
-      iconName={row.summaryToolIcon ?? row.toolSurface ?? toolGroupSummaryIconName(row.summaryKind)}
-      toolIcon={row.toolIcon}
-      failed={row.hasFailure}
-      expanded={row.expanded}
-      toolCount={row.toolCount}
-      createdAt={row.createdAt}
-      timestampFormat={ctx.timestampFormat}
-      onToggle={() => ctx.onToggleWorkGroup(row.groupId, row.id)}
-    />
+    <ThinkingMarkScopeCtx value={{ runId: row.runId ?? null, streaming: false }}>
+      <WorkGroupHeader
+        label={row.summary}
+        iconName={
+          row.summaryToolIcon ?? row.toolSurface ?? toolGroupSummaryIconName(row.summaryKind)
+        }
+        toolIcon={row.toolIcon}
+        failed={row.hasFailure}
+        expanded={row.expanded}
+        toolCount={row.toolCount}
+        createdAt={row.createdAt}
+        timestampFormat={ctx.timestampFormat}
+        onToggle={() => ctx.onToggleWorkGroup(row.groupId, row.id)}
+      />
+    </ThinkingMarkScopeCtx>
   );
 }
 
@@ -5534,7 +5549,6 @@ function useStableRows(rows: MessagesTimelineRow[], identity: string): MessagesT
 
 type WorkEntryIconName =
   | "bot"
-  | "brain"
   | "browser"
   | "check"
   | "circle-alert"
@@ -5548,6 +5562,7 @@ type WorkEntryIconName =
   | "search"
   | "square-pen"
   | "terminal"
+  | "thinking"
   | "pull-request"
   | "studio-code"
   | "wrench"
@@ -5733,8 +5748,8 @@ function WorkEntryIcon({ name, className }: { name: WorkEntryIconName; className
       return <PullRequestGlyph.pullRequest className={className} aria-hidden />;
     case "bot":
       return <BotIcon className={className} aria-hidden />;
-    case "brain":
-      return <BrainIcon className={className} aria-hidden />;
+    case "thinking":
+      return <TimelineThinkingMark className={className} />;
     case "browser":
       return <BrowserAppIcon className={className} />;
     case "computer":
@@ -5772,6 +5787,37 @@ function WorkEntryIcon({ name, className }: { name: WorkEntryIconName; className
   }
 }
 
+/**
+ * The run a thinking row belongs to, so its mark names that run's provider,
+ * and whether the thought is still streaming. Rows outside a scope use the
+ * latest run and stay still.
+ */
+interface ThinkingMarkScope {
+  readonly runId: RunId | null;
+  readonly streaming: boolean;
+}
+const ThinkingMarkScopeCtx = createContext<ThinkingMarkScope>({ runId: null, streaming: false });
+const LIVE_THINKING_SCOPE: ThinkingMarkScope = { runId: null, streaming: true };
+
+function TimelineThinkingMark({ className }: { className: string }) {
+  const { providerStatuses, runs } = use(TimelineRowCtx);
+  const { latestRunId } = use(TimelineRowActivityCtx);
+  const scope = use(ThinkingMarkScopeCtx);
+  const runId = scope.runId ?? latestRunId;
+  const run =
+    (runId === null ? undefined : runs.find((candidate) => candidate.id === runId)) ??
+    runs.reduce<HandoffTimelineRun | undefined>(
+      (latest, candidate) =>
+        latest === undefined || candidate.ordinal > latest.ordinal ? candidate : latest,
+      undefined,
+    );
+  const provider =
+    run === undefined
+      ? undefined
+      : providerStatuses.find((candidate) => candidate.instanceId === run.providerInstanceId);
+  return <ThinkingMark provider={provider} pulse={scope.streaming} className={className} />;
+}
+
 function workToneIcon(tone: TimelineWorkEntry["tone"]): {
   iconName: WorkEntryIconName;
   className: string;
@@ -5784,7 +5830,7 @@ function workToneIcon(tone: TimelineWorkEntry["tone"]): {
   }
   if (tone === "thinking") {
     return {
-      iconName: "brain",
+      iconName: "thinking",
       className: "text-icon-muted",
     };
   }
@@ -6257,12 +6303,19 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
           role={showFailedIndicator ? "img" : undefined}
           aria-label={showFailedIndicator ? "Tool call failed" : undefined}
         >
-          <ToolActivityIconView
-            icon={entryToolIcon}
-            fallbackName={entryIconName}
-            className="block size-4 shrink-0 stroke-2"
-            muted
-          />
+          <ThinkingMarkScopeCtx
+            value={{
+              runId: workEntry.runId ?? null,
+              streaming: isReasoning && workEntry.toolLifecycleStatus === "inProgress",
+            }}
+          >
+            <ToolActivityIconView
+              icon={entryToolIcon}
+              fallbackName={entryIconName}
+              className="block size-4 shrink-0 stroke-2"
+              muted
+            />
+          </ThinkingMarkScopeCtx>
         </span>
       }
       label={

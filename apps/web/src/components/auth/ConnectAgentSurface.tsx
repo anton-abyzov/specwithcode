@@ -7,7 +7,6 @@ import {
 } from "@specweave-studio/contracts";
 import { Radio as RadioPrimitive } from "@base-ui/react/radio";
 import { isLoopbackHost } from "@specweave-studio/shared/preview";
-import { EyeIcon, type LucideIcon } from "lucide-react";
 import type * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
@@ -16,7 +15,8 @@ import { type ReactNode, useCallback, useEffect, useState } from "react";
 import { PrimaryEnvironmentHttpClient } from "~/environments/primary/httpClient";
 import { runPrimaryHttp } from "~/lib/runtime";
 import { cn } from "~/lib/utils";
-import { runtimeModeConfig } from "../chat/runtimeModeConfig";
+import { ReadOnlyAccessGlyph } from "../chat/AccessGlyph";
+import { runtimeModeConfig, type RuntimeModeIcon } from "../chat/runtimeModeConfig";
 import { Alert, AlertDescription } from "../ui/alert";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
@@ -26,12 +26,12 @@ import { AuthSurfaceShell } from "./AuthSurfaceShell";
 
 const accessConfig: Record<
   AuthMcpClientAccess,
-  { readonly label: string; readonly description: string; readonly icon: LucideIcon }
+  { readonly label: string; readonly description: string; readonly icon: RuntimeModeIcon }
 > = {
   "read-only": {
     label: "Read only",
     description: "Read projects and threads. Cannot start, message or change anything.",
-    icon: EyeIcon,
+    icon: ReadOnlyAccessGlyph,
   },
   ...runtimeModeConfig,
 };

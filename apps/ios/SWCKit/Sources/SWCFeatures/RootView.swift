@@ -212,9 +212,9 @@ private struct OfflineMachinesView: View {
     if offline.count == 1 {
       let machine = offline[0]
       switch machine.status {
-      case .needsRepair: return machine.needsSignIn ? "Sign in again to reach \(machine.label)" : machine.hasDirectPairing ? "Pair \(machine.label) again" : "Can't reach \(machine.label)"
-      case .unsupported: return "Update SpecWithCode on \(machine.label)"
-      default: return "\(machine.label) is offline"
+      case .needsRepair: return machine.needsSignIn ? "Sign in again to reach \(machine.displayName)" : machine.hasDirectPairing ? "Pair \(machine.displayName) again" : "Can't reach \(machine.displayName)"
+      case .unsupported: return "Update SpecWithCode on \(machine.displayName)"
+      default: return "\(machine.displayName) is offline"
       }
     }
     return offline.count == model.machines.count ? "Your machines are offline" : "Some machines are offline"
@@ -262,7 +262,7 @@ private struct SetUpAideView: View {
   /// Aide goes on the machine with the lowest environment id, the same one
   /// every client picks.
   private var machineName: String {
-    model.machines.min { $0.id < $1.id }?.label ?? "your machine"
+    model.machines.min { $0.id < $1.id }?.displayName ?? "your machine"
   }
 
   private func setUp() {

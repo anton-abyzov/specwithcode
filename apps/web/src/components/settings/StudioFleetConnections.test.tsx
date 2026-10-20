@@ -39,6 +39,7 @@ vi.mock("../../studio/fleet", () => ({
 }));
 vi.mock("../../state/session", () => ({ useEnvironmentScope: () => true }));
 vi.mock("./MachineReadinessChecklist", () => ({ MachineReadinessChecklist: () => null }));
+vi.mock("./ProvisionMachineSheet", () => ({ ProvisionMachineButton: () => null }));
 vi.mock("../../state/environments", () => ({
   useEnvironments: () => ({ environments: runtime.environments }),
 }));

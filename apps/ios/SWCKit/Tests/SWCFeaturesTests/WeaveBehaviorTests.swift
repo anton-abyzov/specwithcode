@@ -92,6 +92,23 @@ struct SymbolTests {
     #expect(!WeaveLucide.assistantSystemName.hasPrefix("bell"))
   }
 
+  /// Saved brain and padlock project icons still draw, as a stand-in.
+  @MainActor @Test func retiredBrainAndLockIconsDrawStandIns() {
+    #expect(WeaveLucide.systemName(for: "brain") == "lightbulb")
+    #expect(WeaveLucide.systemName(for: "brain-circuit") == "cpu")
+    #expect(WeaveLucide.systemName(for: "lock") == "shield")
+    for name in WeaveLucide.knownNames {
+      let symbol = WeaveLucide.systemName(for: name)
+      #expect(!symbol.hasPrefix("brain") && !symbol.hasPrefix("lock"), "\(name) maps to \(symbol)")
+    }
+    #expect(ProjectAvatar.displayEmoji("\u{1F9E0}") == "\u{1F4A1}")
+    #expect(ProjectAvatar.displayEmoji("\u{1F512}\u{FE0F}") == "\u{1F6E1}\u{FE0F}")
+    #expect(ProjectAvatar.displayEmoji("\u{1F680}") == "\u{1F680}")
+    #expect(ThinkingGlyph.dots.map(\.opacity) == [1, 0.6, 0.3])
+    let breath = stride(from: 0.0, through: 1.6, by: 0.05).map(ThinkingGlyph.pulseOpacity(at:))
+    #expect(breath.allSatisfy { $0 >= 0.449 && $0 <= 1.001 })
+  }
+
   #if canImport(AppKit)
   /// SF Symbols has no concierge bell; the assistant symbol and every other
   /// mapped name must exist, or the avatar draws nothing.

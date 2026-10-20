@@ -3,6 +3,7 @@ import type { HandoffTimelineRun } from "@specweave-studio/client-runtime/handof
 import { resolveUserMessagePresentation } from "@specweave-studio/client-runtime/user-message";
 import { useEnvironment } from "../../state/environments";
 import { useThreadShell } from "../../state/entities";
+import { useMachineNickname } from "../../studio/machineNickname";
 import { requestExecutionLabel } from "../../studio/projectDomain";
 import { useProjectMessageRouting } from "../../studio/projectMessageRouting";
 import type { ChatMessage } from "../../types";
@@ -34,10 +35,11 @@ function useUserMessageProvenance({
   // composer selection, owns the historical provider/model attribution.
   // A subagent's task arrives outside any run; it ran on the subagent thread's own model.
   const thread = useThreadShell(threadRef ?? null);
+  const machine = useMachineNickname(environmentId, environment?.label);
   const execution = requestExecutionLabel(
     message,
     runs,
-    environment?.label ?? environmentId,
+    machine,
     providers,
     thread?.modelSelection ?? null,
   );

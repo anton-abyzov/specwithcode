@@ -20,17 +20,8 @@ extension LiveEngine {
       throw SyncError.wrap(error)
     }
     let env = result.record.environmentId
-    let entry: MachineEntry
-    if let existing = machines[env] {
-      entry = existing
-      entry.record = result.record
-      entry.permissions = result.credential.permissions
-      entry.tokenDaysLeft = result.credential.daysLeft()
-      await entry.connection.update(result.record)
-      await entry.connection.reconnect()
-    } else {
-      entry = addMachine(result.record, credential: result.credential)
-    }
+    let entry = await adopt(result)
+    if let fleetCache { await fleetCache.undismiss(env) }
     publishNow()
 
     // Give the new connection a moment so the summary shows it online.
@@ -42,8 +33,23 @@ extension LiveEngine {
     return summary(entry)
   }
 
+  /// Takes a new or renewed pairing into the machine list.
+  func adopt(_ result: PairingResult) async -> MachineEntry {
+    if let existing = machines[result.record.environmentId] {
+      existing.record = result.record
+      existing.permissions = result.credential.permissions
+      existing.tokenDaysLeft = result.credential.daysLeft()
+      await existing.connection.update(result.record)
+      await existing.connection.reconnect()
+      return existing
+    }
+    return addMachine(result.record, credential: result.credential)
+  }
+
+  /// A removed machine is not paired again from another machine's fleet.
   public func removeMachine(id: String) {
     guard let entry = machines.removeValue(forKey: id) else { return }
+    if let fleetCache { Task { await fleetCache.dismiss(id) } }
     machineOrder.removeAll { $0 == id }
     entry.cancel()
     entry.socket = nil
@@ -183,6 +189,44 @@ extension LiveEngine {
     guard machines[entry.environmentId] === entry else { return }
     entry.settings = settings
     schedulePublish()
+  }
+
+  /// Follows the machine's settings on this socket, so a rename made on any
+  /// machine shows at once. A failed stream on an open socket subscribes again
+  /// with backoff; a closed socket leaves it to the next one.
+  func watchSettings(_ entry: MachineEntry, _ socket: RpcSocket) async {
+    var failures = 0
+    while !Task.isCancelled {
+      let stream = await socket.stream(tag: RpcMethod.subscribeServerConfig.rawValue, payload: .object([:]))
+      do {
+        for try await chunk in stream {
+          failures = 0
+          for value in chunk.values {
+            switch try? await Self.decode(ServerConfigStreamItem.self, from: value) {
+            case let .snapshot(config)?:
+              if let settings = config.settings { settingsChanged(entry, settings) }
+            case let .settingsUpdated(settings)?:
+              settingsChanged(entry, settings)
+            case .other?, nil:
+              break
+            }
+          }
+          chunk.ack()
+        }
+        // The server never ends this stream; one that does has nothing to follow.
+        return
+      } catch is CancellationError {
+        return
+      } catch let error as ServerError {
+        if case .authorization = error.kind { return }
+        Self.log.error("Settings subscription failed on \(entry.environmentId, privacy: .public): \(error.message, privacy: .public)")
+      } catch {
+        return
+      }
+      guard !Task.isCancelled, machines[entry.environmentId] === entry, entry.socket === socket, !(await socket.isClosed) else { return }
+      try? await Task.sleep(for: resubscribeDelay(afterFailures: failures))
+      failures += 1
+    }
   }
 
   func machineSettings(_ settings: ServerSettings, on entry: MachineEntry) -> MachineSettings {

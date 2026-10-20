@@ -4,6 +4,7 @@ import {
   EnvironmentId,
   type ModelSelection,
   type OrchestrationV2ThreadShell,
+  OrchestratorMcpFailure,
   ProjectId,
   ProviderInstanceId,
   RunId,
@@ -48,6 +49,8 @@ const setup = (
     readonly grantedRuntimeMode?: "approval-required" | "auto-accept-edits";
     /** Another machine's work started the calling thread here. */
     readonly origin?: WorkOrigin;
+    /** The other machine refuses or loses the launch with this code. */
+    readonly remoteFails?: OrchestratorMcpFailure["code"];
   } = {},
 ) => {
   const caller = {
@@ -91,9 +94,16 @@ const setup = (
           ? Effect.succeed({ kind: "remote", machine: M1 })
           : Effect.die("unexpected machine"),
     launch: (input) =>
-      Effect.sync(() => {
+      Effect.suspend(() => {
         remoteLaunches.push(input);
-        return {
+        if (options.remoteFails !== undefined)
+          return Effect.fail(
+            new OrchestratorMcpFailure({
+              code: options.remoteFails,
+              message: `M1: ${options.remoteFails}`,
+            }),
+          );
+        return Effect.succeed({
           threadId: ThreadId.make("b-thread"),
           projectId: ProjectId.make("remote-project"),
           modelSelection: workerModel,
@@ -109,7 +119,7 @@ const setup = (
                 runtimeMode: options.grantedRuntimeMode,
                 runtimeModeLoweredFrom: input.runtimeMode,
               }),
-        };
+        });
       }),
   };
   const layerDependencies = Layer.mergeAll(
@@ -255,17 +265,84 @@ it.effect("never sends workers to a machine other than the one chosen, nor scrat
   const moved = setup({ workerMachine: true, staleEnvironment: true });
   const routed = setup({ workerMachine: true });
   return Effect.gen(function* () {
-    expect(yield* moved.launch({ title: "Fix CI", message: "Fix it" })).toMatchObject({
-      code: "machine_identity_mismatch",
+    // The re-pointed entry is skipped with its reason; the thread runs here, not there.
+    const result = yield* moved.launch({ title: "Fix CI", message: "Fix it" });
+    expect(result).toMatchObject({
+      placement: {
+        machine: "this machine",
+        reason: "this_machine",
+        skipped: [{ machine: "M1", reason: expect.stringContaining("different machine") }],
+      },
     });
     expect(moved.remoteLaunches).toEqual([]);
-    expect(moved.localLaunches).toEqual([]);
+    expect(moved.localLaunches).toHaveLength(1);
     // A scratch thread runs here only when the coordinator says so.
     expect(yield* routed.launch({ title: "x", scratch: true })).toMatchObject({
       code: "invalid_request",
     });
     expect(routed.localLaunches).toEqual([]);
     expect(routed.remoteLaunches).toEqual([]);
+  });
+});
+
+it.effect("reports where each thread runs and why", () => {
+  const routed = setup({ workerMachine: true });
+  return Effect.gen(function* () {
+    expect(yield* routed.launch({ title: "a", message: "go" })).toMatchObject({
+      machine: M1,
+      placement: { machine: "M1", reason: "project_worker_machine", skipped: [] },
+    });
+    expect(yield* routed.launch({ title: "b", message: "go", machine: "M1" })).toMatchObject({
+      placement: { machine: "M1", reason: "explicit", skipped: [] },
+    });
+    expect(yield* routed.launch({ title: "c", message: "go", machine: "local" })).toMatchObject({
+      placement: { machine: "this machine", reason: "explicit", skipped: [] },
+    });
+    const plain = setup();
+    expect(yield* plain.launch({ title: "d", message: "go" })).toMatchObject({
+      placement: { machine: "this machine", reason: "this_machine", skipped: [] },
+    });
+  });
+});
+
+it.effect("keeps the project going here when its worker machine cannot take the thread", () => {
+  const codes = [
+    "machine_unreachable",
+    "machine_not_authorized",
+    "model_unavailable_on_machine",
+    "project_unavailable_on_machine",
+    "outside_grant_scope",
+  ] as const;
+  return Effect.gen(function* () {
+    for (const code of codes) {
+      const out = setup({ workerMachine: true, remoteFails: code });
+      const result = yield* out.launch({ title: "Fix CI", message: "Fix it" });
+      expect(result, code).toMatchObject({
+        placement: {
+          machine: "this machine",
+          reason: "this_machine",
+          skipped: [{ machine: "M1", reason: `M1: ${code}` }],
+        },
+      });
+      expect(out.remoteLaunches, code).toHaveLength(1);
+      expect(out.localLaunches, code).toHaveLength(1);
+    }
+  });
+});
+
+it.effect("never substitutes a machine the agent named, nor a launch that may have started", () => {
+  const named = setup({ remoteFails: "machine_unreachable" });
+  const unknown = setup({ workerMachine: true, remoteFails: "remote_launch_unconfirmed" });
+  return Effect.gen(function* () {
+    expect(
+      yield* named.launch({ title: "Fix CI", message: "Fix it", machine: "M1" }),
+    ).toMatchObject({ code: "machine_unreachable" });
+    expect(named.localLaunches).toEqual([]);
+    // A second thread here could duplicate one already running on M1.
+    expect(yield* unknown.launch({ title: "Fix CI", message: "Fix it" })).toMatchObject({
+      code: "remote_launch_unconfirmed",
+    });
+    expect(unknown.localLaunches).toEqual([]);
   });
 });
 

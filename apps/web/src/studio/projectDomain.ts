@@ -46,57 +46,100 @@ export function projectExecutionScopes(
   return [...refs.values()];
 }
 
-/** No election or failover: only the single server-admitted owner can receive messages. */
+export interface LogicalCoordinators<T> {
+  /** Every copy that coordinates now: newest epoch first, then by machine. */
+  readonly coordinators: readonly T[];
+  /** Copies mid-handoff that nothing has superseded yet. */
+  readonly pending: readonly T[];
+  /** Active copies a newer coordinator took over from; each gives way once reachable. */
+  readonly superseded: readonly T[];
+  /** Coordinators that a successor took over from at the same epoch, and that successor: an unresolved claim. */
+  readonly contested: readonly T[];
+}
+
+const memberKey = (member: EnvironmentProject) => `${member.environmentId}:${member.id}`;
+const bindingOf = (member: EnvironmentProject) => member.workspaceSettings?.coordinatorBinding;
+
+/**
+ * The coordinators of a linked project. Each machine may run its own (0969), so
+ * several active copies are not a conflict; only a copy whose exact ancestor
+ * took over again is superseded. A copy never becomes a coordinator by election:
+ * its own server records the binding.
+ */
+export function logicalCoordinators<T extends EnvironmentProject>(
+  members: readonly T[],
+): LogicalCoordinators<T> | null {
+  const declared = members.filter((member) => member.workspaceSettings?.logicalProject);
+  if (!declared.length) return null;
+  const byKey = new Map(declared.map((member) => [memberKey(member), member]));
+  const epochOf = (member: T) => bindingOf(member)?.epoch ?? 0;
+  const superseded = new Set<string>();
+  const contested = new Set<string>();
+  for (const member of declared) {
+    if (bindingOf(member)?.state !== "active") continue;
+    const seen = new Set<string>([memberKey(member)]);
+    let predecessor = bindingOf(member)?.predecessor;
+    while (predecessor) {
+      const key = `${predecessor.environmentId}:${predecessor.projectId}`;
+      if (seen.has(key)) break;
+      seen.add(key);
+      const ancestor = byKey.get(key);
+      if (!ancestor) break;
+      if (epochOf(ancestor) < epochOf(member)) superseded.add(key);
+      else if (
+        epochOf(ancestor) === epochOf(member) &&
+        bindingOf(ancestor)?.state === "active" &&
+        bindingOf(member)?.predecessor?.environmentId === predecessor.environmentId &&
+        bindingOf(member)?.predecessor?.projectId === predecessor.projectId
+      ) {
+        contested.add(key);
+        contested.add(memberKey(member));
+      }
+      predecessor = bindingOf(ancestor)?.predecessor;
+    }
+  }
+  const order = (a: T, b: T) => epochOf(b) - epochOf(a) || memberKey(a).localeCompare(memberKey(b));
+  const live = (member: T) => !superseded.has(memberKey(member));
+  return {
+    coordinators: declared
+      .filter((member) => bindingOf(member)?.state === "active" && live(member))
+      .toSorted(order),
+    pending: declared
+      .filter((member) => bindingOf(member)?.state === "transferring" && live(member))
+      .toSorted(order),
+    superseded: declared
+      .filter((member) => bindingOf(member)?.state === "active" && !live(member))
+      .toSorted(order),
+    contested: declared.filter((member) => contested.has(memberKey(member))).toSorted(order),
+  };
+}
+
+export const COORDINATOR_PENDING_PROBLEM =
+  "Coordinator handoff is pending. Reconnect the source and destination to confirm the transfer.";
+export const COORDINATOR_CONTESTED_PROBLEM =
+  "Two coordinators claim the same epoch, one as the other's successor. Renaming waits until that claim is settled.";
+export const COORDINATOR_UNAVAILABLE_PROBLEM =
+  "The active coordinator is unavailable. Reconnect its machine; the project will not switch automatically.";
+
+/**
+ * One coordinator to name for the project as a whole (settings, renames,
+ * replication source): the newest one. Each machine's own coordinator still
+ * takes its own messages; see `logicalCoordinators`.
+ */
 export function logicalCoordinator<T extends EnvironmentProject>(
   members: readonly T[],
 ): { member?: T; problem: string | null } | null {
-  const declared = members.filter((member) => member.workspaceSettings?.logicalProject);
-  if (!declared.length) return null;
-  const epochOf = (member: T) => member.workspaceSettings?.coordinatorBinding?.epoch ?? 0;
-  const highest = Math.max(...declared.map(epochOf));
-  const current = declared.filter((member) => epochOf(member) === highest);
-  const pending = current.find(
-    (member) => member.workspaceSettings?.coordinatorBinding?.state === "transferring",
-  );
-  if (pending)
+  const found = logicalCoordinators(members);
+  if (!found) return null;
+  const first = found.coordinators[0];
+  if (first)
     return {
-      member: pending,
-      problem:
-        "Coordinator handoff is pending. Reconnect the source and destination to confirm the transfer.",
+      member: first,
+      problem: found.contested.includes(first) ? COORDINATOR_CONTESTED_PROBLEM : null,
     };
-  const active = current.filter(
-    (member) => member.workspaceSettings?.coordinatorBinding?.state === "active",
-  );
-  if (active.length !== 1)
-    return {
-      problem:
-        active.length > 1
-          ? "Conflicting coordinator ownership. Sending is blocked until the machines agree."
-          : "The active coordinator is unavailable. Reconnect its machine; the project will not switch automatically.",
-    };
-  const member = active[0]!;
-  // A confirmed successor supersedes its exact ancestors, even if an older
-  // host has not delivered its acknowledgment yet. An unrelated claim never does.
-  const ancestors = new Set<string>();
-  let predecessor = member.workspaceSettings?.coordinatorBinding?.predecessor;
-  while (predecessor && !ancestors.has(`${predecessor.environmentId}:${predecessor.projectId}`)) {
-    const key = `${predecessor.environmentId}:${predecessor.projectId}`;
-    ancestors.add(key);
-    predecessor = declared.find((candidate) => `${candidate.environmentId}:${candidate.id}` === key)
-      ?.workspaceSettings?.coordinatorBinding?.predecessor;
-  }
-  if (
-    declared.some(
-      (other) =>
-        other !== member &&
-        other.workspaceSettings?.coordinatorBinding?.state !== "transferred" &&
-        !ancestors.has(`${other.environmentId}:${other.id}`),
-    )
-  )
-    return {
-      problem: "Conflicting coordinator ownership. Sending is blocked until the machines agree.",
-    };
-  return { member, problem: null };
+  const pending = found.pending[0];
+  if (pending) return { member: pending, problem: COORDINATOR_PENDING_PROBLEM };
+  return { problem: COORDINATOR_UNAVAILABLE_PROBLEM };
 }
 
 export function logicalProjectThreads(
@@ -134,6 +177,7 @@ export function logicalProjectThreads(
 export function requestExecutionLabel(
   message: { runId?: string | null },
   runs: readonly { id: string; modelSelection?: { instanceId: string; model: string } }[],
+  /** The machine's display name, from `machineNickname`. */
   machine: string,
   entries?: ReadonlyMap<string, ProviderNameSource>,
   unrunModel?: { instanceId: string; model: string } | null,
@@ -144,7 +188,7 @@ export function requestExecutionLabel(
     ? modelLabel(entries?.get(selection.instanceId) ?? null, selection.instanceId, selection.model)
         .full
     : "Model not recorded";
-  return `${shortMachineName(machine)} · ${model}`;
+  return `${machine} · ${model}`;
 }
 
 /**
@@ -154,22 +198,25 @@ export function requestExecutionLabel(
  */
 export function copyRolesSummary<
   T extends EnvironmentProject & { readonly environmentLabel?: string | null },
->(members: readonly T[]): string | null {
+>(
+  members: readonly T[],
+  nameOf: (member: T) => string = (member) =>
+    shortMachineName(member.environmentLabel ?? "Machine"),
+): string | null {
   const shared = members.filter((member) => member.workspaceSettings?.logicalProject);
   if (new Set(shared.map((member) => member.environmentId)).size < 2) return null;
-  const coordinator = logicalCoordinator(shared)?.member;
+  const coordinators = new Set<T>(logicalCoordinators(shared)?.coordinators ?? []);
   return shared
     .map((member) => {
       const state = member.workspaceSettings?.coordinatorBinding?.state;
-      const role =
-        member === coordinator
-          ? "coordinator"
-          : state === "transferring"
-            ? "handoff pending"
-            : state === "transferred"
-              ? "runs workers"
-              : "coordinator unconfirmed";
-      return `${shortMachineName(member.environmentLabel ?? "Machine")}: ${role}`;
+      const role = coordinators.has(member)
+        ? "coordinator"
+        : state === "transferring"
+          ? "handoff pending"
+          : state === "transferred"
+            ? "runs workers"
+            : "coordinator unconfirmed";
+      return `${nameOf(member)}: ${role}`;
     })
     .join(" · ");
 }

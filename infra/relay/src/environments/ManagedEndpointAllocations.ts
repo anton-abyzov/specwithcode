@@ -1,13 +1,15 @@
-import type { RelayManagedEndpoint, RelayManagedEndpointOrigin } from "@specweave-studio/contracts/relay";
+import type {
+  RelayManagedEndpoint,
+  RelayManagedEndpointOrigin,
+} from "@specweave-studio/contracts/relay";
 import { and, eq, exists, inArray, isNull, sql } from "drizzle-orm";
-import { QueryBuilder } from "drizzle-orm/pg-core";
+import { QueryBuilder } from "drizzle-orm/sqlite-core";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
-import * as SqlError from "effect/sql/SqlError";
 
 import * as RelayDb from "../db.ts";
 import { isManagedEndpointHostname, managedEndpointForHostname } from "../deploymentConfig.ts";
@@ -32,7 +34,8 @@ export interface ManagedEndpointTunnelAllocation extends ManagedEndpointAllocati
   readonly recoveryEnabled: boolean;
 }
 
-export const MANAGED_ENDPOINT_ALLOCATION_LOOKUP_BATCH_SIZE = 500;
+// D1 allows at most 100 bound parameters per statement.
+export const MANAGED_ENDPOINT_ALLOCATION_LOOKUP_BATCH_SIZE = 100;
 
 export function resolveReadyManagedEndpoint(input: {
   readonly allocation: ManagedEndpointAllocation;
@@ -435,7 +438,11 @@ export const make = Effect.gen(function* () {
           and(
             whereAllocation(input),
             eq(relayManagedEndpointAllocations.tunnelId, input.tunnelId),
-            eq(relayManagedEndpointAllocations.origin, input.origin),
+            // JSON text equality depends on key order; compare the fields.
+            sql`json_extract(${relayManagedEndpointAllocations.origin}, '$.localHttpHost') = ${input.origin.localHttpHost}`,
+            sql`json_extract(${relayManagedEndpointAllocations.origin}, '$.localHttpPort') = ${input.origin.localHttpPort}`,
+            // One UPDATE statement is atomic in D1, so the link check and the
+            // write cannot interleave with a concurrent revoke.
             exists(
               new QueryBuilder()
                 .select({ userId: relayEnvironmentLinks.userId })
@@ -448,8 +455,7 @@ export const make = Effect.gen(function* () {
                     eq(relayEnvironmentLinks.endpointProviderKind, "cloudflare_tunnel"),
                     isNull(relayEnvironmentLinks.revokedAt),
                   ),
-                )
-                .for("update"),
+                ),
             ),
           ),
         )
@@ -586,30 +592,22 @@ export const make = Effect.gen(function* () {
             tunnelId: input.tunnelId,
             cause,
           });
-        return yield* db.$client
-          .withTransaction(
-            db
-              .select({ generation: relayManagedEndpointAllocations.generation })
-              .from(relayManagedEndpointAllocations)
-              .where(
-                and(
-                  whereAllocation(input),
-                  eq(relayManagedEndpointAllocations.tunnelId, input.tunnelId),
-                  eq(relayManagedEndpointAllocations.generation, input.generation),
-                ),
-              )
-              .limit(1)
-              .for("update")
-              .pipe(
-                Effect.mapError(lockError),
-                Effect.flatMap((rows) =>
-                  rows.length === 0 ? Effect.succeedNone : Effect.asSome(effect),
-                ),
-              ),
+        // D1 has no row locks. Check that the claim is still current, then run
+        // the effect. Its writes are conditional on this same generation and
+        // bump it, so a competing claim that ran concurrently loses its write.
+        const rows = yield* db
+          .select({ generation: relayManagedEndpointAllocations.generation })
+          .from(relayManagedEndpointAllocations)
+          .where(
+            and(
+              whereAllocation(input),
+              eq(relayManagedEndpointAllocations.tunnelId, input.tunnelId),
+              eq(relayManagedEndpointAllocations.generation, input.generation),
+            ),
           )
-          .pipe(
-            Effect.mapError((cause) => (SqlError.isSqlError(cause) ? lockError(cause) : cause)),
-          );
+          .limit(1)
+          .pipe(Effect.mapError(lockError));
+        return rows.length === 0 ? Option.none() : Option.some(yield* effect);
       },
     ),
     claimDeprovision: Effect.fn("relay.managed_endpoint_allocations.claim_deprovision")(function* (

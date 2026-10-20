@@ -10,6 +10,7 @@ import * as Duration from "effect/Duration";
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 import {
+  EnvironmentId,
   ForwardCompatibleNullable,
   ForwardCompatibleOptional,
   OmittedWhenNull,
@@ -297,6 +298,22 @@ export const BrowserLinkTarget = Schema.Literals(["system", "app"]);
 export type BrowserLinkTarget = typeof BrowserLinkTarget.Type;
 export const DEFAULT_BROWSER_LINK_TARGET: BrowserLinkTarget = "system";
 
+export const MACHINE_NICKNAME_MAX_LENGTH = 16;
+
+/**
+ * A machine's short name. An empty name means "use the default short name";
+ * it still carries a stamp so a reset wins over an older rename.
+ */
+export const MachineNickname = Schema.Struct({
+  name: Schema.String.check(Schema.isMaxLength(MACHINE_NICKNAME_MAX_LENGTH)),
+  updatedAt: Schema.String.check(Schema.isMaxLength(64)),
+});
+export type MachineNickname = typeof MachineNickname.Type;
+
+/** environmentId to nickname, for every machine in the fleet, not only this one. */
+export const MachineNicknames = Schema.Record(TrimmedNonEmptyString, MachineNickname);
+export type MachineNicknames = typeof MachineNicknames.Type;
+
 export const LoadBalancingWeights = Schema.Record(
   TrimmedNonEmptyString,
   Schema.Int.check(Schema.isBetween({ minimum: 0, maximum: 100 })),
@@ -373,7 +390,10 @@ export const ClientSettingsSchema = Schema.Struct({
   threadTimelineDetail: ThreadTimelineDetail.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   loadBalancingEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
   loadBalancingWeights: LoadBalancingWeights.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
-  /** Which machine's copy of a project runs its coordinator, keyed by logical project. */
+  /**
+   * Which machine's orchestrator this device last viewed, keyed by logical project.
+   * Viewing never decides where a coordinator runs or moves one (0969).
+   */
   projectCoordinatorMachines: ProjectCoordinatorMachines.pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
@@ -1362,6 +1382,31 @@ export const ProviderLimitFallbackModels = Schema.Array(ModelSelection).check(
 );
 export type ProviderLimitFallbackModels = typeof ProviderLimitFallbackModels.Type;
 
+/**
+ * A model on another paired machine a limited thread may hand off to:
+ * "Minis · Claude · Opus 5.5". `label` is the machine's name when the
+ * target was saved, shown while the machine is offline.
+ */
+export const ProviderLimitMachineTarget = Schema.Struct({
+  environmentId: EnvironmentId,
+  label: Schema.optionalKey(TrimmedNonEmptyString),
+  modelSelection: ModelSelection,
+  /** The model's display name when the target was saved ("Claude Opus 5.5"). */
+  modelLabel: Schema.optionalKey(TrimmedNonEmptyString),
+});
+export type ProviderLimitMachineTarget = typeof ProviderLimitMachineTarget.Type;
+export const ProviderLimitMachineTargets = Schema.Array(ProviderLimitMachineTarget).check(
+  Schema.isMaxLength(8),
+);
+export type ProviderLimitMachineTargets = typeof ProviderLimitMachineTargets.Type;
+
+/** Which list a limited thread tries first: this machine's models or other machines. */
+export const ProviderLimitTargetOrder = Schema.Literals([
+  "same-machine-first",
+  "other-machine-first",
+]);
+export type ProviderLimitTargetOrder = typeof ProviderLimitTargetOrder.Type;
+
 export const PROJECT_SCOPED_SERVER_SETTING_KEYS = [
   "agentInstructions",
   "claudeWorkflowMode",
@@ -1399,6 +1444,9 @@ export const PROJECT_SCOPED_SERVER_SETTING_KEYS = [
   "providerLimitRedeemResets",
   "providerLimitSpendCredits",
   "providerLimitUseApiCredits",
+  "providerLimitMachineTargets",
+  "providerLimitTargetOrder",
+  "providerLimitUnknownUsageEligible",
 ] as const;
 export type ProjectScopedServerSettingKey = (typeof PROJECT_SCOPED_SERVER_SETTING_KEYS)[number];
 
@@ -1445,6 +1493,9 @@ export const ProjectSettingsOverrides = Schema.Struct({
   providerLimitRedeemResets: Schema.optionalKey(Schema.Boolean),
   providerLimitSpendCredits: Schema.optionalKey(Schema.Boolean),
   providerLimitUseApiCredits: Schema.optionalKey(Schema.Boolean),
+  providerLimitMachineTargets: Schema.optionalKey(ProviderLimitMachineTargets),
+  providerLimitTargetOrder: Schema.optionalKey(ProviderLimitTargetOrder),
+  providerLimitUnknownUsageEligible: Schema.optionalKey(Schema.Boolean),
 } satisfies Record<ProjectScopedServerSettingKey, unknown>);
 export type ProjectSettingsOverrides = typeof ProjectSettingsOverrides.Type;
 
@@ -1658,6 +1709,25 @@ export const ServerSettings = Schema.Struct({
   providerLimitUseApiCredits: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(false)),
   ),
+  /**
+   * Models on other paired machines a limited thread may hand off to, best
+   * first. A target counts only with a different account, usage below the
+   * threshold, the machine online, signed in and allowed by its work grant.
+   */
+  providerLimitMachineTargets: ProviderLimitMachineTargets.pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
+  /**
+   * Other machine first tries the machine targets before this machine's
+   * fallback models. Nothing leaves the machine until a target is added.
+   */
+  providerLimitTargetOrder: ProviderLimitTargetOrder.pipe(
+    Schema.withDecodingDefault(Effect.succeed("other-machine-first" as const)),
+  ),
+  /** A machine target whose usage is unknown counts as having room. Off by default. */
+  providerLimitUnknownUsageEligible: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(false)),
+  ),
   sidebarAutoSettleOnMerge: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   backgroundActivity: BackgroundActivitySettings,
   // Legacy flat fields retained for old settings files and old clients. New
@@ -1696,6 +1766,12 @@ export const ServerSettings = Schema.Struct({
   environmentIcon: ForwardCompatibleNullable(EnvironmentMachineKind).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
+  /**
+   * Short names for the machines in this fleet, keyed by environmentId and
+   * never by host name. Paired servers exchange the map and keep the newest
+   * entry for each machine, so every device shows the same name.
+   */
+  machineNicknames: MachineNicknames.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   /**
    * Null means inherit: the repository's specweave-studio.json, then "local". The old
    * default "local" was never persisted (defaults are stripped on write), so
@@ -2056,6 +2132,9 @@ export const ServerSettingsPatch = Schema.Struct({
   providerLimitRedeemResets: Schema.optionalKey(Schema.Boolean),
   providerLimitSpendCredits: Schema.optionalKey(Schema.Boolean),
   providerLimitUseApiCredits: Schema.optionalKey(Schema.Boolean),
+  providerLimitMachineTargets: Schema.optionalKey(ProviderLimitMachineTargets),
+  providerLimitTargetOrder: Schema.optionalKey(ProviderLimitTargetOrder),
+  providerLimitUnknownUsageEligible: Schema.optionalKey(Schema.Boolean),
   backgroundActivity: Schema.optionalKey(
     Schema.Struct({
       schemaVersion: Schema.optionalKey(Schema.Literal(1)),
@@ -2068,6 +2147,8 @@ export const ServerSettingsPatch = Schema.Struct({
   providerHealthRefreshInterval: Schema.optionalKey(Schema.DurationFromMillis),
   backgroundActivityProfile: Schema.optionalKey(BackgroundActivityProfile),
   environmentIcon: Schema.optionalKey(Schema.NullOr(EnvironmentMachineKind)),
+  /** Merged per machine, newest stamp wins; never replaces the whole map. */
+  machineNicknames: Schema.optionalKey(MachineNicknames),
   defaultThreadEnvMode: Schema.optionalKey(Schema.NullOr(ThreadEnvMode)),
   newWorktreesStartFromOrigin: Schema.optionalKey(Schema.Boolean),
   worktreeSubmodules: Schema.optionalKey(Schema.NullOr(WorktreeSubmodules)),

@@ -56,6 +56,11 @@ import { toolActivityFaviconUrl } from "@specweave-studio/shared/favicon";
 
 import { AppText as Text } from "../../components/AppText";
 import { StudioWordmark } from "../../components/StudioWordmark";
+import {
+  MaskedFieldGlyph,
+  ThinkingMark,
+  useThinkingProvider,
+} from "../../components/CraftedGlyphs";
 import { cn } from "../../lib/cn";
 import { THREAD_WORK_ROW_MIN_HEIGHT, type deriveThreadWorkLogSizing } from "../../lib/layout";
 import {
@@ -110,7 +115,14 @@ export const THREAD_DISCLOSURE_TRANSITION_MS = 180;
 const WORK_LOG_LAYOUT_TRANSITION = LinearTransition.duration(THREAD_DISCLOSURE_TRANSITION_MS);
 const WORK_LOG_DETAIL_ENTER_TRANSITION = FadeIn.duration(140);
 const WORK_LOG_DETAIL_EXIT_TRANSITION = FadeOut.duration(120);
-type WorkContentIcon = AppSymbolName | "browser" | "device" | "studio-code" | "pull-request";
+type WorkContentIcon =
+  | AppSymbolName
+  | "browser"
+  | "device"
+  | "studio-code"
+  | "pull-request"
+  | "thinking"
+  | "masked-field";
 
 function WorkLogIcon(props: {
   readonly icon: WorkContentIcon;
@@ -119,9 +131,30 @@ function WorkLogIcon(props: {
   readonly highlighted?: boolean;
 }) {
   const colorClassName = props.highlighted ? "accent-foreground" : props.colorClassName;
+  const thinkingProvider = useThinkingProvider();
   if (props.icon === "studio-code") {
     return (
-      <StudioWordmark height={10} {...(colorClassName ? { colorClassName } : { color: props.color })} />
+      <StudioWordmark
+        height={10}
+        {...(colorClassName ? { colorClassName } : { color: props.color })}
+      />
+    );
+  }
+  if (props.icon === "thinking") {
+    return (
+      <ThinkingMark
+        provider={thinkingProvider}
+        size={14}
+        {...(colorClassName ? { colorClassName } : { color: props.color })}
+      />
+    );
+  }
+  if (props.icon === "masked-field") {
+    return (
+      <MaskedFieldGlyph
+        size={14}
+        {...(colorClassName ? { colorClassName } : { color: props.color })}
+      />
     );
   }
   return (
@@ -371,7 +404,7 @@ export function ShimmeringWorkContent(props: {
   );
 }
 
-function workRowSymbolName(icon: ThreadFeedActivity["icon"]): AppSymbolName {
+function workRowSymbolName(icon: ThreadFeedActivity["icon"]): WorkContentIcon {
   switch (icon) {
     case "agent":
       return { ios: "sparkles", android: "auto_awesome" };
@@ -395,8 +428,10 @@ function workRowSymbolName(icon: ThreadFeedActivity["icon"]): AppSymbolName {
       return "magnifyingglass";
     case "hammer":
       return { ios: "hammer", android: "construction" };
-    case "lock":
-      return { ios: "lock", android: "lock" };
+    case "approval":
+      return { ios: "hand.raised", android: "pan_tool" };
+    case "secret":
+      return "masked-field";
     case "message":
       return { ios: "bubble.left", android: "chat_bubble" };
     case "warning":
@@ -991,7 +1026,7 @@ const ThreadWorkLogRow = memo(function ThreadWorkLogRow(
     !isSystemNotice && !isUsageLimit && (row.icon === "alert" || row.icon === "warning");
   const failed = row.status === "failure";
   const toolIcon = row.workEntry.toolIcon ?? row.workEntry.toolSource?.icon;
-  const icon = reasoning ? "brain" : (toolPresentation?.icon ?? workRowSymbolName(row.icon));
+  const icon = reasoning ? "thinking" : (toolPresentation?.icon ?? workRowSymbolName(row.icon));
 
   return (
     <Animated.View
@@ -1216,7 +1251,7 @@ export function ThreadWorkGroupToggle(props: {
   readonly iconSubtleColor: import("react-native").ColorValue;
   readonly summary: string;
   readonly summaryKind: ToolGroupSummaryKind;
-  readonly summaryToolIcon?: "browser" | "device" | "studio-code" | "pull-request" | "brain";
+  readonly summaryToolIcon?: "browser" | "device" | "studio-code" | "pull-request";
   readonly themeAppearance: "light" | "dark";
   readonly toolSurface?: import("@specweave-studio/contracts").ToolActivitySurface;
   readonly toolIcon?: ToolActivityIcon;
@@ -1344,7 +1379,7 @@ export const ThreadAgentSpawnCard = memo(function ThreadAgentSpawnCard(props: {
                 <ShimmeringWorkContent
                   key={props.rowSizing.textSizeKey}
                   compact
-                  icon="brain"
+                  icon="thinking"
                   iconSubtleColor={props.iconSubtleColor}
                   label={summary.status}
                   showIcon={false}
@@ -1412,7 +1447,7 @@ export function ThreadThinkingRow(props: {
     >
       <ShimmeringWorkContent
         key={props.rowSizing.textSizeKey}
-        icon="brain"
+        icon="thinking"
         iconSubtleColor={props.iconSubtleColor}
         label="Thinking"
         showIcon
@@ -1527,7 +1562,7 @@ function ToolActivityImage(props: {
   );
 }
 
-function toolGroupSummarySymbolName(kind: ToolGroupSummaryKind): AppSymbolName {
+function toolGroupSummarySymbolName(kind: ToolGroupSummaryKind): WorkContentIcon {
   switch (kind) {
     case "pull-request":
     case "link-pr":
@@ -1554,7 +1589,7 @@ function toolGroupSummarySymbolName(kind: ToolGroupSummaryKind): AppSymbolName {
     case "other":
       return { ios: "wrench", android: "build" };
     case "reasoning":
-      return { ios: "brain", android: "psychology" };
+      return "thinking";
     case "agent-tool":
       return { ios: "sparkles", android: "auto_awesome" };
     case "tone-tool":

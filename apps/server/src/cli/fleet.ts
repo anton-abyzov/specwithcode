@@ -27,6 +27,8 @@ import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ServerConfig from "../config.ts";
 import { resolveBaseDir } from "../os-jank.ts";
 import { secretsSentTo } from "../fleet/folderTransfer/secretsReport.ts";
+import { unlinkPhonesFrom } from "../fleet/phoneLinks.ts";
+import { join } from "../nodePath.ts";
 import { discoverFleet, FleetError, readFleetConfig } from "../studioFleet.ts";
 import {
   addFleetMachine,
@@ -248,6 +250,13 @@ const removeCommand = Command.make("remove", {
             fetcher: globalThis.fetch,
             revokeWorkerAccess: (target) =>
               revokeWorkerAccessByLabel(globalThis.fetch, target, localEnvironmentId),
+            unlinkPhones: (target) =>
+              unlinkPhonesFrom({
+                stateDir: join(baseDir, "userdata"),
+                fetcher: globalThis.fetch,
+                target,
+                hubEnvironmentId: localEnvironmentId,
+              }),
           }),
         catch: fleetFailure,
       });

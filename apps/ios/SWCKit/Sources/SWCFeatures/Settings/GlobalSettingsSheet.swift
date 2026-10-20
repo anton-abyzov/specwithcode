@@ -51,7 +51,7 @@ private struct GlobalSettingsRoot: View {
   private var machines: some View {
     GroupedCard(label: "Machines", separatorInset: 56) {
       ForEach(model.machines) { machine in
-        WeaveRow(machine.label, subtitle: machine.statusLabel, showsChevron: true, action: { nav.push(.machine(machine.id)) }) {
+        WeaveRow(machine.displayName, subtitle: machine.statusLabel, showsChevron: true, action: { nav.push(.machine(machine.id)) }) {
           MachineBadge(status: machine.displayStatus, size: 18)
             .frame(width: 28)
             .accessibilityHidden(true)
@@ -134,12 +134,12 @@ private struct MachineDefaultsCard: View {
         } trailing: {
           Menu {
             Picker("Machine", selection: Binding(get: { machineId ?? "" }, set: { selectedMachine = $0 })) {
-              ForEach(model.machines) { Text($0.label).tag($0.id) }
+              ForEach(model.machines) { Text($0.displayName).tag($0.id) }
             }
           } label: {
-            menuLabel(machine?.label ?? "Choose")
+            menuLabel(machine?.displayName ?? "Choose")
           }
-          .accessibilityLabel("Machine, \(machine?.label ?? "none")")
+          .accessibilityLabel("Machine, \(machine?.displayName ?? "none")")
         }
       }
       WeaveRow("New threads", stacksTrailing: true) {
@@ -169,7 +169,7 @@ private struct MachineDefaultsCard: View {
 
   private var footer: String {
     if let error { return error }
-    return "Used when a thread starts on \(machine?.label ?? "this machine"). Changes go to that machine."
+    return "Used when a thread starts on \(machine?.displayName ?? "this machine"). Changes go to that machine."
   }
 
   private func menuLabel(_ text: String) -> some View {

@@ -212,6 +212,10 @@ Options go after `--join`, for example `bash -s -- --join --yes`:
 
 Run the installer with `--help` for every option.
 
+To install the tools a worker needs (git, `gh`, Node.js 22, Claude Code, Codex)
+at pinned versions, use [Provision a machine](./provision-a-machine.md) next:
+`specwithcode provision` on the worker, or **Provision** on its row here.
+
 ## Add it on the main machine
 
 1. Open **Settings → Connections → Your private machines**.

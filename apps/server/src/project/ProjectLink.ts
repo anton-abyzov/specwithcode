@@ -3,6 +3,7 @@ import {
   compareFingerprints,
   DEFAULT_PROJECT_WORKSPACE_SETTINGS,
   keepBothNoteName,
+  LOGICAL_PROJECT_MEMBER_ROOT_MAX_LENGTH,
   logicalProjectMemberKey,
   type LogicalProject,
   type LogicalProjectMember,
@@ -29,6 +30,8 @@ import {
   type ProjectLinkRefusal,
   type ProjectLinkReplicateInput,
   type ProjectLinkReplicateResult,
+  type ProjectStartCoordinatorInput,
+  type ProjectStartCoordinatorResult,
   type ProjectSupersedeInput,
   type ProjectSupersedeResult,
   type ProjectTakeoverInput,
@@ -54,6 +57,7 @@ import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import type { ProjectOwnershipUpdate } from "../orchestration-v2/ProjectCommands.ts";
 import { randomUuidV4 } from "../orchestration-v2/RandomUuid.ts";
 import * as CoordinatorReplicas from "./CoordinatorReplicas.ts";
+import * as LinkedMemorySync from "./LinkedMemorySync.ts";
 import * as ProjectAdmission from "./ProjectAdmission.ts";
 import { fingerprintFolder } from "./projectFingerprint.ts";
 import * as ProjectService from "./ProjectService.ts";
@@ -106,16 +110,28 @@ export class ProjectLink extends Context.Service<
     readonly supersede: (
       input: ProjectSupersedeInput,
     ) => Effect.Effect<ProjectSupersedeResult, ProjectLinkError>;
+    readonly startCoordinator: (
+      input: ProjectStartCoordinatorInput,
+    ) => Effect.Effect<ProjectStartCoordinatorResult, ProjectLinkError>;
   }
 >()("specweave-studio/project/ProjectLink") {}
 
 const fail = (code: ProjectLinkError["code"], detail?: string) =>
   Effect.fail(new ProjectLinkError({ code, ...(detail ? { detail } : {}) }));
 
+/** The same listed copy; the folder a member records never decides a match. */
 const sameMember = (a: LogicalProjectMember, b: LogicalProjectMember) =>
   a.environmentId === b.environmentId &&
   a.projectId === b.projectId &&
   a.coordinatorThreadId === b.coordinatorThreadId;
+
+/** The identity with `self`'s entry recording its folder, when that entry predates folders. */
+const withOwnRoot = (identity: LogicalProject, self: LogicalProjectMember): LogicalProject => ({
+  ...identity,
+  members: identity.members.map((member) =>
+    member.workspaceRoot === undefined && sameMember(member, self) ? self : member,
+  ),
+});
 
 /** Members keyed by machine and project, newest entry kept. */
 const mergeMembers = (...lists: ReadonlyArray<ReadonlyArray<LogicalProjectMember>>) => [
@@ -181,22 +197,26 @@ const make = Effect.gen(function* () {
       ),
     );
 
-  /** This copy as identities list it; an existing entry wins so reciprocity holds. */
+  /**
+   * This copy as identities list it; an existing entry wins so reciprocity holds.
+   * Its folder is always this project's own, never one a caller sent.
+   */
   const selfMember = (project: Project) =>
     Effect.gen(function* () {
       const environmentId = yield* environment.getEnvironmentId;
       const listed = project.workspaceSettings?.logicalProject?.members.find(
         (member) => member.environmentId === environmentId && member.projectId === project.id,
       );
-      return (
-        listed ?? {
-          environmentId,
-          projectId: project.id,
-          coordinatorThreadId:
-            project.workspaceSettings?.coordinatorThreadId ??
-            ThreadId.make(`project-coordinator:${project.id}`),
-        }
-      );
+      const member: LogicalProjectMember = listed ?? {
+        environmentId,
+        projectId: project.id,
+        coordinatorThreadId:
+          project.workspaceSettings?.coordinatorThreadId ??
+          ThreadId.make(`project-coordinator:${project.id}`),
+      };
+      return project.workspaceRoot.length <= LOGICAL_PROJECT_MEMBER_ROOT_MAX_LENGTH
+        ? { ...member, workspaceRoot: project.workspaceRoot }
+        : member;
     });
 
   const coordinatorShell = (member: LogicalProjectMember) =>
@@ -408,7 +428,8 @@ const make = Effect.gen(function* () {
         return {
           operationId: input.operationId,
           kept,
-          logicalProject,
+          // As commit will list it, so the joining copy records the kept copy's folder too.
+          logicalProject: withOwnRoot(logicalProject, kept),
           coordinatorBinding: binding,
           fingerprint: yield* fingerprintOf(project.workspaceRoot),
           adopted,
@@ -505,7 +526,9 @@ const make = Effect.gen(function* () {
           )
         )
           return yield* fail("conflict", "That copy is listed with another coordinator thread.");
-        const logicalProject = { ...identity, members: [...identity.members, input.joining] };
+        // The joining entry keeps the folder its own machine recorded when it accepted.
+        const own = withOwnRoot(identity, kept);
+        const logicalProject = { ...own, members: [...own.members, input.joining] };
         // Reread: writing notes does not change settings, but stay exact about the revision.
         yield* writeOwnership(
           yield* load(input.projectId),
@@ -815,6 +838,78 @@ const make = Effect.gen(function* () {
       }),
     );
 
+  /**
+   * Runs this member's own coordinator next to the others. Nothing is replaced:
+   * no predecessor is named, so no other copy gives way. Replica notes this copy
+   * lacks are written; differing notes are left to memory replication.
+   */
+  const startCoordinator: ProjectLink["Service"]["startCoordinator"] = (input) =>
+    admission.withLock(
+      input.projectId,
+      Effect.gen(function* () {
+        const project = yield* load(input.projectId);
+        const identity = project.workspaceSettings?.logicalProject;
+        const binding = project.workspaceSettings?.coordinatorBinding;
+        const replica = yield* readReplica(project);
+        const replicaFrom = Option.match(replica, {
+          onNone: () => null,
+          onSome: (value) => value.replicatedAt,
+        });
+        if (identity && (binding === undefined || binding.state === "active"))
+          return {
+            operationId: input.operationId,
+            logicalProject: identity,
+            coordinatorBinding: binding ?? { epoch: 0, state: "active" as const },
+            notesWritten: 0,
+            replicaFrom,
+            replayed: true,
+          };
+        if (!identity || binding?.state !== "transferred")
+          return yield* fail(
+            binding?.state === "transferring" ? "handoff_in_progress" : "not_member",
+          );
+        if (project.workspaceSettings?.archived) return yield* fail("archived");
+        let notesWritten = 0;
+        if (Option.isSome(replica)) {
+          const missing: ProjectLinkNoteWrite[] = [];
+          for (const note of replica.value.notes) {
+            const current = yield* workspace
+              .readMemory({ projectId: project.id, name: note.name })
+              .pipe(Effect.option);
+            if (Option.isNone(current))
+              missing.push({ name: note.name, content: note.content, expectedRevision: null });
+          }
+          notesWritten = yield* writeNotes(project.id, missing);
+        }
+        const active: ProjectCoordinatorBinding = {
+          epoch: Math.max(binding.epoch, input.knownEpoch ?? 0) + 1,
+          state: "active",
+          operationId: input.operationId,
+        };
+        const current = yield* load(input.projectId);
+        const settings = current.workspaceSettings;
+        const fill =
+          Option.isSome(replica) && !settings?.goal?.trim() && !settings?.instructions?.trim()
+            ? { goal: replica.value.goal, instructions: replica.value.instructions }
+            : undefined;
+        yield* writeOwnership(
+          current,
+          "project-start-coordinator",
+          input.operationId,
+          { mode: "start-coordinator", logicalProject: identity, coordinatorBinding: active },
+          fill,
+        );
+        return {
+          operationId: input.operationId,
+          logicalProject: identity,
+          coordinatorBinding: active,
+          notesWritten,
+          replicaFrom,
+          replayed: false,
+        };
+      }),
+    );
+
   return ProjectLink.of({
     fingerprint,
     preview,
@@ -826,6 +921,7 @@ const make = Effect.gen(function* () {
     replicate,
     takeover,
     supersede,
+    startCoordinator,
   });
 });
 
@@ -845,6 +941,7 @@ export const layer = Layer.effect(ProjectLink, make).pipe(Layer.provide(ProjectA
 export const layerRpcHandlers = WsProjectLinkRpcGroup.middleware(RpcInstrumentation).toLayer(
   Effect.gen(function* () {
     const link = yield* ProjectLink;
+    const memory = yield* LinkedMemorySync.LinkedMemorySync;
     return {
       [WS_METHODS.projectsFingerprint]: link.fingerprint,
       [WS_METHODS.projectLinkPreview]: link.preview,
@@ -854,8 +951,11 @@ export const layerRpcHandlers = WsProjectLinkRpcGroup.middleware(RpcInstrumentat
       [WS_METHODS.projectUnlink]: link.unlink,
       [WS_METHODS.projectLinkDigest]: link.digest,
       [WS_METHODS.projectLinkReplicate]: link.replicate,
+      [WS_METHODS.projectLinkMemoryExport]: memory.memoryExport,
+      [WS_METHODS.projectLinkMemoryMerge]: memory.memoryMerge,
       [WS_METHODS.projectTakeover]: link.takeover,
       [WS_METHODS.projectSupersede]: link.supersede,
+      [WS_METHODS.projectStartCoordinator]: link.startCoordinator,
     };
   }),
 );

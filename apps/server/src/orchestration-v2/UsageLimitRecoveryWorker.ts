@@ -19,6 +19,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
 import * as Availability from "./UsageLimitAvailability.ts";
+import { MachineLimitHandoff } from "./MachineLimitHandoff.ts";
 import {
   hasFreshLimitPermission,
   isLimitRecoveryCandidate,
@@ -149,6 +150,7 @@ export const makeSweep = Effect.gen(function* () {
   const threads = yield* ThreadManagement.ThreadManagementService;
   const settings = yield* ServerSettings.ServerSettingsService;
   const availability = yield* Availability.UsageLimitAvailability;
+  const machineHandoff = yield* MachineLimitHandoff;
   // The last read that found no candidate, and what it was read against.
   const quiet = yield* Ref.make<{
     readonly writeCount: number;
@@ -332,6 +334,18 @@ export const makeSweep = Effect.gen(function* () {
                 return next;
               }),
             );
+            // A run handed to another machine (or whose move is in doubt)
+            // continues there, never here as well.
+            if (
+              command &&
+              (yield* machineHandoff.holds(
+                thread.id,
+                command.type === "message.dispatch"
+                  ? (command.usageLimitContinuationOfRunId ?? null)
+                  : null,
+              ))
+            )
+              return;
             // Persisted recovery remains authoritative; never hold the settings
             // lock across continuation admission or provider work.
             if (command) yield* threads.dispatch(command);

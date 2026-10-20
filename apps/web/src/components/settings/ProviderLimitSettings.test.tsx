@@ -23,6 +23,7 @@ vi.mock("./useScopedSettings", () => ({
   useUpdateScopedSettings: () => state.update,
 }));
 vi.mock("../chat/ProviderModelPicker", () => ({ ProviderModelPicker: () => null }));
+vi.mock("./MachineFallbackSettings", () => ({ MachineFallbackSettings: () => null }));
 vi.mock("./AddApiCreditAccountDialog", () => ({
   AddApiCreditAccountDialog: ({ open, driver }: { open: boolean; driver: string }) =>
     open ? <div role="dialog" aria-label="Add an API account" data-driver={driver} /> : null,
@@ -142,6 +143,14 @@ it("writes the rule and the threshold", () => {
   expect(state.update).toHaveBeenCalledWith({ providerLimitSwitchAtPercent: null });
   act(() => row("Switch before the limit").props.onChange({ target: { value: "85" } }));
   expect(state.update).toHaveBeenCalledWith({ providerLimitSwitchAtPercent: 85 });
+});
+it("offers thresholds from 50 to 95 percent used", () => {
+  const options = row("Switch before the limit")
+    .findAllByType("option")
+    .map((option) => option.props.value);
+  expect(options).toEqual(["off", "50", "60", "70", "75", "80", "85", "90", "95"]);
+  act(() => row("Switch before the limit").props.onChange({ target: { value: "50" } }));
+  expect(state.update).toHaveBeenCalledWith({ providerLimitSwitchAtPercent: 50 });
 });
 function confirmButton(label: string) {
   const dialog = renderer!.root.find((node) => node.props.role === "alertdialog");

@@ -3,7 +3,17 @@
 import assert from "node:assert/strict";
 import { spawn, execFileSync } from "node:child_process";
 import { randomBytes, randomUUID, createHash } from "node:crypto";
-import { mkdirSync, mkdtempSync, writeFileSync, readFileSync, rmSync } from "node:fs";
+import {
+  chmodSync,
+  mkdirSync,
+  mkdtempSync,
+  writeFileSync,
+  readFileSync,
+  realpathSync,
+  rmSync,
+} from "node:fs";
+import { request as httpRequest } from "node:http";
+import { createServer as createHttpsServer } from "node:https";
 import { createRequire } from "node:module";
 import { createServer } from "node:net";
 import { tmpdir, homedir } from "node:os";
@@ -80,6 +90,7 @@ async function start(host) {
         STUDIO_DISABLE_AUTO_UPDATE: "true",
         PWDEBUG: "0",
         PLAYWRIGHT_HTML_OPEN: "never",
+        ...host.extraEnv,
       },
       stdio: ["ignore", "pipe", "pipe"],
     },
@@ -663,7 +674,53 @@ async function verifyTakeover() {
     "Restarted M1 is demoted by the app to a relinquished member at the new epoch with M3 as successor, and Review turns lists the coordinator turn it ran while cut off",
   );
 }
-let browser, page;
+let browser, page, fleetProxy;
+// AC-04: M4 reaches the joined M3 copy the way a fleet does, over HTTPS at a
+// Tailscale name. The name resolves to a local TLS proxy in front of M3, only
+// inside M4's server process, which trusts the proxy's throwaway certificate.
+const fleetName = "m3-link.fixture.ts.net";
+const fleetPort = await port();
+const fleetDir = join(scratch, "fleet-tls");
+mkdirSync(fleetDir);
+execFileSync(
+  "/usr/bin/openssl",
+  [
+    "req",
+    "-x509",
+    "-newkey",
+    "rsa:2048",
+    "-nodes",
+    "-days",
+    "1",
+    "-keyout",
+    join(fleetDir, "key.pem"),
+    "-out",
+    join(fleetDir, "cert.pem"),
+    "-subj",
+    `/CN=${fleetName}`,
+    "-addext",
+    `subjectAltName=DNS:${fleetName}`,
+  ],
+  { stdio: "ignore" },
+);
+writeFileSync(
+  join(fleetDir, "resolve.mjs"),
+  `import dns from "node:dns";
+const lookup = dns.lookup;
+dns.lookup = function (hostname, options, callback) {
+  if (typeof hostname === "string" && hostname.endsWith(".fixture.ts.net")) {
+    const done = typeof options === "function" ? options : callback;
+    const all = typeof options === "object" && options !== null && options.all;
+    return process.nextTick(() =>
+      all ? done(null, [{ address: "127.0.0.1", family: 4 }]) : done(null, "127.0.0.1", 4),
+    );
+  }
+  return lookup.call(this, hostname, options, callback);
+};
+`,
+);
+const launchArguments = join(fleetDir, "launch-arguments.json");
+const launchResult = join(fleetDir, "launch-result.json");
 try {
   // Two projects for one repository, on M4 and M3, created independently. M4's identity is
   // removed while offline below, so it is a legacy project the link must adopt one for (AC-01);
@@ -727,6 +784,29 @@ try {
         cursorKeychainUsageEnabled: false,
       }),
     );
+    if (label !== "M1 fixture") {
+      // A model-free local ACP agent whose only act is studio_thread_launch. M3 offers the
+      // same model, so the worker M4 starts there inherits one it can run; it is never prompted.
+      const settingsFile = join(data, "userdata/settings.json");
+      const settings = JSON.parse(readFileSync(settingsFile, "utf8"));
+      settings.providerInstances.linkLaunch = {
+        driver: "acpRegistry",
+        displayName: "Link launch agent",
+        enabled: true,
+        config: {
+          source: "local",
+          commandPath: process.execPath,
+          commandArgs: [
+            join(root, "scripts/studio-logical-projects/link-launch-agent.mjs"),
+            ...(label === "M4 fixture"
+              ? [launchArguments, launchResult]
+              : ["--echo", join(fleetDir, `worker-run-${label.split(" ")[0]}.json`)]),
+          ],
+          customModels: ["link-launch"],
+        },
+      };
+      writeFileSync(settingsFile, JSON.stringify(settings));
+    }
     const workspace = join(dir, "workspace");
     mkdirSync(workspace);
     writeFileSync(join(workspace, "README.md"), "Synthetic logical project verification only.\n");
@@ -738,13 +818,25 @@ try {
       port: await port(),
       environmentId: randomUUID(),
       projectId: randomUUID(),
+      extraEnv:
+        label === "M4 fixture"
+          ? {
+              NODE_EXTRA_CA_CERTS: join(fleetDir, "cert.pem"),
+              NODE_OPTIONS: `--import=${pathToFileURL(join(fleetDir, "resolve.mjs")).href}`,
+            }
+          : {},
     };
     host.origin = `http://127.0.0.1:${host.port}`;
     writeFileSync(join(data, "userdata/environment-id"), host.environmentId);
     hosts.push(host);
     await exchange(host, await start(host));
     const config = await rpc(host, "server.getConfig", {});
-    assert.ok(config.providers.every((provider) => provider.enabled === false));
+    assert.ok(
+      config.providers.every(
+        (provider) => provider.enabled === false || provider.instanceId === "linkLaunch",
+      ),
+      "Only the model-free link launch agent is enabled",
+    );
     await request(host, "/api/projects/mutate", {
       type: "project.create",
       commandId: randomUUID(),
@@ -1106,10 +1198,19 @@ try {
   receipt.checks.push(
     "Remote archived threads remain visible in Resolved with their Reopen action",
   );
-  await page.locator("summary").filter({ hasText: "Previous coordinator on M1 fixture" }).click();
+  // Since #482 only the copy the coordinator came from shows its history; earlier builds show each.
+  const previous = page
+    .locator("summary")
+    .filter({ hasText: /^Previous coordinator on / })
+    .first();
+  await previous.waitFor();
+  const previousHost = (await previous.innerText()).match(
+    /Previous coordinator on (M\d fixture)/,
+  )[1];
+  await previous.click();
   await page
-    .getByLabel("Retained coordinator messages on M1 fixture", { exact: true })
-    .getByText("M1 fixture historical request", { exact: true })
+    .getByLabel(`Retained coordinator messages on ${previousHost}`, { exact: true })
+    .getByText(`${previousHost} historical request`, { exact: true })
     .waitFor();
   receipt.checks.push("Previous coordinator conversation remains readable in the same project");
 
@@ -1248,6 +1349,228 @@ try {
     "Remote worker project resolution (matchLogicalRemoteProject, isLogicalProjectBinding) selects the joined copy in both directions from real server state; a same-repository stranger is refused",
   );
 
+  // AC-04 live: the kept coordinator's machine starts a real worker on M3 for the linked
+  // project, through its fleet connection and worker grant, from an agent turn in a thread.
+  fleetProxy = createHttpsServer(
+    {
+      key: readFileSync(join(fleetDir, "key.pem")),
+      cert: readFileSync(join(fleetDir, "cert.pem")),
+    },
+    (incoming, outgoing) => {
+      const forwarded = httpRequest(
+        `${linkJoining.origin}${incoming.url}`,
+        // Tailscale Serve terminates TLS and says so, which the server's OAuth origin follows.
+        { method: incoming.method, headers: { ...incoming.headers, "x-forwarded-proto": "https" } },
+        (response) => {
+          outgoing.writeHead(response.statusCode, response.headers);
+          response.pipe(outgoing);
+        },
+      );
+      forwarded.on("error", () => outgoing.destroy());
+      incoming.pipe(forwarded);
+    },
+  );
+  await new Promise((done) => fleetProxy.listen(fleetPort, "127.0.0.1", done));
+  const fleetFile = join(linkKept.data, "studio-fleet.json");
+  writeFileSync(
+    fleetFile,
+    JSON.stringify({
+      version: 1,
+      machines: [
+        {
+          id: "m3-link",
+          label: linkJoining.label,
+          environmentId: linkJoining.environmentId,
+          url: `https://${fleetName}:${fleetPort}/`,
+        },
+      ],
+    }),
+    { mode: 0o600 },
+  );
+  chmodSync(fleetFile, 0o600);
+  const fleetPairing = await request(linkJoining, "/api/auth/pairing-token", {
+    label: `SpecWithCode workers · ${linkKept.environmentId}`,
+    scopes: ["orchestration:read", "orchestration:operate"],
+  });
+  const allowed = await request(linkKept, "/api/studio/fleet/workers/allow", {
+    id: "m3-link",
+    access: "full-access",
+    pairingCode: fleetPairing.credential,
+  });
+  assert.equal(allowed.id, "m3-link");
+  assert.ok(
+    ["allowed", "expiring"].includes(allowed.workers?.status) && !allowed.workers?.problem,
+    `M4 holds a worker grant on M3: ${JSON.stringify(allowed)}`,
+  );
+  const workerTitle = "Linked copy worker from M4";
+  writeFileSync(
+    launchArguments,
+    JSON.stringify({
+      machine: "m3-link",
+      projectId: linkKept.linkProjectId,
+      title: workerTitle,
+      message: "Report the folder this worker runs in.",
+    }),
+  );
+  const launcherThreadId = `link-launcher-${randomUUID()}`;
+  await rpc(linkKept, "orchestration.dispatchCommand", {
+    type: "thread.create",
+    commandId: randomUUID(),
+    threadId: launcherThreadId,
+    projectId: linkKept.linkProjectId,
+    title: "Start a worker on the linked copy",
+    modelSelection: { instanceId: "linkLaunch", model: "link-launch" },
+    runtimeMode: "full-access",
+    interactionMode: "default",
+    branch: null,
+    worktreePath: null,
+    createdBy: "user",
+    creationSource: "web",
+  });
+  await rpc(linkKept, "orchestration.dispatchCommand", {
+    type: "message.dispatch",
+    commandId: randomUUID(),
+    threadId: launcherThreadId,
+    messageId: randomUUID(),
+    text: `Start a worker on ${linkJoining.label} for this project.`,
+    attachments: [],
+    createdBy: "user",
+    creationSource: "web",
+    dispatchMode: { type: "start_immediately" },
+  });
+  let launch;
+  for (let attempt = 0; attempt < 120 && launch === undefined; attempt += 1) {
+    try {
+      launch = JSON.parse(readFileSync(launchResult, "utf8"));
+    } catch {
+      await new Promise((done) => setTimeout(done, 500));
+    }
+  }
+  assert.ok(launch, "The coordinator machine's agent turn ran studio_thread_launch");
+  writeFileSync(
+    join(output, "08-linked-worker-launch.json"),
+    JSON.stringify(launch, null, 2) + "\n",
+  );
+  const launchContent =
+    launch.body?.result?.structuredContent ??
+    JSON.parse(launch.body?.result?.content?.[0]?.text ?? "null");
+  assert.equal(launch.body?.result?.isError ?? false, false, JSON.stringify(launch).slice(0, 2000));
+  const remoteThreadId = launchContent?.threadId ?? launchContent?.thread?.threadId;
+  assert.ok(
+    remoteThreadId,
+    `The launch returned the worker thread: ${JSON.stringify(launchContent)}`,
+  );
+  assert.ok(
+    launchContent.runId,
+    `The launch started a run on M3: ${JSON.stringify(launchContent)}`,
+  );
+  let remoteThread;
+  let remoteRun;
+  for (let attempt = 0; attempt < 120; attempt += 1) {
+    remoteThread = await rpc(linkJoining, "orchestration.getThreadProjection", {
+      threadId: remoteThreadId,
+    });
+    remoteRun = (remoteThread.runs ?? []).find((run) => run.id === launchContent.runId);
+    if (["completed", "failed", "interrupted", "cancelled"].includes(remoteRun?.status)) break;
+    await new Promise((done) => setTimeout(done, 500));
+  }
+  assert.equal(
+    remoteRun?.status,
+    "completed",
+    `M3 ran the worker's first turn to completion: ${JSON.stringify(remoteRun)}`,
+  );
+  const workerEcho = JSON.parse(readFileSync(join(fleetDir, "worker-run-M3.json"), "utf8"));
+  const joinedRoot = realpathSync(linkJoining.linkFolder);
+  const sessionCwds = [
+    ...(remoteThread.providerSessions ?? []),
+    ...(remoteThread.checkpointScopes ?? []),
+  ]
+    .map((entry) => entry.cwd)
+    .filter(Boolean);
+  assert.ok(sessionCwds.length > 0, "M3 recorded the run's working directory");
+  for (const cwd of [workerEcho.cwd, ...sessionCwds])
+    assert.equal(realpathSync(cwd), joinedRoot, "The run works in M3's joined copy");
+  assert.equal(workerEcho.text.includes("Report the folder this worker runs in."), true);
+  receipt.linkedWorker = {
+    launch: launchContent,
+    remoteThreadId,
+    runId: launchContent.runId,
+    runStatus: remoteRun.status,
+    cwd: workerEcho.cwd,
+    serverCwds: sessionCwds,
+    joinedWorkspaceRoot: linkJoining.linkFolder,
+  };
+  writeFileSync(
+    join(output, "08-linked-worker-run.json"),
+    JSON.stringify(workerEcho, null, 2) + "\n",
+  );
+  let reportBack;
+  for (let attempt = 0; attempt < 120 && reportBack === undefined; attempt += 1) {
+    try {
+      reportBack = JSON.parse(readFileSync(`${launchResult}.later`, "utf8"));
+    } catch {
+      await new Promise((done) => setTimeout(done, 500));
+    }
+  }
+  assert.ok(reportBack, "The worker's result reached M4's coordinator thread");
+  assert.match(
+    reportBack.text,
+    new RegExp(`on ${linkJoining.label} finished: completed`),
+    "M4's coordinator hears that the M3 worker completed",
+  );
+  assert.ok(
+    reportBack.text.includes(encodeURIComponent(remoteThreadId)),
+    "The report names the M3 worker thread",
+  );
+  writeFileSync(
+    join(output, "08-linked-worker-report-back.json"),
+    JSON.stringify(reportBack, null, 2) + "\n",
+  );
+  const launcherRuns = async () =>
+    (await rpc(linkKept, "orchestration.getThreadProjection", { threadId: launcherThreadId }))
+      .runs ?? [];
+  for (let attempt = 0; attempt < 120; attempt += 1) {
+    const runs = await launcherRuns();
+    if (runs.length >= 2 && runs.every((run) => run.status === "completed")) break;
+    await new Promise((done) => setTimeout(done, 500));
+  }
+  assert.deepEqual(
+    (await launcherRuns()).map((run) => run.status),
+    ["completed", "completed"],
+    "M4's coordinator thread ran the launch and then received the worker's report",
+  );
+  writeFileSync(
+    join(output, "08-linked-worker-thread.json"),
+    JSON.stringify(remoteThread, null, 2) + "\n",
+  );
+  assert.equal(
+    remoteThread.thread?.projectId ?? remoteThread.projectId,
+    linkJoining.linkProjectId,
+    "The worker runs in M3's joined Link fixture copy",
+  );
+  const settingsUrl = page.url();
+  await page.goto(`${primary.origin}${linkHref}`);
+  const workerRow = page
+    .locator(`[data-thread-environment="${linkJoining.environmentId}"]`)
+    .getByText(workerTitle, { exact: true })
+    .first();
+  await workerRow.waitFor({ timeout: 30000 });
+  await workerRow.click();
+  await page.evaluate(
+    () => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))),
+  );
+  writeFileSync(join(output, "08-linked-worker-page.txt"), await page.locator("body").innerText());
+  await page.screenshot({ path: join(output, "08-linked-worker.png"), animations: "disabled" });
+  receipt.screenshots.push("08-linked-worker.png");
+  receipt.checks.push(
+    "Live remote worker: an agent turn in M4's kept Link fixture thread (local model-free ACP agent) calls studio_thread_launch on the fleet machine; M4 reaches M3 over HTTPS with its worker grant and M3 creates the worker in its joined Link fixture copy, which the linked project lists under M3",
+  );
+  await request(linkKept, "/api/studio/fleet/workers/stop", { id: "m3-link" });
+  await new Promise((done) => fleetProxy.close(done));
+  fleetProxy.closeAllConnections?.();
+  fleetProxy = undefined;
+  await page.goto(settingsUrl);
+
   // Sidebar shows the linked project once, with each copy's role.
   const linkedRow = page.locator(".sws-project-row").filter({ hasText: "Link fixture" });
   await linkedRow
@@ -1335,7 +1658,9 @@ try {
     db.close();
     return count + total;
   }, 0);
-  assert.equal(receipt.providerTurns, 0, "Synthetic verification must not start provider turns");
+  // M4's launch turn, the M3 worker's turn and M4's report-back turn, all run by the
+  // local model-free agent.
+  assert.equal(receipt.providerTurns, 3, "Only the three model-free linked-launch turns ran");
   receipt.success = true;
 } catch (error) {
   receipt.failure = { name: error.name, message: error.message };
@@ -1353,6 +1678,8 @@ try {
   }
   throw error;
 } finally {
+  fleetProxy?.closeAllConnections?.();
+  fleetProxy?.close();
   if (browser) await browser.close();
   await Promise.all(hosts.map(stop));
   receipt.ownedProcessesStopped = hosts.every(

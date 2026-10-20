@@ -3,6 +3,7 @@ import { assert, it } from "@effect/vitest";
 import {
   CommandId,
   DEFAULT_PROJECT_WORKSPACE_SETTINGS,
+  EnvironmentId,
   EventId,
   ProjectId,
   ThreadId,
@@ -22,6 +23,7 @@ import {
   type ProjectPlanSnapshot,
 } from "../../../../packages/contracts/src/projectPlan.ts";
 import * as Plans from "./ProjectPlanService.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as Projects from "../orchestration-v2/ProjectStore.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
@@ -47,7 +49,10 @@ const shells = Layer.mock(ProjectionStore.ProjectionStoreV2)({
           },
     ),
 });
-const dependencies = Layer.mergeAll(Projects.layer, shells, ProcessRunner.layer).pipe(
+const identity = Layer.succeed(ServerEnvironment.ServerEnvironmentIdentity, {
+  getEnvironmentId: Effect.succeed(EnvironmentId.make("env-local")),
+});
+const dependencies = Layer.mergeAll(Projects.layer, shells, ProcessRunner.layer, identity).pipe(
   Layer.provideMerge(storage),
   Layer.provideMerge(NodeServices.layer),
 );

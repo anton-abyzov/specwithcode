@@ -82,6 +82,20 @@ export interface ThreadTitleGenerationResult {
   needsRefinement?: boolean | undefined;
 }
 
+export interface HandoffNoteGenerationInput {
+  cwd: string;
+  /** The latest turns, oldest first. */
+  transcript: string;
+  maxWords: number;
+  modelSelection: ModelSelection;
+}
+
+export interface HandoffNoteGenerationResult {
+  done: string;
+  next: string;
+  openQuestions: string;
+}
+
 /**
  * TextGeneration - Service tag for commit and change request text generation.
  */
@@ -113,6 +127,14 @@ export class TextGeneration extends Context.Service<
     readonly generateThreadTitle: (
       input: ThreadTitleGenerationInput,
     ) => Effect.Effect<ThreadTitleGenerationResult, TextGenerationError>;
+
+    /**
+     * Generate a handoff note (done, next, open questions). Optional: a
+     * provider without it leaves handoff mode on its plain fallback note.
+     */
+    readonly generateHandoffNote?: (
+      input: HandoffNoteGenerationInput,
+    ) => Effect.Effect<HandoffNoteGenerationResult, TextGenerationError>;
   }
 >()("specweave-studio/textGeneration/TextGeneration") {}
 
@@ -120,7 +142,8 @@ type TextGenerationOp =
   | "generateCommitMessage"
   | "generatePrContent"
   | "generateBranchName"
-  | "generateThreadTitle";
+  | "generateThreadTitle"
+  | "generateHandoffNote";
 
 const resolveInstance = (
   registry: ProviderInstanceRegistry.ProviderInstanceRegistry["Service"],
@@ -180,6 +203,19 @@ export const make = Effect.gen(function* () {
               ));
             return yield* textGeneration.generateThreadTitle({ ...input, linkedContext });
           }),
+        ),
+      ),
+    generateHandoffNote: (input) =>
+      admittedInstance("generateHandoffNote", input).pipe(
+        Effect.flatMap((textGeneration) =>
+          textGeneration.generateHandoffNote === undefined
+            ? Effect.fail(
+                new TextGenerationError({
+                  operation: "generateHandoffNote",
+                  detail: "This provider cannot write handoff notes.",
+                }),
+              )
+            : textGeneration.generateHandoffNote(input),
         ),
       ),
   });

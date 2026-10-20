@@ -71,6 +71,16 @@ public struct ThreadShell: Codable, Hashable, Sendable, Identifiable {
   public var lastVisitedAt: Date?
   public var titleRegeneration: TitleRegeneration?
   public var deletedAt: Date?
+  /// The machine the thread lives on. Absent on servers without handoff mode.
+  public var ownerMachineId: String?
+  /// The machine it runs on now; the owner unless it was handed off.
+  public var executionMachineId: String?
+  public var executionMachineLabel: String?
+  public var executionState: ExecutionState?
+  /// When the execution machine last answered; set with `.unknown`.
+  public var executionLastSeenAt: Date?
+  /// Set on a copy that continued elsewhere (handoff) or moved to another project.
+  public var movedTo: ThreadMoveLink?
 
   enum CodingKeys: String, CodingKey {
     case createdBy, creationSource, id, projectId, title, providerInstanceId, modelSelection, runtimeMode, interactionMode
@@ -82,6 +92,7 @@ public struct ThreadShell: Codable, Hashable, Sendable, Identifiable {
     case itemCount, visibleItemCount, createdAt, updatedAt, archivedAt, settledOverride, settledAt, unsettledAt
     case snoozedUntil, snoozedAt, limitRecovery, pinnedAt, autoSettleDisabledAt, pinOrderKey, activeOrderKey
     case lastVisitedAt, titleRegeneration, deletedAt
+    case ownerMachineId, executionMachineId, executionMachineLabel, executionState, executionLastSeenAt, movedTo
   }
 
   public init(from decoder: Decoder) throws {
@@ -145,6 +156,12 @@ public struct ThreadShell: Codable, Hashable, Sendable, Identifiable {
     lastVisitedAt = try c.decodeIfPresent(Date.self, forKey: .lastVisitedAt)
     titleRegeneration = try? c.decodeIfPresent(TitleRegeneration.self, forKey: .titleRegeneration)
     deletedAt = try c.decodeIfPresent(Date.self, forKey: .deletedAt)
+    ownerMachineId = try? c.decodeIfPresent(String.self, forKey: .ownerMachineId)
+    executionMachineId = try? c.decodeIfPresent(String.self, forKey: .executionMachineId)
+    executionMachineLabel = try? c.decodeIfPresent(String.self, forKey: .executionMachineLabel)
+    executionState = try? c.decodeIfPresent(ExecutionState.self, forKey: .executionState)
+    executionLastSeenAt = (try? c.decodeIfPresent(Date.self, forKey: .executionLastSeenAt)) ?? nil
+    movedTo = (try? c.decodeIfPresent(ThreadMoveLink.self, forKey: .movedTo)) ?? nil
   }
 
   public var isPinned: Bool { pinnedAt != nil }
@@ -271,6 +288,37 @@ public struct AppThread: Codable, Hashable, Sendable, Identifiable {
     if settledOverride == .active { return false }
     return settledAt != nil
   }
+}
+
+/// Whether the machine a thread runs on is answering for it.
+public enum ExecutionState: String, Codable, Hashable, Sendable {
+  /// The execution machine holds the lease; the thread may be idle between turns.
+  case running
+  /// This copy was handed off and takes no new turns.
+  case fenced
+  /// The execution machine is unreachable; never read it as idle.
+  case unknown
+}
+
+/// Where a thread went: another project, or another machine through handoff.
+public struct ThreadMoveLink: Codable, Hashable, Sendable {
+  public var threadId: String
+  public var projectId: String
+  /// "handoff" or "project"; absent on a project move from older servers.
+  public var kind: String?
+  /// The machine that continued it; absent when it is the same machine.
+  public var environmentId: String?
+  public var machineLabel: String?
+
+  public init(threadId: String, projectId: String, kind: String? = nil, environmentId: String? = nil, machineLabel: String? = nil) {
+    self.threadId = threadId
+    self.projectId = projectId
+    self.kind = kind
+    self.environmentId = environmentId
+    self.machineLabel = machineLabel
+  }
+
+  public var isHandoff: Bool { kind == "handoff" }
 }
 
 public struct ThreadLineage: Codable, Hashable, Sendable {

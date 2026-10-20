@@ -194,6 +194,8 @@ type HostConnection = {
 export type HostAdmissionContext = {
   readonly isThisDevice: boolean;
   readonly graceElapsed: boolean;
+  /** The viewed machine's name, for the text that refuses a send to it. */
+  readonly machineLabel?: string;
 };
 
 const REMOTE_PAST_GRACE: HostAdmissionContext = { isThisDevice: false, graceElapsed: true };
@@ -221,6 +223,37 @@ export function hostDisconnectedLabel(
   return "Disconnected";
 }
 
+/**
+ * A message typed while viewing an unreachable machine's orchestrator is
+ * refused here, never queued or handed to another machine's coordinator.
+ */
+export function remoteUnreachableAdmission(machineLabel: string | undefined): string {
+  return `${machineLabel ?? "This machine"} is unreachable, so its coordinator cannot take messages. Nothing is sent to another machine.`;
+}
+
+/**
+ * The status of another machine's orchestrator while it is unreachable: the
+ * page shows the copy this device last synced, read-only, and says how old it is.
+ */
+export function remoteOrchestratorOfflineLabel(
+  machineLabel: string,
+  lastSyncedAt: number | null,
+  now: number,
+): string {
+  if (lastSyncedAt === null)
+    return `${machineLabel} unreachable · last synced: Unknown · read-only`;
+  const minutes = Math.max(0, Math.round((now - lastSyncedAt) / 60_000));
+  const age =
+    minutes < 1
+      ? "just now"
+      : minutes < 60
+        ? `${minutes} min ago`
+        : minutes < 48 * 60
+          ? `${Math.round(minutes / 60)} h ago`
+          : `${Math.round(minutes / (24 * 60))} d ago`;
+  return `${machineLabel} unreachable · last synced ${age} · read-only`;
+}
+
 export function projectAdmissionReason(
   settings: { paused: boolean; archived: boolean } | null,
   connected: boolean,
@@ -245,10 +278,13 @@ export function projectAdmissionReason(
     }
     if (connection?.phase === "connecting") return "Connecting to this host.";
     if (connection?.phase === "reconnecting") {
-      return "Reconnecting to this host. If this does not clear, reload the page.";
+      // A named machine that dropped is unreachable now; say the message stays here.
+      return context.machineLabel
+        ? `${remoteUnreachableAdmission(context.machineLabel)} Reconnecting…`
+        : "Reconnecting to this host. If this does not clear, reload the page.";
     }
     if (connection?.phase === "offline") return "This device is offline.";
-    return "Reconnect this host to send a message.";
+    return remoteUnreachableAdmission(context.machineLabel);
   }
   if (!canOperate) return "This connection has read-only access.";
   if (!settings) return "Project settings are still loading.";

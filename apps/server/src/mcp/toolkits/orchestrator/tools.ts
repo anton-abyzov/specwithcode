@@ -23,6 +23,8 @@ import {
   OrchestratorMcpThreadInterruptResult,
   OrchestratorMcpThreadListInput,
   OrchestratorMcpThreadListResult,
+  OrchestratorMcpThreadMigrateInput,
+  OrchestratorMcpThreadMigrateResult,
   OrchestratorMcpThreadReadInput,
   OrchestratorMcpThreadReadResult,
   OrchestratorMcpThreadSendInput,
@@ -37,6 +39,7 @@ import {
 } from "@specweave-studio/contracts";
 import { Tool, Toolkit } from "effect/ai";
 
+import * as HandoffMode from "../../../handoff/HandoffMode.ts";
 import * as ProjectService from "../../../project/ProjectService.ts";
 import * as ThreadManagementService from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
@@ -305,6 +308,19 @@ const ThreadsContinueAllTool = Tool.make("studio_threads_continue_all", {
   .annotate(Tool.Idempotent, true)
   .annotate(Tool.OpenWorld, true);
 
+const ThreadMigrateTool = Tool.make("studio_thread_migrate", {
+  description:
+    "Move threads this coordinator owns to another machine through handoff. Each thread keeps its owner, the coordinator that started it; only where it runs moves. Pass threadIds, or omit them to move every running handoff-mode thread of this project. Returns one result per thread: moved, stayed with the exact reason, or skipped. A machine that is offline, not granted, or not signed in is refused, never substituted.",
+  parameters: OrchestratorMcpThreadMigrateInput,
+  success: OrchestratorMcpThreadMigrateResult,
+  failure: OrchestratorMcpFailure,
+  failureMode: "return",
+  dependencies: [...dependencies, ProjectService.ProjectService, HandoffMode.HandoffMode],
+})
+  .annotate(Tool.Title, "Move SpecWithCode threads to another machine")
+  .annotate(Tool.Destructive, true)
+  .annotate(Tool.OpenWorld, true);
+
 export const OrchestratorToolkit = Toolkit.make(
   OrchestratorCapabilitiesTool,
   DelegateTaskTool,
@@ -325,4 +341,5 @@ export const OrchestratorToolkit = Toolkit.make(
   ThreadInterruptTool,
   ThreadsStopAllTool,
   ThreadsContinueAllTool,
+  ThreadMigrateTool,
 );

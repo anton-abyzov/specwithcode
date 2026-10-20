@@ -191,6 +191,8 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   /** Server can stream self-update progress before acknowledging the
       restart. Clients fall back to server.updateServer when absent. */
   serverSelfUpdateProgress: Schema.optionalKey(Schema.Boolean),
+  /** Server answers provision.preview and provision.run (Settings > Connections > Provision). */
+  machineProvision: Schema.optionalKey(Schema.Boolean),
   /** Server can durably mark running provider turns before a self-update and
       continue them after the replacement process starts. */
   serverUpdateThreadContinuation: Schema.optionalKey(Schema.Boolean),
@@ -205,6 +207,14 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
       Absent on older servers, where clients must clone with the blocking
       `sourceControl.cloneRepository` call instead. */
   projectCloneTracking: Schema.optionalKey(Schema.Boolean),
+  /** Server answers `sourceControl.checkRemoteAccess` (a `git ls-remote` with
+      its own credentials) and `sourceControl.inspectDestination`. Absent on
+      older servers; clients then don't offer Add to another machine there. */
+  cloneDestinationChecks: Schema.optionalKey(Schema.Boolean),
+  /** Server keeps the `machineNicknames` setting and swaps it with paired
+      machines. Older servers drop the key, so clients write renames only to
+      servers that report this. */
+  machineNicknames: Schema.optionalKey(Schema.Boolean),
   /** Server detects `platform.machine` and persists the `environmentIcon`
       setting. Older servers drop the key on write, so clients show the
       picker inert rather than offering a choice that would never stick. */
@@ -249,9 +259,19 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   /** Serves coordinator takeover, giving way and coordinator note replicas
       (`projectLink.takeover`, `supersede`, `replicate`, `digest`). */
   coordinatorTakeover: Schema.optionalKey(Schema.Boolean),
+  /** Runs a coordinator on every member machine of a linked project
+      (`projectLink.startCoordinator`). Absent on older servers, where a
+      member can only take over the single coordinator. */
+  coordinatorPerMachine: Schema.optionalKey(Schema.Boolean),
+  /** Replicates a linked project's native plan so claims bind on every machine
+      (`projectLink.planExport`, `projectLink.planMerge`). */
+  linkedPlans: Schema.optionalKey(Schema.Boolean),
   /** Server indexes project knowledge (`projects.knowledge*`). Absent on older
       servers, where clients say the knowledge card needs an update. */
   projectKnowledge: Schema.optionalKey(Schema.Boolean),
+  /** Replicates project memory both ways between linked members
+      (`projectLink.memoryExport`, `memoryMerge`). Absent on older servers. */
+  linkedMemorySync: Schema.optionalKey(Schema.Boolean),
 });
 export type ExecutionEnvironmentCapabilities = typeof ExecutionEnvironmentCapabilities.Type;
 

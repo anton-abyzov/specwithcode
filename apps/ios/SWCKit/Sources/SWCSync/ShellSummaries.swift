@@ -9,19 +9,30 @@ public enum ShellSummaries {
     public var environmentId: String
     public var label: String
     public var online: Bool
+    /// The live thread list, or the last one saved while the machine is unreachable.
     public var snapshot: ShellSnapshot?
     /// The machine's saved sidebar order, from its server settings.
     public var projectOrder: SidebarProjectOrder?
     /// Folder of the machine's scratch project ("No project"), from its server config.
     public var scratchWorkspaceRoot: String?
+    /// The user's nickname for the machine, when set.
+    public var nickname: String?
+    /// When the phone last had the machine connected.
+    public var lastSeenAt: Date?
 
-    public init(environmentId: String, label: String, online: Bool, snapshot: ShellSnapshot?, projectOrder: SidebarProjectOrder? = nil, scratchWorkspaceRoot: String? = nil) {
+    public init(environmentId: String, label: String, online: Bool, snapshot: ShellSnapshot?, projectOrder: SidebarProjectOrder? = nil, scratchWorkspaceRoot: String? = nil, nickname: String? = nil, lastSeenAt: Date? = nil) {
       self.environmentId = environmentId
       self.label = label
       self.online = online
       self.snapshot = snapshot
       self.projectOrder = projectOrder
       self.scratchWorkspaceRoot = scratchWorkspaceRoot
+      self.nickname = nickname
+      self.lastSeenAt = lastSeenAt
+    }
+
+    public var displayName: String {
+      MachineNickname.resolve(environmentId: environmentId, label: label, nicknames: nickname.map { [environmentId: $0] } ?? [:])
     }
   }
 
@@ -34,23 +45,39 @@ public enum ShellSummaries {
 
   public static let recentLimit = 30
 
-  public static func build(_ machines: [Machine]) -> Output {
-    let ordered = machines.sorted { $0.environmentId < $1.environmentId }
+  /// - Parameters:
+  ///   - names: Labels of machines the phone knows only from the main
+  ///     machine's roster, so a thread running there still shows its name.
+  ///   - nicknames: The user's nicknames by environment id, for every machine.
+  public static func build(_ machines: [Machine], names: [String: String] = [:], nicknames: [String: String] = [:]) -> Output {
+    let ordered = machines.map { machine in
+      var machine = machine
+      if machine.nickname == nil { machine.nickname = nicknames[machine.environmentId] }
+      return machine
+    }.sorted { $0.environmentId < $1.environmentId }
     let orders = ordered.compactMap(\.projectOrder)
+    let directory = Directory(machines: ordered, names: names, nicknames: nicknames)
+    let listed = Set(ordered.flatMap { machine in (machine.snapshot?.threads ?? []).map { "\(machine.environmentId)/\($0.id)" } })
     var aide: ProjectSummary?
     var archivedAide: ProjectSummary?
     var projects: [ProjectSummary] = []
+    var linked: [String: [LinkedCopy]] = [:]
+    var linkedOrder: [String] = []
     var threadsByProject: [ProjectRef: [ThreadSummary]] = [:]
     var all: [ThreadSummary] = []
 
     for machine in ordered {
       guard let snapshot = machine.snapshot else { continue }
+      let name = machine.displayName
       let coordinatorIds = Set(snapshot.projects.map(\.coordinatorThreadId))
       let titles = Dictionary(snapshot.projects.map { ($0.id, $0.displayTitle) }, uniquingKeysWith: { first, _ in first })
 
       var byProject: [String: [ThreadSummary]] = [:]
       for thread in snapshot.threads where isTopLevel(thread, coordinatorIds: coordinatorIds) {
-        let summary = threadSummary(thread, environmentId: machine.environmentId, projectTitle: titles[thread.projectId], machineLabel: machine.label, machineOnline: machine.online)
+        // A handed-off copy is listed through its continuation when that is known.
+        if let next = thread.movedTo, next.isHandoff, listed.contains("\(next.environmentId ?? machine.environmentId)/\(next.threadId)") { continue }
+        var summary = threadSummary(thread, environmentId: machine.environmentId, projectTitle: titles[thread.projectId], machineLabel: name, machineOnline: machine.online)
+        summary.placement = placement(thread, on: machine, directory: directory)
         byProject[thread.projectId, default: []].append(summary)
         all.append(summary)
       }
@@ -59,7 +86,7 @@ public enum ShellSummaries {
         let ref = ProjectRef(environmentId: machine.environmentId, projectId: project.id)
         let threads = sortThreads(byProject[project.id] ?? [])
         threadsByProject[ref] = threads
-        var summary = projectSummary(project, environmentId: machine.environmentId, machineLabel: machine.label, machineOnline: machine.online, threads: threads)
+        var summary = projectSummary(project, environmentId: machine.environmentId, machineLabel: name, machineOnline: machine.online, threads: threads)
         if project.isPersonal {
           // An active Aide beats an archived one, then the lowest environment id
           // wins (machines are visited in that order), as the web's findPersonalAssistant.
@@ -73,9 +100,21 @@ public enum ShellSummaries {
           continue
         } else {
           summary.isPinned = ProjectPinning.isPinned(project, environmentId: machine.environmentId, orders: orders)
-          projects.append(summary)
+          if let logical = project.workspaceSettings?.logicalProject {
+            if linked[logical.id] == nil { linkedOrder.append(logical.id) }
+            linked[logical.id, default: []].append(LinkedCopy(project: project, summary: summary, threads: threads, lastSeenAt: machine.lastSeenAt))
+          } else {
+            projects.append(summary)
+          }
         }
       }
+    }
+
+    for id in linkedOrder {
+      guard let copies = linked[id] else { continue }
+      let merged = merge(copies)
+      projects.append(merged.summary)
+      for member in copies { threadsByProject[member.summary.ref] = merged.threads }
     }
 
     projects.sort { a, b in
@@ -86,6 +125,85 @@ public enum ShellSummaries {
     }
     let recent = Array(sortThreads(all).prefix(recentLimit))
     return Output(aide: aide ?? archivedAide, projects: projects, threadsByProject: threadsByProject, recentThreads: recent)
+  }
+
+  // MARK: - Machines
+
+  /// Names and reachability of every machine the phone knows.
+  struct Directory {
+    var machines: [String: Machine]
+    var names: [String: String]
+    var nicknames: [String: String]
+
+    init(machines: [Machine], names: [String: String], nicknames: [String: String] = [:]) {
+      self.machines = Dictionary(machines.map { ($0.environmentId, $0) }, uniquingKeysWith: { first, _ in first })
+      self.names = names
+      self.nicknames = nicknames
+    }
+
+    func name(_ environmentId: String, reported: String? = nil) -> String {
+      if let machine = machines[environmentId] { return machine.displayName }
+      let label = names[environmentId] ?? reported ?? ""
+      // A machine the phone never heard of reads better than its raw id.
+      return MachineNickname.known(environmentId: environmentId, label: label, nicknames: nicknames) ?? "Another machine"
+    }
+
+    func isOnline(_ environmentId: String) -> Bool? { machines[environmentId]?.online }
+
+    func lastSeen(_ environmentId: String) -> Date? { machines[environmentId]?.lastSeenAt }
+  }
+
+  /// Where a thread lives and runs. A thread listed by an unreachable
+  /// machine, or one its machine reports it cannot reach, is unknown.
+  static func placement(_ thread: ThreadShell, on machine: Machine, directory: Directory) -> ThreadPlacement {
+    let owner = thread.ownerMachineId ?? machine.environmentId
+    let handoff = thread.movedTo?.isHandoff == true ? thread.movedTo : nil
+    let execution = thread.executionMachineId ?? handoff?.environmentId ?? owner
+    let executionName = directory.name(execution, reported: thread.executionMachineLabel ?? handoff?.machineLabel)
+    var placement = ThreadPlacement(owner: directory.name(owner), runsOn: execution == owner ? nil : executionName)
+    if !machine.online {
+      placement.unknown = .init(machine: machine.displayName, lastSeenAt: machine.lastSeenAt)
+    } else if thread.executionState == .unknown || (execution != machine.environmentId && directory.isOnline(execution) == false) {
+      // The machine that runs it is unreachable: from its server, or from the phone.
+      placement.unknown = .init(machine: executionName, lastSeenAt: directory.lastSeen(execution) ?? thread.executionLastSeenAt)
+    }
+    return placement
+  }
+
+  // MARK: - Projects linked across machines
+
+  struct LinkedCopy {
+    var project: ProjectShell
+    var summary: ProjectSummary
+    var threads: [ThreadSummary]
+    var lastSeenAt: Date?
+  }
+
+  /// One row for a project linked across machines. The row opens the member
+  /// whose coordinator is active, chosen as the web's `logicalCoordinator`
+  /// does; it never fails over to another machine on its own.
+  static func merge(_ copies: [LinkedCopy]) -> (summary: ProjectSummary, threads: [ThreadSummary]) {
+    let coordinator = activeCoordinator(copies)
+    let primary = coordinator ?? copies.first { $0.summary.machineOnline } ?? copies[0]
+    let members = ([primary] + copies.filter { $0.summary.ref != primary.summary.ref }).map { copy in
+      ProjectMember(ref: copy.summary.ref, machineLabel: copy.summary.machineLabel, machineOnline: copy.summary.machineOnline, lastSeenAt: copy.lastSeenAt, isCoordinator: copy.summary.ref == coordinator?.summary.ref)
+    }
+    let threads = sortThreads(copies.flatMap(\.threads))
+    var summary = primary.summary
+    summary.members = members
+    summary.isPinned = copies.contains { $0.summary.isPinned }
+    summary.workingCount = copies.reduce(0) { $0 + $1.summary.workingCount }
+    summary.hasUnread = copies.contains { $0.summary.hasUnread }
+    return (summary, threads)
+  }
+
+  static func activeCoordinator(_ copies: [LinkedCopy]) -> LinkedCopy? {
+    let epoch = { (copy: LinkedCopy) in copy.project.workspaceSettings?.coordinatorBinding?.epoch ?? 0 }
+    guard let highest = copies.map(epoch).max() else { return nil }
+    let current = copies.filter { epoch($0) == highest }
+    if let pending = current.first(where: { $0.project.workspaceSettings?.coordinatorBinding?.state == .transferring }) { return pending }
+    let active = current.filter { $0.project.workspaceSettings?.coordinatorBinding?.state == .active }
+    return active.count == 1 ? active[0] : nil
   }
 
   /// The machine's scratch project, which holds chats started without a project.
@@ -173,7 +291,7 @@ public enum ShellSummaries {
       isPinned: false,
       paused: project.isPaused,
       archived: project.isArchived,
-      workingCount: threads.filter { $0.activity == .working || $0.activity == .needsYou }.count,
+      workingCount: threads.filter { !$0.isUnknown && ($0.activity == .working || $0.activity == .needsYou) }.count,
       hasUnread: threads.contains { $0.isUnread }
     )
   }

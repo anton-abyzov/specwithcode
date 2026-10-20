@@ -58,7 +58,7 @@ public struct ProjectAvatar: View {
     case let .symbol(systemName, _):
       glyph(systemName)
     case let .emoji(emoji):
-      Text(emoji)
+      Text(Self.displayEmoji(emoji))
         .font(.system(size: size * (style == .tile ? 0.6 : 0.8)))
     case let .monogram(text, _):
       Text(Self.monogram(text.isEmpty ? title : text))
@@ -82,6 +82,20 @@ public struct ProjectAvatar: View {
     case .emoji, .none: .weave.muted
     }
   }
+
+  /// Brain and padlock emoji are retired; a project that saved one keeps it
+  /// and is drawn with a stand-in, like the web and Expo apps.
+  static func displayEmoji(_ emoji: String) -> String {
+    retiredEmoji[emoji] ?? retiredEmoji[emoji.replacingOccurrences(of: "\u{FE0F}", with: "")] ?? emoji
+  }
+
+  private static let retiredEmoji: [String: String] = [
+    "\u{1F9E0}": "\u{1F4A1}",
+    "\u{1F512}": "\u{1F6E1}\u{FE0F}",
+    "\u{1F513}": "\u{1F6E1}\u{FE0F}",
+    "\u{1F510}": "\u{1F511}",
+    "\u{1F50F}": "\u{1F58B}\u{FE0F}",
+  ]
 
   static func monogram(_ text: String) -> String {
     let words = text.split(whereSeparator: { $0 == " " || $0 == "-" || $0 == "_" })
@@ -124,14 +138,14 @@ public nonisolated enum WeaveLucide {
     "tablet": "ipad", "watch": "applewatch", "keyboard": "keyboard", "mouse-pointer-2": "cursorarrow",
     "app-window": "macwindow",
     // AI and science
-    "bot": "cpu", "sparkles": "sparkles", "brain": "brain", "brain-circuit": "brain.head.profile",
+    "bot": "cpu", "sparkles": "sparkles", "brain": "lightbulb", "brain-circuit": "cpu",
     "wand-sparkles": "wand.and.stars", "atom": "atom", "flask-conical": "flask", "test-tube": "testtube.2",
     "microscope": "magnifyingglass", "dna": "atom", "telescope": "binoculars", "orbit": "atom",
     "rocket": "airplane.departure", "satellite": "antenna.radiowaves.left.and.right",
     // Tools and security
     "wrench": "wrench.adjustable", "hammer": "hammer", "settings": "gearshape",
     "sliders-horizontal": "slider.horizontal.3", "cog": "gearshape", "shield": "shield",
-    "shield-check": "checkmark.shield", "lock": "lock", "key-round": "key", "fingerprint": "touchid",
+    "shield-check": "checkmark.shield", "lock": "shield", "key-round": "key", "fingerprint": "touchid",
     "scan-eye": "eye", "eye": "eye", "search": "magnifyingglass", "zap": "bolt", "flame": "flame",
     // Writing and data
     "book-open": "book", "book": "book.closed", "notebook-pen": "square.and.pencil", "file-text": "doc.text",

@@ -21,6 +21,8 @@ export interface EnvironmentOption {
   label: string;
   isPrimary: boolean;
   machine: EnvironmentMachineKind;
+  /** More than one machine is saved, so every thread names the machine it runs on. */
+  fleet?: boolean;
 }
 
 export const EnvMode = Schema.Literals(["local", "worktree"]);
@@ -55,13 +57,15 @@ export function resolveEnvironmentOptionLabel(input: {
 
 // A remote (non-primary) environment is always surfaced, even when it is the
 // only environment available: with a single connected machine there is nothing
-// to pick, but the user still needs to see where the project runs.
+// to pick, but the user still needs to see where the project runs. With more
+// than one saved machine every thread names its machine, this one included.
 export function shouldShowEnvironmentIndicator(input: {
-  activeEnvironment: Pick<EnvironmentOption, "isPrimary"> | null;
+  activeEnvironment: Pick<EnvironmentOption, "isPrimary" | "fleet"> | null;
   canPickEnvironment: boolean;
 }): boolean {
   if (input.canPickEnvironment) return true;
-  return input.activeEnvironment !== null && !input.activeEnvironment.isPrimary;
+  if (input.activeEnvironment === null) return false;
+  return !input.activeEnvironment.isPrimary || input.activeEnvironment.fleet === true;
 }
 
 export function shouldShowComposerContextStrip(input: {

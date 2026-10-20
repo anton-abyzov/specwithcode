@@ -20,6 +20,7 @@ import {
   type RelayAgentActivitySnapshotResponse,
   type RelayLiveActivityRegistrationRequest,
   RelayMobileRegistrationScope,
+  type RelayAccountDeletionResponse,
   type RelayOkResponse,
   type RelayPublicClientId,
   RelayRegisterDeviceEndpoint,
@@ -90,6 +91,7 @@ export const ManagedRelayRequestAction = Schema.Literals([
   "create relay environment link challenge",
   "link relay environment",
   "unlink relay environment",
+  "delete relay account",
   "get relay environment status",
   "connect relay environment",
   "register relay mobile device",
@@ -106,6 +108,7 @@ export const ManagedRelayRequestActivity = Schema.Literals([
   "Relay environment link challenge",
   "Relay environment linking",
   "Relay environment unlinking",
+  "Relay account deletion",
   "Relay environment status request",
   "Relay environment connection",
   "Relay mobile device registration",
@@ -274,6 +277,9 @@ export class ManagedRelayClient extends Context.Service<
       readonly clerkToken: string;
       readonly environmentId: RelayClientEnvironmentRecord["environmentId"];
     }) => Effect.Effect<RelayOkResponse, ManagedRelayClientError>;
+    readonly deleteAccount: (input: {
+      readonly clerkToken: string;
+    }) => Effect.Effect<RelayAccountDeletionResponse, ManagedRelayClientError>;
     readonly getEnvironmentStatus: (input: {
       readonly clerkToken: string;
       readonly scopes: ReadonlyArray<RelayDpopAccessTokenScope>;
@@ -417,6 +423,7 @@ function disabledManagedRelayClient(relayUrl: string): ManagedRelayClient["Servi
     ),
     linkEnvironment: unavailable("clientRuntime.managedRelay.linkEnvironment"),
     unlinkEnvironment: unavailable("clientRuntime.managedRelay.unlinkEnvironment"),
+    deleteAccount: unavailable("clientRuntime.managedRelay.deleteAccount"),
     getEnvironmentStatus: unavailable("clientRuntime.managedRelay.getEnvironmentStatus"),
     connectEnvironment: unavailable("clientRuntime.managedRelay.connectEnvironment"),
     registerDevice: unavailable("clientRuntime.managedRelay.registerDevice"),
@@ -781,6 +788,18 @@ export const make = Effect.fn("ManagedRelayClient.make")(function* (
           );
       },
       Effect.withSpan("clientRuntime.managedRelay.unlinkEnvironment"),
+      withRelayClientTracing,
+    ),
+    deleteAccount: Effect.fnUntraced(
+      function* (input) {
+        return yield* client.client
+          .deleteAccount({ headers: bearerHeaders(input.clerkToken) })
+          .pipe(
+            Effect.mapError(relayRequestError("delete relay account")),
+            timeoutRelayRequest("Relay account deletion"),
+          );
+      },
+      Effect.withSpan("clientRuntime.managedRelay.deleteAccount"),
       withRelayClientTracing,
     ),
     getEnvironmentStatus: Effect.fnUntraced(

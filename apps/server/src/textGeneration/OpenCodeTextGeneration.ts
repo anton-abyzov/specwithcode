@@ -1,7 +1,11 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
-import { NonNegativeInt, TextGenerationError, type OpenCodeSettings } from "@specweave-studio/contracts";
+import {
+  NonNegativeInt,
+  TextGenerationError,
+  type OpenCodeSettings,
+} from "@specweave-studio/contracts";
 import { getModelSelectionStringOptionValue } from "@specweave-studio/shared/model";
 
 import * as ServerConfig from "../config.ts";
@@ -13,6 +17,7 @@ import * as OpenCodeServerOwner from "../provider/OpenCodeServerOwner.ts";
 const OpenCodeTextGenerationOperation = Schema.Literals([
   "generateCommitMessage",
   "generatePrContent",
+  "generateHandoffNote",
   "generateBranchName",
   "generateThreadTitle",
 ]);

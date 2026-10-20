@@ -63,6 +63,8 @@ public struct MachineSummary: Identifiable, Hashable, Sendable {
   /// The machine's environment id.
   public let id: String
   public var label: String
+  /// The user's nickname for it, else its short name: what rows and notices show.
+  public var displayName: String
   public var status: MachineStatus
   /// e.g. "macOS · arm64"
   public var platform: String?
@@ -83,7 +85,8 @@ public struct MachineSummary: Identifiable, Hashable, Sendable {
   /// Paired with a link or QR code, so it has a pairing that expires.
   public var hasDirectPairing: Bool
 
-  public init(id: String, label: String, status: MachineStatus, platform: String? = nil, serverVersion: String? = nil, address: String? = nil, tokenDaysLeft: Int? = nil, isStale: Bool = false, viaConnect: Bool = false, needsSignIn: Bool = false, checkedAt: Date? = nil, hasDirectPairing: Bool? = nil) {
+  public init(id: String, label: String, displayName: String? = nil, status: MachineStatus, platform: String? = nil, serverVersion: String? = nil, address: String? = nil, tokenDaysLeft: Int? = nil, isStale: Bool = false, viaConnect: Bool = false, needsSignIn: Bool = false, checkedAt: Date? = nil, hasDirectPairing: Bool? = nil) {
+    self.displayName = displayName ?? MachineNickname.shortName(label)
     self.hasDirectPairing = hasDirectPairing ?? !viaConnect
     self.viaConnect = viaConnect
     self.needsSignIn = needsSignIn
@@ -113,6 +116,8 @@ public enum ProjectKind: String, Sendable { case code, personal }
 
 public struct ProjectSummary: Identifiable, Hashable, Sendable {
   public var id: ProjectRef { ref }
+  /// The project's own row; for a project on several machines, the member
+  /// whose coordinator is active.
   public let ref: ProjectRef
   public var title: String
   public var icon: ProjectIcon
@@ -125,8 +130,11 @@ public struct ProjectSummary: Identifiable, Hashable, Sendable {
   /// Threads of this project that are working right now.
   public var workingCount: Int
   public var hasUnread: Bool
+  /// Each machine's copy of a project linked across machines, coordinator
+  /// first. Empty for a project on one machine.
+  public var members: [ProjectMember]
 
-  public init(ref: ProjectRef, title: String, icon: ProjectIcon = .none, kind: ProjectKind = .code, machineLabel: String, machineOnline: Bool, isPinned: Bool = false, paused: Bool = false, archived: Bool = false, workingCount: Int = 0, hasUnread: Bool = false) {
+  public init(ref: ProjectRef, title: String, icon: ProjectIcon = .none, kind: ProjectKind = .code, machineLabel: String, machineOnline: Bool, isPinned: Bool = false, paused: Bool = false, archived: Bool = false, workingCount: Int = 0, hasUnread: Bool = false, members: [ProjectMember] = []) {
     self.ref = ref
     self.title = title
     self.icon = icon
@@ -138,6 +146,34 @@ public struct ProjectSummary: Identifiable, Hashable, Sendable {
     self.archived = archived
     self.workingCount = workingCount
     self.hasUnread = hasUnread
+    self.members = members
+  }
+
+  /// True for this project's row or any machine's copy of it.
+  public func contains(_ ref: ProjectRef) -> Bool {
+    self.ref == ref || members.contains { $0.ref == ref }
+  }
+}
+
+/// One machine's copy of a project linked across machines. Each has its own
+/// coordinator; viewing one never moves a thread.
+public struct ProjectMember: Identifiable, Hashable, Sendable {
+  public var id: ProjectRef { ref }
+  public let ref: ProjectRef
+  /// The machine's nickname.
+  public var machineLabel: String
+  public var machineOnline: Bool
+  /// When the phone last had the machine connected.
+  public var lastSeenAt: Date?
+  /// This copy's coordinator is the project's active coordinator.
+  public var isCoordinator: Bool
+
+  public init(ref: ProjectRef, machineLabel: String, machineOnline: Bool, lastSeenAt: Date? = nil, isCoordinator: Bool = false) {
+    self.ref = ref
+    self.machineLabel = machineLabel
+    self.machineOnline = machineOnline
+    self.lastSeenAt = lastSeenAt
+    self.isCoordinator = isCoordinator
   }
 }
 
@@ -169,8 +205,11 @@ public struct ThreadSummary: Identifiable, Hashable, Sendable {
   public var machineLabel: String
   public var machineOnline: Bool
   public var planProgress: PlanProgress?
+  /// Where the thread lives and runs, by machine nickname, and whether its
+  /// state is unknown because that machine is unreachable.
+  public var placement: ThreadPlacement
 
-  public init(ref: ThreadRef, projectRef: ProjectRef? = nil, projectTitle: String? = nil, title: String, activity: ThreadActivity, preview: String? = nil, updatedAt: Date, workStartedAt: Date? = nil, isPinned: Bool = false, isResolved: Bool = false, isUnread: Bool = false, machineLabel: String, machineOnline: Bool, planProgress: PlanProgress? = nil) {
+  public init(ref: ThreadRef, projectRef: ProjectRef? = nil, projectTitle: String? = nil, title: String, activity: ThreadActivity, preview: String? = nil, updatedAt: Date, workStartedAt: Date? = nil, isPinned: Bool = false, isResolved: Bool = false, isUnread: Bool = false, machineLabel: String, machineOnline: Bool, planProgress: PlanProgress? = nil, placement: ThreadPlacement? = nil) {
     self.ref = ref
     self.projectRef = projectRef
     self.projectTitle = projectTitle
@@ -185,7 +224,11 @@ public struct ThreadSummary: Identifiable, Hashable, Sendable {
     self.machineLabel = machineLabel
     self.machineOnline = machineOnline
     self.planProgress = planProgress
+    self.placement = placement ?? ThreadPlacement(owner: MachineNickname.shortName(machineLabel))
   }
+
+  /// Its machine is unreachable, so its activity is the last known one.
+  public var isUnknown: Bool { placement.unknown != nil }
 }
 
 public struct PlanProgress: Hashable, Sendable {
@@ -449,6 +492,7 @@ public final class AppModel {
 
   @ObservationIgnored public let engine: AppEngine
   @ObservationIgnored private var sessions: [ChatTarget: ChatSession] = [:]
+  @ObservationIgnored private var sessionViewers: [ChatTarget: Int] = [:]
 
   public init(engine: AppEngine) {
     self.engine = engine
@@ -461,19 +505,37 @@ public final class AppModel {
 
   public func machine(_ id: String) -> MachineSummary? { machines.first { $0.id == id } }
 
+  /// The project row for a project or any machine's copy of it.
   public func project(_ ref: ProjectRef) -> ProjectSummary? {
     if aide?.ref == ref { return aide }
-    return projects.first { $0.ref == ref }
+    return projects.first { $0.ref == ref } ?? projects.first { $0.contains(ref) }
   }
 
-  public func threads(in project: ProjectRef) -> [ThreadSummary] { threadsByProject[project] ?? [] }
+  public func threads(in project: ProjectRef) -> [ThreadSummary] {
+    threadsByProject[project] ?? self.project(project).flatMap { threadsByProject[$0.ref] } ?? []
+  }
 
   public func thread(_ ref: ThreadRef) -> ThreadSummary? {
     for list in threadsByProject.values { if let t = list.first(where: { $0.ref == ref }) { return t } }
     return recentThreads.first { $0.ref == ref }
   }
 
-  /// The shared session for a target; views call `engine.open` on appear.
+  /// A view showing a chat calls this on appear. The same chat can be on
+  /// screen twice (the root and a pushed copy), and SwiftUI may run one's
+  /// disappear after the other's appear, so viewers are counted.
+  public func openSession(_ session: ChatSession) {
+    sessionViewers[session.id, default: 0] += 1
+    engine.open(session)
+  }
+
+  /// The engine stops following a chat only when its last viewer goes.
+  public func closeSession(_ session: ChatSession) {
+    let remaining = (sessionViewers[session.id] ?? 1) - 1
+    sessionViewers[session.id] = remaining > 0 ? remaining : nil
+    if remaining <= 0 { engine.close(session) }
+  }
+
+  /// The shared session for a target; views call `openSession` on appear.
   public func session(for target: ChatTarget) -> ChatSession {
     if let s = sessions[target] { return s }
     let s: ChatSession
@@ -481,11 +543,11 @@ public final class AppModel {
     case let .aide(p), let .project(p):
       let summary = project(p)
       let machine = machine(p.environmentId)
-      s = ChatSession(id: target, title: summary?.title ?? "Project", subtitle: "Coordinator · \(machine?.label ?? "machine")", machineLabel: machine?.label ?? "", machineOnline: machine?.status.isOnline ?? false)
+      s = ChatSession(id: target, title: summary?.title ?? "Project", subtitle: "Coordinator · \(machine?.displayName ?? "machine")", machineLabel: machine?.displayName ?? "", machineOnline: machine?.status.isOnline ?? false)
     case let .thread(t):
       let summary = thread(t)
       let machine = machine(t.environmentId)
-      s = ChatSession(id: target, title: summary?.title ?? "Thread", subtitle: summary?.projectTitle ?? "Thread", machineLabel: machine?.label ?? "", machineOnline: machine?.status.isOnline ?? false)
+      s = ChatSession(id: target, title: summary?.title ?? "Thread", subtitle: summary?.projectTitle ?? "Thread", machineLabel: machine?.displayName ?? "", machineOnline: machine?.status.isOnline ?? false)
     }
     sessions[target] = s
     return s

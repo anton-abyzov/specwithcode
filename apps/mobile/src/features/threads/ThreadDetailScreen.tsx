@@ -813,6 +813,15 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
   const providerSubagentCatalogModel = providerSubagentProvider?.models.find(
     (model) => model.slug === providerSubagentModelSlug,
   );
+  const thinkingProviderDriver = providerSubagentProvider?.driver;
+  const thinkingProviderIconUrl = providerSubagentProvider?.iconUrl;
+  const thinkingProvider = useMemo(
+    () =>
+      thinkingProviderDriver
+        ? { driver: thinkingProviderDriver, iconUrl: thinkingProviderIconUrl }
+        : null,
+    [thinkingProviderDriver, thinkingProviderIconUrl],
+  );
   const workspaceContentWidth = useWorkspaceContentWidth();
   // Clearing animated width can retain the unfolded width after Android resumes folded.
   // Assign both layouts explicitly so the dock always follows its current parent.
@@ -1116,6 +1125,7 @@ export const ThreadDetailScreen = memo(function ThreadDetailScreen(props: Thread
               onEditPendingMessage={isProviderSubagent ? null : handleEditPendingMessage}
               contentPresentation={props.contentPresentation}
               agentLabel={agentLabel}
+              thinkingProvider={thinkingProvider}
               threadTitle={props.selectedThread.title}
               latestRun={props.activityRun}
               activeWorkStartedAt={props.activeWorkStartedAt}

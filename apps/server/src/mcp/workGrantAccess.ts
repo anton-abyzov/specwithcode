@@ -1,4 +1,5 @@
 import {
+  isProjectCoordinatorThreadId,
   OrchestratorMcpFailure,
   type OrchestratorMcpDelegation,
   type OrchestrationV2ThreadShell,
@@ -168,6 +169,40 @@ export const assertThreadInGrant = Effect.fn("mcp.assertThreadInGrant")(function
       message: `This machine does not let ${work.coordinatorLabel} reach that thread.`,
     });
   yield* assertProjectInGrant(work, project);
+});
+
+/**
+ * With a coordinator on each machine of a linked project, a thread is steered
+ * only by the coordinator that owns it: this machine's, or the one whose work
+ * started it here. Another machine's work may still read every thread the
+ * grant covers. A copy that runs no coordinator of its own (it relinquished
+ * it at link time) keeps taking work from the project's coordinator.
+ */
+export const assertThreadWritable = Effect.fn("mcp.assertThreadWritable")(function* (
+  work: WorkGrantContext | undefined,
+  thread: Pick<OrchestrationV2ThreadShell, "id" | "projectId" | "lineage">,
+) {
+  if (work === undefined) return;
+  const projects = yield* ProjectService.ProjectService;
+  const project = yield* projects.getById(thread.projectId).pipe(
+    Effect.map(Option.getOrUndefined),
+    Effect.orElseSucceed(() => undefined),
+  );
+  const settings = project?.workspaceSettings;
+  if (project === undefined || (settings?.logicalProject?.members.length ?? 0) < 2) return;
+  if (settings?.coordinatorBinding !== undefined && settings.coordinatorBinding.state !== "active")
+    return;
+  const owner = isProjectCoordinatorThreadId(thread.id, project)
+    ? undefined
+    : yield* WorkGrants.WorkGrants.pipe(
+        Effect.flatMap((grants) => grants.originOf(thread)),
+        Effect.mapError(storageFailure),
+      );
+  if (owner?.coordinatorEnvironmentId === work.grant.coordinatorEnvironmentId) return;
+  return yield* new OrchestratorMcpFailure({
+    code: "outside_grant_scope",
+    message: `This thread belongs to this machine's own coordinator for "${project.title}", so ${work.coordinatorLabel} may read it but not send to, interrupt or change it. Ask this machine's coordinator, or migrate the thread first.`,
+  });
 });
 
 /** Records where a new thread's work came from, so its own launches carry it on. */

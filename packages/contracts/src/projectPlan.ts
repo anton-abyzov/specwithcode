@@ -1,17 +1,44 @@
 import * as Schema from "effect/Schema";
-import { CommandId, IsoDateTime, NonNegativeInt, ProjectId, ThreadId } from "./baseSchemas.ts";
+import {
+  CommandId,
+  EnvironmentId,
+  IsoDateTime,
+  NonNegativeInt,
+  ProjectId,
+  ThreadId,
+} from "./baseSchemas.ts";
 
 export const PROJECT_PLAN_BYTES = 1_048_576;
 export const PROJECT_PLAN_SPEC_BYTES = 65_536;
 export const PROJECT_PLAN_TASK_LIMIT = 200;
 export const PROJECT_PLAN_EVIDENCE_LIMIT = 20;
+export const PROJECT_PLAN_RELEASED_CLAIMS_LIMIT = 32;
+export const PROJECT_PLAN_MACHINES_LIMIT = 16;
 const text = (max: number) => Schema.String.check(Schema.isMaxLength(max));
 const key = Schema.String.check(Schema.isPattern(/^[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/));
 export const ProjectPlanActor = Schema.Union([
   Schema.Struct({ kind: Schema.Literal("user") }),
-  Schema.Struct({ kind: Schema.Literal("thread"), threadId: ThreadId }),
+  Schema.Struct({
+    kind: Schema.Literal("thread"),
+    threadId: ThreadId,
+    /** The machine running the thread. Absent means the machine that stores the plan. */
+    environmentId: Schema.optionalKey(EnvironmentId),
+  }),
 ]);
 export type ProjectPlanActor = typeof ProjectPlanActor.Type;
+export const ProjectPlanClaim = Schema.Struct({
+  owner: ProjectPlanActor,
+  claimedAt: Schema.optionalKey(IsoDateTime),
+});
+export type ProjectPlanClaim = typeof ProjectPlanClaim.Type;
+/** When and on which machine a part of a plan last changed; linked copies keep the latest. */
+export const ProjectPlanStamp = Schema.Struct({ at: IsoDateTime, environmentId: EnvironmentId });
+export type ProjectPlanStamp = typeof ProjectPlanStamp.Type;
+export const ProjectPlanMachine = Schema.Struct({
+  environmentId: EnvironmentId,
+  label: text(200),
+});
+export type ProjectPlanMachine = typeof ProjectPlanMachine.Type;
 export const ProjectPlanAuthority = Schema.Union([
   Schema.Struct({ kind: Schema.Literal("native") }),
   Schema.Struct({
@@ -70,12 +97,27 @@ export const ProjectPlanTask = Schema.Struct({
   evidence: Schema.Array(ProjectPlanEvidence).check(
     Schema.isMaxLength(PROJECT_PLAN_EVIDENCE_LIMIT),
   ),
+  claimedAt: Schema.optionalKey(IsoDateTime),
+  /** A claim made on another machine at the same time that lost to `owner`. */
+  claimConflict: Schema.optionalKey(ProjectPlanClaim),
+  /** Released claims, so a linked copy that has not seen the release cannot restore them. */
+  releasedClaims: Schema.optionalKey(
+    Schema.Array(ProjectPlanClaim).check(Schema.isMaxLength(PROJECT_PLAN_RELEASED_CLAIMS_LIMIT)),
+  ),
+  /** Last change to the owner, status or note. */
+  stateStamp: Schema.optionalKey(ProjectPlanStamp),
 });
 export type ProjectPlanTask = typeof ProjectPlanTask.Type;
 export const ProjectNativePlan = Schema.Struct({
   ...ProjectPlanDefinition.fields,
   tasks: Schema.Array(ProjectPlanTask).check(Schema.isMaxLength(PROJECT_PLAN_TASK_LIMIT)),
   contentRevision: NonNegativeInt,
+  /** Last change to the spec, criteria or task list. */
+  definitionStamp: Schema.optionalKey(ProjectPlanStamp),
+  /** Names of the linked machines this plan has been merged with. */
+  machines: Schema.optionalKey(
+    Schema.Array(ProjectPlanMachine).check(Schema.isMaxLength(PROJECT_PLAN_MACHINES_LIMIT)),
+  ),
 });
 export type ProjectNativePlan = typeof ProjectNativePlan.Type;
 export const ProjectExternalPlan = Schema.Struct({
@@ -107,6 +149,8 @@ export const ProjectExternalPlan = Schema.Struct({
 export type ProjectExternalPlan = typeof ProjectExternalPlan.Type;
 export const ProjectPlanSnapshot = Schema.Struct({
   projectId: ProjectId,
+  /** The machine serving this plan; a claim from any other machine is a linked copy's. */
+  environmentId: Schema.optionalKey(EnvironmentId),
   revision: NonNegativeInt,
   authority: ProjectPlanAuthority,
   native: Schema.NullOr(ProjectNativePlan),
@@ -159,8 +203,35 @@ export const ProjectPlanVerifyInput = Schema.Struct({
   recheckOnly: Schema.optional(Schema.Boolean),
 });
 export type ProjectPlanVerifyInput = typeof ProjectPlanVerifyInput.Type;
+/** A native plan as one linked machine sends it to another. */
+export const ProjectPlanLinkExport = Schema.Struct({
+  logicalProjectId: Schema.String.check(Schema.isNonEmpty(), Schema.isMaxLength(512)),
+  environmentId: EnvironmentId,
+  projectId: ProjectId,
+  plan: ProjectNativePlan,
+});
+export type ProjectPlanLinkExport = typeof ProjectPlanLinkExport.Type;
+export const ProjectPlanLinkExportInput = Schema.Struct({ projectId: ProjectId });
+export type ProjectPlanLinkExportInput = typeof ProjectPlanLinkExportInput.Type;
+export const ProjectPlanLinkMergeInput = Schema.Struct({
+  projectId: ProjectId,
+  peer: Schema.Struct({
+    environmentId: EnvironmentId,
+    projectId: ProjectId,
+    label: text(200),
+  }),
+  export: ProjectPlanLinkExport,
+});
+export type ProjectPlanLinkMergeInput = typeof ProjectPlanLinkMergeInput.Type;
+export const ProjectPlanLinkMergeResult = Schema.Struct({
+  changed: Schema.Boolean,
+  revision: NonNegativeInt,
+});
+export type ProjectPlanLinkMergeResult = typeof ProjectPlanLinkMergeResult.Type;
 export class ProjectPlanError extends Schema.TaggedError<ProjectPlanError>()("ProjectPlanError", {
   projectId: ProjectId,
+  /** The machine holding the claim that refused this change. */
+  machine: Schema.optionalKey(text(200)),
   code: Schema.Literals([
     "not_found",
     "conflict",
@@ -175,9 +246,12 @@ export class ProjectPlanError extends Schema.TaggedError<ProjectPlanError>()("Pr
     "evidence_limit",
     "receipt_unavailable",
     "operation_failed",
+    "not_linked",
   ]),
 }) {
   override get message(): string {
+    if (this.code === "claimed" && this.machine !== undefined)
+      return `This task is claimed by a thread on ${this.machine}. Only the user can release that claim.`;
     return {
       not_found: "This project or task is no longer available.",
       conflict: "The plan changed elsewhere. Reload before saving.",
@@ -196,6 +270,7 @@ export class ProjectPlanError extends Schema.TaggedError<ProjectPlanError>()("Pr
         "No receipt is available for this request. Nothing was executed by this recheck. Start a new attempt only if you intend another execution.",
       evidence_limit: "This task has reached its verification evidence limit.",
       operation_failed: "The plan operation failed. Reload and try again.",
+      not_linked: "This project is not linked with that machine's copy.",
     }[this.code];
   }
 }

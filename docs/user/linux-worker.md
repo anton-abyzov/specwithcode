@@ -66,6 +66,11 @@ steps below.
 
 ## Install the server
 
+> On a fresh Ubuntu 22.04-26.04 or Debian 12 machine,
+> [Provision a machine](./provision-a-machine.md) does the steps below and
+> installs the agent CLIs at pinned versions in one command. The manual steps
+> stay here for other distributions.
+
 On the Linux host, download the archive and its checksums from the release and
 verify them. Use 1.0.45 or later: in 1.0.43 and 1.0.44,
 `service install` cannot fetch its own Linux archive.

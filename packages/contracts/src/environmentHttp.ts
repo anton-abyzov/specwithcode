@@ -27,6 +27,12 @@ import {
   StudioFleetWorkersStopInput,
   StudioFleetRemoveInput,
   StudioFleetRemoveResult,
+  StudioFleetPhoneRosterInput,
+  StudioFleetPhoneRoster,
+  StudioFleetPhoneMintInput,
+  StudioFleetPhoneMintResult,
+  StudioFleetPhoneLinksInput,
+  StudioFleetPhoneLinksResult,
   StudioWorkGrantsSnapshot,
   StudioWorkGrantUpdateInput,
   StudioWorkGrantRevokeInput,
@@ -1063,6 +1069,45 @@ class EnvironmentStudioFleetHttpApi extends HttpApiGroup.make("studioFleet")
       headers: OptionalBearerHeaders,
       payload: StudioWorkGrantRestoreInput,
       success: StudioWorkGrantResult,
+      error: [
+        ...EnvironmentScopedOperationErrors,
+        EnvironmentHttpBadRequestError,
+        EnvironmentHttpForbiddenError,
+        EnvironmentHttpInternalServerError,
+      ],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("phoneRoster", "/api/studio/fleet/phone", {
+      headers: OptionalBearerHeaders,
+      payload: StudioFleetPhoneRosterInput,
+      success: StudioFleetPhoneRoster,
+      error: [
+        ...EnvironmentScopedOperationErrors,
+        EnvironmentHttpBadRequestError,
+        EnvironmentHttpForbiddenError,
+        EnvironmentHttpInternalServerError,
+      ],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("phoneMint", "/api/studio/fleet/phone/mint", {
+      headers: OptionalBearerHeaders,
+      payload: StudioFleetPhoneMintInput,
+      success: StudioFleetPhoneMintResult,
+      error: [
+        ...EnvironmentScopedOperationErrors,
+        EnvironmentHttpBadRequestError,
+        EnvironmentHttpForbiddenError,
+        EnvironmentHttpInternalServerError,
+      ],
+    }).middleware(EnvironmentAuthenticatedAuth),
+  )
+  .add(
+    HttpApiEndpoint.post("phoneLinks", "/api/studio/fleet/phone/links", {
+      headers: OptionalBearerHeaders,
+      payload: StudioFleetPhoneLinksInput,
+      success: StudioFleetPhoneLinksResult,
       error: [
         ...EnvironmentScopedOperationErrors,
         EnvironmentHttpBadRequestError,

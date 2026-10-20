@@ -41,6 +41,8 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as ServerConfig from "../config.ts";
 import { readFleetConfig } from "../studioFleet.ts";
+import * as LinkedMemoryHistory from "./LinkedMemoryHistory.ts";
+import { recordMemoryDelete, recordMemoryWrite } from "./linkedMemoryMerge.ts";
 import * as ProjectAdmission from "./ProjectAdmission.ts";
 import { mapProjectFailure } from "./ProjectWorkspaceFailure.ts";
 import {
@@ -240,6 +242,7 @@ const make = Effect.gen(function* () {
     Option.isSome(knowledge)
       ? use(knowledge.value)
       : Effect.fail(new ProjectKnowledgeError({ projectId, code: "unavailable" }));
+  const memoryHistory = yield* Effect.serviceOption(LinkedMemoryHistory.LinkedMemoryHistory);
   /** Memory files are knowledge too; a write is indexed before the next turn's context. */
   const knowledgeChanged = (projectId: ProjectId) =>
     Option.isSome(knowledge) ? knowledge.value.markDirty(projectId) : Effect.void;
@@ -324,6 +327,60 @@ const make = Effect.gen(function* () {
         }),
       )
       .pipe(mapProjectFailure(input.projectId, "memory.delete"));
+  // Linked members merge memory by the versions each file has had here. Recording
+  // a version never fails or changes the write itself.
+  const currentHash = (projectId: ProjectId, name: string) =>
+    Option.isSome(memoryHistory)
+      ? file(projectId, name).pipe(
+          Effect.map((found) =>
+            found ? LinkedMemoryHistory.memoryContentHash(found.content) : undefined,
+          ),
+          Effect.orElseSucceed(() => undefined),
+        )
+      : Effect.succeed(undefined);
+  const rememberVersions = (
+    projectId: ProjectId,
+    update: Parameters<LinkedMemoryHistory.LinkedMemoryHistory["Service"]["modify"]>[1],
+  ) =>
+    Option.isSome(memoryHistory)
+      ? memoryHistory.value.modify(projectId, update).pipe(
+          Effect.asVoid,
+          Effect.catchCause((cause) =>
+            Effect.logWarning("Could not record a project memory version", { projectId, cause }),
+          ),
+        )
+      : Effect.void;
+  const writeMemoryRemembered = (input: ProjectMemoryWriteInput) =>
+    Effect.gen(function* () {
+      const previous = yield* currentHash(input.projectId, input.name);
+      const written = yield* writeMemory(input);
+      yield* rememberVersions(input.projectId, (state) =>
+        recordMemoryWrite(state, {
+          name: written.name,
+          previous,
+          hash: LinkedMemoryHistory.memoryContentHash(written.content),
+          authoredAt: written.updatedAt,
+        }),
+      );
+      return written;
+    });
+  const deleteMemoryRemembered = (input: {
+    projectId: ProjectId;
+    name: string;
+    expectedRevision: number;
+  }) =>
+    Effect.gen(function* () {
+      const hash = yield* currentHash(input.projectId, input.name);
+      const deleted = yield* deleteMemory(input);
+      yield* rememberVersions(input.projectId, (state) =>
+        recordMemoryDelete(state, {
+          name: input.name,
+          hash,
+          deletedAt: DateTime.formatIso(DateTime.nowUnsafe()),
+        }),
+      );
+      return deleted;
+    });
   const assertAdmission = (projectId: ProjectId) =>
     Effect.gen(function* () {
       const project = yield* requireProject(projectId);
@@ -449,11 +506,11 @@ const make = Effect.gen(function* () {
     readMemory,
     writeMemory: (input) =>
       admission
-        .withLock(input.projectId, writeMemory(input))
+        .withLock(input.projectId, writeMemoryRemembered(input))
         .pipe(Effect.tap(() => knowledgeChanged(input.projectId))),
     deleteMemory: (input) =>
       admission
-        .withLock(input.projectId, deleteMemory(input))
+        .withLock(input.projectId, deleteMemoryRemembered(input))
         .pipe(Effect.tap(() => knowledgeChanged(input.projectId))),
     assertAdmission,
     knowledgeStatus: (input) => withKnowledge(input.projectId, (service) => service.status(input)),

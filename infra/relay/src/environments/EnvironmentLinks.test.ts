@@ -1,7 +1,7 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
-import { PgDialect } from "drizzle-orm/pg-core";
+import { SQLiteDialect } from "drizzle-orm/sqlite-core";
 
 import * as RelayDb from "../db.ts";
 import { relayEnvironmentLinks } from "../persistence/schema.ts";
@@ -107,14 +107,14 @@ describe("EnvironmentLinks", () => {
       ).toEqual([]);
       expect(whereConditions).toHaveLength(1);
 
-      const query = new PgDialect().sqlToQuery(whereConditions[0] as never);
-      expect(query.sql).toContain('"relay_environment_links"."environment_id" = $1');
+      const query = new SQLiteDialect().sqlToQuery(whereConditions[0] as never);
+      expect(query.sql).toContain('"relay_environment_links"."environment_id" = ?');
       expect(query.sql).toContain('"relay_environment_links"."revoked_at" is null');
-      expect(query.sql).toContain('"relay_environment_links"."notifications_enabled" = $2');
-      expect(query.sql).toContain('"relay_environment_links"."live_activities_enabled" = $3');
-      expect(query.sql).toContain('"relay_environment_links"."environment_public_key" = $4');
+      expect(query.sql).toContain('"relay_environment_links"."notifications_enabled" = ?');
+      expect(query.sql).toContain('"relay_environment_links"."live_activities_enabled" = ?');
+      expect(query.sql).toContain('"relay_environment_links"."environment_public_key" = ?');
       expect(query.sql).toContain(" or ");
-      expect(query.params).toEqual(["env-1", true, true, "public-key-1"]);
+      expect(query.params).toEqual(["env-1", 1, 1, "public-key-1"]);
     }).pipe(
       Effect.provide(
         EnvironmentLinks.layer.pipe(Layer.provide(Layer.succeed(RelayDb.RelayDb, fakeDb))),
@@ -149,7 +149,7 @@ describe("EnvironmentLinks", () => {
         } as never,
         endpoint: { httpBaseUrl: "https://a.example", wsBaseUrl: "wss://a.example" } as never,
       });
-      const query = new PgDialect().sqlToQuery(inserted[0]?.holdWebhooksWhileOffline as never);
+      const query = new SQLiteDialect().sqlToQuery(inserted[0]?.holdWebhooksWhileOffline as never);
       // An environment id is public: another account linking it with its own
       // key must not switch the opt-in on for this one.
       expect(query.sql).toContain("environment_public_key");
@@ -199,10 +199,10 @@ describe("EnvironmentLinks", () => {
       expect(typeof updateValues[0]?.revokedAt).toBe("string");
       expect(whereConditions).toHaveLength(1);
 
-      const dialect = new PgDialect();
+      const dialect = new SQLiteDialect();
       const query = dialect.sqlToQuery(whereConditions[0] as never);
-      expect(query.sql).toContain('"relay_environment_links"."user_id" = $1');
-      expect(query.sql).toContain('"relay_environment_links"."environment_id" = $2');
+      expect(query.sql).toContain('"relay_environment_links"."user_id" = ?');
+      expect(query.sql).toContain('"relay_environment_links"."environment_id" = ?');
       expect(query.sql).toContain('"relay_environment_links"."revoked_at" is null');
       expect(query.params).toEqual(["user-1", "env-1"]);
     }).pipe(

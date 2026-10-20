@@ -19,7 +19,7 @@ struct MachinesView: View {
         } else {
           GroupedCard(separatorInset: 56) {
             ForEach(model.machines) { machine in
-              WeaveRow(machine.label, subtitle: [machine.statusLabel, machine.platform].compactMap { $0 }.joined(separator: " · "), showsChevron: true, action: { nav.push(.machine(machine.id)) }) {
+              WeaveRow(machine.displayName, subtitle: [machine.statusLabel, machine.platform].compactMap { $0 }.joined(separator: " · "), showsChevron: true, action: { nav.push(.machine(machine.id)) }) {
                 MachineBadge(status: machine.displayStatus, size: 18)
                   .frame(width: 28)
                   .accessibilityHidden(true)
@@ -74,12 +74,12 @@ struct MachineDetailView: View {
       ScreenHeader {
         BackButton()
       } center: {
-        HeaderTitle(title: machine?.label ?? "Machine")
+        HeaderTitle(title: machine?.displayName ?? "Machine")
       } trailing: {
         EmptyView()
       }
     }
-    .confirmationDialog("Remove \(machine?.label ?? "this machine")?", isPresented: $confirmRemove, titleVisibility: .visible) {
+    .confirmationDialog("Remove \(machine?.displayName ?? "this machine")?", isPresented: $confirmRemove, titleVisibility: .visible) {
       Button("Remove machine", role: .destructive) {
         model.engine.removeMachine(id: machineId)
         dismiss()
@@ -142,9 +142,14 @@ struct MachineDetailView: View {
         .background(Color.weave.panel, in: RoundedRectangle(cornerRadius: WeaveRadius.lg, style: .continuous))
         .accessibilityHidden(true)
       VStack(alignment: .leading, spacing: 2) {
-        Text(machine.label)
+        Text(machine.displayName)
           .weaveFont(.title)
           .foregroundStyle(Color.weave.ink)
+        if machine.displayName != machine.label {
+          Text(machine.label)
+            .weaveFont(.callout)
+            .foregroundStyle(Color.weave.muted)
+        }
         Text(machine.statusLabel)
           .weaveFont(.callout)
           .foregroundStyle(Color.weave.muted)
@@ -157,9 +162,9 @@ struct MachineDetailView: View {
 
   @ViewBuilder private func notice(_ machine: MachineSummary) -> some View {
     if machine.needsSignIn {
-      Banner("You signed out, so this phone can't reach \(machine.label). Sign in again in Settings.", title: "Sign in again", kind: .fail)
+      Banner("You signed out, so this phone can't reach \(machine.displayName). Sign in again in Settings.", title: "Sign in again", kind: .fail)
     } else if machine.status == .needsRepair, !machine.hasDirectPairing, machine.viaConnect {
-      Banner("SpecWithCode Connect couldn't open a connection to \(machine.label). Make sure Connect is on in its Settings > Connections.", title: "Can't reach \(machine.label)", kind: .fail)
+      Banner("SpecWithCode Connect couldn't open a connection to \(machine.displayName). Make sure Connect is on in its Settings > Connections.", title: "Can't reach \(machine.displayName)", kind: .fail)
     } else if machine.status == .needsRepair {
       Banner("The pairing for \(machine.label) has expired. Pair again to keep using it from this phone.", title: "Pair again", kind: .fail, actionTitle: "Pair again") { nav.push(.repair(machine.id)) }
     } else if machine.status == .unsupported {

@@ -8,11 +8,22 @@ import {
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
 
-/** A host owns its physical checkout and transcript; neither is the domain identity. */
+/** The longest folder path a member records. */
+export const LOGICAL_PROJECT_MEMBER_ROOT_MAX_LENGTH = 4096;
+
+/**
+ * A host owns its physical checkout and transcript; neither is the domain identity.
+ * Members match by `environmentId` and `projectId` (`logicalProjectMemberKey`); the
+ * folder they record never decides a match.
+ */
 export const LogicalProjectMember = Schema.Struct({
   environmentId: EnvironmentId,
   projectId: ProjectId,
   coordinatorThreadId: ThreadId,
+  /** The member's project folder on its machine when it was linked (a later move does not update it); absent on members linked before this field. */
+  workspaceRoot: Schema.optionalKey(
+    TrimmedNonEmptyString.check(Schema.isMaxLength(LOGICAL_PROJECT_MEMBER_ROOT_MAX_LENGTH)),
+  ),
 });
 export type LogicalProjectMember = typeof LogicalProjectMember.Type;
 

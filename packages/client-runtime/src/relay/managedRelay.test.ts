@@ -705,4 +705,19 @@ describe("ManagedRelayClient", () => {
       ]);
     }).pipe(Effect.provide(layerManagedRelayTest(fetchFn)));
   });
+
+  it.effect("deletes the relay account through the Clerk bearer client endpoint", () => {
+    const fetchFn = ((input, init) => {
+      expect(String(input)).toBe("https://relay.example.test/v1/client/account");
+      expect(init?.method).toBe("DELETE");
+      expect(new Headers(init?.headers).get("authorization")).toBe("Bearer clerk-token");
+      return Promise.resolve(Response.json({ deleted: true, environmentCount: 2 }));
+    }) satisfies typeof globalThis.fetch;
+
+    return Effect.gen(function* () {
+      const relayClient = yield* ManagedRelay.ManagedRelayClient;
+      const result = yield* relayClient.deleteAccount({ clerkToken: "clerk-token" });
+      expect(result).toEqual({ deleted: true, environmentCount: 2 });
+    }).pipe(Effect.provide(layerManagedRelayTest(fetchFn)));
+  });
 });

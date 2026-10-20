@@ -11,6 +11,15 @@ public enum FixtureScenario: String, Sendable, CaseIterable {
   case empty
   /// Like `default`, but every opened chat is mid-run with one queued message.
   case running
+  /// One project linked across M4 and Minis; one thread lives on M4 and runs
+  /// on Minis.
+  case fleet
+  /// `fleet`, then M4 goes offline mid-session and comes back.
+  case m4Blip = "m4-blip"
+  /// `fleet`, then Minis goes offline and comes back.
+  case minisBlip = "minis-blip"
+
+  var isFleet: Bool { self == .fleet || self == .m4Blip || self == .minisBlip }
 }
 
 @MainActor
@@ -31,6 +40,13 @@ public final class FixtureEngine: AppEngine {
   private var machineSettings: [String: MachineSettings] = [:]
   /// Machines that stay offline when asked to reconnect.
   private var unreachable: Set<String> = []
+  /// When the phone last had each offline machine connected.
+  private var lastSeen: [String: Date] = [:]
+  /// Threads that run on another machine than the one they live on.
+  private var runsOn: [ThreadRef: String] = [:]
+  /// Pause before each step of a blip scenario: the machine drops after one
+  /// step and comes back after two. Tests set it to zero.
+  public var faultStep: Duration = .seconds(6)
   private var counter = 0
 
   public init(scenario: FixtureScenario = .default) {
@@ -44,8 +60,18 @@ public final class FixtureEngine: AppEngine {
     defer { model.isLoading = false }
     guard scenario != .empty else { return }
     let now = Date()
+    if scenario.isFleet {
+      model.machines = FixtureFleet.machines
+      model.projects = [FixtureFleet.project]
+      model.threadsByProject = [FixtureFleet.onM4: FixtureFleet.threads(now: now)]
+      runsOn = FixtureFleet.runsOn
+      recompute()
+      runBlip()
+      return
+    }
     model.machines = FixtureSample.machines
     unreachable = [FixtureSample.travel]
+    lastSeen = [FixtureSample.travel: now.addingTimeInterval(-26 * 3600)]
     model.aide = FixtureSample.aide
     model.projects = FixtureSample.projects
     model.threadsByProject = Dictionary(grouping: FixtureSample.threads(now: now)) { $0.projectRef ?? FixtureSample.specweave }
@@ -288,9 +314,18 @@ public final class FixtureEngine: AppEngine {
   private func recompute() {
     guard let model else { return }
     let online = Dictionary(model.machines.map { ($0.id, $0.status.isOnline) }, uniquingKeysWith: { a, _ in a })
+    // The machine that answers for a thread: where it lives, then where it runs.
+    func unknown(_ thread: ThreadSummary) -> ThreadPlacement.Unknown? {
+      let owner = thread.ref.environmentId
+      guard let machine = online[owner] == true ? runsOn[thread.ref] : owner, online[machine] != true else { return nil }
+      return .init(machine: MachineNickname.shortName(model.machine(machine)?.label ?? thread.machineLabel), lastSeenAt: lastSeen[machine])
+    }
     for key in model.threadsByProject.keys {
       guard var list = model.threadsByProject[key] else { continue }
-      for i in list.indices { list[i].machineOnline = online[list[i].ref.environmentId] ?? false }
+      for i in list.indices {
+        list[i].machineOnline = online[list[i].ref.environmentId] ?? false
+        list[i].placement.unknown = unknown(list[i])
+      }
       list.sort { $0.updatedAt > $1.updatedAt }
       model.threadsByProject[key] = list
     }
@@ -301,6 +336,11 @@ public final class FixtureEngine: AppEngine {
       p.hasUnread = threads.contains { $0.isUnread }
       p.machineOnline = online[p.ref.environmentId] ?? false
       p.machineLabel = model.machine(p.ref.environmentId)?.label ?? p.machineLabel
+      for i in p.members.indices {
+        let id = p.members[i].ref.environmentId
+        p.members[i].machineOnline = online[id] ?? false
+        p.members[i].lastSeenAt = lastSeen[id]
+      }
       return p
     }
     model.projects = model.projects.map(refreshed).sorted {
@@ -333,7 +373,7 @@ public final class FixtureEngine: AppEngine {
     switch target {
     case let .aide(ref), let .project(ref):
       if let project = model.project(ref) { session.title = project.title }
-      session.subtitle = "Coordinator · \(machine?.label ?? "machine")"
+      session.subtitle = "Coordinator · \(machine.map { MachineNickname.shortName($0.label) } ?? "machine")"
     case let .thread(ref):
       if let thread = model.thread(ref) {
         session.title = thread.title
@@ -345,6 +385,36 @@ public final class FixtureEngine: AppEngine {
   private func finishReconnect(_ machineId: String) {
     guard let model, let index = model.machines.firstIndex(where: { $0.id == machineId }) else { return }
     model.machines[index].status = unreachable.contains(machineId) ? .offline : .connected
+    recompute()
+  }
+
+  /// Drops the blip scenario's machine mid-session, then brings it back.
+  private func runBlip() {
+    let machine: String
+    switch scenario {
+    case .m4Blip: machine = FixtureFleet.m4
+    case .minisBlip: machine = FixtureFleet.minis
+    default: return
+    }
+    let step = faultStep
+    Task { [weak self] in
+      try? await Task.sleep(for: step)
+      self?.setReachable(machine, false)
+      try? await Task.sleep(for: step)
+      self?.setReachable(machine, true)
+    }
+  }
+
+  private func setReachable(_ machineId: String, _ reachable: Bool) {
+    guard let model, let index = model.machines.firstIndex(where: { $0.id == machineId }) else { return }
+    if reachable {
+      unreachable.remove(machineId)
+      model.machines[index].status = .connected
+    } else {
+      unreachable.insert(machineId)
+      lastSeen[machineId] = Date()
+      model.machines[index].status = .offline
+    }
     recompute()
   }
 

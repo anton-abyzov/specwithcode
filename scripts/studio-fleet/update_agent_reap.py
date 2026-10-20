@@ -71,28 +71,30 @@ def reset(agent, request, since=None):
     agent.reap_count, agent.reaped_at, agent.reap_request, agent.reap_since = 0, None, request, since
 
 
-def _due(agent, host, refused, started):
+def _due(agent, host, refused, started, window):
     if agent.config.get('installMode') != 'force' or refused[0] != 'waiting-for-quiet':
         return False
     if not agent.config.get('installRequestedAt') or not _process_refusal(host, refused[1]):
         return False
     since = getattr(agent, 'reaped_at', None) or getattr(agent, 'reap_since', None) or started
     now = host.utcnow()
-    # A reap never runs the pass past its retry window, which the service's hold is sized by.
+    # A reap never runs past the retry window the pass is snapshotting in (that of the request it
+    # serves, from its take-on or its last refused apply), which the service's hold is sized by.
     return (getattr(agent, 'reap_count', 0) < REAP_LIMIT and now - since >= REAP_AFTER
-            and now + datetime.timedelta(seconds=REAP_TIMEOUT) < agent.retry_deadline(started))
+            and now + datetime.timedelta(seconds=REAP_TIMEOUT) < agent.retry_deadline(window))
 
 
-def before_retry(agent, helper_dir, refused, started):
+def before_retry(agent, helper_dir, refused, started, window=None):
     """Runs before the next snapshot of a pending install request; returns how long to wait
     first. In a forced request that kept refusing for REAP_AFTER, it first has the verified
-    helper stop the leftover processes; the helper's record is kept with the update receipts."""
+    helper stop the leftover processes; the helper's record is kept with the update receipts.
+    `window` is the start of the current retry window (agents up to 1.0.62 pass only `started`)."""
     host = _agent_module(agent)
     # The caller has already ended the pass for a cancel written while the last snapshot ran.
     request = agent.config.get('installRequestedAt')
     if getattr(agent, 'reap_request', request) != request:  # A newer request this pass took on.
         reset(agent, request, host.utcnow())
-    if _due(agent, host, refused, started):
+    if _due(agent, host, refused, started, window or started):
         agent.reap_count = getattr(agent, 'reap_count', 0) + 1
         agent.reaped_at = host.utcnow()
         agent.set_status('waiting-for-quiet', REAPING)

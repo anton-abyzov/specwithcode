@@ -1,11 +1,12 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, it } from "@effect/vitest";
-import { CommandId, ProjectId } from "@specweave-studio/contracts";
+import { CommandId, EnvironmentId, ProjectId } from "@specweave-studio/contracts";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as ServerConfig from "../config.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as Runtime from "../orchestration-v2/runtimeLayer.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as Projections from "../orchestration-v2/ProjectionStore.ts";
@@ -31,6 +32,11 @@ const layer = Layer.mergeAll(Runtime.layerProjectService, Plans.layer, Environme
     Layer.succeed(Favicon.ProjectFaviconResolver, { resolvePath: () => Effect.succeed(null) }),
   ),
   Layer.provideMerge(WorkspacePaths.layer),
+  Layer.provideMerge(
+    Layer.succeed(ServerEnvironment.ServerEnvironmentIdentity, {
+      getEnvironmentId: Effect.succeed(EnvironmentId.make("env-local")),
+    }),
+  ),
   Layer.provideMerge(ProcessRunner.layer),
   Layer.provideMerge(Sqlite.layerMemory),
   Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "workspace-adoption-test-" })),

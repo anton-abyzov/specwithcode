@@ -18,6 +18,30 @@ const runtime = vi.hoisted(() => ({
   permitted: new Set<string>(),
   scratch: vi.fn(),
   retry: vi.fn(),
+  nicknames: new Map<string, string>(),
+  dialogs: {} as Record<string, any>,
+}));
+vi.mock("~/studio/machineNickname", () => ({
+  useMachineNicknames: () => (id: string, label?: string | null) =>
+    runtime.nicknames.get(id) ?? label ?? "Machine",
+}));
+vi.mock("./AddToMachineDialog", () => ({
+  AddToMachineDialog: (props: any) => {
+    runtime.dialogs.add = props;
+    return <div data-add-dialog={props.destinationEnvironmentId} />;
+  },
+}));
+vi.mock("../studio/ProjectLinkDialog", () => ({
+  ProjectLinkDialog: (props: any) => {
+    runtime.dialogs.link = props;
+    return <div data-link-dialog={props.initialCandidate.projectId} />;
+  },
+}));
+vi.mock("../settings/RenameMachineDialog", () => ({
+  RenameMachineDialog: (props: any) => {
+    runtime.dialogs.rename = props;
+    return props.open ? <div data-rename-dialog={props.environmentId} /> : null;
+  },
 }));
 vi.mock("~/connection/catalog", () => ({ environmentCatalog: { retryNow: "retryNow" } }));
 vi.mock("~/state/use-atom-command", () => ({ useAtomCommand: () => runtime.retry }));
@@ -87,7 +111,17 @@ async function click(label: string) {
   });
 }
 async function open() {
-  await click("MachineM4");
+  await click("Run onM4");
+}
+/** Machines without the draft's project are one step away, under the other-project view. */
+async function openOther() {
+  await open();
+  await click("Another project or no project");
+}
+function trigger() {
+  return document.querySelector<HTMLButtonElement>(
+    'button[data-composer-shortcut="composer.host"]',
+  )!;
 }
 beforeEach(() => {
   runtime.legacy = true;
@@ -107,6 +141,8 @@ beforeEach(() => {
   runtime.permitted = new Set([m4, m1, m3]);
   runtime.scratch.mockReset();
   runtime.retry.mockReset().mockResolvedValue({ _tag: "Success" });
+  runtime.nicknames = new Map();
+  runtime.dialogs = {};
   onPendingChange.mockClear();
   sendInFlightRef.current = false;
 });
@@ -121,7 +157,7 @@ it("shows a single primary non-Git machine and a connection path with one host s
   await render();
   const controls = document.querySelectorAll('button[data-composer-shortcut="composer.host"]');
   expect(controls).toHaveLength(1);
-  expect(controls[0]!.getAttribute("aria-label")).toBe("Machine: M4");
+  expect(controls[0]!.getAttribute("aria-label")).toBe("Run on: M4");
   expect((controls[0] as HTMLButtonElement).disabled).toBe(false);
   await open();
   expect(document.querySelector('a[href="/settings/connections"]')).not.toBeNull();
@@ -142,7 +178,7 @@ it("requires an explicit No project choice when the destination lacks a matching
     workspaceRoot: "/scratch/m1",
   });
   await render();
-  await open();
+  await openOther();
   await click("M1Connected");
   expect(runtime.scratch).not.toHaveBeenCalled();
   expect(useComposerDraftStore.getState().getDraftSession(draftId)?.environmentId).toBe(m4);
@@ -171,7 +207,7 @@ it("allows choosing a saved destination project without creating Scratch", async
   };
   runtime.projects.push(destination);
   await render();
-  await open();
+  await openOther();
   await click("M1Connected");
   await click("Worker project");
   expect(useComposerDraftStore.getState().getDraftSession(draftId)).toMatchObject({
@@ -202,7 +238,7 @@ it("keeps the matching logical project when explicitly choosing another machine"
 
 it("disables destination choices if the permission is revoked while the menu is open", async () => {
   await render();
-  await open();
+  await openOther();
   await click("M1Connected");
   runtime.permitted = new Set([m4]);
   await act(async () => {
@@ -215,7 +251,7 @@ it("disables destination choices if the permission is revoked while the menu is 
 
 it("refuses an already-started send even before the disabled prop updates", async () => {
   await render();
-  await open();
+  await openOther();
   await click("M1Connected");
   sendInFlightRef.current = true;
   await click("No project");
@@ -264,15 +300,17 @@ it("rechecks current machine-bound content before Auto despite a stale open menu
   expect(useComposerDraftStore.getState().getComposerDraft(draftId)?.files).toHaveLength(1);
 });
 
-it("marks disconnected and permission-limited machines truthfully", async () => {
+it("links machines that need the user to Settings instead of disabling them", async () => {
   runtime.environments[1].connection.phase = "available";
   runtime.permitted.delete(m3);
   await render();
-  await open();
-  expect(button("M1Not connected").hasAttribute("data-disabled")).toBe(true);
-  expect(button("M3Permission to operate threads required").hasAttribute("data-disabled")).toBe(
-    true,
-  );
+  await openOther();
+  const m1Fix = button("M1Not connected");
+  expect(m1Fix.getAttribute("href")).toBe("/settings/connections");
+  expect(m1Fix.getAttribute("aria-label")).toBe("Fix M1: Not connected");
+  const m3Fix = button("M3Permission to operate threads required");
+  expect(m3Fix.getAttribute("href")).toBe("/settings/connections");
+  expect(m3Fix.textContent).toContain("Fix");
 });
 
 it("explains attachment blocking and leaves the draft untouched", async () => {
@@ -290,7 +328,7 @@ it("explains attachment blocking and leaves the draft untouched", async () => {
   ]);
   const before = useComposerDraftStore.getState().getComposerDraft(draftId);
   await render();
-  await open();
+  await openOther();
   await click("M1Connected");
   expect(document.querySelector('[role="alert"]')?.textContent).toMatch(/Remove attachments/);
   expect(useComposerDraftStore.getState().getComposerDraft(draftId)).toBe(before);
@@ -307,7 +345,7 @@ it("cancels a delayed Scratch retarget when the picker unmounts", async () => {
       }),
   );
   await render();
-  await open();
+  await openOther();
   await click("M1Connected");
   await click("No project");
   await act(async () => {
@@ -338,7 +376,7 @@ it("hides archived destination projects and explains the missing project checkou
     },
   );
   await render();
-  await open();
+  await openOther();
   await click("M1Connected");
   expect(document.body.textContent).not.toContain("Archived fixture");
   expect(document.body.textContent).toContain("Active project");
@@ -378,7 +416,7 @@ it("refuses a project archived after selection starts and preserves the prompt",
   };
   runtime.projects.push(project);
   await render();
-  await open();
+  await openOther();
   await click("M1Connected");
   await act(async () => {
     button("Destination").click();
@@ -402,7 +440,7 @@ it.each(["resolved", "catalog"])(
         }),
     );
     await render();
-    await open();
+    await openOther();
     await click("M1Connected");
     await click("No project");
     const scratch = {
@@ -432,7 +470,7 @@ it("opens the coordinator for a modern named project and preserves the independe
   });
   const before = useComposerDraftStore.getState().getDraftSession(draftId);
   await render();
-  await open();
+  await openOther();
   await click("M1Connected");
   await click("Named project");
   expect(runtime.coordinator).toHaveBeenCalledWith(scopeProjectRef(m1, ProjectId.make("named-m1")));
@@ -454,7 +492,7 @@ it("says why a machine is unreachable and retries it instead of selecting it", a
     connection: { phase: "connecting", error: null },
   };
   await render();
-  await open();
+  await openOther();
   const m1Row = button("M1Can't reach");
   expect(m1Row.textContent).toContain("M1 could not establish a WebSocket connection.");
   expect(m1Row.textContent).toContain("Retry");
@@ -474,7 +512,7 @@ it("shows on the closed picker when the chosen machine can't be reached", async 
   };
   await render();
   const control = document.querySelector('button[data-composer-shortcut="composer.host"]')!;
-  expect(control.getAttribute("aria-label")).toBe("Machine: M4, Connection failed");
+  expect(control.getAttribute("aria-label")).toBe("Run on: M4, Connection failed");
   expect(control.querySelector("[data-draft-machine-unreachable]")?.textContent).toBe(
     "Can't reach",
   );
@@ -496,7 +534,7 @@ it("calls this machine busy, not unreachable, while its own server catches up", 
   };
   await render();
   const control = document.querySelector('button[data-composer-shortcut="composer.host"]')!;
-  expect(control.getAttribute("aria-label")).toBe("Machine: M4, Catching up…");
+  expect(control.getAttribute("aria-label")).toBe("Run on: M4, Catching up…");
   expect(control.querySelector("[data-draft-machine-unreachable]")).toBeNull();
   expect(control.querySelector("[data-draft-machine-busy]")?.textContent).toBe("Catching up…");
   await open();
@@ -524,4 +562,107 @@ it("says Connection failed, never Can't reach, when this machine's connection st
   expect(status?.className).toContain("text-warning-foreground");
   expect(control.querySelector("[data-draft-machine-busy]")).toBeNull();
   expect(control.textContent).not.toContain("Can't reach");
+});
+
+it("lists only machines with the project and offers the rest under Add to another machine", async () => {
+  runtime.projects.push({
+    id: ProjectId.make("same-m1"),
+    environmentId: m1,
+    title: "m4",
+    workspaceRoot: "/m4/data",
+  });
+  await render();
+  await open();
+  expect(document.body.textContent).toContain("Machines with m4");
+  expect(button("M1Connected")).toBeTruthy();
+  expect(document.body.textContent).not.toContain("M3Connected");
+  await click("Add to another machine");
+  expect(document.body.textContent).toContain("Add m4 to");
+  expect(document.body.textContent).not.toContain("M1");
+  await click("M3Clone it there");
+  expect(document.querySelector("[data-add-dialog]")?.getAttribute("data-add-dialog")).toBe(m3);
+  expect(runtime.dialogs.add.source.id).toBe(projectId);
+  expect(useComposerDraftStore.getState().getDraftSession(draftId)?.environmentId).toBe(m4);
+
+  const added = {
+    id: ProjectId.make("added-m3"),
+    environmentId: m3,
+    title: "m4",
+    workspaceRoot: "/m3/data",
+  };
+  runtime.projects.push(added);
+  await act(async () => runtime.dialogs.add.onAdded({ environmentId: m3, projectId: added.id }));
+  expect(useComposerDraftStore.getState().getDraftSession(draftId)).toMatchObject({
+    environmentId: m3,
+    projectId: added.id,
+  });
+  expect(document.querySelector("[data-add-dialog]")).toBeNull();
+  expect(useComposerDraftStore.getState().getComposerDraft(draftId)?.prompt).toBe(
+    "Do not lose this draft",
+  );
+});
+
+it("offers Link, never Clone, when the machine has an unlinked checkout of the same remote", async () => {
+  const identity = { canonicalKey: "github.com/acme/data", locator: { kind: "remote" } };
+  runtime.projects[0].repositoryIdentity = identity;
+  runtime.projects.push(
+    {
+      id: ProjectId.make("same-name-m3"),
+      environmentId: m3,
+      title: "m4",
+      workspaceRoot: "/m3/elsewhere",
+    },
+    {
+      id: ProjectId.make("copy-m1"),
+      environmentId: m1,
+      title: "data checkout",
+      workspaceRoot: "/m1/code/data",
+      repositoryIdentity: identity,
+    },
+  );
+  await render();
+  await open();
+  await click("Add to another machine");
+  // The M3 project shares only a title; a name is never proof of the same repository.
+  expect(button("M3").textContent).toContain("Clone it there");
+  await click("M1Has a copy at /m1/code/data · Link");
+  expect(document.querySelector("[data-link-dialog]")?.getAttribute("data-link-dialog")).toBe(
+    "copy-m1",
+  );
+  expect(runtime.dialogs.link.project.id).toBe(projectId);
+  expect(runtime.dialogs.link.initialCandidate).toEqual({
+    environmentId: m1,
+    projectId: "copy-m1",
+  });
+  expect(document.querySelector("[data-add-dialog]")).toBeNull();
+});
+
+it("renames a machine from the menu and shows the nickname on the closed control", async () => {
+  runtime.nicknames.set(m4, "Studio");
+  await render();
+  expect(trigger().getAttribute("aria-label")).toBe("Run on: Studio");
+  expect(trigger().getAttribute("title")).toBe("M4");
+  await click("Run onStudio");
+  await click("Rename a machine");
+  const row = document.querySelector<HTMLElement>('[aria-label="Rename M1"]')!;
+  expect(row).not.toBeNull();
+  expect(document.querySelector('[aria-label="Rename Studio"]')?.textContent).toContain("M4");
+  await act(async () => row.click());
+  expect(document.querySelector("[data-rename-dialog]")?.getAttribute("data-rename-dialog")).toBe(
+    m1,
+  );
+  expect(runtime.dialogs.rename).toMatchObject({ environmentId: m1, hostLabel: "M1", open: true });
+  await act(async () => runtime.dialogs.rename.onOpenChange(false));
+  expect(document.querySelector("[data-rename-dialog]")).toBeNull();
+});
+
+it("shows every machine in a flat list for a draft without a project", async () => {
+  runtime.projects = [];
+  useComposerDraftStore.getState().setDraftThreadContext(draftId, {});
+  await render();
+  await open();
+  expect(document.body.textContent).toContain("Run this draft on");
+  expect(document.body.textContent).not.toContain("Add to another machine");
+  expect(button("M1Connected")).toBeTruthy();
+  expect(button("M3Connected")).toBeTruthy();
 });

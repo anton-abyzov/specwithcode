@@ -24,6 +24,7 @@ import {
 } from "../studio/coordinatorContinuation";
 import { latestWorkStep } from "../studio/coordinatorProgress";
 import { threadBlocker } from "../studio/projectWorkspaceModel";
+import { useMachineNicknames } from "../studio/machineNickname";
 import { useOpenThread } from "../hooks/useOpenThread";
 import { runThreadLifecycleShortcut } from "../lib/threadLifecycleShortcut";
 import { settleAfter, settleCaught } from "../lib/settle";
@@ -517,6 +518,7 @@ import { resolveProviderSkillsForCwd } from "@specweave-studio/client-runtime/pr
 import { vcsEnvironment } from "../state/vcs";
 import { sourceControlEnvironment } from "../state/sourceControl";
 import { useProjectClone } from "../state/projectClones";
+import { clearAddToMachineJob, readAddToMachineJob } from "../studio/addToMachine";
 import { projectCloneDisplayName, projectCloneProgressSummary } from "@specweave-studio/contracts";
 import { useEnvironments, usePrimaryEnvironment } from "../state/environments";
 import {
@@ -2922,6 +2924,21 @@ function useChatViewState(props: ChatViewProps) {
     },
     [],
   );
+  // A clone started from Run on is a copy of another project: cancelling it
+  // removes the copy and its folder and returns to the project it came from.
+  const cancelAddToMachine = useCallback(
+    async (environmentId: EnvironmentId, projectId: ProjectId, running: boolean) => {
+      const job = readAddToMachineJob(environmentId, projectId);
+      if (!job) return;
+      if (running) await cancelProjectClone({ environmentId, input: { projectId } });
+      if (!(await removeClonedProject({ environmentId, projectId }))) return;
+      clearAddToMachineJob(environmentId, projectId);
+      const sourceRef = scopeProjectRef(job.source.environmentId, job.source.projectId);
+      const entry = await openCoordinatorHandoff(sourceRef);
+      if (entry.kind === "standalone") void handleNewThread(sourceRef);
+    },
+    [cancelProjectClone, handleNewThread, openCoordinatorHandoff, removeClonedProject],
+  );
   const projectCloneSendBlockReason =
     activeProjectClone === null
       ? null
@@ -2936,6 +2953,7 @@ function useChatViewState(props: ChatViewProps) {
     }
     const name = projectCloneDisplayName(activeProjectClone);
     const { environmentId, projectId } = activeProjectTarget;
+    const addJob = readAddToMachineJob(environmentId, projectId);
     if (activeProjectClone.phase === "running") {
       return {
         id: `project-clone:${projectId}`,
@@ -2950,9 +2968,11 @@ function useChatViewState(props: ChatViewProps) {
             size="xs"
             variant="ghost"
             onClick={() =>
-              void runProjectCloneAction("Failed to cancel clone", () =>
-                cancelProjectClone({ environmentId, input: { projectId } }),
-              )
+              void (addJob
+                ? cancelAddToMachine(environmentId, projectId, true)
+                : runProjectCloneAction("Failed to cancel clone", () =>
+                    cancelProjectClone({ environmentId, input: { projectId } }),
+                  ))
             }
           >
             Cancel
@@ -2973,7 +2993,11 @@ function useChatViewState(props: ChatViewProps) {
           <Button
             size="xs"
             variant="ghost"
-            onClick={() => void removeClonedProject({ environmentId, projectId })}
+            onClick={() =>
+              void (addJob
+                ? cancelAddToMachine(environmentId, projectId, false)
+                : removeClonedProject({ environmentId, projectId }))
+            }
           >
             Remove project
           </Button>
@@ -2994,6 +3018,7 @@ function useChatViewState(props: ChatViewProps) {
   }, [
     activeProjectClone,
     activeProjectTarget,
+    cancelAddToMachine,
     cancelProjectClone,
     removeClonedProject,
     retryProjectClone,
@@ -3156,6 +3181,7 @@ function useChatViewState(props: ChatViewProps) {
     [navigate, setEnvironmentEnabled],
   );
   const { scratchWorkspaceRootFor, openScratchProject } = useScratchProject();
+  const machineNickname = useMachineNicknames();
   const activeProjectIsScratch =
     activeProject !== null &&
     isScratchProject(
@@ -3182,6 +3208,7 @@ function useChatViewState(props: ChatViewProps) {
         primaryEnvironmentId,
         projectGroupingSettings,
         scratchWorkspaceRootFor,
+        nickname: machineNickname,
       }),
     [
       activeProject,
@@ -3193,6 +3220,7 @@ function useChatViewState(props: ChatViewProps) {
       primaryEnvironmentId,
       environmentById,
       scratchWorkspaceRootFor,
+      machineNickname,
     ],
   );
   const hasMultipleEnvironments = logicalProjectEnvironments.length > 1;
@@ -10056,6 +10084,10 @@ export default function ChatView(props: ChatViewProps) {
                   model: limitDeviceTarget.model,
                   onContinue: () => continueOnDevice(limitDeviceTarget),
                 },
+          machines:
+            activeProjectSettings.settings.providerLimitMachineTargets.length > 0
+              ? { environmentId, threadId: activeThreadShell.id }
+              : null,
           onChange: async (limitRecovery) => {
             const result = await updateThreadMetadata({
               environmentId,

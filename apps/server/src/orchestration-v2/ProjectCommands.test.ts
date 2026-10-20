@@ -989,4 +989,54 @@ describe("explicit link ownership modes", () => {
       ),
     );
   });
+
+  it("lets a relinquished member start its own coordinator above every epoch, replacing none", () => {
+    const linked = { ...shared, members: [other, self] };
+    const member = {
+      logicalProject: linked,
+      coordinatorBinding: {
+        epoch: 4,
+        state: "transferred" as const,
+        operationId: "link-op",
+        successor: other,
+      },
+    };
+    const started = { epoch: 5, state: "active" as const, operationId: "start-op" };
+    const event = payloadOf(
+      apply(member, {
+        mode: "start-coordinator",
+        logicalProject: linked,
+        coordinatorBinding: started,
+      }),
+    );
+    assert.deepInclude(event.workspaceSettings, { coordinatorBinding: started });
+    assert.include(
+      failureText(
+        apply(
+          { ...member, coordinatorBinding: { epoch: 4, state: "active" } },
+          { mode: "start-coordinator", logicalProject: linked, coordinatorBinding: started },
+        ),
+      ),
+      "Only a member whose coordinator was relinquished",
+    );
+    for (const ownership of [
+      { coordinatorBinding: { ...started, epoch: 4 } },
+      { coordinatorBinding: { ...started, operationId: undefined } },
+      { coordinatorBinding: { ...started, predecessor: other } },
+      { coordinatorBinding: { ...started, successor: other } },
+      { coordinatorBinding: { ...started, takenOverAt: "2026-10-19T12:00:00.000Z" } },
+      { coordinatorBinding: { ...started, state: "transferred" as const } },
+      { logicalProject: { ...linked, members: [self] } },
+      { logicalProject: { ...linked, id: "logical:other" } },
+      { acceptedHandoffOperationId: "start-op" },
+    ])
+      failureOf(
+        apply(member, {
+          mode: "start-coordinator",
+          logicalProject: linked,
+          coordinatorBinding: started,
+          ...ownership,
+        }),
+      );
+  });
 });
