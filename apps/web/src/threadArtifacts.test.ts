@@ -1,6 +1,7 @@
 import { expect, it } from "vite-plus/test";
 
-import { collectThreadArtifacts, expandBraceList } from "./threadArtifacts";
+import { expandBraceShorthand } from "./markdown-links";
+import { collectThreadArtifacts, settleThreadArtifacts } from "./threadArtifacts";
 
 const CWD = "/Users/me/Projects/github/specweave-studio";
 
@@ -48,7 +49,7 @@ it("lists the files, pages and links a thread names, newest first, once each", (
 });
 
 it("lists each file a brace list names, not the pattern", () => {
-  const artifacts = collectThreadArtifacts(
+  const authored = collectThreadArtifacts(
     [
       {
         id: "a1",
@@ -57,12 +58,14 @@ it("lists each file a brace list names, not the pattern", () => {
     ],
     "/work",
   );
+  expect(authored).toHaveLength(1);
+  const artifacts = settleThreadArtifacts(authored, new Map());
   expect(artifacts.map((artifact) => artifact.name).toSorted()).toEqual([
     "run-identity-1000-light.png",
     "run-identity-1440-dark.png",
     "run-identity-1440-light.png",
   ]);
-  expect(expandBraceList("a-{x,y}-{1,2}.png")).toEqual([
+  expect(expandBraceShorthand("a-{x,y}-{1,2}.png")).toEqual([
     "a-x-1.png",
     "a-x-2.png",
     "a-y-1.png",

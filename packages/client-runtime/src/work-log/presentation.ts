@@ -800,6 +800,10 @@ function compactActionNoun(
       return ["delegation", "delegations"];
     case "thread-create":
       return ["thread started", "threads started"];
+    case "knowledge-search":
+      return ["knowledge search", "knowledge searches"];
+    case "knowledge-read":
+      return ["knowledge read", "knowledge reads"];
     case "thread-list":
     case "thread-read":
     case "thread-search":

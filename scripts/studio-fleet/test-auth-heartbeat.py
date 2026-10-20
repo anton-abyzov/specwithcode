@@ -123,7 +123,7 @@ class HeartbeatProofs(unittest.TestCase):
 
     def test_every_other_cell_remains_exact(self):
         for field in ['session_id', 'subject', 'scopes', 'method', 'client_label', 'client_surface',
-                      'client_app_version', 'issued_at', 'expires_at', 'revoked_at', 'token_digest']:
+                      'issued_at', 'expires_at', 'revoked_at', 'token_digest']:
             with self.subTest(field=field):
                 original_rows = copy.deepcopy(self.original['rows'])
                 self.db.execute('UPDATE auth_sessions SET ' + field + '=? WHERE session_id=?', ('changed', 'private-session-one'))
@@ -269,7 +269,7 @@ class HeartbeatProofs(unittest.TestCase):
     def test_m3_relay_proof_refuses_each_other_original_auth_column(self):
         self.relay_baseline(); original_rows = copy.deepcopy(self.original['rows'])
         for field in self.original['columns']:
-            if field == 'last_connected_at': continue
+            if field in ('last_connected_at', heartbeat.APP_VERSION_COLUMN): continue
             with self.subTest(field=field):
                 self.db.execute('DELETE FROM auth_sessions')
                 self.db.executemany('INSERT INTO auth_sessions VALUES (?,?,?,?,?,?,?,?,?,?,?,?)', original_rows)
@@ -482,7 +482,7 @@ class HeartbeatProofs(unittest.TestCase):
     def test_m4_second_cookie_cannot_change_any_other_cell(self):
         self.two_browser_baseline(); baseline = copy.deepcopy(self.original['rows'])
         for field in self.original['columns']:
-            if field == 'last_connected_at': continue
+            if field in ('last_connected_at', heartbeat.APP_VERSION_COLUMN): continue
             with self.subTest(field=field):
                 self.db.execute('DELETE FROM auth_sessions')
                 self.db.executemany('INSERT INTO auth_sessions VALUES (?,?,?,?,?,?,?,?,?,?,?,?)', baseline)
@@ -626,13 +626,199 @@ class HeartbeatProofs(unittest.TestCase):
     def test_desktop_session_may_change_only_its_heartbeat(self):
         for field, value in [('scopes', '["admin"]'), ('token_digest', b'rotated'), ('client_surface', 'web'),
                              ('method', 'dpop-access-token'), ('expires_at', '2026-12-01T00:00:00.000Z'),
-                             ('client_app_version', '0.2.9'), ('subject', 'other')]:
+                             ('subject', 'other')]:
             with self.subTest(field=field):
                 self.relay_baseline(); self.add_desktop(); self.baseline()
                 self.db.execute('UPDATE auth_sessions SET ' + field + '=? WHERE session_id=?', (value, 'private-desktop'))
                 self.reconnect('private-session-one', 'private-desktop')
                 with self.assertRaises(AssertionError): self.relay_prove('m3')
                 self.db.execute("DELETE FROM auth_sessions WHERE session_id='private-desktop'"); self.db.commit()
+
+    # A desktop app or a page reloaded into the new release reports its version as it reconnects
+    # (AuthSessions.ts setClientConnectionRow): witness version 5.
+    def report(self, session_id, version):
+        self.db.execute('UPDATE auth_sessions SET client_app_version=? WHERE session_id=?', (version, session_id))
+        self.db.commit()
+
+    def test_a_reconnect_reporting_its_new_app_version_is_proven_and_reversed(self):
+        for old in ['0.1', None]:
+            with self.subTest(old=old):
+                self.report('private-session-one', old); self.baseline()
+                self.report('private-session-one', '1.0.61'); self.change(); raw = self.path.read_bytes()
+                witness = self.prove()
+                self.assertEqual((witness['schemaVersion'], witness['changedRows'], witness['serviceIdentity']), (5, 1, 'm4'))
+                self.assertNotIn('webSessionPolicy', witness)
+                self.assertEqual(witness['timestampChanges'], [{
+                    'rowSha256': heartbeat.invariant_row_hash(self.current, self.current['rows'][0]),
+                    'beforeLastConnectedAt': OLD, 'afterLastConnectedAt': NEW,
+                    'beforeClientAppVersion': old, 'afterClientAppVersion': '1.0.61'}])
+                self.assertEqual(heartbeat.verify_restart_witness(self.before, self.after, witness, self.current), witness)
+                self.assertEqual(heartbeat.restore_witness(self.current, witness, self.before)['rows'], self.original['rows'])
+                for secret in ['private-session', 'private-subject', 'private-label', 'private-token', 'token_digest']:
+                    self.assertNotIn(secret, json.dumps(witness))
+                self.assertEqual(self.path.read_bytes(), raw)
+                self.change(OLD); self.report('private-session-one', '0.1')
+
+    def test_desktop_app_relaunched_into_the_new_release_is_proven_on_every_host(self):
+        for identity in ['m4', 'm1', 'm3']:
+            with self.subTest(identity=identity):
+                self.add_desktop(); self.baseline()
+                self.report('private-desktop', '1.0.61'); self.reconnect('private-desktop')
+                witness = self.relay_prove(identity)
+                self.assertEqual((witness['schemaVersion'], witness['changedRows'], witness['serviceIdentity']), (5, 1, identity))
+                self.assertEqual([cell['kind'] for cell in witness['sessions']], ['existing-desktop-app-session'])
+                cell = witness['timestampChanges'][0]
+                self.assertEqual((cell['beforeClientAppVersion'], cell['afterClientAppVersion']), ('0.2.8', '1.0.61'))
+                self.assertEqual(heartbeat.verify_restart_witness(self.before, self.after, witness, self.current,
+                                                                  identity=identity), witness)
+                self.assertEqual(heartbeat.restore_witness(self.current, witness, self.before)['rows'], self.original['rows'])
+                self.db.execute("DELETE FROM auth_sessions WHERE session_id='private-desktop'"); self.db.commit()
+
+    def test_only_the_session_that_reported_a_version_carries_one(self):
+        self.relay_baseline(); self.add_desktop(); self.baseline()
+        self.report('private-desktop', '1.0.61'); self.reconnect('private-session-one', 'private-desktop')
+        witness = self.relay_prove('m3')
+        self.assertEqual((witness['schemaVersion'], witness['changedRows']), (5, 2))
+        self.assertEqual(sorted(len(cell) for cell in witness['timestampChanges']), [3, 5])
+        self.assertEqual(heartbeat.verify_restart_witness(self.before, self.after, witness, self.current, identity='m3'), witness)
+        self.assertEqual(heartbeat.restore_witness(self.current, witness, self.before)['rows'], self.original['rows'])
+
+    def test_a_generic_service_keeps_its_policy_in_a_version_5_witness(self):
+        self.add_desktop(); self.baseline()
+        self.report('private-desktop', '1.0.61'); self.reconnect('private-desktop')
+        witness = heartbeat.prove_restart_heartbeat(self.before, self.after, self.original, self.current, START, END,
+                                                    identity='lab', web_session_policy='worker-relay')
+        self.assertEqual((witness['schemaVersion'], witness['serviceIdentity'], witness['webSessionPolicy']),
+                         (5, 'lab', 'worker-relay'))
+        self.assertEqual(heartbeat.verify_restart_witness(self.before, self.after, witness, self.current,
+                                                          identity='lab', web_session_policy='worker-relay'), witness)
+        for identity, policy in [('lab', 'browser-cookie'), ('other', 'worker-relay'), ('m3', None)]:
+            with self.subTest(identity=identity, policy=policy), self.assertRaises(AssertionError):
+                heartbeat.verify_restart_witness(self.before, self.after, witness, self.current,
+                                                  identity=identity, web_session_policy=policy)
+
+    def observe(self):
+        self.after = self.proof(); self.current = heartbeat.read_auth_sessions(self.state, self.after)
+
+    # ws.ts commits the version (recordClientConnection) before the heartbeat (markConnected), and stamps
+    # the heartbeat only on a session's first open connection: a version may change on its own.
+    def test_a_version_reported_without_a_new_heartbeat_is_proven_and_reversed(self):
+        self.report('private-session-one', '1.0.61'); self.observe(); raw = self.path.read_bytes()
+        witness = self.prove()
+        self.assertEqual((witness['schemaVersion'], witness['changedRows'], witness['serviceIdentity']), (5, 1, 'm4'))
+        self.assertEqual(witness['timestampChanges'], [{
+            'rowSha256': heartbeat.invariant_row_hash(self.current, self.current['rows'][0]),
+            'beforeClientAppVersion': '0.1', 'afterClientAppVersion': '1.0.61'}])
+        self.assertEqual(heartbeat.verify_restart_witness(self.before, self.after, witness, self.current), witness)
+        self.assertEqual(heartbeat.restore_witness(self.current, witness, self.before)['rows'], self.original['rows'])
+        self.assertEqual(self.path.read_bytes(), raw)
+
+    def test_a_desktop_app_reporting_its_version_before_its_heartbeat_is_proven_on_every_host(self):
+        for identity in ['m1', 'm3', 'm4']:
+            with self.subTest(identity=identity):
+                self.relay_baseline(method='browser-session-cookie' if identity == 'm4' else 'bearer-access-token')
+                self.add_desktop(); self.baseline()
+                self.report('private-desktop', '1.0.61'); self.reconnect('private-session-one')
+                witness = self.relay_prove(identity)
+                self.assertEqual((witness['schemaVersion'], witness['changedRows']), (5, 2))
+                self.assertEqual(sorted(sorted(cell) for cell in witness['timestampChanges']),
+                                 sorted([sorted(heartbeat.HEARTBEAT_CELL), sorted(heartbeat.VERSION_CELL)]))
+                self.assertEqual(heartbeat.verify_restart_witness(self.before, self.after, witness, self.current,
+                                                                  identity=identity), witness)
+                self.assertEqual(heartbeat.restore_witness(self.current, witness, self.before)['rows'], self.original['rows'])
+                self.db.execute("DELETE FROM auth_sessions WHERE session_id='private-desktop'"); self.db.commit()
+
+    def test_a_version_report_alone_still_needs_an_active_supported_session(self):
+        self.report('private-session-two', '1.0.61'); self.observe()
+        with self.assertRaisesRegex(AssertionError, 'revoked'): self.prove()
+        self.report('private-session-two', '0.1')
+        for name, cells in [('cli surface', {'surface': 'cli'}), ('no surface', {'surface': None}),
+                            ('mobile surface', {'surface': 'mobile'}), ('cookie on desktop', {'method': 'browser-session-cookie'}),
+                            ('revoked', {'revoked_at': OLD}), ('expired', {'expires_at': '2026-10-08T09:59:59.000Z'}),
+                            ('future', {'issued_at': NEW})]:
+            with self.subTest(name):
+                surface = cells.pop('surface', 'desktop'); method = cells.pop('method', 'bearer-access-token')
+                self.add_desktop(method=method, surface=surface, **cells); self.baseline()
+                self.report('private-desktop', '1.0.61'); self.observe()
+                with self.assertRaises(AssertionError): self.relay_prove('m3')
+                self.db.execute("DELETE FROM auth_sessions WHERE session_id='private-desktop'"); self.db.commit()
+
+    def test_a_version_report_alone_is_validated_and_bound_to_its_row(self):
+        for value in ['', None, 'x' * 65, b'1.0.61']:
+            with self.subTest(value=value):
+                self.report('private-session-one', value); self.observe()
+                with self.assertRaisesRegex(AssertionError, 'invalid app version'): self.prove()
+                self.report('private-session-one', '0.1')
+        self.add_desktop(); self.add_desktop('private-desktop-idle'); self.baseline()
+        self.report('private-desktop', '1.0.61'); self.observe()
+        witness = self.relay_prove('m3')
+        cell = witness['timestampChanges'][0]
+        for name, forged in [('equal versions', {**cell, 'beforeClientAppVersion': '1.0.61'}),
+                             ('other live version', {**cell, 'afterClientAppVersion': '0.2.8'}),
+                             ('invented before', {**cell, 'beforeClientAppVersion': '0.2.7'}),
+                             ('bytes before', {**cell, 'beforeClientAppVersion': b'0.2.8'}),
+                             ('with timestamps', {**cell, 'beforeLastConnectedAt': OLD, 'afterLastConnectedAt': NEW}),
+                             ('other row', {**cell, 'rowSha256': heartbeat.invariant_row_hash(self.current, next(
+                                 row for row in self.current['rows'] if row[0] == 'private-desktop-idle'))})]:
+            with self.subTest(name), self.assertRaises(AssertionError):
+                heartbeat.verify_restart_witness(self.before, self.after, {**witness, 'timestampChanges': [forged]},
+                                                  self.current, identity='m3')
+        for version in (3, 4):
+            with self.subTest(schemaVersion=version), self.assertRaises(AssertionError):
+                heartbeat.verify_restart_witness(self.before, self.after, {**witness, 'schemaVersion': version},
+                                                  self.current, identity='m3')
+        with self.assertRaisesRegex(AssertionError, 'shape'):
+            heartbeat.restore_timestamps(self.current, witness['timestampChanges'], self.before)
+        self.assertEqual(heartbeat.restore_witness(self.current, witness, self.before)['rows'], self.original['rows'])
+
+    def test_a_reported_version_must_be_short_nonempty_text(self):
+        original_rows = copy.deepcopy(self.original['rows'])
+        for old, new in [('0.1', ''), ('0.1', None), ('0.1', 'x' * 65), ('0.1', b'1.0.61'), (b'0.1', '1.0.61')]:
+            with self.subTest(old=old, new=new):
+                self.report('private-session-one', old); self.baseline()
+                self.report('private-session-one', new); self.change()
+                with self.assertRaisesRegex(AssertionError, 'invalid app version'): self.prove()
+                self.db.execute('DELETE FROM auth_sessions')
+                self.db.executemany('INSERT INTO auth_sessions VALUES (?,?,?,?,?,?,?,?,?,?,?,?)', original_rows)
+                self.db.commit()
+        self.baseline(); self.report('private-session-one', 'x' * 64); self.change()
+        self.assertEqual(self.prove()['schemaVersion'], 5)
+
+    def test_a_version_report_never_covers_another_cell(self):
+        for field, value in [('scopes', '["admin"]'), ('client_surface', 'web'), ('token_digest', b'rotated'),
+                             ('method', 'dpop-access-token'), ('client_label', 'renamed')]:
+            for heartbeat_moved in (True, False):
+                with self.subTest(field=field, heartbeat_moved=heartbeat_moved):
+                    self.relay_baseline(); self.add_desktop(); self.baseline()
+                    self.report('private-desktop', '1.0.61')
+                    self.db.execute('UPDATE auth_sessions SET ' + field + '=? WHERE session_id=?', (value, 'private-desktop'))
+                    self.reconnect(*(['private-desktop'] if heartbeat_moved else []))
+                    with self.assertRaisesRegex(AssertionError, 'another auth cell'): self.relay_prove('m3')
+                    self.db.execute("DELETE FROM auth_sessions WHERE session_id='private-desktop'"); self.db.commit()
+
+    def test_v5_witness_cannot_be_forged_downgraded_or_moved(self):
+        self.add_desktop(); self.baseline()
+        self.report('private-desktop', '1.0.61'); self.reconnect('private-desktop')
+        witness = self.relay_prove('m3')
+        for field, value in [('schemaVersion', 3), ('schemaVersion', 4), ('schemaVersion', 5.0), ('serviceIdentity', 'm1'),
+                             ('webSessionPolicy', 'worker-relay'), ('changedRows', 2), ('unexpected', 'extra')]:
+            with self.subTest(field=field, value=value), self.assertRaises(AssertionError):
+                heartbeat.verify_restart_witness(self.before, self.after, {**witness, field: value}, self.current, identity='m3')
+        for field, value in [('afterClientAppVersion', '1.0.62'), ('beforeClientAppVersion', '0.2.7'),
+                             ('beforeClientAppVersion', None), ('afterClientAppVersion', None)]:
+            with self.subTest(cell=field, value=value), self.assertRaises(AssertionError):
+                forged = copy.deepcopy(witness); forged['timestampChanges'][0][field] = value
+                heartbeat.verify_restart_witness(self.before, self.after, forged, self.current, identity='m3')
+        stripped = copy.deepcopy(witness)
+        for key in ('beforeClientAppVersion', 'afterClientAppVersion'): del stripped['timestampChanges'][0][key]
+        for version in (5, 3):
+            with self.subTest(stripped=version), self.assertRaises(AssertionError):
+                heartbeat.verify_restart_witness(self.before, self.after, {**stripped, 'schemaVersion': version},
+                                                  self.current, identity='m3')
+        with self.assertRaisesRegex(AssertionError, 'shape'):
+            heartbeat.restore_timestamps(self.current, witness['timestampChanges'], self.before)
+        with self.assertRaises(AssertionError):
+            heartbeat.verify_restart_witness(self.before, self.after, witness, self.current, identity='m1')
 
     def test_desktop_heartbeat_never_covers_a_hex_alias_of_a_token(self):
         # The legacy row hash writes a BLOB as its hex text; the proof compares SQLite types.

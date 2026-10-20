@@ -6,7 +6,7 @@ import ChatMarkdown from "~/components/ChatMarkdown";
 import { isElectron } from "~/env";
 import { openLinkOutsideApp } from "~/browser/externalBrowsers";
 import type { ShortcutMatchContext } from "~/keybindings";
-import { openPullRequestInPanel, stepOutOfViewerOverlay } from "~/lib/openInFront";
+import { openFileInFront, openPullRequestInPanel, stepOutOfViewerOverlay } from "~/lib/openInFront";
 import { useRightPanelStore } from "~/rightPanelStore";
 import {
   InViewerOverlay,
@@ -19,6 +19,7 @@ import { ReadOnlySourcePreview } from "../files/AttachmentFilePreview";
 import { useProjectFileQuery } from "../files/projectFilesQueryState";
 import { PullRequestDetailPanel } from "../pullRequest/PullRequestDetailPanel";
 import { Button } from "../ui/button";
+import { mayBeMissing, MissingFileNotice } from "./MissingFileNotice";
 import { MarkdownDocumentView } from "./ReportReader";
 
 const MARKDOWN_FILE = /\.(?:md|mdx|markdown)$/i;
@@ -97,7 +98,12 @@ function LinkedFile(props: {
   readonly actionsSlot: HTMLElement | null;
 }) {
   const { target } = props;
-  const unresolved = target.tried !== undefined && target.tried.length > 0;
+  // One full path is read anyway: a listing leaves out symlinks, and the read
+  // says plainly whether the file is there.
+  const unresolved =
+    target.tried !== undefined &&
+    target.tried.length > 0 &&
+    !(target.tried.length === 1 && target.tried[0]!.startsWith("/"));
   const file = useProjectFileQuery(
     target.threadRef.environmentId,
     target.cwd,
@@ -105,6 +111,10 @@ function LinkedFile(props: {
   );
   const name = fileName(target);
   const contents = file.data?.contents ?? null;
+  const absolutePath =
+    target.path.startsWith("/") || target.cwd === ""
+      ? target.path
+      : `${target.cwd.replace(/\/+$/, "")}/${target.path}`;
   const baseDir = target.path.startsWith("/")
     ? target.path.slice(0, target.path.lastIndexOf("/"))
     : undefined;
@@ -135,28 +145,47 @@ function LinkedFile(props: {
       ) : null}
     </>
   );
-  const headerActions = unresolved ? null : (
-    <>
-      {actions}
-      <Button
-        type="button"
-        size="xs"
-        variant="ghost"
-        onClick={() => {
-          stepOutOfViewerOverlay();
-          useRightPanelStore.getState().openFile(target.threadRef, target.path, target.line);
-        }}
-      >
-        <PanelRightOpenIcon aria-hidden />
-        Open in panel
-      </Button>
-    </>
-  );
+  const missing = file.error !== null && contents === null && mayBeMissing(file.readError);
+  // One full path the host lacks: say so plainly, with what is beside it.
+  const missingPath = missing ? absolutePath : null;
+  const headerActions =
+    unresolved || missing ? null : (
+      <>
+        {actions}
+        <Button
+          type="button"
+          size="xs"
+          variant="ghost"
+          onClick={() => {
+            stepOutOfViewerOverlay();
+            useRightPanelStore.getState().openFile(target.threadRef, target.path, target.line);
+          }}
+        >
+          <PanelRightOpenIcon aria-hidden />
+          Open in panel
+        </Button>
+      </>
+    );
   return (
     <>
       {props.actionsSlot && headerActions ? createPortal(headerActions, props.actionsSlot) : null}
       <div className="flex min-h-0 flex-1 flex-col overflow-auto" data-report-file-pane="true">
-        {unresolved ? (
+        {missingPath !== null ? (
+          <MissingFileNotice
+            environmentId={target.threadRef.environmentId}
+            path={missingPath}
+            error={file.error}
+            actions={actions}
+            onOpen={(path) =>
+              openFileInFront({
+                threadRef: target.threadRef,
+                cwd: target.cwd,
+                path,
+                line: undefined,
+              })
+            }
+          />
+        ) : unresolved ? (
           <div
             className="flex flex-col gap-2 p-4 text-sm"
             role="status"

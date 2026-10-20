@@ -13,6 +13,7 @@ import * as ProcessRunner from "../processRunner.ts";
 import * as ProjectUsageService from "../usage/ProjectUsageService.ts";
 import * as ProjectSkillsService from "../project/ProjectSkillsService.ts";
 import * as ProjectWorkspaceService from "../project/ProjectWorkspaceService.ts";
+import * as ProjectKnowledge from "../project/knowledge/ProjectKnowledge.ts";
 import * as ProjectStarterSuggestions from "../project/ProjectStarterSuggestions.ts";
 import * as ProjectCoordinatorService from "../project/ProjectCoordinatorService.ts";
 import * as ThreadReportService from "../project/ThreadReportService.ts";
@@ -190,8 +191,12 @@ const layerProjectSkillsProvided = ProjectSkillsService.layer.pipe(
 const layerProjectEnvironmentProvided = ProjectEnvironmentService.layer.pipe(
   Layer.provide(Layer.mergeAll(ProjectStore.layer, ProcessRunner.layer)),
 );
+// One reference everywhere, so the index service and its queue are built once.
+const layerProjectKnowledgeProvided = ProjectKnowledge.layer.pipe(
+  Layer.provide(Layer.merge(ProjectStore.layer, layerEventInfrastructure)),
+);
 const layerProjectWorkspaceProvided = ProjectWorkspaceService.layer.pipe(
-  Layer.provide(ProjectStore.layer),
+  Layer.provide(Layer.merge(ProjectStore.layer, layerProjectKnowledgeProvided)),
 );
 const layerThreadReportsProvided = ThreadReportService.layer.pipe(
   Layer.provide(Layer.merge(ProjectStore.layer, ProjectionStore.layer)),
@@ -209,7 +214,9 @@ const layerProjectPlanProvided = ProjectPlanService.layer.pipe(
 const layerProviderTurnStartServiceProvided = ProviderTurnStartService.layer.pipe(
   Layer.provide(
     Layer.mergeAll(
-      ProjectContextDelivery.layer.pipe(Layer.provide(layerProjectWorkspaceProvided)),
+      ProjectContextDelivery.layer.pipe(
+        Layer.provide(Layer.merge(layerProjectWorkspaceProvided, layerProjectKnowledgeProvided)),
+      ),
       layerContextHandoffServiceProvided,
       layerEventSinkProvided,
       IdAllocator.layer,
@@ -459,6 +466,7 @@ export const layerProduction = Layer.mergeAll(
   layerProjectUsageProvided,
   layerProjectSkillsProvided,
   layerProjectWorkspaceProvided,
+  layerProjectKnowledgeProvided,
   layerProjectStarterSuggestionsProvided,
   layerThreadReportsProvided,
   layerThreadIncrementProgressProvided,

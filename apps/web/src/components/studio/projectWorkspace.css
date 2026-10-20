@@ -1080,6 +1080,92 @@
   }
 }
 
+@utility project-knowledge-mode {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: baseline;
+  gap: 4px 10px;
+  margin: 16px 0 4px;
+  font-size: 13px;
+}
+
+/* How full the knowledge index is; amber near capacity, red once files are left out. */
+@utility project-knowledge-bar {
+  height: 5px;
+  margin: 14px 0 6px;
+  border-radius: 999px;
+  overflow: hidden;
+  background: color-mix(in srgb, var(--desk-ink) 10%, transparent);
+  & > span {
+    display: block;
+    height: 100%;
+    border-radius: inherit;
+    background: var(--desk-moss);
+  }
+  &[data-tone="warn"] > span {
+    background: var(--warning);
+  }
+  &[data-tone="full"] > span {
+    background: var(--destructive);
+  }
+}
+
+@utility project-knowledge-sources {
+  margin: 14px 0;
+  border-top: 1px solid var(--desk-line);
+  & > li {
+    display: flex;
+    justify-content: space-between;
+    gap: 15px;
+    padding: 9px 0;
+    border-bottom: 1px solid var(--desk-line);
+    font-size: 13px;
+  }
+  & small {
+    color: var(--desk-muted);
+    font-size: 11px;
+    font-variant-numeric: tabular-nums;
+    white-space: nowrap;
+  }
+}
+
+@utility project-knowledge-search {
+  margin: 18px 0 8px;
+  & > input {
+    flex: 1;
+    min-width: 0;
+  }
+}
+
+@utility project-knowledge-results {
+  margin-bottom: 22px;
+  & > ol > li {
+    padding: 10px 0;
+    border-bottom: 1px solid var(--desk-line);
+    overflow-wrap: anywhere;
+  }
+  & > ol > li > div {
+    display: flex;
+    justify-content: space-between;
+    gap: 12px;
+    font-size: 13px;
+  }
+  & small {
+    color: var(--desk-muted);
+    font-size: 11px;
+  }
+  & > ol > li > p {
+    margin-top: 6px;
+    font-size: 12px;
+    line-height: 1.55;
+    white-space: pre-line;
+    display: -webkit-box;
+    -webkit-line-clamp: 6;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+}
+
 @utility project-inline-form {
   display: flex;
   gap: 8px;

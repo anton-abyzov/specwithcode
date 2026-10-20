@@ -13,7 +13,7 @@ Sources checked 2026-10-14: [Models](https://dev.meta.ai/docs/models), [Wonder l
 
 ## What the preview supports
 
-The adapter uses the official `@muse-code/sdk` 1.4.8 and `muse serve` protocol. It streams assistant text, reasoning summaries and tool output, carries native session IDs across reconnects, applies discovered model/effort choices, and cancels native turns. It preserves once-scoped approval choices and native approval-stage guards. Restored approvals are recovered from the native pending-request surface.
+The adapter uses the official `@muse-code/sdk` 1.4.11 and `muse serve` protocol. It streams assistant text, reasoning summaries and tool output, carries native session IDs across reconnects, applies discovered model/effort choices, and cancels native turns. It preserves once-scoped approval choices and native approval-stage guards. Restored approvals are recovered from the native pending-request surface.
 
 Structured native question dialogs are not supported: the client declares that limitation and cancels pending questions with a reason asking the agent to use chat. Image prompts, rollback/fork, compaction, injected MCP tools, and background title/commit/PR generation are not supported in this preview. Configure another provider for background text generation. The native sandbox stays under Muse's own configuration; SpecWithCode approval mode maps to Muse approval policy, not to a claim about sandbox isolation.
 

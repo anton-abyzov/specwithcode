@@ -113,6 +113,13 @@ vi.mock("./ProjectModels", () => ({
   ),
 }));
 vi.mock("./ProjectUsage", () => ({ ProjectUsage: () => <p>Recorded usage</p> }));
+vi.mock("./ProjectKnowledge", () => ({
+  ProjectKnowledge: () => (
+    <section>
+      <h2>Project knowledge</h2>
+    </section>
+  ),
+}));
 vi.mock("../settings/SettingsScopeContext", () => ({
   SettingsScopeProvider: ({
     search,

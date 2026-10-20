@@ -59,15 +59,19 @@ public struct MachineRecord: Sendable, Hashable, Codable, Identifiable {
   public var enabled: Bool
   /// Last shell sequence applied, for `subscribeShell{afterSequence}` on resume.
   public var lastShellSequence: Int?
+  /// The machine's SpecWithCode Connect tunnel, when it came from the signed-in
+  /// account. Its token comes from the relay, never from pairing.
+  public var connectRoute: MachineRoute?
 
   public var id: String { environmentId }
 
-  public init(environmentId: String, label: String, routes: [MachineRoute], enabled: Bool = true, lastShellSequence: Int? = nil) {
+  public init(environmentId: String, label: String, routes: [MachineRoute], enabled: Bool = true, lastShellSequence: Int? = nil, connectRoute: MachineRoute? = nil) {
     self.environmentId = environmentId
     self.label = label
     self.routes = routes
     self.enabled = enabled
     self.lastShellSequence = lastShellSequence
+    self.connectRoute = connectRoute
   }
 
   /// Routes fastest kind first; saved order holds within a kind, and

@@ -333,6 +333,7 @@ export const make = Effect.gen(function* () {
       googleAccount: true,
       projectLink: true,
       coordinatorTakeover: true,
+      projectKnowledge: true,
       ...(serverSelfUpdate === null ? {} : { serverSelfUpdate }),
       ...(serverInstallation === null ? {} : { serverInstallation }),
       // V2 restart recovery uses the environment-owned opt-in. The old

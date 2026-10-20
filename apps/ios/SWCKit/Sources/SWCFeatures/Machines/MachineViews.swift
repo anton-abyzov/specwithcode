@@ -27,7 +27,7 @@ struct MachinesView: View {
                 EmptyView()
               }
             }
-            WeaveRow("Pair a machine", symbol: "plus", showsChevron: true) { nav.push(.pair) }
+            WeaveRow(model.connect == nil ? "Pair a machine" : "Pair with a link or QR code", symbol: "plus", showsChevron: true) { nav.push(.pair) }
           }
         }
       }
@@ -112,14 +112,23 @@ struct MachineDetailView: View {
         if let version = machine.serverVersion {
           WeaveRow("Server version", trailingText: version)
         }
-        WeaveRow("Pairing expires", trailingText: Self.expiry(machine.tokenDaysLeft).capitalizedFirst)
+        if machine.viaConnect {
+          WeaveRow("Connection", trailingText: "Your account")
+        }
+        if machine.hasDirectPairing {
+          WeaveRow("Pairing expires", trailingText: Self.expiry(machine.tokenDaysLeft).capitalizedFirst)
+        }
       }
       GroupedCard(separatorInset: 56) {
         WeaveRow("Reconnect", symbol: "arrow.clockwise") { model.engine.reconnect(machineId: machine.id) }
-        WeaveRow("Pair again", symbol: "qrcode", showsChevron: true) { nav.push(.repair(machine.id)) }
+        if machine.hasDirectPairing || !machine.viaConnect {
+          WeaveRow("Pair again", symbol: "qrcode", showsChevron: true) { nav.push(.repair(machine.id)) }
+        }
       }
-      GroupedCard(separatorInset: 56) {
-        WeaveRow("Remove machine", symbol: "trash", isDestructive: true) { confirmRemove = true }
+      if !machine.viaConnect {
+        GroupedCard(separatorInset: 56) {
+          WeaveRow("Remove machine", symbol: "trash", isDestructive: true) { confirmRemove = true }
+        }
       }
     }
     .padding(.horizontal, WeaveSpacing.gutter)
@@ -147,7 +156,11 @@ struct MachineDetailView: View {
   }
 
   @ViewBuilder private func notice(_ machine: MachineSummary) -> some View {
-    if machine.status == .needsRepair {
+    if machine.needsSignIn {
+      Banner("You signed out, so this phone can't reach \(machine.label). Sign in again in Settings.", title: "Sign in again", kind: .fail)
+    } else if machine.status == .needsRepair, !machine.hasDirectPairing, machine.viaConnect {
+      Banner("SpecWithCode Connect couldn't open a connection to \(machine.label). Make sure Connect is on in its Settings > Connections.", title: "Can't reach \(machine.label)", kind: .fail)
+    } else if machine.status == .needsRepair {
       Banner("The pairing for \(machine.label) has expired. Pair again to keep using it from this phone.", title: "Pair again", kind: .fail, actionTitle: "Pair again") { nav.push(.repair(machine.id)) }
     } else if machine.status == .unsupported {
       Banner("Update SpecWithCode on \(machine.label) to use it from this phone.", title: "Update needed", kind: .warn)

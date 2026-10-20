@@ -23,6 +23,7 @@ import * as Layer from "effect/Layer";
 import * as PubSub from "effect/PubSub";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
+import type * as Scope from "effect/Scope";
 import * as Semaphore from "effect/Semaphore";
 import * as Stream from "effect/Stream";
 import * as Option from "effect/Option";
@@ -440,6 +441,18 @@ export class SessionStore extends Context.Service<
       SessionCredentialInternalError
     >;
     readonly streamChanges: Stream.Stream<SessionCredentialChange>;
+    /**
+     * Watches one session for the end of its validity: a revocation, including
+     * replacement by a newer session, and `expiresAt` when one is given. A
+     * revoke made by this process ends the watch at once; one made by another
+     * process on the same database within 30 seconds. The watch is live once
+     * this returns, for the life of the current scope; the returned effect
+     * completes when the session ends, or at once when it already has.
+     */
+    readonly watchEnd: (session: {
+      readonly sessionId: AuthSessionId;
+      readonly expiresAt?: DateTime.DateTime | undefined;
+    }) => Effect.Effect<Effect.Effect<void>, never, Scope.Scope>;
     readonly revoke: (
       sessionId: AuthSessionId,
     ) => Effect.Effect<boolean, SessionCredentialInternalError>;
@@ -460,6 +473,8 @@ export class SessionStore extends Context.Service<
 
 const SIGNING_SECRET_NAME = "server-signing-key";
 const DEFAULT_SESSION_TTL = Duration.days(30);
+/** How often a watched session's row is read again, for revokes made by another process. */
+const SESSION_WATCH_RECHECK_INTERVAL = Duration.seconds(30);
 const DEFAULT_WEBSOCKET_TOKEN_TTL = Duration.minutes(5);
 
 const SessionClaims = Schema.Struct({
@@ -1159,6 +1174,64 @@ export const make = Effect.gen(function* () {
     Effect.mapError((cause) => new ActiveSessionsListError({ cause })),
   );
 
+  const watchEnd: SessionStore["Service"]["watchEnd"] = Effect.fn("SessionStore.watchEnd")(
+    function* (session) {
+      // Subscribe before reading the row, so a revoke that commits after the
+      // read still reaches this watch.
+      const changes = yield* PubSub.subscribe(changesPubSub);
+      const isActive = authSessions.getById({ sessionId: session.sessionId }).pipe(
+        Effect.map((row) => Option.isSome(row) && row.value.revokedAt === null),
+        // An unreadable row is not proof of revocation; keep watching.
+        Effect.catchCause((cause) =>
+          Effect.logWarning("Could not confirm a watched session is still active.").pipe(
+            Effect.annotateLogs({ sessionId: session.sessionId, cause }),
+            Effect.as(true),
+          ),
+        ),
+      );
+      // `clientRemoved` also follows the last disconnect of an expired token
+      // session that is still valid for its open sockets, so only a row that
+      // is gone or revoked ends the watch.
+      const removedHere = Effect.gen(function* () {
+        while (true) {
+          const change = yield* PubSub.take(changes);
+          if (
+            change.type === "clientRemoved" &&
+            change.sessionId === session.sessionId &&
+            !(yield* isActive)
+          ) {
+            return;
+          }
+        }
+      });
+      // Another process (the CLI's `auth session revoke`) publishes to its
+      // own change stream, so the row is read again on an interval.
+      const removedElsewhere = Effect.gen(function* () {
+        while (true) {
+          yield* Effect.sleep(SESSION_WATCH_RECHECK_INTERVAL);
+          if (!(yield* isActive)) return;
+        }
+      });
+      const expiresAt = session.expiresAt;
+      const expired =
+        expiresAt === undefined
+          ? Effect.never
+          : DateTime.now.pipe(
+              Effect.flatMap((now) =>
+                Effect.sleep(
+                  Duration.millis(Math.max(0, expiresAt.epochMilliseconds - now.epochMilliseconds)),
+                ),
+              ),
+            );
+      const active = yield* isActive;
+      const ended = active
+        ? Effect.raceAllFirst([removedHere, removedElsewhere, expired])
+        : Effect.void;
+      // @effect-diagnostics-next-line returnEffectInGen:off -- the caller awaits this effect for the socket's life
+      return ended;
+    },
+  );
+
   const revoke: SessionStore["Service"]["revoke"] = Effect.fn("SessionStore.revoke")(
     function* (sessionId) {
       const revokedAt = yield* DateTime.now;
@@ -1227,6 +1300,7 @@ export const make = Effect.gen(function* () {
     get streamChanges() {
       return Stream.fromPubSub(changesPubSub);
     },
+    watchEnd,
     revoke,
     revokeAllExcept,
     markConnected,

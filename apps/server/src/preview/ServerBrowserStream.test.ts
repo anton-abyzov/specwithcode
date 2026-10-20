@@ -43,6 +43,7 @@ const makeAuth = (
             scopes,
           });
     },
+    watchSessionEnd: () => Effect.succeed(Effect.never),
   });
   return { layer, requests };
 };

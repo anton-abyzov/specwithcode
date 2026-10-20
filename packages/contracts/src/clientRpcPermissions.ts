@@ -72,6 +72,7 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.projectsPlanVerify]: AuthOrchestrationOperateScope,
   [WS_METHODS.projectsMemoryWrite]: AuthOrchestrationOperateScope,
   [WS_METHODS.projectsLibraryAddArtifact]: AuthFilesystemWriteScope,
+  [WS_METHODS.projectsKnowledgeReindex]: AuthOrchestrationOperateScope,
   [WS_METHODS.projectsThreadReportSave]: AuthFilesystemWriteScope,
   [WS_METHODS.projectsConnectionSave]: AuthTerminalOperateScope,
   [WS_METHODS.projectsConnectionCheck]: AuthTerminalOperateScope,
@@ -214,6 +215,9 @@ export function clientRpcRequiredScopes(
     return [AuthOrchestrationReadScope, AuthFilesystemReadScope];
   const copyScopes = folderCopyScopes(method, input);
   if (copyScopes) return copyScopes;
+  // Knowledge describes the project and quotes its Library files.
+  if (method === WS_METHODS.projectsKnowledgeRead || method === WS_METHODS.projectsKnowledgeSearch)
+    return [AuthOrchestrationReadScope, AuthFilesystemReadScope];
   if (method === WS_METHODS.projectsConnectionSave || method === WS_METHODS.projectsConnectionCheck)
     return [AuthOrchestrationOperateScope, AuthTerminalOperateScope];
   // Writes another tool's configuration, which that tool then runs as commands.

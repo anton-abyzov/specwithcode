@@ -9,9 +9,31 @@ import { requestExecutionLabel, type ProjectExecutionScope } from "../../studio/
 import { ProjectMessageBody } from "./ProjectMessageBody";
 import { useProviderEntries } from "./shell/ModelBadge";
 
+/**
+ * The checkouts that ran this project's coordinator before this one, newest first. A handoff or
+ * takeover names its predecessor on the incoming binding and the relinquished binding keeps its
+ * own, so the chain is followed through the members this machine can read. A link or "Copy files
+ * only" adds members without moving the coordinator, so they never appear here.
+ */
+export function coordinatorPredecessorKeys(
+  project: EnvironmentProject,
+  members: readonly EnvironmentProject[],
+): string[] {
+  const byKey = new Map(members.map((member) => [`${member.environmentId}:${member.id}`, member]));
+  const keys: string[] = [];
+  let predecessor = project.workspaceSettings?.coordinatorBinding?.predecessor;
+  while (predecessor) {
+    const key = `${predecessor.environmentId}:${predecessor.projectId}`;
+    if (keys.includes(key) || key === `${project.environmentId}:${project.id}`) break;
+    keys.push(key);
+    predecessor = byKey.get(key)?.workspaceSettings?.coordinatorBinding?.predecessor;
+  }
+  return keys;
+}
+
 export function ProjectExecutionHistory({
   project,
-  members: _members,
+  members,
   scopes,
 }: {
   project: EnvironmentProject;
@@ -19,11 +41,11 @@ export function ProjectExecutionHistory({
   scopes: readonly ProjectExecutionScope[];
 }) {
   if (!project.workspaceSettings?.logicalProject) return null;
-  // A linked checkout that never ran a coordinator has no history to hand over.
+  const chain = coordinatorPredecessorKeys(project, members);
+  // A predecessor that never ran a coordinator has no history to hand over.
   const predecessors = scopes.filter(
     (scope) =>
-      scope.coordinatorThreadId &&
-      (scope.environmentId !== project.environmentId || scope.projectId !== project.id),
+      scope.coordinatorThreadId && chain.includes(`${scope.environmentId}:${scope.projectId}`),
   );
   if (predecessors.length === 0) return null;
   return (

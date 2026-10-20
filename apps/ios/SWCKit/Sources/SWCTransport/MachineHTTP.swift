@@ -159,6 +159,38 @@ public struct MachineHTTP: Sendable {
     return WebSocketTicket(ticket: body.ticket, expiresAt: body.expiresAt.flatMap(WireCoding.parseDate))
   }
 
+  /// Spends a one-time SpecWithCode Connect credential. The machine accepts
+  /// it only with a DPoP proof from the key the relay bound it to, and the
+  /// token it returns is bound to the same key.
+  public func redeemConnectCredential(_ credential: String, at httpBase: URL, clientLabel: String, key: any DpopKey) async throws -> TokenGrant {
+    var request = try makeRequest(httpBase, "/oauth/token", timeout: requestTimeout)
+    request.httpMethod = "POST"
+    request.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+    request.setValue(try DpopProof.make(key: key, method: "POST", url: request.url!, now: now()), forHTTPHeaderField: "DPoP")
+    request.httpBody = Data(Self.tokenExchangeBody(code: credential, clientLabel: clientLabel).utf8)
+    let data: Data
+    do {
+      data = try await perform(request, timeout: requestTimeout, authenticated: false)
+    } catch TransportError.http(status: 401, code: _) {
+      throw TransportError.pairingCodeRejected
+    }
+    let body = try decode(TokenResponse.self, from: data)
+    let lifetime = body.expires_in ?? Self.defaultTokenLifetime
+    let scopes = (body.scope ?? "").split(separator: " ").map(String.init)
+    return TokenGrant(accessToken: body.access_token, expiresAt: now().addingTimeInterval(lifetime), scopes: scopes)
+  }
+
+  /// A WebSocket ticket for a DPoP-bound token.
+  public func dpopWebsocketTicket(token: String, key: any DpopKey, at httpBase: URL) async throws -> WebSocketTicket {
+    var request = try makeRequest(httpBase, "/api/auth/websocket-ticket", timeout: requestTimeout)
+    request.httpMethod = "POST"
+    request.setValue("DPoP \(token)", forHTTPHeaderField: "Authorization")
+    request.setValue(try DpopProof.make(key: key, method: "POST", url: request.url!, accessToken: token, now: now()), forHTTPHeaderField: "DPoP")
+    let data = try await perform(request, timeout: requestTimeout, authenticated: true)
+    let body = try decode(TicketResponse.self, from: data)
+    return WebSocketTicket(ticket: body.ticket, expiresAt: body.expiresAt.flatMap(WireCoding.parseDate))
+  }
+
   /// Whether the token is still accepted. A rejected token comes back as
   /// `authenticated == false` or as `TransportError.needsRepair`.
   public func session(token: String, at httpBase: URL) async throws -> SessionState {

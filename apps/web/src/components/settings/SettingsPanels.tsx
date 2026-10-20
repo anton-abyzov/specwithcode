@@ -62,6 +62,7 @@ import {
   resolveDesktopUpdateButtonAction,
 } from "../../components/desktopUpdate.logic";
 import { openDesktopUpdateReleaseNotes } from "../../components/desktopUpdate.toast";
+import { requestRestartToUpdate } from "../../components/sidebar/restartToUpdateRequests";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { TraitsPicker } from "../chat/TraitsPicker";
 import {
@@ -349,6 +350,9 @@ function AboutVersionSection() {
 
     if (action === "install") {
       if (isUpdateActionPending) return;
+      // The same install as the sidebar's button: it asks only when work
+      // runs, and updates the service on this Mac first when it is behind.
+      if (requestRestartToUpdate()) return;
       setIsUpdateActionPending(true);
       let confirmed = false;
       try {
@@ -372,8 +376,9 @@ function AboutVersionSection() {
         setIsUpdateActionPending(false);
         return;
       }
+      const expectedVersion = updateState?.downloadedVersion ?? null;
       void bridge
-        .installUpdate()
+        .installUpdate(expectedVersion ? { expectedVersion } : undefined)
         .catch((error: unknown) => {
           toastManager.add(
             stackedThreadToast({

@@ -48,6 +48,7 @@ const fixture = (
                   method: "bearer-access-token",
                   scopes,
                 }),
+          watchSessionEnd: () => Effect.succeed(Effect.never),
         } as unknown as EnvironmentAuth.EnvironmentAuth["Service"]),
       ),
       Layer.provideMerge(
@@ -132,6 +133,22 @@ describe("device hub proxy", () => {
       "http://hub.test/vendor/serve-emu/api/fold?device=emulator-5554",
     ]);
   });
+
+  it.each(["/vendor/serve-emu/api/stream-settings", "/vendor/serve-sim/api/screenshot"])(
+    "answers OPTIONS on mutable path %s with 405 before authenticating",
+    async (path) => {
+      const { handler, requests } = fixture(
+        [AuthOrchestrationOperateScope],
+        false,
+        new EnvironmentAuth.ServerAuthMissingCredentialError({}),
+      );
+      const response = await handler(
+        new Request(`http://studio.test/api/device-hub${path}`, { method: "OPTIONS" }),
+      );
+      expect(response.status).toBe(405);
+      expect(requests).toEqual([]);
+    },
+  );
 
   it("never forwards the vendor shell endpoint", async () => {
     const { handler, requests } = fixture([AuthOrchestrationOperateScope]);

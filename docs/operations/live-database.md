@@ -18,6 +18,8 @@ To read the database, use one of these instead:
 
 The CLI commands use `STUDIO_HOME`, or take `--base-dir <home>` (the folder that holds `userdata/`, for example `~/.specwithcode/m4`, or `~/.specweave-studio/m4` on a Mac that has not moved yet).
 
+The same rule covers the project knowledge indexes under `userdata/knowledge/` (one SQLite file per project, with its own `-wal` and `-shm`). The service registers each one with the live-database guard while it is open. They are derived data: to start one over, use **Rebuild index** in the project's Memory settings instead of deleting the file. See [project knowledge](../studio/project-knowledge.md).
+
 ## Why
 
 SQLite coordinates processes with POSIX advisory locks on the database file and on `-shm`. Those locks belong to a process, not to a file descriptor: when a process closes any descriptor it has for one of those files, the kernel drops every lock that process holds on it, including the ones SQLite took for its own connection. Nothing reports the loss.

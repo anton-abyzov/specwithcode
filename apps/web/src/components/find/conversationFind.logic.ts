@@ -1,3 +1,5 @@
+import { noteReaderScroll, noteReaderScrollAround } from "../../lib/readerScroll";
+
 export const FIND_SCOPE_ATTRIBUTE = "data-conversation-find-scope";
 export const FIND_IGNORE_ATTRIBUTE = "data-conversation-find-ignore";
 export const FIND_HIGHLIGHT = "studio-find";
@@ -143,6 +145,7 @@ export function scrollRangeIntoView(range: Range): void {
   if (!anchor) return;
   const container = scrollContainerOf(anchor);
   if (!container) {
+    noteReaderScrollAround(anchor);
     anchor.scrollIntoView({ block: "center" });
     return;
   }
@@ -150,6 +153,7 @@ export function scrollRangeIntoView(range: Range): void {
   const bounds = container.getBoundingClientRect();
   const margin = Math.min(80, bounds.height / 4);
   if (rect.top >= bounds.top + margin && rect.bottom <= bounds.bottom - margin) return;
+  noteReaderScroll(container);
   container.scrollTop += rect.top - (bounds.top + bounds.height / 2 - rect.height / 2);
 }
 

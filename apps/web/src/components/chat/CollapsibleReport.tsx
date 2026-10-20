@@ -1,6 +1,7 @@
 import { ChevronDownIcon, ChevronUpIcon } from "lucide-react";
 import { type ReactNode, useLayoutEffect, useRef, useState } from "react";
 
+import { noteReaderScrollAround } from "~/lib/readerScroll";
 import { cn } from "~/lib/utils";
 import { Button } from "../ui/button";
 import { shouldCollapseReport } from "./longReport";
@@ -36,6 +37,7 @@ export function revealCollapsedTop(element: HTMLElement | null): void {
   requestAnimationFrame(() => {
     if (typeof element.getBoundingClientRect !== "function") return;
     if (element.getBoundingClientRect().top >= scrollerTop(element)) return;
+    noteReaderScrollAround(element);
     element.scrollIntoView?.({ block: "start", behavior: "auto" });
   });
 }

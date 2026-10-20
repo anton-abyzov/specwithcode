@@ -4,6 +4,7 @@
  */
 import type { PropsWithChildren } from "react";
 import { useSyncExternalStore } from "react";
+import * as Cause from "effect/Cause";
 import type { EnvironmentThreadShell } from "@specweave-studio/client-runtime/state/shell";
 
 type Listener = () => void;
@@ -12,6 +13,10 @@ export const fixture = {
   shells: [] as EnvironmentThreadShell[],
   params: {} as Record<string, string>,
   navigations: [] as string[],
+  /** Titles sent with thread.meta.update, in order. */
+  renames: [] as Array<{ threadId: string; title: string }>,
+  /** A reason the next rename is refused with, as the server would. */
+  refuseNextRename: null as string | null,
 };
 export function publish(change: Partial<typeof fixture>): void {
   Object.assign(fixture, change);
@@ -88,6 +93,27 @@ const NO_IDS: string[] = [];
 export const useUnreachableEnvironmentIds = () => NO_IDS;
 export const projectEnvironment = { update: {} };
 export const useAtomCommand = () => async () => ({ _tag: "Success", value: undefined });
+
+// state/session, state/threads, state/use-orchestration-command: a rename is
+// stored on the simulated shell, the way the server's projection would.
+export const readEnvironmentScope = () => true;
+export const threadEnvironment = { updateMetadata: {} };
+export const useOrchestrationCommand =
+  () =>
+  async ({ input }: { input: { threadId: string; title: string } }) => {
+    if (fixture.refuseNextRename !== null) {
+      const reason = fixture.refuseNextRename;
+      fixture.refuseNextRename = null;
+      return { _tag: "Failure", cause: Cause.fail(new Error(reason)) };
+    }
+    fixture.renames.push({ threadId: input.threadId, title: input.title });
+    publish({
+      shells: fixture.shells.map((t) =>
+        t.id === input.threadId ? { ...t, title: input.title } : t,
+      ),
+    });
+    return { _tag: "Success", value: undefined };
+  };
 
 // hooks
 const NO_MACHINES = { projectCoordinatorMachines: {} };

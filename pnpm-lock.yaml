@@ -546,8 +546,8 @@ importers:
         specifier: 1.29.0
         version: 1.29.0(zod@4.6.5)
       '@muse-code/sdk':
-        specifier: 1.4.9
-        version: 1.4.9(@types/node@24.12.4)
+        specifier: 1.4.11
+        version: 1.4.11(@types/node@24.12.4)
       '@napi-rs/keyring':
         specifier: ^1.3.0
         version: 1.3.0
@@ -3517,8 +3517,8 @@ packages:
     resolution: {integrity: sha512-VVPPgHyQ6ShqnrmDWuxjmUIsO9gWyOZFmuOfLd9LfBGQJwZfy0gvv9pbHSJuoFNIYC7ZDX9aoFwowjcdSC4E8w==}
     engines: {node: '>=18'}
 
-  '@muse-code/sdk@1.4.9':
-    resolution: {integrity: sha512-fYWvvK0Ar11e0KHbepmp1Kobp6w9UPVVq1rL6ZY7uY1t9NlK6yrF66hELky6G7NgvpH2q/RfeFYfiyuESpHo2A==}
+  '@muse-code/sdk@1.4.11':
+    resolution: {integrity: sha512-/6pblfm1gN96L4c6DZpNIl4TQn+x/PQJ4H0xoqNyJ6Kb+HmSm4FdflydB2MM0iCnPz6Wx2l2r95mmrGDTtvVhw==}
     engines: {node: '>=20'}
     peerDependencies:
       '@types/node': 24.12.4
@@ -14340,7 +14340,7 @@ snapshots:
       strict-event-emitter: 0.5.1
     optional: true
 
-  '@muse-code/sdk@1.4.9(@types/node@24.12.4)':
+  '@muse-code/sdk@1.4.11(@types/node@24.12.4)':
     optionalDependencies:
       '@types/node': 24.12.4
 

@@ -52,9 +52,9 @@ def _process_refusal(host, message):
 
 def held(agent):
     """True while updates/hold.json, which the service keeps while it holds itself for an update,
-    has not expired: update_agent retries a forced apply its preflight refused for a process under
-    the service only then, so the next snapshot may reap it. update.py --reap checks the hold in
-    full (assert_held) before it stops anything."""
+    has not expired. Only an update_agent.py from 1.0.60 or earlier calls it (it retried a forced
+    apply refused for a process only then); kept because this module is written before the agent
+    script it sits beside. update.py --reap checks the hold in full (assert_held)."""
     host = _agent_module(agent)
     try:
         hold = host.read_json(agent.updates / 'hold.json', agent.home)

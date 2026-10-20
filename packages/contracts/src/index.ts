@@ -56,6 +56,7 @@ export * from "./editor.ts";
 export * from "./project.ts";
 export * from "./projectWorkspace.ts";
 export * from "./projectLibrary.ts";
+export * from "./projectKnowledge.ts";
 export * from "./projectSuggestions.ts";
 export * from "./projectConnections.ts";
 export * from "./projectEnvironment.ts";

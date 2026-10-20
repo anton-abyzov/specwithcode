@@ -177,6 +177,20 @@ export function createProjectWorkspaceAtoms<R, E>(
       staleTimeMs: 5_000,
       idleTtlMs: 30_000,
     }),
+    knowledge: createEnvironmentRpcQueryAtomFamily(runtime, {
+      label: "project-workspace:knowledge",
+      tag: WS_METHODS.projectsKnowledgeRead,
+      staleTimeMs: 10_000,
+      idleTtlMs: 30_000,
+    }),
+    knowledgeSearch: createEnvironmentRpcCommand(runtime, {
+      label: "project-workspace:knowledge-search",
+      tag: WS_METHODS.projectsKnowledgeSearch,
+    }),
+    knowledgeReindex: createEnvironmentRpcCommand(runtime, {
+      label: "project-workspace:knowledge-reindex",
+      tag: WS_METHODS.projectsKnowledgeReindex,
+    }),
     libraryAddArtifact: createEnvironmentRpcCommand(runtime, {
       label: "project-workspace:library-add-artifact",
       tag: WS_METHODS.projectsLibraryAddArtifact,

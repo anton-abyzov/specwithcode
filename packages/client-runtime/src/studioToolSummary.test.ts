@@ -44,6 +44,16 @@ describe("summarizeStudioToolCalls", () => {
     ).toEqual({ label, failedCount: 0 });
   });
 
+  it("says how often a thread searched and read project knowledge", () => {
+    const calls = [completed({ query: "storage" }), completed({ query: "index" })];
+    expect(summarizeStudioToolCalls("knowledge-search", calls).label).toBe(
+      "Searched project knowledge 2 times",
+    );
+    expect(summarizeStudioToolCalls("knowledge-read", calls.slice(1)).label).toBe(
+      "Read project knowledge 1 time",
+    );
+  });
+
   it("counts answered requests rather than pretending every request contains one question", () => {
     expect(
       summarizeStudioToolCalls("question-respond", [

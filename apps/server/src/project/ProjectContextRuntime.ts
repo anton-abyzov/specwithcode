@@ -7,6 +7,13 @@ import {
 } from "../orchestration-v2/ProviderAdapter.ts";
 import type { ProjectContextDelivery } from "./ProjectContextDelivery.ts";
 
+/**
+ * Drivers that confirm each delivered prompt, so the next turn sends only
+ * changed sections. Others get the full snapshot every turn and therefore
+ * receive project knowledge as a catalog to search.
+ */
+const RECEIPT_DRIVERS = new Set(["claudeAgent", "codex"]);
+
 /** Last boundary before native dispatch, after historical handoffs are composed. */
 export function withProjectContext(
   session: ProviderAdapterV2SessionRuntime,
@@ -35,6 +42,7 @@ export function withProjectContext(
             providerInstanceId: input.modelSelection.instanceId,
             providerThreadId: input.providerThread.id,
             nativeThreadId: input.providerThread.nativeThreadRef?.nativeId ?? null,
+            inlineKnowledge: RECEIPT_DRIVERS.has(session.driver) && !nativeCommand,
           });
       const contextInput: ProviderAdapterV2TurnInput = {
         ...input,

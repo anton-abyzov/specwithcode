@@ -11,7 +11,7 @@ const path =
 project.title =
   "116 Copilot echo verification acpRegistry_github_copilot " + "long-project-name".repeat(8);
 project.workspaceRoot = path;
-const snapshot = useEnvironmentQuery({ kind: "project" }).data;
+const snapshot = useEnvironmentQuery({ kind: "read" }).data;
 snapshot.settings.environment.additionalFolders = [
   path + "/research",
   "C:\\Projects\\" + "deep-folder-".repeat(35),

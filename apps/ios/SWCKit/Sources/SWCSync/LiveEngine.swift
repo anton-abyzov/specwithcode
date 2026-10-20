@@ -77,6 +77,8 @@ public final class LiveEngine: AppEngine {
   var active = true
   var started = false
   var loadingDeadlinePassed = false
+  /// SpecWithCode Connect, when the build is configured for it.
+  let connect: ConnectRuntime?
   private var publishTask: Task<Void, Never>?
   private var pathMonitor: NWPathMonitor?
   private var lastPathSatisfied: Bool?
@@ -86,13 +88,15 @@ public final class LiveEngine: AppEngine {
     credentials: any CredentialStore = KeychainCredentialStore(),
     http: MachineHTTP = MachineHTTP(),
     connector: any WebSocketConnector = URLSessionWebSocketConnector(),
-    options: Options = Options()
+    options: Options = Options(),
+    connect: ConnectRuntime? = nil
   ) {
     self.registry = registry
     self.credentials = credentials
     self.http = http
     self.connector = connector
     self.options = options
+    self.connect = connect
   }
 
   /// The engine the app uses: the registry in Application Support and tokens in the Keychain.
@@ -101,9 +105,12 @@ public final class LiveEngine: AppEngine {
   }
 
   /// Like `init(clientLabel:)`, asking for the device name at each pairing.
-  public convenience init(clientLabel: @escaping @Sendable @MainActor () -> String) {
+  /// With `account`, the person can sign in to SpecWithCode Connect.
+  public convenience init(clientLabel: @escaping @Sendable @MainActor () -> String, account: (any ConnectAccount)? = nil) {
     let url = (try? MachineRegistry.defaultFileURL()) ?? FileManager.default.temporaryDirectory.appendingPathComponent("machines.json")
-    self.init(registry: MachineRegistry(fileURL: url), options: Options(clientLabel: clientLabel))
+    let credentials = KeychainCredentialStore()
+    let connect = account.map { ConnectRuntime(account: $0, credentials: credentials, clientLabel: clientLabel(), device: .current(label: clientLabel())) }
+    self.init(registry: MachineRegistry(fileURL: url), credentials: credentials, options: Options(clientLabel: clientLabel), connect: connect)
   }
 
   // MARK: - Lifecycle
@@ -113,7 +120,11 @@ public final class LiveEngine: AppEngine {
     started = true
     self.model = model
     if options.monitorsNetwork { startPathMonitor() }
-    Task { await bootstrap() }
+    if let connect { model.connect = ConnectState(methods: ConnectSignInMethod.offered(by: connect.account.config)) }
+    Task {
+      await bootstrap()
+      await startConnect()
+    }
     let timeout = options.loadingTimeout
     Task { [weak self] in
       try? await Task.sleep(for: timeout)
@@ -142,6 +153,7 @@ public final class LiveEngine: AppEngine {
 
   public func setActive(_ value: Bool) {
     active = value
+    if value { refreshConnectIfStale() }
     for entry in machines.values {
       let connection = entry.connection
       // Tasks may run out of order; each applies the latest flag.
@@ -163,7 +175,7 @@ public final class LiveEngine: AppEngine {
 
   @discardableResult
   func addMachine(_ record: MachineRecord, credential: MachineCredential?) -> MachineEntry {
-    let connection = MachineConnection(record: record, credentials: credentials, http: http, connector: connector, configuration: options.connection)
+    let connection = MachineConnection(record: record, credentials: credentials, http: http, connector: connector, configuration: options.connection, authorizer: connect?.authorizer)
     let entry = MachineEntry(record: record, connection: connection)
     entry.permissions = credential?.permissions
     entry.tokenDaysLeft = credential?.daysLeft()
@@ -320,7 +332,8 @@ public final class LiveEngine: AppEngine {
     let registry = self.registry
     let env = entry.environmentId
     Task { [weak self] in
-      guard let route = await entry.connection.route(of: socket),
+      // A Connect token is bound to the device key and only goes to the tunnel.
+      guard let route = await entry.connection.route(of: socket), route.issuer != ConnectAuthorizer.issuer,
             let updated = try? await registry.mergeLearnedRoutes(reported, issuer: route.issuer, for: env) else { return }
       guard let self, self.machines[env] === entry, updated.routes != entry.record.routes else { return }
       entry.record.routes = updated.routes
@@ -393,8 +406,12 @@ public final class LiveEngine: AppEngine {
       platform: entry.config?.environment.platform.displayName ?? entry.status.descriptor?.platformLabel,
       serverVersion: entry.config?.environment.serverVersion ?? entry.status.descriptor?.serverVersion,
       address: (entry.status.route ?? entry.record.rankedRoutes.first)?.address,
-      tokenDaysLeft: entry.tokenDaysLeft,
-      isStale: entry.isOnline && entry.snapshot != nil && !entry.isSynchronized
+      tokenDaysLeft: entry.record.routes.isEmpty || entry.status.route?.issuer == ConnectAuthorizer.issuer ? nil : entry.tokenDaysLeft,
+      isStale: entry.isOnline && entry.snapshot != nil && !entry.isSynchronized,
+      viaConnect: entry.record.connectRoute != nil,
+      needsSignIn: entry.status.lastError == .connect(.signedOut),
+      checkedAt: entry.isOnline ? nil : connect?.checkedAt[entry.environmentId],
+      hasDirectPairing: !entry.record.routes.isEmpty
     )
   }
 

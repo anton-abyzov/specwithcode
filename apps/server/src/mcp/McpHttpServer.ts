@@ -35,6 +35,8 @@ import { EnvironmentToolkit } from "./toolkits/environment/tools.ts";
 import * as EnvironmentHandlers from "./toolkits/environment/handlers.ts";
 import { ProjectMemoryToolkit } from "./toolkits/projectMemory/tools.ts";
 import * as ProjectMemoryHandlers from "./toolkits/projectMemory/handlers.ts";
+import { ProjectKnowledgeToolkit } from "./toolkits/projectKnowledge/tools.ts";
+import * as ProjectKnowledgeHandlers from "./toolkits/projectKnowledge/handlers.ts";
 import { MachinesToolkit } from "./toolkits/machines/tools.ts";
 import * as MachinesHandlers from "./toolkits/machines/handlers.ts";
 import { ProjectToolkit } from "./toolkits/project/tools.ts";
@@ -899,9 +901,10 @@ const layerEnvironmentRegistration = toolkitRegistration(
   EnvironmentHandlers.layer,
 );
 
-const layerProjectMemoryRegistration = toolkitRegistration(
-  ProjectMemoryToolkit,
-  ProjectMemoryHandlers.layer,
+// Memory and the knowledge index built from it, registered together.
+const layerProjectMemoryRegistration = Layer.mergeAll(
+  toolkitRegistration(ProjectMemoryToolkit, ProjectMemoryHandlers.layer),
+  toolkitRegistration(ProjectKnowledgeToolkit, ProjectKnowledgeHandlers.layer),
 );
 
 const layerProjectRegistration = toolkitRegistration(ProjectToolkit, ProjectHandlers.layer);

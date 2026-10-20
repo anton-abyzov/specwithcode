@@ -112,6 +112,35 @@ describe("project RPC errors", () => {
     expect(readError.reason).toBeUndefined();
     expect(readError.message).not.toContain(cause.message);
     expect(readError.cause).toBe(cause);
+    // A host path the report named: no workspace in the message, and a missing
+    // file says so (October 20, 2026: brace shorthand read as one file).
+    const missing = Object.assign(new Error("realpath failed"), { code: "ENOENT" });
+    const brace = "/Users/me/.specwithcode/audits/2026-10-20/findings-{B,C,D,E}.md";
+    expect(
+      new ProjectReadFileError({
+        cwd: "/workspace",
+        relativePath: brace,
+        failure: "operation_failed",
+        operation: "realpath-target",
+        cause: { _tag: "WorkspaceFileSystemOperationError", cause: missing },
+      }).message,
+    ).toBe(`File not found: '${brace}'.`);
+    expect(
+      new ProjectReadFileError({
+        cwd: "/workspace",
+        relativePath: "src/gone.ts",
+        failure: "operation_failed",
+        cause: missing,
+      }).message,
+    ).toBe("File not found: 'src/gone.ts' in '/workspace'.");
+    expect(
+      new ProjectReadFileError({
+        cwd: "/workspace",
+        relativePath: "/tmp/report.md",
+        failure: "operation_failed",
+        cause,
+      }).message,
+    ).toBe("Failed to read file '/tmp/report.md'.");
 
     const contentSearchError = new ProjectSearchContentsError({
       cwd: "/workspace",

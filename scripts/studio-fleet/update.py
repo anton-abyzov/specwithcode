@@ -30,7 +30,7 @@ import uuid
 from launcher import (cli_alias_state, is_studio_wrapper, migrate_runtime_path, render_cli,
                       render_legacy_cli, render_unnamed_cli, swap_cli_alias)
 from release_policy import validate_manifest, validate_package, validate_upgrade
-from auth_heartbeat import (bind_auth, encoded, prove_restart_heartbeat,
+from auth_heartbeat import (bind_auth, encoded, prove_restart_heartbeat, read_auth_sessions,
                             read_auth_sessions_in_transaction, restore_witness,
                             utc_timestamp, verify_restart_witness)
 from quiescence import (VANISHED_READS, capture_quiescence, assert_quiescence, quiescence_core, read_processes,
@@ -323,20 +323,29 @@ def rows_carried_forward(expected, actual, carried, auth_heartbeat=True):
 
 AUTH_INVARIANT_KEY = 'authSessionsInvariantSha256'
 AUTH_HEARTBEAT_COLUMN = 'last_connected_at'
+# The app version a connect reports (AuthSessions.ts setClientConnectionRow), shown in the sessions
+# list only. A desktop app relaunched into a new release reports it on its first connect, which landed
+# between the agent's snapshot and the apply on every first attempt from 1.0.46 to 1.0.60. The surface
+# written beside it stays guarded: the heartbeat proof classifies sessions by it (active_session), so
+# a change refuses here, before the restart, rather than rolling back after it.
+AUTH_APP_VERSION_COLUMN = 'client_app_version'
 
 def auth_invariant_hash(db):
-    """Hash every auth_sessions cell except the connection heartbeat. A connected browser or
-    desktop app rewrites last_connected_at every few seconds; identity, scopes, credentials,
-    expiry and revocation all stay guarded, including SQLite types and the complete
-    schema. Hashed in memory only. Older invariant hashes fail closed."""
+    """Hash every auth_sessions cell except what a connect rewrites on its own: the heartbeat (a
+    connected browser or desktop app rewrites last_connected_at every few seconds) and the app
+    version it reports (AUTH_APP_VERSION_COLUMN). Identity, surface, scopes, credentials, expiry
+    and revocation all stay guarded, including SQLite types and the complete schema. Hashed in
+    memory only. Older invariant hashes fail closed: read a receipt back with the release's own
+    helper (v2 until 1.0.60 also hashed the app version)."""
     columns = [row[1] for row in db.execute('PRAGMA table_info(auth_sessions)')]
-    keep = [index for index, name in enumerate(columns) if name != AUTH_HEARTBEAT_COLUMN]
+    skipped = {AUTH_HEARTBEAT_COLUMN, AUTH_APP_VERSION_COLUMN}
+    keep = [index for index, name in enumerate(columns) if name not in skipped]
     schema = [[list(row) for row in db.execute('PRAGMA table_xinfo(auth_sessions)')],
               [list(row) for row in db.execute(
                   "SELECT type,name,tbl_name,sql FROM sqlite_master WHERE tbl_name='auth_sessions' ORDER BY type,name")]]
     rows = sorted(encoded([(columns[index], type(row[index]).__name__, row[index]) for index in keep])
                   for row in db.execute('SELECT * FROM auth_sessions'))
-    return digest(('studio-auth-invariant-v2\n' + encoded(schema) + '\n' + '\n'.join(rows)).encode())
+    return digest(('studio-auth-invariant-v3\n' + encoded(schema) + '\n' + '\n'.join(rows)).encode())
 
 def same_guarded_rows(expected, actual, carried=None, *, auth_heartbeat=True):
     """Protected rows are unchanged, allowing auth_sessions heartbeats and, with `carried`
@@ -379,8 +388,8 @@ def database_allowance(expected, actual, carried, *, auth_heartbeat=True):
     """Tables of a complete capture that the guarded row comparison has already proven.
 
     Call only after same_guarded_rows(expected, actual, carried, auth_heartbeat=...) passed.
-    auth_sessions may differ when both invariant hashes (every cell but the heartbeat
-    column, with SQLite types and the auth schema) are equal. With `carried` measured
+    auth_sessions may differ when both invariant hashes (every cell but the heartbeat and the
+    reported app version, with SQLite types and the auth schema) are equal. With `carried` measured
     against `expected`, thread projection rows and projection cursors may differ, and log
     tables may grow when their earlier rows are typed-identical (`logPrefixes`). Every
     other table and the schema must stay exactly equal."""
@@ -1513,10 +1522,27 @@ def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_b
                 current_rows, current_carried, current_database = rows_since_with_database(own / 'userdata', before['rows'])
             else:
                 current_rows, current_carried = rows_since(own / 'userdata', before['rows'])
-            assert same_guarded_rows(before['rows'], current_rows, current_carried), 'Native work changed before restart'
+            assert same_guarded_rows(before['rows'], current_rows, current_carried,
+                                     auth_heartbeat=allow_existing_browser_heartbeat), 'Native work changed before restart'
+            assert_provable_reconnects(current_rows)
             if 'databaseCapture' in before:
                 assert_capture_carried(before['databaseCapture'], current_database, before['rows'], current_rows,
-                                       current_carried, message='Complete database changed before restart')
+                                       current_carried, auth_heartbeat=allow_existing_browser_heartbeat,
+                                       message='Complete database changed before restart')
+        def assert_provable_reconnects(current_rows):
+            # Auth may differ only as the proof after the restart accepts, so a connect it would roll
+            # back (a phone app, a revoked session, one past the session counts) refuses here, with
+            # the old release running, as a refusal the update agent retries.
+            if not allow_existing_browser_heartbeat or original_auth is None \
+                    or current_rows['hashes'].get('auth_sessions') == before['rows']['hashes'].get('auth_sessions'):
+                return
+            try:
+                current_auth = read_auth_sessions(own / 'userdata', current_rows)  # Bound to the rows just compared.
+                prove_restart_heartbeat(before['rows'], auth_comparison(before['rows'], current_rows), original_auth,
+                                        current_auth, restart_started_at, datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                                        identity=identity, web_session_policy=policy)
+            except (AssertionError, KeyError, ValueError) as error:  # A fresh snapshot may prove it: retried.
+                raise AssertionError('Native work changed before restart: auth (%s)' % str(error)[:200]) from None
         assert_unchanged_before_restart()
         def assert_same_service_pid():
             # A service launchd restarted on its own after the pointers moved would be the
@@ -1608,8 +1634,8 @@ def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_b
                 migration_cells = 'typed-verified'
         elif allow_existing_browser_heartbeat:
             # Rows the services appended carry forward as below (a project's startup settings
-            # save, a usage-limit check). Every auth cell except last_connected_at stays exact
-            # through the invariant hash, and the heartbeat itself is proven separately
+            # save, a usage-limit check). Every auth cell except what a reconnect writes stays
+            # exact through the invariant hash, and the heartbeat itself is proven separately
             # against the old non-auth rows, so neither allowance widens the other.
             appended = (carried_applies(before['rows'], after['rows'], after_carried)
                         and all('auth_sessions' in rows[key] for rows in (before['rows'], after['rows'])

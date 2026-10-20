@@ -349,6 +349,43 @@ class SavedProofRecompute(unittest.TestCase):
         self.assertEqual(result['authHeartbeatWitness']['changedRows'], 1)
         self.assertNotIn('synthetic-private', json.dumps(result))
 
+    def test_a_reconnect_reporting_its_app_version_recomputes_with_complete_continuity(self):
+        self.fixture.writer.execute('ALTER TABLE auth_sessions ADD COLUMN client_app_version TEXT')
+        self.fixture.writer.commit()
+        before, original = self.snapshot(auth=True)
+        self.fixture.advance()
+        self.fixture.writer.execute("UPDATE auth_sessions SET client_app_version='1.0.61'")
+        self.fixture.writer.commit()
+        after, current = self.snapshot(auth=True)
+        witness = heartbeat.prove_restart_heartbeat(before['rows'], after['rows'], original, current, START, END, identity='m3')
+        self.assertEqual(witness['schemaVersion'], 5)
+        report = self.report(before, after, 'verified-existing-browser-heartbeat', witness)
+        result = continuity.verify_update_database(report, after, self.state, allow_existing_browser_heartbeat=True)
+        self.assertEqual(result['authHeartbeatWitness'], witness)
+        forged = copy.deepcopy(witness); forged['timestampChanges'][0]['beforeClientAppVersion'] = '1.0.60'
+        with self.assertRaises(AssertionError):
+            continuity.verify_update_database(self.report(before, after, 'verified-existing-browser-heartbeat', forged),
+                                              after, self.state, allow_existing_browser_heartbeat=True)
+
+    def test_a_version_reported_without_a_new_heartbeat_recomputes_with_complete_continuity(self):
+        # ws.ts commits the version before the heartbeat, and stamps only a session's first connection.
+        self.fixture.writer.execute('ALTER TABLE auth_sessions ADD COLUMN client_app_version TEXT')
+        self.fixture.writer.commit()
+        before, original = self.snapshot(auth=True)
+        self.fixture.writer.execute("UPDATE auth_sessions SET client_app_version='1.0.61'")
+        self.fixture.writer.commit()
+        after, current = self.snapshot(auth=True)
+        witness = heartbeat.prove_restart_heartbeat(before['rows'], after['rows'], original, current, START, END, identity='m3')
+        self.assertEqual((witness['schemaVersion'], [set(cell) for cell in witness['timestampChanges']]),
+                         (5, [heartbeat.VERSION_CELL]))
+        report = self.report(before, after, 'verified-existing-browser-heartbeat', witness)
+        result = continuity.verify_update_database(report, after, self.state, allow_existing_browser_heartbeat=True)
+        self.assertEqual(result['authHeartbeatWitness'], witness)
+        forged = copy.deepcopy(witness); forged['timestampChanges'][0]['beforeClientAppVersion'] = '1.0.60'
+        with self.assertRaises(AssertionError):
+            continuity.verify_update_database(self.report(before, after, 'verified-existing-browser-heartbeat', forged),
+                                              after, self.state, allow_existing_browser_heartbeat=True)
+
     def test_migrated_or_capture_less_proofs_are_not_accepted_here(self):
         before, _ = self.snapshot()
         after, _ = self.snapshot()
@@ -451,6 +488,66 @@ class UpdaterContinuity(unittest.TestCase):
         self.assertEqual(result['completeDatabaseContinuity'], 'verified')
         self.assertNotEqual(result['before']['databaseCapture'], result['after']['databaseCapture'])
         self.assertNotIn('synthetic-private', fixture.output.read_text())
+
+    def test_a_reconnect_reporting_the_new_app_version_verifies_complete_continuity(self):
+        # A desktop app or a page reloaded into the new release reports its version as it reconnects.
+        fixture = self.harness(heartbeat_change=True)
+        updater_base.mutate_state(self.state, 'ALTER TABLE auth_sessions ADD COLUMN client_app_version TEXT',
+                                  "UPDATE auth_sessions SET client_app_version='1.0.60'")
+        fixture.rows = plain_update.rows_snapshot(self.state)
+        fixture.before['rows'] = copy.deepcopy(fixture.rows)
+        fixture.before['databaseCapture'] = continuity.read_database(self.state, fixture.rows)
+        self.restart_sql = ["UPDATE auth_sessions SET client_app_version='1.0.61'"]
+        fixture.execute(True)
+        result = json.loads(fixture.output.read_text())
+        self.assertEqual(result['phase'], 'verified')
+        self.assertEqual(result['rowPreservation'], 'verified-existing-browser-heartbeat')
+        self.assertEqual(result['completeDatabaseContinuity'], 'verified')
+        witness = result['authHeartbeatWitness']
+        self.assertEqual(witness['schemaVersion'], 5)
+        self.assertEqual([(cell['beforeClientAppVersion'], cell['afterClientAppVersion']) for cell in witness['timestampChanges']],
+                         [('1.0.60', '1.0.61')])
+        self.assertNotIn('synthetic-private', fixture.output.read_text())
+
+    def test_a_version_reported_before_its_heartbeat_verifies_complete_continuity(self):
+        # The new service's after-snapshot can fall between the version write and the heartbeat.
+        fixture = self.harness()
+        updater_base.mutate_state(self.state, 'ALTER TABLE auth_sessions ADD COLUMN client_app_version TEXT',
+                                  "UPDATE auth_sessions SET client_app_version='1.0.60'")
+        fixture.rows = plain_update.rows_snapshot(self.state)
+        fixture.before['rows'] = copy.deepcopy(fixture.rows)
+        fixture.before['databaseCapture'] = continuity.read_database(self.state, fixture.rows)
+        self.restart_sql = ["UPDATE auth_sessions SET client_app_version='1.0.61'"]
+        fixture.execute(True)
+        result = json.loads(fixture.output.read_text())
+        self.assertEqual((result['phase'], result['completeDatabaseContinuity']), ('verified', 'verified'))
+        witness = result['authHeartbeatWitness']
+        self.assertEqual((witness['schemaVersion'], [set(cell) for cell in witness['timestampChanges']]),
+                         (5, [heartbeat.VERSION_CELL]))
+
+    def test_a_surface_written_before_the_restart_refuses_without_restarting(self):
+        # Refused while the old release still runs, which the agent retries, instead of a rollback.
+        fixture = self.harness()
+        read = self.updater.rows_since_with_database
+        def reported(state, expected_rows):
+            db = sqlite3.connect(self.state / 'statev2.sqlite')
+            db.execute("UPDATE auth_sessions SET client_surface='desktop'"); db.commit(); db.close()
+            return read(state, expected_rows)
+        with patch.object(self.updater, 'rows_since_with_database', side_effect=reported), \
+                self.assertRaisesRegex(AssertionError, 'Native work changed before restart'):
+            fixture.execute(True)
+        self.assertEqual(fixture.restart_calls, [])
+        self.assertTrue(self.unchanged_pointers(fixture))
+        result = json.loads(fixture.output.read_text())
+        self.assertEqual((result['phase'], result['pointers']), ('pointers-written', 'previous-release'))
+        self.assertNotIn('stateBackup', result)
+
+    def test_a_surface_written_after_the_restart_still_rolls_back(self):
+        fixture = self.harness(heartbeat_change=True)
+        self.restart_sql = ["UPDATE auth_sessions SET client_surface='desktop'"]
+        with self.assertRaises(AssertionError):
+            fixture.execute(True)
+        self.assertEqual(json.loads(fixture.output.read_text())['result'], 'update-failed')
 
     def test_heartbeat_cannot_hide_an_unprotected_change(self):
         fixture = self.harness(heartbeat_change=True)

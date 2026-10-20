@@ -111,6 +111,7 @@ public actor MachineConnection {
   private let http: MachineHTTP
   private let connector: any WebSocketConnector
   private let configuration: Configuration
+  private let authorizer: (any ConnectAuthorizing)?
 
   private var active = false
   private var generation = 0
@@ -129,7 +130,8 @@ public actor MachineConnection {
     credentials: any CredentialStore,
     http: MachineHTTP = MachineHTTP(),
     connector: any WebSocketConnector = URLSessionWebSocketConnector(),
-    configuration: Configuration = Configuration()
+    configuration: Configuration = Configuration(),
+    authorizer: (any ConnectAuthorizing)? = nil
   ) {
     self.environmentId = record.environmentId
     self.record = record
@@ -137,6 +139,7 @@ public actor MachineConnection {
     self.http = http
     self.connector = connector
     self.configuration = configuration
+    self.authorizer = authorizer
     self.status = Status(state: .offline)
   }
 
@@ -236,6 +239,11 @@ public actor MachineConnection {
   /// session leaves sockets open, so this is how a revoke is noticed.
   public func verifySession() async {
     guard let route = status.route, let credential = try? credentials.credential(for: route, of: environmentId) else { return }
+    if route.issuer == ConnectAuthorizer.issuer {
+      // A Connect token is DPoP-bound; reconnecting asks the relay again if it was revoked.
+      reconnect()
+      return
+    }
     let gen = generation
     do {
       let session = try await http.session(token: credential.token, at: route.httpBase)
@@ -312,9 +320,12 @@ public actor MachineConnection {
       } catch {
         // A stop or restart cancels this loop; anything else is a failed attempt.
         guard gen == generation, !Task.isCancelled else { return }
-        let failure = (error as? TransportError) ?? .unreachable(error.redactedDescription)
+        let failure = Self.transportError(error)
         switch failure {
         case .needsRepair:
+          halt(.needsRepair, error: failure)
+          return
+        case let .connect(connectError) where connectError.isPermanent:
           halt(.needsRepair, error: failure)
           return
         case .appTooOld, .serverTooOld:
@@ -350,7 +361,80 @@ public actor MachineConnection {
     everConnected && failures < 3 ? .reconnecting : .offline
   }
 
+  static func transportError(_ error: Error) -> TransportError {
+    if let transport = error as? TransportError { return transport }
+    if let connect = error as? ConnectError {
+      return connect.isOffline ? .unreachable("Offline") : .connect(connect)
+    }
+    return .unreachable(error.redactedDescription)
+  }
+
+  /// Direct routes first when the record has paired ones; the Connect tunnel
+  /// when there are none or none of them answered.
   private func establish(_ gen: Int) async throws -> (RpcSocket, MachineRoute, EnvironmentDescriptorLite, MachineCredential) {
+    guard let authorizer, let connectRoute = record.connectRoute else {
+      return try await establishDirect(gen)
+    }
+    if !record.routes.isEmpty {
+      do {
+        return try await establishDirect(gen)
+      } catch is CancellationError {
+        throw CancellationError()
+      } catch {
+        try check(gen)
+        switch error as? TransportError {
+        case .appTooOld?, .serverTooOld?: throw error
+        default: break
+        }
+      }
+    }
+    return try await establishConnect(gen, route: connectRoute, authorizer: authorizer)
+  }
+
+  private func establishConnect(_ gen: Int, route: MachineRoute, authorizer: any ConnectAuthorizing) async throws -> (RpcSocket, MachineRoute, EnvironmentDescriptorLite, MachineCredential) {
+    let descriptor = try await http.descriptor(at: route.httpBase, expectedEnvironmentId: environmentId)
+    try check(gen)
+    var progress = status
+    progress.route = route
+    progress.descriptor = descriptor
+    setStatus(progress)
+
+    // A cached token the machine no longer accepts gets one fresh credential.
+    var refresh = false
+    while true {
+      let (credential, key) = try await authorizer.credential(for: environmentId, at: route, refresh: refresh)
+      try check(gen)
+      let ticket: WebSocketTicket
+      do {
+        ticket = try await http.dpopWebsocketTicket(token: credential.token, key: key, at: route.httpBase)
+      } catch TransportError.needsRepair where !refresh {
+        refresh = true
+        continue
+      } catch TransportError.http(status: 401, code: _) where !refresh {
+        refresh = true
+        continue
+      }
+      try check(gen)
+      guard let url = Self.socketURL(wsBase: route.wsBase, ticket: ticket.ticket, parameters: Self.relayParameters(configuration.clientParameters)) else {
+        throw TransportError.invalidAddress(route.wsBase.absoluteString)
+      }
+      let connection = try await connector.connect(to: url)
+      guard gen == generation else {
+        connection.close()
+        throw CancellationError()
+      }
+      let socket = RpcSocket(connection: connection, configuration: configuration.socket)
+      await socket.start()
+      return (socket, route, descriptor, credential)
+    }
+  }
+
+  /// The client parameters with `connectionMethod=relay`.
+  static func relayParameters(_ parameters: [(String, String)]) -> [(String, String)] {
+    parameters.filter { $0.0 != "connectionMethod" } + [("connectionMethod", "relay")]
+  }
+
+  private func establishDirect(_ gen: Int) async throws -> (RpcSocket, MachineRoute, EnvironmentDescriptorLite, MachineCredential) {
     // Only routes holding an unexpired token from their own issuer are tried,
     // and each gets only that token.
     let now = configuration.now()

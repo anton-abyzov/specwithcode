@@ -212,7 +212,7 @@ private struct OfflineMachinesView: View {
     if offline.count == 1 {
       let machine = offline[0]
       switch machine.status {
-      case .needsRepair: return "Pair \(machine.label) again"
+      case .needsRepair: return machine.needsSignIn ? "Sign in again to reach \(machine.label)" : machine.hasDirectPairing ? "Pair \(machine.label) again" : "Can't reach \(machine.label)"
       case .unsupported: return "Update SpecWithCode on \(machine.label)"
       default: return "\(machine.label) is offline"
       }

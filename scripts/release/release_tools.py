@@ -314,10 +314,13 @@ def read_lines(path):
     return entries
 
 
-def timing_retries(path, stage=None, sha=None, result=None):
+def timing_retries(path, stage=None, sha=None, result=None, attempt=None):
+    """The retries of one stage, candidate, result and attempt (each when given): a candidate can
+    run a stage more than once, and each attempt retries files of its own."""
     return [entry for entry in read_lines(path)
             if (stage is None or entry.get('stage') == stage) and (sha is None or entry.get('sha') == sha)
-            and (result is None or entry.get('result') == result)]
+            and (result is None or entry.get('result') == result)
+            and (attempt is None or entry.get('attempt') == attempt)]
 
 
 def timing_summary(path, release, retries=None):
@@ -567,7 +570,7 @@ def main(argv=None):
     command.add_argument('--end', type=int)
     command.add_argument('--status')
     command.add_argument('--sha', default='')
-    command.add_argument('--attempt', type=int, default=1)
+    command.add_argument('--attempt', type=int, help='the attempt to record (1 when left out), or the only one retries lists')
     command.add_argument('--version')
     command.add_argument('--current')
     command.add_argument('--previous')
@@ -587,6 +590,9 @@ def main(argv=None):
     command.add_argument('file')
     command.add_argument('pairs', nargs='+')
     args = parser.parse_args(argv)
+    # The fleet folders found under them go to run-tests.sh, which runs in another folder.
+    if getattr(args, 'history', None):
+        args.history = [os.path.abspath(path) for path in args.history]
     try:
         if args.command == 'packages':
             for directory, name in packages(args.root):
@@ -624,15 +630,16 @@ def main(argv=None):
         elif args.command == 'public-notes':
             write_atomic(args.out, public_notes(pathlib.Path(args.source).read_text(), args.rules).encode(), 0o644)
         elif args.command == 'timing':
+            attempt = 1 if args.attempt is None else args.attempt
             if args.action == 'record':
-                timing_record(args.file, args.stage, args.start, args.end, args.status, args.sha, args.attempt)
+                timing_record(args.file, args.stage, args.start, args.end, args.status, args.sha, attempt)
             elif args.action == 'attempts':
                 print(timing_attempts(args.file, args.stage))
             elif args.action == 'retry':
                 timing_retry(args.file, args.stage, args.job, args.first, args.retry, args.result, args.log,
-                             args.detail, args.sha, args.attempt)
+                             args.detail, args.sha, attempt)
             elif args.action == 'retries':
-                for entry in timing_retries(args.file, args.stage, args.sha or None, args.result):
+                for entry in timing_retries(args.file, args.stage, args.sha or None, args.result, args.attempt):
                     print(entry['job'])
             elif args.action == 'summary':
                 summary = timing_summary(args.file, args.version, args.retries)

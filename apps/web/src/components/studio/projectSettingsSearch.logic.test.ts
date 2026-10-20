@@ -14,6 +14,14 @@ describe("searchProjectSettings", () => {
     expect(results.map((r) => r.id)).toContain("project-memory");
   });
 
+  it.each(["knowledge", "search mode", "rebuild index"])(
+    "finds Project knowledge on the Memory tab by %s",
+    (query) => {
+      const results = searchProjectSettings(query, PROJECT_SETTINGS_TABS);
+      expect(results.map((r) => r.id)).toContain("project-knowledge");
+    },
+  );
+
   it("finds a row by a term people remember", () => {
     const results = searchProjectSettings("mcp", PROJECT_SETTINGS_TABS);
     expect(results.map((r) => r.id)).toEqual([

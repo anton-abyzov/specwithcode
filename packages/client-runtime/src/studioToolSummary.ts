@@ -322,6 +322,12 @@ export function summarizeStudioToolCalls(
     case "project-list":
       label = phrase("Listed", "list", `projects ${times}`);
       break;
+    case "knowledge-search":
+      label = phrase("Searched", "search", `project knowledge ${times}`);
+      break;
+    case "knowledge-read":
+      label = phrase("Read", "read", `project knowledge ${times}`);
+      break;
     case "project-read":
       label = phrase("Read", "read", quantity(countEntities(projectIds), "project"));
       break;

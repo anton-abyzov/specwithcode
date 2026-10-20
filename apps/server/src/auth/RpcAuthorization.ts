@@ -73,6 +73,10 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.projectsMemoryRead]: AuthOrchestrationReadScope,
   [WS_METHODS.projectsLibraryRead]: AuthFilesystemReadScope,
   [WS_METHODS.projectsLibraryAddArtifact]: AuthFilesystemWriteScope,
+  // Search results quote Library files, so reading knowledge is a file read.
+  [WS_METHODS.projectsKnowledgeRead]: AuthFilesystemReadScope,
+  [WS_METHODS.projectsKnowledgeSearch]: AuthFilesystemReadScope,
+  [WS_METHODS.projectsKnowledgeReindex]: AuthOrchestrationOperateScope,
   [WS_METHODS.projectsThreadReportsRead]: AuthFilesystemReadScope,
   [WS_METHODS.projectsThreadIncrementProgressRead]: AuthFilesystemReadScope,
   [WS_METHODS.projectsIncrementsList]: AuthFilesystemReadScope,

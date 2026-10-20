@@ -6,6 +6,8 @@ import type {
   StudioServiceUpdateState,
 } from "@specweave-studio/contracts";
 
+import { compareSemverVersions, parseSemver } from "@specweave-studio/shared/semver";
+
 import { resolveDesktopUpdateButtonAction } from "../desktopUpdate.logic";
 import { groupRunningWork, summarizeRunningWork } from "./restartRunningWork.logic";
 
@@ -14,8 +16,13 @@ export interface RestartToUpdateView {
   readonly app: boolean;
   /** Downloaded app version the click installs; null when only the service updates. */
   readonly appVersion: string | null;
-  /** The Studio service has a downloaded update waiting to be installed. */
+  /**
+   * The service on this Mac updates too: its agent has a release waiting, or
+   * the service runs an older release than the app installs.
+   */
   readonly service: boolean;
+  /** Service version the click installs; null when the service does not update. */
+  readonly serviceVersion: string | null;
   readonly label: string;
   readonly description: string;
 }
@@ -52,6 +59,60 @@ function serviceUpdateVersion(state: StudioServiceUpdateState): string | null {
   return state.downloadedVersion ?? state.availableVersion;
 }
 
+/** `older` is a release (never a dev or nightly build) before `newer`. */
+export function isOlderRelease(older: string | null | undefined, newer: string | null): boolean {
+  if (!older || !newer) return false;
+  const left = parseSemver(older);
+  const right = parseSemver(newer);
+  if (left === null || right === null || left.prerelease.length > 0) return false;
+  if (right.prerelease.length > 0) return false;
+  return compareSemverVersions(older, newer) < 0;
+}
+
+// The agent takes an install request in these states, downloading the release first if needed.
+const SERVICE_TAKES_REQUESTS: ReadonlySet<StudioServiceUpdateState["status"]> = new Set([
+  "disabled",
+  "up-to-date",
+  "available",
+  "downloading",
+  "downloaded",
+  "waiting-for-quiet",
+  "installed",
+]);
+
+/**
+ * The service on this Mac runs an older release than the app is about to
+ * install, and its agent can take a request. "Update now" then updates both,
+ * the service first, whether or not the agent has its half on disk yet.
+ */
+export function isServiceBehindApp(
+  state: StudioServiceUpdateState | null,
+  appVersion: string | null,
+): boolean {
+  return (
+    state !== null &&
+    SERVICE_TAKES_REQUESTS.has(state.status) &&
+    isOlderRelease(state.installedVersion, appVersion)
+  );
+}
+
+/**
+ * The service version "Update now" installs: the newest of the agent's own
+ * release and the app's versions (the downloaded update, the version running)
+ * that the service is behind. Null when the service has nothing to install.
+ */
+export function serviceInstallTarget(
+  state: StudioServiceUpdateState | null,
+  ...appVersions: ReadonlyArray<string | null | undefined>
+): string | null {
+  let target = state !== null && isServiceUpdateReady(state) ? serviceUpdateVersion(state) : null;
+  for (const version of appVersions) {
+    if (!version || !isServiceBehindApp(state, version)) continue;
+    if (target === null || isOlderRelease(target, version)) target = version;
+  }
+  return target;
+}
+
 /** What "Update now" does, shown wherever it is offered. */
 export const SERVICE_UPDATE_NOW_DESCRIPTION =
   "Stops running work, closes terminals and restarts SpecWithCode. You can continue interrupted tasks afterwards.";
@@ -67,27 +128,39 @@ export function getRestartToUpdateView(
 ): RestartToUpdateView | null {
   const serviceRequestedVersion = options.serviceRequestedVersion ?? null;
   const app = appState !== null && isAppUpdateReady(appState);
+  const appVersion = app ? appState.downloadedVersion : null;
+  // The app already runs a newer release than the service (it updated on its
+  // own, as on quit): the service catches up with one press too.
+  const running = appState?.currentVersion ?? null;
+  const ready = serviceState !== null && isServiceUpdateReady(serviceState);
+  const behind =
+    isServiceBehindApp(serviceState, appVersion) || isServiceBehindApp(serviceState, running);
+  // The service installs the newest of the agent's release and the app's versions.
+  const candidate = serviceInstallTarget(serviceState, appVersion, running);
   // The agent reports "installing" a moment after the request; until then the
   // service half is already handled and must not be offered again.
   const service =
     serviceState !== null &&
-    isServiceUpdateReady(serviceState) &&
-    (serviceRequestedVersion === null ||
-      serviceUpdateVersion(serviceState) !== serviceRequestedVersion);
+    (ready || behind) &&
+    (serviceRequestedVersion === null || candidate !== serviceRequestedVersion);
   if (!app && !service) return null;
 
-  const appVersion = app ? appState.downloadedVersion : null;
-  const serviceVersion = service ? serviceUpdateVersion(serviceState) : null;
+  const serviceVersion = service ? candidate : null;
   const version = appVersion ?? serviceVersion;
   const installFailed = app && appState.errorContext === "install";
   const failure = installFailed ? appState.message?.trim() : undefined;
+  // Nothing is on disk yet when only the running app is ahead: say what runs.
+  const what =
+    app || ready || !serviceState?.installedVersion
+      ? `SpecWithCode ${version ?? "update"} is downloaded.`
+      : `The SpecWithCode service on this Mac still runs ${serviceState.installedVersion}; this installs ${version ?? "the update"}.`;
 
   const parts = service
     ? [
         failure ? `The last install failed: ${failure}` : null,
-        `SpecWithCode ${version ?? "update"} is downloaded.`,
+        what,
         SERVICE_UPDATE_NOW_DESCRIPTION,
-        app ? "The app restarts too." : null,
+        app ? "The service updates first, then the app restarts on its own." : null,
       ]
     : [
         failure ? `The last install failed: ${failure}` : null,
@@ -101,6 +174,7 @@ export function getRestartToUpdateView(
     app,
     appVersion,
     service,
+    serviceVersion,
     // A waiting service update installs now, without waiting for work to finish.
     label: service ? "Update now" : installFailed ? "Retry update" : "Restart to update",
     description: parts.filter(Boolean).join(" "),
@@ -178,10 +252,17 @@ export interface ServiceUpdateProgress {
    * an answer to an earlier request, and an old failure is ignored for a while.
    */
   readonly requestedAt?: number;
-  /** When the agent first reported installing (ms). */
+  /** When the agent first reported installing in this attempt (ms). */
   readonly installingSince?: number;
   /** Receipt already present before this window started following the install. */
   readonly previousInstallAt?: string | null;
+  /** When "Update now" was pressed (ms), for the elapsed time the toast shows. */
+  readonly startedAt?: number;
+  /**
+   * End of the forced request's hold (ms). Until then the agent keeps retrying
+   * on its own and the work stays stopped, so "Update now" is not offered again.
+   */
+  readonly holdUntil?: number;
 }
 
 /**
@@ -189,8 +270,12 @@ export interface ServiceUpdateProgress {
  * requested, when the agent's write time is unknown (older desktops).
  */
 export const STALE_FAILURE_MS = 90_000;
-/** An install that has not finished in this long is reported, so it can be retried. */
-export const INSTALL_TIMEOUT_MS = 10 * 60_000;
+/**
+ * An install that has not finished in this long is reported, so it can be
+ * retried: the update agent gives its install helper 25 minutes (APPLY_TIMEOUT
+ * in update_agent.py), so a slow but healthy install is never reported early.
+ */
+export const INSTALL_TIMEOUT_MS = 25 * 60_000;
 
 /**
  * Identifies an agent state that answers a request (waiting, failed or another
@@ -249,10 +334,11 @@ export function isStaleServiceAnswer(
 
 export function startServiceUpdateProgress(
   serviceState: StudioServiceUpdateState | null,
+  targetVersion?: string | null,
 ): ServiceUpdateProgress {
   return {
     phase: "stopping",
-    targetVersion: serviceState ? serviceUpdateVersion(serviceState) : null,
+    targetVersion: targetVersion ?? (serviceState ? serviceUpdateVersion(serviceState) : null),
     fromVersion: serviceState?.installedVersion ?? null,
     previousInstallAt: serviceState?.lastInstall?.at ?? null,
     blockers: [],
@@ -352,7 +438,7 @@ export function advanceServiceUpdateProgress(
           ...progress,
           phase: "failed",
           message:
-            "The install has not finished after 10 minutes. See Settings > About for the receipt.",
+            "The install has not finished after 25 minutes. See Settings > About for the receipt.",
         };
       }
       return {
@@ -374,8 +460,12 @@ export function advanceServiceUpdateProgress(
               `The update was rolled back; SpecWithCode stayed on ${state.installedVersion ?? "its current version"}.`,
           }
         : progress;
-    case "waiting-for-quiet":
-      return { ...progress, phase: "waiting", message: state.message };
+    case "waiting-for-quiet": {
+      // The agent went back to waiting (it retries after new work started),
+      // so the next install is timed on its own.
+      const { installingSince: _previous, ...rest } = progress;
+      return { ...rest, phase: "waiting", message: state.message };
+    }
     case "error":
     case "manual-required":
       return {
@@ -406,13 +496,50 @@ export function canRetryServiceUpdate(progress: ServiceUpdateProgress): boolean 
   );
 }
 
-export function serviceUpdateButtonLabel(progress: ServiceUpdateProgress): string {
+/**
+ * The agent is still acting on a forced request: the work is stopped and
+ * held, and the agent retries on its own until the hold ends. Pressing again
+ * would only stop the work again.
+ */
+export function isForcedRequestLive(progress: ServiceUpdateProgress, now: number): boolean {
+  return (
+    (progress.phase === "requesting" || progress.phase === "waiting") &&
+    progress.holdUntil !== undefined &&
+    now < progress.holdUntil
+  );
+}
+
+/** "Update now" (or "Retry update") does something new for this update. */
+export function canPressUpdateAgain(progress: ServiceUpdateProgress, now: number): boolean {
+  return canRetryServiceUpdate(progress) && !isForcedRequestLive(progress, now);
+}
+
+/** The hold time of a pending forced request, from the agent's state (ms). */
+export function pendingHoldUntil(state: StudioServiceUpdateState | null): number | undefined {
+  const pending = state?.pendingInstall;
+  if (!pending || pending.mode !== "force" || pending.holdUntil === null) return undefined;
+  const until = Date.parse(pending.holdUntil);
+  return Number.isFinite(until) ? until : undefined;
+}
+
+/** Minutes and seconds, such as 4:07 (hours only past one). */
+export function formatElapsed(ms: number): string {
+  const total = Math.max(0, Math.floor(ms / 1000));
+  const hours = Math.floor(total / 3600);
+  const minutes = Math.floor((total % 3600) / 60);
+  const seconds = String(total % 60).padStart(2, "0");
+  return hours > 0
+    ? `${hours}:${String(minutes).padStart(2, "0")}:${seconds}`
+    : `${minutes}:${seconds}`;
+}
+
+export function serviceUpdateButtonLabel(progress: ServiceUpdateProgress, now?: number): string {
   switch (progress.phase) {
     case "stopping":
       return "Stopping tasks…";
     case "requesting":
     case "waiting":
-      return "Update now";
+      return now !== undefined && isForcedRequestLive(progress, now) ? "Updating…" : "Update now";
     case "installing":
       return "Installing…";
     case "restarting":
@@ -551,62 +678,98 @@ export interface ServiceUpdateToastView {
   readonly cancel: boolean;
 }
 
+export interface ServiceUpdateToastOptions {
+  /** Now (ms), for the elapsed time and whether a forced request is still live. */
+  readonly now?: number;
+  /** The app installs its own update once the service is on the new version. */
+  readonly appFollows?: boolean;
+}
+
 /**
- * The persistent toast for a service update. While the agent is asked or
- * waits it always offers "Update now" and "Cancel update"; `waitedLong` (the
- * wait outlasted a normal stop) only turns it into a warning.
+ * The persistent toast for a service update, with the time since the press.
+ * While a forced request is live it offers only "Cancel update": the agent
+ * keeps retrying on its own. Otherwise, while the agent is asked or waits, it
+ * also offers "Update now". `waitedLong` (the wait outlasted a normal stop)
+ * turns a real wait into a warning.
  */
 export function serviceUpdateToast(
   progress: ServiceUpdateProgress,
   waitedLong: boolean,
+  options: ServiceUpdateToastOptions = {},
 ): ServiceUpdateToastView {
   const version = progress.targetVersion ? `SpecWithCode ${progress.targetVersion}` : "the update";
+  const now = options.now;
+  const elapsed =
+    now !== undefined && progress.startedAt !== undefined
+      ? formatElapsed(now - progress.startedAt)
+      : null;
+  const clock = elapsed === null ? "" : ` · ${elapsed}`;
   switch (progress.phase) {
     case "stopping":
       return {
         type: "loading",
-        title: `Preparing to install ${version}`,
+        title: `Updating to ${version}${clock}`,
         description: "Stopping running tasks and cancelling queued messages…",
         action: null,
         cancel: false,
       };
     case "requesting":
     case "waiting": {
+      const forced = now !== undefined && isForcedRequestLive(progress, now);
       const blockers = describeServiceUpdateBlockers(progress.blockers);
       const fallback =
         progress.phase === "requesting"
-          ? "Asking the update agent to install it…"
+          ? forced
+            ? "Checking that nothing is running, then installing…"
+            : "Asking the update agent to install it…"
           : "Waiting for the last work to finish…";
       const running =
         progress.fromVersion && progress.fromVersion !== progress.targetVersion
           ? `The SpecWithCode service on this Mac still runs ${progress.fromVersion}. `
           : "";
+      // A forced request with nothing left running is the agent's own check, not a wait.
+      const warn = waitedLong && (!forced || progress.phase === "waiting" || blockers !== "");
       return {
-        type: waitedLong ? "warning" : "loading",
-        title: waitedLong ? `Waiting to install ${version}` : `Preparing to install ${version}`,
+        type: warn ? "warning" : "loading",
+        title: warn
+          ? `Waiting to install ${version}${clock}`
+          : forced
+            ? `Updating to ${version}${clock}`
+            : `Preparing to install ${version}${clock}`,
         description: running + (blockers || progress.message || fallback),
-        action: "update-now",
+        action: forced ? null : "update-now",
         cancel: true,
       };
     }
     case "installing":
       return {
         type: "loading",
-        title: `Installing ${version}`,
+        title: `Installing ${version}${clock}`,
         description: "The service restarts on its own; this window reconnects when it is back.",
         action: null,
         cancel: false,
       };
-    case "restarting":
-      return {
-        type: "success",
-        title: `Updated to ${version}`,
-        description: progress.message
-          ? `Installed successfully. The updater also reported: ${progress.message} Reloading this window…`
-          : "Reloading this window…",
-        action: null,
-        cancel: false,
-      };
+    case "restarting": {
+      const took = elapsed === null ? "" : ` in ${elapsed}`;
+      const reported = progress.message
+        ? `Installed successfully. The updater also reported: ${progress.message} `
+        : "";
+      return options.appFollows
+        ? {
+            type: "success",
+            title: `Updated the service to ${version}${took}`,
+            description: `${reported}Restarting the app to finish the update…`,
+            action: null,
+            cancel: false,
+          }
+        : {
+            type: "success",
+            title: `Updated to ${version}${took}`,
+            description: `${reported}Reloading this window…`,
+            action: null,
+            cancel: false,
+          };
+    }
     case "failed":
       return {
         type: "error",

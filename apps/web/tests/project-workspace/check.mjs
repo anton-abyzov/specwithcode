@@ -17,7 +17,7 @@ try {
   const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
   const errors = [];
   page.on("pageerror", (e) => errors.push(e.message));
-  await page.goto("http://127.0.0.1:5788");
+  await page.goto(`http://127.0.0.1:${process.env.PROJECT_UI_PORT ?? 5788}`);
   await page.waitForLoadState("networkidle");
   await page.screenshot({ path: path.join(output, "0888-project-desktop.png"), fullPage: true });
   await page.getByRole("button", { name: /^Open thread Review the landing page, / }).click();

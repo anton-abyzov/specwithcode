@@ -12,6 +12,8 @@ import {
   appStartAgentRun,
   isStaleService,
   controllerForAttachedService,
+  serviceCheckFor,
+  shouldRequestAppVersion,
 } from "./serviceUpdates.ts";
 
 function withInstallations(
@@ -170,6 +172,99 @@ describe("appStartAgentRun", () => {
         checkAutomatically: true,
         automaticUpdatesAllowed: false,
         pendingForcedInstall: false,
+      }),
+    ).toBeNull();
+  });
+});
+
+describe("shouldRequestAppVersion", () => {
+  const forced = {
+    requestedAt: "2026-10-20T04:07:30.000Z",
+    mode: "force" as const,
+    version: "1.0.61",
+    holdUntil: "2026-10-20T04:22:30.000Z",
+    handled: false,
+  };
+  const ask = (state: Parameters<typeof shouldRequestAppVersion>[0]["state"]) =>
+    shouldRequestAppVersion({
+      allowed: true,
+      serviceVersion: "1.0.60",
+      appVersion: "1.0.61",
+      state,
+    });
+
+  it("asks for the app's version on an older service with nothing pending", () => {
+    expect(ask({ status: "up-to-date", pendingInstall: null })).toBe(true);
+    // Older desktops report no pending request at all.
+    expect(ask({ status: "downloaded" })).toBe(true);
+  });
+
+  it("never turns a forced request into a normal one after the app restarts", () => {
+    // The 1.0.58 case: the relaunched app rewrote Update now as a 10-minute quiet wait.
+    expect(ask({ status: "downloaded", pendingInstall: forced })).toBe(false);
+    expect(ask({ status: "available", pendingInstall: { ...forced, version: "1.0.60" } })).toBe(
+      false,
+    );
+  });
+
+  it("leaves a normal request for the same version, and replaces one for another", () => {
+    const normal = { ...forced, mode: "normal" as const, holdUntil: null };
+    expect(ask({ status: "downloaded", pendingInstall: normal })).toBe(false);
+    expect(ask({ status: "downloaded", pendingInstall: { ...normal, version: "1.0.59" } })).toBe(
+      true,
+    );
+  });
+
+  it("leaves an install or a quiet wait under way, and builds that keep updates off", () => {
+    expect(ask({ status: "installing", pendingInstall: null })).toBe(false);
+    expect(ask({ status: "waiting-for-quiet", pendingInstall: null })).toBe(false);
+    expect(
+      shouldRequestAppVersion({
+        allowed: false,
+        serviceVersion: "1.0.60",
+        appVersion: "1.0.61",
+        state: { status: "up-to-date" },
+      }),
+    ).toBe(false);
+  });
+});
+
+describe("serviceCheckFor", () => {
+  const service = {
+    status: "up-to-date" as const,
+    installedVersion: "1.0.60",
+    availableVersion: null,
+    downloadedVersion: null,
+  };
+  const app = { availableVersion: "1.0.61", downloadedVersion: null };
+
+  it("asks the agent once per release the service does not run yet", () => {
+    expect(serviceCheckFor({ appState: app, service, asked: new Set() })).toBe("1.0.61");
+    expect(serviceCheckFor({ appState: app, service, asked: new Set(["1.0.61"]) })).toBeNull();
+    // The downloaded release counts first.
+    expect(
+      serviceCheckFor({
+        appState: { availableVersion: "1.0.61", downloadedVersion: "1.0.62" },
+        service,
+        asked: new Set(["1.0.61"]),
+      }),
+    ).toBe("1.0.62");
+  });
+
+  it("stays quiet when the agent already knows the release or is busy", () => {
+    const quiet = (patch: Partial<typeof service> | Record<string, unknown>) =>
+      serviceCheckFor({ appState: app, service: { ...service, ...patch }, asked: new Set() });
+    expect(quiet({ installedVersion: "1.0.61" })).toBeNull();
+    expect(quiet({ status: "downloaded", downloadedVersion: "1.0.61" })).toBeNull();
+    expect(quiet({ status: "available", availableVersion: "1.0.62" })).toBeNull();
+    expect(quiet({ status: "downloading" })).toBeNull();
+    expect(quiet({ status: "installing" })).toBeNull();
+    expect(quiet({ status: "not-managed" })).toBeNull();
+    expect(
+      serviceCheckFor({
+        appState: { availableVersion: null, downloadedVersion: null },
+        service,
+        asked: new Set(),
       }),
     ).toBeNull();
   });

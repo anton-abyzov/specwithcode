@@ -151,7 +151,15 @@ private struct ChatScreen: View {
 
   @ViewBuilder private var offlineTranscript: some View {
     let machineId = target.environmentId
-    switch model.machine(machineId)?.status {
+    let machine = model.machine(machineId)
+    switch machine?.status {
+    case .needsRepair where machine?.needsSignIn == true:
+      transcriptPlaceholder(
+        title: "Sign in again",
+        message: "This conversation loads once you sign in to SpecWithCode on this phone.",
+        actionTitle: "Show machine",
+        action: { nav.push(.machine(machineId)) }
+      )
     case .needsRepair:
       transcriptPlaceholder(
         title: "Pair \(machineLabel) again",

@@ -67,6 +67,7 @@ import { AsyncResult } from "effect/reactivity";
 import React, {
   Children,
   lazy,
+  Fragment,
   Suspense,
   type CSSProperties,
   type ComponentProps,
@@ -153,6 +154,7 @@ import { openInEditorMenuLabel } from "../editorLabels";
 import { resolveDiffThemeName, type DiffThemeName } from "../lib/diffRendering";
 import { fnv1a32 } from "../lib/diffRendering";
 import { LRUCache } from "../lib/lruCache";
+import { noteReaderScrollAround } from "../lib/readerScroll";
 import { getSyntaxHighlighterPromise } from "../lib/syntaxHighlighting";
 import { GitHubIcon } from "./Icons";
 import { createIncrementalHighlightedDocument } from "../lib/incrementalHighlighting";
@@ -1964,6 +1966,7 @@ function handleMarkdownFragmentClick(event: ReactMouseEvent<HTMLAnchorElement>, 
   const nextUrl = new URL(window.location.href);
   nextUrl.hash = href.slice(1);
   window.history.pushState(window.history.state, "", nextUrl);
+  noteReaderScrollAround(target);
   target.scrollIntoView({ block: "nearest" });
 }
 
@@ -2593,8 +2596,19 @@ function useChatMarkdownState({
   // The message's file links in the order it names them, for the viewer.
   const viewerLinks = useMemo(
     () =>
-      [...markdownFileLinkMetaByHref.values(), ...inlineCodeFileLinkMetaByText.values()]
-        .map((meta) => [text.indexOf(meta.basename), meta] as const)
+      [
+        ...[...markdownFileLinkMetaByHref.values()].map(
+          (meta) => [text.indexOf(meta.basename), meta] as const,
+        ),
+        // Shorthand stands for its files, in the order it names them.
+        ...[...inlineCodeFileLinkMetaByText].flatMap(([span, meta]) =>
+          meta.expansions
+            ? meta.expansions.map((file, index) => [text.indexOf(span) + index, file] as const)
+            : meta.glob
+              ? []
+              : [[text.indexOf(meta.basename), meta] as const],
+        ),
+      ]
         .toSorted((left, right) => left[0] - right[0])
         .map(([, meta]) => meta),
     [inlineCodeFileLinkMetaByText, markdownFileLinkMetaByHref, text],
@@ -3447,7 +3461,21 @@ const CHAT_MARKDOWN_COMPONENTS = {
       const fileLinkMeta =
         inlineCodeFileLinkMetaByText.get(codeText.trim()) ??
         resolveInlineCodeFileLinkMeta(codeText, cwd, imageBaseDir ?? cwd);
-      if (fileLinkMeta) {
+      if (fileLinkMeta?.expansions && fileLinkMeta.expansions.length > 0) {
+        // Shorthand is never a file of its own: each file it names gets a chip.
+        return (
+          <span data-markdown-copy={`\`${codeText}\``} data-file-link-group="true">
+            {fileLinkMeta.expansions.map((meta, index) => (
+              <Fragment key={meta.targetPath}>
+                {index > 0 ? " " : null}
+                {fileLinkChip(meta, `\`${meta.targetPath}\``)}
+              </Fragment>
+            ))}
+          </span>
+        );
+      }
+      // A pattern the host has not matched yet stays as written.
+      if (fileLinkMeta && !fileLinkMeta.glob && !fileLinkMeta.expansions) {
         return fileLinkChip(
           fileLinkMeta,
           `\`${codeText}\``,
@@ -3623,22 +3651,23 @@ const CHAT_MARKDOWN_COMPONENTS = {
     );
     // A fence that only lists files shows the files, each with its full path.
     const pathLines = isStreaming ? null : pathListLines(codeBlock.code, language);
-    const pathEntries = pathLines?.flatMap((line) => {
+    const pathEntries = pathLines?.map((line) => {
       const meta =
         inlineCodeFileLinkMetaByText.get(line) ??
         resolveInlineCodeFileLinkMeta(line, cwd, imageBaseDir ?? cwd);
-      if (!meta) return [];
-      return [
-        {
-          line,
-          chip: fileLinkChip(meta, line),
-          fullPath: meta.filePath,
-          missing: meta.unresolved !== undefined,
-        },
-      ];
+      if (!meta || (meta.glob && !meta.expansions?.length) || meta.expansions?.length === 0) {
+        return [];
+      }
+      // A shorthand line lists each file it names.
+      return (meta.expansions ?? [meta]).map((file) => ({
+        line: meta.expansions ? file.filePath : line,
+        chip: fileLinkChip(file, meta.expansions ? file.filePath : line),
+        fullPath: file.filePath,
+        missing: file.unresolved !== undefined,
+      }));
     });
-    if (pathEntries && pathEntries.length === pathLines?.length) {
-      return <MarkdownPathList entries={pathEntries} startFileDrag={startFileDrag} />;
+    if (pathEntries && pathEntries.every((entries) => entries.length > 0)) {
+      return <MarkdownPathList entries={pathEntries.flat()} startFileDrag={startFileDrag} />;
     }
     const fenceTitle = extractFenceTitle(extractPreCodeMeta(node));
     const highlightedCode = (
@@ -3790,6 +3819,7 @@ function ChatMarkdown({
           target={documentTarget}
           onClose={() => setDocumentTarget(null)}
           onOpenExternally={() => void openFolder(documentTarget.path)}
+          onOpenFile={(path) => setDocumentTarget({ path })}
           threadRef={props.threadRef}
           renderMarkdown={(markdown, baseDir) => (
             <ChatMarkdown

@@ -96,6 +96,19 @@ else
   mkdir -p "$OUT"
   OUT="$(cd "$OUT" && pwd)"
 fi
+# Absolute before the cd below, like OUT: a relative --history would be looked up under
+# scripts/studio-fleet and quietly leave the tests in name order.
+if [ ${#HISTORY[@]} -gt 0 ]; then
+  given=("${HISTORY[@]}")
+  HISTORY=()
+  for dir in "${given[@]}"; do
+    if [ -d "$dir" ]; then
+      HISTORY+=("$(cd "$dir" && pwd)")
+    else
+      echo "run-tests.sh: --history $dir is not a directory; ignoring it" >&2
+    fi
+  done
+fi
 
 if [ -z "${STUDIO_TEST_NODE:-}" ]; then
   STUDIO_TEST_NODE="$(command -v node || true)"

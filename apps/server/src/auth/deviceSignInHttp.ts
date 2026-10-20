@@ -17,7 +17,7 @@ import { HttpServerRequest, HttpServerResponse } from "effect/http";
 import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 
 import * as Config from "../config.ts";
-import { capacityMutationOriginAllowed, mutationTrustedOrigins } from "../studio/http.ts";
+import { capacityMutationOriginAllowed, mutationTrustedOrigins } from "./requestOrigin.ts";
 import * as EnvironmentAuth from "./EnvironmentAuth.ts";
 import {
   DEVICE_SIGN_IN_APPROVED_TTL_MS,

@@ -8,7 +8,8 @@ import type {
 import { useCallback, useEffect, useState } from "react";
 
 import { startServiceUpdateNow, useServiceUpdateFlow } from "../serviceUpdateFlow";
-import { canRetryServiceUpdate } from "../sidebar/SidebarRestartToUpdate.logic";
+import { requestRestartToUpdate } from "../sidebar/restartToUpdateRequests";
+import { canPressUpdateAgain } from "../sidebar/SidebarRestartToUpdate.logic";
 import { Button } from "../ui/button";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
@@ -84,11 +85,14 @@ export function UpdatePreferencesSection() {
   // An install already under way is followed in its toast; it is not started twice.
   const serviceUpdateBusy =
     serviceUpdate.starting ||
-    (serviceUpdate.progress !== null && !canRetryServiceUpdate(serviceUpdate.progress));
+    (serviceUpdate.progress !== null && !canPressUpdateAgain(serviceUpdate.progress, Date.now()));
   const runServiceAction = useCallback(() => {
     if (!bridge || serviceAction === "none") return;
     if (serviceAction === "install") {
-      // The same "Update now" as the sidebar: stop and hold the work, then install.
+      // The same "Update now" as the sidebar, which also restarts the app into
+      // its downloaded update once the service is on the new version.
+      if (requestRestartToUpdate({ requireService: true })) return;
+      // No sidebar button for it: stop and hold the work, then install.
       if (typeof bridge.installServiceUpdate !== "function") return;
       setServicePending(true);
       void startServiceUpdateNow(serviceState)

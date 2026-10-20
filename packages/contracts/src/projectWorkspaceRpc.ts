@@ -37,6 +37,14 @@ import {
   ProjectCoordinatorResult,
 } from "./projectWorkspace.ts";
 import {
+  ProjectKnowledgeError,
+  ProjectKnowledgeReindexInput,
+  ProjectKnowledgeSearchInput,
+  ProjectKnowledgeSearchResult,
+  ProjectKnowledgeStatus,
+  ProjectKnowledgeStatusInput,
+} from "./projectKnowledge.ts";
+import {
   ProjectLibraryAddArtifactInput,
   ProjectLibraryError,
   ProjectLibraryReadInput,
@@ -93,6 +101,9 @@ export const PROJECT_WORKSPACE_RPC_METHODS = {
   projectsCoordinatorSend: "projects.coordinatorSend",
   projectsLibraryRead: "projects.libraryRead",
   projectsLibraryAddArtifact: "projects.libraryAddArtifact",
+  projectsKnowledgeRead: "projects.knowledgeRead",
+  projectsKnowledgeSearch: "projects.knowledgeSearch",
+  projectsKnowledgeReindex: "projects.knowledgeReindex",
   projectsThreadReportsRead: "projects.threadReportsRead",
   projectsThreadReportSave: "projects.threadReportSave",
   projectsThreadIncrementProgressRead: "projects.threadIncrementProgressRead",
@@ -101,6 +112,7 @@ export const PROJECT_WORKSPACE_RPC_METHODS = {
 } as const;
 const error = Schema.Union([ProjectWorkspaceError, EnvironmentAuthorizationError]);
 const planError = Schema.Union([ProjectPlanError, EnvironmentAuthorizationError]);
+const knowledgeError = Schema.Union([ProjectKnowledgeError, EnvironmentAuthorizationError]);
 // Human RPCs never accept actor identity from the caller.
 const planChange = {
   projectId: ProjectPlanTaskInput.fields.projectId,
@@ -275,5 +287,27 @@ export const projectWorkspaceRpcs = [
     payload: ThreadIncrementLinkInput,
     success: ThreadIncrementLinkResult,
     error,
+  }),
+] as const;
+
+/**
+ * Project knowledge, registered as its own group: the core group is at
+ * TypeScript's instantiation-depth limit (see `WsProjectKnowledgeRpcGroup`).
+ */
+export const projectKnowledgeRpcs = [
+  Rpc.make(PROJECT_WORKSPACE_RPC_METHODS.projectsKnowledgeRead, {
+    payload: ProjectKnowledgeStatusInput,
+    success: ProjectKnowledgeStatus,
+    error: knowledgeError,
+  }),
+  Rpc.make(PROJECT_WORKSPACE_RPC_METHODS.projectsKnowledgeSearch, {
+    payload: ProjectKnowledgeSearchInput,
+    success: ProjectKnowledgeSearchResult,
+    error: knowledgeError,
+  }),
+  Rpc.make(PROJECT_WORKSPACE_RPC_METHODS.projectsKnowledgeReindex, {
+    payload: ProjectKnowledgeReindexInput,
+    success: ProjectKnowledgeStatus,
+    error: knowledgeError,
   }),
 ] as const;

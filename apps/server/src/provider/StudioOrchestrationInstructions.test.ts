@@ -39,7 +39,7 @@ describe("SpecWithCode orchestration provider instructions", () => {
     assert.notInclude(STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS, "<browser_automation>");
     // About 300 tokens; it was about 1,900. The computer-use line routes
     // native-app requests that tool names alone did not.
-    assert.isAtMost(STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS.length, 1_350);
+    assert.isAtMost(STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS.length, 1_375);
   });
 
   it("routes computer use, and skills that name other computer-use tools, to computer_*", () => {
@@ -50,6 +50,11 @@ describe("SpecWithCode orchestration provider instructions", () => {
 
   it("asks for absolute file paths and a one-path-per-line list for manual picks", () => {
     assert.include(STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS, "never a bare file name");
+    // A link to `findings-{B,C,D,E}.md` names no file (October 20, 2026).
+    assert.include(
+      STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS,
+      "never a bare file name or `{a,b}`/`*` shorthand",
+    );
     assert.include(STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS, "one absolute path per line");
   });
 

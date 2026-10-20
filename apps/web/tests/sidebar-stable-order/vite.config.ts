@@ -7,7 +7,7 @@ const { fileURLToPath } = NodeURL;
 
 // The real StudioSidebar and its sort; only data, routing and settings hooks are simulated.
 const MOCKED =
-  /\/(state\/(entities|environments|projects|server|use-atom-command)|hooks\/(useSettings|useScratchProject|useThreadActions)|lib\/chatThreadActions|threadRoutes|settings\/useSettingsProjectGroups|sidebar\/(SidebarPlanProgress|SidebarChrome)|ProjectFavicon|shell\/ModelBadge)$/;
+  /\/(state\/(entities|environments|projects|server|session|threads|use-atom-command|use-orchestration-command)|hooks\/(useSettings|useScratchProject|useThreadActions)|lib\/chatThreadActions|threadRoutes|settings\/useSettingsProjectGroups|sidebar\/(SidebarPlanProgress|SidebarChrome)|ProjectFavicon|shell\/ModelBadge)$/;
 const mocks = fileURLToPath(new URL("./mocks.tsx", import.meta.url));
 export default defineConfig({
   root: fileURLToPath(new URL(".", import.meta.url)),

@@ -13,6 +13,7 @@ import {
   confirmAppRestartForUpdate,
   drainWorkForAppRestart,
   isServiceWorkRunning,
+  registerAppInstallAfterService,
   releaseAppRestartDrain,
   retryServiceUpdate,
   startServiceUpdateNow,
@@ -39,11 +40,12 @@ import {
 import { RestartRunningWorkList } from "./RestartRunningWorkList";
 import { onRestartToUpdateRequest } from "./restartToUpdateRequests";
 import {
-  canRetryServiceUpdate,
+  canPressUpdateAgain,
   describeInstallOutcome,
   getRestartToUpdateView,
   RESTART_WHEN_IDLE_NOTE,
   SERVICE_UPDATE_NOW_DESCRIPTION,
+  serviceInstallTarget,
   serviceUpdateButtonLabel,
 } from "./SidebarRestartToUpdate.logic";
 
@@ -58,9 +60,9 @@ const errorText = (error: unknown, fallback: string) =>
 
 /**
  * Bottom-left sidebar button that appears once an update has downloaded in
- * the background. One click installs it: the app restarts into the new
- * version, and a waiting Studio service update is installed now instead of
- * after the next quiet period.
+ * the background. One click installs it. When the service on this Mac updates
+ * too, it goes first, now instead of after the next quiet period, and the app
+ * restarts into its new version once the service runs the new one.
  */
 export function SidebarRestartToUpdate() {
   return isElectron ? <SidebarRestartToUpdateButton /> : null;
@@ -135,10 +137,81 @@ function SidebarRestartToUpdateButton() {
     [environmentId, navigate],
   );
 
+  // Arms the check that the app really quit after an accepted install.
+  const awaitRestart = useCallback(() => {
+    if (watchdog.current !== null) window.clearTimeout(watchdog.current);
+    watchdog.current = window.setTimeout(() => {
+      watchdog.current = null;
+      setPending(false);
+      toastManager.add(
+        stackedThreadToast({
+          type: "error",
+          title: "SpecWithCode did not restart",
+          description: "Quit and reopen SpecWithCode to finish the update.",
+        }),
+      );
+    }, RESTART_WATCHDOG_MS);
+  }, []);
+
+  // After "Update now" for both, the service is on its new version: the app
+  // installs its own update and restarts. A refusal says why and leaves the
+  // app open on its current version.
+  const installAppAfterService = useCallback(
+    async (appVersion: string | null) => {
+      const bridge = window.desktopBridge;
+      if (!bridge) return false;
+      setPending(true);
+      let restarting = false;
+      try {
+        let result = await installWhenUpdaterFree(bridge, appVersion, setFetching).finally(() =>
+          setFetching(null),
+        );
+        // A newer release replaced the download while the service updated:
+        // fetch it and install that, rather than leave the app behind.
+        if (!result.accepted && result.reason === "no-download") {
+          const latest = await ensureLatestAppUpdate(bridge, setFetching).finally(() =>
+            setFetching(null),
+          );
+          if (latest.kind === "ready") {
+            result = await installWhenUpdaterFree(bridge, latest.version, setFetching).finally(() =>
+              setFetching(null),
+            );
+          }
+        }
+        restarting = result.accepted && !result.failed;
+        const message = describeInstallOutcome(result, { downloadsInBackground });
+        if (message) {
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "The service updated, but the app did not",
+              description: message,
+            }),
+          );
+        }
+      } catch (error) {
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "The service updated, but the app did not",
+            description: errorText(error, "An unexpected error occurred."),
+          }),
+        );
+      } finally {
+        if (restarting) awaitRestart();
+        else setPending(false);
+      }
+      return restarting;
+    },
+    [awaitRestart, downloadsInBackground],
+  );
+
+  useEffect(() => registerAppInstallAfterService(installAppAfterService), [installAppAfterService]);
+
   const restart = useCallback(
     async (options: { readonly confirmed?: boolean } = {}) => {
       const bridge = window.desktopBridge;
-      if (service.progress && canRetryServiceUpdate(service.progress)) {
+      if (service.progress && canPressUpdateAgain(service.progress, Date.now())) {
         void retryServiceUpdate();
         return;
       }
@@ -187,25 +260,37 @@ function SidebarRestartToUpdateButton() {
         }
       }
       setIdleSince(null);
+      if (view.service && bridge.installServiceUpdate) {
+        // The service first, the app after: an app relaunch while the agent
+        // checks the service makes its install start over. The flow installs
+        // the app once the service runs the new version.
+        try {
+          await startServiceUpdateNow(serviceState, {
+            targetVersion:
+              serviceInstallTarget(serviceState, appVersion, appState?.currentVersion) ??
+              view.serviceVersion,
+            thenInstallApp: view.app ? { appVersion } : null,
+          });
+        } catch (error) {
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Could not install update",
+              description: errorText(error, "An unexpected error occurred."),
+            }),
+          );
+        }
+        return;
+      }
       setPending(true);
       let restarting = false;
       try {
-        if (view.service && bridge.installServiceUpdate) {
-          // The service is asked first: the desktop kicks the agent before it
-          // answers, so the app restart that follows cannot drop the request.
-          const started = await startServiceUpdateNow(serviceState);
-          // The user chose to keep their work running: nothing restarts.
-          if (!started) return;
-        }
         if (view.app) {
           // A service this app started quits with it. Stopped here for the
           // update, its running work continues after the restart; killed by
           // the quit, it would end as cancelled. A service the app attached to
           // keeps running, so it is never drained or held for the restart.
-          const drained =
-            !view.service &&
-            (await appOwnsLocalService(bridge)) &&
-            (await drainWorkForAppRestart());
+          const drained = (await appOwnsLocalService(bridge)) && (await drainWorkForAppRestart());
           // A background check or download can hold the updater for a moment:
           // wait for it, showing what runs, instead of failing with "busy".
           const result = await installWhenUpdaterFree(bridge, appVersion, setFetching).finally(() =>
@@ -233,25 +318,14 @@ function SidebarRestartToUpdateButton() {
           }),
         );
       } finally {
-        if (restarting) {
-          // Stay on "Restarting…" while the app shuts down.
-          watchdog.current = window.setTimeout(() => {
-            watchdog.current = null;
-            setPending(false);
-            toastManager.add(
-              stackedThreadToast({
-                type: "error",
-                title: "SpecWithCode did not restart",
-                description: "Quit and reopen SpecWithCode to finish the update.",
-              }),
-            );
-          }, RESTART_WATCHDOG_MS);
-        } else {
-          setPending(false);
-        }
+        // Stay on "Restarting…" while the app shuts down.
+        if (restarting) awaitRestart();
+        else setPending(false);
       }
     },
     [
+      appState?.currentVersion,
+      awaitRestart,
       checkingWork,
       downloadsInBackground,
       fetching,
@@ -263,8 +337,17 @@ function SidebarRestartToUpdateButton() {
     ],
   );
 
-  // The sidebar update button installs a downloaded update through this flow.
-  useEffect(() => onRestartToUpdateRequest(() => void restart()), [restart]);
+  // The sidebar update pill and Settings install a downloaded update through
+  // this flow; false when there is nothing here for it to install.
+  useEffect(
+    () =>
+      onRestartToUpdateRequest((request) => {
+        if (request.requireService ? !view?.service : !view) return false;
+        void restart();
+        return true;
+      }),
+    [restart, view],
+  );
 
   // Restart on its own once the work the user let finish is done, or once the
   // hold window has passed: then the work is stopped for the update and
@@ -300,15 +383,16 @@ function SidebarRestartToUpdateButton() {
   // longer lists it as waiting, so the click is never answered by nothing.
   // While the newest release downloads the old one is gone, but the click is still being answered.
   if (!view && !progress && !fetching) return null;
+  const at = Date.now();
   const busy =
     pending ||
     checkingWork ||
     fetching !== null ||
     service.starting ||
-    (progress !== null && !canRetryServiceUpdate(progress));
+    (progress !== null && !canPressUpdateAgain(progress, at));
   const text =
     progress && !(pending && view?.app)
-      ? serviceUpdateButtonLabel(progress)
+      ? serviceUpdateButtonLabel(progress, at)
       : service.starting || (pending && view?.service && !view.app)
         ? (view?.label ?? "Update now")
         : fetching?.phase === "checking"

@@ -1072,7 +1072,7 @@ class ApplyRecovery(unittest.TestCase):
   result=json.loads(self.output.read_text())
   self.assertEqual(result['phase'],'pointers-written');self.assertEqual(result['pointers'],'previous-release')
   self.assertEqual(result['rollback'],'restored-exact-owned-runtime-pointers')
-  # A refusal the update agent retries (update_agent.refused_before_restart).
+  # A refusal the update agent retries (update_agent_recovery.refused_before_restart).
   self.assertIn('Native work changed before restart',result['error'])
   for key in ('restartStartedAt','stateBackup','rollbackError'):self.assertNotIn(key,result)
   # The unused copy is removed, so retries do not pile up database copies.
@@ -1190,6 +1190,46 @@ class ApplyRecovery(unittest.TestCase):
   self.prepare_heartbeat();self.scenario='pre-restart-heartbeat'
   with self.assertRaisesRegex(AssertionError,'before restart'):self.execute(True)
   self.assertEqual(self.restart_calls,[]);self.assertTrue(all(path.read_bytes()==value for path,value in self.original.items()))
+ def reconnect_before_restart(self,method,surface,**execute):
+  # A second session reconnects to the old service while the gate settles, after the snapshot.
+  self.prepare_heartbeat();self.on_restart=lambda:None
+  now=datetime.datetime.now(datetime.timezone.utc);db=sqlite3.connect(self.own/'userdata'/'statev2.sqlite')
+  db.execute('INSERT INTO auth_sessions VALUES (?,?,?,?,?,?,?,?)',('second-session',method,surface,(now-datetime.timedelta(days=1)).isoformat(),
+             (now+datetime.timedelta(days=1)).isoformat(),(now-datetime.timedelta(hours=2)).isoformat(),None,b'second-credential'));db.commit()
+  def measure():
+   self.rows=copy.deepcopy(self.rows);self.rows['counts']['auth_sessions']=2;self.rows[update.AUTH_INVARIANT_KEY]='i'*64
+   self.rows['hashes']['auth_sessions']=auth_heartbeat.rows_hash([list(row) for row in db.execute('SELECT * FROM auth_sessions')])
+  measure();self.before['rows']=copy.deepcopy(self.rows)
+  real=update.write_install_gate
+  def gate_then_reconnect(own,home):
+   real(own,home);db.execute("UPDATE auth_sessions SET last_connected_at=? WHERE session_id='second-session'",(datetime.datetime.now(datetime.timezone.utc).isoformat(),))
+   db.commit();measure()
+  try:
+   with patch.object(update,'write_install_gate',side_effect=gate_then_reconnect):self.execute(**execute)
+  finally:db.close()
+ def assert_refused_before_restart(self,error):
+  self.assertEqual(self.restart_calls,[]);self.assertEqual(self.backups,[])
+  self.assertTrue(all(path.read_bytes()==value for path,value in self.original.items()))
+  result=json.loads(self.output.read_text())
+  self.assertEqual((result['phase'],result['pointers']),('pointers-written','previous-release'))
+  self.assertIn(error,result['error'])  # A refusal the update agent retries (RETRYABLE_REFUSALS).
+  for key in ('restartStartedAt','stateBackup','rollbackError'):self.assertNotIn(key,result)
+  self.assertNotIn('second-session',self.output.read_text());self.assertNotIn('second-credential',self.output.read_text())
+ def test_a_phone_app_reconnecting_before_the_restart_refuses_without_restarting(self):
+  # The proof after the restart rejects a phone app's session and would roll the update back.
+  with self.assertRaisesRegex(AssertionError,'Native work changed before restart: auth'):
+   self.reconnect_before_restart('dpop-access-token','mobile',allow_existing_browser_heartbeat=True)
+  self.assert_refused_before_restart('Native work changed before restart: auth')
+ def test_a_desktop_app_reconnecting_before_the_restart_is_proven_and_installs(self):
+  self.reconnect_before_restart('bearer-access-token','desktop',allow_existing_browser_heartbeat=True)
+  result=json.loads(self.output.read_text())
+  self.assertEqual((result['phase'],result['authHeartbeatWitness']['changedRows']),('verified',1))
+  self.assertEqual(len(self.restart_calls),1)
+ def test_without_the_heartbeat_proof_any_reconnect_refuses_before_the_restart(self):
+  # Auth stays byte-exact through the restart then, so a reconnect would only roll it back.
+  with self.assertRaisesRegex(AssertionError,'Native work changed before restart'):
+   self.reconnect_before_restart('bearer-access-token','desktop')
+  self.assert_refused_before_restart('Native work changed before restart')
  def reject_heartbeat_metadata_change(self,field):
   self.prepare_heartbeat()
   def change(after):
@@ -1813,6 +1853,33 @@ class AuthHeartbeatPrestate(unittest.TestCase):
    self.assertNotEqual(before['hashes']['auth_sessions'],after['hashes']['auth_sessions'])
    update.assert_prestate(self.prestate(before),self.prestate(after))
    self.assertTrue(update.same_guarded_rows(before,after))
+ def test_a_reconnect_reporting_its_app_version_does_not_break_the_prestate(self):
+  # A desktop app relaunched into the new release reports its version on its first connect
+  # (AuthSessions.ts setClientConnectionRow), between the agent's snapshot and the apply.
+  with tempfile.TemporaryDirectory() as tmp:
+   state=pathlib.Path(tmp);db=self.fixture(state)
+   db.executescript("ALTER TABLE auth_sessions ADD COLUMN client_surface TEXT;ALTER TABLE auth_sessions ADD COLUMN client_app_version TEXT;UPDATE auth_sessions SET client_surface='desktop',client_app_version='1.0.60';");db.close()
+   before=update.rows_snapshot(state)
+   after=self.snapshot(state,"UPDATE auth_sessions SET client_surface='desktop',client_app_version='1.0.61',last_connected_at='2026-10-11T03:58:00Z'")
+   self.assertNotEqual(before['hashes']['auth_sessions'],after['hashes']['auth_sessions'])
+   self.assertEqual(before[update.AUTH_INVARIANT_KEY],after[update.AUTH_INVARIANT_KEY])
+   update.assert_prestate(self.prestate(before),self.prestate(after))
+   self.assertTrue(update.same_guarded_rows(before,after))
+   changed=self.snapshot(state,"UPDATE auth_sessions SET method='bearer-access-token'")
+   with self.assertRaises(AssertionError):update.assert_prestate(self.prestate(before),self.prestate(changed))
+ def test_a_changed_client_surface_refuses_before_the_restart(self):
+  # The heartbeat proof after the restart classifies sessions by their surface and never accepts
+  # a changed one, so the prestate refuses it first (cheap and retried) instead of a rollback.
+  with tempfile.TemporaryDirectory() as tmp:
+   state=pathlib.Path(tmp);db=self.fixture(state)
+   db.executescript("ALTER TABLE auth_sessions ADD COLUMN client_surface TEXT;ALTER TABLE auth_sessions ADD COLUMN client_app_version TEXT;");db.close()
+   before=update.rows_snapshot(state)
+   for surface in ("'web'","'desktop'"):
+    with self.subTest(surface=surface):
+     after=self.snapshot(state,"UPDATE auth_sessions SET client_surface="+surface+",client_app_version='1.0.61'")
+     self.assertNotEqual(before[update.AUTH_INVARIANT_KEY],after[update.AUTH_INVARIANT_KEY])
+     self.assertFalse(update.same_guarded_rows(before,after))
+     with self.assertRaisesRegex(AssertionError,'Guarded prestate changed'):update.assert_prestate(self.prestate(before),self.prestate(after))
  def test_identity_scope_expiry_or_revocation_changes_still_fail(self):
   for change in ["UPDATE auth_sessions SET revoked_at='2026-10-11T03:58:00Z'","UPDATE auth_sessions SET scopes='admin'",
                  "UPDATE auth_sessions SET expires_at='2027-01-01T00:00:00Z'","UPDATE auth_sessions SET subject='other'",
@@ -1838,7 +1905,8 @@ class AuthHeartbeatPrestate(unittest.TestCase):
    self.assertNotIn('browser-session-cookie',json.dumps(value));self.assertNotIn('owner',json.dumps(value))
  def test_the_pre_restart_rows_check_uses_the_heartbeat_tolerant_comparison(self):
   source=pathlib.Path(update.__file__).read_text()
-  self.assertIn("assert same_guarded_rows(before['rows'], current_rows, current_carried), 'Native work changed before restart'",source)
+  self.assertIn("assert same_guarded_rows(before['rows'], current_rows, current_carried,\n"
+                "                                     auth_heartbeat=allow_existing_browser_heartbeat), 'Native work changed before restart'",source)
   self.assertIn("current_rows, current_carried = rows_since(own / 'userdata', before['rows'])",source)
 class PreflightFailureReceipt(unittest.TestCase):
  def run_main(self, tmp, error=None, writes_progress=False):

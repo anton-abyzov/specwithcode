@@ -14,12 +14,18 @@ final class Recorder<Value: Sendable>: Sendable {
 final class FakeHTTP: HTTPTransport {
   typealias Handler = @Sendable (URLRequest) async throws -> (Int, String)
   private let handler: Handler
+  private let log = Recorder<URLRequest>()
 
   init(_ handler: @escaping Handler) {
     self.handler = handler
   }
 
+  var requests: [URLRequest] { log.values }
+
+  func requests(path: String) -> [URLRequest] { requests.filter { $0.url?.path == path } }
+
   func send(_ request: URLRequest) async throws -> (Data, HTTPURLResponse) {
+    log.append(request)
     let (status, body) = try await handler(request)
     let response = HTTPURLResponse(url: request.url!, statusCode: status, httpVersion: "HTTP/1.1", headerFields: ["Content-Type": "application/json"])!
     return (Data(body.utf8), response)

@@ -206,6 +206,7 @@ import {
 } from "./Sidebar.logic";
 import { sortThreads } from "../lib/threadSort";
 import { SidebarChromeFooter, SidebarChromeHeader } from "./sidebar/SidebarChrome";
+import { requestRestartToUpdate } from "./sidebar/restartToUpdateRequests";
 import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { useIsMobile } from "~/hooks/useMediaQuery";
 import { CommandDialogTrigger } from "./ui/command";
@@ -3672,6 +3673,12 @@ export default function LegacySidebar() {
     }
 
     if (desktopUpdateButtonAction === "install") {
+      // The sidebar's Restart to update installs the service first when it is
+      // behind, so the app never relaunches while the service update runs.
+      if (requestRestartToUpdate()) {
+        setDesktopUpdateActionPending(false);
+        return;
+      }
       let confirmed = false;
       try {
         confirmed = await ensureLocalApi().dialogs.confirm(
@@ -3692,8 +3699,9 @@ export default function LegacySidebar() {
         setDesktopUpdateActionPending(false);
         return;
       }
+      const expectedVersion = desktopUpdateState.downloadedVersion;
       void bridge
-        .installUpdate()
+        .installUpdate(expectedVersion ? { expectedVersion } : undefined)
         .then((result) => {
           if (!shouldToastDesktopUpdateActionResult(result)) return;
           const actionError = getDesktopUpdateActionError(result);

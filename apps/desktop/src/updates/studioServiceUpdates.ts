@@ -1,6 +1,7 @@
 import type {
   DesktopUpdateChannel,
   DesktopUpdatePreferences,
+  StudioServicePendingInstall,
   StudioServiceUpdateState,
   StudioServiceUpdateStatus,
 } from "@specweave-studio/contracts";
@@ -380,6 +381,49 @@ function automaticChecksOff(configText: string | null | undefined): boolean {
 }
 
 /**
+ * The install request in the agent's config that it has not finished, by the
+ * agent's own rules: a cancelled request is gone, and one tied to a version
+ * lapses unstarted after SERVICE_INSTALL_REQUEST_TTL_MS. The agent applies
+ * that lapse only when a pass starts, so a forced request the pass it started
+ * keeps retrying stays pending until its hold ends. One the agent took up
+ * (`handledInstallRequestAt`) stays pending only while it installs; after that
+ * the agent's `lastInstall` is the answer.
+ */
+export function pendingServiceInstall(input: {
+  readonly configText: string | null | undefined;
+  readonly handledAt: unknown;
+  readonly status: StudioServiceUpdateStatus;
+  readonly nowMs: number;
+}): StudioServicePendingInstall | null {
+  if (!input.configText) return null;
+  let config: Partial<ServiceAgentConfig> | null;
+  try {
+    config = JSON.parse(input.configText) as Partial<ServiceAgentConfig> | null;
+  } catch {
+    return null;
+  }
+  const requestedAt = config?.installRequestedAt;
+  const requested = isoMillis(requestedAt);
+  if (config === null || typeof requestedAt !== "string" || requested === null) return null;
+  const cancelled = isoMillis(config.installCancelledAt);
+  if (cancelled !== null && cancelled > requested) return null;
+  const handled = input.handledAt === requestedAt;
+  if (handled && input.status !== "installing") return null;
+  const bound = installRequestRecord(config.installRequest);
+  const version = bound !== null && bound.at === requestedAt ? bound.version : null;
+  const mode: ServiceInstallMode = config.installMode === "force" ? "force" : "normal";
+  const holdUntil = mode === "force" ? stringOrNullValue(config.installHoldUntil) : null;
+  if (!handled && version !== null) {
+    const servedUntil = Math.max(
+      requested + SERVICE_INSTALL_REQUEST_TTL_MS,
+      isoMillis(holdUntil) ?? Number.NEGATIVE_INFINITY,
+    );
+    if (input.nowMs > servedUntil) return null;
+  }
+  return { requestedAt, mode, version, holdUntil, handled };
+}
+
+/**
  * Maps the agent's `state.json` (or its absence) to what Settings shows. With
  * no state yet, the agent's `config.json` decides between "checking soon" and
  * "automatic checks are off", so the row never waits on an agent that will not run.
@@ -388,6 +432,8 @@ export function toServiceUpdateState(input: {
   readonly installation: ManagedServiceInstallation | null;
   readonly stateText: string | null;
   readonly configText?: string | null;
+  /** Decides whether a pending request has lapsed; now when omitted. */
+  readonly nowMs?: number;
 }): StudioServiceUpdateState {
   const empty: StudioServiceUpdateState = {
     status: "not-managed",
@@ -407,18 +453,28 @@ export function toServiceUpdateState(input: {
     identity: input.installation.identity,
     installedVersion: input.installation.version,
   };
+  const nowMs = input.nowMs ?? DateTime.toEpochMillis(DateTime.nowUnsafe());
+  const pending = (status: StudioServiceUpdateStatus, handledAt: unknown) =>
+    pendingServiceInstall({ configText: input.configText, handledAt, status, nowMs });
   if (input.stateText === null) {
-    return automaticChecksOff(input.configText) ? { ...base, status: "disabled" } : base;
+    const status = automaticChecksOff(input.configText) ? "disabled" : base.status;
+    return { ...base, status, pendingInstall: pending(status, null) };
   }
   let record: Record<string, unknown>;
   try {
     const parsed: unknown = JSON.parse(input.stateText);
-    if (typeof parsed !== "object" || parsed === null) return base;
+    if (typeof parsed !== "object" || parsed === null) {
+      return { ...base, pendingInstall: pending(base.status, null) };
+    }
     record = parsed as Record<string, unknown>;
   } catch {
-    return base;
+    return { ...base, pendingInstall: pending(base.status, null) };
   }
-  const status = record.status as StudioServiceUpdateStatus;
+  const status: StudioServiceUpdateStatus = AGENT_STATUSES.has(
+    record.status as StudioServiceUpdateStatus,
+  )
+    ? (record.status as StudioServiceUpdateStatus)
+    : "starting";
   const lastInstallRecord =
     typeof record.lastInstall === "object" && record.lastInstall !== null
       ? (record.lastInstall as Record<string, unknown>)
@@ -435,7 +491,7 @@ export function toServiceUpdateState(input: {
         }
       : null;
   return {
-    status: AGENT_STATUSES.has(status) ? status : "starting",
+    status,
     identity: input.installation.identity,
     installedVersion: stringOrNull(record.installedVersion) ?? input.installation.version,
     availableVersion: stringOrNull(record.availableVersion),
@@ -445,6 +501,7 @@ export function toServiceUpdateState(input: {
     message: stringOrNull(record.message),
     lastInstall,
     updatedAt: stringOrNull(record.updatedAt),
+    pendingInstall: pending(status, record.handledInstallRequestAt),
   };
 }
 

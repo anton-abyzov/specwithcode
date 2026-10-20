@@ -20,7 +20,7 @@ import {
 } from "effect/http";
 import * as Socket from "effect/socket/Socket";
 
-import { authenticateMediaRequest } from "../auth/http.ts";
+import { authenticateMediaRequest, serveSocketUntilSessionEnds } from "../auth/http.ts";
 import { assetResponseHeaders } from "../http.ts";
 import * as PreviewBrowserHost from "./PreviewBrowserHost.ts";
 import * as ServerBrowser from "./ServerBrowser.ts";
@@ -185,7 +185,12 @@ const makeHandler = (browser: ServerBrowser.ServerBrowser["Service"]) =>
         const receiveInput = reader.pull.pipe(
           Effect.flatMap((chunks) => Effect.forEach(chunks, receive, { discard: true })),
         );
-        return yield* Effect.raceFirst(Effect.forever(sendOutput), Effect.forever(receiveInput));
+        yield* serveSocketUntilSessionEnds(
+          socket,
+          session,
+          Effect.raceFirst(Effect.forever(sendOutput), Effect.forever(receiveInput)),
+        );
+        return HttpServerResponse.empty();
       }),
     ).pipe(
       Effect.catchTags({

@@ -57,7 +57,7 @@ if args.snapshot:
         import time
         time.sleep(control['snapshotSleep'])
     if control.get('snapshotFail') or snapshots <= control.get('snapshotFailures', 0) \
-            or (control.get('snapshotFailAfterApply') and applies):
+            or snapshots in control.get('snapshotFailCalls', ()) or (control.get('snapshotFailAfterApply') and applies):
         sys.stderr.write(control.get('snapshotError', 'AssertionError: Native work is not idle') + '\n')
         sys.exit(1)
     assert not os.path.exists(args.snapshot)

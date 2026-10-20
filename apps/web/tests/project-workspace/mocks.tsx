@@ -33,6 +33,13 @@ import { selectThreadRightPanelState, useRightPanelStore } from "../../src/right
 import { parseStudioThreadHref } from "@specweave-studio/shared/studioThreadLinks";
 import { StudioThreadLink } from "../../src/components/StudioThreadLink";
 import { reportKey } from "@specweave-studio/shared/threadReport";
+import {
+  knowledgeLoadedAt,
+  knowledgeReindex,
+  knowledgeSearchResult,
+  knowledgeServerConfig,
+  knowledgeStatus,
+} from "./knowledge-fixture";
 // `?fresh` is a project nobody has worked in yet; `?fresh=empty` is one whose folder is empty too.
 const recovery = new URLSearchParams(window.location.search).get("recovery");
 const recoveryFailureId =
@@ -1008,8 +1015,12 @@ export const useEnvironment = (environmentId) => ({
             ],
           },
         }),
+  ...(knowledgeServerConfig ? { serverConfig: knowledgeServerConfig } : {}),
 });
 export const useEnvironmentScope = () => true;
+// Threads never move between projects in this fixture.
+export const waitForThreadMoveOutcome = async () => null;
+export const useEnvironmentScopeAccess = () => "granted";
 export const useEnvironmentsWithScope = (environments) =>
   new Set(environments.map((environment) => environment.environmentId));
 const connections = [];
@@ -1129,13 +1140,20 @@ export const useEnvironmentQuery = (q) => ({
                           // Real VCS status atoms land here too: an empty working tree.
                           workingTree: { files: [] },
                         }
-                      : undefined,
+                      : q?.kind === "knowledge"
+                        ? knowledgeStatus()
+                        : undefined,
+  dataUpdatedAt: knowledgeLoadedAt,
+  error: null,
   refresh: () => {},
   isPending: false,
 });
 window.__projectCalls = [];
 export const useAtomCommand = (command) => async (args) => {
   window.__projectCalls.push({ command, args });
+  if (command === "knowledgeSearch")
+    return { _tag: "Success", value: knowledgeSearchResult(args.input.query) };
+  if (command === knowledgeReindex) return { _tag: "Success", value: knowledgeStatus("indexing") };
   if (command === "threadReportSave") {
     const key = reportKey(args.input.threadId, args.input.text);
     if (!savedReports.some((report) => report.key === key)) {
@@ -1239,6 +1257,9 @@ export const projectWorkspace = withFallback({
   send: "send",
   memoryWrite: "memoryWrite",
   memoryDelete: "memoryDelete",
+  knowledge: () => ({ kind: "knowledge" }),
+  knowledgeSearch: "knowledgeSearch",
+  knowledgeReindex,
 });
 export const projectEnvironment = withFallback({
   update: "update",
@@ -1616,6 +1637,8 @@ export const environmentThreadShells = fixtureAnything("environmentThreadShells"
 export const projectContentSearch = fixtureAnything("projectContentSearch");
 export const readProjects = fixtureAnything("readProjects");
 export const readThreadShell = fixtureAnything("readThreadShell");
+export const waitForThreadMoveOutcome = async () => null;
+export const readEnvironmentSupportsProjectMove = () => false;
 export const useThreadShell = (ref) =>
   useThreadShells().find(
     (shell) => shell.environmentId === ref?.environmentId && shell.id === ref?.threadId,
@@ -1628,6 +1651,7 @@ export const readEnvironmentSupportsSettlement = fixtureAnything(
   "readEnvironmentSupportsSettlement",
 );
 export const readEnvironmentSupportsSnooze = fixtureAnything("readEnvironmentSupportsSnooze");
+export const readEnvironmentSupportsProjectMove = () => false;
 export const readEnvironmentSupportsTitleRegeneration = fixtureAnything(
   "readEnvironmentSupportsTitleRegeneration",
 );

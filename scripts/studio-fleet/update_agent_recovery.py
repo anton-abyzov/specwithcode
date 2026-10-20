@@ -217,6 +217,21 @@ def installation_fingerprint(agent):
         return None
 
 
+def refused_before_restart(agent, receipt, version):
+    """The helper stopped before restarting the service because work or a process beneath it
+    changed after the snapshot, and every pointer is as it was: running it again is safe."""
+    ua = _ua(agent)
+    try:
+        value = ua.read_json(receipt, agent.home)
+        inst = ua.load_installation(agent.home, agent.identity)
+    except ua.AgentError:
+        return False
+    error = value.get('error') if isinstance(value, dict) else None
+    retryable = isinstance(error, str) and any(phrase in error for phrase in ua.RETRYABLE_REFUSALS + ua.PROCESS_REFUSALS)
+    return (retryable and value.get('pointers') in ('unchanged', 'previous-release') and inst['version'] != version
+            and not any(key in value for key in ('restartStartedAt', 'rollbackError', 'stateBackup')))
+
+
 def refusal_proof(agent, receipt, before):
     ua = _ua(agent)
     try:
@@ -269,6 +284,14 @@ def verified_transition(agent, last):
     return (last.get('version') == agent.inst['version']
             and last.get('sourceCommit') == agent.inst['sourceCommit']
             and not agent.failed_switch_stands(last))
+
+
+def holds(agent, last):
+    """A failed install that holds automatic installs until Install now. An install request the
+    helper refused before the restart, with every pointer as it was, changed nothing: automatic
+    installs go on, each needing its own quiet checks and bounded by record_refusal."""
+    return (last.get('result') == 'failed' and last.get('refusedBeforeRestart') is not True
+            and not verified_transition(agent, last))
 
 
 def completion_proof(agent, receipt, source=None, previous_source=None):
@@ -369,6 +392,22 @@ def automatic_retry(agent, verified):
     return None
 
 
+def withdrawn(agent, version):
+    """Re-reads the settings: the (status, message) ending the pass once the request is gone or changed.
+    A newer request that may install `version` is taken on: agent.config becomes its settings."""
+    ua = _ua(agent)
+    try:
+        config = ua.load_config(agent.updates, agent.home)
+    except ua.AgentError:
+        return None
+    request, agent.config = agent.config['installRequestedAt'], config
+    if config['installRequestedAt'] is not None and not ua.install_cancelled(config):
+        return ua.update_request.replaced(request, config, agent.state, version, ua.utcnow())
+    agent.state['handledInstallRequestAt'] = config['installRequestedAt'] or request
+    agent.state['quietSince'] = None
+    return 'downloaded', ua.CANCELLED
+
+
 def automatic_withdrawn(agent, verified):
     """Re-read mutable consent immediately after snapshots and immediately before apply."""
     ua = _ua(agent)
@@ -380,7 +419,7 @@ def automatic_withdrawn(agent, verified):
         agent.state['automaticRetry'] = None
         return 'downloaded', 'Automatic installation stopped because update settings changed.'
     last = agent.state.get('lastInstall') or {}
-    if last.get('result') == 'failed' and not verified_transition(agent, last):
+    if holds(agent, last):
         held = automatic_retry(agent, verified)  # A slow snapshot can outlive the bounded retry window.
         if held:
             return 'error', held

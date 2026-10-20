@@ -74,8 +74,20 @@ public struct MachineSummary: Identifiable, Hashable, Sendable {
   /// Online, but the machine's projects and threads are not live right now:
   /// the app is catching up or subscribing again after a failed stream.
   public var isStale: Bool
+  /// Reached through SpecWithCode Connect, the signed-in account.
+  public var viaConnect: Bool
+  /// The account signed out; signing in again reconnects it.
+  public var needsSignIn: Bool
+  /// When SpecWithCode Connect last checked an offline computer.
+  public var checkedAt: Date?
+  /// Paired with a link or QR code, so it has a pairing that expires.
+  public var hasDirectPairing: Bool
 
-  public init(id: String, label: String, status: MachineStatus, platform: String? = nil, serverVersion: String? = nil, address: String? = nil, tokenDaysLeft: Int? = nil, isStale: Bool = false) {
+  public init(id: String, label: String, status: MachineStatus, platform: String? = nil, serverVersion: String? = nil, address: String? = nil, tokenDaysLeft: Int? = nil, isStale: Bool = false, viaConnect: Bool = false, needsSignIn: Bool = false, checkedAt: Date? = nil, hasDirectPairing: Bool? = nil) {
+    self.hasDirectPairing = hasDirectPairing ?? !viaConnect
+    self.viaConnect = viaConnect
+    self.needsSignIn = needsSignIn
+    self.checkedAt = checkedAt
     self.id = id
     self.label = label
     self.status = status
@@ -378,6 +390,17 @@ public protocol AppEngine: AnyObject {
   func saveProjectSettings(_ draft: ProjectSettingsDraft, for project: ProjectRef) async throws
   func loadMachineSettings(_ machineId: String) async throws -> MachineSettings
   func saveMachineSettings(_ settings: MachineSettings, for machineId: String) async throws
+
+  /// Signs in to SpecWithCode Connect and adds the account's computers.
+  func connectSignIn(with method: ConnectSignInMethod) async throws
+  /// Signs out and forgets the computers that came from the account.
+  func connectSignOut() async
+  /// Deletes the SpecWithCode account, then signs out.
+  func connectDeleteAccount() async throws
+  /// Lists the account's computers again.
+  func connectRefresh() async
+  /// Hands over the APNs device token so the relay can send notifications.
+  func connectSetPushToken(_ token: Data)
 }
 
 extension AppEngine {
@@ -393,6 +416,12 @@ extension AppEngine {
     close(session)
     open(session)
   }
+
+  public func connectSignIn(with method: ConnectSignInMethod) async throws {}
+  public func connectSignOut() async {}
+  public func connectDeleteAccount() async throws {}
+  public func connectRefresh() async {}
+  public func connectSetPushToken(_ token: Data) {}
 }
 
 /// Everything the UI shows outside an open conversation.
@@ -412,6 +441,8 @@ public final class AppModel {
   /// False while a paired machine's projects and threads have not arrived
   /// yet, so a missing Aide or project may only be missing for now.
   public var allShellsLoaded = true
+  /// SpecWithCode Connect, nil when this build has no Connect configuration.
+  public var connect: ConnectState?
   public var appearance: AppearancePreference {
     didSet { UserDefaults.standard.set(appearance.rawValue, forKey: "appearance") }
   }

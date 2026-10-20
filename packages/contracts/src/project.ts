@@ -592,9 +592,35 @@ export class ProjectReadFileError extends Schema.TaggedError<ProjectReadFileErro
         decodedProjectErrorMessage(props) ??
         (props.reason === "protected"
           ? `Workspace file '${props.relativePath}' is a protected credential or app state file and cannot be read here.`
-          : `Failed to read workspace file '${props.relativePath}' in '${props.cwd}'.`),
+          : readFileFailureMessage(props)),
     } as any);
   }
+}
+
+/** A host path a read named outright, which no workspace qualifies. */
+const isAbsoluteReadPath = (path: string) => path.startsWith("/") || /^[A-Za-z]:[\\/]/.test(path);
+
+/** Whether a failure's cause chain is a path that is not there (`ENOENT`, `ENOTDIR`). */
+function isMissingPathCause(cause: unknown): boolean {
+  let current = cause;
+  for (let depth = 0; depth < 3 && typeof current === "object" && current !== null; depth++) {
+    const code = (current as { readonly code?: unknown }).code;
+    if (code === "ENOENT" || code === "ENOTDIR") return true;
+    current = (current as { readonly cause?: unknown }).cause;
+  }
+  return false;
+}
+
+function readFileFailureMessage(props: ProjectFileFailureContext): string {
+  const absolute = isAbsoluteReadPath(props.relativePath);
+  if (props.failure === "operation_failed" && isMissingPathCause(props.cause)) {
+    return absolute
+      ? `File not found: '${props.relativePath}'.`
+      : `File not found: '${props.relativePath}' in '${props.cwd}'.`;
+  }
+  return absolute
+    ? `Failed to read file '${props.relativePath}'.`
+    : `Failed to read workspace file '${props.relativePath}' in '${props.cwd}'.`;
 }
 
 export const ProjectWriteFileInput = Schema.Struct({

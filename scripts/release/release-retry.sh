@@ -1,6 +1,7 @@
 # Sourced by release.sh: the one retry a flaky stage-1 job or server test file gets. Each failed
 # job or file runs once more on the same candidate; a second failure fails the stage as before.
-# Uses release.sh's say, q, x, pool, record_retry and its globals (STAGE, SHA12, RETRY, ...).
+# Uses release.sh's say, q, x, pool, record_retry and its globals (STAGE, SHA12, RETRY,
+# RETRIED_JOBS, ...).
 
 # retry_jobs OUT SPEC...: each failed job once more, one at a time, on the same candidate. The
 # first tries move to OUT/try-1; a job that passes now was a flake and is recorded as one.
@@ -36,8 +37,10 @@ retry_jobs() {
   done
 }
 
-# run_group OUT SPEC...: the jobs, then one retry of the failures when they look like a flake
-# (at most RETRY_MAX_JOBS); more failures than that are a break, and a retry would only cost time.
+# run_group OUT SPEC...: the jobs, then one retry of the failures when they look like a flake: at
+# most RETRY_MAX_JOBS in the whole stage, so the last attempt's failures, run first as a group of
+# their own, and the rest share the cap (RETRIED_JOBS, reset by stage_stage1). More failures than
+# that are a break, and a retry would only cost time.
 run_group() {
   local out="$1" spec bad=()
   shift
@@ -50,9 +53,10 @@ run_group() {
   printf '%s\n' "${bad[@]%%|*}" > "$STAGE/stage1/failed.txt"
   if [ "$RETRY" -eq 0 ]; then
     say "stage1: ${#bad[@]} job(s) failed; --no-retry, so none runs again"
-  elif [ ${#bad[@]} -gt "$RETRY_MAX_JOBS" ]; then
-    say "stage1: ${#bad[@]} jobs failed, more than $RETRY_MAX_JOBS: a break, not a flake; no retry"
+  elif [ $((RETRIED_JOBS + ${#bad[@]})) -gt "$RETRY_MAX_JOBS" ]; then
+    say "stage1: $((RETRIED_JOBS + ${#bad[@]})) job(s) failed in this stage, more than $RETRY_MAX_JOBS: a break, not a flake; no retry"
   else
+    RETRIED_JOBS=$((RETRIED_JOBS + ${#bad[@]}))
     retry_jobs "$out" "${bad[@]}"
   fi
 }

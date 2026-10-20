@@ -8,20 +8,26 @@ prepareServiceUpdate call Update now makes), so running tasks are interrupted, q
 cancelled and terminals closed, and no new work starts; then one forced request bound to the
 version with a 15-minute hold. Its agent retries the snapshot every 10 seconds instead of
 waiting for a quiet period, and because the request was made during the service's hold, it may
-stop processes the drain left behind (update.py --reap). When the agent has not found the
-release at the first request, the rollout holds and asks again as soon as it has. A service
-that cannot be held is never asked unheld: an installed release older than 1.0.45 has no
-`service prepare-update` (PREPARE_UPDATE_SINCE), so the rollout refuses before it asks M4
-anything, and a service that does not answer, refuses or does not hold stops the rollout before
-that request. An unheld forced request never stops running work and leaves update.py --reap
+stop processes the drain left behind (update.py --reap). Until the agent offers the release, M4
+is only asked to check (checkRequestedAt and a kickstart, as the desktop's Check now does), not
+to install: the hold inserts its own session row (servicePrepareUpdate.ts), which would land
+between the snapshot and the apply of a request written before it and fail the guarded
+prestate. A service that cannot be held is never asked unheld: an installed release older than
+1.0.45 has no `service prepare-update` (PREPARE_UPDATE_SINCE), so the rollout refuses before it
+asks M4 anything, and a service that does not answer, refuses or does not hold stops the rollout
+before that request. An unheld forced request never stops running work and leaves update.py --reap
 nothing it may stop, so a busy M4 waits for quiet and its guarded checks fail as new work starts.
 The message names the safe path (UNSUPPORTED_PATH): Update now in the app on M4 holds the same
 way, then `--only workers`. `--no-hold` is the explicit opt-in to an unheld forced request.
 The script polls the installed version and finalized guarded receipt, never 'downloaded',
 and asks again (holding again first) only after the hold has ended, because each new request
 restarts the agent's escalation. An install already under way for the version is joined, not
-asked again or held. A rollout that gives up on M4 releases the hold it took, unless the agent
-is installing, so work can start again.
+asked again or held, and its failure stops the rollout like a failure of its own request. A
+rollout that gives up cancels the forced request it wrote, while that is still the pending one
+(update_request.py cancel), and on M4 then releases the hold it took, as Cancel update does, once
+the state read again shows nothing needs it: the hold stays while the agent installs and while a
+forced request is still pending (its own when the cancel failed, or one Update now wrote since),
+so no forced request runs unheld.
 
 M1 and M3 restart their tunnels to M4 when they update, and auth or orchestration events in
 the middle of M4's snapshot and apply fail its guarded prestate, so they are asked only after
@@ -84,7 +90,7 @@ PENDING_STATUSES = ('available', 'downloading', 'downloaded', 'waiting-for-quiet
 
 
 class RolloutError(Exception):
-    pass
+    reply = None  # The host's error answer; it names a request written before a kickstart failed.
 
 
 class HoldUnavailable(Exception):
@@ -152,7 +158,9 @@ class Host(object):
         if not isinstance(value, dict):
             raise RolloutError('%s gave no answer (exit %d)' % (self.identity, result.returncode))
         if result.returncode != 0 or 'error' in value:
-            raise RolloutError('%s: %s' % (self.identity, value.get('error') or 'exit %d' % result.returncode))
+            error = RolloutError('%s: %s' % (self.identity, value.get('error') or 'exit %d' % result.returncode))
+            error.reply = value
+            raise error
         return value
 
 
@@ -296,8 +304,8 @@ class Printer(object):
 
 def failed_since(status, version, since, changed_attempt=False):
     """True when the agent recorded a failed install of `version` at or after `since` (the host's
-    time of this rollout's first request), or a joined automatic attempt wrote a new result.
-    An install left running past its timeout is not a completed failure."""
+    time of this rollout's first request or check), or a joined automatic attempt wrote a new
+    result. An install left running past its timeout is not a completed failure."""
     last = status.get('lastInstall')
     if not isinstance(last, dict) or last.get('version') != version or last.get('result') != 'failed':
         return False
@@ -316,24 +324,29 @@ def left_running(status, version, since):
     return at is not None and at >= since and 'left to finish' in (status.get('message') or '')
 
 
-def requested_by_update_now(status, version, now=None):
-    """True while a forced, held request for `version` stands on the host, as Update now (or an
-    earlier rollout) writes it: not cancelled since, and its hold not yet run out."""
-    request = status.get('installRequest') or {}
-    if request.get('version') != version or status.get('installMode') != 'force':
-        return False
+def forced_pending(status, now=None):
+    """True while a forced request stands on the host: not cancelled since, and its hold not yet
+    run out. The agent's retries and update.py --reap rely on the service hold made for it."""
     asked = update_request._time(status.get('installRequestedAt'))
     cancelled = update_request._time(status.get('installCancelledAt'))
     until = update_request._time(status.get('installHoldUntil'))
-    if asked is None or until is None or (cancelled is not None and cancelled >= asked):
+    if status.get('installMode') != 'force' or asked is None or until is None \
+            or (cancelled is not None and cancelled >= asked):
         return False
     return until > (now or datetime.datetime.now(datetime.timezone.utc))
 
 
+def requested_by_update_now(status, version, now=None):
+    """True while a forced, held request for `version` stands on the host, as Update now (or an
+    earlier rollout) writes it: not cancelled since, and its hold not yet run out."""
+    return (status.get('installRequest') or {}).get('version') == version and forced_pending(status, now)
+
+
 def roll_host(identity, call, version, force, hold_minutes, deadline, poll, clock, sleep, say, hold=None):
     """Asks one host for `version` and waits until it reports it installed. With `hold` (M4's
-    ServiceHold), each forced request is preceded by Update now's drain and hold once the agent
-    offers `version`, and a rollout that gives up releases the hold it took."""
+    ServiceHold), each forced request follows Update now's drain and hold, which waits until the
+    agent offers `version`; before that the agent is only asked to check. A rollout that gives up
+    cancels the forced request it wrote and releases the hold it took once nothing needs it."""
     begin = clock()
     status = call(['status', '--identity', identity])
     current = status.get('version')
@@ -346,14 +359,11 @@ def roll_host(identity, call, version, force, hold_minutes, deadline, poll, cloc
     holder = [hold if force else None]
     took = [False]  # This rollout holds (or held) the service.
     sent = [0]  # Requests this rollout wrote.
+    written = [None]  # installRequestedAt of the last forced request this rollout wrote.
 
     def unheld(reason):
         """A wanted hold that cannot be taken stops the rollout before any further forced request."""
-        if sent[0]:
-            outcome = ('its earlier forced request for %s is still pending and waits for quiet; '
-                       'choose Cancel update on M4 if it should not install' % version)
-        else:
-            outcome = 'it was not asked to install'
+        outcome = 'it was not asked again' if sent[0] else 'it was not asked to install'
         return RolloutError('%s: could not hold the service for %s (%s), so %s. %s' % (
             identity, version, reason, outcome, UNSUPPORTED_PATH % {'version': version}))
 
@@ -376,7 +386,15 @@ def roll_host(identity, call, version, force, hold_minutes, deadline, poll, cloc
         argv = ['request', '--identity', identity, '--version', version, '--kickstart']
         if force:
             argv += ['--force', '--hold-minutes', str(hold_minutes)]
-        reply = call(argv)
+        reply = {}
+        try:
+            reply = call(argv)
+        except RolloutError as error:
+            reply = error.reply or {}  # It names a request written before launchctl refused to start the agent.
+            raise
+        finally:
+            if force:  # The last forced request is the one a give-up cancels.
+                written[0] = (reply.get('request') or {}).get('installRequestedAt') or written[0]
         sent[0] += 1
         mode = 'forced, held %d min' % hold_minutes if force else 'version-bound'
         say('%s: asked to install %s (%s) on %s' % (identity, version, mode, current or 'an unknown version'))
@@ -386,14 +404,56 @@ def roll_host(identity, call, version, force, hold_minutes, deadline, poll, cloc
             first[0] = update_request._time((reply.get('request') or {}).get('installRequestedAt'))
         return clock()
 
+    def check():
+        """Asks the agent only to look for the release (Check now), so nothing is asked to install
+        before the service is held."""
+        reply = call(['check', '--identity', identity, '--kickstart'])
+        say('%s: the agent does not offer %s yet; asked it to check, and the service is held once it does'
+            % (identity, version))
+        if first[0] is None:  # It may install what it finds on its own; a failure from here on counts.
+            first[0] = update_request._time((reply.get('request') or {}).get('checkRequestedAt'))
+        return clock()
+
+    def busy(status):
+        """Why the hold is the service's now, or None: an install under way ends it, a restart ended it."""
+        if status.get('status') == 'installing':
+            return 'the agent is installing'
+        return 'it restarted' if status.get('version') == version else None
+
     def release(status):
-        """A rollout that gives up lets work start again, unless the agent is installing (the
-        hold ends with that install) or the service already restarted (the hold ended with it)."""
+        """A rollout that gives up cancels the forced request it wrote, while that is still the
+        pending one, then lets work start again the way Cancel update does: only once the state,
+        read again after the cancel, shows nothing that needs the hold. It stays while the agent
+        installs (the hold ends with that install), once the service restarted (it ended with it)
+        and while a forced request is pending (its own when the cancel failed, or one Update now
+        wrote since), so that request never runs unheld."""
+        reason = busy(status)
+        if reason:
+            if took[0] and hold is not None:
+                say('%s: left the hold to the service: %s' % (identity, reason))
+            return
+        if written[0] is not None:  # Before the hold ends, so the request never runs unheld.
+            try:
+                call(['cancel', '--identity', identity, '--request', written[0]])
+                say('%s: cancelled its forced request for %s' % (identity, version))
+            except RolloutError as error:
+                say('%s: WARNING: could not cancel its forced request for %s (%s)' % (identity, version, error))
         if not took[0] or hold is None:
             return
-        if status.get('status') == 'installing' or status.get('version') == version:
-            say('%s: left the hold to the service: %s' % (
-                identity, 'the agent is installing' if status.get('status') == 'installing' else 'it restarted'))
+        try:  # The last poll can be a poll interval old, and the cancel may not have gone through.
+            status = call(['status', '--identity', identity])
+        except RolloutError as error:
+            say('%s: WARNING: left the hold, as the agent state could not be read again (%s); it ends on its '
+                'own within 15 minutes' % (identity, error))
+            return
+        reason = busy(status)
+        if reason:
+            say('%s: left the hold to the service: %s' % (identity, reason))
+            return
+        if forced_pending(status):
+            say('%s: left the hold to the forced request still pending (asked at %s), so it never runs unheld; '
+                'it ends with that install, on its own within 15 minutes, or with Cancel update in the app on %s'
+                % (identity, status.get('installRequestedAt'), identity.upper()))
             return
         try:
             hold.release()
@@ -414,12 +474,19 @@ def roll_host(identity, call, version, force, hold_minutes, deadline, poll, cloc
             held_request, asked, requests = False, clock(), 0
         else:
             supported, reason = holder[0].support() if holder[0] is not None else (True, None)
-            if not supported:  # Before the first request, even one asked before the agent offers it.
+            if not supported:  # Before the first request or check.
                 raise unheld(reason)
             held_request = drain(status)
-            if holder[0] is not None and not held_request and not offers(status, version):
-                say('%s: the agent does not offer %s yet; the service is held once it does' % (identity, version))
-            asked, requests = ask(), 1
+            if held_request or holder[0] is None:
+                asked, requests = ask(), 1
+            elif status.get('status') == 'installing':  # Never a forced request before the hold.
+                # The install under way, not joined (automatic, or its hold ran out): the agent
+                # saved 'installing' before it started, so its failure, dated after, is reported
+                # here instead of draining and asking for the release that just failed.
+                first[0] = update_request._time(status.get('updatedAt'))
+                asked, requests = clock(), 0
+            else:  # Never a forced request before the hold: a check until the agent offers it.
+                asked, requests = check(), 0
         seen, failures = None, 0
         while True:
             if clock() - begin >= deadline:
@@ -466,15 +533,23 @@ def roll_host(identity, call, version, force, hold_minutes, deadline, poll, cloc
             if joined or status.get('version') == version:
                 continue
             if not held_request and drain(status):
-                # The agent found the release after the first request: ask again during the hold,
-                # so that request may reap what the drain left behind.
+                # The agent offers the release now: the forced request follows the hold, so the
+                # snapshot its apply is checked against already counts the hold's session row.
                 held_request, asked, requests = True, ask(), requests + 1
                 continue
-            if clock() - asked >= window:
-                say('%s: the %s window ended without an install; asking once more' % (identity, 'hold' if force else 'request'))
-                held_request = drain(status)
-                asked = ask()
-                requests += 1
+            if clock() - asked < window:
+                continue
+            if holder[0] is not None and status.get('status') == 'installing':
+                continue  # The install under way ends the hold; a request now would follow no drain.
+            if holder[0] is not None and not held_request:
+                asked = check()  # Still not offered.
+                continue
+            say('%s: the %s window ended without an install; asking once more' % (identity, 'hold' if force else 'request'))
+            held_request = drain(status)
+            if held_request or holder[0] is None:
+                asked, requests = ask(), requests + 1
+            else:  # It no longer offers the release.
+                asked = check()
     except (RolloutError, KeyboardInterrupt):
         release(status)
         raise

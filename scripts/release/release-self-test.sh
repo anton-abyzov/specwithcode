@@ -3,8 +3,9 @@
 #
 # Everything runs in a new temporary folder with RELEASE_STUB=1, so release.sh records each
 # command in <staging>/<version>/stub.log instead of running it: no network, no signing, no
-# GitHub release, no fleet request and no desktop app is touched. Covered: argument errors,
-# the dry-run (nothing written), stage order, resume after a failed stage, refusing a second run
+# GitHub release, no fleet request and no desktop app is touched. Covered: argument errors (and
+# the shard count and retry caps from the environment), the dry-run (nothing written), stage
+# order, stage 1's launch order, resume after a failed stage, refusing a second run
 # and a staging folder release.sh did not make, a new candidate rerunning only per-candidate
 # stages with the server suite on --changed, stage 1 rerunning its failures first, refusing a
 # new candidate once published, missing release-gates interfaces, a failed lookup of the previous
@@ -17,8 +18,12 @@
 # publishing, the previous release's digests file, the public clone's noreply identity and a --ci
 # rerun removing the bump-only release branch a failed run left, and every stubbed command existing.
 # And the one retry of a flaky test: a stage-1 job or server file that fails once passes as a
-# FLAKE, one that fails twice fails the stage, too many failures or a crashed shard get no retry,
-# --no-retry turns it off, and every retry is in retries.jsonl and the timing table.
+# FLAKE, one that fails twice fails the stage, too many failures in the whole stage or a crashed
+# shard get no retry, --no-retry turns it off (restarting a suite already running with retries,
+# once its whole process group is gone), server-wait waits for a suite still running and names
+# only its own run's flakes, and every retry is in retries.jsonl and the timing table. And the
+# desktop stage: it waits for the app's own update (its swap, or Squirrel.Mac's ShipIt) and moves
+# aside, without a snapshot, an app on the release that fails its signature check.
 set -euo pipefail
 
 HERE="$(cd "$(dirname "$0")" && pwd)"
@@ -197,6 +202,23 @@ arguments_ok() {
   has 'Stages, in order' && has '--resume'
 }
 check 'bad arguments exit 2 and --help prints the usage' arguments_ok
+# The shard count and retry caps come from the environment and are checked with the arguments.
+environment_ok() {
+  local bad
+  for bad in RELEASE_SERVER_SHARDS=0 RELEASE_SERVER_SHARDS=7 RELEASE_SERVER_SHARDS=four; do
+    STUB_ENV=(HOME="$ARGS_HOME" RELEASE_STUB= "$bad")
+    run 2 1.2.0 && has 'RELEASE_SERVER_SHARDS must be 1 to 6' || return 1
+  done
+  for bad in RELEASE_RETRY_MAX_JOBS=two RELEASE_RETRY_MAX_FILES=-1 RELEASE_RETRY_MAX_FILES=5x; do
+    STUB_ENV=(HOME="$ARGS_HOME" RELEASE_STUB= "$bad")
+    run 2 1.2.0 && has 'RELEASE_RETRY_MAX_JOBS and RELEASE_RETRY_MAX_FILES must be numbers' || return 1
+  done
+  STUB_ENV=(HOME="$ARGS_HOME" RELEASE_STUB= RELEASE_STAGING_ROOT= RELEASE_TREES= RELEASE_ENV=
+    RELEASE_SERVER_SHARDS=6 RELEASE_RETRY_MAX_JOBS=3 RELEASE_RETRY_MAX_FILES=0)
+  run 0 9.9.9 --dry-run && has 'test-sharded.mjs --shards 6' && has '(at most 3 in the stage)' &&
+    has 'when at most 0 files failed'
+}
+check 'RELEASE_SERVER_SHARDS outside 1 to 6 and retry caps that are not numbers exit 2; good ones are used' environment_ok
 check 'argument errors write nothing' test -z "$(find "$ARGS_HOME" -mindepth 1 -print -quit)"
 
 # ---------------------------------------------------------------- dry-run
@@ -255,6 +277,9 @@ check 'a failed stage stops the run and leaves earlier stages marked' first_ok
 check 'the failed run kept its log and timings' grep -q '"stage": "sign"' "$STAGE/timings/stages.json"
 check 'the first server run is a full run (no --changed)' \
   sh -c "grep '^server' '$STUB_LOG' | grep -q 'test-sharded.mjs' && ! grep '^server' '$STUB_LOG' | grep -q -- '--changed'"
+check "a full server run prints a shard-weights refresh that writes the checkout it runs in, not the test tree's copy" \
+  grep -qF -- "--root $M/trees.noindex/test/apps/server --out apps/server/src/testUtils/shardWeights.json $STAGE/server/" \
+  "$STAGE/logs/server.log"
 check 'stage 1 ran contrast, every package, typecheck and fleet' \
   sh -c "grep -c '^stage1' '$STUB_LOG' | grep -qx 5"
 
@@ -743,6 +768,24 @@ merge_check_refused() {
 check 'a failed required check on the release PR stops the merge' merge_check_refused
 stub_set RELEASE_STUB_OUTPUT=
 
+# ---------------------------------------------------------------- stage 1: launch order
+
+# Contrast first, shortest as it is, then the longest jobs by the last times known (here the
+# previous release's). One job at a time, so the stub log keeps the order they started in.
+L="$WORK/l"
+make_machine "$L"
+use_machine "$L" 1.8.0
+mkdir -p "$STAGING/1.1.0/stage1/aaaaaaaaaaaa-1"
+for job in contrast:1 apps_web:20 packages_shared:90 typecheck:300 fleet:200; do
+  printf '%s\n' "${job#*:}" > "$STAGING/1.1.0/stage1/aaaaaaaaaaaa-1/${job%%:*}.secs"
+done
+stub_set RELEASE_JOBS=1
+stage1_order_ok() {
+  run 0 1.8.0 --stop-after stage1 || return 1
+  [ "$(labels_of stage1)" = "contrast typecheck-gate fleet-tests test:packages/shared test:apps/web " ]
+}
+check "stage 1 starts contrast first, then the longest jobs by the last run's times" stage1_order_ok
+
 # ---------------------------------------------------------------- flaky tests: one retry
 
 F="$WORK/f"
@@ -761,6 +804,24 @@ stage1_flake_ok() {
     grep -qE '^fleet +FLAKE' "$STAGE/logs/stage1.log" && ls "$STAGE"/stage1/*/try-1/fleet.exit > /dev/null
 }
 check 'a stage-1 job that fails once runs again, alone, and passes as a FLAKE' stage1_flake_ok
+
+# Two jobs that fail once: only those two run again, once the whole group is done, one after the
+# other, and both pass as FLAKEs.
+use_machine "$F" 1.5.17
+stub_set "RELEASE_STUB_FAIL_ONCE=stage1:fleet-tests stage1:typecheck-gate"
+stage1_two_flakes_ok() {
+  run 0 1.5.17 --stop-after stage1 || return 1
+  has 'stage1: FLAKE typecheck' && has 'stage1: FLAKE fleet' && has '2 flakes: typecheck, fleet' || return 1
+  [ "$(grep -c '"result": "passed"' "$STAGE/timings/retries.jsonl")" = 2 ] || return 1
+  case "$(awk -F '\t' '$1 == "stage1" && $3 != "FAILED (stub)" { printf "%s ", $2 }' "$STUB_LOG")" in
+    *" typecheck-gate fleet-tests ") ;;
+    *) return 1 ;;
+  esac
+  [ "$(commands_of stage1 contrast)" = 1 ] && [ "$(commands_of stage1 test:apps/web)" = 1 ] &&
+    [ "$(commands_of stage1 test:packages/shared)" = 1 ] && [ "$(commands_of stage1 typecheck-gate)" = 2 ] &&
+    [ "$(commands_of stage1 fleet-tests)" = 2 ] && [ "$(cat "$STAGE/markers/stage1")" = "$SHA_A" ]
+}
+check 'two stage-1 jobs that fail once each run again, alone, after the rest, and pass as FLAKEs' stage1_two_flakes_ok
 
 use_machine "$F" 1.5.1
 stub_set RELEASE_STUB_FAIL_ONCE= RELEASE_STUB_FAIL=stage1:fleet-tests
@@ -788,6 +849,37 @@ stage1_break_ok() {
     [ ! -f "$STAGE/timings/retries.jsonl" ]
 }
 check 'more failed stage-1 jobs than the cap get no retry' stage1_break_ok
+
+# The cap is the whole stage's: a resumed stage 1 runs last attempt's failures first, as a group of
+# their own, and a retry there counts against the rest. resume_failing V JOB: a release of V whose
+# last stage-1 attempt failed in JOB.
+resume_failing() {
+  use_machine "$F" "$1"
+  run 0 "$1" --stop-after candidate || return 1
+  mkdir -p "$STAGE/stage1"
+  printf '%s\n' "$2" > "$STAGE/stage1/failed.txt"
+}
+stage1_stage_cap_ok() {
+  local before
+  resume_failing 1.5.9 fleet || return 1
+  stub_set "RELEASE_STUB_FAIL_ONCE=stage1:fleet-tests stage1:contrast stage1:typecheck-gate"
+  before="$(lines)"
+  run 1 1.5.9 --resume --stop-after stage1 || return 1
+  has "rerunning last attempt's failures first: fleet" && has 'stage1: FLAKE fleet' &&
+    has 'stage1: 3 job(s) failed in this stage, more than 2: a break, not a flake; no retry' &&
+    has 'stage 1 failed: contrast typecheck;' || return 1
+  [ "$(grep -c . "$STAGE/timings/retries.jsonl")" = 1 ] && [ ! -f "$STAGE/markers/stage1" ] &&
+    [ "$(awk -F '\t' -v from="$before" 'NR > from && $2 == "contrast" && $3 != "FAILED (stub)"' "$STUB_LOG" | wc -l | tr -d ' ')" = 1 ]
+}
+check 'a flake retried among last attempt'"'"'s failures counts toward the cap: two more failures get no retry' stage1_stage_cap_ok
+stage1_stage_cap_room_ok() {
+  resume_failing 1.5.10 fleet || return 1
+  stub_set "RELEASE_STUB_FAIL_ONCE=stage1:fleet-tests stage1:contrast"
+  run 0 1.5.10 --resume --stop-after stage1 || return 1
+  has 'stage1: FLAKE fleet' && has 'stage1: FLAKE contrast' &&
+    [ "$(grep -c '"result": "passed"' "$STAGE/timings/retries.jsonl")" = 2 ]
+}
+check '... and one more failure, two in all, still gets its retry' stage1_stage_cap_room_ok
 
 use_machine "$F" 1.5.3
 stub_set RELEASE_STUB_FAIL= RELEASE_STUB_FAIL_ONCE=stage1:fleet-tests
@@ -830,6 +922,89 @@ server_crash_ok() {
 check 'a server run with no failed file named (crash or timeout) gets no retry' server_crash_ok
 stub_set RELEASE_STUB_FAIL= RELEASE_STUB_OUTPUT=
 
+# The suite failed although one file passed its retry (another failed again), then ran green on
+# the same candidate with no retry: server-wait names no flake for it.
+use_machine "$F" 1.5.11
+stub_set RELEASE_STUB_FAIL=server "RELEASE_STUB_OUTPUT=server-failed-files=src/serverSettings.test.ts server-failed-again=src/other.test.ts"
+server_attempt_ok() {
+  run 1 1.5.11 --stop-after server-wait || return 1
+  wait_for_server "$SHA_A" || return 1
+  grep -q '"result": "passed"' "$STAGE/timings/retries.jsonl" || return 1
+  stub_set RELEASE_STUB_FAIL= RELEASE_STUB_OUTPUT=
+  run 0 1.5.11 --resume --stop-after server-wait || return 1
+  has 'server: green for aaaaaaaaaaaa' && lacks 'after a retry of'
+}
+check 'server-wait names only the flakes of the server run it waited for' server_attempt_ok
+
+# --no-retry on a resume reaches a suite already running for the candidate: one started with
+# retries (here a server.pid from before the flag was kept, when they were the default) is
+# stopped and started again without them; one started with --no-retry too is kept. The stand-in
+# process plays the running suite.
+use_machine "$F" 1.5.12
+server_no_retry_restart_ok() {
+  local fake rc=0 before
+  run 0 1.5.12 --stop-after stage1 || return 1
+  bash -c 'sleep 60; :' --internal-server 1.5.12 &
+  fake=$!
+  printf '%s %s\n' "$fake" "$SHA_A" > "$STAGE/server.pid"
+  stub_set RELEASE_STUB_FAIL=server:server-shards RELEASE_STUB_OUTPUT=server-failed-files=src/serverSettings.test.ts
+  run 1 1.5.12 --resume --no-retry --stop-after server-wait && wait_for_server "$SHA_A" &&
+    has 'retries failed files; restarting it with --no-retry' && [ "$(stage_line main stop-server)" = "kill -TERM -- -$fake" ] &&
+    grep -q -- '--no-retry, so no file runs again' "$STAGE/logs/server.log" && [ -z "$(stage_line server server-retry)" ] &&
+    [ "$(cut -d' ' -f2- < "$STAGE/server.pid")" = "$SHA_A 0" ] || rc=1
+  printf '%s %s 0\n' "$fake" "$SHA_A" > "$STAGE/server.pid"
+  before="$(lines)"
+  if [ "$rc" -eq 0 ]; then
+    run 0 1.5.12 --resume --no-retry --stop-after build && has '= server: still running for aaaaaaaaaaaa' &&
+      ! awk -F '\t' -v from="$before" 'NR > from && $2 == "stop-server"' "$STUB_LOG" | grep -q . || rc=1
+  fi
+  kill "$fake" 2> /dev/null || true
+  [ "$rc" -eq 0 ]
+}
+check '--no-retry restarts a server suite running with retries and keeps one running without' server_no_retry_restart_ok
+stub_set RELEASE_STUB_FAIL= RELEASE_STUB_OUTPUT=
+
+# The suite started again for --no-retry starts only once the old one's whole process group is
+# gone, not just its leader: test-sharded.mjs outlives the leader while its shards close. The
+# stand-in leader quits once stop-server is logged (a stub run sends no signal) and leaves a member
+# of its group that writes to the server log as it closes, as the runner's shutdown does.
+use_machine "$F" 1.5.15
+server_restart_waits_ok() {
+  local fake rc=0
+  run 0 1.5.15 --stop-after stage1 || return 1
+  set -m
+  bash -c 'n=0; until grep -q stop-server "$2" 2> /dev/null || [ $n -ge 300 ]; do sleep 0.1; n=$((n + 1)); done
+    (sleep 2; printf "old suite: shards closed\n" >> "$3") &' --internal-server 1.5.15 "$STUB_LOG" "$STAGE/logs/server.log" &
+  fake=$!
+  set +m
+  printf '%s %s\n' "$fake" "$SHA_A" > "$STAGE/server.pid"
+  run 0 1.5.15 --resume --no-retry --stop-after server-wait && has 'restarting it with --no-retry' &&
+    awk '/old suite: shards closed/ { old = NR } /server attempt/ && !new { new = NR } END { exit !(old && old < new) }' \
+      "$STAGE/logs/server.log" || rc=1
+  kill -- "-$fake" 2> /dev/null || true
+  [ "$rc" -eq 0 ]
+}
+check "--no-retry starts the new server suite only once the old one's whole process group is gone" server_restart_waits_ok
+
+# server.pid holds three fields: server-wait reads the candidate from the second while the suite
+# still runs (one that has finished left its result, and server.pid is not read). The stand-in
+# gives its result 3s after server-wait starts; a misread candidate stops server-wait after 1s.
+use_machine "$F" 1.5.16
+server_wait_live_ok() {
+  local fake rc=0
+  run 0 1.5.16 --stop-after drafts && wait_for_server "$SHA_A" || return 1
+  rm -f "$STAGE/markers/server" "$STAGE/server.exit"
+  bash -c 'n=0; until [ -f "$2/logs/server-wait.log" ] || [ $n -ge 300 ]; do sleep 0.1; n=$((n + 1)); done
+    sleep 3; printf "%s 0\n" "$3" > "$2/server.exit"' --internal-server 1.5.16 "$STAGE" "$SHA_A" &
+  fake=$!
+  printf '%s %s 1\n' "$fake" "$SHA_A" > "$STAGE/server.pid"
+  run 0 1.5.16 --resume --stop-after server-wait && has '= server: still running for aaaaaaaaaaaa' &&
+    has 'server: green for aaaaaaaaaaaa' || rc=1
+  kill "$fake" 2> /dev/null || true
+  [ "$rc" -eq 0 ]
+}
+check 'server-wait waits for a suite still running with a three-field server.pid' server_wait_live_ok
+
 # An old app's own updater swapped the release in when it quit: the desktop stage keeps it, and
 # no snapshot zips the new version or prunes the previous version's rollback zip.
 use_machine "$F" 1.5.7
@@ -854,6 +1029,52 @@ desktop_grants_ok() {
 }
 check 'a desktop app that loses the computer-use grants stops the release' desktop_grants_ok
 stub_set RELEASE_STUB_FAIL=
+
+# An install cut short after it wrote Info.plist: the app reports the release, but its signature
+# check fails. It is moved aside, not deleted or snapshotted, and the zip installed again.
+use_machine "$F" 1.5.13
+stub_set RELEASE_STUB_OUTPUT=app-version-before=1.5.13 RELEASE_STUB_STATUS=desktop-signed=1
+desktop_partial_ok() {
+  local app="$F/Applications/SpecWithCode.app"
+  run 0 1.5.13 || return 1
+  has 'fails its signature check; moving it to' && has 'SpecWithCode 1.5.13 is released.' || return 1
+  [ "$(labels_of desktop)" = "desktop-aside desktop-install desktop-codesign desktop-signature desktop-open " ] &&
+    stage_line desktop desktop-aside | grep -qE "^mv $app $app\.partial-[0-9]{8}T[0-9]{6}Z\$"
+}
+check 'a desktop app on the release that fails its signature check is moved aside and installed again' desktop_partial_ok
+stub_set RELEASE_STUB_OUTPUT= RELEASE_STUB_STATUS=
+
+# An install cut short before it wrote Info.plist: the app has no readable version. It is moved
+# aside too, and neither snapshotted nor probed for grants, which would replace the record the
+# earlier attempt took of the previous app.
+use_machine "$F" 1.5.18
+desktop_unreadable_ok() {
+  local app="$F/Applications/SpecWithCode.app" rc=0
+  mkdir -p "$app/Contents/Frameworks"
+  { run 0 1.5.18 && has 'has no readable version (an install cut short); moving it to' &&
+    has 'SpecWithCode 1.5.18 is released.' &&
+    [ "$(labels_of desktop)" = "desktop-aside desktop-install desktop-codesign desktop-signature desktop-open " ] &&
+    ! logged desktop-grants-before && ! logged desktop-backup; } || rc=1
+  rm -rf "$app"
+  [ "$rc" -eq 0 ]
+}
+check 'a desktop app with no readable version is moved aside, not snapshotted or probed for grants' desktop_unreadable_ok
+
+# A signed app updates through Squirrel.Mac: while the app's own ShipIt still runs, the stage waits
+# (60 polls, not slept in a stub run), then stops rather than snapshot or swap under it.
+use_machine "$F" 1.5.14
+SHIPIT="$F/Applications/SpecWithCode.app/Contents/Frameworks/Squirrel.framework/Resources/ShipIt"
+stub_set "RELEASE_STUB_OUTPUT=shipit-pids=4242 shipit-command=$SHIPIT"
+desktop_shipit_ok() {
+  run 1 1.5.14 || return 1
+  has 'Squirrel.Mac update (ShipIt, pid 4242) still runs after 60s' && [ -z "$(labels_of desktop)" ] &&
+    [ ! -f "$STAGE/markers/desktop" ] || return 1
+  # Another app's ShipIt is not this app's update.
+  stub_set "RELEASE_STUB_OUTPUT=shipit-pids=4242 shipit-command=/Applications/Other.app/Contents/Frameworks/Squirrel.framework/Resources/ShipIt"
+  run 0 1.5.14 --resume && has 'SpecWithCode 1.5.14 is released.' && logged desktop-install
+}
+check "the desktop stage waits for the app's own ShipIt and stops while it runs; another app's ShipIt is ignored" desktop_shipit_ok
+stub_set RELEASE_STUB_OUTPUT=
 
 # ---------------------------------------------------------------- timing comparison
 

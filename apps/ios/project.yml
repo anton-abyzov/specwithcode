@@ -18,6 +18,9 @@ settings:
 packages:
   SWCKit:
     path: SWCKit
+  Clerk:
+    url: https://github.com/clerk/clerk-ios
+    exactVersion: 1.6.1
 targets:
   SpecWithCode:
     type: application
@@ -31,6 +34,10 @@ targets:
         product: SWCFeatures
       - package: SWCKit
         product: SWCSync
+      - package: SWCKit
+        product: SWCTransport
+      - package: Clerk
+        product: ClerkKit
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.specwithcode.ios
@@ -45,10 +52,22 @@ targets:
         INFOPLIST_KEY_NSCameraUsageDescription: Scan the pairing QR code shown by SpecWithCode on your computer.
         INFOPLIST_KEY_NSLocalNetworkUsageDescription: Connect to SpecWithCode on computers in your home or office network.
         INFOPLIST_KEY_ITSAppUsesNonExemptEncryption: NO
+        # SpecWithCode Connect. Public values, read from the environment when
+        # the project is generated; empty leaves Connect off. See README.md.
+        SWC_CLERK_PUBLISHABLE_KEY: ${STUDIO_CLERK_PUBLISHABLE_KEY}
+        SWC_CLERK_JWT_TEMPLATE: ${STUDIO_CLERK_JWT_TEMPLATE}
+        SWC_RELAY_URL: ${STUDIO_RELAY_URL}
+        SWC_CLERK_OAUTH_PROVIDERS: ${STUDIO_CLERK_OAUTH_PROVIDERS}
+        # Sign in with Apple and push need a provisioning profile with those
+        # capabilities, so they are opt-in: Config/Connect.entitlements.
+        CODE_SIGN_ENTITLEMENTS: ${STUDIO_CODE_SIGN_ENTITLEMENTS}
       configs:
         Debug:
           PRODUCT_BUNDLE_IDENTIFIER: com.specwithcode.ios.dev
           INFOPLIST_KEY_CFBundleDisplayName: SpecWithCode Dev
+          SWC_APS_ENVIRONMENT: development
+        Release:
+          SWC_APS_ENVIRONMENT: production
     info:
       path: App/Info.plist
       properties:
@@ -57,6 +76,13 @@ targets:
             CFBundleURLSchemes: [specwithcode]
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
+        SWCClerkPublishableKey: $(SWC_CLERK_PUBLISHABLE_KEY)
+        SWCClerkJWTTemplate: $(SWC_CLERK_JWT_TEMPLATE)
+        SWCRelayURL: $(SWC_RELAY_URL)
+        SWCClerkOAuthProviders: $(SWC_CLERK_OAUTH_PROVIDERS)
+        SWCApsEnvironment: $(SWC_APS_ENVIRONMENT)
+        # Non-empty only in builds signed with Config/Connect.entitlements; turns push on.
+        SWCCodeSignEntitlements: $(CODE_SIGN_ENTITLEMENTS)
         UIAppFonts: []
   SpecWithCodeTests:
     type: bundle.unit-test

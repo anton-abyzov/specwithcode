@@ -18,6 +18,7 @@ let package = Package(
     .library(name: "SWCFeatures", targets: ["SWCFeatures"]),
     .library(name: "Weave", targets: ["Weave"]),
     .library(name: "SWCSync", targets: ["SWCSync"]),
+    .library(name: "SWCTransport", targets: ["SWCTransport"]),
   ],
   targets: [
     .target(name: "SWCWire"),
