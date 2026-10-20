@@ -927,6 +927,7 @@ const make = Effect.gen(function* () {
                   defaultRuntimeMode: carriedMode ?? resolved.defaultRuntimeMode,
                   providerLimitAction: "ask" as const,
                   providerLimitFallbackModelSelection: null,
+                  providerLimitFallbackModels: [],
                   providerLimitSwitchAtPercent: resolved.providerLimitSwitchAtPercent,
                   providerLimitWaitUnderMinutes: resolved.providerLimitWaitUnderMinutes,
                   providerLimitRedeemResets: false,

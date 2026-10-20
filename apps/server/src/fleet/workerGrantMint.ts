@@ -14,6 +14,7 @@ import {
   type FleetTarget,
   readBoundedJson,
 } from "../studioFleet.ts";
+import { WORKER_CLIENT_LABEL_PREFIX } from "./workGrantPolicy.ts";
 
 /**
  * How this server obtains a worker grant on another of the user's machines:
@@ -346,7 +347,7 @@ export async function renewWorkerGrant(input: {
 
 /** The label a worker grant is minted under on the other machine, as its client list shows it. */
 export const workerClientName = (localEnvironmentId: string) =>
-  `SpecWithCode workers · ${localEnvironmentId}`.slice(0, 100);
+  `${WORKER_CLIENT_LABEL_PREFIX}${localEnvironmentId}`.slice(0, 100);
 
 /** A Studio access token is `<base64url claims>.<signature>`; its claims name the session. */
 export function sessionIdOfToken(token: string): string | undefined {

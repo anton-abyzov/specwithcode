@@ -30,6 +30,24 @@ import {
 } from "./remoteWorkers.testkit.ts";
 
 describe("RemoteWorkers", () => {
+  it.live("sends the delegation path and says when that machine is too old to check it", () => {
+    let answer: Record<string, unknown> = launchAnswer;
+    const { remote, layer } = setup({ studio_thread_launch: () => ({ result: answer }) });
+    return Effect.gen(function* () {
+      yield* allow();
+      const workers = yield* RemoteWorkers.RemoteWorkers;
+      const older = yield* workers.launch(launchInput());
+      expect(
+        remote.toolCalls.find((call) => call.name === "studio_thread_launch")?.args.delegation,
+      ).toEqual({ path: ["env-m4"], hops: 1 });
+      // A worker from before grants had scopes neither refuses loops nor limits projects.
+      expect(older.machineNotice).toContain("older SpecWithCode");
+      answer = { ...launchAnswer, threadId: "b-thread-2", delegationChecked: true };
+      const current = yield* workers.launch(launchInput({ commandId: "command-2" }));
+      expect(current.machineNotice).toBeUndefined();
+    }).pipe(Effect.provide(layer));
+  });
+
   it.live(
     "launches canonical workers only into fresh verified admitted bindings, including transferred source projects",
     () => {

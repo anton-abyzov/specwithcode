@@ -2762,11 +2762,10 @@ function providerFailureFromResult(
     failureHint,
     message.subtype === "success" ? message.result : message.errors.join("\n"),
   ].some(isApiCreditExhaustedMessage);
+  // A bare 429 is a short-lived rate limit: only a rejected window, the
+  // assistant's own rate_limit error or a blocking limit is the plan's limit.
   const failureClass =
-    message.terminal_reason === "blocking_limit" ||
-    (message.subtype === "success" && message.api_error_status === 429) ||
-    usageLimited ||
-    creditsExhausted
+    message.terminal_reason === "blocking_limit" || usageLimited || creditsExhausted
       ? "usage_limit"
       : "provider_error";
   const structuredError = isOverloadedResult(message)

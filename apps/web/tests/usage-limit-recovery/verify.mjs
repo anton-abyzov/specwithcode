@@ -44,7 +44,7 @@ const browser = await chromium.launch({
 });
 const errors = [];
 const receipt = [];
-const BUTTONS = ["Continue with Claude", "Check now", "Snooze until reset"];
+const BUTTONS = ["Continue with Claude · Claude Opus 5.5", "Check now", "Snooze until reset"];
 try {
   const page = await browser.newPage({ reducedMotion: "reduce" });
   page.on("pageerror", (error) => errors.push(String(error)));
@@ -172,7 +172,9 @@ try {
       JSON.parse(await page.locator("body").getAttribute("data-recovery-change")).autoResume,
       true,
     );
-    await page.getByRole("button", { name: "Continue with Codex", exact: true }).click();
+    await page
+      .getByRole("button", { name: "Continue with Codex · GPT-6 Astra", exact: true })
+      .click();
     assert.equal(await page.locator("body").getAttribute("data-handoff"), "true");
     assert.equal(
       JSON.parse(await page.locator("body").getAttribute("data-recovery-change")).autoResume,
@@ -214,6 +216,71 @@ try {
       fullPage: true,
     });
     receipt.push({ width, creditContinuation: "passed" });
+  }
+  for (const width of [375, 768, 1440]) {
+    await page.setViewportSize({ width, height: 900 });
+    await page.goto(`${origin}/?claude=1&unarmed=1&status=none&choices=1`);
+    await page
+      .getByRole("button", { name: "Continue with Codex · GPT-6 Astra", exact: true })
+      .waitFor();
+    await page.getByRole("button", { name: "Other fallback models" }).click();
+    const sol = page.getByRole("menuitem", { name: /Codex · GPT-6\.1 Sol/ });
+    const full = page.getByRole("menuitem", { name: /Copilot · Claude Opus 5\.5/ });
+    await sol.waitFor();
+    assert.match(await full.innerText(), /full until 11:19 PM/);
+    assert.equal(await full.getAttribute("aria-disabled"), "true");
+    await page.screenshot({
+      path: path.join(output, `fallback-menu-${width}.png`),
+      fullPage: true,
+    });
+    await sol.click();
+    assert.equal(await page.locator("body").getAttribute("data-choice"), "Codex · GPT-6.1 Sol");
+    assert.equal(
+      await page.evaluate(() => document.documentElement.scrollWidth > innerWidth),
+      false,
+    );
+    receipt.push({ width, fallbackMenu: "passed" });
+  }
+  for (const width of [375, 1440]) {
+    for (const state of ["full", "room"]) {
+      await page.setViewportSize({ width, height: 700 });
+      await page.goto(`${origin}/?pairing=${state}&theme=dark`);
+      await page.getByText("Continuing on Codex · GPT-6 Astra").waitFor();
+      const back = page.getByRole("button", { name: "Back to Claude · Claude Opus 5.5" });
+      assert.equal(await back.isDisabled(), state === "full");
+      if (state === "room") {
+        await back.click();
+        assert.equal(await page.locator("body").getAttribute("data-back"), "true");
+      }
+      assert.equal(
+        await page.evaluate(() => document.documentElement.scrollWidth > innerWidth),
+        false,
+      );
+      await page.screenshot({
+        path: path.join(output, `pairing-${state}-${width}.png`),
+        fullPage: true,
+      });
+      receipt.push({ width, pairing: state });
+    }
+  }
+  for (const width of [375, 1024]) {
+    await page.setViewportSize({ width, height: 500 });
+    await page.goto(`${origin}/?order=1`);
+    const main = page.locator("main");
+    assert.equal(await main.getAttribute("data-order"), "gpt-6-astra,gpt-6.1-sol,claude-opus-5-5");
+    await page.screenshot({
+      path: path.join(output, `fallback-order-${width}.png`),
+      fullPage: true,
+    });
+    await page.getByRole("button", { name: "Move Claude · Claude Opus 5.5 up" }).click();
+    assert.equal(await main.getAttribute("data-order"), "gpt-6-astra,claude-opus-5-5,gpt-6.1-sol");
+    await page.getByRole("button", { name: "Remove Codex · GPT-6 Astra" }).click();
+    assert.equal(await main.getAttribute("data-order"), "claude-opus-5-5,gpt-6.1-sol");
+    await page.screenshot({
+      path: path.join(output, `fallback-order-edited-${width}.png`),
+      fullPage: true,
+    });
+    receipt.push({ width, fallbackOrder: "passed" });
   }
   assert.deepEqual(errors, []);
   await fs.writeFile(

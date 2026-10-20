@@ -8,11 +8,20 @@ import {
 } from "@specweave-studio/contracts";
 import {
   formatResetIn,
+  limitFallbackPairingBannerItem,
   usageApproachingBannerItem,
   usageLimitRecoveryBannerItem,
 } from "./UsageLimitRecoveryBanner";
 vi.mock("../ui/button", () => ({ Button: "button" }));
 vi.mock("../ui/checkbox", () => ({ Checkbox: "checkbox" }));
+vi.mock("../ui/menu", () => ({
+  Menu: "menu",
+  MenuTrigger: ({ children }: { children: unknown }) => (
+    <span data-trigger>{children as never}</span>
+  ),
+  MenuPopup: "menupopup",
+  MenuItem: "menuitem",
+}));
 vi.mock("../settings/AddApiCreditAccountDialog", () => ({
   AddApiCreditAccountDialog: ({ open, driver }: { open: boolean; driver: string }) =>
     open ? <dialog data-driver={driver} /> : null,
@@ -44,7 +53,9 @@ const recovery: OrchestrationV2LimitRecovery = {
   requestId: CommandId.make("choice"),
 };
 const button = (text: string) =>
-  renderer!.root.findAllByType("button").find((node) => node.children.join("") === text)!;
+  renderer!.root
+    .findAllByType("button")
+    .find((node) => node.children.join("") === text || node.props["aria-label"] === text)!;
 const autoContinue = () => renderer!.root.findByType("checkbox" as never);
 const rendered = (node = renderer!.root): string =>
   node.children.map((child) => (typeof child === "string" ? child : rendered(child))).join(" ");
@@ -185,7 +196,7 @@ it("offers to continue the stopped turn with another ready provider", async () =
   expect(autoContinue().props.disabled).toBe(true);
   expect(rendered()).toContain("Hand off now instead of waiting:");
   expect(rendered()).toContain("Hand it off now, or send a message after the reset.");
-  await act(async () => button("Continue with Codex").props.onClick());
+  await act(async () => button("Continue with Codex · GPT-6").props.onClick());
   expect(onContinue).toHaveBeenCalledOnce();
   expect(change).not.toHaveBeenCalled();
   await act(() =>
@@ -296,6 +307,35 @@ it("suggests switching before the limit under the offer rule", async () => {
   await act(async () => button("Switch to Codex").props.onClick());
   expect(onSwitch).toHaveBeenCalledOnce();
 });
+it("pairs a fallback thread with its original model and offers the way back", async () => {
+  const onBack = vi.fn();
+  const base = {
+    id: "pairing",
+    current: "Codex · GPT-6 Astra",
+    original: "Claude · Claude Opus 5.5",
+    resetAt: null,
+    onBack,
+    onDismiss: () => {},
+  };
+  const waiting = limitFallbackPairingBannerItem({ ...base, hasRoom: false });
+  expect(waiting.title).toBe("Continuing on Codex · GPT-6 Astra");
+  expect(waiting.description).toBe(
+    "Claude · Claude Opus 5.5 stopped at its limit and is still limited.",
+  );
+  await act(() => {
+    renderer = create(<>{waiting.actions}</>);
+  });
+  expect(button("Back to Claude · Claude Opus 5.5").props.disabled).toBe(true);
+  const ready = limitFallbackPairingBannerItem({ ...base, hasRoom: true });
+  expect(ready.description).toBe(
+    "Claude · Claude Opus 5.5 stopped at its limit and has room again.",
+  );
+  await act(() => {
+    renderer = create(<>{ready.actions}</>);
+  });
+  await act(async () => button("Back to Claude · Claude Opus 5.5").props.onClick());
+  expect(onBack).toHaveBeenCalledOnce();
+});
 it("lays its buttons out below the title instead of in a column beside it", () => {
   const item = usageLimitRecoveryBannerItem({ ...props, onChange: vi.fn() });
   expect(item.title).toBe("Usage limit reached");
@@ -386,4 +426,32 @@ it("offers to add an API key when there is none, and says when credits ran out",
   expect(rendered()).toContain("Have API credits?");
   await act(async () => button("Add an API key").props.onClick());
   expect(renderer!.root.findByType("dialog" as never).props["data-driver"]).toBe("grok");
+});
+
+it("lists the rest of the fallback order, choosable or with the reason it is out", async () => {
+  const onContinue = vi.fn().mockResolvedValue(undefined);
+  const onSol = vi.fn().mockResolvedValue(undefined);
+  const item = usageLimitRecoveryBannerItem({
+    ...props,
+    onChange: vi.fn().mockResolvedValue(undefined),
+    fallback: { label: "Codex", model: "GPT-6 Astra", automatic: false, onContinue },
+    fallbackChoices: [
+      { label: "Codex", model: "GPT-6.1 Sol", onContinue: onSol },
+      { label: "Claude", model: "Opus 5.5", unavailable: "full until 11:19 PM" },
+    ],
+  });
+  await act(() => {
+    renderer = create(<>{item.actions}</>);
+  });
+  expect(button("Continue with Codex · GPT-6 Astra")).toBeDefined();
+  expect(rendered()).toContain("Other models");
+  const items = renderer!.root.findAllByType("menuitem" as never);
+  expect(items.map((node) => rendered(node))).toEqual([
+    "Codex · GPT-6.1 Sol",
+    "Claude · Opus 5.5 full until 11:19 PM",
+  ]);
+  expect(items[1]!.props.disabled).toBe(true);
+  await act(async () => items[0]!.props.onClick());
+  expect(onSol).toHaveBeenCalledOnce();
+  expect(onContinue).not.toHaveBeenCalled();
 });

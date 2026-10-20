@@ -7,9 +7,11 @@ import {
   type OrchestrationV2LimitRecoveryUpdate,
   type RunId,
 } from "@specweave-studio/contracts";
-import { GaugeIcon } from "lucide-react";
+import type { FallbackOrderUnavailable } from "@specweave-studio/shared/providerFallback";
+import { ChevronDownIcon, GaugeIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Button } from "../ui/button";
+import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { Checkbox } from "../ui/checkbox";
 import type { ComposerBannerStackItem } from "./ComposerBannerStack";
 
@@ -34,6 +36,11 @@ type RecoveryProps = {
     onContinue: () => Promise<void>;
   } | null;
   /**
+   * The rest of the user's fallback order, in order: each either continues
+   * the stopped run there, or says why it cannot now.
+   */
+  fallbackChoices?: ReadonlyArray<FallbackChoice>;
+  /**
    * The reset is within the project's wait: nothing switches or spends, and
    * the thread resumes here at the reset.
    */
@@ -46,6 +53,41 @@ type RecoveryProps = {
   } | null;
   onChange: (recovery: OrchestrationV2LimitRecoveryUpdate) => Promise<void>;
 };
+
+/** One entry of the fallback order on the limit banner. */
+export interface FallbackChoice {
+  readonly label: string;
+  readonly model: string;
+  /** Absent when the entry cannot take the thread now; `unavailable` says why. */
+  readonly onContinue?: () => Promise<void>;
+  readonly unavailable?: string;
+}
+
+/** Why an entry of the fallback order cannot take the thread now, in a few words. */
+export function fallbackUnavailableReason(
+  unavailable: FallbackOrderUnavailable | null,
+  resetAt: number | null,
+): string | undefined {
+  switch (unavailable) {
+    case null:
+    case "current":
+      return undefined;
+    case "missing":
+      return "not on this machine";
+    case "limited":
+      return "at its limit";
+    case "signed-out":
+      return "signed out";
+    case "per-token":
+      return "billed per token";
+    case "full":
+      return resetAt === null
+        ? "full"
+        : `full until ${new Date(resetAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`;
+    case "unverified":
+      return "usage not read yet";
+  }
+}
 
 /** "12 min", "2 h 5 min", "3 days": how far off a reset is, rounded up to the minute. */
 export function formatResetIn(resetMs: number, nowMs: number): string {
@@ -148,6 +190,7 @@ function RecoveryActions({
   recovery,
   snoozedUntil,
   fallback,
+  fallbackChoices,
   waiting,
   device,
   onChange,
@@ -210,9 +253,10 @@ function RecoveryActions({
     setPending(false);
   }
   const canAutoContinue = canSchedule || canCheck === true;
-  const handoffs = [fallback, device].filter((target) => target != null);
+  const choices = fallbackChoices ?? [];
+  const handoffs = [fallback, device, ...choices].filter((target) => target != null);
   return (
-    <div className="flex flex-wrap items-center gap-2">
+    <div className="flex w-full min-w-0 flex-wrap items-center gap-2">
       <label
         className="flex basis-full items-center gap-2 text-xs text-foreground has-data-disabled:text-muted-foreground"
         title={
@@ -242,7 +286,7 @@ function RecoveryActions({
         </p>
       ) : null}
       {handoffs.length > 0 ? (
-        <div className="flex basis-full flex-wrap items-center gap-2">
+        <div className="flex min-w-0 basis-full flex-wrap items-center gap-2">
           <span className="text-xs text-muted-foreground">
             {scheduled ? "Or hand off now:" : "Hand off now instead of waiting:"}
           </span>
@@ -252,10 +296,42 @@ function RecoveryActions({
               variant={waiting ? "ghost" : "outline"}
               disabled={pending}
               title={`Hand this thread to ${fallback.label} (${fallback.model}) with its context and continue the stopped turn`}
+              aria-label={`Continue with ${fallback.label} · ${fallback.model}`}
+              className="max-w-full min-w-0"
               onClick={() => void continueElsewhere(fallback)}
             >
-              {`Continue with ${fallback.label}`}
+              <span className="truncate">{`Continue with ${fallback.label} · ${fallback.model}`}</span>
             </Button>
+          ) : null}
+          {choices.length > 0 ? (
+            <Menu>
+              <MenuTrigger
+                disabled={pending}
+                render={<Button size="xs" variant="ghost" aria-label="Other fallback models" />}
+              >
+                {fallback ? "Other models" : "Choose a model"}
+                <ChevronDownIcon className="size-3" />
+              </MenuTrigger>
+              <MenuPopup side="bottom" align="start">
+                {choices.map((choice) => (
+                  <MenuItem
+                    key={`${choice.label}:${choice.model}`}
+                    disabled={pending || choice.onContinue === undefined}
+                    onClick={() => {
+                      const run = choice.onContinue;
+                      if (run) void continueElsewhere({ label: choice.label, onContinue: run });
+                    }}
+                  >
+                    <span>{`${choice.label} · ${choice.model}`}</span>
+                    {choice.unavailable ? (
+                      <span className="ml-2 text-xs text-muted-foreground">
+                        {choice.unavailable}
+                      </span>
+                    ) : null}
+                  </MenuItem>
+                ))}
+              </MenuPopup>
+            </Menu>
           ) : null}
           {device ? (
             <Button
@@ -349,6 +425,49 @@ export function usageApproachingBannerItem(props: {
       </Button>
     ),
     dismissLabel: "Not now",
+    onDismiss: props.onDismiss,
+  };
+}
+
+/**
+ * The thread runs on a limit fallback: "On Codex · GPT-6 Astra for Claude Code ·
+ * Claude Opus 5.5", with the way back once the original model has room.
+ */
+export function limitFallbackPairingBannerItem(props: {
+  id: string;
+  current: string;
+  original: string;
+  /** The original model's reset, when its usage reading says. */
+  resetAt: number | null;
+  /** The original model can take the next turn now. */
+  hasRoom: boolean;
+  onBack: () => void;
+  onDismiss: () => void;
+}): ComposerBannerStackItem {
+  return {
+    id: props.id,
+    variant: "info",
+    priority: "notice",
+    icon: <GaugeIcon />,
+    actionsLayout: "wrap-below",
+    title: `Continuing on ${props.current}`,
+    description: props.hasRoom
+      ? `${props.original} stopped at its limit and has room again.`
+      : props.resetAt === null
+        ? `${props.original} stopped at its limit and is still limited.`
+        : `${props.original} stopped at its limit and resets at ${new Date(props.resetAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}.`,
+    actions: (
+      <Button
+        size="xs"
+        variant="outline"
+        disabled={!props.hasRoom}
+        title={props.hasRoom ? undefined : `${props.original} has no room yet`}
+        onClick={props.onBack}
+      >
+        {`Back to ${props.original}`}
+      </Button>
+    ),
+    dismissLabel: "Hide",
     onDismiss: props.onDismiss,
   };
 }

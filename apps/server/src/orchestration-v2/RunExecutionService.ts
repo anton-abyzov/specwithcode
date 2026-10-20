@@ -1045,6 +1045,7 @@ export const layer: Layer.Layer<
           // The run stays live for the liveness watchdog until this fiber ends,
           // however it ends; a run nobody reads events for is orphaned.
           const releaseIngestion = yield* liveness.acquire(input.run.id);
+          const closeEventSubscription = yield* Effect.cached(eventSubscription.close);
           const providerEventFiber = yield* eventSubscription.events.pipe(
             Stream.filterEffect((event) =>
               Ref.modify(eventRouting, (state) => routeProviderEvent(event, routeIdentity, state)),
@@ -1222,128 +1223,140 @@ export const layer: Layer.Layer<
                     cause: Cause.pretty(cause),
                   }),
             ),
-            Effect.ensuring(eventSubscription.close),
+            Effect.ensuring(closeEventSubscription),
             // Its own finalizer: a close that dies must not leave the run
             // looking driven forever.
             Effect.ensuring(releaseIngestion),
             Effect.forkDetach,
           );
+          // A fiber interrupted before it first runs skips its finalizers, so
+          // stopping it also closes the subscription and releases the run.
+          // Both happen once however many paths stop it.
+          const stopIngestion = Fiber.interrupt(providerEventFiber).pipe(
+            Effect.ensuring(closeEventSubscription),
+            Effect.ensuring(releaseIngestion),
+          );
 
-          // A failed read fails the start below, so the run is recorded as
-          // failed instead of staying active with no provider turn.
-          const shouldStart =
-            input.shouldStartProviderTurn === undefined
-              ? Exit.succeed(true)
-              : yield* Effect.exit(input.shouldStartProviderTurn());
-          if (Exit.isSuccess(shouldStart) && !shouldStart.value) {
-            yield* Fiber.interrupt(providerEventFiber);
-            return;
-          }
+          // The start can be interrupted from outside (the provider-start
+          // timeout, a Stop), and catchCause below does not see that. Stop the
+          // ingestion fiber then, or it keeps its subscription and liveness.
+          yield* Effect.gen(function* () {
+            // A failed read fails the start below, so the run is recorded as
+            // failed instead of staying active with no provider turn.
+            const shouldStart =
+              input.shouldStartProviderTurn === undefined
+                ? Exit.succeed(true)
+                : yield* Effect.exit(input.shouldStartProviderTurn());
+            if (Exit.isSuccess(shouldStart) && !shouldStart.value) {
+              yield* stopIngestion;
+              return;
+            }
 
-          // Keep the active turn's MCP credential valid between browser calls.
-          yield* McpSessionRegistry.touchActiveMcpThread(input.run.threadId);
-          const turnInput = {
-            appThread: input.appThread,
-            threadId: input.run.threadId,
-            runId: input.run.id,
-            runOrdinal: input.run.ordinal,
-            providerTurnOrdinal: input.providerTurnOrdinal,
-            ...(input.nativeThreadHasTurns === undefined
-              ? {}
-              : { nativeThreadHasTurns: input.nativeThreadHasTurns }),
-            ...(input.run.restartContinuationOfRunId === undefined
-              ? {}
-              : {
-                  restartContinuationOfRunId: input.run.restartContinuationOfRunId,
-                }),
-            attemptId: input.attemptId,
-            rootNodeId: input.rootNode.id,
-            providerThread: input.providerThread,
-            message: input.message,
-            modelSelection: input.modelSelection,
-            runtimePolicy: input.runtimePolicy,
-          };
-          const compact =
-            input.message.attachments.length === 0 &&
-            input.message.text.trim().toLowerCase() === "/compact";
-          const startTurn = compact
-            ? (input.session.compactThread?.(turnInput) ??
-              Effect.fail(
-                new ProviderAdapterTurnStartError({
-                  driver: input.session.driver,
-                  threadId: input.run.threadId,
-                  providerThreadId: input.providerThread.id,
-                  runId: input.run.id,
-                  cause: "This provider does not support context compaction.",
-                }),
-              ))
-            : input.session.startTurn(turnInput).pipe(
-                Effect.retry({
-                  // A credit submission admits exactly one request, so it is never resent.
-                  times:
-                    input.run.manualCodexCreditIntent === undefined
-                      ? TRANSIENT_TURN_START_RETRIES
-                      : 0,
-                  schedule: Schedule.spaced(TRANSIENT_TURN_START_RETRY_DELAY),
-                  // Recheck the run after Stop before each resend.
-                  while: (error) =>
-                    !isTransientTurnStartFailure(error)
-                      ? Effect.succeed(false)
-                      : input.shouldStartProviderTurn === undefined
-                        ? Effect.succeed(true)
-                        : input.shouldStartProviderTurn().pipe(Effect.orElseSucceed(() => false)),
-                }),
-              );
-          yield* Effect.andThen(shouldStart, startTurn).pipe(
-            Effect.catchCause((cause) =>
-              logProviderTurnStartFailure(input.run.id, cause).pipe(
-                Effect.andThen(Fiber.interrupt(providerEventFiber)),
-                Effect.andThen(Ref.get(latestProviderThread)),
-                Effect.flatMap((providerThread) =>
-                  Ref.get(latestTurnItemOrdinal).pipe(
-                    Effect.flatMap((latestItemOrdinal) =>
-                      Ref.get(openRunOwnedSubagents).pipe(
-                        Effect.flatMap((openSubagents) =>
-                          writeFinalRunEvents({
-                            run: input.run,
-                            rootNode: input.rootNode,
-                            checkpointScope: input.checkpointScope,
-                            providerThread,
-                            attempt: input.attempt,
-                            // Checked in the write transaction, not by another
-                            // read that can fail like the one before the start.
-                            writeIfRunCurrent: {
-                              activeAttemptId: input.attempt.id,
-                              expectedStatus: "running",
-                            },
-                            openRunOwnedSubagents: openSubagents,
-                            terminal: makeFailedTerminalEvent(
-                              makeProviderFailure({
-                                cause: Cause.squash(cause),
-                                // A failed ownership read is not the provider's fault.
-                                class: Exit.isFailure(shouldStart) ? "unknown" : "provider_error",
-                              }),
-                              latestItemOrdinal + 1,
-                            ),
-                            failureItemPersisted: false,
-                            refreshAfterTurn,
-                          }),
+            // Keep the active turn's MCP credential valid between browser calls.
+            yield* McpSessionRegistry.touchActiveMcpThread(input.run.threadId);
+            const turnInput = {
+              appThread: input.appThread,
+              threadId: input.run.threadId,
+              runId: input.run.id,
+              runOrdinal: input.run.ordinal,
+              providerTurnOrdinal: input.providerTurnOrdinal,
+              ...(input.nativeThreadHasTurns === undefined
+                ? {}
+                : { nativeThreadHasTurns: input.nativeThreadHasTurns }),
+              ...(input.run.restartContinuationOfRunId === undefined
+                ? {}
+                : {
+                    restartContinuationOfRunId: input.run.restartContinuationOfRunId,
+                  }),
+              attemptId: input.attemptId,
+              rootNodeId: input.rootNode.id,
+              providerThread: input.providerThread,
+              message: input.message,
+              modelSelection: input.modelSelection,
+              runtimePolicy: input.runtimePolicy,
+            };
+            const compact =
+              input.message.attachments.length === 0 &&
+              input.message.text.trim().toLowerCase() === "/compact";
+            const startTurn = compact
+              ? (input.session.compactThread?.(turnInput) ??
+                Effect.fail(
+                  new ProviderAdapterTurnStartError({
+                    driver: input.session.driver,
+                    threadId: input.run.threadId,
+                    providerThreadId: input.providerThread.id,
+                    runId: input.run.id,
+                    cause: "This provider does not support context compaction.",
+                  }),
+                ))
+              : input.session.startTurn(turnInput).pipe(
+                  Effect.retry({
+                    // A credit submission admits exactly one request, so it is never resent.
+                    times:
+                      input.run.manualCodexCreditIntent === undefined
+                        ? TRANSIENT_TURN_START_RETRIES
+                        : 0,
+                    schedule: Schedule.spaced(TRANSIENT_TURN_START_RETRY_DELAY),
+                    // Recheck the run after Stop before each resend.
+                    while: (error) =>
+                      !isTransientTurnStartFailure(error)
+                        ? Effect.succeed(false)
+                        : input.shouldStartProviderTurn === undefined
+                          ? Effect.succeed(true)
+                          : input.shouldStartProviderTurn().pipe(Effect.orElseSucceed(() => false)),
+                  }),
+                );
+            yield* Effect.andThen(shouldStart, startTurn).pipe(
+              Effect.catchCause((cause) =>
+                logProviderTurnStartFailure(input.run.id, cause).pipe(
+                  Effect.andThen(stopIngestion),
+                  Effect.andThen(Ref.get(latestProviderThread)),
+                  Effect.flatMap((providerThread) =>
+                    Ref.get(latestTurnItemOrdinal).pipe(
+                      Effect.flatMap((latestItemOrdinal) =>
+                        Ref.get(openRunOwnedSubagents).pipe(
+                          Effect.flatMap((openSubagents) =>
+                            writeFinalRunEvents({
+                              run: input.run,
+                              rootNode: input.rootNode,
+                              checkpointScope: input.checkpointScope,
+                              providerThread,
+                              attempt: input.attempt,
+                              // Checked in the write transaction, not by another
+                              // read that can fail like the one before the start.
+                              writeIfRunCurrent: {
+                                activeAttemptId: input.attempt.id,
+                                expectedStatus: "running",
+                              },
+                              openRunOwnedSubagents: openSubagents,
+                              terminal: makeFailedTerminalEvent(
+                                makeProviderFailure({
+                                  cause: Cause.squash(cause),
+                                  // A failed ownership read is not the provider's fault.
+                                  class: Exit.isFailure(shouldStart) ? "unknown" : "provider_error",
+                                }),
+                                latestItemOrdinal + 1,
+                              ),
+                              failureItemPersisted: false,
+                              refreshAfterTurn,
+                            }),
+                          ),
                         ),
                       ),
                     ),
                   ),
-                ),
-                Effect.mapError(
-                  (writeCause) =>
-                    new RunExecutionStartError({
-                      commandId: input.commandId,
-                      runId: input.run.id,
-                      cause: { start: cause, write: writeCause },
-                    }),
+                  Effect.mapError(
+                    (writeCause) =>
+                      new RunExecutionStartError({
+                        commandId: input.commandId,
+                        runId: input.run.id,
+                        cause: { start: cause, write: writeCause },
+                      }),
+                  ),
                 ),
               ),
-            ),
-          );
+            );
+          }).pipe(Effect.onInterrupt(() => stopIngestion));
         }).pipe((start) => liveness.hold(input.run.id, start)),
     } satisfies RunExecutionServiceV2Shape);
   }),

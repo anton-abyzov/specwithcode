@@ -27,7 +27,13 @@ import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ServerConfig from "../config.ts";
 import { resolveBaseDir } from "../os-jank.ts";
 import { discoverFleet, FleetError, readFleetConfig } from "../studioFleet.ts";
-import { addFleetMachine, FleetJoinError, removeFleetMachine } from "../studioFleetJoin.ts";
+import {
+  addFleetMachine,
+  FleetJoinError,
+  type FleetRemoveResult,
+  removeFleetMachineEverywhere,
+  revokeWorkerAccessByLabel,
+} from "../studioFleetJoin.ts";
 import { invokedCliName } from "./cliName.ts";
 import { baseDirFlag, DurationFromString } from "./config.ts";
 import { fleetInviteLabel, issueFleetInvitation } from "../studioFleetInvite.ts";
@@ -220,20 +226,52 @@ const removeCommand = Command.make("remove", {
     Argument.withDescription("The machine's id or name, as `fleet list` shows it."),
   ),
 }).pipe(
-  Command.withDescription("Remove a machine from the primary's list."),
+  Command.withDescription(
+    "Remove a machine from this one's list and revoke what this machine holds there.",
+  ),
   Command.withHandler((flags) =>
     Effect.gen(function* () {
       const baseDir = yield* resolveFleetBaseDir(flags.baseDir);
+      // Worker grants there are found by this machine's id, known while its server runs.
+      const localEnvironmentId = yield* discoverPairTarget(
+        Option.getOrUndefined(flags.baseDir),
+      ).pipe(
+        Effect.map((target) => target.descriptor.environmentId as string),
+        Effect.orElseSucceed(() => undefined),
+      );
       const removed = yield* Effect.tryPromise({
-        try: () => removeFleetMachine({ baseDir, machine: flags.machine }),
+        try: () =>
+          removeFleetMachineEverywhere({
+            baseDir,
+            machine: flags.machine,
+            fetcher: globalThis.fetch,
+            revokeWorkerAccess: (target) =>
+              revokeWorkerAccessByLabel(globalThis.fetch, target, localEnvironmentId),
+          }),
         catch: fleetFailure,
       });
-      yield* Console.log(
-        `Removed ${removed.label}. Its management token stays valid there until you revoke it on that machine with \`${cliName()} auth session list\` and \`auth session revoke\`.\n`,
-      );
+      yield* Console.log(`${fleetRemoveSummary(removed, cliName())}\n`);
     }).pipe(Effect.provide(FetchHttpClient.layer)),
   ),
 );
+
+/** What `fleet remove` tells the user, including anything still valid on that machine. */
+export function fleetRemoveSummary(removed: FleetRemoveResult, cli: string): string {
+  const lines = [`Removed ${removed.label}.`];
+  if (removed.workerAccess === "revoked")
+    lines.push(`Revoked this machine's worker access on ${removed.label}.`);
+  else if (removed.workerAccess === "kept")
+    lines.push(
+      `Worker access this machine may hold on ${removed.label} could not be revoked from here. On ${removed.label}, revoke it under Settings > Connections > Who can run work on this Mac.`,
+    );
+  if (removed.managementToken === "revoked")
+    lines.push(`Revoked this machine's management token on ${removed.label}.`);
+  else if (removed.managementToken === "kept")
+    lines.push(
+      `Its management token is still valid on ${removed.label}: that machine could not be reached or is too old to revoke it remotely. Revoke it there with \`${cli} auth session revoke ${removed.managementSessionId ?? "<id from auth session list>"}\`.`,
+    );
+  return lines.join("\n");
+}
 
 export const fleetCommand = Command.make("fleet").pipe(
   Command.withDescription(

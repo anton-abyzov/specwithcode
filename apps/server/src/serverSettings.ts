@@ -1403,7 +1403,7 @@ const make = Effect.gen(function* () {
 
   const getSettingsFromCache = Cache.get(settingsCache, cacheKey);
 
-  const materializeProviderEnvironmentSecrets = (
+  const materializeProviderEnvironmentSecretsUncached = (
     settings: ServerSettings,
   ): Effect.Effect<ServerSettings, ServerSettingsError> =>
     Effect.gen(function* () {
@@ -1506,6 +1506,41 @@ const make = Effect.gen(function* () {
         github: { ...settings.github, tokens },
         voice,
       };
+    });
+
+  // Settings are read hundreds of times a minute (the settlement sweep alone reads
+  // them per thread), and each read used to open every redacted secret's file on
+  // the shared libuv pool. The result is kept for the settings object it came
+  // from until the secret store reports a write. A new settings object comes only
+  // from a load or an update, so either one reads the secrets again.
+  let materialized:
+    | {
+        readonly settings: ServerSettings;
+        readonly generation: number;
+        readonly result: ServerSettings;
+      }
+    | undefined;
+  const materializeProviderEnvironmentSecrets = (
+    settings: ServerSettings,
+  ): Effect.Effect<ServerSettings, ServerSettingsError> =>
+    Effect.suspend(() => {
+      const storeGeneration = secretStore.generation;
+      if (storeGeneration === undefined) {
+        return materializeProviderEnvironmentSecretsUncached(settings);
+      }
+      // Taken before the reads: a write that races them leaves a stale entry
+      // that no later call can match.
+      const generation = storeGeneration();
+      if (materialized?.settings === settings && materialized.generation === generation) {
+        return Effect.succeed(materialized.result);
+      }
+      return materializeProviderEnvironmentSecretsUncached(settings).pipe(
+        Effect.tap((result) =>
+          Effect.sync(() => {
+            materialized = { settings, generation, result };
+          }),
+        ),
+      );
     });
 
   const materializeChanges = (changes: Stream.Stream<ServerSettings>) =>

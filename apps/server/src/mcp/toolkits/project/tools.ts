@@ -16,6 +16,7 @@ import {
   ProjectId,
   OrchestratorMcpFailure,
   OrchestratorMcpMachineRef,
+  OrchestratorMcpDelegation,
   OrchestratorMcpMachineTarget,
   SourceControlCloneRepositoryInput,
   SourceControlCloneRepositoryResult,
@@ -201,6 +202,7 @@ const ThreadLaunchTool = Tool.make("studio_thread_launch", {
       }),
     ),
     attachments: Schema.optional(Schema.Array(McpAttachmentInput).check(Schema.isMaxLength(8))),
+    delegation: Schema.optional(OrchestratorMcpDelegation),
   }),
   success: Schema.Struct({
     threadId: ThreadId,
@@ -231,6 +233,17 @@ const ThreadLaunchTool = Tool.make("studio_thread_launch", {
       RuntimeMode.annotate({
         description:
           "Set when that machine's grant lowered the requested mode: the mode asked for. Tell the user the worker runs on runtimeMode instead.",
+      }),
+    ),
+    machineNotice: Schema.optional(
+      Schema.String.annotate({
+        description:
+          "For a thread on another machine: something the user should know about that machine. Tell the user.",
+      }),
+    ),
+    delegationChecked: Schema.optional(
+      Schema.Boolean.annotate({
+        description: "Set by SpecWithCode between machines; ignore it.",
       }),
     ),
   }),

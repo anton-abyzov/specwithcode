@@ -5,8 +5,10 @@ import {
   ThreadId,
   type OrchestrationV2ThreadShell,
 } from "@specweave-studio/contracts";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as TestClock from "effect/testing/TestClock";
 
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import * as VcsStatusBroadcaster from "../vcs/VcsStatusBroadcaster.ts";
@@ -48,6 +50,73 @@ it.effect("refreshes workspace after checkpoint capture without reading history"
     assert.equal(capture.mock.calls.length, 1);
     assert.deepEqual(refresh.mock.calls[0], [{ cwd: "/repo", threadId, runId }]);
   }).pipe(Effect.provide(layer));
+});
+
+const finalizeLayerWith = (
+  refresh: () => Effect.Effect<void, RunFinalization.RunFinalizationRefreshError>,
+  scopeId: CheckpointScopeId,
+  runId: RunId,
+) =>
+  RunFinalization.layer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.mock(CheckpointCapture.CheckpointCaptureServiceV2)({ execute: () => Effect.void }),
+        Layer.mock(ProjectionStore.ProjectionStoreV2)({
+          getCheckpointContext: () =>
+            Effect.succeed({
+              runs: [],
+              checkpointScopes: [{ id: scopeId, runId, kind: "root_run" as const, cwd: "/repo" }],
+              checkpoints: [],
+            }),
+        }),
+        Layer.succeed(RunFinalization.RunFinalizationObserver, {
+          refresh,
+          refreshAfterTurn: () => Effect.void,
+        }),
+      ),
+    ),
+  );
+
+it.effect("finishes without waiting for a workspace refresh that never returns", () => {
+  const threadId = ThreadId.make("thread_finalize_stuck");
+  const runId = RunId.make("run_finalize_stuck");
+  const scopeId = CheckpointScopeId.make("scope_finalize_stuck");
+  return Effect.gen(function* () {
+    const started = yield* Deferred.make<void>();
+    const interrupted = yield* Deferred.make<void>();
+    const refresh = () =>
+      Deferred.succeed(started, undefined).pipe(
+        Effect.andThen(Effect.never),
+        Effect.onInterrupt(() => Deferred.succeed(interrupted, undefined)),
+      );
+    yield* Effect.gen(function* () {
+      const service = yield* RunFinalization.RunFinalizationService;
+      // Returns while the refresh is still running.
+      yield* service.finalize({ threadId, runId, scopeId });
+      yield* Deferred.await(started);
+      assert.isFalse(yield* Deferred.isDone(interrupted));
+      // The refresh is dropped at its time limit, without failing anything.
+      yield* TestClock.adjust(RunFinalization.REFRESH_TIMEOUT);
+      yield* Deferred.await(interrupted);
+    }).pipe(Effect.provide(finalizeLayerWith(refresh, scopeId, runId)));
+  });
+});
+
+it.effect("finishes when the workspace refresh fails", () => {
+  const threadId = ThreadId.make("thread_finalize_refresh_failure");
+  const runId = RunId.make("run_finalize_refresh_failure");
+  const scopeId = CheckpointScopeId.make("scope_finalize_refresh_failure");
+  const refresh = () =>
+    Effect.fail(
+      new RunFinalization.RunFinalizationRefreshError({
+        cwd: "/repo",
+        cause: new Error("Git index is locked"),
+      }),
+    );
+  return Effect.gen(function* () {
+    const service = yield* RunFinalization.RunFinalizationService;
+    yield* service.finalize({ threadId, runId, scopeId });
+  }).pipe(Effect.provide(finalizeLayerWith(refresh, scopeId, runId)));
 });
 
 it.effect.each(

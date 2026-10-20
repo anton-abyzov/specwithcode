@@ -10,6 +10,7 @@ import {
   canTakeTurn,
   coordinatorFallbackReason,
   coordinatorOnLimitFallback,
+  describeFallbackOrder,
   limitRestartRequest,
   providerUsedPercent,
   isClaudeApiKeyProvider,
@@ -1242,5 +1243,150 @@ describe("the recommended model from another provider", () => {
         nowMs: now,
       }),
     ).toBeNull();
+  });
+});
+
+describe("the user's fallback order", () => {
+  // Codex lists GPT-6 Astra and GPT-6.1 Sol; Astra has its own weekly window.
+  const codexModels = (used: number, astraUsed: number) => {
+    const base = provider("codex", "codex", used);
+    return {
+      ...base,
+      models: [
+        { slug: "gpt-6-astra", name: "GPT-6 Astra", isCustom: false, capabilities: null },
+        { slug: "gpt-6.1-sol", name: "GPT-6.1 Sol", isCustom: false, capabilities: null },
+      ],
+      usageLimits: {
+        ...base.usageLimits!,
+        windows: [
+          ...base.usageLimits!.windows,
+          {
+            id: "weekly_astra",
+            kind: "weekly" as const,
+            label: "Week",
+            modelScope: "astra",
+            usedPercent: astraUsed,
+            resetsAt: later,
+          },
+        ],
+      },
+    } satisfies ServerProvider;
+  };
+  const opus = {
+    ...provider("claudeAgent", "claudeAgent", 10),
+    models: [{ slug: "claude-opus-5-5", name: "Opus 5.5", isCustom: false, capabilities: null }],
+  } satisfies ServerProvider;
+  const copilot = {
+    ...provider("copilot", "acpRegistry", null),
+    models: [{ slug: "claude-opus-5.5", name: "Opus 5.5", isCustom: false, capabilities: null }],
+  } satisfies ServerProvider;
+  const astra = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-6-astra" };
+  const sol = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-6.1-sol" };
+  const claudeOpus = { instanceId: opus.instanceId, model: "claude-opus-5-5" };
+  const order = {
+    ...rule,
+    providerLimitFallbackModels: [astra, sol, claudeOpus],
+  };
+
+  it("continues a limited Claude thread on the first entry, before the same model elsewhere", () => {
+    expect(
+      resolveProviderFallback({
+        providers: [opus, codexModels(20, 30), copilot],
+        currentInstanceId: opus.instanceId,
+        currentModel: "claude-opus-5-5",
+        rule: order,
+        nowMs: now,
+        belowPercent: 95,
+        anyReady: true,
+      }),
+    ).toEqual(astra);
+  });
+
+  it("takes the next entry when the first one's own window is full", () => {
+    const providers = [opus, codexModels(20, 100), copilot];
+    expect(
+      resolveProviderFallback({
+        providers,
+        currentInstanceId: opus.instanceId,
+        rule: order,
+        nowMs: now,
+        belowPercent: 95,
+      }),
+    ).toEqual(sol);
+    const entries = describeFallbackOrder({
+      providers,
+      currentInstanceId: opus.instanceId,
+      rule: order,
+      nowMs: now,
+      belowPercent: 95,
+    });
+    expect(entries.map((entry) => entry.unavailable)).toEqual(["full", null, "current"]);
+    expect(entries[0]!.resetAt).toBe(Date.parse(later));
+  });
+
+  it("serves the reverse direction from the same order", () => {
+    expect(
+      resolveProviderFallback({
+        providers: [opus, codexModels(100, 100), copilot],
+        currentInstanceId: ProviderInstanceId.make("codex"),
+        currentModel: "gpt-6-astra",
+        rule: order,
+        nowMs: now,
+        belowPercent: 95,
+        limitedInstanceIds: new Set(["codex"]),
+      }),
+    ).toEqual(claudeOpus);
+  });
+
+  it("falls through to the old steps when no entry can take the thread", () => {
+    expect(
+      resolveProviderFallback({
+        providers: [opus, codexModels(100, 100), copilot],
+        currentInstanceId: opus.instanceId,
+        currentModel: "claude-opus-5-5",
+        rule: order,
+        nowMs: now,
+        belowPercent: 95,
+      }),
+    ).toEqual({ instanceId: copilot.instanceId, model: "claude-opus-5.5" });
+  });
+
+  it("names why an entry is out: signed out, missing, per-token, limited", () => {
+    const signedOut = { ...codexModels(10, 10), auth: { status: "unauthenticated" as const } };
+    const apiKey = { ...opus, auth: { status: "authenticated" as const, type: "apiKey" } };
+    const entries = describeFallbackOrder({
+      providers: [signedOut, apiKey, copilot],
+      currentInstanceId: ProviderInstanceId.make("other"),
+      rule: {
+        ...rule,
+        providerLimitFallbackModels: [
+          astra,
+          claudeOpus,
+          { instanceId: copilot.instanceId, model: "gone" },
+          { instanceId: copilot.instanceId, model: "claude-opus-5.5" },
+        ],
+      },
+      nowMs: now,
+      limitedInstanceIds: new Set(["copilot"]),
+    });
+    expect(entries.map((entry) => entry.unavailable)).toEqual([
+      "signed-out",
+      "per-token",
+      "missing",
+      "limited",
+    ]);
+  });
+
+  it("keeps the legacy single fallback after the same model elsewhere", () => {
+    expect(
+      resolveProviderFallback({
+        providers: [opus, codexModels(20, 30), copilot],
+        currentInstanceId: opus.instanceId,
+        currentModel: "claude-opus-5-5",
+        rule: { ...rule, providerLimitFallbackModelSelection: astra },
+        nowMs: now,
+        belowPercent: 95,
+      }),
+    ).toEqual({ instanceId: copilot.instanceId, model: "claude-opus-5.5" });
   });
 });

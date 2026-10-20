@@ -158,6 +158,17 @@ describe("private machine roster", () => {
     const removed = connected([]);
     expect(connectButton(StudioFleetRoster(removed.props))?.props.disabled).toBe(false);
   });
+  it("offers Remove machine on other machines only, with Manage access", () => {
+    const onRemove = vi.fn();
+    const removeButton = (tree: unknown) =>
+      visitElements(tree, (element) => element.props.children === "Remove machine");
+    const tree = render({ onRemove, canManageWorkers: true });
+    (removeButton(tree)?.props.onClick as () => void)();
+    // M4 is this machine: only M1 can be removed.
+    expect(onRemove).toHaveBeenCalledExactlyOnceWith(snapshot.machines[1]);
+    expect(removeButton(render({ onRemove, canManageWorkers: false }))).toBeNull();
+    expect(removeButton(render({ canManageWorkers: true }))).toBeNull();
+  });
   it("shows an unpaired M1 in a fresh browser and calls pairing only on an explicit click", () => {
     const onPair = vi.fn();
     const tree = render({ onPair });

@@ -142,6 +142,8 @@ import * as WebhookRoute from "./scheduledTasks/webhookRoute.ts";
 import * as RelayDeliveryProof from "./scheduledTasks/RelayDeliveryProof.ts";
 import * as HeldHooksWaker from "./relay/HeldHooksWaker.ts";
 import * as McpOAuth from "./auth/McpOAuth.ts";
+import * as WorkGrants from "./fleet/WorkGrants.ts";
+import * as WorkGrantRevokeSweeper from "./fleet/workGrantRevokeSweeper.ts";
 import * as McpOAuthHttp from "./auth/mcpOAuthHttp.ts";
 import {
   relayHookBaseUrl,
@@ -599,6 +601,8 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   AgentAwarenessRelay.layer,
   // Coordinator workers on the owner's other machines: grants, follower and their renewal.
   RemoteWorkers.layerFleetWorkers,
+  // Interrupts the work of a machine revoked here once its grace has passed.
+  WorkGrantRevokeSweeper.layer,
   // Asks Studio Connect to deliver webhooks it held while this environment was offline.
   HeldHooksWaker.layer,
   layerThreadSettlementWorker,
@@ -749,6 +753,9 @@ const layerRuntimeCoreDependencies = layerRuntimeCoreDependenciesBase.pipe(
   Layer.provideMerge(Layer.mergeAll(NativeAppIconResolver.layer, layerProjectFaviconResolver)),
   Layer.provideMerge(layerRepositoryIdentityResolver),
   Layer.provideMerge(layerServerEnvironment),
+  // Who may run work here, from other machines: read by /mcp sign-in, the
+  // thread tools and Settings, so it sits under all of them.
+  Layer.provideMerge(WorkGrants.layer),
   Layer.provideMerge(layerAuth),
   Layer.provideMerge(ServerSecretStore.layer),
   Layer.provideMerge(

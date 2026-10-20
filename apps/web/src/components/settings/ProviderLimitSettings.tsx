@@ -1,11 +1,12 @@
 import {
   DEFAULT_PROVIDER_LIMIT_SWITCH_AT_PERCENT,
   DEFAULT_PROVIDER_LIMIT_WAIT_UNDER_MINUTES,
+  type ModelSelection,
   type ProviderLimitAction,
 } from "@specweave-studio/contracts";
-import { createModelSelection } from "@specweave-studio/shared/model";
 import {
   canTakeTurn,
+  fallbackModelOrder,
   isDirectClaudeApiKeyProvider,
 } from "@specweave-studio/shared/providerFallback";
 import { useState } from "react";
@@ -33,6 +34,7 @@ import { Button } from "../ui/button";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
 import { AddApiCreditAccountDialog } from "./AddApiCreditAccountDialog";
+import { addFallbackEntry, FallbackOrderList, MAX_FALLBACK_MODELS } from "./FallbackOrderList";
 import { useSettingsScope } from "./SettingsScopeContext";
 import {
   SETTINGS_PICKER_TRIGGER_CLASSNAME,
@@ -80,8 +82,14 @@ export function ProviderLimitSettings() {
   const entries = sortProviderInstanceEntries(
     applyProviderInstanceSettings(deriveProviderInstanceEntries(providers), settings),
   );
-  const fallback = settings.providerLimitFallbackModelSelection;
-  const pickerSelection = resolveDefaultProviderModelSelection(providers, fallback);
+  const fallbackOrder = fallbackModelOrder(settings);
+  // The list is the setting; its first entry keeps older clients' single fallback in step.
+  const saveFallbackOrder = (order: ReadonlyArray<ModelSelection>) =>
+    updateSettings({
+      providerLimitFallbackModels: [...order],
+      providerLimitFallbackModelSelection: order[0] ?? null,
+    });
+  const pickerSelection = resolveDefaultProviderModelSelection(providers, fallbackOrder[0] ?? null);
   const modelOptions = getCustomModelOptionsByInstance(
     settings,
     providers,
@@ -89,7 +97,10 @@ export function ProviderLimitSettings() {
     pickerSelection?.model,
   );
   const mixedAction = useScopedSettingsMixed(["providerLimitAction"]);
-  const mixedFallback = useScopedSettingsMixed(["providerLimitFallbackModelSelection"]);
+  const mixedFallback = useScopedSettingsMixed([
+    "providerLimitFallbackModels",
+    "providerLimitFallbackModelSelection",
+  ]);
   const mixedSwitchAt = useScopedSettingsMixed(["providerLimitSwitchAtPercent"]);
   const mixedWaitUnder = useScopedSettingsMixed(["providerLimitWaitUnderMinutes"]);
   const mixedRedeem = useScopedSettingsMixed(["providerLimitRedeemResets"]);
@@ -161,18 +172,15 @@ export function ProviderLimitSettings() {
       />
       <SettingsRow
         serverScoped
-        settingKeys={["providerLimitFallbackModelSelection"]}
+        settingKeys={["providerLimitFallbackModels", "providerLimitFallbackModelSelection"]}
         mixed={mixedFallback}
         id="provider-limit-fallback"
-        title="Fallback model"
-        description="The model a limited thread continues on. Without one, SpecWithCode picks another signed-in provider that is not full. A thread already on the fallback goes back to the default model."
-        status={fallback === null && !mixedFallback ? "Any ready provider" : undefined}
+        title="Fallback order"
+        description="The models a limited thread continues on, best first. The first one that is signed in and has room takes the thread; a thread already on one skips it, so Codex threads can fall back to Claude from the same list. After these, SpecWithCode tries any other ready provider."
+        status={fallbackOrder.length === 0 && !mixedFallback ? "Any ready provider" : undefined}
         resetAction={
-          fallback !== null ? (
-            <SettingResetButton
-              label="fallback model"
-              onClick={() => updateSettings({ providerLimitFallbackModelSelection: null })}
-            />
+          fallbackOrder.length > 0 ? (
+            <SettingResetButton label="fallback order" onClick={() => saveFallbackOrder([])} />
           ) : null
         }
         control={
@@ -184,23 +192,24 @@ export function ProviderLimitSettings() {
               instanceEntries={entries}
               modelOptionsByInstance={modelOptions}
               triggerClassName={SETTINGS_PICKER_TRIGGER_CLASSNAME}
-              {...(mixedFallback
-                ? { triggerLabel: "Mixed" }
-                : fallback === null
-                  ? { triggerLabel: "Choose" }
-                  : {})}
-              triggerAriaLabel="Fallback model"
+              triggerLabel={mixedFallback ? "Mixed" : "Add model"}
+              triggerAriaLabel="Add a fallback model"
+              disabled={fallbackOrder.length >= MAX_FALLBACK_MODELS}
               onInstanceModelChange={(instanceId, model) =>
-                updateSettings({
-                  providerLimitFallbackModelSelection: createModelSelection(instanceId, model),
-                })
+                saveFallbackOrder(addFallbackEntry(fallbackOrder, instanceId, model))
               }
             />
           ) : (
             <span className="text-sm text-muted-foreground">No providers available</span>
           )
         }
-      />
+      >
+        <FallbackOrderList
+          order={fallbackOrder}
+          providers={providers}
+          onChange={saveFallbackOrder}
+        />
+      </SettingsRow>
       <SettingsRow
         serverScoped
         settingKeys={["providerLimitSwitchAtPercent"]}

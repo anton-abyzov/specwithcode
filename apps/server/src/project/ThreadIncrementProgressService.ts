@@ -14,9 +14,11 @@ import {
   type ThreadIncrementLinkInput,
   type ThreadIncrementLinkResult,
   type ThreadIncrementLinkTarget,
+  type ThreadIncrementProgress,
   type ThreadIncrementProgressInput,
   type ThreadIncrementProgressSnapshot,
 } from "@specweave-studio/contracts";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -47,6 +49,12 @@ export class ThreadIncrementProgressService extends Context.Service<
     ) => Effect.Effect<ThreadIncrementLinkResult, ProjectWorkspaceError>;
   }
 >()("specweave-studio/project/ThreadIncrementProgressService") {}
+
+/**
+ * Every open plan card polls the same threads, so identical reads share one
+ * pass over the SpecWeave folders while it runs and for this long after.
+ */
+const PROGRESS_READ_TTL_MS = 5_000;
 
 interface LinkRow {
   readonly threadId: string;
@@ -108,15 +116,86 @@ export const make = Effect.gen(function* () {
         ),
       );
 
+  const summariesOf = (
+    projectId: ThreadIncrementProgressInput["projectId"],
+    threadIds: ThreadIncrementProgressInput["threadIds"],
+  ) =>
+    projections.getThreadSummaries !== undefined
+      ? projections.getThreadSummaries(projectId, threadIds)
+      : Effect.forEach(threadIds, (threadId) => projections.getThreadShell(threadId)).pipe(
+          Effect.map((shells) =>
+            shells.flatMap((thread) =>
+              thread === null || thread.projectId !== projectId ? [] : [thread],
+            ),
+          ),
+        );
+
+  // Everything the folder read depends on, so a new title, branch or link is never served stale.
+  const progressReadKey = (
+    workspaceRoot: string,
+    sources: ReadonlyArray<ThreadIncrementSource>,
+  ): string =>
+    [
+      workspaceRoot,
+      ...sources.map((source) =>
+        [
+          source.threadId,
+          source.title ?? "",
+          source.branch ?? "",
+          source.worktreePath ?? "",
+          source.link === undefined ? "auto" : `link:${source.link.incrementId ?? ""}`,
+          source.home ?? "",
+        ].join("\u0001"),
+      ),
+    ].join("\u0000");
+  // Keyed by everything the read depends on, so a new link or branch reads again.
+  // A pending read is always shared; the TTL counts from when it settled, so a
+  // slow pass is not started again by every poll that arrives while it runs.
+  const progressReads = new Map<
+    string,
+    { settledAt: number | undefined; readonly result: Promise<ThreadIncrementProgress[]> }
+  >();
+  const readProgress = (workspaceRoot: string, sources: ReadonlyArray<ThreadIncrementSource>) =>
+    Effect.gen(function* () {
+      const clock = yield* Clock.clockWith(Effect.succeed);
+      const now = clock.currentTimeMillisUnsafe();
+      for (const [key, entry] of progressReads) {
+        if (entry.settledAt !== undefined && now - entry.settledAt >= PROGRESS_READ_TTL_MS) {
+          progressReads.delete(key);
+        }
+      }
+      const key = progressReadKey(workspaceRoot, sources);
+      const shared = progressReads.get(key);
+      if (shared !== undefined) return yield* Effect.promise(() => shared.result);
+      const result = readThreadIncrementProgress(workspaceRoot, sources);
+      const entry: { settledAt: number | undefined; readonly result: typeof result } = {
+        settledAt: undefined,
+        result,
+      };
+      progressReads.set(key, entry);
+      result.then(
+        () => {
+          entry.settledAt = clock.currentTimeMillisUnsafe();
+        },
+        () => {
+          if (progressReads.get(key) === entry) progressReads.delete(key);
+        },
+      );
+      return yield* Effect.promise(() => result);
+    });
+
   const read = (input: ThreadIncrementProgressInput) =>
     Effect.gen(function* () {
       const project = yield* projectOf(input.projectId);
-      const ids = [...new Set(input.threadIds)];
+      const ids = [...new Set(input.threadIds)].toSorted();
       const links = yield* linksFor(input.projectId, ids);
+      const threads = new Map(
+        (yield* summariesOf(input.projectId, ids)).map((thread) => [thread.id, thread]),
+      );
       const sources: ThreadIncrementSource[] = [];
       for (const threadId of ids) {
-        const thread = yield* projections.getThreadShell(threadId);
-        if (thread === null || thread.projectId !== input.projectId) continue;
+        const thread = threads.get(threadId);
+        if (thread === undefined) continue;
         const link = links.get(threadId);
         sources.push({
           threadId,
@@ -126,13 +205,10 @@ export const make = Effect.gen(function* () {
           ...(link === undefined ? {} : { link: { incrementId: link.incrementId } }),
         });
       }
-      const threads =
-        sources.length === 0
-          ? []
-          : yield* Effect.promise(() =>
-              readThreadIncrementProgress(project.workspaceRoot, sources),
-            );
-      return { projectId: input.projectId, threads };
+      return {
+        projectId: input.projectId,
+        threads: sources.length === 0 ? [] : yield* readProgress(project.workspaceRoot, sources),
+      };
     }).pipe(asWorkspaceError(input.projectId));
 
   const listIncrements = (input: ProjectIncrementsListInput) =>

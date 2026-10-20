@@ -34,6 +34,7 @@ export type CoordinatorProgress = {
 
 const ACTIVE = new Set(["queued", "preparing", "starting", "running", "waiting"]);
 const EXECUTING = new Set(["preparing", "starting", "running", "waiting"]);
+const ANSWER_LABEL = "Waiting for an answer";
 
 export function toolLabel(name: string): string {
   const tool = name.replace(/^mcp__.+?__/, "");
@@ -77,7 +78,7 @@ export function itemLabel(item: ProgressItem): string | null {
       return "Planning";
     case "approval_request":
     case "user_input_request":
-      return "Waiting for an answer";
+      return ANSWER_LABEL;
     default:
       // Messages in, checkpoints, notices and bookkeeping say nothing about the work.
       return null;
@@ -106,15 +107,25 @@ export function coordinatorProgress(projection: {
     .toSorted((left, right) => left.ordinal - right.ordinal);
   const run = active.find((candidate) => EXECUTING.has(candidate.status)) ?? active[0];
   if (run === undefined) return null;
-  const requested = epochMillis(run.requestedAt);
-  const since = requested === null ? null : new Date(requested).toISOString();
+  const sinceOf = (candidate: ProgressRun) => {
+    const requested = epochMillis(candidate.requestedAt);
+    return requested === null ? null : new Date(requested).toISOString();
+  };
+  const since = sinceOf(run);
   const at = (label: string) => ({ label, since, waiting: false });
   if (run.status === "queued") return at("Starting the coordinator");
-  if (run.status === "waiting") return { label: "Waiting for an answer", since, waiting: true };
+  if (run.status === "waiting") {
+    // A "waiting" run has finished its turn and is saving its checkpoint; the next message
+    // starts only after that, so name the hold-up and count from the message that waits on it.
+    const next = active.find((candidate) => candidate.status === "queued");
+    if (next !== undefined)
+      return { label: "Finishing the previous turn", since: sinceOf(next), waiting: false };
+    return at("Finishing the turn");
+  }
   const latest = latestWorkStep(
     (projection.turnItems ?? []).filter((item) => item.runId === run.id),
   );
-  if (latest !== null) return at(latest);
+  if (latest !== null) return { label: latest, since, waiting: latest === ANSWER_LABEL };
   // A turn can be woken by a worker's report as well as by the person, so say neither.
   return at(run.status === "running" ? "Reading the new message" : "Starting the coordinator");
 }

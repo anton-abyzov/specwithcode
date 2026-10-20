@@ -1,5 +1,6 @@
 import type { EnvironmentId, ProjectWorkerMachine, RuntimeMode } from "@specweave-studio/contracts";
 import type {
+  StudioFleetRemoveResult,
   StudioFleetSnapshot,
   StudioFleetWorkerAccess,
   StudioFleetWorkers,
@@ -134,4 +135,15 @@ export function workerMachineChoices(
       machine: current,
     });
   return choices;
+}
+
+/** What removing a machine left valid there, for the notice after Remove. */
+export function fleetRemoveNotice(removed: StudioFleetRemoveResult): string {
+  const kept = [
+    removed.workerAccess === "kept" ? "worker access" : null,
+    removed.managementToken === "kept" ? "management token" : null,
+  ].filter((part) => part !== null);
+  if (kept.length === 0)
+    return `Removed ${removed.label} and revoked what this machine held there.`;
+  return `Removed ${removed.label} here. ${removed.label} could not be reached, so this machine's ${kept.join(" and ")} there stays valid until it expires. On ${removed.label}, revoke it in Settings > Connections${removed.managementSessionId ? ` (session ${removed.managementSessionId})` : ""}.`;
 }

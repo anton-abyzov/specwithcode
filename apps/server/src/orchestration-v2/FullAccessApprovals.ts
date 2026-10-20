@@ -45,6 +45,7 @@ import * as Stream from "effect/Stream";
 
 import { forkParked } from "../serverActivation.ts";
 import { randomUuidV4 } from "./RandomUuid.ts";
+import { SWEEP_SHELL_SNAPSHOT_MAX_AGE_MS } from "./ShellSnapshotCache.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 
 const FULL_ACCESS_PROMPT_KINDS: ReadonlySet<OrchestrationV2RuntimeRequest["kind"]> = new Set([
@@ -335,10 +336,15 @@ export const makeWith = (overrides: Partial<FullAccessApprovalsOptions> = {}) =>
         yield* raiseChildren(threadId);
       }).pipe(reportFailure("Full access raise failed", threadId));
 
-    const sweep = (): Effect.Effect<void> =>
+    /** Left without an age, it reads the database rather than a shared snapshot. */
+    const sweep = (maxAgeMs?: number): Effect.Effect<void> =>
       Effect.gen(function* () {
         // Shell rows carry their pending prompt, so only threads with one are read.
-        const snapshot = yield* threads.getShellSnapshot({ location: "active" });
+        // acceptPending re-reads each thread's requests, so a shared copy is safe.
+        const snapshot = yield* threads.getShellSnapshot({
+          location: "active",
+          ...(maxAgeMs === undefined ? {} : { maxAgeMs }),
+        });
         const byId = new Map(snapshot.threads.map((thread) => [thread.id, thread]));
         const waiting = snapshot.threads.filter(
           (thread) =>
@@ -404,7 +410,8 @@ export const makeWith = (overrides: Partial<FullAccessApprovalsOptions> = {}) =>
         });
         yield* Effect.sleep(delay);
         delay = Duration.min(Duration.times(delay, 2), maxDelay);
-        // Prompts raised while the stream was closed have no event to wait for.
+        // Prompts raised while the stream was closed have no event to wait for,
+        // and a snapshot shared from before the stream stopped would miss them.
         yield* sweep();
       }
     });
@@ -423,14 +430,16 @@ export const makeWith = (overrides: Partial<FullAccessApprovalsOptions> = {}) =>
             [
               follow,
               // The first sweep answers prompts left over from before this start.
-              sweep().pipe(Effect.repeat(Schedule.spaced(options.sweepInterval))),
+              sweep(SWEEP_SHELL_SNAPSHOT_MAX_AGE_MS).pipe(
+                Effect.repeat(Schedule.spaced(options.sweepInterval)),
+              ),
             ],
             { concurrency: "unbounded", discard: true },
           ),
         );
       });
 
-    return { start, process, sweep } satisfies FullAccessApprovals["Service"];
+    return { start, process, sweep: () => sweep() } satisfies FullAccessApprovals["Service"];
   });
 
 /** @public Service construction is part of the canonical Effect module API. */

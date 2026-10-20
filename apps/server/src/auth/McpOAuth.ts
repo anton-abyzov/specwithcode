@@ -29,6 +29,7 @@ import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as McpHttpServer from "../mcp/McpHttpServer.ts";
 import type * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
 import * as EnvironmentAuth from "./EnvironmentAuth.ts";
+import * as WorkGrants from "../fleet/WorkGrants.ts";
 import * as ServerSecretStore from "./ServerSecretStore.ts";
 import {
   base64UrlDecodeUtf8,
@@ -564,9 +565,25 @@ export const layerMcpClientAuthenticator = Layer.effect(
     const environmentAuth = yield* EnvironmentAuth.EnvironmentAuth;
     const environment = yield* ServerEnvironment.ServerEnvironment;
     const environmentId = yield* environment.getEnvironmentId;
+    const workGrants = yield* WorkGrants.WorkGrants;
     return McpHttpServer.McpClientAuthenticator.of({
       authenticate: (request) =>
         environmentAuth.authenticateMcpClient(request).pipe(
+          // A machine this one revoked is refused whatever grant it holds,
+          // including one minted after the revoke.
+          Effect.flatMap((client) =>
+            workGrants.forClient(client).pipe(
+              Effect.flatMap((grant) =>
+                grant?.revoked === true
+                  ? Effect.fail(
+                      new EnvironmentAuth.ServerAuthInvalidCredentialError({
+                        diagnostic: "This machine revoked that machine's work here.",
+                      }),
+                    )
+                  : Effect.succeed(client),
+              ),
+            ),
+          ),
           Effect.flatMap((client) =>
             Clock.currentTimeMillis.pipe(
               Effect.map((issuedAt): McpInvocationContext.McpInvocationScope => ({

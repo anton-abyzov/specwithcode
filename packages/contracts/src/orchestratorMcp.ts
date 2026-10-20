@@ -72,6 +72,28 @@ export const OrchestratorMcpMachineRef = Schema.Struct({
 });
 export type OrchestratorMcpMachineRef = typeof OrchestratorMcpMachineRef.Type;
 
+/** The most machines one chain of remote launches may name. */
+export const ORCHESTRATOR_MCP_DELEGATION_MAX_PATH = 16;
+
+/**
+ * Which machines a remote launch came through, oldest first, ending with the
+ * machine that sends it, and how many machine hops it has made. Set by
+ * SpecWithCode itself on launches between machines; the receiving machine
+ * refuses a launch whose path already names it or whose hops exceed what it
+ * allows the sender.
+ */
+export const OrchestratorMcpDelegation = Schema.Struct({
+  path: Schema.Array(EnvironmentId).check(
+    Schema.isMinLength(1),
+    Schema.isMaxLength(ORCHESTRATOR_MCP_DELEGATION_MAX_PATH),
+  ),
+  hops: PositiveInt.check(Schema.isLessThanOrEqualTo(ORCHESTRATOR_MCP_DELEGATION_MAX_PATH)),
+}).annotate({
+  description:
+    "Set by SpecWithCode between machines; agents never pass it. The machines this launch came through and its hop count.",
+});
+export type OrchestratorMcpDelegation = typeof OrchestratorMcpDelegation.Type;
+
 /**
  * OpenCode 1.15 has been observed serializing nested MCP union objects as JSON
  * strings. Keep the structured object as the documented form while accepting
@@ -984,6 +1006,10 @@ export class OrchestratorMcpFailure extends Schema.TaggedError<OrchestratorMcpFa
       "remote_launch_unconfirmed",
       "delegation_is_local",
       "worker_machine_set",
+      "delegation_cycle",
+      "delegation_limit",
+      "outside_grant_scope",
+      "account_not_allowed",
     ]),
     message: Schema.String,
   },

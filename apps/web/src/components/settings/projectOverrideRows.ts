@@ -41,6 +41,7 @@ export const PROJECT_OVERRIDE_LABELS: Readonly<
   responseStreamingMode: { label: "Response streaming", page: "General" },
   providerLimitAction: { label: "When a provider runs out", page: "Providers" },
   providerLimitFallbackModelSelection: { label: "Fallback model", page: "Providers" },
+  providerLimitFallbackModels: { label: "Fallback order", page: "Providers" },
   providerLimitSwitchAtPercent: { label: "Switch at usage", page: "Providers" },
   providerLimitWaitUnderMinutes: { label: "Wait when reset is under", page: "Providers" },
   providerLimitRedeemResets: { label: "Redeem resets", page: "Providers" },

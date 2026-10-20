@@ -2,7 +2,7 @@
 // Three isolated real servers, synthetic history, disabled providers, headless browser.
 import assert from "node:assert/strict";
 import { spawn, execFileSync } from "node:child_process";
-import { randomUUID, createHash } from "node:crypto";
+import { randomBytes, randomUUID, createHash } from "node:crypto";
 import { mkdirSync, mkdtempSync, writeFileSync, readFileSync, rmSync } from "node:fs";
 import { createRequire } from "node:module";
 import { createServer } from "node:net";
@@ -162,6 +162,101 @@ async function rpc(host, tag, payload) {
     });
   });
 }
+async function mintWorkerGrant(worker, coordinator) {
+  // The same loopback OAuth steps a coordinator's Allow workers drives on a machine.
+  const clientName = `SpecWithCode workers · ${coordinator.environmentId}`;
+  const redirectUri = "http://127.0.0.1/specwithcode-workers";
+  const resource = `${worker.origin}/mcp`;
+  const pairing = await request(worker, "/api/auth/pairing-token", {
+    label: clientName,
+    scopes: ["orchestration:read", "orchestration:operate"],
+  });
+  const json = { "Content-Type": "application/json" };
+  const registered = await fetch(worker.origin + "/oauth/mcp/register", {
+    method: "POST",
+    headers: json,
+    body: JSON.stringify({ client_name: clientName, redirect_uris: [redirectUri] }),
+  });
+  assert.ok([200, 201].includes(registered.status), "Worker client registration failed");
+  const clientId = (await registered.json()).client_id;
+  const verifier = randomBytes(48).toString("base64url");
+  const decision = await fetch(worker.origin + "/oauth/mcp/decision", {
+    method: "POST",
+    headers: json,
+    body: JSON.stringify({
+      authorization: {
+        response_type: "code",
+        client_id: clientId,
+        redirect_uri: redirectUri,
+        code_challenge: createHash("sha256").update(verifier).digest("base64url"),
+        code_challenge_method: "S256",
+        state: randomUUID(),
+        resource,
+      },
+      decision: { _tag: "pairing-code", access: "full-access", code: pairing.credential },
+    }),
+  });
+  assert.equal(decision.status, 200, "Worker grant approval failed");
+  const code = new URL((await decision.json()).redirectTo).searchParams.get("code");
+  const token = await fetch(worker.origin + "/oauth/mcp/token", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      grant_type: "authorization_code",
+      code,
+      redirect_uri: redirectUri,
+      client_id: clientId,
+      code_verifier: verifier,
+      resource,
+    }),
+  });
+  assert.equal(token.status, 200, "Worker grant token exchange failed");
+  return (await token.json()).access_token;
+}
+/** One MCP tool call with a worker grant, as a coordinator's machine makes it. */
+async function mcpCall(host, token, name, args) {
+  const post = (body, session) =>
+    fetch(host.origin + "/mcp", {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${token}`,
+        "Content-Type": "application/json",
+        Accept: "application/json, text/event-stream",
+        "MCP-Protocol-Version": "2025-06-18",
+        ...(session ? { "Mcp-Session-Id": session } : {}),
+      },
+      body: JSON.stringify(body),
+    });
+  const read = async (response) => {
+    const text = await response.text();
+    if (!(response.headers.get("content-type") ?? "").includes("text/event-stream"))
+      return text ? JSON.parse(text) : null;
+    return text
+      .split("\n")
+      .filter((line) => line.startsWith("data:"))
+      .map((line) => JSON.parse(line.slice(5)))
+      .find((message) => message.id !== undefined);
+  };
+  const initialized = await post({
+    jsonrpc: "2.0",
+    id: 1,
+    method: "initialize",
+    params: {
+      protocolVersion: "2025-06-18",
+      capabilities: {},
+      clientInfo: { name: "work-grant-verifier", version: "1" },
+    },
+  });
+  if (initialized.status !== 200) return { status: initialized.status, body: null };
+  const session = initialized.headers.get("mcp-session-id");
+  await read(initialized);
+  await post({ jsonrpc: "2.0", method: "notifications/initialized" }, session);
+  const called = await post(
+    { jsonrpc: "2.0", id: 2, method: "tools/call", params: { name, arguments: args } },
+    session,
+  );
+  return { status: called.status, body: await read(called) };
+}
 async function exchange(host, credential) {
   const response = await fetch(host.origin + "/oauth/token", {
     method: "POST",
@@ -176,6 +271,163 @@ async function exchange(host, credential) {
   });
   assert.equal(response.status, 200, "Owned token exchange failed");
   host.token = (await response.json()).access_token;
+}
+/**
+ * 0951: work another machine starts here stays inside the grant this machine
+ * gave it. M1 is the worker; M4 the coordinator; M3 an earlier hop.
+ */
+async function verifyWorkGrants() {
+  const [m4, m1, m3] = hosts;
+  const worker = await mintWorkerGrant(m1, m4);
+  const grants = () => request(m1, "/api/studio/fleet/work-grants", undefined, "GET");
+  const grantOf = async () =>
+    (await grants()).grants.find((grant) => grant.coordinatorEnvironmentId === m4.environmentId);
+  const change = (action, input = {}) =>
+    request(m1, `/api/studio/fleet/work-grants/${action}`, {
+      coordinatorEnvironmentId: m4.environmentId,
+      ...input,
+    });
+  let grant = await grantOf();
+  assert.deepEqual(
+    {
+      projects: grant.projects,
+      accounts: grant.accounts,
+      owner: grant.owner,
+      hopLimit: grant.hopLimit,
+      legacy: grant.legacy,
+      status: grant.status,
+    },
+    {
+      projects: { kind: "linked" },
+      accounts: { kind: "all" },
+      owner: "self",
+      hopLimit: 2,
+      legacy: false,
+      status: "active",
+    },
+    "A new grant from the owner's own machine covers linked projects and all sign-ins",
+  );
+  receipt.checks.push("New worker grant: linked projects, all sign-ins, two hops, not legacy");
+  const launch = (projectId, delegation, instanceId = "codex") =>
+    mcpCall(m1, worker, "studio_thread_launch", {
+      projectId,
+      title: "Synthetic remote launch",
+      message: "Synthetic verification only.",
+      modelSelection: { instanceId, model: "synthetic-unavailable" },
+      ...(delegation ? { delegation } : {}),
+    });
+  const refused = (result, code, what) => {
+    assert.equal(result.status, 200, `${what}: MCP call failed`);
+    assert.ok(JSON.stringify(result.body).includes(code), `${what}: expected ${code}`);
+  };
+  // M1 started work on M4, which now tries to start work back on M1.
+  refused(
+    await launch(m1.projectId, { path: [m1.environmentId, m4.environmentId], hops: 2 }),
+    "delegation_cycle",
+    "A to B to A",
+  );
+  receipt.checks.push("A to B to A launch refused on the worker as delegation_cycle");
+  const unlinked = randomUUID();
+  const unlinkedRoot = join(m1.dir, "unlinked");
+  mkdirSync(unlinkedRoot);
+  await request(m1, "/api/projects/mutate", {
+    type: "project.create",
+    commandId: randomUUID(),
+    projectId: unlinked,
+    title: "Unlinked private project",
+    workspaceRoot: unlinkedRoot,
+  });
+  refused(await launch(unlinked), "outside_grant_scope", "Unlinked project");
+  const listed = await mcpCall(m1, worker, "studio_project_list", {});
+  assert.ok(!JSON.stringify(listed.body).includes(unlinked), "Unlinked project stays hidden");
+  receipt.checks.push("Launch into a project not linked to the coordinator refused and hidden");
+  await change("update", { accounts: { kind: "listed", instanceIds: ["claudeAgent"] } });
+  refused(await launch(m1.projectId), "account_not_allowed", "Sign-in outside the grant");
+  receipt.checks.push("Launch with a sign-in outside the account policy refused");
+  await change("update", { owner: "other" });
+  grant = await grantOf();
+  assert.equal(grant.hopLimit, 1);
+  refused(
+    await launch(m1.projectId, { path: [m3.environmentId, m4.environmentId], hops: 2 }),
+    "delegation_limit",
+    "Two hops from another person's machine",
+  );
+  receipt.checks.push("Another person's machine: hop limit 1, two-hop launch refused");
+  await change("update", {
+    owner: "self",
+    accounts: { kind: "listed", instanceIds: ["claudeAgent", "codex"] },
+  });
+  // The worker's own Settings > Connections, headless.
+  const workerBrowser = await browser.newContext({
+    viewport: { width: 1400, height: 1400 },
+    colorScheme: "light",
+    reducedMotion: "reduce",
+  });
+  // Reading and changing grants needs access:read and access:write.
+  const pairing = await request(m1, "/api/auth/pairing-token", {
+    label: "Owned verifier browser",
+    scopes: ["orchestration:read", "settings:write", "access:read", "access:write"],
+  });
+  const signedIn = await workerBrowser.request.post(m1.origin + "/api/auth/browser-session", {
+    headers: { Origin: m1.origin },
+    data: { credential: pairing.credential },
+  });
+  assert.equal(signedIn.status(), 200, "Worker browser authentication failed");
+  const settings = await workerBrowser.newPage();
+  // The innermost section under that heading.
+  const workGrantsSection = () =>
+    settings
+      .locator("section")
+      .filter({
+        has: settings.getByRole("heading", { name: "Who can run work on this Mac", exact: true }),
+      })
+      .last();
+  const shoot = async (file) => {
+    const section = workGrantsSection();
+    await section.scrollIntoViewIfNeeded();
+    await section.screenshot({ path: join(output, file), animations: "disabled" });
+    writeFileSync(join(output, file.replace(".png", ".txt")), await section.innerText());
+    receipt.screenshots.push(file);
+  };
+  await settings.goto(`${m1.origin}/settings/connections`);
+  try {
+    await workGrantsSection().getByText(m4.environmentId).first().waitFor({ timeout: 45000 });
+  } catch (error) {
+    await settings.screenshot({
+      path: join(output, "failure-worker-settings.png"),
+      fullPage: true,
+    });
+    writeFileSync(
+      join(output, "failure-worker-settings.txt"),
+      await settings.locator("body").innerText(),
+    );
+    throw error;
+  }
+  await shoot("03-who-can-run-work.png");
+  receipt.checks.push("Who can run work on this Mac lists the coordinator, scope and sign-ins");
+  const revokedAt = Date.now();
+  await change("revoke");
+  grant = await grantOf();
+  assert.equal(grant.status, "revoked");
+  assert.equal(Date.parse(grant.interruptAt) - Date.parse(grant.revokedAt), 120000);
+  assert.ok(Date.parse(grant.revokedAt) >= revokedAt - 1000);
+  assert.equal((await mcpCall(m1, worker, "studio_project_list", {})).status, 401);
+  receipt.checks.push(
+    "Revoke refuses the worker grant at once; running work stops after 2 minutes",
+  );
+  await settings.reload();
+  await workGrantsSection()
+    .getByRole("button", { name: "Allow again" })
+    .waitFor({ timeout: 45000 });
+  await shoot("04-revoked.png");
+  await change("restore");
+  assert.equal((await mcpCall(m1, worker, "studio_project_list", {})).status, 401);
+  const renewed = await mintWorkerGrant(m1, m4);
+  assert.equal((await mcpCall(m1, renewed, "studio_project_list", {})).status, 200);
+  receipt.checks.push(
+    "Restore needs a fresh grant from the coordinator; the revoked one stays dead",
+  );
+  await workerBrowser.close();
 }
 let browser, page;
 try {
@@ -482,7 +734,7 @@ try {
     .waitFor({ timeout: 45000 });
   await page
     .locator("[data-request-execution]")
-    .filter({ hasText: "fixture-recorded-model" })
+    .filter({ hasText: /fixture.recorded.model/i })
     .first()
     .waitFor();
   await page.screenshot({
@@ -525,7 +777,7 @@ try {
     const provenance = page.locator(
       `[data-request-execution-origin][data-environment-id="${host.environmentId}"]`,
     );
-    await provenance.filter({ hasText: "fixture-recorded-model" }).waitFor();
+    await provenance.filter({ hasText: /fixture.recorded.model/i }).waitFor();
     assert.ok((await provenance.innerText()).includes(host.label));
     await provenance.scrollIntoViewIfNeeded();
     await page.evaluate(
@@ -560,6 +812,7 @@ try {
     .getByText("M1 fixture historical request", { exact: true })
     .waitFor();
   receipt.checks.push("Previous coordinator conversation remains readable in the same project");
+  await verifyWorkGrants();
   await stop(hosts[2]);
   await page
     .locator(`[data-unavailable-thread-host="${hosts[2].environmentId}"]`)

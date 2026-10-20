@@ -17,6 +17,8 @@ import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 
 import * as RemoteWorkers from "../../../fleet/RemoteWorkers.ts";
+import * as WorkGrants from "../../../fleet/WorkGrants.ts";
+import { unscopedGrant, type WorkOrigin } from "../../../fleet/workGrantPolicy.ts";
 import * as ServerConfig from "../../../config.ts";
 import * as ThreadLaunch from "../../../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagement from "../../../orchestration-v2/ThreadManagementService.ts";
@@ -44,6 +46,8 @@ const setup = (
     readonly staleEnvironment?: boolean;
     /** The machine's grant lowered the caller's mode to this one. */
     readonly grantedRuntimeMode?: "approval-required" | "auto-accept-edits";
+    /** Another machine's work started the calling thread here. */
+    readonly origin?: WorkOrigin;
   } = {},
 ) => {
   const caller = {
@@ -111,6 +115,12 @@ const setup = (
   const layerDependencies = Layer.mergeAll(
     NodeCrypto.layer,
     Layer.succeed(RemoteWorkers.RemoteWorkers, remote),
+    Layer.succeed(WorkGrants.WorkGrants, {
+      ...WorkGrants.WorkGrants.defaultValue(),
+      enabled: true,
+      originOf: () => Effect.succeed(options.origin),
+      forCoordinator: (id) => Effect.succeed(unscopedGrant(id)),
+    }),
     Layer.succeed(McpInvocationContext.McpInvocationContext, {
       environmentId: EnvironmentId.make("env-m4"),
       requestNamespace: "session",
@@ -286,5 +296,38 @@ it.effect("refuses other machines to outside clients, scratch threads and attach
     ).toMatchObject({ code: "invalid_request" });
     expect(outside.remoteLaunches).toEqual([]);
     expect(inside.remoteLaunches).toEqual([]);
+  });
+});
+
+it.effect("carries the calling thread's delegation path to the other machine", () => {
+  const plain = setup();
+  const relayed = setup({
+    origin: {
+      coordinatorEnvironmentId: EnvironmentId.make("env-m3"),
+      path: [EnvironmentId.make("env-m3")],
+      hops: 1,
+    },
+  });
+  return Effect.gen(function* () {
+    yield* plain.launch({ title: "Fix CI", message: "Fix it", machine: "M1" });
+    expect(plain.remoteLaunches[0]?.delegation).toEqual({ path: ["env-m4"], hops: 1 });
+    yield* relayed.launch({ title: "Fix CI", message: "Fix it", machine: "M1" });
+    expect(relayed.remoteLaunches[0]?.delegation).toEqual({
+      path: ["env-m3", "env-m4"],
+      hops: 2,
+    });
+  });
+});
+
+it.effect("refuses to send work back to the machine it came from, before sending it", () => {
+  // M1 started the calling thread here; it may not start work on M1 in turn.
+  const { launch, remoteLaunches } = setup({
+    origin: { coordinatorEnvironmentId: M1.environmentId, path: [M1.environmentId], hops: 1 },
+  });
+  return Effect.gen(function* () {
+    const result = yield* launch({ title: "Fix CI", message: "Fix it", machine: "M1" });
+    expect(result).toMatchObject({ code: "delegation_cycle" });
+    expect(String(result.message)).toContain("env-m1 → this machine → env-m1");
+    expect(remoteLaunches).toEqual([]);
   });
 });

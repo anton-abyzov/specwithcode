@@ -5,11 +5,12 @@ import {
   RemoteEnvironmentAuthorization,
 } from "@specweave-studio/client-runtime/studio";
 import type { PreparedConnection } from "@specweave-studio/client-runtime/connection";
-import type { ProjectId } from "@specweave-studio/contracts";
+import type { EnvironmentId, ProjectId } from "@specweave-studio/contracts";
 import type {
   StudioFleetAddInput,
   StudioFleetInviteInput,
   StudioFleetWorkersAllowInput,
+  StudioWorkGrantUpdateInput,
 } from "@specweave-studio/contracts/studioFleet";
 import * as Effect from "effect/Effect";
 
@@ -170,6 +171,72 @@ export function requestRemoteWorkers(prepared: PreparedConnection, projectId: Pr
         ),
       timeoutMs: 10000,
       request: ({ client, headers }) => client.remoteWorkers({ headers, query: { projectId } }),
+    });
+  });
+}
+/**
+ * Removes a machine from this server's list and gives up what this server
+ * holds there: its worker grant and the management token from the invitation.
+ */
+export function requestFleetRemove(prepared: PreparedConnection, id: string) {
+  return Effect.gen(function* () {
+    const signer = yield* Effect.serviceOption(ManagedRelay.ManagedRelayDpopSigner);
+    const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
+    return yield* executeAuthenticatedEnvironmentHttpRequest({
+      prepared,
+      signer,
+      remoteAuthorization,
+      group: "studioFleet",
+      method: "POST",
+      url: (base) => environmentEndpointUrl(base, "/api/studio/fleet/machines/remove"),
+      timeoutMs: 30000,
+      request: ({ client, headers }) => client.removeFleetMachine({ headers, payload: { id } }),
+    });
+  });
+}
+/** Coordinator machines that may run work on this server's machine, and what they may use. */
+export function requestWorkGrants(prepared: PreparedConnection) {
+  return Effect.gen(function* () {
+    const signer = yield* Effect.serviceOption(ManagedRelay.ManagedRelayDpopSigner);
+    const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
+    return yield* executeAuthenticatedEnvironmentHttpRequest({
+      prepared,
+      signer,
+      remoteAuthorization,
+      group: "studioFleet",
+      method: "GET",
+      url: (base) => environmentEndpointUrl(base, "/api/studio/fleet/work-grants"),
+      timeoutMs: 10000,
+      request: ({ client, headers }) => client.workGrants({ headers }),
+    });
+  });
+}
+export function requestWorkGrantChange(
+  prepared: PreparedConnection,
+  change:
+    | { readonly action: "update"; readonly input: StudioWorkGrantUpdateInput }
+    | {
+        readonly action: "revoke" | "restore";
+        readonly input: { readonly coordinatorEnvironmentId: EnvironmentId };
+      },
+) {
+  return Effect.gen(function* () {
+    const signer = yield* Effect.serviceOption(ManagedRelay.ManagedRelayDpopSigner);
+    const remoteAuthorization = yield* Effect.serviceOption(RemoteEnvironmentAuthorization);
+    return yield* executeAuthenticatedEnvironmentHttpRequest({
+      prepared,
+      signer,
+      remoteAuthorization,
+      group: "studioFleet",
+      method: "POST",
+      url: (base) => environmentEndpointUrl(base, `/api/studio/fleet/work-grants/${change.action}`),
+      timeoutMs: 15000,
+      request: ({ client, headers }) =>
+        change.action === "update"
+          ? client.updateWorkGrant({ headers, payload: change.input })
+          : change.action === "revoke"
+            ? client.revokeWorkGrant({ headers, payload: change.input })
+            : client.restoreWorkGrant({ headers, payload: change.input }),
     });
   });
 }

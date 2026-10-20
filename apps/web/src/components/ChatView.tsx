@@ -31,6 +31,9 @@ import { useLatestRef } from "../hooks/useLatestRef";
 import { THREAD_LIFECYCLE_LABELS } from "@specweave-studio/shared/threadLifecycleLabels";
 import { ChatCanvas } from "./chat/ChatCanvas";
 import {
+  fallbackUnavailableReason,
+  limitFallbackPairingBannerItem,
+  type FallbackChoice,
   usageApproachingBannerItem,
   usageLimitRecoveryBannerItem,
 } from "./chat/UsageLimitRecoveryBanner";
@@ -198,12 +201,14 @@ import {
 } from "@specweave-studio/shared/orchestrationV2ThreadError";
 import { resolveProjectSettings } from "@specweave-studio/shared/projectSettings";
 import {
+  canTakeTurn,
   isApiCreditExhaustedMessage,
   limitRestartRequest,
   limitStopWaitsForReset,
   provenFallbackSelection,
   providerUsedPercent,
   resolveApiCreditSelections,
+  describeFallbackOrder,
   resolveProviderFallback,
   usageAtThreshold,
   usageResetAt,
@@ -552,6 +557,7 @@ import {
   resolveScrollToEndClearance,
 } from "./composerFooterLayout";
 import { ChatHeader } from "./chat/ChatHeader";
+import { limitFallbackPairing } from "../studio/runIdentity";
 import { useRemoteOpenState } from "~/remoteOpen";
 import { shouldShowOpenInPicker } from "./chat/OpenInPicker.logic";
 import { useOpenFavoriteEditorShortcut } from "./chat/OpenInPickerShortcut";
@@ -9045,6 +9051,23 @@ function useChatViewActions(
           proven: provenFallbackSelection(activeThreadShell, activeCoordinatorShell),
         })
       : null;
+  // The rest of the user's fallback order for the banner's menu, each with
+  // the reason it cannot take the thread now. A person may pick one whose
+  // usage was not read: the start's own admission check still applies.
+  const limitFallbackOrder =
+    serverRuntime?.status === "failed" &&
+    serverRuntime.lastErrorClass === "usage_limit" &&
+    activeThreadShell &&
+    resumableRunId !== null &&
+    supportsProviderSwitchingViaHandoff
+      ? describeFallbackOrder({
+          providers: providerStatuses,
+          currentInstanceId: activeThreadShell.providerInstanceId,
+          rule: activeProjectSettings.settings,
+          nowMs: renderNowMs,
+          belowPercent: 100,
+        })
+      : [];
   const limitFallbackProvider =
     limitFallbackSelection === null
       ? undefined
@@ -9181,6 +9204,7 @@ function useChatViewActions(
     isRestoringThreadBranch,
     isSavingQueuedEdit,
     limitDeviceTarget,
+    limitFallbackOrder,
     limitFallbackProvider,
     limitFallbackSelection,
     limitRestart,
@@ -9671,6 +9695,7 @@ export default function ChatView(props: ChatViewProps) {
     isRestoringThreadBranch,
     isSavingQueuedEdit,
     limitDeviceTarget,
+    limitFallbackOrder,
     limitFallbackProvider,
     limitFallbackSelection,
     limitRestart,
@@ -9864,6 +9889,39 @@ export default function ChatView(props: ChatViewProps) {
         }
       : null;
   const creditRecoveryContextRef = useLatestRef(creditRecoveryContext);
+  const continueLimitedOn = async (selection: ModelSelection) => {
+    // The composer follows the thread to the provider it now runs on.
+    if (projectRouting?.saveCoordinatorModel) await projectRouting.saveCoordinatorModel(selection);
+    else onProviderModelSelect(selection.instanceId, selection.model, { focusComposer: false });
+    await onResume(selection, limitRestart ?? undefined);
+  };
+  const limitFallbackChoices: ReadonlyArray<FallbackChoice> = limitFallbackOrder.flatMap(
+    (entry) => {
+      if (
+        entry.unavailable === "current" ||
+        (limitFallbackSelection !== null &&
+          entry.selection.instanceId === limitFallbackSelection.instanceId &&
+          entry.selection.model === limitFallbackSelection.model)
+      )
+        return [];
+      const label = entry.provider
+        ? resolveProviderInstanceDisplayName(entry.provider)
+        : entry.selection.instanceId;
+      const model =
+        entry.provider?.models.find((candidate) => candidate.slug === entry.selection.model)
+          ?.name ?? entry.selection.model;
+      const reason = fallbackUnavailableReason(entry.unavailable, entry.resetAt);
+      const choosable = entry.unavailable === null || entry.unavailable === "unverified";
+      return [
+        {
+          label,
+          model,
+          ...(reason ? { unavailable: reason } : {}),
+          ...(choosable ? { onContinue: () => continueLimitedOn(entry.selection) } : {}),
+        },
+      ];
+    },
+  );
   const limitRecoveryBanner = useBannerItem(
     usageLimitRecoveryBannerItem,
     limitStopped && activeThreadShell?.latestRun
@@ -9954,22 +10012,10 @@ export default function ChatView(props: ChatViewProps) {
                       (model) => model.slug === limitFallbackSelection.model,
                     )?.name ?? limitFallbackSelection.model,
                   automatic: activeProjectSettings.settings.providerLimitAction === "switch",
-                  onContinue: async () => {
-                    // The composer follows the thread to the provider it now runs on.
-                    if (projectRouting?.saveCoordinatorModel)
-                      await projectRouting.saveCoordinatorModel(limitFallbackSelection);
-                    else
-                      onProviderModelSelect(
-                        limitFallbackSelection.instanceId,
-                        limitFallbackSelection.model,
-                        {
-                          focusComposer: false,
-                        },
-                      );
-                    await onResume(limitFallbackSelection, limitRestart ?? undefined);
-                  },
+                  onContinue: () => continueLimitedOn(limitFallbackSelection),
                 }
               : null,
+          fallbackChoices: limitFallbackChoices,
           waiting: limitWaiting,
           device:
             limitDeviceTarget === null
@@ -10075,13 +10121,73 @@ export default function ChatView(props: ChatViewProps) {
         }
       : null,
   );
+  // A thread a usage limit moved to a fallback stays paired with the model it stood in for.
+  const pairing =
+    activeThreadShell && serverProjection
+      ? limitFallbackPairing(
+          serverProjection.messages,
+          serverProjection.runs,
+          activeThreadShell.modelSelection,
+        )
+      : null;
+  const pairingProvider =
+    pairing === null
+      ? undefined
+      : providerStatuses.find((provider) => provider.instanceId === pairing.original.instanceId);
+  const pairingKey =
+    pairing === null ? null : `limit-pairing:${routeThreadKey}:${pairing.stoppedRunId}`;
+  const selectionLabel = (selection: { readonly instanceId: string; readonly model: string }) => {
+    const provider = providerStatuses.find((entry) => entry.instanceId === selection.instanceId);
+    if (provider === undefined) return selection.model;
+    const model =
+      provider.models.find((entry) => entry.slug === selection.model)?.name ?? selection.model;
+    return `${resolveProviderInstanceDisplayName(provider)} · ${model}`;
+  };
+  const pairingBanner = useBannerItem(
+    limitFallbackPairingBannerItem,
+    pairing !== null &&
+      pairingKey !== null &&
+      activeThreadShell &&
+      !dismissedUsageApproaching.has(pairingKey)
+      ? {
+          id: pairingKey,
+          current: selectionLabel(activeThreadShell.modelSelection),
+          original: selectionLabel(pairing.original),
+          resetAt:
+            pairingProvider === undefined
+              ? null
+              : usageResetAt(pairingProvider, 100, approachingNowMs, pairing.original.model),
+          hasRoom:
+            pairingProvider !== undefined &&
+            canTakeTurn(pairingProvider) &&
+            (providerUsedPercent(pairingProvider, approachingNowMs, pairing.original.model) ?? 0) <
+              100,
+          onBack: () => {
+            const selection = {
+              instanceId: pairing.original.instanceId,
+              model: pairing.original.model,
+            } as ModelSelection;
+            if (projectRouting?.saveCoordinatorModel)
+              void projectRouting.saveCoordinatorModel(selection);
+            else
+              onProviderModelSelect(selection.instanceId, selection.model, {
+                focusComposer: false,
+              });
+          },
+          onDismiss: () =>
+            setDismissedUsageApproaching((current) => new Set(current).add(pairingKey)),
+        }
+      : null,
+  );
   const composerBannerItems = useMemo<ComposerBannerStackItem[]>(() => {
     const limitRecoveryItems =
       limitRecoveryBanner !== null
         ? [limitRecoveryBanner]
         : usageApproachingBanner !== null
           ? [usageApproachingBanner]
-          : [];
+          : pairingBanner !== null
+            ? [pairingBanner]
+            : [];
     const backgroundWorkItems = [goalBannerItem, backgroundWorkBannerItem].filter(
       (item) => item !== null,
     );
@@ -10168,6 +10274,7 @@ export default function ChatView(props: ChatViewProps) {
     feedbackBannerItems,
     limitRecoveryBanner,
     usageApproachingBanner,
+    pairingBanner,
     handleRestoreThreadBranch,
     isRestoringThreadBranch,
     backgroundWorkBannerItem,

@@ -10,6 +10,8 @@ import {
 import * as Effect from "effect/Effect";
 
 import * as RemoteWorkers from "../../../fleet/RemoteWorkers.ts";
+import * as WorkGrants from "../../../fleet/WorkGrants.ts";
+import { delegationRefusal, outgoingDelegation } from "../../../fleet/workGrantPolicy.ts";
 import type { Caller } from "../../threadAccess.ts";
 
 export interface LaunchTargetInput {
@@ -95,6 +97,31 @@ export const launchRemote = Effect.fn("mcp.launchRemote")(function* (input: {
   if (project === undefined) return yield* invalid("The project was not found.");
   const isCoordinator = project.workspaceSettings?.coordinatorThreadId === caller.id;
   const remote = yield* RemoteWorkers.RemoteWorkers;
+  // Work that reached this machine from another carries its path on, so no
+  // chain of launches can come back to a machine it passed through.
+  const grants = yield* WorkGrants.WorkGrants;
+  const origin = yield* grants.originOf(caller).pipe(
+    Effect.mapError(
+      () =>
+        new OrchestratorMcpFailure({
+          code: "orchestration_error",
+          message: "This machine could not read where this thread's work came from. Try again.",
+        }),
+    ),
+  );
+  const outgoing = outgoingDelegation({
+    localEnvironmentId: context.scope.environmentId,
+    targetEnvironmentId: input.machine.machine.environmentId,
+    origin,
+  });
+  if (!outgoing.ok)
+    return yield* new OrchestratorMcpFailure({
+      code: outgoing.code,
+      message: delegationRefusal(
+        outgoing,
+        new Map([...(yield* remote.machineLabels), [context.scope.environmentId, "this machine"]]),
+      ),
+    });
   return yield* remote.launch({
     machine: input.machine.machine,
     commandId: input.commandId,
@@ -113,5 +140,6 @@ export const launchRemote = Effect.fn("mcp.launchRemote")(function* (input: {
     workspaceStrategy: params.workspaceStrategy,
     message: params.message,
     reportBack: params.reportBack ?? true,
+    delegation: outgoing.delegation,
   });
 });

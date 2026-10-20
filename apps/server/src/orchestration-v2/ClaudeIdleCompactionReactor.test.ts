@@ -1,13 +1,20 @@
 import { DEFAULT_SERVER_SETTINGS, ProviderInstanceId, ThreadId } from "@specweave-studio/contracts";
 import * as DateTime from "effect/DateTime";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as TestClock from "effect/testing/TestClock";
 import { afterEach, beforeEach, describe, expect, it } from "@effect/vitest";
 
+import * as ServerSettingsModule from "../serverSettings.ts";
 import {
+  ClaudeIdleCompactionReactor,
   claudeIdleCompactionPolicy,
   idleCompactMinTokens,
   idleCompactionUsedTokens,
   isIdleCompactionCandidate,
+  layer,
 } from "./ClaudeIdleCompactionReactor.ts";
+import * as ThreadManagementService from "./ThreadManagementService.ts";
 
 const completedAt = Date.parse("2026-10-15T10:00:00.000Z");
 const idleThread = {
@@ -90,9 +97,9 @@ describe("idleCompactionUsedTokens", () => {
   });
 });
 
-describe("idle compaction policy", () => {
-  // The policy merges process.env beneath the instance environment, so cache and
-  // minimum variables inherited from the host shell would decide these cases.
+// The policy merges process.env beneath the instance environment, so cache and
+// minimum variables inherited from the host shell would decide these cases.
+function clearHostCacheVariables() {
   const HOST_VARIABLES = [
     "CLAUDE_CODE_IDLE_COMPACT_MIN_TOKENS",
     "CLAUDE_CODE_MESSAGES_PROMPT_CACHE_TTL",
@@ -114,6 +121,10 @@ describe("idle compaction policy", () => {
       else process.env[name] = value;
     }
   });
+}
+
+describe("idle compaction policy", () => {
+  clearHostCacheVariables();
 
   it("never goes below Claude Code's 100K floor", () => {
     expect(idleCompactMinTokens(undefined)).toBe(100_000);
@@ -189,4 +200,87 @@ describe("idle compaction policy", () => {
     expect(withEnvironment("DISABLE_PROMPT_CACHING", "1")).toBeNull();
     expect(withEnvironment("CLAUDE_CODE_PROMPT_CACHE_TTL", "1h")).not.toBeNull();
   });
+});
+
+describe("idle compaction sweep", () => {
+  clearHostCacheVariables();
+
+  const runId = "run:1";
+  const snapshotShell = {
+    ...idleThread,
+    id: ThreadId.make("thread:idle"),
+    projectId: "project:idle",
+    latestRunId: runId,
+    modelSelection: { instanceId: ProviderInstanceId.make("claudeAgent") },
+  };
+
+  /** Runs one sweep whose snapshot holds `snapshotShell`; returns what was sent. */
+  const sweepWithCurrent = (current: object | null) =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(minutes(55));
+      const sent: Array<string> = [];
+      const threads = {
+        getShellSnapshot: () =>
+          Effect.succeed({
+            schemaVersion: 1,
+            snapshotSequence: 0,
+            threads: [snapshotShell],
+            archivedThreads: [],
+          }),
+        getProjectThreadRecords: () =>
+          Effect.succeed({
+            providerTurns: [
+              {
+                providerThreadId: "provider-thread-1",
+                ordinal: 1,
+                status: "completed",
+                tokenUsage: { usedTokens: 300_000, updatedAt: "2026-10-15T10:00:00.000Z" },
+              },
+            ],
+            messages: [{ text: "fix the tests" }],
+          }),
+        getThreadShell: () => Effect.succeed(current),
+        sendToThread: (input: { readonly text: string }) =>
+          Effect.sync(() => {
+            sent.push(input.text);
+            return {};
+          }),
+      } as unknown as ThreadManagementService.ThreadManagementServiceShape;
+      yield* Effect.gen(function* () {
+        yield* (yield* ClaudeIdleCompactionReactor).sweep;
+      }).pipe(
+        Effect.provide(
+          layer.pipe(
+            Layer.provide(
+              Layer.mergeAll(
+                Layer.succeed(ThreadManagementService.ThreadManagementService, threads),
+                Layer.succeed(ServerSettingsModule.ServerSettingsService, {
+                  getSettings: Effect.succeed(DEFAULT_SERVER_SETTINGS),
+                } as never),
+              ),
+            ),
+          ),
+        ),
+      );
+      return sent;
+    });
+
+  it.effect("compacts a thread that is still idle on the same run", () =>
+    Effect.gen(function* () {
+      expect(yield* sweepWithCurrent(snapshotShell)).toEqual(["/compact"]);
+    }),
+  );
+
+  it.effect("leaves a thread that moved on after the sweep's snapshot", () =>
+    Effect.gen(function* () {
+      expect(yield* sweepWithCurrent({ ...snapshotShell, latestRunId: "run:2" })).toEqual([]);
+      expect(
+        yield* sweepWithCurrent({ ...snapshotShell, settledAt: DateTime.makeUnsafe(minutes(55)) }),
+      ).toEqual([]);
+      expect(
+        yield* sweepWithCurrent({ ...snapshotShell, archivedAt: DateTime.makeUnsafe(minutes(55)) }),
+      ).toEqual([]);
+      expect(yield* sweepWithCurrent(null)).toEqual([]);
+    }),
+  );
 });

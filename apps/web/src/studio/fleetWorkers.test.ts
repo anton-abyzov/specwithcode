@@ -4,7 +4,7 @@ import type {
   StudioFleetSnapshot,
   StudioFleetWorkers,
 } from "@specweave-studio/contracts/studioFleet";
-import { fleetWorkersView, workerMachineChoices } from "./fleetWorkers";
+import { fleetRemoveNotice, fleetWorkersView, workerMachineChoices } from "./fleetWorkers";
 
 const base: StudioFleetWorkers = {
   status: "not_allowed",
@@ -121,5 +121,25 @@ describe("worker machine choices", () => {
       value: "m3",
       label: "m3",
     });
+  });
+});
+
+describe("removing a machine", () => {
+  const removed = {
+    id: "m1",
+    label: "Mac M1",
+    managementToken: "revoked",
+    workerAccess: "none",
+    managementSessionId: "session-1",
+  } as const;
+  it("says it revoked what this machine held there", () => {
+    expect(fleetRemoveNotice(removed)).toBe(
+      "Removed Mac M1 and revoked what this machine held there.",
+    );
+  });
+  it("says what stays valid there, and how to revoke it, when that machine was offline", () => {
+    const notice = fleetRemoveNotice({ ...removed, managementToken: "kept", workerAccess: "kept" });
+    expect(notice).toContain("worker access and management token there stays valid");
+    expect(notice).toContain("On Mac M1, revoke it in Settings > Connections (session session-1)");
   });
 });

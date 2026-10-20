@@ -1,5 +1,6 @@
 import { CheckpointScopeId, ProjectId, RunId, ThreadId } from "@specweave-studio/contracts";
 import * as Context from "effect/Context";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
@@ -48,7 +49,11 @@ export class RunFinalizationService extends Context.Service<
   }
 >()("specweave-studio/orchestration-v2/RunFinalizationService") {}
 
+/** How long the workspace refresh after a run may take before it is dropped. */
+export const REFRESH_TIMEOUT = Duration.seconds(15);
+
 const make = Effect.gen(function* () {
+  const layerScope = yield* Effect.scope;
   const checkpointCapture = yield* CheckpointCapture.CheckpointCaptureServiceV2;
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const observer = yield* RunFinalizationObserver;
@@ -72,14 +77,20 @@ const make = Effect.gen(function* () {
       );
     const cwd = projection.checkpointScopes.find((scope) => scope.id === input.scopeId)?.cwd;
     if (cwd !== undefined) {
-      yield* observer
-        .refresh({ cwd, threadId: input.threadId, runId: input.runId })
-        .pipe(
-          Effect.mapError(
-            (cause) =>
-              new RunFinalizationError({ ...input, operation: "refresh-workspace", cause }),
-          ),
-        );
+      // Detached: the capture is committed, and git or `gh` stuck behind a busy
+      // lock must not keep this effect, and so the thread's next turn, waiting.
+      yield* observer.refresh({ cwd, threadId: input.threadId, runId: input.runId }).pipe(
+        Effect.timeout(REFRESH_TIMEOUT),
+        Effect.catchCause((cause) =>
+          Effect.logWarning("failed to refresh the workspace after run completion", {
+            threadId: input.threadId,
+            runId: input.runId,
+            cwd,
+            cause,
+          }),
+        ),
+        Effect.forkIn(layerScope),
+      );
     }
   });
   return RunFinalizationService.of({ finalize });

@@ -1077,6 +1077,14 @@ export const SETTINGS_SEARCH_ITEMS = [
     ],
   },
   {
+    id: "machine-work-grants",
+    title: "Who can run work on this Mac",
+    to: "/settings/connections",
+    searchTerms: [
+      "worker grant revoke coordinator fleet remote work machine access projects sign-ins accounts delegation",
+    ],
+  },
+  {
     id: "private-machines-auto-connect",
     title: "Connect private machines automatically",
     to: "/settings/connections",

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import {
+  limitFallbackPairing,
   limitContinuationKind,
   limitContinuationNote,
   restartContinuationNote,
@@ -51,5 +52,44 @@ describe("restart continuations", () => {
     );
     expect(restartContinuationNote({ id: "message:update-requeue:run-1" })).toBeNull();
     expect(restartContinuationNote({ id: "message-1" })).toBeNull();
+  });
+});
+
+describe("limit fallback pairing", () => {
+  const claude = { instanceId: "claudeAgent", model: "claude-opus-5-5" };
+  const astra = { instanceId: "codex", model: "gpt-6-astra" };
+  const sol = { instanceId: "codex", model: "gpt-6.1-sol" };
+  const runs = [
+    { id: "r1", modelSelection: claude },
+    { id: "r2", modelSelection: astra },
+  ];
+  const continued = [
+    { id: "m1", runId: "r1" },
+    { id: "limit-fallback:t1:r1", runId: "r2" },
+  ];
+
+  it("pairs a thread continued on a fallback with the model that stopped", () => {
+    expect(limitFallbackPairing(continued, runs, astra)).toEqual({
+      original: claude,
+      stoppedRunId: "r1",
+    });
+    expect(limitFallbackPairing(continued, runs, sol)?.original).toEqual(claude);
+  });
+
+  it("drops the pairing once the thread is set back or a run returns", () => {
+    expect(limitFallbackPairing(continued, runs, claude)).toBeNull();
+    const back = [
+      ...runs,
+      { id: "r3", modelSelection: claude },
+      { id: "r4", modelSelection: astra },
+    ];
+    expect(limitFallbackPairing(continued, back, astra)).toBeNull();
+  });
+
+  it("ignores threads with no fallback continuation", () => {
+    expect(
+      limitFallbackPairing([{ id: "limit-reset:t1:r1", runId: "r2" }], runs, astra),
+    ).toBeNull();
+    expect(limitFallbackPairing([{ id: "m1", runId: "r1" }], runs, astra)).toBeNull();
   });
 });

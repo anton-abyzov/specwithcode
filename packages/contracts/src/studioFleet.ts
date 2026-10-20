@@ -1,6 +1,7 @@
 import * as Schema from "effect/Schema";
 import { AuthGrantScope } from "./auth.ts";
 import { AuthSessionId, EnvironmentId, IsoDateTime, ProjectId, ThreadId } from "./baseSchemas.ts";
+import { ProviderInstanceId } from "./providerInstance.ts";
 
 export const StudioFleetMachineId = Schema.String.check(
   Schema.isPattern(/^[a-z0-9][a-z0-9-]{0,47}$/),
@@ -248,3 +249,131 @@ export const StudioFleetRemoteWorkersResult = Schema.Struct({
   workers: Schema.Array(StudioFleetRemoteWorker),
 });
 export type StudioFleetRemoteWorkersResult = typeof StudioFleetRemoteWorkersResult.Type;
+
+/**
+ * Which of this machine's projects a coordinator machine's workers may run
+ * in: every project, the projects linked to that coordinator (a logical
+ * project naming it as a member), or the listed ones.
+ */
+export const StudioWorkGrantProjects = Schema.Union([
+  Schema.Struct({ kind: Schema.Literal("all") }),
+  Schema.Struct({ kind: Schema.Literal("linked") }),
+  Schema.Struct({
+    kind: Schema.Literal("listed"),
+    projectIds: Schema.Array(ProjectId).check(Schema.isMaxLength(256)),
+  }),
+]);
+export type StudioWorkGrantProjects = typeof StudioWorkGrantProjects.Type;
+
+/**
+ * Which of this machine's sign-ins (provider instances) remote work may use:
+ * all of them, the listed ones, or none (every launch is refused).
+ */
+export const StudioWorkGrantAccounts = Schema.Union([
+  Schema.Struct({ kind: Schema.Literal("all") }),
+  Schema.Struct({
+    kind: Schema.Literal("listed"),
+    instanceIds: Schema.Array(ProviderInstanceId).check(Schema.isMaxLength(64)),
+  }),
+  Schema.Struct({ kind: Schema.Literal("none") }),
+]);
+export type StudioWorkGrantAccounts = typeof StudioWorkGrantAccounts.Type;
+
+/** Whether the coordinator machine is the owner's own or another person's. */
+export const StudioWorkGrantOwner = Schema.Literals(["self", "other"]);
+export type StudioWorkGrantOwner = typeof StudioWorkGrantOwner.Type;
+
+/** How many machine hops a launch may have made when it reaches this machine. */
+export const workGrantHopLimit = (owner: StudioWorkGrantOwner) => (owner === "self" ? 2 : 1);
+
+/**
+ * A coordinator machine that may run work on this one, as this machine sees
+ * it. The machine doing the work owns and enforces it.
+ */
+export const StudioWorkGrant = Schema.Struct({
+  coordinatorEnvironmentId: EnvironmentId,
+  /** The coordinator's name in this machine's fleet list, else its environment id. */
+  machineLabel: Schema.String,
+  projects: StudioWorkGrantProjects,
+  accounts: StudioWorkGrantAccounts,
+  owner: StudioWorkGrantOwner,
+  hopLimit: Schema.Int,
+  /** The most its threads may run with; null until it has called since this version. */
+  runtimeCap: Schema.NullOr(StudioFleetWorkerAccess),
+  /** When its newest live grant lapses; null when none is live. */
+  expiresAt: Schema.NullOr(IsoDateTime),
+  status: Schema.Literals(["active", "revoked", "expired"]),
+  revokedAt: Schema.NullOr(IsoDateTime),
+  /** Set while revoked threads still run: when they are interrupted. */
+  interruptAt: Schema.NullOr(IsoDateTime),
+  /** Threads it started here that are running now. */
+  runningThreads: Schema.Int,
+  /** Allowed before grants had scopes: all projects, all sign-ins until edited. */
+  legacy: Schema.Boolean,
+});
+export type StudioWorkGrant = typeof StudioWorkGrant.Type;
+
+export const StudioWorkGrantsSnapshot = Schema.Struct({
+  grants: Schema.Array(StudioWorkGrant),
+  projects: Schema.Array(
+    Schema.Struct({
+      id: ProjectId,
+      title: Schema.String,
+      /** Coordinator machines this project is linked to. */
+      linkedTo: Schema.Array(EnvironmentId),
+    }),
+  ),
+  accounts: Schema.Array(
+    Schema.Struct({
+      instanceId: ProviderInstanceId,
+      label: Schema.String,
+      driver: Schema.String,
+      /** The signed-in account, when the provider reports one. */
+      account: Schema.NullOr(Schema.String),
+    }),
+  ),
+});
+export type StudioWorkGrantsSnapshot = typeof StudioWorkGrantsSnapshot.Type;
+
+export const StudioWorkGrantUpdateInput = exactStruct({
+  coordinatorEnvironmentId: EnvironmentId,
+  projects: Schema.optionalKey(StudioWorkGrantProjects),
+  accounts: Schema.optionalKey(StudioWorkGrantAccounts),
+  owner: Schema.optionalKey(StudioWorkGrantOwner),
+});
+export type StudioWorkGrantUpdateInput = typeof StudioWorkGrantUpdateInput.Type;
+
+/** Revoke refuses new work at once and interrupts running work after a grace period. */
+export const StudioWorkGrantRevokeInput = exactStruct({ coordinatorEnvironmentId: EnvironmentId });
+export type StudioWorkGrantRevokeInput = typeof StudioWorkGrantRevokeInput.Type;
+
+/** Lifts a revoke so that machine may allow workers here again. */
+export const StudioWorkGrantRestoreInput = exactStruct({ coordinatorEnvironmentId: EnvironmentId });
+export type StudioWorkGrantRestoreInput = typeof StudioWorkGrantRestoreInput.Type;
+
+export const StudioWorkGrantResult = Schema.Struct({ grant: StudioWorkGrant });
+export type StudioWorkGrantResult = typeof StudioWorkGrantResult.Type;
+
+/** Grace between Revoke and interrupting the threads that machine started here. */
+export const WORK_GRANT_REVOKE_GRACE_MS = 2 * 60 * 1000;
+
+export const StudioFleetRemoveInput = exactStruct({ id: StudioFleetMachineId });
+export type StudioFleetRemoveInput = typeof StudioFleetRemoveInput.Type;
+
+/**
+ * What removing a machine did on that machine: `revoked` there, `kept` when
+ * it could not be reached or refused (still valid there until revoked on it),
+ * `none` when this machine held nothing there.
+ */
+export const StudioFleetRemoteRevoke = Schema.Literals(["revoked", "kept", "none"]);
+export type StudioFleetRemoteRevoke = typeof StudioFleetRemoteRevoke.Type;
+
+export const StudioFleetRemoveResult = Schema.Struct({
+  id: StudioFleetMachineId,
+  label: Schema.String,
+  managementToken: StudioFleetRemoteRevoke,
+  workerAccess: StudioFleetRemoteRevoke,
+  /** The management token's session id there, to revoke it on that machine when kept. */
+  managementSessionId: Schema.NullOr(Schema.String),
+});
+export type StudioFleetRemoveResult = typeof StudioFleetRemoveResult.Type;

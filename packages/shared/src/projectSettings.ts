@@ -185,6 +185,15 @@ function resolveProjectOverrides(
     effective[key] = value;
     sources[key] = "project";
   }
+  // A project's single fallback model, set before fallback orders existed,
+  // outranks an environment-wide order the project never chose.
+  if (
+    sources.providerLimitFallbackModelSelection === "project" &&
+    sources.providerLimitFallbackModels !== "project"
+  ) {
+    const single = effective.providerLimitFallbackModelSelection as ModelSelection | null;
+    effective.providerLimitFallbackModels = single === null ? [] : [single];
+  }
   return { settings: effective as ServerSettings, sources, overrides };
 }
 

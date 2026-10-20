@@ -1177,6 +1177,46 @@ describe("sweep API credit path", () => {
     }),
   );
 
+  itEffect.effect(
+    "tries a failed continuation again under a fresh id, further apart each time",
+    () =>
+      Effect.gen(function* () {
+        yield* TestClock.adjust("1 minute");
+        const { state, sweep } = yield* harness({ cached: claude(100), fresh: claude(100) });
+        state.failDispatch = true;
+        yield* sweep();
+        expect(state.attempted).toEqual(["limit-api:t1:r1"]);
+        state.failDispatch = false;
+        // Inside the first wait: nothing is sent.
+        yield* TestClock.adjust("31 seconds");
+        yield* sweep();
+        expect(state.attempted).toHaveLength(1);
+        yield* TestClock.adjust("31 seconds");
+        yield* sweep();
+        expect(state.dispatched).toMatchObject([{ commandId: "limit-api:t1:r1:retry-1" }]);
+        yield* TestClock.adjust("2 minutes");
+        yield* sweep();
+        expect(state.attempted).toHaveLength(2);
+      }),
+  );
+
+  itEffect.effect("stops after three failed continuations", () =>
+    Effect.gen(function* () {
+      yield* TestClock.adjust("1 minute");
+      const { state, sweep } = yield* harness({ cached: claude(100), fresh: claude(100) });
+      state.failDispatch = true;
+      for (let i = 0; i < 12; i++) {
+        yield* sweep();
+        yield* TestClock.adjust("1 minute");
+      }
+      expect(state.attempted).toEqual([
+        "limit-api:t1:r1",
+        "limit-api:t1:r1:retry-1",
+        "limit-api:t1:r1:retry-2",
+      ]);
+    }),
+  );
+
   itEffect.effect("moves an out-of-credit API thread to the next key without a usage read", () =>
     Effect.gen(function* () {
       yield* TestClock.adjust("1 minute");
@@ -1686,6 +1726,97 @@ describe("sweep switch path with a stale fallback read", () => {
       yield* TestClock.adjust("5 minutes");
       yield* sweep();
       expect(state.refreshed).toEqual([codexId, codexId]);
+    }),
+  );
+});
+
+describe("sweep switch path down the fallback order", () => {
+  const stoppedAt = Date.parse("2026-10-17T04:42:26.000Z");
+  const codex2Id = ProviderInstanceId.make("codex2");
+  const limited = {
+    ...idle,
+    status: "failed" as const,
+    lastErrorClass: "usage_limit" as const,
+    projectId: null,
+    usageLimitResetAt: "2026-10-17T09:00:00.000Z",
+    latestRunCompletedAt: DateTime.makeUnsafe(stoppedAt),
+  };
+  const settings = {
+    ...DEFAULT_SERVER_SETTINGS,
+    providerLimitAction: "switch" as const,
+    providerLimitFallbackModelSelection: null,
+    providerLimitFallbackModels: [
+      { instanceId: codexId, model: "gpt-6" },
+      { instanceId: codex2Id, model: "gpt-6" },
+    ],
+  };
+  const codexWithRoom = (id: ProviderInstanceId, at: number) => {
+    const codex = withUsage(provider(codexId, "codex", at), 20);
+    const windows = codex.usageLimits!.windows.map((window) => ({
+      ...window,
+      resetsAt: "2026-10-17T09:00:00.000Z",
+    }));
+    return { ...codex, instanceId: id, usageLimits: { ...codex.usageLimits!, windows } };
+  };
+
+  itEffect.effect("tries the next model in the order after a failed dispatch", () =>
+    Effect.gen(function* () {
+      const state = {
+        failFor: codexId as string,
+        attempted: [] as OrchestrationV2ServerCommand[],
+        dispatched: [] as OrchestrationV2ServerCommand[],
+      };
+      const providers = () => [
+        withUsage(provider(claudeId, "claudeAgent", stoppedAt), 100),
+        codexWithRoom(codexId, stoppedAt),
+        codexWithRoom(codex2Id, stoppedAt),
+      ];
+      const deps = Layer.mergeAll(
+        Layer.mock(Projects.ProjectService)({
+          getById: () => Effect.succeed(Option.some(legacyProject)),
+        }),
+        fallbackPolicyTestLayer(settings),
+        Layer.mock(Providers.ProviderRegistry)({
+          getProviders: Effect.sync(providers),
+          refreshInstance: () => Effect.sync(providers),
+        }),
+        Layer.mock(Instances.ProviderInstanceRegistry)({
+          getInstance: () => Effect.succeed(undefined),
+        }),
+        Layer.mock(ProjectionStore.ProjectionStoreV2)({
+          getShellSnapshot: () => Effect.succeed({ threads: [limited] } as never),
+          getThreadShell: () => Effect.succeed(limited as never),
+          getThreadRecords: (threadId) =>
+            Effect.fail(new ProjectionStore.ProjectionStoreThreadNotFoundError({ threadId })),
+        }),
+        Layer.mock(ThreadManagement.ThreadManagementService)({
+          dispatch: (command) => {
+            state.attempted.push(command);
+            if ("modelSelection" in command && command.modelSelection?.instanceId === state.failFor)
+              return Effect.die(new Error("rejected"));
+            state.dispatched.push(command);
+            return Effect.succeed({ sequence: 1, storedEvents: [] });
+          },
+        }),
+      );
+      yield* Effect.gen(function* () {
+        yield* TestClock.setTime(stoppedAt + 30_000);
+        const sweep = yield* makeSweep;
+        for (let i = 0; i < 6 && state.dispatched.length === 0; i++) {
+          yield* sweep();
+          yield* TestClock.adjust("1 minute");
+        }
+      }).pipe(Effect.provide(deps), Effect.provideService(ProviderFallbackEnv, {}));
+      expect(
+        state.attempted.map((command) =>
+          "modelSelection" in command ? command.modelSelection?.instanceId : undefined,
+        ),
+      ).toEqual([codexId, codex2Id]);
+      expect(state.dispatched[0]).toMatchObject({
+        type: "message.dispatch",
+        manualContinuationOfRunId: limited.latestRunId,
+        modelSelection: { instanceId: codex2Id, model: "gpt-6" },
+      });
     }),
   );
 });

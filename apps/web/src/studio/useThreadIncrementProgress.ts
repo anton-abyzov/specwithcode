@@ -1,8 +1,9 @@
 /**
  * The SpecWeave increment progress of some threads of one project, keyed by
  * thread id. The ledger changes outside Studio's events, so the answer is
- * refreshed on a slow timer while the page is visible and whenever one of the
- * threads moves (an agent turn is when tasks get claimed and done).
+ * refreshed on a slow timer while the page is visible and after one of the
+ * threads moves (an agent turn is when tasks get claimed and done), at most
+ * once per timer period and never while a read is still in flight.
  */
 import {
   AuthFilesystemReadScope,
@@ -29,6 +30,66 @@ export const incrementLinkRevisionAtom = Atom.make(0).pipe(
 );
 const EMPTY = new Map<string, ThreadIncrementProgress>();
 
+/**
+ * When to refresh one progress query. A busy thread moves many times a
+ * minute, and each refresh used to restart the read in flight, so the server
+ * never finished one. Thread activity now waits for the trailing edge of the
+ * refresh period; a hand-made link refreshes as soon as no read is in flight.
+ */
+export function makeProgressRefreshGate(options: {
+  readonly refresh: () => void;
+  readonly periodMs?: number;
+  readonly now?: () => number;
+}) {
+  const periodMs = options.periodMs ?? REFRESH_MS;
+  const now = options.now ?? Date.now;
+  // The query reads once on mount.
+  let lastRefreshAt = now();
+  let pending = false;
+  let wanted: "none" | "after-period" | "now" = "none";
+  let timer: ReturnType<typeof setTimeout> | undefined;
+
+  const run = () => {
+    lastRefreshAt = now();
+    wanted = "none";
+    options.refresh();
+  };
+  const flush = () => {
+    if (timer !== undefined) clearTimeout(timer);
+    timer = undefined;
+    if (wanted === "none" || pending) return;
+    const wait = wanted === "now" ? 0 : lastRefreshAt + periodMs - now();
+    if (wait > 0) timer = setTimeout(flush, wait);
+    else run();
+  };
+
+  return {
+    /** One of the threads moved. */
+    activity: () => {
+      if (wanted === "none") wanted = "after-period";
+      flush();
+    },
+    /** A link was made by hand. */
+    linkChanged: () => {
+      wanted = "now";
+      flush();
+    },
+    /** The slow timer fired while the page is visible. */
+    tick: () => {
+      if (!pending) run();
+    },
+    /** Whether the query is reading; a refresh owed meanwhile runs when it settles. */
+    setPending: (next: boolean) => {
+      pending = next;
+      flush();
+    },
+    dispose: () => {
+      if (timer !== undefined) clearTimeout(timer);
+      timer = undefined;
+    },
+  };
+}
+
 export function useThreadIncrementProgress(input: {
   readonly environmentId: EnvironmentId | null;
   readonly projectId: ProjectId | null;
@@ -54,25 +115,33 @@ export function useThreadIncrementProgress(input: {
     [canRead, input.environmentId, input.projectId, idsKey],
   );
   const query = useEnvironmentQuery(atom);
-  const { refresh } = query;
+  const { refresh, isPending } = query;
+  const gate = useMemo(
+    () => (atom === null ? null : makeProgressRefreshGate({ refresh })),
+    [atom, refresh],
+  );
+  useEffect(() => () => gate?.dispose(), [gate]);
+  useEffect(() => gate?.setPending(isPending), [gate, isPending]);
 
   useEffect(() => {
-    if (atom === null) return;
+    if (gate === null) return;
     const timer = window.setInterval(() => {
-      if (document.visibilityState === "visible") refresh();
+      if (document.visibilityState === "visible") gate.tick();
     }, REFRESH_MS);
     return () => window.clearInterval(timer);
-  }, [atom, refresh]);
+  }, [gate]);
 
   // Only a change in activity or in a hand-made link refreshes; the first read happens on mount.
   const linkRevision = useAtomValue(incrementLinkRevisionAtom);
-  const activityKey = `${input.activityKey ?? ""}\u0000${linkRevision}`;
-  const lastActivity = useRef(activityKey);
+  const activityKey = input.activityKey ?? "";
+  const lastSeen = useRef({ activityKey, linkRevision });
   useEffect(() => {
-    if (lastActivity.current === activityKey) return;
-    lastActivity.current = activityKey;
-    if (atom !== null) refresh();
-  }, [atom, activityKey, refresh]);
+    const previous = lastSeen.current;
+    lastSeen.current = { activityKey, linkRevision };
+    if (gate === null) return;
+    if (previous.linkRevision !== linkRevision) gate.linkChanged();
+    else if (previous.activityKey !== activityKey) gate.activity();
+  }, [gate, activityKey, linkRevision]);
 
   return useMemo(() => {
     const threads = query.data?.threads;

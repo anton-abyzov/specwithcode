@@ -40,7 +40,10 @@ describe("coordinatorProgress", () => {
 
   it("says when the turn is blocked on an answer, and hides a count it cannot know", () => {
     expect(
-      coordinatorProgress({ runs: [run("waiting")], turnItems: [item(2, "reasoning")] }),
+      coordinatorProgress({
+        runs: [run("running")],
+        turnItems: [item(2, "reasoning"), item(3, "approval_request")],
+      }),
     ).toEqual({
       label: "Waiting for an answer",
       since: requestedAt,
@@ -94,6 +97,29 @@ describe("coordinatorProgress", () => {
       since: requestedAt,
       waiting: false,
     });
+  });
+
+  it("names the previous turn's checkpoint as what a queued message waits on", () => {
+    const sentAt = "2026-10-11T16:12:30.000Z";
+    // The previous turn has replied and is saving its checkpoint; the new message waits on it.
+    expect(
+      coordinatorProgress({
+        runs: [
+          run("completed", 1),
+          run("waiting", 2),
+          { id: "run-3", ordinal: 3, status: "queued", requestedAt: sentAt },
+        ],
+        turnItems: [item(5, "assistant_message", undefined, "run-2")],
+      }),
+    ).toEqual({ label: "Finishing the previous turn", since: sentAt, waiting: false });
+    // Nothing queued behind it: the turn is only finishing, and nobody is asked anything.
+    expect(
+      coordinatorProgress({ runs: [run("waiting")], turnItems: [item(2, "reasoning")] }),
+    ).toEqual({ label: "Finishing the turn", since: requestedAt, waiting: false });
+    // A queued message with nothing ahead of it is about to start.
+    expect(coordinatorProgress({ runs: [run("completed", 1), run("queued", 2)] })?.label).toBe(
+      "Starting the coordinator",
+    );
   });
 });
 

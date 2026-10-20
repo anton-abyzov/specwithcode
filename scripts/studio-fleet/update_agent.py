@@ -93,6 +93,12 @@ WAITING_REASONS = (
 # update.py idle_agent_refusal: only the service's own idle provider servers are open (idle_agents.py).
 IDLE_AGENTS = ('Waiting for a quiet moment, then closing idle agent processes so the update can install',
                'Closed idle agent processes; installing after a quiet moment')
+# update.py database_restart_refusal: the service lost its database locks; only a restart recovers it.
+# Shown only while the helper restarts it itself (restarted=, wait=, retry=); otherwise the person must.
+RECOVERING = ('Restarting SpecWithCode to recover its database',
+              'Restarted SpecWithCode to recover its database; installing after a quiet moment')
+RESTART_FAULTS = {'locks-lost': 'The SpecWithCode service lost its SQLite locks on its database',
+                  'detached': 'The SpecWithCode service is using a database log that was deleted from disk'}
 # `REFUSAL <code> <detail>`, the helper's structured reason; details are counts and names only.
 REFUSAL_LINE = re.compile(r'^REFUSAL ([a-z][a-z-]{0,31})(?: ([ -~]{0,400}))?$', re.M)
 WORK_NOUNS = (('runs', 'running task'), ('queued', 'queued message'), ('requests', 'open request'),
@@ -616,7 +622,8 @@ def install_cancelled(config):
 
 def refusal_reason(refusal, outcome):
     """(status, message) for a refused snapshot. The helper's last REFUSAL line wins; older
-    helpers print none, so the phrase table stays. Only an environment fault is an error."""
+    helpers print none, so the phrase table stays. Only an environment fault, or a database fault
+    that no automatic restart will clear, is an error."""
     found = REFUSAL_LINE.findall(refusal) if outcome != 'timeout' else [('timeout', '')]
     code, detail = found[-1] if found else ('', '')
     detail = re.sub(r'[^A-Za-z0-9 ._:,=()+-]', '', detail).strip()[:200]
@@ -635,6 +642,11 @@ def refusal_reason(refusal, outcome):
                  for name, count in pairs if name not in ('wait', 'stopped')][:6]
         message = WAITING_REASONS[1][1] if code == 'descendants' else IDLE_AGENTS['stopped' in dict(pairs)]
         return 'waiting-for-quiet', message + (' (%s)' % ', '.join(names) if names else '')
+    if code == 'restart-needed':
+        if re.search(r'(?:^| )(?:restarted|wait|retry)=', detail):
+            return 'waiting-for-quiet', RECOVERING['restarted=' in detail]
+        fault = RESTART_FAULTS.get(detail.split(' ')[0], 'The SpecWithCode service lost its hold on its database')
+        return 'error', 'SpecWithCode cannot be updated right now: %s. Restart SpecWithCode, then update' % fault
     return 'waiting-for-quiet', next((message for phrase, message in WAITING_REASONS if phrase in refusal), WAITING)
 
 def helper_log_path(receipt):

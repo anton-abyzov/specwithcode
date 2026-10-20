@@ -57,6 +57,7 @@ import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
 import * as RunExecutionService from "./RunExecutionService.ts";
 import * as RunFinalizationService from "./RunFinalizationService.ts";
+import * as RunLiveness from "./RunLiveness.ts";
 
 const driver = ProviderDriverKind.make("codex");
 
@@ -1141,6 +1142,102 @@ it.effect.each(["failure", "interruption", "stale-attempt", "start-guard"] as co
         // underlying text stays in the logged cause.
         assert.equal(errorItem.payload.failure.message, "Run preparation failed.");
       }
+    }),
+);
+
+it.effect.each(["reading events", "not yet reading"] as const)(
+  "stops event ingestion when a hung provider start is interrupted, %s",
+  (ingestion) =>
+    Effect.gen(function* () {
+      const threadId = ThreadId.make("thread:run-execution-hung-start");
+      const runId = RunId.make("run:run-execution-hung-start");
+      const attemptId = RunAttemptId.make("attempt:run-execution-hung-start");
+      const providerInstanceId = ProviderInstanceId.make("codex");
+      const providerThreadId = ProviderThreadId.make("provider-thread:run-execution-hung-start");
+      const startTurnCalled = yield* Deferred.make<void>();
+      const ingesting = yield* Deferred.make<void>();
+      const subscriptionClosed = yield* Deferred.make<void>();
+      const layerTest = RunExecutionService.layer.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            Layer.mock(CheckpointService.CheckpointServiceV2)({
+              captureBaseline: () => Effect.void,
+            }),
+            Layer.mock(EventSink.EventSinkV2)({}),
+            IdAllocator.layer,
+            Layer.mock(ProviderEventIngestor.ProviderEventIngestorV2)({
+              ingestNormalized: () => Effect.succeed([]),
+            }),
+            ServerSettings.layerTest(),
+          ),
+        ),
+        Layer.provideMerge(RunLiveness.layer),
+      );
+
+      yield* Effect.gen(function* () {
+        const runExecution = yield* RunExecutionService.RunExecutionServiceV2;
+        const liveness = yield* RunLiveness.RunLiveness;
+        // The provider takes the prompt and never acknowledges it, as a start
+        // the provider-start timeout interrupts does.
+        const start = yield* runExecution
+          .startRootRun({
+            commandId: CommandId.make("command:run-execution-hung-start"),
+            appThread: { id: threadId } as OrchestrationV2AppThread,
+            providerSessionId: ProviderSessionId.make("session:run-execution-hung-start"),
+            session: {
+              events: Stream.never,
+              subscribeEvents: Effect.succeed({
+                events: Stream.never.pipe(Stream.onStart(Deferred.succeed(ingesting, undefined))),
+                close: Deferred.succeed(subscriptionClosed, undefined),
+              }),
+              startTurn: () =>
+                Deferred.succeed(startTurnCalled, undefined).pipe(Effect.andThen(Effect.never)),
+            } as unknown as ProviderAdapterV2SessionRuntime,
+            run: { id: runId, threadId, ordinal: 1, providerInstanceId } as OrchestrationV2Run,
+            rootNode: {
+              id: NodeId.make("node:run-execution-hung-start"),
+            } as OrchestrationV2ExecutionNode,
+            checkpointScope: {
+              id: CheckpointScopeId.make("checkpoint-scope:run-execution-hung-start"),
+            } as OrchestrationV2CheckpointScope,
+            providerThread: { id: providerThreadId, driver } as OrchestrationV2ProviderThread,
+            attempt: { id: attemptId, providerTurnId: null } as OrchestrationV2RunAttempt,
+            attemptId,
+            providerTurnOrdinal: 1,
+            message: {
+              messageId: MessageId.make("message:run-execution-hung-start"),
+              text: "Start and hang.",
+              attachments: [],
+              createdBy: "user",
+              creationSource: "web",
+            },
+            modelSelection: { instanceId: providerInstanceId, model: "gpt-5.4" },
+            runtimePolicy: {
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              cwd: process.cwd(),
+              approvalPolicy: "never",
+              sandboxPolicy: {
+                type: "readOnly",
+                access: { type: "fullAccess" },
+                networkAccess: false,
+              },
+            },
+          })
+          .pipe(Effect.forkChild);
+        yield* Deferred.await(startTurnCalled);
+        // A fiber interrupted before it first runs skips its own finalizers.
+        if (ingestion === "reading events") yield* Deferred.await(ingesting);
+        assert.isTrue(yield* liveness.isLive(runId));
+
+        // The interrupt returns once the start's finalizers ran.
+        yield* Fiber.interrupt(start);
+        assert.isTrue(
+          yield* Deferred.isDone(subscriptionClosed),
+          "the event subscription outlived the start",
+        );
+        assert.isFalse(yield* liveness.isLive(runId));
+      }).pipe(Effect.provide(layerTest));
     }),
 );
 
@@ -3401,7 +3498,9 @@ it.effect("retries a turn start whose native status check timed out, then names 
         key: "transient-start:status-check",
         shouldFinalizeRun: () => Effect.succeed(true),
         events: () =>
-          Stream.unwrap(Deferred.succeed(ingestionStarted, undefined).pipe(Effect.as(Stream.never))),
+          Stream.unwrap(
+            Deferred.succeed(ingestionStarted, undefined).pipe(Effect.as(Stream.never)),
+          ),
         startTurn: (input) =>
           Deferred.await(ingestionStarted).pipe(
             Effect.andThen(Ref.update(attempts, (count) => count + 1)),
@@ -3444,7 +3543,9 @@ it.effect("stops resending a turn start once the run was stopped during the wait
         // The user stops the run after the first attempt, before the resend.
         shouldStartProviderTurn: () => Ref.get(attempts).pipe(Effect.map((count) => count === 0)),
         events: () =>
-          Stream.unwrap(Deferred.succeed(ingestionStarted, undefined).pipe(Effect.as(Stream.never))),
+          Stream.unwrap(
+            Deferred.succeed(ingestionStarted, undefined).pipe(Effect.as(Stream.never)),
+          ),
         startTurn: (input) =>
           Deferred.await(ingestionStarted).pipe(
             Effect.andThen(Ref.update(attempts, (count) => count + 1)),
@@ -3480,11 +3581,27 @@ it("treats only native status check denials as transient turn start failures", (
       threadId: ThreadId.make("thread:transient"),
       providerThreadId: ProviderThreadId.make("provider-thread:transient"),
       runId: RunId.make("run:transient"),
-      cause: new ProviderSetupError({ instanceId: ProviderInstanceId.make("codex"), operation: "session", detail }),
+      cause: new ProviderSetupError({
+        instanceId: ProviderInstanceId.make("codex"),
+        operation: "session",
+        detail,
+      }),
     });
-  assert.isTrue(RunExecutionService.isTransientTurnStartFailure(wrap("The native provider status check failed. Refresh Providers on this machine and try again.")));
-  assert.isFalse(RunExecutionService.isTransientTurnStartFailure(wrap("This provider instance is disabled.")));
-  assert.isFalse(RunExecutionService.isTransientTurnStartFailure(new Error("The native provider status check timed out.")));
+  assert.isTrue(
+    RunExecutionService.isTransientTurnStartFailure(
+      wrap(
+        "The native provider status check failed. Refresh Providers on this machine and try again.",
+      ),
+    ),
+  );
+  assert.isFalse(
+    RunExecutionService.isTransientTurnStartFailure(wrap("This provider instance is disabled.")),
+  );
+  assert.isFalse(
+    RunExecutionService.isTransientTurnStartFailure(
+      new Error("The native provider status check timed out."),
+    ),
+  );
 });
 
 it.effect("keeps completed runs completed when pull request refresh fails", () =>
@@ -3504,7 +3621,10 @@ function captureRootRunTermination(input: {
   readonly shouldFinalizeRun: () => Effect.Effect<boolean, ProjectionStore.ProjectionStoreV2Error>;
   readonly rejectTerminalWrite?: boolean;
   readonly hasUnpairedRunInterruptRequest?: () => Effect.Effect<boolean, never>;
-  readonly shouldStartProviderTurn?: () => Effect.Effect<boolean, ProjectionStore.ProjectionStoreV2Error>;
+  readonly shouldStartProviderTurn?: () => Effect.Effect<
+    boolean,
+    ProjectionStore.ProjectionStoreV2Error
+  >;
   readonly seedOpenSubagent?: boolean;
   readonly events?: (
     ids: BackgroundScenarioIds,

@@ -14,9 +14,15 @@ import {
   FLEET_CONFIG_FILE,
   type FleetFetch,
   FleetError,
+  type FleetTarget,
   parseFleetConfig,
   readFleetConfigSource,
 } from "./studioFleet.ts";
+import {
+  revokeWorkerSessions,
+  sessionIdOfToken,
+  workerClientName,
+} from "./fleet/workerGrantMint.ts";
 
 /**
  * A machine's invitation to join a fleet: its private Tailscale HTTPS address,
@@ -275,4 +281,103 @@ export async function removeFleetMachine(input: {
     machines: document.machines.filter((machine) => machine !== found),
   });
   return { id: String(found.id), label: String(found.label) };
+}
+
+/** What removing a machine did there: revoked, still valid there, or nothing was held. */
+export type FleetRemoteRevoke = "revoked" | "kept" | "none";
+
+export interface FleetRemoveResult {
+  readonly id: string;
+  readonly label: string;
+  readonly managementToken: FleetRemoteRevoke;
+  readonly workerAccess: FleetRemoteRevoke;
+  /** The management token's session there, for revoking it on that machine when kept. */
+  readonly managementSessionId: string | null;
+}
+
+const REVOKE_TIMEOUT_MS = 10_000;
+
+/**
+ * The management token gives itself up on the machine it was made for.
+ * Only after that machine answers as itself: a token is never sent to an
+ * address that now belongs to someone else. An older machine without the
+ * endpoint keeps it (it lapses at expiry or is revoked there by hand).
+ */
+export async function revokeManagementToken(
+  fetcher: FleetFetch,
+  target: Pick<FleetTarget, "url" | "environmentId" | "managementToken">,
+): Promise<{ readonly result: FleetRemoteRevoke; readonly sessionId: string | null }> {
+  if (!target.managementToken) return { result: "none", sessionId: null };
+  const sessionId = sessionIdOfToken(target.managementToken) ?? null;
+  try {
+    await checkIdentity(fetcher, target);
+    const response = await fetcher(`${target.url}/api/auth/session/revoke`, {
+      method: "POST",
+      headers: { authorization: `Bearer ${target.managementToken}` },
+      redirect: "error",
+      signal: AbortSignal.timeout(REVOKE_TIMEOUT_MS),
+    });
+    // 401: that machine no longer honors the token, which is the outcome wanted.
+    if (response.status === 200 || response.status === 401) return { result: "revoked", sessionId };
+    return { result: "kept", sessionId };
+  } catch {
+    return { result: "kept", sessionId };
+  }
+}
+
+/**
+ * Removes a machine and gives up what this machine holds there: worker
+ * access (through `revokeWorkerAccess`, which must not throw) and the
+ * management token, while the token can still reach it. The machine leaves
+ * the list either way; what could not be revoked there is reported.
+ */
+export async function removeFleetMachineEverywhere(input: {
+  readonly baseDir: string;
+  readonly machine: string;
+  readonly fetcher: FleetFetch;
+  readonly revokeWorkerAccess: (target: FleetTarget) => Promise<FleetRemoteRevoke>;
+}): Promise<FleetRemoveResult> {
+  const source = await readFleetConfigSource(input.baseDir);
+  if (source === null) throw new FleetJoinError("unknown-machine");
+  const config = parseFleetConfig(source);
+  const wanted = input.machine.trim().toLowerCase();
+  const target = config.machines.find(
+    (machine) => machine.id === wanted || machine.label.trim().toLowerCase() === wanted,
+  );
+  if (!target) throw new FleetJoinError("unknown-machine");
+  const workerAccess = await input.revokeWorkerAccess(target);
+  const management = await revokeManagementToken(input.fetcher, target);
+  const removed = await removeFleetMachine({ baseDir: input.baseDir, machine: target.id });
+  return {
+    ...removed,
+    managementToken: management.result,
+    workerAccess,
+    managementSessionId: management.result === "revoked" ? null : management.sessionId,
+  };
+}
+
+/**
+ * Worker access this machine holds on `target`, found by the label its
+ * grants are minted under, revoked with the management token. For the CLI,
+ * which has no running grant store; the server uses its own.
+ */
+export async function revokeWorkerAccessByLabel(
+  fetcher: FleetFetch,
+  target: FleetTarget,
+  localEnvironmentId: string | undefined,
+): Promise<FleetRemoteRevoke> {
+  if (!target.managementToken || localEnvironmentId === undefined) return "kept";
+  try {
+    await checkIdentity(fetcher, target);
+  } catch {
+    return "kept";
+  }
+  const swept = await revokeWorkerSessions({
+    fetcher,
+    target,
+    clientName: workerClientName(localEnvironmentId),
+    keepNewest: false,
+  });
+  if (!swept.complete || !swept.swept) return "kept";
+  return swept.revoked > 0 ? "revoked" : "none";
 }

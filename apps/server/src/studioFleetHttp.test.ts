@@ -36,6 +36,9 @@ import * as Config from "./config.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import { fakeMachine, ORIGIN } from "./fleet/fleetMachine.testkit.ts";
 import * as FleetTargets from "./fleet/FleetTargets.ts";
+import * as ThreadManagement from "./orchestration-v2/ThreadManagementService.ts";
+import * as ProjectService from "./project/ProjectService.ts";
+import * as ProviderRegistry from "./provider/ProviderRegistry.ts";
 import * as FleetWorkerGrants from "./fleet/FleetWorkerGrants.ts";
 import * as FleetHttp from "./studioFleetHttp.ts";
 import { persistServerRuntimeState } from "./serverRuntimeState.ts";
@@ -159,6 +162,16 @@ async function api(
         Layer.provide(
           FetchHttpClient.layer.pipe(
             Layer.provide(Layer.succeed(FetchHttpClient.Fetch, globalThis.fetch)),
+          ),
+        ),
+        Layer.provide(
+          Layer.mergeAll(
+            Layer.mock(ThreadManagement.ThreadManagementService)({}),
+            Layer.mock(ProjectService.ProjectService)({}),
+            Layer.mock(ProviderRegistry.ProviderRegistry)({}),
+            FleetTargets.layer.pipe(
+              Layer.provide(Layer.succeed(FetchHttpClient.Fetch, globalThis.fetch)),
+            ),
           ),
         ),
       ),

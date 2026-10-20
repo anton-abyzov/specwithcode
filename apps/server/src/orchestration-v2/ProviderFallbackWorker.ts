@@ -20,6 +20,7 @@ import {
   canTakeTurn,
   FALLBACK_USAGE_MAX_AGE_MS,
   isApiCreditExhaustedMessage,
+  fallbackSelectionKey,
   isClaudeApiKeyProvider,
   isDirectClaudeApiKeyProvider,
   isPerTokenProvider,
@@ -186,6 +187,8 @@ export function providerFallbackCommand(
   proven: ModelSelection | null = null,
   /** Providers reporting no usage whose threads stopped on a limit (see `unreportedLimitStops`). */
   limited?: ReadonlySet<string>,
+  /** Fallback order entries whose continuation of this stop failed to dispatch. */
+  failed?: ReadonlySet<string>,
 ): OrchestrationV2ServerCommand | null {
   if (rule.providerLimitAction !== "switch") return null;
   if (thread.activeRunId !== null || thread.pendingRuntimeRequest !== null) return null;
@@ -203,6 +206,7 @@ export function providerFallbackCommand(
       anyReady: true,
       proven,
       ...(limited === undefined ? {} : { limitedInstanceIds: limited }),
+      ...(failed === undefined ? {} : { excludedSelections: failed }),
     });
     if (target === null) return null;
     const identity = `${thread.id}:${thread.latestRunId}`;
@@ -382,6 +386,8 @@ export function providerLimitStep(
     readonly proven?: ModelSelection | null;
     /** Providers reporting no usage that a current stop shows are limited. */
     readonly limited?: ReadonlySet<string>;
+    /** Fallback order entries whose continuation of this stop failed to dispatch. */
+    readonly failedTargets?: ReadonlySet<string> | undefined;
   },
 ):
   | {
@@ -475,6 +481,7 @@ export function providerLimitStep(
     nowMs,
     options.proven ?? null,
     options.limited,
+    options.failedTargets,
   );
   return command === null ? null : { type: "switch", command };
 }
@@ -636,6 +643,10 @@ export function apiCreditReturnCommand(
     modelSelection: origin.modelSelection,
   };
 }
+
+/** Tries of one fallback step whose dispatch fails, and the wait that grows after each. */
+export const FALLBACK_DISPATCH_ATTEMPTS = 3;
+export const FALLBACK_DISPATCH_BACKOFF_MS = 60_000;
 
 /** The message id prefix of the continuation the `switch` rule sent on a usage-limit stop. */
 export const LIMIT_FALLBACK_MESSAGE_PREFIX = "limit-fallback:";
@@ -973,6 +984,47 @@ export const makeSweep = Effect.gen(function* () {
     if (queued) return null;
     return { command, attemptKey, tries };
   });
+  // Per stopped run, the fallback models whose continuation failed to
+  // dispatch: the next try moves down the user's order instead of repeating one.
+  const failedTargets = yield* Ref.make(new Map<string, ReadonlySet<string>>());
+  const dispatchTries = yield* Ref.make(
+    new Map<
+      string,
+      { readonly next: number; readonly failures: number; readonly lastFailureAt: number }
+    >(),
+  );
+  // Frees a failed step for the next sweep under its next id. A replayed id
+  // the orchestrator rejected before (a restart lost the count) only moves on.
+  const dispatchFailed = (
+    baseCommandId: string,
+    freed: ReadonlyArray<string>,
+    cause: Cause.Cause<unknown>,
+    nowMs: number,
+  ) =>
+    Effect.gen(function* () {
+      const error = Cause.squash(cause);
+      const replay =
+        typeof error === "object" &&
+        error !== null &&
+        "_tag" in error &&
+        error._tag === "OrchestratorCommandPreviouslyRejectedError";
+      const tries = (yield* Ref.get(dispatchTries)).get(baseCommandId) ?? {
+        next: 0,
+        failures: 0,
+        lastFailureAt: 0,
+      };
+      const next = replay
+        ? { ...tries, next: tries.next + 1 }
+        : { next: tries.next + 1, failures: tries.failures + 1, lastFailureAt: nowMs };
+      yield* Ref.update(dispatchTries, (current) => new Map(current).set(baseCommandId, next));
+      if (next.failures < FALLBACK_DISPATCH_ATTEMPTS)
+        yield* Ref.update(sent, (current) => {
+          const without = new Set(current);
+          without.delete(baseCommandId);
+          for (const key of freed) without.delete(key);
+          return without;
+        });
+    });
   // A replayed id the orchestrator already rejected says nothing new, so it
   // only moves on to the next id; anything else counts toward the rest.
   const returnFailed = (
@@ -1070,7 +1122,10 @@ export const makeSweep = Effect.gen(function* () {
     if (!anyLimitRule(preferences) && !providers.some(isClaudeApiKeyProvider)) return;
     // Simulated limits test the banner and the switch; they never redeem or spend.
     const simulated = simulatedUsageLimitInstances(env).length > 0;
+    // Only active threads are swept (`snapshot.threads`), so this shares the
+    // other sweeps' active read.
     const snapshot = yield* projections.getShellSnapshot({
+      location: "active",
       unsettledOnly: true,
       maxAgeMs: SWEEP_SHELL_SNAPSHOT_MAX_AGE_MS,
     });
@@ -1135,6 +1190,7 @@ export const makeSweep = Effect.gen(function* () {
         simulated,
         proven: provenFallbackSelection(thread, coordinator),
         limited,
+        failedTargets: (yield* Ref.get(failedTargets)).get(`${thread.id}:${thread.latestRunId}`),
       };
       const stepFor = (current: FallbackThread) =>
         providerLimitStep(current, providersFor(current), resolved, now, options);
@@ -1277,6 +1333,19 @@ export const makeSweep = Effect.gen(function* () {
       }
       let command = step.type === "redeem-reset" ? step.continuation : step.command;
       if ((yield* Ref.get(sent)).has(command.commandId)) continue;
+      // A dispatch that failed is tried again under a fresh id (the orchestrator
+      // refuses a rejected id for good), a few times, further apart each time.
+      const baseCommandId = command.commandId;
+      const tries = (yield* Ref.get(dispatchTries)).get(baseCommandId);
+      if (tries !== undefined) {
+        if (tries.failures >= FALLBACK_DISPATCH_ATTEMPTS) continue;
+        if (now - tries.lastFailureAt < FALLBACK_DISPATCH_BACKOFF_MS * tries.failures) continue;
+        if (tries.next > 0)
+          command = {
+            ...command,
+            commandId: CommandId.make(`${baseCommandId}:retry-${tries.next}`),
+          };
+      }
       if (command.type === "message.dispatch" && command.manualContinuationOfRunId !== undefined) {
         // A thread the provider never answered resends its request instead of
         // continuing nothing (see limitRestartRequest).
@@ -1303,6 +1372,7 @@ export const makeSweep = Effect.gen(function* () {
         Effect.gen(function* () {
           if ((yield* Ref.get(sent)).has(command.commandId)) return;
           if (step.type === "api-credits") yield* markSent(apiAttemptKey);
+          yield* markSent(baseCommandId);
           yield* markSent(command.commandId);
           yield* threads.dispatch(command).pipe(
             Effect.tap(() =>
@@ -1315,9 +1385,30 @@ export const makeSweep = Effect.gen(function* () {
               }),
             ),
             Effect.catchCause((cause) =>
-              Effect.logWarning("orchestration-v2.provider-fallback.dispatch-failed", {
-                threadId: thread.id,
-                cause,
+              Effect.gen(function* () {
+                yield* Effect.logWarning("orchestration-v2.provider-fallback.dispatch-failed", {
+                  threadId: thread.id,
+                  cause,
+                });
+                if (
+                  step.type === "switch" &&
+                  command.type === "message.dispatch" &&
+                  command.modelSelection !== undefined
+                ) {
+                  const stop = `${thread.id}:${thread.latestRunId}`;
+                  const target = fallbackSelectionKey(command.modelSelection);
+                  yield* Ref.update(failedTargets, (current) =>
+                    new Map(current).set(stop, new Set([...(current.get(stop) ?? []), target])),
+                  );
+                }
+                yield* dispatchFailed(
+                  baseCommandId,
+                  step.type === "api-credits"
+                    ? [command.commandId, apiAttemptKey]
+                    : [command.commandId],
+                  cause,
+                  now,
+                );
               }),
             ),
           );

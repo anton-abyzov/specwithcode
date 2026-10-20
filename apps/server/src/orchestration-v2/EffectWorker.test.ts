@@ -11,8 +11,10 @@ import {
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Queue from "effect/Queue";
@@ -85,6 +87,8 @@ function layerExecutorFor(input: {
   readonly interrupt?: ProviderTurnControlService.ProviderTurnControlServiceV2Shape["interrupt"];
   /** Records whether the run was held live while its turn started. */
   readonly recordHeld?: boolean;
+  /** The turn start never returns, like a provider stuck opening its session. */
+  readonly startNever?: boolean;
 }) {
   const record = (event: string) => Ref.update(input.events, (events) => [...events, event]);
   const layerDependencies = Layer.mergeAll(
@@ -125,6 +129,7 @@ function layerExecutorFor(input: {
             } else {
               yield* record("start");
             }
+            if (input.startNever === true) return yield* Effect.never;
             if (
               input.failFirstStart !== undefined &&
               (yield* Ref.getAndSet(input.failFirstStart, false))
@@ -861,5 +866,130 @@ it.effect("settles a delegated child once its restart continuation fails for goo
       );
       assert.deepEqual(yield* Ref.get(recovered), [threadId]);
     }).pipe(Effect.provide(layer));
+  }),
+);
+
+function startEffect(now: DateTime.Utc): EffectOutbox.OrchestrationEffectV2 {
+  const timestamp = DateTime.formatIso(now);
+  return {
+    id: `effect:provider-turn.start:${runId}`,
+    commandId: CommandId.make("command:start-timeout"),
+    threadId,
+    request: { type: "provider-turn.start", runId },
+    status: "running",
+    attemptCount: 1,
+    availableAt: timestamp,
+    leaseOwner: "test-worker",
+    leaseExpiresAt: timestamp,
+    createdAt: timestamp,
+    updatedAt: timestamp,
+    completedAt: null,
+    lastError: null,
+  };
+}
+
+it.effect("ends the run of a provider turn start that never returns", () =>
+  Effect.gen(function* () {
+    const now = yield* DateTime.now;
+    const events = yield* Ref.make<ReadonlyArray<string>>([]);
+    const dispatched = yield* Ref.make<ReadonlyArray<unknown>>([]);
+    const layer = layerExecutorFor({
+      events,
+      startNever: true,
+      threads: {
+        dispatch: (command) =>
+          Ref.update(dispatched, (commands) => [...commands, command]).pipe(Effect.as({} as never)),
+      },
+    });
+    yield* Effect.gen(function* () {
+      const executor = yield* EffectWorker.OrchestrationEffectExecutorV2;
+      const liveness = yield* RunLiveness.RunLiveness;
+      const execution = yield* executor
+        .execute(startEffect(now), { willRetry: true })
+        .pipe(Effect.forkChild);
+      yield* TestClock.adjust(
+        Duration.subtract(EffectWorker.PROVIDER_TURN_START_TIMEOUT, Duration.seconds(1)),
+      );
+      assert.isTrue(yield* liveness.isLive(runId));
+      assert.deepEqual(yield* Ref.get(dispatched), []);
+      yield* TestClock.adjust("1 second");
+      // The start is dropped and its run ended, which lets the queue move on.
+      assert.isTrue(Exit.isSuccess(yield* Fiber.await(execution)));
+      assert.isFalse(yield* liveness.isLive(runId));
+      assert.deepEqual(yield* Ref.get(dispatched), [
+        {
+          type: "run.interrupt",
+          commandId: CommandId.make(`command:provider-start-timeout:${runId}`),
+          threadId,
+          runId,
+          reason: EffectWorker.PROVIDER_TURN_START_TIMEOUT_MESSAGE,
+        },
+      ]);
+    }).pipe(Effect.provide(layer));
+  }),
+);
+
+it.effect("retries a timed-out start whose run could not be ended", () =>
+  Effect.gen(function* () {
+    const now = yield* DateTime.now;
+    const events = yield* Ref.make<ReadonlyArray<string>>([]);
+    const layer = layerExecutorFor({
+      events,
+      startNever: true,
+      threads: { dispatch: () => Effect.fail(new Error("run is not interruptible") as never) },
+    });
+    yield* Effect.gen(function* () {
+      const executor = yield* EffectWorker.OrchestrationEffectExecutorV2;
+      const execution = yield* executor
+        .execute(startEffect(now), { willRetry: true })
+        .pipe(Effect.forkChild);
+      yield* TestClock.adjust(EffectWorker.PROVIDER_TURN_START_TIMEOUT);
+      const exit = yield* Fiber.await(execution);
+      assert.isTrue(Exit.isFailure(exit));
+      assert.include(
+        Cause.pretty(Exit.isFailure(exit) ? exit.cause : Cause.empty),
+        "provider_start_timeout",
+      );
+    }).pipe(Effect.provide(layer));
+  }),
+);
+
+it.effect("publishes the end of a timed-out start although it cancels its own effect", () =>
+  Effect.gen(function* () {
+    const now = yield* DateTime.now;
+    const claimed = startEffect(now);
+    const cancelled = yield* Deferred.make<void>();
+    const published = yield* Ref.make(false);
+    const events = yield* Ref.make<ReadonlyArray<string>>([]);
+    // Like the real interrupt: its commit cancels the start effect being run,
+    // and the run's end is published after a yield.
+    const layerExecutor = layerExecutorFor({
+      events,
+      startNever: true,
+      threads: {
+        dispatch: () =>
+          Deferred.succeed(cancelled, undefined).pipe(
+            Effect.andThen(Effect.yieldNow),
+            Effect.andThen(Ref.set(published, true)),
+            Effect.as({} as never),
+          ),
+      },
+    });
+    const layerOutbox = Layer.mock(EffectOutbox.EffectOutboxV2)({
+      claimNext: () => Effect.succeed(Option.some(claimed)),
+      get: () => Effect.succeed(Option.some(claimed)),
+      awaitCancellation: () => Deferred.await(cancelled),
+      clearCancellation: () => Effect.void,
+    });
+    const layerWorker = EffectWorker.layerWithOptions({ workerId: "test-worker" }).pipe(
+      Layer.provide(Layer.merge(layerOutbox, layerExecutor)),
+    );
+    yield* Effect.gen(function* () {
+      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+      const run = yield* worker.runOnce.pipe(Effect.forkChild);
+      yield* TestClock.adjust(EffectWorker.PROVIDER_TURN_START_TIMEOUT);
+      assert.isTrue(yield* Fiber.join(run));
+      assert.isTrue(yield* Ref.get(published));
+    }).pipe(Effect.provide(layerWorker));
   }),
 );
