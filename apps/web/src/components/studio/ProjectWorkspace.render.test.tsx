@@ -156,13 +156,13 @@ describe("coordinator conversation rendering", () => {
       expect(view.top()).toBe(700);
       expect(latestButton()).toBeNull();
       await view.scrollTo(200);
-      expect(latestButton()?.textContent).toBe("Jump to latest");
+      expect(latestButton()?.getAttribute("aria-label")).toBe("Jump to latest");
       state.messages = [...state.messages, reply(10, { role: "assistant", createdBy: "agent" })];
       await render();
       expect(view.top()).toBe(200);
       // Nothing scrolls an ancestor either, as scrollIntoView would on a phone.
       expect(Element.prototype.scrollIntoView).not.toHaveBeenCalled();
-      expect(latestButton()?.textContent).toBe("New messages");
+      expect(latestButton()?.getAttribute("aria-label")).toBe("Jump to latest, new messages below");
       await act(async () => (latestButton() as HTMLButtonElement).click());
       expect(view.top()).toBe(view.height() - 300);
       expect(latestButton()).toBeNull();
@@ -201,6 +201,20 @@ describe("coordinator conversation rendering", () => {
       // The browser reports the move to the end as a scroll.
       await view.scrollTo(view.top());
       expect(latestButton()).toBeNull();
+    });
+
+    it("keeps every mounted message while a reader further up gets new ones", async () => {
+      state.messages = conversation(40);
+      const view = await scrolled();
+      const first = () => container.querySelector(".project-message")?.textContent;
+      const before = first();
+      expect(shownMessages()).toBe(COORDINATOR_MESSAGE_WINDOW);
+      await view.scrollTo(0);
+      state.messages = [...state.messages, reply(40), reply(41), reply(42)];
+      await render();
+      // The message at the top of the window is still there to read.
+      expect(first()).toBe(before);
+      expect(shownMessages()).toBe(COORDINATOR_MESSAGE_WINDOW + 3);
     });
 
     it("stays put while the person types in the composer", async () => {

@@ -55,6 +55,34 @@ function RecoveryNavigationFixture() {
     </>
   );
 }
+/* `?switch`: the projects sidebar switches the one ProjectWorkspace between two
+   projects, the way the real /projects/$projectKey route does, so a project left
+   for another stays mounted under its hidden Activity and is shown again. */
+function SwitchFixture() {
+  const [projectKey, setProjectKey] = useState("atlas");
+  return (
+    <div style={{ display: "flex", height: "100vh" }}>
+      <nav aria-label="Projects" className="flex flex-col gap-2 border-r p-3 text-sm">
+        {[
+          ["atlas", "Atlas Studio"],
+          ["beacon", "Beacon"],
+        ].map(([key, title]) => (
+          <button
+            key={key}
+            type="button"
+            aria-current={key === projectKey ? "page" : undefined}
+            onClick={() => setProjectKey(key)}
+          >
+            {title}
+          </button>
+        ))}
+      </nav>
+      <div style={{ minWidth: 0, flex: 1, display: "flex" }}>
+        <ProjectWorkspace projectKey={projectKey} />
+      </div>
+    </div>
+  );
+}
 /* `?report`: the app's projects sidebar beside the workspace, so the viewer
    overlay can be checked never to cover it. The thread beside a viewer is a
    stand-in; the native ChatView is not part of this fixture. */
@@ -155,6 +183,8 @@ createRoot(document.getElementById("root")!).render(
     <RecoveryNavigationFixture />
   ) : search.has("legacy-delete") ? (
     <LegacyDeletionFixture />
+  ) : search.has("switch") ? (
+    <SwitchFixture />
   ) : search.has("routed") ? (
     <RoutedProjectWorkspace />
   ) : (

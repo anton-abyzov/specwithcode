@@ -377,7 +377,6 @@ import {
   MonitorIcon,
   CheckCircle2Icon,
   PaperclipIcon,
-  ChevronDownIcon,
   DownloadIcon,
   GitBranchIcon,
   LaptopIcon,
@@ -542,6 +541,7 @@ import { EmbeddedThreadDiffPanel } from "./chat/EmbeddedThreadDiffPanel";
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
 import type { AssistantCitationRequest } from "./chat/AssistantCitationSource";
 import { MessagesTimeline, type MessagesTimelineHistoryControls } from "./chat/MessagesTimeline";
+import { JumpToLatestButton } from "./chat/JumpToLatestButton";
 import { ProviderSubagentBar } from "./chat/ProviderSubagentBar";
 import { getTriggerDisplayModelName } from "./chat/providerIconUtils";
 import { resolveTimelineIsAtEnd, worktreeSetupAgentStarted } from "./chat/MessagesTimeline.logic";
@@ -4137,6 +4137,20 @@ function useChatViewState(props: ChatViewProps) {
         : activeRunHealth,
     [activeRunHealth, waitThread?.title, waitThreadId],
   );
+  // The working header names the machine. This machine is never offline, and
+  // a brief reconnect gets the same grace as the unavailable banner.
+  const timelineActiveHostLabel = activeEnvironment?.label ?? null;
+  const timelineActiveHostConnected =
+    !activeEnvironmentUnavailable ||
+    activeEnvironmentIsThisMachine ||
+    (activeReconnectingEnvironmentId !== null && !reconnectWarningGraceElapsed);
+  const timelineActiveHost = useMemo(
+    () =>
+      timelineActiveHostLabel === null
+        ? null
+        : { label: timelineActiveHostLabel, connected: timelineActiveHostConnected },
+    [timelineActiveHostConnected, timelineActiveHostLabel],
+  );
   // Server-side workspace preparation: unlike the local-dispatch flag this
   // survives reloads and shows on remote viewers of the same thread.
   const activeRunPreparing = activeActivityRun?.status === "preparing";
@@ -5262,6 +5276,7 @@ function useChatViewState(props: ChatViewProps) {
     timelineMessages,
     timelineOverflows,
     timelineRunHealth,
+    timelineActiveHost,
     timelineThreadError,
     timelineWorkingFolder,
     timestampFormat,
@@ -9509,6 +9524,7 @@ export default function ChatView(props: ChatViewProps) {
     timelineMessages,
     timelineOverflows,
     timelineRunHealth,
+    timelineActiveHost,
     timelineThreadError,
     timelineWorkingFolder,
     timestampFormat,
@@ -14129,6 +14145,7 @@ export default function ChatView(props: ChatViewProps) {
                   isCompacting={!paintOnlyDisplayedTimeline && isCompacting}
                   activeTurnStartedAt={paintOnlyDisplayedTimeline ? null : activeWorkStartedAt}
                   runHealth={paintOnlyDisplayedTimeline ? null : timelineRunHealth}
+                  activeHost={paintOnlyDisplayedTimeline ? null : timelineActiveHost}
                   workingPlan={paintOnlyDisplayedTimeline ? null : threadPlanView}
                   {...(canInterruptRunningThread && !paintOnlyDisplayedTimeline
                     ? { onStopStalledRun: onInterrupt, onContinueStalledRun }
@@ -14232,20 +14249,13 @@ export default function ChatView(props: ChatViewProps) {
                   className="chat-scroll-to-bottom pointer-events-none absolute z-30 flex justify-center py-1.5"
                   style={{ bottom: scrollToEndClearance + 4 }}
                 >
-                  <Button
-                    aria-label="Jump to latest"
+                  <JumpToLatestButton
                     onPointerDown={(event) => event.preventDefault()}
-                    onClick={() => {
+                    onJump={() => {
                       composerRef.current?.restoreAfterTimelineReachedEnd();
                       scrollToEnd(true);
                     }}
-                    className="pointer-events-auto"
-                    size="xs"
-                    variant="glass"
-                  >
-                    <ChevronDownIcon className="size-3.5" />
-                    Jump to latest
-                  </Button>
+                  />
                 </div>
               )}
             </div>

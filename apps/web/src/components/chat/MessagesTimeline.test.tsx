@@ -19,6 +19,7 @@ import {
   type ReactElement,
 } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
+import * as DateTime from "effect/DateTime";
 import { createRoot } from "react-dom/client";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import { shouldUseRestingComposerLayout } from "../composerFooterLayout";
@@ -3266,5 +3267,167 @@ describe("MessagesTimeline timeline detail", () => {
     expect(verbose).toContain("Finding 20");
     expect(verbose).not.toContain('"data-report-artifact"');
     expect(verbose).not.toContain("Show full report");
+  });
+});
+
+describe("live activity", () => {
+  const runId = RunId.make("run-live");
+  const turnStart = "2026-10-19T20:11:46.000Z";
+  const liveRun = { runId, status: "running" as const, startedAt: turnStart, completedAt: null };
+  const workEntry = (
+    id: string,
+    command: string,
+    status: "inProgress" | "completed",
+    createdAt: string,
+  ) => ({
+    id,
+    kind: "work" as const,
+    createdAt,
+    entry: {
+      id,
+      createdAt,
+      runId,
+      label: "Run command",
+      tone: "tool" as const,
+      itemType: "command_execution" as const,
+      command,
+      toolLifecycleStatus: status,
+    },
+  });
+  const turnItem = (updatedAt: string) =>
+    ({
+      runId,
+      type: "assistant_message",
+      status: "completed",
+      updatedAt: DateTime.makeUnsafe(updatedAt),
+    }) as unknown as NonNullable<Parameters<typeof MessagesTimeline>[0]["recoveryItems"]>[number];
+  const render = (overrides: Partial<Parameters<typeof MessagesTimeline>[0]>) =>
+    renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        isWorking
+        activeTurnInProgress
+        activeTurnStartedAt={turnStart}
+        latestRun={liveRun}
+        runningRunId={runId}
+        timelineEntries={[buildUserTimelineEntry("Check the canonical tags.")]}
+        {...overrides}
+      />,
+    );
+  const commands = [
+    workEntry("w1", "ls src", "completed", "2026-10-19T20:12:00.000Z"),
+    workEntry("w2", "cat page.tsx", "completed", "2026-10-19T20:12:10.000Z"),
+    workEntry("w3", "for i in 1 2 3; do curl -s x; done", "inProgress", "2026-10-19T20:12:20.000Z"),
+  ];
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-10-19T20:12:50.000Z"));
+    return () => vi.useRealTimers();
+  });
+
+  it("names the running step, times it, and offers its group with a count", () => {
+    const markup = render({
+      timelineEntries: [buildUserTimelineEntry("Check the canonical tags."), ...commands],
+      recoveryItems: [turnItem("2026-10-19T20:12:45.000Z")],
+    });
+    expect(markup).toContain('data-tool-group-header="live"');
+    expect(markup).toContain("3 calls");
+    expect(markup).toContain("show these 3 tool calls");
+    expect(markup).toContain('aria-expanded="false"');
+    // Timed from the running call's own start (20:12:20), not the turn's.
+    expect(markup).toMatch(/data-live-elapsed[^>]*><span class="tabular-nums">30s</);
+    expect(markup).not.toContain("data-work-group-content");
+  });
+
+  it("opens the group as a bounded list of sibling calls", () => {
+    activityTestState.expanded = true;
+    const markup = render({
+      timelineEntries: [buildUserTimelineEntry("Check the canonical tags."), ...commands],
+      recoveryItems: [turnItem("2026-10-19T20:12:45.000Z")],
+    });
+    expect(markup).toContain("hide these 3 tool calls");
+    expect(markup).toContain('aria-expanded="true"');
+    expect(markup).toContain("data-work-group-content");
+    expect(markup).toContain("ls src");
+    expect(markup).toContain("cat page.tsx");
+  });
+
+  it("says Thinking only while events keep arriving", () => {
+    const fresh = render({ recoveryItems: [turnItem("2026-10-19T20:12:41.000Z")] });
+    expect(fresh).toContain("Thinking");
+    expect(fresh).not.toContain("No new events");
+    expect(fresh).toMatch(/data-live-elapsed[^>]*><span class="tabular-nums">9s</);
+    expect(fresh).toContain('data-live-state="fresh"');
+
+    const quiet = render({
+      activeTurnStartedAt: "2026-10-19T20:05:00.000Z",
+      recoveryItems: [turnItem("2026-10-19T20:09:40.000Z")],
+    });
+    expect(quiet).toContain("No new events");
+    expect(quiet).toContain("for 3m");
+    expect(quiet).not.toContain("Thinking");
+    expect(quiet).toContain('data-live-state="quiet"');
+  });
+
+  it("claims no quiet state from other runs' items", () => {
+    const markup = render({
+      recoveryItems: [
+        {
+          ...turnItem("2026-10-19T20:12:49.000Z"),
+          runId: RunId.make("older-run"),
+        },
+      ],
+    });
+    // This run's items are not loaded: nothing is known, so nothing is claimed.
+    expect(markup).not.toContain("No new events");
+    expect(markup).not.toContain("data-live-elapsed");
+  });
+
+  it("between calls keeps the last call and says the model has the turn, or that it went quiet", () => {
+    const finished = [buildUserTimelineEntry("Check the canonical tags."), ...commands.slice(0, 2)];
+    const fresh = render({
+      timelineEntries: finished,
+      recoveryItems: [turnItem("2026-10-19T20:12:44.000Z")],
+    });
+    expect(fresh).toContain("cat page.tsx");
+    expect(fresh).toMatch(/data-live-elapsed[^>]*>Thinking <span class="tabular-nums">6s</);
+
+    const quiet = render({
+      activeTurnStartedAt: "2026-10-19T20:05:00.000Z",
+      timelineEntries: finished,
+      recoveryItems: [turnItem("2026-10-19T20:10:20.000Z")],
+    });
+    expect(quiet).toContain("No new events for 2m");
+    expect(quiet).not.toContain("live-tool-shine");
+  });
+
+  it("freezes the live rows while the host is unreachable", () => {
+    const markup = render({
+      timelineEntries: [buildUserTimelineEntry("Check the canonical tags."), ...commands],
+      recoveryItems: [turnItem("2026-10-19T20:12:45.000Z")],
+      activeHost: { label: "MacBook M4MAX", connected: false },
+    });
+    expect(markup).not.toContain("data-live-elapsed");
+    expect(markup).not.toContain("live-tool-shine");
+    expect(markup).toContain("3 calls");
+  });
+
+  it("names the machine and says when its status may be stale", () => {
+    const recoveryItems = [turnItem("2026-10-19T20:12:45.000Z")];
+    const online = render({
+      recoveryItems,
+      activeHost: { label: "MacBook M4MAX", connected: true },
+    });
+    expect(online).toContain("· MacBook M4MAX");
+    expect(online).toContain('data-live-dot="fresh"');
+    expect(online).not.toContain("status may be stale");
+
+    const offline = render({
+      recoveryItems,
+      activeHost: { label: "MacBook M4MAX", connected: false },
+    });
+    expect(offline).toContain("offline, status may be stale");
+    expect(offline).toContain('data-live-dot="offline"');
   });
 });

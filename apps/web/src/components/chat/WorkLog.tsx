@@ -3,7 +3,11 @@ import { cn } from "../../lib/utils";
 
 const GroupedRows = createContext(false);
 
-/** Groups may span virtualized timeline items. Each part owns its trailing space. */
+/**
+ * Groups may span virtualized timeline items. Each part owns its trailing space.
+ * An open group's calls hang off a rule under its header icon, so they read
+ * as the members of that group rather than as more rows of the turn.
+ */
 export function WorkLogBlock({
   layout = "standalone",
   continues = false,
@@ -23,7 +27,13 @@ export function WorkLogBlock({
             : "pb-2"
       }
     >
-      {children}
+      {layout === "group-content" ? (
+        <div className="ms-3 border-s border-border/70 ps-1.5" data-work-group-content>
+          {children}
+        </div>
+      ) : (
+        children
+      )}
     </div>
   );
 }

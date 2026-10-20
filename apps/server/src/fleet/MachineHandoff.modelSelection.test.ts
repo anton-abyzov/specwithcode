@@ -274,6 +274,8 @@ const fixture = Effect.gen(function* () {
   const coordinator = ProjectCoordinatorService.ProjectCoordinatorService.of({
     start: () => Effect.die("Machine handoff must call send"),
     nextTurnModel: () => Effect.succeed(undefined),
+    route: () => Effect.die("unused"),
+    coordinatorModes: () => Effect.die("unused"),
     send: (request) =>
       Effect.gen(function* () {
         state.sends++;

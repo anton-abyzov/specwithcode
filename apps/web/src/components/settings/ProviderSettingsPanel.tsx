@@ -100,6 +100,7 @@ import { CodexSetupSection, CodexManagedRuntimeFields } from "./CodexSetupSectio
 import { readCodexSetupMode } from "./CodexSetupSection.logic";
 import { DRIVER_OPTIONS, getDriverOption } from "./providerDriverMeta";
 import { searchableSetting } from "./settingsSearch";
+import { acpAgentIdForInstanceConfig, groupBySharedKey } from "../../providerInstances";
 import {
   backgroundActivityOverrideSettings,
   buildProviderInstanceUpdatePatch,
@@ -822,7 +823,7 @@ export function EnvironmentProviderSettings({
     ),
   );
 
-  const rows: InstanceRow[] = [];
+  const authoredRows: InstanceRow[] = [];
   const visibleDriverKinds = new Set<ProviderDriverKind>(
     visibleProviderSettings.map((providerSettings) => providerSettings.provider),
   );
@@ -871,7 +872,7 @@ export function EnvironmentProviderSettings({
         resolveProviderInstanceEnabled(effectiveInstance) ||
         defaultInstanceId === targetInstanceId
       ) {
-        rows.push({
+        authoredRows.push({
           instanceId: defaultInstanceId,
           instance: effectiveInstance,
           driver,
@@ -882,13 +883,13 @@ export function EnvironmentProviderSettings({
     }
     for (const [id, instance] of instancesByDriver.get(providerSettings.provider) ?? []) {
       if (id === defaultInstanceId) continue;
-      rows.push({ instanceId: id, instance, driver: instance.driver, isDefault: false });
+      authoredRows.push({ instanceId: id, instance, driver: instance.driver, isDefault: false });
     }
   }
   for (const [driver, list] of instancesByDriver) {
     if (visibleDriverKinds.has(driver)) continue;
     for (const [id, instance] of list) {
-      rows.push({
+      authoredRows.push({
         instanceId: id,
         instance,
         driver: instance.driver,
@@ -896,6 +897,12 @@ export function EnvironmentProviderSettings({
       });
     }
   }
+
+  // Two instances of one ACP agent (a local Copilot install and the managed
+  // one) list together, as in every model picker.
+  const rows = groupBySharedKey(authoredRows, (row) =>
+    row.driver === "acpRegistry" ? acpAgentIdForInstanceConfig(row.instance.config) : undefined,
+  );
 
   const targetInstanceMissing =
     targetInstanceId !== undefined &&

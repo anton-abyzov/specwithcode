@@ -14,6 +14,7 @@ import {
   resolveDefaultProviderModelSelection,
   resolveProviderCatalogAvailability,
   resolveSelectableProviderInstance,
+  sortProviderInstanceEntries,
 } from "./providerInstances";
 
 function provider(input: {
@@ -674,6 +675,34 @@ describe("provider icon metadata", () => {
     const [local, managed] = copilotEntries("Copilot (your install)", "Copilot managed");
     expect(local?.displayName).toBe("Copilot (your install)");
     expect(managed?.displayName).toBe("Copilot managed");
+  });
+
+  it("keeps both Copilot instances next to each other in picker order", () => {
+    const gemini = ProviderInstanceId.make("acpRegistry_gemini");
+    const codex = ProviderDriverKind.make("codex");
+    const settings = copilotSettings("GitHub Copilot", "Copilot managed");
+    const entries = applyProviderInstanceSettings(
+      deriveProviderInstanceEntries([
+        provider({ provider: codex, instanceId: "codex" }),
+        provider({ provider: acpDriver, instanceId: "acpRegistry_copilot" }),
+        provider({ provider: acpDriver, instanceId: gemini }),
+        provider({ provider: acpDriver, instanceId: "copilot-0889" }),
+      ]),
+      {
+        providerInstances: {
+          ...settings.providerInstances,
+          [ProviderInstanceId.make("codex")]: { driver: codex, enabled: true },
+          [gemini]: { driver: acpDriver, enabled: true, config: { agentId: "gemini" } },
+        },
+        providers: {} as never,
+      },
+    );
+    expect(sortProviderInstanceEntries(entries).map((entry) => entry.instanceId)).toEqual([
+      "codex",
+      "acpRegistry_copilot",
+      "copilot-0889",
+      "acpRegistry_gemini",
+    ]);
   });
 
   it("leaves a lone agent's name alone", () => {

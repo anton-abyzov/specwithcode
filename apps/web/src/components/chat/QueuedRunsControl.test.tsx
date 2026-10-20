@@ -19,8 +19,10 @@ vi.mock("../../state/entities", () => ({
   useThreadShell: () => ({ title: "Release macOS app" }),
 }));
 
-vi.mock("../../hooks/useNowMinute", () => ({
-  useNowMinute: () => "2026-10-15T12:00:00.000Z",
+// The hook's real shape: a UTC minute without a zone.
+vi.mock("../../hooks/useNowMinute", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../hooks/useNowMinute")>()),
+  useNowMinute: () => "2026-10-15T12:00",
 }));
 
 vi.mock("../../state/threads", () => ({

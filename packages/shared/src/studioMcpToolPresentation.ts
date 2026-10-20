@@ -388,6 +388,11 @@ const STUDIO_MCP_TOOLS: Readonly<Record<string, StudioMcpToolDefinition>> = {
     "project-delete",
   ),
   studio_project_clone: tool(["Clone", "Cloning", "Cloned", "a repository"], "project-clone"),
+  studio_route_targets: tool(["List", "Listing", "Listed", "projects to route to"], "project-list"),
+  studio_project_route: tool(
+    ["Route", "Routing", "Routed", "a request to a project"],
+    "thread-send",
+  ),
   studio_attachment_prepare_upload: tool(
     ["Prepare", "Preparing", "Prepared", "an attachment upload"],
     "attachment-prepare",

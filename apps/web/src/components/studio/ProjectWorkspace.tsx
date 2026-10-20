@@ -251,7 +251,8 @@ export function ProjectWorkspace({
   );
   // A page left for another project stays mounted under a hidden Activity: its
   // effects and subscriptions stop, its DOM and state stay, so coming back shows
-  // it without rendering its conversation again.
+  // it without rendering its conversation again. The conversation puts its
+  // reader back itself (useConversationFollow).
   if (kept[0]?.key !== pageKey)
     setKept(
       [{ key: pageKey, page }, ...kept.filter((entry) => entry.key !== pageKey)].slice(

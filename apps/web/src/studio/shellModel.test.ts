@@ -51,7 +51,8 @@ const running = { status: "running" } as EnvironmentThreadShell["runtime"];
 const failed = { status: "failed", lastErrorClass: null } as EnvironmentThreadShell["runtime"];
 // Local noon, so calendar-day buckets do not depend on the runner's time zone.
 const now = new Date(2026, 9, 10, 12, 0, 0).getTime();
-const at = (daysAgo: number, hour = 9) => new Date(2026, 9, 10 - daysAgo, hour, 0, 0).toISOString();
+const at = (daysAgo: number, hour = 9) =>
+  new Date(2026, 9, 10 - daysAgo, 0, Math.round(hour * 60), 0).toISOString();
 const projectLabel = (t: EnvironmentThreadShell) => String(t.projectId);
 
 describe("machine names", () => {
@@ -147,10 +148,10 @@ describe("chats in the sidebar", () => {
   it("lists chats under date headings, newest first, without empty headings", () => {
     const groups = buildChatGroups(
       [
-        thread({ id: "a", updatedAt: at(0, 8) }),
-        thread({ id: "b", updatedAt: at(0, 10) }),
-        thread({ id: "c", updatedAt: at(3) }),
-        thread({ id: "d", updatedAt: at(40) }),
+        thread({ id: "a", createdAt: at(0, 8) }),
+        thread({ id: "b", createdAt: at(0, 10) }),
+        thread({ id: "c", createdAt: at(3) }),
+        thread({ id: "d", createdAt: at(40) }),
       ],
       DEFAULT_CHAT_LIST_OPTIONS,
       { now, projectLabel },
@@ -178,9 +179,9 @@ describe("chats in the sidebar", () => {
   });
   it("filters by status, recency and title", () => {
     const rows = [
-      thread({ id: "ask", hasPendingUserInput: true, updatedAt: at(0), title: "Deploy fix" }),
-      thread({ id: "done", settledOverride: "settled", updatedAt: at(0), title: "Old deploy" }),
-      thread({ id: "stale", updatedAt: at(20), title: "Deploy notes" }),
+      thread({ id: "ask", hasPendingUserInput: true, createdAt: at(0), title: "Deploy fix" }),
+      thread({ id: "done", settledOverride: "settled", createdAt: at(0), title: "Old deploy" }),
+      thread({ id: "stale", createdAt: at(20), title: "Deploy notes" }),
     ];
     const ids = (options: Parameters<typeof buildChatGroups>[1], query?: string) =>
       buildChatGroups(
@@ -259,9 +260,9 @@ describe("chats in the sidebar", () => {
   });
   it("leaves a project's own threads to the project unless asked to show them", () => {
     const rows = [
-      thread({ id: "chat", updatedAt: at(0, 9) }),
-      thread({ id: "worker", projectId: "atlas" as never, updatedAt: at(0, 10) }),
-      thread({ id: "older", updatedAt: at(3) }),
+      thread({ id: "chat", createdAt: at(0, 9) }),
+      thread({ id: "worker", projectId: "atlas" as never, createdAt: at(0, 10) }),
+      thread({ id: "older", createdAt: at(3) }),
     ];
     const isProjectThread = (t: EnvironmentThreadShell) => t.projectId === "atlas";
     const view = (options: Parameters<typeof buildChatGroups>[1]) =>
@@ -291,6 +292,95 @@ describe("chats in the sidebar", () => {
         isProjectThread,
       }),
     ).toEqual([]);
+  });
+  it("keeps busy chats in place through streamed items, tool calls and status changes", () => {
+    // Three workers started this morning, the way delegated lanes appear.
+    let rows = [
+      thread({ id: "lane-a", title: "0949 Folder copy", createdAt: at(0, 8) }),
+      thread({ id: "lane-b", title: "0948 Link projects", createdAt: at(0, 9) }),
+      thread({ id: "lane-c", title: "0951 Machine grants", createdAt: at(0, 10) }),
+      thread({ id: "quiet", title: "Current time", createdAt: at(1, 15) }),
+    ];
+    const view = () =>
+      buildChatGroups(rows, DEFAULT_CHAT_LIST_OPTIONS, { now, projectLabel }).map((g) => [
+        g.label,
+        g.threads.map((t) => t.id),
+      ]);
+    const before = view();
+    expect(before).toEqual([
+      ["Today", ["lane-c", "lane-b", "lane-a"]],
+      ["Yesterday", ["quiet"]],
+    ]);
+    // Interleaved server events: each one moves `updatedAt` forward on one row.
+    const events: Array<[string, Partial<EnvironmentThreadShell>]> = [
+      ["lane-a", { runtime: running, updatedAt: at(0, 11) }],
+      ["lane-b", { updatedAt: at(0, 11.1) }],
+      ["quiet", { runtime: running, updatedAt: at(0, 11.2) }],
+      ["lane-a", { pendingBackgroundTasks: [{}] as never, updatedAt: at(0, 11.3) }],
+      ["lane-c", { hasPendingApprovals: true, updatedAt: at(0, 11.4) }],
+      ["lane-b", { runtime: failed, updatedAt: at(0, 11.5) }],
+      ["lane-c", { hasPendingApprovals: false, runtime: null, updatedAt: at(0, 11.6) }],
+    ];
+    for (const [id, change] of events) {
+      rows = rows.map((t) => (t.id === id ? { ...t, ...change } : t));
+      expect(view()).toEqual(before);
+    }
+    // Nothing is frozen: the rows carry the newest state.
+    const shown = buildChatGroups(rows, DEFAULT_CHAT_LIST_OPTIONS, { now, projectLabel })
+      .flatMap((g) => g.threads)
+      .find((t) => t.id === "lane-b");
+    expect(shown?.runtime).toBe(failed);
+  });
+  it("moves a chat only when it is asked for work, and keeps ties in a fixed order", () => {
+    const same = at(0, 9);
+    let rows = [
+      thread({ id: "b", createdAt: same }),
+      thread({ id: "a", createdAt: same }),
+      thread({ id: "c", createdAt: at(0, 8) }),
+    ];
+    const ids = () =>
+      buildChatGroups(
+        rows,
+        { ...DEFAULT_CHAT_LIST_OPTIONS, groupBy: "none" },
+        { now, projectLabel },
+      )[0]!.threads.map((t) => t.id);
+    expect(ids()).toEqual(["a", "b", "c"]);
+    // Equal keys keep the id order whichever row the server sent last.
+    rows = [rows[1]!, rows[2]!, { ...rows[0]!, updatedAt: at(0, 11) }];
+    expect(ids()).toEqual(["a", "b", "c"]);
+    // The person sends a message in the oldest chat: it comes to the top.
+    rows = rows.map((t) => (t.id === "c" ? { ...t, latestUserMessageAt: at(0, 11.5) } : t));
+    expect(ids()).toEqual(["c", "a", "b"]);
+    // A coordinator hands "b" a new turn: that is new work, so it moves too.
+    rows = rows.map((t) =>
+      t.id === "b" ? { ...t, latestRun: { requestedAt: at(0, 11.7) } as never } : t,
+    );
+    expect(ids()).toEqual(["b", "c", "a"]);
+    // A new chat starts on top.
+    rows = [...rows, thread({ id: "new", createdAt: at(0, 11.9) })];
+    expect(ids()).toEqual(["new", "b", "c", "a"]);
+  });
+  it("keeps a chat under its date heading and in the recency filter while it streams", () => {
+    const rows = [
+      thread({ id: "old", createdAt: at(20), updatedAt: at(0, 11), runtime: running }),
+      thread({ id: "fresh", createdAt: at(0, 9) }),
+    ];
+    expect(
+      buildChatGroups(rows, DEFAULT_CHAT_LIST_OPTIONS, { now, projectLabel }).map((g) => [
+        g.label,
+        g.threads.map((t) => t.id),
+      ]),
+    ).toEqual([
+      ["Today", ["fresh"]],
+      ["Previous 30 days", ["old"]],
+    ]);
+    expect(
+      buildChatGroups(
+        rows,
+        { ...DEFAULT_CHAT_LIST_OPTIONS, activity: "7d", groupBy: "none" },
+        { now, projectLabel },
+      ).flatMap((g) => g.threads.map((t) => t.id)),
+    ).toEqual(["fresh"]);
   });
   it("says where the chats went when only project threads are left out", () => {
     expect(chatListEmptyMessage(DEFAULT_CHAT_LIST_OPTIONS, 0)).toBe("No chats yet.");
