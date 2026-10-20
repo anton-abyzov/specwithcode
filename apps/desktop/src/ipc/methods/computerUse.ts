@@ -13,6 +13,7 @@ import * as DesktopLifecycle from "../../app/DesktopLifecycle.ts";
 import {
   currentPermissions,
   requestPermission,
+  resetPermission,
   runComputerUseAction,
 } from "../../computerUse/MacComputerUse.ts";
 import type { MacPermission } from "../../permissions/MacPermission.ts";
@@ -21,6 +22,7 @@ import {
   GET_COMPUTER_USE_PERMISSIONS_CHANNEL,
   RELAUNCH_FOR_COMPUTER_USE_CHANNEL,
   REQUEST_COMPUTER_USE_PERMISSION_CHANNEL,
+  RESET_COMPUTER_USE_PERMISSION_CHANNEL,
   RUN_COMPUTER_USE_ACTION_CHANNEL,
 } from "../channels.ts";
 import * as DesktopIpc from "../DesktopIpc.ts";
@@ -32,6 +34,12 @@ class ComputerUseRunFailed extends Data.TaggedError("ComputerUseRunFailed")<{
 /** Results cross IPC as values so the renderer sees the agent-facing message, never an Effect failure. */
 const ComputerUseIpcResult = Schema.Union([
   Schema.Struct({ ok: Schema.Literal(true), result: ComputerUseActionResult }),
+  Schema.Struct({ ok: Schema.Literal(false), error: Schema.String }),
+]);
+
+/** A failed reset reaches the card as a message, so it can offer the button again. */
+const ComputerUseResetIpcResult = Schema.Union([
+  Schema.Struct({ ok: Schema.Literal(true), permissions: ComputerUsePermissions }),
   Schema.Struct({ ok: Schema.Literal(false), error: Schema.String }),
 ]);
 
@@ -97,6 +105,29 @@ export const installComputerUse = Effect.fn("desktop.ipc.installComputerUse")(fu
       handler: (permission) =>
         Effect.promise(() => requestPermission(permission, showHelper)).pipe(
           Effect.catchCause(() => Effect.promise(currentPermissions)),
+        ),
+    }),
+  );
+  yield* ipc.handle(
+    DesktopIpc.makeIpcMethod({
+      channel: RESET_COMPUTER_USE_PERMISSION_CHANNEL,
+      payload: ComputerUsePermission,
+      result: ComputerUseResetIpcResult,
+      handler: (permission) =>
+        Effect.tryPromise({
+          try: () => resetPermission(permission, showHelper),
+          catch: (error) =>
+            new ComputerUseRunFailed({
+              reason: error instanceof Error ? error.message : String(error),
+            }),
+        }).pipe(
+          Effect.map((permissions) => ({ ok: true as const, permissions })),
+          Effect.catch((error) =>
+            Effect.logWarning("Computer use permission reset failed", {
+              permission,
+              message: error.reason,
+            }).pipe(Effect.as({ ok: false as const, error: error.reason || "The reset failed." })),
+          ),
         ),
     }),
   );

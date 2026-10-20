@@ -564,6 +564,14 @@ const memberProjects = rowsFixture
   : new URLSearchParams(window.location.search).has("machines")
     ? [otherMachineProject, project]
     : [project];
+// `?switch`: a second project, so the check can leave Atlas for it and come back.
+const beaconProject = {
+  ...project,
+  id: "project-beacon",
+  title: "Beacon",
+  workspaceRoot: "/scratch/beacon",
+};
+const switchFixture = new URLSearchParams(window.location.search).has("switch");
 export const useSettingsProjectGroups = () => [
   {
     projectKey: "atlas",
@@ -572,12 +580,21 @@ export const useSettingsProjectGroups = () => [
       environmentLabel: machineLabels[member.environmentId],
     })),
   },
+  ...(switchFixture
+    ? [
+        {
+          projectKey: "beacon",
+          memberProjects: [{ ...beaconProject, environmentLabel: machineLabels.host }],
+        },
+      ]
+    : []),
 ];
-export const useProjects = () => memberProjects;
+const allProjects = switchFixture ? [...memberProjects, beaconProject] : memberProjects;
+export const useProjects = () => allProjects;
 export const useProject = (ref) =>
   ref === null
     ? null
-    : (memberProjects.find(
+    : (allProjects.find(
         (project) => project.environmentId === ref.environmentId && project.id === ref.projectId,
       ) ?? null);
 export const useThreadShells = () => useSyncExternalStore(subscribeShells, () => shells);
@@ -877,7 +894,8 @@ const baseThreadProjection = () => ({
    reader is scrolled up. `window.__streamPush` adds a message and
    `window.__streamUpdate` rewrites one, the way streamed text arrives. */
 const streamFixture = new URLSearchParams(window.location.search).has("stream");
-let streamMessages = Array.from({ length: 24 }, (_, index) => ({
+// `?switch` makes it longer than the coordinator's mounted window, with older history on the host.
+let streamMessages = Array.from({ length: switchFixture ? 80 : 24 }, (_, index) => ({
   id: `s${index}`,
   role: index % 2 === 0 ? "user" : "assistant",
   createdBy: index % 2 === 0 ? "user" : "agent",
@@ -930,7 +948,7 @@ export const useThreadProjection = (ref) => {
       }
     : base;
 };
-export const useThreadHistory = () => ({ hasMoreHistory: false });
+export const useThreadHistory = () => ({ hasMoreHistory: switchFixture, loading: false });
 export const useThreadStatus = () => "ready";
 export const useEnvironment = (environmentId) => ({
   label: memberProjects.length > 1 ? machineLabels[environmentId] : "Development Mac",
@@ -1102,7 +1120,11 @@ export const useEnvironmentQuery = (q) => ({
                     ? reportSnapshot()
                     : q?.kind === "read" || q?.kind === undefined
                       ? {
-                          settings,
+                          // `?switch`: Beacon has a coordinator of its own.
+                          settings:
+                            q?.projectId === beaconProject.id
+                              ? { ...settings, coordinatorThreadId: "beacon-coord" }
+                              : settings,
                           memory: fresh !== null ? { files: [], totalBytes: 0 } : memory,
                           // Real VCS status atoms land here too: an empty working tree.
                           workingTree: { files: [] },
@@ -1207,7 +1229,7 @@ export const projectWorkspace = withFallback({
   connectionSave: "connectionSave",
   connectionCheck: "connectionCheck",
   connectionRevoke: "connectionRevoke",
-  read: () => ({ kind: "read" }),
+  read: (args) => ({ kind: "read", projectId: args?.input?.projectId }),
   starterSuggestions: () => ({ kind: "starters" }),
   threadReports: () => ({ kind: "threadReports" }),
   threadIncrementProgress: () => ({ kind: "threadIncrementProgress" }),

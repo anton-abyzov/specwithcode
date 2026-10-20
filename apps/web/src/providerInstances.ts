@@ -213,16 +213,12 @@ export function applyProviderInstanceSettings(
       explicitInstance.config !== null && typeof explicitInstance.config === "object"
         ? (explicitInstance.config as Readonly<Record<string, unknown>>)
         : null;
-    const agentId = config?.agentId;
+    const agentId = acpAgentIdForInstanceConfig(explicitInstance.config);
     if (config?.source === "local") {
-      const copilot = isLocalGitHubCopilotCommand(
-        typeof agentId === "string" ? agentId : null,
-        typeof config.commandPath === "string" ? config.commandPath : null,
-      );
       return {
         ...entry,
         enabled,
-        acpRegistryAgentId: copilot ? GITHUB_COPILOT_AGENT_ID : undefined,
+        acpRegistryAgentId: agentId,
         acpRegistryIconUrl: undefined,
         acpSource: "local" as const,
       };
@@ -232,9 +228,7 @@ export function applyProviderInstanceSettings(
       ...entry,
       enabled,
       acpSource: "registry" as const,
-      ...(typeof agentId === "string" && agentId.trim()
-        ? { acpRegistryAgentId: agentId.trim() }
-        : {}),
+      ...(agentId ? { acpRegistryAgentId: agentId } : {}),
       ...(typeof iconUrl === "string" && iconUrl.trim()
         ? { acpRegistryIconUrl: iconUrl.trim() }
         : {}),
@@ -244,6 +238,42 @@ export function applyProviderInstanceSettings(
 }
 
 const GITHUB_COPILOT_AGENT_ID = "github-copilot-cli";
+
+/**
+ * The ACP agent an `acpRegistry` instance config runs. A local install counts
+ * only when it is recognisably Copilot; other local commands have no agent id.
+ */
+export function acpAgentIdForInstanceConfig(config: unknown): string | undefined {
+  if (config === null || typeof config !== "object") return undefined;
+  const { agentId, source, commandPath } = config as Readonly<Record<string, unknown>>;
+  if (source === "local") {
+    return isLocalGitHubCopilotCommand(
+      typeof agentId === "string" ? agentId : null,
+      typeof commandPath === "string" ? commandPath : null,
+    )
+      ? GITHUB_COPILOT_AGENT_ID
+      : undefined;
+  }
+  return typeof agentId === "string" && agentId.trim() ? agentId.trim() : undefined;
+}
+
+/**
+ * Stable regroup: items sharing a key move up next to the first item with
+ * that key; items without a key stay where they are relative to the groups.
+ */
+export function groupBySharedKey<T>(
+  items: ReadonlyArray<T>,
+  keyOf: (item: T) => string | undefined,
+): T[] {
+  const groups = new Map<unknown, T[]>();
+  for (const item of items) {
+    const key = keyOf(item) ?? item;
+    const group = groups.get(key);
+    if (group) group.push(item);
+    else groups.set(key, [item]);
+  }
+  return [...groups.values()].flat();
+}
 const ACP_SOURCE_QUALIFIERS = {
   local: { label: "your install", present: /\b(?:your|local|install(?:ed)?)\b/iu },
   registry: { label: "SpecWithCode-managed", present: /\bmanaged\b/iu },
@@ -277,8 +307,9 @@ function labelSharedAcpAgentSources(
  * Sort instance entries so the default instance of each driver kind appears
  * before any custom instances of the same kind. Within a kind, custom
  * instances keep their settings-author order (which is how the server
- * emits them). Stable across kinds: entries retain the server's
- * cross-driver ordering.
+ * emits them), except that instances running the same ACP agent (a local
+ * Copilot install and the managed one) sit together. Stable across kinds:
+ * entries retain the server's cross-driver ordering.
  */
 export function sortProviderInstanceEntries(
   entries: ReadonlyArray<ProviderInstanceEntry>,
@@ -300,7 +331,7 @@ export function sortProviderInstanceEntries(
   for (const bucket of byKind.values()) {
     const defaults = bucket.filter((entry) => entry.isDefault);
     const customs = bucket.filter((entry) => !entry.isDefault);
-    sorted.push(...defaults, ...customs);
+    sorted.push(...defaults, ...groupBySharedKey(customs, (entry) => entry.acpRegistryAgentId));
   }
   return sorted;
 }

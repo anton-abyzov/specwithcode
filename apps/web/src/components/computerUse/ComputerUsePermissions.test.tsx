@@ -26,6 +26,7 @@ vi.mock("../../state/environments", () => ({
 let status: ComputerUsePermissions;
 const requestComputerUsePermission = vi.fn(async () => status);
 const relaunchForComputerUse = vi.fn(async () => undefined);
+const resetComputerUsePermission = vi.fn(async () => status);
 
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
@@ -35,6 +36,7 @@ beforeEach(() => {
       getComputerUsePermissions: async () => status,
       requestComputerUsePermission,
       relaunchForComputerUse,
+      resetComputerUsePermission,
     },
   });
 });
@@ -92,6 +94,56 @@ it("asks macOS on Allow, then offers to ask the agent to try again once granted"
     "Screen Recording is allowed for SpecWithCode now. Please try again.",
   );
   expect(text(renderer)).toContain("Asked the agent");
+  await act(() => renderer.unmount());
+});
+
+it("offers a reset when Accessibility stays refused after Allow, then sees the new grant", async () => {
+  let renderer!: ReactTestRenderer;
+  await act(() => {
+    renderer = create(
+      <ComputerUsePermissionCard permission="accessibility" environmentId={local} />,
+    );
+  });
+  await flush();
+  // Before Allow there is nothing to reset.
+  expect(buttons(renderer, "Reset and ask again")).toHaveLength(0);
+
+  await act(() => buttons(renderer, "Allow")[0]!.props.onClick());
+  await flush();
+  expect(text(renderer)).toContain("macOS is keeping that switch for another build of the app");
+  await act(() => buttons(renderer, "Reset and ask again")[0]!.props.onClick());
+  expect(resetComputerUsePermission).toHaveBeenCalledTimes(1);
+  expect(resetComputerUsePermission).toHaveBeenCalledWith("accessibility");
+  await flush();
+  expect(text(renderer)).toContain("Reset. Turn SpecWithCode on again in the Accessibility list.");
+  expect(buttons(renderer, "Reset and ask again")).toHaveLength(0);
+
+  status = { screenRecording: true, accessibility: true };
+  await act(() => {
+    window.dispatchEvent(new Event("focus"));
+  });
+  await flush();
+  expect(text(renderer)).toContain("Accessibility is allowed.");
+  await act(() => renderer.unmount());
+});
+
+it("shows why a reset failed and offers it again", async () => {
+  resetComputerUsePermission.mockRejectedValueOnce(new Error("tccutil: No such bundle identifier"));
+  let renderer!: ReactTestRenderer;
+  await act(() => {
+    renderer = create(
+      <ComputerUsePermissionCard permission="accessibility" environmentId={local} />,
+    );
+  });
+  await flush();
+  await act(() => buttons(renderer, "Allow")[0]!.props.onClick());
+  await flush();
+  await act(() => buttons(renderer, "Reset and ask again")[0]!.props.onClick());
+  await flush();
+  expect(text(renderer)).toContain(
+    "Could not reset Accessibility: tccutil: No such bundle identifier",
+  );
+  expect(buttons(renderer, "Reset and ask again")).toHaveLength(1);
   await act(() => renderer.unmount());
 });
 

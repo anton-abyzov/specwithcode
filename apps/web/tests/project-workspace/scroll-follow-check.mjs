@@ -56,7 +56,7 @@ try {
       const at = {
         label,
         ...(await measure()),
-        button: (await latest.count()) ? await latest.innerText() : null,
+        button: (await latest.count()) ? await latest.getAttribute("aria-label") : null,
       };
       steps.push(at);
       return at;
@@ -128,7 +128,10 @@ try {
       stayed.every((s) => s.pageScrollY === reading.pageScrollY),
       `${name}: the page itself scrolled`,
     );
-    check(stayed.at(-1).button === "New messages", `stayed.at(-1).button: ${stayed.at(-1).button}`);
+    check(
+      stayed.at(-1).button === "Jump to latest, new messages below",
+      `stayed.at(-1).button: ${stayed.at(-1).button}`,
+    );
     await page.screenshot({
       path: `${output}/scroll-${name}-reader-stays.png`,
       animations: "disabled",

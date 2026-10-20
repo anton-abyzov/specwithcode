@@ -295,23 +295,25 @@ function matchesStatus(thread: EnvironmentThreadShell, status: ChatStatusFilter)
   return group !== "Resolved";
 }
 
-function compareChats(sortBy: ChatSort) {
-  return (a: EnvironmentThreadShell, b: EnvironmentThreadShell): number => {
-    if (sortBy === "title")
-      return (
-        a.title.localeCompare(b.title, undefined, { sensitivity: "base", numeric: true }) ||
-        a.id.localeCompare(b.id)
-      );
-    const key = sortBy === "created" ? "createdAt" : "updatedAt";
-    return b[key].localeCompare(a[key]) || a.id.localeCompare(b.id);
-  };
-}
-
 /** Newest work first; a turn streaming its items does not move its row. */
 function compareByActivity(a: EnvironmentThreadShell, b: EnvironmentThreadShell): number {
   return (
     Date.parse(threadActivityAt(b)) - Date.parse(threadActivityAt(a)) || a.id.localeCompare(b.id)
   );
+}
+
+/**
+ * "Last activity" means the last time someone asked the chat for work: it was
+ * created, sent a message or given a turn. `updatedAt` moves on every streamed
+ * item, tool call and status change, so sorting on it made busy rows jump.
+ */
+function compareChats(sortBy: ChatSort) {
+  if (sortBy === "activity") return compareByActivity;
+  return (a: EnvironmentThreadShell, b: EnvironmentThreadShell): number =>
+    sortBy === "title"
+      ? a.title.localeCompare(b.title, undefined, { sensitivity: "base", numeric: true }) ||
+        a.id.localeCompare(b.id)
+      : b.createdAt.localeCompare(a.createdAt) || a.id.localeCompare(b.id);
 }
 
 export type ChatGroup = {
@@ -357,7 +359,7 @@ export function buildChatGroups(
         !isSidebarSubagentThread(thread) &&
         (ownedByProject === null || !ownedByProject(thread)) &&
         matchesStatus(thread, options.status) &&
-        (since === null || Date.parse(thread.updatedAt) >= since) &&
+        (since === null || Date.parse(threadActivityAt(thread)) >= since) &&
         (query === "" || thread.title.toLowerCase().includes(query)),
     )
     .sort(compareChats(options.sortBy));
@@ -367,7 +369,10 @@ export function buildChatGroups(
   const order: string[] = [];
   const keyOf = (thread: EnvironmentThreadShell): string =>
     options.groupBy === "date"
-      ? dateBucket(options.sortBy === "created" ? thread.createdAt : thread.updatedAt, input.now)
+      ? dateBucket(
+          options.sortBy === "created" ? thread.createdAt : threadActivityAt(thread),
+          input.now,
+        )
       : options.groupBy === "status"
         ? projectThreadGroup(thread)
         : input.projectLabel(thread);

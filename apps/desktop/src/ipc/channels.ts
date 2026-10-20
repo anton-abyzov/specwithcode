@@ -9,6 +9,7 @@ export const RUN_COMPUTER_USE_ACTION_CHANNEL = "desktop:run-computer-use-action"
 export const GET_COMPUTER_USE_PERMISSIONS_CHANNEL = "desktop:get-computer-use-permissions";
 export const REQUEST_COMPUTER_USE_PERMISSION_CHANNEL = "desktop:request-computer-use-permission";
 export const RELAUNCH_FOR_COMPUTER_USE_CHANNEL = "desktop:relaunch-for-computer-use";
+export const RESET_COMPUTER_USE_PERMISSION_CHANNEL = "desktop:reset-computer-use-permission";
 export const VOICE_GET_STATUS_CHANNEL = "desktop:voice-get-status";
 export const VOICE_REQUEST_ACCESS_CHANNEL = "desktop:voice-request-access";
 export const VOICE_SET_CALL_ACTIVE_CHANNEL = "desktop:voice-set-call-active";

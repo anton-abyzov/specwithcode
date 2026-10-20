@@ -1717,7 +1717,10 @@ describe("AcpSessionRuntime", () => {
   it.effect("completes session/load after replay becomes idle while its RPC stays pending", () =>
     Effect.gen(function* () {
       const runtime = yield* AcpSessionRuntime.AcpSessionRuntime;
-      const started = yield* runtime.start().pipe(Effect.timeout("2 seconds"));
+      // The bound covers spawning the mock agent too, which a loaded CI shard
+      // slows past 2 s. Under the mock's 10 s load delay it still proves start
+      // returns on replay idle, not when session/load answers.
+      const started = yield* runtime.start().pipe(Effect.timeout("8 seconds"));
 
       expect(started.sessionId).toBe("mock-session-1");
       expect(started.sessionSetupResult._meta).toMatchObject({

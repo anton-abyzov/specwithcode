@@ -27,6 +27,7 @@ import * as GitVcsDriver from "../../../vcs/GitVcsDriver.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import { newCommandId, readCaller, resolveProjectId, unavailable } from "../../threadAccess.ts";
 import { launchRemote, launchTarget } from "./remoteLaunch.ts";
+import { routeTargets, routeToProject } from "./route.ts";
 import { ProjectToolkit } from "./tools.ts";
 
 function projectFailure(error: Project.ProjectServiceError) {
@@ -313,6 +314,12 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
         };
       }),
   ),
+  studio_route_targets: McpToolAccess.readsAsCaller(() => routeTargets()),
+  // The target coordinator's modes are checked in the handler: it may not exist yet.
+  studio_project_route: McpToolAccess.writesThreads(
+    () => [],
+    (input) => routeToProject(input),
+  ),
   studio_project_list: McpToolAccess.reads((input) =>
     Effect.gen(function* () {
       const projects = yield* access;
@@ -409,6 +416,25 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
           message:
             "Project instructions are the user's to change in project settings. Save what you learned with studio_project_memory_write instead.",
         });
+      // Approved folders and the project kind are the access evidence the personal
+      // assistant routes on; an agent widening them would grant itself projects.
+      const folders = lifecycle?.environment?.additionalFolders;
+      if (lifecycle?.kind !== undefined || folders !== undefined) {
+        const current = Option.getOrUndefined(
+          yield* projects.getById(input.projectId).pipe(Effect.mapError(unavailable)),
+        )?.workspaceSettings;
+        const same = (left: ReadonlyArray<string>, right: ReadonlyArray<string>) =>
+          left.length === right.length && left.every((folder) => right.includes(folder));
+        if (
+          (lifecycle?.kind !== undefined && lifecycle.kind !== (current?.kind ?? "code")) ||
+          (folders !== undefined && !same(folders, current?.environment.additionalFolders ?? []))
+        )
+          return yield* new OrchestratorMcpFailure({
+            code: "invalid_request",
+            message:
+              "Approved folders and the project kind are the user's to change in project settings; they decide what agents here can reach.",
+          });
+      }
       return yield* projects
         .update({ ...input, commandId: yield* newCommandId() })
         .pipe(Effect.mapError(projectFailure));

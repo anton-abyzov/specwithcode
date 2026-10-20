@@ -10,6 +10,7 @@ import {
   routedRepliesForThread,
   routedReplyNotes,
 } from "./projectCoordinatorMessageDisplay";
+import { routedMessageText } from "@specweave-studio/shared/routedMessage";
 
 const project = { id: "project", environmentId: "host" };
 const worker = {
@@ -36,6 +37,7 @@ describe("coordinator follow-up presentation", () => {
     expect(projectCoordinatorMessageDisplay(stored, project, [worker])).toEqual({
       text: prefix + original,
       sourceThread: worker,
+      routedFrom: null,
     });
     expect(stored.text).toBe(prefix + prefix + original);
   });
@@ -43,7 +45,7 @@ describe("coordinator follow-up presentation", () => {
     const named = `User follow-up from selected worker worker, message ${message.id}. Review that thread and decide whether to reuse it or route elsewhere.\n\n`;
     expect(
       projectCoordinatorMessageDisplay({ ...message, text: named + original }, project, [worker]),
-    ).toEqual({ text: original, sourceThread: worker });
+    ).toEqual({ text: original, sourceThread: worker, routedFrom: null });
     // Another message's ID is not this message's wrapper.
     expect(
       projectCoordinatorMessageDisplay(
@@ -61,7 +63,7 @@ describe("coordinator follow-up presentation", () => {
       projectCoordinatorMessageDisplay({ ...message, id: message.id + ":fingerprint" }, project, [
         worker,
       ]),
-    ).toEqual({ text: original, sourceThread: worker });
+    ).toEqual({ text: original, sourceThread: worker, routedFrom: null });
   });
   it.each([
     ["ordinary typed text", { id: "ordinary-message" }],
@@ -84,6 +86,7 @@ describe("coordinator follow-up presentation", () => {
     expect(projectCoordinatorMessageDisplay(input, project, [worker])).toEqual({
       text: input.text,
       sourceThread: null,
+      routedFrom: null,
     });
   });
   it.each([
@@ -93,7 +96,7 @@ describe("coordinator follow-up presentation", () => {
   ])("does not trust a %s with the same ID", (_name, overrides) => {
     expect(
       projectCoordinatorMessageDisplay(message, project, [{ ...worker, ...overrides }]),
-    ).toEqual({ text: message.text, sourceThread: null });
+    ).toEqual({ text: message.text, sourceThread: null, routedFrom: null });
   });
 });
 
@@ -300,5 +303,40 @@ describe("follow-ups passed back to their own worker", () => {
       reply("r1", "Started [Calendar work](studio://thread/worker)."),
     ];
     expect(returnedFollowUpIds(messages, project, [worker]).size).toBe(0);
+  });
+});
+
+describe("requests the personal assistant routed here", () => {
+  const routed = (text: string, senderThreadId = "project-coordinator:aide") => ({
+    id: "coordinator-send:project:route:abc",
+    role: "user",
+    createdBy: "user",
+    senderThreadId,
+    text,
+  });
+  it("shows the user's words and who routed them, not the header", () => {
+    const text = routedMessageText(
+      {
+        assistantTitle: "Aide",
+        threadId: "project-coordinator:aide",
+        messageId: "m1",
+        note: "Yours: the signup audit.",
+      },
+      "Audit the **signup** flow.",
+    );
+    expect(projectCoordinatorMessageDisplay(routed(text), project, [worker])).toEqual({
+      text: "Audit the **signup** flow.",
+      sourceThread: null,
+      routedFrom: { assistantTitle: "Aide", note: "Yours: the signup audit." },
+    });
+  });
+  it("leaves a header whose sender is another thread as written", () => {
+    const text = routedMessageText(
+      { assistantTitle: "Aide", threadId: "project-coordinator:aide", messageId: "m1" },
+      "Words",
+    );
+    expect(
+      projectCoordinatorMessageDisplay(routed(text, "someone-else"), project, [worker]),
+    ).toEqual({ text, sourceThread: null, routedFrom: null });
   });
 });

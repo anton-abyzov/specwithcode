@@ -22,7 +22,7 @@ import { useId, useImperativeHandle, useMemo, useRef, useState, type Ref } from 
 import { useAssetUrls } from "../../assets/assetUrls";
 import { threadEnvironment } from "../../state/threads";
 import { useThreadProjection, useThreadShell } from "../../state/entities";
-import { useNowMinute } from "../../hooks/useNowMinute";
+import { nowMinuteMs, useNowMinute } from "../../hooks/useNowMinute";
 import { epochMillis } from "../../studio/projectThreadMentions";
 import { queuedAgeLabel, queuedRunOneLine } from "./queuedRunSummary";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -162,7 +162,7 @@ export function QueuedRunsControl({
   const optimisticQueued = props.optimisticMessages.filter(
     (message) => message.inputIntent === "queued_turn" && !acknowledgedMessageIds.has(message.id),
   );
-  const nowMs = Date.parse(useNowMinute());
+  const nowMs = nowMinuteMs(useNowMinute());
   const items = [
     ...queued.map(({ run, text, attachments, senderThreadId, summary }, serverIndex) => ({
       key: run.id,
