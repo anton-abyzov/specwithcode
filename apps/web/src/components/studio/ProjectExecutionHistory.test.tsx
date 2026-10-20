@@ -41,11 +41,33 @@ const scopes = ["m4", "m1", "m3"].map((environmentId) => ({
   projectId: "project",
   coordinatorThreadId: "same-coordinator-id",
 })) as ProjectExecutionScope[];
+const member = (environmentId: string) => ({
+  environmentId,
+  projectId: "project",
+  coordinatorThreadId: "same-coordinator-id",
+});
+// The coordinator moved M3 -> M1 -> M4: each handoff names the machine it came from.
 const project = {
   id: "project",
   environmentId: "m4",
-  workspaceSettings: { logicalProject: { id: "one" } },
-} as EnvironmentProject;
+  workspaceSettings: {
+    logicalProject: { id: "one" },
+    coordinatorBinding: { epoch: 2, state: "active", predecessor: member("m1") },
+  },
+} as unknown as EnvironmentProject;
+const m1 = {
+  id: "project",
+  environmentId: "m1",
+  workspaceSettings: {
+    logicalProject: { id: "one" },
+    coordinatorBinding: {
+      epoch: 1,
+      state: "transferred",
+      predecessor: member("m3"),
+      successor: member("m4"),
+    },
+  },
+} as unknown as EnvironmentProject;
 let root: Root, container: HTMLDivElement;
 beforeEach(() => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -90,7 +112,7 @@ afterEach(async () => {
 });
 const render = () =>
   act(async () =>
-    root.render(<ProjectExecutionHistory project={project} members={[]} scopes={scopes} />),
+    root.render(<ProjectExecutionHistory project={project} members={[m1]} scopes={scopes} />),
   );
 const setHistory = (history: typeof state.history) =>
   act(async () => {
@@ -192,6 +214,43 @@ it("stays hidden for a linked project until it has handoff history", async () =>
         members={[]}
         scopes={[scopes[0]!, { ...scopes[1]!, coordinatorThreadId: null }]}
       />,
+    ),
+  );
+  expect(container.textContent).toBe("");
+});
+
+it("shows no handoff history beside a linked copy whose coordinator never moved", async () => {
+  // A link or "Copy files only" adds a member that relinquished its own coordinator; this one stays.
+  const kept = {
+    ...project,
+    workspaceSettings: {
+      logicalProject: { id: "one" },
+      coordinatorBinding: { epoch: 0, state: "active" },
+    },
+  } as unknown as EnvironmentProject;
+  const copy = {
+    id: "project",
+    environmentId: "m3",
+    workspaceSettings: {
+      logicalProject: { id: "one" },
+      coordinatorBinding: { epoch: 0, state: "transferred", successor: member("m4") },
+    },
+  } as unknown as EnvironmentProject;
+  for (const members of [[copy], []])
+    await act(async () =>
+      root.render(
+        <ProjectExecutionHistory
+          project={kept}
+          members={members}
+          scopes={[scopes[0]!, scopes[2]!]}
+        />,
+      ),
+    );
+  expect(container.textContent).toBe("");
+  // On the copy itself, the coordinator still runs beside it on M4, not before it.
+  await act(async () =>
+    root.render(
+      <ProjectExecutionHistory project={copy} members={[kept]} scopes={[scopes[0]!, scopes[2]!]} />,
     ),
   );
   expect(container.textContent).toBe("");

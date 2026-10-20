@@ -45,3 +45,12 @@ Use C + E + D, and add A as a prompt rule. Leave B for later.
 | Markdown                                                          | The docked reader, with outline and toolbar, reading the file by its host path                                            | The reader says why and offers **Open with the default app**                                                  |
 
 No chip leads to a dead end: if a path can't be resolved, the viewer shows the candidates and gives a way out.
+
+## Shell shorthand
+
+A report once linked `~/.specwithcode/audits/2026-10-20/findings-{B,C,D,E}.md`. The chat read it as one file that does not exist, while the Artifacts strip, which had its own expander, showed the four real files. Now `markdown-links.ts` owns the one expander (`expandBraceShorthand`: lists, `{A..E}` and `{01..03}` ranges, nesting; `${VAR}` and a lone `{id}` stay as written; more than 32 paths is a pattern, not a list):
+
+- A brace span becomes one chip per file it names, each settled like any other path. The host is asked about the written name first, so a file really named `a{1,2}.md` still opens as itself.
+- A `*` in a file name lists that folder on the host and links the matches; before the host answers, and when nothing matches, the span stays code or a not-found chip.
+- The viewer and the docked reader list the folder when a read fails to find a file, and say so with the full path and the similarly named files beside it. A protected file keeps its refusal.
+- Workers are told to name each file on its own (`StudioOrchestrationInstructions.ts`, the project role in `ProjectWorkspaceService.ts`).

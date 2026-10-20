@@ -190,6 +190,18 @@ To send feedback, take a screenshot in the app and tap Share Beta Feedback.
 
 The shots use neutral sample names: the main machine is "Office Mac" and the coordinator model shows "Default". The sample data the app ships with (`SWCKit/Sources/SWCSync/FixtureEngine.swift`, also shown to App Review through Explore with sample data) uses the same names.
 
+## When the build includes SpecWithCode Connect
+
+Everything above describes a build without Connect (no `STUDIO_CLERK_PUBLISHABLE_KEY`). A build with Connect lets people create an account and sign in, which changes the submission:
+
+- Demo account (guideline 2.1): App Review needs a working sign-in. Create a dedicated Clerk user (email and password, or an email code App Review can receive) and link it to a Mac that stays online with SpecWithCode running during review, with a sample project. Put the credentials in App Store Connect > App Review Information > Sign-in required, not in the notes text. Sign in with Apple cannot be used as a demo account.
+- Review notes: replace the first paragraph with one that says sign-in is required for real use, names the demo account fields, and says the demo Mac is linked to that account. Keep the sample-data steps (they still work without signing in) and the VPN paragraph, and add: "Sign in with Apple is offered alongside Google and GitHub (guideline 4.8). Settings > Account > Delete account deletes the account in the app (guideline 5.1.1(v))."
+- Sign in with Apple (4.8): it is always the first sign-in method whenever Google or GitHub is offered (`ConnectSignInMethod.offered`).
+- Account deletion (5.1.1(v)): Settings > Account > Delete account calls `DELETE /v1/client/account` on the relay (`RelayClient.deleteAccount`). The relay unlinks the account's Macs, deletes their tunnels and DNS, its mobile devices and push registrations, then the Clerk user; the app then signs out locally. It needs the relay deployed with that endpoint and `CLERK_SECRET_KEY` set.
+- App Privacy: the answer is no longer Data Not Collected. Declare Contact Info (name, email address) and Identifiers (user ID, device ID: the random Connect device id and the APNs token), all linked to the user, used for App Functionality, not for tracking. Update `App/PrivacyInfo.xcprivacy` to match (`NSPrivacyCollectedDataTypes`) in the same release; the Clerk SDK ships its own privacy manifest. The privacy policy's iPhone section must also describe the account, the relay and push notifications.
+- Capabilities: the App ID needs Sign in with Apple and Push Notifications, and the build must be signed with `Config/Connect.entitlements` (README > Sign in with SpecWithCode Connect).
+- What to Test: replace the Pairing bullet with "Sign in with the account you use in SpecWithCode on your Mac, then open your Mac from the list", keep pairing as "Pair with a link or QR code", and drop push notifications from "Not in this build".
+
 ## Steps that need the owner's go-ahead
 
 1. Register the explicit App ID `com.specwithcode.ios` in Certificates, Identifiers & Profiles. No capabilities are needed.

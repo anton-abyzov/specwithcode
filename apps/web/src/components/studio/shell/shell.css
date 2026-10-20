@@ -555,11 +555,13 @@ html.dark[data-theme-id=""] [data-app-sidebar] {
 }
 /* Renaming in place: the name becomes a field the row's height, and a refused
    name is said under it. */
-.sws-project-row[data-renaming] .sws-chat-menu {
+:is(.sws-chat-row, .sws-project-row)[data-renaming] .sws-chat-menu {
   display: none;
 }
+/* The hidden row menu leaves no space to keep free, even on hover. */
 .sws-project-rename .sws-side-row,
-.sws-project-rename .sws-side-row:hover {
+.sws-project-rename .sws-side-row:hover,
+:is(.sws-chat-row, .sws-project-row)[data-renaming] .sws-project-rename .sws-side-row {
   padding-right: 4px;
   background: var(--sidebar-row-selected);
   cursor: text;

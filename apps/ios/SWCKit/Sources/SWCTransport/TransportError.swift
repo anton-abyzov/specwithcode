@@ -26,11 +26,14 @@ public enum TransportError: Error, Sendable, Hashable {
   case http(status: Int, code: String?)
   /// A 2xx answer the app could not read.
   case invalidResponse(String)
+  /// SpecWithCode Connect could not hand out access to the machine.
+  case connect(ConnectError)
 
   /// The failure will not go away by retrying.
   public var isPermanent: Bool {
     switch self {
     case .needsRepair, .appTooOld, .serverTooOld, .pairingCodeRejected: true
+    case let .connect(error): error.isPermanent
     default: false
     }
   }
@@ -63,6 +66,8 @@ extension TransportError: LocalizedError {
       "The computer answered with an error (\(status))."
     case .invalidResponse:
       "The computer sent an answer the app could not read."
+    case let .connect(error):
+      error.errorDescription
     }
   }
 }

@@ -40,6 +40,7 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  type FocusEvent,
   type KeyboardEvent,
   type ReactNode,
 } from "react";
@@ -391,6 +392,8 @@ export function ProjectRow(props: {
   // An archived project never asks for attention from the sidebar.
   const waiting = archived ? 0 : props.waiting;
   const [renaming, setRenaming] = useState<RenameState | null>(null);
+  // Losing the right to rename mid-edit ends the edit; it does not come back later.
+  if (renaming !== null && !props.rename) setRenaming(null);
   const refocusRow = useRef(false);
   // Renaming from the menu: the closing menu must not take focus back from the field.
   const renameFromMenu = useRef(false);
@@ -428,11 +431,12 @@ export function ProjectRow(props: {
       data-archived={archived || undefined}
       data-pinned={pinned || undefined}
       data-dragging={props.dragging || undefined}
-      data-renaming={renaming !== null || undefined}
+      data-renaming={(renaming !== null && props.rename !== undefined) || undefined}
     >
       {renaming !== null && props.rename ? (
-        <ProjectNameEditor
-          project={project}
+        <SidebarNameEditor
+          icon={<ProjectFavicon project={project} className="size-[18px] shrink-0" />}
+          label="Project name"
           rename={props.rename}
           state={renaming}
           onChange={setRenaming}
@@ -562,20 +566,27 @@ export function ProjectRow(props: {
   );
 }
 
-interface RenameState {
+export interface RenameState {
   draft: string;
   /** Why the last save was refused; cleared as soon as the name changes. */
   error: string | null;
   saving?: boolean;
 }
 
+/** Focus taken without the person pointing or tabbing away is given back this many times. */
+const MAX_FOCUS_RETURNS = 3;
+
 /**
- * The project's name as a text field, in the row's place. Enter saves and Esc
- * cancels; leaving the field saves a valid new name and drops anything else.
- * A name another project already has, ignoring case, is refused as it is typed.
+ * A project's or chat's name as a text field, in the row's place. Enter saves
+ * and Esc cancels; leaving the field saves a valid new name and drops anything
+ * else. `rename.check` refuses a bad name as it is typed. Only the person leaves
+ * the field: the double click's first click opens the chat or project, whose
+ * composer then takes focus by itself, and that must not end the edit.
  */
-function ProjectNameEditor(props: {
-  project: Parameters<typeof ProjectFavicon>[0]["project"];
+export function SidebarNameEditor(props: {
+  icon: ReactNode;
+  /** The field's accessible name, such as "Project name". */
+  label: string;
   rename: ProjectRename;
   state: RenameState;
   onChange: (state: RenameState) => void;
@@ -586,6 +597,47 @@ function ProjectNameEditor(props: {
   const errorId = useId();
   // Escape removes the field, and a field removed while focused may still report a blur.
   const closed = useRef(false);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const selectedOnce = useRef(false);
+  const focusReturns = useRef(0);
+  // When the person last pointed outside the field or pressed Tab.
+  const leftAt = useRef(Number.NEGATIVE_INFINITY);
+  useEffect(() => {
+    const onPointerDown = (event: PointerEvent) => {
+      if (event.target !== inputRef.current) leftAt.current = event.timeStamp;
+    };
+    // Tab, F6 and shortcuts are the person moving on; plain typing is not.
+    const onKeyDown = (event: globalThis.KeyboardEvent) => {
+      if (
+        event.key === "Tab" ||
+        event.key === "F6" ||
+        event.metaKey ||
+        event.ctrlKey ||
+        event.altKey
+      )
+        leftAt.current = event.timeStamp;
+    };
+    document.addEventListener("pointerdown", onPointerDown, true);
+    document.addEventListener("keydown", onKeyDown, true);
+    return () => {
+      document.removeEventListener("pointerdown", onPointerDown, true);
+      document.removeEventListener("keydown", onKeyDown, true);
+    };
+  }, []);
+  const onBlur = (event: FocusEvent) => {
+    const leaving =
+      event.timeStamp - leftAt.current < 1_000 ||
+      !document.hasFocus() ||
+      focusReturns.current >= MAX_FOCUS_RETURNS;
+    if (leaving || closed.current) {
+      void submit(true);
+      return;
+    }
+    focusReturns.current += 1;
+    requestAnimationFrame(() => {
+      if (!closed.current) inputRef.current?.focus({ preventScroll: true });
+    });
+  };
   const done = (refocus: boolean) => {
     closed.current = true;
     props.onDone(refocus);
@@ -607,10 +659,10 @@ function ProjectNameEditor(props: {
   return (
     <div className="sws-project-rename">
       <div className="sws-side-row" data-invalid={error !== null || undefined}>
-        <ProjectFavicon project={props.project} className="size-[18px] shrink-0" />
+        {props.icon}
         <input
           className="sws-project-rename-input"
-          aria-label="Project name"
+          aria-label={props.label}
           aria-invalid={error !== null || undefined}
           aria-describedby={error !== null ? errorId : undefined}
           autoFocus
@@ -621,13 +673,20 @@ function ProjectNameEditor(props: {
           // refused name should stay ready to correct.
           readOnly={state.saving}
           aria-busy={state.saving || undefined}
-          onFocus={(event) => event.currentTarget.select()}
+          ref={inputRef}
+          // Selected once, so typing replaces the name; focus given back keeps what was typed.
+          onFocus={(event) => {
+            if (selectedOnce.current) return;
+            selectedOnce.current = true;
+            event.currentTarget.select();
+          }}
           onChange={(event) => props.onChange({ draft: event.currentTarget.value, error: null })}
-          onBlur={() => void submit(true)}
+          onBlur={onBlur}
           onKeyDown={(event) => {
             // The row's move shortcuts and the sidebar's chat keys stay out of the field.
             event.stopPropagation();
-            if (event.nativeEvent.isComposing) return;
+            // Safari confirms a composed candidate with keyCode 229 and isComposing false.
+            if (event.nativeEvent.isComposing || event.keyCode === 229) return;
             if (event.key === "Enter") {
               event.preventDefault();
               void submit(false);

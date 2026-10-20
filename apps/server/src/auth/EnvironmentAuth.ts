@@ -32,6 +32,7 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import type * as Scope from "effect/Scope";
 import * as HttpServerRequest from "effect/http/HttpServerRequest";
 
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
@@ -42,6 +43,7 @@ import * as ServerSecretStore from "./ServerSecretStore.ts";
 import * as SessionStore from "./SessionStore.ts";
 import { REUSABLE_DEV_SESSION_EXPIRES_AT, resolveReusableDevAuth } from "./ReusableDevAuth.ts";
 import { verifyRequestDpopProof } from "./dpop.ts";
+import { capacityMutationOriginAllowed, mutationTrustedOrigins } from "./requestOrigin.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 
 const DEFAULT_SESSION_SUBJECT = "cli-issued-session";
@@ -533,12 +535,32 @@ export class EnvironmentAuth extends Context.Service<
     readonly revokeOtherClientSessions: (
       currentSessionId: AuthSessionId,
     ) => Effect.Effect<number, ServerAuthInternalError>;
+    /**
+     * A cookie, bearer or DPoP credential. A cookie authorizes a request other
+     * than GET or HEAD only from this server's own origin or a trusted
+     * one (devUrl, `STUDIO_DEV_ALLOWED_ORIGINS`, the Mac app).
+     */
     readonly authenticateHttpRequest: (
       request: HttpServerRequest.HttpServerRequest,
     ) => Effect.Effect<AuthenticatedSession, ServerAuthCredentialError | ServerAuthInternalError>;
+    /**
+     * WebSocket upgrades and media requests: a `wsTicket`, a bearer or DPoP
+     * header, or a cookie. As in `authenticateHttpRequest`, a cookie upgrade or
+     * state-changing request must come from this server's own origin or a
+     * trusted one.
+     */
     readonly authenticateWebSocketUpgrade: (
       request: HttpServerRequest.HttpServerRequest,
     ) => Effect.Effect<AuthenticatedSession, ServerAuthCredentialError | ServerAuthInternalError>;
+    /**
+     * See `SessionStore.watchEnd`: completes once the session is revoked or
+     * replaced, and for a browser cookie session also once it expires. A
+     * bearer or DPoP token's expiry is not an end: those clients get a new
+     * token without renewing the session their open sockets are bound to.
+     */
+    readonly watchSessionEnd: (
+      session: Pick<AuthenticatedSession, "sessionId" | "method" | "expiresAt">,
+    ) => Effect.Effect<Effect.Effect<void>, never, Scope.Scope>;
     readonly issueWebSocketTicket: (
       session: Pick<AuthenticatedSession, "sessionId">,
     ) => Effect.Effect<AuthWebSocketTicketResult, ServerAuthInternalError>;
@@ -720,9 +742,12 @@ export const make = Effect.gen(function* () {
       })),
     );
 
-  const authenticateRequest = (
+  const authenticateRequestCredential = (
     request: HttpServerRequest.HttpServerRequest,
-  ): Effect.Effect<AuthenticatedSession, ServerAuthCredentialError | ServerAuthInternalError> => {
+  ): Effect.Effect<
+    { readonly session: AuthenticatedSession; readonly cookie: boolean },
+    ServerAuthCredentialError | ServerAuthInternalError
+  > => {
     const selectedCredential = selectRequestCredential(
       request,
       sessions.cookieName,
@@ -770,8 +795,56 @@ export const make = Effect.gen(function* () {
         }
         return Effect.succeed(session);
       }),
+      Effect.map((session) => ({
+        session,
+        cookie: credential.source !== "bearer" && credential.source !== "dpop",
+      })),
     );
   };
+
+  const authenticateRequest = (
+    request: HttpServerRequest.HttpServerRequest,
+  ): Effect.Effect<AuthenticatedSession, ServerAuthCredentialError | ServerAuthInternalError> =>
+    authenticateRequestCredential(request).pipe(Effect.map(({ session }) => session));
+
+  const trustedOrigins = mutationTrustedOrigins(config);
+  // Browsers attach cookies to any same-site request, and every port of
+  // 127.0.0.1 or localhost is the same site. A cookie may open a socket or
+  // change state only from this server's own origin or a trusted one. Plain
+  // reads stay open: an <img> sends no Origin, and the same-origin policy
+  // keeps another page from reading the response. A POST without a body
+  // needs no preflight, so CORS alone does not stop it.
+  const cookieRequestOriginAllowed = (request: HttpServerRequest.HttpServerRequest) =>
+    (request.headers.upgrade?.toLowerCase() !== "websocket" &&
+      (request.method === "GET" || request.method === "HEAD")) ||
+    capacityMutationOriginAllowed({
+      origin: request.headers.origin,
+      host: request.headers.host,
+      requestUrl: request.originalUrl,
+      forwardedProto: request.headers["x-forwarded-proto"],
+      fetchSite: request.headers["sec-fetch-site"],
+      authorization: request.headers.authorization,
+      cookie: request.headers.cookie,
+      trustedOrigins,
+    });
+
+  const authenticateSameOriginRequest = (request: HttpServerRequest.HttpServerRequest) =>
+    authenticateRequestCredential(request).pipe(
+      Effect.flatMap(({ session, cookie }) =>
+        cookie && !cookieRequestOriginAllowed(request)
+          ? Effect.logWarning("Rejected a cookie-authenticated request from another origin.").pipe(
+              Effect.andThen(
+                Effect.fail(
+                  new ServerAuthInvalidCredentialError({
+                    diagnostic:
+                      "A cookie session can open sockets or change state only from this server's own origin.",
+                  }),
+                ),
+              ),
+            )
+          : Effect.succeed(session),
+      ),
+    );
 
   const getSessionState: EnvironmentAuth["Service"]["getSessionState"] = (request) =>
     authenticateRequest(request).pipe(
@@ -1174,7 +1247,9 @@ export const make = Effect.gen(function* () {
   const authenticateHttpRequest: EnvironmentAuth["Service"]["authenticateHttpRequest"] = (
     request,
   ) =>
-    authenticateRequest(request).pipe(Effect.withSpan("EnvironmentAuth.authenticateHttpRequest"));
+    authenticateSameOriginRequest(request).pipe(
+      Effect.withSpan("EnvironmentAuth.authenticateHttpRequest"),
+    );
 
   const authenticateWebSocketUpgrade: EnvironmentAuth["Service"]["authenticateWebSocketUpgrade"] =
     Effect.fn("EnvironmentAuth.authenticateWebSocketUpgrade")(function* (request) {
@@ -1196,7 +1271,21 @@ export const make = Effect.gen(function* () {
         }
       }
 
-      return yield* authenticateRequest(request);
+      return yield* authenticateSameOriginRequest(request);
+    });
+
+  // Only a browser cookie session (including the legacy and dev cookies)
+  // ends its sockets at expiry: the browser re-pairs, which replaces the old
+  // session, and an expired cookie cannot reconnect. Token clients would be
+  // cut off while still holding valid access: relay, mobile and hosted clients
+  // exchange their hourly DPoP token for a new session, and the desktop app
+  // keeps one cached bearer (a service-attached Mac reuses a stored one with
+  // as little as a day left). Their sockets end on revoke or replacement, and
+  // a new connection still needs an unexpired token.
+  const watchSessionEnd: EnvironmentAuth["Service"]["watchSessionEnd"] = (session) =>
+    sessions.watchEnd({
+      sessionId: session.sessionId,
+      expiresAt: session.method === "browser-session-cookie" ? session.expiresAt : undefined,
     });
 
   const authenticateMcpClient: EnvironmentAuth["Service"]["authenticateMcpClient"] = (request) => {
@@ -1298,6 +1387,7 @@ export const make = Effect.gen(function* () {
     revokeOtherClientSessions,
     authenticateHttpRequest,
     authenticateWebSocketUpgrade,
+    watchSessionEnd,
     issueWebSocketTicket,
     issueStartupPairingUrl,
     authenticateMcpClient,

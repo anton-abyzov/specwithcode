@@ -34,7 +34,7 @@ const entry =
 const runtimeHeader = "  apps/server:\n    dependencies:\n";
 const smolToml = "      smol-toml:\n        specifier: 1.8.0\n        version: 1.8.0\n";
 const museIntegrity =
-  "sha512-fYWvvK0Ar11e0KHbepmp1Kobp6w9UPVVq1rL6ZY7uY1t9NlK6yrF66hELky6G7NgvpH2q/RfeFYfiyuESpHo2A==";
+  "sha512-/6pblfm1gN96L4c6DZpNIl4TQn+x/PQJ4H0xoqNyJ6Kb+HmSm4FdflydB2MM0iCnPz6Wx2l2r95mmrGDTtvVhw==";
 const patchedBuilder =
   "app-builder-lib: 26.15.6(patch_hash=4688f96749e3d76cf27bc535d874470bf264610a331db13644df7715d699acf1)(dmg-builder@26.15.6)(electron-builder-squirrel-windows@26.15.6)";
 
@@ -119,7 +119,7 @@ for (const [name, mutate] of [
       change(
         s,
         `integrity: ${museIntegrity}`,
-        `integrity: ${museIntegrity.replace("fYWvv", "gYWvv")}`,
+        `integrity: ${museIntegrity.replace("/6pbl", "/7pbl")}`,
       ),
   ],
   [
@@ -127,8 +127,8 @@ for (const [name, mutate] of [
     (s) =>
       change(
         s,
-        "specifier: 1.4.9\n        version: 1.4.9(",
-        "specifier: 1.4.10\n        version: 1.4.10(",
+        "specifier: 1.4.11\n        version: 1.4.11(",
+        "specifier: 1.4.12\n        version: 1.4.12(",
       ),
   ],
   ["other importer dependency", (s) => change(s, "version: 4.0.1", "version: 4.0.2")],
@@ -285,7 +285,7 @@ const routerZod = reviewed.find((c) => c.before === "zod: 4.4.3");
 for (const [name, edit, message] of [
   [
     "an integrity that differs from its record",
-    (c) => (c === muse ? { ...c, integrity: c.integrity.replace("fYWvv", "gYWvv") } : c),
+    (c) => (c === muse ? { ...c, integrity: c.integrity.replace("/6pbl", "/7pbl") } : c),
     /exactly its stated integrity/,
   ],
   [

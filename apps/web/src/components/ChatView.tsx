@@ -7674,20 +7674,29 @@ function useChatViewActions(
             handleManualNavigation();
           }
         };
-        // Touch direction isn't observable here (touchmove fires on any
-        // finger motion, scrolling or not), so break only once the drag has
-        // actually carried the viewport out of the end band — an upward flick
+        // Only a finger moving down scrolls the list up, and only once the
+        // drag has carried the viewport out of the end band — an upward flick
         // gets there within its first few events and later touchmoves break.
-        const handleTouchMove = () => {
+        // A tap's jitter, or a finger moving up, never does.
+        let touchStartY: number | null = null;
+        const handleTouchStart = (event: TouchEvent) => {
+          touchStartY = event.touches[0]?.clientY ?? null;
+        };
+        const handleTouchMove = (event: TouchEvent) => {
+          const y = event.touches[0]?.clientY;
+          if (touchStartY === null || y === undefined || y - touchStartY < 8) return;
           if (viewportIsAwayFromEnd()) {
             handleManualNavigation();
           }
         };
         // Scrollbar drags produce no wheel/touch events; they are the only
         // pointerdowns whose target is the scroll node itself rather than a
-        // message row. Content clicks break follow only away from the end
-        // (reading or selecting up there must hold position); clicking near
-        // the live edge keeps following.
+        // message row. A click on a message is not a scroll: the view sits
+        // off the end while a new turn is framed at the top or a frame
+        // behind streamed text, and a click there (a link, a disclosure, a
+        // word) must keep following. Dragging a selection past the edge does
+        // scroll, so the list moving while a pressed pointer moves breaks it.
+        let selectionDrag: "pressed" | "dragging" | null = null;
         const handlePointerDown = (event: PointerEvent) => {
           if (event.target === scrollNode) {
             if (contentScrollsUp()) {
@@ -7695,7 +7704,17 @@ function useChatViewActions(
             }
             return;
           }
-          if (viewportIsAwayFromEnd()) {
+          selectionDrag = event.pointerType === "mouse" ? "pressed" : null;
+        };
+        const handlePointerMove = () => {
+          if (selectionDrag === "pressed") selectionDrag = "dragging";
+        };
+        const handlePointerUp = () => {
+          selectionDrag = null;
+        };
+        const handleScrollWhileSelecting = () => {
+          if (selectionDrag === "dragging" && viewportIsAwayFromEnd()) {
+            selectionDrag = null;
             handleManualNavigation();
           }
         };
@@ -7757,17 +7776,27 @@ function useChatViewActions(
         scrollNode.addEventListener("wheel", handleWheel, {
           passive: true,
         });
+        scrollNode.addEventListener("touchstart", handleTouchStart, { passive: true });
         scrollNode.addEventListener("touchmove", handleTouchMove, {
           passive: true,
         });
         scrollNode.addEventListener("pointerdown", handlePointerDown, {
           passive: true,
         });
+        scrollNode.addEventListener("scroll", handleScrollWhileSelecting, { passive: true });
+        window.addEventListener("pointermove", handlePointerMove, { passive: true });
+        window.addEventListener("pointerup", handlePointerUp);
+        window.addEventListener("pointercancel", handlePointerUp);
         document.addEventListener("keydown", handleKeyDown);
         removeListeners = () => {
           scrollNode.removeEventListener("wheel", handleWheel);
+          scrollNode.removeEventListener("touchstart", handleTouchStart);
           scrollNode.removeEventListener("touchmove", handleTouchMove);
           scrollNode.removeEventListener("pointerdown", handlePointerDown);
+          scrollNode.removeEventListener("scroll", handleScrollWhileSelecting);
+          window.removeEventListener("pointermove", handlePointerMove);
+          window.removeEventListener("pointerup", handlePointerUp);
+          window.removeEventListener("pointercancel", handlePointerUp);
           document.removeEventListener("keydown", handleKeyDown);
         };
       });

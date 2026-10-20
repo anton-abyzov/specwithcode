@@ -330,3 +330,107 @@ it("lists where it looked when the named file is gone, instead of a dead end", a
     }),
   );
 });
+
+// The "Finish every authorized project thread" report of October 20, 2026:
+// shell brace shorthand for four findings files outside the workspace.
+const AUDIT = "/Users/me/.specwithcode/audits/2026-10-20";
+const BRACE_REPORT =
+  "Findings so far are in `~/.specwithcode/audits/2026-10-20/findings-{B,C,D,E}.md`.";
+
+function useAuditHost(files = ["A", "B", "C", "D", "E"].map((batch) => `findings-${batch}.md`)) {
+  state.existing = new Set([AUDIT, ...files.map((name) => `${AUDIT}/${name}`)]);
+}
+
+function chipLabels() {
+  return renderer!.root
+    .findAllByType("a")
+    .map((node) => node.findAll((child) => typeof child.children[0] === "string"))
+    .flatMap((nodes) => nodes.flatMap((node) => node.children))
+    .filter((label): label is string => typeof label === "string" && label.endsWith(".md"));
+}
+
+it("shows one chip per file brace shorthand names, never the shorthand itself", async () => {
+  useAuditHost();
+  await render(BRACE_REPORT);
+  expect(new Set(chipLabels())).toEqual(
+    new Set(["findings-B.md", "findings-C.md", "findings-D.md", "findings-E.md"]),
+  );
+  expect(chip("findings-C.md").props.href).toBe(`${AUDIT}/findings-C.md`);
+  await click("findings-C.md");
+  expect(
+    renderer!.root.findAll(
+      (node) => node.props["data-document-reader"] === `${AUDIT}/findings-C.md`,
+    ),
+  ).toHaveLength(1);
+  // Copying the message keeps what the worker wrote.
+  const [group] = renderer!.root.findAll((node) => node.props["data-file-link-group"] === "true");
+  expect(group!.props["data-markdown-copy"]).toBe(
+    "`~/.specwithcode/audits/2026-10-20/findings-{B,C,D,E}.md`",
+  );
+});
+
+it("opens a file whose name really has braces as that one file", async () => {
+  useAuditHost(["findings-{B,C,D,E}.md"]);
+  await render(BRACE_REPORT);
+  expect(chipLabels()).toEqual(["findings-{B,C,D,E}.md"]);
+  expect(chip("findings-{B,C,D,E}.md").props.href).toBe(`${AUDIT}/findings-{B,C,D,E}.md`);
+});
+
+it("marks a file the shorthand names but the host lacks as not found", async () => {
+  useAuditHost(["findings-B.md", "findings-C.md", "findings-E.md"]);
+  await render(BRACE_REPORT);
+  await click("findings-D.md");
+  expect(state.toast).toHaveBeenCalledWith(
+    expect.objectContaining({
+      title: "findings-D.md was not found",
+      description: expect.stringContaining(`${AUDIT}/findings-D.md`),
+    }),
+  );
+  await click("findings-E.md");
+  expect(
+    renderer!.root.findAll(
+      (node) => node.props["data-document-reader"] === `${AUDIT}/findings-E.md`,
+    ),
+  ).toHaveLength(1);
+});
+
+it("links the files a name pattern matches on the host, not the pattern", async () => {
+  useAuditHost(["findings-A.md", "findings-B.md", "INVENTORY.md"]);
+  await render("Per batch: `~/.specwithcode/audits/2026-10-20/findings-*.md`.");
+  expect(chipLabels()).toEqual(["findings-A.md", "findings-B.md"]);
+});
+
+function codeTexts() {
+  return renderer!.root
+    .findAllByType("code")
+    .map((node) => node.children.filter((child) => typeof child === "string").join(""));
+}
+
+it("keeps a name pattern as written when nothing, or too much, matches", async () => {
+  useAuditHost(["INVENTORY.md"]);
+  await render("None: `~/.specwithcode/audits/2026-10-20/findings-*.md`.");
+  expect(chipLabels()).toEqual([]);
+  expect(codeTexts()).toEqual(["~/.specwithcode/audits/2026-10-20/findings-*.md"]);
+
+  useAuditHost(Array.from({ length: 40 }, (_, index) => `log-${index}.md`));
+  await render("Logs: `~/.specwithcode/audits/2026-10-20/log-*.md`.");
+  expect(chipLabels()).toEqual([]);
+  expect(codeTexts()).toEqual(["~/.specwithcode/audits/2026-10-20/log-*.md"]);
+});
+
+it("keeps brace shorthand of patterns as written, never a chip per pattern", async () => {
+  useAuditHost();
+  await render("Shots: `~/.specwithcode/audits/2026-10-20/findings-{A,B}-*.md`.");
+  expect(chipLabels()).toEqual([]);
+  expect(codeTexts()).toEqual(["~/.specwithcode/audits/2026-10-20/findings-{A,B}-*.md"]);
+});
+
+it("never drops shorthand for folders the host cannot list", async () => {
+  useAuditHost();
+  await render("Caches: `~/.specwithcode/audits/2026-10-20/{logs,cache}`.");
+  const [group] = renderer!.root.findAll((node) => node.props["data-file-link-group"] === "true");
+  expect(group?.findAllByType("a").map((link) => link.props.href)).toEqual([
+    `${AUDIT}/logs`,
+    `${AUDIT}/cache`,
+  ]);
+});

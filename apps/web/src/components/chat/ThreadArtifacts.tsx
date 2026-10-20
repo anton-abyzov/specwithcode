@@ -42,6 +42,7 @@ import {
 } from "~/viewerOverlayStore";
 import {
   collectThreadArtifacts,
+  settleThreadArtifacts,
   isViewableArtifact,
   type ThreadArtifact,
   type ThreadArtifactKind,
@@ -175,17 +176,7 @@ function useSettledArtifacts(
     [authored],
   );
   const settled = useExistingFileLinks(metaByKey, threadRef?.environmentId ?? null, cwd);
-  return useMemo(
-    () =>
-      authored.flatMap((artifact): ThreadArtifact[] => {
-        if (!("meta" in artifact)) return [artifact];
-        const meta = settled.get(artifact.key) ?? artifact.meta;
-        // A file the host does not have is not something to open.
-        if (meta.unresolved) return [];
-        return [{ ...artifact, meta }];
-      }),
-    [authored, settled],
-  );
+  return useMemo(() => settleThreadArtifacts(authored, settled), [authored, settled]);
 }
 
 /**

@@ -5,6 +5,7 @@ import type { ReactNode } from "react";
 
 import { useProjectFileQuery } from "../files/projectFilesQueryState";
 import { Button } from "../ui/button";
+import { mayBeMissing, MissingFileNotice } from "./MissingFileNotice";
 import { MarkdownDocumentView, ReportReader } from "./ReportReader";
 
 /** A markdown file a message links to, opened as a document. */
@@ -34,6 +35,8 @@ export function MarkdownDocumentReader(props: {
   /** Renders the file; `baseDir` anchors its relative links and images. */
   readonly renderMarkdown: (markdown: string, baseDir: string) => ReactNode;
   readonly onOpenExternally?: (() => void) | undefined;
+  /** Opens another file, such as one beside a file that is not there. */
+  readonly onOpenFile?: ((path: string) => void) | undefined;
   /** The thread whose message linked the file, shown beside it. */
   readonly threadRef?: ScopedThreadRef | undefined;
 }) {
@@ -43,6 +46,12 @@ export function MarkdownDocumentReader(props: {
   const contents = file.data?.contents ?? null;
   const baseDir = directoryOf(target.path);
   const renderMarkdown = (markdown: string) => props.renderMarkdown(markdown, baseDir);
+  const openExternally = props.onOpenExternally ? (
+    <Button type="button" size="sm" variant="outline" onClick={props.onOpenExternally}>
+      <ExternalLinkIcon aria-hidden />
+      Open with the default app
+    </Button>
+  ) : null;
   return (
     <ReportReader
       open
@@ -60,18 +69,21 @@ export function MarkdownDocumentReader(props: {
     >
       {contents !== null ? (
         <MarkdownDocumentView text={contents} renderMarkdown={renderMarkdown} />
+      ) : file.error !== null && mayBeMissing(file.readError) ? (
+        <MissingFileNotice
+          environmentId={props.environmentId}
+          path={target.path}
+          error={file.error}
+          onOpen={props.onOpenFile}
+          actions={openExternally}
+        />
       ) : file.error !== null ? (
         <div className="flex flex-col items-start gap-3 font-sans text-sm" role="alert">
           <p className="text-muted-foreground">
             {name} could not be read here: {file.error}
           </p>
           <p className="break-all font-mono text-muted-foreground text-xs">{target.path}</p>
-          {props.onOpenExternally ? (
-            <Button type="button" size="sm" variant="outline" onClick={props.onOpenExternally}>
-              <ExternalLinkIcon aria-hidden />
-              Open with the default app
-            </Button>
-          ) : null}
+          {openExternally}
         </div>
       ) : (
         <p className="font-sans text-muted-foreground text-sm">Loading {name}…</p>

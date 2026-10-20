@@ -13,11 +13,16 @@ export const DEV_PROXIED_PATH_PREFIXES = ["/api", "/oauth", "/.well-known", "/ws
 /**
  * Prefixes the proxy must forward with the browser's own Host. MCP OAuth
  * derives its issuer and resource URLs from the request, and a client
- * rejects metadata naming a different origin than the one it fetched.
+ * rejects metadata naming a different origin than the one it fetched. The
+ * server lets a cookie open `/ws` or change state through `/api` only when
+ * the request's Origin matches its Host, so a dev page opened at any address
+ * (127.0.0.1, a LAN or tailnet name) needs the Host it was opened at.
  */
 export const DEV_PROXIED_ORIGIN_PRESERVING_PREFIXES: ReadonlySet<string> = new Set([
+  "/api",
   "/oauth",
   "/.well-known",
+  "/ws",
   "/mcp",
 ]);
 

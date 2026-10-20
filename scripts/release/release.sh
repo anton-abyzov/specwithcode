@@ -27,11 +27,11 @@
 # build tree; on --resume it becomes the new candidate: stage 1 and the signed build run again in
 # full, the server suite only for files changed since its last green commit (vitest --changed).
 #
-# A flaky test does not stop the run: in stage 1, when one or two jobs fail, each runs once more,
-# alone, on the same candidate (first tries kept in try-1/); in the server suite, up to five
-# failed files run once more as one shard (retry-1/). A second failure fails the stage. Every
-# retry is in timings/retries.jsonl and the timing table (FLAKY, and REPEAT FLAKE when the
-# previous release had the same one). Nothing else is retried.
+# A flaky test does not stop the run: in stage 1, when one or two jobs of the whole stage fail,
+# each runs once more, alone, on the same candidate (first tries kept in try-1/); in the server
+# suite, up to five failed files run once more as one shard (retry-1/). A second failure fails the
+# stage. Every retry is in timings/retries.jsonl and the timing table (FLAKY, and REPEAT FLAKE when
+# the previous release had the same one). Nothing else is retried.
 #
 # --dry-run     print every stage and command; run nothing and write nothing
 # --resume      continue the release whose state is in the staging folder
@@ -83,7 +83,7 @@ NO_GH_TOKEN=(env -u GH_TOKEN -u GITHUB_TOKEN -u GH_ENTERPRISE_TOKEN -u GITHUB_EN
 VERSION="" MODE=real RESUME=0 SELF_TEST=0 STATUS=0 INTERNAL_SERVER=0 PREV_OVERRIDE="" MIGRATIONS=1 CI_MODE=0
 STOP_AFTER="" JOBS="${RELEASE_JOBS:-4}" SHA="" SHA12="" PREV="" CURRENT_STAGE=main LOCKED=0 STATE_READY=0
 RETRY=1 RETRY_MAX_JOBS="${RELEASE_RETRY_MAX_JOBS:-2}" RETRY_MAX_FILES="${RELEASE_RETRY_MAX_FILES:-5}"
-SERVER_SHARDS="${RELEASE_SERVER_SHARDS:-4}" STAGE_ATTEMPT=1
+SERVER_SHARDS="${RELEASE_SERVER_SHARDS:-4}" STAGE_ATTEMPT=1 RETRIED_JOBS=0
 POLL=1
 
 say() { printf '%s\n' "$*"; }
@@ -113,7 +113,7 @@ command_word() {
 
 # x LABEL [-C DIR] [--] CMD...: run CMD. Stub mode records it; dry-run prints it.
 x() {
-  local label="$1" dir=""
+  local label="$1" dir="" item
   shift
   if [ "${1:-}" = "-C" ]; then
     dir="$2"
@@ -128,13 +128,15 @@ x() {
       ;;
     stub)
       printf '%s\t%s\t%s\n' "$CURRENT_STAGE" "$label" "$*" >> "$STUB_LOG"
-      # RELEASE_STUB_FAIL_ONCE=STAGE:LABEL fails only that call's first run in a staging folder.
-      if [ -n "${RELEASE_STUB_FAIL_ONCE:-}" ] && [ "$RELEASE_STUB_FAIL_ONCE" = "$CURRENT_STAGE:$label" ] &&
-        [ ! -e "$STUB_LOG.failed-once" ]; then
-        : > "$STUB_LOG.failed-once"
-        printf '%s\t%s\tFAILED (stub)\n' "$CURRENT_STAGE" "$label" >> "$STUB_LOG"
-        return 1
-      fi
+      # RELEASE_STUB_FAIL_ONCE="STAGE:LABEL..." fails only the first run of each of those calls in
+      # a staging folder.
+      for item in ${RELEASE_STUB_FAIL_ONCE:-}; do
+        if [ "$item" = "$CURRENT_STAGE:$label" ] && ! grep -qxF -- "$item" "$STUB_LOG.failed-once" 2> /dev/null; then
+          printf '%s\n' "$item" >> "$STUB_LOG.failed-once"
+          printf '%s\t%s\tFAILED (stub)\n' "$CURRENT_STAGE" "$label" >> "$STUB_LOG"
+          return 1
+        fi
+      done
       if [ "${RELEASE_STUB_FAIL:-}" = "$CURRENT_STAGE" ] || [ "${RELEASE_STUB_FAIL:-}" = "$CURRENT_STAGE:$label" ]; then
         printf '%s\t%s\tFAILED (stub)\n' "$CURRENT_STAGE" "$label" >> "$STUB_LOG"
         return 1
@@ -842,6 +844,7 @@ stage_stage1() {
   local out="$STAGE/stage1/$SHA12-$(date +%s)" failed_file="$STAGE/stage1/failed.txt" line dir name spec listing=""
   local specs=() ordered=() first=() rest=() failed=() secs retried=0
   FLEET_HISTORY=()
+  RETRIED_JOBS=0  # run_group's retries in this stage, counted across its two groups
   need_file "$TEST/scripts/studio-verify/typecheck-gate.sh" "the typecheck gate from the release-gates branch"
   need_file "$TEST/scripts/studio-fleet/run-tests.sh" "the fleet test runner from the release-gates branch"
   if [ "$CI_MODE" -eq 1 ]; then prefetch_test_objects; fi
@@ -863,7 +866,7 @@ EOF
     run_job "$out" "contrast|apps/web|contrast"
     for spec in "${specs[@]}"; do run_job "$out" "$spec"; done
     say "    (every package with a test script except the root and apps/server, which is the server stage)"
-    say "    a failed job (at most $RETRY_MAX_JOBS) runs once more, alone; a second failure fails the stage"
+    say "    a failed job (at most $RETRY_MAX_JOBS in the stage) runs once more, alone; a second failure fails the stage"
     return 0
   fi
   mkdir -p "$out"
@@ -949,7 +952,7 @@ server_alive() {  # server_alive PID: a live --internal-server of this version
 stop_stale_server() {
   local pid sha
   [ -f "$STAGE/server.pid" ] || return 0
-  read -r pid sha < "$STAGE/server.pid"
+  read -r pid sha _ < "$STAGE/server.pid"
   if [ "$sha" != "$SHA" ] && server_alive "$pid"; then
     say "Stopping the server suite for the old candidate (process group $pid)"
     x stop-server -- kill -TERM -- "-$pid"
@@ -957,18 +960,40 @@ stop_stale_server() {
   return 0
 }
 
+# server.pid holds the running suite's process group, its candidate and its RETRY (0 for
+# --no-retry). A file without the last is from before it was kept, when retries were the default.
 start_server() {
-  local pid="" sha=""
+  local pid="" sha="" retry="" waited=0
   if is_done server "$SHA"; then return 0; fi
   if [ "$MODE" = dry ]; then
     say "> server (background, alongside build..drafts)"
     stage_server
     return 0
   fi
-  if [ -f "$STAGE/server.pid" ]; then read -r pid sha < "$STAGE/server.pid"; fi
+  if [ -f "$STAGE/server.pid" ]; then read -r pid sha retry < "$STAGE/server.pid"; fi
   if [ "$sha" = "$SHA" ] && server_alive "$pid"; then
-    say "= server: still running for $SHA12 (pid $pid)"
-    return 0
+    if [ "${retry:-1}" = "$RETRY" ]; then
+      say "= server: still running for $SHA12 (pid $pid)"
+      return 0
+    fi
+    # A suite that retries would hide the flake --no-retry is meant to reproduce; and one started
+    # with --no-retry fails on a flake this run would retry.
+    if [ "$RETRY" -eq 0 ]; then
+      say "server: the suite running for $SHA12 (pid $pid) retries failed files; restarting it with --no-retry"
+    else
+      say "server: the suite running for $SHA12 (pid $pid) has --no-retry; restarting it with retries"
+    fi
+    x stop-server -- kill -TERM -- "-$pid"
+    # Its whole process group gone before the new one starts: the leader goes at once, while
+    # test-sharded.mjs stays until its shards (in groups of their own) have closed, 15s at most.
+    # A stub run sends no signal and still waits, for the self-test's stand-in. Any result it
+    # wrote meanwhile is dropped: it is not this run's (server.exit goes below).
+    while kill -0 -- "-$pid" 2> /dev/null; do
+      [ $waited -lt 30 ] || die "the server suite (process group $pid) did not stop within 30s; stop it, then --resume"
+      sleep 1
+      waited=$((waited + 1))
+    done
+    remove_owned "$MARKERS/server"
   fi
   rm -f "$STAGE/server.exit"
   set -m
@@ -977,7 +1002,7 @@ start_server() {
   bash "$SELF" --internal-server "$VERSION" "$SHA" ${flags[@]+"${flags[@]}"} >> "$LOG_DIR/server.log" 2>&1 < /dev/null &
   pid=$!
   set +m
-  printf '%s %s\n' "$pid" "$SHA" > "$STAGE/server.pid"
+  printf '%s %s %s\n' "$pid" "$SHA" "$RETRY" > "$STAGE/server.pid"
   say "> server: started in the background (pid $pid, log $LOG_DIR/server.log)"
 }
 
@@ -1010,7 +1035,9 @@ stage_server() {
   fi
   if [ ${#extra[@]} -eq 0 ] && [ "$MODE" != dry ]; then
     # A full run's per-shard JSON reports can refresh the recorded shard weights in a follow-up PR.
-    say "server: full run; refresh shard weights with: node scripts/update-test-shard-weights.ts --root $TEST/apps/server $out/server-*.json"
+    # --out writes the checkout the command runs from; without it the script would rewrite the
+    # test tree's own tracked copy, under --root.
+    say "server: full run; refresh shard weights from the checkout you commit them in: node scripts/update-test-shard-weights.ts --root $TEST/apps/server --out apps/server/src/testUtils/shardWeights.json $out/server-*.json"
   fi
 }
 
@@ -1063,7 +1090,7 @@ stop_if_server_failed() {
 }
 
 stage_server_wait() {
-  local pid="" sha="" rc="" started noted flakes
+  local pid="" sha="" rc="" started noted flakes attempt
   if [ "$MODE" = dry ]; then
     say "    wait for the background server suite; fail here if it failed"
     return 0
@@ -1075,7 +1102,7 @@ stage_server_wait() {
     rc="$(server_result)"
     if [ -n "$rc" ]; then break; fi
     pid="" sha=""
-    if [ -f "$STAGE/server.pid" ]; then read -r pid sha < "$STAGE/server.pid"; fi
+    if [ -f "$STAGE/server.pid" ]; then read -r pid sha _ < "$STAGE/server.pid"; fi
     if [ "$sha" != "$SHA" ] || ! server_alive "$pid"; then
       sleep 1  # It may have written its result just after the first look.
       rc="$(server_result)"
@@ -1093,7 +1120,12 @@ stage_server_wait() {
     drop_drafts
     die "the server suite failed for $SHA12 (exit $rc); fix, commit in $BUILD and --resume (reruns only changed files)"
   fi
-  flakes="$(python3 -B "$TOOLS" timing retries --file "$TIMINGS/retries.jsonl" --stage server --sha "$SHA12" --result passed)"
+  # Only the retries of the run that gave this result: an earlier attempt on the same candidate may
+  # have retried files of its own. That run is the newest server line in stages.jsonl, which
+  # internal_server writes before its result.
+  attempt=$(($(attempt_of server) - 1))
+  flakes="$(python3 -B "$TOOLS" timing retries --file "$TIMINGS/retries.jsonl" --stage server --sha "$SHA12" \
+    --attempt "$attempt" --result passed)"
   if [ -n "$flakes" ]; then
     say "server: green for $SHA12, after a retry of: ${flakes//$'\n'/ } (FLAKY)"
   else
@@ -1403,33 +1435,73 @@ stage_publish_public() {
   publish "$PUBLIC_REPO" "$STAGE/notes-public.md" public
 }
 
-# An old app that saw the public release swaps it in when it quits (macSwapInstall.ts): its
-# swap.sh moves the old bundle to $APP.studio-update-old, the new one in, then removes the old.
+# The pid of the ShipIt that Squirrel.Mac runs from this app's own bundle, when one runs. Matched
+# as stage_quit_desktop matches the app: the exact process name, then the exact executable path,
+# which no other app's ShipIt has.
+desktop_shipit() {
+  local pids pid
+  pids="$(q shipit-pids --may-fail -- pgrep -x ShipIt)"
+  for pid in $pids; do
+    if [ "$(q shipit-command --may-fail -- ps -o comm= -p "$pid")" = "$APP/Contents/Frameworks/Squirrel.framework/Resources/ShipIt" ]; then
+      printf '%s\n' "$pid"
+      return 0
+    fi
+  done
+}
+
+# An old app that saw the public release installs it when it quits. An unsigned build's swap.sh
+# (macSwapInstall.ts) moves the old bundle to $APP.studio-update-old, the new one in, then removes
+# the old; a signed build updates through Squirrel.Mac (ElectronUpdater), whose ShipIt replaces the
+# bundle once the app has quit. Wait up to 60s for either to finish.
 desktop_swap_settled() {
-  local waited=0
-  if [ "$MODE" != real ]; then return 0; fi
-  while [ -e "$APP.studio-update-old" ]; do
-    [ $waited -lt 60 ] ||
+  local waited=0 pause=1 shipit
+  if [ "$MODE" = dry ]; then
+    say "    desktop-settle: wait up to 60s while $APP.studio-update-old exists or the app's own ShipIt runs"
+    return 0
+  fi
+  if [ "$MODE" != real ]; then pause=0; fi
+  while :; do
+    shipit="$(desktop_shipit)"
+    if [ ! -e "$APP.studio-update-old" ] && [ -z "$shipit" ]; then return 0; fi
+    if [ $waited -ge 60 ]; then
+      [ -z "$shipit" ] ||
+        die "the app's own Squirrel.Mac update (ShipIt, pid $shipit) still runs after 60s; let it finish, check $APP and --resume"
       die "$APP.studio-update-old is still there after 60s: the app's own update swap did not finish; check $APP, move the leftover aside and --resume"
-    sleep 1
+    fi
+    sleep "$pause"
     waited=$((waited + 1))
   done
 }
 
 stage_desktop() {
-  local zip="$ASSETS/SpecWithCode-$VERSION-arm64.zip" version current="" grants="$STAGE/desktop-grants.json" probed=0
+  local zip="$ASSETS/SpecWithCode-$VERSION-arm64.zip" version current="" grants="$STAGE/desktop-grants.json" probed=0 aside
   stage_quit_desktop
   need_output "$zip" "the signed desktop zip from the sign stage"
   desktop_swap_settled
+  # Read once that update is over: it may have just put this release in.
   if [ "$MODE" != dry ]; then
     current="$(q app-version-before --may-fail -- /usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Contents/Info.plist")"
   fi
-  if [ "$current" = "$VERSION" ]; then
+  if [ "$current" = "$VERSION" ] && t desktop-signed -- codesign --verify --deep --strict "$APP"; then
     # Its own updater already installed this release: a snapshot now would zip the new version and
     # prune the previous version's rollback zip.
     say "desktop: $APP is already $VERSION (the app's own updater swapped it in); keeping it"
   else
-    if [ "$MODE" != real ] || [ -d "$APP" ]; then
+    if [ "$current" = "$VERSION" ] || { [ "$MODE" != dry ] && [ -z "$current" ] && [ -d "$APP" ]; }; then
+      # Not a whole app: an install cut short, such as an earlier attempt's ditto, either after it
+      # wrote Info.plist (it reports this release but fails its signature check) or before (it has
+      # no readable version). Moved aside, never deleted, under a name Launch Services does not
+      # take for an app; not snapshotted, which would zip it and prune the previous version's
+      # rollback zip, and its grants not recorded, which would replace the record that earlier
+      # attempt took of the previous app before its swap.
+      aside="$APP.partial-$(date -u +%Y%m%dT%H%M%SZ)"
+      if [ -n "$current" ]; then
+        say "desktop: $APP reports $VERSION but fails its signature check; moving it to $aside and installing again"
+      else
+        say "desktop: $APP has no readable version (an install cut short); moving it to $aside and installing again"
+      fi
+      x desktop-aside -- mv "$APP" "$aside"
+    elif [ "$MODE" != real ] || [ -d "$APP" ]; then
       # Computer use keeps one Accessibility and Screen Recording grant only while each release
       # satisfies the installed one's designated requirement; record both before the swap.
       x desktop-grants-before -C "$BUILD" -- node scripts/studio-projects/mac-upgrade-grant.mjs before "$APP" "$grants"

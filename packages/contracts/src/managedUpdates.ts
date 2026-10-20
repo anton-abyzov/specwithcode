@@ -153,6 +153,19 @@ export const StudioServiceUpdateStatusSchema = Schema.Literals([
 ]);
 export type StudioServiceUpdateStatus = typeof StudioServiceUpdateStatusSchema.Type;
 
+export const StudioServicePendingInstallSchema = Schema.Struct({
+  /** When the request was written (ISO). */
+  requestedAt: Schema.String,
+  /** `force`: the work was stopped and held for it, so the agent retries until `holdUntil`. */
+  mode: Schema.Literals(["normal", "force"]),
+  /** The version the request installs; null for requests not tied to one. */
+  version: Schema.NullOr(Schema.String),
+  holdUntil: Schema.NullOr(Schema.String),
+  /** The agent has taken the request up and is installing it. */
+  handled: Schema.Boolean,
+});
+export type StudioServicePendingInstall = typeof StudioServicePendingInstallSchema.Type;
+
 export const StudioServiceUpdateStateSchema = Schema.Struct({
   status: StudioServiceUpdateStatusSchema,
   /** Fleet identity of the service, such as `m4`. */
@@ -176,5 +189,11 @@ export const StudioServiceUpdateStateSchema = Schema.Struct({
    * is the agent's answer to an earlier request. Absent from older desktops.
    */
   updatedAt: Schema.optionalKey(Schema.NullOr(Schema.String)),
+  /**
+   * The install request some window wrote that the agent has not finished:
+   * every window follows it instead of asking again. Null when there is none
+   * (or it was cancelled or lapsed); absent from older desktops.
+   */
+  pendingInstall: Schema.optionalKey(Schema.NullOr(StudioServicePendingInstallSchema)),
 });
 export type StudioServiceUpdateState = typeof StudioServiceUpdateStateSchema.Type;

@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """release_tools.py in temporary folders: workspace packages, SHA256SUMS, the Google pair file,
 the previous release, release notes, the public notes check, which failed server files are worth
-a retry, stage-1 ordering and the retry lines of the timing table. release.sh --self-test runs it.
+a retry, stage-1 ordering, the retry lines of the timing table and one attempt's retries.
+release.sh --self-test runs it.
 
 Run: python3 -B scripts/release/test-release-tools.py
 """
@@ -316,6 +317,18 @@ class StageOneOrder(Temporary):
         self.assertEqual(release_tools.stage1_fleet_dirs([str(self.root / 'stage1')]),
                          [str(self.root / 'stage1/b/fleet'), str(self.root / 'stage1/a/fleet')])
 
+    def test_a_relative_history_gives_absolute_fleet_folders(self):
+        # release.sh passes them on to run-tests.sh, which runs in the test tree, not here.
+        summary = self.root / 'stage1' / 'a' / 'fleet' / 'summary.txt'
+        summary.parent.mkdir(parents=True)
+        summary.write_text('TEST RESULT SECS\n')
+        self.addCleanup(os.chdir, os.getcwd())
+        os.chdir(str(self.root))
+        code, out, _err = cli('stage1-fleet-dirs', '--history', 'stage1', '--history', 'missing')
+        self.assertEqual(code, 0)
+        self.assertTrue(os.path.isabs(out.strip()), out)
+        self.assertEqual(os.path.realpath(out.strip()), os.path.realpath(str(summary.parent)))
+
 
 class Retries(Temporary):
     def test_flakes_are_summarised_and_a_repeat_is_named(self):
@@ -339,6 +352,23 @@ class Retries(Temporary):
         self.assertNotIn('REPEAT FLAKE', '\n'.join(lines))
         self.assertEqual(release_tools.timing_summary(stages, '1.2.0', str(self.root / 'none.jsonl'))['retries'], [])
         self.assertEqual([entry['job'] for entry in release_tools.timing_retries(retries, 'server', 'abc')], ['src/a.test.ts'])
+
+    def test_flakes_of_one_attempt(self):
+        # A candidate's server suite can run twice; server-wait names only the flakes of the run it waited for.
+        retries = self.root / 'retries.jsonl'
+        release_tools.timing_retry(retries, 'server', 'src/a.test.ts', 17, 9, 'passed', '/s/1/shards.json', '', 'abc', 1)
+        release_tools.timing_retry(retries, 'server', 'src/b.test.ts', 12, 8, 'passed', '/s/2/shards.json', '', 'abc', 2)
+        self.assertEqual([entry['job'] for entry in release_tools.timing_retries(retries, 'server', 'abc', 'passed', 2)],
+                         ['src/b.test.ts'])
+        query = ('timing', 'retries', '--file', str(retries), '--stage', 'server', '--sha', 'abc', '--result', 'passed')
+        self.assertEqual(cli(*query, '--attempt', '1'), (0, 'src/a.test.ts\n', ''))
+        self.assertEqual(cli(*query, '--attempt', '3'), (0, '', ''))
+        self.assertEqual(cli(*query), (0, 'src/a.test.ts\nsrc/b.test.ts\n', ''))
+        # record still counts a left-out --attempt as the first.
+        stages = self.root / 'stages.jsonl'
+        self.assertEqual(cli('timing', 'record', '--file', str(stages), '--stage', 'server', '--start', '0', '--end', '5',
+                             '--status', 'ok')[0], 0)
+        self.assertEqual(json.loads(stages.read_text())['attempt'], 1)
 
 
 if __name__ == '__main__':

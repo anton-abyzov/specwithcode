@@ -53,7 +53,8 @@ class Clock(object):
 
 class Fleet(object):
     """Fake hosts. A host installs once it was asked and `polls` more status reads passed, and
-    only when `ready(identity)` allows it. Every call is logged in order."""
+    only when `ready(identity)` allows it. Every call is logged in order; a request is dated by
+    the fake clock, as update_request dates it by the host's."""
 
     def __init__(self, clock, polls=None, ready=None):
         self.clock = clock
@@ -61,6 +62,7 @@ class Fleet(object):
         self.log = []
         self.version = {name: OLD for name in ('m4', 'm1', 'm3')}
         self.asked = {}
+        self.written = {name: [] for name in self.version}  # Each request's installRequestedAt.
         self.left = dict(polls or {})
         self.ready = ready or (lambda fleet, identity: True)
         self.status = {name: 'waiting-for-quiet' for name in self.version}
@@ -72,10 +74,20 @@ class Fleet(object):
         def call(argv):
             assert argv[:3] == [argv[0], '--identity', identity], argv
             with self.lock:
+                stamp = update_request._iso(datetime.datetime.fromtimestamp(self.clock(), datetime.timezone.utc))
+                if argv[0] == 'cancel':
+                    self.log.append((identity, 'cancel', self.version[identity], list(argv)))
+                    return {'identity': identity, 'result': 'cancelled'}
+                if argv[0] == 'check':
+                    self.log.append((identity, 'check', self.version[identity], list(argv)))
+                    return {'identity': identity, 'result': 'check-requested', 'kicked': True,
+                            'request': {'checkRequestedAt': stamp}}
                 if argv[0] == 'request':
                     self.asked[identity] = list(argv)
                     self.log.append((identity, 'request', self.version[identity], list(argv)))
-                    return {'identity': identity, 'result': 'requested', 'kicked': True}
+                    self.written[identity].append(stamp)
+                    return {'identity': identity, 'result': 'requested', 'kicked': True,
+                            'request': {'installRequestedAt': stamp}}
                 if identity in self.asked and self.version[identity] != NEW and self.ready(self, identity):
                     remaining = self.left.get(identity, 1)
                     if remaining <= 0:
@@ -271,6 +283,19 @@ class RolloutOrder(unittest.TestCase):
         requests = fleet.calls('m4', 'request')
         self.assertEqual(len(requests), 3)  # At 0, after 15 min and after 30 min of a 40 min deadline.
         self.assertEqual(fleet.calls('m1', 'request') + fleet.calls('m3', 'request'), [])
+        # The give-up cancels the last forced request, the one still pending, held or not.
+        self.assertEqual(kinds(fleet), ['request'] * 3 + ['cancel'])
+        self.assertEqual(fleet.calls('m4', 'cancel')[0][3],
+                         ['cancel', '--identity', 'm4', '--request', fleet.written['m4'][-1]])
+
+    def test_version_bound_worker_requests_are_not_cancelled(self):
+        """Only a forced request is withdrawn on a give-up; a version-bound one lapses on its own."""
+        clock = Clock()
+        fleet = Fleet(clock, polls={'m1': 10 ** 6, 'm3': 10 ** 6})
+        with self.assertRaises(fleet_rollout.RolloutError):
+            self.run_rollout(fleet, clock, worker_deadline=5 * 60)
+        for worker in ('m1', 'm3'):
+            self.assertEqual(kinds(fleet, worker), ['request'])
 
     def test_a_stuck_m4_never_reaches_the_workers(self):
         clock = Clock()
@@ -461,8 +486,10 @@ class M4Hold(unittest.TestCase):
         self.assertIn('stopped 1 thread (1 turn interrupted), closed 0 terminals', held[0])
 
     def test_the_hold_waits_until_the_agent_offers_the_version(self):
-        """Before the agent found the release a drain would not hold, only stop work: M4 is asked
-        without one, then held and asked again as soon as the agent offers it."""
+        """Before the agent found the release a drain would not hold, only stop work, and a forced
+        request written then lets the hold's own session row land between the agent's snapshot
+        and its apply (M4, 1.0.48 to 1.0.54: 'Guarded prestate changed: rows', one more
+        auth_sessions row at each retry). M4 is only asked to check, then held, then asked."""
         clock = Clock()
         fleet = Fleet(clock, polls={'m4': 6})
         fleet.status['m4'], fleet.message['m4'] = 'up-to-date', None
@@ -483,9 +510,77 @@ class M4Hold(unittest.TestCase):
         result = fleet_rollout.rollout(NEW, hosts, only='m4', clock=clock, sleep=clock.sleep, say=lines.append,
                                        hold=FakeHold(fleet), poll=15)
         self.assertEqual(result['m4']['result'], 'installed')
-        self.assertEqual(result['m4']['requests'], 2)
-        self.assertEqual(kinds(fleet), ['request', 'hold', 'request'])
-        self.assertTrue(any('does not offer %s yet' % NEW in line for line in lines))
+        self.assertEqual(result['m4']['requests'], 1)
+        self.assertEqual(kinds(fleet), ['check', 'hold', 'request'])
+        self.assertEqual(fleet.calls('m4', 'check')[0][3], ['check', '--identity', 'm4', '--kickstart'])
+        self.assertIn('--force', fleet.asked['m4'])
+        self.assertTrue(any('does not offer %s yet; asked it to check' % NEW in line for line in lines))
+
+    def test_an_agent_that_never_offers_the_version_is_only_asked_to_check(self):
+        """No forced request and no drain until the agent offers the release: each window ends
+        with another check, and a give-up has no request to cancel and no hold to release."""
+        clock = Clock()
+        fleet = Fleet(clock, polls={'m4': 10 ** 6})
+        fleet.status['m4'], fleet.message['m4'] = 'up-to-date', None
+        fleet.downloaded['m4'] = fleet.available['m4'] = None
+        with self.assertRaises(fleet_rollout.RolloutError) as caught:
+            self.run_rollout(fleet, clock, FakeHold(fleet), only='m4', hold_minutes=15, local_deadline=40 * 60,
+                             poll=30)
+        self.assertIn('did not install', str(caught.exception))
+        self.assertEqual(kinds(fleet), ['check'] * 3)  # At 0, after 15 min and after 30 min.
+        self.assertEqual(fleet.asked, {})
+
+    def test_a_hold_window_that_ends_without_an_offer_asks_only_for_a_check(self):
+        """An agent that stopped offering the release (its check failed) is asked to check again,
+        never for a forced request no drain preceded."""
+        clock = Clock()
+        fleet = Fleet(clock, polls={'m4': 10 ** 6})
+        real = fleet.host('m4')
+
+        def m4(argv):
+            reply = real(argv)
+            if argv[0] == 'status' and fleet.calls('m4', 'request'):
+                reply.update(status='error', message='GitHub could not be reached', downloadedVersion=None,
+                             availableVersion=None)
+            return reply
+
+        hosts = fleet.hosts()
+        hosts['m4'] = m4
+        with self.assertRaises(fleet_rollout.RolloutError):
+            fleet_rollout.rollout(NEW, hosts, only='m4', clock=clock, sleep=clock.sleep, say=quiet,
+                                  hold=FakeHold(fleet), hold_minutes=15, local_deadline=40 * 60, poll=30)
+        # Checks after 15 and 30 min; the give-up still cancels the one request, then releases.
+        self.assertEqual(kinds(fleet), ['hold', 'request', 'check', 'check', 'cancel', 'release'])
+        self.assertEqual(fleet.calls('m4', 'cancel')[0][3],
+                         ['cancel', '--identity', 'm4', '--request', fleet.written['m4'][0]])
+
+    def test_a_failed_install_after_the_check_is_not_asked_again(self):
+        """The agent installs a release it found on its own (installAutomatically): a failure
+        from the check on is this rollout's, so M4 is neither held nor asked to install it again."""
+        clock = Clock()
+        fleet = Fleet(clock, polls={'m4': 10 ** 6})
+        fleet.status['m4'], fleet.message['m4'] = 'up-to-date', None
+        fleet.downloaded['m4'] = fleet.available['m4'] = None
+        real = fleet.host('m4')
+        failed = {}
+
+        def m4(argv):
+            reply = real(argv)
+            if argv[0] == 'status' and fleet.calls('m4', 'check'):  # It found it, installed and rolled back.
+                failed.setdefault('at', update_request._iso(
+                    datetime.datetime.fromtimestamp(clock(), datetime.timezone.utc)))
+                reply.update(status='downloaded', message='Guarded prestate changed: rows', downloadedVersion=NEW,
+                             availableVersion=NEW, lastInstall={'version': NEW, 'result': 'failed',
+                                                                'at': failed['at'], 'receipt': '/r.json'})
+            return reply
+
+        hosts = fleet.hosts()
+        hosts['m4'] = m4
+        with self.assertRaises(fleet_rollout.RolloutError) as caught:
+            fleet_rollout.rollout(NEW, hosts, only='m4', clock=clock, sleep=clock.sleep, say=quiet,
+                                  hold=FakeHold(fleet), poll=15)
+        self.assertIn('tried %s and it failed' % NEW, str(caught.exception))
+        self.assertEqual(kinds(fleet), ['check'])
 
     def test_each_request_again_is_held_again_and_a_give_up_releases(self):
         clock = Clock()
@@ -495,8 +590,112 @@ class M4Hold(unittest.TestCase):
             self.run_rollout(fleet, clock, FakeHold(fleet), lines, only='m4', hold_minutes=15,
                              local_deadline=40 * 60, poll=30)
         self.assertIn('did not install', str(caught.exception))
-        self.assertEqual(kinds(fleet), ['hold', 'request'] * 3 + ['release'])
+        # The last forced request is cancelled before the hold ends, so it never runs unheld.
+        self.assertEqual(kinds(fleet), ['hold', 'request'] * 3 + ['cancel', 'release'])
+        self.assertEqual(fleet.calls('m4', 'cancel')[0][3],
+                         ['cancel', '--identity', 'm4', '--request', fleet.written['m4'][-1]])
+        self.assertTrue(any('cancelled its forced request for %s' % NEW in line for line in lines))
         self.assertTrue(any('released the hold' in line for line in lines))
+
+    def test_a_cancel_that_fails_keeps_the_hold_for_the_request_still_pending(self):
+        """A request written since (Update now asking again) is not the rollout's to cancel, and a
+        cancel that did not go through leaves the rollout's own: either is a forced request that
+        update.py --reap and the agent's retries need held, so the hold stays, as Cancel update in
+        the app keeps it when its withdrawal fails. One already withdrawn in the app needs none."""
+        until = update_request._iso(datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(minutes=10))
+        newer = '2026-10-20T12:05:00.000Z'
+        for case, answer, pending, released in (('asked again', 'it is ' + newer, newer, False),
+                                                ('no answer', None, 'own', False),
+                                                ('withdrawn in the app', 'there is none', None, True)):
+            with self.subTest(case=case):
+                clock = Clock()
+                fleet = Fleet(clock, polls={'m4': 10 ** 6})
+                real = fleet.host('m4')
+
+                def m4(argv, real=real, fleet=fleet, answer=answer, pending=pending):
+                    reply = real(argv)
+                    if argv[0] == 'cancel':
+                        raise fleet_rollout.RolloutError(
+                            'm4: The pending install request on m4 is not %s (%s); nothing was cancelled'
+                            % (argv[-1], answer) if answer else 'm4 did not answer within 90s')
+                    if argv[0] == 'status' and fleet.calls('m4', 'cancel'):  # Read again after the cancel.
+                        asked = fleet.written['m4'][-1] if pending == 'own' else pending
+                        reply.update(installRequestedAt=asked, installMode='force' if asked else 'normal',
+                                     installHoldUntil=until if asked else None,
+                                     installCancelledAt=None if asked else newer)
+                    return reply
+
+                hosts = fleet.hosts()
+                hosts['m4'] = m4
+                lines = []
+                with self.assertRaises(fleet_rollout.RolloutError):
+                    fleet_rollout.rollout(NEW, hosts, only='m4', clock=clock, sleep=clock.sleep, say=lines.append,
+                                          hold=FakeHold(fleet), local_deadline=10 * 60, poll=15)
+                self.assertEqual(kinds(fleet), ['hold', 'request', 'cancel'] + (['release'] if released else []))
+                warning = [line for line in lines if 'could not cancel' in line]
+                self.assertEqual(len(warning), 1)
+                self.assertIn('nothing was cancelled' if answer else 'did not answer', warning[0])
+                left = [line for line in lines if 'forced request still pending' in line]
+                if released:
+                    self.assertEqual(left, [])
+                else:
+                    self.assertEqual(len(left), 1)
+                    self.assertIn('(asked at %s)' % (fleet.written['m4'][-1] if pending == 'own' else pending), left[0])
+                    self.assertIn('Cancel update in the app on M4', left[0])
+
+    def test_an_install_started_during_the_cancel_keeps_the_hold(self):
+        """The last poll can be a poll interval old, so the agent may have started installing
+        after its last look at the settings and before the cancel reached it. The state read
+        after the cancel shows it, and the hold stays for that install, as Cancel update in the
+        app leaves it; a state that cannot be read keeps the hold too, until it runs out."""
+        for case, after, words in (('installing', {'status': 'installing'}, 'the agent is installing'),
+                                   ('unreadable', None, 'could not be read again')):
+            with self.subTest(case=case):
+                clock = Clock()
+                fleet = Fleet(clock, polls={'m4': 10 ** 6})
+                real = fleet.host('m4')
+
+                def m4(argv, real=real, fleet=fleet, after=after):
+                    reply = real(argv)
+                    if argv[0] == 'status' and fleet.calls('m4', 'cancel'):
+                        if after is None:
+                            raise fleet_rollout.RolloutError('m4 did not answer within 90s')
+                        reply.update(after)
+                    return reply
+
+                hosts = fleet.hosts()
+                hosts['m4'] = m4
+                lines = []
+                with self.assertRaises(fleet_rollout.RolloutError):
+                    fleet_rollout.rollout(NEW, hosts, only='m4', clock=clock, sleep=clock.sleep, say=lines.append,
+                                          hold=FakeHold(fleet), local_deadline=10 * 60, poll=15)
+                self.assertEqual(kinds(fleet), ['hold', 'request', 'cancel'])
+                self.assertTrue(any('cancelled its forced request for %s' % NEW in line for line in lines))
+                self.assertTrue(any(words in line for line in lines), lines)
+
+    def test_a_request_whose_kickstart_failed_is_still_cancelled(self):
+        """update_request names a request it wrote before launchctl refused to start the agent, and
+        the give-up that follows cancels that one."""
+        clock = Clock()
+        fleet = Fleet(clock)
+        real = fleet.host('m4')
+
+        def m4(argv):
+            reply = real(argv)
+            if argv[0] == 'request':
+                error = fleet_rollout.RolloutError('m4: The request was written but launchctl could not start the '
+                                                   'update agent: exit 37')
+                error.reply = {'identity': 'm4', 'error': str(error), 'request': reply['request']}
+                raise error
+            return reply
+
+        hosts = fleet.hosts()
+        hosts['m4'] = m4
+        with self.assertRaisesRegex(fleet_rollout.RolloutError, 'could not start the update agent'):
+            fleet_rollout.rollout(NEW, hosts, only='m4', clock=clock, sleep=clock.sleep, say=quiet,
+                                  hold=FakeHold(fleet), poll=15)
+        self.assertEqual(kinds(fleet), ['hold', 'request', 'cancel', 'release'])
+        self.assertEqual(fleet.calls('m4', 'cancel')[0][3][-1], fleet.written['m4'][-1])
 
     def test_a_joined_install_is_neither_held_nor_asked_again(self):
         """M4 already runs the version while its checks after the restart go on: the rollout
@@ -520,7 +719,9 @@ class M4Hold(unittest.TestCase):
         self.assertEqual(kinds(fleet), [])
 
     def test_an_installing_agent_keeps_its_hold(self):
-        """Releasing during the install would let work start before the restart."""
+        """Releasing during the install would let work start before the restart, and asking again
+        when the hold window ends mid-install would be a forced request the drain did not precede;
+        the request being installed is not cancelled either."""
         clock = Clock()
         fleet = Fleet(clock, polls={'m4': 10 ** 6})
         real = fleet.host('m4')
@@ -536,9 +737,66 @@ class M4Hold(unittest.TestCase):
         lines = []
         with self.assertRaises(fleet_rollout.RolloutError):
             fleet_rollout.rollout(NEW, hosts, only='m4', clock=clock, sleep=clock.sleep, say=lines.append,
-                                  hold=FakeHold(fleet), local_deadline=10 * 60, poll=15)
+                                  hold=FakeHold(fleet), local_deadline=40 * 60, poll=15)
         self.assertEqual(kinds(fleet), ['hold', 'request'])
         self.assertTrue(any('the agent is installing' in line for line in lines))
+
+    def test_a_failed_install_under_way_at_the_start_is_not_asked_again(self):
+        """An install the rollout finds under way and cannot join (automatic, or one whose Update
+        now hold ran out while it applies) is waited on. The agent saved 'installing' (updatedAt)
+        before it started, so its failure, before or after the restart, stops the rollout instead
+        of a drain and a forced request for the release that just failed."""
+        for switched, words in ((False, 'tried %s and it failed' % NEW), (True, 'not confirmed')):
+            with self.subTest(switched=switched):
+                clock = Clock()
+                fleet = Fleet(clock, polls={'m4': 10 ** 6})
+                real, failed = fleet.host('m4'), {}
+                started = update_request._iso(datetime.datetime.fromtimestamp(clock(), datetime.timezone.utc))
+
+                def m4(argv, real=real, fleet=fleet, clock=clock, failed=failed, started=started, switched=switched):
+                    reply = real(argv)
+                    if argv[0] != 'status':
+                        return reply
+                    if len(fleet.calls('m4', 'status')) <= 3:
+                        reply.update(status='installing', message='Installing SpecWithCode %s' % NEW, updatedAt=started)
+                        return reply
+                    failed.setdefault('at', update_request._iso(
+                        datetime.datetime.fromtimestamp(clock() - 5, datetime.timezone.utc)))
+                    on = NEW if switched else OLD
+                    reply.update(status='error', version=on, installedVersion=on, installFinalized=False,
+                                 updatedAt=failed['at'], message='SpecWithCode %s did not install' % NEW,
+                                 lastInstall={'version': NEW, 'result': 'failed', 'at': failed['at'],
+                                              'receipt': '/r.json'})
+                    return reply
+
+                hosts = fleet.hosts()
+                hosts['m4'] = m4
+                with self.assertRaisesRegex(fleet_rollout.RolloutError, words):
+                    fleet_rollout.rollout(NEW, hosts, only='m4', clock=clock, sleep=clock.sleep, say=quiet,
+                                          hold=FakeHold(fleet), local_deadline=20 * 60, poll=15)
+                self.assertEqual(kinds(fleet), [])
+
+    def test_a_give_up_never_cancels_a_request_it_did_not_write(self):
+        """Update now's forced request, joined, is the person's: a rollout that gives up leaves it."""
+        clock = Clock()
+        fleet = Fleet(clock, polls={'m4': 10 ** 6})
+        real = fleet.host('m4')
+        until = (datetime.datetime.now(datetime.timezone.utc) + datetime.timedelta(minutes=10)).isoformat()
+
+        def m4(argv):
+            reply = real(argv)
+            if argv[0] == 'status':
+                reply.update(installRequest={'at': '2026-10-18T09:00:00Z', 'version': NEW}, installMode='force',
+                             installRequestedAt='2026-10-18T09:00:00Z', installCancelledAt=None,
+                             installHoldUntil=until)
+            return reply
+
+        hosts = fleet.hosts()
+        hosts['m4'] = m4
+        with self.assertRaisesRegex(fleet_rollout.RolloutError, 'did not install'):
+            fleet_rollout.rollout(NEW, hosts, only='m4', clock=clock, sleep=clock.sleep, say=quiet,
+                                  hold=FakeHold(fleet), local_deadline=10 * 60, poll=15)
+        self.assertEqual(kinds(fleet), [])
 
     def test_a_failed_install_releases_and_a_failed_release_only_warns(self):
         clock = Clock()
@@ -562,7 +820,8 @@ class M4Hold(unittest.TestCase):
             fleet_rollout.rollout(NEW, hosts, only='m4', clock=clock, sleep=clock.sleep, say=lines.append,
                                   hold=FakeHold(fleet, release_error='exit 1'), poll=15)
         self.assertIn('it failed', str(caught.exception))
-        self.assertEqual(kinds(fleet), ['hold', 'request', 'release'])
+        self.assertEqual(kinds(fleet), ['hold', 'request', 'cancel', 'release'])
+        self.assertEqual(fleet.calls('m4', 'cancel')[0][3][-1], '2026-10-16T12:00:00.000Z')
         self.assertTrue(any('could not release the hold (exit 1)' in line for line in lines))
 
     def test_an_interrupted_rollout_releases(self):
@@ -575,7 +834,7 @@ class M4Hold(unittest.TestCase):
         with self.assertRaises(KeyboardInterrupt):
             fleet_rollout.rollout(NEW, fleet.hosts(), only='m4', clock=clock, sleep=sleep, say=quiet,
                                   hold=FakeHold(fleet), poll=15)
-        self.assertEqual(kinds(fleet), ['hold', 'request', 'release'])
+        self.assertEqual(kinds(fleet), ['hold', 'request', 'cancel', 'release'])
 
     def test_an_unavailable_or_unheld_service_fails_fast_without_asking(self):
         """An older CLI without `service prepare-update`, a service that did not hold, or no answer:
@@ -603,9 +862,31 @@ class M4Hold(unittest.TestCase):
                 for worker in ('m1', 'm3'):
                     self.assertEqual(kinds(fleet, worker), [])
 
+    def test_a_hold_that_fails_later_cancels_the_earlier_request(self):
+        """The hold that should precede the request again does not answer: M4 is not asked again,
+        and the forced request asked under the first hold is cancelled before that hold ends."""
+        clock = Clock()
+        fleet = Fleet(clock, polls={'m4': 10 ** 6})
+        hold = FakeHold(fleet)
+        prepare = hold.prepare
+
+        def first_only():
+            reply = prepare()
+            hold.error = 'no answer within 200s'  # Every later drain fails.
+            return reply
+
+        hold.prepare = first_only
+        with self.assertRaises(fleet_rollout.RolloutError) as caught:
+            self.run_rollout(fleet, clock, hold, only='m4', hold_minutes=15, poll=30)
+        self.assertIn('no answer within 200s', str(caught.exception))
+        self.assertIn('was not asked again', str(caught.exception))
+        self.assertEqual(kinds(fleet), ['hold', 'request', 'hold', 'cancel', 'release'])
+        self.assertEqual(fleet.calls('m4', 'cancel')[0][3],
+                         ['cancel', '--identity', 'm4', '--request', fleet.written['m4'][0]])
+
     def test_an_old_cli_is_refused_before_the_first_request(self):
-        """Support is checked before any request, including the one asked before the agent offers
-        the version, so an old CLI never gets an unheld forced request."""
+        """Support is checked before any request, and before the check asked while the agent does
+        not offer the version, so an old CLI never gets an unheld forced request."""
         for offered in (True, False):
             with self.subTest(offered=offered):
                 clock = Clock()
@@ -1032,9 +1313,96 @@ class RequestCommand(unittest.TestCase):
         self.assertIn('could not start the update agent', reply['error'])
         self.assertIn('Operation not permitted', reply['error'])
         self.assertIn('exit 37', reply['error'])
+        # The request stays written, so the error names it for the caller to cancel.
+        self.assertEqual(reply['request']['installRequestedAt'], json.loads(self.config.read_text())['installRequestedAt'])
         self.launchd['kick'] = (0, '')
         code, reply = self.cli('request', '--identity', 'm9', '--version', NEW, '--kickstart')
         self.assertEqual((code, reply['result'], reply['kicked']), (0, 'requested', True))
+
+    def test_check_asks_only_for_a_check(self):
+        """What the desktop's Check now writes: checkRequestedAt and nothing else, so the agent is
+        not asked to install; every other setting stays, a request already there included."""
+        code, reply = self.cli('check', '--identity', 'm9', '--kickstart')
+        self.assertEqual((code, reply['result'], reply['kicked']), (0, 'check-requested', True))
+        config = json.loads(self.config.read_text())
+        self.assertEqual(stat.S_IMODE(self.config.stat().st_mode), 0o600)
+        self.assertEqual(config, dict(update_request.DEFAULT_SETTINGS, checkRequestedAt=reply['request']['checkRequestedAt']))
+        self.assertTrue(config['checkRequestedAt'].endswith('Z'))
+        self.assertFalse(update_request.pending(config, {}, (1, 0, 40), update_request._time(config['checkRequestedAt']),
+                                                lambda _config: False, RuntimeError))
+        self.assertEqual(self.launchd['calls'][-1], ['kickstart', 'gui/%d/%s' % (os.getuid(), update_request.agent_label('m9'))])
+        settings = {'schemaVersion': 1, 'repository': 'owner/private-feed', 'quietMinutes': 5,
+                    'installRequestedAt': '2026-10-20T11:00:00.000Z', 'installMode': 'force',
+                    'installHoldUntil': '2026-10-20T11:15:00.000Z', 'installCancelledAt': None,
+                    'installRequest': {'at': '2026-10-20T11:00:00.000Z', 'version': NEW}}
+        self.config.write_text(json.dumps(settings))
+        code, reply = self.cli('check', '--identity', 'm9')
+        self.assertEqual((code, reply['kicked']), (0, None))
+        self.assertEqual(json.loads(self.config.read_text()),
+                         dict(update_request.DEFAULT_SETTINGS, **dict(settings, checkRequestedAt=reply['request']['checkRequestedAt'])))
+        # A job that cannot run gets no check either.
+        before = self.config.read_bytes()
+        self.launchd['loaded'] = False
+        code, reply = self.cli('check', '--identity', 'm9', '--kickstart')
+        self.assertEqual(code, 1)
+        self.assertIn('not loaded in launchd', reply['error'])
+        self.assertEqual(self.config.read_bytes(), before)
+
+    def test_cancel_withdraws_the_request_it_names(self):
+        """installCancelledAt after the request, which the agent reads as a cancel (as update.py
+        --reap and the desktop do); the request record and every other setting stay."""
+        import update_agent  # noqa: E402  Its own reading of a cancel; nothing here runs a pass.
+        code, reply = self.cli('request', '--identity', 'm9', '--version', NEW, '--force', '--hold-minutes', '15')
+        requested = reply['request']['installRequestedAt']
+        before = json.loads(self.config.read_text())
+        self.assertFalse(update_agent.install_cancelled(update_agent.load_config(self.own / 'updates', self.home)))
+        code, reply = self.cli('cancel', '--identity', 'm9', '--request', requested)
+        self.assertEqual((code, reply['result'], reply['request']['installRequestedAt']), (0, 'cancelled', requested))
+        config = json.loads(self.config.read_text())
+        self.assertEqual(stat.S_IMODE(self.config.stat().st_mode), 0o600)
+        self.assertEqual(config, dict(before, installCancelledAt=reply['request']['installCancelledAt']))
+        self.assertGreater(update_request._time(config['installCancelledAt']), update_request._time(requested))
+        self.assertTrue(update_agent.install_cancelled(update_agent.load_config(self.own / 'updates', self.home)))
+        state = {}
+        self.assertFalse(update_request.pending(config, state, (1, 0, 40), update_request._time(requested),
+                                                update_agent.install_cancelled, RuntimeError))
+        self.assertEqual(state['handledInstallRequestAt'], requested)
+        # Nor does a later rollout join it as an install under way.
+        self.assertFalse(fleet_rollout.requested_by_update_now(self.cli('status', '--identity', 'm9')[1], NEW))
+
+    def test_cancel_refuses_any_other_request_and_changes_nothing(self):
+        """Compared exactly: a request written since (Update now asking again), one cleared by
+        Cancel update in the app, the same moment written another way, or none at all."""
+        code, reply = self.cli('cancel', '--identity', 'm9', '--request', '2026-10-20T12:00:00.000Z')
+        self.assertEqual(code, 1)
+        self.assertIn('(there is none); nothing was cancelled', reply['error'])
+        self.assertFalse(self.config.exists())
+        code, reply = self.cli('request', '--identity', 'm9', '--version', NEW, '--force')
+        mine = reply['request']['installRequestedAt']
+        spelled = update_request._time(mine).isoformat()  # +00:00 instead of Z.
+        for current, asked in (('2026-10-20T12:05:00.000Z', mine), (None, mine), (mine, spelled)):
+            with self.subTest(current=current, asked=asked):
+                self.config.write_text(json.dumps(dict(json.loads(self.config.read_text()), installRequestedAt=current)))
+                before = self.config.read_bytes()
+                code, reply = self.cli('cancel', '--identity', 'm9', '--request', asked)
+                self.assertEqual(code, 1)
+                self.assertIn('is not %s' % asked, reply['error'])
+                self.assertIn('nothing was cancelled', reply['error'])
+                self.assertEqual(self.config.read_bytes(), before)
+
+    def test_a_cancel_is_dated_after_its_request(self):
+        """The agent counts only a cancel later than the request: a clock that stepped back, or a
+        cancel in the same millisecond, still dates it just after."""
+        self.cli('request', '--identity', 'm9', '--version', NEW, '--force')
+        requested = json.loads(self.config.read_text())['installRequestedAt']
+        for now in (update_request._time(requested), update_request._time(requested) - datetime.timedelta(minutes=1)):
+            with self.subTest(now=now):
+                reply = update_request.cancel_request(self.home, 'm9', requested, now=now)
+                self.assertEqual(update_request._time(reply['installCancelledAt']) - update_request._time(requested),
+                                 datetime.timedelta(milliseconds=1))
+        later = update_request._time(requested) + datetime.timedelta(minutes=3)
+        self.assertEqual(update_request.cancel_request(self.home, 'm9', requested, now=later)['installCancelledAt'],
+                         update_request._iso(later))
 
     def completion_fixture(self):
         installation = {'identity': 'm9', 'version': NEW, 'sourceCommit': 'a' * 40,
@@ -1136,11 +1504,30 @@ class RequestCommand(unittest.TestCase):
         with self.assertRaises(fleet_rollout.RolloutError) as caught:
             host(['request', '--identity', 'm9', '--version', 'x'])
         self.assertIn('Invalid version', str(caught.exception))
+        self.assertEqual(host(['check', '--identity', 'm9'])['result'], 'check-requested')
+        requested = host(['status', '--identity', 'm9'])['installRequestedAt']
+        self.assertEqual(host(['cancel', '--identity', 'm9', '--request', requested])['result'], 'cancelled')
+        self.assertIsNotNone(host(['status', '--identity', 'm9'])['installCancelledAt'])
+        with self.assertRaises(fleet_rollout.RolloutError) as caught:
+            host(['cancel', '--identity', 'm9', '--request', '2026-01-01T00:00:00.000Z'])
+        self.assertIn('nothing was cancelled', str(caught.exception))
         installation, state, proof, receipt = self.completion_fixture()
         (self.own / 'installation.json').write_text(json.dumps(installation))
         (self.own / 'updates' / 'state.json').write_text(json.dumps(state))
         receipt.write_text(json.dumps(proof))
         self.assertTrue(host(['status', '--identity', 'm9'])['installFinalized'])
+
+    def test_a_host_error_keeps_its_answer(self):
+        """A request written before launchctl refused to start the agent reaches roll_host, which
+        cancels it on the give-up that follows."""
+        answer = {'identity': 'm9', 'error': 'The request was written but launchctl could not start the update '
+                  'agent: exit 37', 'request': {'installRequestedAt': '2026-10-20T12:00:00.000Z'}}
+        host = fleet_rollout.Host('m9', [sys.executable, '-c', 'import json, sys; print(json.dumps(%r)); sys.exit(1)'
+                                         % (answer,)])
+        with self.assertRaises(fleet_rollout.RolloutError) as caught:
+            host(['request', '--identity', 'm9', '--version', NEW])
+        self.assertIn('could not start the update agent', str(caught.exception))
+        self.assertEqual(caught.exception.reply, answer)
 
     def test_command_line_dry_run_contacts_nobody(self):
         with tempfile.TemporaryDirectory() as temporary:

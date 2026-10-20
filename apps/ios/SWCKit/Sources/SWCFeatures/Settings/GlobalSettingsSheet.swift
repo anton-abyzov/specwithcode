@@ -26,6 +26,7 @@ private struct GlobalSettingsRoot: View {
   var body: some View {
     ScrollView {
       VStack(alignment: .leading, spacing: WeaveSpacing.s6) {
+        if let connect = model.connect { ConnectAccountCard(state: connect) }
         machines
         if !model.machines.isEmpty { MachineDefaultsCard() }
         appearance
@@ -58,7 +59,7 @@ private struct GlobalSettingsRoot: View {
           EmptyView()
         }
       }
-      WeaveRow("Pair a machine", symbol: "plus", showsChevron: true) { nav.push(.pair) }
+      WeaveRow(model.connect == nil ? "Pair a machine" : "Pair with a link or QR code", symbol: "plus", showsChevron: true) { nav.push(.pair) }
     }
   }
 
@@ -90,13 +91,20 @@ private struct GlobalSettingsRoot: View {
   }
 
   private var about: some View {
-    GroupedCard(label: "About", footer: "Your phone talks straight to the machines you pair. They pass your messages to the AI tools you set up on them.") {
+    GroupedCard(label: "About", footer: aboutFooter) {
       WeaveRow("Version", symbol: "info.circle", trailingText: Self.version)
-      WeaveRow("Privacy policy", subtitle: "Nothing goes through a SpecWithCode server.", symbol: "hand.raised", showsChevron: true) {
+      WeaveRow("Privacy policy", subtitle: model.connect == nil ? "Nothing goes through a SpecWithCode server." : nil, symbol: "hand.raised", showsChevron: true) {
         openURL(AppLinks.privacyPolicy)
       }
       .accessibilityHint("Opens the privacy policy in Safari")
     }
+  }
+
+  private var aboutFooter: String {
+    guard model.connect != nil else {
+      return "Your phone talks straight to the machines you pair. They pass your messages to the AI tools you set up on them."
+    }
+    return "SpecWithCode Connect signs you in and finds your Macs. Your threads travel over an encrypted connection to your Mac, which passes your messages to the AI tools you set up on it."
   }
 
   private static var version: String {

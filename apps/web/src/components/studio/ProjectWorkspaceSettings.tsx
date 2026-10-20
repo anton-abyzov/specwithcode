@@ -31,6 +31,7 @@ import { useStudioFleet } from "../../studio/fleet";
 import { workerMachineChoices } from "../../studio/fleetWorkers";
 import { ProjectModels } from "./ProjectModels";
 import { ProjectMemory } from "./ProjectMemory";
+import { ProjectKnowledge } from "./ProjectKnowledge";
 import { ProjectUsage } from "./ProjectUsage";
 import { ProjectRoutines } from "./ProjectRoutines";
 import {
@@ -618,6 +619,13 @@ export function ProjectWorkspaceSettings({
                   onSaved={onSaved}
                   onDirtyChange={setMemoryDirty}
                 />
+                {tab === "memory" && (
+                  <ProjectKnowledge
+                    environmentId={project.environmentId}
+                    projectId={project.id}
+                    memory={snapshot.memory}
+                  />
+                )}
               </div>
               <div hidden={tab !== "environment"}>
                 <ProjectEnvironment

@@ -712,7 +712,9 @@ export const make = Effect.gen(function* () {
           // the equivalent runtime. Anything not yet connected may be using the
           // old bearer: an attempt in flight would fail with it and then wait
           // blocked for a manual retry. Retry with the new one instead. A
-          // connected session keeps its socket.
+          // connected session does not keep its socket: when the rotation
+          // revokes the old session, the server closes that socket with 4401
+          // and the client reconnects with the new bearer.
           if (bearerReplaced) {
             const scope = (yield* SubscriptionRef.get(serviceScopes)).get(target.environmentId);
             if (scope !== undefined) {

@@ -6,6 +6,7 @@ import Weave
 struct PairWelcomeView: View {
   @Environment(StackNavigator.self) private var nav
   @Environment(\.sampleData) private var sampleData
+  @Environment(AppModel.self) private var model
 
   static let steps = [
     "Open SpecWithCode on your computer.",
@@ -36,13 +37,17 @@ struct PairWelcomeView: View {
             .multilineTextAlignment(.center)
         }
         .padding(.horizontal, WeaveSpacing.s4)
-        VStack(alignment: .leading, spacing: 0) {
-          ForEach(Array(Self.steps.enumerated()), id: \.offset) { index, step in
-            if index > 0 { WeaveDivider(leadingInset: 60) }
-            StepRow(number: index + 1, text: step)
+        if let connect = model.connect {
+          ConnectWelcomeContent(state: connect)
+        } else {
+          VStack(alignment: .leading, spacing: 0) {
+            ForEach(Array(Self.steps.enumerated()), id: \.offset) { index, step in
+              if index > 0 { WeaveDivider(leadingInset: 60) }
+              StepRow(number: index + 1, text: step)
+            }
           }
+          .weavePanel(in: RoundedRectangle(cornerRadius: WeaveRadius.card, style: .continuous))
         }
-        .weavePanel(in: RoundedRectangle(cornerRadius: WeaveRadius.card, style: .continuous))
       }
       .padding(.horizontal, WeaveSpacing.gutter)
       .padding(.bottom, WeaveSpacing.s8)
@@ -51,7 +56,12 @@ struct PairWelcomeView: View {
     }
     .safeAreaInset(edge: .bottom, spacing: 0) {
       VStack(spacing: WeaveSpacing.s1) {
-        WeaveButton("Pair a machine", systemImage: "qrcode.viewfinder", fullWidth: true) { nav.push(.pair) }
+        if model.connect == nil {
+          WeaveButton("Pair a machine", systemImage: "qrcode.viewfinder", fullWidth: true) { nav.push(.pair) }
+        } else {
+          WeaveButton("Pair with a link or QR code", systemImage: "qrcode.viewfinder", kind: .ghost, fullWidth: true) { nav.push(.pair) }
+            .accessibilityHint("For a Mac on your network, without signing in")
+        }
         if !sampleData.isActive {
           WeaveButton("Explore with sample data", kind: .ghost, fullWidth: true) { sampleData.enter() }
             .accessibilityHint("Shows the app with made-up machines and projects")
@@ -62,31 +72,5 @@ struct PairWelcomeView: View {
       .background(Color.weave.canvas.ignoresSafeArea(edges: .bottom))
     }
     .screenBackground()
-  }
-}
-
-private struct StepRow: View {
-  let number: Int
-  let text: String
-
-  var body: some View {
-    HStack(alignment: .firstTextBaseline, spacing: WeaveSpacing.s4) {
-      Text("\(number)")
-        .font(.weave(.callout, weight: .semibold))
-        .foregroundStyle(Color.weave.irisStrong)
-        .frame(width: 28, height: 28)
-        .background(Color.weave.irisTint, in: Circle())
-        .alignmentGuide(.firstTextBaseline) { $0[VerticalAlignment.center] + 5 }
-      Text(text)
-        .weaveFont(.body)
-        .foregroundStyle(Color.weave.ink)
-        .fixedSize(horizontal: false, vertical: true)
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-    .padding(.horizontal, WeaveSpacing.s4)
-    .padding(.vertical, WeaveSpacing.s3 + 2)
-    .frame(minHeight: 56)
-    .accessibilityElement(children: .ignore)
-    .accessibilityLabel("Step \(number): \(text)")
   }
 }

@@ -38,10 +38,14 @@
     {
       "op": "add",
       "parent": ["importers:", "apps/server:", "dependencies:"],
-      "lines": ["'@muse-code/sdk':", "  specifier: 1.4.9", "  version: 1.4.9(@types/node@24.12.4)"],
-      "commit": "7f4309417f9284d483447f6168a5d7ace89d8a96",
-      "pr": 235,
-      "reason": "Muse Code provider SDK, exact pin; added at 1.4.7/1.4.8 by #183 (3328c7c1d, 6f441d506), bumped to 1.4.9 by #235."
+      "lines": [
+        "'@muse-code/sdk':",
+        "  specifier: 1.4.11",
+        "  version: 1.4.11(@types/node@24.12.4)"
+      ],
+      "commit": "32a51ee859475bf355785a028766ff6551f64a18",
+      "pr": 478,
+      "reason": "Muse Code provider SDK, exact pin; added at 1.4.7/1.4.8 by #183 (3328c7c1d, 6f441d506), bumped to 1.4.9 by #235 and to 1.4.11 by #478 to match the muse 1.4.11 CLI schema fingerprint."
     },
     {
       "op": "add",
@@ -62,11 +66,11 @@
     {
       "op": "add",
       "parent": ["packages:"],
-      "package": "@muse-code/sdk@1.4.9",
-      "integrity": "sha512-fYWvvK0Ar11e0KHbepmp1Kobp6w9UPVVq1rL6ZY7uY1t9NlK6yrF66hELky6G7NgvpH2q/RfeFYfiyuESpHo2A==",
+      "package": "@muse-code/sdk@1.4.11",
+      "integrity": "sha512-/6pblfm1gN96L4c6DZpNIl4TQn+x/PQJ4H0xoqNyJ6Kb+HmSm4FdflydB2MM0iCnPz6Wx2l2r95mmrGDTtvVhw==",
       "lines": [
-        "'@muse-code/sdk@1.4.9':",
-        "  resolution: {integrity: sha512-fYWvvK0Ar11e0KHbepmp1Kobp6w9UPVVq1rL6ZY7uY1t9NlK6yrF66hELky6G7NgvpH2q/RfeFYfiyuESpHo2A==}",
+        "'@muse-code/sdk@1.4.11':",
+        "  resolution: {integrity: sha512-/6pblfm1gN96L4c6DZpNIl4TQn+x/PQJ4H0xoqNyJ6Kb+HmSm4FdflydB2MM0iCnPz6Wx2l2r95mmrGDTtvVhw==}",
         "  engines: {node: '>=20'}",
         "  peerDependencies:",
         "    '@types/node': 24.12.4",
@@ -74,20 +78,20 @@
         "    '@types/node':",
         "      optional: true"
       ],
-      "commit": "7f4309417f9284d483447f6168a5d7ace89d8a96",
-      "pr": 235,
-      "reason": "Registry record of the Muse SDK; integrity equals the npm registry dist.integrity of 1.4.9, which has no dependencies."
+      "commit": "32a51ee859475bf355785a028766ff6551f64a18",
+      "pr": 478,
+      "reason": "Registry record of the Muse SDK; integrity equals the npm registry dist.integrity of 1.4.11, which has no dependencies."
     },
     {
       "op": "add",
       "parent": ["snapshots:"],
       "lines": [
-        "'@muse-code/sdk@1.4.9(@types/node@24.12.4)':",
+        "'@muse-code/sdk@1.4.11(@types/node@24.12.4)':",
         "  optionalDependencies:",
         "    '@types/node': 24.12.4"
       ],
-      "commit": "7f4309417f9284d483447f6168a5d7ace89d8a96",
-      "pr": 235,
+      "commit": "32a51ee859475bf355785a028766ff6551f64a18",
+      "pr": 478,
       "reason": "Snapshot of the Muse SDK with its optional @types/node peer."
     },
     {

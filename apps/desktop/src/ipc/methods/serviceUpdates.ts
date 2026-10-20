@@ -1,6 +1,8 @@
 import {
+  type DesktopUpdateState,
   DesktopUpdatePreferencesPatchSchema,
   DesktopUpdatePreferencesSchema,
+  type StudioServiceUpdateState,
   StudioServiceUpdateStateSchema,
 } from "@specweave-studio/contracts";
 import { compareSemverVersions, parseSemver } from "@specweave-studio/shared/semver";
@@ -9,6 +11,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as Stream from "effect/Stream";
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- Read the native updater helper receipt with the existing synchronous IPC boundary.
 import * as FS from "node:fs";
 
@@ -54,6 +57,63 @@ export function isStaleService(serviceVersion: string | undefined, appVersion: s
 }
 
 const { logInfo, logWarning } = DesktopObservability.makeComponentLogger("service-updates");
+
+/**
+ * Whether the app, at start, should ask the agent to install its own version
+ * on a service older than the app. Never over a pending request that would
+ * install that version anyway, and never over a forced one: "Update now"
+ * stopped and held the work for it, and replacing it with a normal request
+ * would end the agent's forced retries and leave the install to its next
+ * scheduled pass, up to 10 minutes later.
+ */
+export function shouldRequestAppVersion(input: {
+  readonly allowed: boolean;
+  readonly serviceVersion: string | undefined;
+  readonly appVersion: string;
+  readonly state: Pick<StudioServiceUpdateState, "status" | "pendingInstall">;
+}): boolean {
+  if (!input.allowed || !isStaleService(input.serviceVersion, input.appVersion)) return false;
+  if (input.state.status === "installing" || input.state.status === "waiting-for-quiet") {
+    return false;
+  }
+  const pending = input.state.pendingInstall ?? null;
+  return (
+    pending === null ||
+    (pending.mode === "normal" && pending.version !== null && pending.version !== input.appVersion)
+  );
+}
+
+/**
+ * The agent checks the feed about once an hour. When the app finds a release
+ * the service does not run yet, the agent is asked to check now, so it
+ * downloads the service's half in the background too and one "Update now"
+ * installs both. Returns the version to ask about, once per version.
+ */
+export function serviceCheckFor(input: {
+  readonly appState: Pick<DesktopUpdateState, "availableVersion" | "downloadedVersion">;
+  readonly service: Pick<
+    StudioServiceUpdateState,
+    "status" | "installedVersion" | "availableVersion" | "downloadedVersion"
+  >;
+  readonly asked: ReadonlySet<string>;
+}): string | null {
+  const version = input.appState.downloadedVersion ?? input.appState.availableVersion;
+  if (version === null || input.asked.has(version)) return null;
+  const { service } = input;
+  if (
+    service.status === "not-managed" ||
+    service.status === "downloading" ||
+    service.status === "installing"
+  ) {
+    return null;
+  }
+  const installed = service.installedVersion ?? undefined;
+  if (!isStaleService(installed, version)) return null;
+  // The agent already has it, or something newer.
+  const known = service.downloadedVersion ?? service.availableVersion;
+  if (known !== null && !isStaleService(known, version)) return null;
+  return version;
+}
 
 /**
  * The agent run the app starts once it has settled, if any. Every one reports
@@ -162,6 +222,7 @@ export const installServiceUpdates = Effect.fn("desktop.ipc.installServiceUpdate
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const desktopSettings = yield* DesktopAppSettings.DesktopAppSettings;
   const electronWindow = yield* ElectronWindow.ElectronWindow;
+  const updates = yield* DesktopUpdates.DesktopUpdates;
   const syncConfig = (extra?: ServiceAgentConfigChange) =>
     writeServiceAgentConfig(extra).pipe(
       Effect.provideService(DesktopEnvironment.DesktopEnvironment, environment),
@@ -292,7 +353,6 @@ export const installServiceUpdates = Effect.fn("desktop.ipc.installServiceUpdate
           return effectiveUpdatePreferences(settings.updatePreferences, false);
         }
         const change = yield* desktopSettings.setUpdatePreferences(patch);
-        const updates = yield* DesktopUpdates.DesktopUpdates;
         yield* updates.applyPreferences;
         yield* syncConfig();
         if (
@@ -351,17 +411,20 @@ export const installServiceUpdates = Effect.fn("desktop.ipc.installServiceUpdate
           // The bundled agent first: the kicked pass takes the agent lock, and a
           // refresh after it would leave the older agent to handle the request.
           // A failure is shown at once, in the state this reply carries.
-          const kicked = yield* refreshThenRunAgent(yield* controllerFor(environment)).pipe(
+          const outcome = yield* refreshThenRunAgent(yield* controllerFor(environment)).pipe(
             Effect.tap((outcome) =>
               outcome === "refreshed"
                 ? Effect.void
                 : logWarning("service update agent kicked without a refresh", { reason, outcome }),
             ),
-            Effect.as(true),
-            Effect.catch((error) => reportAgentFailure(reason, error).pipe(Effect.as(false))),
+            Effect.catch((error) => reportAgentFailure(reason, error).pipe(Effect.as(null))),
           );
           // Nothing would handle the request: running the agent again only repeats the failure.
-          if (!kicked) return yield* publish;
+          if (outcome === null) return yield* publish;
+          // The refreshed agent is running the request: a second refresh and
+          // kick would only find it busy. One that did not finish refreshing in
+          // time completes in the background, so the next pass runs the new agent.
+          if (outcome === "refreshed") return yield* publish;
         }
         yield* startAgent(reason, kind === "install").pipe(Effect.forkDetach);
       }
@@ -452,10 +515,12 @@ export const installServiceUpdates = Effect.fn("desktop.ipc.installServiceUpdate
       : undefined;
     const current = yield* readState;
     if (
-      (yield* automaticUpdatesAllowed) &&
-      isStaleService(serviceVersion, environment.appVersion) &&
-      current.status !== "installing" &&
-      current.status !== "waiting-for-quiet"
+      shouldRequestAppVersion({
+        allowed: yield* automaticUpdatesAllowed,
+        serviceVersion,
+        appVersion: environment.appVersion,
+        state: current,
+      })
     ) {
       yield* logInfo("service is older than the app; installing the app's version when idle", {
         serviceVersion,
@@ -474,6 +539,31 @@ export const installServiceUpdates = Effect.fn("desktop.ipc.installServiceUpdate
     });
     if (start !== null) yield* startAgent(start.reason, start.reportFailure);
   }).pipe(Effect.forkScoped);
+
+  // The app and the service download the same release on their own clocks.
+  // Once the app finds one the service does not run yet, its agent checks now
+  // (and downloads, when downloads run in the background), so "Update now"
+  // finds both halves on disk.
+  const asked = new Set<string>();
+  const askAgentToCheck = (appState: DesktopUpdateState) =>
+    Effect.gen(function* () {
+      if ((yield* controllerFor(environment)).installation() === null) return;
+      const version = serviceCheckFor({ appState, service: yield* readState, asked });
+      if (version === null) return;
+      asked.add(version);
+      yield* logInfo("the app found a release the service does not run; asking its agent", {
+        version,
+      });
+      yield* request("check");
+    });
+  yield* Effect.scoped(
+    Effect.gen(function* () {
+      yield* Effect.sleep(AGENT_START_DELAY);
+      const { latest, changes } = yield* updates.subscribe;
+      yield* askAgentToCheck(latest);
+      yield* Stream.runForEach(changes, askAgentToCheck);
+    }),
+  ).pipe(Effect.ignoreCause, Effect.forkScoped);
 
   yield* publish.pipe(
     Effect.andThen(Effect.sleep(STATE_POLL_INTERVAL)),

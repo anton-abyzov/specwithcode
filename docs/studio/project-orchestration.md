@@ -68,12 +68,14 @@ A new project started away from any project preselects a machine. With load bala
 
 ### Limits
 
-| Item                                 | Limit                                                              |
-| ------------------------------------ | ------------------------------------------------------------------ |
-| Goal                                 | 8,000 characters                                                   |
-| Project instructions                 | 16,000 characters                                                  |
-| Delivered project context per prompt | 32,768 UTF-16 characters, with at least 2,048 kept for `MEMORY.md` |
-| Memory                               | 256 KiB per file, 16 MiB and 4,096 files per project               |
+| Item                                 | Limit                                                                                                                       |
+| ------------------------------------ | --------------------------------------------------------------------------------------------------------------------------- |
+| Goal                                 | 8,000 characters                                                                                                            |
+| Project instructions                 | 16,000 characters                                                                                                           |
+| Delivered project context per prompt | 32,768 UTF-16 characters, with at least 2,048 kept for `MEMORY.md`                                                          |
+| Memory                               | 256 KiB per file, 16 MiB and 4,096 files per project                                                                        |
+| Project knowledge sent in full       | 24,000 characters of memory files and hub artifacts; above that the project switches to [search mode](project-knowledge.md) |
+| Project knowledge index              | 2 MiB per file, 20,000 documents and 64 MiB of text per project                                                             |
 
 ### How SpecWithCode projects differ from Claude Code Projects
 

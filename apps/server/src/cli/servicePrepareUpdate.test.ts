@@ -155,10 +155,14 @@ const startService = (
       seen,
       /**
        * Every auth_sessions row, without `last_connected_at`: the cells update.py's
-       * prestate hashes (auth_invariant_hash) and compares between snapshot and apply.
+       * prestate (auth_invariant_hash) compares between snapshot and apply. Once #466
+       * lands it leaves out `client_app_version` as well, while `client_surface` stays
+       * guarded; both stay here, which also shows this command's connect leaves them unset.
        */
       guardedSessionRows: sql
-        .unsafe<Record<string, unknown>>("SELECT * FROM auth_sessions ORDER BY issued_at, session_id")
+        .unsafe<Record<string, unknown>>(
+          "SELECT * FROM auth_sessions ORDER BY issued_at, session_id",
+        )
         .pipe(
           Effect.map((rows) =>
             rows.map(({ last_connected_at: _heartbeat, ...guarded }) => guarded),

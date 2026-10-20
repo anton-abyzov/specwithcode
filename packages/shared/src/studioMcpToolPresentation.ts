@@ -51,6 +51,8 @@ export type StudioMcpToolSummaryAction =
   | "project-update"
   | "project-delete"
   | "project-clone"
+  | "knowledge-search"
+  | "knowledge-read"
   | "environment-read"
   | "environment-update"
   | "attachment-prepare"
@@ -388,6 +390,14 @@ const STUDIO_MCP_TOOLS: Readonly<Record<string, StudioMcpToolDefinition>> = {
     "project-delete",
   ),
   studio_project_clone: tool(["Clone", "Cloning", "Cloned", "a repository"], "project-clone"),
+  studio_project_knowledge_search: tool(
+    ["Search", "Searching", "Searched", "project knowledge"],
+    "knowledge-search",
+  ),
+  studio_project_knowledge_read: tool(
+    ["Read", "Reading", "Read", "project knowledge"],
+    "knowledge-read",
+  ),
   studio_route_targets: tool(["List", "Listing", "Listed", "projects to route to"], "project-list"),
   studio_project_route: tool(
     ["Route", "Routing", "Routed", "a request to a project"],

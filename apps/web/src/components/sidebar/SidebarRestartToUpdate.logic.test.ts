@@ -24,6 +24,13 @@ import {
   getRestartToUpdateView,
   isAppUpdateReady,
   isServiceUpdateReady,
+  canPressUpdateAgain,
+  formatElapsed,
+  isForcedRequestLive,
+  isOlderRelease,
+  isServiceBehindApp,
+  pendingHoldUntil,
+  serviceInstallTarget,
 } from "./SidebarRestartToUpdate.logic";
 
 const appIdle: DesktopUpdateState = {
@@ -87,10 +94,47 @@ describe("restart to update", () => {
   });
 
   it("restarts the app for a downloaded app update", () => {
-    const view = getRestartToUpdateView(appDownloaded, serviceUpToDate);
-    expect(view).toMatchObject({ app: true, service: false, label: "Restart to update" });
-    expect(view?.description).toContain("SpecWithCode 0.2.5 is downloaded.");
-    expect(view?.description).toContain("Restarts the app to install it.");
+    // The service already runs the release the app installs, or no agent reports on it.
+    for (const service of [{ ...serviceUpToDate, installedVersion: "0.2.5" }, null]) {
+      const view = getRestartToUpdateView(appDownloaded, service);
+      expect(view).toMatchObject({
+        app: true,
+        service: false,
+        serviceVersion: null,
+        label: "Restart to update",
+      });
+      expect(view?.description).toContain("SpecWithCode 0.2.5 is downloaded.");
+      expect(view?.description).toContain("Restarts the app to install it.");
+    }
+  });
+
+  it("updates a service that runs an older release together with the app", () => {
+    // The agent has not looked for 0.2.5 yet: one press still updates both.
+    for (const status of ["up-to-date", "available", "downloading", "disabled"] as const) {
+      const view = getRestartToUpdateView(appDownloaded, { ...serviceUpToDate, status });
+      expect(view).toMatchObject({
+        app: true,
+        service: true,
+        serviceVersion: "0.2.5",
+        label: "Update now",
+      });
+      expect(view?.description).toContain(
+        "The service updates first, then the app restarts on its own.",
+      );
+    }
+    // Busy or failed agents and unmanaged services are left to the app restart.
+    for (const status of ["installing", "error", "manual-required", "not-managed"] as const) {
+      expect(getRestartToUpdateView(appDownloaded, { ...serviceUpToDate, status })).toMatchObject({
+        service: false,
+      });
+    }
+    // A dev build of the service is never replaced by a release.
+    expect(
+      getRestartToUpdateView(appDownloaded, {
+        ...serviceUpToDate,
+        installedVersion: "0.2.4-dev.3",
+      }),
+    ).toMatchObject({ service: false });
   });
 
   it("offers to update a waiting service now", () => {
@@ -110,9 +154,79 @@ describe("restart to update", () => {
       ...serviceWaiting,
       status: "downloaded",
     });
-    expect(view).toMatchObject({ app: true, service: true, label: "Update now" });
+    expect(view).toMatchObject({
+      app: true,
+      appVersion: "0.2.5",
+      service: true,
+      serviceVersion: "0.2.5",
+      label: "Update now",
+    });
     expect(view?.description).toContain(SERVICE_UPDATE_NOW_DESCRIPTION);
-    expect(view?.description).toContain("The app restarts too.");
+    expect(view?.description).toContain(
+      "The service updates first, then the app restarts on its own.",
+    );
+  });
+
+  it("lets the service catch up with the version the app already runs", () => {
+    // The app updated on its own (as on quit); the service still runs 0.2.4.
+    const appUpdated = { ...appIdle, currentVersion: "0.2.5" };
+    const view = getRestartToUpdateView(appUpdated, serviceUpToDate);
+    expect(view).toMatchObject({
+      app: false,
+      appVersion: null,
+      service: true,
+      serviceVersion: "0.2.5",
+      label: "Update now",
+    });
+    expect(view?.description).toContain(
+      "The SpecWithCode service on this Mac still runs 0.2.4; this installs 0.2.5.",
+    );
+    expect(view?.description).not.toContain("is downloaded");
+    // The same release on both: nothing to offer.
+    expect(
+      getRestartToUpdateView(appUpdated, { ...serviceUpToDate, installedVersion: "0.2.5" }),
+    ).toBeNull();
+    // A newer app download wins over the running version.
+    expect(
+      getRestartToUpdateView(
+        {
+          ...appDownloaded,
+          currentVersion: "0.2.5",
+          availableVersion: "0.2.6",
+          downloadedVersion: "0.2.6",
+        },
+        serviceUpToDate,
+      ),
+    ).toMatchObject({ app: true, service: true, serviceVersion: "0.2.6" });
+    expect(serviceInstallTarget(serviceUpToDate, null, "0.2.5", undefined)).toBe("0.2.5");
+  });
+
+  it("installs the newer of the agent's release and the app's on the service", () => {
+    // The agent found 0.2.6 while the app still has 0.2.5 on disk.
+    const newerAgent = { ...serviceWaiting, availableVersion: "0.2.6", downloadedVersion: "0.2.6" };
+    expect(serviceInstallTarget(newerAgent, "0.2.5")).toBe("0.2.6");
+    // The agent still offers 0.2.5 while the app has 0.2.6.
+    expect(serviceInstallTarget(serviceWaiting, "0.2.6")).toBe("0.2.6");
+    // Only the agent has a release: the app has nothing downloaded.
+    expect(serviceInstallTarget(serviceWaiting, null)).toBe("0.2.5");
+    // Nothing for the service: it runs the app's release and the agent offers nothing.
+    expect(serviceInstallTarget({ ...serviceUpToDate, installedVersion: "0.2.5" }, "0.2.5")).toBe(
+      null,
+    );
+    expect(serviceInstallTarget(null, "0.2.5")).toBe(null);
+  });
+
+  it("compares releases only, never dev builds", () => {
+    expect(isOlderRelease("0.2.4", "0.2.5")).toBe(true);
+    expect(isOlderRelease("0.2.10", "0.2.9")).toBe(false);
+    expect(isOlderRelease("0.2.5", "0.2.5")).toBe(false);
+    expect(isOlderRelease("0.2.4-dev.1", "0.2.5")).toBe(false);
+    expect(isOlderRelease("0.2.4", "0.2.5-beta.1")).toBe(false);
+    expect(isOlderRelease(null, "0.2.5")).toBe(false);
+    expect(isOlderRelease("0.2.4", null)).toBe(false);
+    expect(isServiceBehindApp(serviceUpToDate, "0.2.5")).toBe(true);
+    expect(isServiceBehindApp({ ...serviceUpToDate, status: "installing" }, "0.2.5")).toBe(false);
+    expect(isServiceBehindApp(serviceUpToDate, null)).toBe(false);
   });
 
   it("offers a retry with the reason after a failed install", () => {
@@ -603,6 +717,164 @@ describe("service update progress", () => {
     expect(serviceUpdateButtonLabel(requested)).toBe("Update now");
     expect(serviceUpdateButtonLabel({ ...requested, phase: "waiting" })).toBe("Update now");
     expect(serviceUpdateButtonLabel({ ...requested, phase: "stopping" })).toBe("Stopping tasks…");
+  });
+
+  it("does not stop the work again while a forced request is live", () => {
+    const at = 1_000_000;
+    const forced = { ...requested, startedAt: at, holdUntil: at + 15 * 60_000 };
+    for (const phase of ["requesting", "waiting"] as const) {
+      expect(isForcedRequestLive({ ...forced, phase }, at + 60_000)).toBe(true);
+      expect(canPressUpdateAgain({ ...forced, phase }, at + 60_000)).toBe(false);
+      expect(serviceUpdateButtonLabel({ ...forced, phase }, at + 60_000)).toBe("Updating…");
+      // Once the hold ends the agent stops retrying, so pressing again asks again.
+      expect(canPressUpdateAgain({ ...forced, phase }, at + 15 * 60_000)).toBe(true);
+      expect(serviceUpdateButtonLabel({ ...forced, phase }, at + 15 * 60_000)).toBe("Update now");
+    }
+    // A failed attempt is always retried; installing and restarting never are.
+    expect(canPressUpdateAgain({ ...forced, phase: "failed" }, at)).toBe(true);
+    expect(canPressUpdateAgain({ ...forced, phase: "installing" }, at)).toBe(false);
+    // Without a hold (an older desktop or an adopted request) it can be pressed again.
+    expect(canPressUpdateAgain(requested, at)).toBe(true);
+  });
+
+  it("offers only Cancel while a forced request is live, and names the time", () => {
+    const at = 1_000_000;
+    const forced = { ...requested, startedAt: at, holdUntil: at + 15 * 60_000 };
+    expect(serviceUpdateToast(forced, false, { now: at + 67_000 })).toEqual({
+      type: "loading",
+      title: "Updating to SpecWithCode 0.2.5 · 1:07",
+      description:
+        "The SpecWithCode service on this Mac still runs 0.2.4. Checking that nothing is running, then installing…",
+      action: null,
+      cancel: true,
+    });
+    // The agent's own check is not a wait, however long it takes.
+    expect(serviceUpdateToast(forced, true, { now: at + 67_000 })).toMatchObject({
+      type: "loading",
+      title: "Updating to SpecWithCode 0.2.5 · 1:07",
+    });
+    // Work that keeps running is.
+    expect(
+      serviceUpdateToast({ ...forced, phase: "waiting" }, true, { now: at + 67_000 }),
+    ).toMatchObject({
+      type: "warning",
+      title: "Waiting to install SpecWithCode 0.2.5 · 1:07",
+      action: null,
+      cancel: true,
+    });
+    // After the hold the agent stops retrying: Update now comes back.
+    expect(serviceUpdateToast(forced, false, { now: at + 15 * 60_000 })).toMatchObject({
+      title: "Preparing to install SpecWithCode 0.2.5 · 15:00",
+      action: "update-now",
+      cancel: true,
+    });
+  });
+
+  it("counts the time through stopping and installing, and reports it when done", () => {
+    const at = 1_000_000;
+    const started = { ...requested, startedAt: at };
+    expect(
+      serviceUpdateToast({ ...started, phase: "stopping" }, false, { now: at + 4_000 }),
+    ).toMatchObject({
+      title: "Updating to SpecWithCode 0.2.5 · 0:04",
+    });
+    expect(
+      serviceUpdateToast({ ...started, phase: "installing" }, false, { now: at + 125_000 }),
+    ).toMatchObject({ title: "Installing SpecWithCode 0.2.5 · 2:05" });
+    expect(
+      serviceUpdateToast({ ...started, phase: "restarting" }, false, { now: at + 150_000 }),
+    ).toMatchObject({
+      type: "success",
+      title: "Updated to SpecWithCode 0.2.5 in 2:30",
+      description: "Reloading this window…",
+    });
+    // When the app installs its own update next, the window does not reload.
+    expect(
+      serviceUpdateToast({ ...started, phase: "restarting" }, false, {
+        now: at + 150_000,
+        appFollows: true,
+      }),
+    ).toMatchObject({
+      type: "success",
+      title: "Updated the service to SpecWithCode 0.2.5 in 2:30",
+      description: "Restarting the app to finish the update…",
+    });
+    // No press time (an adopted update): no clock.
+    expect(
+      serviceUpdateToast({ ...requested, phase: "installing" }, false, { now: at }),
+    ).toMatchObject({
+      title: "Installing SpecWithCode 0.2.5",
+    });
+  });
+
+  it("formats the elapsed time as minutes and seconds", () => {
+    expect(formatElapsed(0)).toBe("0:00");
+    expect(formatElapsed(-5_000)).toBe("0:00");
+    expect(formatElapsed(59_999)).toBe("0:59");
+    expect(formatElapsed(61_000)).toBe("1:01");
+    expect(formatElapsed(3_599_000)).toBe("59:59");
+    expect(formatElapsed(3_723_000)).toBe("1:02:03");
+  });
+
+  it("reads the hold of a pending forced request", () => {
+    const pending = {
+      requestedAt: "2026-10-20T04:00:00.000Z",
+      mode: "force" as const,
+      version: "0.2.5",
+      holdUntil: "2026-10-20T04:15:00.000Z",
+      handled: false,
+    };
+    expect(pendingHoldUntil({ ...serviceWaiting, pendingInstall: pending })).toBe(
+      Date.parse("2026-10-20T04:15:00.000Z"),
+    );
+    expect(
+      pendingHoldUntil({
+        ...serviceWaiting,
+        pendingInstall: { ...pending, mode: "normal", holdUntil: null },
+      }),
+    ).toBeUndefined();
+    expect(
+      pendingHoldUntil({ ...serviceWaiting, pendingInstall: { ...pending, holdUntil: "soon" } }),
+    ).toBeUndefined();
+    expect(pendingHoldUntil({ ...serviceWaiting, pendingInstall: null })).toBeUndefined();
+    expect(pendingHoldUntil(serviceWaiting)).toBeUndefined();
+    expect(pendingHoldUntil(null)).toBeUndefined();
+  });
+
+  it("times each install attempt on its own when the agent goes back to waiting", () => {
+    const at = 1_000_000;
+    const installing = advanceServiceUpdateProgress(
+      requested,
+      { ...serviceWaiting, status: "installing" },
+      at,
+    );
+    expect(installing).toMatchObject({ phase: "installing", installingSince: at });
+    // New work started: the agent waits again, then installs on a fresh clock.
+    const waiting = advanceServiceUpdateProgress(installing, serviceWaiting, at + 8 * 60_000);
+    expect(waiting.phase).toBe("waiting");
+    expect(waiting.installingSince).toBeUndefined();
+    const again = advanceServiceUpdateProgress(
+      waiting,
+      { ...serviceWaiting, status: "installing" },
+      at + 9 * 60_000,
+    );
+    expect(again).toMatchObject({ phase: "installing", installingSince: at + 9 * 60_000 });
+    expect(
+      advanceServiceUpdateProgress(
+        again,
+        { ...serviceWaiting, status: "installing" },
+        at + 18 * 60_000,
+      ).phase,
+    ).toBe("installing");
+  });
+
+  it("targets the version the press installs, not only the agent's", () => {
+    expect(startServiceUpdateProgress(serviceUpToDate, "0.2.5")).toMatchObject({
+      phase: "stopping",
+      targetVersion: "0.2.5",
+      fromVersion: "0.2.4",
+    });
+    expect(startServiceUpdateProgress(serviceWaiting, null).targetVersion).toBe("0.2.5");
   });
 
   it("asks before stopping work, naming what ends", () => {

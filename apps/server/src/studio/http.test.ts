@@ -1,7 +1,12 @@
 import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 import * as NodeServices from "@effect/platform-node/NodeServices";
-import { AuthSessionId, EnvironmentHttpApi, AuthOrchestrationReadScope, AuthOrchestrationOperateScope } from "@specweave-studio/contracts";
+import {
+  AuthSessionId,
+  EnvironmentHttpApi,
+  AuthOrchestrationReadScope,
+  AuthOrchestrationOperateScope,
+} from "@specweave-studio/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Etag from "effect/http/Etag";
@@ -15,19 +20,52 @@ import * as AuthHttp from "../auth/http.ts";
 import * as Config from "../config.ts";
 import * as Capacity from "./Capacity.ts";
 import * as Http from "./http.ts";
-import { StudioCapacityPolicyInput, StudioCapacityRefreshInput, StudioCapacitySelectInput } from "@specweave-studio/contracts/studio";
+import * as RequestOrigin from "../auth/requestOrigin.ts";
+import {
+  StudioCapacityPolicyInput,
+  StudioCapacityRefreshInput,
+  StudioCapacitySelectInput,
+} from "@specweave-studio/contracts/studio";
 import { unavailableCapacity } from "./capacitySnapshot.ts";
 
 class StudioTestApi extends HttpApi.make("environment").add(EnvironmentHttpApi.groups.studio) {}
-async function api(scopes: ReadonlyArray<typeof AuthOrchestrationReadScope | typeof AuthOrchestrationOperateScope> = [AuthOrchestrationReadScope, AuthOrchestrationOperateScope], desktop = false) {
+async function api(
+  scopes: ReadonlyArray<
+    typeof AuthOrchestrationReadScope | typeof AuthOrchestrationOperateScope
+  > = [AuthOrchestrationReadScope, AuthOrchestrationOperateScope],
+  desktop = false,
+) {
   const calls: string[] = [];
   const snapshot = unavailableCapacity(
-    DateTime.toEpochMillis(DateTime.nowUnsafe()), "switch-unavailable");
-  const routes = HttpApiBuilder.layer(StudioTestApi).pipe(Layer.provide(Http.layer), Layer.provide(AuthHttp.layerAuthenticatedAuth),
-    Layer.provide(Layer.mock(Auth.EnvironmentAuth)({ authenticateHttpRequest: (request) => request.headers.authorization === "Bearer synthetic-session"
-      ? Effect.succeed({ sessionId: AuthSessionId.make("synthetic-session"), subject: "test-native-client", method: "bearer-access-token" as const, scopes })
-      : Effect.fail(new Auth.ServerAuthMissingCredentialError({})) })),
-    Layer.provide(Layer.mock(Capacity.Capacity)({ current: Effect.succeed(snapshot), refresh: Effect.sync(() => { calls.push("refresh"); return snapshot; }), policy: (input) => Effect.sync(() => { calls.push(`policy:${input.mode}`);
+    DateTime.toEpochMillis(DateTime.nowUnsafe()),
+    "switch-unavailable",
+  );
+  const routes = HttpApiBuilder.layer(StudioTestApi).pipe(
+    Layer.provide(Http.layer),
+    Layer.provide(AuthHttp.layerAuthenticatedAuth),
+    Layer.provide(
+      Layer.mock(Auth.EnvironmentAuth)({
+        authenticateHttpRequest: (request) =>
+          request.headers.authorization === "Bearer synthetic-session"
+            ? Effect.succeed({
+                sessionId: AuthSessionId.make("synthetic-session"),
+                subject: "test-native-client",
+                method: "bearer-access-token" as const,
+                scopes,
+              })
+            : Effect.fail(new Auth.ServerAuthMissingCredentialError({})),
+      }),
+    ),
+    Layer.provide(
+      Layer.mock(Capacity.Capacity)({
+        current: Effect.succeed(snapshot),
+        refresh: Effect.sync(() => {
+          calls.push("refresh");
+          return snapshot;
+        }),
+        policy: (input) =>
+          Effect.sync(() => {
+            calls.push(`policy:${input.mode}`);
             return snapshot;
           }),
         select: (input) =>
@@ -76,56 +114,171 @@ async function api(scopes: ReadonlyArray<typeof AuthOrchestrationReadScope | typ
 describe("capacity HTTP authorization and CSRF", () => {
   it("rejects unauthenticated reads and insufficient mutation scope without calling the companion", async () => {
     const app = await api([AuthOrchestrationReadScope]);
-    try { expect((await app.request("/api/studio/capacity", undefined, {})).status).toBe(401);
+    try {
+      expect((await app.request("/api/studio/capacity", undefined, {})).status).toBe(401);
       expect((await app.request("/api/studio/capacity")).status).toBe(200);
-      expect((await app.request("/api/studio/capacity/refresh", {})).status).toBe(403); expect(app.calls).toEqual([]);
-    } finally { await app.dispose(); }
+      expect((await app.request("/api/studio/capacity/refresh", {})).status).toBe(403);
+      expect(app.calls).toEqual([]);
+    } finally {
+      await app.dispose();
+    }
   });
   it("accepts exact private HTTPS forwarded-protocol mutations and rejects forged Origin/unknown body fields", async () => {
     const app = await api();
     try {
-      expect((await app.request("/api/studio/capacity/policy", { mode: "spend-first" })).status).toBe(200);
+      expect(
+        (await app.request("/api/studio/capacity/policy", { mode: "spend-first" })).status,
+      ).toBe(200);
       expect((await app.request("/api/studio/capacity/select", { id: null })).status).toBe(200);
       expect((await app.request("/api/studio/capacity/refresh", {})).status).toBe(200);
-      const bad = await app.request("/api/studio/capacity/refresh", {}, { authorization: "Bearer synthetic-session", origin: "https://attacker.invalid", "x-forwarded-host": "attacker.invalid", "x-forwarded-proto": "https" });
+      const bad = await app.request(
+        "/api/studio/capacity/refresh",
+        {},
+        {
+          authorization: "Bearer synthetic-session",
+          origin: "https://attacker.invalid",
+          "x-forwarded-host": "attacker.invalid",
+          "x-forwarded-proto": "https",
+        },
+      );
       expect(bad.status).toBe(403);
-      expect((await app.request("/api/studio/capacity/refresh", { url: "http://attacker.invalid", authenticated: true })).status).toBe(400);
+      expect(
+        (
+          await app.request("/api/studio/capacity/refresh", {
+            url: "http://attacker.invalid",
+            authenticated: true,
+          })
+        ).status,
+      ).toBe(400);
       expect(app.calls).toEqual(["policy:spend-first", "select:null", "refresh"]);
-    } finally { await app.dispose(); }
+    } finally {
+      await app.dispose();
+    }
   });
   it("permits only the trusted desktop Origin after authenticating scope", async () => {
     const app = await api(undefined, true);
     const readOnly = await api([AuthOrchestrationReadScope], true);
-    const headers = { authorization: "Bearer synthetic-session", origin: "studio://app", "sec-fetch-site": "cross-site" };
+    const headers = {
+      authorization: "Bearer synthetic-session",
+      origin: "studio://app",
+      "sec-fetch-site": "cross-site",
+    };
     try {
-      expect((await app.request("/api/studio/capacity/policy", { mode: "balanced" }, headers)).status).toBe(200);
-      expect((await readOnly.request("/api/studio/capacity/policy", { mode: "balanced" }, headers)).status).toBe(403);
-      expect((await app.request("/api/studio/capacity/policy", { mode: "balanced" }, { ...headers, origin: "studio://attacker" })).status).toBe(403);
-      expect(app.calls).toEqual(["policy:balanced"]); expect(readOnly.calls).toEqual([]);
-    } finally { await app.dispose(); await readOnly.dispose(); }
+      expect(
+        (await app.request("/api/studio/capacity/policy", { mode: "balanced" }, headers)).status,
+      ).toBe(200);
+      expect(
+        (await readOnly.request("/api/studio/capacity/policy", { mode: "balanced" }, headers))
+          .status,
+      ).toBe(403);
+      expect(
+        (
+          await app.request(
+            "/api/studio/capacity/policy",
+            { mode: "balanced" },
+            { ...headers, origin: "studio://attacker" },
+          )
+        ).status,
+      ).toBe(403);
+      expect(app.calls).toEqual(["policy:balanced"]);
+      expect(readOnly.calls).toEqual([]);
+    } finally {
+      await app.dispose();
+      await readOnly.dispose();
+    }
   });
   it("trusts the Mac app Origin on a web-mode service too", async () => {
     const app = await api();
-    const headers = { authorization: "Bearer synthetic-session", origin: "studio://app", "sec-fetch-site": "cross-site" };
+    const headers = {
+      authorization: "Bearer synthetic-session",
+      origin: "studio://app",
+      "sec-fetch-site": "cross-site",
+    };
     try {
-      expect((await app.request("/api/studio/capacity/policy", { mode: "balanced" }, headers)).status).toBe(200);
-      expect((await app.request("/api/studio/capacity/policy", { mode: "balanced" }, { ...headers, origin: "studio://attacker" })).status).toBe(403);
+      expect(
+        (await app.request("/api/studio/capacity/policy", { mode: "balanced" }, headers)).status,
+      ).toBe(200);
+      expect(
+        (
+          await app.request(
+            "/api/studio/capacity/policy",
+            { mode: "balanced" },
+            { ...headers, origin: "studio://attacker" },
+          )
+        ).status,
+      ).toBe(403);
       expect(app.calls).toEqual(["policy:balanced"]);
-    } finally { await app.dispose(); }
+    } finally {
+      await app.dispose();
+    }
   });
   it("allows only explicit private Origin allowlists, scoped CLI auth, and rejects cookie requests without Origin", () => {
-    const base = { requestUrl: "/api/studio/capacity/policy", host: "private.example.ts.net:8443", forwardedProto: "https", trustedOrigins: [] as string[] };
-    expect(Http.capacityMutationOriginAllowed({ ...base, origin: "https://private.example.ts.net" })).toBe(false);
-    expect(Http.capacityMutationOriginAllowed({ ...base, origin: "https://private.example.ts.net", trustedOrigins: ["https://private.example.ts.net"] })).toBe(true);
-    expect(Http.capacityMutationOriginAllowed({ ...base, authorization: "DPoP synthetic" })).toBe(true);
-    expect(Http.capacityMutationOriginAllowed({ ...base, authorization: "Bearer synthetic", cookie: "native=session" })).toBe(false);
-    expect(Http.capacityMutationOriginAllowed({ ...base, origin: "https://private.example.ts.net:8443", fetchSite: "cross-site" })).toBe(false);
-    expect(Http.capacityMutationOriginAllowed({ ...base, origin: "studio://app", fetchSite: "cross-site", trustedOrigins: ["studio://app"] })).toBe(true);
-    expect(Http.capacityMutationOriginAllowed({ ...base, origin: "studio://attacker", fetchSite: "cross-site", trustedOrigins: ["studio://app"] })).toBe(false);
+    const base = {
+      requestUrl: "/api/studio/capacity/policy",
+      host: "private.example.ts.net:8443",
+      forwardedProto: "https",
+      trustedOrigins: [] as string[],
+    };
+    expect(
+      RequestOrigin.capacityMutationOriginAllowed({
+        ...base,
+        origin: "https://private.example.ts.net",
+      }),
+    ).toBe(false);
+    expect(
+      RequestOrigin.capacityMutationOriginAllowed({
+        ...base,
+        origin: "https://private.example.ts.net",
+        trustedOrigins: ["https://private.example.ts.net"],
+      }),
+    ).toBe(true);
+    expect(
+      RequestOrigin.capacityMutationOriginAllowed({ ...base, authorization: "DPoP synthetic" }),
+    ).toBe(true);
+    expect(
+      RequestOrigin.capacityMutationOriginAllowed({
+        ...base,
+        authorization: "Bearer synthetic",
+        cookie: "native=session",
+      }),
+    ).toBe(false);
+    expect(
+      RequestOrigin.capacityMutationOriginAllowed({
+        ...base,
+        origin: "https://private.example.ts.net:8443",
+        fetchSite: "cross-site",
+      }),
+    ).toBe(false);
+    expect(
+      RequestOrigin.capacityMutationOriginAllowed({
+        ...base,
+        origin: "studio://app",
+        fetchSite: "cross-site",
+        trustedOrigins: ["studio://app"],
+      }),
+    ).toBe(true);
+    expect(
+      RequestOrigin.capacityMutationOriginAllowed({
+        ...base,
+        origin: "studio://attacker",
+        fetchSite: "cross-site",
+        trustedOrigins: ["studio://app"],
+      }),
+    ).toBe(false);
   });
   it("rejects hidden auth flags, arbitrary URLs and unknown pins in the public request contract", () => {
-    expect(Schema.decodeUnknownOption(StudioCapacityRefreshInput)({ authenticated: true })._tag).toBe("None");
-    expect(Schema.decodeUnknownOption(StudioCapacityPolicyInput)({ mode: "balanced", url: "http://attacker.invalid" })._tag).toBe("None");
-    expect(Schema.decodeUnknownOption(StudioCapacitySelectInput)({ id: "foreign", allowUnknown: true })._tag).toBe("None");
+    expect(
+      Schema.decodeUnknownOption(StudioCapacityRefreshInput)({ authenticated: true })._tag,
+    ).toBe("None");
+    expect(
+      Schema.decodeUnknownOption(StudioCapacityPolicyInput)({
+        mode: "balanced",
+        url: "http://attacker.invalid",
+      })._tag,
+    ).toBe("None");
+    expect(
+      Schema.decodeUnknownOption(StudioCapacitySelectInput)({ id: "foreign", allowUnknown: true })
+        ._tag,
+    ).toBe("None");
   });
 });

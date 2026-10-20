@@ -12,12 +12,20 @@ a published version on a service with no desktop in front of it, and reports wha
 wrote. It touches only the identity's updates/config.json, never the service or its database:
 
     python3 -B update_request.py request --identity m4 --version 1.0.37 [--force --hold-minutes 15] [--kickstart]
+    python3 -B update_request.py check --identity m4 [--kickstart]
+    python3 -B update_request.py cancel --identity m4 --request 2026-10-20T12:00:00.000Z
     python3 -B update_request.py status --identity m4
 
-With --kickstart a request is written only while the agent's launchd job is loaded and enabled,
-and a kickstart launchd refuses exits non-zero with launchctl's reason: a request nothing starts
-would lapse unseen. status adds whether the job is loaded (agentLoaded), turned off with
-`launchctl disable` (agentDisabled), and whether its last check is overdue (stale).
+check asks only for a check, as the desktop's Check now does (checkRequestedAt), so nothing is
+asked to install. cancel withdraws one install request, named by its installRequestedAt, the way
+the agent reads a cancel (installCancelledAt after the request), and only while it is still the
+pending request: one written since is left alone and the command exits non-zero.
+
+With --kickstart a request or check is written only while the agent's launchd job is loaded and
+enabled, and a kickstart launchd refuses exits non-zero with launchctl's reason (the error names
+the request written, so the caller can cancel it): a request nothing starts would lapse unseen.
+status adds whether the job is loaded (agentLoaded), turned off with `launchctl disable`
+(agentDisabled), and whether its last check is overdue (stale).
 
 It also holds the agent's launchd helpers (update_agent.py is at its file-size cap): the one
 launchctl transport, the disabled-label check install_launch_agent runs before any bootout,
@@ -258,6 +266,29 @@ def status(home, identity, run=None, launchd=True):
     return report
 
 
+def _updates(home, identity):
+    updates = _identity_home(home, identity) / 'updates'
+    if updates.is_symlink() or not updates.is_dir():
+        raise RequestError('%s has no update agent folder at %s' % (identity, updates))
+    return updates
+
+
+def _write_config(updates, config):
+    """Replaces updates/config.json with `config`, atomically and mode 600."""
+    descriptor, temporary = tempfile.mkstemp(prefix='.config.json.', dir=str(updates))
+    try:
+        with os.fdopen(descriptor, 'wb') as handle:
+            os.fchmod(handle.fileno(), 0o600)
+            handle.write((json.dumps(config, indent=2) + '\n').encode('utf-8'))
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, str(updates / 'config.json'))
+    except BaseException:
+        if os.path.lexists(temporary):
+            os.unlink(temporary)
+        raise
+
+
 def write_request(home, identity, version, force=False, hold_minutes=HOLD_MAX_MINUTES, now=None):
     """Writes an install request bound to `version` into config.json, atomically and mode 600.
     A forced request makes the agent retry its snapshot every few seconds until installHoldUntil
@@ -266,31 +297,48 @@ def write_request(home, identity, version, force=False, hold_minutes=HOLD_MAX_MI
         raise RequestError('Invalid version %r' % version)
     if force and not (isinstance(hold_minutes, int) and 1 <= hold_minutes <= HOLD_MAX_MINUTES):
         raise RequestError('--hold-minutes must be 1 to %d' % HOLD_MAX_MINUTES)
-    updates = _identity_home(home, identity) / 'updates'
-    if updates.is_symlink() or not updates.is_dir():
-        raise RequestError('%s has no update agent folder at %s' % (identity, updates))
-    path = updates / 'config.json'
+    updates = _updates(home, identity)
     config = dict(DEFAULT_SETTINGS)
-    config.update(_read_json(path))
+    config.update(_read_json(updates / 'config.json'))
     now = now or datetime.datetime.now(datetime.timezone.utc)
     stamp = _iso(now)
     config.update({'checkRequestedAt': stamp, 'installRequestedAt': stamp,
                    'installMode': 'force' if force else 'normal',
                    'installHoldUntil': _iso(now + datetime.timedelta(minutes=hold_minutes)) if force else None,
                    'installRequest': {'at': stamp, 'version': version}})
-    descriptor, temporary = tempfile.mkstemp(prefix='.config.json.', dir=str(updates))
-    try:
-        with os.fdopen(descriptor, 'wb') as handle:
-            os.fchmod(handle.fileno(), 0o600)
-            handle.write((json.dumps(config, indent=2) + '\n').encode('utf-8'))
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temporary, str(path))
-    except BaseException:
-        if os.path.lexists(temporary):
-            os.unlink(temporary)
-        raise
+    _write_config(updates, config)
     return {key: config[key] for key in ('installRequestedAt', 'installMode', 'installHoldUntil', 'installRequest')}
+
+
+def write_check(home, identity, now=None):
+    """Asks the agent to look for a release now, as the desktop's Check now does: only
+    checkRequestedAt changes, so nothing is asked to install. Other settings stay."""
+    updates = _updates(home, identity)
+    config = dict(DEFAULT_SETTINGS)
+    config.update(_read_json(updates / 'config.json'))
+    config['checkRequestedAt'] = _iso(now or datetime.datetime.now(datetime.timezone.utc))
+    _write_config(updates, config)
+    return {'checkRequestedAt': config['checkRequestedAt']}
+
+
+def cancel_request(home, identity, request, now=None):
+    """Cancels the install request dated `request` (its installRequestedAt) by writing
+    installCancelledAt, which the agent, update.py --reap and the desktop read as a cancel when it
+    is later than the request. Refuses, changing nothing, once another request replaced it or it
+    was cleared. Other settings stay."""
+    updates = _updates(home, identity)
+    config = _read_json(updates / 'config.json')
+    current = config.get('installRequestedAt')
+    if current != request:
+        raise RequestError('The pending install request on %s is not %s (%s); nothing was cancelled' % (
+            identity, request, 'it is %s' % current if current else 'there is none'))
+    stamp = _iso(now or datetime.datetime.now(datetime.timezone.utc))
+    asked = _time(request)
+    if asked is not None and _time(stamp) <= asked:  # Only a later cancel counts, even if the clock stepped back.
+        stamp = _iso((asked + datetime.timedelta(milliseconds=1)).astimezone(datetime.timezone.utc))
+    config['installCancelledAt'] = stamp
+    _write_config(updates, config)
+    return {'installRequestedAt': request, 'installCancelledAt': stamp}
 
 
 # ---------------------------------------------------------------- launchd
@@ -408,10 +456,18 @@ def ready_to_kick(identity, run=None):
     return None
 
 
+def _kick(identity, what):
+    """kickstart() for the command line: True, or RequestError naming what was written."""
+    kicked, reason = kickstart(identity)
+    if not kicked:
+        raise RequestError('The %s was written but launchctl could not start the update agent: %s' % (what, reason))
+    return True
+
+
 def main(argv=None):
     parser = argparse.ArgumentParser(prog='update_request.py', description='Write or read a SpecWithCode service install request')
     commands = parser.add_subparsers(dest='command')
-    for name in ('request', 'status'):
+    for name in ('request', 'check', 'cancel', 'status'):
         command = commands.add_parser(name)
         command.add_argument('--identity', required=True)
         command.add_argument('--home', help=argparse.SUPPRESS)  # Tests only: a temporary private home.
@@ -420,15 +476,31 @@ def main(argv=None):
             command.add_argument('--force', action='store_true',
                                  help='retry the snapshot until the hold ends instead of waiting for quiet')
             command.add_argument('--hold-minutes', type=int, default=HOLD_MAX_MINUTES)
+        if name in ('request', 'check'):
             command.add_argument('--kickstart', action='store_true', help='start the agent now')
+        if name == 'cancel':
+            command.add_argument('--request', required=True, help='installRequestedAt of the request to cancel')
     args = parser.parse_args(argv)
     if args.command is None:
-        parser.error('choose request or status')
+        parser.error('choose request, check, cancel or status')
     home = pathlib.Path(args.home) if args.home else pathlib.Path.home()
+    written = {}  # A request written before a kickstart failed, named in the error.
     try:
         if args.command == 'status':
             # launchd jobs belong to the user, not to a --home: a test home reads no live job.
             report = status(home, args.identity, launchd=not args.home)
+        elif args.command == 'cancel':
+            report = {'identity': args.identity, 'result': 'cancelled',
+                      'request': cancel_request(home, args.identity, args.request)}
+        elif args.command == 'check':
+            refused = ready_to_kick(args.identity) if args.kickstart else None
+            if refused:
+                raise RequestError(refused)
+            written['request'] = write_check(home, args.identity)
+            report = {'identity': args.identity, 'result': 'check-requested', 'request': written['request'],
+                      'kicked': None}
+            if args.kickstart:
+                report['kicked'] = _kick(args.identity, 'check request')
         else:
             current, wanted = installed(home, args.identity), _version(args.version)
             if current is not None and wanted is not None and _version(current) > wanted:
@@ -439,18 +511,14 @@ def main(argv=None):
                 refused = ready_to_kick(args.identity) if args.kickstart else None
                 if refused:
                     raise RequestError(refused)
-                report = {'identity': args.identity, 'result': 'requested',
-                          'request': write_request(home, args.identity, args.version, args.force, args.hold_minutes)}
-                report['kicked'] = None
+                written['request'] = write_request(home, args.identity, args.version, args.force, args.hold_minutes)
+                report = {'identity': args.identity, 'result': 'requested', 'request': written['request'],
+                          'kicked': None}
                 if args.kickstart:
-                    kicked, reason = kickstart(args.identity)
-                    if not kicked:
-                        raise RequestError('The request was written but launchctl could not start the update '
-                                           'agent: %s' % reason)
-                    report['kicked'] = True
+                    report['kicked'] = _kick(args.identity, 'request')
     except (RequestError, OSError) as error:
         message = str(error) if isinstance(error, RequestError) else '%s (%s)' % (type(error).__name__, error.strerror)
-        print(json.dumps({'identity': args.identity, 'error': message}))
+        print(json.dumps(dict({'identity': args.identity, 'error': message}, **written)))
         return 1
     print(json.dumps(report))
     return 0

@@ -16,6 +16,10 @@ folder on the M4) before starting.
   tracked file if it has none.
 - Not an EasyChamp folder and not the SpecWithCode checkout the app runs from.
 - No copy may already exist at `~/Projects/scratch/swc-copy-test-DATE` on the M3.
+- If you clone or copy a fixture for the check, keep it under
+  `~/Projects/scratch/swc-copy-source-DATE` and give its project a title that
+  starts with `swc copy check`, so step 6 can find and remove it. The check adds
+  a project to the sidebar on both machines; nothing removes them on its own.
 
 ## 1. Versions
 
@@ -91,9 +95,19 @@ must list it and offer **Undo and keep edited files aside**.
 
 ## 6. Clean up
 
-Ask the M3 worker to remove `~/Projects/scratch/swc-copy-test-DATE` only after
-the results are saved. First unlink the M3 copy in **Settings > Machines** on
-the M4 (Undo restores the folder but leaves the link), then remove the scratch
-project from the M3 sidebar.
+Do this as soon as the results are saved, in this order, and record the sizes
+freed in the report:
+
+1. On the M4, unlink the M3 copy in **Settings > Machines** (Undo restores the
+   folder but leaves the link).
+2. Delete the M3 copy's project (the M3 sidebar, or `studio_project_delete` from
+   a thread on the M3), then the fixture project on the M4 if you made one.
+   Deleting a project never removes its folder.
+3. Ask the M3 worker to confirm `~/Projects/scratch/swc-copy-test-DATE` is gone
+   (Undo removes it) and to remove it if not.
+4. On the M4, `du -sh` and then remove `~/Projects/scratch/swc-copy-source-DATE`
+   if you made a fixture.
+
 Keep `~/Projects/scratch/swc-copy-test-DATE-report` on the M4 with the
-timings, the screenshots of each dialog step and the worker's output.
+timings, the screenshots of each dialog step and the worker's output until the
+increment closes.
