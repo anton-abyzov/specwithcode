@@ -61,7 +61,7 @@ export function providerUsedPercent(
 }
 
 /** Match native admission's denial signals; window percentages cannot override them. */
-function usageDeniesTurn(provider: ServerProvider): boolean {
+export function usageDeniesTurn(provider: ServerProvider): boolean {
   const limits = provider.usageLimits;
   return (
     limits?.ordinaryUsageAllowed === false ||

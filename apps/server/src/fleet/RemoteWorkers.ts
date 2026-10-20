@@ -38,6 +38,7 @@ import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import type { FleetTarget } from "../studioFleet.ts";
 import * as FleetTargets from "./FleetTargets.ts";
+import * as PhoneLinks from "./phoneLinks.ts";
 import * as FleetWorkerGrants from "./FleetWorkerGrants.ts";
 import * as RemoteStudioMcpClient from "./RemoteStudioMcpClient.ts";
 import * as RemoteWorkerFollower from "./RemoteWorkerFollower.ts";
@@ -353,23 +354,68 @@ interface Probe {
   readonly projects: ReadonlyArray<Project>;
 }
 
+const ISO_TIME = /^\d{4}-\d{2}-\d{2}T[\d:.]+(?:Z|[+-]\d{2}:\d{2})$/;
+const isoOrNull = (value: unknown) =>
+  typeof value === "string" && ISO_TIME.test(value) && Number.isFinite(Date.parse(value))
+    ? value
+    : null;
+
+/**
+ * The usage another machine shares for one provider, or undefined when it
+ * shares none (an older version) or sends something malformed. Unknown
+ * usage is never read as room.
+ */
+export const readProviderUsage = (
+  value: unknown,
+): OrchestratorMcpMachineProvider["usage"] | undefined => {
+  if (!isRecord(value) || typeof value.signedIn !== "boolean") return undefined;
+  const fingerprint =
+    typeof value.accountFingerprint === "string" &&
+    /^sha256:[a-f0-9]{64}$/.test(value.accountFingerprint)
+      ? value.accountFingerprint
+      : null;
+  const used =
+    typeof value.usedPercent === "number" &&
+    Number.isFinite(value.usedPercent) &&
+    value.usedPercent >= 0 &&
+    value.usedPercent <= 100
+      ? value.usedPercent
+      : null;
+  return {
+    accountFingerprint: fingerprint,
+    usedPercent: used,
+    resetsAt: isoOrNull(value.resetsAt),
+    signedIn: value.signedIn,
+    observedAt: isoOrNull(value.observedAt),
+    ...(value.limited === true ? { limited: true } : {}),
+  } as OrchestratorMcpMachineProvider["usage"];
+};
+
 const readProviders = (capabilities: unknown): ReadonlyArray<OrchestratorMcpMachineProvider> =>
   (isRecord(capabilities) && Array.isArray(capabilities.providers) ? capabilities.providers : [])
     .filter(isRecord)
-    .flatMap((provider) =>
-      typeof provider.providerInstanceId === "string" && typeof provider.driverKind === "string"
-        ? [
-            {
-              providerInstanceId: provider.providerInstanceId,
-              driverKind: provider.driverKind,
-              models: (Array.isArray(provider.models) ? provider.models : [])
-                .filter(isRecord)
-                .flatMap((model) => (typeof model.id === "string" ? [model.id] : [])),
-              available: Array.isArray(provider.constraints) && provider.constraints.length === 0,
-            } as unknown as OrchestratorMcpMachineProvider,
-          ]
-        : [],
-    );
+    .flatMap((provider) => {
+      if (
+        typeof provider.providerInstanceId !== "string" ||
+        typeof provider.driverKind !== "string"
+      )
+        return [];
+      const usage = readProviderUsage(provider.usage);
+      return [
+        {
+          providerInstanceId: provider.providerInstanceId,
+          driverKind: provider.driverKind,
+          models: (Array.isArray(provider.models) ? provider.models : [])
+            .filter(isRecord)
+            .flatMap((model) => (typeof model.id === "string" ? [model.id] : [])),
+          available: Array.isArray(provider.constraints) && provider.constraints.length === 0,
+          ...(usage === undefined ? {} : { usage }),
+          ...(typeof provider.allowedByGrant === "boolean"
+            ? { allowedByGrant: provider.allowedByGrant }
+            : {}),
+        } as unknown as OrchestratorMcpMachineProvider,
+      ];
+    });
 
 const make = Effect.gen(function* () {
   const targets = yield* FleetTargets.FleetTargets;
@@ -1131,6 +1177,8 @@ export const layerFleetWorkers = Layer.mergeAll(
   layer,
   RemoteWorkerFollower.layerResume,
   FleetWorkerGrants.layerRenewal,
+  // Carries a phone revocation between this machine and the machines it linked the phone to.
+  PhoneLinks.layerSweep,
 ).pipe(
   Layer.provideMerge(RemoteWorkerFollower.layer),
   Layer.provideMerge(RemoteStudioMcpClient.layer),

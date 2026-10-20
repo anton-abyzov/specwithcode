@@ -334,6 +334,20 @@ export const ProjectTakeoverResult = Schema.Struct({
 export type ProjectTakeoverResult = typeof ProjectTakeoverResult.Type;
 
 /**
+ * Member machine: run this copy's own coordinator next to the others, at the
+ * next epoch. Nothing is replaced, so no other copy gives way.
+ */
+export const ProjectStartCoordinatorInput = Schema.Struct({
+  operationId: ProjectLinkOperationId,
+  projectId: ProjectId,
+  /** The highest epoch any copy is known at; the new binding is above it. */
+  knownEpoch: Schema.optional(NonNegativeInt),
+});
+export type ProjectStartCoordinatorInput = typeof ProjectStartCoordinatorInput.Type;
+export const ProjectStartCoordinatorResult = ProjectTakeoverResult;
+export type ProjectStartCoordinatorResult = typeof ProjectStartCoordinatorResult.Type;
+
+/**
  * Previous coordinator's machine, once reachable again: give way to the member
  * that took over. It becomes a member that runs workers.
  */

@@ -35,6 +35,7 @@ import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../
 import { Switch } from "../ui/switch";
 import { AddApiCreditAccountDialog } from "./AddApiCreditAccountDialog";
 import { addFallbackEntry, FallbackOrderList, MAX_FALLBACK_MODELS } from "./FallbackOrderList";
+import { MachineFallbackSettings } from "./MachineFallbackSettings";
 import { useSettingsScope } from "./SettingsScopeContext";
 import {
   SETTINGS_PICKER_TRIGGER_CLASSNAME,
@@ -52,7 +53,7 @@ const ACTION_LABELS: Record<ProviderLimitAction, string> = {
   wait: "Wait for the reset",
   switch: "Switch automatically",
 };
-const SWITCH_AT_OPTIONS = ["off", "80", "85", "90", "95"] as const;
+const SWITCH_AT_OPTIONS = ["off", "50", "60", "70", "75", "80", "85", "90", "95"] as const;
 /** The stored threshold is a used share; the label names what is left at that point. */
 const switchAtLabel = (value: string) => `At ${100 - Number(value)}% left`;
 const WAIT_UNDER_OPTIONS = ["0", "15", "30", "60", "120"] as const;
@@ -210,6 +211,7 @@ export function ProviderLimitSettings() {
           onChange={saveFallbackOrder}
         />
       </SettingsRow>
+      <MachineFallbackSettings />
       <SettingsRow
         serverScoped
         settingKeys={["providerLimitSwitchAtPercent"]}

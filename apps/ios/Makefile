@@ -5,7 +5,7 @@ SCHEME := SpecWithCode
 DESTINATION ?= generic/platform=iOS Simulator
 DERIVED_DATA ?= build/DerivedData
 
-.PHONY: project build test-core test-app shots
+.PHONY: project build test-core test-app shots fault-shots
 
 project:
 	xcodegen generate
@@ -31,3 +31,10 @@ shots:
 	fi
 	@if [ ! -f Tools/shots.sh ]; then echo "Tools/shots.sh not found" >&2; exit 1; fi
 	bash Tools/shots.sh '$(SIM_UDID)'
+
+# Machine-outage sequences from the fleet fixture; run after `make shots` installs the app.
+fault-shots:
+	@if [ -z "$(SIM_UDID)" ]; then \
+	  echo "usage: make fault-shots SIM_UDID=<simulator-udid>" >&2; exit 2; \
+	fi
+	bash Tools/fault-shots.sh '$(SIM_UDID)'

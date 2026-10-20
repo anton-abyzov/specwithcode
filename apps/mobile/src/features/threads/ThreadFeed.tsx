@@ -50,10 +50,14 @@ import {
   renderCodexFileCitationsAsMarkdown,
   splitCodexArtifactTemplateMarkdown,
 } from "@specweave-studio/client-runtime/codex-markdown-directives";
-import { CHAT_LIST_ANCHOR_OFFSET, resolveChatListAnchoredEndSpace } from "@specweave-studio/shared/chatList";
+import {
+  CHAT_LIST_ANCHOR_OFFSET,
+  resolveChatListAnchoredEndSpace,
+} from "@specweave-studio/shared/chatList";
 import { imageMimeType } from "@specweave-studio/shared/image";
 import { videoMimeType } from "@specweave-studio/shared/video";
 import { SymbolView, type AppSymbolName } from "../../components/AppSymbol";
+import { ThinkingProviderScope, type ThinkingMarkProvider } from "../../components/CraftedGlyphs";
 import { HeaderHeightContext } from "@react-navigation/elements";
 import { useFocusEffect, useNavigation } from "@react-navigation/native";
 import {
@@ -282,6 +286,8 @@ export interface ThreadFeedProps {
   readonly feed: ReadonlyArray<ThreadFeedEntry>;
   readonly contentPresentation: ThreadContentPresentation;
   readonly agentLabel: string;
+  /** The provider whose mark thinking rows show; dots when unknown. */
+  readonly thinkingProvider?: ThinkingMarkProvider | null;
   readonly latestRun: ThreadFeedLatestRun | null;
   readonly activeWorkStartedAt: string | null;
   readonly runlessWorkActive?: boolean;
@@ -3059,7 +3065,7 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
     );
   }
 
-  return (
+  const feedView = (
     <PresentationSource identifier={fileShareSourceIdentifier} style={{ flex: 1 }}>
       <View className="flex-1" onLayout={handleViewportLayout}>
         <View className="flex-1">
@@ -3211,6 +3217,9 @@ export const ThreadFeed = memo(function ThreadFeed(props: ThreadFeedProps) {
         <FilePreviewModal source={expandedFile} onRequestClose={() => setExpandedFile(null)} />
       </View>
     </PresentationSource>
+  );
+  return (
+    <ThinkingProviderScope value={props.thinkingProvider ?? null}>{feedView}</ThinkingProviderScope>
   );
 });
 

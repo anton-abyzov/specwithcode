@@ -183,6 +183,17 @@ export function summarizeStudioToolCalls(
             : phrase("Requested", "continue", `all interrupted threads ${times}`);
       break;
     }
+    case "thread-migrate": {
+      const rows = selected.map((call) => call.output?.results);
+      const known = completed.length > 0 && rows.every(Array.isArray);
+      const moved = rows
+        .flatMap((row) => (Array.isArray(row) ? row : []))
+        .filter((row) => asRecord(row)?.outcome === "moved").length;
+      label = known
+        ? `Moved ${quantity(moved, "thread")} to another machine`
+        : phrase("Requested", "move", `threads to another machine ${times}`);
+      break;
+    }
     case "task-status":
       label = phrase("Checked", "check", `task status ${times}`);
       break;

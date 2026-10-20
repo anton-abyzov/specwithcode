@@ -53,6 +53,7 @@ import { machineHandoff } from "../../studio/machineHandoff";
 import { requestConfirmDialog } from "../../confirmDialog";
 import { FleetInviteArea } from "./FleetInvite";
 import { MachineReadinessChecklist } from "./MachineReadinessChecklist";
+import { ProvisionMachineButton } from "./ProvisionMachineSheet";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 import { Button } from "../ui/button";
@@ -598,6 +599,12 @@ export function StudioFleetRoster({
                     </Button>
                   )}
                 </div>
+                {canCheckReadiness && (current || (saved && own?.connected)) ? (
+                  <ProvisionMachineButton
+                    environmentId={machine.environmentId}
+                    environmentLabel={machine.label}
+                  />
+                ) : null}
                 {canCheckReadiness && (current || (saved && own?.connected)) ? (
                   readinessFor === machine.id ? (
                     <div className="rounded-lg border p-2.5">

@@ -349,6 +349,8 @@ class InstallNow(AgentCase):
         real = update_agent.Agent.take_snapshot
 
         def slow(agent, *args):
+            if len(self.snapshot_calls()) > 60:  # A pass that never waits or ends fails here, not by hanging.
+                raise AssertionError('The pass kept taking snapshots')
             result = real(agent, *args)
             if len(self.snapshot_calls()) == call:
                 self.offset += datetime.timedelta(minutes=minutes)
@@ -385,6 +387,21 @@ class InstallNow(AgentCase):
         self.assertEqual((code, state['status'], state['lastInstall']['result']), (0, 'installed', 'updated'))
         self.assertEqual(state['handledInstallRequestAt'], newer)
         self.assertEqual((len(self.snapshot_calls()), len(self.apply_calls())), (4, 2))
+        self.assertEqual(self.sleeps, [update_agent.RETRY_SECONDS])  # One wait before its second snapshot.
+
+    def test_a_newer_request_whose_snapshots_all_refuse_waits_out_a_window_of_its_own(self):
+        """Taken on after the older request's window ran out, it waits between snapshots for its own
+        window, then is left waiting for quiet: never ended as the older request's refused apply."""
+        base = update_agent.utcnow()  # Only the waits move the clock, so the count is the same under load.
+        with mock.patch.object(update_agent, 'utcnow', lambda: base + self.offset):
+            code = self.written_during_snapshot(2, {'snapshotFailAfterApply': True}, installMode='normal',
+                                                installRequestedAt=self.NEWER)
+        state = self.state()
+        self.assertEqual((code, state['status'], state['lastInstall']), (0, 'waiting-for-quiet', None))
+        self.assertNotEqual(state['handledInstallRequestAt'], self.NEWER)
+        self.assertEqual(len(self.apply_calls()), 1)
+        waits = int(update_agent.REQUEST_WINDOW.total_seconds() // update_agent.RETRY_SECONDS) - 1
+        self.assertEqual(self.sleeps, [update_agent.RETRY_SECONDS] * waits)
 
     def test_a_newer_request_taken_on_before_its_apply_owns_the_refusal(self):
         """Update, then Update now while the snapshot before the apply ran: the refused apply and its
@@ -396,21 +413,42 @@ class InstallNow(AgentCase):
         self.assert_ended_as_the_refused_apply(request=newer)
         self.assertIs(self.state()['lastInstall']['refusedBeforeRestart'], True)
 
-    def test_a_newer_request_taken_on_as_its_apply_starts_owns_the_refusal(self):
-        """Written as the apply wrote its installing status: the helper ran for the newer request."""
-        newer = '2026-10-12T20:01:00+00:00'
+    NEWER = '2026-10-12T20:01:00+00:00'
+
+    def taken_on_as_apply_starts(self, apply, **control):
+        """A plain request; the desktop writes a newer one as apply number `apply` writes its installing status."""
         self.fake.add_release()
         self.request(mode='normal')
-        self.control(applyRefusals=1, snapshotFailAfterApply=True)
+        self.control(**control)
         real = update_agent.Agent.set_status
 
         def racing(agent, status, message=None):
             real(agent, status, message)
-            if status == 'installing' and not self.apply_calls():
-                self.config(installAutomatically=False, quietMinutes=60, installMode='normal', installRequestedAt=newer)
+            if status == 'installing' and len(self.apply_calls()) == apply - 1:
+                self.config(installAutomatically=False, quietMinutes=60, installMode='normal', installRequestedAt=self.NEWER)
         with mock.patch.object(update_agent.Agent, 'set_status', racing):
-            self.assertEqual(self.run_agent(), 1)
-        self.assert_ended_as_the_refused_apply(request=newer)
+            return self.run_agent()
+
+    def assert_installed_for_the_newer_request(self, applies):
+        state = self.state()
+        self.assertEqual((state['status'], state['lastInstall']['result']), ('installed', 'updated'))
+        self.assertEqual(state['handledInstallRequestAt'], self.NEWER)
+        self.assertEqual(len(self.apply_calls()), applies)
+
+    def test_a_newer_request_taken_on_as_its_apply_starts_owns_the_refusal(self):
+        """Written as the apply wrote its installing status: the helper ran for the newer request."""
+        self.assertEqual(self.taken_on_as_apply_starts(1, applyRefusals=1, snapshotFailAfterApply=True), 1)
+        self.assert_ended_as_the_refused_apply(request=self.NEWER)
+
+    def test_a_newer_request_taken_on_as_a_retry_applies_gets_retries_of_its_own(self):
+        """That apply is the newer request's first, so two retries still follow it."""
+        self.assertEqual(self.taken_on_as_apply_starts(2, applyRefusals=3), 0)
+        self.assert_installed_for_the_newer_request(applies=4)
+
+    def test_a_newer_request_taken_on_as_the_last_retry_applies_still_retries_its_refusal(self):
+        """The older request spent both retries; its last apply ran for the newer one, whose first it is."""
+        self.assertEqual(self.taken_on_as_apply_starts(3, applyRefusals=3), 0)
+        self.assert_installed_for_the_newer_request(applies=4)
 
     def test_a_newer_request_after_spent_retries_gets_retries_of_its_own(self):
         """The older request used both retries; the newer one, taken on before the third apply, retries it."""

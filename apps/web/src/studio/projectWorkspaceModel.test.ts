@@ -7,6 +7,7 @@ import {
   hostDisconnectedLabel,
   projectAdmissionReason,
   projectThreadGroup,
+  remoteOrchestratorOfflineLabel,
   projectThreadReference,
   projectThreads,
   threadAttentionNote,
@@ -497,7 +498,16 @@ describe("Project admission and retry", () => {
   it("requires a connected authorized active project", () => {
     const settings = { paused: false, archived: false };
     expect(projectAdmissionReason(settings, true, true)).toBeNull();
-    expect(projectAdmissionReason(settings, false, true)).toMatch(/Reconnect/);
+    expect(projectAdmissionReason(settings, false, true)).toMatch(/unreachable/);
+    expect(
+      projectAdmissionReason(settings, false, true, null, {
+        isThisDevice: false,
+        graceElapsed: true,
+        machineLabel: "Minis",
+      }),
+    ).toBe(
+      "Minis is unreachable, so its coordinator cannot take messages. Nothing is sent to another machine.",
+    );
     expect(
       projectAdmissionReason(settings, false, true, {
         phase: "error",
@@ -579,6 +589,20 @@ describe("Project admission and retry", () => {
       expect(hostDisconnectedLabel({ phase: "reconnecting" }, remote)).toBe("Reconnecting");
       expect(hostDisconnectedLabel({ phase: "offline" }, remote)).toBe("Offline");
     }
+  });
+  it("refuses a message to a named machine that dropped, saying nothing goes elsewhere", () => {
+    const settings = { paused: false, archived: false };
+    expect(
+      projectAdmissionReason(
+        settings,
+        false,
+        true,
+        { phase: "reconnecting" },
+        { isThisDevice: false, graceElapsed: true, machineLabel: "Minis" },
+      ),
+    ).toBe(
+      "Minis is unreachable, so its coordinator cannot take messages. Nothing is sent to another machine. Reconnecting…",
+    );
   });
   it("retains unresolved receipts across reloads, isolated by scope, and removes acknowledgements", () => {
     const values = new Map<string, string>();
@@ -758,4 +782,24 @@ it("does not list native subagents of an independent user chat as project work",
   expect(
     projectThreads([independent, child, worker], "host-1", projectId, coordinator).map((t) => t.id),
   ).toEqual(["worker-1"]);
+});
+
+describe("remoteOrchestratorOfflineLabel", () => {
+  const now = Date.UTC(2026, 9, 20, 18, 0);
+  it("says how old the synced copy is and that it is read-only", () => {
+    expect(remoteOrchestratorOfflineLabel("Minis", now - 12 * 60_000, now)).toBe(
+      "Minis unreachable · last synced 12 min ago · read-only",
+    );
+    expect(remoteOrchestratorOfflineLabel("Minis", now - 3 * 3_600_000, now)).toBe(
+      "Minis unreachable · last synced 3 h ago · read-only",
+    );
+    expect(remoteOrchestratorOfflineLabel("Minis", now, now)).toBe(
+      "Minis unreachable · last synced just now · read-only",
+    );
+  });
+  it("says Unknown when nothing records a sync", () => {
+    expect(remoteOrchestratorOfflineLabel("Minis", null, now)).toBe(
+      "Minis unreachable · last synced: Unknown · read-only",
+    );
+  });
 });

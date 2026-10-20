@@ -350,3 +350,37 @@ export function buildThreadTitlePrompt(input: ThreadTitlePromptInput) {
 
   return { prompt, outputSchema };
 }
+
+// ---------------------------------------------------------------------------
+// Handoff note
+// ---------------------------------------------------------------------------
+
+export interface HandoffNotePromptInput {
+  /** The latest turns, oldest first, already trimmed by the caller. */
+  transcript: string;
+  maxWords: number;
+}
+
+/** The note another machine or model reads before it continues the thread. */
+export function buildHandoffNotePrompt(input: HandoffNotePromptInput) {
+  const prompt = [
+    "You write the handoff note another engineer reads before continuing this thread on another machine.",
+    "Return a JSON object with keys done, next and openQuestions.",
+    "Rules:",
+    `- at most ${input.maxWords} words across all three fields`,
+    "- done: what this thread finished, with file paths, branches, PR numbers and commands where they matter",
+    "- next: the very next step, concrete enough to start without rereading the thread",
+    "- openQuestions: decisions still waiting on the user; an empty string when there are none",
+    "- never include secrets, tokens or passwords",
+    PLAIN_TEXT_RULE,
+    "",
+    "Thread (latest turns):",
+    preserveMessageEnd(input.transcript),
+  ].join("\n");
+  const outputSchema = Schema.Struct({
+    done: Schema.String,
+    next: Schema.String,
+    openQuestions: Schema.String.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  });
+  return { prompt, outputSchema };
+}

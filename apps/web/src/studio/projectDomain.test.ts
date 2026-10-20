@@ -10,7 +10,9 @@ import type {
   EnvironmentThreadShell,
 } from "@specweave-studio/client-runtime/state/shell";
 import {
+  copyRolesSummary,
   logicalCoordinator,
+  logicalCoordinators,
   logicalProjectThreads,
   projectExecutionScopes,
   requestExecutionLabel,
@@ -36,21 +38,23 @@ const projects = refs.map((ref, index) => ({
   },
 })) as unknown as EnvironmentProject[];
 describe("logical project execution", () => {
-  it("resolves only the admitted owner, refusing conflicts and a missing successor", () => {
+  it("names the newest coordinator and reports none when every copy runs workers", () => {
     expect(logicalCoordinator(projects)?.member?.id).toBe("m3");
     expect(logicalCoordinator(projects.slice(0, 2))?.member).toBeUndefined();
-    expect(
-      logicalCoordinator([
-        projects[2]!,
-        {
-          ...projects[0]!,
-          workspaceSettings: {
-            ...projects[0]!.workspaceSettings!,
-            coordinatorBinding: { epoch: 0, state: "active" },
-          },
-        },
-      ])?.problem,
-    ).toContain("Conflicting");
+    expect(logicalCoordinator(projects.slice(0, 2))?.problem).toContain("unavailable");
+  });
+  it("lets each machine run its own coordinator without a conflict", () => {
+    const m4 = {
+      ...projects[0]!,
+      workspaceSettings: {
+        ...projects[0]!.workspaceSettings!,
+        coordinatorBinding: { epoch: 0, state: "active" as const },
+      },
+    };
+    const both = [projects[2]!, m4];
+    expect(logicalCoordinator(both)).toEqual({ member: projects[2], problem: null });
+    expect(logicalCoordinators(both)?.coordinators).toEqual([projects[2], m4]);
+    expect(copyRolesSummary(both)).toBe("Machine: coordinator · Machine: coordinator");
   });
   it("keeps the transferring source mounted for retry but blocks sending", () => {
     const source = {
@@ -104,9 +108,9 @@ describe("logical project execution", () => {
       requestExecutionLabel(
         { runId: "old" },
         [{ id: "old", modelSelection: { instanceId: "claudeAgent", model: "claude-opus-5-5" } }],
-        "Anton's MacBook M4MAX (149)",
+        "Anton's Mac",
       ),
-    ).toBe("MacBook M4MAX (149) · Claude Code · Opus 5.5");
+    ).toBe("Anton's Mac · Claude Code · Opus 5.5");
   });
 });
 
@@ -133,7 +137,80 @@ it("uses the declared successor chain without waiting forever for a stale ancest
     },
   };
   expect(logicalCoordinator([a, b, c])?.member).toBe(c);
-  expect(logicalCoordinator([a, c])?.problem).toContain("Conflicting");
+  // Without the link in between, the transferring copy still waits on its own handoff.
+  expect(logicalCoordinator([a, c])).toEqual({ member: c, problem: null });
+  expect(logicalCoordinators([a, c])?.pending).toEqual([a]);
+});
+it("supersedes an active ancestor that a newer copy took over from", () => {
+  const old = {
+    ...projects[0]!,
+    workspaceSettings: {
+      ...projects[0]!.workspaceSettings!,
+      coordinatorBinding: { epoch: 1, state: "active" as const },
+    },
+  };
+  const successor = {
+    ...projects[1]!,
+    workspaceSettings: {
+      ...projects[1]!.workspaceSettings!,
+      coordinatorBinding: {
+        epoch: 2,
+        state: "active" as const,
+        predecessor: refs[0]!,
+        takenOverAt: "2026-10-20T18:00:00.000Z",
+      },
+    },
+  };
+  const found = logicalCoordinators([old, successor]);
+  expect(found?.coordinators).toEqual([successor]);
+  expect(found?.superseded).toEqual([old]);
+});
+it("flags an ancestor still active at the epoch its successor took over at", () => {
+  const ancestor = {
+    ...projects[0]!,
+    workspaceSettings: {
+      ...projects[0]!.workspaceSettings!,
+      coordinatorBinding: { epoch: 1, state: "active" as const },
+    },
+  };
+  const successor = {
+    ...projects[1]!,
+    workspaceSettings: {
+      ...projects[1]!.workspaceSettings!,
+      coordinatorBinding: { epoch: 1, state: "active" as const, predecessor: refs[0]! },
+    },
+  };
+  const found = logicalCoordinators([ancestor, successor]);
+  expect(found?.coordinators).toEqual([successor, ancestor]);
+  expect(found?.contested).toEqual([successor, ancestor]);
+  expect(logicalCoordinator([ancestor, successor])?.problem).toContain("same epoch");
+  // A coordinator started after the takeover runs at a newer epoch and contests nothing.
+  const restarted = {
+    ...ancestor,
+    workspaceSettings: {
+      ...ancestor.workspaceSettings,
+      coordinatorBinding: { epoch: 2, state: "active" as const },
+    },
+  };
+  expect(logicalCoordinators([restarted, successor])?.contested).toEqual([]);
+  expect(logicalCoordinator([restarted, successor])).toEqual({ member: restarted, problem: null });
+});
+it("does not loop or supersede both copies when predecessors point at each other", () => {
+  const a = {
+    ...projects[0]!,
+    workspaceSettings: {
+      ...projects[0]!.workspaceSettings!,
+      coordinatorBinding: { epoch: 1, state: "active" as const, predecessor: refs[1]! },
+    },
+  };
+  const b = {
+    ...projects[1]!,
+    workspaceSettings: {
+      ...projects[1]!.workspaceSettings!,
+      coordinatorBinding: { epoch: 2, state: "active" as const, predecessor: refs[0]! },
+    },
+  };
+  expect(logicalCoordinators([a, b])?.coordinators).toEqual([b]);
 });
 it("retains the current host scope while a new project's member list is empty", () => {
   const project = {

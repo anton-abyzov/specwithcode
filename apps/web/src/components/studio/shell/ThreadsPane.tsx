@@ -15,6 +15,7 @@ import {
   RotateCcwIcon,
   SearchIcon,
   SlidersVerticalIcon,
+  WifiOffIcon,
 } from "lucide-react";
 import { useMemo, useRef, useState, type ReactNode, type RefObject } from "react";
 
@@ -26,13 +27,15 @@ import {
   threadAttentionNote,
   type ProjectThreadGroup,
 } from "../../../studio/projectWorkspaceModel";
+import { threadLocation } from "../../../studio/threadLocation";
+import { useMachineNicknames } from "../../../studio/machineNickname";
 import { withRunningSubagents } from "../../../studio/threadSubagents";
+import { useEnvironments } from "../../../state/environments";
 import {
   buildThreadPaneGroups,
   compactAge,
   modelLabel,
   nowFromMinute,
-  shortMachineName,
   THREAD_GROUP_PAGE,
   THREAD_GROUP_PAGE_STEP,
   THREAD_GROUPS_FOLDED_BY_DEFAULT,
@@ -154,6 +157,28 @@ export function ThreadsPane({
     Boolean(props.remoteWorkerCount) ||
     allThreads.some((thread) => thread.environmentId !== props.environmentId);
   const unreachable = useUnreachableHosts();
+  const { environments } = useEnvironments();
+  const nickname = useMachineNicknames();
+  // A row names where a thread lives and runs ("M4", "M4 → Minis") by nickname; the
+  // tooltip keeps the host label. Machines this device reaches name themselves, and
+  // project members fill in the ones it does not.
+  const machineNames = useMemo(() => {
+    const labels = new Map<string, string>();
+    for (const environment of environments)
+      labels.set(environment.environmentId, environment.label);
+    for (const [environmentId, label] of props.machineLabels ?? [])
+      if (label !== environmentId && !labels.has(environmentId)) labels.set(environmentId, label);
+    const name = (environmentId: string, fallbackLabel?: string | null) => {
+      const label = labels.get(environmentId) ?? fallbackLabel;
+      const resolved = nickname(environmentId, label);
+      return label || resolved !== environmentId ? resolved : "another machine";
+    };
+    return {
+      name,
+      fullName: (environmentId: string, fallbackLabel?: string | null) =>
+        labels.get(environmentId) ?? fallbackLabel ?? name(environmentId),
+    };
+  }, [environments, props.machineLabels, nickname]);
   const groups = useMemo(
     () => buildThreadPaneGroups(allThreads, sortBy, query, props.runningSubagents, unreachable),
     [allThreads, query, sortBy, props.runningSubagents, unreachable],
@@ -385,9 +410,15 @@ export function ThreadsPane({
                       subagentsWorking,
                     );
                     const rowStatus = statusWord === group ? null : statusWord;
-                    const machine = multiMachine
-                      ? (props.machineLabels?.get(thread.environmentId) ?? null)
-                      : null;
+                    const location = threadLocation({
+                      summary: thread.source,
+                      servingEnvironmentId: thread.environmentId,
+                      name: machineNames.name,
+                      fullName: machineNames.fullName,
+                      unreachable,
+                    });
+                    // A thread that runs away from home says so even in a one-machine project.
+                    const machine = multiMachine || location.moved ? location : null;
                     const showDot = tone === "waiting" || tone === "working" || tone === "failed";
                     const pullRequest = threadPullRequest(thread);
                     const plan = compactThreadPlan(
@@ -453,11 +484,26 @@ export function ThreadsPane({
                                 </span>
                               ) : null}
                               {machine ? (
-                                <span className="sws-thread-machine" title={machine}>
-                                  <LaptopIcon aria-hidden />
-                                  <span className="sr-only">On </span>
-                                  {shortMachineName(machine)}
-                                </span>
+                                <Tooltip>
+                                  <TooltipTrigger
+                                    render={
+                                      <span
+                                        className="sws-thread-machine"
+                                        data-execution={machine.state}
+                                        data-moved={machine.moved || undefined}
+                                      />
+                                    }
+                                  >
+                                    {machine.state === "unknown" ? (
+                                      <WifiOffIcon aria-hidden />
+                                    ) : (
+                                      <LaptopIcon aria-hidden />
+                                    )}
+                                    <span className="sr-only">{machine.description}</span>
+                                    <span aria-hidden>{machine.label}</span>
+                                  </TooltipTrigger>
+                                  <TooltipPopup side="bottom">{machine.description}</TooltipPopup>
+                                </Tooltip>
                               ) : null}
                               {thread.runtime?.lastError ? (
                                 <span className="sws-thread-error">{thread.runtime.lastError}</span>

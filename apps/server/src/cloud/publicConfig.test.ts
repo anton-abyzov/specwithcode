@@ -7,6 +7,7 @@ import {
   hostedAppUrlConfig,
   makeCloudCliOAuthConfig,
   makeRelayUrlConfig,
+  resolveHostedServicesEnabled,
   resolveRelayClientTracingConfig,
 } from "./publicConfig.ts";
 
@@ -178,5 +179,29 @@ it("resolves relay client tracing from runtime config with build-time fallback",
       fallback,
     ),
     null,
+  );
+});
+
+it("keeps hosted services off unless the process or the build opts in", () => {
+  assert.isFalse(
+    resolveHostedServicesEnabled({ enable: undefined, disable: undefined, buildDefault: "" }),
+  );
+  assert.isFalse(
+    resolveHostedServicesEnabled({ enable: "false", disable: undefined, buildDefault: undefined }),
+  );
+  assert.isTrue(
+    resolveHostedServicesEnabled({ enable: "true", disable: undefined, buildDefault: "" }),
+  );
+});
+
+it("lets a release build's opt-in survive launchers that still pass the legacy false", () => {
+  assert.isTrue(
+    resolveHostedServicesEnabled({ enable: "false", disable: undefined, buildDefault: "true" }),
+  );
+  assert.isFalse(
+    resolveHostedServicesEnabled({ enable: "false", disable: "true", buildDefault: "true" }),
+  );
+  assert.isFalse(
+    resolveHostedServicesEnabled({ enable: "true", disable: "true", buildDefault: "" }),
   );
 });

@@ -109,6 +109,12 @@ final class FakeMachine: Sendable {
 
   let requests = Recorder<JSONValue>()
   private let failures = Mutex<[String: String]>([:])
+  /// What `server.getConfig` answers.
+  let configJSON: String
+
+  init(config: String = FakeMachine.config) {
+    configJSON = config
+  }
 
   /// Makes the next call of `tag` fail with this typed error JSON.
   func fail(_ tag: String, with error: String) {
@@ -144,7 +150,10 @@ final class FakeMachine: Sendable {
       }
       switch tag {
       case "server.getConfig":
-        return [Self.exit(id, Self.config)]
+        return [Self.exit(id, configJSON)]
+      case "subscribeServerConfig":
+        // As a server: the snapshot, then updates on the open stream.
+        return [Self.chunk(id, #"{"version":1,"type":"snapshot","config":\#(configJSON)}"#)]
       case "orchestration.subscribeShell":
         return [Self.chunk(id, FixtureJSON.shellSnapshot), Self.chunk(id, #"{"kind":"synchronized"}"#)]
       case "orchestration.subscribeThread":

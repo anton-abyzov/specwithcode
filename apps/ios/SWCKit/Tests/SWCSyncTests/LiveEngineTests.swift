@@ -125,6 +125,24 @@ import SWCWire
     #expect(await until { h.machine.payloads("orchestration.subscribeThread").last?["threadId"] == .string("thr_coord") })
   }
 
+  @Test func renamesShowWithoutReconnecting() async throws {
+    let h = try await harness()
+    #expect(await loaded(h))
+    #expect(await until { h.machine.requests("subscribeServerConfig").count == 1 })
+    let streamId = try #require(h.machine.requests("subscribeServerConfig").last?["id"]?.intValue)
+    let socket = try #require(h.connector.connections.values.last)
+    func renamed(_ name: String, at time: String) -> String {
+      FakeMachine.chunk(streamId, #"{"version":1,"type":"settingsUpdated","payload":{"settings":{"providerInstances":{},"machineNicknames":{"\#(env)":{"name":"\#(name)","updatedAt":"\#(time)"}}}}}"#)
+    }
+    socket.push(renamed("Desk", at: "2026-10-20T22:00:00.000Z"))
+    #expect(await until { h.model.machines.first?.displayName == "Desk" })
+    #expect(await until { h.model.recentThreads.first?.placement.owner == "Desk" })
+    // An empty name resets the machine to its own name.
+    socket.push(renamed("", at: "2026-10-20T22:05:00.000Z"))
+    #expect(await until { h.model.machines.first?.displayName == "M4" })
+    #expect(h.connector.connections.values.count == 1)
+  }
+
   @Test func missingCoordinatorIsSubscribedAgainOnceTheShellListsIt() async throws {
     let h = try await harness()
     #expect(await loaded(h))

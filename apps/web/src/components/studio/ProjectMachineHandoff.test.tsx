@@ -54,6 +54,9 @@ vi.mock("../../lib/utils", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../../lib/utils")>()),
   randomUUID: () => "7307ab55-fc59-4e07-abeb-de54be69215f",
 }));
+vi.mock("../../studio/machineNickname", () => ({
+  useMachineNicknames: () => (_id: string, label?: string | null) => label ?? "Machine",
+}));
 vi.mock("./shell/Tip", () => ({ Tip: ({ children }: React.PropsWithChildren) => <>{children}</> }));
 vi.mock("./MachineHandoffDialog", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./MachineHandoffDialog")>()),

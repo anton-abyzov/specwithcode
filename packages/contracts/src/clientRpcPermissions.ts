@@ -13,6 +13,7 @@ import {
   type AuthEnvironmentScope,
 } from "./auth.ts";
 import { WS_METHODS } from "./rpc.ts";
+import { PROVISION_RPC_METHODS } from "./provision.ts";
 
 /** Incremental client enforcement; the server still authorizes every request. */
 export const CLIENT_GUARDED_RPC_SCOPES = {
@@ -36,6 +37,9 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.managedUpdatesCheck]: AuthEnvironmentMaintainScope,
   [WS_METHODS.machineHandoffPrepare]: AuthOrchestrationOperateScope,
   [WS_METHODS.machineHandoffReceive]: AuthSourceControlWriteScope,
+  // Provisioning reads the machine like Check readiness and installs like a server update.
+  [PROVISION_RPC_METHODS.provisionPreview]: AuthFilesystemReadScope,
+  [PROVISION_RPC_METHODS.provisionRun]: AuthEnvironmentMaintainScope,
   // Reading a folder's repositories and a copy's notes before linking.
   [WS_METHODS.projectsFingerprint]: AuthFilesystemReadScope,
   [WS_METHODS.projectLinkPreview]: AuthOrchestrationReadScope,
@@ -58,11 +62,26 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.machineHandoffCopySecrets]: AuthAccessWriteScope,
   [WS_METHODS.machineHandoffSentSecrets]: AuthFilesystemReadScope,
   [WS_METHODS.machineHandoffReadiness]: AuthFilesystemReadScope,
+  // Handoff mode: settings, per-thread checkpoints (a Git ref, maybe pushed) and moving work.
+  [WS_METHODS.handoffModeSnapshot]: AuthOrchestrationReadScope,
+  [WS_METHODS.handoffModeUpdateConfig]: AuthSettingsWriteScope,
+  [WS_METHODS.handoffModeSetThreadMode]: AuthOrchestrationOperateScope,
+  [WS_METHODS.handoffModeSetProjectMode]: AuthSettingsWriteScope,
+  [WS_METHODS.handoffModeCheckpointNow]: AuthSourceControlWriteScope,
+  [WS_METHODS.handoffModeHandOff]: AuthOrchestrationOperateScope,
+  [WS_METHODS.handoffModeHandOffMachine]: AuthOrchestrationOperateScope,
+  [WS_METHODS.handoffModeContinueHere]: AuthOrchestrationOperateScope,
+  [WS_METHODS.handoffModeResumeFenced]: AuthOrchestrationOperateScope,
   [WS_METHODS.projectLinkDigest]: AuthOrchestrationReadScope,
+  [WS_METHODS.projectLinkMemoryExport]: AuthOrchestrationReadScope,
+  [WS_METHODS.projectLinkMemoryMerge]: AuthSettingsWriteScope,
+  // Machine names, grant status and usage of paired machines for one thread.
+  [WS_METHODS.limitHandoffCandidates]: AuthOrchestrationReadScope,
   // A member's read-only copy of its coordinator's notes, and taking over or giving way.
   [WS_METHODS.projectLinkReplicate]: AuthSettingsWriteScope,
   [WS_METHODS.projectTakeover]: AuthSettingsWriteScope,
   [WS_METHODS.projectSupersede]: AuthSettingsWriteScope,
+  [WS_METHODS.projectStartCoordinator]: AuthSettingsWriteScope,
   [WS_METHODS.projectsEnvironmentPrepare]: AuthSourceControlWriteScope,
   [WS_METHODS.projectsPlanReplace]: AuthOrchestrationOperateScope,
   [WS_METHODS.projectsPlanConfigure]: AuthOrchestrationOperateScope,
@@ -70,6 +89,8 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.projectsPlanRelease]: AuthOrchestrationOperateScope,
   [WS_METHODS.projectsPlanReport]: AuthOrchestrationOperateScope,
   [WS_METHODS.projectsPlanVerify]: AuthOrchestrationOperateScope,
+  // Applies claims made on a linked machine, like claiming here.
+  [WS_METHODS.projectLinkPlanMerge]: AuthOrchestrationOperateScope,
   [WS_METHODS.projectsMemoryWrite]: AuthOrchestrationOperateScope,
   [WS_METHODS.projectsLibraryAddArtifact]: AuthFilesystemWriteScope,
   [WS_METHODS.projectsKnowledgeReindex]: AuthOrchestrationOperateScope,
@@ -92,6 +113,9 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.pullRequestsRequestReviewers]: AuthSourceControlWriteScope,
   [WS_METHODS.pullRequestsSetLabels]: AuthSourceControlWriteScope,
   [WS_METHODS.sourceControlCloneRepository]: AuthSourceControlWriteScope,
+  // Runs git with this machine's credentials; only offered before a clone, which needs write.
+  [WS_METHODS.sourceControlCheckRemoteAccess]: AuthSourceControlWriteScope,
+  [WS_METHODS.sourceControlInspectDestination]: AuthSourceControlWriteScope,
   [WS_METHODS.sourceControlPublishRepository]: AuthSourceControlWriteScope,
   [WS_METHODS.projectCloneStart]: AuthSourceControlWriteScope,
   [WS_METHODS.projectCloneCancel]: AuthSourceControlWriteScope,
@@ -144,6 +168,7 @@ function folderCopyScopes(method: string, input: unknown): readonly AuthEnvironm
     case WS_METHODS.machineHandoffCopyStatus:
     case WS_METHODS.machineHandoffSentSecrets:
     case WS_METHODS.machineHandoffReadiness:
+    case PROVISION_RPC_METHODS.provisionPreview:
       return read;
     // Sends secret files to another machine: as strong as granting it access.
     case WS_METHODS.machineHandoffCopySecrets:
@@ -207,10 +232,19 @@ export function clientRpcRequiredScopes(
     method === WS_METHODS.projectLinkCommit ||
     method === WS_METHODS.projectUnlink ||
     method === WS_METHODS.projectLinkReplicate ||
+    method === WS_METHODS.projectLinkMemoryMerge ||
     method === WS_METHODS.projectTakeover ||
-    method === WS_METHODS.projectSupersede
+    method === WS_METHODS.projectSupersede ||
+    method === WS_METHODS.projectStartCoordinator
   )
     return [AuthSettingsWriteScope, AuthOrchestrationOperateScope];
+  // Moving a thread writes a checkpoint ref (pushed when allowed) and starts work elsewhere.
+  if (
+    method === WS_METHODS.handoffModeHandOff ||
+    method === WS_METHODS.handoffModeHandOffMachine ||
+    method === WS_METHODS.handoffModeContinueHere
+  )
+    return [AuthOrchestrationOperateScope, AuthSourceControlWriteScope];
   if (method === WS_METHODS.projectLinkPreview)
     return [AuthOrchestrationReadScope, AuthFilesystemReadScope];
   const copyScopes = folderCopyScopes(method, input);

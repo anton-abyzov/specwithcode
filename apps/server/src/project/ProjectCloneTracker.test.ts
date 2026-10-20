@@ -46,6 +46,7 @@ function makeHarness(options?: {
             remoteUrl: input.remoteUrl ?? "",
             cloneUrl: input.remoteUrl ?? "",
             repository: null,
+            destinationExisted: false,
           }),
         cloneRepository:
           options?.clone ??
@@ -194,6 +195,7 @@ describe("ProjectCloneTracker", () => {
             Effect.succeed({
               destinationPath: input.destinationPath,
               remoteUrl: "https://github.com/octocat/studio.git",
+              destinationExisted: false,
               cloneUrl: "https://user:s3cret@github.com/octocat/studio.git",
               repository: null,
             }),

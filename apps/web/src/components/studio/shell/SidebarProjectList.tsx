@@ -54,6 +54,7 @@ import type {
   SidebarProjectSnapshot,
 } from "../../../sidebarProjectGrouping";
 import { coordinatorMachineKey } from "../../../studio/projectCoordinatorMachine";
+import { useMachineNicknames } from "../../../studio/machineNickname";
 import { copyRolesSummary } from "../../../studio/projectDomain";
 import type { ArrangedProjects, ProjectDropTarget } from "../../../studio/projectOrder";
 import { Tip } from "./Tip";
@@ -414,7 +415,10 @@ export function ProjectRow(props: {
   const project = props.displayedProject ?? group;
   const displayName = displayNameOf(group, props.displayedProject);
   const personal = isPersonalGroup(group);
-  const copies = copyRolesSummary(group.memberProjects);
+  const nickname = useMachineNicknames();
+  const copies = copyRolesSummary(group.memberProjects, (member) =>
+    nickname(member.environmentId, member.environmentLabel),
+  );
   return (
     <li
       ref={setNodeRef}

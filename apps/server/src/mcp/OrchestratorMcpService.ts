@@ -60,13 +60,16 @@ import {
   type ScheduledTask,
   type ScheduledTaskUpsertInput,
   type ServerProvider,
+  type EnvironmentId,
   ThreadId,
+  threadExecutionSummary,
 } from "@specweave-studio/contracts";
 import {
   heldQueuedRunCount,
   runRanAfter,
 } from "@specweave-studio/shared/orchestrationV2ThreadError";
 import { formatStudioThreadLink } from "@specweave-studio/shared/studioThreadLinks";
+import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
@@ -90,7 +93,12 @@ import {
 } from "../orchestration-v2/DispatchModeLimit.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
-import { listProjectThreadInventory, threadSettlement } from "./OrchestratorMcpThreadList.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import {
+  listProjectThreadInventory,
+  threadExecutionFields,
+  threadSettlement,
+} from "./OrchestratorMcpThreadList.ts";
 import { afterStop, callerLiveness, lastTurnWasStopped } from "./McpCallerLiveness.ts";
 import {
   BULK_CONTINUE_TEXT,
@@ -99,6 +107,7 @@ import {
 } from "./OrchestratorMcpBulkThreads.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import { checkAllowedFor, isModelPinned } from "../scheduledTasks/ScheduledTaskCheck.ts";
+import { providerUsageSummary } from "../usage/providerUsageSummary.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import {
   clientRuntimeModeCeiling,
@@ -720,7 +729,9 @@ export function threadSendHeldQueueReport(input: {
 function threadDetail(
   projection: Pick<OrchestrationV2ThreadProjection, "thread" | "runs" | "runtimeRequests">,
   itemCount: number,
+  servingEnvironmentId: EnvironmentId | null,
 ): OrchestratorMcpThreadDetail {
+  const execution = projection.thread.execution ?? null;
   const latest = ThreadManagementService.latestRun(projection);
   const active = ThreadManagementService.latestActiveRun(projection);
   return {
@@ -757,6 +768,11 @@ function threadDetail(
     ...heldQueuedMessagesField(projection.runs),
     archived: projection.thread.archivedAt !== null,
     ...threadSettlement(projection.thread),
+    ...threadExecutionFields(threadExecutionSummary(projection.thread), servingEnvironmentId),
+    ...(execution === null || execution.history.length === 0
+      ? {}
+      : { executionHistory: execution.history }),
+    ...(execution?.sourceRoot == null ? {} : { sourceRoot: execution.sourceRoot }),
     createdAt: DateTime.formatIso(projection.thread.createdAt),
     updatedAt: DateTime.formatIso(projection.thread.updatedAt),
   };
@@ -938,6 +954,16 @@ const make = Effect.gen(function* () {
         )
       : Effect.succeed(project.defaultModelSelection);
   const secretRequests = yield* SecretRequests.SecretRequests;
+  const servingEnvironmentId = yield* Effect.serviceOption(
+    ServerEnvironment.ServerEnvironment,
+  ).pipe(
+    Effect.flatMap(
+      Option.match({
+        onNone: () => Effect.succeed(null),
+        onSome: (environment) => environment.getEnvironmentId,
+      }),
+    ),
+  );
 
   const requireCapability = (scope: McpInvocationScope) =>
     scope.capabilities.has("orchestration")
@@ -1158,7 +1184,9 @@ const make = Effect.gen(function* () {
   ) =>
     liveParent(scope, parent).pipe(
       Effect.flatMap((verdict) =>
-        verdict.live ? Effect.void : Effect.fail(failure("parent_not_active", verdict.message)),
+        verdict.live
+          ? Effect.void
+          : Effect.fail(failure(verdict.code ?? "parent_not_active", verdict.message)),
       ),
     );
 
@@ -1220,7 +1248,8 @@ const make = Effect.gen(function* () {
   ) =>
     Effect.gen(function* () {
       const verdict = yield* liveParent(scope, parent);
-      if (!verdict.live) return yield* failure("parent_not_active", verdict.message);
+      if (!verdict.live)
+        return yield* failure(verdict.code ?? "parent_not_active", verdict.message);
       const activeRun = ThreadManagementService.latestActiveRun(parent);
       if (activeRun !== undefined) {
         if (activeRun.rootNodeId === null) {
@@ -2125,6 +2154,7 @@ const make = Effect.gen(function* () {
         const { parent, limits } = yield* loadCaller(scope);
         const providers = yield* loadProviders;
         const orchestrationCapableInstanceIds = yield* loadOrchestrationCapableInstanceIds();
+        const nowMs = yield* Clock.currentTimeMillis;
         return {
           parentThreadId: parent?.thread.id ?? null,
           inheritedProviderInstanceId: parent?.thread.modelSelection.instanceId ?? null,
@@ -2151,6 +2181,7 @@ const make = Effect.gen(function* () {
               canRunChildTask: constraints.length === 0,
               canRunCrossProviderChildTask: constraints.length === 0,
               constraints: [...constraints],
+              usage: providerUsageSummary(provider, nowMs),
             };
           }),
           features: {
@@ -2618,6 +2649,7 @@ const make = Effect.gen(function* () {
           projectId,
           currentThreadId: parent?.thread.id ?? null,
           input,
+          servingEnvironmentId,
         });
       }),
     readThread: (scope, input) =>
@@ -2695,7 +2727,7 @@ const make = Effect.gen(function* () {
           }
         }
         return {
-          thread: threadDetail(target, timeline.totalItems),
+          thread: threadDetail(target, timeline.totalItems, servingEnvironmentId),
           recentRuns: target.runs
             .toSorted((left, right) => right.ordinal - left.ordinal)
             .slice(0, input.runLimit ?? DEFAULT_THREAD_RUN_LIMIT)

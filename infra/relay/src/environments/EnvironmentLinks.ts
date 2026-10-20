@@ -9,10 +9,11 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
-import { and, eq, isNull, or, sql } from "drizzle-orm";
+import { and, eq, isNull, notExists, or, sql } from "drizzle-orm";
+import { QueryBuilder } from "drizzle-orm/sqlite-core";
 
 import * as RelayDb from "../db.ts";
-import { relayEnvironmentLinks } from "../persistence/schema.ts";
+import { relayEnvironmentCredentials, relayEnvironmentLinks } from "../persistence/schema.ts";
 
 export interface RelayLinkedEnvironmentRecord extends RelayClientEnvironmentRecord {
   readonly environmentPublicKey: string;
@@ -150,9 +151,15 @@ export class EnvironmentLinks extends Context.Service<
       readonly environmentPublicKey: string;
       readonly holdWebhooksWhileOffline: boolean;
     }) => Effect.Effect<void, EnvironmentLinkEnvironmentLookupPersistenceError>;
+    /**
+     * Revokes the user's active link. With `environmentPublicKey`, the same
+     * atomic batch also revokes that key's credentials once no active link
+     * uses them.
+     */
     readonly revokeForUser: (input: {
       readonly userId: string;
       readonly environmentId: string;
+      readonly environmentPublicKey?: string;
     }) => Effect.Effect<boolean, EnvironmentLinkRevokePersistenceError>;
   }
 >()("studio-relay/environments/EnvironmentLinks") {}
@@ -459,7 +466,7 @@ const make = Effect.gen(function* () {
         "relay.environment_id": input.environmentId,
       });
       const revokedAt = DateTime.formatIso(yield* DateTime.now);
-      const rows = yield* db
+      const revokeLink = db
         .update(relayEnvironmentLinks)
         .set({
           revokedAt,
@@ -472,18 +479,47 @@ const make = Effect.gen(function* () {
             isNull(relayEnvironmentLinks.revokedAt),
           ),
         )
-        .returning({ environmentId: relayEnvironmentLinks.environmentId })
-        .pipe(
-          Effect.mapError(
-            (cause) =>
-              new EnvironmentLinkRevokePersistenceError({
-                userId: input.userId,
-                environmentId: input.environmentId,
-                cause,
-              }),
+        .returning({ environmentId: relayEnvironmentLinks.environmentId });
+      const mapError = (cause: unknown) =>
+        new EnvironmentLinkRevokePersistenceError({
+          userId: input.userId,
+          environmentId: input.environmentId,
+          cause,
+        });
+      if (input.environmentPublicKey === undefined) {
+        const rows = yield* revokeLink.pipe(Effect.mapError(mapError));
+        return rows.length > 0;
+      }
+      const publicKey = input.environmentPublicKey;
+      const activeLinks = new QueryBuilder()
+        .select({ userId: relayEnvironmentLinks.userId })
+        .from(relayEnvironmentLinks)
+        .where(
+          and(
+            eq(relayEnvironmentLinks.environmentId, input.environmentId),
+            eq(relayEnvironmentLinks.environmentPublicKey, publicKey),
+            isNull(relayEnvironmentLinks.revokedAt),
           ),
         );
-      return rows.length > 0;
+      // Replaces the old transaction: the batch commits both updates or none.
+      // `changes()` is the row count of the link update just before it in the
+      // batch, so credentials are revoked only when this call revoked the link.
+      const revokeCredentials = db
+        .update(relayEnvironmentCredentials)
+        .set({ revokedAt, updatedAt: revokedAt })
+        .where(
+          and(
+            sql`changes() > 0`,
+            eq(relayEnvironmentCredentials.environmentId, input.environmentId),
+            eq(relayEnvironmentCredentials.environmentPublicKey, publicKey),
+            isNull(relayEnvironmentCredentials.revokedAt),
+            notExists(activeLinks),
+          ),
+        );
+      const [rows] = yield* RelayDb.batch(db, [revokeLink, revokeCredentials]).pipe(
+        Effect.mapError(mapError),
+      );
+      return (rows?.length ?? 0) > 0;
     }),
   });
 });

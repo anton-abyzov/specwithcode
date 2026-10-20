@@ -58,7 +58,10 @@ import {
 } from "@specweave-studio/shared/toolActivity";
 import { formatDuration } from "@specweave-studio/shared/orchestrationTiming";
 import type { HtmlRenderReference } from "@specweave-studio/shared/htmlRender";
-import { compactDynamicToolOutput, htmlRenderFromToolItem } from "@specweave-studio/shared/toolOutput";
+import {
+  compactDynamicToolOutput,
+  htmlRenderFromToolItem,
+} from "@specweave-studio/shared/toolOutput";
 import * as DateTime from "effect/DateTime";
 
 export type PendingApproval = ThreadPendingApproval;
@@ -95,7 +98,8 @@ export interface ThreadFeedActivity {
     | "globe"
     | "search"
     | "hammer"
-    | "lock"
+    | "approval"
+    | "secret"
     | "message"
     | "warning"
     | "wrench"
@@ -522,7 +526,7 @@ function itemIcon(item: OrchestrationV2TurnItem): ThreadFeedActivity["icon"] {
     case "web_search":
       return "globe";
     case "approval_request":
-      return item.requestKind === "permission" ? "lock" : "message";
+      return item.requestKind === "permission" ? "approval" : "message";
     case "user_input_request":
     case "user_message":
     case "assistant_message":
@@ -551,7 +555,7 @@ function itemIcon(item: OrchestrationV2TurnItem): ThreadFeedActivity["icon"] {
     case "thread_created":
       return "zap";
     case "secret_request":
-      return "lock";
+      return "secret";
   }
 }
 
@@ -559,7 +563,9 @@ function itemToolPresentation(item: OrchestrationV2TurnItem): StudioMcpToolPrese
   if (item.type !== "dynamic_tool") {
     return null;
   }
-  return resolveStudioMcpToolPresentation(item.toolName) ?? resolveStudioMcpToolPresentation(item.title);
+  return (
+    resolveStudioMcpToolPresentation(item.toolName) ?? resolveStudioMcpToolPresentation(item.title)
+  );
 }
 
 function itemSummary(

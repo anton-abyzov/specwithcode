@@ -33,7 +33,7 @@ import {
   Plug2Icon,
   Maximize2Icon,
   Minimize2Icon,
-  UserLockIcon,
+  HandIcon,
 } from "lucide-react";
 import {
   useCallback,
@@ -215,7 +215,7 @@ const STATE_TABS = [
 
 const SORT_OPTIONS = [
   { value: "ready", label: "Merge readiness", Icon: ListChecksIcon },
-  { value: "blocked", label: "Blocked on me", Icon: UserLockIcon },
+  { value: "blocked", label: "Blocked on me", Icon: HandIcon },
   { value: "updated", label: "Recently updated", Icon: ClockIcon },
   { value: "newest", label: "Newest shown", Icon: CalendarArrowDownIcon },
   { value: "oldest", label: "Oldest shown", Icon: CalendarArrowUpIcon },

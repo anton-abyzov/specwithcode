@@ -1,4 +1,5 @@
 import { listFederatedProjectThreads } from "./federatedProjectThreads.ts";
+import { migrateThreads } from "./migrate.ts";
 import { OrchestratorToolkit } from "./tools.ts";
 import * as Effect from "effect/Effect";
 import { OrchestratorMcpFailure } from "@specweave-studio/contracts";
@@ -21,11 +22,13 @@ import {
 } from "./remote.ts";
 import * as RemoteWorkers from "../../../fleet/RemoteWorkers.ts";
 import * as ProjectService from "../../../project/ProjectService.ts";
+import { accountInGrant } from "../../../fleet/workGrantPolicy.ts";
 import { loadCaller, unavailable } from "../../threadAccess.ts";
 import {
   assertAccountInGrant,
   assertProjectInGrant,
   assertThreadInGrant,
+  assertThreadWritable,
   workGrantOf,
 } from "../../workGrantAccess.ts";
 
@@ -33,7 +36,7 @@ import {
  * Work another machine started here reaches only threads in the projects
  * its grant covers. A thread that does not exist is the handler's to report.
  */
-const guardThread = (threadId: string) =>
+const guardThread = (threadId: string, access: "read" | "write" = "read") =>
   Effect.gen(function* () {
     const caller = yield* loadCaller();
     const work = yield* workGrantOf(caller);
@@ -43,6 +46,7 @@ const guardThread = (threadId: string) =>
       .pipe(Effect.mapError(unavailable));
     if (shell === null) return;
     yield* assertThreadInGrant(work, shell);
+    if (access === "write") yield* assertThreadWritable(work, shell);
   });
 
 /** ...and starts its subagents and threads only on the sign-ins that grant allows. */
@@ -90,7 +94,17 @@ const handlers = {
     Effect.gen(function* () {
       const scope = yield* McpInvocationContext.McpInvocationContext;
       const service = yield* OrchestratorMcpService.OrchestratorMcpService;
-      return yield* service.capabilities(scope);
+      const capabilities = yield* service.capabilities(scope);
+      // Another machine judging this one as a limit handoff target needs to know which sign-ins its grant allows.
+      const work = yield* workGrantOf(yield* loadCaller());
+      if (work === undefined) return capabilities;
+      return {
+        ...capabilities,
+        providers: capabilities.providers.map((provider) => ({
+          ...provider,
+          allowedByGrant: accountInGrant(work.grant.accounts, provider.providerInstanceId),
+        })),
+      };
     }),
   ),
   delegate_task: McpToolAccess.actsAsCaller((input) =>
@@ -199,7 +213,7 @@ const handlers = {
     (input) => [input.threadId === undefined ? undefined : localThreadIdOf(input.threadId)],
     (input) =>
       Effect.gen(function* () {
-        if (input.threadId !== undefined) yield* guardThread(input.threadId);
+        if (input.threadId !== undefined) yield* guardThread(input.threadId, "write");
         const scope = yield* McpInvocationContext.McpInvocationContext;
         const service = yield* ThreadMetadataMcpService.ThreadMetadataMcpService;
         return yield* service.update(scope, input);
@@ -212,7 +226,7 @@ const handlers = {
         input,
         (local) =>
           Effect.gen(function* () {
-            yield* guardThread(local.threadId);
+            yield* guardThread(local.threadId, "write");
             const scope = yield* McpInvocationContext.McpInvocationContext;
             const service = yield* OrchestratorMcpService.OrchestratorMcpService;
             return yield* service.sendToThread(scope, local);
@@ -261,7 +275,7 @@ const handlers = {
         input,
         (local) =>
           Effect.gen(function* () {
-            yield* guardThread(local.threadId);
+            yield* guardThread(local.threadId, "write");
             const scope = yield* McpInvocationContext.McpInvocationContext;
             const service = yield* OrchestratorMcpService.OrchestratorMcpService;
             return yield* service.interruptThread(scope, local);
@@ -282,6 +296,10 @@ const handlers = {
       const service = yield* OrchestratorMcpService.OrchestratorMcpService;
       return yield* service.continueAllThreads(scope, input);
     }),
+  ),
+  studio_thread_migrate: McpToolAccess.writesThreads(
+    (input) => (input.threadIds ?? []).map(localThreadIdOf),
+    migrateThreads,
   ),
 } satisfies McpToolAccess.Handlers<typeof OrchestratorToolkit.tools>;
 

@@ -1,7 +1,10 @@
 import * as ProjectRuntimeAccess from "../project/ProjectRuntimeAccess.ts";
 import * as MachineHandoff from "../fleet/MachineHandoff.ts";
+import * as HandoffMode from "../handoff/HandoffMode.ts";
 import * as CoordinatorReplicas from "../project/CoordinatorReplicas.ts";
 import * as ProjectLink from "../project/ProjectLink.ts";
+import * as LinkedMemoryHistory from "../project/LinkedMemoryHistory.ts";
+import * as LinkedMemorySync from "../project/LinkedMemorySync.ts";
 import * as MachineHandoffStore from "../fleet/MachineHandoffStore.ts";
 import * as HandoffGit from "../fleet/handoffGit.ts";
 import * as ProjectConnectionService from "../project/ProjectConnectionService.ts";
@@ -21,6 +24,7 @@ import * as ThreadIncrementProgressService from "../project/ThreadIncrementProgr
 import * as UsageLimitAvailability from "./UsageLimitAvailability.ts";
 import * as UsageLimitRecoveryWorker from "./UsageLimitRecoveryWorker.ts";
 import * as ProviderFallbackWorker from "./ProviderFallbackWorker.ts";
+import * as MachineLimitHandoff from "./MachineLimitHandoff.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
 import * as Layer from "effect/Layer";
 import * as OrchestrationCommandReceipts from "../persistence/OrchestrationCommandReceipts.ts";
@@ -196,7 +200,9 @@ const layerProjectKnowledgeProvided = ProjectKnowledge.layer.pipe(
   Layer.provide(Layer.merge(ProjectStore.layer, layerEventInfrastructure)),
 );
 const layerProjectWorkspaceProvided = ProjectWorkspaceService.layer.pipe(
-  Layer.provide(Layer.merge(ProjectStore.layer, layerProjectKnowledgeProvided)),
+  Layer.provide(
+    Layer.mergeAll(ProjectStore.layer, layerProjectKnowledgeProvided, LinkedMemoryHistory.layer),
+  ),
 );
 const layerThreadReportsProvided = ThreadReportService.layer.pipe(
   Layer.provide(Layer.merge(ProjectStore.layer, ProjectionStore.layer)),
@@ -432,6 +438,12 @@ export const layer = Layer.mergeAll(
   layerLegacyV1ThreadImporterProvided,
 );
 
+// One instance: the fallback sweep asks it, the recovery sweep and the
+// candidates RPC read it, and the server binds the fleet to it.
+const layerMachineLimitHandoffProvided = MachineLimitHandoff.layer.pipe(
+  Layer.provide(Layer.merge(ProjectionStore.layer, layerProjectService)),
+);
+
 export const layerProduction = Layer.mergeAll(
   ProjectRuntimeAccess.layer.pipe(Layer.provide(layerOrchestratorProvided)),
   MachineHandoff.layer.pipe(
@@ -458,6 +470,14 @@ export const layerProduction = Layer.mergeAll(
       ),
     ),
   ),
+  LinkedMemorySync.layer.pipe(
+    Layer.provide(
+      Layer.mergeAll(layerProjectService, layerProjectWorkspaceProvided, LinkedMemoryHistory.layer),
+    ),
+  ),
+  HandoffMode.layer.pipe(
+    Layer.provide(Layer.mergeAll(ProjectionStore.layer, layerProjectService, TextGeneration.layer)),
+  ),
   ProjectConnectionService.layer.pipe(
     Layer.provide(Layer.merge(ProjectStore.layer, ProjectConnectionTransport.layer)),
   ),
@@ -481,14 +501,25 @@ export const layerProduction = Layer.mergeAll(
   layerSecretRequestsProvided,
   layerProjectFolderProvided,
   layerProjectActionRequestsProvided,
+  layerMachineLimitHandoffProvided,
   UsageLimitRecoveryWorker.layer.pipe(
     Layer.provide(
-      Layer.mergeAll(ProjectStore.layer, ProjectionStore.layer, layerThreadManagementProvided),
+      Layer.mergeAll(
+        ProjectStore.layer,
+        ProjectionStore.layer,
+        layerThreadManagementProvided,
+        layerMachineLimitHandoffProvided,
+      ),
     ),
   ),
   ProviderFallbackWorker.layer.pipe(
     Layer.provide(
-      Layer.mergeAll(ProjectionStore.layer, layerThreadManagementProvided, layerProjectService),
+      Layer.mergeAll(
+        ProjectionStore.layer,
+        layerThreadManagementProvided,
+        layerProjectService,
+        layerMachineLimitHandoffProvided,
+      ),
     ),
   ),
   layerProviderContinuationWorkerProvided,

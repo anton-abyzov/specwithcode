@@ -1048,7 +1048,7 @@ class Agent(object):
                 self.set_status(refused[0], '%s (attempt %d)' % (refused[1], attempt))
                 if (ended := recovery.withdrawn(self, version)):  # Written while the snapshot ran: no reap.
                     return self.finish(*ended)
-                time.sleep(reaper.before_retry(self, helper_dir, refused, started))
+                time.sleep(reaper.before_retry(self, helper_dir, refused, started, window))
                 if (ended := recovery.withdrawn(self, version)):
                     return self.finish(*ended)
                 continue
@@ -1056,14 +1056,13 @@ class Agent(object):
             if ended:
                 remove_path(newest, self.home)
                 return self.finish(*ended)
-            if install_request:
-                if self.config['installRequestedAt'] != serving:  # Taken on as this snapshot ran: its own retries.
-                    retries, serving = 0, self.config['installRequestedAt']
-                refused_apply = self.apply(verified, helper_dir, newest, baseline_path, install_request, retries < APPLY_RETRIES)
+            if install_request:  # Retries count per request: one taken on since `serving` has its own.
+                refused_apply = self.apply(verified, helper_dir, newest, baseline_path, install_request, retries < APPLY_RETRIES, serving)
                 if not isinstance(refused_apply, pathlib.Path):
                     return refused_apply
-                # The refused apply is the request's it ran for, also one taken on while it started.
-                retries, attempt, window, serving = retries + 1, 0, utcnow(), self.config['installRequestedAt']
+                # The refused apply is the request's it ran for: its first, if taken on as the snapshot or apply ran.
+                retries = retries + 1 if self.config['installRequestedAt'] == serving else 1
+                attempt, window, serving = 0, utcnow(), self.config['installRequestedAt']
                 self.set_status('waiting-for-quiet', 'New work started before the restart; trying again')
                 continue
             break
@@ -1088,9 +1087,9 @@ class Agent(object):
         self.state['quietSince'] = baseline['observedAt']
         return self.finish('waiting-for-quiet', 'Waiting for a quiet moment before installing SpecWithCode %s' % version)
 
-    def apply(self, verified, helper_dir, prestate, baseline_path, install_request, may_retry=False):
-        """Run the verified helper once. Its receipt's path means it refused before the restart and put
-        every pointer back, so the caller may snapshot and apply again (only when may_retry)."""
+    def apply(self, verified, helper_dir, prestate, baseline_path, install_request, may_retry=False, serving=None):
+        """Run the verified helper once. Its receipt's path means it refused before the restart and put every pointer
+        back, so the caller may apply again: when may_retry, or for a request taken on since `serving` (its first apply)."""
         version = verified['version']
         runtime = owned(self.release_dir(version) / verified['runtime']['asset'], self.home)
         if sha256_file(runtime) != verified['runtime']['sha256']:
@@ -1115,6 +1114,7 @@ class Agent(object):
         ended = recovery.withdrawn(self, version) if install_request else recovery.automatic_withdrawn(self, verified)
         if ended:  # A settings change that raced the status write above.
             return remove_path(self.marker_path, self.home) or self.finish(*ended)
+        may_retry = may_retry or serving not in (None, self.config['installRequestedAt'])
         if not recovery.current_installation_matches(self, verified):
             remove_path(self.marker_path, self.home)
             self.state['checkedAt'] = None

@@ -8,7 +8,9 @@ import * as ProjectWorkspaceRpc from "./project/ProjectWorkspaceRpc.ts";
 import * as ProjectConnectionRpc from "./project/ProjectConnectionRpc.ts";
 import * as ChromeBridge from "./browserBridge/ChromeBridge.ts";
 import * as ProjectLink from "./project/ProjectLink.ts";
+import * as ProjectPlanRpc from "./project/ProjectPlanRpc.ts";
 import * as MachineHandoff from "./fleet/MachineHandoff.ts";
+import * as HandoffMode from "./handoff/HandoffMode.ts";
 import * as BrowserExtension from "./browserExtension/BrowserExtension.ts";
 import * as PullRequestCheckFailureLogRpc from "./pullRequest/PullRequestCheckFailureLogRpc.ts";
 import { OrchestrationDispatchCommandError } from "@specweave-studio/contracts";
@@ -3229,6 +3231,18 @@ const layerWsRpc = (
         PullRequestCheckFailureLogRpc.handler,
       ),
     ),
+    Layer.merge(
+      ServerWsRpcGroup.toLayerHandler(
+        WS_METHODS.sourceControlCheckRemoteAccess,
+        SourceControlRepositoryService.checkRemoteAccessHandler,
+      ),
+    ),
+    Layer.merge(
+      ServerWsRpcGroup.toLayerHandler(
+        WS_METHODS.sourceControlInspectDestination,
+        SourceControlRepositoryService.inspectDestinationHandler,
+      ),
+    ),
   );
 
 // A defect in a handler's effect fails only its own request. RpcServer's default
@@ -3355,7 +3369,9 @@ const inferredWebSocketLayer = Layer.unwrap(
               Layer.merge(ProjectConnectionRpc.layerNativeApplyHandlers),
               Layer.merge(ChromeBridge.layerRpcHandlers),
               Layer.merge(ProjectLink.layerRpcHandlers),
+              Layer.merge(ProjectPlanRpc.layerLinkRpcHandlers),
               Layer.merge(MachineHandoff.layerRpcHandlers),
+              Layer.merge(HandoffMode.layerRpcHandlers),
               Layer.merge(ProjectWorkspaceRpc.layerKnowledgeRpcHandlers),
               Layer.merge(
                 BrowserExtension.layerRpcHandlers.pipe(

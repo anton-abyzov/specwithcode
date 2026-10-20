@@ -57,6 +57,7 @@ import {
   ThreadId,
   TurnItemId,
   NodeId,
+  threadExecutionSummary,
 } from "@specweave-studio/contracts";
 import {
   createOrchestrationV2TurnItemVisibility,
@@ -1525,6 +1526,7 @@ export function threadShellFromProjection(
     forkedFrom: projection.thread.forkedFrom,
     ...(projection.thread.movedTo == null ? {} : { movedTo: projection.thread.movedTo }),
     ...(projection.thread.movedFrom == null ? {} : { movedFrom: projection.thread.movedFrom }),
+    ...threadExecutionSummary(projection.thread),
     activeProviderThreadId: projection.thread.activeProviderThreadId,
     ...(projection.thread.historyOrigin === undefined
       ? {}
@@ -1859,6 +1861,7 @@ function shellFromState(input: {
     forkedFrom: input.state.thread.forkedFrom,
     ...(input.state.thread.movedTo == null ? {} : { movedTo: input.state.thread.movedTo }),
     ...(input.state.thread.movedFrom == null ? {} : { movedFrom: input.state.thread.movedFrom }),
+    ...threadExecutionSummary(input.state.thread),
     activeProviderThreadId: input.state.thread.activeProviderThreadId,
     ...(input.state.thread.historyOrigin === undefined
       ? {}

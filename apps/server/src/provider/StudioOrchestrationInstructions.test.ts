@@ -37,9 +37,21 @@ describe("SpecWithCode orchestration provider instructions", () => {
     assert.notInclude(STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS, "everyMs");
     assert.notInclude(STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS, "workspaceStrategy");
     assert.notInclude(STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS, "<browser_automation>");
-    // About 300 tokens; it was about 1,900. The computer-use line routes
-    // native-app requests that tool names alone did not.
-    assert.isAtMost(STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS.length, 1_375);
+    // About 350 tokens; it was about 1,900. The computer-use line routes
+    // native-app requests that tool names alone did not; the machines line
+    // separates launching on a machine from moving a running thread.
+    assert.isAtMost(STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS.length, 1_560);
+  });
+
+  it("separates launching on a machine from moving an existing thread", () => {
+    assert.include(
+      STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS,
+      "`studio_thread_migrate` moves an existing thread's execution",
+    );
+    assert.include(
+      STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS,
+      "Switching the viewed orchestrator never moves a thread",
+    );
   });
 
   it("routes computer use, and skills that name other computer-use tools, to computer_*", () => {

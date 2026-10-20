@@ -41,7 +41,7 @@ import * as DeliveryAttempts from "./DeliveryAttempts.ts";
 import * as LiveActivities from "./LiveActivities.ts";
 import * as RelayConfiguration from "../Config.ts";
 import * as ApnsDeliveryQueue from "./ApnsDeliveryQueue.ts";
-import { withSpanAttributes } from "../observability.ts";
+import { withSpanAttributes } from "../spanAttributes.ts";
 
 import {
   alertForAttentionTransition,

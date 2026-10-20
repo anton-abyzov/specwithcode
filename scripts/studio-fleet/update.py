@@ -30,8 +30,8 @@ import uuid
 from launcher import (cli_alias_state, is_studio_wrapper, migrate_runtime_path, render_cli,
                       render_legacy_cli, render_unnamed_cli, swap_cli_alias)
 from release_policy import validate_manifest, validate_package, validate_upgrade
-from auth_heartbeat import (bind_auth, encoded, prove_restart_heartbeat, read_auth_sessions,
-                            read_auth_sessions_in_transaction, restore_witness,
+from auth_heartbeat import (bind_auth, encoded, prove_restart_heartbeat,
+                            read_auth_sessions_in_transaction, restore_witness, rows_hash,
                             utc_timestamp, verify_restart_witness)
 from quiescence import (VANISHED_READS, capture_quiescence, assert_quiescence, quiescence_core, read_processes,
                         reap_descendants, idle_providers, idle_provider_trees)
@@ -383,6 +383,19 @@ def rows_since_with_database(state, expected_rows):
     """rows_since plus the complete database capture, in the same read transaction."""
     proof, _, carried, database = _read_state(state, False, expected_rows, True)
     return proof, carried, database
+
+def auth_since(state, expected_rows):
+    """The complete auth cells, and `expected_rows` with the auth count and hash those cells have,
+    in one read: a proof over them never mixes two reads of a table every connect writes."""
+    db = live_database.connect(state / 'statev2.sqlite')
+    try:
+        db.execute('BEGIN')
+        rows = [list(row) for row in db.execute('SELECT * FROM auth_sessions')]
+        view = {**expected_rows, 'counts': {**expected_rows['counts'], 'auth_sessions': len(rows)},
+                'hashes': {**expected_rows['hashes'], 'auth_sessions': rows_hash(rows)}}
+        return read_auth_sessions_in_transaction(db, view), view
+    finally:
+        db.close()
 
 def database_allowance(expected, actual, carried, *, auth_heartbeat=True):
     """Tables of a complete capture that the guarded row comparison has already proven.
@@ -1532,16 +1545,17 @@ def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_b
         def assert_provable_reconnects(current_rows):
             # Auth may differ only as the proof after the restart accepts, so a connect it would roll
             # back (a phone app, a revoked session, one past the session counts) refuses here, with
-            # the old release running, as a refusal the update agent retries.
+            # the old release running: an install request retries it, an automatic install is held.
             if not allow_existing_browser_heartbeat or original_auth is None \
                     or current_rows['hashes'].get('auth_sessions') == before['rows']['hashes'].get('auth_sessions'):
                 return
             try:
-                current_auth = read_auth_sessions(own / 'userdata', current_rows)  # Bound to the rows just compared.
-                prove_restart_heartbeat(before['rows'], auth_comparison(before['rows'], current_rows), original_auth,
-                                        current_auth, restart_started_at, datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                # Its own read, so a client connecting again since the rows were read is proven too.
+                current_auth, current_view = auth_since(own / 'userdata', before['rows'])
+                prove_restart_heartbeat(before['rows'], current_view, original_auth, current_auth, restart_started_at,
+                                        datetime.datetime.now(datetime.timezone.utc).isoformat(),
                                         identity=identity, web_session_policy=policy)
-            except (AssertionError, KeyError, ValueError) as error:  # A fresh snapshot may prove it: retried.
+            except (AssertionError, KeyError, ValueError, OSError, sqlite3.Error) as error:  # Retried with a fresh snapshot.
                 raise AssertionError('Native work changed before restart: auth (%s)' % str(error)[:200]) from None
         assert_unchanged_before_restart()
         def assert_same_service_pid():

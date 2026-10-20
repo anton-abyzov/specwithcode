@@ -233,6 +233,73 @@ it.effect("cancel clears only the owned partial contents and retry creates a com
   }).pipe(Effect.provide(layer)),
 );
 
+it.effect("cancel then delete removes a destination the clone created", () =>
+  Effect.gen(function* () {
+    const f = yield* fixture;
+    yield* f.fs.writeFileString(`${f.root}/neighbor`, "keep");
+    f.gate(true);
+    yield* f.tracker.start(f.input, f.hooks);
+    yield* Deferred.await(f.entered);
+    expect(yield* f.tracker.cancel(pid)).toBe(true);
+    expect(yield* f.fs.readDirectory(f.destination)).toEqual([]);
+    yield* f.tracker.discard(pid);
+    expect(yield* f.tracker.get(pid)).toBeNull();
+    expect(yield* f.fs.exists(f.destination)).toBe(false);
+    expect(yield* f.fs.readFileString(`${f.root}/neighbor`)).toBe("keep");
+    expect(yield* f.fs.exists(`${f.source}/owned.txt`)).toBe(true);
+  }).pipe(Effect.provide(layer)),
+);
+
+it.effect("cancel then delete keeps a destination that existed empty before the clone", () =>
+  Effect.gen(function* () {
+    const f = yield* fixture;
+    yield* f.fs.makeDirectory(f.destination);
+    f.gate(true);
+    yield* f.tracker.start(f.input, f.hooks);
+    yield* Deferred.await(f.entered);
+    expect(yield* f.fs.exists(`${f.destination}/partial`)).toBe(true);
+    expect(yield* f.tracker.cancel(pid)).toBe(true);
+    yield* f.tracker.discard(pid);
+    expect(yield* f.tracker.get(pid)).toBeNull();
+    expect(yield* f.fs.readDirectory(f.destination)).toEqual([]);
+  }).pipe(Effect.provide(layer)),
+);
+
+it.effect("cancel alone keeps the emptied destination it created so Retry works", () =>
+  Effect.gen(function* () {
+    const f = yield* fixture;
+    f.gate(true);
+    yield* f.tracker.start(f.input, f.hooks);
+    yield* Deferred.await(f.entered);
+    expect(yield* f.tracker.cancel(pid)).toBe(true);
+    expect((yield* f.tracker.get(pid))?.phase).toBe("cancelled");
+    expect(yield* f.fs.readDirectory(f.destination)).toEqual([]);
+  }).pipe(Effect.provide(layer)),
+);
+
+it.effect("delete after a failed clone leaves no destination it created", () =>
+  Effect.gen(function* () {
+    const f = yield* fixture;
+    yield* f.tracker.start({ ...f.input, remoteUrl: `${f.root}/absent-source` }, f.hooks);
+    yield* f.wait("failed");
+    yield* f.tracker.discard(pid);
+    expect(yield* f.fs.exists(f.destination)).toBe(false);
+  }).pipe(Effect.provide(layer)),
+);
+
+it.effect("delete never removes files that arrived after a cancel", () =>
+  Effect.gen(function* () {
+    const f = yield* fixture;
+    f.gate(true);
+    yield* f.tracker.start(f.input, f.hooks);
+    yield* Deferred.await(f.entered);
+    expect(yield* f.tracker.cancel(pid)).toBe(true);
+    yield* f.fs.writeFileString(`${f.destination}/notes.txt`, "mine");
+    yield* f.tracker.discard(pid);
+    expect(yield* f.fs.readDirectory(f.destination)).toEqual(["notes.txt"]);
+  }).pipe(Effect.provide(layer)),
+);
+
 it.effect("serializes competing starts and discards an in-flight checkout", () =>
   Effect.gen(function* () {
     const f = yield* fixture;
@@ -267,7 +334,8 @@ it.effect("serializes competing starts and discards an in-flight checkout", () =
     expect(yield* f.tracker.retry(pid)).toBe(false);
     yield* f.tracker.discard(pid);
     expect(yield* f.tracker.get(pid)).toBeNull();
-    expect(yield* f.fs.readDirectory(f.destination)).toEqual([]);
+    // The clone created the destination, so deleting the project removes it.
+    expect(yield* f.fs.exists(f.destination)).toBe(false);
     expect(yield* f.tracker.cancel(pid)).toBe(false);
     expect(yield* f.tracker.retry(pid)).toBe(false);
     yield* f.tracker.discard(pid);

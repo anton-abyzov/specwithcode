@@ -14,6 +14,7 @@ import * as SchemaIssue from "effect/SchemaIssue";
 declare const __STUDIO_BUILD_RELAY_URL__: string | undefined;
 declare const __STUDIO_BUILD_CLERK_PUBLISHABLE_KEY__: string | undefined;
 declare const __STUDIO_BUILD_CLERK_CLI_OAUTH_CLIENT_ID__: string | undefined;
+declare const __STUDIO_BUILD_ENABLE_HOSTED_SERVICES__: string | undefined;
 declare const __STUDIO_BUILD_RELAY_CLIENT_OTLP_TRACES_URL__: string | undefined;
 declare const __STUDIO_BUILD_RELAY_CLIENT_OTLP_TRACES_DATASET__: string | undefined;
 declare const __STUDIO_BUILD_RELAY_CLIENT_OTLP_TRACES_TOKEN__: string | undefined;
@@ -211,8 +212,36 @@ export function makeCloudCliOAuthConfig({
 
 export const cloudCliOAuthConfig = makeCloudCliOAuthConfig();
 
-export const hasCloudPublicConfig = process.env.STUDIO_ENABLE_HOSTED_SERVICES === "true" && Boolean(
-  (normalizeSecureRelayUrl(process.env.STUDIO_RELAY_URL ?? "") ?? buildTimeRelayUrl) &&
-  (process.env.STUDIO_CLERK_PUBLISHABLE_KEY?.trim() || buildTimeClerkPublishableKey) &&
-  (process.env.STUDIO_CLERK_CLI_OAUTH_CLIENT_ID?.trim() || buildTimeClerkCliOAuthClientId),
-);
+/**
+ * Hosted services stay off unless someone opts in: either the process sets
+ * STUDIO_ENABLE_HOSTED_SERVICES=true, or the release that built this bundle
+ * opted in at build time (it only does so when every Connect public value was
+ * supplied). Installed launchers predate the build-time opt-in and pass
+ * STUDIO_ENABLE_HOSTED_SERVICES=false, so a built-in opt-in is turned off only
+ * by STUDIO_DISABLE_HOSTED_SERVICES=true.
+ */
+export function resolveHostedServicesEnabled(input: {
+  readonly enable: string | undefined;
+  readonly disable: string | undefined;
+  readonly buildDefault: string | undefined;
+}): boolean {
+  if (input.disable?.trim() === "true") return false;
+  return input.enable === "true" || input.buildDefault?.trim() === "true";
+}
+
+const hostedServicesEnabled = resolveHostedServicesEnabled({
+  enable: process.env.STUDIO_ENABLE_HOSTED_SERVICES,
+  disable: process.env.STUDIO_DISABLE_HOSTED_SERVICES,
+  buildDefault:
+    typeof __STUDIO_BUILD_ENABLE_HOSTED_SERVICES__ === "undefined"
+      ? undefined
+      : __STUDIO_BUILD_ENABLE_HOSTED_SERVICES__,
+});
+
+export const hasCloudPublicConfig =
+  hostedServicesEnabled &&
+  Boolean(
+    (normalizeSecureRelayUrl(process.env.STUDIO_RELAY_URL ?? "") ?? buildTimeRelayUrl) &&
+    (process.env.STUDIO_CLERK_PUBLISHABLE_KEY?.trim() || buildTimeClerkPublishableKey) &&
+    (process.env.STUDIO_CLERK_CLI_OAUTH_CLIENT_ID?.trim() || buildTimeClerkCliOAuthClientId),
+  );

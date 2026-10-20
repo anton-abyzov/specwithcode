@@ -1,12 +1,15 @@
 /**
- * Which machine runs a project's coordinator. A project added on several
- * machines is one logical project with a checkout per machine, and each
- * checkout's own server runs its coordinator with that machine's providers,
- * sign-ins and subscriptions. The person picks the checkout; the choice is
- * saved per logical project so it survives a reload and every window agrees.
+ * Which machine's orchestrator a person is looking at. A project added on
+ * several machines has a checkout per machine; with the copies linked, each
+ * machine may run its own coordinator (0969). Viewing one only reads that
+ * machine's server: it never moves a thread or a coordinator. The last viewed
+ * checkout is saved per project so a reload opens the same view.
  *
  * @module projectCoordinatorMachine
  */
+import type { EnvironmentProject } from "@specweave-studio/client-runtime/state/shell";
+import type { LogicalProjectMember } from "@specweave-studio/contracts";
+import { COORDINATOR_PENDING_PROBLEM, logicalCoordinators } from "./projectDomain";
 
 export interface CoordinatorMachineMember {
   readonly environmentId: string;
@@ -18,54 +21,168 @@ export function coordinatorMachineKey(member: CoordinatorMachineMember): string 
   return `${member.environmentId}:${member.id}`;
 }
 
-export interface CoordinatorMachineChoice<T extends CoordinatorMachineMember> {
+export const SUPERSEDED_COORDINATOR_PROBLEM =
+  "Another machine took over this coordinator. It gives way once its machine is reachable; view the newer coordinator to send messages.";
+export const WORKERS_ONLY_PROBLEM =
+  "This copy runs workers, so its coordinator conversation is history. Choose Start a coordinator on this machine to send it messages.";
+export const UNCONFIRMED_COORDINATOR_PROBLEM =
+  "This copy has not confirmed its coordinator yet. Reconnect its machine to send messages.";
+
+export interface CoordinatorView<T extends CoordinatorMachineMember> {
   readonly member: T | undefined;
-  /** A machine was saved for this project but none of its checkouts is listed now. */
-  readonly savedMachineMissing: boolean;
-  /** The saved checkout's machine cannot be reached, so a reachable checkout stands in. */
-  readonly savedMachineOffline: boolean;
+  /**
+   * The route or the last viewed checkout is not listed now. The page says so
+   * instead of quietly showing another machine in its place.
+   */
+  readonly missing: boolean;
+  /** Why the viewed copy's coordinator cannot take messages; null when it can. */
+  readonly problem: string | null;
 }
 
 /**
- * The saved checkout, then another checkout on the saved machine (the project
- * was re-added there), then this computer's checkout, then the first listed.
- * A saved machine that is not listed now never moves the saved choice; it is
- * reported so the page can say whose coordinator it is showing instead.
- *
- * A saved machine that is listed but unreachable would leave the whole page
- * read-only, so a checkout on a reachable machine stands in until it returns.
- * The saved choice itself is not changed.
+ * The checkout the project page shows. An explicit route checkout wins and is
+ * never replaced. The last viewed checkout comes next, even while its machine
+ * is unreachable: the page then shows that machine's last synced state,
+ * read-only. Only with neither does a default apply: for a linked project, a
+ * coordinator on this computer, then a reachable one; otherwise this
+ * computer's checkout, then a reachable one.
  */
-export function resolveCoordinatorMachine<T extends CoordinatorMachineMember>(input: {
+export function chooseCoordinatorView<T extends EnvironmentProject>(input: {
   readonly members: readonly T[];
-  readonly saved: string | undefined;
+  readonly checkoutKey?: string | null | undefined;
+  readonly lastViewed?: string | undefined;
   readonly primaryEnvironmentId: string | null;
   /** Machines known to be unreachable now; a machine still connecting is not one. */
   readonly unreachable?: ReadonlySet<string>;
-}): CoordinatorMachineChoice<T> {
-  const { members, saved, primaryEnvironmentId } = input;
+}): CoordinatorView<T> {
+  const { members, checkoutKey, lastViewed, primaryEnvironmentId } = input;
   const unreachable = input.unreachable ?? new Set<string>();
-  const reachable = members.filter((member) => !unreachable.has(member.environmentId));
+  const roles = logicalCoordinators(members);
+  const viewOf = (member: T | undefined, missing = false): CoordinatorView<T> => ({
+    member,
+    missing,
+    problem: member && roles ? coordinatorProblem(member, roles) : null,
+  });
+  if (checkoutKey) {
+    const exact = members.find((member) => coordinatorMachineKey(member) === checkoutKey);
+    return exact ? viewOf(exact) : { member: undefined, missing: true, problem: null };
+  }
+  if (lastViewed) {
+    const separator = lastViewed.indexOf(":");
+    const environmentId = separator > 0 ? lastViewed.slice(0, separator) : lastViewed;
+    const viewed =
+      members.find((member) => coordinatorMachineKey(member) === lastViewed) ??
+      members.find((member) => member.environmentId === environmentId);
+    if (viewed) return viewOf(viewed);
+  }
+  const reachable = (candidates: readonly T[]) =>
+    candidates.filter((member) => !unreachable.has(member.environmentId));
   const preferred = (candidates: readonly T[]) =>
     (primaryEnvironmentId !== null
       ? candidates.find((member) => member.environmentId === primaryEnvironmentId)
       : undefined) ?? candidates[0];
-  if (saved) {
-    const separator = saved.indexOf(":");
-    const savedEnvironmentId = separator > 0 ? saved.slice(0, separator) : saved;
-    const choice =
-      members.find((member) => coordinatorMachineKey(member) === saved) ??
-      members.find((member) => member.environmentId === savedEnvironmentId);
-    if (choice) {
-      const standIn = unreachable.has(choice.environmentId) ? preferred(reachable) : undefined;
-      return standIn
-        ? { member: standIn, savedMachineMissing: false, savedMachineOffline: true }
-        : { member: choice, savedMachineMissing: false, savedMachineOffline: false };
+  const fallback =
+    (roles
+      ? (roles.coordinators.find((member) => member.environmentId === primaryEnvironmentId) ??
+        reachable(roles.coordinators)[0] ??
+        roles.coordinators[0] ??
+        roles.pending[0])
+      : undefined) ??
+    preferred(reachable(members)) ??
+    preferred(members);
+  return viewOf(fallback, Boolean(lastViewed) && members.length > 0);
+}
+
+function coordinatorProblem<T extends EnvironmentProject>(
+  member: T,
+  roles: NonNullable<ReturnType<typeof logicalCoordinators<T>>>,
+): string | null {
+  if (roles.coordinators.includes(member)) return null;
+  if (roles.pending.includes(member)) return COORDINATOR_PENDING_PROBLEM;
+  if (roles.superseded.includes(member)) return SUPERSEDED_COORDINATOR_PROBLEM;
+  if (member.workspaceSettings?.coordinatorBinding?.state === "transferred")
+    return WORKERS_ONLY_PROBLEM;
+  return UNCONFIRMED_COORDINATOR_PROBLEM;
+}
+
+/**
+ * A linked machine the key names that this device has never loaded: the shared
+ * project lists it, but no synced copy of it is here. Its state is Unknown, and
+ * the page says so rather than showing another machine. Null when the key is
+ * loaded, absent, or not one of the project's linked machines.
+ */
+export function unloadedMachineRef(
+  members: ReadonlyArray<EnvironmentProject>,
+  key: string | null | undefined,
+): LogicalProjectMember | null {
+  if (!key || members.some((member) => coordinatorMachineKey(member) === key)) return null;
+  for (const member of members)
+    for (const ref of member.workspaceSettings?.logicalProject?.members ?? [])
+      if (`${ref.environmentId}:${ref.projectId}` === key) return ref;
+  return null;
+}
+
+/** Every linked machine the project lists that this device has never loaded. */
+export function unloadedMachineRefs(
+  members: ReadonlyArray<EnvironmentProject>,
+): LogicalProjectMember[] {
+  const loaded = new Set(members.map(coordinatorMachineKey));
+  const refs = new Map<string, LogicalProjectMember>();
+  for (const member of members)
+    for (const ref of member.workspaceSettings?.logicalProject?.members ?? []) {
+      const key = `${ref.environmentId}:${ref.projectId}`;
+      if (!loaded.has(key)) refs.set(key, ref);
     }
-  }
-  return {
-    member: preferred(reachable) ?? preferred(members),
-    savedMachineMissing: Boolean(saved) && members.length > 0,
-    savedMachineOffline: false,
-  };
+  return [...refs.values()];
+}
+
+/** One machine's copy of the project, as the orchestrator switcher lists it. */
+export interface OrchestratorCopy {
+  readonly key: string;
+  readonly machine: string;
+  readonly folder: string;
+  /**
+   * coordinator: runs its own coordinator. workers: a linked copy that only runs
+   * workers. pending: a coordinator move to it is not confirmed yet.
+   * independent: the same repository, not linked, with its own orchestrator.
+   */
+  readonly role: "coordinator" | "workers" | "pending" | "independent";
+  /** A coordinator can be started on this linked copy now. */
+  readonly canStart: boolean;
+}
+
+/**
+ * The copies the switcher lists. Checkouts of one repository that were never
+ * linked are independent projects with their own orchestrators: the switcher
+ * views them, and nothing treats them as one project.
+ */
+export function orchestratorCopies<T extends EnvironmentProject>(
+  members: readonly T[],
+  machineOf: (member: T) => string,
+  startReady: (environmentId: T["environmentId"]) => boolean,
+): OrchestratorCopy[] {
+  const roles = logicalCoordinators(members);
+  return members.map((member) => {
+    const linked = Boolean(member.workspaceSettings?.logicalProject);
+    const role: OrchestratorCopy["role"] =
+      !roles || !linked
+        ? members.length > 1
+          ? "independent"
+          : "coordinator"
+        : roles.coordinators.includes(member)
+          ? "coordinator"
+          : roles.pending.includes(member)
+            ? "pending"
+            : "workers";
+    return {
+      key: coordinatorMachineKey(member),
+      machine: machineOf(member),
+      folder: member.workspaceRoot,
+      role,
+      canStart:
+        role === "workers" &&
+        member.workspaceSettings?.coordinatorBinding?.state === "transferred" &&
+        startReady(member.environmentId),
+    };
+  });
 }

@@ -22,7 +22,7 @@ export function ThreadContextDivider(props: {
             className="flex-none"
             textClassName="font-studio-medium"
             compact
-            icon="brain"
+            icon="thinking"
             iconSubtleColor={props.iconColor}
             label={props.label}
             showIcon={false}

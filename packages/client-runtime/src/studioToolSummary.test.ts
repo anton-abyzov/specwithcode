@@ -260,6 +260,19 @@ describe("summarizeStudioToolCalls", () => {
       ]).label,
     ).toBe("Continued 1 thread");
     expect(
+      summarizeStudioToolCalls("thread-migrate", [
+        completed(
+          { machine: "Mac mini" },
+          {
+            results: [
+              { threadId: "thread-1", outcome: "moved" },
+              { threadId: "thread-2", outcome: "stayed" },
+            ],
+          },
+        ),
+      ]).label,
+    ).toBe("Moved 1 thread to another machine");
+    expect(
       summarizeStudioToolCalls("task-cancel", [
         completed({ taskId: "task-1" }, { taskId: "task-1", status: "cancel_requested" }),
       ]).label,

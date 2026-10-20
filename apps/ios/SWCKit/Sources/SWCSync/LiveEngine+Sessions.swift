@@ -336,7 +336,8 @@ extension LiveEngine {
       return
     }
     let online = entry.isOnline
-    assign(session, \.machineLabel, entry.label)
+    let name = displayName(entry)
+    assign(session, \.machineLabel, name)
     assign(session, \.machineOnline, online)
     assign(session, \.isStale, controller.projection != nil && (!online || !controller.isSynchronized))
 
@@ -348,7 +349,7 @@ extension LiveEngine {
         let title = project.displayTitle.trimmingCharacters(in: .whitespacesAndNewlines)
         if !title.isEmpty { assign(session, \.title, title) }
       }
-      assign(session, \.subtitle, "Coordinator · \(entry.label)")
+      assign(session, \.subtitle, "Coordinator · \(name)")
     case .thread:
       let title = (shell?.title ?? controller.projection?.thread.title)?.trimmingCharacters(in: .whitespacesAndNewlines)
       if let title, !title.isEmpty { assign(session, \.title, title) }
@@ -364,7 +365,7 @@ extension LiveEngine {
   func blockedReason(_ target: ChatTarget, entry: MachineEntry, project: ProjectShell?, threadArchived: Bool, threadDeleted: Bool = false) -> String? {
     // A coordinator send starts a new thread, so only a thread target is blocked.
     if case .thread = target, threadDeleted { return Self.deletedReason }
-    if !entry.isOnline { return SyncError.machineOffline(label: entry.label).localizedDescription }
+    if !entry.isOnline { return SyncError.machineOffline(label: displayName(entry)).localizedDescription }
     if !entry.canOperate { return Self.readOnlyReason }
     if let project, case .thread = target {
       if project.isArchived { return "This project is archived." }
@@ -560,7 +561,7 @@ extension LiveEngine {
       if let socket = entry.socket, !(await socket.isClosed) { return socket }
       switch entry.status.state {
       case .needsRepair, .unsupported:
-        throw entry.status.lastError ?? SyncError.machineOffline(label: entry.label)
+        throw entry.status.lastError ?? SyncError.machineOffline(label: displayName(entry))
       default:
         break
       }
@@ -569,7 +570,7 @@ extension LiveEngine {
         let connection = entry.connection
         Task { await connection.networkChanged() }
       }
-      if ContinuousClock.now >= deadline { throw SyncError.machineOffline(label: entry.label) }
+      if ContinuousClock.now >= deadline { throw SyncError.machineOffline(label: displayName(entry)) }
       try await Task.sleep(for: .milliseconds(100))
     }
   }

@@ -25,9 +25,15 @@ import {
   ScheduledTaskSchedule,
   ScheduledTaskUpsertSchedule,
 } from "./scheduledTask.ts";
+import { HandoffMachineThreadOutcome } from "./handoffMode.ts";
 import { ModelSelection } from "./modelSelection.ts";
 import { ProviderInteractionMode, RuntimeMode } from "./providerPolicy.ts";
 import { ThreadLinkedPullRequest } from "./threadPullRequest.ts";
+import {
+  ThreadExecutionHistoryEntry,
+  ThreadExecutionState,
+  ThreadSourceRoot,
+} from "./threadExecution.ts";
 import { ThreadTitleRegeneration } from "./threadTitle.ts";
 import {
   OrchestrationV2Actor,
@@ -407,6 +413,29 @@ export const OrchestratorMcpThreadListInput = Schema.Struct({
 });
 export type OrchestratorMcpThreadListInput = typeof OrchestratorMcpThreadListInput.Type;
 
+/** Where a thread lives and runs; see threadExecution.ts. Omitted by older servers. */
+const OrchestratorMcpThreadExecutionFields = {
+  ownerMachineId: Schema.optional(
+    EnvironmentId.annotate({
+      description: "Environment id of the machine the thread lives on (its project's machine).",
+    }),
+  ),
+  executionMachineId: Schema.optional(
+    EnvironmentId.annotate({
+      description:
+        "Environment id of the machine that runs the thread now. Differs from ownerMachineId after a handoff.",
+    }),
+  ),
+  executionMachineLabel: Schema.optional(Schema.String),
+  executionState: Schema.optional(
+    ThreadExecutionState.annotate({
+      description:
+        "running: the execution machine holds the thread's lease. fenced: this copy was handed off and takes no new turns. unknown: the execution machine is unreachable; executionLastSeenAt says when it last answered. Never read unknown as idle.",
+    }),
+  ),
+  executionLastSeenAt: Schema.optional(Schema.NullOr(IsoDateTime)),
+} as const;
+
 export const OrchestratorMcpThreadListItem = Schema.Struct({
   threadId: ThreadId,
   /** Always use the compound reference for cross-machine reads. */
@@ -437,6 +466,7 @@ export const OrchestratorMcpThreadListItem = Schema.Struct({
         "Queued messages waiting in this thread's held queue (after Stop, a restart or a provider failure). They are not delivered until the queue is resumed: by the user's Resume, by studio_queue_resume, or by another message sent to the thread. Omitted when nothing is held.",
     }),
   ),
+  ...OrchestratorMcpThreadExecutionFields,
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
 });
@@ -515,6 +545,11 @@ export const OrchestratorMcpThreadDetail = Schema.Struct({
   archived: Schema.Boolean,
   settled: Schema.Boolean,
   settledAt: Schema.NullOr(IsoDateTime),
+  ...OrchestratorMcpThreadExecutionFields,
+  /** Each stretch of execution: [machine, from, to, reason]. Omitted when it never moved. */
+  executionHistory: Schema.optional(Schema.Array(ThreadExecutionHistoryEntry)),
+  /** Where a continuation came from. Omitted unless it arrived through a handoff. */
+  sourceRoot: Schema.optional(ThreadSourceRoot),
   createdAt: IsoDateTime,
   updatedAt: IsoDateTime,
 });
@@ -675,6 +710,70 @@ export const OrchestratorMcpThreadsBulkResult = Schema.Struct({
 });
 export type OrchestratorMcpThreadsBulkResult = typeof OrchestratorMcpThreadsBulkResult.Type;
 
+/** The most threads one migrate call moves, as the handoff service accepts. */
+export const ORCHESTRATOR_MCP_MIGRATE_MAX_THREADS = 100;
+
+export const OrchestratorMcpThreadMigrateInput = Schema.Struct({
+  machine: OrchestratorMcpMachineTarget.annotate({
+    description:
+      "Destination machine: a fleet id or label from studio_machine_list. It must be another machine; it is never substituted.",
+  }),
+  threadIds: Schema.optional(
+    Schema.Array(ThreadId)
+      .check(Schema.isMinLength(1), Schema.isMaxLength(ORCHESTRATOR_MCP_MIGRATE_MAX_THREADS))
+      .annotate({
+        description:
+          "Threads of this project to move. Omit to move every running handoff-mode thread of this project.",
+      }),
+  ),
+  modelSelection: Schema.optional(ModelSelection).annotate({
+    description:
+      "Model to continue with on the destination. Only with exactly one thread; omitted keeps its model or the destination's default.",
+  }),
+});
+export type OrchestratorMcpThreadMigrateInput = typeof OrchestratorMcpThreadMigrateInput.Type;
+
+/** One thread a migrate call moved, left in place with the exact reason, or skipped. */
+export const OrchestratorMcpThreadMigrateThreadResult = Schema.Struct({
+  threadId: ThreadId,
+  title: Schema.String,
+  outcome: HandoffMachineThreadOutcome,
+  detail: Schema.NullOr(Schema.String),
+  continuedThreadId: Schema.NullOr(ThreadId),
+  /** Whether the destination resumed the run; null when the handoff does not report it. */
+  resumed: Schema.NullOr(Schema.Boolean),
+});
+export type OrchestratorMcpThreadMigrateThreadResult =
+  typeof OrchestratorMcpThreadMigrateThreadResult.Type;
+
+export const OrchestratorMcpThreadMigrateResult = Schema.Struct({
+  destination: Schema.Struct({ environmentId: EnvironmentId, label: Schema.String }),
+  reason: Schema.Literal("manual"),
+  results: Schema.Array(OrchestratorMcpThreadMigrateThreadResult),
+  /** One line, such as "2 moved, 1 stayed to Mac mini." */
+  summary: Schema.String,
+});
+export type OrchestratorMcpThreadMigrateResult = typeof OrchestratorMcpThreadMigrateResult.Type;
+
+/**
+ * What a machine shares about one provider's usage so another machine can
+ * judge it as a limit handoff target. Never a token or an account name: the
+ * account is a salted sha256 of the provider's account identity, equal on
+ * every machine signed in to the same account or key.
+ */
+export const OrchestratorMcpProviderUsage = Schema.Struct({
+  accountFingerprint: Schema.NullOr(Schema.String.check(Schema.isPattern(/^sha256:[a-f0-9]{64}$/))),
+  /** The fullest live usage window, or null when the provider reports none. */
+  usedPercent: Schema.NullOr(Schema.Number.check(Schema.isBetween({ minimum: 0, maximum: 100 }))),
+  resetsAt: Schema.NullOr(IsoDateTime),
+  signedIn: Schema.Boolean,
+  /** When the usage was read; null when it never was. */
+  observedAt: Schema.NullOr(IsoDateTime),
+  /** The provider refused ordinary use after that read. */
+  limited: Schema.optional(Schema.Boolean),
+});
+export type OrchestratorMcpProviderUsage = typeof OrchestratorMcpProviderUsage.Type;
+
 export const OrchestratorMcpProviderCapability = Schema.Struct({
   providerInstanceId: ProviderInstanceId,
   driverKind: ProviderDriverKind,
@@ -690,6 +789,10 @@ export const OrchestratorMcpProviderCapability = Schema.Struct({
   canRunChildTask: Schema.Boolean,
   canRunCrossProviderChildTask: Schema.Boolean,
   constraints: Schema.Array(Schema.String),
+  /** Usage and account pool, for limit handoff targets. Older machines omit it. */
+  usage: Schema.optional(OrchestratorMcpProviderUsage),
+  /** Whether the caller's work grant lets it run this provider. Omitted without a grant. */
+  allowedByGrant: Schema.optional(Schema.Boolean),
 });
 export type OrchestratorMcpProviderCapability = typeof OrchestratorMcpProviderCapability.Type;
 
@@ -742,6 +845,8 @@ export const OrchestratorMcpMachineProvider = Schema.Struct({
   driverKind: ProviderDriverKind,
   models: Schema.Array(Schema.String),
   available: Schema.Boolean,
+  usage: Schema.optional(OrchestratorMcpProviderUsage),
+  allowedByGrant: Schema.optional(Schema.Boolean),
 });
 export type OrchestratorMcpMachineProvider = typeof OrchestratorMcpMachineProvider.Type;
 
@@ -1010,6 +1115,7 @@ export class OrchestratorMcpFailure extends Schema.TaggedError<OrchestratorMcpFa
       "delegation_limit",
       "outside_grant_scope",
       "account_not_allowed",
+      "thread_fenced",
     ]),
     message: Schema.String,
   },

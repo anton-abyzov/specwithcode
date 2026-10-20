@@ -88,7 +88,9 @@ function layer(input: {
     Layer.provide(
       ServerConfig.layerTest(
         process.cwd(),
-        input.fileSystem ? "/tmp/studio-source-control-repos" : { prefix: "studio-source-control-repos-" },
+        input.fileSystem
+          ? "/tmp/studio-source-control-repos"
+          : { prefix: "studio-source-control-repos-" },
       ),
     ),
   );
@@ -696,3 +698,142 @@ it.effect("publish succeeds with status remote_added when the local repo has no 
     ),
   );
 });
+
+it.effect("checks remote access with git ls-remote before a clone", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const git = yield* GitVcsDriver.GitVcsDriver;
+    const parent = yield* fs.makeTempDirectoryScoped({ prefix: "studio-remote-access-" });
+    const bare = path.join(parent, "origin.git");
+    yield* git.execute({ operation: "test.init", cwd: parent, args: ["init", "--bare", bare] });
+    yield* Effect.gen(function* () {
+      const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
+      const ok = yield* service.checkRemoteAccess({ remoteUrl: bare });
+      assert.deepStrictEqual(ok, { status: "ok", detail: null });
+
+      const missing = yield* service.checkRemoteAccess({
+        remoteUrl: path.join(parent, "missing.git"),
+      });
+      assert.strictEqual(missing.status, "no-access");
+      assert.isNotNull(missing.detail);
+
+      const refused = yield* Effect.flip(
+        service.checkRemoteAccess({ remoteUrl: "ext::sh -c touch% /tmp/pwned" }),
+      );
+      assert.strictEqual(refused.detail, "That clone URL is not allowed.");
+      const option = yield* Effect.flip(
+        service.checkRemoteAccess({ remoteUrl: "--upload-pack=touch /tmp/pwned" }),
+      );
+      assert.strictEqual(option.detail, "That clone URL is not allowed.");
+    }).pipe(Effect.provide(layer({ git: { execute: git.execute } })));
+  }).pipe(
+    Effect.provide(
+      GitVcsDriver.layer.pipe(
+        Layer.provide(
+          ServerConfig.layerTest(process.cwd(), { prefix: "studio-remote-access-config-" }),
+        ),
+        Layer.provideMerge(NodeServices.layer),
+      ),
+    ),
+  ),
+);
+
+it("keeps credentials and tokens out of the remote access detail", () => {
+  const detail = SourceControlRepositoryService.remoteAccessDetail(
+    "remote: Invalid username or token.\nfatal: Authentication failed for 'https://bob:ghp_abcdefghijklmnop@github.com/o/r.git/'\n",
+  );
+  assert.isNotNull(detail);
+  assert.notInclude(detail ?? "", "ghp_abcdefghijklmnop");
+  assert.notInclude(detail ?? "", "bob:");
+});
+
+it.effect("inspects a clone destination without reading a parent repository", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const git = yield* GitVcsDriver.GitVcsDriver;
+    const parent = yield* fs.makeTempDirectoryScoped({ prefix: "studio-inspect-destination-" });
+    const clone = path.join(parent, "clone");
+    yield* git.execute({ operation: "test.init", cwd: parent, args: ["init", clone] });
+    yield* git.execute({
+      operation: "test.remote",
+      cwd: clone,
+      args: ["remote", "add", "origin", "git@github.com:Team/Repo.git"],
+    });
+    const worktree = path.join(parent, "worktree");
+    yield* git.execute({
+      operation: "test.commit",
+      cwd: clone,
+      args: ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "--allow-empty", "-m", "x"],
+    });
+    yield* git.execute({
+      operation: "test.worktree",
+      cwd: clone,
+      args: ["worktree", "add", worktree],
+    });
+    const unfinished = path.join(parent, "unfinished");
+    yield* git.execute({ operation: "test.init", cwd: parent, args: ["init", unfinished] });
+    yield* git.execute({
+      operation: "test.remote",
+      cwd: unfinished,
+      args: ["remote", "add", "origin", "git@github.com:Team/Repo.git"],
+    });
+    const plain = path.join(clone, "plain");
+    yield* fs.makeDirectory(path.join(plain, "src"), { recursive: true });
+    const empty = path.join(parent, "empty");
+    yield* fs.makeDirectory(empty);
+    yield* Effect.gen(function* () {
+      const service = yield* SourceControlRepositoryService.SourceControlRepositoryService;
+      const remoteUrl = "https://github.com/team/repo.git";
+      const same = yield* service.inspectDestination({ path: clone, remoteUrl });
+      assert.deepStrictEqual(same, {
+        path: clone,
+        state: "repository",
+        originKey: "github.com/Team/Repo",
+        sameRepository: true,
+        checkedOut: true,
+      });
+      const linked = yield* service.inspectDestination({ path: worktree, remoteUrl });
+      assert.strictEqual(linked.state, "repository");
+      assert.isTrue(linked.sameRepository);
+      assert.isTrue(linked.checkedOut);
+      // An interrupted clone: origin written, nothing fetched or checked out.
+      const partial = yield* service.inspectDestination({ path: unfinished, remoteUrl });
+      assert.deepStrictEqual(partial, {
+        path: unfinished,
+        state: "repository",
+        originKey: "github.com/Team/Repo",
+        sameRepository: true,
+        checkedOut: false,
+      });
+      const lock = path.join(clone, ".git", "index.lock");
+      yield* fs.writeFileString(lock, "");
+      assert.isFalse((yield* service.inspectDestination({ path: clone, remoteUrl })).checkedOut);
+      yield* fs.remove(lock);
+      const other = yield* service.inspectDestination({
+        path: clone,
+        remoteUrl: "https://github.com/team/other.git",
+      });
+      assert.isFalse(other.sameRepository);
+      assert.strictEqual(
+        (yield* service.inspectDestination({ path: plain, remoteUrl })).state,
+        "not-repository",
+      );
+      assert.strictEqual((yield* service.inspectDestination({ path: empty })).state, "empty");
+      assert.strictEqual(
+        (yield* service.inspectDestination({ path: path.join(parent, "nope") })).state,
+        "missing",
+      );
+    }).pipe(Effect.provide(layer({ git: { execute: git.execute } })));
+  }).pipe(
+    Effect.provide(
+      GitVcsDriver.layer.pipe(
+        Layer.provide(
+          ServerConfig.layerTest(process.cwd(), { prefix: "studio-inspect-destination-config-" }),
+        ),
+        Layer.provideMerge(NodeServices.layer),
+      ),
+    ),
+  ),
+);

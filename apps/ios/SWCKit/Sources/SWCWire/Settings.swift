@@ -11,8 +11,11 @@ public struct ServerSettings: Codable, Hashable, Sendable {
   public var providerInstances: [String: ProviderInstanceInfo]
   public var defaultThreadEnvMode: ThreadEnvMode?
   public var environmentIcon: String?
+  /// The user's short names for every machine in the fleet, by environment id.
+  /// Older servers omit it.
+  public var machineNicknames: [String: MachineNicknameEntry]
 
-  public init(defaultRuntimeMode: RuntimeMode? = nil, defaultModelSelection: ModelSelection? = nil, textGenerationModelSelection: ModelSelection? = nil, sidebarProjectOrder: SidebarProjectOrder? = nil, providerInstances: [String: ProviderInstanceInfo] = [:], defaultThreadEnvMode: ThreadEnvMode? = nil, environmentIcon: String? = nil) {
+  public init(defaultRuntimeMode: RuntimeMode? = nil, defaultModelSelection: ModelSelection? = nil, textGenerationModelSelection: ModelSelection? = nil, sidebarProjectOrder: SidebarProjectOrder? = nil, providerInstances: [String: ProviderInstanceInfo] = [:], defaultThreadEnvMode: ThreadEnvMode? = nil, environmentIcon: String? = nil, machineNicknames: [String: MachineNicknameEntry] = [:]) {
     self.defaultRuntimeMode = defaultRuntimeMode
     self.defaultModelSelection = defaultModelSelection
     self.textGenerationModelSelection = textGenerationModelSelection
@@ -20,11 +23,12 @@ public struct ServerSettings: Codable, Hashable, Sendable {
     self.providerInstances = providerInstances
     self.defaultThreadEnvMode = defaultThreadEnvMode
     self.environmentIcon = environmentIcon
+    self.machineNicknames = machineNicknames
   }
 
   enum CodingKeys: String, CodingKey {
     case defaultRuntimeMode, defaultModelSelection, textGenerationModelSelection, sidebarProjectOrder
-    case providerInstances, defaultThreadEnvMode, environmentIcon
+    case providerInstances, defaultThreadEnvMode, environmentIcon, machineNicknames
   }
 
   public init(from decoder: Decoder) throws {
@@ -36,6 +40,13 @@ public struct ServerSettings: Codable, Hashable, Sendable {
     providerInstances = Self.decodeInstances(c)
     defaultThreadEnvMode = try c.decodeIfPresent(ThreadEnvMode.self, forKey: .defaultThreadEnvMode)
     environmentIcon = try? c.decodeIfPresent(String.self, forKey: .environmentIcon)
+    machineNicknames = Self.decodeNicknames(c)
+  }
+
+  /// Drops a malformed entry rather than failing the whole settings snapshot.
+  private static func decodeNicknames(_ c: KeyedDecodingContainer<CodingKeys>) -> [String: MachineNicknameEntry] {
+    guard let raw = try? c.decodeIfPresent([String: JSONValue].self, forKey: .machineNicknames) else { return [:] }
+    return raw.compactMapValues { try? $0.decode(MachineNicknameEntry.self) }
   }
 
   private static func decodeInstances(_ c: KeyedDecodingContainer<CodingKeys>) -> [String: ProviderInstanceInfo] {
@@ -45,6 +56,19 @@ public struct ServerSettings: Codable, Hashable, Sendable {
       if let info = try? value.decode(ProviderInstanceInfo.self) { result[id] = info }
     }
     return result
+  }
+}
+
+/// One entry of `ServerSettings.machineNicknames`. An empty name means the
+/// machine's default short name; its stamp still lets a reset beat an older rename.
+public struct MachineNicknameEntry: Codable, Hashable, Sendable {
+  public var name: String
+  /// ISO 8601; the newest entry wins when machines disagree.
+  public var updatedAt: String
+
+  public init(name: String, updatedAt: String) {
+    self.name = name
+    self.updatedAt = updatedAt
   }
 }
 

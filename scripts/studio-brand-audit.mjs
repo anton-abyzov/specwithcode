@@ -128,7 +128,11 @@ check(
 check("hosted services and telemetry opt in only", () => {
   assert.match(
     read("apps/server/src/cloud/publicConfig.ts"),
-    /process.env.STUDIO_ENABLE_HOSTED_SERVICES === "true" && Boolean/,
+    /input.enable === "true" \|\| input.buildDefault\?.trim\(\) === "true"/,
+  );
+  assert.match(
+    read("scripts/lib/public-config.ts"),
+    /STUDIO_ENABLE_HOSTED_SERVICES\?.trim\(\) !== "true"\) return false/,
   );
   assert.match(
     read("apps/web/src/cloud/publicConfig.ts"),

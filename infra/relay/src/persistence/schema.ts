@@ -5,34 +5,33 @@ import type {
   RelayManagedEndpointOrigin,
 } from "@specweave-studio/contracts/relay";
 import {
-  boolean,
   index,
   integer,
-  jsonb,
-  pgTable,
   primaryKey,
+  sqliteTable,
   text,
   uniqueIndex,
-  varchar,
-} from "drizzle-orm/pg-core";
+} from "drizzle-orm/sqlite-core";
 
-export const relayMobileDevices = pgTable(
+export const relayMobileDevices = sqliteTable(
   "relay_mobile_devices",
   {
-    userId: varchar("user_id", { length: 255 }).notNull(),
-    deviceId: varchar("device_id", { length: 255 }).notNull(),
+    userId: text("user_id").notNull(),
+    deviceId: text("device_id").notNull(),
     label: text("label").notNull().default("iOS device"),
-    platform: varchar("platform", { length: 16 }).notNull().$type<"ios" | "android">(),
+    platform: text("platform").notNull().$type<"ios" | "android">(),
     iosMajorVersion: integer("ios_major_version"),
     androidApiLevel: integer("android_api_level"),
-    appVersion: varchar("app_version", { length: 64 }),
-    bundleId: varchar("bundle_id", { length: 255 }),
-    apsEnvironment: varchar("aps_environment", { length: 16 }).$type<"sandbox" | "production">(),
+    appVersion: text("app_version"),
+    bundleId: text("bundle_id"),
+    apsEnvironment: text("aps_environment").$type<"sandbox" | "production">(),
     pushToken: text("push_token"),
     pushToStartToken: text("push_to_start_token"),
-    preferencesJson: jsonb("preferences_json").notNull().$type<RelayAgentAwarenessPreferences>(),
-    createdAt: varchar("created_at", { length: 64 }).notNull(),
-    updatedAt: varchar("updated_at", { length: 64 }).notNull(),
+    preferencesJson: text("preferences_json", { mode: "json" })
+      .notNull()
+      .$type<RelayAgentAwarenessPreferences>(),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
   },
   (table) => [
     primaryKey({ columns: [table.userId, table.deviceId] }),
@@ -41,19 +40,21 @@ export const relayMobileDevices = pgTable(
   ],
 );
 
-export const relayLiveActivities = pgTable(
+export const relayLiveActivities = sqliteTable(
   "relay_live_activities",
   {
-    userId: varchar("user_id", { length: 255 }).notNull(),
-    deviceId: varchar("device_id", { length: 255 }).notNull(),
+    userId: text("user_id").notNull(),
+    deviceId: text("device_id").notNull(),
     activityPushToken: text("activity_push_token"),
-    remoteStartQueuedAt: varchar("remote_start_queued_at", { length: 64 }),
-    remoteStartedAt: varchar("remote_started_at", { length: 64 }),
-    endedAt: varchar("ended_at", { length: 64 }),
-    lastAggregateJson: jsonb("last_aggregate_json").$type<RelayAgentActivityAggregateState>(),
-    lastLiveActivityDeliveryAt: varchar("last_live_activity_delivery_at", { length: 64 }),
-    createdAt: varchar("created_at", { length: 64 }).notNull(),
-    updatedAt: varchar("updated_at", { length: 64 }).notNull(),
+    remoteStartQueuedAt: text("remote_start_queued_at"),
+    remoteStartedAt: text("remote_started_at"),
+    endedAt: text("ended_at"),
+    lastAggregateJson: text("last_aggregate_json", {
+      mode: "json",
+    }).$type<RelayAgentActivityAggregateState>(),
+    lastLiveActivityDeliveryAt: text("last_live_activity_delivery_at"),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
   },
   (table) => [
     primaryKey({ columns: [table.userId, table.deviceId] }),
@@ -61,25 +62,33 @@ export const relayLiveActivities = pgTable(
   ],
 );
 
-export const relayEnvironmentLinks = pgTable(
+export const relayEnvironmentLinks = sqliteTable(
   "relay_environment_links",
   {
-    userId: varchar("user_id", { length: 191 }).notNull(),
-    environmentId: varchar("environment_id", { length: 191 }).notNull(),
+    userId: text("user_id").notNull(),
+    environmentId: text("environment_id").notNull(),
     environmentLabel: text("environment_label").notNull().default("Studio Environment"),
     environmentPublicKey: text("environment_public_key").notNull(),
     endpointHttpBaseUrl: text("endpoint_http_base_url").notNull(),
     endpointWsBaseUrl: text("endpoint_ws_base_url").notNull(),
-    endpointProviderKind: varchar("endpoint_provider_kind", { length: 32 }).notNull(),
-    notificationsEnabled: boolean("notifications_enabled").notNull().default(true),
-    liveActivitiesEnabled: boolean("live_activities_enabled").notNull().default(true),
-    managedTunnelsEnabled: boolean("managed_tunnels_enabled").notNull().default(false),
+    endpointProviderKind: text("endpoint_provider_kind").notNull(),
+    notificationsEnabled: integer("notifications_enabled", { mode: "boolean" })
+      .notNull()
+      .default(true),
+    liveActivitiesEnabled: integer("live_activities_enabled", { mode: "boolean" })
+      .notNull()
+      .default(true),
+    managedTunnelsEnabled: integer("managed_tunnels_enabled", { mode: "boolean" })
+      .notNull()
+      .default(false),
     // Opt-in: hold webhook requests while the environment is offline.
-    holdWebhooksWhileOffline: boolean("hold_webhooks_while_offline").notNull().default(false),
-    createdByDeviceId: varchar("created_by_device_id", { length: 191 }),
-    revokedAt: varchar("revoked_at", { length: 64 }),
-    createdAt: varchar("created_at", { length: 64 }).notNull(),
-    updatedAt: varchar("updated_at", { length: 64 }).notNull(),
+    holdWebhooksWhileOffline: integer("hold_webhooks_while_offline", { mode: "boolean" })
+      .notNull()
+      .default(false),
+    createdByDeviceId: text("created_by_device_id"),
+    revokedAt: text("revoked_at"),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
   },
   (table) => [
     primaryKey({ columns: [table.userId, table.environmentId] }),
@@ -87,24 +96,24 @@ export const relayEnvironmentLinks = pgTable(
   ],
 );
 
-export const relayManagedEndpointAllocations = pgTable(
+export const relayManagedEndpointAllocations = sqliteTable(
   "relay_managed_endpoint_allocations",
   {
-    userId: varchar("user_id", { length: 191 }).notNull(),
-    environmentId: varchar("environment_id", { length: 191 }).notNull(),
+    userId: text("user_id").notNull(),
+    environmentId: text("environment_id").notNull(),
     hostname: text("hostname").notNull(),
-    tunnelId: varchar("tunnel_id", { length: 191 }),
+    tunnelId: text("tunnel_id"),
     tunnelName: text("tunnel_name").notNull(),
-    dnsRecordId: varchar("dns_record_id", { length: 191 }),
-    readyAt: varchar("ready_at", { length: 64 }),
-    recoveryEnabledAt: varchar("recovery_enabled_at", { length: 64 }),
+    dnsRecordId: text("dns_record_id"),
+    readyAt: text("ready_at"),
+    recoveryEnabledAt: text("recovery_enabled_at"),
     recoveryEnvironmentPublicKey: text("recovery_environment_public_key"),
     // Set when cleanup deletes the recorded tunnel; cleared when a tunnel is recorded again.
-    tunnelReleasedAt: varchar("tunnel_released_at", { length: 64 }),
-    origin: jsonb("origin").$type<RelayManagedEndpointOrigin>(),
+    tunnelReleasedAt: text("tunnel_released_at"),
+    origin: text("origin", { mode: "json" }).$type<RelayManagedEndpointOrigin>(),
     generation: integer("generation").notNull().default(0),
-    createdAt: varchar("created_at", { length: 64 }).notNull(),
-    updatedAt: varchar("updated_at", { length: 64 }).notNull(),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
   },
   (table) => [
     primaryKey({ columns: [table.userId, table.environmentId] }),
@@ -113,23 +122,23 @@ export const relayManagedEndpointAllocations = pgTable(
   ],
 );
 
-export const relayManagedTunnelLimits = pgTable("relay_managed_tunnel_limits", {
-  userId: varchar("user_id", { length: 191 }).primaryKey(),
+export const relayManagedTunnelLimits = sqliteTable("relay_managed_tunnel_limits", {
+  userId: text("user_id").primaryKey(),
   maxTunnels: integer("max_tunnels").notNull(),
-  createdAt: varchar("created_at", { length: 64 }).notNull(),
-  updatedAt: varchar("updated_at", { length: 64 }).notNull(),
+  createdAt: text("created_at").notNull(),
+  updatedAt: text("updated_at").notNull(),
 });
 
-export const relayEnvironmentCredentials = pgTable(
+export const relayEnvironmentCredentials = sqliteTable(
   "relay_environment_credentials",
   {
-    credentialId: varchar("credential_id", { length: 64 }).primaryKey(),
-    environmentId: varchar("environment_id", { length: 191 }).notNull(),
+    credentialId: text("credential_id").primaryKey(),
+    environmentId: text("environment_id").notNull(),
     environmentPublicKey: text("environment_public_key").notNull(),
-    credentialHash: varchar("credential_hash", { length: 191 }).notNull(),
-    revokedAt: varchar("revoked_at", { length: 64 }),
-    createdAt: varchar("created_at", { length: 64 }).notNull(),
-    updatedAt: varchar("updated_at", { length: 64 }).notNull(),
+    credentialHash: text("credential_hash").notNull(),
+    revokedAt: text("revoked_at"),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
   },
   (table) => [
     uniqueIndex("idx_relay_environment_credentials_hash").on(table.credentialHash),
@@ -142,15 +151,15 @@ export const relayEnvironmentCredentials = pgTable(
   ],
 );
 
-export const relayAgentActivityRows = pgTable(
+export const relayAgentActivityRows = sqliteTable(
   "relay_agent_activity_rows",
   {
-    environmentId: varchar("environment_id", { length: 191 }).notNull(),
+    environmentId: text("environment_id").notNull(),
     environmentPublicKey: text("environment_public_key").notNull(),
-    threadId: varchar("thread_id", { length: 512 }).notNull(),
-    stateJson: jsonb("state_json").notNull().$type<RelayAgentActivityState>(),
-    updatedAt: varchar("updated_at", { length: 64 }).notNull(),
-    createdAt: varchar("created_at", { length: 64 }).notNull(),
+    threadId: text("thread_id").notNull(),
+    stateJson: text("state_json", { mode: "json" }).notNull().$type<RelayAgentActivityState>(),
+    updatedAt: text("updated_at").notNull(),
+    createdAt: text("created_at").notNull(),
   },
   (table) => [
     primaryKey({ columns: [table.environmentId, table.environmentPublicKey, table.threadId] }),
@@ -158,21 +167,21 @@ export const relayAgentActivityRows = pgTable(
   ],
 );
 
-export const relayDeliveryAttempts = pgTable(
+export const relayDeliveryAttempts = sqliteTable(
   "relay_delivery_attempts",
   {
-    id: varchar("id", { length: 36 }).primaryKey(),
-    createdAt: varchar("created_at", { length: 64 }).notNull(),
-    userId: varchar("user_id", { length: 255 }),
-    environmentId: varchar("environment_id", { length: 191 }),
-    threadId: varchar("thread_id", { length: 512 }),
-    deviceId: varchar("device_id", { length: 255 }),
-    kind: varchar("kind", { length: 64 }).notNull(),
-    sourceJobId: varchar("source_job_id", { length: 64 }),
-    tokenSuffix: varchar("token_suffix", { length: 16 }),
+    id: text("id").primaryKey(),
+    createdAt: text("created_at").notNull(),
+    userId: text("user_id"),
+    environmentId: text("environment_id"),
+    threadId: text("thread_id"),
+    deviceId: text("device_id"),
+    kind: text("kind").notNull(),
+    sourceJobId: text("source_job_id"),
+    tokenSuffix: text("token_suffix"),
     apnsStatus: integer("apns_status"),
     apnsReason: text("apns_reason"),
-    apnsId: varchar("apns_id", { length: 128 }),
+    apnsId: text("apns_id"),
     transportError: text("transport_error"),
   },
   (table) => [
@@ -185,14 +194,14 @@ export const relayDeliveryAttempts = pgTable(
   ],
 );
 
-export const relayDpopProofs = pgTable(
+export const relayDpopProofs = sqliteTable(
   "relay_dpop_proofs",
   {
-    thumbprint: varchar("thumbprint", { length: 128 }).notNull(),
-    jti: varchar("jti", { length: 255 }).notNull(),
+    thumbprint: text("thumbprint").notNull(),
+    jti: text("jti").notNull(),
     iat: integer("iat").notNull(),
-    expiresAt: varchar("expires_at", { length: 64 }).notNull(),
-    createdAt: varchar("created_at", { length: 64 }).notNull(),
+    expiresAt: text("expires_at").notNull(),
+    createdAt: text("created_at").notNull(),
   },
   (table) => [
     primaryKey({ columns: [table.thumbprint, table.jti] }),

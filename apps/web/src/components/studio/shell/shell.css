@@ -1737,22 +1737,6 @@ html.dark[data-theme-id=""] [data-app-sidebar] {
   overflow: hidden;
   text-overflow: ellipsis;
 }
-.sws-host-pick {
-  height: 24px;
-  padding: 0 6px;
-  border-radius: 7px;
-  cursor: pointer;
-}
-.sws-host-pick svg {
-  flex: none;
-  width: 13px;
-  height: 13px;
-}
-.sws-host-pick:hover,
-.sws-host-pick[data-popup-open] {
-  background: var(--accent);
-  color: var(--foreground);
-}
 .sws-state {
   flex: none;
   height: 24px;
@@ -2117,6 +2101,10 @@ html.dark[data-theme-id=""] [data-app-sidebar] {
   margin-right: 4px;
   display: inline-block;
   vertical-align: -2px;
+}
+/* Its execution machine stopped answering: the row must not read as live. */
+.sws-thread-machine[data-execution="unknown"] svg {
+  color: var(--warning-foreground, currentColor);
 }
 .sws-thread-error {
   /* The first to go when the line is short; the row's state already says it failed. */

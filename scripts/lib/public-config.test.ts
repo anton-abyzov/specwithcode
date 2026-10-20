@@ -4,7 +4,11 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import { afterEach, describe, expect, it } from "vite-plus/test";
 
-import { loadRepoEnv, resolvePublicConfig } from "./public-config.ts";
+import {
+  loadRepoEnv,
+  resolveBuildHostedServicesOptIn,
+  resolvePublicConfig,
+} from "./public-config.ts";
 
 const temporaryDirectories: string[] = [];
 
@@ -144,6 +148,44 @@ describe("loadRepoEnv", () => {
       EXPO_PUBLIC_OTLP_TRACES_DATASET: "mobile-traces",
       EXPO_PUBLIC_OTLP_TRACES_TOKEN: "mobile-token",
     });
+  });
+});
+
+describe("resolveBuildHostedServicesOptIn", () => {
+  const complete = {
+    STUDIO_ENABLE_HOSTED_SERVICES: "true",
+    STUDIO_CLERK_PUBLISHABLE_KEY: "pk_live_example",
+    STUDIO_CLERK_JWT_TEMPLATE: "studio-relay",
+    STUDIO_CLERK_CLI_OAUTH_CLIENT_ID: "client_example",
+    STUDIO_RELAY_URL: "https://relay.example.test",
+  };
+
+  it("opts in only when the gate and every public value are present", () => {
+    expect(resolveBuildHostedServicesOptIn(complete)).toBe(true);
+  });
+
+  it("stays off without the gate, so unset release variables change nothing", () => {
+    expect(
+      resolveBuildHostedServicesOptIn({ ...complete, STUDIO_ENABLE_HOSTED_SERVICES: "" }),
+    ).toBe(false);
+    expect(resolveBuildHostedServicesOptIn({})).toBe(false);
+  });
+
+  it("stays off when any public value is missing or the relay is not HTTPS", () => {
+    for (const key of [
+      "STUDIO_CLERK_PUBLISHABLE_KEY",
+      "STUDIO_CLERK_JWT_TEMPLATE",
+      "STUDIO_CLERK_CLI_OAUTH_CLIENT_ID",
+      "STUDIO_RELAY_URL",
+    ] as const) {
+      expect(resolveBuildHostedServicesOptIn({ ...complete, [key]: " " })).toBe(false);
+    }
+    expect(
+      resolveBuildHostedServicesOptIn({
+        ...complete,
+        STUDIO_RELAY_URL: "http://relay.example.test",
+      }),
+    ).toBe(false);
   });
 });
 

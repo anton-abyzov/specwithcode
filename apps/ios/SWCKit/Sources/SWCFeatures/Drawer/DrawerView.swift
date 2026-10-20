@@ -175,7 +175,7 @@ struct DrawerView: View {
       DrawerSectionLabel("Recents", detail: model.staleMachines.isEmpty ? nil : "Updating")
       ForEach(threads) { thread in
         let target = ChatTarget.thread(thread.ref)
-        WeaveRow(thread.title, titleLineLimit: 1, action: { router.open(target) }) {
+        WeaveRow(thread.title, subtitle: thread.placement.subtitle(), titleLineLimit: 1, subtitleLineLimit: 1, action: { router.open(target) }) {
           WeaveRowSymbol(RecentThreadGlyph.symbol(for: thread), tint: RecentThreadGlyph.tint(for: thread))
         } trailing: {
           RecentThreadGlyph(thread: thread)
@@ -192,7 +192,7 @@ struct DrawerView: View {
     if !model.machines.isEmpty {
       DrawerSectionLabel("Machines")
       ForEach(model.machines) { machine in
-        WeaveRow(machine.label, titleLineLimit: 1, action: { router.push(.machine(machine.id)) }) {
+        WeaveRow(machine.displayName, titleLineLimit: 1, action: { router.push(.machine(machine.id)) }) {
           MachineBadge(status: machine.displayStatus, size: 18)
             .frame(width: 28)
             .accessibilityHidden(true)
@@ -341,8 +341,8 @@ struct RecentThreadGlyph: View {
 
   var body: some View {
     HStack(spacing: WeaveSpacing.s2) {
-      if thread.isUnread, thread.activity == .idle { UnreadDot() }
-      switch thread.activity {
+      if thread.isUnread, thread.activity == .idle || thread.isUnknown { UnreadDot() }
+      switch thread.isUnknown ? .idle : thread.activity {
       case .needsYou: StatusDot(.needsYou).accessibilityHidden(true)
       case .working: StatusDot(.working).accessibilityHidden(true)
       case .failed:
@@ -356,7 +356,8 @@ struct RecentThreadGlyph: View {
   }
 
   static func symbol(for thread: ThreadSummary) -> String {
-    switch thread.activity {
+    if thread.isUnknown { return "questionmark.circle" }
+    return switch thread.activity {
     case .needsYou: "hand.raised"
     case .working: "ellipsis.bubble"
     case .failed: "exclamationmark.bubble"
@@ -365,11 +366,12 @@ struct RecentThreadGlyph: View {
   }
 
   static func tint(for thread: ThreadSummary) -> Color? {
-    thread.activity == .idle ? Color.weave.muted : Color.weave.ink
+    thread.activity == .idle || thread.isUnknown ? Color.weave.muted : Color.weave.ink
   }
 
   static func spoken(_ thread: ThreadSummary) -> String {
-    var parts = [thread.activity.label]
+    var parts = [thread.isUnknown ? "Unknown" : thread.activity.label]
+    parts.append(ProjectOverviewView.spokenPlacement(thread.placement))
     if let project = thread.projectTitle { parts.append(project) }
     if thread.isUnread { parts.append("Unread") }
     if thread.isPinned { parts.append("Pinned") }

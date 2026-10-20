@@ -18,6 +18,7 @@ import * as Schema from "effect/Schema";
 import { deepMerge } from "./Struct.ts";
 import { fromLenientJson } from "./schemaJson.ts";
 import { createModelSelection } from "./model.ts";
+import { mergeMachineNicknames } from "./machineNicknames.ts";
 import {
   getBackgroundActivityBaseProfile,
   normalizeBackgroundActivitySettings,
@@ -356,6 +357,8 @@ export function applyServerSettingsPatch(
     projectAgentBrowserAccessOverrides: _legacyBrowserAccess,
     projectAutoPullOverrides: _legacyAutoPull,
     projectScriptOverrides: _legacyScripts,
+    // Newest stamp wins per machine; a stale peer must not undo a rename.
+    machineNicknames: machineNicknamesPatch,
     ...patchForMerge
   } = patch;
   const currentBackgroundActivity = normalizeServerBackgroundActivitySettings(current);
@@ -456,6 +459,14 @@ export function applyServerSettingsPatch(
             Object.entries(
               mergeSettingsEntries(current.projectSettingsOverrides, projectSettingsOverridesPatch),
             ).filter(([, entry]) => Object.keys(entry).length > 0),
+          ),
+        }
+      : {}),
+    ...(machineNicknamesPatch !== undefined
+      ? {
+          machineNicknames: mergeMachineNicknames(
+            current.machineNicknames ?? {},
+            machineNicknamesPatch,
           ),
         }
       : {}),

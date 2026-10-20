@@ -35,8 +35,9 @@ import type { ProjectRow } from "./ProjectStore.ts";
  * - `link-member`: the kept coordinator lists more members; its binding does not change.
  * - `join-as-member`: a standalone copy adopts another identity and relinquishes its coordinator.
  * - `remove-member`: the kept coordinator stops listing members; its binding does not change.
- * - `unlink`: a relinquished member leaves with a fresh identity and an active coordinator,
- *   the only way a relinquished binding becomes active outside a verified handoff.
+ * - `unlink`: a relinquished member leaves with a fresh identity and an active coordinator.
+ * - `start-coordinator`: a relinquished member runs its own coordinator next to the others,
+ *   at a higher epoch, replacing none of them.
  */
 export type ProjectOwnershipMode =
   | "handoff"
@@ -46,7 +47,8 @@ export type ProjectOwnershipMode =
   | "remove-member"
   | "unlink"
   | "takeover"
-  | "superseded";
+  | "superseded"
+  | "start-coordinator";
 
 export interface ProjectOwnershipUpdate {
   readonly mode: ProjectOwnershipMode;
@@ -437,6 +439,24 @@ export function ownershipRejection(
         !incoming.members.some((member) => memberRef(member) === memberRef(next.predecessor!))
       )
         return "A takeover becomes the active coordinator at a higher epoch, after a listed coordinator it replaces.";
+      return undefined;
+    }
+    case "start-coordinator": {
+      if (old?.state !== "transferred")
+        return "Only a member whose coordinator was relinquished can start its own; finish any handoff first.";
+      if (!keepsIdentity()) return "Starting a coordinator keeps the shared identity as it is.";
+      if (!sameRecord(incoming.members, identity!.members) || !selfEntries[0])
+        return "Starting a coordinator keeps every member listed as it is.";
+      if (
+        next.state !== "active" ||
+        next.epoch <= old.epoch ||
+        next.operationId === undefined ||
+        next.predecessor !== undefined ||
+        next.successor !== undefined ||
+        next.takenOverAt !== undefined ||
+        next.releaseReason !== undefined
+      )
+        return "A started coordinator is active at a higher epoch and replaces no other coordinator.";
       return undefined;
     }
     case "superseded": {

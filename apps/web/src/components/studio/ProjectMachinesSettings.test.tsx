@@ -11,6 +11,7 @@ const state = vi.hoisted(() => ({
   dialog: null as Record<string, unknown> | null,
   lastSeen: {} as Record<string, number>,
   old: [] as string[],
+  perMachine: [] as string[],
 }));
 vi.mock("@specweave-studio/client-runtime/state/runtime", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@specweave-studio/client-runtime/state/runtime")>()),
@@ -42,7 +43,7 @@ vi.mock("../../state/use-atom-command", () => ({
                 : [],
           },
         };
-      if (tag === "projectLink.takeover")
+      if (tag === "projectLink.takeover" || tag === "projectLink.startCoordinator")
         return { _tag: "Success", value: { replicaFrom: "2026-10-19T12:00:00.000Z" } };
       return { _tag: "Success", value: {} };
     },
@@ -59,6 +60,7 @@ vi.mock("./useLinkMachines", () => ({
     problem: (id: string) => state.problems[id] ?? null,
     connected: (id: string) => !state.problems[id],
     takeoverReady: (id: string) => !state.problems[id] && !state.old.includes(id),
+    startReady: (id: string) => !state.problems[id] && state.perMachine.includes(id),
   }),
 }));
 vi.mock("../../lib/machineLastSeen", () => ({
@@ -129,6 +131,7 @@ beforeEach(() => {
   state.dialog = null;
   state.lastSeen = {};
   state.old = [];
+  state.perMachine = [];
   localStorage.clear();
   container = document.createElement("div");
   document.body.append(container);
@@ -151,7 +154,7 @@ it("lists each machine's copy with its role and links a project that has none", 
   const rows = [...document.querySelectorAll("[data-project-copy]")];
   expect(rows.map((row) => row.textContent)).toEqual([
     expect.stringContaining("Coordinator. Plans the work"),
-    expect.stringContaining("Runs workers. Its own coordinator is read-only history."),
+    expect.stringContaining("Runs workers. Its own coordinator is read-only history until"),
   ]);
 });
 
@@ -288,4 +291,33 @@ it("lists the turns a superseded coordinator ran while disconnected", async () =
   });
   expect(text()).toContain("Turns M3 ran while disconnected");
   expect(text()).toContain("Ship the release notes");
+});
+
+it("starts a second coordinator on a machine that supports it, with no takeover wait", async () => {
+  state.perMachine = ["m4"];
+  await render([kept, joined]);
+  expect(text()).not.toContain("Take over coordinator here");
+  await click(button("Start a coordinator here"));
+  expect(state.calls.filter((call) => call.tag === "projectLink.startCoordinator")).toEqual([
+    {
+      tag: "projectLink.startCoordinator",
+      environmentId: "m4",
+      input: {
+        operationId: "7307ab55-fc59-4e07-abeb-de54be69215f",
+        projectId: "joined",
+        knownEpoch: 0,
+      },
+    },
+  ]);
+  expect(text()).toContain("M4 now runs its own coordinator next to the others.");
+  expect(state.calls.some((call) => call.tag === "projectLink.takeover")).toBe(false);
+
+  const both = copy("m4", "joined", shared, "active", { predecessor: null });
+  state.projects = [kept, both];
+  await render([kept, both]);
+  const rows = [...document.querySelectorAll("[data-project-copy]")];
+  expect(rows.map((row) => row.textContent)).toEqual([
+    expect.stringContaining("Coordinator. Plans the work"),
+    expect.stringContaining("Coordinator. Plans the work"),
+  ]);
 });

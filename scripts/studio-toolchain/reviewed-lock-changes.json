@@ -221,6 +221,44 @@
       "commit": "a3906b9ff60f06bfb578db94a9abeee6b417ea94",
       "pr": 306,
       "reason": "pnpm records the patch hash of the reviewed Expo 58 permission and notification patches in this dependency reference."
+    },
+    {
+      "op": "replace",
+      "parent": ["importers:", "infra/relay:", "dependencies:"],
+      "before": "'@effect/sql-pg':",
+      "after": "'@effect/sql-d1':",
+      "commit": "dd3426484f69f0e472dbc6dd2e30413b6297adbf",
+      "pr": 469,
+      "reason": "The Connect relay moved its storage from PlanetScale Postgres to Cloudflare D1, so it depends on @effect/sql-d1 4.0.0 (already in the lock through alchemy and drizzle-orm) instead of @effect/sql-pg."
+    },
+    {
+      "op": "replace",
+      "parent": ["importers:", "infra/relay:", "dependencies:", "'@effect/sql-d1':"],
+      "before": "specifier: 4.0.1",
+      "after": "specifier: 4.0.0",
+      "commit": "4cb13e1c74540ff17abda8ea023c1f19cba731c2",
+      "pr": 469,
+      "reason": "The Connect relay moved its storage from PlanetScale Postgres to Cloudflare D1, so it depends on @effect/sql-d1 4.0.0 (already in the lock through alchemy and drizzle-orm) instead of @effect/sql-pg."
+    },
+    {
+      "op": "replace",
+      "parent": ["importers:", "infra/relay:", "dependencies:", "'@effect/sql-d1':"],
+      "before": "version: 4.0.1(effect@4.0.1(patch_hash=a33cba07c41f32374c2aaa86ea4a84d3ab9a872a78c94b65e929b19f8361856f))",
+      "after": "version: 4.0.0(effect@4.0.1(patch_hash=a33cba07c41f32374c2aaa86ea4a84d3ab9a872a78c94b65e929b19f8361856f))",
+      "commit": "4cb13e1c74540ff17abda8ea023c1f19cba731c2",
+      "pr": 469,
+      "reason": "The Connect relay moved its storage from PlanetScale Postgres to Cloudflare D1, so it depends on @effect/sql-d1 4.0.0 (already in the lock through alchemy and drizzle-orm) instead of @effect/sql-pg."
+    },
+    {
+      "op": "add",
+      "parent": [
+        "snapshots:",
+        "'@effect/sql-pg@4.0.1(effect@4.0.1(patch_hash=a33cba07c41f32374c2aaa86ea4a84d3ab9a872a78c94b65e929b19f8361856f))':"
+      ],
+      "lines": ["optional: true"],
+      "commit": "dd3426484f69f0e472dbc6dd2e30413b6297adbf",
+      "pr": 469,
+      "reason": "With the relay no longer depending on @effect/sql-pg directly, pnpm marks its snapshot optional; it stays only as an optional peer of drizzle-orm."
     }
   ]
 }

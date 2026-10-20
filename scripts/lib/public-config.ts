@@ -103,7 +103,26 @@ export function loadRepoEnv({
   };
 }
 
-export function resolvePublicConfig(...sources: readonly Environment[]): SpecWeaveStudioPublicConfig {
+/**
+ * Whether a build bakes hosted services on by default. A release opts in with
+ * STUDIO_ENABLE_HOSTED_SERVICES=true, and the opt-in only counts when every
+ * SpecWithCode Connect public value is present, so a release whose repository
+ * variables are unset builds exactly what it built before.
+ */
+export function resolveBuildHostedServicesOptIn(env: Environment): boolean {
+  if (env.STUDIO_ENABLE_HOSTED_SERVICES?.trim() !== "true") return false;
+  const config = resolvePublicConfig(env);
+  return Boolean(
+    config.clerkPublishableKey &&
+    config.clerkJwtTemplate &&
+    config.clerkCliOAuthClientId &&
+    config.relayUrl?.startsWith("https://"),
+  );
+}
+
+export function resolvePublicConfig(
+  ...sources: readonly Environment[]
+): SpecWeaveStudioPublicConfig {
   return {
     clerkPublishableKey: firstNonEmpty(
       sources,
