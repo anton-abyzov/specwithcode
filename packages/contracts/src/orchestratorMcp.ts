@@ -28,6 +28,7 @@ import {
 } from "./scheduledTask.ts";
 import { HandoffMachineThreadOutcome } from "./handoffMode.ts";
 import { ModelSelection } from "./modelSelection.ts";
+import { TaskClass, TaskRoutingDecision } from "./taskRouting.ts";
 import { ProviderInteractionMode, RuntimeMode } from "./providerPolicy.ts";
 import { ThreadLinkedPullRequest } from "./threadPullRequest.ts";
 import {
@@ -239,11 +240,17 @@ export const OrchestratorMcpTerminalDelegatedTaskStatus = Schema.Literals([
 export type OrchestratorMcpTerminalDelegatedTaskStatus =
   typeof OrchestratorMcpTerminalDelegatedTaskStatus.Type;
 
+export const OrchestratorMcpTaskClassHint = TaskClass.annotate({
+  description:
+    "Optional kind of work, used only when Auto model routing is on and no model is named: translation, transcript (speech or transcript processing; audio is transcribed by a speech-to-text tool first, never by the text model), summary, research, animation-draft, animation-final, code, review, design or general. A named model always wins.",
+});
+
 export const OrchestratorMcpDelegateTaskInput = Schema.Struct({
   task: OrchestratorMcpPrompt.annotate({
     description: "Self-contained task for one delegated child agent/subagent.",
   }),
   target: Schema.optional(OrchestratorMcpTarget),
+  taskClass: Schema.optional(OrchestratorMcpTaskClassHint),
   title: Schema.optional(OrchestratorMcpTitle),
   role: Schema.optional(OrchestratorMcpTaskRole),
   mode: Schema.optional(
@@ -299,6 +306,12 @@ export const OrchestratorMcpDelegateTaskResult = Schema.Struct({
       description: "Reasoning effort option the child was started with, when one was set.",
     }),
   ),
+  routing: Schema.optional(
+    TaskRoutingDecision.annotate({
+      description:
+        "Set when Auto model routing chose the model: the task class, the reason and the baseline it left. If this task fails and `escalation` is set, you may retry it once with that provider and model; it is never retried for you.",
+    }),
+  ),
   summary: Schema.NullOr(Schema.String),
   resultContextTransferId: Schema.NullOr(ContextTransferId),
   waitTimedOut: Schema.Boolean.annotate({
@@ -330,6 +343,7 @@ export const OrchestratorMcpCreateThreadRequest = Schema.Struct({
   prompt: Schema.optional(OrchestratorMcpPrompt),
   title: Schema.optional(OrchestratorMcpTitle),
   target: Schema.optional(OrchestratorMcpTarget),
+  taskClass: Schema.optional(OrchestratorMcpTaskClassHint),
   runtimeMode: Schema.optional(OrchestratorMcpRuntimeMode),
   interactionMode: Schema.optional(OrchestratorMcpInteractionMode),
 });
@@ -368,6 +382,7 @@ export const OrchestratorMcpCreatedThread = Schema.Struct({
       description: "Reasoning effort option the thread was started with, when one was set.",
     }),
   ),
+  routing: Schema.optional(TaskRoutingDecision),
 });
 export type OrchestratorMcpCreatedThread = typeof OrchestratorMcpCreatedThread.Type;
 

@@ -13,6 +13,7 @@ from unittest.mock import patch
 import auth_heartbeat as heartbeat
 import database_continuity as continuity
 import update as plain_update
+import update_read
 
 START = '2026-10-09T10:00:00+00:00'
 END = '2026-10-09T10:00:02+00:00'
@@ -229,7 +230,7 @@ class ProjectSnapshotRead(unittest.TestCase):
             self.writer.execute("UPDATE unprotected_blob SET value='abcd'")
             self.writer.commit()
             return read_auth(db, rows)
-        with patch.object(plain_update, 'read_auth_sessions_in_transaction', side_effect=commit_after_rows):
+        with patch.object(update_read, 'read_auth_sessions_in_transaction', side_effect=commit_after_rows):
             rows, private, complete = plain_update._rows_snapshot(self.state, True, include_database=True)
         self.assertEqual(rows, rows_before)
         self.assertEqual(complete, baseline)
@@ -242,9 +243,9 @@ class ProjectSnapshotRead(unittest.TestCase):
     def test_complete_capture_without_auth_also_shares_protected_row_transaction(self):
         baseline = continuity.read_database(self.state)
         capture = continuity.capture_connection
-        def commit_after_rows(db):
+        def commit_after_rows(db, *args, **kwargs):
             self.fixture.advance()
-            return capture(db)
+            return capture(db, *args, **kwargs)
         with patch.object(continuity, 'capture_connection', side_effect=commit_after_rows):
             rows, private, complete = plain_update._rows_snapshot(self.state, False, include_database=True)
         self.assertIsNone(private)
@@ -254,13 +255,13 @@ class ProjectSnapshotRead(unittest.TestCase):
     def test_full_capture_keeps_schema_and_private_auth_coherent(self):
         baseline = continuity.read_database(self.state)
         capture = continuity.capture_connection
-        def commit_schema_after_auth(db):
+        def commit_schema_after_auth(db, *args, **kwargs):
             self.assertTrue(db.in_transaction)
             with self.assertRaisesRegex(sqlite3.OperationalError, 'readonly'):
                 db.execute("UPDATE unprotected_blob SET value='write'")
             self.writer.execute('ALTER TABLE auth_sessions ADD COLUMN another TEXT')
             self.writer.commit()
-            return capture(db)
+            return capture(db, *args, **kwargs)
         with patch.object(continuity, 'capture_connection', side_effect=commit_schema_after_auth):
             rows, private, complete = plain_update._rows_snapshot(self.state, True, include_database=True)
         self.assertEqual(complete, baseline)

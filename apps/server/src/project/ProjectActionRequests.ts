@@ -30,7 +30,11 @@ import * as SqlClient from "effect/sql/SqlClient";
 import type * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import { randomUuidV4 } from "../orchestration-v2/RandomUuid.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
-import { folderChangeRefusal, ProjectFolderService } from "./ProjectFolderChange.ts";
+import {
+  folderChangeRefusal,
+  planningImpactText,
+  ProjectFolderService,
+} from "./ProjectFolderChange.ts";
 import * as ProjectService from "./ProjectService.ts";
 import { PROJECT_ACTION_REQUEST_PREFIX } from "./projectActionRequestId.ts";
 
@@ -156,12 +160,13 @@ export const make = Effect.gen(function* () {
           .pipe(Effect.mapError((error) => failure(error.message)));
         if (check.unchanged) return yield* failure(`The project already uses ${check.targetRoot}.`);
         // The asking thread is running now; work still running when the user approves is refused then.
-        const hardRefusal = folderChangeRefusal({ ...check, activeThreads: [] }, true);
+        const hardRefusal = folderChangeRefusal({ ...check, activeThreads: [] }, true, true);
         if (hardRefusal !== null) return yield* failure(hardRefusal.detail);
         const repository = check.sameRepository
           ? `Both folders are checkouts of ${check.targetRepository}.`
           : `The new folder ${check.targetRepository === null ? "has no Git remote" : `is a checkout of ${check.targetRepository}`}, and the current one ${check.currentRepository === null ? "has none" : `is ${check.currentRepository}`}. Approving confirms it is the right folder.`;
-        return `Change the folder of the project ${name} from ${check.currentRoot} to ${check.targetRoot}?\n\n${repository} Its ${plural(check.threadCount, "thread")}, memory and history stay with the project and run in the new folder from their next turn.\n\n${why}`;
+        const planning = planningImpactText(check);
+        return `Change the folder of the project ${name} from ${check.currentRoot} to ${check.targetRoot}?\n\n${repository}${planning === null ? "" : ` ${planning}`} Its ${plural(check.threadCount, "thread")}, memory and history stay with the project and run in the new folder from their next turn.\n\n${why}`;
       }
     }
   });
@@ -281,6 +286,8 @@ export const make = Effect.gen(function* () {
           workspaceRoot: params.workspaceRoot,
           // The card told the user when the repository differs; approving confirms it.
           confirmDifferentRepository: true,
+          // The card lists the planning impact too; approving confirms it.
+          confirmPlanningImpact: true,
           approvalRequestId,
         });
         return `Changed the folder of ${name} from ${changed.previousRoot} to ${changed.project.workspaceRoot}. Threads run there from their next turn.`;

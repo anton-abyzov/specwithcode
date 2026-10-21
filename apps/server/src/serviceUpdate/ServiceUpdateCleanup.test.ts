@@ -58,7 +58,7 @@ const layerTest = Cleanup.layer.pipe(
   Layer.provideMerge(Layer.mergeAll(layerHarness, layerStores, layerDatabase)),
 );
 
-/** The rows `_read_state` in update.py counts as busy. */
+/** The rows `assert_idle` in update_read.py counts as busy. */
 const busyRows = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const terminal = Preparation.TERMINAL_RUN_STATUSES.map((status) => `'${status}'`).join(", ");

@@ -67,7 +67,8 @@ export const RPC_REQUIRED_SCOPES = {
   [WS_METHODS.projectsSkillsRead]: AuthOrchestrationReadScope,
   [WS_METHODS.projectsEnvironmentRead]: AuthOrchestrationReadScope,
   [WS_METHODS.projectsEnvironmentImportPreview]: AuthOrchestrationReadScope,
-  [WS_METHODS.projectsFolderCheck]: AuthOrchestrationReadScope,
+  // The check walks the folder and reports its checkouts and planning roots.
+  [WS_METHODS.projectsFolderCheck]: AuthFilesystemReadScope,
   [WS_METHODS.projectsWorkspaceRead]: AuthOrchestrationReadScope,
   [WS_METHODS.projectsStarterSuggestions]: AuthOrchestrationReadScope,
   [WS_METHODS.projectsConnectionsRead]: AuthOrchestrationReadScope,

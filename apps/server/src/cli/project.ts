@@ -590,6 +590,12 @@ const projectMoveCommand = Command.make("move", {
     Flag.withDescription("Use the folder even when it is not a checkout of the same repository."),
     Flag.withDefault(false),
   ),
+  confirmPlanningImpact: Flag.Boolean("confirm-planning-impact").pipe(
+    Flag.withDescription(
+      "Use the folder even when plan cards would read another SpecWeave planning root.",
+    ),
+    Flag.withDefault(false),
+  ),
 }).pipe(
   Command.withDescription(
     "Move a project to another folder, keeping its threads, memory and history.",
@@ -615,6 +621,7 @@ const projectMoveCommand = Command.make("move", {
           projectId: project.id,
           workspaceRoot,
           ...(flags.confirmDifferentRepository ? { confirmDifferentRepository: true } : {}),
+          ...(flags.confirmPlanningImpact ? { confirmPlanningImpact: true } : {}),
         });
         return `Moved project ${project.id} (${project.title}) from ${project.workspaceRoot} to ${workspaceRoot}.`;
       }),

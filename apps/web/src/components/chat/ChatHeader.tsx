@@ -30,9 +30,11 @@ import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useOrchestrationCommand } from "../../state/use-orchestration-command";
 import { readEnvironmentScope, useEnvironmentScope } from "../../state/session";
-import { readThreadShell } from "../../state/entities";
+import { readThreadShell, useThreadShell } from "../../state/entities";
 import { isCoordinatorNamedThread } from "../../studio/threadTitles";
 import { ProjectFavicon } from "../ProjectFavicon";
+import { useProviderEntries } from "../studio/shell/ModelBadge";
+import { RoutingDecisionChip } from "../studio/shell/RoutingDecisionChip";
 import {
   WorkspaceBreadcrumb,
   WorkspaceBreadcrumbItem,
@@ -94,6 +96,8 @@ export const ChatHeader = memo(function ChatHeader({
     () => scopeThreadRef(activeThreadEnvironmentId, activeThreadId),
     [activeThreadEnvironmentId, activeThreadId],
   );
+  const activeThreadShell = useThreadShell(isServerThread ? activeThreadRef : null);
+  const providerEntries = useProviderEntries(activeThreadEnvironmentId);
   const canOperateThread = useEnvironmentScope(
     activeThreadEnvironmentId,
     AuthOrchestrationOperateScope,
@@ -370,6 +374,7 @@ export const ChatHeader = memo(function ChatHeader({
           )}
         </WorkspaceBreadcrumbItem>
       </WorkspaceBreadcrumb>
+      <RoutingDecisionChip routing={activeThreadShell?.routing} entries={providerEntries} />
       <ThreadArtifactsMenu
         threadRef={activeThreadRef}
         cwd={artifactsCwd ?? activeProjectCwd ?? undefined}

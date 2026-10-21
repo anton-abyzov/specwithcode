@@ -28,6 +28,7 @@ import type {
   ProjectIncrementSummary,
   ThreadIncrementBinding,
   ThreadIncrementCriterion,
+  ThreadIncrementCriterionState,
   ThreadIncrementProgress,
 } from "@specweave-studio/contracts";
 
@@ -161,17 +162,63 @@ export async function incrementRootFor(
   return planning ?? NodePath.resolve(workspaceRoot);
 }
 
-/** An AC is met once every task citing it is finished; one no task cites stays open. */
+/**
+ * Each AC's traceability: the tasks that cite it, its story, the old `met`
+ * flag, and how far it is proven (see ThreadIncrementCriterionState). A task
+ * counts as evidence only when the ledger accepted its `done` (`doneAt`); a
+ * verify run counts only when it passed after the last of those.
+ */
 export function criteriaWithState(
-  criteria: ReadonlyArray<{ readonly id: string; readonly text: string }>,
-  tasks: ReadonlyArray<{ readonly status: string; readonly criteria: ReadonlyArray<string> }>,
+  criteria: ReadonlyArray<{
+    readonly id: string;
+    readonly text: string;
+    readonly checked?: boolean;
+    readonly story?: string;
+  }>,
+  tasks: ReadonlyArray<{
+    readonly id?: string;
+    readonly status: string;
+    readonly criteria: ReadonlyArray<string>;
+    readonly doneAt?: string;
+  }>,
+  options: {
+    readonly verify?: { readonly ok: boolean; readonly ranAt: string } | null;
+    readonly readable?: boolean;
+  } = {},
 ): ThreadIncrementCriterion[] {
+  const verify = options.verify ?? null;
+  const verifiedAt = verify?.ok === true ? Date.parse(verify.ranAt) : Number.NaN;
   return criteria.map((criterion) => {
     const citing = tasks.filter((task) => task.criteria.includes(criterion.id));
+    const met = citing.length > 0 && citing.every((task) => CLOSED_TASK_STATES.has(task.status));
+    const done = citing.filter((task) => task.status === "done");
+    const state: ThreadIncrementCriterionState =
+      options.readable === false
+        ? criterion.checked === true
+          ? "declared"
+          : "unknown"
+        : citing.length === 0
+          ? criterion.checked === true
+            ? "declared"
+            : "uncovered"
+          : !met
+            ? "open"
+            : done.length === 0
+              ? "skipped"
+              : done.some((task) => task.doneAt === undefined)
+                ? "declared"
+                : done.length === citing.length &&
+                    Number.isFinite(verifiedAt) &&
+                    done.every((task) => Date.parse(task.doneAt!) <= verifiedAt)
+                  ? "verified"
+                  : "evidenced";
     return {
       id: criterion.id,
       text: criterion.text,
-      met: citing.length > 0 && citing.every((task) => CLOSED_TASK_STATES.has(task.status)),
+      met,
+      state,
+      tasks: citing.flatMap((task) => (task.id === undefined ? [] : [task.id])),
+      ...(criterion.story === undefined ? {} : { story: criterion.story }),
     };
   });
 }
@@ -332,6 +379,7 @@ export async function readIncrementProgress(input: {
       ? null
       : foldSpecweaveLedger(taskSource, ledger, input.now, { incrementId: input.incrementId });
   const metadata = parseIncrementMetadata(metadataText);
+  const verify = parseVerifyReport(verifyText);
   const cards = new Map((folded?.cards ?? []).map((card) => [card.id, card]));
   const tasks = await Promise.all(
     (folded?.tasks ?? []).map(async (task) => {
@@ -342,6 +390,7 @@ export async function readIncrementProgress(input: {
         status: task.status,
         criteria: [...task.criteria],
         note: task.note,
+        ...(task.status === "done" && task.changedAt !== null ? { doneAt: task.changedAt } : {}),
         ...(card === undefined ? {} : { line: card.line }),
         ...(await sanitizeCardLink(card?.link ?? null, folder)),
       };
@@ -359,8 +408,11 @@ export async function readIncrementProgress(input: {
     specPath: spec === null ? null : specPath,
     readable: folded !== null,
     tasks,
-    criteria: criteriaWithState(fromSpec?.criteria ?? [], tasks),
-    verify: parseVerifyReport(verifyText),
+    criteria: criteriaWithState(fromSpec?.criteria ?? [], tasks, {
+      verify,
+      readable: folded !== null || (taskSource?.length ?? 0) === 0,
+    }),
+    verify,
   };
 }
 
@@ -438,37 +490,119 @@ export async function readThreadIncrementProgress(
   return results.filter((entry): entry is ThreadIncrementProgress => entry !== null);
 }
 
-const LISTED_INCREMENTS = 300;
+/** What an older client gets when it asks without a limit, as before paging. */
+export const LISTED_INCREMENTS = 300;
+const METADATA_CACHE_ENTRIES = 20_000;
+const METADATA_READ_BATCH = 64;
 
-/** The increments in the thread's checkout that it can be linked to, newest first. */
+type IncrementMeta = { readonly title: string | null; readonly status: string };
+/** Parsed metadata.json by path, valid while its mtime and size are unchanged. */
+const metadataCache = new Map<string, { mtimeMs: number; size: number; meta: IncrementMeta }>();
+
+async function incrementMeta(root: string, file: string): Promise<IncrementMeta> {
+  const stat = await NodeFSP.stat(file).catch(() => null);
+  if (stat === null) return { title: null, status: "unknown" };
+  const cached = metadataCache.get(file);
+  if (cached && cached.mtimeMs === stat.mtimeMs && cached.size === stat.size) return cached.meta;
+  const metadata = parseIncrementMetadata(await readBounded(root, file, SMALL_BYTES));
+  const meta = {
+    title:
+      typeof metadata.title === "string" && metadata.title.trim() ? metadata.title.trim() : null,
+    status:
+      typeof metadata.status === "string" && metadata.status.trim()
+        ? metadata.status.trim().toLowerCase()
+        : "unknown",
+  };
+  metadataCache.delete(file);
+  metadataCache.set(file, { mtimeMs: stat.mtimeMs, size: stat.size, meta });
+  if (metadataCache.size > METADATA_CACHE_ENTRIES) {
+    metadataCache.delete(metadataCache.keys().next().value!);
+  }
+  return meta;
+}
+
+/** The increment folder names in the thread's checkout, newest first; no file is opened. */
+async function incrementIds(root: string): Promise<string[]> {
+  const names = await NodeFSP.readdir(NodePath.join(root, INCREMENTS_DIR), {
+    withFileTypes: true,
+  }).catch(() => []);
+  return names
+    .filter((entry) => entry.isDirectory() && INCREMENT_FOLDER.test(entry.name))
+    .map((entry) => entry.name)
+    .toSorted((left, right) => right.localeCompare(left, undefined, { numeric: true }));
+}
+
+export interface IncrementQuery {
+  /** Words that must all appear in the folder name or title, case-insensitive. */
+  readonly query?: string;
+  /** Only increments with this metadata status (`unknown` when it has none). */
+  readonly status?: string;
+  readonly offset?: number;
+  readonly limit?: number;
+}
+
+/**
+ * One page of the increments in the thread's checkout, newest first, with the
+ * total that match and every status's count. On demand only: folder names come
+ * from one readdir, and each metadata.json is parsed once until it changes.
+ */
+export async function queryProjectIncrements(
+  workspaceRoot: string,
+  worktreePath: string | null,
+  input: IncrementQuery = {},
+): Promise<{
+  increments: ProjectIncrementSummary[];
+  total: number;
+  statusCounts: Record<string, number>;
+}> {
+  const root = await incrementRootFor(workspaceRoot, worktreePath);
+  const folder = NodePath.join(root, INCREMENTS_DIR);
+  const ids = await incrementIds(root);
+  const metas: IncrementMeta[] = [];
+  for (let start = 0; start < ids.length; start += METADATA_READ_BATCH) {
+    metas.push(
+      ...(await Promise.all(
+        ids
+          .slice(start, start + METADATA_READ_BATCH)
+          .map((id) => incrementMeta(root, NodePath.join(folder, id, "metadata.json"))),
+      )),
+    );
+  }
+  const words = (input.query ?? "").toLowerCase().split(/\s+/u).filter(Boolean);
+  const statusCounts: Record<string, number> = {};
+  const matched: ProjectIncrementSummary[] = [];
+  ids.forEach((incrementId, index) => {
+    const meta = metas[index]!;
+    const haystack = `${incrementId} ${meta.title ?? ""}`.toLowerCase();
+    if (!words.every((word) => haystack.includes(word))) return;
+    statusCounts[meta.status] = (statusCounts[meta.status] ?? 0) + 1;
+    if (input.status !== undefined && input.status !== meta.status) return;
+    matched.push({ incrementId, title: meta.title, status: meta.status });
+  });
+  const offset = Math.max(0, Math.floor(input.offset ?? 0));
+  const limit = Math.min(
+    LISTED_INCREMENTS,
+    Math.max(1, Math.floor(input.limit ?? LISTED_INCREMENTS)),
+  );
+  return { increments: matched.slice(offset, offset + limit), total: matched.length, statusCounts };
+}
+
+/** The first page of increments in the thread's checkout, newest first. */
 export async function listProjectIncrements(
   workspaceRoot: string,
   worktreePath: string | null,
 ): Promise<ProjectIncrementSummary[]> {
+  return (await queryProjectIncrements(workspaceRoot, worktreePath)).increments;
+}
+
+/** Whether `incrementId` names an increment folder in the thread's checkout, at any page. */
+export async function incrementExists(
+  workspaceRoot: string,
+  worktreePath: string | null,
+  incrementId: string,
+): Promise<boolean> {
+  if (!INCREMENT_FOLDER.test(incrementId)) return false;
   const root = await incrementRootFor(workspaceRoot, worktreePath);
-  const folder = NodePath.join(root, INCREMENTS_DIR);
-  const names = await NodeFSP.readdir(folder, { withFileTypes: true }).catch(() => []);
-  const ids = names
-    .filter((entry) => entry.isDirectory() && INCREMENT_FOLDER.test(entry.name))
-    .map((entry) => entry.name)
-    .toSorted((left, right) => right.localeCompare(left, undefined, { numeric: true }))
-    .slice(0, LISTED_INCREMENTS);
-  return Promise.all(
-    ids.map(async (incrementId) => {
-      const metadata = parseIncrementMetadata(
-        await readBounded(root, NodePath.join(folder, incrementId, "metadata.json"), SMALL_BYTES),
-      );
-      return {
-        incrementId,
-        title:
-          typeof metadata.title === "string" && metadata.title.trim()
-            ? metadata.title.trim()
-            : null,
-        status:
-          typeof metadata.status === "string" && metadata.status.trim()
-            ? metadata.status.trim().toLowerCase()
-            : "unknown",
-      };
-    }),
-  );
+  const folder = NodePath.join(root, INCREMENTS_DIR, incrementId);
+  return inside(root, folder) && (await isDirectory(folder));
 }

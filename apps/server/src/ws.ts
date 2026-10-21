@@ -3373,6 +3373,7 @@ const inferredWebSocketLayer = Layer.unwrap(
               Layer.merge(MachineHandoff.layerRpcHandlers),
               Layer.merge(HandoffMode.layerRpcHandlers),
               Layer.merge(ProjectWorkspaceRpc.layerKnowledgeRpcHandlers),
+              Layer.merge(ProjectWorkspaceRpc.layerPlanningRpcHandlers),
               Layer.merge(
                 BrowserExtension.layerRpcHandlers.pipe(
                   Layer.provide(Layer.succeed(BrowserExtension.BrowserExtension, browserExtension)),

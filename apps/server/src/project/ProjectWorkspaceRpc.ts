@@ -1,7 +1,11 @@
 import * as MachineHandoff from "../fleet/MachineHandoff.ts";
 import * as ProjectConnectionRpc from "./ProjectConnectionRpc.ts";
 import * as ProjectEnvironmentService from "./ProjectEnvironmentService.ts";
-import { WS_METHODS, WsProjectKnowledgeRpcGroup } from "@specweave-studio/contracts";
+import {
+  WS_METHODS,
+  WsProjectPlanningRpcGroup,
+  WsProjectKnowledgeRpcGroup,
+} from "@specweave-studio/contracts";
 import * as Effect from "effect/Effect";
 import { RpcInstrumentation } from "../observability/RpcInstrumentation.ts";
 import * as ProjectWorkspaceService from "./ProjectWorkspaceService.ts";
@@ -25,8 +29,6 @@ export const handlers = Effect.gen(function* () {
   const coordinator = yield* ProjectCoordinatorService.ProjectCoordinatorService;
   const starters = yield* ProjectStarterSuggestions.ProjectStarterSuggestionsService;
   const reports = yield* ThreadReportService.ThreadReportService;
-  const incrementProgress = yield* ThreadIncrementProgressService.ThreadIncrementProgressService;
-  const folders = yield* ProjectFolderService;
   return {
     [WS_METHODS.machineHandoffPrepare]: handoff.prepare,
     [WS_METHODS.machineHandoffReceive]: handoff.receive,
@@ -38,9 +40,6 @@ export const handlers = Effect.gen(function* () {
     [WS_METHODS.projectsEnvironmentImport]: (
       input: import("@specweave-studio/contracts").ProjectEnvironmentImportInput,
     ) => applyWorkspaceImport(environment, projects, input),
-    [WS_METHODS.projectsFolderCheck]: (
-      input: import("@specweave-studio/contracts").ProjectFolderCheckInput,
-    ) => folders.check(input),
     [WS_METHODS.projectsUsageRead]: usage.read,
     [WS_METHODS.projectsSkillsRead]: skills.read,
     [WS_METHODS.projectsWorkspaceRead]: workspace.readWorkspace,
@@ -52,13 +51,28 @@ export const handlers = Effect.gen(function* () {
     [WS_METHODS.projectsLibraryAddArtifact]: workspace.addLibraryArtifact,
     [WS_METHODS.projectsThreadReportsRead]: reports.read,
     [WS_METHODS.projectsThreadReportSave]: reports.save,
-    [WS_METHODS.projectsThreadIncrementProgressRead]: incrementProgress.read,
-    [WS_METHODS.projectsIncrementsList]: incrementProgress.listIncrements,
-    [WS_METHODS.projectsThreadIncrementLink]: incrementProgress.link,
     [WS_METHODS.projectsCoordinatorStart]: coordinator.start,
     [WS_METHODS.projectsCoordinatorSend]: coordinator.send,
   };
 });
+
+/** The folder check and SpecWeave increment handlers (see `WsProjectPlanningRpcGroup`). */
+export const layerPlanningRpcHandlers = WsProjectPlanningRpcGroup.middleware(
+  RpcInstrumentation,
+).toLayer(
+  Effect.gen(function* () {
+    const incrementProgress = yield* ThreadIncrementProgressService.ThreadIncrementProgressService;
+    const folders = yield* ProjectFolderService;
+    return {
+      [WS_METHODS.projectsFolderCheck]: (
+        input: import("@specweave-studio/contracts").ProjectFolderCheckInput,
+      ) => folders.check(input),
+      [WS_METHODS.projectsThreadIncrementProgressRead]: incrementProgress.read,
+      [WS_METHODS.projectsIncrementsList]: incrementProgress.listIncrements,
+      [WS_METHODS.projectsThreadIncrementLink]: incrementProgress.link,
+    };
+  }),
+);
 
 /** The `projects.knowledge*` handlers (see `WsProjectKnowledgeRpcGroup`). */
 export const layerKnowledgeRpcHandlers = WsProjectKnowledgeRpcGroup.middleware(

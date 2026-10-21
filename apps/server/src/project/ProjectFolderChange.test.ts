@@ -463,6 +463,103 @@ it.layer(NodeServices.layer)("ProjectFolderService", (it) => {
     ),
   );
 
+  it.effect("keeps umbrella increments in reach and reports the umbrella layout", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { scenario, parent } = yield* makeScenario;
+        yield* fs.writeFileString(`${parent}/.specweave/config.json`, "{}");
+        yield* fs.makeDirectory(`${parent}/.specweave/increments/0001-start`, { recursive: true });
+        yield* fs.makeDirectory(`${parent}/repositories/acme/api/.git`, { recursive: true });
+        const check = yield* withFolders(scenario, (folders) =>
+          folders.check({ projectId, workspaceRoot: parent }),
+        );
+        // The stub plans in its umbrella already, so plan cards read the same increments.
+        expect(check.planning).toMatchObject({
+          currentRoot: parent,
+          targetRoot: parent,
+          currentIncrements: 1,
+          changes: false,
+        });
+        expect(check.layout).toMatchObject({
+          kind: "umbrella",
+          repositories: ["repositories/acme/api"],
+        });
+        const changed = yield* withFolders(scenario, (folders) =>
+          folders.change({
+            commandId,
+            projectId,
+            workspaceRoot: parent,
+            confirmDifferentRepository: true,
+          }),
+        );
+        expect(changed.project.workspaceRoot).toBe(parent);
+      }),
+    ),
+  );
+
+  it.effect("refuses to leave the planning root until the user confirms it", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { scenario, parent, stub } = yield* makeScenario;
+        yield* fs.writeFileString(`${parent}/.specweave/config.json`, "{}");
+        yield* fs.makeDirectory(`${parent}/.specweave/increments/0001-start`, { recursive: true });
+        const elsewhere = `${scenario.root}/elsewhere`;
+        yield* fs.makeDirectory(`${elsewhere}/.git`, { recursive: true });
+        scenario.repositories.set(elsewhere, "github.com/easychamp/easychamp");
+        scenario.repositories.set(stub, "github.com/easychamp/easychamp");
+        const check = yield* withFolders(scenario, (folders) =>
+          folders.check({ projectId, workspaceRoot: elsewhere }),
+        );
+        expect(check.layout?.kind).toBe("single");
+        expect(check.planning).toMatchObject({
+          currentRoot: parent,
+          targetRoot: null,
+          changes: true,
+        });
+        const refused = yield* withFolders(scenario, (folders) =>
+          folders.change({ commandId, projectId, workspaceRoot: elsewhere }),
+        ).pipe(Effect.flip);
+        expect(refused).toMatchObject({ reason: "planning_impact" });
+        expect(refused.message).toContain(`changing the folder back to ${stub} restores them`);
+        expect(scenario.updates).toHaveLength(0);
+        const changed = yield* withFolders(scenario, (folders) =>
+          folders.change({
+            commandId,
+            projectId,
+            workspaceRoot: elsewhere,
+            confirmPlanningImpact: true,
+          }),
+        );
+        expect(changed.previousRoot).toBe(stub);
+        expect(scenario.updates).toHaveLength(1);
+      }),
+    ),
+  );
+
+  it.effect("changes a folder without SpecWeave exactly as before", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const { scenario, stub } = yield* makeScenario;
+        const plain = `${scenario.root}/plain`;
+        yield* fs.makeDirectory(plain);
+        scenario.repositories.set(plain, "github.com/easychamp/easychamp");
+        scenario.repositories.set(stub, "github.com/easychamp/easychamp");
+        const check = yield* withFolders(scenario, (folders) =>
+          folders.check({ projectId, workspaceRoot: plain }),
+        );
+        expect(check.planning).toBeUndefined();
+        expect(check.layout?.kind).toBe("plain");
+        const changed = yield* withFolders(scenario, (folders) =>
+          folders.change({ commandId, projectId, workspaceRoot: plain }),
+        );
+        expect(changed.project.workspaceRoot).toBe(plain);
+      }),
+    ),
+  );
+
   it.effect("reports an unchanged folder without updating the project", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -501,4 +598,25 @@ it("explains each refusal in the user's terms", () => {
   expect(
     ProjectFolderChange.folderChangeRefusal({ ...base, targetExists: false }, true)?.reason,
   ).toBe("folder_missing");
+  const planning = {
+    ...base,
+    planning: {
+      currentRoot: "/umb",
+      currentIncrements: 12,
+      targetRoot: null,
+      targetIncrements: 0,
+      brokenLinks: ["0007-auth"],
+      changes: true,
+    },
+  };
+  expect(ProjectFolderChange.folderChangeRefusal(planning, true)?.detail).toBe(
+    'Plan cards read 12 increments in /umb now and would read none after the change. 1 thread link to 0007-auth would show "not found". Nothing is deleted or rewritten: changing the folder back to /a restores them. Confirm the planning change to use /b.',
+  );
+  expect(ProjectFolderChange.folderChangeRefusal(planning, true, true)).toBeNull();
+  expect(
+    ProjectFolderChange.folderChangeRefusal(
+      { ...planning, planning: { ...planning.planning, changes: false } },
+      true,
+    ),
+  ).toBeNull();
 });

@@ -18,6 +18,8 @@ import {
   OrchestratorMcpMachineRef,
   OrchestratorMcpDelegation,
   OrchestratorMcpMachineTarget,
+  OrchestratorMcpTaskClassHint,
+  TaskRoutingDecision,
   SourceControlCloneRepositoryInput,
   SourceControlCloneRepositoryResult,
 } from "@specweave-studio/contracts";
@@ -181,6 +183,7 @@ const ThreadLaunchTool = Tool.make("studio_thread_launch", {
     ),
     title: TrimmedNonEmptyString,
     modelSelection: Schema.optional(ModelSelection),
+    taskClass: Schema.optional(OrchestratorMcpTaskClassHint),
     effort: Schema.optional(
       TrimmedNonEmptyString.annotate({
         description:
@@ -216,6 +219,12 @@ const ThreadLaunchTool = Tool.make("studio_thread_launch", {
     effort: Schema.optional(
       Schema.String.annotate({
         description: "Reasoning effort option the thread was started with, when one was set.",
+      }),
+    ),
+    routing: Schema.optional(
+      TaskRoutingDecision.annotate({
+        description:
+          "Set when Auto model routing chose the model: task class, reason and the baseline it left.",
       }),
     ),
     runId: Schema.NullOr(RunId),

@@ -596,6 +596,29 @@ export function messageReleasesHeldQueue(
 }
 
 /**
+ * Auto routing's one escalation: a thread still on the cheaper model Auto
+ * picked continues its failed run on the model Auto recorded as the
+ * escalation. Any other failed run stays closed to manual continuation.
+ */
+function isRoutedEscalation(
+  thread: OrchestrationV2ThreadProjection["thread"],
+  command: { readonly modelSelection?: ModelSelection | undefined },
+): boolean {
+  const routing = thread.routing;
+  const target = command.modelSelection;
+  return (
+    routing != null &&
+    routing.moved &&
+    routing.escalation !== null &&
+    target !== undefined &&
+    target.instanceId === routing.escalation.instanceId &&
+    target.model === routing.escalation.model &&
+    thread.providerInstanceId === routing.selection.instanceId &&
+    thread.modelSelection.model === routing.selection.model
+  );
+}
+
+/**
  * A parent thread is "live" for wake purposes while a run is still producing
  * agent output. A run parked at "waiting" is post-terminal drain, so its agent
  * turn is over and a wake is still needed.
@@ -2333,6 +2356,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       interactionMode: command.interactionMode,
       branch: command.branch,
       worktreePath: command.worktreePath,
+      ...(command.routing === undefined ? {} : { routing: command.routing }),
       activeProviderThreadId: null,
       lineage: {
         parentThreadId: null,
@@ -4716,7 +4740,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           command.dispatchMode.type !== "start_immediately" ||
           source === undefined ||
           (source.status !== "interrupted" &&
-            !(source.status === "failed" && limited?.class === "usage_limit")) ||
+            !(source.status === "failed" && limited?.class === "usage_limit") &&
+            !(source.status === "failed" && isRoutedEscalation(projection.thread, command))) ||
           latestExecutedRun(projection.runs)?.id !== source.id ||
           projection.thread.archivedAt !== null ||
           projection.thread.deletedAt !== null ||
@@ -6888,6 +6913,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         }),
         runtimeMode,
         interactionMode: command.interactionMode,
+        ...(command.routing === undefined ? {} : { routing: command.routing }),
       };
       const task: OrchestrationV2Subagent = {
         id: taskNodeId,
@@ -6904,6 +6930,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         prompt: command.task,
         title: command.title ?? null,
         model: command.modelSelection.model,
+        ...(command.routing === undefined ? {} : { routing: command.routing }),
         ...(command.completionWake === undefined ? {} : { completionWake: command.completionWake }),
         status: "running",
         result: null,

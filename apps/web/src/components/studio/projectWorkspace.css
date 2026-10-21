@@ -510,8 +510,10 @@
     outline: none;
   }
   & .project-checkbox {
+    display: flex;
     flex-direction: row;
     align-items: center;
+    gap: 8px;
   }
   /* Secondary actions read as buttons: one line, an optional leading icon, a quiet border.
      Memory file rows and the inline icon picker keep their own look. */

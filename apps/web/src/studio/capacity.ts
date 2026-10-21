@@ -10,6 +10,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { requestCapacity, type CapacityOperation } from "./capacityRequest";
+import { environmentConnectedAtom } from "./connected";
 import { connectionAtomRuntime } from "../connection/runtime";
 import { appAtomRegistry } from "../rpc/atomRegistry";
 import { environmentPresentations } from "../state/presentation";
@@ -19,14 +20,14 @@ import { environmentSession, readEnvironmentScope, readPreparedConnection } from
 const capacityAtom = Atom.family((environmentId: EnvironmentId) =>
   connectionAtomRuntime
     .atom((get) => {
-      const presentation = get(environmentPresentations.presentationAtom(environmentId));
+      const connected = get(environmentConnectedAtom(environmentId));
       const session = get(environmentSession.sessionStateAtom(environmentId));
       const grant = Option.getOrNull(AsyncResult.value(session));
       const prepared = Option.getOrNull(
         get(environmentSession.preparedConnectionValueAtom(environmentId)),
       );
       if (
-        presentation?.connection.phase !== "connected" ||
+        !connected ||
         session._tag === "Failure" ||
         grant === null ||
         !sessionGrantsScope(grant, AuthOrchestrationReadScope) ||

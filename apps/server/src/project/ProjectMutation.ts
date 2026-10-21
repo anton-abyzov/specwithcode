@@ -78,6 +78,9 @@ export const projectMutationOperation = Effect.fn("projectMutationOperation")(fu
         ...(mutation.confirmDifferentRepository === undefined
           ? {}
           : { confirmDifferentRepository: mutation.confirmDifferentRepository }),
+        ...(mutation.confirmPlanningImpact === undefined
+          ? {}
+          : { confirmPlanningImpact: mutation.confirmPlanningImpact }),
       });
       return changed.project;
     }

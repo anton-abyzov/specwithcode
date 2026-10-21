@@ -48,14 +48,44 @@ export const ThreadIncrementTask = Schema.Struct({
   link: Schema.optional(Schema.String),
   /** The commit the done evidence names (`HEAD <sha>`), when it gives no link. */
   commit: Schema.optional(Schema.String),
+  /**
+   * When the ledger accepted its `done` (which requires evidence). Absent for
+   * a task that is not done, or one only a legacy `**Status**: [x]` marks done.
+   */
+  doneAt: Schema.optional(Schema.String),
 });
 export type ThreadIncrementTask = typeof ThreadIncrementTask.Type;
+
+/**
+ * How far an acceptance criterion is proven, strongest first:
+ * `verified` — every citing task is done with ledger evidence and the latest
+ * `specweave verify` passed after the last of them; `evidenced` — done with
+ * evidence, but verify is missing, failed or older; `declared` — only a tick
+ * in the spec or a legacy task status says so; `skipped` — every citing task
+ * was skipped; `open` — a citing task is unfinished; `uncovered` — no task
+ * cites it; `unknown` — the ledger could not be read.
+ */
+export const ThreadIncrementCriterionState = Schema.Literals([
+  "verified",
+  "evidenced",
+  "declared",
+  "skipped",
+  "open",
+  "uncovered",
+  "unknown",
+]);
+export type ThreadIncrementCriterionState = typeof ThreadIncrementCriterionState.Type;
 
 export const ThreadIncrementCriterion = Schema.Struct({
   id: TrimmedNonEmptyString,
   text: Schema.String,
-  /** Every task citing it is done or skipped (and at least one cites it). */
+  /** Every task citing it is done or skipped (and at least one cites it). Kept for older clients. */
   met: Schema.Boolean,
+  state: Schema.optional(ThreadIncrementCriterionState),
+  /** Ids of the tasks that cite it, in spec order. */
+  tasks: Schema.optional(Schema.Array(Schema.String)),
+  /** The user story it belongs to, such as `US-001`, when the spec names one. */
+  story: Schema.optional(Schema.String),
 });
 export type ThreadIncrementCriterion = typeof ThreadIncrementCriterion.Type;
 
@@ -132,6 +162,15 @@ export type ThreadIncrementLinkResult = typeof ThreadIncrementLinkResult.Type;
 export const ProjectIncrementsListInput = Schema.Struct({
   projectId: ProjectId,
   threadId: Schema.optional(ThreadId),
+  /** Words that must all appear in the folder name or title. */
+  query: Schema.optional(Schema.String.check(Schema.isMaxLength(200))),
+  /** Only this metadata status, such as `active` or `completed`. */
+  status: Schema.optional(Schema.String.check(Schema.isMaxLength(40))),
+  offset: Schema.optional(Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))),
+  /** At most 300; an older client that sends none gets the first 300, as before. */
+  limit: Schema.optional(
+    Schema.Int.check(Schema.isGreaterThanOrEqualTo(1), Schema.isLessThanOrEqualTo(300)),
+  ),
 });
 export type ProjectIncrementsListInput = typeof ProjectIncrementsListInput.Type;
 
@@ -145,6 +184,10 @@ export type ProjectIncrementSummary = typeof ProjectIncrementSummary.Type;
 export const ProjectIncrementsListResult = Schema.Struct({
   projectId: ProjectId,
   increments: Schema.Array(ProjectIncrementSummary),
+  /** How many match the query and status, across every page. */
+  total: Schema.optional(Schema.Int),
+  /** Increments matching the query, by status, before the status filter. */
+  statusCounts: Schema.optional(Schema.Record(Schema.String, Schema.Int)),
   /** The thread's current link, when it has one: absent is automatic. */
   link: Schema.optional(ThreadIncrementLinkTarget),
 });

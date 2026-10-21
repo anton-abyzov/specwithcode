@@ -23,8 +23,15 @@ import * as ThreadMessageIntake from "../../../orchestration-v2/ThreadMessageInt
 import * as Claims from "../../../orchestration-v2/AttachmentClaims.ts";
 import * as ProjectActionRequests from "../../../project/ProjectActionRequests.ts";
 import * as Project from "../../../project/ProjectService.ts";
+import * as ProviderAdapterRegistry from "../../../orchestration-v2/ProviderAdapterRegistry.ts";
 import * as ProviderRegistry from "../../../provider/ProviderRegistry.ts";
 import { workerLaunchWithRoom } from "../../../project/WorkerLaunchRoom.ts";
+import {
+  autoRoutingApplies,
+  promptWithRoutingNote,
+  routeWorkerTask,
+  routedSelection,
+} from "../../../project/TaskRouting.ts";
 import * as ManagedProjectFolders from "../../../project/ManagedProjectFolders.ts";
 import * as Repositories from "../../../sourceControl/SourceControlRepositoryService.ts";
 import * as GitVcsDriver from "../../../vcs/GitVcsDriver.ts";
@@ -345,17 +352,74 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
             message:
               "Pass modelSelection: the project has no default model. orchestrator_capabilities lists providers and models.",
           });
-        yield* assertAccountInGrant(work, modelSelection.instanceId);
+        // Auto model routing (project/TaskRouting.ts): only when no model was
+        // named and the app picks it, or the caller passed a task class.
+        const routes =
+          project !== undefined &&
+          (work === undefined || work.grant.accounts.kind === "all") &&
+          autoRoutingApplies({
+            pinned: input.modelSelection !== undefined,
+            isCoordinator,
+            taskClass: input.taskClass,
+          });
+        const providers = routes
+          ? yield* (yield* ProviderRegistry.ProviderRegistry).getProviders
+          : [];
+        // Only instances with a V2 adapter can run a thread, as delegate_task checks.
+        const adapters = routes
+          ? yield* Effect.serviceOption(ProviderAdapterRegistry.ProviderAdapterRegistryV2)
+          : Option.none();
+        const runnableInstanceIds = Option.isSome(adapters)
+          ? yield* adapters.value.list().pipe(
+              Effect.map((ids) => new Set<string>(ids)),
+              Effect.orElseSucceed(() => undefined),
+            )
+          : undefined;
+        const decision =
+          routes && project !== undefined
+            ? yield* routeWorkerTask({
+                project,
+                baseline: modelSelection,
+                providers,
+                task: {
+                  text: input.message ?? "",
+                  title: input.title,
+                  hint: input.taskClass,
+                  attachments: attachments.map((attachment) => ({
+                    name: attachment.name,
+                    mimeType: attachment.mimeType,
+                    sizeBytes: attachment.sizeBytes,
+                  })),
+                },
+                ...(runnableInstanceIds === undefined ? {} : { runnableInstanceIds }),
+              })
+            : null;
+        const routedModel =
+          decision?.moved === true
+            ? routedSelection(decision, decision.selection, providers)
+            : modelSelection;
+        yield* assertAccountInGrant(work, routedModel.instanceId);
+        // A routed thread keeps the effort the baseline ran at, mapped to its model.
+        const carriedEffort =
+          decision?.moved === true && input.effort === undefined
+            ? modelSelectionEffortValue(modelSelection)
+            : undefined;
         const launchSelection =
-          input.effort === undefined
-            ? modelSelection
-            : yield* withRequestedEffort(modelSelection, input.effort);
+          input.effort !== undefined
+            ? yield* withRequestedEffort(routedModel, input.effort)
+            : carriedEffort !== undefined
+              ? yield* withRequestedEffort(routedModel, carriedEffort).pipe(
+                  Effect.orElseSucceed(() => routedModel),
+                )
+              : routedModel;
+        const routing = decision === null ? undefined : { ...decision, selection: launchSelection };
         const result = yield* ThreadMessageIntake.launchThread({
           commandId,
           threadId,
           projectId,
           title: input.title,
           modelSelection: launchSelection,
+          ...(routing === undefined ? {} : { routing }),
           runtimeMode,
           interactionMode,
           workspaceStrategy: input.workspaceStrategy ?? { type: "root" },
@@ -365,7 +429,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
                 initialMessage: {
                   messageId,
                   ...(caller === undefined ? {} : { senderThreadId: caller.id }),
-                  text: input.message ?? "",
+                  text: promptWithRoutingNote(input.message ?? "", routing ?? null),
                   attachments,
                 },
               }),
@@ -392,6 +456,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
           projectId: thread.projectId,
           modelSelection: thread.modelSelection,
           ...(effortValue === undefined ? {} : { effort: effortValue }),
+          ...(routing === undefined ? {} : { routing }),
           runId: run?.id ?? null,
           status: run?.status ?? null,
           // Tells a coordinator on another machine that this one applied its grant's checks.

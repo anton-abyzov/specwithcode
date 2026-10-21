@@ -24,6 +24,7 @@ import {
 } from "./projectConnectionRpc.ts";
 import {
   PROJECT_WORKSPACE_RPC_METHODS,
+  projectPlanningRpcs,
   projectKnowledgeRpcs,
   projectWorkspaceRpcs,
 } from "./projectWorkspaceRpc.ts";
@@ -2265,6 +2266,11 @@ export const WsCloneDestinationRpcGroup = RpcGroup.make(
   WsSourceControlInspectDestinationRpc,
 ).middleware(RpcScopeAuthorization);
 
+/** Folder checks and SpecWeave increments; their own group for the same depth reason. */
+export const WsProjectPlanningRpcGroup = RpcGroup.make(...projectPlanningRpcs).middleware(
+  RpcScopeAuthorization,
+);
+
 /** Project knowledge status, search and rebuild; its own group for the same depth reason. */
 export const WsProjectKnowledgeRpcGroup = RpcGroup.make(...projectKnowledgeRpcs).middleware(
   RpcScopeAuthorization,
@@ -2292,6 +2298,7 @@ export const WsRpcGroup = WsCoreRpcGroup.merge(WsComposerDraftsRpcGroup)
   .merge(WsLimitHandoffRpcGroup)
   .merge(WsFolderCopyRpcGroup)
   .merge(WsProjectKnowledgeRpcGroup)
+  .merge(WsProjectPlanningRpcGroup)
   .merge(WsHandoffModeRpcGroup)
   .merge(WsCloneDestinationRpcGroup)
   .merge(WsProvisionRpcGroup);
