@@ -39,6 +39,7 @@ export const NON_AGENT_PROVIDER_SPAWNS: Readonly<Record<string, string>> = {
   "provider/GrokProvider.ts": "grok CLI version and model probes",
   "provider/Drivers/GrokSkills.ts": "grok inspect --json skill listing",
   "provider/PiProvider.ts": "pi --version probe",
+  "provider/providerDiscovery.ts": "startup grok and opencode version and sign-in probes",
   "provider/OpenCodeServerLedger.ts": "stops leftover opencode servers",
   "provider/acp/AcpRegistryAuth.ts": "registry agent terminal sign-in and preflight",
   "provider/acp/AcpRegistrySupport.ts": "registry agent version probes",

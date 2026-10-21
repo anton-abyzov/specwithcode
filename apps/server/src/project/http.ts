@@ -33,6 +33,8 @@ export const failProjectMutation = Effect.fn("environment.projects.failMutation"
       active_work: "project_active_work",
       environment_active: "project_environment_active",
       name_taken: "project_name_taken",
+      assistant_exists: "project_assistant_exists",
+      kind_fixed: "project_kind_fixed",
     } as const;
     return yield* failEnvironmentInvalidRequest(reason[cause.reason]);
   }

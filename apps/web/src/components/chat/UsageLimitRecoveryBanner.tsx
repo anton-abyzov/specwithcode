@@ -91,6 +91,8 @@ export function fallbackUnavailableReason(
         : `full until ${new Date(resetAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`;
     case "unverified":
       return "usage not read yet";
+    case "not-ready":
+      return "not set up on this machine";
   }
 }
 

@@ -34,6 +34,10 @@ import {
   threadTurnKey,
 } from "@specweave-studio/contracts";
 import * as KeyedLock from "@specweave-studio/shared/KeyedLock";
+import {
+  isPersonalAssistantProject,
+  PERSONAL_ASSISTANT_PRIVATE_MESSAGE,
+} from "@specweave-studio/shared/personalAssistant";
 import { resolveProjectSettings } from "@specweave-studio/shared/projectSettings";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -257,12 +261,29 @@ export const make = Effect.gen(function* () {
       })
       .pipe(Effect.map(toSnapshot));
 
+  /** A personal assistant's threads never get handoff mode: they stay on their machine. */
+  const refuseMachinePrivate = (projectId: ProjectId) =>
+    projects.getById(projectId).pipe(
+      Effect.orElseSucceed(() => Option.none()),
+      Effect.flatMap((project) =>
+        Option.isSome(project) && isPersonalAssistantProject(project.value.workspaceSettings)
+          ? Effect.fail(
+              new HandoffModeError({
+                code: "invalid",
+                message: PERSONAL_ASSISTANT_PRIVATE_MESSAGE,
+              }),
+            )
+          : Effect.void,
+      ),
+    );
+
   const setThreadMode = (input: {
     readonly threadId: ThreadId;
     readonly mode: HandoffThreadRecord["mode"];
   }) =>
     Effect.gen(function* () {
       const shell = yield* shellOf(input.threadId);
+      if (input.mode === "on") yield* refuseMachinePrivate(shell.projectId);
       yield* updateThread(input.threadId, shell.projectId, (record) => ({
         ...record,
         mode: input.mode,
@@ -274,15 +295,18 @@ export const make = Effect.gen(function* () {
     readonly projectId: ProjectId;
     readonly mode: HandoffDocument["config"]["defaultMode"] | null;
   }) =>
-    store
-      .update((document) => {
-        const projectModes = { ...document.projectModes };
-        if (input.mode === null) delete projectModes[input.projectId];
-        else projectModes[input.projectId] = input.mode;
-        const next = { ...document, projectModes };
-        return [next, next] as const;
-      })
-      .pipe(Effect.map(toSnapshot));
+    (input.mode === "on" ? refuseMachinePrivate(input.projectId) : Effect.void).pipe(
+      Effect.andThen(
+        store.update((document) => {
+          const projectModes = { ...document.projectModes };
+          if (input.mode === null) delete projectModes[input.projectId];
+          else projectModes[input.projectId] = input.mode;
+          const next = { ...document, projectModes };
+          return [next, next] as const;
+        }),
+      ),
+      Effect.map(toSnapshot),
+    );
 
   const conversation = (threadId: ThreadId) =>
     projections
@@ -384,6 +408,14 @@ export const make = Effect.gen(function* () {
         );
       if (Option.isNone(project)) {
         return yield* new HandoffModeError({ code: "not_found", message: "No such project." });
+      }
+      // A personal assistant's conversation is never checkpointed for another machine.
+      if (isPersonalAssistantProject(project.value.workspaceSettings)) {
+        if (reason !== "manual" && reason !== "handoff") return null;
+        return yield* new HandoffModeError({
+          code: "invalid",
+          message: PERSONAL_ASSISTANT_PRIVATE_MESSAGE,
+        });
       }
       const cwd = shell.worktreePath ?? project.value.workspaceRoot;
       const written = yield* Effect.tryPromise({
@@ -569,6 +601,12 @@ export const make = Effect.gen(function* () {
           ...current,
           lease,
           runEpochs: noteRunEpoch(current.runEpochs, run.id, lease.epoch),
+          // A run that starts after a handoff gave the thread back is not the one the
+          // handoff interrupted, so its ending is its own.
+          fencedBy:
+            current.runEpochs[run.id] === undefined && current.lease?.state === "active"
+              ? null
+              : current.fencedBy,
         };
       });
     });

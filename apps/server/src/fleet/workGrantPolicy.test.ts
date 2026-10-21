@@ -125,6 +125,26 @@ describe("work grant policy", () => {
     expect(projectInGrant({ kind: "listed", projectIds: [] }, M4, linked)).toBe(false);
   });
 
+  it("never covers a personal assistant, whatever the grant says", () => {
+    const household = {
+      id: "example-household",
+      workspaceSettings: {
+        kind: "personal",
+        logicalProject: { members: [{ environmentId: M4 }] },
+      },
+    };
+    expect(projectInGrant({ kind: "all" }, M4, household)).toBe(false);
+    expect(projectInGrant({ kind: "linked" }, M4, household)).toBe(false);
+    expect(
+      projectInGrant({ kind: "listed", projectIds: ["example-household" as never] }, M4, household),
+    ).toBe(false);
+    const code = {
+      ...household,
+      workspaceSettings: { ...household.workspaceSettings, kind: "code" },
+    };
+    expect(projectInGrant({ kind: "all" }, M4, code)).toBe(true);
+  });
+
   it("allows all sign-ins, the listed ones, or none", () => {
     const codex = ProviderInstanceId.make("codex");
     expect(accountInGrant({ kind: "all" }, codex)).toBe(true);

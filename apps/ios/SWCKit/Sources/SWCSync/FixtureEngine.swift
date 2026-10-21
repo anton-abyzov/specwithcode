@@ -21,6 +21,9 @@ public enum FixtureScenario: String, Sendable, CaseIterable {
   /// Like `default`, but Aide's chat holds a long history with links, for
   /// scroll, link and app lifecycle checks on a simulator.
   case long
+  /// Rich text, thread navigation and explicitly simulated ledger states.
+  case checkOutput = "check-output"
+  case readability
 
   var isFleet: Bool { self == .fleet || self == .m4Blip || self == .minisBlip }
 }
@@ -51,9 +54,68 @@ public final class FixtureEngine: AppEngine {
   /// step and comes back after two. Tests set it to zero.
   public var faultStep: Duration = .seconds(6)
   private var counter = 0
+  private var continuedThreads: [ThreadRef: ThreadRef] = [:]
 
   public init(scenario: FixtureScenario = .default) {
     self.scenario = scenario
+  }
+
+  // Simulated handoff updates the same in-memory summaries and transcript the UI reads.
+  // It is not evidence of a remote provider executing.
+  func fixtureHandoffOptions(for thread: ThreadRef) -> HandoffOptions {
+    guard let model, let summary = model.thread(thread), scenario.isFleet else {
+      return HandoffOptions(badge: nil, destinations: [], notices: ["Sample data has no linked destination for this thread."])
+    }
+    if continuedThreads[thread] != nil {
+      return HandoffOptions(badge: "continued", destinations: [], notices: [LiveEngine.handedOffReason])
+    }
+    let candidates = model.machines.filter { $0.id != thread.environmentId }
+    let destinations = candidates.filter { $0.status.isOnline }.map {
+      HandoffDestination(id: $0.id, name: $0.label, usesReplica: !summary.machineOnline)
+    }
+    return HandoffOptions(badge: "ready", destinations: destinations,
+      notices: ["Sample preview. No real machine or provider will run."] + candidates.filter { !$0.status.isOnline }.map { "\($0.label): offline or unreachable from this phone." })
+  }
+
+  func simulateHandoff(_ thread: ThreadRef, to destination: HandoffDestination) async throws -> ThreadRef {
+    if let existing = continuedThreads[thread] { return existing }
+    guard let model, let original = model.thread(thread), let project = original.projectRef,
+      fixtureHandoffOptions(for: thread).destinations.contains(destination) else {
+      throw FixtureFailure("This destination cannot continue the sample thread.")
+    }
+    try await Task.sleep(for: latency * 3)
+    try requireOnline(destination.id, doing: "continue the thread")
+    let next = ThreadRef(environmentId: destination.id, threadId: "continued-" + thread.threadId)
+    let sourceTarget = ChatTarget.thread(thread)
+    let nextTarget = ChatTarget.thread(next)
+    replies[sourceTarget]?.cancel()
+    replies[sourceTarget] = nil
+    running.remove(sourceTarget)
+    let rows = transcripts[sourceTarget] ?? initialTranscript(for: sourceTarget)
+    transcripts[nextTarget] = rows.map { original in
+      var row = Self.finished(original)
+      switch row.kind {
+      case let .approval(_, prompt, _), let .question(_, prompt, _):
+        row.kind = .notice(text: "Previous machine request (historical): " + prompt)
+      case let .plan(steps):
+        row.kind = .plan(steps: steps.map { step in
+          var step = step
+          if step.status == .running { step.status = .pending }
+          return step
+        })
+      default: break
+      }
+      return row
+    } + [row("handoff", .assistant(markdown: "**Sample continuation on \(destination.name).** The conversation and checkpoint are represented here. No real provider has started; send a sample message to try the composer.", streaming: false))]
+    continuedThreads[thread] = next
+    let moved = ThreadSummary(ref: next, projectRef: project, projectTitle: original.projectTitle,
+      title: original.title, activity: .idle, preview: "Sample continuation", updatedAt: Date(),
+      machineLabel: destination.name, machineOnline: true, planProgress: original.planProgress,
+      placement: ThreadPlacement(owner: destination.name))
+    model.threadsByProject[project, default: []].append(moved)
+    updateThread(thread) { $0.activity = .idle; $0.placement.runsOn = destination.name }
+    recompute()
+    return next
   }
 
   // MARK: AppEngine
@@ -165,6 +227,7 @@ public final class FixtureEngine: AppEngine {
 
   public func send(_ text: String, to target: ChatTarget) async throws {
     guard let model else { throw FixtureFailure("SpecWithCode isn't ready yet. Try again in a moment.") }
+    if case let .thread(ref) = target, continuedThreads[ref] != nil { throw FixtureFailure(LiveEngine.handedOffReason) }
     let machine = model.machine(target.environmentId)
     guard machine?.status.isOnline == true else {
       throw FixtureFailure("\(machine?.label ?? "This machine") is offline, so the message wasn't sent. Try again when it reconnects.")
@@ -373,6 +436,7 @@ public final class FixtureEngine: AppEngine {
     session.machineOnline = online
     session.isStale = !online
     session.sendBlockedReason = online ? nil : "\(machine?.label ?? "This machine") is offline. You can send again when it reconnects."
+    if case let .thread(ref) = target, continuedThreads[ref] != nil { session.sendBlockedReason = LiveEngine.handedOffReason }
     switch target {
     case let .aide(ref), let .project(ref):
       if let project = model.project(ref) { session.title = project.title }
@@ -546,6 +610,8 @@ public final class FixtureEngine: AppEngine {
   // MARK: Transcripts
 
   private func initialTranscript(for target: ChatTarget) -> [TranscriptRow] {
+    if scenario == .checkOutput { return Self.checkOutputRows.map { row("check-output", $0) } }
+    if scenario == .readability { return Self.readabilityRows.map { row("readability", $0) } }
     switch target {
     case .aide:
       let rows = scenario == .long ? FixtureSample.longAideTranscript : FixtureSample.aideTranscript

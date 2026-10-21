@@ -148,6 +148,12 @@ export function runOnMachineGroups(input: {
   const repository = repositoryKey(input.active);
   const withProject: Array<RunOnMachineGroups["withProject"][number]> = [];
   const addable: Array<RunOnMachineGroups["addable"][number]> = [];
+  // A personal assistant runs only on its own machine, and is never copied to another.
+  if (input.active.workspaceSettings?.kind === "personal")
+    return {
+      withProject: [{ environmentId: input.active.environmentId, project: input.active }],
+      addable: [],
+    };
   for (const environmentId of input.environmentIds) {
     const here = input.projects.filter(
       (project) => project.environmentId === environmentId && usableCopy(project),

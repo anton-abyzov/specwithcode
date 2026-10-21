@@ -101,10 +101,13 @@ def download(agent, name, asset, destination, limit):
 
 def install_beside(ua, home):
     """Copy this module next to the installed agent. install_launch_agent runs this before
-    it replaces the agent, so a new agent never starts without the module it imports."""
+    it replaces the agent, so a new agent never starts without the module it imports. True when
+    it wrote the module."""
     target = ua.ensure_dir(ua.studio_paths.updater_root(home), home)
     os.chmod(str(target), 0o700)
     path = ua.owned(target / pathlib.Path(__file__).name, home)
     data = pathlib.Path(os.path.abspath(__file__)).read_bytes()
     if not (path.is_file() and ua.read_owned(path, home, 8 << 20) == data):
         ua.atomic_write(path, data, home, 0o600)
+        return True
+    return False

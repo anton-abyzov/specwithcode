@@ -152,8 +152,9 @@ import {
 } from "../../lib/diffRendering";
 import { PREFERRED_HIGHLIGHTER } from "../../lib/syntaxHighlighting";
 import ChatMarkdown, { ChatMarkdownAssetImage } from "../ChatMarkdown";
+import { ThreadRoutineRun } from "./ThreadRoutineRun";
 import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
+import { CHAT_REMARK_GFM } from "../../markdown-gfm";
 import type { Root, RootContent } from "mdast";
 import { StudioWordmark } from "../StudioWordmark";
 import { ThreadContextChip } from "../ThreadContextChip";
@@ -2430,6 +2431,14 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
       </p>
     );
 
+  // A fired routine reads as a card in place of the bubble, unless it carries files.
+  const routineTaskId =
+    row.message.scheduledTaskId !== undefined &&
+    (row.message.attachments?.length ?? 0) === 0 &&
+    resolvedContext.records.length === 0
+      ? row.message.scheduledTaskId
+      : null;
+
   return (
     <div className="group flex flex-col items-end gap-1">
       <UserMessageProvenance
@@ -2442,125 +2451,138 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
       {row.message.inputIntent && row.message.inputIntent !== "turn_start" ? (
         <UserMessageIntentMarker intent={row.message.inputIntent} />
       ) : null}
-      <div className="relative max-w-[80%] rounded-2xl bg-message p-3 text-message-foreground">
-        <MessageAuthorHeading>
-          {row.message.createdBy === "agent"
-            ? senderThreadId === projectRouting?.coordinatorThreadId
-              ? "Coordinator"
-              : "Agent"
-            : "You"}
-        </MessageAuthorHeading>
-        {(regularImages.length > 0 || userVideos.length > 0) && (
-          <div className="mb-2 grid max-w-[210px] grid-cols-2 gap-2">
-            {regularImages.map((image) => (
-              <div
-                key={image.id}
-                className={cn(
-                  "bg-background/70",
-                  image.source?.kind === "snap-shot" && image.previewUrl
-                    ? cn(SNAP_SHOT_ATTACHMENT_FRAME_CLASS, "col-span-2")
-                    : "aspect-[4/3] overflow-hidden rounded-lg border border-border/80",
-                )}
-              >
-                {image.previewUrl ? (
-                  <button
-                    type="button"
-                    className="block h-full w-full cursor-zoom-in"
-                    aria-label={`Preview ${image.name}`}
-                    onClick={() => {
-                      const preview = buildExpandedImagePreview(regularImages, image.id);
-                      if (!preview) return;
-                      ctx.onImageExpand(preview);
-                    }}
-                  >
-                    <img
-                      src={image.previewUrl}
-                      alt={image.name}
-                      className="block size-full object-cover"
-                    />
-                  </button>
-                ) : (
-                  <div className="flex min-h-[72px] items-center justify-center px-2 py-3 text-center text-2xs text-muted-foreground">
-                    {image.name}
-                  </div>
-                )}
-                {image.previewUrl && image.source?.kind === "snap-shot" ? (
-                  <SnapShotAttachmentDetails source={image.source} />
-                ) : null}
-              </div>
-            ))}
-            {userVideos.map((file) => (
-              <UserVideoAttachment key={file.id} file={file} />
-            ))}
-          </div>
-        )}
-        {unchippedFiles.length > 0 || unknownAttachments.length > 0 ? (
-          <div className="mb-2 flex flex-col gap-1">
-            {unchippedFiles.map((file) => {
-              const fileIdentity = (
-                <>
-                  <PierreEntryIcon pathValue={file.name} kind="file" theme={ctx.resolvedTheme} />
-                  <span className="min-w-0 flex-1 truncate">{file.name}</span>
-                </>
-              );
-              if (file.downloadable !== false) {
-                return (
-                  <div key={file.id} className="flex min-w-0 items-center gap-1">
-                    <button
-                      type="button"
-                      aria-label={`Preview ${file.name}`}
-                      onClick={() => ctx.onFileOpen(file)}
-                      className="focus-visible:ring-ring/70 flex min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-md py-1 text-left text-sm hover:underline focus-visible:ring-2 focus-visible:outline-none focus-visible:ring-inset"
-                    >
-                      {fileIdentity}
-                      <EyeIcon className="size-4 shrink-0" />
-                    </button>
-                    <Tooltip>
-                      <TooltipTrigger
-                        render={
-                          <Button
-                            size="icon-xs"
-                            variant="ghost-muted"
-                            aria-label={`Download ${file.name}`}
-                            onClick={() => ctx.onFileDownload(file)}
-                          />
-                        }
-                      >
-                        <DownloadIcon />
-                      </TooltipTrigger>
-                      <TooltipPopup side="top">Download {file.name}</TooltipPopup>
-                    </Tooltip>
-                  </div>
-                );
-              }
-
-              return (
-                <div key={file.id} className="flex min-w-0 items-center gap-2 py-1 text-sm">
-                  {fileIdentity}
-                </div>
-              );
-            })}
-            {unknownAttachments.map((attachment) => (
-              <div key={attachment.id} className="flex min-w-0 items-center gap-2 py-1 text-sm">
-                <PierreEntryIcon
-                  pathValue={attachment.name}
-                  kind="file"
-                  theme={ctx.resolvedTheme}
-                />
-                <span className="min-w-0 flex-1 truncate">{attachment.name}</span>
-              </div>
-            ))}
-          </div>
-        ) : null}
-        <div onCopyCapture={onBodyCopyCapture}>
-          <CollapsibleUserMessageBody
-            text={resolvedContext.text}
-            renderContextReference={renderContextReference}
-            skills={ctx.skills}
-            markdownCwd={ctx.markdownCwd}
+      {routineTaskId !== null ? (
+        <div className="w-full">
+          <ThreadRoutineRun
+            message={row.message}
+            taskId={routineTaskId}
+            environmentId={ctx.activeThreadEnvironmentId}
+            timestampFormat={ctx.timestampFormat}
+            cwd={ctx.markdownCwd}
+            threadRef={ctx.threadRef}
           />
         </div>
-      </div>
+      ) : (
+        <div className="relative max-w-[80%] rounded-2xl bg-message p-3 text-message-foreground">
+          <MessageAuthorHeading>
+            {row.message.createdBy === "agent"
+              ? senderThreadId === projectRouting?.coordinatorThreadId
+                ? "Coordinator"
+                : "Agent"
+              : "You"}
+          </MessageAuthorHeading>
+          {(regularImages.length > 0 || userVideos.length > 0) && (
+            <div className="mb-2 grid max-w-[210px] grid-cols-2 gap-2">
+              {regularImages.map((image) => (
+                <div
+                  key={image.id}
+                  className={cn(
+                    "bg-background/70",
+                    image.source?.kind === "snap-shot" && image.previewUrl
+                      ? cn(SNAP_SHOT_ATTACHMENT_FRAME_CLASS, "col-span-2")
+                      : "aspect-[4/3] overflow-hidden rounded-lg border border-border/80",
+                  )}
+                >
+                  {image.previewUrl ? (
+                    <button
+                      type="button"
+                      className="block h-full w-full cursor-zoom-in"
+                      aria-label={`Preview ${image.name}`}
+                      onClick={() => {
+                        const preview = buildExpandedImagePreview(regularImages, image.id);
+                        if (!preview) return;
+                        ctx.onImageExpand(preview);
+                      }}
+                    >
+                      <img
+                        src={image.previewUrl}
+                        alt={image.name}
+                        className="block size-full object-cover"
+                      />
+                    </button>
+                  ) : (
+                    <div className="flex min-h-[72px] items-center justify-center px-2 py-3 text-center text-2xs text-muted-foreground">
+                      {image.name}
+                    </div>
+                  )}
+                  {image.previewUrl && image.source?.kind === "snap-shot" ? (
+                    <SnapShotAttachmentDetails source={image.source} />
+                  ) : null}
+                </div>
+              ))}
+              {userVideos.map((file) => (
+                <UserVideoAttachment key={file.id} file={file} />
+              ))}
+            </div>
+          )}
+          {unchippedFiles.length > 0 || unknownAttachments.length > 0 ? (
+            <div className="mb-2 flex flex-col gap-1">
+              {unchippedFiles.map((file) => {
+                const fileIdentity = (
+                  <>
+                    <PierreEntryIcon pathValue={file.name} kind="file" theme={ctx.resolvedTheme} />
+                    <span className="min-w-0 flex-1 truncate">{file.name}</span>
+                  </>
+                );
+                if (file.downloadable !== false) {
+                  return (
+                    <div key={file.id} className="flex min-w-0 items-center gap-1">
+                      <button
+                        type="button"
+                        aria-label={`Preview ${file.name}`}
+                        onClick={() => ctx.onFileOpen(file)}
+                        className="focus-visible:ring-ring/70 flex min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-md py-1 text-left text-sm hover:underline focus-visible:ring-2 focus-visible:outline-none focus-visible:ring-inset"
+                      >
+                        {fileIdentity}
+                        <EyeIcon className="size-4 shrink-0" />
+                      </button>
+                      <Tooltip>
+                        <TooltipTrigger
+                          render={
+                            <Button
+                              size="icon-xs"
+                              variant="ghost-muted"
+                              aria-label={`Download ${file.name}`}
+                              onClick={() => ctx.onFileDownload(file)}
+                            />
+                          }
+                        >
+                          <DownloadIcon />
+                        </TooltipTrigger>
+                        <TooltipPopup side="top">Download {file.name}</TooltipPopup>
+                      </Tooltip>
+                    </div>
+                  );
+                }
+
+                return (
+                  <div key={file.id} className="flex min-w-0 items-center gap-2 py-1 text-sm">
+                    {fileIdentity}
+                  </div>
+                );
+              })}
+              {unknownAttachments.map((attachment) => (
+                <div key={attachment.id} className="flex min-w-0 items-center gap-2 py-1 text-sm">
+                  <PierreEntryIcon
+                    pathValue={attachment.name}
+                    kind="file"
+                    theme={ctx.resolvedTheme}
+                  />
+                  <span className="min-w-0 flex-1 truncate">{attachment.name}</span>
+                </div>
+              ))}
+            </div>
+          ) : null}
+          <div onCopyCapture={onBodyCopyCapture}>
+            <CollapsibleUserMessageBody
+              text={resolvedContext.text}
+              renderContextReference={renderContextReference}
+              skills={ctx.skills}
+              markdownCwd={ctx.markdownCwd}
+            />
+          </div>
+        </div>
+      )}
       {row.message.routedNote ? (
         <RoutedMessageNoteLine
           note={row.message.routedNote}
@@ -4432,7 +4454,7 @@ function LiveWorkEntryTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "
           ) : row.entry.itemType === "reasoning" ? (
             <ReactMarkdown
               remarkPlugins={[
-                remarkGfm,
+                CHAT_REMARK_GFM,
                 [remarkThoughtPreview, row.active ? "Thinking" : "Thought"],
               ]}
             >
@@ -6327,7 +6349,7 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
               {isReasoning && !expanded ? (
                 <ReactMarkdown
                   remarkPlugins={[
-                    remarkGfm,
+                    CHAT_REMARK_GFM,
                     [
                       remarkThoughtPreview,
                       workEntry.toolLifecycleStatus === "inProgress" ? "Thinking" : "Thought",

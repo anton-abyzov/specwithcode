@@ -340,13 +340,33 @@ a hub.
 
 ## Usage in a project
 
-Under a project's message box, a small chip shows one ring per provider with the fullest window
-across that provider's accounts, such as `Claude 42%` and `Codex 10%`. It turns amber at 80% and red
-at 95%. Select it to see every window with its reset time, each pooled account, and banked resets.
+Under a project's message box, a small chip shows one ring per provider with the window that has
+the least left, such as `Claude 58% left` and `Codex 90% left`. It turns amber at 20% left and red
+at 5% left. Select it to see every window with its reset time, each pooled account, and banked resets.
 From there, open **Usage → Limits** or the project's own token usage. Banked resets are shown but not
 spent here; use one from Limits. The chip reads what Limits
 already holds, so opening it never asks a provider for anything. The same breakdown heads the
 project's **Usage** tab.
+
+## Usage in the model picker
+
+In a chat, the model button shows what is left for the selected model: a ring and `62%`, or `Limit`
+when its limit is reached. On a narrow window only the ring shows; hover or focus the button to read
+the full sentence. Open the picker to see every model with its room after the provider name, and
+select a provider on the left to see its windows on this machine, with the ones every model shares
+listed before the ones that cap a single model family (`Weekly · Fable`).
+
+A model is greyed out only when a fresh read (under 15 minutes old) shows a limit it uses is spent,
+or the provider itself refuses new turns. The row says which limit and when it resets, and its
+shortcut keeps its number but does nothing. A limit on one family (Fable) leaves the other Claude
+models selectable, and Claude through GitHub Copilot is a separate account, so it stays selectable
+when your Claude subscription is out. Anything the app can't vouch for stays selectable and says so:
+`Checking usage…`, `Usage unknown`, an old read (`~46%`, `Limit?`), a limit that has reset since it
+was read, an offline machine, a provider that doesn't report usage, or a sign-in billed per token.
+
+While a turn runs, the picker names the model it runs on; a new pick applies from your next message.
+A model that ran out while selected stays selected; what your next message does follows
+[When a provider runs out](#when-a-provider-runs-out).
 
 ## Subscription usage widget
 

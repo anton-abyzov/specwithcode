@@ -123,32 +123,34 @@ function projectionWithNativeThread(): OrchestrationV2ThreadProjection {
   } as unknown as OrchestrationV2ThreadProjection;
 }
 
-it.effect("resumes the native session in another Claude home when its transcript can be copied", () =>
-  Effect.gen(function* () {
-    const fs = yield* FileSystem.FileSystem;
-    const path = yield* Path.Path;
-    const root = yield* fs.makeTempDirectoryScoped({ prefix: "studio-switch-homes-" });
-    const homeA = path.join(root, "a");
-    const homeB = path.join(root, "b");
-    const metadata = {
-      [currentInstanceId]: { continuationKey: `claude:home:${homeA}` },
-      [otherInstanceId]: { continuationKey: `claude:home:${homeB}` },
-    };
-    const plan = () =>
-      Effect.gen(function* () {
-        const service = yield* ProviderSwitch.ProviderSwitchServiceV2;
-        return yield* service.plan({
-          projection: projectionWithNativeThread(),
-          targetModelSelection: { instanceId: otherInstanceId, model: "gpt-5.1-codex" },
-        });
-      }).pipe(Effect.provide(layerTest(metadata)));
-    assert.equal((yield* plan()).transition.type, "create_with_handoff", "no transcript yet");
-    yield* fs.makeDirectory(path.join(homeA, "projects", "-repo"), { recursive: true });
-    yield* fs.writeFileString(path.join(homeA, "projects", "-repo", "sess-1.jsonl"), "{}\n");
-    const result = yield* plan();
-    assert.equal(result.transition.type, "restart_and_resume");
-    assert.deepEqual(result.releaseProviderSessionIds, [currentSessionId]);
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+it.effect(
+  "resumes the native session in another Claude home when its transcript can be copied",
+  () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped({ prefix: "studio-switch-homes-" });
+      const homeA = path.join(root, "a");
+      const homeB = path.join(root, "b");
+      const metadata = {
+        [currentInstanceId]: { continuationKey: `claude:home:${homeA}` },
+        [otherInstanceId]: { continuationKey: `claude:home:${homeB}` },
+      };
+      const plan = () =>
+        Effect.gen(function* () {
+          const service = yield* ProviderSwitch.ProviderSwitchServiceV2;
+          return yield* service.plan({
+            projection: projectionWithNativeThread(),
+            targetModelSelection: { instanceId: otherInstanceId, model: "gpt-5.1-codex" },
+          });
+        }).pipe(Effect.provide(layerTest(metadata)));
+      assert.equal((yield* plan()).transition.type, "create_with_handoff", "no transcript yet");
+      yield* fs.makeDirectory(path.join(homeA, "projects", "-repo"), { recursive: true });
+      yield* fs.writeFileString(path.join(homeA, "projects", "-repo", "sess-1.jsonl"), "{}\n");
+      const result = yield* plan();
+      assert.equal(result.transition.type, "restart_and_resume");
+      assert.deepEqual(result.releaseProviderSessionIds, [currentSessionId]);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
 it.effect(
@@ -320,6 +322,23 @@ it.effect("hands off from a native provider thread after its session detaches", 
       }),
     ),
   ),
+);
+
+it.effect("moves a thread off a provider instance that can no longer run", () =>
+  Effect.gen(function* () {
+    const service = yield* ProviderSwitch.ProviderSwitchServiceV2;
+    // The current instance is gone from the registry (an agent not prepared
+    // on this machine); its native thread and dead session stay recorded.
+    const result = yield* service.plan({
+      projection: deadNativeThreadProjection("error"),
+      targetModelSelection: {
+        instanceId: ProviderInstanceId.make("codex_other"),
+        model: "gpt-5.2-codex",
+      },
+    });
+    assert.equal(result.transition.type, "create_with_handoff");
+    assert.deepEqual(result.releaseProviderSessionIds, []);
+  }).pipe(Effect.provide(layerTest({ codex_other: { continuationKey: "codex:account:other" } }))),
 );
 
 it.effect.each(["stopped", "error"] as const)(

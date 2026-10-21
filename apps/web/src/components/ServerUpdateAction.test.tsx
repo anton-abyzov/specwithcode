@@ -238,6 +238,38 @@ describe("ServerUpdateAction", () => {
     expect(markup).not.toContain("<button");
   });
 
+  it("explains what the update changes on the button when given a description", () => {
+    const description = "Update installs 0.0.31 on the server and restarts its server.";
+    const markup = renderToStaticMarkup(
+      <ServerUpdateAction
+        environmentId={"env-test" as EnvironmentId}
+        serverLabel="Test server"
+        selfUpdate="boot-service"
+        targetVersion="0.0.31"
+        description={description}
+      />,
+    );
+
+    expect(markup).toContain(`aria-description="${description}"`);
+    expect(markup).toContain('data-slot="tooltip-trigger"');
+    expect(markup).toContain(">Update</button>");
+  });
+
+  it("keeps a plain button without a description", () => {
+    const markup = renderToStaticMarkup(
+      <ServerUpdateAction
+        environmentId={"env-test" as EnvironmentId}
+        serverLabel="Test server"
+        selfUpdate="boot-service"
+        targetVersion="0.0.31"
+      />,
+    );
+
+    expect(markup).toContain(">Update</button>");
+    expect(markup).not.toContain("aria-description");
+    expect(markup).not.toContain('data-slot="tooltip-trigger"');
+  });
+
   it("updates remote desktop apps through the shared update flow", async () => {
     testState.updateServer.mockResolvedValue(
       AsyncResult.success({ targetVersion: "0.0.34", method: "desktop-app" as const }),

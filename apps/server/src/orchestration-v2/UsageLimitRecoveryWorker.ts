@@ -335,15 +335,18 @@ export const makeSweep = Effect.gen(function* () {
               }),
             );
             // A run handed to another machine (or whose move is in doubt)
-            // continues there, never here as well.
+            // continues there, never here as well. The handoff state on disk
+            // says so after a restart, when the in-memory moves are gone.
             if (
               command &&
-              (yield* machineHandoff.holds(
+              ((yield* machineHandoff.holds(
                 thread.id,
                 command.type === "message.dispatch"
                   ? (command.usageLimitContinuationOfRunId ?? null)
                   : null,
-              ))
+              )) ||
+                (command.type === "message.dispatch" &&
+                  (yield* machineHandoff.localTurnBlocked(thread.id))))
             )
               return;
             // Persisted recovery remains authoritative; never hold the settings

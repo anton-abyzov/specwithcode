@@ -661,21 +661,28 @@ describe("studioServiceUpdates", () => {
         updatedAt: "2026-10-12T20:00:00+00:00",
       }),
     });
-    expect(withAgentStartFailure(state, null)).toBe(state);
+    // Every state says whether the failure is the desktop's own, so a renderer
+    // tells this desktop from an older one that never says.
+    expect(withAgentStartFailure(state, null)).toEqual({ ...state, agentStartFailed: false });
     const failure = { at: "2026-10-12T20:05:00.000Z", message: "The agent did not start." };
+    // Flagged as the desktop's own failure: no forced request gets past it.
     expect(withAgentStartFailure(state, failure)).toMatchObject({
       status: "error",
       message: "The agent did not start.",
       updatedAt: failure.at,
+      agentStartFailed: true,
     });
-    expect(
-      withAgentStartFailure({ ...state, updatedAt: "2026-10-12T20:06:00.000000+00:00" }, failure),
-    ).toMatchObject({ status: "waiting-for-quiet" });
+    const newer = withAgentStartFailure(
+      { ...state, updatedAt: "2026-10-12T20:06:00.000000+00:00" },
+      failure,
+    );
+    expect(newer).toMatchObject({ status: "waiting-for-quiet", agentStartFailed: false });
     // Without a write time the failure stands.
     expect(withAgentStartFailure({ ...state, updatedAt: null }, failure).status).toBe("error");
-    expect(withAgentStartFailure({ ...state, status: "not-managed" }, failure).status).toBe(
-      "not-managed",
-    );
+    expect(withAgentStartFailure({ ...state, status: "not-managed" }, failure)).toMatchObject({
+      status: "not-managed",
+      agentStartFailed: false,
+    });
   });
 
   it("names the agent's launchd job after the service", () => {

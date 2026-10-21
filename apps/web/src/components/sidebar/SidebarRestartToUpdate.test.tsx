@@ -74,6 +74,7 @@ const downloaded: DesktopUpdateState = {
   message: null,
   errorContext: null,
   canRetry: true,
+  productionBuild: true,
 };
 
 const serviceWaiting: StudioServiceUpdateState = {
@@ -91,6 +92,14 @@ const serviceWaiting: StudioServiceUpdateState = {
 const calls: string[] = [];
 let installResult: Omit<DesktopUpdateActionResult, "state">;
 let agent: StudioServiceUpdateState = serviceWaiting;
+// The request the desktop reports pending, as the desktop this renderer ships
+// with does: it stamps each request it takes and drops one cancelled. A state
+// that names its own pendingInstall is reported as it is.
+let pending: NonNullable<StudioServiceUpdateState["pendingInstall"]> | null = null;
+const reported = (agentState: StudioServiceUpdateState): StudioServiceUpdateState => ({
+  pendingInstall: pending,
+  ...agentState,
+});
 // What a look (stopWork false) reports, and what stopping reports.
 let checked: ServerPrepareServiceUpdateResult = { idle: true, stoppedThreads: 0, blockers: [] };
 let prepared: ServerPrepareServiceUpdateResult = { idle: true, stoppedThreads: 0, blockers: [] };
@@ -99,6 +108,18 @@ const reload = vi.fn();
 function prepareCall(input: ServerPrepareServiceUpdateInput): string {
   if (input.releaseHold) return "prepare:release";
   return `prepare:${input.stopWork}${input.hold ? "+hold" : ""}`;
+}
+
+async function installService(options?: StudioServiceInstallOptions) {
+  calls.push(`installServiceUpdate:${options?.force ? "force" : "normal"}`);
+  pending = {
+    requestedAt: new Date().toISOString(),
+    mode: options?.force ? "force" : "normal",
+    version: options?.version ?? null,
+    holdUntil: options?.holdUntil ?? null,
+    handled: false,
+  };
+  return reported(agent);
 }
 
 const bridge: {
@@ -133,18 +154,16 @@ const bridge: {
     return { accepted: true, completed: true, state: state.app };
   }),
   getUpdateState: vi.fn(async () => state.app ?? downloaded),
-  getServiceUpdateState: vi.fn(async () => agent),
+  getServiceUpdateState: vi.fn(async () => reported(agent)),
   installUpdate: vi.fn(async (options?: { expectedVersion?: string }) => {
     calls.push(`installUpdate:${options?.expectedVersion ?? ""}`);
     return { ...installResult, state: state.app ?? downloaded };
   }),
-  installServiceUpdate: vi.fn(async (options?: StudioServiceInstallOptions) => {
-    calls.push(`installServiceUpdate:${options?.force ? "force" : "normal"}`);
-    return { ...agent };
-  }),
+  installServiceUpdate: vi.fn(installService),
   cancelServiceUpdate: vi.fn(async () => {
     calls.push("cancelServiceUpdate");
-    return { ...agent };
+    pending = null;
+    return reported(agent);
   }),
   getUpdatePreferences: vi.fn(async () => ({
     checkAutomatically: true,
@@ -220,6 +239,7 @@ beforeEach(() => {
   bridge.checkForUpdate.mockClear();
   bridge.downloadUpdate.mockClear();
   agent = serviceWaiting;
+  pending = null;
   checked = { idle: true, stoppedThreads: 0, blockers: [] };
   prepared = { idle: true, stoppedThreads: 0, blockers: [], held: true };
   state.prepare.mockReset();
@@ -229,13 +249,10 @@ beforeEach(() => {
   });
   reload.mockReset();
   bridge.getServiceUpdateState.mockClear();
-  bridge.getServiceUpdateState.mockImplementation(async () => agent);
+  bridge.getServiceUpdateState.mockImplementation(async () => reported(agent));
   bridge.installUpdate.mockClear();
   bridge.installServiceUpdate.mockClear();
-  bridge.installServiceUpdate.mockImplementation(async (options?: StudioServiceInstallOptions) => {
-    calls.push(`installServiceUpdate:${options?.force ? "force" : "normal"}`);
-    return { ...agent };
-  });
+  bridge.installServiceUpdate.mockImplementation(installService);
   bridge.cancelServiceUpdate = cancelServiceUpdate;
   cancelServiceUpdate.mockClear();
   // The app started its own service unless a test attaches it to one.
@@ -518,33 +535,6 @@ describe("SidebarRestartToUpdate", () => {
     // The app restarts itself; the window does not reload into the old app first.
     await advance(5_000);
     expect(reload).not.toHaveBeenCalled();
-  });
-
-  it("updates a service that runs an older release together with the app, before its agent has it", async () => {
-    // The agent has not looked for 0.2.5 yet; the forced request makes it fetch it.
-    agent = {
-      ...serviceWaiting,
-      status: "up-to-date",
-      availableVersion: null,
-      downloadedVersion: null,
-    };
-    state.service = agent;
-    render();
-    expect(label()).toBe("Update now");
-    await click();
-    expect(calls).toEqual(STOP_AND_INSTALL);
-    expect(bridge.installServiceUpdate.mock.calls[0]![0]).toMatchObject({
-      force: true,
-      version: "0.2.5",
-    });
-    agent = { ...serviceWaiting, status: "downloading", downloadedVersion: null };
-    await advance(2_000);
-    expect(label()).toBe("Updating…");
-    agent = { ...serviceWaiting, status: "installing" };
-    await advance(2_000);
-    agent = { ...serviceWaiting, status: "installed", installedVersion: "0.2.5" };
-    await advance(2_000);
-    expect(calls.at(-1)).toBe("installUpdate:0.2.5");
   });
 
   it("updates the service to the version the app already runs", async () => {
@@ -968,7 +958,7 @@ describe("SidebarRestartToUpdate", () => {
       expect(label()).toBe("Installing…");
     });
 
-    it("keeps following the agent while an older desktop handles the request", async () => {
+    it("keeps following the agent while the desktop still handles the request", async () => {
       bridge.installServiceUpdate.mockImplementation(() => {
         calls.push("installServiceUpdate:slow");
         return new Promise(() => undefined);
@@ -998,20 +988,6 @@ describe("SidebarRestartToUpdate", () => {
       calls.length = 0;
       await advance(30_000);
       expect(calls).toEqual([]);
-    });
-
-    it("cancels on an older desktop by releasing the hold", async () => {
-      delete bridge.cancelServiceUpdate;
-      agent = { ...serviceWaiting, updatedAt: new Date(Date.now() + 1_000).toISOString() };
-      render();
-      await click();
-      await advance(2_000);
-      calls.length = 0;
-      await act(async () => {
-        lastToast().data.secondaryActionProps?.onClick?.();
-      });
-      expect(calls).toEqual(["prepare:release"]);
-      expect(state.closeToast).toHaveBeenCalled();
     });
 
     it("asks an older agent again once nothing runs and it has gone quiet", async () => {
@@ -1046,6 +1022,7 @@ describe("SidebarRestartToUpdate", () => {
       expect(label()).toBe("Updating…");
       calls.length = 0;
       // Another window withdrew the request and released the hold.
+      pending = null;
       checked = { idle: true, stoppedThreads: 0, blockers: [], held: false };
       await advance(40_000);
       expect(calls).not.toContain("installServiceUpdate:force");
@@ -1183,16 +1160,19 @@ describe("SidebarRestartToUpdate", () => {
       expect(label()).toBe("Installing…");
     });
 
-    it("withdraws a failed attempt and releases the hold when its toast is closed", async () => {
+    it("withdraws a failed attempt and releases the hold once, as it fails", async () => {
       render();
       await click();
+      calls.length = 0;
       agent = { ...serviceWaiting, status: "error", message: "Did not install." };
       await advance(2_000);
+      expect(calls).toEqual(["cancelServiceUpdate", "prepare:release"]);
       calls.length = 0;
+      // Closing its toast later asks nothing more: another window may have pressed since.
       await act(async () => {
         lastToast().data.onClose?.();
       });
-      expect(calls).toEqual(["cancelServiceUpdate", "prepare:release"]);
+      expect(calls).toEqual([]);
       expect(label()).toBe("Update now");
     });
 

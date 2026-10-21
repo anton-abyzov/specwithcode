@@ -45,6 +45,7 @@ import * as Metrics from "../observability/Metrics.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import { ProjectCoordinatorService } from "../project/ProjectCoordinatorService.ts";
 import * as ProcessRunner from "../processRunner.ts";
+import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import {
   checkedPrompt,
   isModelPinned,
@@ -58,7 +59,12 @@ import { isMissedFixedTimeRun, isSameSchedule } from "./Schedule.ts";
 import { redactHeaders, redactQuery, renderWebhookPrompt } from "./webhookTemplate.ts";
 import { constantTimeEquals, verifyWebhookSignature } from "./webhookVerification.ts";
 import * as ProjectAdmission from "../project/ProjectAdmission.ts";
-import { assertTaskAdmission, suspendedProjectState } from "./ScheduledTaskAdmission.ts";
+import {
+  assertTaskAdmission,
+  providerSkipReason,
+  routineCoordinatorThreadId,
+  suspendedProjectState,
+} from "./ScheduledTaskAdmission.ts";
 import { reserveRun, completeRun } from "./ScheduledTaskRunReceipt.ts";
 import {
   bindOwnThread,
@@ -176,6 +182,10 @@ export const layer = Layer.effect(
       yield* Effect.serviceOption(ProcessRunner.ProcessRunner),
     );
     const admission = yield* ProjectAdmission.ProjectAdmission;
+    // Optional: a host without provider snapshots fires every run as before.
+    const providerRegistry = Option.getOrUndefined(
+      yield* Effect.serviceOption(ProviderRegistry.ProviderRegistry),
+    );
     const readWebhookOrigin = yield* ScheduledTaskWebhookOrigin;
     // Webhook deliveries for one task dispatch in arrival order rather than
     // being dropped while an earlier delivery is still dispatching.
@@ -689,6 +699,55 @@ export const layer = Layer.effect(
         }
         // Only a routine set to "Use a specific model" overrides the project's choice.
         const pinned = isModelPinned(active);
+        // A provider that cannot start a session would only add another failed
+        // run, so this fire is skipped with the reason and the next one checks
+        // again. Nothing is rerouted: a pinned routine keeps its model. Each
+        // destination is checked on the model its dispatch below will use: a
+        // coordinator, bound or woken, on what its next turn resolves to; a
+        // new thread on the routine's model. A snapshot that cannot be read
+        // fires as before.
+        // The model a prompt posted to `threadId` is sent with (see sendTo);
+        // null asks for the project's coordinator before it is started.
+        const sendModel = (threadId: ThreadId | null) =>
+          pinned
+            ? Effect.succeed(active.modelSelection)
+            : coordinators === undefined
+              ? Effect.succeed(undefined)
+              : coordinators.nextTurnModel(active.projectId, threadId);
+        const providerDestination =
+          active.threadId !== null
+            ? sendModel(ThreadId.make(active.threadId)).pipe(
+                Effect.map((modelSelection) => ({ threadId: active.threadId, modelSelection })),
+              )
+            : active.ownThread || coordinators === undefined
+              ? Effect.succeed({ threadId: null, modelSelection: active.modelSelection })
+              : Effect.all([
+                  routineCoordinatorThreadId(active).pipe(
+                    Effect.provideService(ProjectStore.ProjectStoreV2, projects),
+                  ),
+                  sendModel(null),
+                ]).pipe(Effect.map(([threadId, modelSelection]) => ({ threadId, modelSelection })));
+        const providerSkip =
+          providerRegistry === undefined ||
+          (checked !== null && (checked._tag === "Failure" || !checked.value.passed))
+            ? null
+            : yield* Effect.all([providerRegistry.getProviders, providerDestination]).pipe(
+                Effect.flatMap(([providers, destination]) =>
+                  providerSkipReason(active, providers, destination),
+                ),
+                Effect.provideService(SqlClient.SqlClient, sql),
+                Effect.catch((cause) =>
+                  Effect.logWarning("Could not check a routine's provider", {
+                    taskId: active.id,
+                    cause,
+                  }).pipe(Effect.as(null)),
+                ),
+              );
+        if (providerSkip !== null)
+          yield* Effect.logWarning("Scheduled task run skipped: its provider cannot start", {
+            taskId: active.id,
+            reason: providerSkip,
+          });
 
         // Post the prompt into a thread of the routine's project, re-checking
         // the destination under the project lock.
@@ -703,13 +762,7 @@ export const layer = Layer.effect(
               // thread ran on when the task was made. A coordinator takes
               // the model a user message would get; any other thread
               // keeps its own.
-              Effect.andThen(
-                pinned
-                  ? Effect.succeed(active.modelSelection)
-                  : coordinators === undefined
-                    ? Effect.succeed(undefined)
-                    : coordinators.nextTurnModel(active.projectId, threadId),
-              ),
+              Effect.andThen(sendModel(threadId)),
               Effect.flatMap((modelSelection) =>
                 threadManagement.sendToThread({
                   projectId: active.projectId,
@@ -774,7 +827,7 @@ export const layer = Layer.effect(
         const result =
           checked !== null && checked._tag === "Failure"
             ? checked
-            : checked !== null && !checked.value.passed
+            : providerSkip !== null || (checked !== null && !checked.value.passed)
               ? Exit.void
               : active.threadId !== null
                 ? yield* Effect.exit(sendTo(ThreadId.make(active.threadId), prompt))
@@ -817,9 +870,10 @@ export const layer = Layer.effect(
                       );
 
         const completedAt = yield* localNow;
-        const runSucceeded = result._tag === "Success";
+        const runSucceeded = result._tag === "Success" && providerSkip === null;
         const lastRunStatus = runSucceeded ? ("succeeded" as const) : ("failed" as const);
-        const lastRunError = runSucceeded ? null : errorMessage(result.cause);
+        const lastRunError =
+          providerSkip ?? (result._tag === "Success" ? null : errorMessage(result.cause));
         // Re-read the task so the next run is computed from the schedule as it
         // is *now* (the user may have edited or deleted it while we ran).
         const current = yield* findTask(task.id);

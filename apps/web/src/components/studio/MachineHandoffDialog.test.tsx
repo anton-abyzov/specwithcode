@@ -393,12 +393,38 @@ describe("handoff file method", () => {
     expect(onMethodChange).not.toHaveBeenCalled();
   });
 
-  it("switches to the Git handoff, which keeps its destinations and review", async () => {
+  it("switches to the Git handoff and back without losing the file choice", async () => {
     const onMethodChange = vi.fn();
     await handoff({ method: "copy", onMethodChange, copyFlow: <p>Copy flow</p> });
     await click(methodRadio("Use the folder as it is"));
     expect(onMethodChange).toHaveBeenCalledExactlyOnceWith("folder");
     await handoff({ method: "folder", onMethodChange, copyFlow: undefined });
-    expect(document.querySelector('[data-slot="handoff-method"]')).toBeNull();
+    expect(methodRadio("Use the folder as it is").getAttribute("aria-checked")).toBe("true");
+    expect(button("Review handoff")).toBeDefined();
+    await click(methodRadio("Copy from MacBook M4"));
+    expect(onMethodChange).toHaveBeenLastCalledWith("copy");
+    await click(methodRadio("Clone from origin per repository"));
+    expect(onMethodChange).toHaveBeenLastCalledWith("clone");
+  });
+
+  it("keeps every choice editable in an unpublished review and offers Back", async () => {
+    const onMethodChange = vi.fn();
+    const onBack = vi.fn();
+    await handoff({ method: "folder", onMethodChange, phase: "review", preview, onBack });
+    expect(methodRadio("Copy from MacBook M4").getAttribute("aria-disabled")).not.toBe("true");
+    await click(methodRadio("Copy from MacBook M4"));
+    expect(onMethodChange).toHaveBeenCalledExactlyOnceWith("copy");
+    await click(radio("Mac Mini"));
+    expect(props.onSelect).toHaveBeenCalledExactlyOnceWith("m3:project");
+    await click(button("Back"));
+    expect(onBack).toHaveBeenCalledOnce();
+  });
+
+  it("freezes the choices of a published checkpoint", async () => {
+    const onMethodChange = vi.fn();
+    await handoff({ method: "folder", onMethodChange, phase: "review", preview });
+    expect(() => button("Back")).toThrow();
+    await click(methodRadio("Copy from MacBook M4"));
+    expect(onMethodChange).not.toHaveBeenCalled();
   });
 });

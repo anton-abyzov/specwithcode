@@ -14,16 +14,22 @@
  * "arguments"}` also makes that one call with the thread's own credential and
  * records its outcome as `mcp`, so a verifier can act as the thread itself.
  *
+ * Every echo prompt is also appended to `<result.json>.jsonl`, so a verifier
+ * can count the turns each instance ran. A prompt containing `HOLD-TURN`
+ * stays running until the client cancels it (`session/cancel`).
+ *
  * Only the first prompt launches. Later prompts (the worker's report back to
  * this thread) are recorded in `<result.json>.later` and launch nothing.
  */
-import { readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 import { createInterface } from "node:readline";
 
 const echo = process.argv[2] === "--echo";
 const [argumentsFile, resultFile] = echo ? [null, process.argv[3]] : process.argv.slice(2);
 const sessions = new Map();
 const cwds = new Map();
+/** Held prompts by session: the request id `session/cancel` answers. */
+const held = new Map();
 let launched = false;
 
 const send = (message) =>
@@ -126,7 +132,13 @@ async function prompt(id, params) {
       resultFile,
       JSON.stringify({ sessionId: params.sessionId, cwd, text, ...(call ? { mcp } : {}) }, null, 2),
     );
+    appendFileSync(
+      `${resultFile}.jsonl`,
+      JSON.stringify({ sessionId: params.sessionId, cwd, text, at: new Date().toISOString() }) +
+        "\n",
+    );
     update(params.sessionId, `Echo worker ran in ${cwd}`);
+    if (text.includes("HOLD-TURN")) return void held.set(params.sessionId, id);
     return send({ id, result: { stopReason: "end_turn" } });
   }
   if (launched) {
@@ -163,6 +175,14 @@ const models = {
 createInterface({ input: process.stdin }).on("line", (line) => {
   if (!line.trim()) return;
   const message = JSON.parse(line);
+  if (message.method === "session/cancel") {
+    const sessionId = message.params?.sessionId;
+    const id = held.get(sessionId);
+    held.delete(sessionId);
+    if (id !== undefined) send({ id, result: { stopReason: "cancelled" } });
+    if (message.id !== undefined) send({ id: message.id, result: {} });
+    return;
+  }
   if (message.id === undefined || message.method === undefined) return;
   switch (message.method) {
     case "initialize":

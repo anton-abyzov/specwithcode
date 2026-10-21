@@ -30,6 +30,7 @@ import {
   assertProjectInGrant,
   assertThreadInGrant,
   assertThreadWritable,
+  refusePrivateCallerRemote,
   workGrantOf,
 } from "../../workGrantAccess.ts";
 
@@ -235,6 +236,7 @@ const handlers = {
         // The other machine cannot read this thread, so it receives the user's words.
         (machine, remote) =>
           Effect.gen(function* () {
+            yield* refusePrivateCallerRemote(yield* loadCaller());
             if (remote.forwardMessageId === undefined) return yield* sendRemote(machine, remote);
             if (remote.message !== undefined)
               return yield* Effect.fail(

@@ -1,3 +1,4 @@
+import { isPersonalAssistantProject } from "@specweave-studio/shared/personalAssistant";
 import {
   EnvironmentId,
   ORCHESTRATOR_MCP_DELEGATION_MAX_PATH,
@@ -155,7 +156,10 @@ export function delegationRefusal(
     : `Refused: this launch came through ${path}, ${refusal.hops ?? "too many"} machine hops; this machine allows ${refusal.limit ?? "fewer"} for that sender. Start the work closer to where it began.`;
 }
 
-/** Whether `project` here is one the grant covers. */
+/**
+ * Whether `project` here is one the grant covers. A personal assistant is
+ * never covered: it is private to this machine, whatever the grant says.
+ */
 export function projectInGrant(
   projects: StudioWorkGrantProjects,
   coordinatorEnvironmentId: EnvironmentId,
@@ -163,6 +167,7 @@ export function projectInGrant(
     readonly id: string;
     readonly workspaceSettings?:
       | {
+          readonly kind?: string;
           readonly logicalProject?:
             | { readonly members: ReadonlyArray<{ readonly environmentId: string }> }
             | null
@@ -172,6 +177,7 @@ export function projectInGrant(
       | undefined;
   },
 ): boolean {
+  if (isPersonalAssistantProject(project)) return false;
   switch (projects.kind) {
     case "all":
       return true;

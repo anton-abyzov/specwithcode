@@ -11,6 +11,7 @@ import {
   coordinatorFallbackReason,
   coordinatorOnLimitFallback,
   describeFallbackOrder,
+  fallbackSelectionKey,
   limitRestartRequest,
   providerUsedPercent,
   isClaudeApiKeyProvider,
@@ -622,6 +623,56 @@ describe("resolveProviderFallback ordering", () => {
       instanceId: freeCodex.instanceId,
       model: "codex-default",
     });
+  });
+
+  it("skips selections this stop already tried at every step, without a fallback order", () => {
+    const opus = provider("claudeAgent", "claudeAgent", 100);
+    const otherClaude = provider("claude-2", "claudeAgent", 40);
+    const freeCodex = provider("codex-2", "codex", 10);
+    const providers = [opus, otherClaude, freeCodex];
+    const sameModel = { instanceId: otherClaude.instanceId, model: "claudeAgent-small" };
+    const codexDefault = { instanceId: freeCodex.instanceId, model: "codex-default" };
+    const input = {
+      providers,
+      currentInstanceId: opus.instanceId,
+      currentModel: "claudeAgent-small",
+      rule,
+      nowMs: now,
+    };
+    const tried = (...selections: ReadonlyArray<{ instanceId: string; model: string }>) =>
+      new Set(selections.map((selection) => fallbackSelectionKey(selection as never)));
+    // Same model elsewhere, then any ready provider.
+    expect(resolveProviderFallback({ ...input, anyReady: true })).toEqual(sameModel);
+    expect(
+      resolveProviderFallback({ ...input, anyReady: true, excludedSelections: tried(sameModel) }),
+    ).toEqual(codexDefault);
+    expect(
+      resolveProviderFallback({
+        ...input,
+        anyReady: true,
+        excludedSelections: tried(sameModel, codexDefault),
+      }),
+    ).toBeNull();
+    // The legacy single model, the project default and the coordinator's model.
+    const others = { ...input, providers: [opus, freeCodex] };
+    for (const step of [
+      { rule: { ...rule, providerLimitFallbackModelSelection: codexDefault } },
+      { rule: { ...rule, defaultModelSelection: codexDefault } },
+      { proven: codexDefault },
+    ]) {
+      expect(resolveProviderFallback({ ...others, ...step })).toEqual(codexDefault);
+      expect(
+        resolveProviderFallback({ ...others, ...step, excludedSelections: tried(codexDefault) }),
+      ).toBeNull();
+    }
+    expect(
+      resolveSameModelElsewhere({
+        providers,
+        current: { instanceId: opus.instanceId, model: "claudeAgent-small" },
+        nowMs: now,
+        excludedSelections: tried(sameModel),
+      }),
+    ).toBeNull();
   });
 
   it("skips instances a current stop marks as limited", () => {
@@ -1375,6 +1426,26 @@ describe("the user's fallback order", () => {
       "missing",
       "limited",
     ]);
+  });
+
+  it("never offers an instance that can't open a session here", () => {
+    // The managed Copilot agent that was never prepared on this machine.
+    const unprepared = {
+      ...copilot,
+      installed: false,
+      status: "warning" as const,
+      auth: { status: "unknown" as const },
+    };
+    const entries = describeFallbackOrder({
+      providers: [unprepared],
+      currentInstanceId: ProviderInstanceId.make("other"),
+      rule: {
+        ...rule,
+        providerLimitFallbackModels: [{ instanceId: copilot.instanceId, model: "claude-opus-5.5" }],
+      },
+      nowMs: now,
+    });
+    expect(entries.map((entry) => entry.unavailable)).toEqual(["not-ready"]);
   });
 
   it("keeps the legacy single fallback after the same model elsewhere", () => {

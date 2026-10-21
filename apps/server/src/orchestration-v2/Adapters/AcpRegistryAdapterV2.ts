@@ -7,9 +7,13 @@ import {
   AcpRegistrySettings,
   defaultInstanceIdForDriver,
   ProviderDriverKind,
+  ProviderSetupError,
 } from "@specweave-studio/contracts";
 import { HostProcessEnvironment } from "@specweave-studio/shared/hostProcess";
 import { resolveSelfInvocation, type SelfInvocation } from "@specweave-studio/shared/nodeRuntime";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- A synchronous error mapper checks whether a spawn ENOENT came from a missing cwd.
+import { existsSync } from "node:fs";
+
 import * as Crypto from "effect/Crypto";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -36,6 +40,7 @@ import {
 } from "../../provider/acp/CopilotStartupModel.ts";
 import { makeAcpNativeLoggerFactory } from "../../provider/acp/AcpNativeLogging.ts";
 import * as ProviderEventLoggers from "../../provider/ProviderEventLoggers.ts";
+import { isCommandMissingCause } from "../../provider/providerSnapshot.ts";
 import { mergeProviderInstanceEnvironment } from "../../provider/ProviderInstanceEnvironment.ts";
 import * as IdAllocator from "../IdAllocator.ts";
 import { makeProviderFailure } from "../ProviderFailure.ts";
@@ -141,6 +146,81 @@ export function acpRegistryPromptFailure(agentId: string, cause: unknown) {
   });
 }
 
+const isAcpRegistryError = Schema.is(AcpRegistrySupport.AcpRegistryError);
+const isAcpSpawnError = Schema.is(EffectAcpErrors.AcpSpawnError);
+
+/**
+ * Setup that only the user can fix (an agent not prepared or not installed)
+ * becomes a marked ProviderSetupError, so the run settles at once with
+ * actionable text instead of retrying a session that cannot open. Registry
+ * and network failures stay unmarked and retryable.
+ */
+export function acpRegistrySetupFailure(
+  options: Pick<AcpRegistryAdapterV2Options, "instanceId" | "settings">,
+  cause: unknown,
+): ProviderSetupError | undefined {
+  const base = { instanceId: options.instanceId, operation: "session", cause } as const;
+  if (!isAcpRegistryError(cause)) return undefined;
+  switch (cause.reason) {
+    // Studio writes these details itself; they carry no install output.
+    case "runner_unavailable":
+      return new ProviderSetupError({
+        ...base,
+        detail: cause.detail,
+        unavailable: {
+          reason: / is not prepared\./u.test(cause.detail) ? "not_prepared" : "not_installed",
+        },
+      });
+    case "agent_not_configured":
+    case "agent_not_found":
+    case "unsupported_distribution":
+    case "unsupported_platform":
+      return new ProviderSetupError({
+        ...base,
+        detail: cause.detail,
+        unavailable: { reason: "not_installed" },
+      });
+    // Install details can quote stderr; the server log keeps them. A rerun may
+    // still succeed (a flaky package download), so these stay retryable.
+    case "install_failed":
+    case "archive_invalid":
+    case "checksum_mismatch":
+      return new ProviderSetupError({
+        ...base,
+        detail: `Could not install ${options.settings.agentId || "this ACP agent"}. Open Settings → Providers → Install / update agent.`,
+      });
+    default:
+      return undefined;
+  }
+}
+
+/**
+ * A resolved command that is missing on this machine cannot start until it is
+ * installed. Node reports a missing spawn folder as the same ENOENT, so a
+ * folder that is gone leaves the error unmarked and retryable.
+ */
+function acpRegistryMissingCommand(
+  options: Pick<AcpRegistryAdapterV2Options, "instanceId" | "settings">,
+  error: EffectAcpErrors.AcpError,
+  cwd: string | undefined,
+): EffectAcpErrors.AcpError {
+  if (!isAcpSpawnError(error) || !isCommandMissingCause(error.cause)) return error;
+  if (cwd !== undefined && !existsSync(cwd)) return error;
+  return new EffectAcpErrors.AcpSpawnError({
+    ...(error.command === undefined ? {} : { command: error.command }),
+    cause: new ProviderSetupError({
+      instanceId: options.instanceId,
+      operation: "session",
+      detail:
+        options.settings.source === "local"
+          ? "The local ACP command was not found on this machine. Check its path in Settings → Providers."
+          : `${options.settings.agentId || "The ACP agent"} is not installed on this machine. Use Install / update agent in Settings → Providers.`,
+      unavailable: { reason: "not_installed" },
+      cause: error,
+    }),
+  });
+}
+
 function makeAcpRegistryRuntime(options: AcpRegistryAdapterV2Options) {
   return (
     input: AcpAdapterV2RuntimeInput,
@@ -158,7 +238,7 @@ function makeAcpRegistryRuntime(options: AcpRegistryAdapterV2Options) {
             (cause) =>
               new EffectAcpErrors.AcpSpawnError({
                 command: options.settings.agentId || ACP_REGISTRY_PROVIDER,
-                cause,
+                cause: acpRegistrySetupFailure(options, cause) ?? cause,
               }),
           ),
         );
@@ -185,6 +265,10 @@ function makeAcpRegistryRuntime(options: AcpRegistryAdapterV2Options) {
           Layer.provide(
             Layer.succeed(ChildProcessSpawner.ChildProcessSpawner, options.childProcessSpawner),
           ),
+        ),
+      ).pipe(
+        Effect.mapError((error) =>
+          acpRegistryMissingCommand(options, error, spawn.cwd ?? input.cwd),
         ),
       );
       const runtime = yield* Effect.service(AcpSessionRuntime.AcpSessionRuntime).pipe(

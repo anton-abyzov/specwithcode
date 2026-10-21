@@ -517,6 +517,45 @@ describe("ProjectLink", () => {
     ).toBe("not_coordinator");
   });
 
+  it("never previews or links a personal assistant, and returns none of its notes", async () => {
+    const pair = legacyPair();
+    const household = pair.m3.add(
+      "example-household",
+      checkout("https://github.com/example/example-household.git"),
+      { kind: "personal" },
+    );
+    pair.m3.notes(household.id).set("groceries.md", { content: "Private list", revision: 1 });
+    const refused = await pair.m3.fails(
+      pair.m3.run((service) => service.preview({ projectId: household.id })),
+    );
+    expect(refused.code).toBe("not_code_project");
+    expect(JSON.stringify(refused)).not.toContain("Private list");
+    // Neither side of a link takes it.
+    const asKept = await pair.m3.fails(
+      pair.m3.run((service) =>
+        service.prepare({ operationId, projectId: household.id, joining: pair.kept }),
+      ),
+    );
+    expect(asKept.code).toBe("not_code_project");
+    const prepared = await pair.m4.run((service) =>
+      service.prepare({ operationId, projectId: pair.kept.projectId, joining: pair.joining }),
+    );
+    const asJoining = await pair.m3.fails(
+      pair.m3.run((service) =>
+        service.accept({
+          operationId,
+          projectId: household.id,
+          kept: prepared.kept,
+          logicalProject: prepared.logicalProject,
+          coordinatorBinding: prepared.coordinatorBinding,
+          keptFingerprint: prepared.fingerprint,
+        }),
+      ),
+    );
+    expect(asJoining.code).toBe("not_code_project");
+    expect(pair.m3.projects.get(household.id)?.workspaceSettings?.logicalProject).toBeFalsy();
+  });
+
   it("previews notes and roles, and writes only chosen notes after checking their revisions", async () => {
     const pair = legacyPair();
     pair.m4.notes(pair.kept.projectId).set("decisions.md", { content: "M4 decision", revision: 2 });

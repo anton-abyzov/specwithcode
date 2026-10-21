@@ -19,6 +19,11 @@ fixture = importlib.util.module_from_spec(_spec)
 _spec.loader.exec_module(fixture)
 
 
+def large_rows():
+    """Guarded rows past the agent's 4 MiB JSON limit: they grow with the service's threads."""
+    return {'counts': dict(('thread-%07d' % index, index) for index in range(200000))}
+
+
 class RecoveryCase(fixture.AgentCase):
     def pointers(self):
         for path in (self.own / 'launch.sh', self.home / '.local/bin/specweave-studio',
@@ -293,19 +298,25 @@ class AutomaticRecovery(RecoveryCase):
         self.assertEqual(self.state()['status'], 'error')
         self.assertEqual(len(self.apply_calls()), 3)
 
-    def test_a_kept_release_that_failed_its_check_is_not_reported_as_not_installed(self):
+    def kept_after_a_failed_check(self, **receipt):
         self.fake.add_release()
         self.config(quietMinutes=0)
         # What update.py writes when the restarted release failed a check and was kept for review.
-        self.control(applyFailAfterSwitch=True, switchReceipt={
+        self.control(applyFailAfterSwitch=True, switchReceipt=dict({
             'phase': 'restart-requested', 'pointers': 'new-release', 'attemptedAfter': {'servicePid': 5151},
-            'error': 'AssertionError: Owned restart window is not bounded', 'rollbackError': 'AssertionError'})
+            'error': 'AssertionError: Owned restart window is not bounded', 'rollbackError': 'AssertionError'}, **receipt))
         self.run_agent()
         self.run_agent()
         state = self.state()
         self.assertEqual((state['status'], state['installedVersion']), ('error', '0.2.0'))
         self.assertIn('0.2.0 was kept after a restart check failed', state['message'])
         self.assertNotIn('did not install', state['message'])
+
+    def test_a_kept_release_that_failed_its_check_is_not_reported_as_not_installed(self):
+        self.kept_after_a_failed_check()
+
+    def test_a_kept_release_whose_receipt_is_past_4_mib_is_still_reported_as_kept(self):
+        self.kept_after_a_failed_check(before={'rows': large_rows()})
 
     def test_a_kept_release_whose_rollback_failed_does_not_claim_liveness(self):
         self.fake.add_release()
@@ -623,6 +634,12 @@ class NewerReleaseRecovery(RecoveryCase):
         self.offer_newer()
         self.assertEqual(len(self.apply_calls()), 2)
         self.assertEqual(self.state()['status'], 'installed')
+        self.assertEqual(self.state()['lastInstall']['version'], '0.3.0')
+
+    def test_a_newer_release_installs_after_a_rolled_back_failure_whose_receipt_is_past_4_mib(self):
+        self.rolled_back_once(receipt={'before': {'rows': large_rows()}})
+        self.offer_newer()
+        self.assertEqual(len(self.apply_calls()), 2)
         self.assertEqual(self.state()['lastInstall']['version'], '0.3.0')
 
     def test_a_newer_release_that_fails_too_is_held_after_one_attempt(self):

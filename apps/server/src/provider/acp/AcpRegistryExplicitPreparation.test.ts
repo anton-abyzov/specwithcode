@@ -134,18 +134,37 @@ describe("featured ACP explicit preparation", () => {
         preparedLog = yield* fs.readFileString(log);
         expect(preparedLog.match(/^install --global /gmu)).toHaveLength(2);
 
+        // A registry bump keeps launching the prepared version until the user updates it.
         version = "1.0.1";
         yield* catalog.search({ query: id });
+        expect(yield* catalog.inspect(settings, env)).toMatchObject({
+          status: "ready",
+          version: "1.0.0",
+          availableVersion: "1.0.1",
+        });
+        const retained = yield* catalog.resolve(settings, root, env);
+        expect(retained.spawn.command).toContain(path.join(root, "tools", id, "1.0.0"));
+        expect(path.basename(retained.spawn.command)).toBe(executableName);
+        expect(yield* fs.readFileString(log)).toBe(preparedLog);
+        yield* catalog.prepare({ agentId: id });
+        expect(yield* catalog.inspect(settings, env)).toMatchObject({ status: "ready", version });
+        expect(yield* catalog.inspect(settings, env)).not.toHaveProperty("availableVersion");
+        const updated = yield* catalog.resolve(settings, root, env);
+        expect(updated.spawn.command).toContain(path.join(root, "tools", id, version));
+        expect((yield* fs.readFileString(log)).match(/^install --global /gmu)).toHaveLength(3);
+
+        // A retained earlier version still has to pass the executable checks.
+        preparedLog = yield* fs.readFileString(log);
+        version = "1.0.2";
+        yield* catalog.search({ query: id });
+        yield* fs.remove(updated.spawn.command);
         expect(yield* catalog.inspect(settings, env)).toMatchObject({
           status: "unprepared",
           version,
         });
         const drift = yield* catalog.resolve(settings, root, env).pipe(Effect.flip);
-        expect(drift.detail).toContain("1.0.1 is not prepared");
+        expect(drift.detail).toContain("1.0.2 is not prepared");
         expect(yield* fs.readFileString(log)).toBe(preparedLog);
-        yield* catalog.prepare({ agentId: id });
-        expect(yield* catalog.inspect(settings, env)).toMatchObject({ status: "ready", version });
-        expect((yield* fs.readFileString(log)).match(/^install --global /gmu)).toHaveLength(3);
       }).pipe(
         Effect.scoped,
         Effect.provide(

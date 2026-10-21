@@ -2,6 +2,7 @@ import {
   DEFAULT_PROJECT_WORKSPACE_SETTINGS,
   DEFAULT_SERVER_SETTINGS,
   EnvironmentId,
+  HandoffModeError,
   type OrchestrationV2ServerCommand,
   type OrchestratorMcpMachine,
   type OrchestratorMcpMachineListResult,
@@ -16,24 +17,36 @@ import {
 } from "@specweave-studio/contracts";
 import { it as itEffect } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as TestClock from "effect/testing/TestClock";
 import { describe, expect, it } from "vite-plus/test";
+import { PERSONAL_ASSISTANT_PRIVATE_MESSAGE } from "@specweave-studio/shared/personalAssistant";
 
+import { HandoffTurnGate, turnRefusal } from "../handoff/HandoffTurnGate.ts";
+import {
+  EMPTY_HANDOFF_DOCUMENT,
+  emptyThreadRecord,
+  type HandoffDocument,
+} from "../handoff/handoffState.ts";
 import * as Instances from "../provider/ProviderInstanceRegistry.ts";
 import * as Providers from "../provider/ProviderRegistry.ts";
 import * as Projects from "../project/ProjectService.ts";
 import { provider } from "../studio/fixtures.ts";
 import { accountFingerprint, accountPoolKey } from "../usage/providerUsageSummary.ts";
+import { makeLimitHandoffPort } from "./LimitHandoffAdapter.ts";
 import {
   LIMIT_PREMOVE_RECENT_MS,
   type LimitHandoffOutcome,
+  type LimitHandoffPortShape,
   type LimitHandoffRequest,
   limitHandoffTrigger,
+  limitResumable,
   make,
   MachineLimitHandoff,
+  type MachineLimitHandoffShape,
 } from "./MachineLimitHandoff.ts";
 import { makeSweep, ProviderFallbackEnv } from "./ProviderFallbackWorker.ts";
 import { fallbackPolicyTestLayer } from "./providerFallbackPolicyTestHelpers.ts";
@@ -45,6 +58,7 @@ const resetsAt = "2026-10-20T18:00:00.000Z";
 const claudeId = ProviderInstanceId.make("claudeAgent");
 const codexId = ProviderInstanceId.make("codex");
 const minis = EnvironmentId.make("env-minis");
+const m4 = EnvironmentId.make("env-m4");
 const m3 = EnvironmentId.make("env-m3");
 const project = {
   id: ProjectId.make("easychamp"),
@@ -140,6 +154,14 @@ interface Scenario {
   readonly unbound?: boolean;
   /** Spend this machine's other provider too, so nothing local qualifies. */
   readonly localSpent?: boolean;
+  /** The thread's project is this machine's personal assistant. */
+  readonly personal?: boolean;
+  /** The handoff state on disk, read by the turn gate (none: every turn starts). */
+  readonly handoffDocument?: HandoffDocument;
+  /** Replaces the scripted port, e.g. with the real adapter over a fake 0967. */
+  readonly port?: LimitHandoffPortShape;
+  /** Runs against the service before the sweeps. */
+  readonly before?: (handoff: MachineLimitHandoffShape) => Effect.Effect<void>;
 }
 
 function run(scenario: Scenario, sweeps = 1) {
@@ -160,7 +182,19 @@ function run(scenario: Scenario, sweeps = 1) {
   ];
   const deps = Layer.mergeAll(
     Layer.mock(Projects.ProjectService)({
-      getById: () => Effect.succeed(Option.some(project)),
+      getById: () =>
+        Effect.succeed(
+          Option.some(
+            scenario.personal
+              ? {
+                  ...project,
+                  title: "Example Household",
+                  workspaceRoot: "/fixtures/example-household",
+                  workspaceSettings: { ...DEFAULT_PROJECT_WORKSPACE_SETTINGS, kind: "personal" },
+                }
+              : project,
+          ),
+        ),
     }),
     fallbackPolicyTestLayer(settings),
     Layer.mock(Providers.ProviderRegistry)({
@@ -182,7 +216,7 @@ function run(scenario: Scenario, sweeps = 1) {
     }),
   );
   const list: OrchestratorMcpMachineListResult = {
-    local: { id: "local", label: "M4", environmentId: EnvironmentId.make("env-m4") },
+    local: { id: "local", label: "M4", environmentId: m4 },
     machines: scenario.machines,
     projectWorkerMachine: null,
   };
@@ -192,7 +226,7 @@ function run(scenario: Scenario, sweeps = 1) {
     if (!scenario.unbound)
       yield* handoff.bind({
         listMachines: () => Effect.succeed(list),
-        port: {
+        port: scenario.port ?? {
           available: true,
           handOff: (request) => {
             requests.push(request);
@@ -209,6 +243,7 @@ function run(scenario: Scenario, sweeps = 1) {
           },
         },
       });
+    if (scenario.before) yield* scenario.before(handoff);
     const sweep = yield* makeSweep;
     for (let i = 0; i < sweeps; i++) {
       yield* sweep();
@@ -218,7 +253,21 @@ function run(scenario: Scenario, sweeps = 1) {
     const shown = yield* handoff.candidates(thread.id).pipe(Effect.option);
     return { requests, dispatched, held, shown: Option.getOrNull(shown) };
   }).pipe(
-    Effect.provide(Layer.effect(MachineLimitHandoff, make).pipe(Layer.provideMerge(deps))),
+    Effect.provide(
+      Layer.effect(MachineLimitHandoff, make).pipe(
+        Layer.provideMerge(deps),
+        Layer.provide(
+          Layer.succeed(HandoffTurnGate, {
+            check: (threadId) =>
+              Effect.succeed(
+                scenario.handoffDocument === undefined
+                  ? null
+                  : turnRefusal(scenario.handoffDocument, threadId, m4),
+              ),
+          }),
+        ),
+      ),
+    ),
     Effect.provideService(ProviderFallbackEnv, {}),
   );
 }
@@ -363,6 +412,33 @@ describe("limit handoff in the fallback sweep", () => {
     }),
   );
 
+  itEffect.effect("never hands a personal assistant's thread to another machine", () =>
+    Effect.gen(function* () {
+      const result = yield* run(
+        { personal: true, machines: [machine(minis, "Minis"), machine(m3, "M3")] },
+        2,
+      );
+      expect(result.requests).toEqual([]);
+      expect(result.held).toBe(false);
+      expect(result.shown?.candidates.map((row) => [row.eligible, row.reason, row.text])).toEqual([
+        [false, "refused", `Minis: ${PERSONAL_ASSISTANT_PRIVATE_MESSAGE}`],
+        [false, "refused", `M3: ${PERSONAL_ASSISTANT_PRIVATE_MESSAGE}`],
+      ]);
+      // It continues here on the same-machine fallback model instead.
+      expect(result.dispatched[0]).toMatchObject({
+        type: "message.dispatch",
+        modelSelection: { instanceId: codexId, model: "gpt-6" },
+      });
+      const spent = yield* run({
+        personal: true,
+        localSpent: true,
+        machines: [machine(minis, "Minis")],
+      });
+      expect(spent.requests).toEqual([]);
+      expect(spent.dispatched).toEqual([]);
+    }),
+  );
+
   itEffect.effect("changes nothing until a handoff port is bound", () =>
     Effect.gen(function* () {
       const result = yield* run({ unbound: true, machines: [machine(minis, "Minis")] });
@@ -374,8 +450,342 @@ describe("limit handoff in the fallback sweep", () => {
       expect(result.shown?.candidates[0]?.text).toBe(
         "Minis: the paired machines aren't loaded yet",
       );
+      expect(result.shown?.waiting).toBe(
+        "This SpecWithCode version can't hand threads to another machine yet.",
+      );
     }),
   );
+
+  itEffect.effect("names a refusal worth retrying in the wait text, then runs the local step", () =>
+    Effect.gen(function* () {
+      const result = yield* run({
+        machines: [machine(minis, "Minis"), machine(m3, "M3")],
+        answers: {
+          [minis]: {
+            type: "refused",
+            code: "unreachable",
+            message: "Minis did not answer.",
+            retryable: true,
+          },
+          [m3]: {
+            type: "refused",
+            code: "invalid",
+            message: "M3: no .env.local; M3: Claude not signed in",
+            retryable: false,
+          },
+        },
+      });
+      expect(result.requests.map((request) => request.destinationEnvironmentId)).toEqual([
+        minis,
+        m3,
+      ]);
+      // Nothing moved anywhere, so the same-machine fallback continues it.
+      expect(result.dispatched).toHaveLength(1);
+      expect(result.dispatched[0]).toMatchObject({
+        modelSelection: { instanceId: codexId, model: "gpt-6" },
+      });
+      expect(result.shown?.waiting).toBe(
+        "No other machine has room: Minis did not answer.; M3: no .env.local; M3: Claude not signed in.",
+      );
+    }),
+  );
+
+  itEffect.effect("a failed preflight keeps the thread here with 0967's exact reasons", () =>
+    Effect.gen(function* () {
+      const message = "Minis: no .env.local; Minis: Claude not signed in";
+      const notes: unknown[] = [];
+      const result = yield* run(
+        {
+          settings: { providerLimitMachineTargets: [target(minis, "Minis")] },
+          machines: [machine(minis, "Minis")],
+          handoffDocument: EMPTY_HANDOFF_DOCUMENT,
+          port: makeLimitHandoffPort({
+            environmentId: m4,
+            document: Effect.succeed(EMPTY_HANDOFF_DOCUMENT),
+            handOff: () => Effect.fail(new HandoffModeError({ code: "invalid", message })),
+            recordNote: (input) => Effect.sync(() => void notes.push(input)),
+          }),
+        },
+        2,
+      );
+      // Shown once, as given, not "Minis: Minis: no .env.local".
+      expect(result.shown?.candidates.map((row) => [row.reason, row.text])).toEqual([
+        ["refused", message],
+      ]);
+      expect(result.shown?.waiting).toBe(`No other machine has room: ${message}.`);
+      // Nothing is held: the same-machine fallback continues it here, once.
+      expect(result.held).toBe(false);
+      expect(result.dispatched).toHaveLength(1);
+      expect(result.dispatched[0]).toMatchObject({
+        type: "message.dispatch",
+        modelSelection: { instanceId: codexId, model: "gpt-6" },
+      });
+      expect(notes).toEqual([]);
+    }),
+  );
+
+  itEffect.effect("asks with the target's model label, for the thread's notice", () =>
+    Effect.gen(function* () {
+      const result = yield* run({
+        settings: {
+          providerLimitMachineTargets: [
+            { ...target(minis, "Minis"), modelLabel: "Claude Opus 5.5" },
+          ],
+        },
+        machines: [machine(minis, "Minis")],
+      });
+      expect(result.requests[0]).toMatchObject({
+        sourceSummary: "Claude limit reached on M4",
+        modelLabel: "Claude Opus 5.5",
+      });
+    }),
+  );
+
+  itEffect.effect("an in-doubt answer holds the thread and asks the same machine again", () =>
+    Effect.gen(function* () {
+      const result = yield* run(
+        {
+          machines: [machine(minis, "Minis"), machine(m3, "M3")],
+          answers: { [minis]: { type: "in-doubt", message: "Minis did not answer." } },
+        },
+        2,
+      );
+      expect(result.requests.map((request) => request.destinationEnvironmentId)).toEqual([
+        minis,
+        minis,
+      ]);
+      expect(result.dispatched).toEqual([]);
+      expect(result.held).toBe(true);
+      expect(result.shown?.waiting).toBe(
+        "Minis hasn't confirmed the handoff yet; the thread stays here until it answers.",
+      );
+    }),
+  );
+
+  itEffect.effect("a move slower than the wait is never interrupted, only stopped waiting on", () =>
+    Effect.gen(function* () {
+      const started = yield* Deferred.make<void>();
+      const calls: LimitHandoffRequest[] = [];
+      let interrupted = false;
+      let finished = false;
+      const moved: LimitHandoffOutcome = {
+        type: "moved",
+        machineLabel: "Minis",
+        threadId: "remote-t1",
+        notice: null,
+      };
+      const result = yield* run(
+        {
+          machines: [machine(minis, "Minis"), machine(m3, "M3")],
+          port: {
+            available: true,
+            handOff: (request) => {
+              calls.push(request);
+              // The first call is 0967 mid-takeover past the 10-minute wait; the repeat
+              // returns its first result, as 0967's per-thread idempotency does.
+              if (calls.length > 1) return Effect.succeed(moved);
+              return Deferred.succeed(started, undefined).pipe(
+                Effect.andThen(Effect.sleep("11 minutes")),
+                Effect.tap(() => Effect.sync(() => (finished = true))),
+                Effect.as(moved),
+                Effect.onInterrupt(() => Effect.sync(() => (interrupted = true))),
+              );
+            },
+          },
+          before: () =>
+            Deferred.await(started).pipe(
+              Effect.andThen(TestClock.adjust("11 minutes")),
+              Effect.forkChild,
+              Effect.asVoid,
+            ),
+        },
+        2,
+      );
+      expect(interrupted).toBe(false);
+      expect(finished).toBe(true);
+      expect(calls.map((request) => request.destinationEnvironmentId)).toEqual([minis, minis]);
+      expect(result.dispatched).toEqual([]);
+      expect(result.held).toBe(true);
+    }),
+  );
+
+  itEffect.effect("after a restart, a thread still handing off never continues here", () =>
+    Effect.gen(function* () {
+      // Restarted: nothing in memory, only the handoff state on disk.
+      const document: HandoffDocument = {
+        ...EMPTY_HANDOFF_DOCUMENT,
+        threads: {
+          [limited.id]: {
+            ...emptyThreadRecord(project.id),
+            lease: {
+              holderEnvironmentId: m4,
+              holderLabel: "M4",
+              holderThreadId: limited.id,
+              epoch: 2,
+              renewedAt: "2026-10-20T13:54:00.000Z",
+              state: "handing-off",
+            },
+          },
+        },
+      };
+      const asked: unknown[] = [];
+      const result = yield* run(
+        {
+          machines: [machine(minis, "Minis"), machine(m3, "M3")],
+          handoffDocument: document,
+          port: makeLimitHandoffPort({
+            environmentId: m4,
+            document: Effect.succeed(document),
+            handOff: (input) =>
+              Effect.sync(() => asked.push(input)).pipe(Effect.andThen(Effect.die("x"))),
+          }),
+        },
+        3,
+      );
+      expect(asked).toEqual([]);
+      expect(result.dispatched).toEqual([]);
+      expect(result.shown?.waiting).toBe(
+        "This thread is being handed off; it starts no turn until the handoff finishes.",
+      );
+    }),
+  );
+
+  itEffect.effect("a machine that woke paused shows why, not a wait on the target", () =>
+    Effect.gen(function* () {
+      const document: HandoffDocument = {
+        ...EMPTY_HANDOFF_DOCUMENT,
+        config: { ...EMPTY_HANDOFF_DOCUMENT.config, defaultMode: "on" },
+        pausedSince: "2026-10-20T13:50:00.000Z",
+        threads: {
+          [limited.id]: {
+            ...emptyThreadRecord(project.id),
+            lease: {
+              holderEnvironmentId: m4,
+              holderLabel: "M4",
+              holderThreadId: limited.id,
+              epoch: 2,
+              renewedAt: "2026-10-20T13:54:00.000Z",
+              state: "active",
+            },
+            replicas: [
+              {
+                environmentId: minis,
+                machineLabel: "Minis",
+                state: "current",
+                sequence: 1,
+                detail: null,
+                updatedAt: "2026-10-20T13:54:00.000Z",
+              },
+            ],
+          },
+        },
+      };
+      const asked: unknown[] = [];
+      const result = yield* run(
+        {
+          machines: [machine(minis, "Minis"), machine(m3, "M3")],
+          handoffDocument: document,
+          port: makeLimitHandoffPort({
+            environmentId: m4,
+            document: Effect.succeed(document),
+            handOff: (input) =>
+              Effect.sync(() => asked.push(input)).pipe(Effect.andThen(Effect.die("x"))),
+          }),
+        },
+        2,
+      );
+      expect(asked).toEqual([]);
+      expect(result.dispatched).toEqual([]);
+      expect(result.shown?.waiting).toBe(
+        "This machine woke after handing its threads off and no other machine answered yet. Choose Continue here anyway to run it here.",
+      );
+    }),
+  );
+
+  itEffect.effect("a thread continued elsewhere gets no local step, with or without targets", () =>
+    Effect.gen(function* () {
+      const document: HandoffDocument = {
+        ...EMPTY_HANDOFF_DOCUMENT,
+        threads: {
+          [limited.id]: {
+            ...emptyThreadRecord(project.id),
+            continuedOn: {
+              environmentId: minis,
+              machineLabel: "Minis",
+              threadId: ThreadId.make("remote-t1"),
+              at: "2026-10-20T13:55:00.000Z",
+            },
+          },
+        },
+      };
+      for (const targets of [[target(minis, "Minis")], []]) {
+        const result = yield* run(
+          {
+            settings: { providerLimitMachineTargets: targets },
+            machines: [machine(minis, "Minis")],
+            handoffDocument: document,
+            port: makeLimitHandoffPort({
+              environmentId: m4,
+              document: Effect.succeed(document),
+              handOff: () => Effect.die("never asked"),
+            }),
+          },
+          2,
+        );
+        expect(result.dispatched).toEqual([]);
+        expect(result.requests).toEqual([]);
+      }
+    }),
+  );
+
+  itEffect.effect("never hands off a stopped, completed or cancelled turn for resume", () =>
+    Effect.gen(function* () {
+      for (const status of ["interrupted", "completed", "cancelled", "failed"] as const) {
+        const answers: Array<"handled" | "skipped"> = [];
+        const result = yield* run({
+          localSpent: true,
+          machines: [machine(minis, "Minis")],
+          // The sweep's own trigger never fires for these; ask directly.
+          thread: { status, lastErrorClass: status === "failed" ? "provider_error" : null },
+          before: (handoff) =>
+            Effect.gen(function* () {
+              const shell = { ...limited, status, lastErrorClass: null };
+              answers.push(
+                yield* handoff.consider({
+                  thread: shell as never,
+                  rule: {
+                    ...DEFAULT_SERVER_SETTINGS,
+                    providerLimitAction: "switch",
+                    providerLimitMachineTargets: [target(minis, "Minis")],
+                  },
+                  trigger: { reason: "usage-limit", resume: true, key: "limit-handoff:t1:r1" },
+                  providers: [],
+                  projectTitle: "EasyChamp",
+                  nowMs: stoppedAt,
+                  admit: Effect.succeed(true),
+                }),
+              );
+            }),
+        });
+        expect(answers).toEqual(["skipped"]);
+        // A completed idle thread may still move at the threshold, never resumed.
+        expect(result.requests.filter((request) => request.resume)).toEqual([]);
+        expect(result.dispatched.filter((command) => command.type === "message.dispatch")).toEqual(
+          [],
+        );
+      }
+    }),
+  );
+});
+
+describe("limitResumable", () => {
+  it("allows a running turn or one stopped on the usage limit only", () => {
+    expect(limitResumable(limited)).toBe(true);
+    expect(limitResumable({ ...limited, activeRunId: RunId.make("r2") })).toBe(true);
+    for (const status of ["interrupted", "completed", "cancelled"] as const)
+      expect(limitResumable({ ...limited, status, lastErrorClass: null })).toBe(false);
+    expect(limitResumable({ ...limited, lastErrorClass: "provider_error" as never })).toBe(false);
+  });
 });
 
 describe("limitHandoffTrigger", () => {

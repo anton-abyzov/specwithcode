@@ -61,7 +61,16 @@ import SWCWire
     #expect(try kind("ti_file") == .tool(title: "Edited auth.ts", detail: "+12 −3", symbol: "pencil", status: .completed))
     #expect(try kind("ti_fsearch") == .tool(title: "Searched for refreshToken", detail: "1 result", symbol: "magnifyingglass", status: .completed))
     #expect(try kind("ti_wsearch") == .tool(title: "Searched the web for oauth refresh race", detail: "1 result", symbol: "globe", status: .completed))
-    #expect(try kind("ti_tool") == .tool(title: "studio_thread_launch", detail: nil, symbol: "wrench.and.screwdriver", status: .completed))
+    #expect(try kind("ti_tool") == .tool(title: "Start conversation", detail: "Tool: studio_thread_launch", symbol: "wrench.and.screwdriver", status: .completed))
+  }
+
+  @Test func technicalToolNamesAndFailures() throws {
+    var item = try TestData.turnItem("ti_tool")
+    item.content = .dynamicTool(.init(toolName: "studio-code.studio_thread_read"))
+    #expect(TranscriptMapper.kind(for: item, environmentId: "env") == .tool(title: "Read conversation", detail: "Tool: studio-code.studio_thread_read", symbol: "wrench.and.screwdriver", status: .completed))
+    item.content = .dynamicTool(.init(toolName: "studio-code.studio_thread_send", output: .object(["isError": .bool(true), "content": .array([.object(["text": .string("Permission denied")])])])))
+    #expect(TranscriptMapper.kind(for: item, environmentId: "env") == .tool(title: "Send to conversation", detail: "Permission denied\nTool: studio-code.studio_thread_send", symbol: "wrench.and.screwdriver", status: .failed))
+    #expect(ToolPresentation(name: "unknown.protocol", output: nil).detail == "Tool: unknown.protocol")
   }
 
   @Test func commandOutputAndExitCode() throws {

@@ -3,6 +3,7 @@ import { expect, it, vi } from "vite-plus/test";
 import { it as effectIt } from "@effect/vitest";
 import {
   CheckpointScopeId,
+  GitCommandError,
   MessageId,
   NodeId,
   ProviderSessionId,
@@ -26,6 +27,7 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 import * as Schema from "effect/Schema";
+import * as EffectAcpErrors from "@specweave-studio/effect-acp/errors";
 
 import * as ServerSettings from "../serverSettings.ts";
 import * as CheckpointService from "./CheckpointService.ts";
@@ -40,7 +42,10 @@ import * as EventSink from "./EventSink.ts";
 import * as IdAllocator from "./IdAllocator.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
-import { ProviderAdapterEventStreamError, ProviderAdapterOpenSessionError } from "./ProviderAdapter.ts";
+import {
+  ProviderAdapterEventStreamError,
+  ProviderAdapterOpenSessionError,
+} from "./ProviderAdapter.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as ProviderTurnStart from "./ProviderTurnStartService.ts";
 import * as RunExecutionService from "./RunExecutionService.ts";
@@ -160,6 +165,150 @@ it("does not commit running state when inherited background routing cannot be re
     expect(writeIfRunCurrent).not.toHaveBeenCalled();
     expect(startRootRun).not.toHaveBeenCalled();
   }).pipe(Effect.provide(layer), Effect.runPromise);
+});
+
+function deletedBranchHarness(worktreePath: string) {
+  const threadId = ThreadId.make("thread_provider_turn_start_branch_missing");
+  const runId = RunId.make("run_provider_turn_start_branch_missing");
+  const attemptId = RunAttemptId.make("attempt_provider_turn_start_branch_missing");
+  const rootNodeId = NodeId.make("node_provider_turn_start_branch_missing");
+  const providerThreadId = ProviderThreadId.make("provider_thread_branch_missing");
+  const providerSessionId = ProviderSessionId.make("provider_session_branch_missing");
+  const messageId = MessageId.make("message_provider_turn_start_branch_missing");
+  const checkpointScopeId = CheckpointScopeId.make("checkpoint_scope_branch_missing");
+  const projection = {
+    thread: {
+      id: threadId,
+      projectId: ProjectId.make("project_provider_turn_start_branch_missing"),
+      branch: "ops/nr-repair-20261019",
+      worktreePath,
+    },
+    runs: [
+      {
+        id: runId,
+        status: "starting",
+        rootNodeId,
+        activeAttemptId: attemptId,
+        providerThreadId,
+        userMessageId: messageId,
+        ordinal: 9,
+      },
+    ],
+    nodes: [{ id: rootNodeId, checkpointScopeId }],
+    attempts: [{ id: attemptId }],
+    providerThreads: [{ id: providerThreadId, providerSessionId, nativeThreadRef: null }],
+    messages: [{ id: messageId, role: "user", text: "complete the job!", attachments: [] }],
+    checkpointScopes: [{ id: checkpointScopeId }],
+    contextHandoffs: [],
+    contextTransfers: [],
+    turnItems: [],
+  } as unknown as OrchestrationV2ThreadProjection;
+  const writeIfRunCurrent = vi.fn((_input: { readonly events: ReadonlyArray<unknown> }) =>
+    Effect.succeed({ committed: true, storedEvents: [] } as never),
+  );
+  const startRootRun = vi.fn(() => Effect.void);
+  const open = vi.fn(() => Effect.die("a provider session must not open"));
+  const createWorktree = vi.fn(() =>
+    Effect.fail(
+      new GitCommandError({
+        operation: "GitVcsDriver.createWorktree",
+        command: "git",
+        cwd: "/tmp/provider-turn-start-project",
+        reason: "invalid_reference",
+        detail: "git worktree add failed: fatal: invalid reference: ops/nr-repair-20261019",
+      }),
+    ),
+  );
+  const layer = ProviderTurnStart.layer.pipe(
+    Layer.provide(NodePath.layer),
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.mock(ContextHandoffService.ContextHandoffServiceV2)({}),
+        Layer.mock(EventSink.EventSinkV2)({ writeIfRunCurrent }),
+        IdAllocator.layer,
+        Layer.succeed(FileSystem.FileSystem, { exists: () => Effect.succeed(false) } as never),
+        Layer.mock(GitWorkflow.GitWorkflowService)({
+          pruneWorktrees: () => Effect.void,
+          createWorktree,
+        }),
+        Layer.mock(ProjectService.ProjectService)({
+          getById: () =>
+            Effect.succeed(
+              Option.some({ workspaceRoot: "/tmp/provider-turn-start-project" } as never),
+            ),
+        }),
+        Layer.mock(ProjectionStore.ProjectionStoreV2)({
+          getTurnStartContext: () => Effect.succeed({ ...projection, hasConversation: true }),
+          getRuntimeRecoveryProjection: () =>
+            Effect.fail(
+              new ProjectionStore.ProjectionStoreReadError({
+                threadId,
+                cause: "the start continued past the worktree check",
+              }),
+            ),
+        }),
+        Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({ open }),
+        Layer.mock(ProviderAuthService.ProviderAuthService)({
+          tryHandlePromptCommand: () => Effect.succeed(false),
+        }),
+        Layer.mock(RunExecutionService.RunExecutionServiceV2)({ startRootRun }),
+        Layer.mock(RuntimePolicy.RuntimePolicyV2)({}),
+      ),
+    ),
+  );
+
+  const start = ProviderTurnStart.ProviderTurnStartServiceV2.pipe(
+    // willRetry: a settled start does not fail, because a retry cannot succeed.
+    Effect.flatMap((service) => service.start({ threadId, runId, willRetry: true })),
+    Effect.provide(layer),
+  );
+  return { start, createWorktree, open, startRootRun, writeIfRunCurrent };
+}
+
+it("settles once without opening a provider when the thread's branch was deleted", async () => {
+  const worktreePath = "/tmp/worktrees/provider-turn-start-project/ops-nr-repair-20261019";
+  const { start, createWorktree, open, startRootRun, writeIfRunCurrent } =
+    deletedBranchHarness(worktreePath);
+  await Effect.runPromise(start);
+
+  expect(createWorktree).toHaveBeenCalledTimes(1);
+  expect(open).not.toHaveBeenCalled();
+  expect(startRootRun).not.toHaveBeenCalled();
+  expect(writeIfRunCurrent).toHaveBeenCalledTimes(1);
+  const events = writeIfRunCurrent.mock.calls[0]![0].events as ReadonlyArray<{
+    readonly type: string;
+    readonly payload: Record<string, unknown>;
+  }>;
+  const item = events.find((event) => event.type === "turn-item.updated")!.payload;
+  expect(item).toMatchObject({
+    type: "error",
+    status: "failed",
+    failure: {
+      class: "validation_error",
+      code: "workspace_branch_missing",
+      retryable: false,
+      message: ProviderTurnStart.missingWorktreeBranchMessage({
+        worktreePath,
+        branch: "ops/nr-repair-20261019",
+      }),
+    },
+  });
+  expect(events.find((event) => event.type === "run.updated")!.payload).toMatchObject({
+    status: "failed",
+  });
+});
+
+it("does not call a nested repository's branch deleted when the project repo lacks it", async () => {
+  // A thread launched in repositories/x keeps its worktree under <worktrees>/x;
+  // recreating it from the umbrella repo reports invalid_reference falsely.
+  const { start, writeIfRunCurrent, open } = deletedBranchHarness(
+    "/tmp/worktrees/x/ops-nr-repair-20261019",
+  );
+  const error = await Effect.runPromise(Effect.flip(start));
+
+  expect(error._tag).toBe("ProviderTurnStartError");
+  expect(writeIfRunCurrent).not.toHaveBeenCalled();
+  expect(open).not.toHaveBeenCalled();
 });
 
 function makeLocalCommandHarness(input: {
@@ -685,6 +834,84 @@ effectIt.effect(
         { type: "error", failure: { class: "usage_limit", message: detail, resetAt } },
       ]);
     }),
+);
+
+effectIt.effect(
+  "settles a provider that is not prepared on its first attempt with an actionable reason",
+  () =>
+    Effect.gen(function* () {
+      // The 2026-10 incident chain: the Copilot registry index moved past the
+      // prepared receipt, so every open failed the same way five times.
+      const detail =
+        "GitHub Copilot 1.0.101 is not prepared. Use Install / update agent in Settings → Providers.";
+      const harness = makeLocalCommandHarness({
+        text: "Continue",
+        openFailure: new ProviderAdapterOpenSessionError({
+          driver: ProviderDriverKind.make("acpRegistry"),
+          providerSessionId: ProviderSessionId.make("provider-session:internal-fixture"),
+          cause: new EffectAcpErrors.AcpSpawnError({
+            command: "github-copilot-cli",
+            cause: new ProviderSetupError({
+              instanceId: ProviderInstanceId.make("acpRegistry_copilot"),
+              operation: "session",
+              detail,
+              unavailable: { reason: "not_prepared" },
+            }),
+          }),
+        }),
+      });
+
+      yield* harness.startWithRetry;
+
+      expect(harness.open).toHaveBeenCalledOnce();
+      expect(harness.startRootRun).not.toHaveBeenCalled();
+      expect(harness.projection().runs.at(-1)).toMatchObject({ status: "failed" });
+      expect(harness.projection().turnItems).toMatchObject([
+        {
+          type: "error",
+          failure: { class: "provider_error", code: "provider_unavailable", message: detail },
+        },
+      ]);
+    }),
+);
+
+effectIt.effect("keeps internal session ids out of a generic session-open failure", () =>
+  Effect.gen(function* () {
+    const openFailure = new ProviderAdapterOpenSessionError({
+      driver: ProviderDriverKind.make("acpRegistry"),
+      providerSessionId: ProviderSessionId.make("provider-session:internal-fixture"),
+      cause: new EffectAcpErrors.AcpSpawnError({
+        command: "fixture-agent",
+        cause: new Error("registry index request timed out"),
+      }),
+    });
+    const retried = makeLocalCommandHarness({ text: "Continue", openFailure });
+
+    // Without a setup marker the failure may be transient, so it still retries.
+    const error = yield* retried.startWithRetry.pipe(Effect.flip);
+    expect(error._tag).toBe("ProviderTurnStartError");
+    expect(retried.projection().runs.at(-1)?.status).toBe("starting");
+
+    const settled = makeLocalCommandHarness({ text: "Continue", openFailure });
+    yield* settled.start;
+    const [item] = settled.projection().turnItems;
+    const failure = item?.type === "error" ? item.failure : undefined;
+    expect(failure).toMatchObject({ class: "provider_error", code: null });
+    expect(failure?.message).toContain("could not be opened");
+    expect(failure?.message).not.toContain("provider-session:");
+  }),
+);
+
+effectIt.effect("keeps a deliberate plain-string session-open reason", () =>
+  Effect.gen(function* () {
+    const reason =
+      "Project permissions changed. The active turn must finish before this session can restart.";
+    const harness = makeLocalCommandHarness({ text: "Continue", openFailure: reason });
+    yield* harness.start;
+    expect(harness.projection().turnItems).toMatchObject([
+      { type: "error", failure: { message: reason } },
+    ]);
+  }),
 );
 
 effectIt.effect("leaves the run starting when a session-open failure will be retried", () =>

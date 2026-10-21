@@ -8,6 +8,7 @@ import * as Effect from "effect/Effect";
 import * as Workspace from "../../../project/ProjectWorkspaceService.ts";
 import * as Access from "../../McpToolAccess.ts";
 import { readCaller, resolveProjectId } from "../../threadAccess.ts";
+import { refuseMachinePrivate } from "../../workGrantAccess.ts";
 import { ProjectMemoryToolkit } from "./tools.ts";
 
 const boundProject = Effect.fn("mcp.projectMemory.boundProject")(function* (requested?: ProjectId) {
@@ -19,6 +20,7 @@ const boundProject = Effect.fn("mcp.projectMemory.boundProject")(function* (requ
       message: "Project memory is scoped to the calling thread's project.",
     });
   }
+  yield* refuseMachinePrivate(context, projectId);
   return projectId;
 });
 const failure = (error: ProjectWorkspaceError) =>

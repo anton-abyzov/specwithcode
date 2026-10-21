@@ -119,7 +119,32 @@ export async function sanitizeCardLink(
   }
 }
 
-/** The checkout whose increments a thread reads: its worktree when that has SpecWeave, else the project. */
+/**
+ * The SpecWeave workspace that plans `folder`'s increments: the nearest
+ * folder at or above it with `.specweave/config.json`, as the CLI's
+ * `findProjectRoot` walks up from a member repository of an umbrella. Null
+ * when there is none, or when that nearest one has no increments yet.
+ */
+export async function planningRootAbove(folder: string): Promise<string | null> {
+  let current = await NodeFSP.realpath(folder).catch(() => null);
+  while (current !== null) {
+    const config = await NodeFSP.stat(NodePath.join(current, ".specweave", "config.json")).catch(
+      () => null,
+    );
+    if (config?.isFile()) {
+      return (await isDirectory(NodePath.join(current, INCREMENTS_DIR))) ? current : null;
+    }
+    const parent = NodePath.dirname(current);
+    current = parent === current ? null : parent;
+  }
+  return null;
+}
+
+/**
+ * The checkout whose increments a thread reads: its worktree when that has
+ * SpecWeave, else the project, else the umbrella workspace that plans for
+ * either one (a member repository has no `.specweave` of its own).
+ */
 export async function incrementRootFor(
   workspaceRoot: string,
   worktreePath: string | null,
@@ -127,7 +152,13 @@ export async function incrementRootFor(
   if (worktreePath !== null && (await isDirectory(NodePath.join(worktreePath, INCREMENTS_DIR)))) {
     return NodePath.resolve(worktreePath);
   }
-  return NodePath.resolve(workspaceRoot);
+  if (await isDirectory(NodePath.join(workspaceRoot, INCREMENTS_DIR))) {
+    return NodePath.resolve(workspaceRoot);
+  }
+  const planning =
+    (worktreePath === null ? null : await planningRootAbove(worktreePath)) ??
+    (await planningRootAbove(workspaceRoot));
+  return planning ?? NodePath.resolve(workspaceRoot);
 }
 
 /** An AC is met once every task citing it is finished; one no task cites stays open. */
@@ -172,7 +203,8 @@ async function readJson(file: string): Promise<Record<string, unknown> | null> {
 
 /**
  * The increment SpecWeave bound this thread to by a ledger write, when its
- * root lies inside one of `allowedRoots` and the increment folder exists.
+ * root lies inside one of `allowedRoots` or is exactly the umbrella workspace
+ * that plans for the thread's checkout, and the increment folder exists.
  */
 async function claimedBinding(
   thread: ThreadIncrementSource,
@@ -194,7 +226,10 @@ async function claimedBinding(
   const allowed = await Promise.all(
     allowedRoots.map((candidate) => NodeFSP.realpath(candidate).catch(() => null)),
   );
-  if (!allowed.some((candidate) => candidate !== null && inside(candidate, root))) return null;
+  if (!allowed.some((candidate) => candidate !== null && inside(candidate, root))) {
+    const planning = await Promise.all(allowedRoots.map(planningRootAbove));
+    if (!planning.includes(root)) return null;
+  }
   if (!(await isDirectory(NodePath.join(root, INCREMENTS_DIR, binding.incrementId)))) return null;
   return {
     root,

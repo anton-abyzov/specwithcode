@@ -478,6 +478,10 @@
     "./providerPermissions": {
       "types": "./src/providerPermissions.ts",
       "import": "./src/providerPermissions.ts"
+    },
+    "./personalAssistant": {
+      "types": "./src/personalAssistant.ts",
+      "import": "./src/personalAssistant.ts"
     }
   },
   "scripts": {

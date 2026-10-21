@@ -442,9 +442,11 @@ export const layer = Layer.mergeAll(
 );
 
 // One instance: the fallback sweep asks it, the recovery sweep and the
-// candidates RPC read it, and the server binds the fleet to it.
+// candidates RPC read it, and the server binds the fleet to it. The turn gate
+// (the orchestrator's, one cached document) keeps a handed-off thread from
+// continuing here after a restart.
 const layerMachineLimitHandoffProvided = MachineLimitHandoff.layer.pipe(
-  Layer.provide(Layer.merge(ProjectionStore.layer, layerProjectService)),
+  Layer.provide(Layer.mergeAll(ProjectionStore.layer, layerProjectService, HandoffTurnGate.layer)),
 );
 
 export const layerProduction = Layer.mergeAll(

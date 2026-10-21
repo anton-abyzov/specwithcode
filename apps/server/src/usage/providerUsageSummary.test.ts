@@ -11,6 +11,7 @@ import {
   accountPoolKey,
   providerUsageSummary,
   simulatedProviderUsage,
+  withSimulatedUsage,
 } from "./providerUsageSummary.ts";
 
 const now = Date.parse("2026-10-20T13:00:00.000Z");
@@ -131,5 +132,25 @@ describe("providerUsageSummary", () => {
       providerUsageSummary(provider(), now, { STUDIO_SIMULATE_PROVIDER_USAGE: "claudeAgent=100" })
         .limited,
     ).toBe(true);
+  });
+
+  it("gives the sweep the simulated usage as one stable session window", () => {
+    const env = { STUDIO_SIMULATE_PROVIDER_USAGE: "claudeAgent=96@pool-a,codex=?" };
+    const codex = provider({
+      instanceId: ProviderInstanceId.make("codex"),
+      driver: ProviderDriverKind.make("codex"),
+    });
+    const [claude, unknown] = withSimulatedUsage([provider(), codex], now, env);
+    expect(claude!.usageLimits?.windows).toEqual([
+      expect.objectContaining({ kind: "session", usedPercent: 96 }),
+    ]);
+    const resetsAt = Date.parse(claude!.usageLimits!.windows[0]!.resetsAt!);
+    expect(resetsAt - now).toBeGreaterThanOrEqual(5 * 3600_000);
+    // The same window all through the block, so a thread moves once per window.
+    const later = withSimulatedUsage([provider()], now + 60_000, env)[0]!;
+    expect(later.usageLimits!.windows[0]!.resetsAt).toBe(claude!.usageLimits!.windows[0]!.resetsAt);
+    expect(unknown).toBe(codex);
+    const real = [provider()];
+    expect(withSimulatedUsage(real, now, {})).toBe(real);
   });
 });

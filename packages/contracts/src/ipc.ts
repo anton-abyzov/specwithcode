@@ -17,6 +17,15 @@ export type {
   StudioServiceUpdateStatus,
   StudioServiceUpdateState,
 } from "./managedUpdates.ts";
+import type { DesktopUpdateChannel, DesktopUpdateState } from "./desktopUpdateState.ts";
+import type {
+  DesktopUpdateActionResult,
+  DesktopUpdateCheckResult,
+  DesktopUpdateInstallOptions,
+  StudioServiceInstallOptions,
+} from "./desktopUpdateActions.ts";
+export * from "./desktopUpdateState.ts";
+export * from "./desktopUpdateActions.ts";
 import * as Schema from "effect/Schema";
 
 import { SnapShotSource } from "./chatAttachment.ts";
@@ -94,34 +103,10 @@ export const ContextMenuItemSchema: Schema.Codec<ContextMenuItemSchemaType> = Sc
   ),
 });
 
-export type DesktopUpdateStatus =
-  | "disabled"
-  | "idle"
-  | "checking"
-  | "up-to-date"
-  | "available"
-  | "downloading"
-  | "downloaded"
-  | "error";
-
-export type DesktopRuntimeArch = "arm64" | "x64" | "other";
 export type DesktopTheme = "light" | "dark" | "system";
-export type DesktopUpdateChannel = "latest" | "nightly";
 export type DesktopAppStageLabel = "Alpha" | "Dev" | "Nightly";
 
-export const DesktopUpdateStatusSchema = Schema.Literals([
-  "disabled",
-  "idle",
-  "checking",
-  "up-to-date",
-  "available",
-  "downloading",
-  "downloaded",
-  "error",
-]);
-export const DesktopRuntimeArchSchema = Schema.Literals(["arm64", "x64", "other"]);
 export const DesktopThemeSchema = Schema.Literals(["light", "dark", "system"]);
-export const DesktopUpdateChannelSchema = Schema.Literals(["latest", "nightly"]);
 export const DesktopAppStageLabelSchema = Schema.Literals(["Alpha", "Dev", "Nightly"]);
 
 export interface DesktopAppBranding {
@@ -286,128 +271,6 @@ export const DesktopSnapShotAnimationDestination = Schema.Struct({
   ),
 });
 export type DesktopSnapShotAnimationDestination = typeof DesktopSnapShotAnimationDestination.Type;
-
-export interface DesktopRuntimeInfo {
-  hostArch: DesktopRuntimeArch;
-  appArch: DesktopRuntimeArch;
-  runningUnderArm64Translation: boolean;
-}
-
-export interface DesktopUpdateState {
-  enabled: boolean;
-  status: DesktopUpdateStatus;
-  channel: DesktopUpdateChannel;
-  currentVersion: string;
-  hostArch: DesktopRuntimeArch;
-  appArch: DesktopRuntimeArch;
-  runningUnderArm64Translation: boolean;
-  availableVersion: string | null;
-  downloadedVersion: string | null;
-  releaseNotes: ReadonlyArray<DesktopUpdateReleaseNote>;
-  omittedReleaseCount: number;
-  downloadPercent: number | null;
-  checkedAt: string | null;
-  message: string | null;
-  errorContext: "check" | "download" | "install" | null;
-  canRetry: boolean;
-}
-
-export interface DesktopUpdateReleaseNote {
-  version: string;
-  items: ReadonlyArray<string>;
-  totalItems: number;
-}
-
-export const DesktopUpdateReleaseNoteSchema = Schema.Struct({
-  version: Schema.String,
-  items: Schema.Array(Schema.String),
-  totalItems: Schema.Number,
-});
-
-export const DesktopUpdateStateSchema = Schema.Struct({
-  enabled: Schema.Boolean,
-  status: DesktopUpdateStatusSchema,
-  channel: DesktopUpdateChannelSchema,
-  currentVersion: Schema.String,
-  hostArch: DesktopRuntimeArchSchema,
-  appArch: DesktopRuntimeArchSchema,
-  runningUnderArm64Translation: Schema.Boolean,
-  availableVersion: Schema.NullOr(Schema.String),
-  downloadedVersion: Schema.NullOr(Schema.String),
-  releaseNotes: Schema.Array(DesktopUpdateReleaseNoteSchema),
-  omittedReleaseCount: Schema.Number,
-  downloadPercent: Schema.NullOr(Schema.Number),
-  checkedAt: Schema.NullOr(Schema.String),
-  message: Schema.NullOr(Schema.String),
-  errorContext: Schema.NullOr(Schema.Literals(["check", "download", "install"])),
-  canRetry: Schema.Boolean,
-});
-
-export interface StudioServiceInstallOptions {
-  /**
-   * The caller has stopped and held the service's work. The agent retries the
-   * install every few seconds until the service is quiet or `holdUntil`
-   * passes, rather than waiting for a quiet period on its own schedule.
-   */
-  readonly force?: boolean;
-  /** ISO time the service's update hold expires; the agent stops retrying then. */
-  readonly holdUntil?: string;
-  /**
-   * The service version the user was shown. The agent installs only this
-   * version, and only if it starts within 10 minutes; older desktops ignore it.
-   */
-  readonly version?: string;
-}
-
-/**
- * Why an install request was not accepted: another update step holds the
- * updater (`busy`), the app is already quitting, there is no downloaded
- * update to install (`no-download`), or updates are off in this build.
- */
-export const DesktopUpdateRefusalReasonSchema = Schema.Literals([
-  "busy",
-  "quitting",
-  "no-download",
-  "disabled",
-]);
-export type DesktopUpdateRefusalReason = typeof DesktopUpdateRefusalReasonSchema.Type;
-
-export interface DesktopUpdateActionResult {
-  accepted: boolean;
-  completed: boolean;
-  /** Install only: the accepted install failed and the app stayed open. */
-  failed?: boolean;
-  /** Install only: why the request was refused. */
-  reason?: DesktopUpdateRefusalReason;
-  state: DesktopUpdateState;
-}
-
-export const DesktopUpdateActionResultSchema = Schema.Struct({
-  accepted: Schema.Boolean,
-  completed: Schema.Boolean,
-  failed: Schema.optionalKey(Schema.Boolean),
-  reason: Schema.optionalKey(DesktopUpdateRefusalReasonSchema),
-  state: DesktopUpdateStateSchema,
-});
-
-export const DesktopUpdateInstallOptionsSchema = Schema.Struct({
-  /**
-   * Install only this downloaded version. A request made while a background
-   * check runs then waits for the check instead of being refused.
-   */
-  expectedVersion: Schema.optionalKey(Schema.String),
-});
-export type DesktopUpdateInstallOptions = typeof DesktopUpdateInstallOptionsSchema.Type;
-
-export interface DesktopUpdateCheckResult {
-  checked: boolean;
-  state: DesktopUpdateState;
-}
-
-export const DesktopUpdateCheckResultSchema = Schema.Struct({
-  checked: Schema.Boolean,
-  state: DesktopUpdateStateSchema,
-});
 
 // Stable id for the Windows-native primary backend. Desktop side wraps
 // this with a brand inside DesktopBackendManager; web side keeps it as

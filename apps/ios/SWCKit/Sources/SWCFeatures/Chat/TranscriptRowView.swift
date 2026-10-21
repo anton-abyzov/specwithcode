@@ -8,6 +8,7 @@ struct TranscriptRowView: View {
   let busyRequests: Set<String>
   let onDecision: (String, ApprovalDecision) -> Void
   let onOpenThread: (ThreadRef) -> Void
+  var onOpenLink: ((URL) -> Void)? = nil
 
   /// Replies longer than this collapse behind "Show more".
   static let collapseThreshold = 1_200
@@ -17,13 +18,13 @@ struct TranscriptRowView: View {
   var body: some View {
     switch row.kind {
     case let .user(text, state):
-      MessageBubble(text, footnote: state.footnote, isPending: state != .sent)
+      MessageBubble(text, footnote: state.footnote, isPending: state != .sent, onOpenLink: onOpenLink)
 
     case let .assistant(markdown, streaming):
       if markdown.isEmpty, streaming {
         EmptyView()
       } else {
-        MarkdownText(markdown, collapsible: !streaming && markdown.count > Self.collapseThreshold)
+        MarkdownText(markdown, collapsible: !streaming && markdown.count > Self.collapseThreshold, onOpenLink: onOpenLink)
           .padding(.leading, Self.textInset)
           .padding(.trailing, WeaveSpacing.s2)
       }
@@ -37,10 +38,10 @@ struct TranscriptRowView: View {
         .padding(.leading, Self.textInset)
 
     case let .plan(steps):
-      PlanCard(steps: steps.map { PlanCard.Step(id: $0.id, text: $0.text, state: $0.status.progressState) })
+      PlanCard(title: "Provider checklist", steps: steps.map { PlanCard.Step(id: $0.id, text: $0.text, state: $0.status.progressState) })
 
     case let .proposedPlan(markdown):
-      ProposedPlanCard(markdown: markdown)
+      ProposedPlanCard(markdown: markdown, onOpenLink: onOpenLink)
 
     case let .approval(requestId, prompt, resolved):
       ApprovalCard(prompt: prompt, isResolved: resolved, isBusy: busyRequests.contains(requestId)) { decision in
@@ -111,13 +112,14 @@ private struct ReasoningRow: View {
 
 private struct ProposedPlanCard: View {
   let markdown: String
+  var onOpenLink: ((URL) -> Void)?
 
   var body: some View {
     VStack(alignment: .leading, spacing: WeaveSpacing.s3) {
-      Label("Proposed plan", systemImage: "list.bullet.clipboard")
+      Label("Provider proposed plan", systemImage: "list.bullet.clipboard")
         .font(.weave(.callout, weight: .semibold))
         .foregroundStyle(Color.weave.ink)
-      MarkdownText(markdown, collapsible: markdown.count > TranscriptRowView.collapseThreshold, collapsedHeight: 320)
+      MarkdownText(markdown, collapsible: markdown.count > TranscriptRowView.collapseThreshold, collapsedHeight: 320, onOpenLink: onOpenLink)
     }
     .padding(WeaveSpacing.s4)
     .frame(maxWidth: .infinity, alignment: .leading)

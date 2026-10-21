@@ -211,6 +211,8 @@ export function resolveSameModelElsewhere(input: {
   readonly nowMs: number;
   readonly belowPercent?: number | null | undefined;
   readonly limitedInstanceIds?: ReadonlySet<string> | undefined;
+  /** Selections already tried for this stop (`fallbackSelectionKey`), skipped. */
+  readonly excludedSelections?: ReadonlySet<string> | undefined;
 }): ModelSelection | null {
   const currentProvider = input.providers.find(
     (provider) => provider.instanceId === input.current.instanceId,
@@ -225,6 +227,8 @@ export function resolveSameModelElsewhere(input: {
     if (provider.instanceId === input.current.instanceId) return [];
     const slug = sameModelOn(provider, model);
     if (slug === undefined) return [];
+    const key = fallbackSelectionKey({ instanceId: provider.instanceId, model: slug });
+    if (input.excludedSelections?.has(key)) return [];
     const room = roomOn(provider, slug, {
       nowMs: input.nowMs,
       belowPercent: input.belowPercent,
@@ -388,7 +392,10 @@ export type FallbackOrderUnavailable =
   | "signed-out"
   | "per-token"
   | "full"
-  | "unverified";
+  /** Installed but its usage is unknown: the user may still choose it. */
+  | "unverified"
+  /** Not installed, not prepared or not ready on this machine: nothing can run on it. */
+  | "not-ready";
 
 export interface FallbackOrderEntry {
   readonly selection: ModelSelection;
@@ -434,8 +441,13 @@ export function describeFallbackOrder(input: {
       return entry("missing");
     if (input.limitedInstanceIds?.has(provider.instanceId)) return entry("limited");
     if (isPerTokenProvider(provider)) return entry("per-token");
-    if (!canTakeTurn(provider))
-      return entry(provider.auth.status === "unauthenticated" ? "signed-out" : "unverified");
+    if (!canTakeTurn(provider)) {
+      if (provider.auth.status === "unauthenticated") return entry("signed-out");
+      if (usageDeniesTurn(provider)) return entry("full");
+      // An ACP agent that was never prepared here (or any instance that is not
+      // ready) can't open a session; offering it only leads to a failed turn.
+      return entry("not-ready");
+    }
     if (reportsNoUsage(provider)) return entry(null);
     const used = providerUsedPercent(provider, input.nowMs, selection.model);
     const threshold = input.belowPercent ?? 100;
@@ -473,6 +485,10 @@ export function resolveProviderFallback(input: {
   /** Fallback order entries already tried for this stop (`fallbackSelectionKey`), skipped. */
   readonly excludedSelections?: ReadonlySet<string>;
 }): ModelSelection | null {
+  // Every step below skips what this stop already tried, not only the user's order.
+  const excluded = (instanceId: ProviderInstanceId, model: string | undefined) =>
+    model !== undefined &&
+    (input.excludedSelections?.has(fallbackSelectionKey({ instanceId, model })) ?? false);
   const usable = (
     provider: ServerProvider | undefined,
     model: string | undefined,
@@ -514,6 +530,7 @@ export function resolveProviderFallback(input: {
       nowMs: input.nowMs,
       belowPercent: input.belowPercent,
       limitedInstanceIds: input.limitedInstanceIds,
+      excludedSelections: input.excludedSelections,
     });
     if (same !== null) return same;
   }
@@ -526,12 +543,17 @@ export function resolveProviderFallback(input: {
     const provider = input.providers.find((entry) => entry.instanceId === selection.instanceId);
     if (
       usable(provider, selection.model) &&
+      !excluded(provider.instanceId, selection.model) &&
       provider.models.some((model) => model.slug === selection.model && !model.isCustom)
     )
       return selection;
   }
   const proven = input.proven ?? null;
-  if (proven !== null && proven.instanceId !== input.currentInstanceId) {
+  if (
+    proven !== null &&
+    proven.instanceId !== input.currentInstanceId &&
+    !excluded(proven.instanceId, proven.model)
+  ) {
     const provider = input.providers.find((entry) => entry.instanceId === proven.instanceId);
     const used =
       provider === undefined ? null : providerUsedPercent(provider, input.nowMs, proven.model);
@@ -561,7 +583,10 @@ export function resolveProviderFallback(input: {
   ];
   const candidates = input.providers
     .filter(
-      (provider) => usable(provider, candidateModel(provider)) && !isPerTokenProvider(provider),
+      (provider) =>
+        usable(provider, candidateModel(provider)) &&
+        !isPerTokenProvider(provider) &&
+        !excluded(provider.instanceId, candidateModel(provider)),
     )
     .map((provider, order) => ({ provider, order, rank: rank(provider) }))
     .sort((a, b) => a.rank[0] - b.rank[0] || a.rank[1] - b.rank[1] || a.order - b.order);

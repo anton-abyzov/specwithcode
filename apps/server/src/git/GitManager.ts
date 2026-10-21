@@ -1815,7 +1815,12 @@ export const make = Effect.gen(function* () {
     headContext: Pick<BranchHeadContext, "isCrossRepository" | "remoteName">,
   ) {
     const configured = yield* gitCore.readConfigValue(cwd, `branch.${branch}.gh-merge-base`);
-    if (configured) return configured;
+    // A recorded base the branch shares no commit with is stale (a worktree reset onto another line).
+    if (
+      configured &&
+      (yield* gitCore.sharesHistoryWithHead(cwd, yield* resolveBaseRangeRef(cwd, configured)))
+    )
+      return configured;
 
     if (upstreamRef && !headContext.isCrossRepository) {
       const upstreamBranch = extractBranchNameFromRemoteRef(upstreamRef, {
@@ -2083,6 +2088,13 @@ export const make = Effect.gen(function* () {
       label: `Generating ${terms.shortLabel} content...`,
     });
     const baseRangeRef = yield* resolveBaseRangeRef(cwd, baseBranch);
+    if (!(yield* gitCore.sharesHistoryWithHead(cwd, baseRangeRef))) {
+      return yield* new GitManagerError({
+        operation: "runPrStep",
+        cwd,
+        detail: `Branch ${branch} shares no commits with ${baseBranch}, so there is nothing to propose into it.`,
+      });
+    }
     const rangeContext = yield* gitCore.readRangeContext(cwd, baseRangeRef);
     const policy = yield* resolveStylePolicy(cwd, settings);
     const changeRequestTemplate =

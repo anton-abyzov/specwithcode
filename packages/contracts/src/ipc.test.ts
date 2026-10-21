@@ -1,7 +1,7 @@
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
-import { DesktopEnvironmentBootstrapSchema } from "./ipc.ts";
+import { DesktopEnvironmentBootstrapSchema, DesktopUpdateStateSchema } from "./ipc.ts";
 
 describe("DesktopEnvironmentBootstrapSchema", () => {
   const decode = Schema.decodeUnknownSync(DesktopEnvironmentBootstrapSchema);
@@ -34,5 +34,33 @@ describe("DesktopEnvironmentBootstrapSchema", () => {
         wsBaseUrl: null,
       }).runningDistro,
     ).toBeNull();
+  });
+});
+
+describe("DesktopUpdateStateSchema", () => {
+  it("keeps whether the app is a production build through the IPC result", () => {
+    // The renderer asks the service for the app's own version only for a release build.
+    const state = {
+      enabled: true,
+      status: "idle",
+      channel: "latest",
+      currentVersion: "1.0.62",
+      hostArch: "arm64",
+      appArch: "arm64",
+      runningUnderArm64Translation: false,
+      availableVersion: null,
+      downloadedVersion: null,
+      releaseNotes: [],
+      omittedReleaseCount: 0,
+      downloadPercent: null,
+      checkedAt: null,
+      message: null,
+      errorContext: null,
+      canRetry: false,
+      productionBuild: true,
+    };
+    expect(Schema.encodeUnknownSync(DesktopUpdateStateSchema)(state)).toMatchObject({
+      productionBuild: true,
+    });
   });
 });

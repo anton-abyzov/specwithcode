@@ -46,11 +46,13 @@ const machine = (
     id: LOGICAL_ID,
     members,
   },
+  kind: "code" | "personal" = "code",
 ) =>
   Effect.gen(function* () {
     const project = projectFixture(self.projectId, {
       workspaceSettings: {
         ...DEFAULT_PROJECT_WORKSPACE_SETTINGS,
+        kind,
         ...(logicalProject
           ? {
               logicalProject: {
@@ -354,6 +356,25 @@ it.effect("refuses merges from unlinked projects, unknown members and this machi
         "invalid",
       );
       assert.deepStrictEqual(yield* a.contents, {});
+    }),
+  ),
+);
+
+it.effect("never exports a personal assistant's memory nor merges another machine's into it", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      // Linked before the rule that keeps a personal assistant on its machine.
+      const household = yield* machine(alpha, "Example Household", undefined, "personal");
+      const b = yield* machine(beta, "Beta");
+      yield* household.write("notes.md", "groceries");
+      yield* b.write("notes.md", "from beta");
+      assert.strictEqual(refusal(yield* Effect.exit(household.exported)), "not_code_project");
+      const memory = yield* b.exported;
+      assert.strictEqual(
+        refusal(yield* Effect.exit(household.merge(beta, memory))),
+        "not_code_project",
+      );
+      assert.deepStrictEqual(yield* household.contents, { "notes.md": "groceries" });
     }),
   ),
 );

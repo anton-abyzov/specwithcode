@@ -1,6 +1,8 @@
 export interface PendingMachineHandoff {
   readonly operationId: string;
   readonly targetKey: string;
+  /** A transfer asked the source to publish; the source may be fenced to this operation. */
+  readonly publishing?: true;
 }
 
 /** Only a retry pointer is kept in the browser; context stays on the machines. */
@@ -12,13 +14,13 @@ export function parsePendingMachineHandoff(value: string | null): PendingMachine
   try {
     const candidate: unknown = JSON.parse(value);
     if (typeof candidate !== "object" || candidate === null) return null;
-    const { operationId, targetKey } = candidate as Record<string, unknown>;
+    const { operationId, targetKey, publishing } = candidate as Record<string, unknown>;
     return typeof operationId === "string" &&
       /^[a-f0-9]{8}-[a-f0-9]{4}-4[a-f0-9]{3}-[89ab][a-f0-9]{3}-[a-f0-9]{12}$/i.test(operationId) &&
       typeof targetKey === "string" &&
       targetKey.length > 0 &&
       targetKey.length <= 1024
-      ? { operationId, targetKey }
+      ? { operationId, targetKey, ...(publishing === true ? { publishing } : {}) }
       : null;
   } catch {
     return null;

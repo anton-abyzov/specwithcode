@@ -14,6 +14,8 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { cn } from "~/lib/utils";
 import { modelPickerModelKey } from "./modelPickerKeys";
 import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
+import { ModelRowAvailability } from "./ModelUsage";
+import type { AvailabilityText } from "../../studio/modelAvailability";
 
 export const ModelListRow = memo(function ModelListRow(props: {
   index: number;
@@ -41,6 +43,10 @@ export const ModelListRow = memo(function ModelListRow(props: {
   unavailable?: boolean;
   jumpLabel?: string | null;
   disabledReason?: string | null;
+  /** The row is disabled by a spent usage limit: its reason stays readable on the row. */
+  usageBlocked?: boolean;
+  /** Usage for this model, shown after the provider name. */
+  availability?: AvailabilityText | null;
   onToggleFavorite: () => void;
 }) {
   const providerLabel = props.model.subProvider
@@ -52,16 +58,26 @@ export const ModelListRow = memo(function ModelListRow(props: {
       hideIndicator
       index={props.index}
       value={modelPickerModelKey(props.instanceId, props.model.slug)}
-      disabled={Boolean(props.disabledReason)}
+      // A usage-blocked row stays fully legible: the picker refuses the pick
+      // instead of the combobox fading the reason along with the row.
+      disabled={Boolean(props.disabledReason) && !props.usageBlocked}
+      aria-disabled={props.usageBlocked ? true : undefined}
       className={cn(
-        "group relative w-full !min-w-0 max-w-full cursor-pointer",
+        "group relative w-full !min-w-0 max-w-full",
+        props.usageBlocked ? "cursor-not-allowed" : "cursor-pointer",
         props.disabledReason &&
           "data-disabled:pointer-events-auto data-disabled:cursor-not-allowed",
       )}
+      data-model-usage-blocked={props.usageBlocked ? "true" : undefined}
     >
       <div className="min-w-0 flex-1 text-left">
         <div className="flex min-w-0 items-center gap-2">
-          <div className="min-w-0 truncate text-xs font-medium leading-snug">
+          <div
+            className={cn(
+              "min-w-0 truncate text-xs font-medium leading-snug",
+              props.usageBlocked && "text-muted-foreground",
+            )}
+          >
             {props.useTriggerLabel
               ? getTriggerDisplayModelLabel(props.model)
               : getDisplayModelName(
@@ -84,18 +100,36 @@ export const ModelListRow = memo(function ModelListRow(props: {
           ) : null}
         </div>
         {props.showProvider && (
-          <div className="mt-1 flex items-center gap-1.5">
+          <div className="mt-1 flex items-start gap-1.5">
             <ProviderInstanceIcon
               driverKind={props.driverKind}
               displayName={props.providerDisplayName}
               acpRegistryAgentId={props.acpRegistryAgentId}
               acpRegistryIconUrl={props.acpRegistryIconUrl}
-              className="size-3"
+              className="mt-[0.1875rem] size-3 shrink-0"
               iconClassName="size-3"
             />
-            <span className="truncate text-xs font-normal leading-snug text-muted-foreground">
+            <span
+              className={cn(
+                "text-xs font-normal leading-snug text-muted-foreground",
+                props.availability ? "max-w-[45%] shrink-0 truncate" : "truncate",
+              )}
+            >
               {providerLabel}
             </span>
+            {props.availability ? (
+              <>
+                <span className="shrink-0 text-xs text-muted-foreground" aria-hidden>
+                  ·
+                </span>
+                <span className="flex min-w-0 text-xs leading-snug">
+                  <ModelRowAvailability text={props.availability} />
+                </span>
+                {props.usageBlocked ? (
+                  <span className="sr-only">{props.availability.long}</span>
+                ) : null}
+              </>
+            ) : null}
           </div>
         )}
       </div>
@@ -119,7 +153,8 @@ export const ModelListRow = memo(function ModelListRow(props: {
                 onKeyDown={(event) => {
                   event.stopPropagation();
                 }}
-                disabled={Boolean(props.disabledReason)}
+                // A usage limit is temporary; favorites stay editable through it.
+                disabled={Boolean(props.disabledReason) && !props.usageBlocked}
                 aria-label={props.isFavorite ? "Remove from favorites" : "Add to favorites"}
               >
                 <StarIcon

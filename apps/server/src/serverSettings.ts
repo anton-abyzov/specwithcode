@@ -793,6 +793,26 @@ export class ServerSettingsService extends Context.Service<
     readonly instancesAwaitingSignInClear?: (
       instanceIds: Iterable<string>,
     ) => Effect.Effect<ReadonlySet<string>>;
+
+    /**
+     * Default-off drivers nobody has switched on or off since this server
+     * started from a file that never recorded a choice for them. Startup
+     * discovery probes only these. Absent from test doubles.
+     */
+    readonly providerDiscoveryCandidates?: Effect.Effect<
+      ReadonlySet<DiscoverableProviderDriver>,
+      ServerSettingsError
+    >;
+
+    /**
+     * Turns on the given drivers that are still discovery candidates, and
+     * records each in `providerDiscovery.autoEnabled` with `at`. Returns the
+     * drivers it turned on. Absent from test doubles.
+     */
+    readonly autoEnableDiscoveredProviders?: (
+      drivers: ReadonlyArray<DiscoverableProviderDriver>,
+      at: string,
+    ) => Effect.Effect<ReadonlyArray<DiscoverableProviderDriver>, ServerSettingsError>;
   }
 >()("specweave-studio/serverSettings/ServerSettingsService") {
   /** @deprecated Import and use `layerTest` from this module. */
@@ -956,6 +976,74 @@ function restoreUsedProviders(
     },
     providerInstances,
   };
+}
+
+/** Default-off drivers that startup discovery may turn on when their CLI is signed in. */
+export const DISCOVERABLE_PROVIDER_DRIVERS = ["grok", "opencode"] as const;
+export type DiscoverableProviderDriver = (typeof DISCOVERABLE_PROVIDER_DRIVERS)[number];
+
+/**
+ * An instance of `driver` with its own enabled flag is a user's choice. So is
+ * a hand-written default slot: it replaces the legacy entry discovery turns on.
+ */
+function hasUserInstanceDecision(settings: ServerSettings, driver: string): boolean {
+  return (
+    settings.providerInstances[ProviderInstanceId.make(driver)] !== undefined ||
+    Object.values(settings.providerInstances).some(
+      (instance) => instance.driver === driver && instance.enabled !== undefined,
+    )
+  );
+}
+
+/**
+ * Discoverable drivers the user never switched on or off. The decoded
+ * settings always hold a boolean, so only the raw file can tell "never
+ * chosen" from an explicit false; chat history counts as a choice.
+ */
+function undecidedDiscoverableDrivers(
+  settings: ServerSettings,
+  persisted: typeof PersistedOptionalProviderSettings.Type,
+  providerHistory: ReadonlyArray<{ readonly providerName: string }>,
+): ReadonlySet<DiscoverableProviderDriver> {
+  const usedProviders = new Set(providerHistory.map(({ providerName }) => providerName));
+  return new Set(
+    DISCOVERABLE_PROVIDER_DRIVERS.filter(
+      (driver) =>
+        persisted.providers?.[driver]?.enabled === undefined &&
+        !usedProviders.has(driver) &&
+        !hasUserInstanceDecision(settings, driver) &&
+        settings.providerDiscovery.autoEnabled[driver] === undefined,
+    ),
+  );
+}
+
+/**
+ * Whether each instance of `driver` runs, as one comparable value. Edits that
+ * leave every on/off state alone (a binary path, a label) compare equal. The
+ * default slot follows the legacy entry until an explicit instance replaces it.
+ */
+function driverEnabledFlags(settings: ServerSettings, driver: string): string {
+  const legacy = (settings.providers as Record<string, { readonly enabled?: boolean } | undefined>)[
+    driver
+  ]?.enabled;
+  const states: Record<string, boolean> = { [driver]: legacy ?? false };
+  for (const [instanceId, instance] of Object.entries(settings.providerInstances)) {
+    if (instance.driver === driver) states[instanceId] = resolveProviderInstanceEnabled(instance);
+  }
+  return JSON.stringify(Object.entries(states).sort(([a], [b]) => a.localeCompare(b)));
+}
+
+/** A user change to a driver's switch replaces discovery's decision for it. */
+function dropUserDecidedAutoEnables(current: ServerSettings, next: ServerSettings): ServerSettings {
+  const autoEnabled = next.providerDiscovery.autoEnabled;
+  const kept = Object.fromEntries(
+    Object.entries(autoEnabled).filter(
+      ([driver]) => driverEnabledFlags(current, driver) === driverEnabledFlags(next, driver),
+    ),
+  );
+  return Object.keys(kept).length === Object.keys(autoEnabled).length
+    ? next
+    : { ...next, providerDiscovery: { ...next.providerDiscovery, autoEnabled: kept } };
 }
 
 const ACP_REGISTRY_DRIVER = ProviderDriverKind.make("acpRegistry");
@@ -1184,8 +1272,34 @@ const make = Effect.gen(function* () {
     ),
   );
 
+  // Null until the first load decides which discoverable drivers are undecided.
+  const discoveryCandidatesRef = yield* Ref.make<ReadonlySet<DiscoverableProviderDriver> | null>(
+    null,
+  );
+  // Whether the latest load decoded the file. Discovery never writes over one
+  // that did not: it stays on disk for the user to repair.
+  const lastLoadTrustedRef = yield* Ref.make(true);
+  // The discoverable enabled flags this server last wrote, so a reload can
+  // tell its own persisted default from a value someone else put in the file.
+  const lastWrittenDiscoverableFlagsRef = yield* Ref.make<
+    Partial<Record<DiscoverableProviderDriver, boolean>>
+  >({});
+  const removeDiscoveryCandidates = (decided: (driver: DiscoverableProviderDriver) => boolean) =>
+    Ref.update(discoveryCandidatesRef, (candidates) =>
+      candidates === null ? candidates : new Set([...candidates].filter((d) => !decided(d))),
+    );
+
   const writeSettingsAtomically = Effect.fnUntraced(
     function* (settings: ServerSettings) {
+      yield* Ref.set(
+        lastWrittenDiscoverableFlagsRef,
+        Object.fromEntries(
+          DISCOVERABLE_PROVIDER_DRIVERS.map((driver) => [
+            driver,
+            settings.providers[driver].enabled,
+          ]),
+        ),
+      );
       const sparseSettingsJson = yield* encodeServerSettingsJson(
         stripDefaultServerSettings(settings, PERSISTED_SERVER_SETTINGS_DEFAULTS) ?? {},
       );
@@ -1355,6 +1469,28 @@ const make = Effect.gen(function* () {
     const loaded = foldProviderInstanceEnabledFlags(
       restoreUsedProviders(settings, persisted, providerHistory),
     );
+    // Decided once, from the file as this server first found it: our own
+    // later writes persist the default false, which must not read as a choice.
+    yield* Ref.set(lastLoadTrustedRef, settingsFileTrusted);
+    if ((yield* Ref.get(discoveryCandidatesRef)) === null) {
+      yield* Ref.set(
+        discoveryCandidatesRef,
+        settingsFileTrusted
+          ? undecidedDiscoverableDrivers(loaded, persisted, providerHistory)
+          : new Set(),
+      );
+    } else {
+      // A reload: a flag in the file that this server did not write there
+      // came from the user (or another tool), and settles that driver.
+      const lastWritten = yield* Ref.get(lastWrittenDiscoverableFlagsRef);
+      yield* removeDiscoveryCandidates((driver) => {
+        const onDisk = persisted.providers?.[driver]?.enabled;
+        return (
+          (onDisk !== undefined && onDisk !== lastWritten[driver]) ||
+          hasUserInstanceDecision(loaded, driver)
+        );
+      });
+    }
     const folded = settingsFileTrusted
       ? foldLegacyProjectSettings(loaded, legacyProjectRows)
       : loaded;
@@ -2341,6 +2477,86 @@ const make = Effect.gen(function* () {
     yield* Deferred.succeed(startedDeferred, undefined).pipe(Effect.orDie);
   });
 
+  /**
+   * Wraps a user-driven update: changing a driver's switch drops discovery's
+   * record for it and settles it, so discovery never overrides the choice.
+   */
+  const userSettingsUpdate =
+    (update: (current: ServerSettings) => Effect.Effect<ServerSettings, ServerSettingsError>) =>
+    (current: ServerSettings) =>
+      update(current).pipe(
+        Effect.tap((next) =>
+          removeDiscoveryCandidates(
+            (driver) => driverEnabledFlags(current, driver) !== driverEnabledFlags(next, driver),
+          ),
+        ),
+        Effect.map((next) => dropUserDecidedAutoEnables(current, next)),
+      );
+
+  const autoEnableDiscoveredProviders = (
+    drivers: ReadonlyArray<DiscoverableProviderDriver>,
+    at: string,
+  ) =>
+    Effect.gen(function* () {
+      const eligible = (
+        settings: ServerSettings,
+        candidates: ReadonlySet<DiscoverableProviderDriver> | null,
+      ) =>
+        drivers.filter(
+          (driver) =>
+            candidates?.has(driver) === true &&
+            settings.providers[driver].enabled === false &&
+            !hasUserInstanceDecision(settings, driver),
+        );
+      if (!(yield* Ref.get(lastLoadTrustedRef))) {
+        // The file no longer decodes: a write now would replace it with defaults.
+        yield* Ref.set(discoveryCandidatesRef, new Set());
+        return [];
+      }
+      if (
+        eligible(yield* getSettingsFromCache, yield* Ref.get(discoveryCandidatesRef)).length === 0
+      ) {
+        return [];
+      }
+      // Failing the update with this exact value skips the write entirely.
+      const nothingToWrite = new ServerSettingsError({ settingsPath, operation: "write-file" });
+      let enabled: ReadonlyArray<DiscoverableProviderDriver> = [];
+      yield* updateAndPersistSettings(
+        (current) =>
+          Effect.gen(function* () {
+            // Re-checked under the write lock: a user switch or a broken file
+            // may have landed while the probes ran.
+            enabled = (yield* Ref.get(lastLoadTrustedRef))
+              ? eligible(current, yield* Ref.get(discoveryCandidatesRef))
+              : [];
+            if (enabled.length === 0) return yield* Effect.fail(nothingToWrite);
+            const autoEnabled = { ...current.providerDiscovery.autoEnabled };
+            for (const driver of enabled) autoEnabled[driver] = at;
+            return {
+              ...current,
+              providers: {
+                ...current.providers,
+                ...(enabled.includes("grok")
+                  ? { grok: { ...current.providers.grok, enabled: true } }
+                  : {}),
+                ...(enabled.includes("opencode")
+                  ? { opencode: { ...current.providers.opencode, enabled: true } }
+                  : {}),
+              },
+              providerDiscovery: { ...current.providerDiscovery, autoEnabled },
+            };
+          }),
+        {},
+      ).pipe(
+        Effect.catchIf(
+          (error) => error === nothingToWrite,
+          () => Effect.void,
+        ),
+      );
+      yield* removeDiscoveryCandidates((driver) => enabled.includes(driver));
+      return enabled;
+    });
+
   return {
     start,
     ready: Deferred.await(startedDeferred),
@@ -2350,20 +2566,26 @@ const make = Effect.gen(function* () {
     ),
     updateSettings: (patch) =>
       updateAndPersistSettings(
-        (current) => Effect.succeed(applyServerSettingsPatch(current, patch)),
+        userSettingsUpdate((current) => Effect.succeed(applyServerSettingsPatch(current, patch))),
         patch,
       ),
     updateProviderInstance: (mutation, patch = {}) =>
       updateAndPersistSettings(
-        (current) =>
+        userSettingsUpdate((current) =>
           Effect.gen(function* () {
             yield* ensureProviderInstanceMutationAllowed(current, mutation, settingsPath);
             const patched = applyServerSettingsPatch(current, patch);
             return applyProviderInstanceMutation(patched, mutation);
           }),
+        ),
         patch,
         mutation,
       ),
+    providerDiscoveryCandidates: getSettingsFromCache.pipe(
+      Effect.andThen(Ref.get(discoveryCandidatesRef)),
+      Effect.map((candidates) => candidates ?? new Set<DiscoverableProviderDriver>()),
+    ),
+    autoEnableDiscoveredProviders,
     withSettingsSnapshot,
     clearRemovedInstanceSignIns,
     clearSignInsBeforeStart,

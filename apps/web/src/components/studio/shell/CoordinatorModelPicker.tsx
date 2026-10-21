@@ -14,7 +14,7 @@ import {
   type ProviderInstanceId,
 } from "@specweave-studio/contracts";
 import { createModelSelection } from "@specweave-studio/shared/model";
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useEnvironmentSettings } from "../../../hooks/useSettings";
 import { getCustomModelOptionsByInstance } from "../../../modelSelection";
 import {
@@ -27,6 +27,7 @@ import { useEnvironment } from "../../../state/environments";
 import { serverEnvironment } from "../../../state/server";
 import { readEnvironmentScope, useEnvironmentScope } from "../../../state/session";
 import { useAtomCommand } from "../../../state/use-atom-command";
+import { useMachineNickname } from "../../../studio/machineNickname";
 import { COORDINATOR_RECOMMENDED_TRAITS, modelLabel } from "../../../studio/shellModel";
 import { ProviderModelPicker } from "../../chat/ProviderModelPicker";
 import { TraitsPicker } from "../../chat/TraitsPicker";
@@ -130,6 +131,14 @@ export function CoordinatorModelPicker(props: {
     : null;
   const available = entries.filter((entry) => entry.enabled && entry.isAvailable);
   const modelsLoading = useCoordinatorModelsLoading(environment?.serverConfig);
+  const machineLabel = useMachineNickname(props.environmentId, environment?.label);
+  // A host still connecting has no fresh read: its rows say so instead of guessing.
+  const hostPhase = environment?.connection?.phase;
+  const hostConnected = hostPhase !== "offline" && hostPhase !== "error";
+  const usage = useMemo(
+    () => ({ connected: hostConnected, machineLabel: machineLabel || null, running: null }),
+    [hostConnected, machineLabel],
+  );
   const openProviderSetup = (instanceId?: ProviderInstanceId) => {
     if (props.disabled || props.saving) return;
     void navigate({
@@ -280,6 +289,7 @@ export function CoordinatorModelPicker(props: {
           triggerAriaLabel={`Coordinator model: ${label.full}. Change model`}
           disabled={props.saving}
           getModelDisabledReason={getModelDisabledReason}
+          usage={usage}
           onOpenProviderSetup={openProviderSetup}
           onManageProviders={() => openProviderSetup()}
           onInstanceModelChange={changeModel}

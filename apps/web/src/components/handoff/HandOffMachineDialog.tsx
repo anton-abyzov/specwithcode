@@ -1,3 +1,4 @@
+import { isPersonalAssistantProject } from "@specweave-studio/shared/personalAssistant";
 import { threadRuntimeIsActive } from "@specweave-studio/client-runtime/state/shell";
 import { scopeThreadRef } from "@specweave-studio/client-runtime/environment";
 import type {
@@ -11,7 +12,7 @@ import { useRouter } from "@tanstack/react-router";
 import { useEffect, useId, useMemo, useState } from "react";
 import { create } from "zustand";
 
-import { readThreadShell } from "../../state/entities";
+import { readThreadShell, useProjects } from "../../state/entities";
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import {
   handoffMachineCandidates,
@@ -271,11 +272,18 @@ function HandOffMachineDialog({
   const { snapshot } = useHandoffModeSnapshot(environmentId);
   const destinations = useHandoffDestinations(environmentId, false);
   const [destinationId, setDestinationId] = useState<EnvironmentId | null>(null);
+  const projects = useProjects();
   const threads = useMemo<HandoffMachineThreadRow[]>(
     () =>
       handoffMachineCandidates(snapshot, (threadId) => {
         const shell = readThreadShell(scopeThreadRef(environmentId, threadId));
-        return shell !== null && threadRuntimeIsActive(shell.runtime);
+        if (shell === null || !threadRuntimeIsActive(shell.runtime)) return false;
+        // A personal assistant's threads stay on their machine.
+        const owner = projects.find(
+          (candidate) =>
+            candidate.environmentId === environmentId && candidate.id === shell.projectId,
+        );
+        return !isPersonalAssistantProject(owner);
       })
         .filter((thread) => projectId === null || thread.projectId === projectId)
         .map((thread) => ({
@@ -284,7 +292,7 @@ function HandOffMachineDialog({
             readThreadShell(scopeThreadRef(environmentId, thread.threadId))?.title ||
             "Untitled thread",
         })),
-    [environmentId, projectId, snapshot],
+    [environmentId, projectId, projects, snapshot],
   );
   const [deselected, setDeselected] = useState<ReadonlySet<ThreadId>>(new Set());
   const selected = useMemo(

@@ -81,6 +81,65 @@ const SERVICE_TAKES_REQUESTS: ReadonlySet<StudioServiceUpdateState["status"]> = 
 ]);
 
 /**
+ * The agent's refusals that an Update now request gets past, exactly as
+ * update_agent.py (refusal_reason) writes them: the service lost its SQLite
+ * locks or its database log, and update.py (database_restart_refusal)
+ * restarts it for a held forced request, then installs.
+ */
+const RESTART_NEEDED_REFUSALS: ReadonlySet<string> = new Set([
+  "SpecWithCode cannot be updated right now: The SpecWithCode service lost its SQLite locks on its database. Restart SpecWithCode, then update",
+  "SpecWithCode cannot be updated right now: The SpecWithCode service is using a database log that was deleted from disk. Restart SpecWithCode, then update",
+]);
+
+/** What the update agent says when an install request lapsed before it could start. */
+export const SERVICE_REQUEST_EXPIRED =
+  "The update request expired before it could start; choose Update now again.";
+
+/**
+ * The error is the desktop's own: it could not start the update agent (or
+ * save the request), and the agent has written nothing since. The desktop
+ * this renderer ships with flags every state; one without the flag is none.
+ */
+export function isAgentStartFailure(state: StudioServiceUpdateState): boolean {
+  return state.agentStartFailed === true;
+}
+
+/**
+ * The agent's last pass was refused for a fault that an Update now request
+ * gets past (see RESTART_NEEDED_REFUSALS), or let a request lapse before it
+ * could start (its message says to choose Update now again), and the agent has
+ * a release newer than the service runs verified on disk: "Update now"
+ * installs it, with the agent's words shown beside it. Any other failure
+ * offers only a check: one a forced request cannot get past (a failed check, a
+ * rejected download, which the agent does not fetch again before its next
+ * check, or the desktop's own failure to start the agent), and one with
+ * nothing on disk to install.
+ */
+export function isServiceErrorWithRelease(
+  state: StudioServiceUpdateState | null,
+): state is StudioServiceUpdateState & { readonly message: string } {
+  const message = state?.message ?? "";
+  return (
+    state?.status === "error" &&
+    !isAgentStartFailure(state) &&
+    (RESTART_NEEDED_REFUSALS.has(message) || message === SERVICE_REQUEST_EXPIRED) &&
+    isOlderRelease(state.installedVersion, state.downloadedVersion)
+  );
+}
+
+/**
+ * The agent refused a request for a fault only a held request gets past
+ * (update.py restarts the service for one), with the release on disk.
+ */
+export function isRestartRefusalWithRelease(state: StudioServiceUpdateState | null): boolean {
+  return isServiceErrorWithRelease(state) && RESTART_NEEDED_REFUSALS.has(state.message);
+}
+
+function takesRequests(state: StudioServiceUpdateState): boolean {
+  return SERVICE_TAKES_REQUESTS.has(state.status) || isServiceErrorWithRelease(state);
+}
+
+/**
  * The service on this Mac runs an older release than the app is about to
  * install, and its agent can take a request. "Update now" then updates both,
  * the service first, whether or not the agent has its half on disk yet.
@@ -90,27 +149,47 @@ export function isServiceBehindApp(
   appVersion: string | null,
 ): boolean {
   return (
-    state !== null &&
-    SERVICE_TAKES_REQUESTS.has(state.status) &&
-    isOlderRelease(state.installedVersion, appVersion)
+    state !== null && takesRequests(state) && isOlderRelease(state.installedVersion, appVersion)
   );
 }
 
 /**
+ * The release the agent found for the service, on disk or not yet, when it
+ * takes a request for it. Asking for an older version would only be refused
+ * as superseded, after the work was stopped.
+ */
+function agentRelease(state: StudioServiceUpdateState | null): string | null {
+  if (state === null) return null;
+  if (isServiceUpdateReady(state)) return serviceUpdateVersion(state);
+  const found = serviceUpdateVersion(state);
+  return takesRequests(state) && isOlderRelease(state.installedVersion, found) ? found : null;
+}
+
+/**
  * The service version "Update now" installs: the newest of the agent's own
- * release and the app's versions (the downloaded update, the version running)
- * that the service is behind. Null when the service has nothing to install.
+ * release and the app's versions (the downloaded update, the version running,
+ * the release the app found) that the service is behind. Null when the service
+ * has nothing to install.
  */
 export function serviceInstallTarget(
   state: StudioServiceUpdateState | null,
   ...appVersions: ReadonlyArray<string | null | undefined>
 ): string | null {
-  let target = state !== null && isServiceUpdateReady(state) ? serviceUpdateVersion(state) : null;
+  let target = agentRelease(state);
   for (const version of appVersions) {
     if (!version || !isServiceBehindApp(state, version)) continue;
     if (target === null || isOlderRelease(target, version)) target = version;
   }
   return target;
+}
+
+/**
+ * The version the app runs, when it is a released one. A dev or unpackaged
+ * build reports its plain package version, which may not be published yet:
+ * the service is never asked to catch up with it.
+ */
+export function runningAppRelease(state: DesktopUpdateState | null): string | null {
+  return state?.productionBuild === true ? state.currentVersion : null;
 }
 
 /** What "Update now" does, shown wherever it is offered. */
@@ -131,17 +210,23 @@ export function getRestartToUpdateView(
   const appVersion = app ? appState.downloadedVersion : null;
   // The app already runs a newer release than the service (it updated on its
   // own, as on quit): the service catches up with one press too.
-  const running = appState?.currentVersion ?? null;
+  const running = runningAppRelease(appState);
   const ready = serviceState !== null && isServiceUpdateReady(serviceState);
+  const failedWithRelease = isServiceErrorWithRelease(serviceState);
   const behind =
     isServiceBehindApp(serviceState, appVersion) || isServiceBehindApp(serviceState, running);
   // The service installs the newest of the agent's release and the app's versions.
-  const candidate = serviceInstallTarget(serviceState, appVersion, running);
+  const candidate = serviceInstallTarget(
+    serviceState,
+    appVersion,
+    running,
+    appState?.availableVersion,
+  );
   // The agent reports "installing" a moment after the request; until then the
   // service half is already handled and must not be offered again.
   const service =
     serviceState !== null &&
-    (ready || behind) &&
+    (ready || behind || failedWithRelease) &&
     (serviceRequestedVersion === null || candidate !== serviceRequestedVersion);
   if (!app && !service) return null;
 
@@ -149,6 +234,11 @@ export function getRestartToUpdateView(
   const version = appVersion ?? serviceVersion;
   const installFailed = app && appState.errorContext === "install";
   const failure = installFailed ? appState.message?.trim() : undefined;
+  // The agent's own words for the failure Update now gets past stay beside the action.
+  const serviceFailure =
+    service && isServiceErrorWithRelease(serviceState)
+      ? serviceState.message.replace(/\.?$/, ".")
+      : null;
   // Nothing is on disk yet when only the running app is ahead: say what runs.
   const what =
     app || ready || !serviceState?.installedVersion
@@ -158,6 +248,7 @@ export function getRestartToUpdateView(
   const parts = service
     ? [
         failure ? `The last install failed: ${failure}` : null,
+        serviceFailure,
         what,
         SERVICE_UPDATE_NOW_DESCRIPTION,
         app ? "The service updates first, then the app restarts on its own." : null,
@@ -263,6 +354,69 @@ export interface ServiceUpdateProgress {
    * on its own and the work stays stopped, so "Update now" is not offered again.
    */
   readonly holdUntil?: number;
+  /**
+   * The agent answered that its feed does not offer the version asked for, so
+   * asking the service again fails the same way until it does.
+   */
+  readonly unavailable?: boolean;
+  /**
+   * The service restarted under this window's request, and the window stops
+   * and holds its work again: the toast says so until that stop answers, or
+   * a look finds the work held when it did not.
+   */
+  readonly serviceRestarted?: boolean;
+}
+
+/** `progress` showing, or no longer showing, that the service restarted under it. */
+export function markServiceRestarted(
+  progress: ServiceUpdateProgress,
+  restarted: boolean,
+): ServiceUpdateProgress {
+  if ((progress.serviceRestarted === true) === restarted) return progress;
+  if (restarted) return { ...progress, serviceRestarted: true };
+  const { serviceRestarted: _restarted, ...rest } = progress;
+  return rest;
+}
+
+/** A failure that asking the service again repeats: its agent lacks the release. */
+export function isReleaseUnavailableFailure(progress: ServiceUpdateProgress | null): boolean {
+  return progress?.phase === "failed" && progress.unavailable === true;
+}
+
+// The agent has found a release in these states, on disk or not yet.
+const AGENT_HAS_RELEASE: ReadonlySet<StudioServiceUpdateState["status"]> = new Set([
+  "available",
+  "downloading",
+  "downloaded",
+  "waiting-for-quiet",
+]);
+
+/**
+ * The agent offers `version`, or a newer release, for the service to install,
+ * so a request for it no longer fails for want of the release.
+ */
+export function agentOffersRelease(
+  state: StudioServiceUpdateState | null,
+  version: string | null,
+): boolean {
+  if (state === null) return false;
+  if (!AGENT_HAS_RELEASE.has(state.status) && !isServiceErrorWithRelease(state)) return false;
+  const offered = serviceUpdateVersion(state);
+  return offered !== null && (offered === version || isOlderRelease(version, offered));
+}
+
+/** `progress` without the mark of a release the agent lacks. */
+function withoutUnavailable(progress: ServiceUpdateProgress): ServiceUpdateProgress {
+  if (progress.unavailable === undefined) return progress;
+  const { unavailable: _unavailable, ...rest } = progress;
+  return rest;
+}
+
+/** The state names `version`, or a newer release, as found or fetched. */
+function namesRelease(state: StudioServiceUpdateState, version: string): boolean {
+  return [state.downloadedVersion, state.availableVersion].some(
+    (found) => typeof found === "string" && (found === version || isOlderRelease(version, found)),
+  );
 }
 
 /**
@@ -359,7 +513,7 @@ export function retryServiceUpdateProgress(
   const offered =
     progress.phase === "failed" && agent !== null ? serviceUpdateVersion(agent) : null;
   return {
-    ...progress,
+    ...withoutUnavailable(progress),
     phase: "stopping",
     message: null,
     blockers: [],
@@ -397,6 +551,35 @@ function hasCompletedRequestedInstall(
   return progress.previousInstallAt !== undefined && receipt.at !== progress.previousInstallAt;
 }
 
+/** The agent wrote `state` after this attempt was requested, so it answers it. */
+function answersRequest(progress: ServiceUpdateProgress, state: StudioServiceUpdateState): boolean {
+  const written = updatedAtMs(state);
+  return written !== null && progress.requestedAt !== undefined && written >= progress.requestedAt;
+}
+
+/** The agent wrote `state` before this attempt was requested: it answers an earlier one. */
+function writtenBeforeRequest(
+  progress: ServiceUpdateProgress,
+  state: StudioServiceUpdateState,
+): boolean {
+  const written = updatedAtMs(state);
+  return written !== null && progress.requestedAt !== undefined && written < progress.requestedAt;
+}
+
+/**
+ * The agent wrote `state` once the install was first seen, so it follows that
+ * install. A state without its write time, or an older one (a reply read
+ * before the install began), says nothing new.
+ */
+function writtenSinceInstallBegan(
+  progress: ServiceUpdateProgress,
+  state: StudioServiceUpdateState,
+): boolean {
+  const written = updatedAtMs(state);
+  if (written === null) return false;
+  return progress.installingSince === undefined || written >= progress.installingSince;
+}
+
 const SERVICE_STILL_BUSY: ReadonlySet<StudioServiceUpdateState["status"]> = new Set([
   "installing",
   "error",
@@ -409,7 +592,15 @@ export function advanceServiceUpdateProgress(
   state: StudioServiceUpdateState | null,
   now?: number,
 ): ServiceUpdateProgress {
-  if (state === null || progress.phase === "restarting" || progress.phase === "stopping") {
+  // A failed attempt stays failed: an answer already on its way when it failed
+  // (a read of the agent, the reply to its request) does not take it up again.
+  // Only a press asks anew.
+  if (
+    state === null ||
+    progress.phase === "restarting" ||
+    progress.phase === "stopping" ||
+    progress.phase === "failed"
+  ) {
     return progress;
   }
   const target = progress.targetVersion;
@@ -432,7 +623,12 @@ export function advanceServiceUpdateProgress(
   if (isStaleServiceAnswer(progress, state, now)) return progress;
   switch (state.status) {
     case "installing": {
-      const since = progress.installingSince ?? now;
+      // Timed from when the agent wrote it, not from when this window read it:
+      // a read answered late, after the agent already left the install for
+      // another pass, must not hide what the agent wrote since.
+      const since =
+        progress.installingSince ??
+        (now === undefined ? undefined : Math.min(now, updatedAtMs(state) ?? now));
       if (now !== undefined && since !== undefined && now - since >= INSTALL_TIMEOUT_MS) {
         return {
           ...progress,
@@ -450,16 +646,58 @@ export function advanceServiceUpdateProgress(
     }
     case "up-to-date":
     case "available":
+    case "disabled":
       // The agent left installing without the new version: the install was rolled back.
-      return progress.phase === "installing"
-        ? {
-            ...progress,
-            phase: "failed",
-            message:
-              state.message ??
-              `The update was rolled back; SpecWithCode stayed on ${state.installedVersion ?? "its current version"}.`,
-          }
-        : progress;
+      if (progress.phase === "installing" && state.status !== "disabled") {
+        return {
+          ...progress,
+          phase: "failed",
+          message:
+            state.message ??
+            `The update was rolled back; SpecWithCode stayed on ${state.installedVersion ?? "its current version"}.`,
+        };
+      }
+      // The agent ran for this request and found nothing to install: its feed
+      // does not offer the version asked for, so waiting would never end. A
+      // request still pending was not seen by that pass (it read the config
+      // just before the request was written), nor was one whose release the
+      // state names: the agent has it.
+      if (
+        state.status !== "available" &&
+        answersRequest(progress, state) &&
+        (state.pendingInstall ?? null) === null &&
+        target !== null &&
+        !namesRelease(state, target)
+      ) {
+        return {
+          ...progress,
+          phase: "failed",
+          message: `SpecWithCode ${target} is not available to the service on this Mac yet.`,
+          unavailable: true,
+        };
+      }
+      return progress;
+    case "downloading":
+    case "downloaded": {
+      // Written for an earlier request (a cancel's "Update cancelled", say):
+      // not what the agent does for this one.
+      if (writtenBeforeRequest(progress, state)) return progress;
+      // Only a download under way gets words of its own; once it is fetched
+      // the agent's own message, or none, replaces them.
+      const message =
+        state.status === "downloading"
+          ? (state.message ?? (target !== null ? `Downloading SpecWithCode ${target}…` : null))
+          : state.message;
+      // The agent left the install for another pass that fetches or checks
+      // again: nothing installs now, and the next install is timed on its own.
+      if (progress.phase === "installing") {
+        if (!writtenSinceInstallBegan(progress, state)) return progress;
+        const { installingSince: _previous, ...rest } = progress;
+        return { ...rest, phase: "requesting", message };
+      }
+      // The agent fetches the release for this request: say so instead of a check.
+      return message === progress.message ? progress : { ...progress, message };
+    }
     case "waiting-for-quiet": {
       // The agent went back to waiting (it retries after new work started),
       // so the next install is timed on its own.
@@ -668,6 +906,10 @@ export const RESTART_WHEN_IDLE_NOTE =
 export const APP_RESTART_UNKNOWN =
   "Restart to install the update now?\nSpecWithCode could not check for running work. Any running task is interrupted.";
 
+/** What the toast says while the work of a restarted service is held again. */
+export const SERVICE_RESTARTED =
+  "The SpecWithCode service restarted. Holding its work again, then installing…";
+
 export interface ServiceUpdateToastView {
   readonly type: "loading" | "warning" | "success" | "error";
   readonly title: string;
@@ -727,6 +969,9 @@ export function serviceUpdateToast(
         progress.fromVersion && progress.fromVersion !== progress.targetVersion
           ? `The SpecWithCode service on this Mac still runs ${progress.fromVersion}. `
           : "";
+      // The work listed was the restarted service's: until the stop that holds
+      // the work again says what runs now, the restart is what the toast says.
+      const restarted = progress.serviceRestarted === true ? SERVICE_RESTARTED : "";
       // A forced request with nothing left running is the agent's own check, not a wait.
       const warn = waitedLong && (!forced || progress.phase === "waiting" || blockers !== "");
       return {
@@ -736,7 +981,7 @@ export function serviceUpdateToast(
           : forced
             ? `Updating to ${version}${clock}`
             : `Preparing to install ${version}${clock}`,
-        description: running + (blockers || progress.message || fallback),
+        description: running + (restarted || blockers || progress.message || fallback),
         action: forced ? null : "update-now",
         cancel: true,
       };

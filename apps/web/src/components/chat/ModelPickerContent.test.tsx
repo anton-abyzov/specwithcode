@@ -38,10 +38,21 @@ vi.mock("../ui/combobox", () => ({
   ),
 }));
 vi.mock("./ModelListRow", () => ({
-  ModelListRow: ({ model }: { model: { name: string } }) => <div data-model-row>{model.name}</div>,
+  ModelListRow: ({
+    model,
+    disabledReason,
+  }: {
+    model: { name: string };
+    disabledReason?: string | null;
+  }) => (
+    <div data-model-row data-disabled-reason={disabledReason ?? undefined}>
+      {model.name}
+    </div>
+  ),
 }));
 
 import { ModelPickerContent } from "./ModelPickerContent";
+import type { ModelPickerUsage } from "./ModelUsage";
 
 const instanceId = ProviderInstanceId.make("copilot");
 const ready = deriveProviderInstanceEntries([
@@ -233,5 +244,107 @@ describe("model picker one-click setup", () => {
     };
     await mount({ quickSetup: quickSetup({ elsewhere: [grok], canManage: false }) });
     expect(button("Turn on here")!.disabled).toBe(true);
+  });
+});
+
+describe("model picker when the chosen provider can't run here", () => {
+  it("lists ready providers' models under the unprepared one instead of an empty picker", async () => {
+    const codexId = ProviderInstanceId.make("codex");
+    const [codex] = deriveProviderInstanceEntries([
+      {
+        ...ready.snapshot,
+        instanceId: codexId,
+        driver: ProviderDriverKind.make("codex"),
+        displayName: "Codex",
+        status: "ready",
+        auth: { status: "authenticated" },
+      },
+    ]);
+    const unprepared = {
+      ...ready,
+      displayName: "Copilot managed",
+      installed: false,
+      isAvailable: false,
+      status: "warning" as const,
+      snapshot: { ...ready.snapshot, installed: false, status: "warning" as const },
+    };
+    const install = vi.fn();
+    const { onInstanceModelChange } = await mount({
+      model: "claude-opus-5.5",
+      instanceEntries: [unprepared, codex!],
+      modelOptionsByInstance: new Map([
+        [instanceId, [{ slug: "claude-opus-5.5", name: "Claude Opus 5.5" }]],
+        [codexId, [{ slug: "gpt-6.1-sol", name: "GPT-6.1-Sol" }]],
+      ]),
+      onOpenProviderSetup: vi.fn(),
+      quickSetup: {
+        installable: new Map([[instanceId, "github-copilot-cli"]]),
+        elsewhere: [],
+        canManage: true,
+        pending: new Set<string>(),
+        errors: new Map<string, string>(),
+        install,
+        enableHere: vi.fn(),
+      },
+    });
+    const rows = [...container.querySelectorAll("[data-model-row]")].map((row) => row.textContent);
+    expect(rows).toEqual(["GPT-6.1-Sol"]);
+    expect(container.textContent).toContain("Copilot managed can't run on this machine yet.");
+    // Installing stays the user's choice.
+    expect(button("Install Copilot managed")).toBeDefined();
+    expect(install).not.toHaveBeenCalled();
+    expect(onInstanceModelChange).not.toHaveBeenCalled();
+  });
+});
+
+describe("model picker usage limits", () => {
+  const spent: ModelPickerUsage = {
+    connected: true,
+    machineLabel: "Studio Mac",
+    running: null,
+    nowMs: Date.parse("2026-10-12T12:00:00.000Z"),
+    availability: () => ({
+      kind: "exhausted",
+      binding: { label: "Weekly", scope: "account", family: null, resetsAt: null },
+      checkedAt: 0,
+      providerAllows: false,
+    }),
+    text: () => ({
+      short: "Weekly limit reached",
+      long: "The weekly limit is used up.",
+      tone: "full",
+    }),
+    blockedReason: () => "The weekly limit is used up.",
+    formatAt: () => "6:00 PM",
+  };
+  const options = new Map([
+    [
+      instanceId,
+      [
+        { slug: "alpha", name: "Alpha" },
+        { slug: "beta", name: "Beta" },
+      ],
+    ],
+  ]);
+  const rowReason = (name: string) =>
+    [...container.querySelectorAll("[data-model-row]")]
+      .find((node) => node.textContent === name)
+      ?.getAttribute("data-disabled-reason") ?? null;
+
+  it("disables a spent model and names why", async () => {
+    await mount({ model: "alpha", modelOptionsByInstance: options, usage: spent });
+    expect(rowReason("Beta")).toBe("The weekly limit is used up.");
+  });
+
+  it("lets a spent model already in a multi-selection be taken out", async () => {
+    await mount({
+      model: "alpha",
+      modelOptionsByInstance: options,
+      usage: spent,
+      selectedModels: [{ instanceId, model: "alpha" }],
+      onToggleModel: vi.fn(),
+    });
+    expect(rowReason("Alpha")).toBeNull();
+    expect(rowReason("Beta")).toBe("The weekly limit is used up.");
   });
 });

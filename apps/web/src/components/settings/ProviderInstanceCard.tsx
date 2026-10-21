@@ -488,6 +488,11 @@ interface ProviderInstanceCardProps {
    */
   readonly onDelete?: (() => void) | undefined;
   /**
+   * The server turned this provider on at startup because its CLI was
+   * installed and signed in. Shows a notice with an Undo while it stays on.
+   */
+  readonly autoEnabled?: boolean | undefined;
+  /**
    * Optional outer reset button rendered next to the driver icon. Built-in
    * default slots supply a reset-to-factory control here; custom instances
    * omit it.
@@ -548,6 +553,7 @@ export function ProviderInstanceCard({
   canWriteSettings = true,
   onUpdate,
   onDelete,
+  autoEnabled = false,
   headerAction,
   setup,
   runtime,
@@ -879,6 +885,32 @@ export function ProviderInstanceCard({
     </Popover>
   ) : null;
 
+  const autoEnabledNotice =
+    autoEnabled && enabled ? (
+      <span
+        data-testid="provider-auto-enabled-notice"
+        className="pointer-events-auto relative z-10 mt-1 flex flex-wrap items-center gap-x-1.5 text-xs text-muted-foreground"
+      >
+        Turned on automatically because its CLI is signed in.
+        <button
+          type="button"
+          className="font-medium text-foreground underline-offset-2 hover:underline disabled:opacity-50"
+          disabled={readOnly}
+          aria-label={`Undo: turn off ${displayName}`}
+          onClick={(event) => {
+            // The notice unmounts with this button; keep focus on the card's switch.
+            const card = event.currentTarget.closest('[data-slot="settings-row"], section');
+            updateEnabled(false);
+            requestAnimationFrame(() =>
+              card?.querySelector<HTMLElement>('[role="switch"]')?.focus(),
+            );
+          }}
+        >
+          Undo
+        </button>
+      </span>
+    ) : null;
+
   if (mode === "list") {
     return (
       <div
@@ -926,6 +958,7 @@ export function ProviderInstanceCard({
                 </span>
               </ProviderStatusDiagnostic>
             </span>
+            {autoEnabledNotice}
           </span>
         </div>
         <span className="flex h-5 shrink-0 items-center">
@@ -1006,6 +1039,7 @@ export function ProviderInstanceCard({
                   {editorStatusNode}
                 </div>
               </ProviderStatusDiagnostic>
+              {autoEnabledNotice}
               {urlAuthAction && onAcceptUrlAuth ? (
                 <div className="grid max-w-xl gap-1.5 pt-1 text-xs">
                   <p>{urlAuthAction.message}</p>

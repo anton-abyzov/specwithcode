@@ -10,7 +10,9 @@ import {
   type FolderCopyUndoResult,
 } from "@specweave-studio/contracts";
 import {
-  CHOICE_TEXT,
+  type ChoiceMachines,
+  choiceText,
+  copyRowTitle,
   DEFAULT_COPY_SELECTION,
   EXACT_COPY_SELECTION,
   FILE_CLASS_ORDER,
@@ -125,11 +127,17 @@ export function CopyPlanPreview({
   onDecide,
   onClone,
   disabled,
+  machines,
+  rootLabel,
 }: {
   readonly status: FolderCopyStatus;
   readonly onDecide: (decisions: Readonly<Record<string, FolderCopyChoice>>) => void;
   readonly onClone: (rowId: string, clone: boolean) => void;
   readonly disabled: boolean;
+  /** Names the machines in each choice instead of "this machine" and "the source". */
+  readonly machines?: ChoiceMachines;
+  /** Title of the row for the folder's own root, such as the project name. */
+  readonly rootLabel?: string;
 }) {
   const totals = status.totals;
   return (
@@ -150,6 +158,8 @@ export function CopyPlanPreview({
             onDecide={onDecide}
             onClone={onClone}
             disabled={disabled}
+            {...(machines ? { machines } : {})}
+            {...(rootLabel ? { rootLabel } : {})}
           />
         ))}
       </ul>
@@ -165,8 +175,8 @@ export function CopyPlanPreview({
         <Note key={warning}>{warning}</Note>
       ))}
       <p className="text-xs text-muted-foreground">
-        Nothing on this machine is overwritten without a backup. Undo restores the folder for 14
-        days.
+        Nothing on {machines?.here ?? "this machine"} is overwritten without a backup. Undo restores
+        the folder for 14 days.
       </p>
     </div>
   );
@@ -177,12 +187,17 @@ function CopyRow({
   onDecide,
   onClone,
   disabled,
+  machines,
+  rootLabel,
 }: {
   readonly row: FolderCopyRow;
   readonly onDecide: (decisions: Readonly<Record<string, FolderCopyChoice>>) => void;
   readonly onClone: (rowId: string, clone: boolean) => void;
   readonly disabled: boolean;
+  readonly machines?: ChoiceMachines;
+  readonly rootLabel?: string;
 }) {
+  const title = copyRowTitle(row, rootLabel);
   const open = row.conflicts.filter((conflict) => conflict.decision === null).length;
   const attention = (row.needsDecision && row.decision === null) || open > 0;
   const shared = (["keep-mine", "take-theirs"] as const).filter((choice) =>
@@ -202,9 +217,7 @@ function CopyRow({
         )}
         <div className="min-w-0 flex-1">
           <div className="flex flex-wrap items-baseline justify-between gap-x-3">
-            <span className="break-all font-medium">
-              {row.kind === "files" ? "Other files" : row.path || "Project root"}
-            </span>
+            <span className="break-all font-medium">{title}</span>
             <span className="text-xs text-muted-foreground">{ROW_STATUS_TEXT[row.status]}</span>
           </div>
           {row.detail && (
@@ -231,7 +244,7 @@ function CopyRow({
       )}
       {row.needsDecision && row.choices.length > 0 && (
         <RadioGroup
-          aria-label={`Choice for ${row.path || "project root"}`}
+          aria-label={`Choice for ${title}`}
           value={row.decision ?? ""}
           onValueChange={(value) => onDecide({ [row.id]: value as FolderCopyChoice })}
           disabled={disabled}
@@ -240,7 +253,7 @@ function CopyRow({
           {row.choices.map((choice) => (
             <label key={choice} className="flex cursor-pointer items-center gap-2 text-xs">
               <Radio value={choice} />
-              {CHOICE_TEXT[choice]}
+              {choiceText(choice, machines)}
             </label>
           ))}
         </RadioGroup>
@@ -261,7 +274,7 @@ function CopyRow({
                   className="rounded border px-2 py-1 hover:bg-accent/40 disabled:opacity-50"
                   onClick={() => onDecide({ [folderCopyAllConflictsKey(row.id)]: choice })}
                 >
-                  All: {CHOICE_TEXT[choice]}
+                  All: {choiceText(choice, machines)}
                 </button>
               ))}
             </div>
@@ -283,7 +296,7 @@ function CopyRow({
                   {conflict.choices.map((choice) => (
                     <label key={choice} className="flex cursor-pointer items-center gap-1.5">
                       <Radio value={choice} />
-                      {CHOICE_TEXT[choice]}
+                      {choiceText(choice, machines)}
                     </label>
                   ))}
                 </RadioGroup>

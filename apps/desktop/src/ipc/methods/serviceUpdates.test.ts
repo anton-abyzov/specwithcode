@@ -2,14 +2,50 @@
 import * as FS from "node:fs";
 import * as OS from "node:os";
 import * as Path from "node:path";
+import { it as effectIt } from "@effect/vitest";
+import type { DesktopUpdateState, StudioServiceUpdateState } from "@specweave-studio/contracts";
+import * as Duration from "effect/Duration";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
+import * as Queue from "effect/Queue";
+import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import { describe, expect, it, vi } from "vite-plus/test";
+import * as DesktopConfig from "../../app/DesktopConfig.ts";
+import * as DesktopEnvironmentModule from "../../app/DesktopEnvironment.ts";
 import type { DesktopEnvironment } from "../../app/DesktopEnvironment.ts";
+import * as DesktopLocalService from "../../backend/DesktopLocalService.ts";
 import type { AttachedLocalService } from "../../backend/DesktopLocalService.ts";
-import { makeServiceUpdateController } from "../../updates/studioServiceUpdates.ts";
+import * as ElectronWindow from "../../electron/ElectronWindow.ts";
+import * as DesktopAppSettings from "../../settings/DesktopAppSettings.ts";
+import * as DesktopUpdates from "../../updates/DesktopUpdates.ts";
+import {
+  makeServiceUpdateController,
+  SERVICE_AGENT_DISABLED_MESSAGE,
+  ServiceAgentError,
+  type ServiceUpdateController,
+} from "../../updates/studioServiceUpdates.ts";
+import * as DesktopIpc from "../DesktopIpc.ts";
+import * as IpcChannels from "../channels.ts";
 
 vi.mock("electron", () => ({}));
+
+// A test can swap in a controller that never touches launchd or the disk.
+const fake = vi.hoisted(() => ({ controller: null as ServiceUpdateController | null }));
+vi.mock("../../updates/studioServiceUpdates.ts", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../updates/studioServiceUpdates.ts")>();
+  return {
+    ...actual,
+    makeServiceUpdateController: (
+      input: Parameters<typeof actual.makeServiceUpdateController>[0],
+    ) => fake.controller ?? actual.makeServiceUpdateController(input),
+  };
+});
+
 import {
   appStartAgentRun,
+  installServiceUpdates,
   isStaleService,
   controllerForAttachedService,
   serviceCheckFor,
@@ -267,5 +303,307 @@ describe("serviceCheckFor", () => {
         asked: new Set(),
       }),
     ).toBeNull();
+  });
+});
+
+describe("installServiceUpdates", () => {
+  const frozen: StudioServiceUpdateState = {
+    status: "up-to-date",
+    identity: "m4",
+    installedVersion: "1.0.60",
+    availableVersion: null,
+    downloadedVersion: null,
+    checkedAt: null,
+    quietSince: null,
+    message: null,
+    lastInstall: null,
+  };
+  const appState = (availableVersion: string | null) =>
+    ({
+      enabled: true,
+      status: availableVersion === null ? "idle" : "available",
+      channel: "latest",
+      currentVersion: "1.0.60",
+      hostArch: "arm64",
+      appArch: "arm64",
+      runningUnderArm64Translation: false,
+      availableVersion,
+      downloadedVersion: null,
+      releaseNotes: [],
+      omittedReleaseCount: 0,
+      downloadPercent: null,
+      checkedAt: null,
+      message: null,
+      errorContext: null,
+      canRetry: false,
+      productionBuild: true,
+    }) satisfies DesktopUpdateState;
+  // Real promises (the agent's launchctl calls) settle outside the test clock.
+  // @effect-diagnostics-next-line globalTimers:off -- A real macrotask, which the test clock does not run.
+  const settle = Effect.promise(() => new Promise<void>((resolve) => setTimeout(resolve, 5)));
+  const settleAll = Effect.gen(function* () {
+    for (let step = 0; step < 5; step += 1) yield* settle;
+  });
+  // The states the desktop sent its windows.
+  const published: StudioServiceUpdateState[] = [];
+
+  /**
+   * Installs the service-update IPC with `controller` and lets the app settle,
+   * so its own agent run is done; then `afterStart` publishes the app's update
+   * states and reads what Settings would show.
+   */
+  const withServiceUpdates = (
+    controller: ServiceUpdateController,
+    afterStart: (
+      appChanges: Queue.Queue<DesktopUpdateState>,
+      readState: Effect.Effect<StudioServiceUpdateState>,
+    ) => Effect.Effect<void>,
+  ) => {
+    fake.controller = controller;
+    const handlers = new Map<string, DesktopIpc.DesktopIpcHandleListener>();
+    const ipcMain: DesktopIpc.DesktopIpcMain = {
+      handle: (channel, listener) => void handlers.set(channel, listener),
+      removeHandler: (channel) => void handlers.delete(channel),
+      on: () => undefined,
+      removeAllListeners: () => undefined,
+    };
+    const readState = Effect.promise(
+      async () =>
+        (await handlers.get(IpcChannels.SERVICE_UPDATE_GET_STATE_CHANNEL)!(
+          { sender: { id: 1 } },
+          undefined,
+        )) as StudioServiceUpdateState,
+    );
+    return Effect.gen(function* () {
+      const changes = yield* Queue.unbounded<DesktopUpdateState>();
+      const layer = Layer.mergeAll(
+        DesktopIpc.layer(ipcMain),
+        Layer.succeed(DesktopEnvironmentModule.DesktopEnvironment, {
+          homeDirectory: "/synthetic/home",
+          platform: "darwin",
+          appVersion: "1.0.60",
+          resolveResourcePathCandidates: () => [],
+          path: Path,
+          rootDir: "/synthetic/root",
+        } as unknown as DesktopEnvironment["Service"]),
+        DesktopAppSettings.layerTest(),
+        DesktopConfig.layerTest({}),
+        Layer.succeed(ElectronWindow.ElectronWindow, {
+          sendAll: (channel: string, value: unknown) =>
+            Effect.sync(() => {
+              if (channel === IpcChannels.SERVICE_UPDATE_STATE_CHANNEL) {
+                published.push(value as StudioServiceUpdateState);
+              }
+            }),
+        } as unknown as ElectronWindow.ElectronWindow["Service"]),
+        Layer.succeed(DesktopUpdates.DesktopUpdates, {
+          subscribe: Effect.succeed({
+            latest: appState(null),
+            changes: Stream.fromQueue(changes),
+          }),
+          applyPreferences: Effect.void,
+        } as unknown as DesktopUpdates.DesktopUpdates["Service"]),
+        Layer.succeed(DesktopLocalService.DesktopLocalService, {
+          attached: Effect.succeed(Option.none()),
+        } as unknown as DesktopLocalService.DesktopLocalService["Service"]),
+      );
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          yield* installServiceUpdates();
+          // The app settles and runs its own agent pass.
+          yield* TestClock.adjust(Duration.seconds(20));
+          yield* settleAll;
+          yield* afterStart(changes, readState);
+        }),
+      ).pipe(Effect.provide(layer));
+    }).pipe(
+      Effect.provide(TestClock.layer()),
+      Effect.ensuring(
+        Effect.sync(() => {
+          fake.controller = null;
+        }),
+      ),
+    );
+  };
+
+  /** A controller for the m4 installation whose agent runs report as `ensureAgent` does. */
+  const controllerWith = (
+    overrides: Pick<ServiceUpdateController, "ensureAgent"> & Partial<ServiceUpdateController>,
+    kicks: string[],
+  ): ServiceUpdateController => ({
+    installation: () => ({ identity: "m4", studioHome: "/synthetic/m4", version: "1.0.60" }),
+    readState: () => frozen,
+    writeConfig: () => undefined,
+    runAgentNow: async () => {
+      kicks.push("runAgentNow");
+    },
+    repairAgent: async () => undefined,
+    pendingForcedInstall: () => false,
+    ...overrides,
+  });
+
+  effectIt.effect(
+    "keeps a turned-off agent's failure when the app finds a release on its own",
+    () => {
+      const configs: Array<Record<string, unknown>> = [];
+      const kicks: string[] = [];
+      const controller = controllerWith(
+        {
+          writeConfig: (input) => {
+            configs.push({ ...input });
+          },
+          // launchd has the agent's label turned off.
+          ensureAgent: async () => {
+            kicks.push("ensureAgent");
+            throw new ServiceAgentError({
+              step: "disabled",
+              message: SERVICE_AGENT_DISABLED_MESSAGE,
+            });
+          },
+        },
+        kicks,
+      );
+      return withServiceUpdates(controller, (appChanges, readState) =>
+        Effect.gen(function* () {
+          // The app's own agent run found the label turned off, and says the
+          // failure is its own, so no window offers a forced request for it.
+          expect(yield* readState).toMatchObject({
+            status: "error",
+            message: SERVICE_AGENT_DISABLED_MESSAGE,
+            agentStartFailed: true,
+          });
+
+          // Hours later the app finds a release the service does not know.
+          yield* Queue.offer(appChanges, appState("1.0.61"));
+          yield* settleAll;
+          // The agent was asked to check...
+          expect(configs.at(-1)).toMatchObject({ checkRequestedAt: expect.any(String) });
+          expect(kicks.filter((kick) => kick === "ensureAgent")).toHaveLength(2);
+          // ...and Settings still says why it cannot run, not a frozen "up to date".
+          expect(yield* readState).toMatchObject({
+            status: "error",
+            message: SERVICE_AGENT_DISABLED_MESSAGE,
+            agentStartFailed: true,
+          });
+        }),
+      );
+    },
+  );
+
+  effectIt.effect("sends its windows the agent's state as soon as it asks for a check", () => {
+    const kicks: string[] = [];
+    let current = frozen;
+    const controller = controllerWith(
+      {
+        readState: () => current,
+        writeConfig: (input) => {
+          // The agent wrote a newer state since the windows last heard.
+          if (input.checkRequestedAt !== undefined) {
+            current = { ...frozen, checkedAt: "2026-10-20T10:00:00.000Z" };
+          }
+        },
+        ensureAgent: async () => {
+          kicks.push("ensureAgent");
+        },
+      },
+      kicks,
+    );
+    return withServiceUpdates(controller, (appChanges) =>
+      Effect.gen(function* () {
+        published.length = 0;
+        // Well before the next 20-second look at the agent's state.
+        yield* Queue.offer(appChanges, appState("1.0.61"));
+        yield* settleAll;
+        // Not the desktop's own failure, and it says so: a window then trusts
+        // the agent's words for a refusal Update now gets past.
+        expect(published.at(-1)).toMatchObject({
+          checkedAt: "2026-10-20T10:00:00.000Z",
+          agentStartFailed: false,
+        });
+      }),
+    );
+  });
+
+  effectIt.effect("never shows a failure of a check nobody asked for", () => {
+    const configs: Array<Record<string, unknown>> = [];
+    const kicks: string[] = [];
+    const controller = controllerWith(
+      {
+        writeConfig: (input) => {
+          configs.push({ ...input });
+        },
+        // The app start's run works; by the time the app finds a release, launchd has the label turned off.
+        ensureAgent: async () => {
+          kicks.push("ensureAgent");
+          if (kicks.filter((kick) => kick === "ensureAgent").length === 1) return;
+          throw new ServiceAgentError({
+            step: "disabled",
+            message: SERVICE_AGENT_DISABLED_MESSAGE,
+          });
+        },
+      },
+      kicks,
+    );
+    return withServiceUpdates(controller, (appChanges, readState) =>
+      Effect.gen(function* () {
+        expect(yield* readState).toMatchObject({ status: "up-to-date" });
+        yield* Queue.offer(appChanges, appState("1.0.61"));
+        yield* settleAll;
+        expect(configs.at(-1)).toMatchObject({ checkRequestedAt: expect.any(String) });
+        expect(kicks.filter((kick) => kick === "ensureAgent")).toHaveLength(2);
+        expect(yield* readState).toMatchObject({ status: "up-to-date", agentStartFailed: false });
+      }),
+    );
+  });
+
+  effectIt.effect("does not run the agent for a check it could not write", () => {
+    const kicks: string[] = [];
+    const controller = controllerWith(
+      {
+        writeConfig: (input) => {
+          if (input.checkRequestedAt !== undefined) throw new Error("disk full");
+        },
+        ensureAgent: async () => {
+          kicks.push("ensureAgent");
+        },
+      },
+      kicks,
+    );
+    return withServiceUpdates(controller, (appChanges) =>
+      Effect.gen(function* () {
+        const before = kicks.length;
+        yield* Queue.offer(appChanges, appState("1.0.61"));
+        yield* settleAll;
+        expect(kicks.slice(before)).toEqual([]);
+      }),
+    );
+  });
+
+  effectIt.effect("passes later releases on while an agent refresh hangs", () => {
+    const configs: Array<Record<string, unknown>> = [];
+    const kicks: string[] = [];
+    const controller = controllerWith(
+      {
+        writeConfig: (input) => {
+          configs.push({ ...input });
+        },
+        // launchctl hangs from the first check nobody asked for on.
+        ensureAgent: () => {
+          kicks.push("ensureAgent");
+          const runs = kicks.filter((kick) => kick === "ensureAgent").length;
+          return runs === 1 ? Promise.resolve() : new Promise<void>(() => undefined);
+        },
+      },
+      kicks,
+    );
+    return withServiceUpdates(controller, (appChanges) =>
+      Effect.gen(function* () {
+        yield* Queue.offer(appChanges, appState("1.0.61"));
+        yield* settleAll;
+        yield* Queue.offer(appChanges, appState("1.0.62"));
+        yield* settleAll;
+        expect(configs.filter((config) => config.checkRequestedAt !== undefined)).toHaveLength(2);
+      }),
+    );
   });
 });
