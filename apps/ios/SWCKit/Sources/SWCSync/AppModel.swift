@@ -427,6 +427,9 @@ public protocol AppEngine: AnyObject {
   func respond(to requestId: String, in target: ChatTarget, decision: ApprovalDecision) async throws
 
   func perform(_ action: ThreadAction, on thread: ThreadRef) async throws
+  func handoffOptions(for thread: ThreadRef) async throws -> HandoffOptions
+  func checkHandoff(_ thread: ThreadRef, destination: HandoffDestination) async throws -> HandoffCheck
+  func continueThread(_ thread: ThreadRef, destination: HandoffDestination) async throws -> ThreadRef
   func setupAide() async throws -> ProjectRef
 
   func loadProjectSettings(_ project: ProjectRef) async throws -> ProjectSettingsDraft
@@ -447,6 +450,16 @@ public protocol AppEngine: AnyObject {
 }
 
 extension AppEngine {
+  public func handoffOptions(for thread: ThreadRef) async throws -> HandoffOptions {
+    throw SyncError.sendBlocked("Handoff is unavailable on this machine.")
+  }
+  public func checkHandoff(_ thread: ThreadRef, destination: HandoffDestination) async throws -> HandoffCheck {
+    throw SyncError.sendBlocked("Handoff is unavailable on this machine.")
+  }
+  public func continueThread(_ thread: ThreadRef, destination: HandoffDestination) async throws -> ThreadRef {
+    throw SyncError.sendBlocked("Handoff is unavailable on this machine.")
+  }
+
   public func pair(link: String, expectedEnvironmentId: String?) async throws -> MachineSummary {
     try await pair(link: link)
   }

@@ -109,6 +109,8 @@ final class FakeMachine: Sendable {
 
   let requests = Recorder<JSONValue>()
   private let failures = Mutex<[String: String]>([:])
+  private let answers = Mutex<[String: String]>([:])
+  func answer(_ tag: String, with json: String) { answers.withLock { $0[tag] = json } }
   /// What `server.getConfig` answers.
   let configJSON: String
 
@@ -148,6 +150,7 @@ final class FakeMachine: Sendable {
       if let error = failures.withLock({ $0.removeValue(forKey: tag) }) {
         return [#"{"_tag":"Exit","requestId":\#(id),"exit":{"_tag":"Failure","cause":[{"_tag":"Fail","error":\#(error)}]}}"#]
       }
+      if let answer = answers.withLock({ $0[tag] }) { return [Self.exit(id, answer)] }
       switch tag {
       case "server.getConfig":
         return [Self.exit(id, configJSON)]

@@ -2,7 +2,7 @@
 
 During an owned restart, sessions that already existed reconnect and advance only
 their `last_connected_at`: the supported web session (M4 browser cookie, or the paired
-worker relay's web bearer) and the desktop app's own sessions on that service. A
+worker relay's web bearer) and the desktop and phone apps' own sessions on that service. A
 connect may also report the app version its client now runs (`client_app_version`,
 witness version 5), with or without advancing the heartbeat: the server writes the version
 first and stamps the heartbeat only on a session's first open connection. No new session,
@@ -28,6 +28,12 @@ MAX_WEB_HEARTBEATS = {'m4': 2, 'm1': 1, 'm3': 1}
 # The desktop app signs in with an access token and reports the desktop surface.
 DESKTOP_SESSION_METHODS = ('bearer-access-token', 'dpop-access-token')
 MAX_DESKTOP_HEARTBEATS = 4
+# A phone or tablet app (apps/ios, apps/mobile) signs in the same ways, directly or over the
+# relay, and reports the mobile surface (MachineConnection.swift: clientSurface=mobile).
+MOBILE_SESSION_METHODS = DESKTOP_SESSION_METHODS
+MAX_MOBILE_HEARTBEATS = 4
+SESSION_KIND_NAMES = {'web': 'existing-web-session', 'desktop': 'existing-desktop-app-session',
+                      'mobile': 'existing-mobile-app-session'}
 # What a connect reports besides its heartbeat (AuthSessions.ts setClientConnectionRow): the
 # version of the app or page that connected, for the sessions list only. A desktop app or a page
 # reloaded into the new release reports it on every connect, committed before the heartbeat (ws.ts
@@ -119,15 +125,17 @@ def assert_only_auth_hash_changed(before, after):
 
 
 def active_session(auth, row, instant, identity, web_session_policy=None):
-    """'web' or 'desktop' for an active session allowed to heartbeat; raises otherwise."""
+    """'web', 'desktop' or 'mobile' for an active session allowed to heartbeat; raises otherwise."""
     fields = dict(zip(auth['columns'], row))
     assert fields['revoked_at'] is None, 'Heartbeat session is revoked'
     if fields['method'] == session_policy(identity, web_session_policy)[0] and fields['client_surface'] == 'web':
         kind = 'web'
     elif fields['method'] in DESKTOP_SESSION_METHODS and fields['client_surface'] == 'desktop':
         kind = 'desktop'
+    elif fields['method'] in MOBILE_SESSION_METHODS and fields['client_surface'] == 'mobile':
+        kind = 'mobile'
     else:
-        raise AssertionError('Heartbeat is not the supported existing web-browser session or a desktop-app session')
+        raise AssertionError('Heartbeat is not the supported existing web-browser session or a desktop-app or phone-app session')
     assert utc_timestamp(fields['issued_at']) <= instant < utc_timestamp(fields['expires_at']), 'Heartbeat session is not active'
     return kind
 
@@ -140,7 +148,7 @@ def active_browser(auth, row, instant, identity, web_session_policy=None):
 def session_name(auth, row, kind):
     """Names a heartbeating session in a receipt without its identifier or credential."""
     fields = dict(zip(auth['columns'], row))
-    return {'kind': 'existing-web-session' if kind == 'web' else 'existing-desktop-app-session',
+    return {'kind': SESSION_KIND_NAMES[kind],
             'method': fields['method'], 'surface': fields['client_surface'],
             'sessionIdSha256': hashlib.sha256(('studio-auth-session-id-v1\n' + encoded(fields['session_id'])).encode()).hexdigest()}
 
@@ -172,7 +180,7 @@ def prove_restart_heartbeat(before, after, original, current, restart_started_at
     assert len(old_rows) == len(original['rows']) and len(new_rows) == len(current['rows']), 'Duplicate auth session identity'
     assert old_rows.keys() == new_rows.keys(), 'Auth session identities changed'
     changed = [(old, new_rows[key]) for key, old in old_rows.items() if old != new_rows[key]]
-    assert 1 <= len(changed) <= max_web + MAX_DESKTOP_HEARTBEATS, \
+    assert 1 <= len(changed) <= max_web + MAX_DESKTOP_HEARTBEATS + MAX_MOBILE_HEARTBEATS, \
         'Heartbeat exceeds the supported existing-session count'
     restored = copy.deepcopy(current)
     changes = []
@@ -203,8 +211,8 @@ def prove_restart_heartbeat(before, after, original, current, restart_started_at
             row[version] = old[version]
             changes[-1].update(beforeClientAppVersion=old[version], afterClientAppVersion=new[version])
         sessions.append({**session_name(current, new, kind), 'rowSha256': changes[-1]['rowSha256']})
-    assert kinds.count('web') <= max_web and kinds.count('desktop') <= MAX_DESKTOP_HEARTBEATS, \
-        'Heartbeat exceeds the supported existing-session count'
+    assert kinds.count('web') <= max_web and kinds.count('desktop') <= MAX_DESKTOP_HEARTBEATS \
+        and kinds.count('mobile') <= MAX_MOBILE_HEARTBEATS, 'Heartbeat exceeds the supported existing-session count'
     assert len({cell['rowSha256'] for cell in changes}) == len(changes), 'Duplicate heartbeat row fingerprint'
     bind_auth(restored, before)
     witness = {'schemaVersion': 1, 'changedColumn': 'last_connected_at', 'changedRows': len(changed),
@@ -220,8 +228,8 @@ def prove_restart_heartbeat(before, after, original, current, restart_started_at
                        timestampChanges=sorted(changes, key=lambda cell: cell['rowSha256']),
                        sessions=sorted(sessions, key=lambda cell: cell['rowSha256']))
         return witness
-    if 'desktop' in kinds or versioned:
-        # Version 3: any mix of the web session and existing desktop-app sessions, each named.
+    if 'desktop' in kinds or 'mobile' in kinds or versioned:
+        # Version 3: any mix of the web session and existing desktop or phone app sessions, each named.
         witness.update(schemaVersion=5 if versioned else 3, serviceIdentity=identity,
                        timestampChanges=sorted(changes, key=lambda cell: cell['rowSha256']),
                        sessions=sorted(sessions, key=lambda cell: cell['rowSha256']))
@@ -260,7 +268,7 @@ def restore_m4_timestamps(auth, changes, expected):
 def restore_timestamps(auth, changes, expected, *, versions=False):
     """Reverse uniquely bound cells privately, then bind the full table. With `versions`
     (witness version 5) a cell may also, or only, reverse the app version a connect reported."""
-    assert isinstance(changes, list) and 1 <= len(changes) <= max(MAX_WEB_HEARTBEATS.values()) + MAX_DESKTOP_HEARTBEATS, \
+    assert isinstance(changes, list) and 1 <= len(changes) <= max(MAX_WEB_HEARTBEATS.values()) + MAX_DESKTOP_HEARTBEATS + MAX_MOBILE_HEARTBEATS, \
         'Heartbeat change count is not supported'
     restored = copy.deepcopy(auth)
     timestamp = restored['columns'].index('last_connected_at')

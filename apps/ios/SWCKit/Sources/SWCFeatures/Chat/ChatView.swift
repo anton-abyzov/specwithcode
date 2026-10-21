@@ -32,11 +32,17 @@ private struct ChatScreen: View {
   @State private var renameText = ""
   @State private var confirmArchive = false
   @State private var confirmDelete = false
+  @State private var showingHandoff = false
 
   var body: some View {
     transcript
       .edgeBar(.bottom) { composerArea }
       .screenChrome { header }
+      .sheet(isPresented: $showingHandoff) {
+        if let thread = target.threadRef {
+          HandoffSheet(thread: thread) { next in nav.push(.chat(.thread(next))) }
+        }
+      }
       .onAppear { model.openSession(session) }
       .onDisappear { model.closeSession(session) }
       .task(id: router.pendingComposerFocus) {
@@ -331,6 +337,8 @@ private struct ChatScreen: View {
   @ViewBuilder private func threadMenu(_ ref: ThreadRef, summary: ThreadSummary?) -> some View {
     let pinned = summary?.isPinned ?? false
     let resolved = summary?.isResolved ?? false
+    Button("Continue on a machine", systemImage: "arrow.right.arrow.left") { showingHandoff = true }
+      .accessibilityIdentifier("thread.handoff")
     Section {
       Button(pinned ? "Unpin" : "Pin", systemImage: pinned ? "pin.slash" : "pin") {
         perform(pinned ? .unpin : .pin, on: ref)

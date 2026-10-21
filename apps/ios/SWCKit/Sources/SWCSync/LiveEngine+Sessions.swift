@@ -365,6 +365,8 @@ extension LiveEngine {
   func blockedReason(_ target: ChatTarget, entry: MachineEntry, project: ProjectShell?, threadArchived: Bool, threadDeleted: Bool = false) -> String? {
     // A coordinator send starts a new thread, so only a thread target is blocked.
     if case .thread = target, threadDeleted { return Self.deletedReason }
+    if case .thread = target, controllers[target]?.projection?.thread.movedTo?.isHandoff == true { return Self.handedOffReason }
+    if case let .thread(ref) = target, let reason = Self.handoffBlock(entry.thread(ref.threadId)) { return reason }
     if !entry.isOnline { return SyncError.machineOffline(label: displayName(entry)).localizedDescription }
     if !entry.canOperate { return Self.readOnlyReason }
     if let project, case .thread = target {
@@ -409,6 +411,8 @@ extension LiveEngine {
     do {
       switch target {
       case let .thread(ref):
+        if controller?.projection?.thread.movedTo?.isHandoff == true { throw SyncError.sendBlocked(Self.handedOffReason) }
+        if let reason = Self.handoffBlock(entry.thread(ref.threadId)) { throw SyncError.sendBlocked(reason) }
         if controller?.projection?.thread.deletedAt != nil { throw SyncError.sendBlocked(Self.deletedReason) }
         let messageId = Self.newId()
         let running = controller?.projection.map(TranscriptMapper.isRunning) ?? (entry.thread(ref.threadId)?.activeRunId != nil)
