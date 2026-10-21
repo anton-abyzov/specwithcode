@@ -613,7 +613,7 @@ class HeartbeatProofs(unittest.TestCase):
     def test_desktop_permission_never_covers_other_sessions_methods_or_states(self):
         for name, cells in [('cookie on desktop', {'method': 'browser-session-cookie'}),
                             ('cli surface', {'surface': 'cli'}), ('no surface', {'surface': None}),
-                            ('mobile surface', {'surface': 'mobile'}), ('revoked', {'revoked_at': OLD}),
+                            ('revoked', {'revoked_at': OLD}),
                             ('expired', {'expires_at': '2026-10-08T09:59:59.000Z'}), ('future', {'issued_at': NEW}),
                             ('never connected', {'last_connected_at': None})]:
             with self.subTest(name):
@@ -633,6 +633,99 @@ class HeartbeatProofs(unittest.TestCase):
                 self.reconnect('private-session-one', 'private-desktop')
                 with self.assertRaises(AssertionError): self.relay_prove('m3')
                 self.db.execute("DELETE FROM auth_sessions WHERE session_id='private-desktop'"); self.db.commit()
+
+    # A phone or tablet app's own sessions reconnect the same way (apps/ios MachineConnection.swift).
+    def test_phone_app_reconnects_are_proven_and_named_on_every_host(self):
+        for identity, method, version in [('m4', 'bearer-access-token', None), ('m1', 'dpop-access-token', None),
+                                          ('m3', 'bearer-access-token', '1.0.66'), ('m4', 'dpop-access-token', '1.0.66')]:
+            with self.subTest(identity=identity, method=method, version=version):
+                self.add_desktop('private-phone', method=method, surface='mobile'); self.baseline()
+                if version: self.report('private-phone', version)
+                self.reconnect('private-phone'); raw = self.path.read_bytes()
+                witness = self.relay_prove(identity)
+                self.assertEqual((witness['schemaVersion'], witness['changedRows'], witness['serviceIdentity']),
+                                 (5 if version else 3, 1, identity))
+                self.assertEqual([(cell['kind'], cell['method'], cell['surface']) for cell in witness['sessions']],
+                                 [('existing-mobile-app-session', method, 'mobile')])
+                self.assertEqual(heartbeat.verify_restart_witness(self.before, self.after, witness, self.current,
+                                                                  identity=identity), witness)
+                self.assertEqual(heartbeat.restore_witness(self.current, witness, self.before)['rows'], self.original['rows'])
+                for secret in ['private-phone', 'private-subject', 'private-desktop-label', 'private-desktop-token']:
+                    self.assertNotIn(secret, json.dumps(witness))
+                self.assertEqual(self.path.read_bytes(), raw)
+                self.db.execute("DELETE FROM auth_sessions WHERE session_id='private-phone'"); self.db.commit()
+
+    def test_m4_cookies_and_desktop_and_phone_apps_reconnect_together(self):
+        self.two_browser_baseline(); self.add_desktop(); self.add_desktop('private-phone', method='dpop-access-token', surface='mobile')
+        self.baseline(); self.reconnect('private-session-one', 'private-session-two', 'private-desktop', 'private-phone')
+        witness = self.prove()
+        self.assertEqual((witness['schemaVersion'], witness['changedRows']), (3, 4))
+        self.assertEqual(sorted(cell['kind'] for cell in witness['sessions']),
+                         ['existing-desktop-app-session', 'existing-mobile-app-session', 'existing-web-session', 'existing-web-session'])
+        self.assertEqual(heartbeat.verify_restart_witness(self.before, self.after, witness, self.current), witness)
+        forged = copy.deepcopy(witness)
+        next(cell for cell in forged['sessions'] if cell['kind'] == 'existing-mobile-app-session')['kind'] = 'existing-desktop-app-session'
+        with self.assertRaises(AssertionError): heartbeat.verify_restart_witness(self.before, self.after, forged, self.current)
+
+    def test_m4_full_session_budget_is_proven_and_restored_and_one_more_phone_is_refused(self):
+        # The budgets the owner approved and docs/studio/updates.md states.
+        self.assertEqual((heartbeat.MAX_DESKTOP_HEARTBEATS, heartbeat.MAX_MOBILE_HEARTBEATS), (4, 4))
+        desktops = ['private-desktop-%d' % index for index in range(heartbeat.MAX_DESKTOP_HEARTBEATS)]
+        phones = ['private-phone-%d' % index for index in range(heartbeat.MAX_MOBILE_HEARTBEATS + 1)]
+        self.two_browser_baseline()
+        for name in desktops: self.add_desktop(name)
+        for name in phones: self.add_desktop(name, method='dpop-access-token', surface='mobile')
+        self.baseline(); self.reconnect('private-session-one', 'private-session-two', *desktops, *phones)
+        with self.assertRaisesRegex(AssertionError, 'count'): self.prove()
+        self.reconnect(phones[-1], value=OLD)
+        witness = self.prove()
+        self.assertEqual(witness['changedRows'], 2 + heartbeat.MAX_DESKTOP_HEARTBEATS + heartbeat.MAX_MOBILE_HEARTBEATS)
+        self.assertEqual(heartbeat.verify_restart_witness(self.before, self.after, witness, self.current), witness)
+        self.assertEqual(heartbeat.restore_witness(self.current, witness, self.before)['rows'], self.original['rows'])
+
+    def test_phone_session_rules_match_the_desktop_apps(self):
+        """Never a cookie or a CLI session, a revoked or expired one, or one changing anything but its heartbeat."""
+        for name, cells, field, value in [
+                ('cookie', {'method': 'browser-session-cookie'}, None, None), ('revoked', {'revoked_at': OLD}, None, None),
+                ('expired', {'expires_at': '2026-10-08T09:59:59.000Z'}, None, None), ('future', {'issued_at': NEW}, None, None),
+                ('now desktop', {}, 'client_surface', 'desktop'), ('now web', {}, 'client_surface', 'web'),
+                ('now cli', {}, 'client_surface', 'cli'), ('other method', {}, 'method', 'dpop-access-token'),
+                ('scopes', {}, 'scopes', '["admin"]'), ('token', {}, 'token_digest', b'rotated')]:
+            with self.subTest(name):
+                self.relay_baseline(); self.add_desktop('private-phone', surface='mobile', **cells); self.baseline()
+                if field: self.db.execute('UPDATE auth_sessions SET ' + field + '=? WHERE session_id=?', (value, 'private-phone'))
+                self.reconnect('private-session-one', 'private-phone')
+                with self.assertRaises(AssertionError): self.relay_prove('m3')
+                self.db.execute("DELETE FROM auth_sessions WHERE session_id='private-phone'"); self.db.commit()
+
+    def test_new_or_too_many_phone_sessions_are_refused(self):
+        self.relay_baseline(); self.baseline()
+        self.add_desktop('private-new-phone', surface='mobile', last_connected_at=NEW)  # Not in the prestate.
+        self.after = self.proof(); self.current = heartbeat.read_auth_sessions(self.state, self.after)
+        with self.assertRaises(AssertionError): self.relay_prove('m3')
+        self.db.execute("DELETE FROM auth_sessions WHERE session_id='private-new-phone'"); self.db.commit()
+        names = ['private-phone-%d' % index for index in range(heartbeat.MAX_MOBILE_HEARTBEATS + 1)]
+        for name in names: self.add_desktop(name, surface='mobile')
+        self.baseline(); self.reconnect(*names)
+        with self.assertRaisesRegex(AssertionError, 'count'): self.relay_prove('m3')
+        self.reconnect(*names[1:], value=OLD); self.reconnect(*names[:heartbeat.MAX_MOBILE_HEARTBEATS])
+        self.assertEqual(self.relay_prove('m3')['changedRows'], heartbeat.MAX_MOBILE_HEARTBEATS)
+
+    def test_a_generic_service_proves_phone_app_reconnects_under_its_policy(self):
+        for policy, version in [('worker-relay', None), ('browser-cookie', '1.0.66')]:
+            with self.subTest(policy=policy, version=version):
+                phone = 'private-phone-' + policy
+                self.add_desktop(phone, method='dpop-access-token', surface='mobile'); self.baseline()
+                if version: self.report(phone, version)
+                self.reconnect(phone)
+                witness = heartbeat.prove_restart_heartbeat(self.before, self.after, self.original, self.current, START, END,
+                                                            identity='lab', web_session_policy=policy)
+                self.assertEqual((witness['schemaVersion'], witness['serviceIdentity'], witness['webSessionPolicy']),
+                                 (5 if version else 4, 'lab', policy))
+                self.assertEqual([cell['kind'] for cell in witness['sessions']], ['existing-mobile-app-session'])
+                self.assertEqual(heartbeat.verify_restart_witness(self.before, self.after, witness, self.current,
+                                                                  identity='lab', web_session_policy=policy), witness)
+                self.assertEqual(heartbeat.restore_witness(self.current, witness, self.before)['rows'], self.original['rows'])
 
     # A desktop app or a page reloaded into the new release reports its version as it reconnects
     # (AuthSessions.ts setClientConnectionRow): witness version 5.
@@ -733,7 +826,8 @@ class HeartbeatProofs(unittest.TestCase):
         with self.assertRaisesRegex(AssertionError, 'revoked'): self.prove()
         self.report('private-session-two', '0.1')
         for name, cells in [('cli surface', {'surface': 'cli'}), ('no surface', {'surface': None}),
-                            ('mobile surface', {'surface': 'mobile'}), ('cookie on desktop', {'method': 'browser-session-cookie'}),
+                            ('cookie on desktop', {'method': 'browser-session-cookie'}),
+                            ('cookie on mobile', {'method': 'browser-session-cookie', 'surface': 'mobile'}),
                             ('revoked', {'revoked_at': OLD}), ('expired', {'expires_at': '2026-10-08T09:59:59.000Z'}),
                             ('future', {'issued_at': NEW})]:
             with self.subTest(name):
@@ -873,24 +967,27 @@ class HeartbeatProofs(unittest.TestCase):
         with self.assertRaises(AssertionError):
             heartbeat.verify_restart_witness(self.before, self.after, witness, self.current, identity='m1')
 
-    def test_actual_updater_m3_relay_and_desktop_reconnects_verify_and_name_both(self):
-        case = self.actual_relay_update_fixture('m3')
-        try:
-            state = case.own / 'userdata'
-            db = sqlite3.connect(state / 'statev2.sqlite')
-            db.execute("INSERT INTO auth_sessions SELECT 'private-desktop','bearer-access-token','desktop',issued_at,expires_at,last_connected_at,revoked_at,x'02' FROM auth_sessions LIMIT 1")
-            db.commit()
-            case.rows['counts']['auth_sessions'] = 2
-            case.rows['hashes']['auth_sessions'] = heartbeat.rows_hash([list(row) for row in db.execute('SELECT * FROM auth_sessions')])
-            db.close(); case.before['rows'] = copy.deepcopy(case.rows)
-            case.execute(True); result = json.loads(case.output.read_text())
-            self.assertEqual(result['phase'], 'verified')
-            self.assertEqual(result['authHeartbeatWitness']['schemaVersion'], 3)
-            self.assertEqual(sorted(cell['kind'] for cell in result['authHeartbeatSessions']),
-                             ['existing-desktop-app-session', 'existing-web-session'])
-            self.assertEqual(case.quiescence_checks, [case.before['processQuiescence']])
-            for secret in ['private-desktop', 'private-session', 'private-credential']:
-                self.assertNotIn(secret, case.output.read_text())
-        finally: case.tearDown()
+    def test_actual_updater_m3_relay_and_app_reconnects_verify_and_name_both(self):
+        for method, surface, kind in [('bearer-access-token', 'desktop', 'existing-desktop-app-session'),
+                                      ('dpop-access-token', 'mobile', 'existing-mobile-app-session')]:
+            with self.subTest(surface=surface):
+                case = self.actual_relay_update_fixture('m3')
+                try:
+                    state = case.own / 'userdata'
+                    db = sqlite3.connect(state / 'statev2.sqlite')
+                    db.execute("INSERT INTO auth_sessions SELECT 'private-desktop',?,?,issued_at,expires_at,last_connected_at,revoked_at,x'02' FROM auth_sessions LIMIT 1",
+                               (method, surface))
+                    db.commit()
+                    case.rows['counts']['auth_sessions'] = 2
+                    case.rows['hashes']['auth_sessions'] = heartbeat.rows_hash([list(row) for row in db.execute('SELECT * FROM auth_sessions')])
+                    db.close(); case.before['rows'] = copy.deepcopy(case.rows)
+                    case.execute(True); result = json.loads(case.output.read_text())
+                    self.assertEqual(result['phase'], 'verified')
+                    self.assertEqual(result['authHeartbeatWitness']['schemaVersion'], 3)
+                    self.assertEqual(sorted(cell['kind'] for cell in result['authHeartbeatSessions']), sorted([kind, 'existing-web-session']))
+                    self.assertEqual(case.quiescence_checks, [case.before['processQuiescence']])
+                    for secret in ['private-desktop', 'private-session', 'private-credential']:
+                        self.assertNotIn(secret, case.output.read_text())
+                finally: case.tearDown()
 
 if __name__ == '__main__': unittest.main()

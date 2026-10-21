@@ -1544,7 +1544,7 @@ def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_b
                                        message='Complete database changed before restart')
         def assert_provable_reconnects(current_rows):
             # Auth may differ only as the proof after the restart accepts, so a connect it would roll
-            # back (a phone app, a revoked session, one past the session counts) refuses here, with
+            # back (a CLI session, a revoked session, one past the session counts) refuses here, with
             # the old release running: an install request retries it, an automatic install is held.
             if not allow_existing_browser_heartbeat or original_auth is None \
                     or current_rows['hashes'].get('auth_sessions') == before['rows']['hashes'].get('auth_sessions'):
