@@ -1,6 +1,6 @@
 /**
  * Clears what Stop leaves behind before a service update, so the update helper's
- * idle check (`_read_state` in `scripts/studio-fleet/update.py`) passes:
+ * idle check (`assert_idle` in `scripts/studio-fleet/update_read.py`) passes:
  *
  * - a run stuck preparing, starting or running ends `interrupted`, so the person
  *   can continue it by hand after the update; a `waiting` run, whose turn output is

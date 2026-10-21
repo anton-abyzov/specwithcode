@@ -53,6 +53,7 @@ export const PROJECT_OVERRIDE_LABELS: Readonly<
     label: "Use machines with unknown usage",
     page: "Providers",
   },
+  taskRouting: { label: "Auto model routing", page: "Providers" },
 };
 
 const VALUE_LABELS: Readonly<Record<string, string>> = {

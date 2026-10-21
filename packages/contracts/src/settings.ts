@@ -28,6 +28,7 @@ import {
   ProviderOptionSelections,
 } from "./model.ts";
 import { ModelSelection } from "./modelSelection.ts";
+import { TaskRoutingSettings } from "./taskRouting.ts";
 import { ProjectScript } from "./project.ts";
 import { DEFAULT_RUNTIME_MODE, RuntimeMode } from "./providerPolicy.ts";
 import { BrowserProfile, BrowserProfileId, DEFAULT_BROWSER_PROFILE_ID } from "./browserProfile.ts";
@@ -1447,6 +1448,7 @@ export const PROJECT_SCOPED_SERVER_SETTING_KEYS = [
   "providerLimitMachineTargets",
   "providerLimitTargetOrder",
   "providerLimitUnknownUsageEligible",
+  "taskRouting",
 ] as const;
 export type ProjectScopedServerSettingKey = (typeof PROJECT_SCOPED_SERVER_SETTING_KEYS)[number];
 
@@ -1496,6 +1498,7 @@ export const ProjectSettingsOverrides = Schema.Struct({
   providerLimitMachineTargets: Schema.optionalKey(ProviderLimitMachineTargets),
   providerLimitTargetOrder: Schema.optionalKey(ProviderLimitTargetOrder),
   providerLimitUnknownUsageEligible: Schema.optionalKey(Schema.Boolean),
+  taskRouting: Schema.optionalKey(TaskRoutingSettings),
 } satisfies Record<ProjectScopedServerSettingKey, unknown>);
 export type ProjectSettingsOverrides = typeof ProjectSettingsOverrides.Type;
 
@@ -1728,6 +1731,11 @@ export const ServerSettings = Schema.Struct({
   providerLimitUnknownUsageEligible: Schema.Boolean.pipe(
     Schema.withDecodingDefault(Effect.succeed(false)),
   ),
+  /**
+   * Task-aware Auto model routing for workers whose model the app picks
+   * (see `@specweave-studio/shared/taskRouting`). Off until a person turns it on.
+   */
+  taskRouting: TaskRoutingSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   sidebarAutoSettleOnMerge: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   backgroundActivity: BackgroundActivitySettings,
   // Legacy flat fields retained for old settings files and old clients. New
@@ -2143,6 +2151,8 @@ export const ServerSettingsPatch = Schema.Struct({
   providerLimitMachineTargets: Schema.optionalKey(ProviderLimitMachineTargets),
   providerLimitTargetOrder: Schema.optionalKey(ProviderLimitTargetOrder),
   providerLimitUnknownUsageEligible: Schema.optionalKey(Schema.Boolean),
+  /** Replaces the whole policy; the panel always sends every field. */
+  taskRouting: Schema.optionalKey(TaskRoutingSettings),
   backgroundActivity: Schema.optionalKey(
     Schema.Struct({
       schemaVersion: Schema.optionalKey(Schema.Literal(1)),

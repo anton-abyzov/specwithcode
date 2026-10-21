@@ -73,6 +73,12 @@ const guardTargets = (
     }
   });
 
+/** Auto model routing stays off for work under a grant that names its sign-ins. */
+const routingOptions = Effect.gen(function* () {
+  const work = yield* workGrantOf(yield* loadCaller());
+  return { autoRouting: work === undefined || work.grant.accounts.kind === "all" };
+});
+
 /** A thread list's project must be one the grant covers. */
 const guardProject = (projectId: string) =>
   Effect.gen(function* () {
@@ -115,7 +121,7 @@ const handlers = {
       yield* guardTargets([input.target]);
       const scope = yield* McpInvocationContext.McpInvocationContext;
       const service = yield* OrchestratorMcpService.OrchestratorMcpService;
-      return yield* service.delegateTask(scope, withoutMachine(input));
+      return yield* service.delegateTask(scope, withoutMachine(input), yield* routingOptions);
     }),
   ),
   task_status: McpToolAccess.actsAsCaller(({ taskId }) =>
@@ -182,7 +188,7 @@ const handlers = {
       yield* guardTargets(input.threads.map((thread) => thread.target));
       const scope = yield* McpInvocationContext.McpInvocationContext;
       const service = yield* OrchestratorMcpService.OrchestratorMcpService;
-      return yield* service.createThreads(scope, input);
+      return yield* service.createThreads(scope, input, yield* routingOptions);
     }),
   ),
   studio_thread_list: McpToolAccess.reads((input) =>

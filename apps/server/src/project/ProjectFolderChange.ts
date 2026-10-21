@@ -8,6 +8,11 @@
  * instead, and only the coordinator follows the project. Memory, plans and history are keyed by project and stay as they
  * are. The same operation serves Project settings, the CLI and an approved
  * agent request.
+ *
+ * The check also reports what the new folder holds (FolderLayout) and which
+ * SpecWeave planning root plan cards would read. When that root changes, the
+ * change is refused until the user confirms it; changing back restores the
+ * old reading, since links and increments are never rewritten here.
  */
 import {
   CommandId,
@@ -25,6 +30,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
@@ -35,6 +41,7 @@ import {
   relocateClaudeTranscript,
 } from "../provider/Drivers/ClaudeTranscriptTransfer.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
+import { planningImpact, readFolderLayout } from "./FolderLayout.ts";
 import * as ProjectService from "./ProjectService.ts";
 import * as RepositoryIdentityResolver from "./RepositoryIdentityResolver.ts";
 
@@ -44,6 +51,8 @@ export interface ProjectFolderChangeInput {
   readonly workspaceRoot: string;
   /** The user accepted a folder whose repository differs from the current one. */
   readonly confirmDifferentRepository?: boolean;
+  /** The user accepted that plan cards will read another SpecWeave planning root. */
+  readonly confirmPlanningImpact?: boolean;
   /** Internal: the approval card that asked for this change, see ProjectUpdateInput. */
   readonly approvalRequestId?: RuntimeRequestId;
 }
@@ -84,10 +93,32 @@ function plural(count: number, noun: string): string {
   return `${count} ${noun}${count === 1 ? "" : "s"}`;
 }
 
+/** One paragraph on what plan cards read before and after, or null when nothing changes. */
+export function planningImpactText(
+  check: Pick<ProjectFolderCheck, "planning" | "currentRoot">,
+): string | null {
+  const planning = check.planning;
+  if (planning === undefined || !planning.changes) return null;
+  const before =
+    planning.currentRoot === null
+      ? "no SpecWeave increments"
+      : `${plural(planning.currentIncrements, "increment")} in ${planning.currentRoot}`;
+  const after =
+    planning.targetRoot === null
+      ? "none"
+      : `${plural(planning.targetIncrements, "increment")} in ${planning.targetRoot}`;
+  const broken =
+    planning.brokenLinks.length === 0
+      ? ""
+      : ` ${plural(planning.brokenLinks.length, "thread link")} to ${planning.brokenLinks.slice(0, 5).join(", ")}${planning.brokenLinks.length > 5 ? " and others" : ""} would show "not found".`;
+  return `Plan cards read ${before} now and would read ${after} after the change.${broken} Nothing is deleted or rewritten: changing the folder back to ${check.currentRoot} restores them.`;
+}
+
 /** The refusal the user reads when a check says the change cannot happen yet. */
 export function folderChangeRefusal(
   check: ProjectFolderCheck,
   confirmDifferentRepository: boolean,
+  confirmPlanningImpact = false,
 ): Pick<ProjectService.ProjectFolderChangeError, "reason" | "detail"> | null {
   if (!check.targetExists)
     return {
@@ -111,6 +142,12 @@ export function folderChangeRefusal(
       reason: "repository_mismatch",
       detail: `${check.targetRoot} ${check.targetRepository === null ? "has no Git remote" : `is a checkout of ${check.targetRepository}`}, and the current folder ${check.currentRepository === null ? "has no Git remote" : `is a checkout of ${check.currentRepository}`}. Confirm that this is the right folder to use it.`,
     };
+  const planning = planningImpactText(check);
+  if (planning !== null && !confirmPlanningImpact)
+    return {
+      reason: "planning_impact",
+      detail: `${planning} Confirm the planning change to use ${check.targetRoot}.`,
+    };
   return null;
 }
 
@@ -124,6 +161,7 @@ export const make = Effect.gen(function* () {
   const identities = yield* RepositoryIdentityResolver.RepositoryIdentityResolver;
   const sessions = yield* Effect.serviceOption(ProviderSessionManager.ProviderSessionManagerV2);
   const adapters = yield* Effect.serviceOption(ProviderAdapterRegistry.ProviderAdapterRegistryV2);
+  const sql = yield* Effect.serviceOption(SqlClient.SqlClient);
 
   const checkFailure = (message: string) => new ProjectFolderCheckError({ message });
 
@@ -138,6 +176,38 @@ export const make = Effect.gen(function* () {
       Effect.map((identity) => identity?.canonicalKey ?? null),
       Effect.orElseSucceed(() => null),
     );
+
+  /**
+   * Manual increment links of threads that read the project's planning root
+   * (a worktree with its own increments keeps reading those).
+   */
+  const linkedIncrements = (
+    projectId: ProjectId,
+    shells: ReadonlyArray<OrchestrationV2ThreadShell>,
+  ) =>
+    Option.isNone(sql)
+      ? Effect.succeed([] as string[])
+      : Effect.gen(function* () {
+          const rows = yield* sql.value<{
+            readonly threadId: string;
+            readonly incrementId: string;
+          }>`SELECT thread_id AS "threadId", increment_id AS "incrementId" FROM thread_increment_links WHERE project_id = ${projectId} AND increment_id IS NOT NULL`;
+          const worktrees = new Map(
+            shells.map((thread) => [thread.id as string, thread.worktreePath]),
+          );
+          const ids: string[] = [];
+          for (const row of rows) {
+            if (!worktrees.has(row.threadId)) continue;
+            const worktree = worktrees.get(row.threadId) ?? null;
+            if (
+              worktree !== null &&
+              (yield* isDirectory(path.join(worktree, ".specweave", "increments")))
+            )
+              continue;
+            ids.push(row.incrementId);
+          }
+          return ids;
+        }).pipe(Effect.orElseSucceed(() => [] as string[]));
 
   const projectThreads = (projectId: ProjectId) =>
     projections.getShellSnapshot().pipe(
@@ -194,6 +264,28 @@ export const make = Effect.gen(function* () {
         thread.worktreePath === null &&
         thread.id !== project.workspaceSettings?.coordinatorThreadId,
     );
+
+  /** Layout and planning impact; both are on-demand reads of the two folders only. */
+  const folderDetails = (
+    projectId: ProjectId,
+    currentRoot: string,
+    target: { readonly root: string; readonly exists: boolean },
+    unchanged: boolean,
+    shells: ReadonlyArray<OrchestrationV2ThreadShell>,
+  ) =>
+    Effect.gen(function* () {
+      if (!target.exists) return {};
+      const layout = yield* Effect.promise(() => readFolderLayout(target.root));
+      if (unchanged) return layout === null ? {} : { layout };
+      const links = yield* linkedIncrements(projectId, shells);
+      const planning = yield* Effect.promise(() => planningImpact(currentRoot, target.root, links));
+      const reachable =
+        planning.currentRoot !== null || planning.targetRoot !== null || links.length > 0;
+      return {
+        ...(layout === null ? {} : { layout }),
+        ...(reachable ? { planning } : {}),
+      };
+    });
 
   const check: ProjectFolderService["Service"]["check"] = Effect.fn("ProjectFolderService.check")(
     function* (input) {
@@ -272,6 +364,7 @@ export const make = Effect.gen(function* () {
         keptInPlaceCount: keep ? rootThreads(shells, project).length : 0,
         specweaveWorkspace:
           normalized.exists && (yield* isDirectory(path.join(normalized.root, ".specweave"))),
+        ...(yield* folderDetails(project.id, currentRoot, normalized, unchanged, shells)),
       } satisfies ProjectFolderCheck;
     },
   );
@@ -351,7 +444,11 @@ export const make = Effect.gen(function* () {
           relocatedSessions: 0,
         };
     }
-    const refusal = folderChangeRefusal(checked, input.confirmDifferentRepository === true);
+    const refusal = folderChangeRefusal(
+      checked,
+      input.confirmDifferentRepository === true,
+      input.confirmPlanningImpact === true,
+    );
     if (refusal !== null)
       return yield* new ProjectService.ProjectFolderChangeError({
         projectId: input.projectId,

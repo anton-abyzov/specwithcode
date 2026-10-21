@@ -29,9 +29,11 @@ const readScript = (name: string) =>
 
 const sorted = (values: ReadonlyArray<string>) => [...values].toSorted();
 
-it.effect("mirrors the idle check in update.py", () =>
+it.effect("mirrors the idle check update.py reads with", () =>
   Effect.gen(function* () {
-    const source = yield* readScript("update.py");
+    // update.py imports its database reads, the idle check among them, from update_read.py.
+    const source = yield* readScript("update_read.py");
+    assert.include(yield* readScript("update.py"), "from update_read import (TERMINAL_RUNS, ");
     const terminalRuns = source.match(/^TERMINAL_RUNS = \{([^}]*)\}/m);
     assert.isNotNull(terminalRuns);
     assert.deepEqual(
@@ -71,7 +73,7 @@ it.effect("mirrors the idle check in update.py", () =>
 it.effect("leaves held queued runs out of the idle check on both sides", () =>
   Effect.gen(function* () {
     // A held queue never starts on its own; counting it would keep the update waiting forever.
-    const script = yield* readScript("update.py");
+    const script = yield* readScript("update_read.py");
     assert.include(script, "get('queueHeld') is True");
     assert.include(script, "runs = run_work(db)[0]");
     const preparation = yield* serverSource("serviceUpdate/ServiceUpdatePreparation.ts");

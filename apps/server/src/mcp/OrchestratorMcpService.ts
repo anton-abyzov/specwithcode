@@ -60,6 +60,8 @@ import {
   type ScheduledTask,
   type ScheduledTaskUpsertInput,
   type ServerProvider,
+  type TaskClass,
+  type TaskRoutingDecision,
   type EnvironmentId,
   ThreadId,
   threadExecutionSummary,
@@ -106,6 +108,7 @@ import {
   bulkStopTargets,
 } from "./OrchestratorMcpBulkThreads.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import { checkAllowedFor, isModelPinned } from "../scheduledTasks/ScheduledTaskCheck.ts";
 import { providerUsageSummary } from "../usage/providerUsageSummary.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
@@ -134,6 +137,14 @@ const DEFAULT_THREAD_READ_LIMIT = 50;
 const DEFAULT_THREAD_RUN_LIMIT = 10;
 const DEFAULT_THREAD_ITEM_MAX_CHARS = 20_000;
 
+/**
+ * `autoRouting: false` keeps Auto model routing off for this call: a caller
+ * working under another machine's grant may only use the sign-ins it names.
+ */
+export interface WorkerRoutingOptions {
+  readonly autoRouting?: boolean;
+}
+
 interface ResolvedTarget {
   readonly modelSelection: ModelSelection;
 }
@@ -150,6 +161,7 @@ export interface OrchestratorMcpServiceShape {
   readonly delegateTask: (
     scope: McpInvocationScope,
     input: OrchestratorMcpDelegateTaskInput,
+    options?: WorkerRoutingOptions,
   ) => Effect.Effect<OrchestratorMcpDelegateTaskResult, OrchestratorMcpFailure>;
   readonly taskStatus: (
     scope: McpInvocationScope,
@@ -162,6 +174,7 @@ export interface OrchestratorMcpServiceShape {
   readonly createThreads: (
     scope: McpInvocationScope,
     input: OrchestratorMcpCreateThreadsInput,
+    options?: WorkerRoutingOptions,
   ) => Effect.Effect<OrchestratorMcpCreateThreadsResult, OrchestratorMcpFailure>;
   readonly scheduleTask: (
     scope: McpInvocationScope,
@@ -907,6 +920,15 @@ import {
   needsExplicitWorkerTarget,
 } from "../project/ProjectDelegation.ts";
 import { workerLaunchWithRoom } from "../project/WorkerLaunchRoom.ts";
+import {
+  autoRoutingApplies,
+  promptWithRoutingNote,
+  routeWorkerTask,
+  routedSelection,
+  routedTarget,
+  targetPinsModel,
+} from "../project/TaskRouting.ts";
+import type { TaskClassificationInput } from "@specweave-studio/shared/taskRouting";
 import { defaultWorkerModelSelection } from "@specweave-studio/shared/coordinatorDefault";
 import {
   modelSelectionEffortValue,
@@ -924,6 +946,7 @@ const make = Effect.gen(function* () {
   const crypto = yield* Crypto.Crypto;
   const threadManagement = yield* ThreadManagementService.ThreadManagementService;
   const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
+  const serverSettings = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
   const providerAdapters = yield* ProviderAdapterRegistry.ProviderAdapterRegistryV2;
   const scheduledTasks = yield* ScheduledTaskService.ScheduledTaskService;
   const projects = yield* ProjectService.ProjectService;
@@ -1503,6 +1526,67 @@ const make = Effect.gen(function* () {
       };
     });
 
+  /**
+   * Auto model routing on top of a resolved worker target (see
+   * project/TaskRouting.ts): only when nothing named a model and the app
+   * picks it (a coordinator's worker) or the caller passed a task class.
+   * A routed target that fails to resolve keeps the baseline.
+   */
+  const routeResolvedTarget = (input: {
+    readonly project: Effect.Success<ReturnType<typeof requireProject>>;
+    readonly parent: Pick<OrchestrationV2ThreadProjection, "thread">;
+    readonly requested: OrchestratorMcpTarget | undefined;
+    readonly taskClass: TaskClass | undefined;
+    readonly task: TaskClassificationInput;
+    readonly providers: ReadonlyArray<ServerProvider>;
+    readonly baseline: ResolvedTarget;
+    readonly options: WorkerRoutingOptions | undefined;
+  }) =>
+    Effect.gen(function* () {
+      const unrouted = { target: input.baseline, routing: null as TaskRoutingDecision | null };
+      if (
+        input.options?.autoRouting === false ||
+        !autoRoutingApplies({
+          pinned: targetPinsModel(input.requested),
+          isCoordinator:
+            input.project.workspaceSettings?.coordinatorThreadId === input.parent.thread.id,
+          taskClass: input.taskClass,
+        })
+      )
+        return unrouted;
+      const decision = yield* routeWorkerTask({
+        project: input.project,
+        baseline: input.baseline.modelSelection,
+        providers: input.providers,
+        task: { ...input.task, hint: input.taskClass },
+        runnableInstanceIds: yield* loadOrchestrationCapableInstanceIds(),
+        settings: serverSettings,
+      });
+      if (decision === null) return unrouted;
+      if (!decision.moved) return { target: input.baseline, routing: decision };
+      const moved = yield* resolveTarget({
+        parent: input.parent,
+        target: routedTarget(decision, input.requested),
+        providers: input.providers,
+      }).pipe(Effect.option);
+      if (Option.isNone(moved))
+        return {
+          target: input.baseline,
+          routing: {
+            ...decision,
+            moved: false,
+            selection: decision.baseline,
+            escalation: null,
+            reason: `Could not start on ${decision.selection.model}: kept ${decision.baseline.model}.`,
+          },
+        };
+      const modelSelection = routedSelection(decision, moved.value.modelSelection, input.providers);
+      return {
+        target: { ...moved.value, modelSelection },
+        routing: { ...decision, selection: modelSelection },
+      };
+    });
+
   const requestKey = (clientRequestId: string | undefined): Effect.Effect<string> =>
     clientRequestId === undefined
       ? crypto.randomUUIDv4.pipe(Effect.orDie)
@@ -1621,6 +1705,7 @@ const make = Effect.gen(function* () {
         providerInstanceId: task.providerInstanceId,
         model: task.model,
         ...effortField(childControls.thread.modelSelection),
+        ...(task.routing ? { routing: task.routing } : {}),
         summary: derivedResult,
         resultContextTransferId: resultTransfer?.id ?? null,
         latestTerminalRunId: terminalRun?.id ?? null,
@@ -2207,7 +2292,7 @@ const make = Effect.gen(function* () {
           },
         };
       }),
-    delegateTask: (callerScope, input) =>
+    delegateTask: (callerScope, input, options) =>
       Effect.gen(function* () {
         const { scope, parent } = yield* loadThreadCaller(callerScope, "delegate_task");
         const parentRun = yield* callerRun(scope, parent, "delegate");
@@ -2220,16 +2305,25 @@ const make = Effect.gen(function* () {
             "invalid_request",
             "Choose a project worker model or pass an explicit target.",
           );
-        const target = yield* resolveTargetRechecking({
+        const { target, routing } = yield* routeResolvedTarget({
+          project,
           parent,
-          target: projectDelegationTarget(
-            project,
-            parent.thread.id,
-            input.target,
-            hostDefault,
-            yield* coordinatorWorkerLaunch(project, parent.thread, providers, hostDefault),
-          ),
+          requested: input.target,
+          taskClass: input.taskClass,
+          task: { text: input.task, title: input.title },
           providers,
+          options,
+          baseline: yield* resolveTargetRechecking({
+            parent,
+            target: projectDelegationTarget(
+              project,
+              parent.thread.id,
+              input.target,
+              hostDefault,
+              yield* coordinatorWorkerLaunch(project, parent.thread, providers, hostDefault),
+            ),
+            providers,
+          }),
         });
         const runtimeMode = yield* resolveRuntimeMode(parent.thread.runtimeMode, input.runtimeMode);
         const interactionMode = yield* resolveInteractionMode(
@@ -2257,9 +2351,10 @@ const make = Effect.gen(function* () {
             parentThreadId: scope.thread.threadId,
             parentRunId: parentRun.id,
             parentNodeId,
-            task: taskPrompt(input),
+            task: promptWithRoutingNote(taskPrompt(input), routing),
             ...(input.title === undefined ? {} : { title: input.title }),
             modelSelection: target.modelSelection,
+            ...(routing === null ? {} : { routing }),
             runtimeMode,
             interactionMode,
             // Async delegations wake the parent on every child terminal; wait
@@ -2494,7 +2589,7 @@ const make = Effect.gen(function* () {
           status: "cancel_requested",
         };
       }),
-    createThreads: (callerScope, input) =>
+    createThreads: (callerScope, input, options) =>
       Effect.gen(function* () {
         const { scope, parent } = yield* loadThreadCaller(callerScope, "create_threads");
         const parentRun = yield* callerRun(scope, parent, "record");
@@ -2518,16 +2613,25 @@ const make = Effect.gen(function* () {
                   "invalid_request",
                   "Choose a project worker model or pass an explicit target.",
                 );
-              const target = yield* resolveTargetRechecking({
+              const { target, routing } = yield* routeResolvedTarget({
+                project: latest,
                 parent,
-                target: projectDelegationTarget(
-                  latest,
-                  parent.thread.id,
-                  request.target,
-                  hostDefault,
-                  yield* coordinatorWorkerLaunch(latest, parent.thread, providers, hostDefault),
-                ),
+                requested: request.target,
+                taskClass: request.taskClass,
+                task: { text: request.prompt ?? "", title: request.title },
                 providers,
+                options,
+                baseline: yield* resolveTargetRechecking({
+                  parent,
+                  target: projectDelegationTarget(
+                    latest,
+                    parent.thread.id,
+                    request.target,
+                    hostDefault,
+                    yield* coordinatorWorkerLaunch(latest, parent.thread, providers, hostDefault),
+                  ),
+                  providers,
+                }),
               });
               const runtimeMode = yield* resolveRuntimeMode(
                 parent.thread.runtimeMode,
@@ -2563,6 +2667,7 @@ const make = Effect.gen(function* () {
                   projectId: parent.thread.projectId,
                   title,
                   modelSelection: target.modelSelection,
+                  ...(routing === null ? {} : { routing }),
                   runtimeMode,
                   interactionMode,
                   branch: parent.thread.branch,
@@ -2595,7 +2700,7 @@ const make = Effect.gen(function* () {
                       requestKey: key,
                       index,
                     }),
-                    text: request.prompt,
+                    text: promptWithRoutingNote(request.prompt, routing),
                     attachments: [],
                     modelSelection: target.modelSelection,
                     dispatchMode: { type: "start_immediately" },
@@ -2645,6 +2750,7 @@ const make = Effect.gen(function* () {
                 providerInstanceId: target.modelSelection.instanceId,
                 model: target.modelSelection.model,
                 ...effortField(target.modelSelection),
+                ...(routing === null ? {} : { routing }),
               } satisfies OrchestratorMcpCreatedThread;
             }),
           { concurrency: 1 },

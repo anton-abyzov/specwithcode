@@ -54,10 +54,51 @@ function repositoryLabel(repository: string | null) {
   return repository ?? "no Git remote";
 }
 
+const LAYOUT_LABEL = {
+  single: "One Git repository",
+  umbrella: "Umbrella workspace (repositories/<owner>/<repo>)",
+  nested: "Folder with nested repositories",
+  plain: "Plain folder, no Git repository found",
+} as const;
+
+/** One line on what the folder holds, for the check. Exported for tests. */
+export function layoutSummary(layout: NonNullable<ProjectFolderCheck["layout"]>): string {
+  const base = LAYOUT_LABEL[layout.kind];
+  if (layout.repositoryCount === 0) return `${base}.`;
+  const shown = layout.repositories.slice(0, 3).join(", ");
+  const more = layout.repositoryCount > 3 ? ` and ${layout.repositoryCount - 3} more` : "";
+  const partial = layout.truncated ? " The search stopped early; there may be more." : "";
+  return `${base}${layout.rootIsRepository ? ", itself a checkout," : ""} with ${layout.repositoryCount} ${layout.repositoryCount === 1 ? "repository" : "repositories"}: ${shown}${more}.${partial}`;
+}
+
+/** The planning change the user must confirm, or null when plan cards read the same increments. */
+export function planningSummary(check: Pick<ProjectFolderCheck, "planning" | "currentRoot">) {
+  const planning = check.planning;
+  if (planning === undefined || !planning.changes) return null;
+  const before =
+    planning.currentRoot === null
+      ? "no SpecWeave increments"
+      : `${plural(planning.currentIncrements, "increment")} in ${displayFolder(planning.currentRoot)}`;
+  const after =
+    planning.targetRoot === null
+      ? "none"
+      : `${plural(planning.targetIncrements, "increment")} in ${displayFolder(planning.targetRoot)}`;
+  return {
+    change: `Plan cards read ${before} now and would read ${after}.`,
+    broken:
+      planning.brokenLinks.length === 0
+        ? null
+        : `${plural(planning.brokenLinks.length, "linked increment")} would show "not found": ${planning.brokenLinks.slice(0, 5).join(", ")}${planning.brokenLinks.length > 5 ? ", …" : ""}.`,
+    undo: `Nothing is deleted or rewritten. To go back, change the folder to ${displayFolder(check.currentRoot)} again.`,
+  };
+}
+
 /**
  * Moves a project to another folder. The server checks the folder first: it must
  * exist, belong to no other project, and nothing may be running; a folder from a
- * different repository needs an explicit confirmation. Threads, worktree
+ * different repository needs an explicit confirmation, and so does a folder
+ * whose SpecWeave planning root differs (plan cards would read other
+ * increments). The check also shows what the folder holds. Threads, worktree
  * bindings and memory move with the project; leaving a checkout of another
  * repository keeps its threads running there.
  */
@@ -73,6 +114,7 @@ export function ProjectFolderChange({
   const [folder, setFolder] = useState("");
   const [check, setCheck] = useState<ProjectFolderCheck | null>(null);
   const [confirmRepository, setConfirmRepository] = useState(false);
+  const [confirmPlanning, setConfirmPlanning] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [done, setDone] = useState<string | null>(null);
@@ -109,6 +151,7 @@ export function ProjectFolderChange({
     }
     setCheck(result.value);
     setConfirmRepository(false);
+    setConfirmPlanning(false);
   }
 
   async function choose() {
@@ -136,6 +179,7 @@ export function ProjectFolderChange({
 
   async function apply() {
     if (locked || !check) return;
+    const previousRoot = check.currentRoot;
     setBusy(true);
     setError(null);
     const result = await changeFolder({
@@ -144,6 +188,7 @@ export function ProjectFolderChange({
         projectId: project.id,
         workspaceRoot: check.targetRoot,
         ...(check.sameRepository ? {} : { confirmDifferentRepository: confirmRepository }),
+        ...(planning === null ? {} : { confirmPlanningImpact: confirmPlanning }),
       },
     });
     setBusy(false);
@@ -152,15 +197,17 @@ export function ProjectFolderChange({
       return;
     }
     setDone(
-      `The project now uses ${check.targetRoot}. Its threads run there from their next turn.`,
+      `The project now uses ${check.targetRoot}. Its threads run there from their next turn. To undo, change the folder back to ${previousRoot}.`,
     );
     setCheck(null);
     setFolder("");
     onChanged();
   }
 
+  const planning = check === null ? null : planningSummary(check);
   const blocked =
     check === null ||
+    (planning !== null && !confirmPlanning) ||
     check.unchanged ||
     !check.targetExists ||
     check.conflictingProject !== null ||
@@ -263,6 +310,31 @@ export function ProjectFolderChange({
                     />
                     This is the right folder for this project
                   </label>
+                ) : null}
+                {check.layout ? (
+                  <CheckLine tone="info">
+                    <span data-folder-layout={check.layout.kind}>
+                      {layoutSummary(check.layout)}
+                    </span>
+                  </CheckLine>
+                ) : null}
+                {planning ? (
+                  <>
+                    <CheckLine tone="warn">
+                      <span data-folder-planning="changes">
+                        {planning.change} {planning.broken ?? ""} {planning.undo}
+                      </span>
+                    </CheckLine>
+                    <label className="project-checkbox">
+                      <input
+                        type="checkbox"
+                        checked={confirmPlanning}
+                        disabled={locked}
+                        onChange={(e) => setConfirmPlanning(e.target.checked)}
+                      />
+                      Plan cards should read the new folder's increments
+                    </label>
+                  </>
                 ) : null}
                 {check.activeThreads.length > 0 ? (
                   <div className="project-notice">

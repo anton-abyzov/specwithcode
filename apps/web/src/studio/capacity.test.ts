@@ -19,7 +19,20 @@ vi.mock("@effect/atom-react", async () => {
   const { AsyncResult } = await import("effect/reactivity");
   return {
     useAtomValue: (atom: { evaluate: (get: (key: string) => unknown) => Effect.Effect<unknown> }) =>
-      AsyncResult.success(Effect.runSync(atom.evaluate((key) => state.values[key]))),
+      AsyncResult.success(
+        Effect.runSync(
+          atom.evaluate((key) => {
+            // A reactive read of the whole presentation restarts the request on every rebuild.
+            if (key === "presentation") throw new Error("read the connected atom instead");
+            if (key === "connected")
+              return (
+                (state.values.presentation as { connection: { phase: string } } | undefined)
+                  ?.connection.phase === "connected"
+              );
+            return state.values[key];
+          }),
+        ),
+      ),
   };
 });
 vi.mock("../connection/runtime", () => ({
@@ -35,6 +48,7 @@ vi.mock("../connection/runtime", () => ({
 vi.mock("../state/presentation", () => ({
   environmentPresentations: { presentationAtom: () => "presentation" },
 }));
+vi.mock("./connected", () => ({ environmentConnectedAtom: () => "connected" }));
 vi.mock("../state/session", async () => {
   const Option = await import("effect/Option");
   return {

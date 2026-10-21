@@ -12,6 +12,7 @@ if not __debug__:
 import copy
 import hashlib
 import json
+import operator
 import pathlib
 import re
 
@@ -36,14 +37,48 @@ def cell(value):
     raise AssertionError('Unsupported SQLite cell type')
 
 
+def typed_line(row):
+    return encoded([cell(value) for value in row])
+
+
+def legacy_line(row):
+    return json.dumps(list(row), default=lambda value: value.hex(), separators=(',', ':'))
+
+
 def typed_rows_hash(rows):
-    return digest('\n'.join(sorted(encoded([cell(value) for value in row]) for row in rows)))
+    return digest('\n'.join(sorted(typed_line(row) for row in rows)))
 
 
 def legacy_rows_hash(rows):
     """The protected-row hash update.rows_snapshot publishes (BLOBs as hex strings)."""
-    return digest('\n'.join(sorted(json.dumps(list(row), default=lambda value: value.hex(),
-                                              separators=(',', ':')) for row in rows)))
+    return digest('\n'.join(sorted(legacy_line(row) for row in rows)))
+
+
+def joined_digest(lines, size=1 << 16):
+    """digest('\\n'.join(lines)), the joined text encoded `size` characters at a time: the
+    same bytes, without a second copy of the whole text."""
+    text, hasher = '\n'.join(lines), hashlib.sha256()
+    for start in range(0, len(text), size):
+        hasher.update(text[start:start + size].encode())
+    return hasher.hexdigest()
+
+
+def whole_and_prefix(rows, line, boundary):
+    """({count, sha256} of every row, of the earlier rows) for rows read as `SELECT rowid, *`
+    in scan order, hashed as typed_rows_hash or legacy_rows_hash (`line`) hashes the rows
+    without their rowid. The earlier rows are what `WHERE rowid <= boundary` reads from the
+    same table b-tree: the leading run of rows, stopping at the first rowid above the boundary
+    (on a page whose cells are out of rowid order, a later row at or below it is not read).
+    One sort serves both: the earlier rows, in the sorted order, are their sorted lines, and
+    equal lines are interchangeable. The lines stay for the second hash, so the joined text is
+    hashed without encoding it whole (joined_digest)."""
+    leading = next((position for position, row in enumerate(rows) if row[0] > boundary), len(rows))
+    pairs = sorted(((line(row[1:]), position) for position, row in enumerate(rows)), key=operator.itemgetter(0))
+    whole = {'count': len(pairs), 'sha256': joined_digest([text for text, _ in pairs])}
+    if leading == len(pairs):
+        return whole, dict(whole)
+    earlier = [text for text, position in pairs if position < leading]
+    return whole, {'count': len(earlier), 'sha256': joined_digest(earlier)}
 
 
 def identifier(value):
@@ -82,20 +117,38 @@ def widened_tables(db, structure, widen_from):
     return widened
 
 
-def capture_connection(db, widen_from=None):
+def capture_connection(db, widen_from=None, *, visit=None, prefixes=None):
     """Capture the complete database inside the caller's open read transaction. With
-    `widen_from`, also measure tables that gained columns since then (widened_tables)."""
+    `widen_from`, also measure tables that gained columns since then (widened_tables).
+    `visit(table, rows)` is handed each table's rows from this scan, so a caller that
+    hashes some tables its own way need not read them a second time.
+    `prefixes` ({table: {'boundary': rowid}}) names tables whose rowid is the row position
+    (not virtual, no WITHOUT ROWID, no declared rowid column; the caller checks). Each is read
+    once as `SELECT rowid, *` from its table b-tree (the caller leaves out a table with an index
+    holding every column, which that read could scan instead), and its entry gains 'legacy' and
+    'typed' {count, sha256} of the rows `WHERE rowid <= boundary` would read, hashed as those
+    rows would hash (whole_and_prefix). The capture itself is the same with or without it."""
     assert db.in_transaction, 'Complete database capture requires an existing read transaction'
     structure = schema(db)
     tables, legacy, sequences = {}, {}, None
     for table in structure['columns']:
-        rows = list(db.execute('SELECT * FROM ' + identifier(table)))
-        tables[table] = {'count': len(rows), 'sha256': typed_rows_hash(rows)}
-        legacy[table] = {'count': len(rows), 'sha256': legacy_rows_hash(rows)}
+        rows = None  # The previous table's rows go before this table is read and hashed.
+        if prefixes is not None and table in prefixes:
+            entry = prefixes[table]
+            positioned = list(db.execute('SELECT rowid, * FROM ' + identifier(table)))
+            tables[table], entry['typed'] = whole_and_prefix(positioned, typed_line, entry['boundary'])
+            legacy[table], entry['legacy'] = whole_and_prefix(positioned, legacy_line, entry['boundary'])
+            rows = [row[1:] for row in positioned] if visit is not None or table == 'sqlite_sequence' else None
+            del positioned
+        else:
+            rows = list(db.execute('SELECT * FROM ' + identifier(table)))
+            tables[table] = {'count': len(rows), 'sha256': typed_rows_hash(rows)}
+            legacy[table] = {'count': len(rows), 'sha256': legacy_rows_hash(rows)}
         if table == 'sqlite_sequence':
             # AUTOINCREMENT counters: table names and integers only, so a log that grew can
             # be told apart from any other change to this bookkeeping table.
             sequences = sorted([list(row) for row in rows], key=encoded)
+        if visit is not None: visit(table, rows)
     summary = {'schemaSha256': digest(encoded(structure)), 'tables': tables}
     if sequences is not None: summary['sqliteSequence'] = sequences
     capture = {'schema': structure, 'summary': summary, 'legacy': legacy}
