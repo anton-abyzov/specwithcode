@@ -1215,11 +1215,17 @@ class ApplyRecovery(unittest.TestCase):
   self.assertIn(error,result['error'])  # A refusal the update agent retries (RETRYABLE_REFUSALS).
   for key in ('restartStartedAt','stateBackup','rollbackError'):self.assertNotIn(key,result)
   self.assertNotIn('second-session',self.output.read_text());self.assertNotIn('second-credential',self.output.read_text())
- def test_a_phone_app_reconnecting_before_the_restart_refuses_without_restarting(self):
-  # The proof after the restart rejects a phone app's session and would roll the update back.
+ def test_a_cli_session_reconnecting_before_the_restart_refuses_without_restarting(self):
+  # The proof after the restart rejects a CLI session and would roll the update back.
   with self.assertRaisesRegex(AssertionError,'Native work changed before restart: auth'):
-   self.reconnect_before_restart('dpop-access-token','mobile',allow_existing_browser_heartbeat=True)
+   self.reconnect_before_restart('bearer-access-token','cli',allow_existing_browser_heartbeat=True)
   self.assert_refused_before_restart('Native work changed before restart: auth')
+ def test_a_phone_app_reconnecting_before_the_restart_is_proven_and_installs(self):
+  self.reconnect_before_restart('dpop-access-token','mobile',allow_existing_browser_heartbeat=True)
+  result=json.loads(self.output.read_text())
+  self.assertEqual((result['phase'],result['authHeartbeatWitness']['changedRows']),('verified',1))
+  self.assertEqual([cell['kind'] for cell in result['authHeartbeatSessions']],['existing-mobile-app-session'])
+  self.assertEqual(len(self.restart_calls),1)
  def test_a_desktop_app_reconnecting_before_the_restart_is_proven_and_installs(self):
   self.reconnect_before_restart('bearer-access-token','desktop',allow_existing_browser_heartbeat=True)
   result=json.loads(self.output.read_text())

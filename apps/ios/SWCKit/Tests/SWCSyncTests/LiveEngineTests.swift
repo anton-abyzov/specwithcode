@@ -48,6 +48,19 @@ import SWCWire
     await until { !h.model.isLoading && h.model.machines.first?.label == "M4" && h.model.projects.count == 1 }
   }
 
+  @Test func lateProbeStatusDoesNotOverwriteServerName() async throws {
+    let h = try await harness()
+    defer { h.engine.setActive(false) }
+    #expect(await until { h.engine.machines[env]?.config != nil })
+    let entry = try #require(h.engine.machines[env])
+    let socket = try #require(entry.socket)
+    await h.engine.loadConfig(entry, socket)
+    let probe = EnvironmentDescriptorLite(environmentId: env, label: "Wire Probe")
+    h.engine.statusChanged(env, .init(state: .connected, descriptor: probe))
+    h.engine.publishNow()
+    #expect(h.model.machines.first?.label == "M4")
+  }
+
   @Test func startFillsTheModelFromTheShell() async throws {
     let h = try await harness()
     #expect(await loaded(h))

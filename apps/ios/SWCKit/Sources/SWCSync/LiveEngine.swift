@@ -238,7 +238,9 @@ public final class LiveEngine: AppEngine {
       entry.isSynchronized = false
       if status.lastError != nil { entry.answered = true }
     }
-    if let label = status.descriptor?.label { rename(entry, label) }
+    // Status and socket events have separate consumers. A buffered probe
+    // must not overwrite the newer name received through server.getConfig.
+    if entry.config == nil, let label = status.descriptor?.label { rename(entry, label) }
     for controller in controllers.values where controller.environmentId == env {
       refreshMeta(controller)
     }

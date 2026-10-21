@@ -230,13 +230,14 @@ public struct AppThread: Codable, Hashable, Sendable, Identifiable {
   public var rollbackRequestId: String?
   public var rollbackFailure: RollbackFailure?
   public var deletedAt: Date?
+  public var movedTo: ThreadMoveLink?
 
   enum CodingKeys: String, CodingKey {
     case createdBy, creationSource, id, projectId, title, providerInstanceId, modelSelection, runtimeMode, interactionMode
     case branch, worktreePath, linkedPullRequest, pullRequests, branchPullRequest, activeProviderThreadId, historyOrigin
     case lineage, forkedFrom, createdAt, updatedAt, archivedAt, settledOverride, settledAt, settledNote, unsettledAt
     case snoozedUntil, snoozedAt, limitRecovery, pinnedAt, autoSettleDisabledAt, pinOrderKey, activeOrderKey
-    case lastVisitedAt, titleRegeneration, rollbackRequestId, rollbackFailure, deletedAt
+    case lastVisitedAt, titleRegeneration, rollbackRequestId, rollbackFailure, deletedAt, movedTo
   }
 
   public init(from decoder: Decoder) throws {
@@ -278,6 +279,7 @@ public struct AppThread: Codable, Hashable, Sendable, Identifiable {
     rollbackRequestId = try c.decodeIfPresent(String.self, forKey: .rollbackRequestId)
     rollbackFailure = try? c.decodeIfPresent(RollbackFailure.self, forKey: .rollbackFailure)
     deletedAt = try c.decodeIfPresent(Date.self, forKey: .deletedAt)
+    movedTo = try c.decodeIfPresent(ThreadMoveLink.self, forKey: .movedTo)
   }
 
   public var isPinned: Bool { pinnedAt != nil }
