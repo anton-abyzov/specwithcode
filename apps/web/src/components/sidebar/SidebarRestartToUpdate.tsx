@@ -13,9 +13,17 @@ import {
   confirmAppRestartForUpdate,
   drainWorkForAppRestart,
   isServiceWorkRunning,
-  registerAppInstallAfterService,
   releaseAppRestartDrain,
-  retryServiceUpdate,
+} from "../serviceUpdateCalls";
+import {
+  canInstallAppAlone,
+  endFailedServiceUpdate,
+  isServiceUpdateIdle,
+  registerAppInstallAfterService,
+  registerAppInstallNow,
+  serviceLacksRelease,
+  type ServiceUpdateStart,
+  type StartServiceUpdateOptions,
   startServiceUpdateNow,
   useServiceUpdateFlow,
 } from "../serviceUpdateFlow";
@@ -44,6 +52,7 @@ import {
   describeInstallOutcome,
   getRestartToUpdateView,
   RESTART_WHEN_IDLE_NOTE,
+  runningAppRelease,
   SERVICE_UPDATE_NOW_DESCRIPTION,
   serviceInstallTarget,
   serviceUpdateButtonLabel,
@@ -57,6 +66,19 @@ const IDLE_CHECK_MS = 15_000;
 
 const errorText = (error: unknown, fallback: string) =>
   error instanceof Error ? error.message : fallback;
+
+interface RestartOptions {
+  /** The wait for idle came due: restart without asking again. */
+  readonly confirmed?: boolean;
+  /**
+   * Install the app's update on its own, without the service's: as asked, or
+   * ("lacking") only because the service's agent lacked the release, so the
+   * service updates first after all once its agent offers it.
+   */
+  readonly appOnly?: boolean | "lacking";
+  /** The press asks for the service itself (Settings' service row): never the app alone. */
+  readonly forService?: boolean;
+}
 
 /**
  * Bottom-left sidebar button that appears once an update has downloaded in
@@ -77,7 +99,16 @@ function SidebarRestartToUpdateButton() {
   const [downloadsInBackground, setDownloadsInBackground] = useState(false);
   // The user chose to let running work finish: restart once nothing runs, or
   // once the hold window from Settings has passed, whichever comes first.
-  const [idleSince, setIdleSince] = useState<number | null>(null);
+  const [idleSince, setIdleSinceState] = useState<number | null>(null);
+  // The same wait as last set, ahead of the render that shows it: a timer of a
+  // wait already over restarts nothing.
+  const idleSinceRef = useRef<number | null>(null);
+  const setIdleSince = useCallback((next: number | null) => {
+    idleSinceRef.current = next;
+    setIdleSinceState(next);
+  }, []);
+  // That wait installs the app alone, as the press that started it did.
+  const idleAppOnly = useRef<boolean | "lacking">(false);
   const [holdMinutes, setHoldMinutes] = useState(DEFAULT_FORCE_INSTALL_AFTER_MINUTES);
   const [now, setNow] = useState(() => Date.now());
   const [checkingWork, setCheckingWork] = useState(false);
@@ -209,22 +240,68 @@ function SidebarRestartToUpdateButton() {
   useEffect(() => registerAppInstallAfterService(installAppAfterService), [installAppAfterService]);
 
   const restart = useCallback(
-    async (options: { readonly confirmed?: boolean } = {}) => {
+    async (options: RestartOptions = {}) => {
       const bridge = window.desktopBridge;
-      if (service.progress && canPressUpdateAgain(service.progress, Date.now())) {
-        void retryServiceUpdate();
+      const progress = service.progress;
+      // A service update is under way: a press for the app's update (here, in
+      // Settings or from the header pill) adds the app's install to it.
+      const thenInstallApp = view?.app ? { appVersion: view.appVersion } : null;
+      // The service's agent lacks the release, so asking it again fails the
+      // same way (the toast's Try again still asks it), even once that failure
+      // was closed or the window reloaded.
+      const lacking =
+        options.appOnly === "lacking" ||
+        (options.appOnly !== true && thenInstallApp !== null && serviceLacksRelease(serviceState));
+      // The app's update installs on its own, without the service's: as asked
+      // (a wait for idle, a press whose service already runs its version), or
+      // because the agent lacks the release. Never for a press that asks for
+      // the service itself.
+      let appOnly = options.forService !== true && (options.appOnly === true || lacking);
+      // Asks the service; a press that could not reach it says so.
+      const startService = async (
+        input: StartServiceUpdateOptions,
+      ): Promise<ServiceUpdateStart> => {
+        try {
+          return await startServiceUpdateNow(serviceState, input);
+        } catch (error) {
+          toastManager.add(
+            stackedThreadToast({
+              type: "error",
+              title: "Could not install update",
+              description: errorText(error, "An unexpected error occurred."),
+            }),
+          );
+          return false;
+        }
+      };
+      // A live service update is never cut into, not even for the app alone.
+      const live = progress !== null && !canPressUpdateAgain(progress, Date.now());
+      if (progress !== null && !live && !appOnly) {
+        // A failed or lapsed attempt: try again, keeping the app's install.
+        // The service already on its version leaves only the app's install.
+        if ((await startServiceUpdateNow(serviceState, { thenInstallApp })) !== "app-only") return;
+        appOnly = true;
+      }
+      if (live) {
+        if (thenInstallApp === null) return;
+        // The app installs once the service runs the new version, instead of
+        // any wait for idle.
+        const attached = await startServiceUpdateNow(serviceState, { thenInstallApp });
+        if (attached) setIdleSince(null);
+        // Too late to add it: the service is on its new version and this window reloads now.
+        else if (progress.phase === "restarting") {
+          toastManager.add(
+            stackedThreadToast({
+              type: "info",
+              title: "The service update is finishing",
+              description:
+                "The SpecWithCode service is on its new version and this window reloads in a moment. Choose Restart to update again after that.",
+            }),
+          );
+        }
         return;
       }
-      if (
-        !bridge ||
-        !view ||
-        pending ||
-        checkingWork ||
-        fetching ||
-        service.progress ||
-        service.starting
-      )
-        return;
+      if (!bridge || !view || pending || checkingWork || fetching || service.starting) return;
       // Install the newest release, never one a newer release has replaced:
       // ask the feed again and fetch what it offers before anything restarts.
       let appVersion = view.appVersion;
@@ -244,9 +321,34 @@ function SidebarRestartToUpdateButton() {
         }
         appVersion = latest.version;
       }
+      // The service version Update now installs: the newest it is behind.
+      const serviceTarget = () =>
+        serviceInstallTarget(
+          serviceState,
+          appVersion,
+          runningAppRelease(appState),
+          appState?.availableVersion,
+        ) ?? view.serviceVersion;
+      if (!appOnly && view.service && bridge.installServiceUpdate) {
+        // A wait for idle that came due hands over to the service update, which
+        // asks for itself; a press ends the wait once that update starts.
+        if (options.confirmed) setIdleSince(null);
+        // The service first, the app after: an app relaunch while the agent
+        // checks the service makes its install start over. The flow installs
+        // the app once the service runs the new version.
+        const started = await startService({
+          targetVersion: serviceTarget(),
+          thenInstallApp: view.app ? { appVersion } : null,
+        });
+        if (started === true) setIdleSince(null);
+        // The service already runs that version: only the app's install is
+        // left, asked about below as any app restart is.
+        if (started !== "app-only") return;
+        appOnly = true;
+      }
       // A service update asks for itself before it stops work; an app restart
       // alone asks here, so running jobs are never cut off without a warning.
-      if (view.app && !view.service && !options.confirmed) {
+      if (view.app && (appOnly || !view.service) && !options.confirmed) {
         setCheckingWork(true);
         const choice = await confirmAppRestartForUpdate({
           version: appVersion,
@@ -254,34 +356,47 @@ function SidebarRestartToUpdateButton() {
         })
           .catch(() => "cancel" as const)
           .finally(() => setCheckingWork(false));
-        if (choice !== "now") {
-          setIdleSince(choice === "idle" ? Date.now() : null);
+        // Kept as it was: a wait for idle, and the failure that sends presses here.
+        if (choice === "cancel") return;
+        if (choice === "idle") {
+          // The wait installs the app alone too, for the same reason.
+          idleAppOnly.current = appOnly && lacking ? "lacking" : appOnly;
+          setIdleSince(Date.now());
+          // The app's install goes ahead, once idle: a failed service update is over.
+          endFailedServiceUpdate();
           return;
         }
       }
-      setIdleSince(null);
-      if (view.service && bridge.installServiceUpdate) {
-        // The service first, the app after: an app relaunch while the agent
-        // checks the service makes its install start over. The flow installs
-        // the app once the service runs the new version.
-        try {
-          await startServiceUpdateNow(serviceState, {
-            targetVersion:
-              serviceInstallTarget(serviceState, appVersion, appState?.currentVersion) ??
-              view.serviceVersion,
-            thenInstallApp: view.app ? { appVersion } : null,
-          });
-        } catch (error) {
-          toastManager.add(
-            stackedThreadToast({
-              type: "error",
-              title: "Could not install update",
-              description: errorText(error, "An unexpected error occurred."),
-            }),
-          );
+      // The service's agent found the release it lacked while the question was
+      // open or the app waited for idle: the service updates first after all,
+      // then the app, as a press now would. Not beside an update this window
+      // follows: the app restarts beside that one, as chosen. Nor once the
+      // service took the release on its own: only the app's install is left.
+      const handover = appOnly && lacking ? serviceTarget() : null;
+      if (
+        handover !== null &&
+        view.app &&
+        bridge.installServiceUpdate &&
+        !serviceLacksRelease() &&
+        isServiceUpdateIdle()
+      ) {
+        if (options.confirmed) setIdleSince(null);
+        const started = await startService({
+          targetVersion: handover,
+          thenInstallApp: { appVersion },
+        });
+        if (started === true) setIdleSince(null);
+        if (started !== "app-only") return;
+      }
+      // A service update went live meanwhile (in another window, or from the
+      // toast's Try again): the app's install follows it instead of cutting into it.
+      if (appOnly && !canInstallAppAlone()) {
+        if (await startServiceUpdateNow(serviceState, { thenInstallApp: { appVersion } })) {
+          setIdleSince(null);
         }
         return;
       }
+      setIdleSince(null);
       setPending(true);
       let restarting = false;
       try {
@@ -297,6 +412,9 @@ function SidebarRestartToUpdateButton() {
             setFetching(null),
           );
           restarting = result.accepted && !result.failed;
+          // The app restarts on its own: a failed service update is over. A
+          // refused install keeps it, so the next press installs the app alone again.
+          if (restarting) endFailedServiceUpdate();
           if (drained && !restarting) void releaseAppRestartDrain();
           const message = describeInstallOutcome(result, { downloadsInBackground });
           if (message) {
@@ -324,7 +442,7 @@ function SidebarRestartToUpdateButton() {
       }
     },
     [
-      appState?.currentVersion,
+      appState,
       awaitRestart,
       checkingWork,
       downloadsInBackground,
@@ -333,21 +451,40 @@ function SidebarRestartToUpdateButton() {
       renderRunningWork,
       service,
       serviceState,
+      setIdleSince,
       view,
     ],
   );
 
   // The sidebar update pill and Settings install a downloaded update through
-  // this flow; false when there is nothing here for it to install.
+  // this flow; false when there is nothing here for it to install. Settings'
+  // service row asks for the service itself; any other press while a restart
+  // waits for idle restarts now for that same install, as the button does.
   useEffect(
     () =>
       onRestartToUpdateRequest((request) => {
         if (request.requireService ? !view?.service : !view) return false;
-        void restart();
+        void restart(
+          request.requireService
+            ? { forService: true }
+            : idleSince === null
+              ? {}
+              : { appOnly: idleAppOnly.current },
+        );
         return true;
       }),
-    [restart, view],
+    [idleSince, restart, view],
   );
+
+  // A press whose service is already on its version installs only the app.
+  useEffect(() => registerAppInstallNow(() => restart({ appOnly: true })), [restart]);
+
+  // The newest restart for the wait below, whose timers outlive many renders
+  // (its clock alone renders every second).
+  const restartRef = useRef(restart);
+  useEffect(() => {
+    restartRef.current = restart;
+  });
 
   // Restart on its own once the work the user let finish is done, or once the
   // hold window has passed: then the work is stopped for the update and
@@ -355,13 +492,24 @@ function SidebarRestartToUpdateButton() {
   useEffect(() => {
     if (idleSince === null || !view?.app) return;
     let active = true;
+    let restarting: Promise<void> | null = null;
+    const restartNow = () => {
+      // One restart at a time, and none once the wait is over: the deadline and
+      // a check can come due together, before the end of the wait is rendered.
+      if (restarting !== null || idleSinceRef.current !== idleSince) return;
+      restarting = restartRef
+        .current({ confirmed: true, appOnly: idleAppOnly.current })
+        .finally(() => {
+          restarting = null;
+        });
+    };
     const check = () => {
       if (holdWindowElapsed(idleSince, Date.now(), holdMinutes)) {
-        void restart({ confirmed: true });
+        restartNow();
         return;
       }
       void isServiceWorkRunning().then((running) => {
-        if (active && running === false) void restart({ confirmed: true });
+        if (active && running === false) restartNow();
       });
     };
     const timer = window.setInterval(check, IDLE_CHECK_MS);
@@ -376,7 +524,7 @@ function SidebarRestartToUpdateButton() {
       window.clearInterval(tick);
       window.clearTimeout(deadline);
     };
-  }, [holdMinutes, idleSince, restart, view?.app]);
+  }, [holdMinutes, idleSince, view?.app]);
 
   const progress = service.progress;
   // The button stays while a service update is under way, even once the agent no
@@ -390,9 +538,17 @@ function SidebarRestartToUpdateButton() {
     fetching !== null ||
     service.starting ||
     (progress !== null && !canPressUpdateAgain(progress, at));
+  // The service's agent lacks the release, so a press restarts only the app:
+  // the button says so, while the toast's Try again still asks the service.
+  const appView =
+    view?.app && serviceLacksRelease(serviceState)
+      ? getRestartToUpdateView(appState, null, { installOnQuit })
+      : null;
+  const shown = appView ?? view;
+  const followed = appView === null ? progress : null;
   const text =
-    progress && !(pending && view?.app)
-      ? serviceUpdateButtonLabel(progress, at)
+    followed && !(pending && view?.app)
+      ? serviceUpdateButtonLabel(followed, at)
       : service.starting || (pending && view?.service && !view.app)
         ? (view?.label ?? "Update now")
         : fetching?.phase === "checking"
@@ -407,11 +563,11 @@ function SidebarRestartToUpdateButton() {
                   ? "Restarting…"
                   : idleSince !== null && view?.app
                     ? describeHoldCountdown(idleSince, now, holdMinutes)
-                    : (view?.label ?? "Restart to update");
+                    : (shown?.label ?? "Restart to update");
   const description =
     idleSince !== null && view?.app
       ? `SpecWithCode restarts to install ${view.appVersion ?? "the update"} once running work finishes, or after ${forceInstallAfterLabel(holdMinutes)}: then the work is stopped for the update and continues after the restart. Click to restart now.`
-      : (view?.description ?? SERVICE_UPDATE_NOW_DESCRIPTION);
+      : (shown?.description ?? SERVICE_UPDATE_NOW_DESCRIPTION);
 
   const releaseUrl = view?.app ? getDesktopUpdateReleaseUrl(view.appVersion) : null;
   const notes = view?.app
@@ -433,7 +589,8 @@ function SidebarRestartToUpdateButton() {
               "inline-flex min-h-7 shrink-0 items-center gap-1.5 self-start rounded-lg bg-primary px-2.5 py-1 text-2xs leading-4 font-medium text-primary-foreground outline-hidden ring-ring transition-colors focus-visible:ring-2",
               busy ? "cursor-progress opacity-80" : "cursor-pointer hover:bg-primary/90",
             )}
-            onClick={() => void restart()}
+            // While a restart waits for idle, a click restarts now for that same install.
+            onClick={() => void restart(idleSince === null ? {} : { appOnly: idleAppOnly.current })}
           >
             {busy ? (
               <Spinner size="sm" className="shrink-0" />

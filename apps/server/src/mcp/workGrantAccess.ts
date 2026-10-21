@@ -1,9 +1,14 @@
 import {
+  isPersonalAssistantProject,
+  PERSONAL_ASSISTANT_PRIVATE_MESSAGE,
+} from "@specweave-studio/shared/personalAssistant";
+import {
   isProjectCoordinatorThreadId,
   OrchestratorMcpFailure,
   type OrchestratorMcpDelegation,
   type OrchestrationV2ThreadShell,
   type Project,
+  type ProjectId,
   type ProviderInstanceId,
 } from "@specweave-studio/contracts";
 import * as Effect from "effect/Effect";
@@ -126,8 +131,9 @@ export const assertProjectInGrant = (work: WorkGrantContext | undefined, project
     : Effect.fail(
         new OrchestratorMcpFailure({
           code: "outside_grant_scope",
-          message:
-            work.grant.projects.kind === "linked"
+          message: isPersonalAssistantProject(project)
+            ? `${PERSONAL_ASSISTANT_PRIVATE_MESSAGE} ${work.coordinatorLabel} cannot reach this machine's assistant.`
+            : work.grant.projects.kind === "linked"
               ? `Project "${project.title}" on this machine is not linked to ${work.coordinatorLabel}, and this machine lets ${work.coordinatorLabel} run work only in linked projects. Link the projects, or widen what ${work.coordinatorLabel} may use here in Settings > Connections > Who can run work on this Mac.`
               : `This machine does not let ${work.coordinatorLabel} run work in project "${project.title}". The user can add it in Settings > Connections > Who can run work on this Mac.`,
         }),
@@ -203,6 +209,55 @@ export const assertThreadWritable = Effect.fn("mcp.assertThreadWritable")(functi
     code: "outside_grant_scope",
     message: `This thread belongs to this machine's own coordinator for "${project.title}", so ${work.coordinatorLabel} may read it but not send to, interrupt or change it. Ask this machine's coordinator, or migrate the thread first.`,
   });
+});
+
+/**
+ * Refuses a personal assistant's project to a caller acting under another
+ * machine's work grant, whatever the tool: a grant never reaches the
+ * assistant's threads, queue, requests, memory or plan.
+ */
+export const refuseMachinePrivate = Effect.fn("mcp.refuseMachinePrivate")(function* (
+  context: Caller,
+  projectId: ProjectId,
+) {
+  const work = yield* workGrantOf(context);
+  if (work === undefined) return;
+  // Read without adding a requirement, so every tool can call this; a server
+  // that cannot say what the project is refuses it.
+  const projects = yield* Effect.serviceOption(ProjectService.ProjectService);
+  const project = Option.isNone(projects)
+    ? undefined
+    : yield* projects.value.getById(projectId).pipe(
+        Effect.map(Option.getOrUndefined),
+        Effect.orElseSucceed(() => undefined),
+      );
+  if (project === undefined || isPersonalAssistantProject(project))
+    return yield* new OrchestratorMcpFailure({
+      code: "outside_grant_scope",
+      message: `${PERSONAL_ASSISTANT_PRIVATE_MESSAGE} ${work.coordinatorLabel} cannot reach this machine's assistant.`,
+    });
+});
+
+/**
+ * Refuses a personal assistant's thread (or its subagents) sending to another
+ * machine: what it writes there would carry its private context off this one.
+ */
+export const refusePrivateCallerRemote = Effect.fn("mcp.refusePrivateCallerRemote")(function* (
+  context: Caller,
+) {
+  if (context.caller === undefined) return;
+  const projects = yield* Effect.serviceOption(ProjectService.ProjectService);
+  const project = Option.isNone(projects)
+    ? undefined
+    : yield* projects.value.getById(context.caller.projectId).pipe(
+        Effect.map(Option.getOrUndefined),
+        Effect.orElseSucceed(() => undefined),
+      );
+  if (project === undefined || isPersonalAssistantProject(project))
+    return yield* new OrchestratorMcpFailure({
+      code: "invalid_request",
+      message: `${PERSONAL_ASSISTANT_PRIVATE_MESSAGE} Send to threads on this machine, or route the work with studio_project_route to a project here.`,
+    });
 });
 
 /** Records where a new thread's work came from, so its own launches carry it on. */

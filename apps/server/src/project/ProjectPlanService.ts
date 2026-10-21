@@ -1,3 +1,4 @@
+import { isPersonalAssistantProject } from "@specweave-studio/shared/personalAssistant";
 import { stringifyJson } from "../json.ts";
 import { sha256 } from "../nodeCrypto.ts";
 import * as DateTime from "effect/DateTime";
@@ -572,7 +573,10 @@ const make = Effect.gen(function* () {
     }).pipe(mapFailure(input.projectId));
   const linkedIdentity = (projectId: ProjectId) =>
     Effect.gen(function* () {
-      const identity = (yield* requireProject(projectId)).workspaceSettings?.logicalProject;
+      const project = yield* requireProject(projectId);
+      // A personal assistant's plan never leaves its machine, nor takes another's in.
+      if (isPersonalAssistantProject(project)) return yield* fail(projectId, "not_linked");
+      const identity = project.workspaceSettings?.logicalProject;
       if (
         !identity?.members.some(
           (member) => member.environmentId === self && member.projectId === projectId,

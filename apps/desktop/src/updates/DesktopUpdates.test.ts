@@ -106,6 +106,77 @@ describe("DesktopUpdates", () => {
     }),
   );
 
+  it.effect("says whether the running app is a packaged production build", () =>
+    Effect.gen(function* () {
+      const configured = (options: Parameters<typeof makeHarness>[0]) =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            const updates = yield* DesktopUpdates.DesktopUpdates;
+            yield* updates.configure;
+            return yield* updates.getState;
+          }),
+        ).pipe(Effect.provide(makeHarness(options).layer));
+
+      const packaged = yield* configured({});
+      assert.equal(packaged.productionBuild, true);
+      // Updates turned off by the switch: still a release build.
+      const switchedOff = yield* configured({ env: { SPECWITHCODE_DISABLE_AUTO_UPDATE: "true" } });
+      assert.equal(switchedOff.enabled, false);
+      assert.equal(switchedOff.productionBuild, true);
+      // An unpackaged build reports its plain package version, which may not be released.
+      const unpackaged = yield* configured({ isPackaged: false });
+      assert.equal(unpackaged.status, "disabled");
+      assert.equal(unpackaged.productionBuild, false);
+    }),
+  );
+
+  it.effect("says it is not a production build when run against the dev server", () =>
+    Effect.gen(function* () {
+      const state = yield* Effect.scoped(
+        Effect.gen(function* () {
+          const updates = yield* DesktopUpdates.DesktopUpdates;
+          yield* updates.configure;
+          return yield* updates.getState;
+        }),
+      ).pipe(
+        Effect.provide(
+          makeHarness({ env: { VITE_DEV_SERVER_URL: "http://127.0.0.1:5733/" } }).layer,
+        ),
+      );
+      // Packaged, but a development run: its version may not be released.
+      assert.equal(state.productionBuild, false);
+    }),
+  );
+
+  it.effect("says whether it is a production build before the updater is configured", () =>
+    Effect.gen(function* () {
+      const state = yield* Effect.scoped(
+        Effect.gen(function* () {
+          const updates = yield* DesktopUpdates.DesktopUpdates;
+          return yield* updates.getState;
+        }),
+      ).pipe(Effect.provide(makeHarness().layer));
+      assert.equal(state.productionBuild, true);
+    }),
+  );
+
+  it.effect("says a dev run is not a production build before the updater is configured", () =>
+    Effect.gen(function* () {
+      const state = yield* Effect.scoped(
+        Effect.gen(function* () {
+          const updates = yield* DesktopUpdates.DesktopUpdates;
+          return yield* updates.getState;
+        }),
+      ).pipe(
+        Effect.provide(
+          makeHarness({ env: { VITE_DEV_SERVER_URL: "http://127.0.0.1:5733/" } }).layer,
+        ),
+      );
+      // A window that asks this early must not take the dev version for a release.
+      assert.equal(state.productionBuild, false);
+    }),
+  );
+
   it.effect("subscribe delivers the latest state plus subsequent changes", () => {
     const harness = makeHarness();
 

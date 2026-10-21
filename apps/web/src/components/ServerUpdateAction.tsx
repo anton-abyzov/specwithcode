@@ -223,7 +223,12 @@ export function ServerUpdateAction({
   size = "xs",
   className,
   appearance = "button",
-}: Omit<ServerUpdateTarget, "continueThreadsAfterServerUpdate"> & UpdateButtonProps) {
+  description,
+}: Omit<ServerUpdateTarget, "continueThreadsAfterServerUpdate"> &
+  UpdateButtonProps & {
+    /** What the update changes on that machine: the button's tooltip and accessible description. */
+    readonly description?: string | undefined;
+  }) {
   const isDesktopAppUpdate = selfUpdate === "desktop-managed";
   const sessionStateAtom = environmentSession.sessionStateAtom(environmentId);
   const canUpdate = canUpdateServer(useAtomValue(sessionStateAtom));
@@ -300,16 +305,24 @@ export function ServerUpdateAction({
     );
   }
 
-  return (
+  const button = (
     <Button
       size={size}
       variant={variant}
       className={className}
       disabled={!canUpdate}
       onClick={onClick}
+      aria-description={description}
     >
       {actionLabel}
     </Button>
+  );
+  if (description === undefined) return button;
+  return (
+    <Tooltip>
+      <TooltipTrigger render={button} />
+      <TooltipPopup side="top">{description}</TooltipPopup>
+    </Tooltip>
   );
 }
 

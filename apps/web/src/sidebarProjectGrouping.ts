@@ -1,4 +1,4 @@
-import type { EnvironmentId, ScopedProjectRef } from "@specweave-studio/contracts";
+import type { EnvironmentId, ProjectId, ScopedProjectRef } from "@specweave-studio/contracts";
 import { buildProjectGroups, type ProjectGroupingSettings } from "./logicalProject";
 import type { Project } from "./types";
 
@@ -174,4 +174,52 @@ export function buildSidebarProjectPickerEntries(input: {
     ...entries.slice(0, preferredIndex),
     ...entries.slice(preferredIndex + 1),
   ];
+}
+
+/** A Run on > Add to another machine clone: where it comes from and the project it fills. */
+export interface PendingMachineAdd {
+  readonly source: { readonly environmentId: EnvironmentId; readonly projectId: ProjectId };
+  readonly destination: { readonly environmentId: EnvironmentId; readonly projectId: ProjectId };
+}
+
+/**
+ * While Run on adds a project to another machine, the new project there is not
+ * linked yet: the link lands only once the clone is done. List it with the
+ * project it comes from meanwhile, so the sidebar never shows it as a second,
+ * separate project. Only a destination that is linked to nothing else is moved.
+ */
+export function withPendingMachineAdds<TProject extends Project>(
+  projects: ReadonlyArray<TProject>,
+  adds: ReadonlyArray<PendingMachineAdd>,
+): ReadonlyArray<TProject> {
+  if (adds.length === 0) return projects;
+  const find = (ref: PendingMachineAdd["source"]) =>
+    projects.find(
+      (project) => project.environmentId === ref.environmentId && project.id === ref.projectId,
+    );
+  const replaced = new Map<TProject, TProject>();
+  for (const add of adds) {
+    const source = find(add.source);
+    const destination = find(add.destination);
+    const identity = source?.workspaceSettings?.logicalProject;
+    const settings = destination?.workspaceSettings;
+    if (!source || !destination || !settings || !identity) continue;
+    const own = settings.logicalProject;
+    if (own?.id === identity.id) continue;
+    const self = own?.members.filter(
+      (member) =>
+        member.environmentId === destination.environmentId && member.projectId === destination.id,
+    );
+    if (own && own.members.length !== (self?.length ?? 0)) continue;
+    replaced.set(destination, {
+      ...destination,
+      workspaceSettings: {
+        ...settings,
+        logicalProject: { ...identity, members: [...identity.members, ...(self ?? [])] },
+      },
+    });
+  }
+  return replaced.size === 0
+    ? projects
+    : projects.map((project) => replaced.get(project) ?? project);
 }

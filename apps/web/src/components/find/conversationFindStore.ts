@@ -32,3 +32,9 @@ export function useConversationFindQuery(scope: HTMLElement | null): string {
   const current = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
   return scope !== null && current.scope === scope ? current.query.trim() : "";
 }
+
+/** The open find query when its conversation holds `element`; "" otherwise. */
+export function useConversationFindQueryWithin(element: HTMLElement | null): string {
+  const current = useSyncExternalStore(subscribe, getSnapshot, getSnapshot);
+  return element !== null && current.scope?.contains(element) ? current.query.trim() : "";
+}

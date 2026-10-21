@@ -30,13 +30,15 @@ import {
   makeAcpReplayCompletenessAssertion,
   makeAcpReplayRuntime,
 } from "./AcpAdapterV2.testkit.ts";
-import { ProviderAdapterV2RuntimePolicy } from "../ProviderAdapter.ts";
+import { ProviderAdapterV2RuntimePolicy, providerSetupFailure } from "../ProviderAdapter.ts";
+import { makeProviderFailure } from "../ProviderFailure.ts";
 import { BUILT_IN_PROVIDER_ADAPTER_DRIVER_KINDS_V2 } from "../builtInProviderAdapterDrivers.ts";
 import {
   ACP_REGISTRY_PROVIDER,
   AcpRegistryAdapterV2Driver,
   makeAcpRegistryAdapterV2,
   acpRegistryPromptFailure,
+  type AcpRegistryAdapterV2Options,
 } from "./AcpRegistryAdapterV2.ts";
 
 const registryUrl = "https://registry.test/registry.json";
@@ -537,4 +539,130 @@ describe("AcpRegistryAdapterV2", () => {
       });
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
+
+  describe("session setup failures", () => {
+    const instanceId = ProviderInstanceId.make("acpRegistry_copilot");
+    const openWith = (resolve: AcpRegistryAdapterV2Options["resolver"]["resolve"]) =>
+      Effect.gen(function* () {
+        const adapter = makeAcpRegistryAdapterV2({
+          crypto: yield* Crypto.Crypto,
+          selfInvocation: yield* resolveSelfInvocation(),
+          instanceId,
+          settings: yield* decodeAcpRegistryAdapterSettings({ agentId: "github-copilot-cli" }),
+          environment: {},
+          childProcessSpawner: yield* ChildProcessSpawner.ChildProcessSpawner,
+          fileSystem: yield* FileSystem.FileSystem,
+          idAllocator: yield* IdAllocator.IdAllocatorV2,
+          resolver: { resolve },
+          serverConfig: yield* ServerConfig.ServerConfig,
+        });
+        return yield* adapter
+          .openSession({
+            threadId: ThreadId.make("thread-acp-registry-setup"),
+            providerSessionId: ProviderSessionId.make("provider-session:setup-fixture"),
+            modelSelection: { instanceId, model: "default" },
+            runtimePolicy: ProviderAdapterV2RuntimePolicy.make({
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              cwd: process.cwd(),
+            }),
+          })
+          .pipe(Effect.scoped, Effect.flip);
+      });
+
+    it.effect("reports an agent that is not prepared as unavailable with its own detail", () =>
+      Effect.gen(function* () {
+        const detail =
+          "GitHub Copilot 1.0.101 is not prepared. Use Install / update agent in Settings → Providers.";
+        const error = yield* openWith(() =>
+          Effect.fail(
+            new AcpRegistrySupport.AcpRegistryError({ reason: "runner_unavailable", detail }),
+          ),
+        );
+        assert.equal(error._tag, "ProviderAdapterOpenSessionError");
+        assert.equal(error.message, detail);
+        const setup = providerSetupFailure(error);
+        assert.deepEqual(setup?.unavailable, { reason: "not_prepared" });
+        assert.equal(setup?.instanceId, instanceId);
+        assert.deepEqual(makeProviderFailure({ cause: error, class: "provider_error" }), {
+          class: "provider_error",
+          message: detail,
+          code: "provider_unavailable",
+          retryable: null,
+        });
+      }).pipe(Effect.provide(layerTest), Effect.scoped),
+    );
+
+    it.effect("marks a missing package manager as not installed", () =>
+      Effect.gen(function* () {
+        const detail =
+          "ACP Registry agent github-copilot-cli requires 'npm', but it is not available on this environment's PATH.";
+        const error = yield* openWith(() =>
+          Effect.fail(
+            new AcpRegistrySupport.AcpRegistryError({ reason: "runner_unavailable", detail }),
+          ),
+        );
+        assert.equal(error.message, detail);
+        assert.deepEqual(providerSetupFailure(error)?.unavailable, { reason: "not_installed" });
+      }).pipe(Effect.provide(layerTest), Effect.scoped),
+    );
+
+    it.effect("replaces install output with curated text and keeps the failure retryable", () =>
+      Effect.gen(function* () {
+        const error = yield* openWith(() =>
+          Effect.fail(
+            new AcpRegistrySupport.AcpRegistryError({
+              reason: "install_failed",
+              detail:
+                "ACP Registry install command 'npm' exited with code 1: npm ERR! /Users/private/.npm token=secret",
+            }),
+          ),
+        );
+        const setup = providerSetupFailure(error);
+        assert.equal(
+          error.message,
+          "Could not install github-copilot-cli. Open Settings → Providers → Install / update agent.",
+        );
+        assert.isUndefined(setup?.unavailable);
+        assert.notInclude(error.message, "token=secret");
+      }).pipe(Effect.provide(layerTest), Effect.scoped),
+    );
+
+    it.effect("keeps a registry outage unmarked so it is retried", () =>
+      Effect.gen(function* () {
+        const error = yield* openWith(() =>
+          Effect.fail(
+            new AcpRegistrySupport.AcpRegistryError({
+              reason: "registry_unavailable",
+              detail: "ACP Registry request failed.",
+            }),
+          ),
+        );
+        assert.isUndefined(providerSetupFailure(error));
+        assert.equal(makeProviderFailure({ cause: error, class: "provider_error" }).code, null);
+      }).pipe(Effect.provide(layerTest), Effect.scoped),
+    );
+
+    it.effect("reports a resolved command missing on this machine as not installed", () =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        const error = yield* openWith((_settings, cwd) =>
+          Effect.succeed({
+            distribution: "npx" as const,
+            spawn: {
+              command: path.join(process.cwd(), "missing-acp-agent-for-test"),
+              args: [],
+              cwd,
+              env: {},
+            },
+          }),
+        );
+        assert.deepEqual(providerSetupFailure(error)?.unavailable, { reason: "not_installed" });
+        assert.equal(
+          error.message,
+          "github-copilot-cli is not installed on this machine. Use Install / update agent in Settings → Providers.",
+        );
+      }).pipe(Effect.provide(layerTest), Effect.scoped),
+    );
+  });
 });

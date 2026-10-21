@@ -139,7 +139,12 @@ function makeWindow(
   };
 }
 
-/** A complete current Claude read can permit a manual retry, never automatic usage. */
+/**
+ * A complete current Claude read can permit a manual retry, never automatic
+ * usage. Only the account-wide session and weekly must have room: a spent
+ * model weekly (Fable) blocks that model alone, so it cannot hold an
+ * account-wide denial open, though its reading must still be valid.
+ */
 export function completeClaudeUsageWindows(
   windows: ReadonlyArray<ServerProviderUsageWindow>,
   now: number,
@@ -154,7 +159,8 @@ export function completeClaudeUsageWindows(
       (entry) =>
         Number.isFinite(entry.usedPercent) &&
         entry.usedPercent >= 0 &&
-        entry.usedPercent < 100 &&
+        entry.usedPercent <= 100 &&
+        (entry.usedPercent < 100 || entry.modelScope !== undefined) &&
         // An unused session has no reset yet; all other windows need a future reset.
         ((entry.id === "five_hour" &&
           entry.kind === "session" &&
@@ -165,10 +171,102 @@ export function completeClaudeUsageWindows(
   );
 }
 
+/** A per-model weekly (`seven_day_opus`, the overage-included bucket). */
+function isModelScopedType(type: string): boolean {
+  return type !== "seven_day" && type.startsWith("seven_day_");
+}
+
 /**
- * Utilization is a 0–1 fraction on the streamed event. An overage-included
- * event before any probe has named the bucket is dropped: guessing a name
- * would draw a row the next probe cannot reconcile.
+ * The model a scoped event type names. The overage-included bucket takes the
+ * name the probe saw; other types carry the model in their suffix and are
+ * drawn only when rejected, since the page does not render them otherwise.
+ */
+function scopedDisplayName(
+  type: string,
+  names: ClaudeScopedLimitNames,
+  rejected: boolean,
+): string | undefined {
+  if (type === OVERAGE_INCLUDED_EVENT_TYPE) return names.overageIncluded;
+  if (!rejected || !isModelScopedType(type)) return undefined;
+  const words = type.slice("seven_day_".length).split("_").filter(Boolean);
+  if (words.length === 0) return undefined;
+  return words.map((word) => word[0]!.toUpperCase() + word.slice(1)).join(" ");
+}
+
+function eventWindow(
+  type: string,
+  usedPercent: number,
+  resetsAt: string | undefined,
+  names: ClaudeScopedLimitNames,
+  rejected: boolean,
+): ServerProviderUsageWindow | undefined {
+  if (type in WINDOWS) return makeWindow(type, usedPercent, resetsAt);
+  const name = scopedDisplayName(type, names, rejected);
+  return name ? scopedWindow(name, usedPercent, resetsAt) : undefined;
+}
+
+/**
+ * `unifiedWindows` (every window's 0–1 utilization and epoch-second reset)
+ * is internal to the CLI and missing from the SDK typings, so it is read
+ * structurally. A rejected event can carry its utilization only there.
+ */
+interface UnifiedWindowReading {
+  readonly utilization?: unknown;
+  readonly resetsAt?: unknown;
+}
+
+function readUnifiedWindows(
+  info: SDKRateLimitInfo,
+): Readonly<Record<string, UnifiedWindowReading>> {
+  const raw = (info as { readonly unifiedWindows?: unknown }).unifiedWindows;
+  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return {};
+  return Object.fromEntries(
+    Object.entries(raw).filter(
+      (entry): entry is [string, UnifiedWindowReading] =>
+        typeof entry[1] === "object" && entry[1] !== null,
+    ),
+  );
+}
+
+const validFraction = (value: unknown): value is number =>
+  typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= 1;
+
+/** undefined when absent, null when supplied but unusable, else the ISO reset. */
+function eventReset(value: unknown): string | null | undefined {
+  if (value === undefined) return undefined;
+  return (typeof value === "number" ? isoFromEpochSeconds(value) : undefined) ?? null;
+}
+
+/**
+ * When a rejection lapses: the latest reset among the rejected window and
+ * every account-wide window the same event shows spent, since all of them
+ * must reset first. One of those without a usable reset means it never lapses.
+ */
+function denialReset(
+  type: string | undefined,
+  resetsAt: string | null | undefined,
+  unified: Readonly<Record<string, UnifiedWindowReading>>,
+): string | undefined {
+  if (!resetsAt) return undefined;
+  let latest = resetsAt;
+  for (const [id, reading] of Object.entries(unified)) {
+    if (id === type || !(id in WINDOWS)) continue;
+    if (typeof reading.utilization !== "number" || !(reading.utilization >= 1)) continue;
+    const reset = eventReset(reading.resetsAt);
+    if (!reset) return undefined;
+    if (Date.parse(reset) > Date.parse(latest)) latest = reset;
+  }
+  return latest;
+}
+
+/**
+ * Utilization is a 0–1 fraction on the streamed event, read from the top
+ * level or else the event's own `unifiedWindows` entry; a rejected window is
+ * spent whatever it reports. The other windows the event carries land too.
+ * Any rejection revokes ordinary usage until it resets: a rejected model
+ * weekly too, since start gates without a model cannot scope it. An
+ * overage-included event before any probe has named the bucket draws no row:
+ * guessing a name would draw a row the next probe cannot reconcile.
  */
 export function claudeRateLimitEventToUpdate(
   info: SDKRateLimitInfo,
@@ -180,34 +278,48 @@ export function claudeRateLimitEventToUpdate(
     info.overageStatus === "allowed_warning" ||
     info.isUsingOverage === true ||
     overage.overageInUse === true;
-  const denial =
-    info.status === "rejected" && !overageAllowed
-      ? {
-          ordinaryUsageAllowed: false as const,
-          nativeDenialRequiresFullRead: true as const,
-          rateLimitReachedType: "rate_limit_reached",
-        }
-      : undefined;
+  const rejected = info.status === "rejected" && !overageAllowed;
   const type: string | undefined = info.rateLimitType;
-  const resetsAt = isoFromEpochSeconds(info.resetsAt);
-  if (
-    !type ||
-    typeof info.utilization !== "number" ||
-    !Number.isFinite(info.utilization) ||
-    info.utilization < 0 ||
-    info.utilization > 1 ||
-    (info.resetsAt !== undefined && resetsAt === undefined)
-  ) {
-    return denial ? { windows: [], ...denial } : undefined;
+  const unified = readUnifiedWindows(info);
+  const windows: ServerProviderUsageWindow[] = [];
+  let resetsAt: string | null | undefined;
+  if (type) {
+    const own = unified[type];
+    const utilization = info.utilization !== undefined ? info.utilization : own?.utilization;
+    resetsAt = eventReset(info.resetsAt !== undefined ? info.resetsAt : own?.resetsAt);
+    // A supplied but malformed reading is not normalized into evidence.
+    const fraction =
+      utilization === undefined
+        ? rejected
+          ? 1
+          : undefined
+        : validFraction(utilization)
+          ? utilization
+          : undefined;
+    const window =
+      fraction === undefined || resetsAt === null
+        ? undefined
+        : eventWindow(type, (rejected ? 1 : fraction) * 100, resetsAt, names, rejected);
+    if (window) windows.push(window);
   }
-  const usedPercent = info.utilization * 100;
-  if (type in WINDOWS) {
-    return { windows: [makeWindow(type, usedPercent, resetsAt)], ...denial };
+  for (const [id, reading] of Object.entries(unified)) {
+    if (id === type || !validFraction(reading.utilization)) continue;
+    const reset = eventReset(reading.resetsAt);
+    if (reset === null) continue;
+    const window = eventWindow(id, reading.utilization * 100, reset, names, false);
+    if (window) windows.push(window);
   }
-  if (type === OVERAGE_INCLUDED_EVENT_TYPE && names.overageIncluded) {
-    return { windows: [scopedWindow(names.overageIncluded, usedPercent, resetsAt)], ...denial };
-  }
-  return denial ? { windows: [], ...denial } : undefined;
+  const denialResetsAt = rejected ? denialReset(type, resetsAt, unified) : undefined;
+  const denial = rejected
+    ? {
+        ordinaryUsageAllowed: false as const,
+        nativeDenialRequiresFullRead: true as const,
+        rateLimitReachedType: "rate_limit_reached",
+        ...(denialResetsAt ? { nativeDenialResetsAt: denialResetsAt } : {}),
+      }
+    : undefined;
+  if (windows.length === 0 && !denial) return undefined;
+  return { windows, ...denial };
 }
 
 /**

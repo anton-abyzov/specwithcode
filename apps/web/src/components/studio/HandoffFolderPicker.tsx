@@ -17,7 +17,8 @@ import { Button } from "../ui/button";
 /** All paths and listings belong to the selected remote environment. */
 export function HandoffFolderPicker({
   machines,
-  machine,
+  machine: chosenMachine,
+  suggestedMachine = null,
   onMachineChange,
   defaultOpen = false,
   sourceFolder = null,
@@ -27,6 +28,8 @@ export function HandoffFolderPicker({
 }: {
   machines: readonly (HandoffMachine & { id: EnvironmentId })[];
   machine: EnvironmentId | null;
+  /** Shown until the person picks a machine, so the list never opens empty. */
+  suggestedMachine?: EnvironmentId | null;
   onMachineChange: (machine: EnvironmentId | null) => void;
   defaultOpen?: boolean;
   /** This project's folder on the source machine, mirrored to find the same checkout. */
@@ -40,6 +43,16 @@ export function HandoffFolderPicker({
   onSaved: (environmentId: EnvironmentId, projectId: ProjectId, path: string) => void;
 }) {
   const [expanded, setExpanded] = useState(defaultOpen);
+  const suggestion = machines.some((m) => m.id === suggestedMachine && !m.unavailable)
+    ? suggestedMachine
+    : (machines.find((m) => !m.unavailable)?.id ?? null);
+  // Opening fixes the suggestion, so a machine going offline never retargets an entered path.
+  const [pinned, setPinned] = useState(() => (defaultOpen ? suggestion : null));
+  // A machine that connects while the picker is open becomes its machine.
+  if (expanded && !chosenMachine && pinned === null && suggestion !== null) setPinned(suggestion);
+  const shownMachine = chosenMachine ?? pinned ?? suggestion;
+  // A collapsed picker reads nothing from the other machine.
+  const machine = expanded ? (chosenMachine ?? pinned) : null;
   const [path, setPath] = useState("~/Projects/");
   const [browsePath, setBrowsePath] = useState("~/Projects/");
   const [edited, setEdited] = useState(false);
@@ -120,11 +133,11 @@ export function HandoffFolderPicker({
           <select
             aria-label="Folder machine"
             className="mt-1 block w-full rounded border bg-background p-2"
-            value={machine ?? ""}
+            value={shownMachine ?? ""}
             disabled={saving}
             onChange={(event) => onMachineChange((event.target.value as EnvironmentId) || null)}
           >
-            <option value="">Choose a machine</option>
+            {!shownMachine && <option value="">Choose a machine</option>}
             {machines.map((m) => (
               <option key={m.id} value={m.id} disabled={!!m.unavailable}>
                 {m.label} — {handoffMachineStatus(m)}

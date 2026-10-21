@@ -2701,6 +2701,65 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
+    it.effect("ignores a recorded base that shares no history with the branch", () =>
+      Effect.gen(function* () {
+        // A worktree started from `main` and then reset onto an unrelated `develop`
+        // keeps `gh-merge-base main`; it has nothing of its own to propose.
+        const cwd = yield* makeTmpDir();
+        const remote = yield* makeTmpDir("git-vcs-driver-remote-");
+        const { initialBranch } = yield* initRepoWithCommit(cwd);
+        yield* git(cwd, ["branch", "-M", initialBranch, "main"]);
+        yield* git(cwd, ["checkout", "--orphan", "develop"]);
+        yield* writeTextFile(cwd, "develop.txt", "develop\n");
+        yield* git(cwd, ["add", "develop.txt"]);
+        yield* git(cwd, ["commit", "-m", "develop root"]);
+        yield* git(remote, ["init", "--bare"]);
+        yield* git(cwd, ["remote", "add", "origin", remote]);
+        yield* git(cwd, ["push", "origin", "main", "develop"]);
+        yield* git(cwd, ["remote", "set-head", "origin", "develop"]);
+        yield* git(cwd, ["checkout", "-b", "ops/watch", "main"]);
+        yield* git(cwd, ["config", "branch.ops/watch.gh-merge-base", "main"]);
+        yield* git(cwd, ["checkout", "-B", "ops/watch", "--track", "origin/develop"]);
+        const driver = yield* GitVcsDriver.GitVcsDriver;
+
+        const status = yield* driver.statusDetails(cwd);
+        assert.equal(status.aheadCount, 0);
+        assert.equal(status.aheadOfDefaultCount, 0);
+
+        const error = yield* driver.readRangeContext(cwd, "origin/main").pipe(Effect.flip);
+        assert.include(error.message, "no merge base");
+      }),
+    );
+
+    it.effect("keeps a recorded base whose common commit a shallow clone cut off", () =>
+      Effect.gen(function* () {
+        const source = yield* makeTmpDir();
+        const remote = yield* makeTmpDir("git-vcs-driver-remote-");
+        const { initialBranch } = yield* initRepoWithCommit(source);
+        yield* git(source, ["branch", "-M", initialBranch, "main"]);
+        yield* git(remote, ["init", "--bare"]);
+        yield* git(source, ["remote", "add", "origin", remote]);
+        yield* git(source, ["push", "origin", "main"]);
+        const cwd = yield* makeTmpDir("git-vcs-driver-shallow-");
+        yield* git(cwd, ["clone", "--depth", "1", `file://${remote}`, "."]);
+        yield* git(cwd, ["config", "user.email", "test@example.com"]);
+        yield* git(cwd, ["config", "user.name", "Test"]);
+        yield* git(cwd, ["checkout", "-b", "feature/shallow"]);
+        yield* git(cwd, ["config", "branch.feature/shallow.gh-merge-base", "main"]);
+        yield* writeTextFile(cwd, "feature.txt", "feature\n");
+        yield* git(cwd, ["add", "feature.txt"]);
+        yield* git(cwd, ["commit", "-m", "feature"]);
+        yield* writeTextFile(source, "base.txt", "base\n");
+        yield* git(source, ["add", "base.txt"]);
+        yield* git(source, ["commit", "-m", "base advances"]);
+        yield* git(source, ["push", "origin", "main"]);
+        yield* git(cwd, ["fetch", "--depth", "1", "origin", "+main:refs/remotes/origin/main"]);
+
+        const status = yield* (yield* GitVcsDriver.GitVcsDriver).statusDetails(cwd);
+        assert.isAbove(status.aheadOfDefaultCount, 0);
+      }),
+    );
+
     it.effect("can read local files without traversing revision history", () =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();

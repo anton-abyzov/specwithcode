@@ -1,5 +1,10 @@
 import * as DateTime from "effect/DateTime";
-import type { ProviderInstanceId, ServerProvider } from "@specweave-studio/contracts";
+import type {
+  ProviderInstanceId,
+  ServerProvider,
+  ServerProviderUsageLimits,
+  ServerProviderUsageWindow,
+} from "@specweave-studio/contracts";
 import { ProviderSetupError } from "@specweave-studio/contracts";
 import type {
   StudioCapacityAccount,
@@ -8,6 +13,7 @@ import type {
   StudioCapacitySnapshot,
 } from "@specweave-studio/contracts/studio";
 import { HostProcessEnvironment } from "@specweave-studio/shared/hostProcess";
+import { isLiveWindow, windowModelScope } from "@specweave-studio/shared/usageWindows";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -19,6 +25,7 @@ import * as Settings from "../serverSettings.ts";
 import * as Providers from "../provider/ProviderRegistry.ts";
 import { hasExplicitProviderApiEnvironment } from "../provider/ProviderInstanceEnvironment.ts";
 import { CLAUDE_STATUS_CHECK_FAILED } from "../provider/providerSnapshot.ts";
+import { nativeDenialResetPassed } from "../provider/providerUsageLimits.ts";
 import * as NativeRoute from "./NativeRoute.ts";
 import * as SwitchClient from "./SwitchClient.ts";
 import {
@@ -31,8 +38,10 @@ import {
   freshObservation,
   nativeCapacityBinding,
   nativeConfigForInstance,
+  nativeDenialLapsed,
   nativeQuotaDenied,
   nativeSnapshotAuthorized,
+  spentModelWindow,
   unavailableCapacity,
 } from "./capacitySnapshot.ts";
 
@@ -81,6 +90,86 @@ function blockingUsageReset(
     resetAt = Math.max(resetAt, window.resetsAt);
   }
   return resetAt;
+}
+
+const CLAUDE_WINDOW_NAMES: Partial<Record<string, string>> = {
+  five_hour: "5-hour limit",
+  seven_day: "weekly limit",
+};
+
+interface ClaudeDenialLimit {
+  readonly name: string;
+  readonly resetAt: string | undefined;
+}
+
+/**
+ * The Claude limit that refuses this start and when it resets. A spent model
+ * weekly binds its own model; a rejection binds through its spent account-wide
+ * windows, else the model weekly it rejected, else the reset it reported.
+ */
+function claudeDenialLimit(
+  limits: ServerProviderUsageLimits,
+  now: number,
+  model: string | null | undefined,
+): ClaudeDenialLimit {
+  const scoped = spentModelWindow(limits, now, model);
+  const denied = limits.ordinaryUsageAllowed === false && !nativeDenialResetPassed(limits, now);
+  const accountWide = denied
+    ? limits.windows.filter(
+        (window) =>
+          ACCOUNT_WIDE_WINDOWS.claudeAgent?.includes(window.id) &&
+          window.usedPercent >= 100 &&
+          isLiveWindow(window, now),
+      )
+    : [];
+  // A rejected model weekly fences every start until gates pass the model;
+  // its window resets exactly when the rejection said it would.
+  const reportedAt = Date.parse(limits.nativeDenialResetsAt ?? "");
+  const rejectedScoped =
+    denied && accountWide.length === 0 && !scoped
+      ? limits.windows.filter(
+          (window) =>
+            windowModelScope(window) !== null &&
+            window.usedPercent >= 100 &&
+            isLiveWindow(window, now) &&
+            Date.parse(window.resetsAt ?? "") === reportedAt,
+        )
+      : [];
+  const blocking = [...accountWide, ...(scoped ? [scoped] : []), ...rejectedScoped];
+  const nextReset = limits.unavailable
+    ? undefined
+    : blockingUsageReset(
+        blocking.map((window) => ({
+          usedPercent: window.usedPercent,
+          resetsAt: window.resetsAt ? Date.parse(window.resetsAt) : null,
+        })),
+        limits,
+        now,
+      );
+  const resetMs =
+    nextReset ??
+    (blocking.length === 0 && Number.isFinite(reportedAt) && reportedAt > now
+      ? reportedAt
+      : undefined);
+  // Of several spent windows the one that resets last is the one to name.
+  const binding = blocking.reduce<ServerProviderUsageWindow | undefined>(
+    (latest, window) =>
+      !latest || Date.parse(window.resetsAt ?? "") > Date.parse(latest.resetsAt ?? "")
+        ? window
+        : latest,
+    undefined,
+  );
+  const scope = binding ? windowModelScope(binding) : null;
+  return {
+    name: binding
+      ? (CLAUDE_WINDOW_NAMES[binding.id] ?? (scope ? `weekly ${scope} limit` : binding.label))
+      : "usage limit",
+    resetAt: resetMs === undefined ? undefined : DateTime.formatIso(DateTime.makeUnsafe(resetMs)),
+  };
+}
+
+function claudeDenialMessage(limit: ClaudeDenialLimit): string {
+  return `Claude's ${limit.name} is used up${limit.resetAt ? `; it resets at ${limit.resetAt}` : ""}.`;
 }
 
 /**
@@ -181,11 +270,15 @@ export class Capacity extends Context.Service<
     readonly select: (
       input: StudioCapacitySelectInput,
     ) => Effect.Effect<StudioCapacitySnapshot, CapacityMutationError>;
-    /** Admission check only. Never changes an existing session or chooses its account. */
+    /**
+     * Admission check only. Never changes an existing session or chooses its
+     * account. `model` lets a spent model weekly refuse only that model.
+     */
     readonly assertNativeStart: (
       id: ProviderInstanceId,
       cwd: string | null,
       options?: NativeCreditStartOptions,
+      model?: string | null,
     ) => Effect.Effect<void, ProviderSetupError>;
   }
 >()("specweave-studio/studio/Capacity") {}
@@ -263,6 +356,7 @@ const make = Effect.gen(function* () {
     id: ProviderInstanceId,
     cwd: string | null,
     options?: NativeCreditStartOptions,
+    model?: string | null,
   ) =>
     Effect.gen(function* () {
       const deny = (detail: string, usageLimit?: { readonly resetAt?: string }) =>
@@ -323,25 +417,34 @@ const make = Effect.gen(function* () {
       // An explicit start can follow a native login or quota reset before the
       // background snapshot expires. Recheck this exact instance once, never
       // another account; a failed probe cannot clear its previous denial.
-      const recheckDenied = nativeQuotaDenied(native?.usageLimits, now);
+      const recheckDenied = nativeQuotaDenied(native?.usageLimits, now, model);
+      // A Claude denial past its reported reset no longer refuses, but this
+      // start still reads native status once; a read that fails admits it.
+      const lapsedDenial =
+        entry.driver === "claudeAgent" && nativeDenialLapsed(native?.usageLimits, now);
       // A CLI billed to API credits (Console sign-in or its own key) is not a
       // subscription slot: no plan quota or capacity profile applies to it.
       if (claudeApiBillingAuthorized(native, now)) return;
-      if (!nativeSnapshotAuthorized(native, now) || checkCredits || recheckDenied) {
+      if (!nativeSnapshotAuthorized(native, now) || checkCredits || recheckDenied || lapsedDenial) {
+        const admitCached = lapsedDenial && !recheckDenied && nativeSnapshotAuthorized(native, now);
         const observed = yield* providers
           .refreshInstance(id)
           .pipe(Effect.timeoutOption(NATIVE_STATUS_CHECK_TIMEOUT));
-        if (Option.isNone(observed))
-          return yield* deny(
-            "The native provider status check timed out. Refresh Providers on this machine and try again.",
+        if (Option.isNone(observed)) {
+          if (!admitCached)
+            return yield* deny(
+              "The native provider status check timed out. Refresh Providers on this machine and try again.",
+            );
+          now = yield* Clock.currentTimeMillis;
+        } else {
+          nativeReread = true;
+          observedProviders = observed.value;
+          native = observedProviders.find(
+            (provider) => provider.instanceId === id && provider.driver === entry.driver,
           );
-        nativeReread = true;
-        observedProviders = observed.value;
-        native = observedProviders.find(
-          (provider) => provider.instanceId === id && provider.driver === entry.driver,
-        );
-        now = yield* Clock.currentTimeMillis;
-        if (claudeApiBillingAuthorized(native, now)) return;
+          now = yield* Clock.currentTimeMillis;
+          if (claudeApiBillingAuthorized(native, now)) return;
+        }
       }
       if (!nativeSnapshotAuthorized(native, now)) {
         if (native?.status === "error" && native.auth.status !== "unauthenticated")
@@ -413,8 +516,15 @@ const make = Effect.gen(function* () {
         );
       // Optional companions and deliberately unbound homes never erase a fresh
       // denial reported by this exact native account or its live notification.
-      if (nativeQuotaDenied(native?.usageLimits, now) && !creditContinuation()) {
+      if (nativeQuotaDenied(native?.usageLimits, now, model) && !creditContinuation()) {
         const limits = native?.usageLimits;
+        if (entry.driver === "claudeAgent" && limits) {
+          const limit = claudeDenialLimit(limits, now, model);
+          return yield* deny(
+            claudeDenialMessage(limit),
+            limit.resetAt ? { resetAt: limit.resetAt } : {},
+          );
+        }
         const nextReset =
           limits && !limits.unavailable
             ? blockingUsageReset(

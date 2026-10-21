@@ -44,6 +44,7 @@ import settings_continuity
 from service_launch_agent import upgraded_service_plist
 import managed_updates
 import studio_paths
+import update_request
 
 from installation_descriptor import InstallationDescriptor, cli_paths, current_owner, installation_lock, owned_path, validate_identity, web_session_policy
 ENV_KEYS = {'HOME', 'USER', 'LOGNAME', 'PATH', 'LANG', 'TMPDIR', 'STUDIO_HOME',
@@ -1734,6 +1735,9 @@ def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_b
         except Exception as error:  # Pruning never fails a verified update.
             result['prunedReleases'] = []
             result['pruneError'] = type(error).__name__
+        # The new release's update agent replaces an older one, as the desktop installs its own: a Mac
+        # whose desktop app is old or never opened kept its first agent otherwise. Never fails the update.
+        result['updateAgent'] = update_request.refresh_agent(home, identity, new_release)
         output.write_text(json.dumps(result, indent=2) + '\n')
         print(json.dumps({'identity': identity, 'result': 'updated', 'archiveSha256': archive_sha, 'servicePid': after['servicePid'], 'report': str(output)}))
     except BaseException as error:

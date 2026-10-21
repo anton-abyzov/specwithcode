@@ -26,6 +26,7 @@ import {
 } from "./ComposerControl";
 import { useComposerMenuProps } from "./composerEventScope";
 import { shortcutLabelForCommand } from "../../keybindings";
+import { ModelUsageMeter, useModelPickerUsage, type ModelPickerUsageConfig } from "./ModelUsage";
 
 export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   /**
@@ -62,6 +63,15 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   /** Open the provider list even when every configured model is ready. */
   onManageProviders?: () => void;
   getModelDisabledReason?: (instanceId: ProviderInstanceId, model: string) => string | null;
+  /**
+   * Show usage on the trigger and beside every model, and refuse models whose
+   * confirmed limit is spent. For pickers that choose what a chat runs next;
+   * settings pickers leave it off, since a default may point at a model that
+   * is only out until its reset.
+   */
+  usage?: ModelPickerUsageConfig;
+  /** Classes that hide the trigger's usage number when the composer is narrow. */
+  usageValueHiddenClassName?: string;
   onInstanceModelChange: (instanceId: ProviderInstanceId, model: string) => void;
 }) {
   const composerFloatingLayerProps = useComposerMenuProps();
@@ -100,6 +110,15 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
     : triggerTitle;
   const showInstanceBadge =
     activeEntry !== null && shouldShowInstanceBadge(activeEntry, props.instanceEntries);
+  const usage = useModelPickerUsage(props.usage, props.instanceEntries, isMenuOpen);
+  const showsSingleModel =
+    props.selectedModels === undefined && props.triggerLabel === undefined && !props.unset;
+  const selectedUsage =
+    usage && activeEntry && showsSingleModel
+      ? usage.availability(activeInstanceId, selectedModel?.slug ?? props.model)
+      : null;
+  const selectedUsageText =
+    usage && selectedUsage ? usage.text(activeInstanceId, selectedUsage).long : null;
 
   const setIsMenuOpen = (open: boolean) => {
     props.onOpenChange?.(open);
@@ -193,9 +212,8 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   const allModelNames = selectedEntries
     ? selectedEntries.map((selection) => selection.label).join(", ") || "Choose models"
     : undefined;
-  const triggerTooltipContent = shortcutLabel
-    ? `${props.triggerLabel ?? allModelNames ?? triggerLabel} · ${shortcutLabel}`
-    : (props.triggerLabel ?? allModelNames ?? triggerLabel);
+  const triggerName = props.triggerLabel ?? allModelNames ?? triggerLabel;
+  const triggerTooltipContent = shortcutLabel ? `${triggerName} · ${shortcutLabel}` : triggerName;
 
   return (
     <Popover
@@ -211,7 +229,11 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
       <PopoverTrigger
         render={
           <ComposerControl
-            aria-label={props.triggerAriaLabel ?? allModelNames}
+            aria-label={
+              props.triggerAriaLabel ??
+              allModelNames ??
+              (selectedUsageText ? `${triggerName}. ${selectedUsageText}` : undefined)
+            }
             size={size}
             data-chat-provider-model-picker="true"
             className={cn(
@@ -280,8 +302,25 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
             >
               {props.triggerLabel ?? multipleLabel ?? triggerTitle}
             </TooltipTrigger>
-            <TooltipPopup side="top">{triggerTooltipContent}</TooltipPopup>
+            <TooltipPopup side="top">
+              {selectedUsageText ? (
+                <span className="flex max-w-72 flex-col gap-0.5">
+                  <span>{triggerTooltipContent}</span>
+                  <span className="text-muted-foreground">{selectedUsageText}</span>
+                </span>
+              ) : (
+                triggerTooltipContent
+              )}
+            </TooltipPopup>
           </Tooltip>
+          {selectedUsage ? (
+            <ModelUsageMeter
+              state={selectedUsage}
+              {...(props.usageValueHiddenClassName
+                ? { hideValueClassName: props.usageValueHiddenClassName }
+                : {})}
+            />
+          ) : null}
           {selectedModel?.isUnavailable && !selectedEntries && props.triggerLabel === undefined ? (
             <Badge variant="outline" size="sm">
               Unavailable
@@ -336,6 +375,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
             ? { getModelDisabledReason: props.getModelDisabledReason }
             : {})}
           {...(props.quickSetup && !props.disabled ? { quickSetup: props.quickSetup } : {})}
+          {...(usage ? { usage } : {})}
           onInstanceModelChange={handleInstanceModelChange}
         />
         {props.selectedModels === undefined && !props.unset ? (

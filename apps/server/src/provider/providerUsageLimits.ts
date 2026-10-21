@@ -4,6 +4,7 @@ import type {
   ServerProviderUsageLimits,
   ServerProviderUsageWindow,
 } from "@specweave-studio/contracts";
+import { isLiveWindow, windowModelScope } from "@specweave-studio/shared/usageWindows";
 
 const WINDOW_KIND_ORDER: Record<ServerProviderUsageWindow["kind"], number> = {
   session: 0,
@@ -56,6 +57,7 @@ export function hasNativeUsageEvidence(limits: ServerProviderUsageLimits): boole
       limits.nativeAllowanceObservedAt,
       limits.nativeDenialObservedAt,
       limits.nativeDenialRequiresFullRead,
+      limits.nativeDenialResetsAt,
       limits.nativeCreditDenialObservedAt,
       limits.ordinaryUsageAllowed,
       limits.spendControlReached,
@@ -133,6 +135,7 @@ export function applyUsageLimitsUpdate(input: {
     ...(previous?.nativeDenialRequiresFullRead || (negative && update.nativeDenialRequiresFullRead)
       ? { nativeDenialRequiresFullRead: true as const }
       : {}),
+    ...denialResetsAt(previous, update, negative),
     ...(previous?.nativeCreditDenialObservedAt !== undefined
       ? { nativeCreditDenialObservedAt: previous.nativeCreditDenialObservedAt }
       : {}),
@@ -180,6 +183,91 @@ export function applyUsageLimitsUpdate(input: {
             : {}),
         }
       : {}),
+  };
+}
+
+/**
+ * When the published Claude denial lapses. A new denial without a reset
+ * cannot lapse; with one it keeps the later of the two, since every window
+ * that rejected must reset before the account is usable again.
+ */
+function denialResetsAt(
+  previous: ServerProviderUsageLimits | undefined,
+  update: ProviderUsageLimitsUpdate,
+  negative: boolean,
+): { readonly nativeDenialResetsAt?: string } {
+  if (!negative) {
+    return previous?.nativeDenialResetsAt !== undefined
+      ? { nativeDenialResetsAt: previous.nativeDenialResetsAt }
+      : {};
+  }
+  const next = update.nativeDenialResetsAt;
+  if (next === undefined || !Number.isFinite(Date.parse(next))) return {};
+  const prior = previous?.nativeDenialResetsAt;
+  const priorAt = prior === undefined ? NaN : Date.parse(prior);
+  return {
+    nativeDenialResetsAt:
+      prior !== undefined && Number.isFinite(priorAt) && priorAt > Date.parse(next) ? prior : next,
+  };
+}
+
+/** The account-wide windows a reading shows spent and not yet reset. */
+function spentAccountWideWindows(
+  windows: ReadonlyArray<ServerProviderUsageWindow>,
+  now: number,
+): ReadonlyArray<ServerProviderUsageWindow> {
+  return windows.filter(
+    (window) =>
+      windowModelScope(window) === null && window.usedPercent >= 100 && isLiveWindow(window, now),
+  );
+}
+
+/**
+ * Whether the Claude denial has lapsed by `now`: its reported reset passed
+ * and no account-wide window it carries is still spent, so a weekly the
+ * rejection did not name cannot lapse with the session's reset.
+ */
+export function nativeDenialResetPassed(
+  limits: Pick<ServerProviderUsageLimits, "nativeDenialResetsAt" | "windows"> | undefined,
+  now: number,
+): boolean {
+  const at = Date.parse(limits?.nativeDenialResetsAt ?? "");
+  return (
+    Number.isFinite(at) &&
+    Number.isFinite(now) &&
+    at <= now &&
+    spentAccountWideWindows(limits?.windows ?? [], now).length === 0
+  );
+}
+
+/**
+ * A valid read that keeps the denial but shows an account-wide window still
+ * spent moves the lapse to that window's reset; one without a reset means
+ * the denial no longer lapses on its own.
+ */
+function carryDenialReset(
+  published: ServerProviderUsageLimits,
+  probed: ServerProviderUsageLimits,
+  probeAt: number,
+): ServerProviderUsageLimits {
+  if (published.nativeDenialResetsAt === undefined) return published;
+  const spent = spentAccountWideWindows(probed.windows, probeAt);
+  if (spent.length === 0) return published;
+  let latest: string | undefined = published.nativeDenialResetsAt;
+  for (const window of spent) {
+    const at = Date.parse(window.resetsAt ?? "");
+    if (!Number.isFinite(at)) {
+      latest = undefined;
+      break;
+    }
+    if (at > Date.parse(latest ?? "")) latest = window.resetsAt;
+  }
+  if (latest === published.nativeDenialResetsAt) return published;
+  const { nativeDenialResetsAt: _lapsed, ...rest } = published;
+  return {
+    ...rest,
+    windows: probed.windows,
+    ...(latest !== undefined ? { nativeDenialResetsAt: latest } : {}),
   };
 }
 
@@ -288,26 +376,49 @@ export function resolveUsageLimitsAfterProbe(input: {
     const fullAt = probed?.nativeAllowanceObservedAt
       ? Date.parse(probed.nativeAllowanceObservedAt)
       : NaN;
-    const laterFullRead =
+    const laterValidRead =
       probed !== undefined &&
       probed.unavailable === undefined &&
       Number.isFinite(probeAt) &&
-      Number.isFinite(fullAt) &&
       denialObservations.every((observedAt) => {
         const denialAt = Date.parse(observedAt);
-        return Number.isFinite(denialAt) && probeAt > denialAt && fullAt > denialAt;
+        return Number.isFinite(denialAt) && probeAt > denialAt;
       });
-    if (!laterFullRead) {
+    const fullRead =
+      Number.isFinite(fullAt) &&
+      denialObservations.every((observedAt) => fullAt > Date.parse(observedAt));
+    // Once the denial's reported reset has passed, a valid later read with
+    // room in every account-wide window replaces it even when it is not a
+    // complete allowance; failed or unsupported reads still keep it.
+    const resetPassed =
+      laterValidRead &&
+      published.nativeCreditDenialObservedAt === undefined &&
+      nativeDenialResetPassed(published, probeAt) &&
+      spentAccountWideWindows(probed.windows, probeAt).length === 0;
+    // A model weekly spent in both readings is what a scoped rejection fenced,
+    // so a read that still shows it spent cannot clear that rejection.
+    const stillSpent =
+      probed?.windows.some(
+        (window) =>
+          window.usedPercent >= 100 &&
+          isLiveWindow(window, probeAt) &&
+          published.windows.some(
+            (prior) =>
+              prior.id === window.id && prior.usedPercent >= 100 && isLiveWindow(prior, probeAt),
+          ),
+      ) ?? false;
+    if (!laterValidRead || !(fullRead || resetPassed) || stillSpent) {
+      const kept = laterValidRead ? carryDenialReset(published, probed, probeAt) : published;
       // An explicit denied route remains a fence even on an older probe.
       if (probed?.nativeRouteVerified === false)
         return {
-          ...published,
+          ...kept,
           nativeRouteVerified: false,
           ...(probed.nativeRouteObservedAt !== undefined
             ? { nativeRouteObservedAt: probed.nativeRouteObservedAt }
             : {}),
         };
-      return published;
+      return kept;
     }
   }
   return probed;

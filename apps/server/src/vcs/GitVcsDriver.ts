@@ -351,6 +351,8 @@ export class GitVcsDriver extends Context.Service<
       cwd: string,
       baseRef: string,
     ) => Effect.Effect<GitRangeContext, GitCommandError>;
+    /** False only when `baseRef` and HEAD provably share no commit (complete history). */
+    readonly sharesHistoryWithHead: (cwd: string, baseRef: string) => Effect.Effect<boolean>;
     readonly getReviewDiffPreview: (
       input: ReviewDiffPreviewInput,
     ) => Effect.Effect<ReviewDiffPreviewResult, GitCommandError>;

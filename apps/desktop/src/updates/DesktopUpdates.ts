@@ -340,7 +340,14 @@ function createBaseUpdateState(
     ...createInitialDesktopUpdateState(environment.appVersion, environment.runtimeInfo, channel),
     enabled,
     status: enabled ? "idle" : "disabled",
+    productionBuild: isProductionBuild(environment),
   };
+}
+
+// The same test the updater uses: a dev or unpackaged build never updates
+// itself, whatever SPECWITHCODE_DISABLE_AUTO_UPDATE says.
+function isProductionBuild(environment: DesktopEnvironment.DesktopEnvironment["Service"]): boolean {
+  return !environment.isDevelopment && environment.isPackaged;
 }
 
 function getCanRetryFromState(state: DesktopUpdateState): boolean {
@@ -482,13 +489,14 @@ export const make = Effect.gen(function* () {
   const markCheckAttempted = DateTime.now.pipe(
     Effect.flatMap((now) => Ref.set(lastCheckAttemptAtRef, DateTime.toEpochMillis(now))),
   );
-  const updateStateRef = yield* Ref.make<DesktopUpdateState>(
-    createInitialDesktopUpdateState(
+  const updateStateRef = yield* Ref.make<DesktopUpdateState>({
+    ...createInitialDesktopUpdateState(
       environment.appVersion,
       environment.runtimeInfo,
       environment.defaultDesktopSettings.updateChannel,
     ),
-  );
+    productionBuild: isProductionBuild(environment),
+  });
 
   const stateChanges = yield* PubSub.sliding<DesktopUpdateState>(16);
   // Makes ref writes + publishes atomic against subscribe, so a snapshot

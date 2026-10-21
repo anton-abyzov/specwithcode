@@ -68,6 +68,9 @@ WORKERS = tuple(fleet_hosts.PORTS)
 MODULES = ('studio_paths', 'update_request')
 REQUEST_WINDOW = int(update_request.REQUEST_TTL.total_seconds())
 CALL_TIMEOUT = 90
+# A request or check first installs the host's update agent and may wait for its pass to end
+# (update_request.AGENT_PASS_WAIT).
+REQUEST_TIMEOUT = CALL_TIMEOUT + update_request.AGENT_PASS_WAIT
 STATUS_FAILURES = 5  # Consecutive unanswered status reads before a host counts as lost.
 VERSION = re.compile(r'(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})\.(0|[1-9][0-9]{0,8})')
 BOOT = """
@@ -143,11 +146,12 @@ class Host(object):
 
     def __call__(self, argv):
         argv = list(argv) + self.extra
+        timeout = REQUEST_TIMEOUT if argv[0] in ('request', 'check') else CALL_TIMEOUT
         try:
             result = subprocess.run(self.command, input=program(argv), capture_output=True, text=True,
-                                    timeout=CALL_TIMEOUT)
+                                    timeout=timeout)
         except subprocess.TimeoutExpired:
-            raise RolloutError('%s did not answer within %ds' % (self.identity, CALL_TIMEOUT)) from None
+            raise RolloutError('%s did not answer within %ds' % (self.identity, timeout)) from None
         except OSError as error:
             raise RolloutError('%s could not be reached (%s)' % (self.identity, type(error).__name__)) from None
         lines = [line for line in result.stdout.splitlines() if line.strip()]
@@ -336,6 +340,25 @@ def forced_pending(status, now=None):
     return until > (now or datetime.datetime.now(datetime.timezone.utc))
 
 
+# update_request.refresh_agent results worth a line: before each request or check, the host installs
+# the update agent its release ships unless it has that one or a newer one.
+AGENT_NOTES = {'installed': 'installed the update agent its release ships over an older one',
+               'busy': 'installed the update agent its release ships over an older one, but a pass of the old '
+                       'one was still running and may take on this request',
+               'disabled': 'its update agent is turned off in launchd',
+               'failed': 'could not install the update agent its release ships; the one it has handles this'}
+# A pass never takes on a check written during it: the next pass, on the new agent, runs it.
+CHECK_BUSY = ('installed the update agent its release ships over an older one; a pass of the old one was '
+              'still running, so the next pass, on the new one, runs the check')
+
+
+def agent_note(identity, reply, say, check=False):
+    """Says what a request or check did to the host's update agent, when that is worth a line."""
+    word = reply.get('agent')
+    if word in AGENT_NOTES:
+        say('%s: %s' % (identity, CHECK_BUSY if check and word == 'busy' else AGENT_NOTES[word]))
+
+
 def requested_by_update_now(status, version, now=None):
     """True while a forced, held request for `version` stands on the host, as Update now (or an
     earlier rollout) writes it: not cancelled since, and its hold not yet run out."""
@@ -398,6 +421,7 @@ def roll_host(identity, call, version, force, hold_minutes, deadline, poll, cloc
         sent[0] += 1
         mode = 'forced, held %d min' % hold_minutes if force else 'version-bound'
         say('%s: asked to install %s (%s) on %s' % (identity, version, mode, current or 'an unknown version'))
+        agent_note(identity, reply, say)
         if reply.get('kicked') is False:
             say('%s: launchctl kickstart failed; the agent still runs within 10 minutes' % identity)
         if first[0] is None:  # The host's own clock, the one its agent dates lastInstall by.
@@ -410,6 +434,7 @@ def roll_host(identity, call, version, force, hold_minutes, deadline, poll, cloc
         reply = call(['check', '--identity', identity, '--kickstart'])
         say('%s: the agent does not offer %s yet; asked it to check, and the service is held once it does'
             % (identity, version))
+        agent_note(identity, reply, say, check=True)
         if first[0] is None:  # It may install what it finds on its own; a failure from here on counts.
             first[0] = update_request._time((reply.get('request') or {}).get('checkRequestedAt'))
         return clock()
@@ -581,6 +606,9 @@ def rollout(version, hosts, only='all', hold_minutes=15, local_deadline=75 * 60,
             except RolloutError as error:
                 with lock:
                     errors.append(str(error))
+            except Exception as error:  # noqa: BLE001 - a host never drops out of the results unreported.
+                with lock:
+                    errors.append('%s stopped on an unexpected %s: %s' % (identity, type(error).__name__, error))
 
         threads = [threading.Thread(target=worker, args=(identity,), name='rollout-' + identity)
                    for identity in WORKERS]

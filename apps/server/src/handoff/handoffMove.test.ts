@@ -97,6 +97,7 @@ const scenario = (
     readonly linked?: boolean;
     readonly signedIn?: boolean;
     readonly sourceMembers?: boolean;
+    readonly sourcePersonal?: boolean;
   } = {},
 ) =>
   Effect.gen(function* () {
@@ -210,15 +211,17 @@ const scenario = (
       title: "App",
       workspaceRoot: roots.root,
       workspaceSettings:
-        target === source && options.sourceMembers === true
-          ? {
-              logicalProject: {
-                members: [{ environmentId: minis, projectId: destinationProject }],
-              },
-            }
-          : target === destination && options.linked !== false
-            ? { logicalProject: { members: [{ environmentId: m4, projectId: sourceProject }] } }
-            : undefined,
+        target === source && options.sourcePersonal === true
+          ? { kind: "personal" }
+          : target === source && options.sourceMembers === true
+            ? {
+                logicalProject: {
+                  members: [{ environmentId: minis, projectId: destinationProject }],
+                },
+              }
+            : target === destination && options.linked !== false
+              ? { logicalProject: { members: [{ environmentId: m4, projectId: sourceProject }] } }
+              : undefined,
     });
 
     const servicesFor = (target: Machine, roots: { project: ProjectId; root: string }) =>
@@ -279,7 +282,12 @@ const scenario = (
       Effect.provide(destinationServices),
     );
     const asSource = { sourceEnvironmentId: m4, grant: unscopedGrant(m4) };
-    const network = { down: false, dropTakeoverAnswer: false };
+    const network = {
+      down: false,
+      dropTakeoverAnswer: false,
+      dropTakeoverRequest: false,
+      refuseTakeover: null as "fenced" | "busy" | null,
+    };
     const viaNetwork = <A>(effect: Effect.Effect<A, HandoffReceiver.HandoffRefusal>) =>
       network.down
         ? Effect.fail(
@@ -308,7 +316,24 @@ const scenario = (
         viaNetwork(destinationReceiver.replicate(asSource, meta, bundle)),
       preflight: (_, request) => viaNetwork(destinationReceiver.preflight(asSource, request)),
       takeover: (_, request) =>
-        viaNetwork(destinationReceiver.takeover(asSource, request)).pipe(
+        (network.refuseTakeover !== null
+          ? Effect.fail(
+              new HandoffPeerError({
+                code: network.refuseTakeover,
+                message: `Minis refused the takeover (${network.refuseTakeover}).`,
+                uncertain: false,
+              }),
+            )
+          : network.dropTakeoverRequest
+            ? Effect.fail(
+                new HandoffPeerError({
+                  code: "unreachable",
+                  message: "Minis did not answer.",
+                  uncertain: true,
+                }),
+              )
+            : viaNetwork(destinationReceiver.takeover(asSource, request))
+        ).pipe(
           Effect.flatMap((answer) =>
             network.dropTakeoverAnswer
               ? Effect.fail(
@@ -441,6 +466,23 @@ describe("handoff between two machines", () => {
     }),
   );
 
+  it.effect("never hands off or replicates a personal assistant's thread", () =>
+    Effect.gen(function* () {
+      const { moves, destination, fixture } = yield* scenario({ sourcePersonal: true });
+      fixture.activeRunId = "run-1";
+      const failure = yield* handOff(moves).pipe(Effect.flip);
+      expect(failure.code).toBe("invalid");
+      expect(failure.message).toContain("private to its machine");
+      const machine = yield* moves.handOffMachine({
+        destinationEnvironmentId: minis,
+        reason: "manual",
+      });
+      expect(machine.results).toEqual([]);
+      expect(destination.document.incoming).toHaveLength(0);
+      expect(destination.launches).toHaveLength(0);
+    }),
+  );
+
   it.effect("never joins projects that are not explicitly linked", () =>
     Effect.gen(function* () {
       const { moves, destination } = yield* scenario({ linked: false });
@@ -478,14 +520,121 @@ describe("handoff between two machines", () => {
       // The destination did continue; the source must not run the thread again.
       expect(destination.launches).toHaveLength(1);
       expect(source.document.threads[threadId]?.lease?.state).toBe("handing-off");
+      // A retry re-sends the same takeover; the destination repeats, never launches twice.
       const retry = yield* handOff(moves).pipe(Effect.flip);
-      expect(retry.code).toBe("busy");
+      expect(retry.code).toBe("unreachable");
+      expect(destination.launches).toHaveLength(1);
       network.dropTakeoverAnswer = false;
       yield* moves.tick;
       expect(source.document.threads[threadId]?.continuedOn?.threadId).toBe(
         destination.launches[0]?.threadId,
       );
       expect(destination.launches).toHaveLength(1);
+    }),
+  );
+
+  it.effect("re-sends a takeover lost before it reached the destination", () =>
+    Effect.gen(function* () {
+      const { source, destination, moves, network, destinationRoot } = yield* scenario();
+      NodeFS.writeFileSync(NodePath.join(destinationRoot, ".env.local"), "TOKEN=minis\n");
+      network.dropTakeoverRequest = true;
+      const failure = yield* handOff(moves).pipe(Effect.flip);
+      expect(failure.code).toBe("unreachable");
+      expect(destination.launches).toHaveLength(0);
+      const record = source.document.threads[threadId];
+      expect(record?.lease?.state).toBe("handing-off");
+      expect(record?.pendingTakeover?.request.epoch).toBe(2);
+      // The destination answers heartbeats again without having continued the thread.
+      network.dropTakeoverRequest = false;
+      yield* moves.tick;
+      expect(destination.launches).toHaveLength(1);
+      expect(source.document.threads[threadId]?.continuedOn?.threadId).toBe(
+        destination.launches[0]?.threadId,
+      );
+      expect(source.document.threads[threadId]?.pendingTakeover).toBeNull();
+      yield* moves.tick;
+      expect(destination.launches).toHaveLength(1);
+    }),
+  );
+
+  it.effect("keeps an interrupted turn resumable when the final checkpoint cannot be sent", () =>
+    Effect.gen(function* () {
+      const { source, destination, moves, fixture, network, destinationRoot } = yield* scenario();
+      NodeFS.writeFileSync(NodePath.join(destinationRoot, ".env.local"), "TOKEN=minis\n");
+      fixture.activeRunId = "run-1";
+      let sent = 0;
+      const original = source.dispatched.push.bind(source.dispatched);
+      source.dispatched.push = (...items) => {
+        // The network drops right after the running turn is stopped.
+        if (items.some((item) => (item as { type?: string }).type === "run.interrupt")) {
+          network.down = true;
+        }
+        sent += items.length;
+        return original(...items);
+      };
+      const failure = yield* handOff(moves).pipe(Effect.flip);
+      expect(sent).toBeGreaterThan(0);
+      expect(failure.code).toBe("unreachable");
+      const record = source.document.threads[threadId];
+      expect(record?.lease?.state).toBe("active");
+      expect(record?.fencedBy).toBe("handoff");
+      expect(record?.lastError).toContain("Hand it off again to resume that turn");
+      // Handing it off again once the network is back resumes the stopped turn.
+      network.down = false;
+      const result = yield* handOff(moves);
+      expect(destination.launches).toHaveLength(1);
+      expect(result.threadId).toBe(destination.launches[0]?.threadId);
+      expect(findIncoming(destination.document, m4, threadId)?.checkpoint.runEnding).toBe(
+        "handoff",
+      );
+      expect(destination.launches[0]?.initialMessage).toBeDefined();
+    }),
+  );
+
+  it.effect("keeps a re-sent takeover paused on a fenced refusal and releases it on others", () =>
+    Effect.gen(function* () {
+      const { source, destination, moves, network, destinationRoot } = yield* scenario();
+      NodeFS.writeFileSync(NodePath.join(destinationRoot, ".env.local"), "TOKEN=minis\n");
+      network.dropTakeoverRequest = true;
+      yield* handOff(moves).pipe(Effect.flip);
+      expect(source.document.threads[threadId]?.lease?.state).toBe("handing-off");
+      network.dropTakeoverRequest = false;
+
+      // A newer epoch on the destination: the thread stays paused until a heartbeat settles it.
+      network.refuseTakeover = "fenced";
+      yield* moves.tick;
+      expect(source.document.threads[threadId]?.lease?.state).toBe("handing-off");
+      expect(source.document.threads[threadId]?.pendingTakeover).not.toBeNull();
+      expect(destination.launches).toHaveLength(0);
+
+      // A definite refusal for any other reason gives the thread back to the source.
+      network.refuseTakeover = "busy";
+      yield* moves.tick;
+      const record = source.document.threads[threadId];
+      expect(record?.lease?.state).toBe("active");
+      expect(record?.pendingTakeover).toBeNull();
+      expect(record?.continuedOn).toBeNull();
+      expect(destination.launches).toHaveLength(0);
+    }),
+  );
+
+  it.effect("hands running threads off when the machine goes to sleep and resumes them", () =>
+    Effect.gen(function* () {
+      const { source, destination, moves, fixture, destinationRoot } = yield* scenario();
+      NodeFS.writeFileSync(NodePath.join(destinationRoot, ".env.local"), "TOKEN=minis\n");
+      fixture.activeRunId = "run-1";
+      const run = yield* moves.handOffMachine({
+        destinationEnvironmentId: minis,
+        reason: "sleep",
+      });
+      expect(run.results).toEqual([
+        expect.objectContaining({ threadId, outcome: "moved", resumed: true }),
+      ]);
+      expect(source.dispatched[0]).toMatchObject({ type: "run.interrupt", threadId });
+      expect(source.document.threads[threadId]?.fencedBy).toBe("sleep");
+      expect(findIncoming(destination.document, m4, threadId)?.checkpoint.runEnding).toBe("sleep");
+      expect(destination.launches).toHaveLength(1);
+      expect(source.document.machineRun?.reason).toBe("sleep");
     }),
   );
 
@@ -521,6 +670,7 @@ describe("handoff between two machines", () => {
           destinationReceiver,
           destination,
           source,
+          sourceRoot,
           destinationRoot,
           destinationServices,
         } = yield* scenario();
@@ -567,8 +717,16 @@ describe("handoff between two machines", () => {
         expect(again.threadId).toBe(continued.threadId);
         expect(destination.launches).toHaveLength(1);
 
-        // M4 comes back at the old epoch: its first heartbeat fences its copy.
+        // M4 kept working while it was away, then comes back at the old epoch:
+        // its first heartbeat fences its copy and keeps that work on a branch.
+        const head = git(sourceRoot, "rev-parse", "HEAD");
+        NodeFS.writeFileSync(NodePath.join(sourceRoot, "app.ts"), "export const a = 3;\n");
         yield* moves.tick;
+        const kept = source.document.threads[threadId]?.fencedBranch;
+        expect(kept).toBe("swc/from-m4/feat/fix-build");
+        expect(git(sourceRoot, "show", `${kept}:app.ts`)).toBe("export const a = 3;");
+        expect(git(sourceRoot, "rev-parse", "HEAD")).toBe(head);
+        expect(git(sourceRoot, "symbolic-ref", "--short", "HEAD")).toBe("feat/fix-build");
         expect(source.document.threads[threadId]?.continuedOn?.threadId).toBe(continued.threadId);
         expect(source.document.threads[threadId]?.lease?.state).toBe("fenced");
         // A late handoff from M4 answers with the continuation; it never starts another.

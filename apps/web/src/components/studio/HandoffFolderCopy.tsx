@@ -115,6 +115,7 @@ export function HandoffFolderCopy({
   method,
   machines,
   savedFolder,
+  preferredMachine = null,
   canMove,
   onBusyChange,
   onOpenProject,
@@ -125,6 +126,8 @@ export function HandoffFolderCopy({
   readonly method: Exclude<HandoffFolderMethod, "folder">;
   readonly machines: ReadonlyArray<CopyMachine>;
   readonly savedFolder: (environmentId: EnvironmentId) => string | null;
+  /** The remembered or last-used machine, preselected when it can take the copy. */
+  readonly preferredMachine?: EnvironmentId | null;
   readonly canMove: boolean;
   readonly onBusyChange: (busy: boolean) => void;
   readonly onOpenProject: (input: {
@@ -153,7 +156,10 @@ export function HandoffFolderCopy({
   const linkCommit = useAtomCommand(projectLink.commit, { reportFailure: false });
 
   const storageKey = folderCopyStorageKey(project.environmentId, project.id);
-  const firstMachine = machines.find((machine) => !machine.unavailable)?.id ?? null;
+  const firstMachine =
+    machines.find((machine) => machine.id === preferredMachine && !machine.unavailable)?.id ??
+    machines.find((machine) => !machine.unavailable)?.id ??
+    null;
   const [machine, setMachine] = useState<EnvironmentId | null>(firstMachine);
   const [folder, setFolder] = useState(() =>
     firstMachine ? (savedFolder(firstMachine) ?? project.workspaceRoot) : project.workspaceRoot,

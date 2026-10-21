@@ -38,7 +38,7 @@ describe("thread workflows", () => {
         activeProviderThreadId: "provider-thread",
         modelSelection: { instanceId: "cursor", model: "grok-4.7" },
       },
-      runs: [{ id: "run", status: "completed" }],
+      runs: [{ id: "run", status: "completed", providerInstanceId: "cursor" }],
       providerSessions: [],
       providerThreads: [
         {
@@ -73,6 +73,96 @@ describe("thread workflows", () => {
         providerThreads: [{ ...projection.providerThreads[0]!, nativeThreadRef: null }],
       }),
     ).toBe(true);
+  });
+
+  it("lets a thread leave a provider that never answered on it", () => {
+    // Earlier turns ran on Claude; then the thread moved to a managed Copilot
+    // agent that was never prepared here, and every open failed.
+    const projection = {
+      thread: {
+        id: "thread",
+        activeProviderThreadId: "copilot-thread",
+        modelSelection: { instanceId: "copilot-managed", model: "claude-opus-5.5" },
+      },
+      runs: [
+        { id: "run-1", status: "completed", providerInstanceId: "claudeAgent" },
+        { id: "run-2", status: "failed", providerInstanceId: "copilot-managed" },
+      ],
+      providerSessions: [],
+      providerThreads: [
+        {
+          id: "claude-thread",
+          appThreadId: "thread",
+          providerInstanceId: "claudeAgent",
+          nativeThreadRef: { driver: "claudeAgent", nativeId: "s-1", strength: "strong" },
+        },
+        {
+          id: "copilot-thread",
+          appThreadId: "thread",
+          providerInstanceId: "copilot-managed",
+          nativeThreadRef: null,
+        },
+      ],
+    } as unknown as OrchestrationV2ThreadProjection;
+    expect(threadSupportsProviderHandoff(projection)).toBe(true);
+    // Once that provider has answered, its native session is the one to keep.
+    expect(
+      threadSupportsProviderHandoff({
+        ...projection,
+        runs: [
+          ...projection.runs,
+          { ...projection.runs[1]!, id: "run-3", status: "completed" },
+        ] as never,
+      }),
+    ).toBe(false);
+  });
+
+  it("lets an idle thread leave a provider that cannot run here", () => {
+    // Managed Copilot answered earlier turns; it is no longer prepared on this
+    // machine, so the latest open failed on a fresh provider thread and its
+    // session record is gone. Nothing native is attached to keep.
+    const projection = {
+      thread: {
+        id: "thread",
+        activeProviderThreadId: "copilot-thread-2",
+        modelSelection: { instanceId: "acpRegistry_copilot", model: "claude-opus-5.5" },
+      },
+      runs: [
+        { id: "run-1", status: "completed", providerInstanceId: "acpRegistry_copilot" },
+        { id: "run-2", status: "failed", providerInstanceId: "acpRegistry_copilot" },
+      ],
+      providerSessions: [],
+      providerThreads: [
+        {
+          id: "copilot-thread-1",
+          appThreadId: "thread",
+          providerInstanceId: "acpRegistry_copilot",
+          providerSessionId: null,
+          nativeThreadRef: { driver: "acpRegistry", nativeId: "acp-1", strength: "strong" },
+        },
+        {
+          id: "copilot-thread-2",
+          appThreadId: "thread",
+          providerInstanceId: "acpRegistry_copilot",
+          providerSessionId: "missing-session",
+          nativeThreadRef: null,
+        },
+      ],
+    } as unknown as OrchestrationV2ThreadProjection;
+
+    expect(threadSupportsProviderHandoff(projection)).toBe(false);
+    expect(threadSupportsProviderHandoff(projection, { selectedInstanceCanRun: false })).toBe(true);
+    expect(threadSupportsProviderHandoff(projection, { selectedInstanceCanRun: true })).toBe(false);
+    // A turn that is still running keeps the thread where it is.
+    expect(
+      threadSupportsProviderHandoff(
+        {
+          ...projection,
+          runs: [...projection.runs, { id: "run-3", status: "running" }] as never,
+        },
+        { selectedInstanceCanRun: false },
+      ),
+    ).toBe(false);
   });
 
   it("sorts queued messages and gates reorder and promotion from capabilities", () => {

@@ -1,4 +1,8 @@
 import {
+  isPersonalAssistantProject,
+  PERSONAL_ASSISTANT_PRIVATE_MESSAGE,
+} from "@specweave-studio/shared/personalAssistant";
+import {
   type EnvironmentId,
   type HandoffModeError,
   type HandoffModeSnapshot,
@@ -217,6 +221,15 @@ export const migrateThreads = (input: OrchestratorMcpThreadMigrateInput) =>
     const caller = context.caller;
     if (caller === undefined) return yield* unavailable();
     yield* assertMayMigrate(context, caller);
+    // A personal assistant's threads never move, named or not; every thread
+    // moved belongs to the caller's project.
+    const project = yield* ProjectService.ProjectService.pipe(
+      Effect.flatMap((projects) => projects.getById(caller.projectId)),
+      Effect.map(Option.getOrUndefined),
+      Effect.mapError(unavailable),
+    );
+    if (isPersonalAssistantProject(project))
+      return yield* failure("capability_denied", PERSONAL_ASSISTANT_PRIVATE_MESSAGE);
 
     const threadIds = input.threadIds === undefined ? undefined : [...new Set(input.threadIds)];
     if (input.modelSelection !== undefined && threadIds?.length !== 1) {

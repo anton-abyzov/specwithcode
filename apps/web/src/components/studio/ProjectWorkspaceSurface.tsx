@@ -239,6 +239,8 @@ export function ProjectWorkspaceSurface({
   );
   const snapshot = query.data;
   const refreshWorkspace = query.refresh;
+  const machinePrivate =
+    (project.workspaceSettings?.kind ?? snapshot?.settings.kind) === "personal";
   const coordinatorId = snapshot?.settings.coordinatorThreadId ?? null;
   // The project shell names the coordinator before the workspace read answers; the
   // panel needs it at once, so a link to the coordinator never lands there.
@@ -1466,15 +1468,20 @@ export function ProjectWorkspaceSurface({
                           : null
                       }
                       // Moving is its own confirmed dialog, and needs a coordinator to move.
-                      onMove={mainCoordinatorId && canOperate ? setHandoffTarget : null}
+                      // A personal assistant is private to its machine: it never moves.
+                      onMove={
+                        mainCoordinatorId && canOperate && !machinePrivate ? setHandoffTarget : null
+                      }
                     />
-                    <ProjectMachineHandoff
-                      key={`${project.environmentId}:${project.id}`}
-                      project={project}
-                      coordinatorId={mainCoordinatorId}
-                      requestedTarget={handoffTarget}
-                      onOpenChange={handoffOpenChange}
-                    />
+                    {machinePrivate ? null : (
+                      <ProjectMachineHandoff
+                        key={`${project.environmentId}:${project.id}`}
+                        project={project}
+                        coordinatorId={mainCoordinatorId}
+                        requestedTarget={handoffTarget}
+                        onOpenChange={handoffOpenChange}
+                      />
+                    )}
                     <ProjectUsageIndicator
                       onOpenProjectUsage={() => setTab("usage")}
                       projectEnvironmentId={project.environmentId}

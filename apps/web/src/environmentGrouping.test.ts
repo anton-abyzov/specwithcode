@@ -13,6 +13,7 @@ import {
   buildSidebarProjectPickerEntries,
   buildSidebarProjectSnapshots,
   projectGroupsSpanEnvironments,
+  withPendingMachineAdds,
 } from "./sidebarProjectGrouping";
 import { orderItemsByPreferredIds } from "./components/Sidebar.logic";
 import { legacyProjectCwdPreferenceKey } from "./uiStateStore";
@@ -50,6 +51,69 @@ function makeProject(overrides: Partial<Project> = {}): Project {
     ...overrides,
   };
 }
+
+describe("a project Run on is still adding to another machine", () => {
+  const identity = (id: string, members: ReadonlyArray<Project>) => ({
+    id,
+    title: "shared-repo",
+    coordinatorId: `coordinator:${id}`,
+    members: members.map((project) => ({
+      environmentId: project.environmentId,
+      projectId: project.id,
+      coordinatorThreadId: `project-coordinator:${project.id}` as never,
+    })),
+  });
+  const withIdentity = (project: Project, id: string) => ({
+    ...project,
+    workspaceSettings: { kind: "code", logicalProject: identity(id, [project]) } as never,
+  });
+  // Every project carries its own one-member logical project until it is linked.
+  const source = withIdentity(makeProject({ repositoryIdentity }), "logical:source");
+  const cloning = withIdentity(
+    makeProject({
+      id: ProjectId.make("project-clone"),
+      environmentId: remoteEnvironmentId,
+      workspaceRoot: "/home/x/shared-repo",
+    }),
+    "logical:clone",
+  );
+  const add = {
+    source: { environmentId: primaryEnvironmentId, projectId: source.id },
+    destination: { environmentId: remoteEnvironmentId, projectId: cloning.id },
+  };
+  const groupsOf = (projects: ReadonlyArray<Project>) =>
+    buildSidebarProjectSnapshots({
+      projects,
+      settings: defaultGroupingSettings,
+      primaryEnvironmentId,
+      resolveEnvironmentLabel: () => null,
+    });
+
+  it("lists it under the project it comes from, not as a second project", () => {
+    expect(groupsOf([source, cloning])).toHaveLength(2);
+    const groups = groupsOf(withPendingMachineAdds([source, cloning], [add]));
+    expect(groups).toHaveLength(1);
+    expect(groups[0]!.groupedProjectCount).toBe(2);
+  });
+
+  it("leaves a destination already linked elsewhere, and projects without a job, alone", () => {
+    const input = [source, cloning];
+    expect(withPendingMachineAdds(input, [])).toBe(input);
+    const other = withIdentity(makeProject({ id: ProjectId.make("other") }), "logical:other");
+    const linkedElsewhere = {
+      ...cloning,
+      workspaceSettings: {
+        kind: "code",
+        logicalProject: identity("logical:other", [other, cloning]),
+      } as never,
+    };
+    expect(withPendingMachineAdds([source, linkedElsewhere, other], [add])).toEqual([
+      source,
+      linkedElsewhere,
+      other,
+    ]);
+  });
+});
 
 describe("environment grouping", () => {
   it("groups matching repository identities across environments", () => {

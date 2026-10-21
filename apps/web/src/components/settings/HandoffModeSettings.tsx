@@ -1,3 +1,4 @@
+import { isPersonalAssistantProject } from "@specweave-studio/shared/personalAssistant";
 import type {
   EnvironmentId,
   HandoffConfig,
@@ -208,7 +209,10 @@ export function HandoffModeSettingsView(props: HandoffModeSettingsViewProps) {
 export function HandoffModeSettings({ environmentId }: { environmentId: EnvironmentId }) {
   const { snapshot } = useHandoffModeSnapshot(environmentId);
   const destinations = useHandoffDestinations(environmentId, false);
-  const projects = useProjects().filter((project) => project.environmentId === environmentId);
+  // A personal assistant stays on its machine, so it has no handoff mode to set.
+  const projects = useProjects().filter(
+    (project) => project.environmentId === environmentId && !isPersonalAssistantProject(project),
+  );
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // A server without handoff mode shows nothing rather than a broken section.

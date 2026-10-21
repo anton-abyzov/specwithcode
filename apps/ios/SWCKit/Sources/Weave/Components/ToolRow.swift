@@ -36,16 +36,21 @@ public struct ToolRow: View {
             .font(.weave(.callout, weight: .medium))
             .foregroundStyle(Color.weave.ink)
             .lineLimit(expanded ? nil : 1)
-          if let detail {
+          if let detail, expanded || state == .failed {
             Text(detail)
               .weaveFont(.code)
               .foregroundStyle(Color.weave.muted)
-              .lineLimit(expanded ? nil : 1)
+              .lineLimit(expanded ? nil : 3)
               .truncationMode(.middle)
           }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
         WeaveProgressGlyph(state: state)
+        if detail != nil {
+          Image(systemName: expanded ? "chevron.up" : "chevron.down")
+            .font(.caption2)
+            .foregroundStyle(Color.weave.muted)
+        }
       }
       .padding(.vertical, WeaveSpacing.s2)
       .frame(minHeight: WeaveSize.minTap)
@@ -53,7 +58,7 @@ public struct ToolRow: View {
     }
     .buttonStyle(.plain)
     .accessibilityElement(children: .ignore)
-    .accessibilityLabel([title, detail, WeaveProgressGlyph.label(state)].compactMap(\.self).joined(separator: ", "))
+    .accessibilityLabel([title, expanded || state == .failed ? detail : nil, WeaveProgressGlyph.label(state)].compactMap(\.self).joined(separator: ", "))
     .accessibilityHint(detail == nil ? "" : (expanded ? "Collapses the detail" : "Shows the full detail"))
   }
 }

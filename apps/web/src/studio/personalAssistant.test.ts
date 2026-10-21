@@ -1,62 +1,83 @@
 import { describe, expect, it } from "vite-plus/test";
 import {
-  findPersonalAssistant,
-  PERSONAL_ASSISTANT_ELSEWHERE_NOTICE,
-  personalAssistantCreationEnvironment,
+  assistantDisplayTitle,
+  findMachineAssistant,
+  isExtraAssistant,
   personalAssistantSetupStep,
 } from "./personalAssistant";
-describe("personal assistant entry", () => {
-  it("opens the existing assistant across machines regardless of current project", () => {
-    const remote = { environmentId: "remote", workspaceSettings: { kind: "personal" } };
-    expect(
-      findPersonalAssistant([
-        { environmentId: "local", workspaceSettings: { kind: "code" } },
-        remote,
-      ]),
-    ).toBe(remote);
+
+// Two fictional machines; neither names a real person or folder.
+const personal = (id: string, environmentId: string, createdAt: string, archived = false) => ({
+  id,
+  environmentId,
+  createdAt,
+  workspaceSettings: { kind: "personal", archived },
+});
+const studio = {
+  id: "atlas",
+  environmentId: "m4",
+  createdAt: "2026-01-01",
+  workspaceSettings: { kind: "code" },
+};
+const ownM4 = personal("aide-m4", "m4", "2026-02-01");
+const ownAnna = personal("aide-anna", "anna", "2026-01-15");
+
+describe("one personal assistant per machine", () => {
+  it("finds each machine's own assistant and never another machine's", () => {
+    const projects = [studio, ownAnna, ownM4];
+    expect(findMachineAssistant(projects, "m4")).toBe(ownM4);
+    expect(findMachineAssistant(projects, "anna")).toBe(ownAnna);
+    expect(findMachineAssistant([studio, ownAnna], "m4")).toBeUndefined();
   });
-  it("prefers an active legacy assistant and retains an archived one rather than duplicating it", () => {
-    const archived = { workspaceSettings: { kind: "personal", archived: true } };
-    const active = { workspaceSettings: { kind: "personal" } };
-    expect(findPersonalAssistant([archived, active])).toBe(active);
-    expect(findPersonalAssistant([archived])).toBe(archived);
-    expect(findPersonalAssistant([])).toBeUndefined();
+
+  it("keeps an older duplicate's history visible, as an earlier assistant", () => {
+    const duplicate = personal("aide-m4-later", "m4", "2026-03-01");
+    const archivedFirst = personal("aide-m4-first", "m4", "2026-01-10", true);
+    const projects = [ownM4, duplicate, archivedFirst];
+    expect(findMachineAssistant(projects, "m4")).toBe(archivedFirst);
+    expect(isExtraAssistant(duplicate, projects)).toBe(true);
+    expect(isExtraAssistant(archivedFirst, projects)).toBe(false);
+    expect(isExtraAssistant(studio, [studio])).toBe(false);
   });
 });
 
-it("uses one creation authority independent of catalog order or online status", () => {
-  expect(personalAssistantCreationEnvironment(["m4", "m1", "m3"])).toBe("m1");
-  expect(personalAssistantCreationEnvironment(["m3", "m4", "m1"])).toBe("m1");
-  expect(personalAssistantCreationEnvironment([])).toBeNull();
-});
-
-describe("personal assistant Set up", () => {
-  const code = { workspaceSettings: { kind: "code" } };
-  const m4 = { label: "M4MAX" };
-
-  it("opens an assistant a connected machine has, even while another machine is hidden", () => {
-    const assistant = { workspaceSettings: { kind: "personal" } };
+describe("Set up", () => {
+  it("opens the assistant of the machine in context, even when another machine has one", () => {
     expect(
-      personalAssistantSetupStep({ projects: [code, assistant], unseenMachines: [m4] }),
-    ).toEqual({ kind: "open", assistant });
+      personalAssistantSetupStep({
+        projects: [ownAnna, ownM4],
+        connectedEnvironmentIds: ["m4", "anna"],
+        preferredEnvironmentId: "m4",
+      }),
+    ).toEqual({ kind: "open", assistant: ownM4 });
   });
 
-  it("offers Connect to hidden private machines before creating a second assistant", () => {
-    expect(personalAssistantSetupStep({ projects: [code], unseenMachines: [m4] })).toEqual({
-      kind: "connect-first",
-      machines: [m4],
-    });
-    expect(PERSONAL_ASSISTANT_ELSEWHERE_NOTICE).toBe(
-      "An assistant on another Mac is not visible until that Mac is connected.",
+  it("creates one on this machine instead of opening Anna's", () => {
+    expect(
+      personalAssistantSetupStep({
+        projects: [ownAnna],
+        connectedEnvironmentIds: ["m4", "anna"],
+        preferredEnvironmentId: "m4",
+      }),
+    ).toEqual({ kind: "create", environmentId: "m4" });
+  });
+
+  it("uses the only connected machine, and asks which machine when several are and none is in context", () => {
+    expect(personalAssistantSetupStep({ projects: [], connectedEnvironmentIds: ["anna"] })).toEqual(
+      { kind: "create", environmentId: "anna" },
     );
+    expect(
+      personalAssistantSetupStep({
+        projects: [ownM4],
+        connectedEnvironmentIds: ["m4", "anna"],
+        preferredEnvironmentId: "offline-mac",
+      }),
+    ).toEqual({ kind: "choose-machine" });
   });
 
-  it("creates one when every private machine is visible, or when the user chose a separate one", () => {
-    expect(personalAssistantSetupStep({ projects: [code], unseenMachines: [] })).toEqual({
-      kind: "create",
-    });
-    expect(
-      personalAssistantSetupStep({ projects: [code], unseenMachines: [m4], separate: true }),
-    ).toEqual({ kind: "create" });
+  it("names each machine's assistant once more than one machine is connected", () => {
+    expect(assistantDisplayTitle("Aide", "Anna's MacBook", 2)).toBe("Aide · Anna's MacBook");
+    expect(assistantDisplayTitle("Aide", "Anna's MacBook", 1)).toBe("Aide");
+    expect(assistantDisplayTitle("Aide", null, 3)).toBe("Aide");
   });
 });

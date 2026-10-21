@@ -1,3 +1,4 @@
+import { isPersonalAssistantProject } from "@specweave-studio/shared/personalAssistant";
 import { THREAD_LIFECYCLE_LABELS } from "@specweave-studio/shared/threadLifecycleLabels";
 import { scopeProjectRef } from "@specweave-studio/client-runtime/environment";
 import { requestCustomSnooze } from "../components/CustomSnoozeDialog";
@@ -198,7 +199,10 @@ export function useThreadActionMenu(input: {
           isRunning: !threadRuntimeCanArchive(thread.runtime),
           canOpenProjectWindow: canOpenProjectWindowFor(menuProjectKey),
           moveToProjectBlockedReason: threadMoveBlockedReason(thread, menuProject),
-          handoff: threadHandoffMenuState(handoffSnapshot, thread.id),
+          // A personal assistant's threads stay on their machine: no handoff items.
+          handoff: isPersonalAssistantProject(menuProject)
+            ? undefined
+            : threadHandoffMenuState(handoffSnapshot, thread.id),
           supports,
           snoozePresets,
         });

@@ -23,6 +23,7 @@ import {
   OctagonAlertIcon,
   PresentationIcon,
   SparklesIcon,
+  TableIcon,
   TriangleAlertIcon,
   WorkflowIcon,
   WrapTextIcon,
@@ -99,7 +100,7 @@ import remarkBreaks from "remark-breaks";
 import { parseAssistantCitationHref } from "@specweave-studio/shared/assistantCitations";
 import { parseComposerContextHref } from "@specweave-studio/shared/composerContextReferences";
 import { AssistantCitationChip } from "./chat/AssistantCitationChip";
-import remarkGfm from "remark-gfm";
+import { CHAT_REMARK_GFM } from "../markdown-gfm";
 import type { Processor } from "unified";
 import { isWindowsAbsolutePath } from "@specweave-studio/shared/path";
 import { remarkGithubAlerts } from "../markdown-github-alerts";
@@ -171,7 +172,10 @@ import {
   SHELL_FENCE_LANGUAGE_REGEX,
 } from "./chat/shellCodeBlocks";
 import { RenderErrorBoundary } from "./RenderErrorBoundary";
+import { remarkDocumentReadability } from "./chat/documentReadability";
 import { MermaidDiagram } from "./chat/MermaidDiagram";
+import { structuredFenceView } from "./chat/StructuredBlocks";
+import { STRUCTURED_FENCE_LANGUAGES } from "./chat/structuredBlocks.logic";
 import { useTheme } from "../hooks/useTheme";
 import { getClientSettings, useClientSettings } from "../hooks/useSettings";
 import { remarkDisplayDates } from "../markdown-display-dates";
@@ -606,7 +610,7 @@ const CHAT_MARKDOWN_SANITIZE_SCHEMA = {
 } satisfies Parameters<typeof rehypeSanitize>[0];
 
 const CHAT_MARKDOWN_REMARK_PLUGINS = [
-  remarkGfm,
+  CHAT_REMARK_GFM,
   remarkBareDomainLinks,
   remarkKeepWindowsPathDestinations,
   remarkGithubAlerts,
@@ -617,7 +621,7 @@ const CHAT_MARKDOWN_REMARK_PLUGINS = [
 ] satisfies NonNullable<ReactMarkdownOptions["remarkPlugins"]>;
 
 const CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS = [
-  remarkGfm,
+  CHAT_REMARK_GFM,
   remarkBareDomainLinks,
   remarkKeepWindowsPathDestinations,
   remarkGithubAlerts,
@@ -627,6 +631,11 @@ const CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS = [
   remarkPreserveCodeMeta,
   remarkNormalizeLinksAndTagInlineCode,
 ] satisfies NonNullable<ReactMarkdownOptions["remarkPlugins"]>;
+
+/** A Markdown file in the document reader: statements on their own lines, digests and paths set apart. */
+const DOCUMENT_REMARK_PLUGINS = [remarkDocumentReadability] satisfies NonNullable<
+  ReactMarkdownOptions["remarkPlugins"]
+>;
 
 const CHAT_MARKDOWN_REHYPE_PLUGINS = [
   rehypePreserveBareAnchorPlaceholders,
@@ -1156,6 +1165,76 @@ function MarkdownMermaidCodeBlock({
           >
             <MermaidDiagram source={code} theme={theme} onExpand={onExpand} />
           </Suspense>
+        </RenderErrorBoundary>
+      ) : (
+        children
+      )}
+    </MarkdownCodeBlock>
+  );
+}
+
+/**
+ * `json`, `status` and `kv` fences render as a grid, a status card or key/value
+ * facts once the response settles. Text the block cannot read keeps the code view,
+ * and the toggle always reaches the source.
+ */
+function MarkdownStructuredCodeBlock({
+  code,
+  language,
+  fenceTitle,
+  theme,
+  isStreaming,
+  children,
+}: {
+  code: string;
+  language: string;
+  fenceTitle: string | null;
+  theme: "light" | "dark";
+  isStreaming: boolean;
+  children: ReactNode;
+}) {
+  const [showCode, setShowCode] = useState(false);
+  const view = useMemo(
+    () => (isStreaming ? null : structuredFenceView(language, code)),
+    [code, isStreaming, language],
+  );
+  const showView = !showCode && view !== null;
+  const toggleLabel = showCode ? "Show formatted" : "Show raw";
+  return (
+    <MarkdownCodeBlock
+      code={code}
+      language={language}
+      fenceTitle={fenceTitle}
+      theme={theme}
+      canWrap={!showView}
+      diagram={showView}
+      leadingActions={
+        view === null ? null : (
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  type="button"
+                  variant="ghost-muted"
+                  size="icon-xs"
+                  onClick={() => setShowCode((value) => !value)}
+                  aria-label={toggleLabel}
+                />
+              }
+            >
+              {showCode ? <TableIcon className="size-3" /> : <CodeIcon className="size-3" />}
+            </TooltipTrigger>
+            <TooltipPopup side="top">{toggleLabel}</TooltipPopup>
+          </Tooltip>
+        )
+      }
+    >
+      {showView ? (
+        <RenderErrorBoundary resetKeys={[code, language]} fallback={children}>
+          {fenceTitle ? (
+            <p className="mb-1 truncate font-mono text-2xs text-muted-foreground">{fenceTitle}</p>
+          ) : null}
+          {view}
         </RenderErrorBoundary>
       ) : (
         children
@@ -3706,6 +3785,19 @@ const CHAT_MARKDOWN_COMPONENTS = {
         </MarkdownMermaidCodeBlock>
       );
     }
+    if (STRUCTURED_FENCE_LANGUAGES.has(language)) {
+      return (
+        <MarkdownStructuredCodeBlock
+          code={codeBlock.code}
+          language={language}
+          fenceTitle={fenceTitle}
+          theme={resolvedTheme}
+          isStreaming={isStreaming}
+        >
+          {highlightedCode}
+        </MarkdownStructuredCodeBlock>
+      );
+    }
     // A closed shell fence gets a Run action that shows its output under the block.
     const runCommand =
       !isStreaming && isClosedCodeFence(node, text)
@@ -3826,6 +3918,7 @@ function ChatMarkdown({
               text={markdown}
               cwd={props.cwd}
               imageBaseDir={baseDir}
+              extraRemarkPlugins={DOCUMENT_REMARK_PLUGINS}
               threadRef={props.threadRef}
               isStreaming={false}
             />

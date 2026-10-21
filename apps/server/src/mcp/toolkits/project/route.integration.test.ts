@@ -655,12 +655,12 @@ it.effect("never lets an agent widen the folders or change the kind routing trus
           environment: { additionalFolders: [w.root], repositories: [] },
         },
       });
-      expect(String(widened.message)).toContain("Approved folders and the project kind");
+      expect(String(widened.message)).toContain("Approved folders are the user's to change");
       const promoted = yield* w.call("studio_project_update", {
         projectId: "specweave",
         workspaceSettings: { expectedRevision: 0, kind: "personal" },
       });
-      expect(String(promoted.message)).toContain("Approved folders and the project kind");
+      expect(String(promoted.message)).toContain("A project's kind is fixed when it is created");
     }),
   );
 });

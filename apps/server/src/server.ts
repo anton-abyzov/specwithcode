@@ -137,6 +137,7 @@ import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import * as DirectEndpoints from "./environment/DirectEndpoints.ts";
 import * as RemoteOpenTargets from "./environment/RemoteOpenTargets.ts";
 import * as AuthHttp from "./auth/http.ts";
+import * as ProviderDiscovery from "./provider/providerDiscovery.ts";
 import * as ReplayMarkers from "./auth/replayMarkers.ts";
 import * as ServerSecretStore from "./auth/ServerSecretStore.ts";
 import * as WebhookRoute from "./scheduledTasks/webhookRoute.ts";
@@ -197,6 +198,7 @@ import * as HandoffModeReactor from "./handoff/HandoffModeReactor.ts";
 import * as HandoffMoves from "./handoff/HandoffMoves.ts";
 import * as HandoffReceiver from "./handoff/HandoffReceiver.ts";
 import * as HandoffRoute from "./handoff/handoffRoute.ts";
+import * as LimitHandoffAdapter from "./orchestration-v2/LimitHandoffAdapter.ts";
 import * as AuthSessions from "./persistence/AuthSessions.ts";
 import * as TemporaryProjects from "./project/TemporaryProjects.ts";
 import * as ThreadPullRequestService from "./orchestration-v2/ThreadPullRequestService.ts";
@@ -610,7 +612,11 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   // Coordinator workers on the owner's other machines: grants, follower and their renewal.
   RemoteWorkers.layerFleetWorkers,
   // Limit handoff reads the machines above; they are built on the runtime it lives in.
-  MachineLimitHandoff.layerFleet.pipe(Layer.provide(RemoteWorkers.layerFleetWorkers)),
+  // Its moves are handoff mode's (without the adapter nothing would ever move).
+  MachineLimitHandoff.layerFleet.pipe(
+    Layer.provide(RemoteWorkers.layerFleetWorkers),
+    Layer.provide(LimitHandoffAdapter.layer),
+  ),
   MachineLimitHandoff.layerRpcHandlers,
   // Interrupts the work of a machine revoked here once its grace has passed.
   WorkGrantRevokeSweeper.layer,
@@ -701,6 +707,8 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   // telemetry instead of waiting for the next status probe.
   ProviderUsageLimitsIngestion.layer,
   layerProviderInstallationRefresh,
+  // Turns on default-off providers whose CLI is already installed and signed in.
+  ProviderDiscovery.layer,
   ReplayMarkers.layer,
 ).pipe(
   // Core Services

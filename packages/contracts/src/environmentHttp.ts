@@ -146,6 +146,8 @@ export const EnvironmentRequestInvalidReason = Schema.Literals([
   "project_environment_invalid",
   "project_folder_change_refused",
   "project_name_taken",
+  "project_assistant_exists",
+  "project_kind_fixed",
 ]);
 export type EnvironmentRequestInvalidReason = typeof EnvironmentRequestInvalidReason.Type;
 
@@ -210,6 +212,10 @@ export class EnvironmentRequestInvalidError extends Schema.TaggedError<Environme
         return "The project folder did not change. Check the folder in project settings before trying again.";
       case "project_name_taken":
         return "Another project already has this name. Choose a different one.";
+      case "project_assistant_exists":
+        return "This machine already has its personal assistant. Open it instead of creating another.";
+      case "project_kind_fixed":
+        return "A project's kind is set when it is created and cannot be changed.";
       default:
         return `The environment rejected the request (${this.reason}).`;
     }

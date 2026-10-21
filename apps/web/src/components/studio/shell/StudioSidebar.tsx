@@ -5,6 +5,7 @@
  * there; a chat row opens that session. Chats group by date unless the filter
  * menu says otherwise, and the menu's choices are remembered per browser.
  */
+import { isExtraAssistant } from "../../../studio/personalAssistant";
 import { useAtomValue } from "@effect/atom-react";
 import { threadRuntimeCanArchive } from "@specweave-studio/client-runtime/state/models";
 import {
@@ -569,7 +570,31 @@ export default function StudioSidebar() {
         };
   // A personal assistant is not a code project: it sits under Overview, ahead of every
   // project and outside the project paging, so it is always one click away.
-  const assistants = listedProjects.filter(isPersonalGroup);
+  // Each machine has its own: this machine's leads, and with more than one
+  // machine each row names its machine. A duplicate from before that rule is marked extra.
+  // Archived ones too: an archived earlier assistant is still its machine's own.
+  const assistantMembers = [...listedProjects, ...archivedProjects]
+    .filter(isPersonalGroup)
+    .flatMap((group) => group.memberProjects);
+  const assistantOf = (group: (typeof listedProjects)[number]) =>
+    group.memberProjects.find((member) => member.workspaceSettings?.kind === "personal");
+  const assistantRank = (group: (typeof listedProjects)[number]) => {
+    const member = assistantOf(group);
+    if (member === undefined) return 3;
+    const here = member.environmentId === primaryEnvironmentId ? 0 : 1;
+    return isExtraAssistant(member, assistantMembers) ? here + 2 : here;
+  };
+  const assistants = listedProjects
+    .filter(isPersonalGroup)
+    .toSorted((left, right) => assistantRank(left) - assistantRank(right));
+  const assistantHint = (group: (typeof listedProjects)[number]) => {
+    const member = assistantOf(group);
+    if (member === undefined) return undefined;
+    const machine =
+      environments.length > 1 ? (machineLabels.get(member.environmentId) ?? null) : null;
+    const extra = isExtraAssistant(member, assistantMembers) ? "extra" : null;
+    return [machine, extra].filter(Boolean).join(" · ") || undefined;
+  };
   // Pinned projects lead, then the rest, both in the person's order.
   const arranged = arrangeProjects(
     listedProjects.filter((group) => !isPersonalGroup(group)),
@@ -651,6 +676,7 @@ export default function StudioSidebar() {
                     archived={isArchivedGroup(group, scratchRootFor)}
                     waiting={waitingByProject.get(group.projectKey) ?? 0}
                     current={group.projectKey === activeProjectKey}
+                    hint={assistantHint(group)}
                     onOpen={closeMobile}
                     onArchive={(archived) => void setGroupArchived(group, archived)}
                     rename={renameFor(group)}

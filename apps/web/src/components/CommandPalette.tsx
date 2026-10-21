@@ -2,14 +2,7 @@
 
 import { ProjectCreationAction } from "./studio/ProjectCreationAction";
 
-import {
-  findPersonalAssistant,
-  PERSONAL_ASSISTANT_ELSEWHERE_NOTICE,
-  personalAssistantCreationEnvironment,
-  personalAssistantSetupStep,
-} from "../studio/personalAssistant";
-import { fleetConnectAction } from "./settings/machinesSettings.logic";
-import { usePrimaryFleet } from "./settings/usePrimaryFleet";
+import { findMachineAssistant, personalAssistantSetupStep } from "../studio/personalAssistant";
 import { deriveLogicalProjectKeyFromSettings } from "../logicalProject";
 import { CloneProjectDestination } from "./studio/CloneProjectDestination";
 import { threadPullRequestLinkMode } from "@specweave-studio/client-runtime/thread-pull-request-compatibility";
@@ -847,7 +840,6 @@ function OpenCommandPaletteDialog(props: {
   const { activeDraftThread, activeThread, defaultProjectRef, handleNewThread } =
     useHandleNewThread();
   const projects = useProjects();
-  const primaryFleet = usePrimaryFleet();
   const referenceThreadRef =
     pathname === "/pull-requests"
       ? environments.some(
@@ -1965,112 +1957,72 @@ function OpenCommandPaletteDialog(props: {
     startAddProjectSourceSelection,
   ]);
 
-  const openNewProjectFlow = (
-    kind: NewProjectKind = "code",
-    options: { readonly separateAssistant?: boolean } = {},
-  ) => {
+  const openMachineAssistant = (assistant: (typeof projects)[number]) => {
+    setOpen(false);
+    void navigate({
+      to: "/projects/$projectKey",
+      params: {
+        projectKey: deriveLogicalProjectKeyFromSettings(assistant, projectGroupingSettings),
+      },
+    });
+  };
+
+  const openNewProjectFlow = (kind: NewProjectKind = "code") => {
     if (kind === "personal") {
+      // Each machine has its own private assistant: open or make the one on
+      // the machine in context, never another machine's.
+      const connected = addProjectEnvironmentOptions.filter((option) => option.isConnected);
       const step = personalAssistantSetupStep({
         projects,
-        unseenMachines: primaryFleet.unseen,
-        separate: options.separateAssistant === true,
+        connectedEnvironmentIds: connected.map((option) => option.environmentId),
+        preferredEnvironmentId: currentExecutionEnvironmentId,
       });
       if (step.kind === "open") {
-        setOpen(false);
-        void navigate({
-          to: "/projects/$projectKey",
-          params: {
-            projectKey: deriveLogicalProjectKeyFromSettings(
-              step.assistant,
-              projectGroupingSettings,
-            ),
+        openMachineAssistant(step.assistant);
+        return;
+      }
+      if (step.kind === "create") {
+        startNewProject(step.environmentId as EnvironmentId, null, kind);
+        return;
+      }
+      pushPaletteView({
+        addonIcon: <ConciergeBellIcon className={ADDON_ICON_CLASS} />,
+        groups: [
+          {
+            value: "assistant-choose-machine",
+            label: "Each machine has its own assistant. Choose one",
+            items: addProjectEnvironmentOptions.map((option) => {
+              const assistant = findMachineAssistant(projects, option.environmentId);
+              return {
+                ...buildEnvironmentItem(
+                  option,
+                  `action:assistant:machine:${option.environmentId}`,
+                  (environmentId) =>
+                    assistant
+                      ? openMachineAssistant(assistant)
+                      : startNewProject(environmentId, null, kind),
+                ),
+                description: option.isConnected
+                  ? assistant
+                    ? `Open ${assistant.title}`
+                    : "Set up its assistant"
+                  : option.status,
+              };
+            }),
           },
-        });
-        return;
-      }
-      // An assistant on a machine this app cannot see stays hidden: offer
-      // Connect first, and a separate assistant only as an explicit choice.
-      if (step.kind === "connect-first") {
-        pushPaletteView({
-          addonIcon: <ConciergeBellIcon className={ADDON_ICON_CLASS} />,
-          groups: [
-            {
-              value: "assistant-connect",
-              label: PERSONAL_ASSISTANT_ELSEWHERE_NOTICE,
-              items: step.machines.map((machine): CommandPaletteActionItem => {
-                const action = fleetConnectAction(machine, primaryFleet.canPair);
-                return {
-                  kind: "action",
-                  value: `action:assistant-connect:${machine.environmentId}`,
-                  searchTerms: ["connect", machine.label, machine.machineName ?? ""],
-                  title: `Connect ${machine.label}`,
-                  description: action.enabled
-                    ? "Its assistant shows here once connected"
-                    : action.label,
-                  disabled: !action.enabled,
-                  icon: <LinkIcon className={ITEM_ICON_CLASS} />,
-                  run: async () => {
-                    try {
-                      await primaryFleet.connect(machine);
-                      toastManager.add(
-                        stackedThreadToast({
-                          type: "success",
-                          title: `Connected ${machine.label}`,
-                          description:
-                            "If it has an assistant, it appears in the sidebar once its projects load.",
-                        }),
-                      );
-                    } catch (failure) {
-                      toastManager.add(
-                        stackedThreadToast({
-                          type: "error",
-                          title: `Could not connect ${machine.label}`,
-                          description:
-                            failure instanceof Error ? failure.message : "Try again in a moment.",
-                        }),
-                      );
-                    }
-                  },
-                };
-              }),
-            },
-            {
-              value: "assistant-separate",
-              label: "Or",
-              items: [
-                {
-                  kind: "action",
-                  value: "action:assistant-create-separate",
-                  searchTerms: ["create", "separate", "new assistant"],
-                  title: "Create a separate assistant",
-                  description: "Only if no other Mac has one",
-                  icon: <ConciergeBellIcon className={ITEM_ICON_CLASS} />,
-                  keepOpen: true,
-                  run: async () => {
-                    openNewProjectFlow("personal", { separateAssistant: true });
-                  },
-                },
-              ],
-            },
-          ],
-        });
-        return;
-      }
+        ],
+      });
+      return;
     }
-    const target =
-      kind === "personal"
-        ? personalAssistantCreationEnvironment(
-            addProjectEnvironmentOptions.map((option) => option.environmentId),
-          )
-        : suggestProjectMachine({
-            current: currentExecutionEnvironmentId,
-            eligible: newProjectEnvironmentOptions.map((option) => option.environmentId),
-            primary: primaryEnvironmentId,
-            loadBalancing: {
-              enabled: clientSettings.loadBalancingEnabled,
-              weights: clientSettings.loadBalancingWeights,
-            },
-          });
+    const target = suggestProjectMachine({
+      current: currentExecutionEnvironmentId,
+      eligible: newProjectEnvironmentOptions.map((option) => option.environmentId),
+      primary: primaryEnvironmentId,
+      loadBalancing: {
+        enabled: clientSettings.loadBalancingEnabled,
+        weights: clientSettings.loadBalancingWeights,
+      },
+    });
     if (target !== null) {
       startNewProject(target, null, kind);
       return;
@@ -3051,23 +3003,10 @@ function OpenCommandPaletteDialog(props: {
       return;
     }
     if (newProjectFlow.kind === "personal") {
-      const assistant = findPersonalAssistant(projects);
+      // The machine already has its assistant: open it instead of a second one.
+      const assistant = findMachineAssistant(projects, newProjectFlow.environmentId);
       if (assistant) {
-        setOpen(false);
-        await navigate({
-          to: "/projects/$projectKey",
-          params: {
-            projectKey: deriveLogicalProjectKeyFromSettings(assistant, projectGroupingSettings),
-          },
-        });
-        return;
-      }
-      const owner = personalAssistantCreationEnvironment(
-        addProjectEnvironmentOptions.map((option) => option.environmentId),
-      );
-      if (owner !== newProjectFlow.environmentId) {
-        // The name step comes after the Connect choice, so do not ask again.
-        openNewProjectFlow("personal", { separateAssistant: true });
+        openMachineAssistant(assistant);
         return;
       }
     }

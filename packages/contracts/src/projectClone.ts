@@ -111,6 +111,18 @@ export function projectCloneDisplayName(
   return segments[segments.length - 1] ?? snapshot.destinationPath;
 }
 
+/**
+ * Why a draft in a cloning project cannot send yet, or null once it can: the
+ * composer shows Run on the new machine with the progress strip, but no turn
+ * starts until the repository is there.
+ */
+export function projectCloneSendBlockReason(
+  snapshot: Pick<ProjectCloneSnapshot, "phase"> | null,
+): string | null {
+  if (snapshot === null || snapshot.phase === "done") return null;
+  return snapshot.phase === "running" ? "Cloning repository" : "Repository not cloned";
+}
+
 /** One-line progress summary: `Receiving objects · 45% · 12.3 MiB | 5.0 MiB/s`. */
 export function projectCloneProgressSummary(
   snapshot: Pick<ProjectCloneSnapshot, "stage" | "percent" | "detail">,

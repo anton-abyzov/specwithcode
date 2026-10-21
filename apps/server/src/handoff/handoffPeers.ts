@@ -254,8 +254,9 @@ export const make = Effect.gen(function* () {
       }
       const decoded = decode(json);
       if (Option.isSome(decoded)) return decoded.value;
+      // The destination may have acted, so an unreadable answer is in doubt, not a refusal.
       return yield* new HandoffPeerError({
-        code: "failed",
+        code: "unreachable",
         message: `${target.label} sent an answer this version cannot read.`,
         uncertain: true,
       });

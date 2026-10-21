@@ -303,6 +303,41 @@ describe("acpRegistrySnapshotReadiness", () => {
       }),
     ).toEqual({ installed: true, version: "1.2.3", status: "ready" });
 
+    // A registry bump keeps the prepared version ready and points at the update.
+    expect(
+      acpRegistrySnapshotReadiness({
+        status: "ready",
+        agentId: "github-copilot-cli",
+        agentName: "Copilot",
+        version: "1.0.98",
+        availableVersion: "1.0.101",
+        distribution: "npx",
+      }),
+    ).toEqual({
+      installed: true,
+      version: "1.0.98",
+      status: "ready",
+      message:
+        "Copilot 1.0.98 is running; 1.0.101 is available. Use Install / update agent in Settings → Providers.",
+    });
+
+    // A registry that rolled back never suggests a downgrade.
+    expect(
+      acpRegistrySnapshotReadiness({
+        status: "ready",
+        agentId: "github-copilot-cli",
+        agentName: "Copilot",
+        version: "1.0.101",
+        availableVersion: "1.0.98",
+        distribution: "npx",
+      }),
+    ).toEqual({
+      installed: true,
+      version: "1.0.101",
+      status: "ready",
+      message: "Copilot 1.0.101 is running; the ACP Registry lists 1.0.98.",
+    });
+
     expect(
       acpRegistrySnapshotReadiness({
         status: "missing_runner",

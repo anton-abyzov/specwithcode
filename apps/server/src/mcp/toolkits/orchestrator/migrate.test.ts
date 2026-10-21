@@ -24,6 +24,7 @@ import * as ThreadMetadataMcpService from "../../ThreadMetadataMcpService.ts";
 import * as OrchestratorHandlers from "./handlers.ts";
 import { migrateSummary } from "./migrate.ts";
 import { OrchestratorToolkit } from "./tools.ts";
+import { PERSONAL_ASSISTANT_PRIVATE_MESSAGE } from "@specweave-studio/shared/personalAssistant";
 
 const projectId = ProjectId.make("project");
 const coordinatorId = ThreadId.make("project-coordinator:project");
@@ -73,6 +74,8 @@ const setup = (
     readonly fenced?: boolean;
     readonly error?: HandoffModeError;
     readonly callerId?: ThreadId;
+    /** The project is this machine's personal assistant. */
+    readonly personal?: boolean;
   } = {},
 ) => {
   const calls: Array<{ readonly method: string; readonly input: unknown }> = [];
@@ -163,7 +166,13 @@ const setup = (
     Layer.mock(ProjectService.ProjectService)({
       getById: (id) =>
         Effect.succeed(
-          id === projectId ? Option.some({ id, workspaceSettings: {} } as never) : Option.none(),
+          id === projectId
+            ? Option.some({
+                id,
+                title: options.personal ? "Example Household" : "Project",
+                workspaceSettings: options.personal ? { kind: "personal" } : {},
+              } as never)
+            : Option.none(),
         ),
     }),
     Layer.mock(OrchestratorMcpService.OrchestratorMcpService)({}),
@@ -314,6 +323,23 @@ it.effect("refuses a fenced copy through the side-effect fence before any handof
       message: "Mac mini continues this thread; this copy is fenced.",
     });
     expect(handoffCalls()).toEqual([]);
+  });
+});
+
+it.effect("never moves a personal assistant's threads, named or not", () => {
+  const household = setup({ personal: true });
+  return Effect.gen(function* () {
+    for (const params of [
+      { machine: "mini", threadIds: ["w1"] },
+      { machine: "mini", threadIds: ["w1", "w2"] },
+      { machine: "mini" },
+    ]) {
+      expect(yield* household.call(params), JSON.stringify(params)).toMatchObject({
+        code: "capability_denied",
+        message: PERSONAL_ASSISTANT_PRIVATE_MESSAGE,
+      });
+    }
+    expect(household.handoffCalls()).toEqual([]);
   });
 });
 
