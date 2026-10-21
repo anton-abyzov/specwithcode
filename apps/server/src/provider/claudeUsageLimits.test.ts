@@ -209,19 +209,215 @@ describe("claudeRateLimitEventToUpdate", () => {
     },
   );
 
+  // Updated with the 2026-10-21 limit fix: a rejected window without a
+  // utilization is spent (it used to stay at its last reading). A model
+  // weekly's rejection still revokes the whole account.
   it("publishes a rejection even when the native event omits usage or a known window", () => {
+    const denial = {
+      ordinaryUsageAllowed: false,
+      nativeDenialRequiresFullRead: true,
+      rateLimitReachedType: "rate_limit_reached",
+    };
     for (const event of [
       { status: "rejected" as const },
-      { status: "rejected" as const, rateLimitType: "five_hour" as const },
-      { status: "rejected" as const, rateLimitType: "seven_day_opus" as const, utilization: 0.5 },
       { status: "rejected" as const, rateLimitType: "five_hour" as const, utilization: NaN },
     ])
-      expect(claudeRateLimitEventToUpdate(event, noNames)).toEqual({
-        windows: [],
+      expect(claudeRateLimitEventToUpdate(event, noNames)).toEqual({ windows: [], ...denial });
+    expect(
+      claudeRateLimitEventToUpdate({ status: "rejected", rateLimitType: "five_hour" }, noNames),
+    ).toEqual({
+      windows: [
+        {
+          id: "five_hour",
+          kind: "session",
+          label: "Session",
+          usedPercent: 100,
+          windowDurationMins: 300,
+        },
+      ],
+      ...denial,
+    });
+    expect(
+      claudeRateLimitEventToUpdate(
+        { status: "rejected", rateLimitType: "seven_day_opus", utilization: 0.5 },
+        noNames,
+      ),
+    ).toEqual({
+      windows: [
+        {
+          id: "seven_day_opus",
+          kind: "weekly",
+          label: "Weekly · Opus",
+          modelScope: "Opus",
+          usedPercent: 100,
+          windowDurationMins: 10080,
+        },
+      ],
+      ...denial,
+    });
+  });
+
+  // The rejected event observed at 06:44Z on 2026-10-21: no top-level
+  // utilization, which the CLI carried only in `unifiedWindows`.
+  const incident = {
+    status: "rejected" as const,
+    rateLimitType: "five_hour" as const,
+    resetsAt: 1_792_575_000,
+    unifiedWindows: {
+      five_hour: { utilization: 1, resetsAt: 1_792_575_000 },
+      seven_day: { utilization: 0.42, resetsAt: 1_793_000_000 },
+      seven_day_overage_included: { utilization: 0.3, resetsAt: 1_793_000_000 },
+    },
+  };
+
+  it("marks the rejected 5-hour window spent with its reset and folds the other windows", () => {
+    expect(claudeRateLimitEventToUpdate(incident, { overageIncluded: "Fable" })).toEqual({
+      windows: [
+        {
+          id: "five_hour",
+          kind: "session",
+          label: "Session",
+          usedPercent: 100,
+          windowDurationMins: 300,
+          resetsAt: "2026-10-21T09:30:00.000Z",
+        },
+        {
+          id: "seven_day",
+          kind: "weekly",
+          label: "Weekly",
+          usedPercent: 42,
+          windowDurationMins: 10080,
+          resetsAt: "2026-10-26T07:33:20.000Z",
+        },
+        {
+          id: "seven_day_fable",
+          kind: "weekly",
+          label: "Weekly · Fable",
+          modelScope: "Fable",
+          usedPercent: 30,
+          windowDurationMins: 10080,
+          resetsAt: "2026-10-26T07:33:20.000Z",
+        },
+      ],
+      ordinaryUsageAllowed: false,
+      nativeDenialRequiresFullRead: true,
+      rateLimitReachedType: "rate_limit_reached",
+      nativeDenialResetsAt: "2026-10-21T09:30:00.000Z",
+    });
+    // Unnamed overage bucket draws no row; the account-wide rows still land.
+    expect(
+      claudeRateLimitEventToUpdate(incident, noNames)?.windows.map((window) => window.id),
+    ).toEqual(["five_hour", "seven_day"]);
+  });
+
+  it("takes the reading and reset from unifiedWindows when the top level omits them", () => {
+    const { resetsAt: _resetsAt, ...withoutReset } = incident;
+    expect(claudeRateLimitEventToUpdate(withoutReset, noNames)).toMatchObject({
+      windows: [{ id: "five_hour", usedPercent: 100, resetsAt: "2026-10-21T09:30:00.000Z" }, {}],
+      nativeDenialResetsAt: "2026-10-21T09:30:00.000Z",
+    });
+    expect(
+      claudeRateLimitEventToUpdate(
+        {
+          status: "allowed_warning",
+          rateLimitType: "five_hour",
+          unifiedWindows: { five_hour: { utilization: 0.9, resetsAt: 1_792_575_000 } },
+        } as never,
+        noNames,
+      ),
+    ).toEqual({
+      windows: [
+        {
+          id: "five_hour",
+          kind: "session",
+          label: "Session",
+          usedPercent: 90,
+          windowDurationMins: 300,
+          resetsAt: "2026-10-21T09:30:00.000Z",
+        },
+      ],
+    });
+  });
+
+  it("skips malformed unifiedWindows entries instead of normalizing them", () => {
+    expect(
+      claudeRateLimitEventToUpdate(
+        Object.assign({}, incident, {
+          unifiedWindows: {
+            five_hour: { utilization: 1, resetsAt: 1_792_575_000 },
+            seven_day: { utilization: 4.2, resetsAt: 1_793_000_000 },
+            seven_day_overage_included: { utilization: 0.3, resetsAt: -1 },
+          },
+        }),
+        { overageIncluded: "Fable" },
+      )?.windows.map((window) => window.id),
+    ).toEqual(["five_hour"]);
+  });
+
+  it.each([
+    ["seven_day_overage_included", "seven_day_fable", "Fable"],
+    ["seven_day_opus", "seven_day_opus", "Opus"],
+    ["seven_day_some_new_model", "seven_day_some_new_model", "Some New Model"],
+  ] as const)(
+    "a rejected model weekly (%s) spends its window and fences the account until its reset",
+    (rateLimitType, id, modelScope) => {
+      const update = claudeRateLimitEventToUpdate(
+        { status: "rejected", rateLimitType: rateLimitType as never, resetsAt: 1_793_000_000 },
+        { overageIncluded: "Fable" },
+      );
+      expect(update).toEqual({
+        windows: [
+          {
+            id,
+            kind: "weekly",
+            label: `Weekly · ${modelScope}`,
+            modelScope,
+            usedPercent: 100,
+            windowDurationMins: 10080,
+            resetsAt: "2026-10-26T07:33:20.000Z",
+          },
+        ],
         ordinaryUsageAllowed: false,
         nativeDenialRequiresFullRead: true,
         rateLimitReachedType: "rate_limit_reached",
+        nativeDenialResetsAt: "2026-10-26T07:33:20.000Z",
       });
+    },
+  );
+
+  it("does not guess a model for an unnamed overage-included rejection", () => {
+    expect(
+      claudeRateLimitEventToUpdate(
+        { status: "rejected", rateLimitType: "seven_day_overage_included" },
+        noNames,
+      ),
+    ).toEqual({
+      windows: [],
+      ordinaryUsageAllowed: false,
+      nativeDenialRequiresFullRead: true,
+      rateLimitReachedType: "rate_limit_reached",
+    });
+  });
+
+  it("lapses only when every account-wide window the rejection shows spent has reset", () => {
+    const withWeekly = (seven_day: object) =>
+      claudeRateLimitEventToUpdate(
+        Object.assign({}, incident, {
+          unifiedWindows: { five_hour: { utilization: 1, resetsAt: 1_792_575_000 }, seven_day },
+        }),
+        noNames,
+      );
+    const spent = withWeekly({ utilization: 1, resetsAt: 1_793_000_000 });
+    expect(spent?.windows.find((window) => window.id === "seven_day")?.usedPercent).toBe(100);
+    expect(spent?.nativeDenialResetsAt).toBe("2026-10-26T07:33:20.000Z");
+    // A spent weekly with no usable reset leaves nothing to lapse at.
+    expect(withWeekly({ utilization: 1 })).toMatchObject({ ordinaryUsageAllowed: false });
+    expect(withWeekly({ utilization: 1 })?.nativeDenialResetsAt).toBeUndefined();
+    expect(withWeekly({ utilization: 1, resetsAt: -1 })?.nativeDenialResetsAt).toBeUndefined();
+    // A weekly with room does not move the session's reset.
+    expect(withWeekly({ utilization: 0.99, resetsAt: 1_793_000_000 })?.nativeDenialResetsAt).toBe(
+      "2026-10-21T09:30:00.000Z",
+    );
   });
 
   it.each([

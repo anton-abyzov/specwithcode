@@ -33,6 +33,7 @@ private struct ChatScreen: View {
   @State private var confirmArchive = false
   @State private var confirmDelete = false
   @State private var showingHandoff = false
+  @State private var showingIncrement = false
 
   var body: some View {
     transcript
@@ -43,6 +44,7 @@ private struct ChatScreen: View {
           HandoffSheet(thread: thread) { next in nav.push(.chat(.thread(next))) }
         }
       }
+      .sheet(isPresented: $showingIncrement) { IncrementSheet(target: target) }
       .onAppear { model.openSession(session) }
       .onDisappear { model.closeSession(session) }
       .task(id: router.pendingComposerFocus) {
@@ -101,7 +103,15 @@ private struct ChatScreen: View {
             row: row,
             busyRequests: busyRequests,
             onDecision: { requestId, decision in respond(requestId, decision) },
-            onOpenThread: { nav.push(.chat(.thread($0))) }
+            onOpenThread: { nav.push(.chat(.thread($0))) },
+            onOpenLink: { url in
+              do {
+                guard let route = MarkdownThreadLink.route(url) else { throw SyncError.sendBlocked("This thread link is invalid.") }
+                let thread = try model.threadLink(threadId: route.threadId, environmentId: route.environmentId, from: target.environmentId)
+                nav.push(.chat(.thread(thread)))
+              }
+              catch { router.showError(error) }
+            }
           )
           .id(row.id)
         }
@@ -277,9 +287,15 @@ private struct ChatScreen: View {
         let needsYou = model.threads(in: project).contains { $0.needsAttention }
         HStack(spacing: 0) {
           if case .project = target { OrchestratorSwitcher(current: project) }
-          WeaveIconButton("checklist", label: "Threads", badge: needsYou) {
+          Button {
             nav.push(.overview(project))
+          } label: {
+            Label("Threads", systemImage: "bubble.left.and.bubble.right")
+              .font(.weave(.caption, weight: .semibold))
+              .foregroundStyle(needsYou ? Color.weave.warn : Color.weave.ink)
+              .frame(minHeight: WeaveSize.minTap)
           }
+          .accessibilityIdentifier("chat.threads")
         }
       case let .thread(thread):
         threadControls(thread)
@@ -337,8 +353,10 @@ private struct ChatScreen: View {
   @ViewBuilder private func threadMenu(_ ref: ThreadRef, summary: ThreadSummary?) -> some View {
     let pinned = summary?.isPinned ?? false
     let resolved = summary?.isResolved ?? false
-    Button("Continue on a machine", systemImage: "arrow.right.arrow.left") { showingHandoff = true }
-      .accessibilityIdentifier("thread.handoff")
+    if summary?.projectRef.flatMap({ model.project($0) })?.kind != .personal {
+      Button("Check handoff options…", systemImage: "arrow.right.arrow.left") { showingHandoff = true }
+        .accessibilityIdentifier("thread.handoff")
+    }
     Section {
       Button(pinned ? "Unpin" : "Pin", systemImage: pinned ? "pin.slash" : "pin") {
         perform(pinned ? .unpin : .pin, on: ref)
@@ -372,20 +390,25 @@ private struct ChatScreen: View {
 
   private var composerArea: some View {
     VStack(spacing: WeaveSpacing.s2) {
-      ZStack {
+      HStack {
+        Button("SpecWeave increment") { showingIncrement = true }
+          .font(.weave(.caption, weight: .medium))
+          .accessibilityIdentifier("chat.increment")
+        Spacer()
         if let plan = session.plan {
-          TasksChip(completed: plan.completed, total: plan.total) { scrollToPlan() }
+          Button("Provider checklist · \(plan.completed)/\(plan.total)") { scrollToPlan() }
+            .font(.weave(.caption))
             .transition(.opacity.combined(with: .scale(scale: 0.9)))
         }
-        if !isNearBottom {
-          HStack {
-            Spacer()
-            WeaveIconButton("arrow.down", label: "Scroll to latest") {
-              withAnimation(.easeOut(duration: 0.25)) { position.scrollTo(edge: .bottom) }
-            }
+      }
+      if !isNearBottom {
+        HStack {
+          Spacer()
+          WeaveIconButton("arrow.down", label: "Scroll to latest") {
+            withAnimation(.easeOut(duration: 0.25)) { position.scrollTo(edge: .bottom) }
           }
-          .transition(.opacity)
         }
+        .transition(.opacity)
       }
       if let notice = connectionNotice {
         Banner(notice.message, kind: notice.kind, actionTitle: notice.action == nil ? nil : notice.actionTitle, action: notice.action)

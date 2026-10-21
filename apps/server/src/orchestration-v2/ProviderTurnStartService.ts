@@ -6,6 +6,7 @@ import { modelSelectionsEqual } from "@specweave-studio/shared/model";
 import { projectComposerContextForProvider } from "@specweave-studio/shared/composerContextReferences";
 import {
   CommandId,
+  GitCommandError,
   latestProviderTurnForAttempt,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2ExecutionNode,
@@ -53,7 +54,11 @@ import {
 import * as IdAllocator from "./IdAllocator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
-import { makeProviderFailure, simulatedUsageLimitFailure } from "./ProviderFailure.ts";
+import {
+  makeProviderFailure,
+  simulatedUsageLimitFailure,
+  WORKSPACE_BRANCH_MISSING_FAILURE_CODE,
+} from "./ProviderFailure.ts";
 import { readSpecweaveCheckpointPreface } from "./SpecweaveCheckpoint.ts";
 import * as RunExecutionService from "./RunExecutionService.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
@@ -72,6 +77,64 @@ export class ProviderTurnStartError extends Schema.TaggedError<ProviderTurnStart
 ) {}
 
 const isProviderTurnStartError = Schema.is(ProviderTurnStartError);
+
+// Session and adapter wrappers name internal ids (provider-session:…, run and
+// thread ids); makeProviderFailure translates them into curated guidance.
+const INTERNAL_ID_WRAPPER_TAGS: ReadonlySet<string> = new Set([
+  "ProviderSessionOpenError",
+  "ProviderAdapterOpenSessionError",
+  "ProviderAdapterCloseSessionError",
+  "ProviderAdapterResumeThreadError",
+  "ProviderAdapterEnsureThreadError",
+  "ProviderAdapterReadThreadSnapshotError",
+  "ProviderAdapterRollbackThreadError",
+  "ProviderAdapterForkThreadError",
+  "ProviderAdapterTurnStartError",
+  "ProviderAdapterSteerRunUnsupportedError",
+  "ProviderAdapterSteerRunError",
+  "ProviderAdapterInterruptError",
+  "ProviderAdapterRuntimeRequestResponseError",
+  "ProviderAdapterEventStreamError",
+]);
+
+/**
+ * A failed start's message: the setup detail, else a deliberate plain-string
+ * reason, else the nearest error text that names no internal ids. Undefined
+ * lets makeProviderFailure pick its curated translation of the cause.
+ */
+function startFailureMessage(error: Error): string | undefined {
+  const setupDetail = providerSetupFailureDetail(error);
+  if (setupDetail !== undefined) return setupDetail;
+  const nestedCause = "cause" in error ? error.cause : undefined;
+  if (typeof nestedCause === "string") return nestedCause;
+  const candidate = nestedCause instanceof Error ? nestedCause : error;
+  const tag = "_tag" in candidate ? candidate._tag : undefined;
+  return typeof tag === "string" && INTERNAL_ID_WRAPPER_TAGS.has(tag)
+    ? undefined
+    : candidate.message;
+}
+
+const isGitCommandError = Schema.is(GitCommandError);
+const isInvalidReference = (error: unknown): boolean =>
+  isGitCommandError(error) && error.reason === "invalid_reference";
+
+/**
+ * Says what was lost and what recovers it. The folder is never recreated from
+ * another branch: that would hand the thread different files than it worked
+ * on, so the user restores the branch or moves the work to a new thread.
+ */
+export function missingWorktreeBranchMessage(input: {
+  readonly worktreePath: string;
+  readonly branch: string;
+}): string {
+  return (
+    `This thread's folder ${input.worktreePath} was deleted outside SpecWithCode, ` +
+    `and its branch ${input.branch} no longer exists, so SpecWithCode can't restore it. ` +
+    "Sending again or switching models will fail the same way. " +
+    `To continue here, recreate the branch at the commit it was on (git branch ${input.branch} <commit>) ` +
+    "and send again. Otherwise continue the work in a new thread."
+  );
+}
 
 export interface ProviderTurnStartServiceV2Shape {
   /**
@@ -114,6 +177,7 @@ export const layer: Layer.Layer<
     const idAllocator = yield* IdAllocator.IdAllocatorV2;
     const environmentRuntime = yield* makeEnvironmentRuntime;
     const fileSystem = yield* FileSystem.FileSystem;
+    const pathService = yield* Path.Path;
     const gitWorkflow = yield* GitWorkflowService.GitWorkflowService;
     const projects = yield* ProjectService.ProjectService;
     const providerAuth = yield* ProviderAuthService.ProviderAuthService;
@@ -506,24 +570,64 @@ export const layer: Layer.Layer<
               worktreePath,
               branch,
             });
-            yield* gitWorkflow.pruneWorktrees({ cwd: project.workspaceRoot }).pipe(
-              Effect.andThen(
-                gitWorkflow.createWorktree({
-                  cwd: project.workspaceRoot,
-                  refName: branch,
-                  path: worktreePath,
-                }),
-              ),
-              Effect.catchCause((cause) =>
-                Cause.hasInterruptsOnly(cause)
-                  ? Effect.failCause(cause)
-                  : Effect.logWarning("provider turn start failed to recreate worktree", {
-                      threadId: projection.thread.id,
-                      worktreePath,
-                      cause: Cause.pretty(cause),
-                    }),
-              ),
-            );
+            const branchMissing = yield* gitWorkflow
+              .pruneWorktrees({ cwd: project.workspaceRoot })
+              .pipe(
+                Effect.andThen(
+                  gitWorkflow.createWorktree({
+                    cwd: project.workspaceRoot,
+                    refName: branch,
+                    path: worktreePath,
+                  }),
+                ),
+                Effect.as(false),
+                Effect.catchCause((cause) =>
+                  Cause.hasInterruptsOnly(cause)
+                    ? Effect.failCause(cause)
+                    : Effect.logWarning("provider turn start failed to recreate worktree", {
+                        threadId: projection.thread.id,
+                        worktreePath,
+                        cause: Cause.pretty(cause),
+                      }).pipe(Effect.as(isInvalidReference(Cause.squash(cause)))),
+                ),
+              );
+            // Git has neither the local branch nor a single remote branch of
+            // that name, so every retry and every other provider fails the
+            // same way before it opens. Settle now with what happened and how
+            // to recover instead of retrying a start that cannot succeed.
+            // Only for the project repository's own worktree folder
+            // (<worktrees>/<repo>/<branch>): a thread launched in a nested
+            // repository has its branch there, not in workspaceRoot.
+            const ownedByProjectRepo =
+              pathService.basename(pathService.dirname(worktreePath)) ===
+                pathService.basename(project.workspaceRoot) &&
+              pathService.basename(worktreePath) === branch.replace(/\//g, "-");
+            if (branchMissing && ownedByProjectRepo) {
+              const now = yield* DateTime.now;
+              yield* settleRunBeforeStart({
+                signal: "workspace-branch-missing",
+                status: "failed",
+                now,
+                providerInstanceId: run.providerInstanceId,
+                itemProviderThreadId: providerThread.id,
+                item: {
+                  type: "error",
+                  title: "Thread folder was deleted",
+                  failure: makeProviderFailure({
+                    class: "validation_error",
+                    code: WORKSPACE_BRANCH_MISSING_FAILURE_CODE,
+                    retryable: false,
+                    message: missingWorktreeBranchMessage({ worktreePath, branch }),
+                  }),
+                },
+                providerThreadUpdate: {
+                  ...providerThread,
+                  status: providerThread.nativeThreadRef === null ? "not_loaded" : "idle",
+                  updatedAt: now,
+                },
+              });
+              return;
+            }
           }
         }
       }
@@ -630,7 +734,6 @@ export const layer: Layer.Layer<
         readonly error: Error;
       }) =>
         Effect.gen(function* () {
-          const nestedCause = "cause" in failed.error ? failed.error.cause : undefined;
           yield* settleRunBeforeStart({
             signal: failed.signal,
             status: "failed",
@@ -642,22 +745,23 @@ export const layer: Layer.Layer<
               title: failed.title,
               failure: makeProviderFailure({
                 cause: failed.error,
-                message:
-                  providerSetupFailureDetail(failed.error) ??
-                  (nestedCause instanceof Error
-                    ? nestedCause.message
-                    : typeof nestedCause === "string"
-                      ? nestedCause
-                      : failed.error.message),
+                message: startFailureMessage(failed.error),
                 class: "provider_error",
               }),
             },
           });
         });
       if (sessionResult._tag === "Failure") {
-        // Admission already refreshed once. A real quota denial cannot be
-        // repaired by immediately reopening the same native session five times.
-        if (input.willRetry === true && !providerSetupFailure(sessionResult.failure)?.usageLimit)
+        // Admission already refreshed once. A real quota denial, or a provider
+        // that cannot run here until its setup is fixed, cannot be repaired by
+        // immediately reopening the same native session five times; settling
+        // now also lets the limit fallback move the thread elsewhere.
+        const setupFailure = providerSetupFailure(sessionResult.failure);
+        if (
+          input.willRetry === true &&
+          setupFailure?.usageLimit === undefined &&
+          setupFailure?.unavailable === undefined
+        )
           return yield* sessionResult.failure;
         yield* settleStartFailure({
           signal: "provider-session-open-failure",

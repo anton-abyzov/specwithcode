@@ -8,6 +8,7 @@ import {
   STUDIO_DETAILED_RESPONSE_STYLE_INSTRUCTIONS,
   STUDIO_HEADLESS_INSTRUCTIONS,
   STUDIO_OUTPUT_FORMATTING_INSTRUCTIONS,
+  STUDIO_PRESENTATION_INSTRUCTIONS,
   STUDIO_WRITING_INSTRUCTIONS,
   withHeadlessBrowserEnvironment,
 } from "./RuntimeInstructions.ts";
@@ -209,15 +210,43 @@ describe("buildRuntimeInstructions", () => {
     );
   });
 
+  it.each(["concise", "detailed"] as const)(
+    "presents results in the form quickest to grasp in %s mode",
+    (responseStyle) => {
+      expect(responseStyleInstructions(responseStyle)).toContain(STUDIO_PRESENTATION_INSTRUCTIONS);
+    },
+  );
+
+  it("keeps simple answers plain and saves visuals for structure and decisions", () => {
+    const presentation = STUDIO_PRESENTATION_INSTRUCTIONS;
+    expect(presentation).toContain("attention is scarce and tokens are cheap");
+    expect(presentation).toContain("Simple answers stay plain text");
+    expect(presentation).toContain("never add a visual for its own sake");
+    // ChatMarkdown renders Mermaid fences inline.
+    expect(presentation).toContain("Mermaid diagram");
+    expect(presentation).toContain("UI changes a screenshot");
+    expect(presentation).toContain("A decision the user must make");
+    expect(presentation).toContain("html_render when available, preview first");
+    expect(presentation).toContain("animated explainer video when asked");
+    expect(presentation).toContain("walk them through it one step at a time");
+    // The October 21 release evidence read "merged7f5f…" and "health200" as one paragraph.
+    expect(presentation).toContain("separate paragraphs with a blank line");
+    expect(presentation).toContain("keep a space between a label and its value (HTTP 200)");
+    expect(presentation).toContain("put hashes, paths and commands in backticks");
+    // About 190 tokens on every turn.
+    expect(presentation.length).toBeLessThanOrEqual(880);
+  });
+
   it("keeps everything every turn carries within its budget", () => {
-    // About 750 tokens with both blocks; it was about 2,000 before the rules moved into code.
+    // About 900 tokens with every block; it was about 2,000 before the rules moved into code.
+    // The presentation block added about 190 tokens on purpose (October 21, 2026).
     for (const responseStyle of ["concise", "detailed"] as const) {
       const instructions = buildRuntimeInstructions({
         harness: "Claude Code",
         model: "claude-opus-5-5",
         responseStyle,
       });
-      expect(instructions.length).toBeLessThanOrEqual(3_200);
+      expect(instructions.length).toBeLessThanOrEqual(3_800);
     }
   });
 

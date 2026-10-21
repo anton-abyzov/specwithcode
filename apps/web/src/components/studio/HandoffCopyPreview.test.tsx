@@ -190,6 +190,42 @@ describe("copy plan preview", () => {
     expect(onDecide).toHaveBeenCalledExactlyOnceWith({ "all:repo:api": "keep-mine" });
   });
 
+  it("names the machines in each choice and titles the root row with the project", async () => {
+    await render(
+      <CopyPlanPreview
+        status={status([
+          row({
+            path: ".",
+            needsDecision: true,
+            choices: ["keep-mine", "leave-both"],
+            conflicts: [
+              {
+                id: "file:notes/plan.md",
+                path: "notes/plan.md",
+                reason: "differs",
+                choices: ["keep-mine", "take-theirs", "keep-both"],
+                decision: null,
+              },
+            ],
+          }),
+        ])}
+        onDecide={vi.fn()}
+        onClone={vi.fn()}
+        disabled={false}
+        machines={{ here: "Minis", source: "M4" }}
+        rootLabel="review"
+      />,
+    );
+    const text = container.textContent ?? "";
+    expect(text).toContain("review");
+    expect(text).not.toMatch(/^\.|Project root/u);
+    expect(text).toContain("Keep Minis’s version");
+    expect(text).toContain("Take M4’s version (back up Minis’s)");
+    expect(text).toContain("Keep both (M4’s copy beside it)");
+    expect(text).not.toContain("this machine");
+    expect(container.querySelector('[aria-label="Choice for review"]')).not.toBeNull();
+  });
+
   it("offers a clone per clean repository", async () => {
     const onClone = vi.fn();
     await render(

@@ -287,7 +287,8 @@ public nonisolated enum MarkdownParser {
 
         // A new block ends the list; any other line continues the last item.
         if fenceOpening(line) != nil || trimmed.hasPrefix(">") || atxHeading(trimmed, indent: leadingSpaces(line)) != nil
-          || isRule(trimmed, indent: leadingSpaces(line)) || items.isEmpty {
+          || isRule(trimmed, indent: leadingSpaces(line)) || items.isEmpty
+          || (i + 1 < lines.count && line.contains("|") && isTableSeparator(lines[i + 1])) {
           break
         }
         items[items.count - 1].text += (afterBlank ? "\n\n" : "\n") + trimmed

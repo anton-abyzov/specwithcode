@@ -2,12 +2,13 @@ import SwiftUI
 
 /// Renders an assistant reply: block structure from `MarkdownParser`, inline
 /// styling from `AttributedString(markdown:)`. Links use the tint (iris) and
-/// open only for web, mail and phone addresses. Long replies can collapse
+/// open for web, mail and phone addresses; thread links use the host callback. Long replies can collapse
 /// behind "Show more".
 public struct MarkdownText: View {
   let markdown: String
   let collapsible: Bool
   let collapsedHeight: CGFloat
+  let onOpenLink: ((URL) -> Void)?
 
   @State private var expanded = false
   @State private var fullHeight: CGFloat = 0
@@ -15,10 +16,11 @@ public struct MarkdownText: View {
   /// - Parameters:
   ///   - collapsible: Clips replies taller than `collapsedHeight` with a fade
   ///     and a "Show more" button.
-  public init(_ markdown: String, collapsible: Bool = false, collapsedHeight: CGFloat = 420) {
+  public init(_ markdown: String, collapsible: Bool = false, collapsedHeight: CGFloat = 420, onOpenLink: ((URL) -> Void)? = nil) {
     self.markdown = markdown
     self.collapsible = collapsible
     self.collapsedHeight = collapsedHeight
+    self.onOpenLink = onOpenLink
   }
 
   /// How far above "Show more" a collapsed reply starts to fade.
@@ -64,9 +66,14 @@ public struct MarkdownText: View {
     .frame(maxWidth: .infinity, alignment: .leading)
     .textSelection(.enabled)
     // Second guard behind the parser: nothing in a reply can open the app's
-    // own links or launch another app.
+    // pairing links or launch arbitrary apps. Thread links stay inside this view.
     .environment(\.openURL, OpenURLAction { url in
-      MarkdownInline.isOpenable(url) ? .systemAction : .discarded
+      if MarkdownThreadLink.threadId(url) != nil {
+        guard let onOpenLink else { return .discarded }
+        onOpenLink(url)
+        return .handled
+      }
+      return MarkdownInline.isOpenable(url) ? .systemAction : .discarded
     })
   }
 }
@@ -240,17 +247,20 @@ struct MarkdownCodeBlock: View {
 struct MarkdownTableView: View {
   let header: [String]
   let rows: [[String]]
+  @ScaledMetric(relativeTo: .callout) private var columnWidth: CGFloat = 154
 
   @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
   var body: some View {
-    ScrollView(.horizontal, showsIndicators: false) {
+    ScrollView(.horizontal, showsIndicators: true) {
       Grid(alignment: .leading, horizontalSpacing: WeaveSpacing.s4, verticalSpacing: WeaveSpacing.s2) {
         GridRow {
           ForEach(header.indices, id: \.self) { column in
             Text(MarkdownInline.render(header[column], dynamicTypeSize: dynamicTypeSize))
               .font(.weave(.callout, weight: .semibold))
               .foregroundStyle(Color.weave.ink)
+              .frame(width: columnWidth, alignment: .leading)
+              .fixedSize(horizontal: false, vertical: true)
           }
         }
         WeaveDivider().gridCellUnsizedAxes(.horizontal)
@@ -260,6 +270,8 @@ struct MarkdownTableView: View {
               Text(MarkdownInline.render(rows[row][column], dynamicTypeSize: dynamicTypeSize))
                 .font(.weave(.callout))
                 .foregroundStyle(Color.weave.ink)
+                .frame(width: columnWidth, alignment: .leading)
+                .fixedSize(horizontal: false, vertical: true)
             }
           }
         }
@@ -317,9 +329,22 @@ enum MarkdownInline {
     }
     let blocked = attributed.runs.compactMap { run -> Range<AttributedString.Index>? in
       guard let url = run.link else { return nil }
-      return isOpenable(url) ? nil : run.range
+      return isOpenable(url) || MarkdownThreadLink.threadId(url) != nil ? nil : run.range
     }
     for range in blocked { attributed[range].link = nil }
+    // Preserve tappable bare web addresses in user messages too.
+    let plain = String(attributed.characters)
+    if let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue) {
+      for match in detector.matches(in: plain, range: NSRange(plain.startIndex..., in: plain)) {
+        guard let url = match.url, isOpenable(url),
+              let range = Range(match.range, in: plain),
+              let lower = AttributedString.Index(range.lowerBound, within: attributed),
+              let upper = AttributedString.Index(range.upperBound, within: attributed),
+              attributed[lower..<upper].runs.allSatisfy({ $0.link == nil && $0.inlinePresentationIntent?.contains(.code) != true })
+        else { continue }
+        attributed[lower..<upper].link = url
+      }
+    }
     return attributed
   }
 }

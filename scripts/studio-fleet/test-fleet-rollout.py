@@ -1441,6 +1441,8 @@ class RequestCommand(unittest.TestCase):
             ('malformed snapshot', lambda i, s, p: p.update(before=[]), False),
             ('malformed source', lambda i, s, p: i.update(sourceCommit=None), False),
             ('malformed service', lambda i, s, p: i.update(service=None), False),
+            # M4's receipt for 1.0.65 was 1.2 MB: its guarded snapshots grow with the service's threads.
+            ('receipt past 1 MiB', lambda i, s, p: p['before'].update(threadIds=['%040d' % n for n in range(40000)]), True),
         ]
         for name, mutate, expected in mutations:
             with self.subTest(name=name):
@@ -1450,6 +1452,17 @@ class RequestCommand(unittest.TestCase):
                 (self.own / 'updates' / 'state.json').write_text(json.dumps(state))
                 receipt.write_text(json.dumps(proof))
                 self.assertEqual(self.cli('status', '--identity', 'm9')[1]['installFinalized'], expected)
+
+    def test_a_receipt_past_the_receipt_limit_fails_closed(self):
+        installation, state, proof, receipt = self.completion_fixture()
+        (self.own / 'installation.json').write_text(json.dumps(installation))
+        (self.own / 'updates' / 'state.json').write_text(json.dumps(state))
+        proof['before']['threadIds'] = ['%040d' % n for n in range(40000)]
+        receipt.write_text(json.dumps(proof))
+        self.assertGreater(receipt.stat().st_size, update_request._JSON_LIMIT)
+        self.assertTrue(self.cli('status', '--identity', 'm9')[1]['installFinalized'])
+        with mock.patch.object(update_request, '_RECEIPT_LIMIT', update_request._JSON_LIMIT):
+            self.assertFalse(self.cli('status', '--identity', 'm9')[1]['installFinalized'])
 
     def test_completion_marker_missing_or_unowned_receipt_fails_closed(self):
         installation, state, proof, receipt = self.completion_fixture()

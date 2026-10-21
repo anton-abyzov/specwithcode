@@ -39,6 +39,10 @@ import {
   appendThreadExecutionHistory,
 } from "@specweave-studio/contracts";
 import * as KeyedLock from "@specweave-studio/shared/KeyedLock";
+import {
+  isPersonalAssistantProject,
+  PERSONAL_ASSISTANT_PRIVATE_MESSAGE,
+} from "@specweave-studio/shared/personalAssistant";
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
@@ -50,6 +54,7 @@ import * as Orchestrator from "../orchestration-v2/Orchestrator.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import { createBundle, negotiationCandidates, repositoryPathFor } from "./bundleGit.ts";
+import { keepFencedChanges } from "./checkpointGit.ts";
 import { HandoffMode } from "./HandoffMode.ts";
 import { HandoffPeerError, HandoffPeers, layer as HandoffPeersLayer } from "./handoffPeers.ts";
 import { shouldResume } from "./handoffPreflight.ts";
@@ -69,6 +74,7 @@ import {
   type ReplicateMeta,
   type ReplicateResponse,
   type TakeoverReason,
+  type TakeoverRequest,
   type TakeoverResponse,
   transcriptTail,
 } from "./handoffWire.ts";
@@ -184,6 +190,9 @@ export const make = Effect.gen(function* () {
           }),
         ),
       );
+      if (isPersonalAssistantProject(project.workspaceSettings)) {
+        return yield* failed("invalid", PERSONAL_ASSISTANT_PRIVATE_MESSAGE);
+      }
       const cwd = shell.worktreePath ?? project.workspaceRoot;
       const repositoryPath = yield* Effect.tryPromise({
         try: () => repositoryPathFor(project.workspaceRoot, cwd),
@@ -380,6 +389,7 @@ export const make = Effect.gen(function* () {
             ? null
             : { ...record.lease, epoch, state: "fenced", renewedAt: now },
         lastError: null,
+        pendingTakeover: null,
       })).pipe(Effect.ignore);
       yield* orchestrator
         .dispatch({
@@ -434,6 +444,116 @@ export const make = Effect.gen(function* () {
         );
     });
 
+  const sendTakeover = (
+    destination: EnvironmentId,
+    request: TakeoverRequest,
+  ): Effect.Effect<TakeoverResponse, HandoffPeerError | HandoffRefusal> =>
+    destination === self
+      ? receiver.takeover(selfCaller, request)
+      : peers.takeover(destination, request);
+
+  /**
+   * Gives the thread back to this machine after a move that definitely did not
+   * happen. A turn the handoff interrupted keeps `fencedBy`, so the next
+   * handoff still resumes it; the next turn started here clears it.
+   */
+  const releaseHold = (threadId: ThreadId, lastError: string | null) =>
+    updateRecord(threadId, (record) => ({
+      ...record,
+      lease: record.lease === null ? null : { ...record.lease, state: "active" },
+      pendingTakeover: null,
+      lastError,
+    })).pipe(Effect.ignore);
+
+  const inDoubt = (threadId: ThreadId, message: string) =>
+    updateRecord(threadId, (record) => ({
+      ...record,
+      lastError: `${message} This thread stays paused until that machine answers.`,
+    })).pipe(Effect.ignore);
+
+  /**
+   * Re-sends a takeover that got no answer, at the same epoch: the destination
+   * either continued already (and repeats its answer) or continues now. A
+   * definite refusal gives the thread back; an in-doubt one keeps it paused.
+   */
+  const resendPending = (threadId: ThreadId) =>
+    Effect.gen(function* () {
+      const record = yield* recordOf(threadId);
+      const pending = record?.pendingTakeover ?? null;
+      if (record === undefined || pending === null || record.lease?.state !== "handing-off") {
+        return yield* failed("busy", "No unanswered handoff of this thread to re-send.");
+      }
+      const destination = pending.destinationEnvironmentId as EnvironmentId;
+      const shell = yield* shellOf(threadId);
+      const response = yield* sendTakeover(destination, pending.request).pipe(
+        Effect.tapError((error) =>
+          error._tag === "HandoffPeerError" && error.uncertain
+            ? inDoubt(threadId, error.message)
+            : error.code === "fenced"
+              ? // The destination saw a newer epoch; a heartbeat settles who runs it.
+                inDoubt(threadId, error.message)
+              : releaseHold(threadId, error.message.slice(0, 1000)),
+        ),
+        Effect.mapError(fromPeer),
+      );
+      yield* fenceSource(
+        shell,
+        destination,
+        response,
+        pending.request.epoch,
+        pending.request.reason,
+      );
+      return {
+        environmentId: destination,
+        machineLabel: response.machineLabel,
+        threadId: response.threadId,
+        modelSelection: response.modelSelection,
+        notice: response.notice,
+      } satisfies HandOffResult;
+    });
+
+  /**
+   * When this machine learns another one continued a thread it still held,
+   * what it changed after the checkpoint the other machine got goes to
+   * `swc/from-<machine>/<branch>`, never merged.
+   */
+  const keepChangesAfterFence = (shell: OrchestrationV2ThreadShell, peer: EnvironmentId) =>
+    Effect.gen(function* () {
+      const record = yield* recordOf(shell.id);
+      if (record === undefined) return;
+      const project = yield* projects.getById(shell.projectId).pipe(
+        Effect.map(Option.getOrNull),
+        Effect.orElseSucceed(() => null),
+      );
+      if (project === null) return;
+      const replica = record.replicas.find((entry) => entry.environmentId === peer);
+      const handedOverCommit =
+        record.checkpoint !== null &&
+        replica?.sequence != null &&
+        replica.sequence >= record.checkpoint.sequence
+          ? record.checkpoint.commit
+          : null;
+      const branch = yield* Effect.tryPromise(() =>
+        keepFencedChanges({
+          cwd: shell.worktreePath ?? project.workspaceRoot,
+          threadId: shell.id,
+          machineLabel: selfLabel,
+          handedOverCommit,
+        }),
+      );
+      if (branch === null) return;
+      yield* updateRecord(shell.id, (current) => ({ ...current, fencedBranch: branch })).pipe(
+        Effect.ignore,
+      );
+    }).pipe(
+      Effect.catchCause((cause) =>
+        Effect.logWarning("Handoff could not keep this machine's changes after the fence", {
+          threadId: shell.id,
+          cause,
+        }),
+      ),
+    );
+
   const handOffLocked = (input: HandOffInput, reason: TakeoverReason) =>
     Effect.gen(function* () {
       const destination = input.destinationEnvironmentId;
@@ -455,6 +575,9 @@ export const make = Effect.gen(function* () {
         );
       }
       if (current?.lease?.state === "handing-off") {
+        if (current.pendingTakeover?.destinationEnvironmentId === destination) {
+          return yield* resendPending(input.threadId);
+        }
         return yield* failed(
           "busy",
           "A handoff of this thread did not finish; it stays paused until the other machine answers.",
@@ -488,56 +611,53 @@ export const make = Effect.gen(function* () {
           renewedAt: now,
           state: "handing-off",
         },
-        fencedBy:
-          first.shell.activeRunId === null
-            ? record.fencedBy
-            : reason === "sleep"
-              ? "sleep"
-              : "handoff",
+        pendingTakeover: null,
       })).pipe(Effect.mapError((error) => error));
       const epoch = (held?.lease?.epoch ?? 0) + 1;
-      const release = updateRecord(input.threadId, (record) => ({
-        ...record,
-        lease: record.lease === null ? null : { ...record.lease, state: "active" },
-        fencedBy: null,
-      })).pipe(Effect.ignore);
+      // Read the run after the hold: a turn that started before it is the one to stop.
+      const heldShell = yield* shellOf(input.threadId).pipe(
+        Effect.tapError(() => releaseHold(input.threadId, null)),
+      );
 
       let checkpoint = first.checkpoint;
-      if (first.shell.activeRunId !== null) {
-        yield* interruptRun(first.shell, `Handing this thread to ${checked.machineLabel}.`);
+      if (heldShell.activeRunId !== null) {
+        yield* updateRecord(input.threadId, (record) => ({
+          ...record,
+          fencedBy: reason === "sleep" ? "sleep" : "handoff",
+        })).pipe(Effect.ignore);
+        yield* interruptRun(heldShell, `Handing this thread to ${checked.machineLabel}.`);
         const again = yield* prepare(input.threadId, destination).pipe(
-          Effect.tapError(() => release),
+          Effect.tapError((error) =>
+            releaseHold(
+              input.threadId,
+              `The handoff stopped the running turn but could not send its last checkpoint: ${error.message} Hand it off again to resume that turn.`.slice(
+                0,
+                1000,
+              ),
+            ),
+          ),
         );
         checkpoint = again.checkpoint;
       }
 
       // 3. The destination takes over at the next epoch.
-      const takeover: Effect.Effect<TakeoverResponse, HandoffPeerError | HandoffRefusal> =
-        destination === self
-          ? receiver.takeover(selfCaller, {
-              sourceEnvironmentId: self,
-              sourceThreadId: input.threadId,
-              epoch,
-              sequence: checkpoint.sequence,
-              reason,
-              modelSelection,
-            })
-          : peers.takeover(destination, {
-              sourceEnvironmentId: self,
-              sourceThreadId: input.threadId,
-              epoch,
-              sequence: checkpoint.sequence,
-              reason,
-              modelSelection,
-            });
-      const response = yield* takeover.pipe(
+      const request: TakeoverRequest = {
+        sourceEnvironmentId: self,
+        sourceThreadId: input.threadId,
+        epoch,
+        sequence: checkpoint.sequence,
+        reason,
+        modelSelection,
+      };
+      const response = yield* sendTakeover(destination, request).pipe(
         Effect.tapError((error) =>
           error._tag === "HandoffPeerError" && error.uncertain
             ? updateRecord(input.threadId, (record) => ({
                 ...record,
+                pendingTakeover: { destinationEnvironmentId: destination, request },
                 lastError: `${error.message} This thread stays paused until that machine answers.`,
               })).pipe(Effect.ignore)
-            : release,
+            : releaseHold(input.threadId, null),
         ),
         Effect.mapError(fromPeer),
       );
@@ -563,9 +683,13 @@ export const make = Effect.gen(function* () {
         const shell = yield* projections
           .getThreadShell(id as ThreadId)
           .pipe(Effect.orElseSucceed(() => null));
-        if (shell !== null && shell.deletedAt === null && shell.activeRunId !== null) {
-          out.push(shell.id);
-        }
+        if (shell === null || shell.deletedAt !== null || shell.activeRunId === null) continue;
+        // A personal assistant's threads stay on their machine.
+        const project = yield* projects.getById(shell.projectId).pipe(
+          Effect.map(Option.getOrNull),
+          Effect.orElseSucceed(() => null),
+        );
+        if (!isPersonalAssistantProject(project?.workspaceSettings)) out.push(shell.id);
       }
       return out;
     });
@@ -760,12 +884,29 @@ export const make = Effect.gen(function* () {
         .pipe(Effect.option);
       if (Option.isNone(answer)) continue;
       lastAnswer.set(peer, now);
+      const continuedIds = new Set(answer.value.continued.map((entry) => entry.sourceThreadId));
+      for (const { sourceThreadId } of leases) {
+        const record = document.threads[sourceThreadId];
+        if (continuedIds.has(sourceThreadId)) continue;
+        if (record?.lease?.state !== "handing-off") continue;
+        if (record.pendingTakeover?.destinationEnvironmentId !== peer) continue;
+        // The destination answers again but never continued it: send the takeover again.
+        yield* locks.withLock(sourceThreadId, resendPending(sourceThreadId)).pipe(
+          Effect.catchCause((cause) =>
+            Effect.logInfo("Handoff re-sent a takeover that is still open", {
+              threadId: sourceThreadId,
+              cause,
+            }),
+          ),
+        );
+      }
       for (const continued of answer.value.continued) {
         const shell = yield* projections
           .getThreadShell(continued.sourceThreadId)
           .pipe(Effect.orElseSucceed(() => null));
         if (shell === null) continue;
         yield* interruptRun(shell, `This thread continues on ${answer.value.machineLabel}.`);
+        yield* keepChangesAfterFence(shell, peer);
         yield* fenceSource(
           shell,
           peer,

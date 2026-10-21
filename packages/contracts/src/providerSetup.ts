@@ -203,6 +203,16 @@ export class ProviderSetupError extends Schema.TaggedError<ProviderSetupError>()
     detail: Schema.String,
     /** Native admission denied work; structured so recovery never parses prose. */
     usageLimit: Schema.optional(Schema.Struct({ resetAt: Schema.optional(IsoDateTime) })),
+    /**
+     * The provider cannot run on this machine until its setup is fixed (not
+     * prepared, not installed, signed out). Retrying it cannot help, so the run
+     * settles at once and the limit fallback may move the thread elsewhere.
+     */
+    unavailable: Schema.optional(
+      Schema.Struct({
+        reason: Schema.Literals(["not_prepared", "not_installed", "signed_out", "disabled"]),
+      }),
+    ),
     cause: Schema.optional(Schema.Defect()),
   },
 ) {

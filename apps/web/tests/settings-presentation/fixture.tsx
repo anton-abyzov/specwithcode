@@ -57,6 +57,9 @@ const projectTitles = new Map([
   ["project", "Atlas Studio"],
   ["beacon", "Beacon"],
 ]);
+// The app paints its background in the shell; the bare fixture page takes the same tokens so a
+// dark capture shows the rows on the dark background they sit on in the app.
+document.body.classList.add("bg-background", "text-foreground");
 createRoot(document.getElementById("root")!).render(
   search.has("routines") && !search.has("tab") ? (
     <main style={{ maxWidth: 960, margin: "24px auto", padding: 16 }}>

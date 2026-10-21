@@ -1867,6 +1867,14 @@ export const ServerSettings = Schema.Struct({
   providerInstances: Schema.Record(ProviderInstanceId, ProviderInstanceConfig).pipe(
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
+  // Providers the server turned on at startup because their CLI was installed
+  // and signed in, keyed by driver with the ISO time. Written only by the
+  // server; a user change to that provider's switch drops its entry.
+  providerDiscovery: Schema.Struct({
+    autoEnabled: Schema.Record(Schema.String, Schema.String).pipe(
+      Schema.withDecodingDefault(Effect.succeed({})),
+    ),
+  }).pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   observability: ObservabilitySettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   bitbucket: BitbucketSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   voice: VoiceSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),

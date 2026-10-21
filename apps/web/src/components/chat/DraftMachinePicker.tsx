@@ -343,6 +343,8 @@ export function DraftMachinePicker(props: Props) {
       readonly onChoose: () => void;
       /** Replaces "Connected" when the machine is usable, for copies and actions. */
       readonly usableText?: string | undefined;
+      /** A short action word kept visible at the row's end, such as "Link". */
+      readonly usableAction?: string | undefined;
       readonly selectable?: boolean | undefined;
     },
   ) {
@@ -405,6 +407,12 @@ export function DraftMachinePicker(props: Props) {
           </span>
         )}
         {fixRow && <span className="shrink-0 text-xs text-muted-foreground">Fix</span>}
+        {!reason && !isRetrying && options.usableAction && (
+          <span className="shrink-0 text-xs text-muted-foreground">
+            <span aria-hidden>· </span>
+            {options.usableAction}
+          </span>
+        )}
       </>
     );
     if (fixRow)
@@ -525,7 +533,9 @@ export function DraftMachinePicker(props: Props) {
           return [
             machineRow(environment, {
               selectable: false,
-              usableText: copy ? `Has a copy at ${copy.workspaceRoot} · Link` : "Clone it there",
+              // AC-02: the path can be long, so "Link" sits apart and never truncates.
+              usableText: copy ? `Has a copy at ${copy.workspaceRoot}` : "Clone it there",
+              usableAction: copy ? "Link" : undefined,
               onChoose: () =>
                 closeMenuFor(() =>
                   copy

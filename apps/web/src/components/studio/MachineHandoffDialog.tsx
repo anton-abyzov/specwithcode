@@ -79,6 +79,7 @@ export function MachineHandoffDialog({
   onContinue,
   onOpenDestination,
   onRestart,
+  onBack,
   folderPicker,
   sourceChanges = null,
   rememberMachine = null,
@@ -111,18 +112,22 @@ export function MachineHandoffDialog({
   readonly onContinue: () => void;
   readonly onOpenDestination: () => void;
   readonly onRestart?: (() => void) | undefined;
+  /** Drops an unpublished preview so every earlier choice can change; absent once published. */
+  readonly onBack?: (() => void) | undefined;
 }) {
   const target = destinations.find((item) => item.key === selected);
   const copying = copyFlow !== undefined && method !== "folder";
   const busy = copying ? copyBusy : phase === "checking" || phase === "transferring";
   const complete = !copying && phase === "complete";
+  // A reviewed preview stays editable until it is published: any change discards it.
+  const frozen = busy || (preview !== null && !onBack);
   const chooser =
-    copyFlow !== undefined && onMethodChange ? (
+    onMethodChange && !complete ? (
       <HandoffMethodChooser
         sourceLabel={sourceLabel}
         method={method}
         onChange={onMethodChange}
-        disabled={busy || preview !== null}
+        disabled={frozen}
       />
     ) : null;
   return (
@@ -155,12 +160,12 @@ export function MachineHandoffDialog({
               {!preview && (
                 <SourceChangesNote changes={sourceChanges} sourceLabel={sourceLabel} busy={busy} />
               )}
-              <fieldset disabled={busy || preview !== null} className="min-w-0 space-y-2">
+              <fieldset disabled={frozen} className="min-w-0 space-y-2">
                 <legend className="mb-2 text-sm font-medium">Continue on</legend>
                 <RadioGroup
                   value={selected}
                   onValueChange={(value) => onSelect(String(value))}
-                  disabled={busy || preview !== null}
+                  disabled={frozen}
                   aria-label="Continue on"
                   className="gap-2"
                 >
@@ -185,7 +190,7 @@ export function MachineHandoffDialog({
                               selected === destination.key
                                 ? "border-primary bg-accent/40"
                                 : "border-border"
-                            } ${destination.unavailable ? "cursor-not-allowed opacity-60" : busy || preview !== null ? "cursor-default" : "cursor-pointer hover:bg-accent/40"}`}
+                            } ${destination.unavailable ? "cursor-not-allowed opacity-60" : frozen ? "cursor-default" : "cursor-pointer hover:bg-accent/40"}`}
                           >
                             <span className="flex h-5 items-center justify-center">
                               <Radio
@@ -335,6 +340,11 @@ export function MachineHandoffDialog({
               <Button variant="outline" disabled={busy} onClick={() => onOpenChange(false)}>
                 Close
               </Button>
+              {preview && onBack && (
+                <Button variant="outline" disabled={busy} onClick={onBack}>
+                  Back
+                </Button>
+              )}
               {preview ? (
                 <Button
                   className="h-auto min-h-9 min-w-0 max-w-full shrink whitespace-normal wrap-anywhere py-2 sm:h-auto sm:min-h-8"

@@ -4,15 +4,22 @@
  * (increment 0968). The provider fallback sweep asks first; when no machine
  * target qualifies the sweep's own same-machine step runs as before.
  *
- * Moving is the handoff port's job (0967's checkpoint, lease and epoch).
- * Until a server provides one, `LimitHandoffPort` refuses every move, so
- * nothing leaves the machine and only the candidate verdicts are shown.
+ * Moving is the handoff port's job (0967's checkpoint, lease and epoch),
+ * provided by `LimitHandoffAdapter`. Without one, `LimitHandoffPort` refuses
+ * every move, so nothing leaves the machine and only the verdicts are shown.
+ * A thread the persisted handoff state holds (handing off, continued
+ * elsewhere) never starts a turn here, even after a restart
+ * (`localTurnBlocked`).
  *
  * The fleet (RemoteWorkers) is built on top of the orchestration runtime
  * this service lives in, so it is bound after both exist (`layerFleet`).
  *
  * @module MachineLimitHandoff
  */
+import {
+  isPersonalAssistantProject,
+  PERSONAL_ASSISTANT_PRIVATE_MESSAGE,
+} from "@specweave-studio/shared/personalAssistant";
 import {
   type EnvironmentId,
   WS_METHODS,
@@ -41,10 +48,12 @@ import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as RemoteWorkers from "../fleet/RemoteWorkers.ts";
+import { HandoffTurnGate } from "../handoff/HandoffTurnGate.ts";
 import { RpcInstrumentation } from "../observability/RpcInstrumentation.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as Projects from "../project/ProjectService.ts";
@@ -57,8 +66,12 @@ export const LIMIT_PREMOVE_RECENT_MS = 10 * 60_000;
 /** One fleet probe per project serves a sweep and the Settings view. */
 const MACHINE_LIST_TTL_MS = 30_000;
 const MACHINE_LIST_TIMEOUT = Duration.seconds(20);
-/** A move that hasn't answered by then is in doubt: never continued here, asked again. */
-const HANDOFF_TIMEOUT = Duration.minutes(5);
+/**
+ * A move that hasn't answered by then is in doubt: never continued here, asked again.
+ * Above 0967's own worst case (about 8 minutes with a running turn), and it only stops
+ * the wait: the move itself is never interrupted.
+ */
+const HANDOFF_TIMEOUT = Duration.minutes(10);
 /** Moves, refusals and waits are forgotten after a day. */
 const STATE_MAX_AGE_MS = 24 * 60 * 60_000;
 
@@ -68,6 +81,8 @@ export interface LimitHandoffRequest {
   readonly threadId: ThreadId;
   readonly projectId: ProjectId;
   readonly destinationEnvironmentId: EnvironmentId;
+  /** "Minis", as the verdicts name it. */
+  readonly destinationLabel?: string;
   readonly modelSelection: ModelSelection;
   readonly reason: LimitHandoffReason;
   /** Continue the stopped turn there from the checkpoint; false moves an idle thread. */
@@ -76,14 +91,31 @@ export interface LimitHandoffRequest {
   readonly idempotencyKey: string;
   /** "Hit 95% of Claude on M4", for the thread's notice. */
   readonly sourceSummary: string;
+  /** The target model as the setting names it ("Claude Opus 5.5"), for the notice. */
+  readonly modelLabel?: string;
 }
+
+/** 0967 starts its messages with the machine ("Minis: …", "Minis did not answer."). */
+const namesMachine = (message: string, label: string) =>
+  message.startsWith(`${label}:`) || message.startsWith(`${label} `);
 
 export type LimitHandoffOutcome =
   | {
       readonly type: "moved";
       readonly machineLabel: string;
-      readonly threadId: string;
+      /** The thread there, or null when only the other machine knows it. */
+      readonly threadId: string | null;
       readonly notice: string | null;
+    }
+  | {
+      /** The move may have happened: nothing runs here and the same target is asked again. */
+      readonly type: "in-doubt";
+      readonly message: string;
+      /**
+       * The handoff state itself holds the thread here (a move still handing
+       * off, or a machine that woke paused), so `message` is the wait text.
+       */
+      readonly heldByState?: boolean;
     }
   | {
       readonly type: "refused";
@@ -194,7 +226,11 @@ const targetKey = (target: { environmentId: string; modelSelection: ModelSelecti
   `${target.environmentId}|${target.modelSelection.instanceId}|${target.modelSelection.model}`;
 
 type Refusal = { readonly code: string; readonly message: string; readonly atMs: number };
-type Moved = { readonly machineLabel: string; readonly threadId: string; readonly atMs: number };
+type Moved = {
+  readonly machineLabel: string;
+  readonly threadId: string | null;
+  readonly atMs: number;
+};
 type InDoubt = {
   readonly target: MachineCandidateVerdict["target"];
   readonly machineLabel: string;
@@ -256,6 +292,11 @@ export interface MachineLimitHandoffShape {
   readonly consider: (input: ConsiderInput) => Effect.Effect<"handled" | "skipped">;
   /** Whether a stopped run was handed off (or may have been): nothing resumes it here. */
   readonly holds: (threadId: ThreadId, runId: string | null) => Effect.Effect<boolean>;
+  /**
+   * Whether the persisted handoff state keeps the thread from starting a turn
+   * here (handing off, continued or leased elsewhere). Survives a restart.
+   */
+  readonly localTurnBlocked: (threadId: ThreadId) => Effect.Effect<boolean>;
   readonly candidates: (
     threadId: ThreadId,
   ) => Effect.Effect<LimitHandoffCandidatesResult, LimitHandoffError>;
@@ -265,6 +306,7 @@ const disabled: MachineLimitHandoffShape = {
   bind: () => Effect.void,
   consider: () => Effect.succeed("skipped"),
   holds: () => Effect.succeed(false),
+  localTurnBlocked: () => Effect.succeed(false),
   candidates: () =>
     Effect.fail(
       new LimitHandoffError({ code: "failed", message: LIMIT_HANDOFF_UNAVAILABLE_MESSAGE }),
@@ -287,8 +329,26 @@ const verdictToCandidate = (verdict: MachineCandidateVerdict): LimitHandoffCandi
   resetsAt: verdict.resetsAt,
 });
 
+/**
+ * Whether the thread's latest turn may be continued elsewhere: one still
+ * running, or one the provider stopped on its usage limit. A turn the user
+ * stopped, or one that completed, was cancelled or failed otherwise, never is.
+ */
+export function limitResumable(
+  thread: Pick<OrchestrationV2ThreadShell, "status" | "activeRunId" | "latestRunId"> &
+    Partial<Pick<OrchestrationV2ThreadShell, "lastErrorClass">>,
+): boolean {
+  if (thread.activeRunId !== null) return true;
+  return (
+    thread.latestRunId !== null &&
+    thread.status === "failed" &&
+    thread.lastErrorClass === "usage_limit"
+  );
+}
+
 export const make = Effect.gen(function* () {
   const fleet = yield* Ref.make<LimitHandoffFleet | null>(null);
+  const gate = yield* HandoffTurnGate;
   const registry = yield* ProviderRegistry.ProviderRegistry;
   const settings = yield* ServerSettings.ServerSettingsService;
   const projects = yield* Projects.ProjectService;
@@ -375,6 +435,14 @@ export const make = Effect.gen(function* () {
           unknownUsageEligible: input.rule.providerLimitUnknownUsageEligible,
           nowMs: input.nowMs,
         });
+        // A personal assistant's threads never continue on another machine.
+        if (Option.isSome(project) && isPersonalAssistantProject(project.value))
+          return {
+            ...verdict,
+            eligible: false,
+            reason: "refused" as const,
+            text: `${verdict.machineLabel}: ${PERSONAL_ASSISTANT_PRIVATE_MESSAGE}`,
+          };
         const refusal = input.refusals?.get(targetKey(target));
         return refusal === undefined
           ? verdict
@@ -382,7 +450,10 @@ export const make = Effect.gen(function* () {
               ...verdict,
               eligible: false,
               reason: "refused" as const,
-              text: `${verdict.machineLabel}: ${refusal.message}`,
+              // 0967 names the machine itself ("Minis: no .env.local; Minis: …").
+              text: namesMachine(refusal.message, verdict.machineLabel)
+                ? refusal.message
+                : `${verdict.machineLabel}: ${refusal.message}`,
             };
       });
     });
@@ -404,10 +475,31 @@ export const make = Effect.gen(function* () {
 
   const consider = Effect.fn("MachineLimitHandoff.consider")(function* (input: ConsiderInput) {
     const port = yield* portOf;
-    if (!port.available) return "skipped" as const;
     const { thread, trigger, nowMs } = input;
+    const setWaiting = (text: string) =>
+      Ref.update(state, (s) => ({
+        ...s,
+        waiting: prune(s.waiting, nowMs).set(thread.id, {
+          text,
+          runId: thread.latestRunId,
+          atMs: nowMs,
+        }),
+      }));
+    if (!port.available) {
+      yield* setWaiting(LIMIT_HANDOFF_UNAVAILABLE_MESSAGE);
+      return "skipped" as const;
+    }
     const current = yield* Ref.get(state);
     if (current.moved.has(trigger.key)) return "handled" as const;
+    // Only a running turn or one stopped on the limit continues elsewhere.
+    if (trigger.resume && !limitResumable(thread)) {
+      yield* Effect.logWarning("orchestration-v2.limit-handoff.not-resumable", {
+        threadId: thread.id,
+        key: trigger.key,
+        status: thread.status,
+      });
+      return "skipped" as const;
+    }
     const source = input.providers.find((p) => p.instanceId === thread.providerInstanceId);
     const doubt = current.inDoubt.get(trigger.key);
     const verdicts =
@@ -428,6 +520,8 @@ export const make = Effect.gen(function* () {
         : [{ target: doubt.target, machineLabel: doubt.machineLabel }];
     const list = yield* machinesFor(thread.projectId, nowMs);
     const localLabel = typeof list === "string" ? "this machine" : list.local.label;
+    // Refusals worth asking again later still name their reason in the wait text.
+    const transient = new Map<string, Refusal>();
     for (const attempt of attempts) {
       if (doubt === undefined && !(yield* input.admit)) return "skipped" as const;
       yield* Ref.update(state, (s) => ({
@@ -442,33 +536,42 @@ export const make = Effect.gen(function* () {
         threadId: thread.id,
         projectId: thread.projectId,
         destinationEnvironmentId: attempt.target.environmentId,
+        destinationLabel: attempt.machineLabel,
         modelSelection: attempt.target.modelSelection,
         reason: trigger.reason,
         resume: trigger.resume,
         idempotencyKey: trigger.key,
         sourceSummary: sourceSummary(thread, trigger, source, input.rule, localLabel),
+        ...(attempt.target.modelLabel === undefined
+          ? {}
+          : { modelLabel: attempt.target.modelLabel }),
       };
-      const answer = yield* port
-        .handOff(request)
-        .pipe(Effect.timeoutOption(HANDOFF_TIMEOUT), Effect.exit);
-      if (Exit.isFailure(answer) || Option.isNone(answer.value)) {
+      // Interrupting 0967 mid-takeover would leave the lease "handing-off" with nobody to
+      // settle it, so the move runs detached and the timeout (or a stopping sweep) only
+      // stops waiting for it.
+      const move = yield* Effect.forkDetach(port.handOff(request));
+      const answer = yield* Fiber.await(move).pipe(Effect.timeoutOption(HANDOFF_TIMEOUT));
+      const failure = Option.isSome(answer) && Exit.isFailure(answer.value) ? answer.value : null;
+      // No answer, a defect or an in-doubt answer: the move may have happened.
+      const outcome: LimitHandoffOutcome =
+        Option.isSome(answer) && Exit.isSuccess(answer.value)
+          ? answer.value.value
+          : { type: "in-doubt", message: failure === null ? "timed out" : "failed" };
+      if (outcome.type === "in-doubt") {
         yield* Effect.logWarning("orchestration-v2.limit-handoff.in-doubt", {
           threadId: thread.id,
           key: trigger.key,
           destination: attempt.target.environmentId,
-          ...(Exit.isFailure(answer) ? { cause: answer.cause } : { timedOut: true }),
+          message: outcome.message,
+          ...(failure === null ? {} : { cause: failure.cause }),
         });
-        yield* Ref.update(state, (s) => ({
-          ...s,
-          waiting: new Map(s.waiting).set(thread.id, {
-            text: `${attempt.machineLabel} hasn't confirmed the handoff yet; the thread stays here until it answers.`,
-            runId: thread.latestRunId,
-            atMs: nowMs,
-          }),
-        }));
+        yield* setWaiting(
+          outcome.heldByState === true
+            ? outcome.message
+            : `${attempt.machineLabel} hasn't confirmed the handoff yet; the thread stays here until it answers.`,
+        );
         return "handled" as const;
       }
-      const outcome = answer.value.value;
       if (outcome.type === "moved") {
         yield* Ref.update(state, (s) => {
           const inDoubt = new Map(s.inDoubt);
@@ -492,6 +595,7 @@ export const make = Effect.gen(function* () {
           reason: trigger.reason,
           to: attempt.target.environmentId,
           remoteThreadId: outcome.threadId,
+          notice: outcome.notice,
         });
         return "handled" as const;
       }
@@ -499,7 +603,14 @@ export const make = Effect.gen(function* () {
       yield* Ref.update(state, (s) => {
         const inDoubt = new Map(s.inDoubt);
         inDoubt.delete(trigger.key);
-        if (outcome.retryable) return { ...s, inDoubt };
+        if (outcome.retryable) {
+          transient.set(targetKey(attempt.target), {
+            code: outcome.code,
+            message: outcome.message,
+            atMs: nowMs,
+          });
+          return { ...s, inDoubt };
+        }
         const refused = pruneRefused(s.refused, nowMs);
         const forKey = new Map(refused.get(trigger.key) ?? []);
         forKey.set(targetKey(attempt.target), {
@@ -525,17 +636,9 @@ export const make = Effect.gen(function* () {
       source,
       projectTitle: input.projectTitle,
       nowMs,
-      refusals: latest.refused.get(trigger.key),
+      refusals: new Map([...transient, ...(latest.refused.get(trigger.key) ?? [])]),
     });
-    const text = describeMachineWait(shown);
-    yield* Ref.update(state, (s) => ({
-      ...s,
-      waiting: prune(s.waiting, nowMs).set(thread.id, {
-        text,
-        runId: thread.latestRunId,
-        atMs: nowMs,
-      }),
-    }));
+    yield* setWaiting(describeMachineWait(shown));
     yield* Effect.logInfo("orchestration-v2.limit-handoff.no-machine", {
       threadId: thread.id,
       key: trigger.key,
@@ -552,6 +655,9 @@ export const make = Effect.gen(function* () {
         return s.moved.has(key) || s.inDoubt.has(key);
       }),
     );
+
+  const localTurnBlocked = (threadId: ThreadId) =>
+    gate.check(threadId).pipe(Effect.map((refusal) => refusal !== null));
 
   const candidates = Effect.fn("MachineLimitHandoff.candidates")(function* (threadId: ThreadId) {
     const thread = yield* projections
@@ -607,7 +713,13 @@ export const make = Effect.gen(function* () {
       ),
     );
 
-  return { bind, consider, holds, candidates } satisfies MachineLimitHandoffShape;
+  return {
+    bind,
+    consider,
+    holds,
+    localTurnBlocked,
+    candidates,
+  } satisfies MachineLimitHandoffShape;
 });
 
 export const layer = Layer.effect(MachineLimitHandoff, make);

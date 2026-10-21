@@ -26,7 +26,8 @@ import {
   withoutDivergedTakeTheirs,
 } from "~/studio/addToMachineCopy";
 import { formatBytes } from "~/studio/folderCopy";
-import { linkCopyAsWorkers } from "~/studio/projectLink";
+import { linkCopyAsWorkers, projectLink, unlinkUndoneCopy } from "~/studio/projectLink";
+import { useAtomCommand } from "~/state/use-atom-command";
 import { CopyPlanPreview, CopyProgress, CopyUndoPreview } from "../studio/HandoffCopyPreview";
 import { ProjectLinkDialog } from "../studio/ProjectLinkDialog";
 import { Button } from "../ui/button";
@@ -67,6 +68,7 @@ export function AddToMachineConsolidate(props: {
   const { source, destinationEnvironmentId: destination, destName, sourceName, commands } = props;
   const operationId = props.offer.operationId;
   const linkCommands = useLinkCommands();
+  const unlink = useAtomCommand(projectLink.unlink, { reportFailure: false });
   const [copy, setCopy] = useState(props.initialStatus);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -165,13 +167,38 @@ export function AddToMachineConsolidate(props: {
           input: { operationId, preview: previewOnly, force },
         }),
       );
-      setCopy(result.status);
       if (previewOnly) {
+        setCopy(result.status);
         setUndoPreview(result);
         return;
       }
       setUndoPreview(null);
-      if (!result.undone) throw new Error(result.problems.join(" ") || "Undo did not finish.");
+      if (!result.undone) {
+        setCopy(result.status);
+        throw new Error(result.problems.join(" ") || "Undo did not finish.");
+      }
+      // AC-06: the link was part of this change, so Undo takes it back too. The
+      // dialog shows the folder as restored only once both are done.
+      if (link?.status === "linked" && copy.projectId) {
+        try {
+          await unlinkUndoneCopy(
+            { preview: linkCommands.preview, unlink },
+            {
+              kept: { environmentId: source.environmentId, projectId: source.id },
+              joining: { environmentId: destination, projectId: copy.projectId },
+              newOperationId: randomUUID,
+            },
+          );
+        } catch (cause) {
+          setCopy(result.status);
+          props.onUndone();
+          throw new Error(
+            `The folder is restored, but ${destName} is still linked. Unlink it in the project's Machines settings. ${messageOf(cause, "")}`.trim(),
+          );
+        }
+        setLink(null);
+      }
+      setCopy(result.status);
       props.onUndone();
     });
 
@@ -196,6 +223,8 @@ export function AddToMachineConsolidate(props: {
               <CopyPlanPreview
                 status={preview}
                 disabled={busy}
+                machines={{ here: destName, source: sourceName }}
+                rootLabel={props.offer.title}
                 onDecide={(decisions) => void decide({ decisions })}
                 onClone={(rowId, on) =>
                   void decide({
@@ -280,7 +309,8 @@ export function AddToMachineConsolidate(props: {
 
           {copy.state === "undone" && (
             <p role="status" className="text-sm">
-              {copy.targetFolder} on {destName} is back to how it was before the copy.
+              {copy.targetFolder} on {destName} is back to how it was before the copy
+              {link?.status === "linked" ? "." : `, and not linked to ${sourceName}.`}
             </p>
           )}
 

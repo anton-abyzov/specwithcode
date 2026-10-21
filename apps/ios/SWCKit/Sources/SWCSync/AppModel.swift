@@ -430,6 +430,7 @@ public protocol AppEngine: AnyObject {
   func handoffOptions(for thread: ThreadRef) async throws -> HandoffOptions
   func checkHandoff(_ thread: ThreadRef, destination: HandoffDestination) async throws -> HandoffCheck
   func continueThread(_ thread: ThreadRef, destination: HandoffDestination) async throws -> ThreadRef
+  func incrementProgress(for target: ChatTarget) async throws -> IncrementRead
   func setupAide() async throws -> ProjectRef
 
   func loadProjectSettings(_ project: ProjectRef) async throws -> ProjectSettingsDraft
@@ -450,6 +451,10 @@ public protocol AppEngine: AnyObject {
 }
 
 extension AppEngine {
+  public func incrementProgress(for target: ChatTarget) async throws -> IncrementRead {
+    .unavailable("SpecWeave increment progress is unavailable in this connection.")
+  }
+
   public func handoffOptions(for thread: ThreadRef) async throws -> HandoffOptions {
     throw SyncError.sendBlocked("Handoff is unavailable on this machine.")
   }

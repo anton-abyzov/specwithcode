@@ -5,6 +5,7 @@ import {
   DEFAULT_PROJECT_WORKSPACE_SETTINGS,
   EnvironmentId,
   type ModelSelection,
+  OrchestratorMcpFailure,
   type OrchestrationV2ThreadShell,
   ProjectId,
   ProviderInstanceId,
@@ -30,8 +31,22 @@ import * as ProviderRegistry from "../../../provider/ProviderRegistry.ts";
 import * as GitVcsDriver from "../../../vcs/GitVcsDriver.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
+import * as OrchestratorMcpService from "../../OrchestratorMcpService.ts";
+import * as OrchestratorHandlers from "../orchestrator/handlers.ts";
+import { OrchestratorToolkit } from "../orchestrator/tools.ts";
 import * as ProjectHandlers from "./handlers.ts";
 import { ProjectToolkit } from "./tools.ts";
+import * as ThreadSearch from "../../../orchestration-v2/ThreadSearch.ts";
+import * as ProjectPlans from "../../../project/ProjectPlanService.ts";
+import * as ProjectWorkspace from "../../../project/ProjectWorkspaceService.ts";
+import * as ScheduledTasks from "../../../scheduledTasks/ScheduledTaskService.ts";
+import * as ProjectMemoryHandlers from "../projectMemory/handlers.ts";
+import { ProjectMemoryToolkit } from "../projectMemory/tools.ts";
+import * as ProjectPlanHandlers from "../projectPlan/handlers.ts";
+import { ProjectPlanToolkit } from "../projectPlan/tools.ts";
+import * as ThreadHandlers from "../thread/handlers.ts";
+import { ThreadToolkit } from "../thread/tools.ts";
+import { PERSONAL_ASSISTANT_PRIVATE_MESSAGE } from "@specweave-studio/shared/personalAssistant";
 
 /**
  * The worker side of a grant: M4MAX (the coordinator) launches on this
@@ -45,6 +60,7 @@ const codex = ProviderInstanceId.make("codex");
 const claude = ProviderInstanceId.make("claude");
 const linkedProject = ProjectId.make("linked");
 const otherProject = ProjectId.make("unlinked");
+const householdProject = ProjectId.make("example-household");
 const selection = (instanceId: ProviderInstanceId): ModelSelection =>
   ({ instanceId, model: "model" }) as ModelSelection;
 
@@ -80,6 +96,15 @@ const projects = new Map([
     otherProject as string,
     projectFixture(otherProject, { title: "Private", defaultModelSelection: selection(codex) }),
   ],
+  [
+    householdProject as string,
+    projectFixture(householdProject, {
+      title: "Example Household",
+      workspaceRoot: "/fixtures/example-household",
+      defaultModelSelection: selection(codex),
+      workspaceSettings: { ...DEFAULT_PROJECT_WORKSPACE_SETTINGS, kind: "personal" },
+    }),
+  ],
 ]);
 
 const workerSession = (coordinator: EnvironmentId) => ({
@@ -96,6 +121,13 @@ const setup = (input: {
   const shells = new Map<string, OrchestrationV2ThreadShell>();
   const launched: Array<ThreadLaunch.ThreadLaunchInput> = [];
   const revoked: Array<string> = [];
+  const reached: Array<string> = [];
+  const reach = (threadId: string) =>
+    Effect.sync(() => reached.push(threadId)).pipe(
+      Effect.andThen(
+        Effect.fail(new OrchestratorMcpFailure({ code: "invalid_request", message: "reached" })),
+      ),
+    );
   const live = [...(input.legacy ?? [])].map(workerSession);
   const config = ServerConfig.layerTest(process.cwd(), { prefix: input.prefix }).pipe(
     Layer.provide(NodeServices.layer),
@@ -124,7 +156,27 @@ const setup = (input: {
       Layer.succeed(McpInvocationContext.McpInvocationContext, scope),
       Layer.mock(ThreadManagement.ThreadManagementService)({
         getThreadShell: (id) => Effect.succeed(shells.get(id) ?? null),
+        getProjectThreadRecords: ({ threadId }) => reach(threadId) as never,
       }),
+      Layer.mock(ThreadSearch.ThreadSearch)({
+        search: () =>
+          Effect.succeed({
+            matches: [...shells.values()].map((shell) => ({
+              threadId: shell.id,
+              projectId: shell.projectId,
+              source: "user" as const,
+              snippet: "groceries",
+              messageCreatedAt: null,
+            })),
+          } as never),
+      }),
+      Layer.mock(ProjectWorkspace.ProjectWorkspaceService)({
+        readMemory: ({ projectId }) => reach(`memory:${projectId}`) as never,
+      }),
+      Layer.mock(ProjectPlans.ProjectPlanService)({
+        read: ({ projectId }) => reach(`plan:${projectId}`) as never,
+      }),
+      Layer.mock(ScheduledTasks.ScheduledTaskService)({}),
       Layer.mock(ThreadLaunch.ThreadLaunchService)({
         launch: (launch) => {
           launched.push(launch);
@@ -144,6 +196,16 @@ const setup = (input: {
       }),
       Layer.mock(Project.ProjectService)({
         getById: (id) => Effect.succeed(Option.fromNullishOr(projects.get(id))),
+        snapshot: Effect.succeed({
+          projects: [...projects.values()],
+          updatedAt: "2026-10-09T00:00:00Z",
+        }),
+      }),
+      // A call the guards let through reaches the service, which records it.
+      Layer.mock(OrchestratorMcpService.OrchestratorMcpService)({
+        readThread: (_scope, input) => reach(input.threadId),
+        sendToThread: (_scope, input) => reach(input.threadId),
+        interruptThread: (_scope, input) => reach(input.threadId),
       }),
       Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/projects" }),
       Layer.mock(GitVcsDriver.GitVcsDriver)({}),
@@ -173,7 +235,8 @@ const setup = (input: {
     issuedAt: 0,
     capabilities: new Set(["orchestration" as const]),
   });
-  const launch = (
+  const call = (
+    tool: string,
     scope: McpInvocationContext.McpInvocationScope,
     params: Record<string, unknown>,
   ) =>
@@ -185,9 +248,71 @@ const setup = (input: {
         ),
       );
       const result = yield* toolkit
-        .handle("studio_thread_launch", params as never)
+        .handle(tool as never, params as never)
         .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(deps));
-      return result.at(-1)?.result as Record<string, unknown>;
+      return result.at(-1)?.result as unknown as Record<string, unknown>;
+    });
+  const launch = (
+    scope: McpInvocationContext.McpInvocationScope,
+    params: Record<string, unknown>,
+  ) => call("studio_thread_launch", scope, params);
+  const callThread = (
+    tool: "studio_thread_read" | "studio_thread_send" | "studio_thread_interrupt",
+    scope: McpInvocationContext.McpInvocationScope,
+    params: Record<string, unknown>,
+  ) =>
+    Effect.gen(function* () {
+      const deps = services(scope, yield* WorkGrants.WorkGrants, yield* ServerConfig.ServerConfig);
+      const toolkit = yield* OrchestratorToolkit.pipe(
+        Effect.provide(
+          McpToolAccess.HandlersLayer.layer(OrchestratorHandlers.layer).pipe(Layer.provide(deps)),
+        ),
+      );
+      const result = yield* toolkit
+        .handle(tool, params as never)
+        .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(deps));
+      return result.at(-1)?.result as unknown as Record<string, unknown>;
+    });
+  // Any other toolkit's tool, through the same declared access.
+  const callTool = (
+    which: "thread" | "memory" | "plan",
+    tool: string,
+    scope: McpInvocationContext.McpInvocationScope,
+    params: Record<string, unknown>,
+  ) =>
+    Effect.gen(function* () {
+      const deps = services(scope, yield* WorkGrants.WorkGrants, yield* ServerConfig.ServerConfig);
+      const handled =
+        which === "thread"
+          ? ThreadToolkit.pipe(
+              Effect.provide(
+                McpToolAccess.HandlersLayer.layer(ThreadHandlers.layer).pipe(Layer.provide(deps)),
+              ),
+              Effect.map((toolkit) => toolkit.handle(tool as never, params as never)),
+            )
+          : which === "memory"
+            ? ProjectMemoryToolkit.pipe(
+                Effect.provide(
+                  McpToolAccess.HandlersLayer.layer(ProjectMemoryHandlers.layer).pipe(
+                    Layer.provide(deps),
+                  ),
+                ),
+                Effect.map((toolkit) => toolkit.handle(tool as never, params as never)),
+              )
+            : ProjectPlanToolkit.pipe(
+                Effect.provide(
+                  McpToolAccess.HandlersLayer.layer(ProjectPlanHandlers.layer).pipe(
+                    Layer.provide(deps),
+                  ),
+                ),
+                Effect.map((toolkit) => toolkit.handle(tool as never, params as never)),
+              );
+      const result = yield* (yield* handled).pipe(
+        Stream.unwrap,
+        Stream.runCollect,
+        Effect.provide(deps),
+      );
+      return result.at(-1)?.result as unknown as Record<string, unknown>;
     });
   const origins = WorkGrants.WorkGrants.pipe(Effect.flatMap((service) => service.origins));
   const workGrants = <A, E>(use: (service: WorkGrants.WorkGrantsShape) => Effect.Effect<A, E>) =>
@@ -207,10 +332,14 @@ const setup = (input: {
     } as unknown as OrchestrationV2ThreadShell);
   return {
     layer,
+    call,
     launch,
+    callThread,
+    callTool,
     clientScope,
     threadScope,
     launched,
+    reached,
     revoked,
     origins,
     workGrants,
@@ -373,6 +502,158 @@ describe("work started here by another machine", () => {
         message: "go",
       });
       expect(again).toMatchObject({ projectId: otherProject });
+    }).pipe(Effect.provide(world.layer));
+  });
+});
+
+describe("a personal assistant here, seen by another machine's work", () => {
+  const localScope: McpInvocationContext.McpInvocationScope = {
+    environmentId: HERE,
+    requestNamespace: "client:example-desktop",
+    thread: undefined,
+    client: {
+      sessionId: "session-example-desktop",
+      label: "Example Desktop",
+      access: "full-access",
+    },
+    issuedAt: 0,
+    capabilities: new Set(["orchestration" as const]),
+  };
+
+  it.live("hides it from a grant covering every project and refuses reading it", () => {
+    // A grant from before scopes covers every project here.
+    const world = setup({ prefix: "studio-work-grant-personal-project-", legacy: [M4] });
+    return Effect.gen(function* () {
+      const listed = yield* world.call("studio_project_list", world.clientScope(M4), {});
+      const ids = (listed.projects as ReadonlyArray<{ id: string }>).map((project) => project.id);
+      expect(ids).toEqual(expect.arrayContaining([linkedProject, otherProject]));
+      expect(ids).not.toContain(householdProject);
+      const read = yield* world.call("studio_project_read", world.clientScope(M4), {
+        projectId: householdProject,
+      });
+      expect(read).toMatchObject({ code: "outside_grant_scope" });
+      expect(String(read.message)).toContain(PERSONAL_ASSISTANT_PRIVATE_MESSAGE);
+      expect(String(read.message)).toContain("M4MAX cannot reach this machine's assistant.");
+      expect(
+        yield* world.call("studio_project_read", world.clientScope(M4), {
+          projectId: otherProject,
+        }),
+      ).toMatchObject({ id: otherProject });
+      const launched = yield* world.launch(world.clientScope(M4), {
+        title: "Errands",
+        projectId: householdProject,
+        message: "go",
+      });
+      expect(launched).toMatchObject({ code: "outside_grant_scope" });
+      expect(world.launched).toHaveLength(0);
+    }).pipe(Effect.provide(world.layer));
+  });
+
+  it.live("refuses reading, sending to and interrupting its threads", () => {
+    const world = setup({ prefix: "studio-work-grant-personal-thread-", legacy: [M4] });
+    const errands = ThreadId.make("household-errands");
+    const fix = ThreadId.make("unlinked-fix");
+    world.addThread(errands, householdProject, codex);
+    world.addThread(fix, otherProject, codex);
+    return Effect.gen(function* () {
+      for (const [tool, params] of [
+        ["studio_thread_read", {}],
+        ["studio_thread_send", { message: "hello" }],
+        ["studio_thread_interrupt", {}],
+      ] as const) {
+        const refused = yield* world.callThread(tool, world.clientScope(M4), {
+          threadId: errands,
+          ...params,
+        });
+        expect(refused, tool).toMatchObject({ code: "outside_grant_scope" });
+        expect(String(refused.message), tool).toContain(PERSONAL_ASSISTANT_PRIVATE_MESSAGE);
+        // The same grant still reaches a code project's thread.
+        yield* world.callThread(tool, world.clientScope(M4), { threadId: fix, ...params });
+      }
+      expect(world.reached).toEqual([fix, fix, fix]);
+    }).pipe(Effect.provide(world.layer));
+  });
+
+  it.live("refuses its queue, requests, forks, memory and plan, and hides it from search", () => {
+    const world = setup({ prefix: "studio-work-grant-personal-tools-", legacy: [M4] });
+    const errands = ThreadId.make("household-errands");
+    const fix = ThreadId.make("unlinked-fix");
+    world.addThread(errands, householdProject, codex);
+    world.addThread(fix, otherProject, codex);
+    return Effect.gen(function* () {
+      for (const [tool, params] of [
+        ["studio_queue_list", {}],
+        ["studio_thread_configuration", {}],
+        ["studio_pending_request_list", {}],
+        ["studio_thread_fork", { sourcePoint: { type: "latest_stable" } }],
+      ] as const) {
+        const refused = yield* world.callTool("thread", tool, world.clientScope(M4), {
+          threadId: errands,
+          ...params,
+        });
+        expect(refused, tool).toMatchObject({ code: "outside_grant_scope" });
+        expect(String(refused.message), tool).toContain(PERSONAL_ASSISTANT_PRIVATE_MESSAGE);
+      }
+      // The same grant still reaches a code project's thread.
+      yield* world.callTool("thread", "studio_queue_list", world.clientScope(M4), {
+        threadId: fix,
+      });
+      expect(world.reached).toEqual([fix]);
+
+      const found = yield* world.callTool("thread", "studio_thread_search", world.clientScope(M4), {
+        query: "groceries",
+      });
+      expect(
+        (found.matches as ReadonlyArray<{ projectId: string }>).map((match) => match.projectId),
+      ).toEqual([otherProject]);
+      expect(
+        yield* world.callTool("thread", "studio_thread_search", world.clientScope(M4), {
+          query: "groceries",
+          projectId: householdProject,
+        }),
+      ).toMatchObject({ code: "outside_grant_scope" });
+
+      for (const [which, tool] of [
+        ["memory", "studio_project_memory_read"],
+        ["plan", "studio_project_plan_read"],
+      ] as const) {
+        const refused = yield* world.callTool(which, tool, world.clientScope(M4), {
+          projectId: householdProject,
+          name: "MEMORY.md",
+        });
+        expect(refused, tool).toMatchObject({ code: "outside_grant_scope" });
+      }
+      expect(world.reached).toEqual([fix]);
+
+      // A caller on this machine without a grant still searches and reads it.
+      const local = yield* world.callTool("thread", "studio_thread_search", localScope, {
+        query: "groceries",
+      });
+      expect(
+        (local.matches as ReadonlyArray<{ projectId: string }>).map((match) => match.projectId),
+      ).toContain(householdProject);
+      yield* world.callTool("memory", "studio_project_memory_read", localScope, {
+        projectId: householdProject,
+        name: "MEMORY.md",
+      });
+      expect(world.reached).toEqual([fix, `memory:${householdProject}`]);
+    }).pipe(Effect.provide(world.layer));
+  });
+
+  it.live("still shows it to a caller on this machine without a grant", () => {
+    const world = setup({ prefix: "studio-work-grant-personal-local-", legacy: [M4] });
+    const errands = ThreadId.make("household-errands");
+    world.addThread(errands, householdProject, codex);
+    return Effect.gen(function* () {
+      const listed = yield* world.call("studio_project_list", localScope, {});
+      expect(
+        (listed.projects as ReadonlyArray<{ id: string }>).map((project) => project.id),
+      ).toContain(householdProject);
+      expect(
+        yield* world.call("studio_project_read", localScope, { projectId: householdProject }),
+      ).toMatchObject({ id: householdProject, title: "Example Household" });
+      yield* world.callThread("studio_thread_read", localScope, { threadId: errands });
+      expect(world.reached).toEqual([errands]);
     }).pipe(Effect.provide(world.layer));
   });
 });

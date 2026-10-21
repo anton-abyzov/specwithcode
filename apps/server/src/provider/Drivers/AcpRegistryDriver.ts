@@ -12,6 +12,7 @@ import {
 } from "@specweave-studio/contracts";
 import { HostProcessEnvironment } from "@specweave-studio/shared/hostProcess";
 import { createModelCapabilities } from "@specweave-studio/shared/model";
+import { compareSemverVersions } from "@specweave-studio/shared/semver";
 import * as Clock from "effect/Clock";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
@@ -149,6 +150,27 @@ function modelsFromDiscovery(
   return providerModelsFromSettings(builtInModels, customModels, capabilities);
 }
 
+/**
+ * The note on an agent that runs its prepared version while the registry
+ * lists another. A registry that rolled back lists an older one, and
+ * "update" would then downgrade it, so that case only says what is listed.
+ */
+function retainedVersionMessage(
+  inspection: {
+    readonly agentId: string;
+    readonly agentName?: string;
+    readonly version: string | null;
+  },
+  availableVersion: string,
+): string {
+  const name = inspection.agentName ?? inspection.agentId;
+  const running = `${name} ${inspection.version ?? ""}`.trimEnd();
+  return inspection.version !== null &&
+    compareSemverVersions(availableVersion, inspection.version) < 0
+    ? `${running} is running; the ACP Registry lists ${availableVersion}.`
+    : `${running} is running; ${availableVersion} is available. Use Install / update agent in Settings → Providers.`;
+}
+
 export function acpRegistrySnapshotReadiness(
   inspection:
     | AcpRegistrySupport.AcpRegistryInspection
@@ -156,7 +178,15 @@ export function acpRegistrySnapshotReadiness(
 ): Pick<ServerProvider, "installed" | "version" | "status" | "message"> {
   switch (inspection.status) {
     case "ready":
-      return { installed: true, version: inspection.version, status: "ready" };
+      return {
+        installed: true,
+        version: inspection.version,
+        status: "ready",
+        // The prepared install keeps running; the registry update is opt-in.
+        ...(inspection.availableVersion !== undefined
+          ? { message: retainedVersionMessage(inspection, inspection.availableVersion) }
+          : {}),
+      };
     case "unconfigured":
       return {
         installed: false,

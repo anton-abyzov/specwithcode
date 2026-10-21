@@ -73,6 +73,8 @@ export const ServerProviderUsageLimits = Schema.Struct({
   nativeDenialObservedAt: Schema.optional(IsoDateTime),
   /** Claude rejection persists through unsupported probes until a complete valid read. */
   nativeDenialRequiresFullRead: Schema.optional(Schema.Literal(true)),
+  /** When the rejected window said it resets; past it the denial no longer refuses starts. */
+  nativeDenialResetsAt: Schema.optional(IsoDateTime),
   /** Credit-only withdrawal; does not revoke ordinary included usage. */
   nativeCreditDenialObservedAt: Schema.optional(IsoDateTime),
   ordinaryUsageAllowed: Schema.optional(Schema.NullOr(Schema.Boolean)),
@@ -121,6 +123,8 @@ export const ProviderUsageLimitsUpdate = Schema.Struct({
   ordinaryUsageAllowed: Schema.optional(Schema.Literal(false)),
   /** Negative-only fence; an unsupported probe cannot clear this rejection. */
   nativeDenialRequiresFullRead: Schema.optional(Schema.Literal(true)),
+  /** Reset of the rejected window, so the fence lapses on time instead of forever. */
+  nativeDenialResetsAt: Schema.optional(IsoDateTime),
   spendControlReached: Schema.optional(Schema.Literal(true)),
   /** Main credit/workspace/spend withdrawal only; sparse positives cannot clear it. */
   nativeCreditDenied: Schema.optional(Schema.Literal(true)),

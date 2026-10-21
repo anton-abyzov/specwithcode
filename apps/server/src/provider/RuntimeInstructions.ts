@@ -50,7 +50,8 @@ SpecWithCode tracks the pull request for this thread's own branch by itself. Reg
 </pull_requests>`;
 
 export const STUDIO_OUTPUT_FORMATTING_INSTRUCTIONS = `<output_formatting>
-Write dates in prose with the month name, day and year (October 17, 2026), not ISO timestamps, and give times in the user's timezone when known, otherwise the source's; never guess one. Leave code, commands, paths, URLs, identifiers, data and quoted errors exactly as they are.
+Write dates with the month name, day and year (October 17, 2026), not ISO timestamps; give times in the user's timezone when known, otherwise the source's; never guess one. Leave code, commands, paths, URLs, identifiers, data and quoted errors exactly as they are.
+Fences \`\`\`status (\`ok|warn|fail: label | detail\`), \`\`\`kv (\`key: value\`) and \`\`\`json render as cards.
 </output_formatting>`;
 
 /**
@@ -68,6 +69,24 @@ export const STUDIO_WRITING_INSTRUCTIONS = `<writing>
 - Before sending, ask what makes this look machine-generated, and fix it.
 </writing>`;
 
+/**
+ * Shared by both styles. The user's attention is the bottleneck and tokens are
+ * cheap, so results arrive in the form that is quickest to grasp (Karpathy's
+ * writing, diagram, HTML, video ladder). The chat renders Mermaid fences,
+ * Markdown images and videos, and html_render pages inline; the file rule keeps
+ * written reports from reading as one glued paragraph. Every turn carries
+ * this block; RuntimeInstructions.test.ts caps its length.
+ */
+export const STUDIO_PRESENTATION_INSTRUCTIONS = `<presentation>
+The user's attention is scarce and tokens are cheap: give each result the form quickest to grasp, aligned and polished.
+- Simple answers stay plain text; never add a visual for its own sake.
+- Flows, architecture, state and before/after changes get a Mermaid diagram; comparisons a table; UI changes a screenshot.
+- A decision the user must make, a review or a large result gets a designed HTML page (html_render when available, preview first) with the diagram, mockup or screenshots and the checks run.
+- Make an animated explainer video when asked or when motion is the explanation.
+- When the user did not read a long reply, walk them through it one step at a time.
+- In Markdown files you write, separate paragraphs with a blank line, keep a space between a label and its value (HTTP 200), and put hashes, paths and commands in backticks.
+</presentation>`;
+
 /** Shared by both styles: the app reads `**Blockers:**` to mark a thread Blocked. */
 const REPORT_RULES =
   "A blocker is a decision only the user can make or a step only they can take outside the app. Anything an agent can settle (another session's run, CI, a merge, a retry, a safe default) is not one: settle it or name it as the next step. When you are blocked, end with a paragraph opening **Blockers:** that asks the one question, with the options and your recommendation. Put long inventories, tables and logs in a file and give its full path. Never shorten errors, failing tests, security warnings or confirmations before destructive actions; quote errors exactly.";
@@ -84,14 +103,14 @@ export const STUDIO_CONCISE_RESPONSE_STYLE_INSTRUCTIONS = `<response_style mode=
 - Reporting to a coordinator or parent thread, give a plain 1-3 line result with the path or link that proves it; use labeled paragraphs (**Outcome:**, **Evidence:**, **Blockers:**) only when the result needs them.
 - ${REPORT_RULES}
 - Ask workers and subagents you brief to report the same way.
-</response_style>\n\n${STUDIO_WRITING_INSTRUCTIONS}\n\n${STUDIO_OUTPUT_FORMATTING_INSTRUCTIONS}`;
+</response_style>\n\n${STUDIO_PRESENTATION_INSTRUCTIONS}\n\n${STUDIO_WRITING_INSTRUCTIONS}\n\n${STUDIO_OUTPUT_FORMATTING_INSTRUCTIONS}`;
 
 export const STUDIO_DETAILED_RESPONSE_STYLE_INSTRUCTIONS = `<response_style mode="detailed">
 - Lead with the result, then the evidence, trade-offs, open questions and the steps that help the reader check the work. Structure long answers with short headers or lists.
 - Reporting to a coordinator or parent thread, write the result as paragraphs that open with bold labels (**Outcome:**, **Evidence:**, **Blockers:**); **Blockers:** is none or the one question the user must answer.
 - ${REPORT_RULES}
 - Ask workers and subagents you brief to report the same way.
-</response_style>\n\n${STUDIO_WRITING_INSTRUCTIONS}\n\n${STUDIO_OUTPUT_FORMATTING_INSTRUCTIONS}`;
+</response_style>\n\n${STUDIO_PRESENTATION_INSTRUCTIONS}\n\n${STUDIO_WRITING_INSTRUCTIONS}\n\n${STUDIO_OUTPUT_FORMATTING_INSTRUCTIONS}`;
 
 export function responseStyleInstructions(style: ResponseStyle = "concise"): string {
   return style === "detailed"

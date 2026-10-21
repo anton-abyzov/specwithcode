@@ -7,6 +7,7 @@ import * as Effect from "effect/Effect";
 import * as Plans from "../../../project/ProjectPlanService.ts";
 import * as Access from "../../McpToolAccess.ts";
 import { readCaller, resolveProjectId } from "../../threadAccess.ts";
+import { refuseMachinePrivate } from "../../workGrantAccess.ts";
 import { ProjectPlanToolkit } from "./tools.ts";
 const boundProject = Effect.fn("mcp.projectPlan.boundProject")(function* (requested?: ProjectId) {
   const context = yield* readCaller();
@@ -16,6 +17,7 @@ const boundProject = Effect.fn("mcp.projectPlan.boundProject")(function* (reques
       code: "capability_denied",
       message: "Plans are scoped to the calling thread's project.",
     });
+  yield* refuseMachinePrivate(context, projectId);
   return { projectId, caller: context.caller };
 });
 const boundActor = Effect.fn("mcp.projectPlan.boundActor")(function* (requested?: ProjectId) {

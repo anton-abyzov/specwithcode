@@ -32,12 +32,14 @@ import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
 import * as ProjectHandlers from "./handlers.ts";
 import { ProjectToolkit } from "./tools.ts";
+import { PERSONAL_ASSISTANT_PRIVATE_MESSAGE } from "@specweave-studio/shared/personalAssistant";
 
 const projectId = ProjectId.make("project");
 const callerId = ThreadId.make("coordinator");
 const providerInstanceId = ProviderInstanceId.make("codex");
 const workerModel = { instanceId: providerInstanceId, model: "gpt-5.5" } as ModelSelection;
 const M1 = { id: "m1", label: "M1", environmentId: EnvironmentId.make("env-m1") };
+const codeProjectId = ProjectId.make("example-code");
 
 const setup = (
   options: {
@@ -51,6 +53,8 @@ const setup = (
     readonly origin?: WorkOrigin;
     /** The other machine refuses or loses the launch with this code. */
     readonly remoteFails?: OrchestratorMcpFailure["code"];
+    /** The caller's project is this machine's personal assistant. */
+    readonly personal?: boolean;
   } = {},
 ) => {
   const caller = {
@@ -68,8 +72,12 @@ const setup = (
   const localLaunches: ThreadLaunch.ThreadLaunchInput[] = [];
   const project = projectFixture(projectId, {
     defaultModelSelection: workerModel,
+    ...(options.personal
+      ? { title: "Example Household", workspaceRoot: "/fixtures/example-household" }
+      : {}),
     workspaceSettings: {
       ...DEFAULT_PROJECT_WORKSPACE_SETTINGS,
+      ...(options.personal ? { kind: "personal" as const } : {}),
       coordinatorThreadId: callerId,
       ...(options.workerMachine
         ? {
@@ -159,7 +167,20 @@ const setup = (
         } as unknown as ThreadLaunch.ThreadLaunchResult);
       },
     }),
-    Layer.mock(Project.ProjectService)({ getById: () => Effect.succeed(Option.some(project)) }),
+    Layer.mock(Project.ProjectService)({
+      getById: (id) =>
+        Effect.succeed(
+          Option.some(
+            id === codeProjectId
+              ? projectFixture(codeProjectId, {
+                  title: "Example Code",
+                  defaultModelSelection: workerModel,
+                  workspaceSettings: { ...DEFAULT_PROJECT_WORKSPACE_SETTINGS, kind: "code" },
+                })
+              : project,
+          ),
+        ),
+    }),
     Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/projects" }),
     Layer.mock(GitVcsDriver.GitVcsDriver)({}),
     Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
@@ -406,5 +427,40 @@ it.effect("refuses to send work back to the machine it came from, before sending
     expect(result).toMatchObject({ code: "delegation_cycle" });
     expect(String(result.message)).toContain("env-m1 → this machine → env-m1");
     expect(remoteLaunches).toEqual([]);
+  });
+});
+
+it.effect("keeps a personal assistant's work on this machine", () => {
+  const household = setup({ personal: true });
+  const code = setup();
+  return Effect.gen(function* () {
+    // Its coordinator cannot start a thread on another machine, in its own project or another.
+    for (const params of [
+      { title: "Errands", message: "go", machine: "M1" },
+      { title: "Fix CI", message: "go", machine: "M1", projectId: codeProjectId },
+    ]) {
+      const refused = yield* household.launch(params);
+      expect(refused, params.title).toMatchObject({ code: "invalid_request" });
+      expect(String(refused.message).startsWith(PERSONAL_ASSISTANT_PRIVATE_MESSAGE)).toBe(true);
+    }
+    expect(household.remoteLaunches).toEqual([]);
+    // Here it still launches.
+    expect(
+      yield* household.launch({ title: "Errands", message: "go", machine: "local" }),
+    ).toMatchObject({ placement: { machine: "this machine", reason: "explicit" } });
+    expect(yield* household.launch({ title: "Errands", message: "go" })).toMatchObject({
+      placement: { machine: "this machine", reason: "this_machine" },
+    });
+    expect(household.localLaunches).toHaveLength(2);
+    // A code project's coordinator still starts work on M1.
+    expect(
+      yield* code.launch({
+        title: "Fix CI",
+        message: "go",
+        machine: "M1",
+        projectId: codeProjectId,
+      }),
+    ).toMatchObject({ threadId: "b-thread", machine: M1 });
+    expect(code.remoteLaunches).toHaveLength(1);
   });
 });

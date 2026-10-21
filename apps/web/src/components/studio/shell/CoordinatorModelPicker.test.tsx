@@ -22,6 +22,9 @@ vi.mock("../../../state/use-atom-query-runner", () => ({
 vi.mock("@tanstack/react-router", () => ({ useNavigate: () => state.navigate }));
 
 vi.mock("../../../hooks/useSettings", () => ({ useEnvironmentSettings: () => ({}) }));
+vi.mock("../../../studio/machineNickname", () => ({
+  useMachineNickname: (_environmentId: string, fallback?: string | null) => fallback ?? "",
+}));
 vi.mock("../../../state/environments", () => ({
   useEnvironment: () => ({ serverConfig: state.serverConfig }),
 }));

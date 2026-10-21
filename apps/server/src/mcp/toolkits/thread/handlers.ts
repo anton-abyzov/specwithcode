@@ -23,6 +23,7 @@ import * as ThreadSearch from "../../../orchestration-v2/ThreadSearch.ts";
 import * as ScheduledTasks from "../../../scheduledTasks/ScheduledTaskService.ts";
 import { queuedRunsInDeliveryOrder } from "../../../orchestration-v2/QueuedRunOrder.ts";
 import { isProjectActionRequestId } from "../../../project/projectActionRequestId.ts";
+import { refuseMachinePrivate, workGrantOf } from "../../workGrantAccess.ts";
 import { ThreadToolkit } from "./tools.ts";
 
 function queueEntry(
@@ -102,19 +103,30 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
   ),
   studio_thread_search: McpToolAccess.reads((input) =>
     Effect.gen(function* () {
-      const { caller } = yield* readCaller();
+      const context = yield* readCaller();
       const { projectId: requested, ...query } = input;
       // Like the other project tools, an omitted project means the caller's own; a client
       // outside a thread searches every project.
-      const projectId = requested ?? caller?.projectId;
+      const projectId = requested ?? context.caller?.projectId;
+      if (projectId !== undefined) yield* refuseMachinePrivate(context, projectId);
       const threadSearch = yield* ThreadSearch.ThreadSearch;
       const result = yield* threadSearch.search(query).pipe(Effect.mapError(unavailable));
-      return {
-        matches:
-          projectId === undefined
-            ? result.matches
-            : result.matches.filter((match) => match.projectId === projectId),
-      };
+      const matches =
+        projectId === undefined
+          ? result.matches
+          : result.matches.filter((match) => match.projectId === projectId);
+      // Another machine's work never sees a personal assistant's threads.
+      if (projectId !== undefined || (yield* workGrantOf(context)) === undefined)
+        return { matches };
+      const reachable = new Set<string>();
+      for (const id of new Set(matches.map((match) => match.projectId))) {
+        const refused = yield* refuseMachinePrivate(context, id).pipe(
+          Effect.as(false),
+          Effect.catch(() => Effect.succeed(true)),
+        );
+        if (!refused) reachable.add(id);
+      }
+      return { matches: matches.filter((match) => reachable.has(match.projectId)) };
     }),
   ),
   studio_thread_fork: writesThread((input) =>

@@ -7,6 +7,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   advanceServiceUpdateProgress,
+  agentOffersRelease,
   canRetryServiceUpdate,
   INSTALL_TIMEOUT_MS,
   describeServiceUpdateBlockers,
@@ -28,8 +29,10 @@ import {
   formatElapsed,
   isForcedRequestLive,
   isOlderRelease,
+  isReleaseUnavailableFailure,
   isServiceBehindApp,
   pendingHoldUntil,
+  runningAppRelease,
   serviceInstallTarget,
 } from "./SidebarRestartToUpdate.logic";
 
@@ -50,6 +53,7 @@ const appIdle: DesktopUpdateState = {
   message: null,
   errorContext: null,
   canRetry: false,
+  productionBuild: true,
 };
 
 const appDownloaded: DesktopUpdateState = {
@@ -77,6 +81,10 @@ const serviceWaiting: StudioServiceUpdateState = {
   availableVersion: "0.2.5",
   downloadedVersion: "0.2.5",
 };
+
+// A refusal Update now gets past: update.py restarts the service for a held request.
+const LOG_DELETED =
+  "SpecWithCode cannot be updated right now: The SpecWithCode service is using a database log that was deleted from disk. Restart SpecWithCode, then update";
 
 describe("restart to update", () => {
   it("stays hidden until an update has downloaded", () => {
@@ -214,6 +222,102 @@ describe("restart to update", () => {
       null,
     );
     expect(serviceInstallTarget(null, "0.2.5")).toBe(null);
+  });
+
+  it("asks the agent for the release it found, not an older version the app runs", () => {
+    // Settings' download in the background is off, or the agent is fetching it.
+    const appUpdated = { ...appIdle, currentVersion: "1.0.62" };
+    for (const status of ["available", "downloading"] as const) {
+      const agent = {
+        ...serviceUpToDate,
+        status,
+        installedVersion: "1.0.61",
+        availableVersion: "1.0.63",
+      };
+      expect(serviceInstallTarget(agent, null, "1.0.62")).toBe("1.0.63");
+      expect(getRestartToUpdateView(appUpdated, agent)).toMatchObject({
+        service: true,
+        serviceVersion: "1.0.63",
+      });
+    }
+    // A release the agent found that the service already runs is no target.
+    expect(
+      serviceInstallTarget(
+        { ...serviceUpToDate, status: "available", availableVersion: "0.2.4" },
+        null,
+      ),
+    ).toBeNull();
+    // Nor one an agent busy installing cannot take.
+    expect(
+      serviceInstallTarget(
+        { ...serviceUpToDate, status: "installing", availableVersion: "0.2.6" },
+        null,
+      ),
+    ).toBeNull();
+    // A pass refused for a fault Update now gets past still takes a request
+    // for the newer release on disk.
+    expect(
+      serviceInstallTarget(
+        {
+          ...serviceUpToDate,
+          status: "error",
+          availableVersion: "0.2.6",
+          downloadedVersion: "0.2.6",
+          message: LOG_DELETED,
+        },
+        null,
+      ),
+    ).toBe("0.2.6");
+  });
+
+  it("asks for the release the agent has ready for a service on a dev build", () => {
+    // A dev build is never older than a release, yet the agent waits to install 0.2.5 on it.
+    expect(
+      serviceInstallTarget({
+        ...serviceWaiting,
+        installedVersion: "0.2.5-dev.3",
+        availableVersion: "0.2.5",
+        downloadedVersion: "0.2.5",
+      }),
+    ).toBe("0.2.5");
+  });
+
+  it("installs the release the app found on the service, so it is not updated twice", () => {
+    // The agent has not checked yet; the app already knows 1.0.63 is out.
+    const appFound = {
+      ...appIdle,
+      status: "available" as const,
+      currentVersion: "1.0.62",
+      availableVersion: "1.0.63",
+    };
+    const agent = { ...serviceUpToDate, installedVersion: "1.0.61" };
+    expect(getRestartToUpdateView(appFound, agent)).toMatchObject({
+      app: false,
+      service: true,
+      serviceVersion: "1.0.63",
+    });
+    // The app's newer release alone is not a reason to offer the service an update.
+    expect(getRestartToUpdateView({ ...appFound, currentVersion: "1.0.61" }, agent)).toBeNull();
+  });
+
+  it("never asks the service to catch up with a dev or unpackaged app", () => {
+    // A dev build reports its plain package version, which may not be released yet.
+    const devApp = {
+      ...appIdle,
+      enabled: false,
+      status: "disabled" as const,
+      currentVersion: "0.2.5",
+      productionBuild: false,
+    };
+    expect(runningAppRelease(devApp)).toBeNull();
+    expect(getRestartToUpdateView(devApp, serviceUpToDate)).toBeNull();
+    // A desktop that does not say what it is counts as a dev build.
+    const { productionBuild: _unknown, ...unknownBuild } = devApp;
+    expect(getRestartToUpdateView(unknownBuild, serviceUpToDate)).toBeNull();
+    // A release build with updates switched off still counts.
+    expect(
+      getRestartToUpdateView({ ...devApp, productionBuild: true }, serviceUpToDate),
+    ).toMatchObject({ service: true, serviceVersion: "0.2.5" });
   });
 
   it("compares releases only, never dev builds", () => {
@@ -595,11 +699,266 @@ describe("service update progress", () => {
     expect(canRetryServiceUpdate(stuck)).toBe(true);
   });
 
+  it("fails when the agent answers the request with nothing to install", () => {
+    const asked = { ...requested, requestedAt: 10_000 };
+    const after = new Date(10_500).toISOString();
+    // The desktop reports no request pending any more: that pass took it up.
+    for (const status of ["up-to-date", "disabled"] as const) {
+      expect(
+        advanceServiceUpdateProgress(asked, {
+          ...serviceUpToDate,
+          status,
+          updatedAt: after,
+          pendingInstall: null,
+        }),
+      ).toMatchObject({
+        phase: "failed",
+        message: "SpecWithCode 0.2.5 is not available to the service on this Mac yet.",
+      });
+    }
+    // Written before the request, or with no time at all: not its answer yet.
+    expect(
+      advanceServiceUpdateProgress(asked, {
+        ...serviceUpToDate,
+        updatedAt: new Date(9_000).toISOString(),
+      }),
+    ).toBe(asked);
+    expect(advanceServiceUpdateProgress(asked, serviceUpToDate)).toBe(asked);
+    // A pass that read the config just before the request was written.
+    expect(
+      advanceServiceUpdateProgress(asked, {
+        ...serviceUpToDate,
+        updatedAt: after,
+        pendingInstall: {
+          requestedAt: new Date(10_000).toISOString(),
+          mode: "force",
+          version: "0.2.5",
+          holdUntil: new Date(10_000 + 15 * 60_000).toISOString(),
+          handled: false,
+        },
+      }),
+    ).toBe(asked);
+    // It found the release and has yet to fetch it.
+    expect(
+      advanceServiceUpdateProgress(asked, {
+        ...serviceUpToDate,
+        status: "available",
+        availableVersion: "0.2.5",
+        updatedAt: after,
+      }),
+    ).toBe(asked);
+  });
+
+  it("says the agent is downloading the release while the request waits for it", () => {
+    const downloading = {
+      ...serviceUpToDate,
+      status: "downloading" as const,
+      availableVersion: "0.2.5",
+      message: "Downloading SpecWithCode 0.2.5",
+    };
+    const shown = advanceServiceUpdateProgress(requested, downloading);
+    expect(shown).toMatchObject({ phase: "requesting", message: "Downloading SpecWithCode 0.2.5" });
+    // Nothing new: the same progress, so the toast is not redrawn.
+    expect(advanceServiceUpdateProgress(shown, downloading)).toBe(shown);
+    expect(advanceServiceUpdateProgress(requested, { ...downloading, message: null }).message).toBe(
+      "Downloading SpecWithCode 0.2.5…",
+    );
+    expect(serviceUpdateToast(shown, false, { now: 0 }).description).toBe(
+      "The SpecWithCode service on this Mac still runs 0.2.4. Downloading SpecWithCode 0.2.5",
+    );
+    // Once installing, a late download state changes nothing.
+    const installing = { ...requested, phase: "installing" as const };
+    expect(advanceServiceUpdateProgress(installing, downloading)).toBe(installing);
+  });
+
   it("keeps waiting for the agent to pick the request up", () => {
     expect(
       advanceServiceUpdateProgress(requested, { ...serviceWaiting, status: "downloaded" }),
     ).toBe(requested);
     expect(advanceServiceUpdateProgress(requested, null)).toBe(requested);
+  });
+
+  it("ignores a download state the agent wrote for an earlier request", () => {
+    const asked = { ...requested, requestedAt: 10_000 };
+    // A cancel's answer, written before this request: not what the agent does for it.
+    expect(
+      advanceServiceUpdateProgress(asked, {
+        ...serviceWaiting,
+        status: "downloaded",
+        message: "Update cancelled",
+        updatedAt: new Date(9_000).toISOString(),
+      }),
+    ).toBe(asked);
+  });
+
+  it("drops the download text once the agent has fetched the release", () => {
+    const asked = { ...requested, requestedAt: 10_000 };
+    const fetching = advanceServiceUpdateProgress(asked, {
+      ...serviceUpToDate,
+      status: "downloading",
+      availableVersion: "0.2.5",
+      updatedAt: new Date(10_500).toISOString(),
+    });
+    expect(fetching.message).toBe("Downloading SpecWithCode 0.2.5…");
+    expect(
+      advanceServiceUpdateProgress(fetching, {
+        ...serviceWaiting,
+        status: "downloaded",
+        message: null,
+        updatedAt: new Date(11_000).toISOString(),
+      }),
+    ).toMatchObject({ phase: "requesting", message: null });
+  });
+
+  it("shows the agent's download while the request waits for running work", () => {
+    const waiting = { ...requested, phase: "waiting" as const };
+    expect(
+      advanceServiceUpdateProgress(waiting, {
+        ...serviceUpToDate,
+        status: "downloading",
+        availableVersion: "0.2.5",
+        message: "Downloading SpecWithCode 0.2.5",
+      }),
+    ).toMatchObject({ phase: "waiting", message: "Downloading SpecWithCode 0.2.5" });
+  });
+
+  it("does not call an agent turned off during the install a rollback", () => {
+    // Written before this request, so not its answer either.
+    const installing = { ...requested, phase: "installing" as const, requestedAt: 10_000 };
+    expect(
+      advanceServiceUpdateProgress(installing, {
+        ...serviceUpToDate,
+        status: "disabled",
+        updatedAt: new Date(9_000).toISOString(),
+      }),
+    ).toBe(installing);
+  });
+
+  it("marks the failure that asking the service again repeats, until a retry asks afresh", () => {
+    const asked = { ...requested, requestedAt: 10_000 };
+    const unavailable = advanceServiceUpdateProgress(asked, {
+      ...serviceUpToDate,
+      updatedAt: new Date(10_500).toISOString(),
+      pendingInstall: null,
+    });
+    expect(unavailable.message).toBe(
+      "SpecWithCode 0.2.5 is not available to the service on this Mac yet.",
+    );
+    expect(isReleaseUnavailableFailure(unavailable)).toBe(true);
+    expect(isReleaseUnavailableFailure({ ...asked, phase: "failed" })).toBe(false);
+    expect(
+      isReleaseUnavailableFailure(retryServiceUpdateProgress(unavailable, serviceUpToDate)),
+    ).toBe(false);
+  });
+
+  it("keeps waiting when the agent finds nothing for a request that names no version", () => {
+    const asked = { ...requested, targetVersion: null, requestedAt: 10_000 };
+    const next = advanceServiceUpdateProgress(asked, {
+      ...serviceUpToDate,
+      updatedAt: new Date(11_000).toISOString(),
+      pendingInstall: null,
+    });
+    expect(next.phase).toBe("requesting");
+    expect(next.message).toBeNull();
+  });
+
+  it("keeps waiting when the pass that found nothing names the release asked for", () => {
+    // That pass did not see the request (it read its settings first), yet the release is on disk.
+    const asked = { ...requested, requestedAt: 10_000 };
+    const after = new Date(10_500).toISOString();
+    for (const status of ["up-to-date", "disabled"] as const) {
+      const racing = { ...serviceWaiting, status, updatedAt: after };
+      expect(advanceServiceUpdateProgress(asked, racing)).toBe(asked);
+      expect(advanceServiceUpdateProgress(asked, { ...racing, pendingInstall: null })).toBe(asked);
+    }
+    // A newer release found serves the request too; an older one does not.
+    const found = { ...serviceUpToDate, status: "disabled" as const, updatedAt: after };
+    expect(
+      advanceServiceUpdateProgress(asked, {
+        ...found,
+        availableVersion: "0.2.6",
+        pendingInstall: null,
+      }),
+    ).toBe(asked);
+    expect(
+      advanceServiceUpdateProgress(asked, {
+        ...found,
+        downloadedVersion: "0.2.4",
+        pendingInstall: null,
+      }),
+    ).toMatchObject({ phase: "failed", unavailable: true });
+  });
+
+  it("takes a pass's answer that names no request as one with none pending", () => {
+    // The desktop this renderer ships with names the request pending, or null:
+    // a state without the field has none, so that first answer stands.
+    const asked = { ...requested, requestedAt: 10_000 };
+    for (const status of ["up-to-date", "disabled"] as const) {
+      expect(
+        advanceServiceUpdateProgress(asked, {
+          ...serviceUpToDate,
+          status,
+          updatedAt: new Date(10_500).toISOString(),
+        }),
+      ).toMatchObject({
+        phase: "failed",
+        message: "SpecWithCode 0.2.5 is not available to the service on this Mac yet.",
+        unavailable: true,
+      });
+    }
+    // A retry asks afresh.
+    const failed = advanceServiceUpdateProgress(asked, {
+      ...serviceUpToDate,
+      updatedAt: new Date(10_500).toISOString(),
+    });
+    expect(retryServiceUpdateProgress(failed, serviceUpToDate)).not.toHaveProperty("unavailable");
+  });
+
+  it("keeps a failed attempt failed whatever the agent reports after it", () => {
+    // An answer already on its way (a read, the reply to the request) asks nothing anew.
+    const failed = { ...requested, phase: "failed" as const, message: "Work did not finish" };
+    for (const status of ["waiting-for-quiet", "installing", "error", "downloaded"] as const) {
+      expect(
+        advanceServiceUpdateProgress(failed, {
+          ...serviceWaiting,
+          status,
+          message: "No disk",
+          updatedAt: new Date(11_000).toISOString(),
+        }),
+      ).toBe(failed);
+    }
+  });
+
+  it("tells when the agent offers the release a failure lacked", () => {
+    const found = { ...serviceWaiting, status: "downloaded" as const };
+    expect(agentOffersRelease(found, "0.2.5")).toBe(true);
+    expect(agentOffersRelease(serviceWaiting, "0.2.5")).toBe(true);
+    // Found but not on disk yet counts; a newer release serves the request too.
+    expect(
+      agentOffersRelease(
+        { ...serviceUpToDate, status: "available", availableVersion: "0.2.5" },
+        "0.2.5",
+      ),
+    ).toBe(true);
+    expect(
+      agentOffersRelease(
+        { ...serviceUpToDate, status: "downloading", availableVersion: "0.2.6" },
+        "0.2.5",
+      ),
+    ).toBe(true);
+    // An older release, nothing found, or an agent that is not about to install does not.
+    expect(agentOffersRelease({ ...found, downloadedVersion: "0.2.4" }, "0.2.5")).toBe(false);
+    expect(agentOffersRelease(serviceUpToDate, "0.2.5")).toBe(false);
+    expect(agentOffersRelease({ ...found, status: "installed" }, "0.2.5")).toBe(false);
+    // A pass refused for a fault Update now gets past keeps the newer release
+    // on disk; one with nothing newer has none.
+    expect(agentOffersRelease({ ...found, status: "error", message: LOG_DELETED }, "0.2.5")).toBe(
+      true,
+    );
+    const failedOnInstalled = { ...found, status: "error" as const, downloadedVersion: "0.2.4" };
+    expect(agentOffersRelease(failedOnInstalled, "0.2.5")).toBe(false);
+    expect(agentOffersRelease(found, null)).toBe(false);
+    expect(agentOffersRelease(null, "0.2.5")).toBe(false);
   });
 
   it("fails with the agent's message, or when it installed another version", () => {
@@ -733,7 +1092,7 @@ describe("service update progress", () => {
     // A failed attempt is always retried; installing and restarting never are.
     expect(canPressUpdateAgain({ ...forced, phase: "failed" }, at)).toBe(true);
     expect(canPressUpdateAgain({ ...forced, phase: "installing" }, at)).toBe(false);
-    // Without a hold (an older desktop or an adopted request) it can be pressed again.
+    // Without a hold time (an adopted request, say) it can be pressed again.
     expect(canPressUpdateAgain(requested, at)).toBe(true);
   });
 

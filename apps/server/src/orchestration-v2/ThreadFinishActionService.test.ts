@@ -1,9 +1,10 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
-import type { OrchestrationV2Run } from "@specweave-studio/contracts";
+import { GitCommandError, type OrchestrationV2Run } from "@specweave-studio/contracts";
 
 import {
   branchReadyForPullRequest,
+  failureNotice,
   latestStartedRun,
   mergeStep,
   threadFinished,
@@ -102,5 +103,58 @@ describe("thread finish action", () => {
       notice: "merged",
       message: "Merged #123 into develop",
     });
+  });
+});
+
+describe("failureNotice", () => {
+  it.each([
+    `${"x".repeat(170)}https://user:demo-fake-secret@github.com/example`,
+    `${"x".repeat(177)} ghp_abcdefghijklmnopqrstuvwxyz0123456789`,
+  ])("redacts credentials before shortening the summary", (detail) => {
+    const message = failureNotice("Could not open a pull request", new Error(detail), {
+      branch: "ops/watch",
+      worktree: "/tmp/wt",
+    });
+    expect(message).not.toContain("demo-fake-secret");
+    expect(message).not.toContain("ghp_");
+    expect(message.split("\n")[0]).toContain("[redacted]");
+  });
+
+  it("preserves diagnostics beyond 4,000 characters for inspection and copying", () => {
+    const detail = `Push rejected\n${"remote: diagnostic context\n".repeat(200)}fatal: final actionable reason`;
+    const message = failureNotice("Could not open a pull request", new Error(detail), {
+      branch: "ops/watch",
+      worktree: "/tmp/wt",
+    });
+    expect(message).toContain(detail);
+    expect(message.endsWith("fatal: final actionable reason")).toBe(true);
+  });
+
+  it("keeps a one-line summary and the full Git diagnostics, without credentials", () => {
+    const error = new GitCommandError({
+      operation: "GitVcsDriver.readRangeContext.diffStat",
+      command: "git",
+      cwd: "/tmp/wt",
+      exitCode: 128,
+      detail:
+        "Git command exited with a non-zero status.: fatal: origin/main...HEAD: no merge base",
+    });
+    const message = failureNotice("Could not open a pull request", error, {
+      branch: "ops/watch",
+      worktree: "/tmp/wt",
+    });
+    const [summary, ...rest] = message.split("\n");
+    expect(summary).toContain("Could not open a pull request: Git command failed in");
+    expect(rest.join("\n")).toContain("Branch: ops/watch");
+    expect(rest.join("\n")).toContain("Exit code: 128");
+    expect(message).toContain("fatal: origin/main...HEAD: no merge base");
+
+    const leaked = failureNotice(
+      "Could not open a pull request",
+      new Error("push failed\nfatal: https://user:ghp_abcdefghijklmnopqrstuvwxyz0123@github.com/x"),
+      { branch: "b", worktree: "/w" },
+    );
+    expect(leaked).toContain("fatal:");
+    expect(leaked).not.toContain("ghp_abcdefghijklmnopqrstuvwxyz0123");
   });
 });

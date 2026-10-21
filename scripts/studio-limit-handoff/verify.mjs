@@ -1,7 +1,11 @@
 #!/usr/bin/env node
-// 0968: two isolated real servers prove which paired machine a limited thread may move to.
-// M4 is the source, Minis the target. Usage is simulated per provider instance with
-// STUDIO_SIMULATE_PROVIDER_USAGE; no provider turn runs and no live data is read.
+// 0968: two isolated real servers prove which paired machine a limited thread may move to,
+// and that it moves there through 0967's handoff, once, under faults. M4 is the source,
+// Minis the target. Usage is simulated per provider instance with
+// STUDIO_SIMULATE_PROVIDER_USAGE and M4's `source` stops on a simulated limit
+// (STUDIO_SIMULATE_USAGE_LIMIT). Every provider is the model-free echo agent, so no real
+// provider turn runs and no live data is read. Faults are injected in the network between
+// the two (a TLS proxy) and by stopping or killing a server.
 import * as NodeAssert from "node:assert/strict";
 import * as NodeChildProcess from "node:child_process";
 import * as NodeCrypto from "node:crypto";
@@ -38,6 +42,8 @@ const receipt = {
     .update(NodeFS.readFileSync(entrypoint))
     .digest("hex"),
   providerTurns: 0,
+  /** Prompts each model-free echo agent instance received, by machine and instance. */
+  stubAgentTurns: {},
   checks: [],
   candidates: {},
   success: false,
@@ -88,12 +94,14 @@ async function start(host) {
     {
       cwd: host.dir,
       env: {
-        PATH: `${NodePath.dirname(process.execPath)}:/usr/bin:/bin:/usr/sbin:/sbin`,
+        // host.bin names the machine ("M4", "Minis") through a scutil stand-in.
+        PATH: `${host.bin}:${NodePath.dirname(process.execPath)}:/usr/bin:/bin:/usr/sbin:/sbin`,
         LANG: "en_US.UTF-8",
         STUDIO_AUTO_BOOTSTRAP_PROJECT_FROM_CWD: "false",
         STUDIO_DISABLE_AUTO_UPDATE: "true",
         PWDEBUG: "0",
         PLAYWRIGHT_HTML_OPEN: "never",
+        SHELL: NodePath.join(host.bin, "login-shell"),
         ...host.env,
       },
       stdio: ["ignore", "pipe", "pipe"],
@@ -360,11 +368,28 @@ const disabled = [
 async function makeHost(label, instances, settings, env) {
   const dir = NodePath.join(scratch, label);
   const data = NodePath.join(dir, "data");
+  const bin = NodePath.join(dir, "bin");
   NodeFS.mkdirSync(NodePath.join(data, "userdata"), { recursive: true });
+  NodeFS.mkdirSync(bin);
+  // The server names its machine from macOS's ComputerName; this one answers with the label.
+  NodeFS.writeFileSync(
+    NodePath.join(bin, "scutil"),
+    `#!/bin/sh\ncase "$*" in\n  "--get ComputerName"|"--get LocalHostName") echo "${label}" ;;\n  *) exec /usr/sbin/scutil "$@" ;;\nesac\n`,
+    { mode: 0o755 },
+  );
+  // The server reads PATH from the login shell first; this one keeps the stand-in on it
+  // (and reads no dotfiles of the person running the verifier).
+  NodeFS.writeFileSync(
+    NodePath.join(bin, "login-shell"),
+    `#!/bin/sh\nexport PATH="${bin}:$PATH"\nshift\nexec /bin/sh -c "$1"\n`,
+    { mode: 0o755 },
+  );
   const host = {
     label,
     dir,
     data,
+    bin,
+    instances,
     port: await port(),
     environmentId: NodeCrypto.randomUUID(),
     env,
@@ -387,18 +412,38 @@ async function makeHost(label, instances, settings, env) {
   );
   return host;
 }
-async function createProject(host, title, remote) {
-  const folder = NodePath.join(host.dir, title.replaceAll(" ", "-"));
-  NodeFS.mkdirSync(folder);
-  NodeFS.writeFileSync(NodePath.join(folder, "README.md"), "Synthetic limit handoff fixture.\n");
-  const git = (...args) =>
-    NodeChildProcess.execFileSync("/usr/bin/git", args, {
-      cwd: folder,
+const fixtureGit = (cwd, ...args) =>
+  NodeChildProcess.execFileSync(
+    "/usr/bin/git",
+    ["-c", "user.name=Fixture", "-c", "user.email=fixture@example.invalid", ...args],
+    {
+      cwd,
       stdio: "ignore",
       env: { PATH: "/usr/bin:/bin", GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null" },
-    });
-  git("init", "-q", "-b", "main");
-  git("remote", "add", "origin", remote);
+    },
+  );
+/**
+ * A fixture checkout with one commit and an ignored `.env.local`. Minis's copy is a clone of
+ * M4's, so both hold the base commit, and it has its own `.env.local` (secrets never travel).
+ */
+function prepareRepo(host, title, remote, cloneFrom) {
+  const folder = NodePath.join(host.dir, title.replaceAll(" ", "-"));
+  if (cloneFrom === undefined) {
+    NodeFS.mkdirSync(folder);
+    NodeFS.writeFileSync(NodePath.join(folder, "README.md"), "Synthetic limit handoff fixture.\n");
+    NodeFS.writeFileSync(NodePath.join(folder, ".gitignore"), ".env.local\n");
+    fixtureGit(folder, "init", "-q", "-b", "main");
+    fixtureGit(folder, "add", "README.md", ".gitignore");
+    fixtureGit(folder, "commit", "-q", "-m", "Fixture base");
+    fixtureGit(folder, "remote", "add", "origin", remote);
+  } else {
+    fixtureGit(host.dir, "clone", "-q", cloneFrom, folder);
+    fixtureGit(folder, "remote", "set-url", "origin", remote);
+  }
+  NodeFS.writeFileSync(NodePath.join(folder, ".env.local"), `FIXTURE_TOKEN=${host.label}-only\n`);
+  return folder;
+}
+async function registerProject(host, title, folder) {
   const projectId = NodeCrypto.randomUUID();
   await request(host, "/api/projects/mutate", {
     type: "project.create",
@@ -421,8 +466,98 @@ async function providersReady(host, names) {
   }
   throw new Error(`${host.label} providers never became ready: ${last?.join(", ")}`);
 }
+async function boot(host) {
+  await exchange(host, await start(host));
+  await providersReady(host, host.instances);
+}
+/** Waits for `read` to return something truthy. */
+async function until(what, read, timeoutMs = 150_000, everyMs = 1000) {
+  const end = Date.now() + timeoutMs;
+  let last;
+  while (Date.now() < end) {
+    last = await read();
+    if (last) return last;
+    await sleep(everyMs);
+  }
+  throw new Error(`Timed out waiting for ${what}`);
+}
+/** The persisted handoff document (0967's handoff-mode.json), read the way a restart reads it. */
+function handoffDoc(host) {
+  try {
+    return JSON.parse(
+      NodeFS.readFileSync(NodePath.join(host.data, "userdata/handoff-mode.json"), "utf8"),
+    );
+  } catch {
+    return null;
+  }
+}
+const recordOf = (host, threadId) => handoffDoc(host)?.threads?.[threadId] ?? null;
+const incomingOf = (host, sourceThreadId) =>
+  (handoffDoc(host)?.incoming ?? []).find((entry) => entry.sourceThreadId === sourceThreadId) ??
+  null;
+const projection = (host, threadId) => rpc(host, "orchestration.getThreadProjection", { threadId });
+/** Every prompt one echo agent instance received (the verifier's count of stub turns). */
+function agentTurns(name) {
+  const file = NodePath.join(scratch, `agent-${name}.json.jsonl`);
+  if (!NodeFS.existsSync(file)) return [];
+  return NodeFS.readFileSync(file, "utf8")
+    .split("\n")
+    .filter((line) => line.trim().length > 0)
+    .map((line) => JSON.parse(line));
+}
+const settledRuns = (view) =>
+  view.runs.filter((run) => !["queued", "running"].includes(run.status));
 
-async function captureScreens(host, threadId) {
+async function shotThread(browser, host, threadId, name, waitText) {
+  for (const [width, theme] of [
+    [1440, "dark"],
+    [390, "light"],
+  ]) {
+    const context = await browser.newContext({
+      viewport: { width, height: 1000 },
+      colorScheme: theme,
+      reducedMotion: "reduce",
+    });
+    await context.addInitScript(() =>
+      localStorage.setItem(
+        "studio:client-settings:v1",
+        JSON.stringify({ onboardingCompletedAt: "2026-10-20T00:00:00.000Z" }),
+      ),
+    );
+    const pairing = await request(host, "/api/auth/pairing-token", {
+      label: "Limit handoff verifier browser",
+    });
+    const auth = await context.request.post(host.origin + "/api/auth/browser-session", {
+      data: { credential: pairing.credential },
+      headers: { Origin: host.origin },
+    });
+    NodeAssert.equal(auth.status(), 200, "Browser session failed");
+    const page = await context.newPage();
+    const errors = [];
+    page.on("pageerror", (error) => errors.push(error.message));
+    await page.goto(`${host.origin}/${host.environmentId}/${threadId}`);
+    // The banner also renders a hidden copy for the other layout; wait for the shown one.
+    const notice = page.getByText(waitText, { exact: false }).locator("visible=true").first();
+    await notice.waitFor({ timeout: 45000 }).catch(async (error) => {
+      NodeFS.writeFileSync(
+        NodePath.join(output, `${name}-failure-${width}.txt`),
+        (await page.locator("body").innerText()).slice(0, 12000),
+      );
+      throw error;
+    });
+    await notice.scrollIntoViewIfNeeded();
+    const file = NodePath.join(output, `${name}-${width}-${theme}.png`);
+    await page.screenshot({ path: file, fullPage: false });
+    receipt.screenshots.push(file);
+    NodeFS.writeFileSync(
+      NodePath.join(output, `${name}-${width}.txt`),
+      (await page.locator("body").innerText()).slice(0, 12000),
+    );
+    NodeAssert.deepEqual(errors, [], `Page errors: ${errors.join(" | ")}`);
+    await context.close();
+  }
+}
+const launchBrowser = () => {
   const { chromium } = NodeModule.createRequire(import.meta.url)(
     process.env.PLAYWRIGHT_MODULE ??
       NodePath.join(
@@ -430,13 +565,22 @@ async function captureScreens(host, threadId) {
         ".cache/codex-runtimes/codex-primary-runtime/dependencies/node/node_modules/playwright",
       ),
   );
-  const browser = await chromium.launch({
+  return chromium.launch({
     headless: true,
     ...(process.env.STUDIO_TEST_CHROMIUM
       ? { executablePath: process.env.STUDIO_TEST_CHROMIUM }
       : {}),
   });
-  receipt.screenshots = [];
+};
+const webBuilt = () =>
+  [
+    NodePath.join(root, "apps/server/dist/client/index.html"),
+    NodePath.join(root, "apps/web/dist/index.html"),
+  ].some((file) => NodeFS.existsSync(file));
+
+/** The limit banner lists each target with its reason, and Settings the ordered list. */
+async function captureCandidates(host, threadId) {
+  const browser = await launchBrowser();
   try {
     for (const [width, theme] of [
       [1440, "dark"],
@@ -489,6 +633,7 @@ async function captureScreens(host, threadId) {
       NodeAssert.ok(items.some((text) => text.endsWith("Minis: ACP Registry usage unknown")));
       await list.scrollIntoViewIfNeeded();
       await shot("limited-thread");
+      await dump("limited-thread");
       await page.goto(`${host.origin}/settings/general`);
       const row = page.locator("#provider-limit-machine-targets");
       await row.waitFor({ timeout: 30000 }).catch(async (error) => {
@@ -522,11 +667,15 @@ async function captureScreens(host, threadId) {
     await browser.close();
   }
   check(
-    "The limited thread lists each machine target with its reason, and Settings shows the ordered list (headless, 1440 and 390 px)",
+    "The held thread lists each machine target with its reason, and Settings shows the ordered list (headless, 1440 and 390 px)",
   );
 }
 
+// Faults live in the network between the machines: the proxy can hold a takeover's answer
+// (the source dies waiting) or drop the takeover before it arrives (the target is gone).
 let proxy;
+let fault = null;
+const heldAnswers = [];
 const hosts = [];
 try {
   // Minis offers four sign-ins of one driver: the same account as M4's, its own account with
@@ -542,53 +691,21 @@ try {
     },
   );
   hosts.push(minis);
-  await exchange(minis, await start(minis));
-  const minisWork = await createProject(
-    minis,
-    "Limit fixture",
-    "https://github.com/example/limit-fixture.git",
-  );
-  const minisEasychamp = await createProject(
-    minis,
-    "EasyChamp",
-    "https://github.com/example/easychamp.git",
-  );
-  await providersReady(minis, minisInstances);
-
   const proxyPort = await port();
-  proxy = NodeHttps.createServer(
-    {
-      key: NodeFS.readFileSync(NodePath.join(tls, "key.pem")),
-      cert: NodeFS.readFileSync(NodePath.join(tls, "cert.pem")),
-    },
-    (incoming, outgoing) => {
-      const forwarded = NodeHttp.request(
-        `${minis.origin}${incoming.url}`,
-        {
-          method: incoming.method,
-          headers: { ...incoming.headers, "x-forwarded-proto": "https" },
-        },
-        (response) => {
-          outgoing.writeHead(response.statusCode, response.headers);
-          response.pipe(outgoing);
-        },
-      );
-      forwarded.on("error", () => outgoing.destroy());
-      incoming.pipe(forwarded);
-    },
-  );
-  await new Promise((done) => proxy.listen(proxyPort, "127.0.0.1", done));
   const deadPort = await port();
   const m1EnvironmentId = NodeCrypto.randomUUID();
-
   const target = (instanceId, environmentId = minis.environmentId, label = "Minis") => ({
     environmentId,
     label,
     modelSelection: { instanceId, model: "link-launch" },
+    modelLabel: "Link launch",
   });
+  // M4's `source` stops on its limit; `hot` is the same account at 96% (it still runs, so an
+  // idle thread can sit at the threshold); `local` is this machine's own fallback model.
+  const m4Instances = ["source", "hot", "local"];
   const m4 = await makeHost(
     "M4",
-    ["source"],
+    m4Instances,
     {
       providerLimitSwitchAtPercent: 95,
       providerLimitTargetOrder: "other-machine-first",
@@ -601,7 +718,8 @@ try {
       ],
     },
     {
-      STUDIO_SIMULATE_PROVIDER_USAGE: "source=97@pool-m4",
+      // `local` reports no usage, like an ACP agent: it takes a turn as long as it is ready.
+      STUDIO_SIMULATE_PROVIDER_USAGE: "source=97@pool-m4,hot=96@pool-m4",
       // Turns on M4's provider stop on a usage limit before any provider process starts.
       STUDIO_SIMULATE_USAGE_LIMIT: "source",
       NODE_EXTRA_CA_CERTS: NodePath.join(tls, "cert.pem"),
@@ -609,6 +727,68 @@ try {
     },
   );
   hosts.push(m4);
+  const remotes = {
+    "Limit fixture": "https://github.com/example/limit-fixture.git",
+    EasyChamp: "https://github.com/example/easychamp.git",
+  };
+  const m4Folders = Object.fromEntries(
+    Object.entries(remotes).map(([title, remote]) => [title, prepareRepo(m4, title, remote)]),
+  );
+  const soloFolder = prepareRepo(m4, "Solo fixture", "https://github.com/example/solo.git");
+  const minisFolders = Object.fromEntries(
+    Object.entries(remotes).map(([title, remote]) => [
+      title,
+      prepareRepo(minis, title, remote, m4Folders[title]),
+    ]),
+  );
+
+  await boot(minis);
+  const minisWork = await registerProject(minis, "Limit fixture", minisFolders["Limit fixture"]);
+  const minisEasychamp = await registerProject(minis, "EasyChamp", minisFolders.EasyChamp);
+
+  proxy = NodeHttps.createServer(
+    {
+      key: NodeFS.readFileSync(NodePath.join(tls, "key.pem")),
+      cert: NodeFS.readFileSync(NodePath.join(tls, "cert.pem")),
+    },
+    (incoming, outgoing) => {
+      const active = incoming.url?.startsWith("/api/handoff/v1/takeover") ? fault : null;
+      if (active !== null) fault = null;
+      if (active?.kind === "drop-takeover") {
+        // The target is gone before the takeover reaches it.
+        incoming.socket.destroy();
+        active.hit();
+        return;
+      }
+      const forwarded = NodeHttp.request(
+        `${minis.origin}${incoming.url}`,
+        {
+          method: incoming.method,
+          headers: { ...incoming.headers, "x-forwarded-proto": "https" },
+        },
+        (response) => {
+          if (active?.kind === "stall-takeover") {
+            // Minis answered; M4 never hears it.
+            let body = "";
+            response.on("data", (chunk) => (body += chunk));
+            response.on("end", () => active.hit({ status: response.statusCode, body }));
+            heldAnswers.push(outgoing);
+            return;
+          }
+          outgoing.writeHead(response.statusCode, response.headers);
+          response.pipe(outgoing);
+        },
+      );
+      forwarded.on("error", () => outgoing.destroy());
+      incoming.pipe(forwarded);
+    },
+  );
+  await new Promise((done) => proxy.listen(proxyPort, "127.0.0.1", done));
+  const armFault = (kind) =>
+    new Promise((hit) => {
+      fault = { kind, hit };
+    });
+
   const fleetFile = NodePath.join(m4.data, "studio-fleet.json");
   NodeFS.writeFileSync(
     fleetFile,
@@ -632,19 +812,12 @@ try {
     { mode: 0o600 },
   );
   NodeFS.chmodSync(fleetFile, 0o600);
-  await exchange(m4, await start(m4));
-  const work = await createProject(
-    m4,
-    "Limit fixture",
-    "https://github.com/example/limit-fixture.git",
-  );
-  const easychamp = await createProject(
-    m4,
-    "EasyChamp",
-    "https://github.com/example/easychamp.git",
-  );
-  const solo = await createProject(m4, "Solo fixture", "https://github.com/example/solo.git");
-  await providersReady(m4, ["source"]);
+  await boot(m4);
+  const work = await registerProject(m4, "Limit fixture", m4Folders["Limit fixture"]);
+  const easychamp = await registerProject(m4, "EasyChamp", m4Folders.EasyChamp);
+  const solo = await registerProject(m4, "Solo fixture", soloFolder);
+  // No push of hidden refs to the fixture's (fake) GitHub origin, and no note model call.
+  await rpc(m4, "handoffMode.updateConfig", { pushToOrigin: false, noteModel: "off" });
   // Work crosses machines only between linked copies of a project, so link both pairs the way
   // Link projects does: M4 keeps the coordinator, Minis joins. Solo fixture stays unlinked.
   for (const [kept, joining] of [
@@ -678,7 +851,7 @@ try {
     );
   }
   check("Limit fixture and EasyChamp are linked between M4 and Minis; Solo fixture is not");
-  const thread = async (projectId, title) => {
+  const thread = async (projectId, title, instanceId = "source") => {
     const threadId = `limit-${NodeCrypto.randomUUID()}`;
     await rpc(m4, "orchestration.dispatchCommand", {
       type: "thread.create",
@@ -686,7 +859,7 @@ try {
       threadId,
       projectId,
       title,
-      modelSelection: { instanceId: "source", model: "link-launch" },
+      modelSelection: { instanceId, model: "link-launch" },
       runtimeMode: "full-access",
       interactionMode: "default",
       branch: null,
@@ -696,6 +869,18 @@ try {
     });
     return threadId;
   };
+  const send = (threadId, text) =>
+    rpc(m4, "orchestration.dispatchCommand", {
+      type: "message.dispatch",
+      commandId: NodeCrypto.randomUUID(),
+      threadId,
+      messageId: NodeCrypto.randomUUID(),
+      text,
+      attachments: [],
+      createdBy: "user",
+      creationSource: "web",
+      dispatchMode: { type: "start_immediately" },
+    });
   const workThread = await thread(work, "Limited worker");
   const easychampThread = await thread(easychamp, "EasyChamp worker");
   const soloThread = await thread(solo, "Solo worker");
@@ -773,7 +958,7 @@ try {
   const seen = byKey(judged);
   NodeAssert.equal(judged.order, "other-machine-first");
   NodeAssert.equal(judged.thresholdPercent, 95);
-  NodeAssert.equal(judged.available, false, "Without 0967's handOff nothing moves yet");
+  NodeAssert.equal(judged.available, true, "0967's handOff moves threads now");
   NodeAssert.equal(seen["Minis/own"].reason, "eligible", JSON.stringify(judged));
   NodeAssert.equal(seen["Minis/own"].eligible, true);
   NodeAssert.equal(seen["Minis/own"].usedPercent, 40);
@@ -781,7 +966,7 @@ try {
   check(`Another account below the threshold is eligible: "${seen["Minis/own"].text}"`);
   NodeAssert.equal(seen["Minis/twin"].reason, "same_account");
   NodeAssert.equal(seen["Minis/twin"].eligible, false);
-  NodeAssert.match(seen["Minis/twin"].text, /^Minis: same .+ account as .+$/);
+  NodeAssert.equal(seen["Minis/twin"].text, "Minis: same ACP Registry account as M4");
   check(`Same-account target skipped: "${seen["Minis/twin"].text}"`);
   NodeAssert.equal(seen["Minis/busy"].reason, "at_threshold");
   NodeAssert.match(seen["Minis/busy"].text, /at 96%$/);
@@ -814,22 +999,297 @@ try {
   await rpc(m4, "server.updateSettings", { patch: { providerLimitUnknownUsageEligible: false } });
   check("Unknown-usage policy on: the unknown target qualifies, the same account never does");
 
-  // AC-10 in the app: the limited thread lists every target with its reason, and Settings
-  // shows the ordered list. Headless Chromium against M4's built web app.
-  await rpc(m4, "orchestration.dispatchCommand", {
-    type: "message.dispatch",
-    commandId: NodeCrypto.randomUUID(),
-    threadId: workThread,
-    messageId: NodeCrypto.randomUUID(),
-    text: "Continue the fixture work.",
-    attachments: [],
-    createdBy: "user",
-    creationSource: "web",
-    dispatchMode: { type: "start_immediately" },
+  // ---- Moves (AC-07, AC-12). Each source thread is listed with what it must end as. ----
+  const sources = {};
+  const continuationOf = (threadId) => incomingOf(minis, threadId)?.continuedThreadId ?? null;
+
+  // 1. A real move on the usage limit. The turn had written a file it never committed: the
+  //    checkpoint carries it to Minis, while `.env.local` stays Minis's own.
+  NodeFS.mkdirSync(NodePath.join(m4Folders["Limit fixture"], "notes"), { recursive: true });
+  NodeFS.writeFileSync(
+    NodePath.join(m4Folders["Limit fixture"], "notes/limited.md"),
+    "Half-done work from the limited turn.\n",
+  );
+  sources.limited = { threadId: workThread, resumed: true };
+  // 2. Threshold premove: an idle thread at 96% whose turn just finished moves, unresumed.
+  const idleThread = await thread(work, "Idle at threshold", "hot");
+  sources.idle = { threadId: idleThread, resumed: false };
+  // 3. No machine qualifies (Solo fixture isn't linked on Minis): M4's own fallback runs.
+  sources.fallback = { threadId: soloThread, local: true };
+  await Promise.all([
+    send(workThread, "Continue the fixture work."),
+    send(idleThread, "Summarize the fixture."),
+    send(soloThread, "Continue the solo work."),
+  ]);
+  const moved = await until(
+    "the limited and the idle thread to continue on Minis",
+    () => {
+      const a = recordOf(m4, workThread)?.continuedOn;
+      const b = recordOf(m4, idleThread)?.continuedOn;
+      return a && b ? { limited: a, idle: b } : null;
+    },
+    240_000,
+  );
+  receipt.moves = { limited: moved.limited, idle: moved.idle };
+
+  const limitedView = await until("the source's note", async () => {
+    const view = await projection(m4, workThread);
+    return view.thread.movedTo?.note ? view : null;
   });
-  if (NodeFS.existsSync(NodePath.join(root, "apps/server/dist/client/index.html")))
-    await captureScreens(m4, workThread);
-  else receipt.screenshots = "skipped: build apps/web before apps/server to capture the UI";
+  const link = limitedView.thread.movedTo;
+  NodeAssert.equal(link.kind, "handoff");
+  NodeAssert.equal(link.environmentId, minis.environmentId);
+  NodeAssert.equal(link.machineLabel, "Minis");
+  NodeAssert.equal(link.threadId, moved.limited.threadId);
+  NodeAssert.equal(
+    link.note,
+    "ACP Registry limit reached on M4 · continued on Minis with Link launch",
+  );
+  NodeAssert.equal(limitedView.thread.archivedAt ?? null, null, "The source is never archived");
+  const continued = await until("the resumed turn on Minis to finish", async () => {
+    const view = await projection(minis, moved.limited.threadId);
+    return settledRuns(view).length > 0 ? view : null;
+  });
+  NodeAssert.equal(continued.runs.length, 1, "One resumed turn on Minis");
+  NodeAssert.equal(continued.runs[0].providerInstanceId, "own");
+  NodeAssert.equal(continued.thread.execution?.sourceRoot?.threadId, workThread);
+  NodeAssert.equal(continued.thread.execution?.sourceRoot?.environmentId, m4.environmentId);
+  const seed = continued.messages.find((message) => message.role === "user")?.text ?? "";
+  NodeAssert.match(seed, /^Continue where you left off\./);
+  NodeAssert.match(seed, /handed off from M4 after its usage limit was reached/);
+  const worktree = continued.thread.worktreePath;
+  NodeAssert.ok(worktree, "The continuation runs in its own worktree");
+  NodeAssert.equal(
+    NodeFS.readFileSync(NodePath.join(worktree, "notes/limited.md"), "utf8"),
+    "Half-done work from the limited turn.\n",
+  );
+  NodeAssert.equal(
+    NodeFS.readFileSync(NodePath.join(worktree, ".env.local"), "utf8"),
+    "FIXTURE_TOKEN=Minis-only\n",
+    "Secrets come from Minis's own checkout, never from M4",
+  );
+  receipt.limitedMove = {
+    note: link.note,
+    continuation: moved.limited.threadId,
+    worktree,
+    seed: seed.slice(0, 400),
+  };
+  check(
+    `Usage-limit stop moved the thread to Minis/own with its uncommitted work and one resumed turn; source note: "${link.note}"`,
+  );
+  NodeAssert.equal(continued.thread.modelSelection.instanceId, "own");
+  NodeAssert.equal(agentTurns("twin").length, 0);
+  check("While moving, the same-account target (Minis/twin) was skipped and Minis/own took it");
+
+  const idleView = await until("the idle thread's note", async () => {
+    const view = await projection(m4, idleThread);
+    return view.thread.movedTo?.note ? view : null;
+  });
+  NodeAssert.equal(
+    idleView.thread.movedTo.note,
+    "Hit 95% of ACP Registry on M4 · continued on Minis with Link launch",
+  );
+  const idleThere = await projection(minis, moved.idle.threadId);
+  NodeAssert.equal(idleThere.runs.length, 0, "An idle premove starts no turn");
+  NodeAssert.equal(idleThere.messages.filter((m) => m.role === "user").length, 0);
+  check(`Idle thread at the threshold moved with no resume: "${idleView.thread.movedTo.note}"`);
+
+  const fellBack = await until("the same-machine fallback on M4", async () => {
+    const view = await projection(m4, soloThread);
+    return view.messages.some((m) => m.id.startsWith("limit-fallback:")) &&
+      settledRuns(view).length >= 2
+      ? view
+      : null;
+  });
+  NodeAssert.equal(fellBack.runs.at(-1).providerInstanceId, "local");
+  NodeAssert.equal(recordOf(m4, soloThread)?.continuedOn ?? null, null);
+  NodeAssert.equal(continuationOf(soloThread), null);
+  check("No machine qualified (Solo fixture not linked on Minis): M4's own fallback continued it");
+
+  // 4. A stopped thread is never resumed: a turn on the 96% account that the user stops.
+  const stoppedThread = await thread(work, "User stopped", "hot");
+  sources.stopped = { threadId: stoppedThread };
+  await send(stoppedThread, "HOLD-TURN until stopped.");
+  const running = await until("the held turn to run", async () => {
+    const view = await projection(m4, stoppedThread);
+    return view.runs.find((run) => run.status === "running") ?? null;
+  });
+  await rpc(m4, "orchestration.dispatchCommand", {
+    type: "run.interrupt",
+    commandId: NodeCrypto.randomUUID(),
+    threadId: stoppedThread,
+    runId: running.id,
+    cause: "user",
+    holdQueue: true,
+  });
+  await until("the user's stop to land", async () => {
+    const view = await projection(m4, stoppedThread);
+    return settledRuns(view).length === 1 ? view : null;
+  });
+
+  // 5. The limit hits, then the source goes offline: Minis took over, M4 never heard it.
+  const sourceDown = await thread(work, "Source goes offline");
+  sources.sourceDown = { threadId: sourceDown, resumed: true };
+  const stalled = armFault("stall-takeover");
+  await send(sourceDown, "Keep going with the fixture.");
+  const answer = await Promise.race([
+    stalled,
+    sleep(240_000).then(() => {
+      throw new Error("The takeover never reached Minis");
+    }),
+  ]);
+  NodeAssert.equal(answer.status, 200, `Minis took over: ${answer.body}`);
+  m4.child.kill("SIGKILL");
+  await new Promise((done) =>
+    m4.child.exitCode !== null || m4.child.signalCode !== null
+      ? done()
+      : m4.child.once("exit", done),
+  );
+  for (const held of heldAnswers.splice(0)) held.destroy();
+  const orphaned = recordOf(m4, sourceDown);
+  NodeAssert.equal(orphaned?.lease?.state, "handing-off", JSON.stringify(orphaned));
+  NodeAssert.equal(orphaned?.continuedOn ?? null, null);
+  const tookOver = JSON.parse(answer.body).threadId;
+  NodeAssert.equal(continuationOf(sourceDown), tookOver);
+  receipt.sourceOffline = { continuation: tookOver, leaseAfterKill: orphaned.lease };
+  await boot(m4);
+  // The persisted lease holds the thread from the first sweep; the heartbeat then fences it.
+  const fenced = await until(
+    "M4's heartbeat to fence the thread Minis continued",
+    () => recordOf(m4, sourceDown)?.continuedOn ?? null,
+    150_000,
+  );
+  NodeAssert.equal(fenced.threadId, tookOver);
+  NodeAssert.equal(fenced.environmentId, minis.environmentId);
+  const downView = await projection(m4, sourceDown);
+  NodeAssert.equal(downView.runs.length, 1, "M4 never ran the turn again after the restart");
+  NodeAssert.equal(downView.thread.movedTo?.threadId, tookOver);
+  const downThere = await until("Minis's resumed turn", async () => {
+    const view = await projection(minis, tookOver);
+    return settledRuns(view).length > 0 ? view : null;
+  });
+  NodeAssert.equal(downThere.runs.length, 1);
+  check(
+    "Limit hit, then M4 died before Minis's takeover answer: Minis continued once; restarted M4 stayed handing-off, ran nothing, and its heartbeat fenced the thread",
+  );
+
+  // 6. The target goes offline during the resume: the takeover never reaches Minis.
+  const targetDown = await thread(work, "Target goes offline");
+  sources.targetDown = { threadId: targetDown, held: true };
+  const dropped = armFault("drop-takeover");
+  await send(targetDown, "Finish the fixture.");
+  await Promise.race([
+    dropped,
+    sleep(240_000).then(() => {
+      throw new Error("M4 never sent the takeover");
+    }),
+  ]);
+  await stop(minis);
+  const inDoubt = await until(
+    "M4 to hold the thread in doubt",
+    () => {
+      const record = recordOf(m4, targetDown);
+      return record?.lease?.state === "handing-off" && record.lastError ? record : null;
+    },
+    60_000,
+  );
+  receipt.targetOffline = { lease: inDoubt.lease, lastError: inDoubt.lastError };
+  // Two more sweeps with Minis gone: nothing runs here, no fallback is sent.
+  await sleep(65_000);
+  const heldView = await projection(m4, targetDown);
+  NodeAssert.equal(heldView.runs.length, 1, "Nothing ran on M4 while the move is in doubt");
+  NodeAssert.ok(!heldView.messages.some((m) => /^limit-(fallback|resume):/.test(m.id)));
+  const waiting = (await candidates(targetDown)).waiting;
+  NodeAssert.ok(waiting, "The thread says why it waits");
+  receipt.targetOffline.waiting = waiting;
+  await boot(minis);
+  // Minis is back; its heartbeat answers that it never continued the thread.
+  await sleep(65_000);
+  NodeAssert.equal(continuationOf(targetDown), null, "Minis never received the takeover");
+  NodeAssert.equal((await projection(m4, targetDown)).runs.length, 1);
+  const stillHeld = recordOf(m4, targetDown);
+  receipt.targetOffline.afterTargetBack = {
+    lease: stillHeld?.lease ?? null,
+    continuedOn: stillHeld?.continuedOn ?? null,
+  };
+  NodeAssert.equal(stillHeld?.continuedOn ?? null, null);
+  check(
+    `Target offline during the takeover: M4 holds the thread in doubt ("${waiting}"), runs nothing and sends no fallback, also after Minis is back`,
+  );
+
+  // AC-10 in the app, on the held thread: every target with its reason, and Settings.
+  receipt.screenshots = [];
+  if (webBuilt()) {
+    await captureCandidates(m4, targetDown);
+    const browser = await launchBrowser();
+    try {
+      await shotThread(browser, m4, workThread, "notice-source", "Continued on Minis");
+      await shotThread(
+        browser,
+        minis,
+        moved.limited.threadId,
+        "notice-target",
+        "Continued here from M4",
+      );
+    } finally {
+      await browser.close();
+    }
+    for (const name of ["notice-source-1440.txt", "notice-source-390.txt"])
+      NodeAssert.ok(
+        NodeFS.readFileSync(NodePath.join(output, name), "utf8").includes(link.note),
+        `${name} shows the note`,
+      );
+    check(
+      'Both threads show the move: "Continued on Minis" with the note on M4, "Continued here from M4" on Minis (headless, 1440 and 390 px)',
+    );
+  } else receipt.screenshots = "skipped: build apps/web to capture the UI";
+
+  // The stopped thread, after every sweep since: never resumed, moved or continued.
+  const stoppedView = await projection(m4, stoppedThread);
+  NodeAssert.equal(stoppedView.runs.length, 1, "The user-stopped turn never ran again");
+  NodeAssert.equal(stoppedView.thread.movedTo ?? null, null);
+  NodeAssert.equal(continuationOf(stoppedThread), null);
+  check("A thread the user stopped (on the 96% account) was never resumed or moved");
+
+  // No turn runs twice: per source run, the runs after it on M4 plus Minis's continuation runs.
+  const ledger = {};
+  for (const [name, source] of Object.entries(sources)) {
+    const here = await projection(m4, source.threadId);
+    const continuation = continuationOf(source.threadId);
+    const there = continuation === null ? null : await projection(minis, continuation);
+    const stopped = here.runs[0];
+    const continuations = here.runs.length - 1 + (there === null ? 0 : there.runs.length);
+    ledger[name] = {
+      sourceRun: stopped.id,
+      sourceRunStatus: stopped.status,
+      runsHere: here.runs.length,
+      continuation,
+      runsThere: there?.runs.length ?? null,
+      continuations,
+    };
+    NodeAssert.ok(continuations <= 1, `${name}: ${JSON.stringify(ledger[name])}`);
+  }
+  receipt.noTurnTwice = ledger;
+  NodeAssert.equal(ledger.limited.continuations, 1);
+  NodeAssert.equal(ledger.sourceDown.continuations, 1);
+  NodeAssert.equal(ledger.fallback.continuations, 1);
+  NodeAssert.equal(ledger.idle.runsThere, 0);
+  NodeAssert.equal(ledger.stopped.continuations, 0);
+  NodeAssert.equal(ledger.targetDown.continuations, 0);
+  for (const name of [...minisInstances, ...m4Instances])
+    receipt.stubAgentTurns[name] = agentTurns(name).length;
+  NodeAssert.deepEqual(receipt.stubAgentTurns, {
+    twin: 0,
+    own: 2,
+    busy: 0,
+    mystery: 0,
+    source: 0,
+    hot: 2,
+    local: 1,
+  });
+  check(
+    "No turn ran twice: each source run has at most one continuation across both servers, and the echo agents saw exactly the expected prompts",
+  );
 
   // Minis goes offline: once its cached reading ages out it is named offline, not eligible.
   await stop(minis);
@@ -856,6 +1316,7 @@ try {
   console.error(error);
   process.exitCode = 1;
 } finally {
+  for (const held of heldAnswers) held.destroy();
   if (proxy) await new Promise((done) => proxy.close(done));
   for (const host of hosts) await stop(host);
   save();

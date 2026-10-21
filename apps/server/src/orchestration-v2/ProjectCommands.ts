@@ -180,7 +180,35 @@ export class ProjectNameTakenError extends Schema.TaggedError<ProjectNameTakenEr
   }
 }
 
+/**
+ * A machine keeps one personal assistant, so a second one is refused; the
+ * client opens `existingProjectId` instead.
+ */
+export class PersonalAssistantExistsError extends Schema.TaggedError<PersonalAssistantExistsError>()(
+  "PersonalAssistantExistsError",
+  {
+    projectId: ProjectId,
+    existingProjectId: ProjectId,
+  },
+) {
+  override get message(): string {
+    return "This machine already has its personal assistant. Open it instead of creating another.";
+  }
+}
+
+/** A project's kind is set when it is created: an assistant's private history never becomes linkable. */
+export class ProjectKindFixedError extends Schema.TaggedError<ProjectKindFixedError>()(
+  "ProjectKindFixedError",
+  { projectId: ProjectId },
+) {
+  override get message(): string {
+    return "A project's kind is set when it is created and cannot be changed.";
+  }
+}
+
 export const ProjectCommandRejection = Schema.Union([
+  PersonalAssistantExistsError,
+  ProjectKindFixedError,
   ProjectCommandInvariantError,
   ProjectNameTakenError,
   ProjectCommandMissingProjectError,
@@ -208,6 +236,13 @@ export interface ProjectCommandState {
   readonly workspaceOwner: ProjectRow | undefined;
   /** Another active project already named like the command's new title, if any. */
   readonly nameOwner?: ProjectRow | undefined;
+  /** This machine's personal assistant, read when the command creates a personal project. */
+  readonly assistant?: ProjectRow | undefined;
+}
+
+/** Whether planning `command` needs this machine's assistant, and so its lock. */
+export function createsPersonalAssistant(command: ProjectCommand): boolean {
+  return command.type === "project.create" && command.kind === "personal";
 }
 
 /** Whether this command renames the project; ownership transfers carry the identity's own name. */
@@ -534,6 +569,18 @@ export function planProjectCommand(input: {
           `Project '${command.projectId}' already exists and cannot be created twice.`,
         );
       }
+      if (
+        command.kind === "personal" &&
+        state.assistant !== undefined &&
+        state.assistant.projectId !== command.projectId
+      ) {
+        return Result.fail(
+          new PersonalAssistantExistsError({
+            projectId: command.projectId,
+            existingProjectId: state.assistant.projectId,
+          }),
+        );
+      }
       const conflict = requireWorkspaceAvailable(command.workspaceRoot);
       if (conflict !== undefined) return Result.fail(conflict);
       return Result.succeed({
@@ -626,6 +673,10 @@ export function planProjectCommand(input: {
           command.ownership,
         );
         if (rejection !== undefined) return invariant(rejection);
+      }
+      const requestedKind = command.workspaceSettings?.kind;
+      if (requestedKind !== undefined && requestedKind !== previousSettings.kind) {
+        return Result.fail(new ProjectKindFixedError({ projectId: command.projectId }));
       }
       // Ignore forged extras even in internal direct calls that bypass wire decoding.
       const {

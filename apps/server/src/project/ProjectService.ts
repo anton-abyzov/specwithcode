@@ -49,6 +49,7 @@ import {
   encodeProjectCommandRejection,
   findProjectNameOwner,
   planProjectCommand,
+  createsPersonalAssistant,
   renamesProject,
   type ProjectCommand,
 } from "../orchestration-v2/ProjectCommands.ts";
@@ -60,6 +61,10 @@ import * as ProjectAdmission from "./ProjectAdmission.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
+import { machineAssistantOf } from "@specweave-studio/shared/personalAssistant";
+
+/** The key every personal create waits on, so concurrent ones see each other. */
+const PERSONAL_ASSISTANT_LOCK = "\u0000personal-assistant";
 
 export interface ProjectCreateInput extends ProjectCreatePayload {
   readonly initialLogicalProject?: LogicalProject;
@@ -173,6 +178,8 @@ export class ProjectRequestDeniedError extends Schema.TaggedError<ProjectRequest
       "active_work",
       "environment_active",
       "name_taken",
+      "assistant_exists",
+      "kind_fixed",
     ]),
   },
 ) {
@@ -188,6 +195,10 @@ export class ProjectRequestDeniedError extends Schema.TaggedError<ProjectRequest
         return "Finish or stop active project work before deleting the project.";
       case "name_taken":
         return "Another project already has this name. Choose a different one.";
+      case "assistant_exists":
+        return "This machine already has its personal assistant. Open it instead of creating another.";
+      case "kind_fixed":
+        return "A project's kind is set when it is created and cannot be changed.";
     }
   }
 }
@@ -396,13 +407,16 @@ export const make = Effect.gen(function* () {
       const nameOwner = renamesProject(command)
         ? yield* findNameOwner(projectId, command.title).pipe(Effect.mapError(dispatchError))
         : undefined;
+      const assistant = createsPersonalAssistant(command)
+        ? machineAssistantOf(yield* projects.list().pipe(Effect.mapError(dispatchError)))
+        : undefined;
       const now = yield* DateTime.now;
       const eventId = yield* idAllocator.allocate
         .event({ commandId: command.commandId })
         .pipe(Effect.mapError(dispatchError));
       const planned = planProjectCommand({
         command,
-        state: { project, workspaceOwner, nameOwner },
+        state: { project, workspaceOwner, nameOwner, assistant },
         eventId,
         now,
       });
@@ -424,12 +438,17 @@ export const make = Effect.gen(function* () {
         error: encodeProjectCommandRejection(planned.failure),
       });
     });
+    const inWorkspace =
+      workspaceRoot === undefined
+        ? planAndCommit
+        : workspaceLocks.withLock(workspaceRoot, planAndCommit);
+    // Two personal creates at once must see each other: they share one lock.
     const receipt = yield* projectLocks
       .withLock(
         projectId,
-        workspaceRoot === undefined
-          ? planAndCommit
-          : workspaceLocks.withLock(workspaceRoot, planAndCommit),
+        createsPersonalAssistant(command)
+          ? workspaceLocks.withLock(PERSONAL_ASSISTANT_LOCK, inWorkspace)
+          : inWorkspace,
       )
       .pipe(Effect.mapError(dispatchError));
     if (receipt.projectId !== projectId || receipt.commandType !== command.type) {
@@ -453,6 +472,10 @@ export const make = Effect.gen(function* () {
         return yield* new ProjectRequestDeniedError({ projectId, reason: "settings_conflict" });
       case "ProjectNameTakenError":
         return yield* new ProjectRequestDeniedError({ projectId, reason: "name_taken" });
+      case "PersonalAssistantExistsError":
+        return yield* new ProjectRequestDeniedError({ projectId, reason: "assistant_exists" });
+      case "ProjectKindFixedError":
+        return yield* new ProjectRequestDeniedError({ projectId, reason: "kind_fixed" });
       case "ProjectCommandMissingProjectError":
         return yield* new ProjectNotFoundError({ projectId });
       default:

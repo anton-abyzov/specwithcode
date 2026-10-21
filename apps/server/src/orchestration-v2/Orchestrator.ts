@@ -125,7 +125,7 @@ import {
 import type { ProviderAdapterV2Shape } from "./ProviderAdapter.ts";
 import { ProviderAdapterRegistryV2 } from "./ProviderAdapterRegistry.ts";
 import { ProviderContinuationRequests } from "./ProviderContinuationRequests.ts";
-import { makeProviderFailure } from "./ProviderFailure.ts";
+import { makeProviderFailure, shouldHoldQueueAfterFailure } from "./ProviderFailure.ts";
 import * as RunExecutionService from "./RunExecutionService.ts";
 import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
 import { ProviderSwitchServiceV2 } from "./ProviderSwitchService.ts";
@@ -1417,19 +1417,19 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       if (queuedRun === undefined) {
         return;
       }
-      // A provider that just failed will likely fail the next message too.
-      // Hold the queue so the user decides when to resume it. Validation
-      // failures (setup, unsupported handoff) belong to that message alone,
-      // and a message queued for another provider is how users recover.
+      // Hold the queue after a failure the next message would repeat, so the
+      // user decides when to resume it (see shouldHoldQueueAfterFailure).
       const failedRun = latestExecutedRun(projection.runs);
-      const failureClass =
+      const failure =
         failedRun?.id === options?.failedRunId
-          ? latestRootProviderFailure(failedRun, projection.turnItems)?.class
+          ? latestRootProviderFailure(failedRun, projection.turnItems)
           : undefined;
       if (
-        failureClass !== undefined &&
-        failureClass !== "validation_error" &&
-        failedRun?.providerInstanceId === queuedRun.providerInstanceId
+        shouldHoldQueueAfterFailure({
+          failure: failure ?? undefined,
+          failedProviderInstanceId: failedRun?.providerInstanceId,
+          queuedProviderInstanceId: queuedRun.providerInstanceId,
+        })
       ) {
         const now = yield* DateTime.now;
         yield* writeSystemEvents(
@@ -9657,21 +9657,28 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         return yield* reject("A thread cannot be moved onto itself.");
       }
       const current = command.side === "source" ? thread.movedTo : thread.movedFrom;
+      let link = command.link;
       if (current != null) {
-        // Repeating the same move records nothing; a different one is refused.
-        if (current.threadId === command.link.threadId) return;
-        return yield* reject(
-          command.side === "source"
-            ? `Thread ${command.threadId} already moved to ${current.threadId}.`
-            : `Thread ${command.threadId} already replaced ${current.threadId}.`,
-        );
+        // Repeating the same move records nothing (a new note only replaces the note);
+        // a different one is refused.
+        if (current.threadId === command.link.threadId) {
+          if (link.note === undefined || link.note === current.note) return;
+          link = { ...current, note: link.note };
+        } else {
+          return yield* reject(
+            command.side === "source"
+              ? `Thread ${command.threadId} already moved to ${current.threadId}.`
+              : `Thread ${command.threadId} already replaced ${current.threadId}.`,
+          );
+        }
       }
       // A handoff keeps the source readable and unarchived: it is fenced (it
       // refuses new turns) and links to the machine that continues it.
       if (
         command.side === "source" &&
+        current == null &&
         thread.archivedAt === null &&
-        command.link.kind !== "handoff"
+        link.kind !== "handoff"
       ) {
         // Archiving cancels the queue and ends pull request watches, so nothing
         // the source still holds can start in the wrong project.
@@ -9679,7 +9686,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           { type: "thread.archive", commandId: command.commandId, threadId: command.threadId },
           events,
           effects,
-          { movedTo: command.link },
+          { movedTo: link },
         );
         return;
       }
@@ -9694,7 +9701,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         occurredAt: now,
         payload: {
           ...thread,
-          ...(command.side === "source" ? { movedTo: command.link } : { movedFrom: command.link }),
+          ...(command.side === "source" ? { movedTo: link } : { movedFrom: link }),
           updatedAt: now,
         },
       });

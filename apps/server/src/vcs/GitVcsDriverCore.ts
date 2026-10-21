@@ -1716,6 +1716,28 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
     return remoteName;
   });
 
+  /**
+   * False only when Git proves `ref` and HEAD have no common commit: `merge-base`
+   * exits 1 in a complete history. An unknown ref or unborn HEAD (exit 128) and a
+   * shallow clone, whose cut history hides the common commit, count as shared.
+   */
+  const sharesHistoryWithHead = (cwd: string, ref: string) =>
+    executeGit("GitVcsDriver.sharesHistoryWithHead", cwd, ["merge-base", ref, "HEAD"], {
+      allowNonZeroExit: true,
+    }).pipe(
+      Effect.flatMap((result) =>
+        result.exitCode !== 1
+          ? Effect.succeed(true)
+          : executeGit(
+              "GitVcsDriver.sharesHistoryWithHead.shallow",
+              cwd,
+              ["rev-parse", "--is-shallow-repository"],
+              { allowNonZeroExit: true },
+            ).pipe(Effect.map((shallow) => shallow.stdout.trim() === "true")),
+      ),
+      Effect.orElseSucceed(() => true),
+    );
+
   // `allowRemoteOfCurrent` lets the review diff compare the default branch with its remote copy.
   const resolveBaseBranchForNoUpstream = Effect.fn("resolveBaseBranchForNoUpstream")(function* (
     cwd: string,
@@ -1739,6 +1761,21 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       defaultBranch,
       ...DEFAULT_BASE_BRANCH_CANDIDATES,
     ];
+    // A recorded base can outlive the branch's history: a worktree started from
+    // `main` and then reset onto an unrelated `develop` keeps `gh-merge-base main`.
+    // Counting or diffing against a base with no common commit is meaningless.
+    const checked = new Map<string, boolean>();
+    const usable = Effect.fn("resolveBaseBranchForNoUpstream.usable")(function* (
+      candidate: string,
+      ref: string,
+    ) {
+      if (candidate !== configuredBaseBranch) return true;
+      const known = checked.get(ref);
+      if (known !== undefined) return known;
+      const result = yield* sharesHistoryWithHead(cwd, ref);
+      checked.set(ref, result);
+      return result;
+    });
 
     for (const candidate of candidates) {
       if (!candidate) {
@@ -1763,7 +1800,8 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
             cwd,
             remoteName: primaryRemoteName,
             refName: normalizedCandidate,
-          }))
+          })) &&
+          (yield* usable(candidate, `${primaryRemoteName}/${normalizedCandidate}`))
         ) {
           return `${primaryRemoteName}/${normalizedCandidate}`;
         }
@@ -1778,11 +1816,14 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           refName: normalizedCandidate,
         }))
       ) {
-        return `${primaryRemoteName}/${normalizedCandidate}`;
+        if (yield* usable(candidate, `${primaryRemoteName}/${normalizedCandidate}`)) {
+          return `${primaryRemoteName}/${normalizedCandidate}`;
+        }
+        continue;
       }
 
       if (yield* branchExists(cwd, normalizedCandidate)) {
-        return normalizedCandidate;
+        if (yield* usable(candidate, normalizedCandidate)) return normalizedCandidate;
       }
     }
 
@@ -2618,6 +2659,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           {
             maxOutputBytes: RANGE_COMMIT_SUMMARY_MAX_OUTPUT_BYTES,
             appendTruncationMarker: true,
+            includeFatalLine: true,
           },
         ),
         runGitStdoutWithOptions(
@@ -2627,6 +2669,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           {
             maxOutputBytes: RANGE_DIFF_SUMMARY_MAX_OUTPUT_BYTES,
             appendTruncationMarker: true,
+            includeFatalLine: true,
           },
         ),
         runGitStdoutWithOptions(
@@ -2636,6 +2679,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
           {
             maxOutputBytes: RANGE_DIFF_PATCH_MAX_OUTPUT_BYTES,
             appendTruncationMarker: true,
+            includeFatalLine: true,
           },
         ),
       ],
@@ -4285,6 +4329,7 @@ export const makeGitVcsDriverCore = Effect.fn("makeGitVcsDriverCore")(function* 
       withListRefsInvalidation(cwd, pushCurrentBranch(cwd, fallbackBranch, options)),
     pullCurrentBranch: (cwd) => withListRefsInvalidation(cwd, pullCurrentBranch(cwd)),
     readRangeContext,
+    sharesHistoryWithHead,
     getReviewDiffPreview,
     getReviewDiffFileContents,
     readConfigValue,

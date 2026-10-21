@@ -10,7 +10,10 @@ import type {
   RunId,
   ThreadId,
 } from "@specweave-studio/contracts";
-import { ProjectEnvironmentError } from "@specweave-studio/contracts";
+import {
+  ORCHESTRATION_V2_PROVIDER_UNAVAILABLE_FAILURE_CODE,
+  ProjectEnvironmentError,
+} from "@specweave-studio/contracts";
 import { providerFailureFallbackMessage } from "@specweave-studio/shared/orchestrationV2ThreadError";
 import * as DateTime from "effect/DateTime";
 import * as Cause from "effect/Cause";
@@ -22,6 +25,30 @@ import { providerSetupFailure } from "./ProviderAdapter.ts";
 
 export const MAX_PROVIDER_FAILURE_MESSAGE_LENGTH = 4_096;
 export const MAX_PROVIDER_FAILURE_CODE_LENGTH = 128;
+
+/** A run whose thread folder and branch were deleted; every provider fails it the same way. */
+export const WORKSPACE_BRANCH_MISSING_FAILURE_CODE = "workspace_branch_missing";
+
+/**
+ * Whether a failed run should hold the thread's queued messages. A provider
+ * that just failed will likely fail the next message too, so the user decides
+ * when to resume. Validation failures (setup, unsupported handoff) belong to
+ * that message alone, and a message queued for another provider is how users
+ * recover. A deleted thread folder fails every message on every provider.
+ */
+export function shouldHoldQueueAfterFailure(input: {
+  readonly failure: Pick<OrchestrationV2ProviderFailure, "class" | "code"> | undefined;
+  readonly failedProviderInstanceId: string | null | undefined;
+  readonly queuedProviderInstanceId: string | null | undefined;
+}): boolean {
+  const { failure } = input;
+  if (failure === undefined) return false;
+  if (failure.code === WORKSPACE_BRANCH_MISSING_FAILURE_CODE) return true;
+  return (
+    failure.class !== "validation_error" &&
+    input.failedProviderInstanceId === input.queuedProviderInstanceId
+  );
+}
 
 const isProjectEnvironmentCode = Schema.is(ProjectEnvironmentError.fields.code);
 
@@ -234,7 +261,13 @@ export function makeProviderFailure(input: {
   const fallbackMessage = providerFailureFallbackMessage(failureClass);
   const rawMessage = input.message ?? causeMessage(input.cause) ?? fallbackMessage;
   const message = boundedText(rawMessage, MAX_PROVIDER_FAILURE_MESSAGE_LENGTH);
-  const rawCode = input.code ?? stringField(input.cause, "code") ?? null;
+  const rawCode =
+    input.code ??
+    (setup?.unavailable && failureClass !== "usage_limit"
+      ? ORCHESTRATION_V2_PROVIDER_UNAVAILABLE_FAILURE_CODE
+      : undefined) ??
+    stringField(input.cause, "code") ??
+    null;
   const code =
     rawCode === null ? null : boundedText(rawCode, MAX_PROVIDER_FAILURE_CODE_LENGTH) || null;
 

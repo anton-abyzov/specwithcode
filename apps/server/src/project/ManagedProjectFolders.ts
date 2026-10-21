@@ -17,6 +17,7 @@ import {
 } from "@specweave-studio/contracts";
 import { newProjectFolderName } from "@specweave-studio/shared/path";
 import { canonicalStudioPath } from "@specweave-studio/shared/studioIdentity";
+import { machineAssistantOf } from "@specweave-studio/shared/personalAssistant";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
@@ -548,18 +549,19 @@ const make = Effect.gen(function* () {
     return { projectId: project.id, workspaceRoot, existing: true };
   });
 
+  /** This machine's assistant, if it has one: the earliest personal project. */
+  const existingAssistant = projects.snapshot.pipe(
+    Effect.map((snapshot) => machineAssistantOf(snapshot.projects)),
+    Effect.mapError(
+      (cause) => new NamedProjectCreateError({ workspaceRoot: namedProjectsRoot, cause }),
+    ),
+  );
+
   const createNamedProject: ManagedProjectFolders["Service"]["createNamedProject"] = Effect.fn(
     "ManagedProjectFolders.createNamedProject",
   )(function* (input) {
     if (input.kind === "personal") {
-      const snapshot = yield* projects.snapshot.pipe(
-        Effect.mapError(
-          (cause) => new NamedProjectCreateError({ workspaceRoot: namedProjectsRoot, cause }),
-        ),
-      );
-      const existing = snapshot.projects.find(
-        (project) => project.workspaceSettings?.kind === "personal",
-      );
+      const existing = yield* existingAssistant;
       if (existing) return { projectId: existing.id, workspaceRoot: existing.workspaceRoot };
     }
     if (input.kind !== "personal" && input.parentPath !== undefined) {
@@ -608,7 +610,23 @@ const make = Effect.gen(function* () {
               ),
         ),
         Effect.mapError((cause) => new NamedProjectCreateError({ workspaceRoot, cause })),
+      )
+      .pipe(
+        // Another path created this machine's assistant first: open that one.
+        Effect.catchIf(
+          (error) =>
+            Schema.is(ProjectService.ProjectRequestDeniedError)(error.cause) &&
+            error.cause.reason === "assistant_exists",
+          (error) =>
+            existingAssistant.pipe(
+              Effect.flatMap((existing) =>
+                existing ? Effect.succeed(existing) : Effect.fail(error),
+              ),
+            ),
+        ),
       );
+    if (project.workspaceRoot !== workspaceRoot)
+      return { projectId: project.id, workspaceRoot: project.workspaceRoot };
     // An assistant has no repository to draw an icon from, so it gets one that
     // tells it apart in the sidebar. The owner can change it like any icon.
     if (input.kind === "personal") {

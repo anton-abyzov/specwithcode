@@ -1,34 +1,94 @@
 import type {
-  ServiceUpdateBlocker,
-  ServerPrepareServiceUpdateInput,
-  ServerPrepareServiceUpdateResult,
   StudioServiceInstallOptions,
   StudioServiceUpdateState,
-  StudioServiceUpdateStatus,
 } from "@specweave-studio/contracts";
-import { type ReactNode, useCallback, useEffect, useSyncExternalStore } from "react";
+import { useCallback, useEffect, useSyncExternalStore } from "react";
 
-import { requestChoiceDialog, requestConfirmDialog } from "../confirmDialog";
-import { ensureLocalApi } from "../localApi";
+import { requestConfirmDialog } from "../confirmDialog";
 import { usePrimaryEnvironmentId } from "../state/environments";
 import { serverEnvironment } from "../state/server";
 import { useAtomCommand } from "../state/use-atom-command";
 import {
+  AGENT_SETTLED,
+  AGENT_UNSETTLED_ON_VERSION,
+  AGENT_WORKING,
+  agentSilentFor,
+  hasPendingRequest,
+  isPendingRequestLive,
+  isWaitingPhase,
+  newerRequestPending,
+  newestWritten,
+  pendingRequestProgress,
+  refusedAfterWithdrawal,
+  withdrawnAfterRequest,
+  writtenAt,
+} from "./serviceUpdateAgent";
+import {
+  CallTimeout,
+  callPrepare,
+  forgetPreparesForTests,
+  forgetWithdrawalForTests,
+  pendingWithdrawal,
+  type PrepareServiceUpdate,
+  QUICK_CALL_MS,
+  readAgentState,
+  registerPrepare,
+  STOP_WORK_TIMEOUT_MS,
+  withdrawRequest,
+  withTimeout,
+} from "./serviceUpdateCalls";
+import {
+  type AppFollowUp,
+  finishedFollowUp,
+  forgetAnsweredFollowUp,
+  forgetLackedRelease,
+  forgetSavedFollowUp,
+  forgetSavedOwnRequest,
+  forgetServedRelease,
+  readLackedRelease,
+  rememberLackedRelease,
+  type SavedOwnRequest,
+  saveFollowUp,
+  savedFollowUp,
+  savedOwnRequestFor,
+  saveOwnRequest,
+  servesRelease,
+} from "./serviceUpdateMemory";
+import {
+  askAgain,
+  bindReholdFlow,
+  hold,
+  holdEnded,
+  holdOnceAgentHasRelease,
+  holdRestartedService,
+  refusedBeforeHeld,
+  releaseStrayHold,
+  resetHold,
+  resetHoldForTests,
+} from "./serviceUpdateRehold";
+import {
   advanceServiceUpdateProgress,
-  APP_RESTART_UNKNOWN,
-  describeAppRestartWarning,
+  agentOffersRelease,
   canPressUpdateAgain,
   canRetryServiceUpdate,
   describeServiceUpdateStop,
   isForcedRequestLive,
-  pendingHoldUntil,
+  isReleaseUnavailableFailure,
+  isRestartRefusalWithRelease,
+  markServiceRestarted,
   retryServiceUpdateProgress,
   serviceFailureKey,
+  SERVICE_REQUEST_EXPIRED,
   serviceUpdateToast,
   type ServiceUpdateProgress,
   startServiceUpdateProgress,
 } from "./sidebar/SidebarRestartToUpdate.logic";
-import { hiddenToastActionProps, stackedThreadToast, toastManager } from "./ui/toast";
+import { serviceUpdateToastOptions } from "./serviceUpdateToast";
+import { stackedThreadToast, toastManager } from "./ui/toast";
+
+export type { AppFollowUp } from "./serviceUpdateMemory";
+export { SERVICE_HOLD_ENDED } from "./serviceUpdateRehold";
+export { SERVICE_REQUEST_EXPIRED } from "./sidebar/SidebarRestartToUpdate.logic";
 
 /**
  * "Update now" for the Studio service, shared by the sidebar button and
@@ -46,10 +106,6 @@ import { hiddenToastActionProps, stackedThreadToast, toastManager } from "./ui/t
  * live follows it instead of stopping the work again.
  */
 
-export type PrepareServiceUpdate = (
-  input: ServerPrepareServiceUpdateInput,
-) => Promise<ServerPrepareServiceUpdateResult | null>;
-
 // While a service update runs, read the update agent's state this often.
 const SERVICE_POLL_MS = 2_000;
 // Re-check what still runs this often while the install waits for it.
@@ -60,34 +116,30 @@ const REQUEST_AGAIN_MS = 30_000;
 const WAIT_NOTICE_MS = 20_000;
 // Reload into the new version this long after the service reports it installed.
 const RELOAD_DELAY_MS = 1_500;
-/** Reads and checks answer within this, or count as no answer. */
-export const QUICK_CALL_MS = 5_000;
-/** Stopping work can take a while on a busy service; the install proceeds after this. */
-export const STOP_WORK_TIMEOUT_MS = 90_000;
 // Older desktops refresh the agent before they answer an install request.
 const INSTALL_REQUEST_TIMEOUT_MS = 90_000;
 /** How long the service holds new work back for the update. */
 export const SERVICE_UPDATE_HOLD_MS = 15 * 60_000;
-/** What the update agent says when an install request lapsed before it could start. */
-export const SERVICE_REQUEST_EXPIRED =
-  "The update request expired before it could start; choose Update now again.";
 // A lapsed request is renewed this many times (about 40 minutes in all) before it fails.
 const MAX_REQUEST_RENEWALS = 3;
 // The toast's clock moves once a second while an update runs.
 const CLOCK_TICK_MS = 1_000;
-// Where a window keeps "then install the app" across a reload.
-const FOLLOW_UP_KEY = "specwithcode.serviceUpdate.thenInstallApp";
-// A saved follow-up older than this belongs to an update long over.
-const FOLLOW_UP_TTL_MS = 45 * 60_000;
-
-/** The app update that installs once the service runs `serviceVersion`. */
-export interface AppFollowUp {
-  readonly appVersion: string | null;
-  readonly serviceVersion: string | null;
-}
+// The app quits once its install is accepted. Still here a little after the
+// sidebar's own 60 s check, the update ends so the button can be pressed again.
+const APP_RESTART_TIMEOUT_MS = 75_000;
+// A reloaded window that got no answer from the service looks again this often,
+// this many times, while the agent may still be acting on a request.
+const ADOPT_RETRY_MS = 5_000;
+const MAX_ADOPT_RETRIES = 36;
 
 /** Installs the app's downloaded update; resolves true when the app is restarting. */
 export type AppInstaller = (appVersion: string | null) => Promise<boolean>;
+
+/**
+ * Installs the app's update on its own, as its Restart to update does: it asks
+ * before cutting off running work and drains the service it started.
+ */
+export type AppInstallNow = () => Promise<void>;
 
 export interface ServiceUpdateFlowState {
   readonly progress: ServiceUpdateProgress | null;
@@ -97,28 +149,6 @@ export interface ServiceUpdateFlowState {
   readonly starting: boolean;
 }
 
-class CallTimeout extends Error {
-  constructor() {
-    super("The call did not answer in time.");
-  }
-}
-
-function withTimeout<T>(promise: Promise<T>, ms: number): Promise<T> {
-  return new Promise<T>((resolve, reject) => {
-    const timer = window.setTimeout(() => reject(new CallTimeout()), ms);
-    promise.then(
-      (value) => {
-        window.clearTimeout(timer);
-        resolve(value);
-      },
-      (error: unknown) => {
-        window.clearTimeout(timer);
-        reject(error);
-      },
-    );
-  });
-}
-
 const errorText = (error: unknown, fallback: string) =>
   error instanceof Error ? error.message : fallback;
 
@@ -126,24 +156,19 @@ const IDLE: ServiceUpdateFlowState = { progress: null, waitedLong: false, starti
 
 let state: ServiceUpdateFlowState = IDLE;
 const listeners = new Set<() => void>();
-// The newest mounted component's way to reach the server.
-const prepares: PrepareServiceUpdate[] = [];
 // Each attempt (and each cancel) bumps this, so late answers of an older one are dropped.
 let attempt = 0;
+// The attempt whose first stop drains before its request is written: what the
+// agent writes meanwhile answers an earlier request (a renewal's, that lapsed).
+let drainingAttempt: number | null = null;
 let installOptions: StudioServiceInstallOptions | undefined;
-// The service reported held for this window's own request; once it no longer
-// is, the update was cancelled elsewhere (or the hold ran out).
-let holdSeen = false;
 let lastRequest = 0;
 let lastBlockerCheck = 0;
 let waitingSince: number | null = null;
 let lastAgentState: StudioServiceUpdateState | null = null;
 let readBusy = false;
 let checkBusy = false;
-let requestBusy = false;
 let cancelling = false;
-// A withdrawal still being written; a new install request waits for it.
-let withdrawal: Promise<unknown> | null = null;
 // Whether this window has looked for an update hold it did not start.
 let adoptChecked = false;
 let adopting = false;
@@ -154,49 +179,88 @@ let toastId: string | null = null;
 let dismissedPhase: ServiceUpdateProgress["phase"] | null = null;
 // Times this window renewed its install request after the agent let it lapse.
 let renewals = 0;
+// The failed attempt's request was withdrawn and the work let go when it
+// failed, or left to the window that pressed: closing its toast only ends it.
+let failureDealtWith = false;
 // "Update now" for both: once the service runs the new version, the app installs.
 let followUp: AppFollowUp | null = null;
 let followUpStarted = false;
 // The sidebar's way to install the app's update; null while it is not mounted.
 let appInstaller: AppInstaller | null = null;
+// The sidebar's way to install the app's update on its own, as its Restart to
+// update does; null while it is not mounted.
+let appInstallNow: AppInstallNow | null = null;
 let clockTimer: number | null = null;
 let forcedSeen = false;
-
-function sessionStore(): Storage | null {
-  try {
-    return typeof window.sessionStorage === "undefined" ? null : window.sessionStorage;
-  } catch {
-    return null;
-  }
-}
+// The app accepted its install after the service update; it should quit now.
+let appRestartTimer: number | null = null;
+// Adoption that got no answer looks again on its own (see adoptHeldUpdate).
+let adoptRetryTimer: number | null = null;
+let adoptRetries = 0;
+let adoptInput: {
+  readonly serviceState: StudioServiceUpdateState | null;
+  readonly prepare: PrepareServiceUpdate;
+} | null = null;
 
 function setFollowUp(next: AppFollowUp | null) {
   followUp = next;
   followUpStarted = false;
-  const store = sessionStore();
-  try {
-    if (next === null) store?.removeItem(FOLLOW_UP_KEY);
-    else store?.setItem(FOLLOW_UP_KEY, JSON.stringify({ ...next, at: Date.now() }));
-  } catch {
-    // Storage can be unavailable; this window still remembers it.
+  saveFollowUp(next);
+}
+
+/** Restores the saved follow-up for the update this window now follows. */
+function restoreSavedFollowUp() {
+  const saved = savedFollowUp(state.progress?.targetVersion ?? null);
+  if (saved !== null && followUp === null) {
+    followUp = saved;
+    followUpStarted = false;
   }
 }
 
-/** The follow-up a reloaded window saved for the update to `serviceVersion`, if any. */
-function savedFollowUp(serviceVersion: string | null): AppFollowUp | null {
-  try {
-    const text = sessionStore()?.getItem(FOLLOW_UP_KEY);
-    if (!text) return null;
-    const saved = JSON.parse(text) as Partial<AppFollowUp> & { readonly at?: unknown };
-    if (typeof saved.at !== "number" || Date.now() - saved.at > FOLLOW_UP_TTL_MS) return null;
-    if (saved.serviceVersion !== serviceVersion) return null;
-    return {
-      appVersion: typeof saved.appVersion === "string" ? saved.appVersion : null,
-      serviceVersion: saved.serviceVersion ?? null,
-    };
-  } catch {
-    return null;
-  }
+/** Saves this window's request, as now asked for, so a reload can take it up again. */
+function rememberOwnRequest() {
+  if (installOptions?.holdUntil === undefined) return;
+  const { holdUntil, version = null } = installOptions;
+  // Once the work was held again for the agent's release, what that stop answered.
+  saveOwnRequest({
+    version,
+    holdUntil,
+    holdAskedAgain: hold.askedAgain,
+    held: hold.askedAgain && hold.seen,
+    refusedAgain: hold.refusedAgain,
+  });
+}
+
+/**
+ * Asking the service for its update again would fail for want of the release:
+ * this window's last request failed that way (its toast may be closed since, or
+ * the window reloaded), and no state seen since offers the release or shows
+ * the service on it. A press for the app's update then restarts only the app;
+ * the failure's Try again still asks the service. Never while this window
+ * shows another update.
+ */
+export function serviceLacksRelease(serviceState: StudioServiceUpdateState | null = null): boolean {
+  const progress = state.progress;
+  if (isReleaseUnavailableFailure(progress)) return true;
+  if (progress !== null) return false;
+  const version = readLackedRelease();
+  return version !== null && (serviceState === null || !servesRelease(serviceState, version));
+}
+
+/** No service update is under way, shown or about to start in this window. */
+export function isServiceUpdateIdle(): boolean {
+  return state.progress === null && !state.starting;
+}
+
+/** Ends this window's update: nothing is followed or asked for any more. */
+function endAttempt() {
+  setFollowUp(null);
+  forgetSavedOwnRequest();
+  attempt += 1;
+  installOptions = undefined;
+  hold.seen = false;
+  failureDealtWith = false;
+  setState({ progress: null, waitedLong: false });
 }
 
 /**
@@ -208,6 +272,31 @@ export function registerAppInstallAfterService(installer: AppInstaller): () => v
   return () => {
     if (appInstaller === installer) appInstaller = null;
   };
+}
+
+/** The sidebar registers how the app's update installs without the service's. */
+export function registerAppInstallNow(install: AppInstallNow): () => void {
+  appInstallNow = install;
+  return () => {
+    if (appInstallNow === install) appInstallNow = null;
+  };
+}
+
+/**
+ * Ends a failed attempt when a press installs the app on its own instead. The
+ * failure already withdrew the request and let work start again, so only its
+ * toast closes.
+ */
+export function endFailedServiceUpdate(): void {
+  if (state.progress?.phase === "failed" && !state.starting) endAttempt();
+}
+
+/**
+ * The app's update may install on its own: no service update is under way
+ * that its restart would cut into (none, or one that failed or lapsed).
+ */
+export function canInstallAppAlone(): boolean {
+  return state.progress === null || canPressUpdateAgain(state.progress, Date.now());
 }
 
 function readState(): ServiceUpdateFlowState {
@@ -222,7 +311,17 @@ function subscribe(listener: () => void): () => void {
 }
 
 function setState(patch: Partial<ServiceUpdateFlowState>) {
+  const failed = patch.progress?.phase === "failed" && state.progress?.phase !== "failed";
   state = { ...state, ...patch };
+  // A failed attempt installs nothing until it is pressed again: a reload must
+  // not find the app's install and run it once the agent installs on its own.
+  // This window keeps it for Try again, which saves it anew.
+  if (failed) forgetSavedFollowUp();
+  // The agent lacks the release: presses restart only the app until it has
+  // it, even once this failure is closed or the window reloads.
+  if (failed && patch.progress?.unavailable === true) {
+    rememberLackedRelease(patch.progress.targetVersion);
+  }
   syncTimers();
   syncToast();
   for (const listener of listeners) listener();
@@ -250,33 +349,72 @@ function updateProgress(
     void run({ ...previous, phase: "requesting", message: null });
     return;
   }
+  // A window that only follows the request does not fail with it when the
+  // agent let it lapse: the window that pressed renews it, and a renewal
+  // already written is followed instead.
+  const lapsedForFollower =
+    next?.phase === "failed" &&
+    next.message === SERVICE_REQUEST_EXPIRED &&
+    isWaitingPhase(previous) &&
+    installOptions === undefined;
+  if (lapsedForFollower && !cancelling && lastAgentState !== null) {
+    if (followRenewal(lastAgentState, previous)) return;
+  }
+  // Refused before this window held the work for it: it holds it and asks again.
+  if (
+    next?.phase === "failed" &&
+    isWaitingPhase(previous) &&
+    next.message === lastAgentState?.message &&
+    refusedBeforeHeld(lastAgentState)
+  ) {
+    return;
+  }
+  // A window that only follows the request leaves such a refusal to the
+  // window that asked, while the request is pending: see followsPastRefusal.
+  if (
+    next?.phase === "failed" &&
+    installOptions === undefined &&
+    followsPastRefusal(lastAgentState)
+  ) {
+    return;
+  }
   setState({ progress: next });
+  if (next?.phase !== "failed" || previous.phase === "failed") return;
+  // Withdrawing the request or letting the work go would undo the renewal,
+  // also once the toast is closed.
+  if (lapsedForFollower) failureDealtWith = true;
   // The agent gave up on this install: let work start again now instead of
   // keeping the service held until someone closes the notice. Update now
   // holds it again.
-  if (
-    next?.phase === "failed" &&
-    previous.phase !== "failed" &&
-    lastAgentState?.status !== "installing"
-  )
-    void abandonFailedAttempt();
+  else if (lastAgentState?.status !== "installing") void abandonFailedAttempt(next);
 }
 
-async function callPrepare(
-  input: ServerPrepareServiceUpdateInput,
-  timeoutMs: number,
-  prepare: PrepareServiceUpdate | undefined = prepares.at(-1),
-): Promise<ServerPrepareServiceUpdateResult | null> {
-  if (!prepare) return null;
-  // An older service without this call, one already restarting, or one too busy
-  // to answer still installs: the update agent checks for itself before it does.
-  return withTimeout(prepare(input), timeoutMs).catch(() => null);
+/**
+ * The agent refused a request for a fault only a held request gets past, and
+ * the desktop still reports it pending: the window that asked holds the work
+ * for it and asks again (see refusedBeforeHeld), so a window that only
+ * follows it keeps following. The refusal ends the request only once that
+ * window gives up on it (it withdraws it) or its hold runs out.
+ */
+function followsPastRefusal(agent: StudioServiceUpdateState | null): boolean {
+  return isRestartRefusalWithRelease(agent) && isPendingRequestLive(agent);
 }
 
-async function readAgentState(): Promise<StudioServiceUpdateState | null> {
-  const read = window.desktopBridge?.getServiceUpdateState;
-  if (!read) return null;
-  return withTimeout(read(), QUICK_CALL_MS).catch(() => null);
+/**
+ * This window only follows the request the agent let lapse: it follows the
+ * renewal the window that pressed wrote, or a newer press, while that one's
+ * hold lasts. False when there is none.
+ */
+function followRenewal(agent: StudioServiceUpdateState, lapsed: ServiceUpdateProgress): boolean {
+  if (!isPendingRequestLive(agent) || !newerRequestPending(agent, lapsed)) return false;
+  attempt += 1;
+  hold.seen = false;
+  failureDealtWith = false;
+  if (!followPendingRequest(agent, null, lapsed.blockers)) return false;
+  // A failure shown meanwhile forgot the app's install for a reload: the
+  // renewal installs it after all.
+  if (followUp !== null) saveFollowUp(followUp);
+  return true;
 }
 
 function sendInstallRequest(): Promise<StudioServiceUpdateState | null> {
@@ -287,97 +425,79 @@ function sendInstallRequest(): Promise<StudioServiceUpdateState | null> {
   return withTimeout(install(installOptions), INSTALL_REQUEST_TIMEOUT_MS);
 }
 
-// The agent may still act on an install request in these states.
-const AGENT_WORKING: ReadonlySet<StudioServiceUpdateStatus> = new Set([
-  "downloading",
-  "downloaded",
-  "waiting-for-quiet",
-  "installing",
-]);
-
-// The agent will not install anything in these states: a hold left on the
-// service has nothing to wait for.
-const AGENT_SETTLED: ReadonlySet<StudioServiceUpdateStatus> = new Set([
-  "not-managed",
-  "disabled",
-  "up-to-date",
-  "installed",
-  "manual-required",
-  "error",
-]);
-
-/** The desktop reports an install request the agent has not finished. */
-function hasPendingRequest(state: StudioServiceUpdateState): boolean {
-  return state.pendingInstall !== undefined && state.pendingInstall !== null;
-}
+bindReholdFlow({
+  attempt: () => attempt,
+  progress: () => state.progress,
+  asks: () => installOptions !== undefined,
+  cancelling: () => cancelling,
+  lastAgent: () => lastAgentState,
+  sawAgent: (agent) => {
+    lastAgentState = agent;
+  },
+  updateProgress,
+  endAttempt,
+  rememberOwnRequest,
+  sendInstallRequest,
+});
 
 /**
- * Withdraws the install request. `withdrawn` is false when the desktop could
- * not save that, so the agent may still install. Older desktops cannot
- * withdraw at all; their agent installs at the next quiet moment as before.
- * `agent` is the agent's state after the withdrawal, when it could be read.
+ * The newest state of the agent this window has, by when the agent wrote it:
+ * the one the caller sees, the one published to this window, or this window's
+ * own last read.
  */
-async function withdrawRequest(): Promise<{
-  readonly withdrawn: boolean;
-  readonly agent: StudioServiceUpdateState | null;
-}> {
-  const cancel = window.desktopBridge?.cancelServiceUpdate;
-  if (!cancel) return { withdrawn: true, agent: await readAgentState() };
-  const pending = withTimeout(cancel(), QUICK_CALL_MS);
-  const settled = pending.catch(() => null);
-  withdrawal = settled;
-  void settled.then(() => {
-    if (withdrawal === settled) withdrawal = null;
-  });
-  try {
-    return { withdrawn: true, agent: await pending };
-  } catch {
-    return { withdrawn: false, agent: await readAgentState() };
-  }
-}
-
-function isWaitingPhase(progress: ServiceUpdateProgress | null): boolean {
-  return progress?.phase === "requesting" || progress?.phase === "waiting";
-}
-
-// The agent has written nothing for a while: a pass that answered and went back
-// to sleep (older agents), not one still retrying for this request.
-function agentSilentSince(now: number): boolean {
-  const written =
-    typeof lastAgentState?.updatedAt === "string" ? Date.parse(lastAgentState.updatedAt) : NaN;
-  return !Number.isFinite(written) || now - written >= REQUEST_AGAIN_MS;
+function newestWrittenAgentState(
+  serviceState: StudioServiceUpdateState | null,
+): StudioServiceUpdateState | null {
+  return newestWritten([serviceState, adoptInput?.serviceState ?? null, lastAgentState]);
 }
 
 /** Stops and holds the service's work, then asks the agent to install now. */
 async function run(start: ServiceUpdateProgress): Promise<void> {
   attempt += 1;
   const current = attempt;
+  drainingAttempt = current;
   waitingSince = null;
   dismissedPhase = null;
-  holdSeen = false;
-  // A retry times its install afresh.
-  const { installingSince: _previousInstall, ...fresh } = start;
+  resetHold();
+  failureDealtWith = false;
+  // Asked anew, the agent's answer to this request says again whether it lacks the release.
+  forgetLackedRelease();
+  // A retry times its install afresh, on a service not restarted for it yet.
+  const { installingSince: _previousInstall, serviceRestarted: _restarted, ...fresh } = start;
   setState({ progress: fresh, waitedLong: false });
   const prepared = await callPrepare(
     { stopWork: true, hold: true, reason: "install" },
     STOP_WORK_TIMEOUT_MS,
   );
-  if (current !== attempt) return;
-  holdSeen = prepared?.held === true;
+  // Ended while the work stopped (a renewal's Cancel): its hold serves nothing.
+  if (current !== attempt) {
+    void releaseStrayHold(prepared);
+    return;
+  }
+  // Without an answer the stop may have held the work: a look that finds
+  // nothing held then holds it again (see holdRestartedService).
+  hold.seen = prepared?.held !== false;
+  hold.refused = prepared?.held === false;
+  hold.pressUnanswered = prepared === null;
   lastBlockerCheck = Date.now();
   // What the agent reports before this request is not its answer to it.
   const before = await readAgentState();
   if (current !== attempt) return;
   // A cancel written meanwhile must not land after this request.
-  await withdrawal;
+  await pendingWithdrawal();
   if (current !== attempt) return;
   const requestedAt = Date.now();
+  // A renewal or retry asks anew, maybe for another version: a reload keeps
+  // the app's install, saved as of this request, so only the agent's answer
+  // to it (see forgetAnsweredFollowUp) can tell the reload it is over.
+  if (followUp !== null) setFollowUp({ ...followUp, serviceVersion: start.targetVersion });
   installOptions = {
     force: true,
     holdUntil: new Date(requestedAt + SERVICE_UPDATE_HOLD_MS).toISOString(),
     // The agent installs only the version shown here, and lets the request lapse after 10 minutes.
     ...(start.targetVersion !== null ? { version: start.targetVersion } : {}),
   };
+  rememberOwnRequest();
   updateProgress((progress) => ({
     ...progress,
     phase: "requesting",
@@ -387,6 +507,7 @@ async function run(start: ServiceUpdateProgress): Promise<void> {
     requestedAt,
     holdUntil: requestedAt + SERVICE_UPDATE_HOLD_MS,
   }));
+  drainingAttempt = null;
   try {
     const next = await sendInstallRequest();
     if (current !== attempt) return;
@@ -420,21 +541,48 @@ function onPollInterval() {
 }
 
 async function followAgent() {
-  if (readBusy) return;
+  if (readBusy || drainingAttempt === attempt) return;
   readBusy = true;
   const current = attempt;
   try {
     const next = await readAgentState();
     if (current !== attempt || next === null) return;
     lastAgentState = next;
+    forgetServedRelease(next);
+    // The desktop reports the request the agent installs for, until it is
+    // cancelled (in another window, once the install began) or for an install
+    // the agent runs on its own: the app's install follows neither, as only a
+    // press asks for it (see cancelledTooLate).
+    if (next.status === "installing" && !hasPendingRequest(next)) setFollowUp(null);
+    // Cancelled in another window before the agent's pass refused it: quietly.
+    if (!cancelling && refusedAfterWithdrawal(next, state.progress, Date.now())) {
+      endAttempt();
+      return;
+    }
     updateProgress((progress) => advanceServiceUpdateProgress(progress, next, Date.now()));
+    // Renewed on this answer: it answered the request that lapsed, not the renewal.
+    if (current !== attempt) return;
+    // Cancelled in another window: nothing more is asked for it, quietly.
+    if (withdrawnElsewhere(next)) endAttempt();
+    else holdOnceAgentHasRelease(next, current);
   } finally {
     readBusy = false;
   }
 }
 
+/**
+ * Another window withdrew the request this window waits on (its own or one it
+ * follows): in a state the agent wrote after the request, the desktop reports
+ * none pending. Not once the request's hold ran out: it lapsed then, and the
+ * toast says so.
+ */
+function withdrawnElsewhere(agent: StudioServiceUpdateState): boolean {
+  return !cancelling && withdrawnAfterRequest(agent, state.progress, Date.now());
+}
+
 function checkBlockers(now: number) {
   if (!isWaitingPhase(state.progress) || checkBusy) return;
+  if (drainingAttempt === attempt || hold.reholding === attempt) return;
   if (now - lastBlockerCheck < BLOCKER_CHECK_MS) return;
   lastBlockerCheck = now;
   checkBusy = true;
@@ -443,42 +591,49 @@ function checkBlockers(now: number) {
     .then((checked) => {
       // A cancel under way owns the attempt; nothing here may undo it.
       if (current !== attempt || cancelling || checked === null) return;
-      if (installOptions !== undefined && checked.held === true) holdSeen = true;
+      if (checked.held === true) {
+        hold.seen = true;
+        hold.pressUnanswered = false;
+      }
       // An update ends with its hold: cancelled in another window, or settled.
-      // One this window asked for ends so only once it was seen held, and
-      // while it still waits (an install keeps the service held).
-      const ownEnded = holdSeen && isWaitingPhase(state.progress);
-      if (checked.held === false && (installOptions === undefined || ownEnded)) {
-        attempt += 1;
-        installOptions = undefined;
-        holdSeen = false;
-        setFollowUp(null);
-        setState({ progress: null, waitedLong: false });
+      // It ends so once it was seen held, while it still waits (an install
+      // keeps the service held). One this window only follows ends too once
+      // the desktop no longer reports it: its hold may have been refused.
+      const followedGone = installOptions === undefined && !isPendingRequestLive(lastAgentState);
+      const ended = isWaitingPhase(state.progress) && (hold.seen || followedGone);
+      if (checked.held === false && ended) {
+        // This window's own hold ran out before the install began, rather than
+        // being cancelled elsewhere: say so, and keep the app's install for a retry.
+        const holdUntil = state.progress?.holdUntil;
+        if (installOptions !== undefined && holdUntil !== undefined && Date.now() >= holdUntil) {
+          holdEnded();
+          return;
+        }
+        // Cancelled elsewhere, or the service restarted: the agent's state tells which.
+        void holdRestartedService(current);
         return;
       }
-      updateProgress((progress) => ({ ...progress, blockers: checked.blockers }));
+      updateProgress((progress) => ({
+        // Held again: the restart the toast told of is behind it.
+        ...(checked.held === true ? markServiceRestarted(progress, false) : progress),
+        blockers: checked.blockers,
+      }));
       // Only this window's own request is asked again; one taken over keeps its own.
       if (installOptions === undefined) return;
-      if (!isWaitingPhase(state.progress) || !checked.idle || requestBusy) return;
+      if (!isWaitingPhase(state.progress) || !checked.idle || hold.requestInFlight !== null) return;
       const at = Date.now();
       // Nothing runs and the agent went quiet: ask again instead of waiting for its next pass.
-      if (at - lastRequest < REQUEST_AGAIN_MS || !agentSilentSince(at)) return;
-      requestBusy = true;
-      void requestAgain(current).finally(() => {
-        requestBusy = false;
-      });
+      if (
+        at - lastRequest < REQUEST_AGAIN_MS ||
+        !agentSilentFor(lastAgentState, at, REQUEST_AGAIN_MS)
+      ) {
+        return;
+      }
+      askAgain(current);
     })
     .finally(() => {
       checkBusy = false;
     });
-}
-
-/** Asks the agent again, after any withdrawal being written, as `run` does. */
-async function requestAgain(current: number): Promise<void> {
-  await withdrawal;
-  if (current !== attempt || cancelling || installOptions === undefined) return;
-  if (!isWaitingPhase(state.progress)) return;
-  await sendInstallRequest().catch(() => null);
 }
 
 function syncTimers() {
@@ -539,15 +694,20 @@ function onClockTick() {
 async function installAppAfterService(next: AppFollowUp, install: AppInstaller): Promise<void> {
   const current = attempt;
   const restarting = await install(next.appVersion).catch(() => false);
-  // The app quits now; this window goes with it.
-  if (restarting || current !== attempt) return;
+  if (current !== attempt) return;
+  if (restarting) {
+    // The app quits now; this window goes with it. A quit that was vetoed or
+    // failed leaves it open: the update then ends, so the button works again.
+    if (appRestartTimer !== null) window.clearTimeout(appRestartTimer);
+    appRestartTimer = window.setTimeout(() => {
+      appRestartTimer = null;
+      if (current === attempt) endAttempt();
+    }, APP_RESTART_TIMEOUT_MS);
+    return;
+  }
   // The installer said why the app did not restart; the service is updated,
   // so the update ends here and the window stays as it is.
-  setFollowUp(null);
-  attempt += 1;
-  installOptions = undefined;
-  holdSeen = false;
-  setState({ progress: null, waitedLong: false });
+  endAttempt();
 }
 
 function dismissToast() {
@@ -555,28 +715,40 @@ function dismissToast() {
   const progress = state.progress;
   if (progress === null) return;
   if (progress.phase === "failed") {
-    // Done with this attempt: withdraw it and let work start again right away.
-    attempt += 1;
-    installOptions = undefined;
-    holdSeen = false;
-    setFollowUp(null);
-    setState({ progress: null, waitedLong: false });
-    void abandonFailedAttempt();
+    // Done with this attempt. Its request was withdrawn and the work let go
+    // when it failed (or left to the window that pressed): only its toast
+    // closes, and another window's update since goes on. Otherwise (it failed
+    // while the agent installed, or that is still being written) now.
+    const dealtWith = failureDealtWith;
+    endAttempt();
+    if (!dealtWith) void abandonFailedAttempt(progress);
     return;
   }
   // The update goes on; the toast comes back when it moves on.
   dismissedPhase = progress.phase;
 }
 
-async function abandonFailedAttempt() {
+/**
+ * Withdraws a failed attempt's request and lets work start again, unless the
+ * desktop now reports a newer request pending (another window pressed since,
+ * or the window that pressed renewed it): that one is not this attempt's.
+ */
+async function abandonFailedAttempt(failed: ServiceUpdateProgress) {
   const current = attempt;
-  const { agent } = await withdrawRequest();
-  // An install the window stopped following (it timed out here) may still run;
-  // the service stays held until it settles or the hold expires.
-  if ((agent ?? lastAgentState)?.status === "installing") return;
-  // A new attempt holds the service again.
+  const before = await readAgentState();
+  // Ended meanwhile: a new attempt, or an app restart's drain, owns the
+  // request and the hold now (a closed toast withdraws them itself).
   if (current !== attempt) return;
-  await callPrepare({ stopWork: false, releaseHold: true }, QUICK_CALL_MS);
+  if (before === null || !newerRequestPending(before, failed)) {
+    const { agent } = await withdrawRequest();
+    // An install the window stopped following (it timed out here) may still
+    // run; the service stays held until it settles or the hold expires.
+    if ((agent ?? lastAgentState)?.status === "installing") return;
+    if (current !== attempt) return;
+    await callPrepare({ stopWork: false, releaseHold: true }, QUICK_CALL_MS);
+  }
+  // Closing the toast of the failure still shown now only ends it.
+  if (current === attempt && state.progress === failed) failureDealtWith = true;
 }
 
 // One persistent toast follows the update from the click to the reload.
@@ -596,31 +768,10 @@ function syncToast() {
     now: Date.now(),
     appFollows: followUp !== null && appInstaller !== null,
   });
-  const options = stackedThreadToast({
-    type: view.type,
-    title: view.title,
-    description: view.description,
-    timeout: 0,
-    priority: view.type === "error" || view.type === "warning" ? "high" : "low",
-    actionProps:
-      view.action === null
-        ? hiddenToastActionProps
-        : {
-            children: view.action === "update-now" ? "Update now" : "Try again",
-            onClick: () => void retryServiceUpdate(),
-          },
-    data: {
-      hideCopyButton: view.type !== "error",
-      onClose: dismissToast,
-      ...(view.cancel
-        ? {
-            secondaryActionProps: {
-              children: "Cancel update",
-              onClick: () => void cancelServiceUpdate(),
-            },
-          }
-        : {}),
-    },
+  const options = serviceUpdateToastOptions(view, {
+    retry: () => void retryServiceUpdate(),
+    cancel: () => void cancelServiceUpdate(),
+    close: dismissToast,
   });
   if (toastId === null) toastId = toastManager.add(options);
   else toastManager.update(toastId, options);
@@ -632,9 +783,20 @@ const STOP_UNKNOWN =
 export interface StartServiceUpdateOptions {
   /** The service version to install; the agent's own release when omitted. */
   readonly targetVersion?: string | null;
-  /** Once the service runs the new version, the app installs this update of its own. */
+  /**
+   * Once the service runs the new version, the app installs this update of its
+   * own. A service already on that version resolves the press "app-only".
+   */
   readonly thenInstallApp?: { readonly appVersion: string | null } | null;
 }
+
+/**
+ * What a press of "Update now" did: true when an update started or the press
+ * joined one under way, false when nothing started, and "app-only" when the
+ * service already runs the version asked for, so only the app's install that
+ * the press named (`thenInstallApp`) is left, for its caller to do.
+ */
+export type ServiceUpdateStart = boolean | "app-only";
 
 /**
  * Follows a forced request already written (by another window, or before the
@@ -646,29 +808,17 @@ function followPendingRequest(
   targetVersion: string | null,
   blockers: ServiceUpdateProgress["blockers"],
 ): boolean {
-  const pending = serviceState?.pendingInstall ?? null;
-  const holdUntil = pendingHoldUntil(serviceState);
   const now = Date.now();
-  if (serviceState === null || pending === null || holdUntil === undefined || holdUntil <= now) {
-    return false;
-  }
-  if (targetVersion !== null && pending.version !== null && pending.version !== targetVersion) {
-    return false;
-  }
-  const requestedAt = Date.parse(pending.requestedAt);
-  const base: ServiceUpdateProgress = {
-    ...startServiceUpdateProgress(serviceState, pending.version ?? targetVersion),
-    phase: "requesting",
-    blockers,
-    holdUntil,
-    ...(Number.isFinite(requestedAt) ? { requestedAt, startedAt: requestedAt } : {}),
-  };
+  const found = pendingRequestProgress(serviceState, targetVersion, blockers, now);
+  // A refusal the request still gets past is followed, not shown (see followsPastRefusal).
+  const progress =
+    found?.phase === "failed" && followsPastRefusal(serviceState)
+      ? { ...found, phase: "requesting" as const, message: null }
+      : found;
+  if (serviceState === null || progress === null) return false;
   lastAgentState = serviceState;
   lastBlockerCheck = now;
-  setState({
-    progress: advanceServiceUpdateProgress(base, serviceState, now),
-    waitedLong: false,
-  });
+  setState({ progress, waitedLong: false });
   return true;
 }
 
@@ -683,18 +833,40 @@ function followPendingRequest(
 export async function startServiceUpdateNow(
   serviceState: StudioServiceUpdateState | null,
   options: StartServiceUpdateOptions = {},
-): Promise<boolean> {
+): Promise<ServiceUpdateStart> {
   const current = state.progress;
   if (state.starting || cancelling) return false;
   const thenApp = options.thenInstallApp ?? null;
   const target = options.targetVersion ?? current?.targetVersion ?? null;
   // Already under way: this press only adds the app's install to it.
   if (current !== null && !canPressUpdateAgain(current, Date.now())) {
+    // The app's install already follows this update: nothing to add.
+    if (current.phase === "restarting" && thenApp !== null && followUp !== null) return true;
     if (current.phase === "restarting" || current.phase === "failed") return false;
     if (thenApp !== null) setFollowUp({ ...thenApp, serviceVersion: current.targetVersion });
     return true;
   }
   if (!window.desktopBridge?.installServiceUpdate) return false;
+  // The service already runs the version this press asks for (its agent
+  // installed it on its own): nothing is stopped or asked of the agent. Only
+  // the app's install is left, with the warning any app restart gives;
+  // without one the update is over. Both versions come from the newest state.
+  const written = newestWrittenAgentState(serviceState);
+  const wanted =
+    current !== null
+      ? retryServiceUpdateProgress(current, written ?? lastAgentState).targetVersion
+      : startServiceUpdateProgress(serviceState, options.targetVersion).targetVersion;
+  const running = (written ?? serviceState ?? adoptInput?.serviceState ?? lastAgentState)
+    ?.installedVersion;
+  if (wanted !== null && running === wanted) {
+    const app = thenApp ?? followUp;
+    if (current !== null) endAttempt();
+    // The press named the app's install: its caller restarts the app itself,
+    // rather than through a restart it registered before this press began.
+    if (thenApp !== null) return "app-only";
+    if (app !== null && appInstallNow !== null) await appInstallNow();
+    return true;
+  }
   if (current === null && followPendingRequest(serviceState, target, [])) {
     if (thenApp !== null)
       setFollowUp({ ...thenApp, serviceVersion: state.progress?.targetVersion ?? target });
@@ -725,7 +897,7 @@ export async function startServiceUpdateNow(
   renewals = 0;
   const start =
     latest !== null
-      ? retryServiceUpdateProgress(latest, lastAgentState)
+      ? retryServiceUpdateProgress(latest, newestWrittenAgentState(serviceState) ?? lastAgentState)
       : startServiceUpdateProgress(serviceState, options.targetVersion);
   if (thenApp !== null) setFollowUp({ ...thenApp, serviceVersion: start.targetVersion });
   else if (latest === null) setFollowUp(null);
@@ -733,79 +905,8 @@ export async function startServiceUpdateNow(
   return true;
 }
 
-/**
- * Asks before an app restart installs an update while work runs. Resolves true
- * when the restart may go ahead: nothing runs, or the user chose to restart
- * anyway. Nothing runs and no question is asked when the service says so.
- */
-export async function confirmAppRestartForUpdate(
-  options: {
-    readonly version?: string | null;
-    /** The running work as the dialog shows it, under the summary. */
-    readonly renderDetails?: (blockers: ReadonlyArray<ServiceUpdateBlocker>) => ReactNode;
-  } = {},
-): Promise<AppRestartChoice> {
-  const checked = await callPrepare({ stopWork: false }, QUICK_CALL_MS);
-  const listed = checked !== null && options.renderDetails !== undefined;
-  const question =
-    checked === null
-      ? APP_RESTART_UNKNOWN
-      : describeAppRestartWarning(checked, { version: options.version ?? null, listed });
-  if (question === null) return "now";
-  // Waiting is the default: the safe choice is the one Enter picks.
-  const choice = requestChoiceDialog(question, {
-    confirmLabel: "Restart when idle",
-    alternateLabel: "Restart now",
-    cancelLabel: "Cancel",
-    ...(listed && checked !== null ? { details: options.renderDetails!(checked.blockers) } : {}),
-  });
-  if (choice === undefined) {
-    const text =
-      checked === null ? question : (describeAppRestartWarning(checked, options) ?? question);
-    return (await ensureLocalApi().dialogs.confirm(text, { variant: "destructive" }))
-      ? "now"
-      : "cancel";
-  }
-  const picked = await choice;
-  return picked === "confirm" ? "idle" : picked === "alternate" ? "now" : "cancel";
-}
-
-/** What the user chose before an update restart: now, once idle, or not at all. */
-export type AppRestartChoice = "now" | "idle" | "cancel";
-
-/**
- * Whether work still runs on the service: false when idle, null when the
- * service cannot say.
- */
-export async function isServiceWorkRunning(): Promise<boolean | null> {
-  const checked = await callPrepare({ stopWork: false }, QUICK_CALL_MS);
-  if (checked === null) return null;
-  return describeAppRestartWarning(checked) !== null;
-}
-
-/**
- * Before an app restart that takes the bundled service down with it: stops
- * running work for the update, as "Update now" does, and holds the service so
- * nothing new starts. Runs stopped this way carry the update as their cause,
- * so they continue after the restart instead of ending as cancelled. Resolves
- * true when the service answered.
- */
-export async function drainWorkForAppRestart(): Promise<boolean> {
-  // A short hold: should the service outlive the restart, it lets work start again soon.
-  const prepared = await callPrepare(
-    { stopWork: true, hold: true, reason: "app-restart" },
-    STOP_WORK_TIMEOUT_MS,
-  );
-  return prepared !== null;
-}
-
-/** Lets work start again after a drained app restart did not happen. */
-export async function releaseAppRestartDrain(): Promise<void> {
-  await callPrepare({ stopWork: false, releaseHold: true, reason: "app-restart" }, QUICK_CALL_MS);
-}
-
 /** "Update now" again (or "Try again") for the update already under way. */
-export function retryServiceUpdate(): Promise<boolean> {
+export function retryServiceUpdate(): Promise<ServiceUpdateStart> {
   return startServiceUpdateNow(null);
 }
 
@@ -818,6 +919,8 @@ export function retryServiceUpdate(): Promise<boolean> {
 export async function cancelServiceUpdate(): Promise<void> {
   if (cancelling || !isWaitingPhase(state.progress)) return;
   cancelling = true;
+  // A renewal still stopping the work has written no request yet.
+  const draining = drainingAttempt === attempt;
   // Before the withdrawal goes out, so a check or request answered meanwhile
   // for the attempt being cancelled is dropped instead of asking again.
   attempt += 1;
@@ -825,11 +928,16 @@ export async function cancelServiceUpdate(): Promise<void> {
   try {
     const { withdrawn, agent } = await withdrawRequest();
     if (current !== attempt) return;
-    if (agent !== null) {
-      lastAgentState = agent;
-      updateProgress((progress) => advanceServiceUpdateProgress(progress, agent, Date.now()));
-    }
-    // The agent started installing meanwhile; that cannot be withdrawn.
+    const progress = state.progress;
+    const answered =
+      agent === null || draining || progress === null
+        ? progress
+        : advanceServiceUpdateProgress(progress, agent, Date.now());
+    if (agent !== null) lastAgentState = agent;
+    // The agent started installing meanwhile; that cannot be withdrawn. Said
+    // before the window follows that install, which may already be done.
+    if (answered !== null && !canRetryServiceUpdate(answered)) cancelledTooLate();
+    if (answered !== progress) updateProgress(() => answered);
     if (state.progress !== null && !canRetryServiceUpdate(state.progress)) return;
     if (!withdrawn) {
       // The agent may still install, so the service stays held for it.
@@ -844,14 +952,28 @@ export async function cancelServiceUpdate(): Promise<void> {
     }
     await callPrepare({ stopWork: false, releaseHold: true }, QUICK_CALL_MS);
     if (current !== attempt) return;
-    attempt += 1;
-    installOptions = undefined;
-    holdSeen = false;
-    setFollowUp(null);
-    setState({ progress: null, waitedLong: false });
+    endAttempt();
   } finally {
     cancelling = false;
   }
+}
+
+/**
+ * A Cancel the agent's install came before: the service's install goes on and
+ * is followed to its end, but the app's own install no longer follows it,
+ * since the person cancelled. The app's Restart to update stays for a later
+ * press.
+ */
+function cancelledTooLate(): void {
+  const appFollowed = followUp !== null;
+  setFollowUp(null);
+  toastManager.add(
+    stackedThreadToast({
+      type: "warning",
+      title: "Could not cancel the update",
+      description: `SpecWithCode had already started installing the service update; it cannot be cancelled.${appFollowed ? " The app will not restart." : ""}`,
+    }),
+  );
 }
 
 /**
@@ -866,6 +988,13 @@ async function adoptHeldUpdate(
   serviceState: StudioServiceUpdateState | null,
   prepare: PrepareServiceUpdate,
 ): Promise<void> {
+  adoptInput = { serviceState, prepare };
+  if (serviceState !== null) {
+    forgetServedRelease(serviceState);
+    forgetAnsweredFollowUp(serviceState);
+    // A failed attempt overtaken by the agent is over; look afresh, as a reload would.
+    if (endOvertakenFailure(serviceState)) adoptChecked = false;
+  }
   if (adoptChecked || adopting) return;
   // "available" or "starting": the agent may be about to take up another
   // window's request; look again once it says more. A request the desktop
@@ -882,14 +1011,34 @@ async function adoptHeldUpdate(
   const current = attempt;
   try {
     const checked = await callPrepare({ stopWork: false }, QUICK_CALL_MS, prepare);
-    // No answer: look again on the next state change.
-    if (checked === null) return;
+    // The window reloaded while the service updated, and the update is done:
+    // only the app's install, which the press asked for, is left.
+    if (
+      current === attempt &&
+      state.progress === null &&
+      !state.starting &&
+      resumeFinishedFollowUp(serviceState)
+    )
+      return;
+    // No answer (the service may be restarting into the new version): look
+    // again shortly while the agent may still act on a request, since the
+    // desktop publishes nothing new until the install ends.
+    if (checked === null) {
+      scheduleAdoptRetry(serviceState);
+      return;
+    }
+    adoptRetries = 0;
     // Not held (yet): another window may start an update later, so look again on
     // the next state change rather than once per window. An install the agent
     // runs on its own (at a quiet moment, or for the app's version after the app
     // updated) holds nothing, but is shown all the same.
     if (checked.held !== true) {
+      // A request a reload would install the app after may have been
+      // withdrawn meanwhile, in another window: then an install the agent
+      // starts on its own later is no longer that press's.
+      forgetAnsweredFollowUp(serviceState, checked.held);
       if (serviceState.status === "installing") await followAgentInstall(serviceState, current);
+      else resumeOwnRequest(serviceState, checked.blockers);
       return;
     }
     // A drain before an app restart (this window's or another's) is not an
@@ -907,17 +1056,25 @@ async function adoptHeldUpdate(
         adoptChecked = false;
         return;
       }
+      // That update is over: an install the agent starts on its own later
+      // does not install the app a press before the reload asked for.
+      forgetSavedFollowUp();
       await withdrawRequest();
       if (current === attempt && state.progress === null) {
         await callPrepare({ stopWork: false, releaseHold: true }, QUICK_CALL_MS);
       }
       return;
     }
-    // No request of this window's: nothing is asked again (`installOptions`
-    // stays unset). A desktop that reports the pending request gives its time,
-    // version and hold; without one every agent state counts.
+    // The pending request gives its time, version and hold; without a live
+    // one, the agent's own state is followed.
     const pendingVersion = agent.pendingInstall?.version ?? null;
-    if (!followPendingRequest(agent, pendingVersion, checked.blockers)) {
+    if (followPendingRequest(agent, pendingVersion, checked.blockers)) {
+      // The window that pressed reloaded: the request is its own again, so a
+      // lapse renews it and a hold that runs out says so. Another window's
+      // request is only followed: nothing is asked again for it.
+      const own = savedOwnRequestFor(agent);
+      if (own !== null) takeUpOwnRequest(own);
+    } else {
       const now = Date.now();
       lastAgentState = agent;
       lastBlockerCheck = now;
@@ -928,15 +1085,111 @@ async function adoptHeldUpdate(
       };
       setState({ progress: advanceServiceUpdateProgress(base, agent, now), waitedLong: false });
     }
+    // Seen held: it ends once the hold does (see checkBlockers).
+    hold.seen = true;
     // A window reloaded during "Update now" for both still installs the app after.
-    const saved = savedFollowUp(readState().progress?.targetVersion ?? null);
-    if (saved !== null && followUp === null) {
-      followUp = saved;
-      followUpStarted = false;
-    }
+    restoreSavedFollowUp();
   } finally {
     adopting = false;
   }
+}
+
+/**
+ * The window that pressed Update now reloaded while its request is pending
+ * and the work not held (the service refused: its agent lacked the release
+ * then). It takes the request up again as its own, as the desktop reports it
+ * back, so it still holds the work once the agent has the release.
+ */
+function resumeOwnRequest(
+  serviceState: StudioServiceUpdateState,
+  blockers: ServiceUpdateProgress["blockers"],
+): void {
+  // A press made while the window looked at the service goes its own way.
+  if (state.progress !== null || state.starting) return;
+  const saved = savedOwnRequestFor(serviceState);
+  if (saved === null) return;
+  if (!followPendingRequest(serviceState, saved.version, blockers)) return;
+  takeUpOwnRequest(saved);
+  // Nothing holds the work now: it is held once the agent has the release
+  // (see holdOnceAgentHasRelease), unless that was asked already.
+  hold.refused = true;
+  hold.askedAgain = saved.holdAskedAgain;
+  // Held for it before the reload and not now: the service restarted, and the
+  // next look holds the work again (see holdRestartedService). Refused then,
+  // the agent's refusal of the request stands, as it did before the reload.
+  hold.seen = saved.held;
+  hold.refusedAgain = saved.refusedAgain;
+  restoreSavedFollowUp();
+}
+
+/** This window asks for `saved` again as it did before it reloaded. */
+function takeUpOwnRequest(saved: SavedOwnRequest): void {
+  const { version, holdUntil } = saved;
+  installOptions = { force: true, holdUntil, ...(version !== null ? { version } : {}) };
+}
+
+/**
+ * This window's attempt failed, and since then the agent started installing on
+ * its own, the service came to run the version asked for, or the agent found
+ * the release it lacked. The attempt ends, so that install is followed like
+ * any other, or the update is offered again; the app's install never runs
+ * without a press. A request this window only followed, that lapsed, gives way
+ * to its renewal instead, which the window follows (false then: nothing to
+ * look at afresh).
+ */
+function endOvertakenFailure(serviceState: StudioServiceUpdateState): boolean {
+  const progress = state.progress;
+  if (progress?.phase !== "failed" || state.starting) return false;
+  // A state older than the one the failure came from says nothing new.
+  const published = writtenAt(serviceState);
+  const seen = lastAgentState === null ? null : writtenAt(lastAgentState);
+  if (published !== null && seen !== null && published < seen) return false;
+  // This window only followed the request the agent let lapse: the window
+  // that pressed renewed it since, and this one follows the renewal.
+  const lapsed = progress.message === SERVICE_REQUEST_EXPIRED && installOptions === undefined;
+  if (lapsed && followRenewal(serviceState, progress)) return false;
+  // An install the window gave up on (it timed out) is not a new one.
+  const installing =
+    serviceState.status === "installing" && lastAgentState?.status !== "installing";
+  const installed =
+    progress.targetVersion !== null &&
+    serviceState.installedVersion === progress.targetVersion &&
+    !AGENT_UNSETTLED_ON_VERSION.has(serviceState.status);
+  // Asked again now, the service's agent no longer fails for want of the release.
+  const found =
+    progress.unavailable === true && agentOffersRelease(serviceState, progress.targetVersion);
+  if (!installing && !installed && !found) return false;
+  endAttempt();
+  return true;
+}
+
+function scheduleAdoptRetry(serviceState: StudioServiceUpdateState) {
+  const inFlight = hasPendingRequest(serviceState) || AGENT_WORKING.has(serviceState.status);
+  if (!inFlight || adoptRetryTimer !== null || adoptRetries >= MAX_ADOPT_RETRIES) return;
+  adoptRetries += 1;
+  adoptRetryTimer = window.setTimeout(() => {
+    adoptRetryTimer = null;
+    if (adoptInput !== null) void adoptHeldUpdate(adoptInput.serviceState, adoptInput.prepare);
+  }, ADOPT_RETRY_MS);
+}
+
+/** Installs the app for a press whose service update finished while the window reloaded. */
+function resumeFinishedFollowUp(serviceState: StudioServiceUpdateState): boolean {
+  const finished = finishedFollowUp(serviceState);
+  // Without the sidebar's installer the window would only reload, again and again.
+  if (finished === null || appInstaller === null) return false;
+  adoptChecked = true;
+  lastAgentState = serviceState;
+  followUp = finished;
+  followUpStarted = false;
+  setState({
+    progress: {
+      ...startServiceUpdateProgress(serviceState, finished.serviceVersion),
+      phase: "restarting",
+    },
+    waitedLong: false,
+  });
+  return true;
 }
 
 /** Shows an install the agent started on its own until the service is back. */
@@ -959,14 +1212,7 @@ async function followAgentInstall(
     ...(Number.isFinite(since) && since <= now ? { startedAt: since } : {}),
   };
   setState({ progress: advanceServiceUpdateProgress(base, agent, now), waitedLong: false });
-}
-
-function registerPrepare(prepare: PrepareServiceUpdate): () => void {
-  prepares.push(prepare);
-  return () => {
-    const index = prepares.lastIndexOf(prepare);
-    if (index >= 0) prepares.splice(index, 1);
-  };
+  restoreSavedFollowUp();
 }
 
 /**
@@ -1002,20 +1248,20 @@ export function resetServiceUpdateFlowForTests(): void {
   if (reloadTimer !== null) window.clearTimeout(reloadTimer);
   state = IDLE;
   listeners.clear();
-  prepares.length = 0;
+  forgetPreparesForTests();
   attempt += 1;
+  drainingAttempt = null;
   installOptions = undefined;
-  holdSeen = false;
   lastRequest = 0;
   lastBlockerCheck = 0;
   waitingSince = null;
   lastAgentState = null;
   renewals = 0;
+  failureDealtWith = false;
   readBusy = false;
   checkBusy = false;
-  requestBusy = false;
   cancelling = false;
-  withdrawal = null;
+  forgetWithdrawalForTests();
   adoptChecked = false;
   adopting = false;
   pollTimer = null;
@@ -1025,12 +1271,18 @@ export function resetServiceUpdateFlowForTests(): void {
   if (clockTimer !== null) window.clearInterval(clockTimer);
   clockTimer = null;
   forcedSeen = false;
+  if (appRestartTimer !== null) window.clearTimeout(appRestartTimer);
+  appRestartTimer = null;
+  resetHoldForTests();
+  forgetSavedOwnRequest();
+  if (adoptRetryTimer !== null) window.clearTimeout(adoptRetryTimer);
+  adoptRetryTimer = null;
+  adoptRetries = 0;
+  adoptInput = null;
   followUp = null;
   followUpStarted = false;
   appInstaller = null;
-  try {
-    sessionStore()?.removeItem(FOLLOW_UP_KEY);
-  } catch {
-    // No storage in this environment.
-  }
+  appInstallNow = null;
+  forgetSavedFollowUp();
+  forgetLackedRelease();
 }

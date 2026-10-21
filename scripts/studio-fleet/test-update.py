@@ -518,6 +518,12 @@ class ApplyRecovery(unittest.TestCase):
   self.assertEqual(failure['result'],'update-failed');self.assertEqual(self.restart_calls,[])
   self.assertEqual(failure['serverBrowserStop']['serverBrowser'],'stopping')
   self.assertEqual(failure['serverBrowserStop']['signals'],[{'pid':300,'startedAt':'Thu Oct 8 13:26:00 2026','signal':'SIGTERM'}])
+ def test_a_verified_update_installs_the_new_release_agent_and_names_the_result(self):
+  with patch.object(update.update_request,'refresh_agent',return_value='busy') as refresh:self.execute()
+  result=json.loads(self.output.read_text());self.assertEqual((result['phase'],result['updateAgent']),('verified','busy'))
+  self.assertEqual(refresh.call_args.args,(self.home,'m4',studio_paths.releases_root(self.home)/self.sha[:20]))
+ def test_a_mac_without_an_installed_agent_gets_none_from_the_update(self):
+  self.execute();self.assertEqual(json.loads(self.output.read_text())['updateAgent'],'absent')
  def test_additive_02_upgrade_preserves_rows_and_records_exact_version(self):
   self.incoming_version='0.2.0';self.incoming_source='a'*40
   self.execute()

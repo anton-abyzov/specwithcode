@@ -28,7 +28,7 @@ import {
   ComboboxItem,
   ComboboxListVirtualized,
 } from "../ui/combobox";
-import { ModelEsque } from "./providerIconUtils";
+import { getTriggerDisplayModelName, ModelEsque } from "./providerIconUtils";
 import { isCommandPaletteOpen } from "../../commandPaletteBus";
 import { primaryServerKeybindingsAtom } from "../../state/server";
 import {
@@ -48,6 +48,13 @@ import {
   type ProviderInstanceEntry,
 } from "../../providerInstances";
 import { providerModelKey, sortProviderModelItems } from "../../modelOrdering";
+import {
+  ModelPickerRunningNote,
+  ModelPickerUsageBand,
+  rowShowsAvailability,
+  type ModelPickerUsage,
+} from "./ModelUsage";
+import { isAvailabilityBlocking } from "../../studio/modelAvailability";
 
 type ModelPickerItem = {
   slug: string;
@@ -189,6 +196,12 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   /** One-click install here, and providers ready on the user's other machines. */
   quickSetup?: ProviderQuickSetup;
   getModelDisabledReason?: (instanceId: ProviderInstanceId, model: string) => string | null;
+  /**
+   * Usage beside each model, for pickers that choose what a chat runs next.
+   * A model whose confirmed read says its limit is spent can't be chosen; it
+   * keeps its place and shortcut, and says why.
+   */
+  usage?: ModelPickerUsage;
   onInstanceModelChange: (instanceId: ProviderInstanceId, model: string) => void;
 }) {
   const {
@@ -198,6 +211,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     getModelDisabledReason,
     onInstanceModelChange,
     onToggleModel,
+    usage,
   } = props;
   const [searchQuery, setSearchQuery] = useState("");
   const [showTopScrollFade, setShowTopScrollFade] = useState(false);
@@ -236,6 +250,15 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   const selectedModelKeySet = useMemo(
     () => new Set(selectedModelKeys ?? (activeModelKey ? [activeModelKey] : [])),
     [selectedModelKeys, activeModelKey],
+  );
+  // A spent model already in a multi-selection can still be taken out of it.
+  const usageBlockedReasonFor = useCallback(
+    (instanceId: ProviderInstanceId, modelSlug: string) =>
+      selectedModelKeys !== undefined &&
+      selectedModelKeySet.has(modelPickerModelKey(instanceId, modelSlug))
+        ? null
+        : (usage?.blockedReason(instanceId, modelSlug) ?? null),
+    [selectedModelKeySet, selectedModelKeys, usage],
   );
   const activeInstanceHasSelectableUnavailableModel =
     activeEntry !== undefined &&
@@ -450,6 +473,18 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     [instanceEntries],
   );
 
+  // A provider tab that can't run on this machine (not installed, not prepared,
+  // signed out) has no models of its own; the list then offers ready ones.
+  const alternativesFor = useMemo(() => {
+    if (isSearching || selectedInstanceId === "favorites") return null;
+    const entry = entryByInstanceId.get(selectedInstanceId);
+    if (!entry || (isProviderInstancePickerReady(entry) && entry.installed)) return null;
+    const ownSelectable = flatModels.some(
+      (model) => model.instanceId === selectedInstanceId && !model.isUnavailable,
+    );
+    return ownSelectable ? null : entry;
+  }, [entryByInstanceId, flatModels, isSearching, selectedInstanceId]);
+
   // Filter models based on search query and selected instance
   const filteredModels = useMemo(() => {
     let result = flatModels;
@@ -540,6 +575,22 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     } else {
       result = result.filter((m) => m.instanceId === selectedInstanceId);
     }
+    if (alternativesFor !== null) {
+      // The chosen provider can't run here: offer what can, never an empty list.
+      return sortProviderModelItems(
+        flatModels.filter((m) => {
+          const entry = entryByInstanceId.get(m.instanceId);
+          return (
+            entry !== undefined &&
+            isProviderInstancePickerReady(entry) &&
+            entry.installed &&
+            !m.isUnavailable &&
+            (props.lockedProvider === null || matchesLockedProvider(m))
+          );
+        }),
+        { favoriteModelKeys: favoritesSet, groupFavorites: true, instanceOrder },
+      );
+    }
 
     return sortProviderModelItems(result, {
       favoriteModelKeys: favoritesSet,
@@ -547,6 +598,8 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       instanceOrder: selectedInstanceId === "favorites" ? instanceOrder : [],
     });
   }, [
+    alternativesFor,
+    entryByInstanceId,
     favoritesSet,
     flatModels,
     instanceOrder,
@@ -619,7 +672,10 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
 
   const handleModelSelect = useCallback(
     (modelSlug: string, instanceId: ProviderInstanceId, additive = false) => {
-      if (getModelDisabledReason?.(instanceId, modelSlug)) {
+      if (
+        getModelDisabledReason?.(instanceId, modelSlug) ||
+        usageBlockedReasonFor(instanceId, modelSlug)
+      ) {
         return;
       }
       const options = modelOptionsByInstance.get(instanceId);
@@ -648,6 +704,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       modelOptionsByInstance,
       onInstanceModelChange,
       onToggleModel,
+      usageBlockedReasonFor,
     ],
   );
 
@@ -842,11 +899,53 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     };
   }, [filteredItemKeys, updateModelListScrollFades]);
 
+  const instanceUsageMark = useCallback(
+    (entry: ProviderInstanceEntry) => {
+      if (!usage) return null;
+      // Account-wide windows only: a spent Fable weekly never marks all of Claude.
+      const state = usage.availability(entry.instanceId, null);
+      if (isAvailabilityBlocking(state)) {
+        return { tone: "full" as const, text: usage.text(entry.instanceId, state).short };
+      }
+      if (state.kind === "exhausted") {
+        return { tone: "warn" as const, text: usage.text(entry.instanceId, state).short };
+      }
+      if (state.kind === "room" && state.tone !== "ok") {
+        return { tone: state.tone, text: usage.text(entry.instanceId, state).short };
+      }
+      return null;
+    },
+    [usage],
+  );
+
+  const running = usage?.running ?? null;
+  const runningEntry = running ? entryByInstanceId.get(running.instanceId) : undefined;
+  const runningOption = running
+    ? modelOptionsByInstance
+        .get(running.instanceId)
+        ?.find((option) => option.slug === running.model)
+    : undefined;
+  const runningNote =
+    running && !onToggleModel ? (
+      <ModelPickerRunningNote
+        runningLabel={`${runningOption ? getTriggerDisplayModelName(runningOption) : running.model}${
+          runningEntry ? ` (${runningEntry.displayName})` : ""
+        }`}
+        pickedDiffers={
+          running.instanceId !== props.activeInstanceId || running.model !== activeModelSlug
+        }
+      />
+    ) : null;
+
   return (
     <TooltipProvider delay={0}>
       <div
         ref={pickerContentRef}
-        className="relative flex max-h-86.5 w-screen max-w-90 flex-row overflow-hidden"
+        className={cn(
+          "relative flex w-screen max-w-90 flex-row overflow-hidden",
+          // The usage band takes room from the list, not from the models.
+          usage ? "max-h-[min(27rem,70dvh)]" : "max-h-86.5",
+        )}
         // Hold the height from when the search started; results scroll instead of resizing.
         style={isSearching ? { height: searchHeight } : undefined}
         data-model-picker-content="true"
@@ -860,6 +959,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
             instanceEntries={sidebarInstanceEntries}
             showFavorites
             {...(selectableUnavailableInstanceIds ? { selectableUnavailableInstanceIds } : {})}
+            {...(usage ? { getInstanceUsage: instanceUsageMark } : {})}
             {...(lockedDisabledInstanceIds
               ? {
                   disabledInstanceIds: lockedDisabledInstanceIds,
@@ -979,6 +1079,25 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
               onTouchStart={(e) => e.stopPropagation()}
             />
 
+            {usage && selectedEntry && !isSearching && alternativesFor === null ? (
+              <ModelPickerUsageBand entry={selectedEntry} usage={usage} />
+            ) : null}
+
+            {alternativesFor !== null ? (
+              <p
+                className="shrink-0 border-b border-border/70 px-3 py-2 text-xs leading-snug text-muted-foreground"
+                role="note"
+                data-model-picker-alternatives={alternativesFor.instanceId}
+              >
+                <span className="text-foreground">
+                  {alternativesFor.displayName} can't run on this machine yet.
+                </span>{" "}
+                {filteredModels.length > 0
+                  ? "These models are ready now:"
+                  : "No other provider is ready here."}
+              </p>
+            ) : null}
+
             {/* Model list */}
             <div
               className="relative min-h-0 overflow-hidden pr-px"
@@ -1019,8 +1138,10 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                     if (!model) {
                       return null;
                     }
+                    const usageState = usage?.availability(model.instanceId, model.slug);
+                    const usageBlockedReason = usageBlockedReasonFor(model.instanceId, model.slug);
                     const disabledReason =
-                      getModelDisabledReason?.(model.instanceId, model.slug) ?? null;
+                      getModelDisabledReason?.(model.instanceId, model.slug) ?? usageBlockedReason;
                     return (
                       <ModelListRow
                         key={modelKey}
@@ -1048,6 +1169,19 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                         unavailable={model.isUnavailable === true}
                         jumpLabel={modelJumpLabelByKey.get(modelKey) ?? null}
                         disabledReason={disabledReason}
+                        usageBlocked={
+                          disabledReason !== null && disabledReason === usageBlockedReason
+                        }
+                        availability={
+                          usage &&
+                          usageState &&
+                          rowShowsAvailability(
+                            usageState,
+                            selectedInstanceId !== "favorites" && !isSearching,
+                          )
+                            ? usage.text(model.instanceId, usageState)
+                            : null
+                        }
                         onToggleFavorite={() => toggleFavorite(model.instanceId, model.slug)}
                       />
                     );
@@ -1164,6 +1298,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                 })}
               </div>
             ) : null}
+            {runningNote}
             {props.onManageProviders ? (
               <div className="shrink-0 border-t border-border/70 p-2">
                 <Button

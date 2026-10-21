@@ -65,7 +65,8 @@ public enum TranscriptMapper {
 
     case let .dynamicTool(tool):
       let name = tool.toolName ?? item.title ?? item.toolSource?.name ?? "Tool"
-      return .tool(title: name, detail: nil, symbol: "wrench.and.screwdriver", status: toolStatus(item.status))
+      let presentation = ToolPresentation(name: name, output: tool.output, failed: toolStatus(item.status) == .failed)
+      return .tool(title: presentation.title, detail: presentation.detail, symbol: "wrench.and.screwdriver", status: toolStatus(item.status, failed: presentation.failed))
 
     case let .todoList(list):
       return .plan(steps: list.steps.map(todoStep))

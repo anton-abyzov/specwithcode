@@ -22,6 +22,7 @@ const {
   replicaMembers,
   takeoverAvailability,
   unlinkNoteWrites,
+  unlinkUndoneCopy,
 } = await import("./projectLink");
 const { copyRolesSummary } = await import("./projectDomain");
 
@@ -324,5 +325,59 @@ describe("coordinator takeover", () => {
       [],
     );
     expect(replicaMembers(tookOver, [gaveWay, tookOver])).toEqual([gaveWay]);
+  });
+});
+
+describe("unlinkUndoneCopy", () => {
+  it("has the copy leave first, then the kept project drop it, without copying notes", async () => {
+    const calls: Array<[string, string, unknown]> = [];
+    const ok = <A>(value: A) => Promise.resolve({ _tag: "Success" as const, value });
+    const record = (name: string) => (args: { environmentId: string; input: unknown }) => {
+      calls.push([name, args.environmentId, args.input]);
+      return ok(name === "preview" ? { member: member("minis", "copy") } : {});
+    };
+    await unlinkUndoneCopy({ preview: record("preview"), unlink: record("unlink") } as never, {
+      kept: { environmentId: "m4" as never, projectId: "kept" as never },
+      joining: { environmentId: "minis" as never, projectId: "copy" as never },
+      newOperationId: () => "op-undo",
+    });
+    expect(calls).toEqual([
+      ["preview", "minis", { projectId: "copy" }],
+      ["unlink", "minis", { side: "member", operationId: "op-undo", projectId: "copy", notes: [] }],
+      [
+        "unlink",
+        "m4",
+        {
+          side: "coordinator",
+          operationId: "op-undo",
+          projectId: "kept",
+          member: member("minis", "copy"),
+        },
+      ],
+    ]);
+  });
+
+  it("stops before the kept side when the copy cannot leave", async () => {
+    const unlink = vi.fn(() =>
+      Promise.resolve({ _tag: "Failure" as const, cause: new Error("offline") }),
+    );
+    await expect(
+      unlinkUndoneCopy(
+        {
+          preview: () =>
+            Promise.resolve({
+              _tag: "Success" as const,
+              value: { member: member("minis", "copy") },
+            }),
+          unlink,
+        } as never,
+        {
+          kept: { environmentId: "m4" as never, projectId: "kept" as never },
+          joining: { environmentId: "minis" as never, projectId: "copy" as never },
+          newOperationId: () => "op-undo",
+        },
+      ),
+    ).rejects.toThrow("offline");
+    expect(unlink).toHaveBeenCalledTimes(1);
   });
 });

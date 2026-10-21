@@ -38,7 +38,7 @@ import {
 import {
   PeerTranscriptMessage,
   type ReplicateMeta,
-  type TakeoverRequest,
+  TakeoverRequest,
   TakeoverResponse,
 } from "./handoffWire.ts";
 
@@ -60,6 +60,20 @@ export const HandoffThreadRecord = Schema.Struct({
   resumeTurnKey: Schema.NullOr(Schema.String),
   /** The lease epoch each recent run started under, newest last. */
   runEpochs: Schema.Record(Schema.String, NonNegativeInt),
+  /**
+   * A takeover sent while handing off that got no answer. The source re-sends
+   * it at the same epoch (the destination answers a repeat idempotently) until
+   * the destination answers or definitely refuses. Added after the first
+   * release, so older files decode to null.
+   */
+  pendingTakeover: Schema.optionalKey(
+    Schema.NullOr(
+      Schema.Struct({
+        destinationEnvironmentId: Schema.String,
+        request: TakeoverRequest,
+      }),
+    ),
+  ).pipe(Schema.withDecodingDefaultKey(Effect.succeed(null))),
 });
 export type HandoffThreadRecord = typeof HandoffThreadRecord.Type;
 
@@ -118,6 +132,7 @@ export function emptyThreadRecord(projectId: ProjectId): HandoffThreadRecord {
     sideEffects: [],
     resumeTurnKey: null,
     runEpochs: {},
+    pendingTakeover: null,
   };
 }
 

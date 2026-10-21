@@ -543,7 +543,8 @@ export const installServiceUpdates = Effect.fn("desktop.ipc.installServiceUpdate
   // The app and the service download the same release on their own clocks.
   // Once the app finds one the service does not run yet, its agent checks now
   // (and downloads, when downloads run in the background), so "Update now"
-  // finds both halves on disk.
+  // finds both halves on disk. Nobody asked for this check, so it never shows
+  // or clears a failure: a turned-off agent keeps saying so in Settings.
   const asked = new Set<string>();
   const askAgentToCheck = (appState: DesktopUpdateState) =>
     Effect.gen(function* () {
@@ -554,7 +555,11 @@ export const installServiceUpdates = Effect.fn("desktop.ipc.installServiceUpdate
       yield* logInfo("the app found a release the service does not run; asking its agent", {
         version,
       });
-      yield* request("check");
+      const written = yield* syncConfig({
+        checkRequestedAt: DateTime.formatIso(yield* DateTime.now),
+      });
+      if (written) yield* startAgent("app found a release", false).pipe(Effect.forkDetach);
+      yield* publish;
     });
   yield* Effect.scoped(
     Effect.gen(function* () {

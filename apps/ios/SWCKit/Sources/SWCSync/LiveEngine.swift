@@ -89,6 +89,7 @@ public final class LiveEngine: AppEngine {
   let connect: ConnectRuntime?
   /// Thread lists and last-seen times kept for unreachable machines.
   let fleetCache: FleetCache?
+  let handoffJournal: HandoffJournal
   /// Names of machines known from a fleet roster, by environment id.
   var fleetNames: [String: String] = [:]
   var fleetLinkedAt: [String: ContinuousClock.Instant] = [:]
@@ -108,7 +109,8 @@ public final class LiveEngine: AppEngine {
     connector: any WebSocketConnector = URLSessionWebSocketConnector(),
     options: Options = Options(),
     connect: ConnectRuntime? = nil,
-    fleetCache: FleetCache? = nil
+    fleetCache: FleetCache? = nil,
+    handoffDefaults: UserDefaults? = nil
   ) {
     self.registry = registry
     self.credentials = credentials
@@ -117,6 +119,7 @@ public final class LiveEngine: AppEngine {
     self.options = options
     self.connect = connect
     self.fleetCache = fleetCache
+    self.handoffJournal = HandoffJournal(defaults: handoffDefaults)
   }
 
   /// The engine the app uses: the registry in Application Support and tokens in the Keychain.
@@ -131,7 +134,7 @@ public final class LiveEngine: AppEngine {
     let credentials = KeychainCredentialStore()
     let connect = account.map { ConnectRuntime(account: $0, credentials: credentials, clientLabel: clientLabel(), device: .current(label: clientLabel())) }
     let cache = FleetCache(directory: url.deletingLastPathComponent().appendingPathComponent("Fleet", isDirectory: true))
-    self.init(registry: MachineRegistry(fileURL: url), credentials: credentials, options: Options(clientLabel: clientLabel), connect: connect, fleetCache: cache)
+    self.init(registry: MachineRegistry(fileURL: url), credentials: credentials, options: Options(clientLabel: clientLabel), connect: connect, fleetCache: cache, handoffDefaults: .standard)
   }
 
   // MARK: - Lifecycle

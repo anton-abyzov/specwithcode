@@ -8,6 +8,7 @@ import { DESKTOP_PASTE_AS_TEXT_EVENT } from "../../lib/desktopPasteAsText";
 import { runtimeModeConfig, runtimeModeOptions as runtimeModes } from "./runtimeModeConfig";
 import { isLocalEnvironmentDisabled } from "../../localEnvironment";
 import { usePrimaryEnvironmentId } from "../../state/environments";
+import { useMachineNickname } from "../../studio/machineNickname";
 import { useRightPanelStore } from "~/rightPanelStore";
 import { AttachmentFilePreview } from "../files/AttachmentFilePreview";
 import { Dialog, DialogPopup, DialogTitle } from "../ui/dialog";
@@ -98,6 +99,7 @@ import {
   deriveComposerSendState,
   getAntigravitySendBlockReason,
   readFileAsDataUrl,
+  resolveComposerDraftProvider,
   resolveComposerInteractionMode,
   resolveComposerProviderSelection,
   threadShellHasStarted,
@@ -1732,7 +1734,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     activeThreadEnvironmentId: _activeThreadEnvironmentId,
     activeThread,
     promptHistoryMessages,
-    isServerThread: _isServerThread,
+    isServerThread,
     isLocalDraftThread: _isLocalDraftThread,
     forceExpandedOnMobile,
     projectSelectionRequired,
@@ -2100,7 +2102,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     entries: providerInstanceEntries,
     settings,
   });
-  const selectedProviderByThreadId = composerDraft.activeProvider ?? null;
+  const selectedProviderByThreadId = resolveComposerDraftProvider({
+    draftProvider: composerDraft.activeProvider ?? null,
+    draftExplicit: composerDraft.modelSelectionExplicit === true,
+    serverInstanceId: isServerThread ? (activeThreadModelSelection?.instanceId ?? null) : null,
+  });
   const {
     selectedProviderEntry,
     requestedDriverKind,
@@ -2187,6 +2193,27 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       : (attachmentBlockReason ??
         (multipleModelSelections === null ? providerSendBlockReason : null)));
   const isSendDisabled = sendDisabledReason !== null;
+  const usageMachineLabel = useMachineNickname(environmentId, environmentUnavailable?.label);
+  // While a turn runs it keeps its model; the picker says a new pick is for the next message.
+  const runningModelSelection =
+    phase === "running" ? (reportedModelSelection ?? activeThreadModelSelection ?? null) : null;
+  const runningInstanceId = runningModelSelection?.instanceId ?? null;
+  const runningModel = runningModelSelection?.model ?? null;
+  // Same rule as the coordinator picker: only a machine known to be down is offline;
+  // one still reconnecting keeps its last read, judged by its age.
+  const environmentPhase = environmentUnavailable?.connection.phase;
+  const environmentConnected = environmentPhase !== "offline" && environmentPhase !== "error";
+  const modelPickerUsage = useMemo(
+    () => ({
+      connected: environmentConnected,
+      machineLabel: usageMachineLabel || null,
+      running:
+        runningInstanceId && runningModel
+          ? { instanceId: runningInstanceId, model: runningModel }
+          : null,
+    }),
+    [environmentConnected, runningInstanceId, runningModel, usageMachineLabel],
+  );
   const selectedProviderStatus = useMemo(
     () => selectedProviderEntry?.snapshot ?? null,
     [selectedProviderEntry],
@@ -5601,6 +5628,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           : {})}
         onOpenChange={setIsComposerModelPickerOpen}
         getModelDisabledReason={getModelDisabledReason}
+        {...(routesProjectMessage ? {} : { usage: modelPickerUsage })}
+        usageValueHiddenClassName="@max-[520px]/composer-surface:hidden"
         onInstanceModelChange={(instanceId, model) => {
           setMultipleModelSelections(null);
           onProviderModelSelect(instanceId, model);

@@ -481,6 +481,9 @@ export type AcpRegistryInspection =
       readonly version: string | null;
       readonly distribution: AcpRegistryDistributionKind | "local";
       readonly documentationUrl?: string;
+      /** Set when the registry lists a version that is not prepared yet; `version` is the prepared one. */
+      readonly availableVersion?: string;
+      readonly agentName?: string;
     };
 
 export class AcpRegistryCatalog extends Context.Service<
@@ -997,6 +1000,44 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
     return receipt;
   });
 
+  // A registry version bump must not strand an agent that is already prepared.
+  // Validate the earlier install against its own recorded version, so the
+  // versioned bin folder, executable and manifest checks still apply. The
+  // launch arguments still come from the current registry entry; agents keep
+  // them stable across releases (Copilot's is `--acp`).
+  const readRetainedPackageReceipt = Effect.fn("AcpRegistryCatalog.readRetainedPackageReceipt")(
+    function* (
+      agent: AcpRegistryAgent,
+      distribution: "npx" | "uvx",
+      packageSpec: string,
+      managerPath: string,
+    ) {
+      if (distribution !== "npx") return Option.none<AcpRegistryPackageInstallReceipt>();
+      const stored = yield* fileSystem
+        .readFileString(yield* packageReceiptPath(agent.id, distribution, managerPath))
+        .pipe(
+          Effect.map(decodePackageInstallReceipt),
+          Effect.orElseSucceed(() => Option.none()),
+        );
+      if (
+        Option.isNone(stored) ||
+        stored.value.agentId !== agent.id ||
+        stored.value.agentVersion === agent.version ||
+        stored.value.distribution !== distribution ||
+        stored.value.managerPath !== managerPath ||
+        parseNpxPackageSpec(stored.value.packageSpec).name !== parseNpxPackageSpec(packageSpec).name
+      ) {
+        return Option.none<AcpRegistryPackageInstallReceipt>();
+      }
+      return yield* readPackageReceipt(
+        { ...agent, version: stored.value.agentVersion },
+        distribution,
+        stored.value.packageSpec,
+        managerPath,
+      );
+    },
+  );
+
   const writePackageReceipt = Effect.fn("AcpRegistryCatalog.writePackageReceipt")(
     function* (receipt: AcpRegistryPackageInstallReceipt) {
       const receiptPath = yield* packageReceiptPath(
@@ -1187,6 +1228,23 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
     const receipt = yield* readPackageReceipt(agent, distribution, packageSpec, managerPath);
     if (Option.isSome(receipt) && distribution === "npx") return receipt.value;
     if (!allowInstall) {
+      const retained = yield* readRetainedPackageReceipt(
+        agent,
+        distribution,
+        packageSpec,
+        managerPath,
+      );
+      if (Option.isSome(retained)) {
+        yield* Effect.logWarning(
+          "launching the prepared ACP Registry agent version; the registry version is not prepared",
+          {
+            agentId: agent.id,
+            preparedVersion: retained.value.agentVersion,
+            registryVersion: agent.version,
+          },
+        );
+        return retained.value;
+      }
       return yield* new AcpRegistryError({
         reason: "runner_unavailable",
         detail: `${agent.name} ${agent.version} is not prepared. Use Install / update agent in Settings → Providers.`,
@@ -1787,11 +1845,28 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
           managerPath,
         );
         if (Option.isNone(receipt)) {
+          const retained = yield* readRetainedPackageReceipt(
+            agent,
+            distribution.kind,
+            distribution.packageName!,
+            managerPath,
+          );
+          if (Option.isNone(retained)) {
+            return {
+              status: "unprepared",
+              agentId,
+              version: agent.version,
+              distribution: distribution.kind,
+            } as const;
+          }
           return {
-            status: "unprepared",
+            status: "ready",
             agentId,
-            version: agent.version,
+            agentName: agent.name,
+            version: retained.value.agentVersion,
+            availableVersion: agent.version,
             distribution: distribution.kind,
+            ...(documentationUrl ? { documentationUrl } : {}),
           } as const;
         }
       }
@@ -1872,11 +1947,16 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
             !requiresExplicitAcpPreparation(agent.id, distribution.packageName),
           ),
         );
+        // A retained earlier install lives under its own version's folder.
+        const installedRoot = packageInstallRoot(
+          { ...agent, version: installed.agentVersion },
+          distribution.kind,
+        );
         command = distribution.packageName?.startsWith("@xai-official/grok@")
           ? yield* assertExecutableInRoot(
-              packageInstallRoot(agent, distribution.kind),
+              installedRoot,
               path.join(
-                packageInstallRoot(agent, distribution.kind),
+                installedRoot,
                 ".grok-install",
                 "bin",
                 platform === "win32" ? "grok.exe" : "grok",

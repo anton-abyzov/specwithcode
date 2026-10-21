@@ -39,6 +39,7 @@ import * as Stream from "effect/Stream";
 import * as GitManager from "../git/GitManager.ts";
 import * as HandoffMode from "../handoff/HandoffMode.ts";
 import { createdPullRequestKey } from "../git/linkCreatedPullRequest.ts";
+import { scrubLogSecrets } from "../pullRequest/gitHubCheckFailureLog.ts";
 import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { forkParked } from "../serverActivation.ts";
@@ -158,12 +159,47 @@ export function mergeStep(
 }
 
 function errorDetail(error: unknown): string {
-  const message =
+  // Redact complete credential shapes before truncation can remove their delimiters.
+  const message = scrubLogSecrets(
     typeof error === "object" && error !== null && "message" in error
       ? String((error as { message: unknown }).message)
-      : String(error);
+      : String(error),
+  );
   const line = message.split("\n").find((part) => part.trim() !== "") ?? message;
   return line.length > 200 ? `${line.slice(0, 199)}…` : line;
+}
+
+/**
+ * A blocked notice: a one-line summary the timeline row shows, then the full
+ * error and its Git context for the inspector and its copy action, scrubbed of
+ * credential shapes.
+ */
+export function failureNotice(
+  summary: string,
+  error: unknown,
+  context: { readonly branch: string; readonly worktree: string },
+): string {
+  const fields =
+    typeof error === "object" && error !== null ? (error as Record<string, unknown>) : {};
+  const message = fields.message === undefined ? String(error) : String(fields.message);
+  const lines = [
+    `${summary}: ${errorDetail(error)}`,
+    "",
+    `Branch: ${context.branch}`,
+    `Worktree: ${context.worktree}`,
+  ];
+  for (const [label, key] of [
+    ["Operation", "operation"],
+    ["Command", "command"],
+    ["Exit code", "exitCode"],
+    ["Reason", "reason"],
+  ] as const) {
+    const value = fields[key];
+    if (typeof value === "string" || typeof value === "number") lines.push(`${label}: ${value}`);
+  }
+  const full = message.trim();
+  if (full !== errorDetail(error)) lines.push("", full);
+  return scrubLogSecrets(lines.join("\n"));
 }
 
 interface PendingMerge {
@@ -389,7 +425,10 @@ export const make = Effect.gen(function* () {
       yield* notice(
         threadId,
         "blocked",
-        `Could not open a pull request: ${errorDetail(result.failure)}`,
+        failureNotice("Could not open a pull request", result.failure, {
+          branch: thread.branch,
+          worktree: cwd,
+        }),
       );
       return;
     }

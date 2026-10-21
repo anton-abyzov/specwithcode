@@ -515,17 +515,28 @@ export interface AgentStartFailure {
 /**
  * Reports a failed agent start through the state the renderer polls, until the
  * agent writes a newer state of its own. The failure carries its own time, so
- * a renderer that ignores answers older than its request still takes it.
+ * a renderer that ignores answers older than its request still takes it. It is
+ * flagged as the desktop's own: the agent's versions it keeps are no release a
+ * forced request could install while the agent does not run. Every other state
+ * says it is not, so a renderer tells this desktop from an older one that
+ * never flags its failures.
  */
 export function withAgentStartFailure(
   state: StudioServiceUpdateState,
   failure: AgentStartFailure | null,
 ): StudioServiceUpdateState {
-  if (failure === null || state.status === "not-managed") return state;
+  const agentStarted = { ...state, agentStartFailed: false };
+  if (failure === null || state.status === "not-managed") return agentStarted;
   const written = isoMillis(state.updatedAt ?? null);
   const failed = isoMillis(failure.at);
-  if (written !== null && failed !== null && written >= failed) return state;
-  return { ...state, status: "error", message: failure.message, updatedAt: failure.at };
+  if (written !== null && failed !== null && written >= failed) return agentStarted;
+  return {
+    ...state,
+    status: "error",
+    message: failure.message,
+    updatedAt: failure.at,
+    agentStartFailed: true,
+  };
 }
 
 /**

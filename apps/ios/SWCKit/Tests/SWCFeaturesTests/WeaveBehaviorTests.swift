@@ -17,6 +17,13 @@ struct MarkdownLinkTests {
     String(MarkdownInline.render(markdown, dynamicTypeSize: .large).characters)
   }
 
+  @Test func bareLinksSurviveMessageMarkdownWithoutLinkifyingCode() {
+    #expect(links("See https://example.com/check").count == 1)
+    #expect(links("See www.example.com").count == 1)
+    #expect(links("Run \u{0060}https://example.com/check\u{0060}").isEmpty)
+    #expect(links("specwithcode://pair/token").isEmpty)
+  }
+
   @Test func webMailAndPhoneLinksStay() throws {
     #expect(links("See [the run](https://github.com/acme/web/actions).") == [try #require(URL(string: "https://github.com/acme/web/actions"))])
     #expect(links("[local](http://localhost:3000/docs)").count == 1)
@@ -47,6 +54,28 @@ struct MarkdownLinkTests {
     #expect(MarkdownInline.isOpenable(try #require(URL(string: "Mailto:a@b.co"))))
     #expect(!MarkdownInline.isOpenable(try #require(URL(string: "SpecWithCode://thread/a/b"))))
     #expect(!MarkdownInline.isOpenable(try #require(URL(string: "relative/path"))))
+  }
+
+  @Test func threadLinksAreNavigationOnly() throws {
+    let url = try #require(URL(string: "studio://thread/thread%3Adelegated%2Fchild"))
+    #expect(MarkdownThreadLink.threadId(url) == "thread:delegated/child")
+    #expect(links("[Child conversation](\(url.absoluteString))") == [url])
+    #expect(!MarkdownInline.isOpenable(url))
+    for raw in ["studio://pair/token", "studio://thread/", "studio://thread/a/b/c", "studio://thread//a", "studio://thread/a/", "studio://thread/a/%2E%2E", "studio://thread/a/%09", "studio://thread:80/a", "studio://user@thread/a", "studio://thread/a?token=x", "studio://thread/a#x", "studio://thread/%0A"] {
+      #expect(MarkdownThreadLink.threadId(try #require(URL(string: raw))) == nil)
+    }
+  }
+
+  @Test func fleetThreadLinksKeepMachineAndEncodedIdentifiers() throws {
+    let url = try #require(URL(string: "studio://thread/env%2Fminis/thread%3Adelegated%2Fchild"))
+    let route = try #require(MarkdownThreadLink.route(url))
+    #expect(route.environmentId == "env/minis")
+    #expect(route.threadId == "thread:delegated/child")
+    #expect(links("[Worker](\(url.absoluteString))") == [url])
+    let localURL = try #require(URL(string: "studio://thread/local%2Fid"))
+    let local = try #require(MarkdownThreadLink.route(localURL))
+    #expect(local.environmentId == nil)
+    #expect(local.threadId == "local/id")
   }
 
   @Test func inlineCodeStillRendersAtEverySize() {
@@ -129,5 +158,23 @@ struct DesignRefinementTests {
     #expect(WeaveFont.body.lineHeightMultiple == 1.55)
     #expect(MarkdownText.fadeHeight == 64)
     #expect(ComposerBar.stopGlyphScale == 0.55)
+  }
+}
+
+@Suite("Markdown block boundaries")
+struct MarkdownBoundaryTests {
+  @Test func tableAfterListKeepsItsColumns() {
+    let source = "- **Done**: check `swift test`\n| Task | State |\n| --- | --- |\n| AC-01 | Passed |"
+    #expect(MarkdownParser.parse(source) == [
+      .list([MarkdownListItem(text: "**Done**: check `swift test`", level: 0, marker: .bullet)]),
+      .table(header: ["Task", "State"], rows: [["AC-01", "Passed"]]),
+    ])
+  }
+
+  @Test func streamingCodeAndListContinueToRender() {
+    #expect(MarkdownParser.parse("1. Run tests\n   - Keep **failures**\n\n```swift\nlet value = 1") == [
+      .list([MarkdownListItem(text: "Run tests", level: 0, marker: .number(1)), MarkdownListItem(text: "Keep **failures**", level: 1, marker: .bullet)]),
+      .code(language: "swift", text: "let value = 1"),
+    ])
   }
 }

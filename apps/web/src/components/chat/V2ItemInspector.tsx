@@ -12,9 +12,10 @@ import {
   turnItemOutputText,
 } from "@specweave-studio/client-runtime/work-log/item-detail";
 import { commandHighlightLanguage } from "@specweave-studio/client-runtime/work-log/command-label";
-import { ExternalLinkIcon, GitBranchIcon, RotateCcwIcon } from "lucide-react";
+import { CheckIcon, CopyIcon, ExternalLinkIcon, GitBranchIcon, RotateCcwIcon } from "lucide-react";
 import { memo, Suspense, use, useMemo } from "react";
 
+import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { useTheme } from "../../hooks/useTheme";
 import { cn } from "../../lib/utils";
 import { resolveDiffThemeName } from "../../lib/diffRendering";
@@ -94,6 +95,21 @@ function StructuredValue({
         text
       )}
     </pre>
+  );
+}
+
+/** A notice's full text with a copy action, so its diagnostics can be shared. */
+function NoticeDetail({ message }: { readonly message: string }) {
+  const { copyToClipboard, isCopied } = useCopyToClipboard();
+  if (!message) return null;
+  return (
+    <div className="space-y-1.5">
+      <StructuredValue value={message} />
+      <Button size="xs" variant="outline" onClick={() => copyToClipboard(message, undefined)}>
+        {isCopied ? <CheckIcon className="size-3" /> : <CopyIcon className="size-3" />}
+        {isCopied ? "Copied" : "Copy details"}
+      </Button>
+    </div>
   );
 }
 
@@ -390,7 +406,7 @@ export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspec
         <StructuredValue value={item.questions.map((question) => question.question).join("\n\n")} />
       ) : null}
       {item.type === "notification" ? <StructuredValue value={item.detail} /> : null}
-      {item.type === "system_notice" ? <StructuredValue value={item.message} /> : null}
+      {item.type === "system_notice" ? <NoticeDetail message={item.message} /> : null}
       {item.type === "error" ? <StructuredValue value={item.failure.message} /> : null}
       {item.type === "proposed_plan" ? <StructuredValue value={item.markdown} /> : null}
       {item.type === "todo_list" ? (

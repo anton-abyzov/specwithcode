@@ -92,9 +92,11 @@ export async function writeCheckpoint(input: {
   readonly cwd: string;
   readonly threadId: string;
   readonly message?: string;
+  /** Another ref to write the snapshot to; defaults to the thread's hidden handoff ref. */
+  readonly ref?: string;
 }): Promise<CheckpointCommit> {
   const root = await repositoryRoot(input.cwd);
-  const ref = handoffRef(input.threadId);
+  const ref = input.ref ?? handoffRef(input.threadId);
   const head = await runGit(root, ["rev-parse", "--verify", "-q", "HEAD^{commit}"], {
     allowFailure: true,
   });
@@ -235,6 +237,78 @@ export async function writeCheckpoint(input: {
 }
 
 /** Pushes only the hidden ref to `origin`; false when there is no origin or the push failed. */
+const FENCED_BRANCH_ATTEMPTS = 20;
+
+function machineSlug(label: string): string {
+  return (
+    label
+      .toLowerCase()
+      .replace(/[^a-z0-9]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 40) || "machine"
+  );
+}
+
+async function treeOf(root: string, commit: string): Promise<string | null> {
+  const result = await runGit(root, ["rev-parse", "-q", "--verify", `${commit}^{tree}`], {
+    allowFailure: true,
+  });
+  return result.code === 0 ? result.stdout.trim() : null;
+}
+
+/**
+ * A copy fenced while it was away (another machine continued the thread)
+ * keeps what it changed after its last handed-over checkpoint on
+ * `swc/from-<machine>/<branch>` for review. The branch only gains a ref:
+ * HEAD, the index and the working tree stay as they are, and nothing is
+ * merged. Returns the branch name, or null when nothing changed.
+ */
+export async function keepFencedChanges(input: {
+  readonly cwd: string;
+  readonly threadId: string;
+  readonly machineLabel: string;
+  /** The checkpoint the other machine continued from, when known. */
+  readonly handedOverCommit: string | null;
+}): Promise<string | null> {
+  const scratchRef = `refs/specwithcode/fenced/${refComponent(input.threadId)}`;
+  const snapshot = await writeCheckpoint({
+    cwd: input.cwd,
+    threadId: input.threadId,
+    ref: scratchRef,
+    message: `SpecWithCode: changes on ${input.machineLabel} after another machine continued this thread`,
+  });
+  const root = snapshot.root;
+  try {
+    const own = await treeOf(root, snapshot.commit);
+    const handedOver =
+      input.handedOverCommit === null ? null : await treeOf(root, input.handedOverCommit);
+    const compareTo = handedOver ?? (await treeOf(root, snapshot.baseCommit));
+    if (own === null || own === compareTo) return null;
+    const leaf = snapshot.branch ?? `thread-${refComponent(input.threadId)}`;
+    const base = `swc/from-${machineSlug(input.machineLabel)}/${leaf}`;
+    const valid = await runGit(root, ["check-ref-format", "--branch", base], {
+      allowFailure: true,
+    });
+    const stem =
+      valid.code === 0
+        ? base
+        : `swc/from-${machineSlug(input.machineLabel)}/thread-${refComponent(input.threadId)}`;
+    for (let attempt = 1; attempt <= FENCED_BRANCH_ATTEMPTS; attempt += 1) {
+      const name = attempt === 1 ? stem : `${stem}-${attempt}`;
+      // An empty old value creates the branch only if it does not exist yet.
+      const created = await runGit(
+        root,
+        ["update-ref", `refs/heads/${name}`, snapshot.commit, ""],
+        { allowFailure: true },
+      );
+      if (created.code === 0) return name;
+    }
+    throw new CheckpointError("failed", `Could not name a branch for the changes under ${stem}.`);
+  } finally {
+    await runGit(root, ["update-ref", "-d", scratchRef], { allowFailure: true });
+  }
+}
+
 export async function pushCheckpointRef(root: string, ref: string): Promise<boolean> {
   const origin = await runGit(root, ["remote", "get-url", "origin"], { allowFailure: true });
   if (origin.code !== 0) return false;

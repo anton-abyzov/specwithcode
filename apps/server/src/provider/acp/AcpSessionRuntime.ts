@@ -14,6 +14,7 @@ import * as Exit from "effect/Exit";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as PlatformError from "effect/PlatformError";
 import * as Queue from "effect/Queue";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
@@ -1573,9 +1574,16 @@ export const make = (
               { ...process.env, ...options.spawn.env },
             );
             if (resolved !== undefined) return resolved;
+            // The same NotFound shape a direct spawn ENOENT has, so callers
+            // report a missing command the same way with or without containment.
             return yield* new EffectAcpErrors.AcpSpawnError({
               command: options.spawn.command,
-              cause: new Error("Contained ACP command was not found on PATH"),
+              cause: PlatformError.systemError({
+                _tag: "NotFound",
+                module: "ChildProcess",
+                method: "spawn",
+                description: "Contained ACP command was not found on PATH",
+              }),
             });
           });
     const containedSpawnCommand =

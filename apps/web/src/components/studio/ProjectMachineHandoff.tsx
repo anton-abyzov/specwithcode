@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import type { EnvironmentProject } from "@specweave-studio/client-runtime/state/shell";
 import { squashAtomCommandFailure } from "@specweave-studio/client-runtime/state/runtime";
@@ -31,7 +31,7 @@ import { derivePhysicalProjectKeyFromPath } from "../../logicalProject";
 import { MachineHandoffButton, MachineHandoffDialog } from "./MachineHandoffDialog";
 import { Tip } from "./shell/Tip";
 import { HandoffFolderPicker } from "./HandoffFolderPicker";
-import { HandoffFolderCopy } from "./HandoffFolderCopy";
+import { HandoffFolderCopy, folderCopyStorageKey } from "./HandoffFolderCopy";
 import type { HandoffFolderMethod } from "../../studio/folderCopy";
 import { isProjectFolder } from "../../studio/projectMachineFolders";
 import { isArchivedMember } from "../../studio/projectListVisibility";
@@ -85,17 +85,19 @@ export function ProjectMachineHandoff({
   const receive = useAtomCommand(machineHandoff.receive, { reportFailure: false });
   const storageKey = machineHandoffStorageKey(project.environmentId, project.id);
   const [open, setOpen] = useState(false);
-  const changeOpen = (value: boolean) => {
-    setOpen(value);
-    onOpenChange?.(value);
-  };
   useEffect(() => () => onOpenChange?.(false), [onOpenChange]);
   const [selected, setSelected] = useState("");
   const [pickerMachine, setPickerMachine] = useState<EnvironmentId | null>(null);
   const preferenceKey = handoffMachinePreferenceKey(project.environmentId, project.id);
   const [preference, setPreference] = useState(() => readHandoffMachinePreference(preferenceKey));
   const fleet = useStudioFleet(project.environmentId);
-  const [snapshot, setSnapshot] = useState<MachineHandoffPrepareResult | null>(null);
+  const [snapshot, setSnapshotState] = useState<MachineHandoffPrepareResult | null>(null);
+  // Handlers read the latest snapshot even before React commits it (a late folder save).
+  const latestSnapshot = useRef<MachineHandoffPrepareResult | null>(null);
+  const setSnapshot = (value: MachineHandoffPrepareResult | null) => {
+    latestSnapshot.current = value;
+    setSnapshotState(value);
+  };
   const [receipt, setReceipt] = useState<MachineHandoffReceiveResult | null>(null);
   const [consent, setConsent] = useState(false);
   const [phase, setPhase] = useState<
@@ -108,6 +110,14 @@ export function ProjectMachineHandoff({
   const [copyBusy, setCopyBusy] = useState(false);
   // A synchronous gate catches double-clicks before React paints the disabled button.
   const running = useRef(false);
+  // The operation this dialog prepared without publishing, until a transfer tries to publish it.
+  // Only such an operation can be dropped: a publish attempt may already have fenced the source.
+  const unpublished = useRef<string | null>(null);
+  const [unpublishedOperation, setUnpublishedOperation] = useState<string | null>(null);
+  const markUnpublished = (operationId: string | null) => {
+    unpublished.current = operationId;
+    setUnpublishedOperation(operationId);
+  };
   const repositoryKey = project.repositoryIdentity
     ? repositoryGroupingKeyOf(project.repositoryIdentity)
     : null;
@@ -183,17 +193,6 @@ export function ProjectMachineHandoff({
     canOperate.has(project.environmentId) &&
     canGit.has(project.environmentId) &&
     canWrite.has(project.environmentId);
-  useEffect(() => {
-    if (!requestedTarget) return;
-    setSelected(requestedTarget);
-    setPickerMachine(null);
-    setSnapshot(null);
-    setReceipt(null);
-    setConsent(false);
-    setPhase("choose");
-    setError(null);
-    changeOpen(true);
-  }, [requestedTarget]);
   const target = candidates.find((item) => `${item.environmentId}:${item.id}` === selected);
   const destinationPlan = target
     ? {
@@ -216,6 +215,74 @@ export function ProjectMachineHandoff({
     setError(
       cause instanceof Error ? cause.message : "The handoff could not finish. Retry this handoff.",
     );
+  const reviewed =
+    snapshot?.publication === "unpublished" &&
+    phase === "review" &&
+    unpublishedOperation === snapshot.bundle.manifest.operationId;
+  /**
+   * Returns to the choices from an unpublished preview. Published checkpoints, and ones a
+   * transfer tried to publish, stay until they finish or are recovered. Choices change only
+   * when nothing reviewed remains.
+   */
+  function discardPreview(): "none" | "discarded" | "failed" {
+    if (running.current) return "failed";
+    const current = latestSnapshot.current;
+    if (!current) {
+      // A review that failed after preparing leaves an unpublished operation; start fresh.
+      try {
+        const pending = parsePendingMachineHandoff(localStorage.getItem(storageKey));
+        if (pending && pending.operationId === unpublished.current) {
+          localStorage.removeItem(storageKey);
+          markUnpublished(null);
+        }
+      } catch {
+        /* The retained pointer resumes the same unpublished operation, which is safe. */
+      }
+      return "none";
+    }
+    // Refs, not render state: a stale render must not discard a newer or attempted operation.
+    if (
+      current.publication !== "unpublished" ||
+      unpublished.current !== current.bundle.manifest.operationId
+    )
+      return "failed";
+    try {
+      localStorage.removeItem(storageKey);
+      markUnpublished(null);
+    } catch (cause) {
+      // A retained pointer would silently reuse this operation; keep the review visible.
+      showError(cause);
+      return "failed";
+    }
+    setSnapshot(null);
+    setConsent(false);
+    setCanRestart(false);
+    setError(null);
+    setPhase("choose");
+    return "discarded";
+  }
+  // A folder save can finish after its picker is gone; it must see the current review.
+  const latestDiscard = useRef(discardPreview);
+  useLayoutEffect(() => {
+    latestDiscard.current = discardPreview;
+  });
+  const changeOpen = (value: boolean) => {
+    // Closing cancels an unpublished review, so the next opening starts from the choices.
+    if (!value && phase !== "complete" && discardPreview() === "none") setError(null);
+    setOpen(value);
+    onOpenChange?.(value);
+  };
+  useEffect(() => {
+    if (!requestedTarget) return;
+    setSelected(requestedTarget);
+    setPickerMachine(null);
+    setSnapshot(null);
+    setReceipt(null);
+    setConsent(false);
+    setPhase("choose");
+    setError(null);
+    changeOpen(true);
+  }, [requestedTarget]);
   const forgetCompleted = () => {
     try {
       localStorage.removeItem(storageKey);
@@ -250,6 +317,7 @@ export function ProjectMachineHandoff({
       if (acknowledged._tag === "Failure") throw squashAtomCommandFailure(acknowledged);
     }
     setPreference(writeHandoffMachinePreference(preferenceKey, { lastUsed: target.environmentId }));
+    markUnpublished(null);
     setReceipt(completed);
     setPhase("complete");
     forgetCompleted();
@@ -271,9 +339,20 @@ export function ProjectMachineHandoff({
     setPhase("checking");
     try {
       const pending = parsePendingMachineHandoff(localStorage.getItem(storageKey));
+      if (pending?.publishing && pending.targetKey !== selected)
+        throw new Error(
+          "An earlier handoff stopped while publishing. Select its folder again to finish it.",
+        );
       const operationId = pending?.targetKey === selected ? pending.operationId : randomUUID();
       // Persist before either RPC: an ambiguous response retries the same operation.
-      localStorage.setItem(storageKey, JSON.stringify({ operationId, targetKey: selected }));
+      localStorage.setItem(
+        storageKey,
+        JSON.stringify({
+          operationId,
+          targetKey: selected,
+          ...(pending?.targetKey === selected && pending.publishing ? { publishing: true } : {}),
+        }),
+      );
       let prepared = await prepare({
         environmentId: project.environmentId,
         input: {
@@ -307,6 +386,13 @@ export function ProjectMachineHandoff({
         }
       }
       if (prepared._tag === "Failure") throw squashAtomCommandFailure(prepared);
+      // After a publish attempt, even before a reload, the source may already be fenced.
+      markUnpublished(
+        prepared.value.publication === "unpublished" &&
+          !(pending?.targetKey === selected && pending.publishing)
+          ? operationId
+          : null,
+      );
       if (prepared.value.bundle.destination?.executionMode !== "project-folder") {
         setCanRestart(prepared.value.publication === "unpublished" && !!pending);
         throw new Error(
@@ -365,6 +451,13 @@ export function ProjectMachineHandoff({
         await complete(checked.value, snapshot.bundle);
         return;
       }
+      // Recorded before publishing so a reload never offers to drop this operation; a failed
+      // write publishes nothing, so the review stays editable.
+      localStorage.setItem(
+        storageKey,
+        JSON.stringify({ operationId, targetKey: selected, publishing: true }),
+      );
+      markUnpublished(null);
       const published = await prepare({
         environmentId: project.environmentId,
         input: {
@@ -419,6 +512,7 @@ export function ProjectMachineHandoff({
     canCommit: canGit.has(project.environmentId),
   });
   const rememberedId = target?.environmentId ?? pickerMachine;
+  const suggestedMachine = pickHandoffMachine(machines, preference) as EnvironmentId | null;
   const rememberedCandidate = machines.find((machine) => machine.id === rememberedId) ?? null;
 
   return (
@@ -437,8 +531,14 @@ export function ProjectMachineHandoff({
             if (!snapshot) {
               try {
                 const pending = parsePendingMachineHandoff(localStorage.getItem(storageKey));
-                // An unfinished Git handoff resumes in the method that started it.
+                // An unfinished Git handoff resumes in the method that started it, an
+                // unfinished copy in the current one; otherwise every opening starts fresh.
                 if (pending) setMethod("folder");
+                else if (
+                  localStorage.getItem(folderCopyStorageKey(project.environmentId, project.id)) ===
+                  null
+                )
+                  setMethod("copy");
                 const saved = readHandoffMachinePreference(preferenceKey);
                 setPreference(saved);
                 const preferred = pickHandoffMachine(machines, saved);
@@ -472,12 +572,16 @@ export function ProjectMachineHandoff({
         destinations={destinations}
         selected={selected}
         onSelect={(key) => {
+          if (discardPreview() === "failed") return;
           setSelected(key);
           setPickerMachine(null);
         }}
         sourceChanges={sourceChanges}
         method={method}
-        onMethodChange={setMethod}
+        onMethodChange={(next) => {
+          if (discardPreview() === "failed") return;
+          setMethod(next);
+        }}
         copyBusy={copyBusy}
         copyFlow={
           method === "folder" ? undefined : (
@@ -495,6 +599,7 @@ export function ProjectMachineHandoff({
                 candidates.find((item) => item.environmentId === environmentId)?.workspaceRoot ??
                 null
               }
+              preferredMachine={suggestedMachine}
               canMove={sourceReady}
               onBusyChange={setCopyBusy}
               onOpenProject={({ environmentId, projectId, folder }) => {
@@ -532,6 +637,7 @@ export function ProjectMachineHandoff({
               existingFolders={projects}
               machines={machines}
               machine={pickerMachine}
+              suggestedMachine={suggestedMachine}
               onMachineChange={(machine) => {
                 setPickerMachine(machine);
                 if (machine) setSelected("");
@@ -541,6 +647,8 @@ export function ProjectMachineHandoff({
               }
               sourceFolder={project.workspaceRoot}
               onSaved={(environmentId, projectId) => {
+                // A save that lands during or after a review must not retarget that review.
+                if (latestDiscard.current() === "failed") return;
                 setSelected(`${environmentId}:${projectId}`);
                 setError(null);
               }}
@@ -584,11 +692,13 @@ export function ProjectMachineHandoff({
             .then(() => changeOpen(false))
             .catch(showError);
         }}
+        onBack={reviewed ? () => void discardPreview() : undefined}
         onRestart={
           canRestart
             ? () => {
                 try {
                   localStorage.removeItem(storageKey);
+                  markUnpublished(null);
                   setSnapshot(null);
                   setConsent(false);
                   setCanRestart(false);

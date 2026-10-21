@@ -7,6 +7,10 @@ import {
 } from "@specweave-studio/contracts";
 import { formatStudioThreadLink } from "@specweave-studio/shared/studioThreadLinks";
 import {
+  isPersonalAssistantProject,
+  PERSONAL_ASSISTANT_PRIVATE_MESSAGE,
+} from "@specweave-studio/shared/personalAssistant";
+import {
   modelSelectionEffortValue,
   resolveEffort,
   withEffortSelection,
@@ -166,6 +170,26 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
               });
         const placed = yield* launchTarget(context, input, targetProject);
         let skipped = placed.skipped;
+        // A personal assistant's work stays on its machine: neither it nor
+        // its threads start work on another machine.
+        if (placed.target.kind === "remote") {
+          const callerProject =
+            caller === undefined || caller.projectId === targetProject?.id
+              ? targetProject
+              : yield* Project.ProjectService.pipe(
+                  Effect.flatMap((projects) => projects.getById(caller.projectId as never)),
+                  Effect.map(Option.getOrUndefined),
+                  Effect.orElseSucceed(() => undefined),
+                );
+          if (
+            isPersonalAssistantProject(targetProject) ||
+            isPersonalAssistantProject(callerProject)
+          )
+            return yield* new OrchestratorMcpFailure({
+              code: "invalid_request",
+              message: `${PERSONAL_ASSISTANT_PRIVATE_MESSAGE} Start this work here, or route it with studio_project_route to a project on this machine.`,
+            });
+        }
         if (placed.target.kind === "remote") {
           const machine = placed.target;
           if (input.effort !== undefined)
@@ -506,7 +530,9 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
           return yield* new OrchestratorMcpFailure({
             code: "invalid_request",
             message:
-              "Approved folders and the project kind are the user's to change in project settings; they decide what agents here can reach.",
+              lifecycle?.kind !== undefined && lifecycle.kind !== (current?.kind ?? "code")
+                ? "A project's kind is fixed when it is created; make a new project of the kind you need."
+                : "Approved folders are the user's to change in project settings; they decide what agents here can reach.",
           });
       }
       return yield* projects

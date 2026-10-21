@@ -35,6 +35,8 @@ export interface UpdatesHarnessOptions {
   readonly startBackend?: Effect.Effect<void>;
   readonly env?: Record<string, string | undefined>;
   readonly platform?: NodeJS.Platform;
+  /** False for an unpackaged (dev) build. */
+  readonly isPackaged?: boolean;
   /** Contents of the resources/package-type marker a Linux package ships. */
   readonly packageType?: string | undefined;
 }
@@ -158,7 +160,7 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
     processArch: "x64",
     appVersion: "1.2.3",
     appPath: "/repo",
-    isPackaged: true,
+    isPackaged: options.isPackaged ?? true,
     resourcesPath: "/missing/resources",
     runningUnderArm64Translation: false,
   }).pipe(

@@ -64,7 +64,12 @@ const machineLayer = (environmentId: EnvironmentId) =>
     ),
   );
 
-const machine = (environmentId: EnvironmentId, projectId: ProjectId, linked = true) =>
+const machine = (
+  environmentId: EnvironmentId,
+  projectId: ProjectId,
+  linked = true,
+  kind: "code" | "personal" = "code",
+) =>
   Effect.gen(function* () {
     const context = yield* Layer.build(machineLayer(environmentId));
     yield* Context.get(context, Projects.ProjectStoreV2).apply({
@@ -88,6 +93,7 @@ const machine = (environmentId: EnvironmentId, projectId: ProjectId, linked = tr
         updatedAt: "2026-10-09T00:00:00.000Z",
         workspaceSettings: {
           ...DEFAULT_PROJECT_WORKSPACE_SETTINGS,
+          kind,
           ...(linked ? { logicalProject: logical } : {}),
         },
       },
@@ -344,6 +350,37 @@ it.layer(NodeServices.layer, { excludeTestServices: true })("linked plan claims"
         });
       assert.isTrue((yield* accepted()).changed);
       assert.isFalse((yield* accepted()).changed);
+    }),
+  );
+
+  it.effect("never exports a personal assistant's plan nor merges another machine's into it", () =>
+    Effect.gen(function* () {
+      // Linked before the rule that keeps a personal assistant on its machine.
+      const household = yield* machine(envA, projectA, true, "personal");
+      const b = yield* machine(envB, projectB);
+      yield* household.plans.replace({
+        projectId: projectA,
+        actor: user,
+        expectedRevision: 0,
+        definition,
+      });
+      yield* b.plans.replace({ projectId: projectB, actor: user, expectedRevision: 0, definition });
+      const exportRefused = yield* household.plans
+        .exportLinked({ projectId: projectA })
+        .pipe(Effect.flip);
+      assert.equal(exportRefused.code, "not_linked");
+      const fromB = yield* b.plans.exportLinked({ projectId: projectB });
+      const mergeRefused = yield* household.plans
+        .mergeLinked({
+          projectId: projectA,
+          peer: { environmentId: envB, projectId: projectB, label: "Mac B" },
+          export: fromB,
+        })
+        .pipe(Effect.flip);
+      assert.equal(mergeRefused.code, "not_linked");
+      const kept = yield* household.plans.read({ projectId: projectA });
+      assert.equal(kept.revision, 1);
+      assert.isUndefined(kept.native!.machines);
     }),
   );
 });

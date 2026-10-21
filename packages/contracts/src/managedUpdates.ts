@@ -192,8 +192,19 @@ export const StudioServiceUpdateStateSchema = Schema.Struct({
   /**
    * The install request some window wrote that the agent has not finished:
    * every window follows it instead of asking again. Null when there is none
-   * (or it was cancelled or lapsed); absent from older desktops.
+   * (or it was cancelled or lapsed). The renderer is bundled with the desktop
+   * and relies on it: that desktop reports it for every installed service, and
+   * a state without it (no service here, or a desktop before 1.0.63, which
+   * never runs this renderer) reads as no request pending.
    */
   pendingInstall: Schema.optionalKey(Schema.NullOr(StudioServicePendingInstallSchema)),
+  /**
+   * The error is the desktop's own: it could not start the agent (or save the
+   * request), and the agent has written nothing since. False in every other
+   * state the desktop reports. The renderer is bundled with the desktop and
+   * relies on it: a state without it (from a desktop before this field, which
+   * never runs this renderer) reads as no such failure.
+   */
+  agentStartFailed: Schema.optionalKey(Schema.Boolean),
 });
 export type StudioServiceUpdateState = typeof StudioServiceUpdateStateSchema.Type;

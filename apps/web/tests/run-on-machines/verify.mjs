@@ -112,10 +112,7 @@ async function addViews(width, height, theme) {
     // D-02: a diverged repository never offers to overwrite what Mini 2 has; only the one
     // differing file (inside its own conflict list) offers the source version.
     await dialog.getByText("Leave both untouched").waitFor();
-    assert.equal(
-      await dialog.getByText("Take the source version (back up this one)", { exact: true }).count(),
-      1,
-    );
+    assert.equal(await dialog.getByText(/^Take .+’s version \(back up Mini 2’s\)$/u).count(), 1);
     const started = await page.evaluate(() =>
       window.calls.filter(([name]) => name === "copyStart").map(([, request]) => request.input),
     );

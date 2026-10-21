@@ -354,6 +354,45 @@ describe("applyUsageLimitsUpdate", () => {
   });
 });
 
+describe("Claude denial reset", () => {
+  const fence = { ordinaryUsageAllowed: false, nativeDenialRequiresFullRead: true } as const;
+  const deny = (
+    previous: Parameters<typeof applyUsageLimitsUpdate>[0]["previous"],
+    reset?: string,
+  ) =>
+    applyUsageLimitsUpdate({
+      previous,
+      checkedAt,
+      update: { windows: [], ...fence, ...(reset ? { nativeDenialResetsAt: reset } : {}) },
+    });
+
+  it("stores the rejected window's reset and keeps it through positive sparse updates", () => {
+    const denied = deny(published, "2026-09-03T14:00:00.000Z");
+    expect(denied?.nativeDenialResetsAt).toBe("2026-09-03T14:00:00.000Z");
+    const positive = applyUsageLimitsUpdate({
+      previous: denied,
+      checkedAt,
+      update: { windows: [{ ...session, usedPercent: 1 }] },
+    });
+    expect(positive?.nativeDenialResetsAt).toBe("2026-09-03T14:00:00.000Z");
+    expect(positive?.ordinaryUsageAllowed).toBe(false);
+  });
+
+  it("keeps the later of two resets, and a reset-less denial cannot lapse", () => {
+    const weekly = deny(published, "2026-09-08T00:00:00.000Z");
+    expect(deny(weekly, "2026-09-03T14:00:00.000Z")?.nativeDenialResetsAt).toBe(
+      "2026-09-08T00:00:00.000Z",
+    );
+    expect(deny(weekly, undefined)?.nativeDenialResetsAt).toBeUndefined();
+  });
+
+  it("lapses in nativeQuotaDenied only after the reset", () => {
+    const denied = deny(published, "2026-09-03T14:00:00.000Z");
+    expect(nativeQuotaDenied(denied, Date.parse("2026-09-03T13:59:59Z"))).toBe(true);
+    expect(nativeQuotaDenied(denied, Date.parse("2026-09-03T14:00:00Z"))).toBe(false);
+  });
+});
+
 describe("resolveUsageLimitsAfterProbe", () => {
   const claudeDriver = ProviderDriverKind.make("claudeAgent");
   const codexDriver = ProviderDriverKind.make("codex");

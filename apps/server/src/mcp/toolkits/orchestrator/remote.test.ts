@@ -8,6 +8,7 @@ import {
   ThreadId,
 } from "@specweave-studio/contracts";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Layer from "effect/Layer";
 import * as Stream from "effect/Stream";
 
@@ -63,6 +64,8 @@ const setup = (
     readonly outside?: boolean;
     /** Resolve thread links the way a server without a fleet does. */
     readonly realResolve?: boolean;
+    /** The caller runs in this machine's personal assistant. */
+    readonly personal?: boolean;
   } = {},
 ) => {
   const caller = {
@@ -214,7 +217,16 @@ const setup = (
         }),
     }),
     Layer.mock(ThreadMetadataMcpService.ThreadMetadataMcpService)({}),
-    Layer.mock(ProjectService.ProjectService)({}),
+    Layer.mock(ProjectService.ProjectService)({
+      getById: (id) =>
+        Effect.succeed(
+          Option.some({
+            id,
+            title: options.personal ? "Aide" : "App",
+            workspaceSettings: { kind: options.personal ? "personal" : "code" },
+          } as never),
+        ),
+    }),
   );
   const call = (tool: string, params: Record<string, unknown>) =>
     OrchestratorToolkit.pipe(
@@ -282,6 +294,20 @@ it.effect("sends to another machine's thread with a link that names that machine
       machine: M1,
       threadLink: "[Worker](studio://thread/env-m1/b-thread)",
     });
+  });
+});
+
+it.effect("never sends a personal assistant's words to another machine", () => {
+  const { call, proxied } = setup({ personal: true });
+  return Effect.gen(function* () {
+    const refused = yield* call("studio_thread_send", {
+      machine: "m1",
+      threadId: "b-thread",
+      message: "Here is the household budget",
+    });
+    expect(refused).toMatchObject({ code: "invalid_request" });
+    expect(String(refused.message)).toContain("private to its machine");
+    expect(proxied.map((entry) => entry.tool)).not.toContain("studio_thread_send");
   });
 });
 

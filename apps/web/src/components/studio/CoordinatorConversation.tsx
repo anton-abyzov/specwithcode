@@ -16,6 +16,9 @@ import {
 } from "../../studio/projectCoordinatorMessageDisplay";
 import { ProjectWorkspaceAttachments } from "./ProjectWorkspaceAttachments";
 import { ProjectMessageBody } from "./ProjectMessageBody";
+import { RoutineRunCard } from "./RoutineRunCard";
+import { parseRoutineRunMessage, type RoutineRunMessage } from "../../studio/routineRunMessage";
+import { useKnownRoutines } from "../../studio/useKnownRoutines";
 import { CollapsibleReport } from "../chat/CollapsibleReport";
 import { shouldCollapseReport } from "../chat/longReport";
 import { ReportArtifact } from "../chat/ReportArtifact";
@@ -259,6 +262,8 @@ export function CoordinatorConversation({
   const runs = thread?.projection.runs;
   const turnItems = thread?.projection.turnItems;
   const machineLabel = useMachineNickname(project.environmentId, executionEnvironment?.label);
+  const hasRoutineRuns = messages.some((message) => message.scheduledTaskId !== undefined);
+  const routines = useKnownRoutines(project.environmentId, hasRoutineRuns);
   const prepared = useMemo(() => {
     const describeRun = (selection: { instanceId: string; model: string }) =>
       modelLabel(
@@ -278,9 +283,27 @@ export function CoordinatorConversation({
         message.createdBy === "user" || message.role === "assistant"
           ? requestExecutionLabel(message, runs ?? [], machineLabel, executionProviders)
           : null;
-      return { message, notice, display, text, executionLabel };
+      // A fired routine reads as a card: its name, its check and its folded instructions.
+      const routine: RoutineRunMessage | null =
+        notice === null && message.role === "user" && message.scheduledTaskId !== undefined
+          ? parseRoutineRunMessage(message, routines.get(message.scheduledTaskId))
+          : null;
+      const routineCadence =
+        message.scheduledTaskId === undefined
+          ? null
+          : (routines.get(message.scheduledTaskId)?.cadence ?? null);
+      return { message, notice, display, text, executionLabel, routine, routineCadence };
     });
-  }, [messages, runs, executionProviders, project, linkWorkers, environmentThreads, machineLabel]);
+  }, [
+    messages,
+    runs,
+    executionProviders,
+    project,
+    linkWorkers,
+    environmentThreads,
+    machineLabel,
+    routines,
+  ]);
   const timelineDetail = useTimelineDetail(scopedThreadKey(ref));
   // Linear in the history, and only rebuilt when it or the level changes.
   const view = useMemo(
@@ -504,6 +527,8 @@ export function CoordinatorConversation({
             routedFrom={row.display.routedFrom}
             senderTitle={row.senderTitle}
             executionLabel={row.executionLabel}
+            routine={row.routine}
+            routineCadence={row.routineCadence}
             announcedKey={row.announcedKey}
             attachments={row.attachments}
             turn={turns.get(row.message.id)}
@@ -613,6 +638,8 @@ const CoordinatorMessageRow = memo(function CoordinatorMessageRow({
   routedFrom,
   senderTitle,
   executionLabel,
+  routine,
+  routineCadence,
   announcedKey,
   attachments,
   turn,
@@ -645,6 +672,9 @@ const CoordinatorMessageRow = memo(function CoordinatorMessageRow({
   readonly routedFrom: RoutedFrom | null;
   readonly senderTitle: string | null;
   readonly executionLabel: string | null;
+  /** A fired routine's message split into its parts; it renders as a card. */
+  readonly routine: RoutineRunMessage | null;
+  readonly routineCadence: string | null;
   /** The threads this message announces with cards, one ID per line. */
   readonly announcedKey: string;
   readonly attachments: ReadonlyArray<ChatAttachment>;
@@ -740,7 +770,7 @@ const CoordinatorMessageRow = memo(function CoordinatorMessageRow({
     <>
       {separator}
       <article
-        className={`project-message project-message-${message.role}`}
+        className={`project-message project-message-${routine !== null ? "routine" : message.role}`}
         data-follow-anchor={message.id}
       >
         <h3>{author}</h3>
@@ -783,10 +813,35 @@ const CoordinatorMessageRow = memo(function CoordinatorMessageRow({
             onOpen={() => onOpenThread(sourceThreadId)}
           />
         )}
-        {author === "Message from a worker" &&
-        isReport &&
-        !message.streaming &&
-        shouldCollapseReport(text) ? (
+        {routine !== null && message.scheduledTaskId !== undefined ? (
+          <RoutineRunCard
+            run={routine}
+            environmentId={environmentId}
+            taskId={message.scheduledTaskId}
+            cadence={routineCadence}
+            fullText={displayText}
+            time={
+              <time dateTime={viewerIso(message.createdAt) ?? undefined}>
+                {formatShortTimestamp(viewerIso(message.createdAt) ?? "", timestampFormat)}
+              </time>
+            }
+            renderMarkdown={(part) => (
+              <ChatMarkdown
+                text={part}
+                cwd={workspaceRoot}
+                threadRef={threadRef}
+                isStreaming={false}
+                lineBreaks
+                parseRawHtml={false}
+                renderContextReference={renderReference}
+                renderThreadLink={renderThreadLink}
+              />
+            )}
+          />
+        ) : author === "Message from a worker" &&
+          isReport &&
+          !message.streaming &&
+          shouldCollapseReport(text) ? (
           <ReportArtifact
             createdAt={viewerIso(message.createdAt) ?? undefined}
             source={

@@ -74,6 +74,7 @@ import {
   deriveCommittedServerUserMessageIds,
   deriveComposerSendState,
   deriveLockedProvider,
+  providerInstanceCanRun,
   dismissBranchMismatchForSession,
   getStartedThreadModelChangeBlockReason,
   hasEnvironmentReconnectWarningGraceElapsed,
@@ -421,6 +422,32 @@ describe("getStartedThreadModelChangeBlockReason", () => {
       description:
         "This provider does not allow switching models after a conversation has started.",
     });
+  });
+});
+
+describe("providerInstanceCanRun", () => {
+  const copilot: Parameters<typeof providerInstanceCanRun>[0][number] = {
+    instanceId: ProviderInstanceId.make("acpRegistry_copilot"),
+    enabled: true,
+    installed: true,
+    status: "ready",
+  };
+
+  it("reports whether the selected instance can start a turn", () => {
+    expect(providerInstanceCanRun([copilot], copilot.instanceId)).toBe(true);
+    expect(providerInstanceCanRun([{ ...copilot, installed: false }], copilot.instanceId)).toBe(
+      false,
+    );
+    expect(providerInstanceCanRun([{ ...copilot, status: "error" }], copilot.instanceId)).toBe(
+      false,
+    );
+    expect(providerInstanceCanRun([{ ...copilot, enabled: false }], copilot.instanceId)).toBe(
+      false,
+    );
+    expect(
+      providerInstanceCanRun([{ ...copilot, availability: "unavailable" }], copilot.instanceId),
+    ).toBe(false);
+    expect(providerInstanceCanRun([copilot], "codex")).toBeUndefined();
   });
 });
 

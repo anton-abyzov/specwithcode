@@ -380,6 +380,11 @@ export const OrchestrationV2ThreadProjectMoveLink = Schema.Struct({
   /** The machine that continued it; omitted when it is this one. */
   environmentId: Schema.optional(EnvironmentId),
   machineLabel: Schema.optional(TrimmedNonEmptyString),
+  /**
+   * Why it moved, shown on the thread: "Hit 95% of Claude on M4 · continued
+   * on Minis with Claude Opus 5.5". Omitted when nothing explains it.
+   */
+  note: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(300))),
 });
 export type OrchestrationV2ThreadProjectMoveLink = typeof OrchestrationV2ThreadProjectMoveLink.Type;
 
@@ -582,6 +587,13 @@ export type OrchestrationV2ThreadLaunchWorkspaceStrategy =
 
 /** Failure code on the error item a failed workspace preparation leaves. */
 export const ORCHESTRATION_V2_WORKSPACE_PREPARATION_FAILURE_CODE = "workspace_preparation_failed";
+
+/**
+ * Failure code on a `provider_error` whose provider cannot run on this machine
+ * until its setup is fixed (see `ProviderSetupError.unavailable`). The limit
+ * fallback treats it like a stop and moves the thread to another provider.
+ */
+export const ORCHESTRATION_V2_PROVIDER_UNAVAILABLE_FAILURE_CODE = "provider_unavailable";
 
 export const OrchestrationV2Run = Schema.Struct({
   manualCodexCreditIntent: Schema.optional(ManualCodexCreditIntent),

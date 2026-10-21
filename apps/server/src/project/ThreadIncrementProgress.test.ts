@@ -246,6 +246,77 @@ describe("readThreadIncrementProgress", () => {
     ]);
   });
 
+  it("reads a member repository's increments from the umbrella workspace above it", async () => {
+    const umbrella = await temp("studio-plan-umbrella-");
+    const home = await temp("studio-plan-home-");
+    await NodeFSP.mkdir(NodePath.join(umbrella, ".specweave"), { recursive: true });
+    await NodeFSP.writeFile(NodePath.join(umbrella, ".specweave/config.json"), "{}");
+    await increment(umbrella, "0930-studio-plan-card", LEDGER);
+    await increment(umbrella, "0931-other", "");
+    const member = NodePath.join(umbrella, "repositories/owner/member");
+    const sibling = NodePath.join(umbrella, "repositories/owner/sibling");
+    await NodeFSP.mkdir(member, { recursive: true });
+    await increment(sibling, "0940-sibling", "");
+    const bind = async (bindingRoot: string, incrementId: string) => {
+      const file = specweaveStudioThreadBindingPath("t1", home);
+      await NodeFSP.mkdir(NodePath.dirname(file), { recursive: true });
+      await NodeFSP.writeFile(
+        file,
+        JSON.stringify({
+          version: 1,
+          threadId: "t1",
+          incrementId,
+          root: bindingRoot,
+          taskId: "T-02",
+          event: "claim",
+          at: "2026-10-15T11:30:00Z",
+        }),
+      );
+    };
+    const source = { threadId: "t1", title: "x", branch: null, worktreePath: null, home };
+    // The CLI run in the member repo wrote to the umbrella's ledger: the claim binds.
+    await bind(umbrella, "0930-studio-plan-card");
+    const [claimed] = await readThreadIncrementProgress(member, [source], NOW);
+    expect(claimed).toMatchObject({
+      incrementId: "0930-studio-plan-card",
+      binding: "claim",
+      boundTaskId: "T-02",
+      tasks: expect.arrayContaining([expect.objectContaining({ id: "T-01", status: "done" })]),
+    });
+    // A sibling repository under the same umbrella is not this checkout's planning root.
+    await bind(sibling, "0940-sibling");
+    expect(await readThreadIncrementProgress(member, [source], NOW)).toEqual([]);
+    // A worktree outside the umbrella still finds it through the project folder.
+    const worktree = await temp("studio-plan-worktree-");
+    const [byBranch] = await readThreadIncrementProgress(
+      member,
+      [{ ...source, branch: "inc/0931-other", worktreePath: worktree }],
+      NOW,
+    );
+    expect(byBranch).toMatchObject({ incrementId: "0931-other", binding: "branch" });
+    // The Link picker lists the umbrella's increments.
+    expect(
+      (await listProjectIncrements(member, worktree)).map((entry) => entry.incrementId),
+    ).toEqual(["0931-other", "0930-studio-plan-card"]);
+  });
+
+  it("skips an ancestor .specweave without a config and stops at the nearest config", async () => {
+    const umbrella = await temp("studio-plan-umbrella-");
+    await increment(umbrella, "0930-studio-plan-card", "");
+    await NodeFSP.writeFile(NodePath.join(umbrella, ".specweave/config.json"), "{}");
+    const parent = NodePath.join(umbrella, "parent");
+    await increment(parent, "0940-stray", "");
+    const member = NodePath.join(parent, "member");
+    await NodeFSP.mkdir(member, { recursive: true });
+    expect((await listProjectIncrements(member, null)).map((entry) => entry.incrementId)).toEqual([
+      "0930-studio-plan-card",
+    ]);
+    // A project with its own config but no increments yet does not borrow the umbrella's.
+    await NodeFSP.mkdir(NodePath.join(member, ".specweave"), { recursive: true });
+    await NodeFSP.writeFile(NodePath.join(member, ".specweave/config.json"), "{}");
+    expect(await listProjectIncrements(member, null)).toEqual([]);
+  });
+
   it("reports an unreadable ledger instead of folding it as nothing done", async () => {
     const root = await temp("studio-plan-root-");
     const home = await temp("studio-plan-home-");

@@ -1,5 +1,7 @@
 import type { StudioServiceUpdateState } from "@specweave-studio/contracts";
 
+import { isServiceErrorWithRelease } from "../sidebar/SidebarRestartToUpdate.logic";
+
 export type ServiceUpdateAction = "check" | "install" | "none";
 
 /** One line under "Studio service" saying where its update stands. */
@@ -60,5 +62,9 @@ export function resolveServiceUpdateAction(state: StudioServiceUpdateState): Ser
   ) {
     return "install";
   }
+  // The last pass was refused for a fault Update now gets past, and the agent
+  // has a newer release on disk: Update now installs it, and the refusal
+  // stays shown beside it. Any other failure offers a check.
+  if (isServiceErrorWithRelease(state)) return "install";
   return "check";
 }

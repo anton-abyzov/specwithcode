@@ -2,18 +2,17 @@ import Foundation
 
 extension FixtureEngine {
   public func handoffOptions(for thread: ThreadRef) async throws -> HandoffOptions {
-    guard scenario.isFleet else { return HandoffOptions(badge: nil, destinations: []) }
-    return HandoffOptions(badge: "ready", destinations: [
-      HandoffDestination(id: FixtureFleet.minis, name: "Minis", usesReplica: false)
-    ])
+    fixtureHandoffOptions(for: thread)
   }
 
   public func checkHandoff(_ thread: ThreadRef, destination: HandoffDestination) async throws -> HandoffCheck {
-    HandoffCheck(allowed: true, messages: ["Checks passed. The thread will resume on \(destination.name)."])
+    HandoffCheck(allowed: fixtureHandoffOptions(for: thread).destinations.contains(destination), messages: ["Sample checks passed. A sample continuation will open on \(destination.name). No real provider runs in this preview."])
   }
 
   public func continueThread(_ thread: ThreadRef, destination: HandoffDestination) async throws -> ThreadRef {
-    // Fixture only. The live engine uses the destination's returned thread id.
-    ThreadRef(environmentId: destination.id, threadId: thread.threadId)
+    if ProcessInfo.processInfo.arguments.contains("-SWCHandoffUncertain") {
+      throw HandoffUncertain(detail: "Sample: Minis did not answer…")
+    }
+    return try await simulateHandoff(thread, to: destination)
   }
 }

@@ -107,7 +107,7 @@ WORK_NOUNS = (('runs', 'running task'), ('queued', 'queued message'), ('requests
 STATUSES = ('disabled', 'up-to-date', 'available', 'downloading', 'downloaded', 'waiting-for-quiet',
             'installing', 'installed', 'manual-required', 'error')
 LIMITS = {'list': 10 << 20, PLAN_ASSET: 256 << 10, SUMS_ASSET: 256 << 10, MANIFEST_ASSET: 4 << 20,
-          'runtime': 1 << 30, 'helpers': 64 << 20, 'json': 4 << 20}
+          'runtime': 1 << 30, 'helpers': 64 << 20, 'json': 4 << 20, 'receipt': 64 << 20}  # Receipts, snapshots: grow with threads
 HELPER_MAX_FILES = 2000
 HELPER_MAX_BYTES = 64 << 20
 LOG_LIMIT = 1 << 20
@@ -981,7 +981,7 @@ class Agent(object):
 
     def read_snapshot(self, path):
         try:
-            value = read_json(path, self.home)
+            value = read_json(path, self.home, LIMITS['receipt'])
         except AgentError:
             return None
         rows = value.get('rows') if isinstance(value, dict) else None
@@ -1203,7 +1203,7 @@ class Agent(object):
         """True only when the helper restarted into the new release, observed it and kept it (any `held-*`
         rollback: kept for review, or a rollback whose checks or restores failed). Not current liveness."""
         try:
-            value = read_json(owned(pathlib.Path(receipt), self.home), self.home) if receipt else None
+            value = read_json(owned(pathlib.Path(receipt), self.home), self.home, LIMITS['receipt']) if receipt else None
         except (AgentError, OSError):
             return False
         return isinstance(value, dict) and value.get('pointers') == 'new-release' \
@@ -1474,12 +1474,12 @@ def show_status(home, identity, out):
     out(json.dumps({key: state.get(key) for key in STATE_KEYS}))
     return 0
 
-def agent_label(identity):
-    return 'com.specweave.studio.%s.updater' % identity
+agent_label = update_request.agent_label
 
 def install_launch_agent(home, identity, out):
     inst = load_installation(home, identity)
-    cache.install_beside(sys.modules[__name__], home)  # Before the agent that imports it.
+    keep = update_request.keeps_installed_agent(here := pathlib.Path(os.path.abspath(__file__)).parent, studio_paths.updater_root(home))
+    cached = not keep and cache.install_beside(sys.modules[__name__], home)  # Before the agent that imports it.
     updates = ensure_dir(inst['studioHome'] / 'updates', home)
     label = agent_label(identity)
     lock_fd = acquire_lock(updates / 'agent.lock', home)
@@ -1487,19 +1487,19 @@ def install_launch_agent(home, identity, out):
         target_dir = ensure_dir(studio_paths.updater_root(home), home)
         os.chmod(str(target_dir), 0o700)
         files = [(owned(target_dir / os.path.basename(name), home), pathlib.Path(os.path.abspath(name)).read_bytes())
-                 for name in (studio_paths.__file__, update_request.__file__, recovery.__file__,
-                              installation_descriptor.__file__, pathlib.Path(__file__).with_name('managed_updates.py'),
-                              pathlib.Path(__file__).with_name('migrate_home.py'), __file__)]  # Modules first.
+                 for name in (studio_paths.__file__, update_request.__file__, recovery.__file__, installation_descriptor.__file__,
+                              here / 'managed_updates.py', here / 'migrate_home.py', __file__)]  # Modules first.
 
         def same(path, data):
             return path.is_file() and not path.is_symlink() and read_owned(path, home, 8 << 20) == data
 
         # Atomic writes are safe while a pass runs: launchd runs the new copy next time; no reload.
-        written = reaper.install_beside(files[-1][0], home, same, atomic_write)
+        written = not keep and reaper.install_beside(files[-1][0], home, same, atomic_write) or cached
         for path, data in files:
-            if not same(path, data):
+            if not keep and not same(path, data):
                 atomic_write(path, data, home, 0o700)
                 written = True
+        if not keep: update_request.record_agent(here, target_dir)  # noqa: E701  Its release, for the next installer.
         if lock_fd is None:
             # A pass (or the install helper it started) runs: a bootout would stop it mid-snapshot
             # or mid-install. Its files are in place; the next request reloads the job if needed.

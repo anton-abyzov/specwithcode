@@ -1,3 +1,4 @@
+import { isPersonalAssistantProject } from "@specweave-studio/shared/personalAssistant";
 import {
   CommandId,
   compareFingerprints,
@@ -367,6 +368,8 @@ const make = Effect.gen(function* () {
   const preview: ProjectLink["Service"]["preview"] = ({ projectId }) =>
     Effect.gen(function* () {
       const project = yield* load(projectId);
+      // Another machine never reads a personal assistant's goal, instructions or notes.
+      if (isPersonalAssistantProject(project)) return yield* fail("not_code_project");
       const member = yield* selfMember(project);
       const { goal, instructions, notes, notesTruncated } = yield* readContent(projectId);
       const binding = project.workspaceSettings?.coordinatorBinding;

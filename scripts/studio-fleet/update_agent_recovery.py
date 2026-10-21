@@ -222,7 +222,7 @@ def refused_before_restart(agent, receipt, version):
     changed after the snapshot, and every pointer is as it was: running it again is safe."""
     ua = _ua(agent)
     try:
-        value = ua.read_json(receipt, agent.home)
+        value = ua.read_json(receipt, agent.home, ua.LIMITS['receipt'])
         inst = ua.load_installation(agent.home, agent.identity)
     except ua.AgentError:
         return False
@@ -301,7 +301,7 @@ def completion_proof(agent, receipt, source=None, previous_source=None):
         path = ua.owned(pathlib.Path(receipt), agent.home)
         if path.parent != agent.updates / 'receipts':
             return False
-        value = ua.read_json(path, agent.home)
+        value = ua.read_json(path, agent.home, ua.LIMITS['receipt'])
         installed = ua.read_json(agent.own / 'installation.json', agent.home)
         before, after = value.get('before'), value.get('after')
         return (value.get('phase') == 'verified' and value.get('result') != 'update-failed'
@@ -350,7 +350,7 @@ def newer_release_after_rollback(agent, verified):
         path = ua.owned(pathlib.Path(last['receipt']), agent.home)
         if path.parent != agent.updates / 'receipts':
             return False
-        value = ua.read_json(path, agent.home)
+        value = ua.read_json(path, agent.home, ua.LIMITS['receipt'])
         if not isinstance(value, dict):
             return False
         # Preflight refusals (a busy service) keep their own bounded budget; see record_refusal.

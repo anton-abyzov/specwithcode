@@ -22,6 +22,8 @@ import {
   type ProjectLinkPreview,
   type ProjectLinkPreviewInput,
   type ProjectLinkRefusal,
+  type ProjectUnlinkInput,
+  type ProjectUnlinkResult,
   type RepositoryFingerprint,
   ThreadId,
   WS_METHODS,
@@ -587,4 +589,51 @@ export async function linkCopyAsWorkers(
   );
   writePendingOperation(storageKey, null);
   return { status: "linked" };
+}
+
+/**
+ * Takes back a link Add to another machine made, when its copy is undone: the
+ * copy leaves first, then the kept project drops it from its members. The copy
+ * keeps its own notes; nothing is copied into it, since it is returning to how
+ * it was before the link.
+ */
+export async function unlinkUndoneCopy(
+  commands: {
+    readonly preview: LinkCall<ProjectLinkPreviewInput, ProjectLinkPreview>;
+    readonly unlink: LinkCall<ProjectUnlinkInput, ProjectUnlinkResult>;
+  },
+  input: {
+    readonly kept: { readonly environmentId: EnvironmentId; readonly projectId: ProjectId };
+    readonly joining: { readonly environmentId: EnvironmentId; readonly projectId: ProjectId };
+    readonly newOperationId: () => string;
+  },
+): Promise<void> {
+  const unwrap = <A>(result: AtomCommandResult<A, unknown>): A => {
+    if (result._tag === "Failure") throw squashAtomCommandFailure(result);
+    return result.value;
+  };
+  const joining = unwrap(
+    await commands.preview({
+      environmentId: input.joining.environmentId,
+      input: { projectId: input.joining.projectId },
+    }),
+  );
+  const operationId = input.newOperationId();
+  unwrap(
+    await commands.unlink({
+      environmentId: input.joining.environmentId,
+      input: { side: "member", operationId, projectId: input.joining.projectId, notes: [] },
+    }),
+  );
+  unwrap(
+    await commands.unlink({
+      environmentId: input.kept.environmentId,
+      input: {
+        side: "coordinator",
+        operationId,
+        projectId: input.kept.projectId,
+        member: joining.member,
+      },
+    }),
+  );
 }

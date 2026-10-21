@@ -381,7 +381,11 @@ it("retains the reviewed operation if its restart pointer cannot be removed", as
     expect(props().phase).toBe("review");
     expect(props().preview).not.toBeNull();
     expect(props().error).toBe("Storage unavailable");
-    expect(JSON.parse(localStorage.getItem(key)!)).toEqual({ operationId, targetKey: "m1:target" });
+    expect(JSON.parse(localStorage.getItem(key)!)).toEqual({
+      operationId,
+      targetKey: "m1:target",
+      publishing: true,
+    });
   } finally {
     remove.mockRestore();
   }
@@ -650,4 +654,191 @@ it("remembers the chosen machine and records the last handoff target", async () 
     remembered: null,
     lastUsed: "m1",
   });
+});
+
+it("goes back from an unpublished review to editable choices and a fresh operation", async () => {
+  await mount();
+  await act(async () => props().onMethodChange!("folder"));
+  await review();
+  await consent();
+  expect(props().phase).toBe("review");
+  expect(props().onBack).toBeDefined();
+  await act(async () => props().onBack!());
+  expect(props().phase).toBe("choose");
+  expect(props().preview).toBeNull();
+  expect(props().consent).toBe(false);
+  expect(localStorage.getItem(key)).toBeNull();
+  expect(props().method).toBe("folder");
+  await act(async () => props().onMethodChange!("clone"));
+  expect(props().method).toBe("clone");
+});
+
+it("drops an unpublished review when a choice changes", async () => {
+  await mount();
+  await act(async () => props().onMethodChange!("folder"));
+  await review();
+  await act(async () => props().onMethodChange!("copy"));
+  expect(props().method).toBe("copy");
+  expect(props().preview).toBeNull();
+  expect(props().phase).toBe("choose");
+  expect(localStorage.getItem(key)).toBeNull();
+});
+
+it("starts over from the default choices after closing a review", async () => {
+  await mount();
+  expect(props().method).toBe("copy");
+  await act(async () => props().onMethodChange!("folder"));
+  await review();
+  await act(async () => props().onOpenChange(false));
+  expect(localStorage.getItem(key)).toBeNull();
+  await act(async () => container.querySelector("button")!.click());
+  expect(props().phase).toBe("choose");
+  expect(props().preview).toBeNull();
+  expect(props().method).toBe("copy");
+});
+
+it("keeps a published checkpoint frozen until it finishes or is recovered", async () => {
+  await mount();
+  await act(async () => props().onMethodChange!("folder"));
+  await review();
+  await consent();
+  state.receive
+    .mockResolvedValueOnce({ _tag: "Success", value: ready })
+    .mockResolvedValueOnce({ _tag: "Failure", error: new Error("Destination offline") });
+  await transfer();
+  expect(props().phase).toBe("review");
+  expect(props().error).toBe("Destination offline");
+  expect(props().onBack).toBeUndefined();
+  await act(async () => props().onMethodChange!("copy"));
+  await act(async () => props().onOpenChange(false));
+  expect(props().method).toBe("folder");
+  expect(props().preview).not.toBeNull();
+  expect(localStorage.getItem(key)).not.toBeNull();
+});
+
+it("suggests the preferred machine in the folder picker and the copy flow", async () => {
+  state.environments = machineEnvironments;
+  localStorage.setItem(preferenceKey, JSON.stringify({ remembered: "m3" }));
+  await mount();
+  expect(picker()).toMatchObject({ suggestedMachine: "m3" });
+  const copy = (props().copyFlow as { props: Record<string, unknown> }).props;
+  expect(copy.preferredMachine).toBe("m3");
+});
+
+it("keeps a review whose publish attempt failed, since the source may be fenced", async () => {
+  await mount();
+  await act(async () => props().onMethodChange!("folder"));
+  await review();
+  await consent();
+  state.prepare.mockResolvedValueOnce({ _tag: "Failure", error: new Error("Lost response") });
+  await transfer();
+  expect(props().phase).toBe("review");
+  expect(props().onBack).toBeUndefined();
+  await act(async () => props().onSelect("m1:other"));
+  await act(async () => props().onOpenChange(false));
+  expect(props().selected).toBe("m1:target");
+  expect(props().preview).not.toBeNull();
+  expect(JSON.parse(localStorage.getItem(key)!).operationId).toBe(operationId);
+});
+
+it("starts fresh after closing a review whose destination check failed", async () => {
+  await mount();
+  await act(async () => props().onMethodChange!("folder"));
+  state.receive.mockResolvedValueOnce({ _tag: "Failure", error: new Error("Destination busy") });
+  await review();
+  expect(props().phase).toBe("choose");
+  expect(localStorage.getItem(key)).not.toBeNull();
+  await act(async () => props().onOpenChange(false));
+  expect(localStorage.getItem(key)).toBeNull();
+  await act(async () => container.querySelector("button")!.click());
+  expect(props().method).toBe("copy");
+  expect(props().error).toBeNull();
+});
+
+it("lets a late folder save leave an unpublished review but never a frozen one", async () => {
+  await mount();
+  await act(async () => props().onMethodChange!("folder"));
+  const onSaved = picker()!.onSaved as (environment: string, project: string) => void;
+  await review();
+  await act(async () => onSaved("m3", "late"));
+  expect(props().phase).toBe("choose");
+  expect(props().selected).toBe("m3:late");
+  await act(async () => props().onSelect("m1:target"));
+  await review();
+  await consent();
+  state.prepare.mockResolvedValueOnce({ _tag: "Failure", error: new Error("Lost response") });
+  await transfer();
+  await act(async () => onSaved("m3", "late"));
+  expect(props().selected).toBe("m1:target");
+  expect(props().preview).not.toBeNull();
+});
+
+it("never offers to drop an operation a transfer tried to publish, even after a reload", async () => {
+  await mount();
+  await act(async () => props().onMethodChange!("folder"));
+  await review();
+  await consent();
+  state.prepare.mockResolvedValueOnce({ _tag: "Failure", error: new Error("Push failed") });
+  await transfer();
+  expect(JSON.parse(localStorage.getItem(key)!)).toMatchObject({ operationId, publishing: true });
+  await act(async () => root.unmount());
+  root = createRoot(container);
+  await mount();
+  expect(props().method).toBe("folder");
+  expect(props().selected).toBe("m1:target");
+  await review();
+  expect(props().phase).toBe("review");
+  expect(props().onBack).toBeUndefined();
+  await act(async () => props().onOpenChange(false));
+  expect(JSON.parse(localStorage.getItem(key)!)).toMatchObject({ operationId, publishing: true });
+});
+
+it("refuses a new handoff elsewhere while an interrupted publish is pending", async () => {
+  localStorage.setItem(
+    key,
+    JSON.stringify({ operationId, targetKey: "m1:target", publishing: true }),
+  );
+  state.environments = machineEnvironments;
+  state.projects = [source, target, { ...target, id: "other", environmentId: "m3" }];
+  await mount();
+  await act(async () => props().onSelect("m3:other"));
+  await review();
+  expect(props().error).toContain("stopped while publishing");
+  expect(state.prepare).not.toHaveBeenCalled();
+  expect(JSON.parse(localStorage.getItem(key)!).targetKey).toBe("m1:target");
+});
+
+it("does not let a folder save landing before the review renders strand that review", async () => {
+  await mount();
+  await act(async () => props().onMethodChange!("folder"));
+  const onSaved = picker()!.onSaved as (environment: string, project: string) => void;
+  await act(async () => {
+    props().onReview();
+    // The review settles, then the save lands, all before React commits the review.
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    onSaved("m3", "late");
+  });
+  expect(state.order).toEqual(["inspect", "preview"]);
+  expect(props().phase).toBe("choose");
+  expect(props().preview).toBeNull();
+  expect(props().selected).toBe("m3:late");
+  expect(localStorage.getItem(key)).toBeNull();
+});
+
+it("keeps the review editable when the publish marker cannot be saved", async () => {
+  await mount();
+  await act(async () => props().onMethodChange!("folder"));
+  await review();
+  await consent();
+  const write = vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+    throw new Error("Quota exceeded");
+  });
+  try {
+    await transfer();
+  } finally {
+    write.mockRestore();
+  }
+  expect(state.order).toEqual(["inspect", "preview", "preview"]);
+  expect(props().error).toBe("Quota exceeded");
+  expect(props().onBack).toBeDefined();
 });

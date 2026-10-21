@@ -600,7 +600,7 @@ describe("Claude failure observation expiry", () => {
     expect(denied?.ordinaryUsageAllowed).toBe(false);
     expect(denied?.unavailable?.reason).toBe("probeFailed");
     await expect(start(record(), { ...claude(), usageLimits: denied })).rejects.toThrow(
-      /no remaining permitted usage/,
+      /Claude's usage limit is used up\./,
     );
     const complete = resolveUsageLimitsAfterProbe({ published: partial, probed: probe(3) });
     expect(complete?.unavailable).toBeUndefined();
@@ -687,12 +687,12 @@ describe("Claude failure observation expiry", () => {
         checkedAt: DateTime.formatIso(DateTime.makeUnsafe(now - 1000)),
       });
       await expect(start(record(), { ...claude(), usageLimits: denied })).rejects.toThrow(
-        /no remaining permitted usage/,
+        /Claude's 5-hour limit is used up\./,
       );
       for (const companion of ["unavailable", "invalid"] as const) {
         await expect(
           start(record(), { ...claude(), usageLimits: denied }, companion),
-        ).rejects.toThrow(/no remaining permitted usage/);
+        ).rejects.toThrow(/Claude's 5-hour limit is used up\./);
       }
       const allowed = claudeRateLimitEventToUpdate(
         { status: "allowed", rateLimitType: "five_hour", utilization: 0 },
@@ -705,7 +705,7 @@ describe("Claude failure observation expiry", () => {
       });
       expect(partial?.ordinaryUsageAllowed).toBe(false);
       await expect(start(record(), { ...claude(), usageLimits: partial })).rejects.toThrow(
-        /no remaining permitted usage/,
+        /Claude's usage limit is used up\./,
       );
       const unsupported = claudeUsageResponseToLimits({
         checkedAt: claude().checkedAt,
@@ -721,7 +721,7 @@ describe("Claude failure observation expiry", () => {
         const retained = resolveUsageLimitsAfterProbe({ published: partial, probed: incomplete });
         expect(retained?.ordinaryUsageAllowed).toBe(false);
         await expect(start(record(), { ...claude(), usageLimits: retained })).rejects.toThrow(
-          /no remaining permitted usage/,
+          /Claude's usage limit is used up\./,
         );
       }
       const recovered = resolveUsageLimitsAfterProbe({ published: partial, probed: probe(now) });
@@ -783,7 +783,7 @@ describe("Claude failure observation expiry", () => {
       ).toBe(true);
       for (const companion of ["available", "unavailable", "invalid"] as const) {
         await expect(start(record(), native, companion, later)).rejects.toThrow(
-          /no remaining permitted usage/,
+          /Claude's (?:5-hour|usage) limit is used up\./,
         );
       }
       const full = claudeUsageResponseToLimits({

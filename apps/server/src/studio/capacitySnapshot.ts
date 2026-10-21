@@ -8,6 +8,7 @@ import {
   type ProviderInstanceId,
   type ServerProvider,
   type ServerProviderUsageLimits,
+  type ServerProviderUsageWindow,
   type ServerSettings,
 } from "@specweave-studio/contracts";
 import {
@@ -19,13 +20,21 @@ import {
   StudioCapacityAccount,
   type StudioCapacitySnapshot,
 } from "@specweave-studio/contracts/studio";
+import {
+  isLiveWindow,
+  windowAppliesToModel,
+  windowModelScope,
+} from "@specweave-studio/shared/usageWindows";
 import * as Schema from "effect/Schema";
 import * as Option from "effect/Option";
 
 import { expandHomePath } from "../pathExpansion.ts";
 import { hasExplicitProviderApiEnvironment } from "../provider/ProviderInstanceEnvironment.ts";
 import { completeClaudeUsageWindows } from "../provider/claudeUsageLimits.ts";
-import { hasNativeUsageEvidence } from "../provider/providerUsageLimits.ts";
+import {
+  hasNativeUsageEvidence,
+  nativeDenialResetPassed,
+} from "../provider/providerUsageLimits.ts";
 
 export const CAPACITY_MAX_AGE_MS = 15 * 60 * 1000;
 const FUTURE_SKEW_MS = 5000;
@@ -83,16 +92,24 @@ export function freshObservation(value: string | null | undefined, now: number):
   const at = value ? Date.parse(value) : NaN;
   return Number.isFinite(at) && at <= now + FUTURE_SKEW_MS && now - at <= CAPACITY_MAX_AGE_MS;
 }
-/** Unknown quota is not a denial; Claude stream refusals require a full read to clear. */
+/**
+ * Unknown quota is not a denial. A Claude stream refusal holds until a full
+ * read clears it or its reported reset passes with no account-wide window
+ * still spent. A model weekly (Fable) a read shows spent denies only starts
+ * on `model`; one a rejection named denies every start through that rejection.
+ */
 export function nativeQuotaDenied(
   limits: ServerProviderUsageLimits | undefined,
   now: number,
+  model?: string | null,
 ): boolean {
   if (
     !limits ||
     (limits.unavailable?.reason === "unsupported" && !limits.nativeDenialRequiresFullRead)
   )
     return false;
+  if (spentModelWindow(limits, now, model)) return true;
+  if (nativeDenialResetPassed(limits, now)) return false;
   const negative =
     limits.ordinaryUsageAllowed === false ||
     limits.spendControlReached === true ||
@@ -102,6 +119,44 @@ export function nativeQuotaDenied(
     (limits.nativeDenialRequiresFullRead === true ||
       freshObservation(limits.nativeAllowanceObservedAt, now) ||
       freshObservation(limits.nativeDenialObservedAt, now))
+  );
+}
+
+/** The spent, unreset model-scoped window that caps `model`, of several the one resetting last. */
+export function spentModelWindow(
+  limits: ServerProviderUsageLimits | undefined,
+  now: number,
+  model: string | null | undefined,
+): ServerProviderUsageWindow | undefined {
+  let binding: ServerProviderUsageWindow | undefined;
+  for (const window of limits?.windows ?? []) {
+    if (
+      windowModelScope(window) === null ||
+      !windowAppliesToModel(window, model) ||
+      window.usedPercent < 100 ||
+      !isLiveWindow(window, now)
+    )
+      continue;
+    const at = Date.parse(window.resetsAt ?? "");
+    const bindingAt = Date.parse(binding?.resetsAt ?? "");
+    if (!binding || !Number.isFinite(at) || at > bindingAt) binding = window;
+  }
+  return binding;
+}
+
+/**
+ * A Claude denial whose reported reset has passed. It no longer refuses a
+ * start, but the start still re-reads native status before going ahead.
+ */
+export function nativeDenialLapsed(
+  limits: ServerProviderUsageLimits | undefined,
+  now: number,
+): boolean {
+  return (
+    !!limits &&
+    limits.nativeDenialRequiresFullRead === true &&
+    limits.ordinaryUsageAllowed === false &&
+    nativeDenialResetPassed(limits, now)
   );
 }
 /** Claude get_usage windows can support manual retry, not automatic allowance.

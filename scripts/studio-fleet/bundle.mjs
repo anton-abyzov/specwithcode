@@ -67,6 +67,9 @@ for (const file of MAC_SERVICE_UPDATER_FILES) {
   assert.ok(lstatSync(source).isFile() && !lstatSync(source).isSymbolicLink(), 'Unsafe updater helper source');
   cpSync(source, join(updater, file));
 }
+// Which release this copy of the agent belongs to: no installer puts it over a newer agent
+// (update_request.AGENT_RECORD), and update.py installs it after every verified install.
+writeFileSync(join(updater, 'agent-release.json'), JSON.stringify({ schemaVersion: 1, version }) + '\n');
 for (const file of ['LICENSE', 'UPSTREAM.md']) cpSync(join(root, file), join(output, file));
 const manifest = { schemaVersion: 1, product: 'SpecWeave Studio', version,
   sourceCommit, runtime: 'Node22.20.0', platform, arch,

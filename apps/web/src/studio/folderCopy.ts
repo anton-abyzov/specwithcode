@@ -101,6 +101,38 @@ export const CHOICE_TEXT: Record<FolderCopyChoice, string> = {
   "keep-both": "Keep both (source copy beside it)",
 };
 
+/** The machines a choice is about: the folder's own machine and the one the files come from. */
+export interface ChoiceMachines {
+  readonly here: string;
+  readonly source: string;
+}
+
+/**
+ * A choice in words. With machine names it says whose version it keeps, so the
+ * text reads the same whichever machine the dialog runs on.
+ */
+export function choiceText(choice: FolderCopyChoice, machines?: ChoiceMachines): string {
+  if (!machines) return CHOICE_TEXT[choice];
+  const { here, source } = machines;
+  switch (choice) {
+    case "keep-mine":
+      return `Keep ${here}’s version`;
+    case "take-theirs":
+      return `Take ${source}’s version (back up ${here}’s)`;
+    case "keep-both":
+      return `Keep both (${source}’s copy beside it)`;
+    case "leave-both":
+      return CHOICE_TEXT[choice];
+  }
+}
+
+/** A row's title: its folder, or the given name for the folder's own root. */
+export function copyRowTitle(row: Pick<FolderCopyRow, "kind" | "path">, rootLabel?: string) {
+  if (row.kind === "files") return "Other files";
+  const root = row.path === "" || row.path === ".";
+  return root ? (rootLabel ?? "Project root") : row.path;
+}
+
 /** Copy states that stop on their own; polling ends at these. */
 export function copySettled(status: FolderCopyStatus): boolean {
   if (status.state === "applied") return status.committed && status.projectId !== null;

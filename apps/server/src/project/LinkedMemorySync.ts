@@ -1,3 +1,4 @@
+import { isPersonalAssistantProject } from "@specweave-studio/shared/personalAssistant";
 import {
   type LinkedMemoryExport,
   type LinkedMemoryExportInput,
@@ -116,6 +117,8 @@ const make = Effect.gen(function* () {
   const memoryExport: LinkedMemorySync["Service"]["memoryExport"] = ({ projectId }) =>
     Effect.gen(function* () {
       const project = yield* load(projectId);
+      // A personal assistant's memory never leaves its machine.
+      if (isPersonalAssistantProject(project)) return yield* fail("not_code_project");
       const identity = project.workspaceSettings?.logicalProject;
       if (!identity) return yield* fail("not_linked");
       const environmentId = yield* environment.getEnvironmentId;
@@ -204,6 +207,8 @@ const make = Effect.gen(function* () {
       input.projectId,
       Effect.gen(function* () {
         const project = yield* load(input.projectId);
+        // ...nor takes another machine's in.
+        if (isPersonalAssistantProject(project)) return yield* fail("not_code_project");
         const identity = project.workspaceSettings?.logicalProject;
         if (!identity || identity.id !== input.export.logicalProjectId)
           return yield* fail("not_linked");

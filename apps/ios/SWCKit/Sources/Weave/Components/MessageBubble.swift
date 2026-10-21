@@ -6,21 +6,23 @@ public struct MessageBubble: View {
   let text: String
   let footnote: String?
   let isPending: Bool
+  let onOpenLink: ((URL) -> Void)?
 
   @Environment(\.colorScheme) private var colorScheme
 
   /// - Parameters:
   ///   - footnote: A short line under the bubble, for example "Queued".
   ///   - isPending: Dims the bubble while the message is not confirmed.
-  public init(_ text: String, footnote: String? = nil, isPending: Bool = false) {
+  public init(_ text: String, footnote: String? = nil, isPending: Bool = false, onOpenLink: ((URL) -> Void)? = nil) {
     self.text = text
     self.footnote = footnote
     self.isPending = isPending
+    self.onOpenLink = onOpenLink
   }
 
   public var body: some View {
     VStack(alignment: .trailing, spacing: WeaveSpacing.s1) {
-      Text(Self.linkified(text))
+      MarkdownText(text, onOpenLink: onOpenLink)
         .weaveFont(.body)
         .foregroundStyle(Color.weave.ink)
         .tint(Color.weave.iris)
@@ -47,26 +49,7 @@ public struct MessageBubble: View {
     }
     .frame(maxWidth: .infinity, alignment: .trailing)
     .padding(.leading, 56)
-    .accessibilityElement(children: .combine)
-    .accessibilityLabel(footnote.map { "You: \(text). \($0)" } ?? "You: \(text)")
-  }
-
-  /// Plain text with web links made tappable and underlined.
-  static func linkified(_ text: String) -> AttributedString {
-    var out = AttributedString(text)
-    guard text.contains("://") || text.contains("www."),
-          let detector = try? NSDataDetector(types: NSTextCheckingResult.CheckingType.link.rawValue)
-    else { return out }
-    let ns = text as NSString
-    for match in detector.matches(in: text, range: NSRange(location: 0, length: ns.length)) {
-      guard let url = match.url, let range = Range(match.range, in: text),
-            let lower = AttributedString.Index(range.lowerBound, within: out),
-            let upper = AttributedString.Index(range.upperBound, within: out)
-      else { continue }
-      out[lower..<upper].link = url
-      out[lower..<upper].underlineStyle = .single
-    }
-    return out
+    .accessibilityElement(children: .contain)
   }
 }
 

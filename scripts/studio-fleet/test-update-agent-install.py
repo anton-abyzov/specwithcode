@@ -285,6 +285,21 @@ class InstallNow(AgentCase):
         self.assertEqual((state['status'], state['lastInstall']['result']), ('installed', 'updated'))
         self.assertEqual((len(self.snapshot_calls()), len(self.apply_calls())), (2, 2))
 
+    def test_snapshots_and_receipts_past_4_mib_still_retry_and_install(self):
+        """Guarded snapshots grow with the service's threads (M4's 1.0.65 receipt was 1.2 MB): one
+        past the 4 MiB JSON limit is still read, so its refusal retries and its install is proven."""
+        counts = dict(('thread-%07d' % index, index) for index in range(200000))
+        self.fake.add_release()
+        self.request()
+        self.control(counts=counts, applyRefusals=1, applyRefusal={'before': {'rows': {'counts': counts}}})
+        self.assertEqual(self.run_agent(), 0)
+        state = self.state()
+        self.assertEqual((state['status'], state['lastInstall']['result']), ('installed', 'updated'))
+        self.assertEqual((len(self.snapshot_calls()), len(self.apply_calls())), (2, 2))
+        receipt = pathlib.Path(state['lastInstall']['receipt'])
+        self.assertGreater(receipt.stat().st_size, 2 * update_agent.LIMITS['json'])
+        self.assertTrue(update_request.status(self.home, 'm4', launchd=False)['installFinalized'])
+
     def test_a_plain_request_retries_a_descendant_refusal(self):
         self.assertEqual(self.descendants_refused_once(mode='normal'), 0)
         self.assertEqual(len(self.apply_calls()), 2)

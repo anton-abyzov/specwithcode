@@ -5,14 +5,32 @@ type Run = { readonly id: string; readonly modelSelection?: RunSelection | undef
 
 /**
  * The usage-limit rule continues a stopped run under a server message whose id
- * names the rule and the run it continues: `limit-fallback:<thread>:<run>`.
+ * names the rule and ends with the run it continues: `limit-fallback:<thread>:<run>`,
+ * or `limit-fallback:<thread>:hop-N:<run>` after a fallback could not open.
+ * `limit-return:` goes home after the reset; `provider-fallback:` moves off a
+ * provider that could not start, which is no limit.
  */
-const LIMIT_CONTINUATION = /^limit-(fallback|reset|credits|api):/;
+const LIMIT_CONTINUATION = /^(?:limit-(fallback|reset|credits|api|return)|(provider-fallback)):/;
 
-export type LimitContinuationKind = "fallback" | "reset" | "credits" | "api";
+export type LimitContinuationKind =
+  | "fallback"
+  | "reset"
+  | "credits"
+  | "api"
+  | "return"
+  | "provider-fallback";
 
 export function limitContinuationKind(messageId: string): LimitContinuationKind | null {
-  return (LIMIT_CONTINUATION.exec(messageId)?.[1] as LimitContinuationKind | undefined) ?? null;
+  const match = LIMIT_CONTINUATION.exec(messageId);
+  return ((match?.[1] ?? match?.[2]) as LimitContinuationKind | undefined) ?? null;
+}
+
+/** The run a continuation's id ends with; run ids hold colons, so the longest match wins. */
+function continuedRun<R extends Run>(messageId: string, runs: readonly R[]): R | undefined {
+  let found: R | undefined;
+  for (const run of runs)
+    if (messageId.endsWith(`:${run.id}`) && run.id.length > (found?.id.length ?? -1)) found = run;
+  return found;
 }
 
 /**
@@ -27,10 +45,8 @@ export function limitContinuationNote(
 ): string | null {
   const kind = limitContinuationKind(message.id);
   if (kind === null) return null;
-  const stoppedId = message.id.slice(message.id.lastIndexOf(":") + 1);
   const ownIndex = message.runId ? runs.findIndex((run) => run.id === message.runId) : -1;
-  const stopped =
-    runs.find((run) => run.id === stoppedId) ?? (ownIndex > 0 ? runs[ownIndex - 1] : undefined);
+  const stopped = continuedRun(message.id, runs) ?? (ownIndex > 0 ? runs[ownIndex - 1] : undefined);
   const now = ownIndex >= 0 ? runs[ownIndex]?.modelSelection : undefined;
   const limit = stopped?.modelSelection
     ? `${describe(stopped.modelSelection).provider} limit reached`
@@ -39,7 +55,14 @@ export function limitContinuationNote(
   switch (kind) {
     case "fallback":
       return on ? `${limit} · continued on ${on}` : `${limit} · continuing on another provider`;
+    case "provider-fallback": {
+      const failed = stopped?.modelSelection
+        ? `${describe(stopped.modelSelection).provider} could not start`
+        : "Provider could not start";
+      return on ? `${failed} · continued on ${on}` : `${failed} · continuing on another provider`;
+    }
     case "reset":
+    case "return":
       return on ? `Usage limit reset · continued on ${on}` : "Usage limit reset · continued";
     case "credits":
       return `${limit} · continued${on ? ` on ${on}` : ""} with banked credits`;
@@ -65,20 +88,25 @@ export function restartContinuationNote(message: { readonly id: string }): strin
 /**
  * The thread runs on a limit fallback: the last usage-limit continuation moved
  * it off `original`, and no later run has gone back. Null once a run returns to
- * the original provider or the thread's next turn is set there.
+ * the original provider or the thread's next turn is set there, and after a
+ * move off a provider that could not start, which has nothing to go back to.
  */
 export function limitFallbackPairing(
   messages: ReadonlyArray<{ readonly id: string; readonly runId?: string | null | undefined }>,
   runs: readonly Run[],
   current: RunSelection,
 ): { readonly original: RunSelection; readonly stoppedRunId: string } | null {
-  const continuation = messages.findLast(
-    (message) => limitContinuationKind(message.id) === "fallback",
-  );
-  if (continuation === undefined) return null;
-  const stoppedRunId = continuation.id.slice(continuation.id.lastIndexOf(":") + 1);
-  const original = runs.find((run) => run.id === stoppedRunId)?.modelSelection;
-  if (original === undefined || current.instanceId === original.instanceId) return null;
+  const continuation = messages.findLast((message) => {
+    const kind = limitContinuationKind(message.id);
+    return kind === "fallback" || kind === "provider-fallback";
+  });
+  if (continuation === undefined || limitContinuationKind(continuation.id) !== "fallback")
+    return null;
+  const stopped = continuedRun(continuation.id, runs);
+  const original = stopped?.modelSelection;
+  if (stopped === undefined || original === undefined || current.instanceId === original.instanceId)
+    return null;
+  const stoppedRunId = stopped.id;
   const ownIndex = continuation.runId ? runs.findIndex((run) => run.id === continuation.runId) : -1;
   const returned = runs
     .slice(ownIndex >= 0 ? ownIndex + 1 : runs.length)

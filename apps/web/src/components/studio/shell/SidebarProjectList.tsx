@@ -486,7 +486,9 @@ export function ProjectRow(props: {
             <span className="sws-side-row-label">{displayName}</span>
             {copies ? <span className="sr-only">, {copies}</span> : null}
             {props.hint ? (
-              <span className="sws-side-row-hint sws-side-row-namesake">{props.hint}</span>
+              <span className="sws-side-row-hint sws-side-row-namesake" title={props.hint}>
+                {props.hint}
+              </span>
             ) : null}
             {pinned ? (
               <PinIcon className="sws-side-row-pin" aria-label="Pinned" role="img" />

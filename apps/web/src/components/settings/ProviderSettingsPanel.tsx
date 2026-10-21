@@ -1084,6 +1084,10 @@ export function EnvironmentProviderSettings({
         instance={row.instance}
         driverOption={driverOption}
         liveProvider={liveProvider}
+        autoEnabled={
+          row.instanceId === defaultInstanceIdForDriver(row.driver) &&
+          settings.providerDiscovery?.autoEnabled?.[row.driver] !== undefined
+        }
         mode={mode}
         selected={mode === "list" && selectedRow?.instanceId === row.instanceId}
         onSelect={mode === "list" ? () => setSelectedInstanceId(row.instanceId) : undefined}

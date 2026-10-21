@@ -1,3 +1,4 @@
+import { isPersonalAssistantProject } from "@specweave-studio/shared/personalAssistant";
 import { THREAD_LIFECYCLE_LABELS } from "@specweave-studio/shared/threadLifecycleLabels";
 import { type EnvironmentId } from "@specweave-studio/contracts";
 import { ThreadHoverCard, ThreadHoverCardPopup } from "./ThreadHoverCard";
@@ -170,6 +171,7 @@ import {
   useThreadShells,
 } from "../state/entities";
 import { environmentServerConfigsAtom, primaryServerKeybindingsAtom } from "../state/server";
+import { useSidebarProjects } from "../state/projectClones";
 import { vcsEnvironment } from "../state/vcs";
 import { threadEnvironment } from "../state/threads";
 import { useEnvironmentQuery } from "../state/query";
@@ -2404,7 +2406,7 @@ const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props: {
 });
 
 export default function Sidebar() {
-  const projects = useProjects();
+  const projects = useSidebarProjects(useProjects());
   const projectOrder = useUiStateStore((store) => store.projectOrder);
   const threads = useThreadShells();
   const router = useRouter();
@@ -4698,7 +4700,12 @@ export default function Sidebar() {
                       threadShell,
                       projectByKey.get(`${thread.environmentId}:${thread.projectId}`),
                     ),
-              handoff: threadHandoffMenuState(handoffSnapshot, thread.id),
+              // A personal assistant's threads stay on their machine: no handoff items.
+              handoff: isPersonalAssistantProject(
+                projectByKey.get(`${thread.environmentId}:${thread.projectId}`),
+              )
+                ? undefined
+                : threadHandoffMenuState(handoffSnapshot, thread.id),
               supports: {
                 settlement: supportsSettlement,
                 autoSettleOptOut: supportsAutoSettleOptOut,

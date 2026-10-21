@@ -331,3 +331,33 @@ describe("projected tool inspector", () => {
     ).toContain("exit 2");
   });
 });
+
+describe("system notice inspector", () => {
+  it("shows the full notice and copies it", async () => {
+    const writeText = vi.fn(async () => undefined);
+    vi.stubGlobal("navigator", { clipboard: { writeText } });
+    const message =
+      "Could not open a pull request: Git command failed\n\nBranch: ops/watch\nfatal: origin/main...HEAD: no merge base";
+    const element = await mount(
+      <V2ItemInspector
+        environmentId={"fixture" as EnvironmentId}
+        projectedItem={
+          {
+            item: { type: "system_notice", status: "completed", message },
+            sourceThreadId: "thread-1",
+            sourceItemId: "item-1",
+          } as unknown as OrchestrationV2ProjectedTurnItem
+        }
+        onOpenThread={() => undefined}
+        onOpenTurnDiff={() => undefined}
+      />,
+    );
+    expect(element.querySelector("pre")?.textContent).toBe(message);
+    const button = [...element.querySelectorAll("button")].find(
+      (candidate) => candidate.textContent === "Copy details",
+    );
+    await act(async () => button!.click());
+    expect(writeText).toHaveBeenCalledWith(message);
+    vi.unstubAllGlobals();
+  });
+});

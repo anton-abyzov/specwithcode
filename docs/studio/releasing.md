@@ -159,7 +159,11 @@ untracked files is refused before anything is deleted. The bump stage refuses a 
 the release stops before the next of bundle, sign, helpers, plan and drafts, so a failed run does
 not go on to sign and upload, and an earlier candidate's drafts are deleted.
 `fleet_rollout.py` stops when a host reports that the install it asked for failed, and names the
-receipt; that host stays on its old version. When publish-public's push failed after `publish.mjs`
+receipt; that host stays on its old version. Before each request or check the host installs the
+update agent its release ships when its own agent is older (`docs/studio/updates.md`), and the rollout
+says so in a line, such as `m1: installed the update agent its release ships over an older one`; a host
+that could not install it still gets the request, which the agent it has handles. A worker that stops
+on an unexpected error fails the rollout with its host's name instead of dropping out of the results. When publish-public's push failed after `publish.mjs`
 tagged, `--resume` drops the tag left in the public clone, since the remote has none.
 
 ### What keeps a release from failing late
@@ -211,7 +215,10 @@ the SpecWithCode app on M4, which drains and holds through the same `prepareServ
 writes the forced request, wait until `fleet_rollout.py --version <v> --only m4` reports M4
 installed (it joins an install of that version already under way), and run `--only workers`;
 `--no-hold` is the explicit opt-in to an unheld request;
-`update_request.py status --identity <id>` reads one host's updater state. For a host whose agent
+`update_request.py status --identity <id>` reads one host's updater state; its `installFinalized`
+needs the agent's verified receipt. Receipts and the agent's snapshots carry the guarded rows,
+which grow with the service's threads (1.2 MB on M4 at 887 threads), so the agent and `status`
+read them up to 64 MiB. For a host whose agent
 cannot install a release on its own, copy the assets to `<studio root>/release-staging/<version>/`
 on that host and run `/usr/bin/python3 -B scripts/studio-fleet/remote_update.py --identity <id>
 --version <v> --runtime <runtime archive> --helpers <helpers archive>`; it checks the staged files,

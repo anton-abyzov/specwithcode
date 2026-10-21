@@ -38,6 +38,7 @@ import {
   OrchestrationV2Subagent,
   OrchestrationV2ThreadHistoryPage,
   OrchestrationV2ThreadLaunchWorkspaceStrategy,
+  OrchestrationV2ThreadProjectMoveLink,
   OrchestrationV2ThreadProjection,
   OrchestrationV2ThreadStreamItem,
   OrchestrationV2ThreadShell,
@@ -1482,5 +1483,30 @@ describe("thread launch workspace strategy repository", () => {
       baseRef: "develop",
     });
     expect(() => decode({ type: "worktree", baseRef: "develop", repository: "  " })).toThrow();
+  });
+});
+
+describe("OrchestrationV2ThreadProjectMoveLink", () => {
+  const decode = Schema.decodeUnknownExit(OrchestrationV2ThreadProjectMoveLink);
+  const link = {
+    threadId: "thread-on-minis",
+    projectId: "project-app",
+    title: "Fix the build",
+    movedAt: "2026-10-20T14:00:00.000Z",
+  };
+
+  it("decodes links stored before kinds and notes", () => {
+    expect(decode(link)._tag).toBe("Success");
+    expect(
+      decode({ ...link, kind: "handoff", environmentId: "env-minis", machineLabel: "Minis" })._tag,
+    ).toBe("Success");
+  });
+
+  it("carries a handoff's note, up to 300 characters", () => {
+    const note = "Hit 95% of Claude on M4 · continued on Minis with Claude Opus 5.5";
+    const decoded = decode({ ...link, kind: "handoff", note });
+    expect(decoded._tag === "Success" ? decoded.value.note : null).toBe(note);
+    expect(decode({ ...link, note: "x".repeat(301) })._tag).toBe("Failure");
+    expect(decode({ ...link, note: "  " })._tag).toBe("Failure");
   });
 });

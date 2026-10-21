@@ -90,3 +90,38 @@ export function providerUsageSummary(
     ...(usageDeniesTurn(provider) ? { limited: true } : {}),
   };
 }
+
+const SIMULATED_WINDOW_MS = 5 * 60 * 60_000;
+
+/**
+ * The providers with the usage `STUDIO_SIMULATE_PROVIDER_USAGE` names, so
+ * the limit sweep's threshold sees it as a real reading would: one session
+ * window at that share, resetting at a fixed time (between 5 and 10 hours
+ * off, the same all through a 5-hour block, so a usage window keeps one key).
+ * Unknown (`?`) entries and providers it doesn't list are returned as they
+ * are; without the variable this is the identity.
+ */
+export function withSimulatedUsage(
+  providers: ReadonlyArray<ServerProvider>,
+  nowMs: number,
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): ReadonlyArray<ServerProvider> {
+  const simulated = simulatedProviderUsage(env);
+  if (simulated.size === 0) return providers;
+  const now = isoAt(nowMs);
+  const resetsAt = isoAt(
+    Math.floor(nowMs / SIMULATED_WINDOW_MS) * SIMULATED_WINDOW_MS + 2 * SIMULATED_WINDOW_MS,
+  );
+  return providers.map((provider): ServerProvider => {
+    const usedPercent = simulated.get(provider.instanceId)?.usedPercent ?? null;
+    if (usedPercent === null) return provider;
+    return {
+      ...provider,
+      usageLimits: {
+        checkedAt: now,
+        nativeAllowanceObservedAt: now,
+        windows: [{ id: "simulated", kind: "session", label: "Simulated", usedPercent, resetsAt }],
+      },
+    };
+  });
+}

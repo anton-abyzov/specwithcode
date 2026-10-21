@@ -1,8 +1,16 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import {
+  chmodSync,
+  copyFileSync,
+  mkdirSync,
+  mkdtempSync,
+  readFileSync,
+  rmSync,
+  writeFileSync,
+} from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import test from "node:test";
 
 const gate = new URL("./typecheck-gate.sh", import.meta.url).pathname;
@@ -82,6 +90,42 @@ test("fails a crash exit even after baselined diagnostics", { skip }, () => {
   assert.match(result.stdout, /apps\/server\s+134\s+3\s+0\s+FAIL/);
 });
 
+test("fails a Go crash that exits 2 after baselined diagnostics", { skip }, () => {
+  const log = serverLog + "fatal error: runtime: out of memory\n\ngoroutine 1 [running]:\n";
+  const result = run({ "apps/server": { exit: 2, log } }, serverBaseline);
+  assert.equal(result.status, 1);
+  assert.match(result.stdout, /apps\/server\s+2\s+3\s+0\s+FAIL/);
+  assert.match(result.stdout, /crashed \(exit 2\): fatal error: runtime: out of memory/);
+});
+
+test("fails a crash in the log whatever the exit code", { skip }, () => {
+  for (const [exit, line] of [
+    [1, "panic: runtime error: index out of range [3] with length 3"],
+    [0, "FATAL ERROR: Reached heap limit Allocation failed - JavaScript heap out of memory"],
+  ]) {
+    const result = run({ "apps/server": { exit, log: serverLog + line + "\n" } }, serverBaseline);
+    assert.equal(result.status, 1, `exit ${exit}`);
+    assert.match(result.stdout, new RegExp(`crashed \\(exit ${exit}\\)`));
+  }
+});
+
+test("fails exit 2 and signals even with baselined diagnostics and no crash text", { skip }, () => {
+  for (const exit of [2, 137]) {
+    const result = run({ "apps/server": { exit, log: serverLog } }, serverBaseline);
+    assert.equal(result.status, 1, `exit ${exit}`);
+    assert.match(result.stdout, new RegExp(`exit ${exit} is not a diagnostic exit`));
+  }
+});
+
+test("does not read a diagnostic that mentions a panic as a crash", { skip }, () => {
+  const log = serverLog + "src/a.ts(5,1): error TS377057: panic: not at the start of a line.\n";
+  const result = run(
+    { "apps/server": { exit: 1, log } },
+    "apps/server/src/a.ts TS377057 3\napps/server/src/b.test.ts TS377033 1\n",
+  );
+  assert.equal(result.status, 0, result.stdout + result.stderr);
+});
+
 test("fails a timed-out or unfinished typecheck", { skip }, () => {
   const result = run(
     {
@@ -121,4 +165,59 @@ test("reports fixed entries and rewrites only the packages that ran", { skip }, 
     "apps/server/src/a.ts TS377057 1",
     "packages/contracts/src/x.ts TS2345 4",
   ]);
+});
+
+// A real run in a throwaway workspace whose tsc is a script, so a crashing checker goes through
+// job_run, the exit file and the log exactly as tsc's would.
+test("a crashing checker fails a real gate run", { skip }, () => {
+  const repo = mkdtempSync(join(tmpdir(), "typecheck-gate-repo-"));
+  try {
+    const verify = join(repo, "scripts", "studio-verify");
+    mkdirSync(verify, { recursive: true });
+    for (const name of ["typecheck-gate.sh", "jobs.sh"]) {
+      copyFileSync(new URL(`./${name}`, import.meta.url).pathname, join(verify, name));
+    }
+    writeFileSync(join(repo, "pnpm-workspace.yaml"), "packages:\n  - pkg/*\n");
+    const tsc = {
+      oom: "echo \"args: $*\"\necho \"src/a.ts(1,1): error TS2322: Type 'number'.\"\necho 'fatal error: runtime: out of memory'\necho\necho 'goroutine 1 [running]:'\nexit 2\n",
+      killed: "echo \"src/a.ts(1,1): error TS2322: Type 'number'.\"\nkill -9 $$\n",
+      exit2: "echo \"src/a.ts(1,1): error TS2322: Type 'number'.\"\nexit 2\n",
+      missing: null,
+    };
+    for (const [name, script] of Object.entries(tsc)) {
+      const dir = join(repo, "pkg", name);
+      mkdirSync(dir, { recursive: true });
+      writeFileSync(join(dir, "package.json"), '{"scripts":{"typecheck":"tsc --noEmit"}}\n');
+      if (script === null) continue;
+      const bin = join(dir, "node_modules", ".bin", "tsc");
+      mkdirSync(dirname(bin), { recursive: true });
+      writeFileSync(bin, "#!/bin/sh\n" + script);
+      chmodSync(bin, 0o755);
+    }
+    // Without crash detection the baselined diagnostic would make both packages pass.
+    const baseline = join(repo, "baseline.txt");
+    writeFileSync(
+      baseline,
+      ["oom", "killed", "exit2"].map((p) => `pkg/${p}/src/a.ts TS2322 1\n`).join(""),
+    );
+    const out = join(repo, "out");
+    const env = { ...process.env };
+    delete env.TYPECHECK_TSC_ARGS;
+    const result = spawnSync(
+      "bash",
+      [join(verify, "typecheck-gate.sh"), "--out", out, "--baseline", baseline],
+      { encoding: "utf8", env },
+    );
+    assert.equal(result.status, 1, result.stdout + result.stderr);
+    assert.match(result.stdout, /pkg\/oom\s+2\s+1\s+0\s+FAIL/);
+    assert.match(result.stdout, /crashed \(exit 2\): fatal error: runtime: out of memory/);
+    assert.match(result.stdout, /pkg\/killed\s+137\s+1\s+0\s+FAIL/);
+    assert.match(result.stdout, /pkg\/exit2\s+2\s+1\s+0\s+FAIL/);
+    assert.match(result.stdout, /pkg\/missing\s+127\s+0\s+0\s+FAIL/);
+    assert.match(result.stdout, /the workspace tsc is not installed/);
+    // CI's checker count is the default.
+    assert.match(readFileSync(join(out, "pkg__oom.log"), "utf8"), /args: --noEmit --checkers 2/);
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
 });

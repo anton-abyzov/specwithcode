@@ -166,6 +166,45 @@ describe("deriveProviderModelsForDisplay", () => {
       expect(markup).toContain("is not a symlink");
     }
   });
+
+  it("says a provider was turned on automatically, with Undo, only while it is on", () => {
+    const instanceId = ProviderInstanceId.make("grok");
+    const driver = ProviderDriverKind.make("grok");
+    const props = {
+      instanceId,
+      driverOption: undefined,
+      liveProvider: undefined,
+      autoEnabled: true,
+      onUpdate: () => undefined,
+      hiddenModels: [],
+      favoriteModels: [],
+      modelOrder: [],
+      onHiddenModelsChange: () => undefined,
+      onFavoriteModelsChange: () => undefined,
+      onModelOrderChange: () => undefined,
+    } as const;
+
+    for (const mode of ["list", "editor"] as const) {
+      const on = renderToStaticMarkup(
+        createElement(ProviderInstanceCard, {
+          ...props,
+          mode,
+          instance: { driver, enabled: true },
+        }),
+      );
+      expect(on).toContain("Turned on automatically because its CLI is signed in.");
+      expect(on).toContain('aria-label="Undo: turn off grok"');
+
+      const off = renderToStaticMarkup(
+        createElement(ProviderInstanceCard, {
+          ...props,
+          mode,
+          instance: { driver, enabled: false },
+        }),
+      );
+      expect(off).not.toContain("Turned on automatically");
+    }
+  });
 });
 
 describe("provider environment helpers", () => {

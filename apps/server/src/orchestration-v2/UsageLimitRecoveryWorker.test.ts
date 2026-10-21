@@ -35,6 +35,7 @@ import * as ProjectionStore from "./ProjectionStore.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
 import * as Availability from "./UsageLimitAvailability.ts";
+import { MachineLimitHandoff } from "./MachineLimitHandoff.ts";
 import {
   autoResumeByDefault,
   limitRecoveryCommand,
@@ -832,7 +833,12 @@ const claudeSweepHarness = (input: {
   globalAutoResume?: boolean;
 }) => {
   const projectId = ProjectId.make("claude-limit-project");
-  const state = { current: input.thread, commands: [] as OrchestrationV2ServerCommand[] };
+  const state = {
+    current: input.thread,
+    commands: [] as OrchestrationV2ServerCommand[],
+    /** The persisted handoff state keeps the thread from starting a turn here. */
+    handoffBlocked: false,
+  };
   const deps = Layer.mergeAll(
     ProjectAdmission.layer,
     Settings.layerTest({
@@ -879,7 +885,13 @@ const claudeSweepHarness = (input: {
     }),
   );
   // A fresh sweep per call: nothing survives in memory, as after a restart.
-  const sweep = Effect.flatMap(makeSweep, (run) => run()).pipe(Effect.provide(deps));
+  const sweep = Effect.flatMap(makeSweep, (run) => run()).pipe(
+    Effect.provide(deps),
+    Effect.provideService(MachineLimitHandoff, {
+      ...MachineLimitHandoff.defaultValue(),
+      localTurnBlocked: () => Effect.sync(() => state.handoffBlocked),
+    }),
+  );
   return { state, sweep };
 };
 
@@ -918,6 +930,31 @@ it.effect("auto-continues a Claude thread once its limit resets, across a restar
     // A second sweep repeats the same command id, which the receipt store dedupes.
     yield* sweep;
     assert.equal(state.commands[1]?.commandId, resume.commandId);
+  }),
+);
+
+it.effect("never resumes here a thread the handoff state holds, across a restart", () =>
+  Effect.gen(function* () {
+    const resetMs = 5 * 60 * 60_000;
+    const { state, sweep } = claudeSweepHarness({
+      thread: claudeLimitStop(resetMs),
+      projectAutoResume: true,
+    });
+    // Handing off (or continued elsewhere), written to disk before the restart.
+    state.handoffBlocked = true;
+    yield* sweep;
+    yield* TestClock.adjust("5 hours");
+    yield* TestClock.adjust("1 minute");
+    yield* sweep;
+    yield* sweep;
+    assert.deepEqual(
+      state.commands.filter((command) => command.type === "message.dispatch"),
+      [],
+    );
+    // Once the move is settled the other way (refused, lease back), it resumes here.
+    state.handoffBlocked = false;
+    yield* sweep;
+    assert.equal(state.commands.at(-1)?.type, "message.dispatch");
   }),
 );
 

@@ -160,6 +160,18 @@ describe("runOnMachineGroups", () => {
     ]);
   });
 
+  it("offers no other machine for a personal assistant: it never runs on or copies to one", () => {
+    const aide = project("here", "aide", { workspaceSettings: { kind: "personal" } });
+    const groups = runOnMachineGroups({
+      active: aide,
+      environmentIds: [env("here"), env("anna"), env("empty")],
+      projects: [aide, project("anna", "aide-anna", { workspaceSettings: { kind: "personal" } })],
+      logicalKey: () => "own:aide",
+    });
+    expect(groups.withProject.map((entry) => entry.environmentId)).toEqual(["here"]);
+    expect(groups.addable).toEqual([]);
+  });
+
   it("skips archived and personal copies but always lists the active machine", () => {
     const groups = runOnMachineGroups({
       active: project("here", "p1", {

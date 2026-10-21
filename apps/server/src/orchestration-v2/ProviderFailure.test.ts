@@ -2,10 +2,13 @@ import { providerFailureFallbackMessage } from "@specweave-studio/shared/orchest
 import { assert, it } from "@effect/vitest";
 import {
   NodeId,
+  type OrchestrationV2ProviderFailureClass,
   ProjectEnvironmentError,
   ProjectId,
   ProviderDriverKind,
+  ORCHESTRATION_V2_PROVIDER_UNAVAILABLE_FAILURE_CODE,
   ProviderInstanceId,
+  ProviderSessionId,
   ProviderSetupError,
   ProviderThreadId,
   ProviderTurnId,
@@ -22,11 +25,16 @@ import {
   makeProviderFailureTurnItem,
   MAX_PROVIDER_FAILURE_CODE_LENGTH,
   MAX_PROVIDER_FAILURE_MESSAGE_LENGTH,
+  shouldHoldQueueAfterFailure,
   simulatedUsageLimitFailure,
+  WORKSPACE_BRANCH_MISSING_FAILURE_CODE,
 } from "./ProviderFailure.ts";
 import * as IdAllocator from "./IdAllocator.ts";
 import { ContextHandoffBudgetError } from "./ContextHandoffDelivery.ts";
-import { ProviderAdapterTurnStartError } from "./ProviderAdapter.ts";
+import {
+  ProviderAdapterOpenSessionError,
+  ProviderAdapterTurnStartError,
+} from "./ProviderAdapter.ts";
 
 it("redacts credentials and URL secrets from provider failures", () => {
   const failure = makeProviderFailure({
@@ -193,6 +201,44 @@ it("keeps native quota admission typed when an existing session starts its turn"
     makeProviderFailure({ cause: new Error("usage limit denied"), class: "provider_error" }).class,
     "provider_error",
   );
+});
+
+it("marks a provider that cannot run on this machine as unavailable", () => {
+  const detail =
+    "GitHub Copilot 1.0.101 is not prepared. Use Install / update agent in Settings → Providers.";
+  const unavailable = (setup: Partial<ConstructorParameters<typeof ProviderSetupError>[0]>) =>
+    new ProviderAdapterOpenSessionError({
+      driver: ProviderDriverKind.make("acpRegistry"),
+      providerSessionId: ProviderSessionId.make("provider-session:unavailable"),
+      cause: new ProviderSetupError({
+        instanceId: ProviderInstanceId.make("acpRegistry_copilot"),
+        operation: "session",
+        detail,
+        ...setup,
+      }),
+    });
+  const cause = unavailable({ unavailable: { reason: "not_prepared" } });
+  for (const wrapped of [cause, Cause.fail(cause)]) {
+    assert.deepEqual(makeProviderFailure({ cause: wrapped, class: "provider_error" }), {
+      class: "provider_error",
+      message: detail,
+      code: ORCHESTRATION_V2_PROVIDER_UNAVAILABLE_FAILURE_CODE,
+      retryable: null,
+    });
+  }
+  // An explicit code wins, a quota denial stays a usage limit, and an unmarked
+  // setup failure keeps no code.
+  assert.equal(
+    makeProviderFailure({ cause, class: "provider_error", code: "explicit" }).code,
+    "explicit",
+  );
+  const limited = makeProviderFailure({
+    cause: unavailable({ unavailable: { reason: "signed_out" }, usageLimit: {} }),
+    class: "provider_error",
+  });
+  assert.equal(limited.class, "usage_limit");
+  assert.equal(limited.code, null);
+  assert.equal(makeProviderFailure({ cause: unavailable({}), class: "provider_error" }).code, null);
 });
 
 it("names the setup reason when turn startup fails a native status check", () => {
@@ -405,4 +451,28 @@ it("logs structural startup causes and the curated folder error code without pay
     }),
     { errorTags: [] },
   );
+});
+
+it("holds the queue after a failure the next message would repeat", () => {
+  const hold = (
+    failure: { class: OrchestrationV2ProviderFailureClass; code: string | null } | undefined,
+    queuedProviderInstanceId = "codex",
+  ) =>
+    shouldHoldQueueAfterFailure({
+      failure,
+      failedProviderInstanceId: "codex",
+      queuedProviderInstanceId,
+    });
+
+  assert.isTrue(hold({ class: "provider_error", code: null }));
+  assert.isFalse(hold({ class: "provider_error", code: null }, "claudeAgent"));
+  assert.isFalse(hold({ class: "validation_error", code: null }));
+  assert.isFalse(hold(undefined));
+  // A deleted thread folder fails the next message on any provider.
+  const workspaceGone = {
+    class: "validation_error" as const,
+    code: WORKSPACE_BRANCH_MISSING_FAILURE_CODE,
+  };
+  assert.isTrue(hold(workspaceGone));
+  assert.isTrue(hold(workspaceGone, "claudeAgent"));
 });

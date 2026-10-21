@@ -64,6 +64,14 @@ export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
    * instances are never flagged — the user just made them).
    */
   newBadgeInstanceIds?: ReadonlySet<ProviderInstanceId>;
+  /**
+   * A usage mark on the provider: amber when its account is low, red when a
+   * confirmed read says every model on it is out. The button stays usable so
+   * the list can show why.
+   */
+  getInstanceUsage?: (
+    entry: ProviderInstanceEntry,
+  ) => { readonly tone: "warn" | "full"; readonly text: string } | null;
 }) {
   const handleSelect = (instanceId: ProviderInstanceId | "favorites") => {
     props.onSelectInstance(instanceId);
@@ -160,13 +168,15 @@ export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
             const showNewBadge = props.newBadgeInstanceIds?.has(entry.instanceId) ?? false;
             const showInstanceBadge = shouldShowInstanceBadge(entry, props.instanceEntries);
 
-            const tooltip = isUnavailable
+            const usageMark = isUnavailable ? null : (props.getInstanceUsage?.(entry) ?? null);
+            const baseTooltip = isUnavailable
               ? describeUnavailableInstance(entry)
               : isContextDisabled
                 ? (props.getDisabledInstanceTooltip?.(entry) ?? entry.displayName)
                 : showNewBadge
                   ? `${entry.displayName} — New`
                   : entry.displayName;
+            const tooltip = usageMark ? `${baseTooltip}: ${usageMark.text}` : baseTooltip;
 
             const button = (
               <Toolbar.Button
@@ -189,7 +199,7 @@ export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
                 aria-pressed={isSelected}
                 type="button"
                 aria-label={
-                  isUnavailable || isContextDisabled
+                  isUnavailable || isContextDisabled || usageMark
                     ? tooltip
                     : showNewBadge
                       ? `${entry.displayName}, new`
@@ -218,6 +228,16 @@ export const ModelPickerSidebar = memo(function ModelPickerSidebar(props: {
                   <span className={NEW_BADGE_CLASS} aria-hidden>
                     <SparklesIcon className="size-2" />
                   </span>
+                ) : null}
+                {usageMark ? (
+                  <span
+                    className={cn(
+                      "pointer-events-none absolute right-0.5 bottom-0.5 z-40 size-2 rounded-full ring-2 ring-(--popover)",
+                      usageMark.tone === "full" ? "bg-destructive" : "bg-warning",
+                    )}
+                    data-model-picker-usage-mark={usageMark.tone}
+                    aria-hidden
+                  />
                 ) : null}
               </Toolbar.Button>
             );

@@ -450,6 +450,7 @@ import {
   selectProjectGroupingSettings,
 } from "../logicalProject";
 import { buildDraftThreadRouteParams, buildThreadRouteParams } from "../threadRoutes";
+import { HANDOFF_CONTINUED, movedAwayBanner, threadMoveBanner } from "./threadMove.logic";
 import {
   isSameSidebarThreadRef,
   useSidebarPendingFileDropStore,
@@ -521,7 +522,11 @@ import { vcsEnvironment } from "../state/vcs";
 import { sourceControlEnvironment } from "../state/sourceControl";
 import { useProjectClone } from "../state/projectClones";
 import { clearAddToMachineJob, readAddToMachineJob } from "../studio/addToMachine";
-import { projectCloneDisplayName, projectCloneProgressSummary } from "@specweave-studio/contracts";
+import {
+  projectCloneDisplayName,
+  projectCloneProgressSummary,
+  projectCloneSendBlockReason as projectCloneSendBlockReasonOf,
+} from "@specweave-studio/contracts";
 import { useEnvironments, usePrimaryEnvironment } from "../state/environments";
 import {
   resolveThreadDetailRef,
@@ -651,13 +656,16 @@ import {
   PullRequestDialogState,
   cloneComposerImageForRetry,
   deriveLockedProvider,
+  providerInstanceCanRun,
   readFileAsDataUrl,
   resolveFileAttachmentUrl,
   prepareRevertedMessageAttachments,
   waitForRevertedMessage,
   reconcileMountedTerminalThreadIds,
   resolveComposerInteractionMode,
+  resolveComposerDraftProvider,
   resolveComposerProviderSelection,
+  resolveComposerServerProviderSync,
   getAntigravitySendBlockReason,
   observeProactivePanelUserChoice,
   resolveProactiveTurnDiffAction,
@@ -2088,6 +2096,15 @@ function useChatViewState(props: ChatViewProps) {
   const composerActiveProvider = useComposerDraftStore(
     (store) => store.getComposerDraft(composerDraftTarget)?.activeProvider ?? null,
   );
+  const composerModelSelectionExplicit = useComposerDraftStore(
+    (store) => store.getComposerDraft(composerDraftTarget)?.modelSelectionExplicit === true,
+  );
+  const composerActiveSelection = useComposerDraftStore((store) => {
+    const draft = store.getComposerDraft(composerDraftTarget);
+    return draft?.activeProvider
+      ? (draft.modelSelectionByProvider[draft.activeProvider] ?? null)
+      : null;
+  });
   const composerHasAttachments = useComposerDraftStore((store) => {
     const draft = store.getComposerDraft(composerDraftTarget);
     return (draft?.images.length ?? 0) > 0 || (draft?.files.length ?? 0) > 0;
@@ -2433,10 +2450,6 @@ function useChatViewState(props: ChatViewProps) {
   );
   const isProviderSubagent =
     serverThread !== null && isProviderNativeSubagentThread(serverThread.source);
-  const supportsProviderSwitchingViaHandoff = useMemo(
-    () => threadSupportsProviderHandoff(serverProjection),
-    [serverProjection],
-  );
   const activeLatestRun = isServerThread ? serverLatestRun : (activeThread?.latestRun ?? null);
   // Opening a thread first draws its cached copy, which can still show a turn
   // that ended while it was closed. Until fresh detail lands, the live shell
@@ -2608,6 +2621,9 @@ function useChatViewState(props: ChatViewProps) {
     key: string | null;
     instanceId: ProviderInstanceId | null;
   }>({ key: null, instanceId: null });
+  // A seeded copy also follows a switch made while the chat was closed (a
+  // reload, a reconnect, a project switch), so the composer and the sidebar
+  // name the same provider. A pick the user has not sent yet stays.
   useEffect(() => {
     const previous = previousServerProviderRef.current;
     previousServerProviderRef.current = {
@@ -2615,18 +2631,30 @@ function useChatViewState(props: ChatViewProps) {
       instanceId: serverProviderInstanceId,
     };
     if (!isServerThread || !activeThread || serverProviderInstanceId === null) return;
-    if (previous.key !== activeThreadKey || previous.instanceId === null) return;
-    if (previous.instanceId === serverProviderInstanceId) return;
-    if (composerActiveProvider === serverProviderInstanceId) return;
+    const sync = resolveComposerServerProviderSync({
+      server: activeThread.modelSelection,
+      serverChangedInPlace:
+        previous.key === activeThreadKey &&
+        previous.instanceId !== null &&
+        previous.instanceId !== serverProviderInstanceId,
+      draftProvider: composerActiveProvider,
+      draftExplicit: composerModelSelectionExplicit,
+      draftSelection: composerActiveSelection,
+    });
+    if (sync === "none") return;
     setComposerDraftModelSelection(
       scopeThreadRef(activeThread.environmentId, activeThread.id),
-      activeThread.modelSelection,
+      sync === "adopt" && composerActiveSelection !== null
+        ? composerActiveSelection
+        : activeThread.modelSelection,
       { explicit: false, replaceOptions: true },
     );
   }, [
     activeThread,
     activeThreadKey,
     composerActiveProvider,
+    composerActiveSelection,
+    composerModelSelectionExplicit,
     isServerThread,
     serverProviderInstanceId,
     setComposerDraftModelSelection,
@@ -2941,14 +2969,7 @@ function useChatViewState(props: ChatViewProps) {
     },
     [cancelProjectClone, handleNewThread, openCoordinatorHandoff, removeClonedProject],
   );
-  const projectCloneSendBlockReason =
-    activeProjectClone === null
-      ? null
-      : activeProjectClone.phase === "running"
-        ? "Cloning repository"
-        : activeProjectClone.phase === "done"
-          ? null
-          : "Repository not cloned";
+  const projectCloneSendBlockReason = projectCloneSendBlockReasonOf(activeProjectClone);
   const projectCloneBannerItem = useMemo<ComposerBannerStackItem | null>(() => {
     if (!activeProjectClone || !activeProjectTarget || activeProjectClone.phase === "done") {
       return null;
@@ -3416,11 +3437,31 @@ function useChatViewState(props: ChatViewProps) {
     ? (activeEnvironment?.serverConfig ?? null)
     : (primaryEnvironment?.serverConfig ?? null);
   const providerStatuses = serverConfig?.providers ?? EMPTY_PROVIDERS;
-  const selectedProviderByThreadId = composerActiveProvider ?? null;
+  const selectedProviderByThreadId = resolveComposerDraftProvider({
+    draftProvider: composerActiveProvider,
+    draftExplicit: composerModelSelectionExplicit,
+    serverInstanceId: isServerThread ? (activeThread?.modelSelection.instanceId ?? null) : null,
+  });
   const threadProvider =
     activeThread?.modelSelection.instanceId ??
     activeProjectDefaultModelSelection?.instanceId ??
     null;
+  // A provider that cannot run here (e.g. a managed agent not prepared on this
+  // machine) holds nothing to keep, so an idle thread may leave it.
+  const selectedProviderCanRun = providerInstanceCanRun(
+    providerStatuses,
+    serverProjection?.thread.modelSelection.instanceId,
+  );
+  const supportsProviderSwitchingViaHandoff = useMemo(
+    () =>
+      threadSupportsProviderHandoff(
+        serverProjection,
+        selectedProviderCanRun === undefined
+          ? undefined
+          : { selectedInstanceCanRun: selectedProviderCanRun },
+      ),
+    [serverProjection, selectedProviderCanRun],
+  );
   const lockedProvider = deriveLockedProvider({
     thread: activeThread,
     selectedProvider: selectedProviderByThreadId,
@@ -8866,8 +8907,6 @@ function useChatViewActions(
     (text: string) => void sendStandaloneCommand(text, "Could not ask the agent to try again."),
     [sendStandaloneCommand],
   );
-  const movedTo = serverProjection?.thread.movedTo ?? null;
-  const movedFrom = serverProjection?.thread.movedFrom ?? null;
   // Handoff mode: another machine continues this thread, so this copy takes no new turns.
   const handoffSnapshot = useHandoffModeSnapshot(activeThread?.environmentId ?? null).snapshot;
   const handoffMachineName = useMachineNicknames();
@@ -8875,9 +8914,23 @@ function useChatViewActions(
     activeThread === undefined
       ? null
       : (threadHandoffState(handoffSnapshot, activeThread.id)?.continuedOn ?? null);
+  const projectedThread = serverProjection?.thread ?? null;
   const threadMoveBannerItem = useMemo<ComposerBannerStackItem | null>(() => {
-    const link = movedTo ?? movedFrom;
-    if (link === null && handoffContinuedOn !== null && activeThread !== undefined) {
+    const banner =
+      projectedThread === null || activeThread === undefined
+        ? null
+        : threadMoveBanner(
+            { ...projectedThread, environmentId: activeThread.environmentId },
+            (projectId) =>
+              allProjects.find(
+                (project) =>
+                  project.environmentId === activeThread.environmentId && project.id === projectId,
+              )?.title,
+          );
+    if (activeThread === undefined) return null;
+    if (banner === null) {
+      // Fenced by the heartbeat without a recorded link: the handoff state still names the continuation.
+      if (handoffContinuedOn === null) return null;
       const machine = handoffMachineName(
         handoffContinuedOn.environmentId,
         handoffContinuedOn.machineLabel,
@@ -8887,7 +8940,7 @@ function useChatViewActions(
         handoffContinuedOn.threadId,
       );
       return {
-        id: `thread-handoff-continued:${activeThread.id}`,
+        id: `${HANDOFF_CONTINUED}${activeThread.id}`,
         variant: "info",
         icon: <FolderInputIcon />,
         title: `Continued on ${machine}`,
@@ -8909,53 +8962,34 @@ function useChatViewActions(
         ),
       };
     }
-    if (link === null || activeThread === undefined) return null;
-    const projectTitle =
-      allProjects.find(
-        (project) =>
-          project.environmentId === activeThread.environmentId && project.id === link.projectId,
-      )?.title ?? "another project";
-    const linkedRef = scopeThreadRef(activeThread.environmentId, link.threadId);
+    const linkedRef = scopeThreadRef(banner.target.environmentId, banner.target.threadId);
+    // A project move's original is archived, and archived threads open only once restored.
     const open = () =>
-      void navigate({ to: "/$environmentId/$threadId", params: buildThreadRouteParams(linkedRef) });
-    // The original is archived, and archived threads open only once restored.
-    const openOriginal = () =>
-      readThreadShell(linkedRef) === null ? void navigate({ to: "/settings/archived" }) : open();
-    return movedTo !== null
-      ? {
-          id: `thread-moved-to:${activeThread.id}`,
-          variant: "info",
-          icon: <FolderInputIcon />,
-          title: `Moved to ${projectTitle}`,
-          description:
-            "This thread was stopped and archived. Its work restarted there as a new thread; this one takes no new messages.",
-          actions: (
-            <Button size="xs" variant="ghost" onClick={open}>
-              Open new thread
-            </Button>
-          ),
-        }
-      : {
-          id: `thread-moved-from:${activeThread.id}`,
-          variant: "info",
-          icon: <FolderInputIcon />,
-          title: `Moved here from ${projectTitle}`,
-          description:
-            "A fresh start: no conversation, files or memory came from the original thread.",
-          actions: (
-            <Button size="xs" variant="ghost" onClick={openOriginal}>
-              Find original
-            </Button>
-          ),
-        };
+      banner.targetArchived && readThreadShell(linkedRef) === null
+        ? void navigate({ to: "/settings/archived" })
+        : void navigate({
+            to: "/$environmentId/$threadId",
+            params: buildThreadRouteParams(linkedRef),
+          });
+    return {
+      id: banner.id,
+      variant: "info",
+      icon: <FolderInputIcon />,
+      title: banner.title,
+      description: banner.description,
+      actions: (
+        <Button size="xs" variant="ghost" onClick={open}>
+          {banner.actionLabel}
+        </Button>
+      ),
+    };
   }, [
     activeThread,
     allProjects,
     handoffContinuedOn,
     handoffMachineName,
-    movedFrom,
-    movedTo,
     navigate,
+    projectedThread,
   ]);
   const settledNote = activeThreadSettled ? (serverProjection?.thread.settledNote ?? null) : null;
   const parkedThreadBannerItem = useMemo<ComposerBannerStackItem | null>(() => {
@@ -10292,8 +10326,10 @@ export default function ChatView(props: ChatViewProps) {
       : null,
   );
   const composerBannerItems = useMemo<ComposerBannerStackItem[]>(() => {
-    const limitRecoveryItems =
-      limitRecoveryBanner !== null
+    // A handed-off thread is read-only: its move banner leads, not the limit it left behind.
+    const limitRecoveryItems = movedAwayBanner(threadMoveBannerItem?.id)
+      ? []
+      : limitRecoveryBanner !== null
         ? [limitRecoveryBanner]
         : usageApproachingBanner !== null
           ? [usageApproachingBanner]

@@ -92,8 +92,21 @@ function resolveThreadProviderSession(projection: Projection): ProviderSession |
   );
 }
 
-export function threadSupportsProviderHandoff(projection: Projection | null | undefined): boolean {
+export function threadSupportsProviderHandoff(
+  projection: Projection | null | undefined,
+  options?: {
+    /**
+     * False when the thread's selected provider cannot start a turn here (not
+     * installed, not prepared, failing, or turned off). Such a provider has no
+     * session to keep, so an idle thread may always move to another one.
+     */
+    readonly selectedInstanceCanRun?: boolean;
+  },
+): boolean {
   if (projection == null) return false;
+  if (options?.selectedInstanceCanRun === false && resolveActiveThreadRun(projection) === null) {
+    return true;
+  }
   const session = resolveThreadProviderSession(projection);
   if (session !== null) {
     return session.capabilities.sessions.supportsProviderSwitchingViaHandoff;
@@ -106,6 +119,23 @@ export function threadSupportsProviderHandoff(projection: Projection | null | un
     projection.runs.every((run) => run.status !== "completed") &&
     !projection.providerThreads.some(
       (thread) => thread.appThreadId === projection.thread.id && thread.nativeThreadRef !== null,
+    )
+  )
+    return true;
+
+  // The selected instance never answered on this thread (its session failed to
+  // open, e.g. an agent not prepared on this machine): there is nothing native on
+  // it to keep, so the thread may move to another provider the way it moved here.
+  const selectedInstanceId = projection.thread.modelSelection.instanceId;
+  if (
+    !projection.runs.some(
+      (run) => run.providerInstanceId === selectedInstanceId && run.status === "completed",
+    ) &&
+    !projection.providerThreads.some(
+      (thread) =>
+        thread.appThreadId === projection.thread.id &&
+        thread.providerInstanceId === selectedInstanceId &&
+        thread.nativeThreadRef !== null,
     )
   )
     return true;

@@ -42,6 +42,7 @@ import SWCTransport
     _ = try await addDestination(h)
     h.machine.answer("handoffMode.preflight", with: #"[{"threadId":"thr_1","ok":true,"failures":[],"resume":true}]"#)
     h.machine.answer("handoffMode.handOff", with: #"{"environmentId":"env-2","threadId":"continued"}"#)
+    h.machine.answer("handoffMode.snapshot", with: #"{"threads":[{"threadId":"thr_1","continuedOn":{"environmentId":"env-2","threadId":"continued"}}],"incoming":[]}"#)
     let next = try await h.engine.continueThread(ref, destination: destination)
     #expect(next.threadId == "continued")
     #expect(h.machine.payloads("handoffMode.handOff") == [.object(["threadId": .string("thr_1"), "destinationEnvironmentId": .string("env-2")])])
@@ -78,7 +79,7 @@ import SWCTransport
     entry.snapshot?.threads[0].executionState = .fenced
     let session = h.model.session(for: .thread(ref))
     h.engine.open(session)
-    #expect(session.sendBlockedReason?.contains("handed off") == true)
+    #expect(session.sendBlockedReason?.contains("not confirmed") == true)
     await #expect(throws: (any Error).self) { try await h.engine.send("do not send", to: .thread(ref)) }
     #expect(h.machine.payloads("orchestration.dispatchCommand").allSatisfy { $0["type"] != .string("message.dispatch") })
   }
@@ -94,4 +95,103 @@ import SWCTransport
     #expect(h.machine.requests("handoffMode.handOff").isEmpty)
     #expect(h.machine.requests("handoffMode.continueHere").isEmpty)
   }
+  @Test func unlinkedAndOfflineMachinesExplainUnavailableChoices() async throws {
+    let h = try await base.harness()
+    defer { h.engine.setActive(false) }
+    #expect(await base.loaded(h))
+    _ = try await addDestination(h)
+    h.machine.answer("handoffMode.snapshot", with: #"{"threads":[],"incoming":[]}"#)
+    let unlinked = try await h.engine.handoffOptions(for: ref)
+    #expect(unlinked.destinations.isEmpty)
+    #expect(unlinked.notices.contains { $0.contains("not linked") })
+    h.engine.machines["env-2"]?.status = .init(state: .offline)
+    let offline = try await h.engine.handoffOptions(for: ref)
+    #expect(offline.notices.contains { $0.contains("offline or unreachable") })
+    #expect(h.machine.requests("handoffMode.preflight").isEmpty)
+  }
+
+  @Test func completedTurnPreflightSaysMoveWithoutRestart() async throws {
+    let h = try await base.harness()
+    defer { h.engine.setActive(false) }
+    #expect(await base.loaded(h))
+    _ = try await addDestination(h)
+    h.machine.answer("handoffMode.preflight", with: #"[{"threadId":"thr_1","ok":true,"failures":[],"resume":false}]"#)
+    let check = try await h.engine.checkHandoff(ref, destination: destination)
+    #expect(check.allowed)
+    #expect(check.messages.first?.contains("without starting a new turn") == true)
+  }
+
+  @Test func fixtureContinuationExistsAndSourceCannotSend() async throws {
+    let engine = FixtureEngine(scenario: .fleet)
+    engine.latency = .zero
+    let model = AppModel(engine: engine)
+    engine.start(model: model)
+    let source = ThreadRef(environmentId: "env-m4", threadId: "f-phone")
+    let session = model.session(for: .thread(source))
+    engine.open(session)
+    let sourceRows = session.rows.count
+    let target = try #require(try await engine.handoffOptions(for: source).destinations.first)
+    let next = try await engine.continueThread(source, destination: target)
+    #expect(next.threadId != source.threadId)
+    #expect(model.thread(next)?.machineLabel == "Minis")
+    let continued = model.session(for: .thread(next))
+    engine.open(continued)
+    #expect(continued.rows.count == sourceRows + 1)
+    #expect(continued.machineLabel == "Minis")
+    #expect(continued.rows.allSatisfy { if case .approval = $0.kind { return false }; return true })
+    #expect(session.sendBlockedReason?.contains("handed off") == true)
+    await #expect(throws: (any Error).self) { try await engine.send("must not run", to: .thread(source)) }
+    #expect(try await engine.continueThread(source, destination: target) == next)
+  }
+
+  @Test func unreachableMoveRemainsInDoubtAndRefreshNeverRetries() async throws {
+    let h = try await base.harness()
+    defer { h.engine.setActive(false) }
+    #expect(await base.loaded(h))
+    _ = try await addDestination(h)
+    h.machine.answer("handoffMode.preflight", with: #"[{"threadId":"thr_1","ok":true,"failures":[],"resume":false}]"#)
+    h.machine.fail("handoffMode.handOff", with: #"{"_tag":"HandoffModeError","code":"unreachable","message":"Minis did not answer…"}"#)
+    do {
+      _ = try await h.engine.continueThread(ref, destination: destination)
+      Issue.record("An unreachable transfer must not report completion")
+    } catch {
+      #expect(error is HandoffUncertain)
+      #expect(error.localizedDescription.contains("Minis did not answer…"))
+    }
+    h.machine.answer("handoffMode.snapshot", with: #"{"threads":[{"threadId":"thr_1","badge":"handing-off","lastError":"Minis did not answer…"}],"incoming":[]}"#)
+    let status = try await h.engine.handoffOptions(for: ref)
+    #expect(status.badge == "handing-off")
+    #expect(status.destinations.isEmpty)
+    #expect(status.notices.contains("Minis did not answer…"))
+    h.engine.machines["env-1"]?.status = .init(state: .offline)
+    let reopened = try await h.engine.handoffOptions(for: ref)
+    #expect(reopened.destinations.isEmpty)
+    await #expect(throws: HandoffUncertain.self) { try await h.engine.continueThread(ref, destination: destination) }
+    #expect(h.machine.requests("handoffMode.handOff").count == 1)
+  }
+
+  @Test func returnedDestinationWithoutSourceConfirmationIsNotSuccess() async throws {
+    let h = try await base.harness()
+    defer { h.engine.setActive(false) }
+    #expect(await base.loaded(h))
+    _ = try await addDestination(h)
+    h.machine.answer("handoffMode.preflight", with: #"[{"threadId":"thr_1","ok":true,"failures":[],"resume":false}]"#)
+    h.machine.answer("handoffMode.handOff", with: #"{"environmentId":"env-2","threadId":"continued"}"#)
+    h.machine.answer("handoffMode.snapshot", with: #"{"threads":[{"threadId":"thr_1","badge":"handing-off"}],"incoming":[]}"#)
+    await #expect(throws: HandoffUncertain.self) { try await h.engine.continueThread(ref, destination: destination) }
+    #expect(h.machine.requests("handoffMode.handOff").count == 1)
+  }
+
+  @Test func uncertaintySurvivesJournalRecreation() throws {
+    let suite = "handoff-test-" + UUID().uuidString
+    let defaults = try #require(UserDefaults(suiteName: suite))
+    defer { defaults.removePersistentDomain(forName: suite) }
+    let first = HandoffJournal(defaults: defaults)
+    first[ref] = "Minis did not answer…"
+    let reopened = HandoffJournal(defaults: defaults)
+    #expect(reopened[ref] == "Minis did not answer…")
+    reopened[ref] = nil
+    #expect(HandoffJournal(defaults: defaults)[ref] == nil)
+  }
+
 }

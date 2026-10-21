@@ -4378,6 +4378,94 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     }),
   );
 
+  it.effect("refuses a PR into a base the branch shares no commits with", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("studio-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["checkout", "--orphan", "develop"]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "develop.txt"), "develop\n");
+      yield* runGit(repoDir, ["add", "develop.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "Develop root"]);
+      yield* runGit(repoDir, ["checkout", "-b", "ops/watch"]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "watch.txt"), "watch\n");
+      yield* runGit(repoDir, ["add", "watch.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "Watch commit"]);
+      yield* runGit(repoDir, ["push", "origin", "main", "develop"]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "ops/watch"]);
+      // Every candidate base is unrelated: the recorded one and the provider's default.
+      yield* runGit(repoDir, ["config", "branch.ops/watch.gh-merge-base", "main"]);
+      let generated = false;
+
+      const { manager, ghCalls } = yield* makeManager({
+        textGeneration: {
+          generatePrContent: () => {
+            generated = true;
+            return Effect.succeed({ title: "t", body: "b" });
+          },
+        },
+        ghScenario: { prListSequence: ["[]", "[]"], defaultBranch: "main" },
+      });
+      const error = yield* runStackedAction(manager, {
+        cwd: repoDir,
+        action: "create_pr",
+      }).pipe(Effect.flip);
+
+      expect(error.message).toContain("shares no commits with main");
+      expect(generated).toBe(false);
+      expect(ghCalls.some((call) => call.startsWith("pr create"))).toBe(false);
+    }),
+  );
+
+  it.effect("proposes into the default branch when the recorded base is unrelated", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("studio-git-manager-");
+      yield* initRepo(repoDir);
+      const remoteDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "origin", remoteDir]);
+      yield* runGit(repoDir, ["checkout", "--orphan", "develop"]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "develop.txt"), "develop\n");
+      yield* runGit(repoDir, ["add", "develop.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "Develop root"]);
+      yield* runGit(repoDir, ["push", "origin", "main", "develop"]);
+      yield* runGit(repoDir, ["checkout", "-b", "ops/fix"]);
+      NodeFS.writeFileSync(NodePath.join(repoDir, "fix.txt"), "fix\n");
+      yield* runGit(repoDir, ["add", "fix.txt"]);
+      yield* runGit(repoDir, ["commit", "-m", "Fix commit"]);
+      yield* runGit(repoDir, ["push", "-u", "origin", "ops/fix"]);
+      // Started from main, then reset onto develop: the recorded base is stale.
+      yield* runGit(repoDir, ["config", "branch.ops/fix.gh-merge-base", "main"]);
+
+      const { manager, ghCalls } = yield* makeManager({
+        textGeneration: {
+          generatePrContent: () => Effect.succeed({ title: "Fix", body: "b" }),
+        },
+        ghScenario: {
+          defaultBranch: "develop",
+          prListSequence: [
+            "[]",
+            JSON.stringify([
+              {
+                number: 7,
+                title: "Fix",
+                url: "https://github.com/acme/studio/pull/7",
+                baseRefName: "develop",
+                headRefName: "ops/fix",
+              },
+            ]),
+          ],
+        },
+      });
+      const result = yield* runStackedAction(manager, { cwd: repoDir, action: "create_pr" });
+
+      expect(result.pr.status).toBe("created");
+      expect(ghCalls.some((call) => call.includes("pr create --base develop --head ops/fix"))).toBe(
+        true,
+      );
+    }),
+  );
+
   it.effect("generates PR content from branch changes when the remote base advances", () =>
     Effect.gen(function* () {
       const repoDir = yield* makeTempDir("studio-git-manager-");

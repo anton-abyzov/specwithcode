@@ -3971,6 +3971,12 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
         path.join(updaterDir, file),
       );
     }
+    // Which release this copy of the agent belongs to: the agent never installs it over a newer
+    // one that an update already installed (update_request.AGENT_RECORD).
+    yield* fs.writeFileString(
+      path.join(updaterDir, "agent-release.json"),
+      `{"schemaVersion": 1, "version": "${appVersion}"}\n`,
+    );
     yield* stageMacVoiceHelper({
       repoRoot,
       destinationDirectory: path.join(stageProdResourcesDir, "voice"),

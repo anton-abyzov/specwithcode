@@ -640,6 +640,51 @@ export function shouldWriteThreadErrorToCurrentServerThread(input: {
   );
 }
 
+/**
+ * The draft provider the composer may put ahead of a saved thread's own
+ * provider. Only a pick the user made in the picker counts: a seeded draft
+ * copy goes stale when the server moves the thread (a limit fallback, its
+ * return at reset) while the chat is closed, and would otherwise show and
+ * send to the old provider while the sidebar shows the new one.
+ */
+export function resolveComposerDraftProvider(input: {
+  draftProvider: ProviderInstanceId | null;
+  draftExplicit: boolean;
+  serverInstanceId: ProviderInstanceId | null;
+}): ProviderInstanceId | null {
+  if (input.serverInstanceId === null) return input.draftProvider;
+  return input.draftExplicit ? input.draftProvider : null;
+}
+
+/**
+ * How the composer draft follows a saved thread's selection.
+ * - `reseed`: copy the server selection into the draft (a seeded copy went
+ *   stale, or the server switched the thread while it was open).
+ * - `adopt`: the server now runs the user's pick, so it stops being a pending
+ *   pick and later server switches move the composer again.
+ */
+export function resolveComposerServerProviderSync(input: {
+  server: ModelSelection | null;
+  serverChangedInPlace: boolean;
+  draftProvider: ProviderInstanceId | null;
+  draftExplicit: boolean;
+  draftSelection: ModelSelection | null;
+}): "none" | "reseed" | "adopt" {
+  const { server } = input;
+  if (server === null || input.draftProvider === null) return "none";
+  const draftMatchesServer =
+    input.draftProvider === server.instanceId &&
+    input.draftSelection?.instanceId === server.instanceId &&
+    input.draftSelection.model === server.model;
+  if (input.draftExplicit) {
+    if (draftMatchesServer) return "adopt";
+    return input.serverChangedInPlace && input.draftProvider !== server.instanceId
+      ? "reseed"
+      : "none";
+  }
+  return draftMatchesServer ? "none" : "reseed";
+}
+
 /** Use the same enabled instance for the composer, provider status, and chat actions. */
 export function resolveComposerProviderSelection(input: {
   entries: ReadonlyArray<ProviderInstanceEntry>;
@@ -1115,6 +1160,28 @@ export function deriveLockedProvider(input: {
   const narrowedSelectedProvider =
     selectedProvider && isProviderDriverKind(selectedProvider) ? selectedProvider : null;
   return narrowedThreadProvider ?? narrowedSelectedProvider ?? null;
+}
+
+/**
+ * Whether the thread's selected provider instance can start a turn here.
+ * Undefined while that instance is missing from the catalog: an unknown
+ * instance keeps whatever lock the thread already has.
+ */
+export function providerInstanceCanRun(
+  providers: ReadonlyArray<
+    Pick<ServerProvider, "instanceId" | "enabled" | "installed" | "status" | "availability">
+  >,
+  instanceId: string | null | undefined,
+): boolean | undefined {
+  const provider = providers.find((candidate) => candidate.instanceId === instanceId);
+  if (provider === undefined) return undefined;
+  return (
+    provider.enabled &&
+    provider.installed &&
+    provider.availability !== "unavailable" &&
+    provider.status !== "error" &&
+    provider.status !== "disabled"
+  );
 }
 
 export function getStartedThreadModelChangeBlockReason(input: {
