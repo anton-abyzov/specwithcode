@@ -474,14 +474,14 @@ try {
   await dismiss("cancel");
   await page.waitForURL(taskListHref);
   await page.reload();
-  await page.getByRole("button", { name: "New task", exact: true }).waitFor();
+  await page.getByRole("button", { name: "New routine", exact: true }).waitFor();
   NodeAssert.equal(await titleInput.count(), 0);
   await page.goBack();
   await page.goForward();
   NodeAssert.equal(page.url(), taskListHref);
   NodeAssert.equal(await titleInput.count(), 0);
   for (const method of ["cancel", "escape"]) {
-    await page.getByRole("button", { name: "New task", exact: true }).click();
+    await page.getByRole("button", { name: "New routine", exact: true }).click();
     await titleInput.waitFor();
     await dismiss(method);
     await titleInput.waitFor({ state: "detached" });
@@ -504,7 +504,7 @@ try {
     .getByRole("switch", { name: "Enabled", exact: true });
   await enabledSwitch.click();
   NodeAssert.equal(await enabledSwitch.getAttribute("aria-checked"), "false");
-  await page.getByRole("button", { name: "Create task", exact: true }).click();
+  await page.getByRole("button", { name: "Create routine", exact: true }).click();
   await titleInput.waitFor({ state: "detached" });
   await page.waitForURL(taskListHref);
   const savedTasks = await rpc(context, "scheduledTasks.list");
@@ -538,7 +538,7 @@ try {
     await dismiss("cancel");
     await page.waitForURL(taskListHref);
     await page.reload();
-    await page.getByRole("button", { name: "New task", exact: true }).waitFor();
+    await page.getByRole("button", { name: "New routine", exact: true }).waitFor();
     NodeAssert.equal(await titleInput.count(), 0);
     receipt.checks.push({ linkedEditReturnsToOrigin: true, directEditConsumesTaskId: true });
   }

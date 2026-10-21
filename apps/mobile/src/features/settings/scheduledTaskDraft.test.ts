@@ -67,6 +67,24 @@ describe("scheduleDraftForTask", () => {
   });
 });
 
+describe("routine cadences mobile does not edit", () => {
+  it("saves a manual or monthly cadence back unchanged", () => {
+    for (const schedule of [
+      { type: "manual" },
+      { type: "monthly", dayOfMonth: 2, timeOfDay: "09:00" },
+    ] as const) {
+      const draft = scheduleDraftForTask({ schedule } as never);
+      expect(draft.mode).toBe("kept");
+      expect(scheduleFromDraft(draft)).toEqual(schedule);
+      // Picking another mode replaces it.
+      expect(scheduleFromDraft({ ...draft, mode: "interval" })).toEqual({
+        type: "interval",
+        everyMs: 900_000,
+      });
+    }
+  });
+});
+
 describe("hasScheduledTaskDraftChanges", () => {
   it("leaves an untouched form clean and clears changes when edits are reverted", () => {
     const initial = createDraft(null, null);

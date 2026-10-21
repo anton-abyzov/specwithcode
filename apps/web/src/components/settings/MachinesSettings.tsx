@@ -42,6 +42,7 @@ import {
   type MachineWorkHere,
 } from "./machinesSettings.logic";
 import { MachineWorkGrants } from "./MachineWorkGrants";
+import { HandoffModeSettings } from "./HandoffModeSettings";
 import { resolveDesktopPairingUrl } from "./pairingUrls";
 import { SettingsPageContainer, SettingsSection } from "./settingsLayout";
 import { usePrimaryFleet } from "./usePrimaryFleet";
@@ -132,6 +133,9 @@ export function MachinesSettingsPanel() {
       />
       {fleet.primaryEnvironmentId ? (
         <MachineWorkGrants environmentId={fleet.primaryEnvironmentId} grants={grants} />
+      ) : null}
+      {fleet.primaryEnvironmentId ? (
+        <HandoffModeSettings environmentId={fleet.primaryEnvironmentId} />
       ) : null}
     </SettingsPageContainer>
   );

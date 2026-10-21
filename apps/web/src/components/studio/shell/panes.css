@@ -645,3 +645,354 @@ button.sws-subagent-row:focus-visible {
   text-underline-offset: 2px;
   cursor: pointer;
 }
+
+/* Routines: one bordered list, a row per routine with its state, cadence, next
+   run and destination, and its actions on the right (below it when narrow). */
+
+.sws-routines {
+  container-type: inline-size;
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+  font-size: 13px;
+}
+.sws-routines-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px 12px;
+}
+.sws-routines-heading {
+  min-width: 0;
+}
+.sws-routines-heading h2 {
+  margin: 0;
+  font-size: 16px;
+  font-weight: 600;
+  line-height: 1.3;
+  letter-spacing: -0.01em;
+  color: var(--foreground);
+}
+.sws-routines-summary {
+  margin: 2px 0 0;
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+.sws-routines-head-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.sws-routines-note {
+  margin: 0;
+  max-width: 62ch;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--muted-foreground);
+}
+.sws-routines .project-notice {
+  margin: 0;
+}
+
+.sws-routines-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-height: 28px;
+  padding: 0 10px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--background);
+  color: var(--foreground);
+  font-size: 12.5px;
+  font-weight: 500;
+  line-height: 1.2;
+  white-space: nowrap;
+  text-decoration: none;
+  cursor: pointer;
+}
+.sws-routines-button svg {
+  width: 13px;
+  height: 13px;
+  flex: none;
+  opacity: 0.75;
+}
+.sws-routines-button:hover:not(:disabled) {
+  background: var(--accent);
+}
+.sws-routines-button:focus-visible,
+.sws-routine-link:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: 2px;
+}
+.sws-routines-button:disabled {
+  cursor: default;
+  opacity: var(--disabled-opacity, 0.5);
+}
+@media (pointer: coarse) {
+  .sws-routines-button {
+    min-height: 40px;
+    padding: 0 14px;
+  }
+}
+
+.sws-routines-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--card);
+}
+.sws-routine {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 8px;
+  padding: 10px 12px;
+}
+.sws-routine + .sws-routine {
+  border-top: 1px solid var(--border);
+}
+.sws-routine-main {
+  min-width: 0;
+  display: grid;
+  gap: 3px;
+}
+.sws-routine-title {
+  min-width: 0;
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+.sws-routine-title .sws-dot {
+  margin-top: 6px;
+}
+.sws-routine .sws-dot[data-tone="resolved"] {
+  background: var(--shell-done, var(--success));
+}
+.sws-routine .sws-dot[data-tone="working"] {
+  background: var(--shell-working, var(--info));
+}
+.sws-routine .sws-dot[data-tone="failed"] {
+  background: var(--destructive);
+}
+.sws-routine-title h3 {
+  min-width: 0;
+  margin: 0;
+  font-size: 13.5px;
+  font-weight: 550;
+  line-height: 1.4;
+  color: var(--foreground);
+  overflow-wrap: anywhere;
+}
+.sws-routine-state {
+  flex: none;
+  margin-top: 1px;
+  padding: 0 7px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 500;
+  line-height: 17px;
+  color: var(--muted-foreground);
+  white-space: nowrap;
+}
+.sws-routine-state:is([data-tone="active"], [data-tone="listening"]) {
+  border-color: color-mix(in srgb, var(--success) 40%, transparent);
+  color: var(--success-foreground);
+}
+.sws-routine-state[data-tone="running"] {
+  border-color: color-mix(in srgb, var(--info) 40%, transparent);
+  color: var(--info-foreground, var(--foreground));
+}
+.sws-routine-state[data-tone="failed"] {
+  border-color: color-mix(in srgb, var(--destructive) 45%, transparent);
+  color: var(--destructive-foreground);
+}
+.sws-routine-meta,
+.sws-routine-brief,
+.sws-routine-error,
+.sws-routine-actions {
+  padding-inline-start: 15px;
+}
+.sws-routine-meta {
+  margin: 0;
+  display: flex;
+  flex-wrap: wrap;
+  row-gap: 1px;
+  font-size: 12px;
+  line-height: 1.5;
+  color: var(--muted-foreground);
+}
+.sws-routine-meta > span {
+  white-space: nowrap;
+}
+/* A drawn dot between items, so it never depends on the page's text encoding. */
+.sws-routine-meta > span + span::before {
+  content: "";
+  display: inline-block;
+  width: 3px;
+  height: 3px;
+  margin: 0 7px 0 6px;
+  border-radius: 999px;
+  background: currentColor;
+  vertical-align: middle;
+  opacity: 0.7;
+}
+.sws-routine-meta time {
+  font-variant-numeric: tabular-nums;
+}
+.sws-routine-link {
+  color: var(--foreground);
+  font: inherit;
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, currentColor 40%, transparent);
+  text-underline-offset: 2px;
+  cursor: pointer;
+}
+.sws-routine-link:hover {
+  text-decoration-color: currentColor;
+}
+.sws-routine-brief {
+  margin: 2px 0 0;
+  display: grid;
+  gap: 1px;
+  font-size: 12px;
+  color: var(--muted-foreground);
+  overflow-wrap: anywhere;
+}
+.sws-routine-brief span {
+  color: var(--foreground);
+  font-weight: 500;
+}
+.sws-routine-error {
+  margin: 2px 0 0;
+  font-size: 12px;
+  line-height: 1.45;
+  color: var(--destructive-foreground);
+  overflow-wrap: anywhere;
+}
+.sws-routine-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+.sws-routine-retry {
+  display: grid;
+  justify-items: start;
+  gap: 8px;
+}
+@container (min-width: 520px) {
+  .sws-routine {
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: start;
+    column-gap: 16px;
+  }
+  .sws-routine-actions {
+    padding-inline-start: 0;
+    justify-content: flex-end;
+  }
+  .sws-routine-retry {
+    grid-column: 1 / -1;
+  }
+}
+
+.sws-routines-empty {
+  margin: 0;
+  display: grid;
+  justify-items: start;
+  gap: 4px;
+  padding: 18px 16px;
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+  font-size: 12.5px;
+  color: var(--muted-foreground);
+}
+.sws-routines-empty strong {
+  font-size: 13.5px;
+  font-weight: 550;
+  color: var(--foreground);
+}
+.sws-routines-empty p {
+  margin: 0 0 6px;
+}
+.sws-routines-alert {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--destructive) 10%, transparent);
+  font-size: 12.5px;
+  color: var(--destructive-foreground);
+  overflow-wrap: anywhere;
+}
+
+/* Templates and the quick form in a personal assistant's Routines tab. */
+
+.sws-scheduled .sws-routine-templates {
+  padding-top: 16px;
+  display: grid;
+  gap: 8px;
+}
+.sws-scheduled .sws-routine-templates ul {
+  display: grid;
+  gap: 6px;
+}
+.sws-scheduled .sws-routine-template {
+  width: 100%;
+  display: grid;
+  gap: 2px;
+  text-align: start;
+  padding: 10px 12px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  min-height: 44px;
+}
+.sws-scheduled .sws-routine-template:hover:not(:disabled) {
+  background: var(--accent);
+}
+.sws-scheduled .sws-routine-template span {
+  font-size: 12px;
+  color: var(--muted-foreground);
+}
+.sws-scheduled .sws-routine-form {
+  display: grid;
+  gap: 12px;
+}
+.sws-scheduled .sws-routine-form label:not(.project-checkbox) {
+  display: grid;
+  gap: 4px;
+  font-size: 12.5px;
+}
+.sws-scheduled .sws-routine-form .project-checkbox {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12.5px;
+}
+.sws-scheduled .sws-routine-form fieldset {
+  display: grid;
+  gap: 8px;
+}
+.sws-scheduled .sws-routine-form legend {
+  font-weight: 500;
+  font-size: 12.5px;
+  margin-bottom: 4px;
+}
+.sws-scheduled
+  .sws-routine-form
+  :is(input:not([type="checkbox"], [type="radio"]), textarea, select) {
+  width: 100%;
+  min-width: 0;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--background);
+  font-size: 13px;
+}
+.sws-scheduled .sws-routine-when {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 8px;
+}

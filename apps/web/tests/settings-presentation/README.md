@@ -25,3 +25,9 @@ expanded paths, keyboard disclosure, dirty-state footer visibility, long connect
 names, repository URLs and shared settings rows. Screenshots and receipt.json go to
 .artifacts/settings-presentation, or the first argument supplied to the runner.
 Native app acceptance and real backend operations are outside this fixture.
+
+`routines-check.mjs` opens Settings > Routines rows (`?routines`) at 1280, 760 and 390 px, light
+and dark: title and state first, cadence, the next run as a short local date with how soon,
+project and destination, a one-line prompt, and Run beside the switch. Run and the title (which
+opens the editor) are checked against recorded calls; nothing runs. `ROUTINES_MEASURE_ONLY=1`
+saves screenshots only, for a before capture. Set `UI_EVIDENCE_DIR` and `PROJECT_UI_PORT`.

@@ -82,5 +82,7 @@ export const UserInputAttachmentAnswerPayload = Schema.Struct({
   attachmentsByQuestionId: UserInputAttachments,
   /** The thread of an agent that answered for the user; absent when the user chose. */
   answeredByThreadId: Schema.optional(Schema.String),
+  /** The user replied from the chat composer; the reply is a message in the conversation. */
+  answeredInChat: Schema.optional(Schema.Boolean),
 });
 export type UserInputAttachmentAnswerPayload = typeof UserInputAttachmentAnswerPayload.Type;

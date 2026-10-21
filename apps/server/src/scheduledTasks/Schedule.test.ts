@@ -143,4 +143,57 @@ describe("scheduled task schedule calculation", () => {
       ),
     ).toBe(true);
   });
+
+  const zoned = (day: number, month: number, hour: number) =>
+    DateTime.makeZonedUnsafe(
+      { year: 2026, month, day, hour, minute: 0, second: 0, millisecond: 0 },
+      { timeZone: "America/New_York", adjustForTimeZone: true },
+    );
+  const parts = (value: DateTime.DateTime | null) => {
+    if (value === null) return null;
+    const { year, month, day, hour, minute } = DateTime.toParts(value);
+    return { year, month, day, hour, minute };
+  };
+
+  it("never schedules a manual routine", () => {
+    expect(nextScheduledRunAt({ type: "manual" }, zoned(1, 10, 8))).toBeNull();
+    expect(isSameSchedule({ type: "manual" }, { type: "manual" })).toBe(true);
+    expect(isSameSchedule({ type: "manual" }, { type: "fixed_time", timeOfDay: "09:00" })).toBe(
+      false,
+    );
+  });
+
+  it("runs a monthly routine on its day, later this month or next month", () => {
+    const schedule = { type: "monthly", dayOfMonth: 1, timeOfDay: "09:00" } as const;
+    // Before the slot on the day itself: today.
+    expect(parts(nextScheduledRunAt(schedule, zoned(1, 10, 8)))).toEqual({
+      year: 2026,
+      month: 10,
+      day: 1,
+      hour: 9,
+      minute: 0,
+    });
+    // After it: next month, across the year end too.
+    expect(parts(nextScheduledRunAt(schedule, zoned(20, 10, 12)))?.month).toBe(11);
+    expect(parts(nextScheduledRunAt(schedule, zoned(2, 12, 12)))).toMatchObject({
+      year: 2027,
+      month: 1,
+      day: 1,
+    });
+    // Day 28 exists in February.
+    expect(
+      parts(
+        nextScheduledRunAt({ type: "monthly", dayOfMonth: 28, timeOfDay: "07:30" }, zoned(5, 2, 0)),
+      ),
+    ).toEqual({ year: 2026, month: 2, day: 28, hour: 7, minute: 30 });
+  });
+
+  it("treats a monthly run like a fixed-time one when it is missed or compared", () => {
+    const schedule = { type: "monthly", dayOfMonth: 15, timeOfDay: "09:00" } as const;
+    const due = zoned(15, 10, 9);
+    expect(isMissedFixedTimeRun(schedule, due, DateTime.add(due, { minutes: 5 }))).toBe(false);
+    expect(isMissedFixedTimeRun(schedule, due, DateTime.add(due, { hours: 3 }))).toBe(true);
+    expect(isSameSchedule(schedule, { ...schedule, timeOfDay: "9:00" })).toBe(true);
+    expect(isSameSchedule(schedule, { ...schedule, dayOfMonth: 14 })).toBe(false);
+  });
 });

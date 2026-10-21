@@ -5,7 +5,7 @@ SCHEME := SpecWithCode
 DESTINATION ?= generic/platform=iOS Simulator
 DERIVED_DATA ?= build/DerivedData
 
-.PHONY: project build test-core test-app shots fault-shots
+.PHONY: project build test-core test-app shots fault-shots sim sim-build sim-test sim-smoke sim-run sim-stop
 
 project:
 	xcodegen generate
@@ -38,3 +38,26 @@ fault-shots:
 	  echo "usage: make fault-shots SIM_UDID=<simulator-udid>" >&2; exit 2; \
 	fi
 	bash Tools/fault-shots.sh '$(SIM_UDID)'
+
+# Simulator-first: one dedicated simulator ("SWC Sim-First", or SIM_NAME), booted
+# headless, so routine checks never need the phone or a Simulator window.
+# Evidence (result bundles, screenshots, logs) goes to build/sim-first.
+sim:
+	bash Tools/sim.sh ensure
+
+sim-build:
+	bash Tools/sim.sh build
+
+# ONLY narrows the run, for example ONLY=SpecWithCodeUITests/AideHistoryUITests.
+sim-test:
+	bash Tools/sim.sh test $(if $(ONLY),-only-testing:$(ONLY))
+
+sim-smoke:
+	bash Tools/sim.sh smoke
+
+# FIXTURE and ROUTE as in fixture mode, for example FIXTURE=long ROUTE=thread.
+sim-run:
+	bash Tools/sim.sh run '$(or $(FIXTURE),default)' '$(ROUTE)'
+
+sim-stop:
+	bash Tools/sim.sh stop

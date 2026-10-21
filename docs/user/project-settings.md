@@ -74,7 +74,7 @@ Leaving an edited form asks before discarding unsaved changes.
 
 ## Webhook automations
 
-In **Settings → Scheduled tasks**, choose **On webhook**
+In **Settings → Routines** (on the phone, **Settings → Scheduled tasks**), choose **On webhook**
 as a task's schedule to run it whenever another service calls its URL, such as
 GitHub on a new pull request or a CI job that failed. A public URL needs a
 [SpecWithCode Connect](remote-access.md) managed tunnel; after you save the task, copy

@@ -14,9 +14,11 @@ function App() {
         <label>
           Fixture state{" "}
           <select aria-label="Fixture state" onChange={(e) => setFixture(e.target.value)}>
-            {["ready", "offline", "denied", "error", "loading", "empty", "invalid"].map((x) => (
-              <option key={x}>{x}</option>
-            ))}
+            {["ready", "offline", "denied", "error", "loading", "empty", "invalid", "folders"].map(
+              (x) => (
+                <option key={x}>{x}</option>
+              ),
+            )}
           </select>
         </label>
         <label>

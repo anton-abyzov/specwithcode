@@ -19,6 +19,7 @@ import { isProjectFolder } from "../../studio/projectMachineFolders";
 import { remoteOrchestratorOfflineLabel } from "../../studio/projectWorkspaceModel";
 import { useMachineNickname } from "../../studio/machineNickname";
 import { nowFromMinute } from "../../studio/shellModel";
+import { requestMigrateProjectThreads } from "../handoff/HandOffMachineDialog";
 import { toastManager } from "../ui/toast";
 import { Button } from "../ui/button";
 import {
@@ -73,6 +74,7 @@ export function OrchestratorSwitcher({
   onMove,
   onStart,
   onAllowWorkers,
+  onMigrate = null,
 }: {
   /** The viewed machine's name: its nickname, else its short host label. */
   label: string;
@@ -91,6 +93,8 @@ export function OrchestratorSwitcher({
   onMove: ((key: string) => void) | null;
   onStart: ((key: string) => void) | null;
   onAllowWorkers: (() => void) | null;
+  /** Opens "Migrate threads…" for the viewed machine's threads; null while it is offline. */
+  onMigrate?: (() => void) | null;
 }) {
   // Switch views only after the menu popup has left the DOM: the page being
   // left is hidden under an Activity, and a menu hidden mid-close stays mounted
@@ -220,9 +224,15 @@ export function OrchestratorSwitcher({
             Move coordinator to {nameOf(copy)}…
           </MenuItem>
         ))}
-        <MenuItem disabled>
+        <MenuItem
+          disabled={!onMigrate}
+          data-orchestrator-migrate=""
+          onClick={() => {
+            if (onMigrate) pendingView.current = onMigrate;
+          }}
+        >
           <ArrowRightLeftIcon aria-hidden />
-          Migrate threads… (needs thread handoff)
+          {onMigrate ? `Migrate ${label}'s threads…` : `Migrate threads… (${label} unreachable)`}
         </MenuItem>
         {onAllowWorkers ? (
           <MenuItem onClick={onAllowWorkers}>
@@ -322,6 +332,15 @@ export function ProjectOrchestratorSwitcher({
       onMove={onMove}
       onStart={(key) => void start(key)}
       onAllowWorkers={() => void navigate({ to: "/settings/connections" })}
+      onMigrate={
+        connected
+          ? () =>
+              requestMigrateProjectThreads(project.environmentId, {
+                id: project.id,
+                title: project.title,
+              })
+          : null
+      }
     />
   );
 }

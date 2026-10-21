@@ -58,13 +58,30 @@ Debug builds use the bundle id `com.specwithcode.ios.dev` and appear as "SpecWit
 
 Simulator builds need no signing. To build for a device, set `STUDIO_APPLE_TEAM_ID` to your team id before you run `make project`.
 
+## Simulator-first testing
+
+Routine checks run on a simulator, never on a phone: nobody has to unlock an iPhone or watch a screen. `Tools/sim.sh` creates one dedicated simulator ("SWC Sim-First", iPhone 17 Pro on the newest iOS runtime), boots it with `simctl` without opening the Simulator app, and keeps every build and test on it. It also drops the `GIT_CONFIG_*` variables some agent harnesses inject, which break SwiftPM inside `xcodebuild`.
+
+```sh
+make sim-smoke                                   # boot, build for testing, run every fixture UI test
+make sim-test ONLY=SpecWithCodeUITests/AideHistoryUITests
+make sim-run FIXTURE=long                        # install, launch on fixture data, save a screenshot
+bash Tools/sim.sh link 'specwithcode://thread/env-studio-mac/t-release'
+bash Tools/sim.sh logs 10                        # the app's log from the last 10 minutes
+make sim-stop
+```
+
+Each test run writes `build/sim-first/<time>/` with the result bundle, `summary.json`, the test log and every screenshot the tests attach. Set `SIM_NAME` to give a worktree its own simulator so parallel runs don't collide.
+
+What the simulator covers: every screen on fixture data, long chats and scrolling (`long` fixture), links, deep links, background and foreground, drafts, machine outages (`m4-blip`, `minis-blip`), and pairing UI. SWCKit's wire, transport and sync logic runs in `make test-core` on macOS. Keep a physical iPhone for what a simulator can't prove: push notification delivery, Sign in with Apple and signing, the real network path from the phone (cellular, Tailscale or the Connect relay), the Secure Enclave key, and a final acceptance pass on a release build. Ask before such a run and say which of these it proves.
+
 ## Fixture mode
 
 The app can run on sample data without a machine. To use it, add launch arguments in the scheme (Edit Scheme > Run > Arguments) or after `simctl launch`:
 
 | Argument                 | Values                                                                                      | Effect                                                                         |
 | ------------------------ | ------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------ |
-| `-SWCFixture [scenario]` | `default`, `empty`, `running`                                                               | Uses sample data instead of real machines. With no scenario it uses `default`. |
+| `-SWCFixture [scenario]` | `default`, `empty`, `running`, `fleet`, `m4-blip`, `minis-blip`, `long`                     | Uses sample data instead of real machines. With no scenario it uses `default`. |
 | `-SWCAppearance`         | `light`, `dark`, `system`                                                                   | Forces an appearance.                                                          |
 | `-SWCRoute`              | `overview`, `settings`, `projectSettings`, `machines`, `pair`, `thread`, `drawer`, `search` | Opens that screen once the data has loaded.                                    |
 

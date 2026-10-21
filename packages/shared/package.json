@@ -171,6 +171,14 @@
       "types": "./src/routedMessage.ts",
       "import": "./src/routedMessage.ts"
     },
+    "./routineBrief": {
+      "types": "./src/routineBrief.ts",
+      "import": "./src/routineBrief.ts"
+    },
+    "./routineTemplates": {
+      "types": "./src/routineTemplates.ts",
+      "import": "./src/routineTemplates.ts"
+    },
     "./projectStarterSuggestions": {
       "types": "./src/projectStarterSuggestions.ts",
       "import": "./src/projectStarterSuggestions.ts"

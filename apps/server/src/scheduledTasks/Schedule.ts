@@ -16,7 +16,8 @@ export function nextScheduledRunAt(
   schedule: ScheduledTaskSchedule,
   from: DateTime.DateTime,
 ): DateTime.DateTime | null {
-  if (schedule.type === "webhook") return null;
+  if (schedule.type === "webhook" || schedule.type === "manual") return null;
+  if (schedule.type === "monthly") return nextMonthlyRunAt(schedule, from);
   if (schedule.type === "interval") {
     // Persisted rows created before the one-minute floor remain readable, but
     // they must not retain their old high-frequency execution rate.
@@ -43,6 +44,30 @@ export function nextScheduledRunAt(
   return null;
 }
 
+/** The next day-of-month occurrence after `from`, in its own time zone. */
+function nextMonthlyRunAt(
+  schedule: Extract<ScheduledTaskSchedule, { type: "monthly" }>,
+  from: DateTime.DateTime,
+): DateTime.DateTime | null {
+  const time = parseTimeOfDay(schedule.timeOfDay);
+  if (time === null) return null;
+  // Day 1 of this month, then of the next two: day 28 at the latest always exists.
+  const first = DateTime.setParts(from, {
+    day: 1,
+    hour: time.hour,
+    minute: time.minute,
+    second: 0,
+    millisecond: 0,
+  });
+  for (let months = 0; months <= 2; months += 1) {
+    const candidate = DateTime.setParts(DateTime.add(first, { months }), {
+      day: schedule.dayOfMonth,
+    });
+    if (DateTime.toEpochMillis(candidate) > DateTime.toEpochMillis(from)) return candidate;
+  }
+  return null;
+}
+
 /**
  * Canonical form of a weekday mask, mirroring how `nextScheduledRunAt` reads
  * it: order and duplicates are irrelevant, and an empty/omitted mask means the
@@ -61,6 +86,19 @@ export function isSameSchedule(a: ScheduledTaskSchedule, b: ScheduledTaskSchedul
   }
   // Webhook tasks never have a next run, whatever their signature settings.
   if (a.type === "webhook") return b.type === "webhook";
+  if (a.type === "manual") return b.type === "manual";
+  if (a.type === "monthly") {
+    const aTime = parseTimeOfDay(a.timeOfDay);
+    const bTime = b.type === "monthly" ? parseTimeOfDay(b.timeOfDay) : null;
+    return (
+      b.type === "monthly" &&
+      a.dayOfMonth === b.dayOfMonth &&
+      aTime !== null &&
+      bTime !== null &&
+      aTime.hour === bTime.hour &&
+      aTime.minute === bTime.minute
+    );
+  }
   if (b.type !== "fixed_time") return false;
   // The contract accepts padded and unpadded hours ("9:00" and "09:00"), so
   // compare the parsed time — string equality would treat a format-only edit
@@ -97,13 +135,17 @@ export function isMissedFixedTimeRun(
   now: DateTime.DateTime,
   heldMs = 0,
 ): boolean {
-  if (schedule.type !== "fixed_time") return false;
+  if (schedule.type !== "fixed_time" && schedule.type !== "monthly") return false;
   const lateMs = DateTime.toEpochMillis(now) - DateTime.toEpochMillis(dueAt);
   return lateMs - heldMs > MISSED_FIXED_TIME_GRACE_MS;
 }
 
 function describeSchedule(schedule: ScheduledTaskSchedule): string {
   if (schedule.type === "webhook") return "On webhook";
+  if (schedule.type === "manual") return "When asked";
+  if (schedule.type === "monthly") {
+    return `At ${schedule.timeOfDay} on day ${schedule.dayOfMonth} of every month`;
+  }
   if (schedule.type === "interval") {
     const minutes = schedule.everyMs / MINUTE_MS;
     if (Number.isInteger(minutes)) {

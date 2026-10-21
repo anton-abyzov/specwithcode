@@ -1047,6 +1047,58 @@ describe("native provider presentation in the v2 timeline", () => {
     ).toBe("message");
   });
 
+  it("keeps a reply typed in chat in the timeline beside its answered card", () => {
+    const requestId = RuntimeRequestId.make("chat-question");
+    const earlier: OrchestrationV2TurnItem = {
+      ...base,
+      id: TurnItemId.make("earlier"),
+      type: "user_message",
+      messageId: MessageId.make("earlier"),
+      inputIntent: "turn_start",
+      text: "Build the settings page",
+      createdBy: "user",
+      creationSource: "web",
+      attachments: [],
+    };
+    const question: OrchestrationV2TurnItem = {
+      ...base,
+      id: TurnItemId.make("chat-question"),
+      type: "user_input_request",
+      requestId,
+      questions: [],
+      questionAnswer: {
+        requestId,
+        answers: { q1: "Use this layout" },
+        attachmentsByQuestionId: {},
+        answeredInChat: true,
+      },
+    };
+    const reply: OrchestrationV2TurnItem = {
+      ...base,
+      id: TurnItemId.make("chat-answer"),
+      type: "user_message",
+      messageId: MessageId.make(`async-answer:${requestId}`),
+      inputIntent: "steer",
+      text: "Use this layout",
+      createdBy: "user",
+      creationSource: "server",
+      attachments: [],
+    };
+    const input = {
+      visibleTurnItems: [visible(earlier), visible(question)],
+      optimisticMessages: [],
+    };
+    const previous = deriveTimelineEntriesFromVisibleTurnItemsWithState(input);
+    const nextInput = { ...input, visibleTurnItems: [...input.visibleTurnItems, visible(reply)] };
+    const next = deriveTimelineEntriesFromVisibleTurnItemsWithState(nextInput, previous);
+    expect(next.entries).toEqual(deriveTimelineEntriesFromVisibleTurnItems(nextInput));
+    expect(next.entries.map((entry) => [entry.kind, entry.id])).toEqual([
+      ["message", "earlier"],
+      ["event", "chat-question"],
+      ["message", `async-answer:${requestId}`],
+    ]);
+  });
+
   it("excludes checkpoint-only work from the timeline", () => {
     const message: OrchestrationV2TurnItem = {
       ...base,

@@ -194,6 +194,14 @@ export function summarizeStudioToolCalls(
         : phrase("Requested", "move", `threads to another machine ${times}`);
       break;
     }
+    case "thread-continue-here": {
+      const continued = selected.filter((call) => typeof call.output?.threadId === "string");
+      label =
+        completed.length > 0 && continued.length === selected.length
+          ? `Continued ${quantity(continued.length, "thread")} on this machine`
+          : phrase("Requested", "continue", `a thread on this machine ${times}`);
+      break;
+    }
     case "task-status":
       label = phrase("Checked", "check", `task status ${times}`);
       break;

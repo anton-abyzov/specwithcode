@@ -1,5 +1,6 @@
 import {
   ScheduledTask,
+  ScheduledTaskBrief,
   ScheduledTaskCheck,
   ScheduledTaskId,
   ScheduledTaskError,
@@ -119,24 +120,32 @@ function webhookEndpoint(
   };
 }
 
+// Routine settings that need no column of their own share this JSON column;
+// older hosts ignore keys they do not know.
 const ScheduledTaskRunPolicy = Schema.Struct({
   modelPinned: Schema.optional(Schema.Boolean),
   check: Schema.optional(Schema.NullOr(ScheduledTaskCheck)),
+  brief: Schema.optional(Schema.NullOr(ScheduledTaskBrief)),
+  ownThread: Schema.optional(Schema.Boolean),
 });
 const decodeRunPolicy = Schema.decodeUnknownEffect(Schema.fromJsonString(ScheduledTaskRunPolicy));
 const decodeRunPolicyJson = (json: string | null) =>
   json === null ? Effect.succeed({} as typeof ScheduledTaskRunPolicy.Type) : decodeRunPolicy(json);
 
-/** The run policy column: null when the task sets neither. */
+/** The run policy column: null when the task sets none of it. */
 export const encodeRunPolicyJson = (task: {
   readonly modelPinned?: boolean | undefined;
   readonly check?: ScheduledTaskCheck | null | undefined;
+  readonly brief?: ScheduledTaskBrief | null | undefined;
+  readonly ownThread?: boolean | undefined;
 }): string | null =>
-  task.modelPinned === undefined && !task.check
+  task.modelPinned === undefined && !task.check && !task.brief && !task.ownThread
     ? null
     : JSON.stringify({
         ...(task.modelPinned === undefined ? {} : { modelPinned: task.modelPinned }),
         ...(task.check ? { check: task.check } : {}),
+        ...(task.brief ? { brief: task.brief } : {}),
+        ...(task.ownThread ? { ownThread: true } : {}),
       });
 
 export const decodeRow = (
@@ -175,6 +184,8 @@ export const decodeRow = (
       ...(webhook === undefined ? {} : { webhook }),
       ...(policy.modelPinned === undefined ? {} : { modelPinned: policy.modelPinned }),
       ...(policy.check ? { check: policy.check } : {}),
+      ...(policy.brief ? { brief: policy.brief } : {}),
+      ...(policy.ownThread ? { ownThread: true } : {}),
     });
   }).pipe(
     Effect.mapError((cause) => {

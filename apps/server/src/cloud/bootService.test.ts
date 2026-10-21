@@ -151,6 +151,7 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
 
   const commands: string[] = [];
   const timeouts = new Map<string, unknown>();
+  const envs = new Map<string, NodeJS.ProcessEnv | undefined>();
   const control: {
     failCommand: string | undefined;
     stateAfterStop?: string;
@@ -170,6 +171,7 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
       const command = `${input.command} ${input.args.join(" ")}`;
       commands.push(command);
       timeouts.set(command, input.timeout);
+      envs.set(command, input.env);
       const failed = command === control.failCommand;
       if (!failed && command === "loginctl enable-linger --no-ask-password 501")
         control.linger = "yes";
@@ -211,6 +213,7 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
     environmentPath: string | undefined = installerPath,
     cliVersion = "1.2.3",
     serviceBaseDir = baseDir,
+    extraEnv: Record<string, string> = {},
   ) =>
     Effect.gen(function* () {
       // Every version the tests install is present and verified on disk, so
@@ -240,6 +243,7 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
             ConfigProvider.fromEnv({
               env: {
                 HOME: home,
+                ...extraEnv,
                 ...(environmentPath === undefined || environmentPath === ""
                   ? {}
                   : { PATH: environmentPath }),
@@ -250,7 +254,7 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
       ),
     );
   const service = yield* makeService();
-  return { service, makeService, fs, statePath, commands, timeouts, control, runtime };
+  return { service, makeService, fs, statePath, commands, timeouts, envs, control, runtime };
 });
 
 it.layer(NodeServices.layer)("boot service install", (it) => {
@@ -327,6 +331,29 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
       });
       yield* service.install();
       expect((yield* service.status).current).toBe(true);
+    }),
+  );
+
+  it.effect("gives systemctl and loginctl the user bus an `env -i` launcher dropped", () =>
+    Effect.gen(function* () {
+      const { makeService, fs, envs } = yield* makeHarness();
+      const runtimeDir = yield* fs.makeTempDirectoryScoped({ prefix: "studio-user-bus-" });
+      yield* fs.writeFileString(`${runtimeDir}/bus`, "");
+      const service = yield* makeService(macInstallerPath, "1.2.3", undefined, {
+        XDG_RUNTIME_DIR: runtimeDir,
+      });
+      yield* service.install();
+      yield* service.status;
+      const bus = { DBUS_SESSION_BUS_ADDRESS: `unix:path=${runtimeDir}/bus` };
+      for (const command of [
+        "systemctl --user show-environment",
+        "loginctl show-user 501 --property=Linger --value",
+        "systemctl --user restart studio.service",
+        "systemctl --user is-active studio.service",
+      ])
+        expect(envs.get(command)).toEqual(bus);
+      for (const [command, env] of envs)
+        if (!/^(systemctl|loginctl) /u.test(command)) expect(env).toBeUndefined();
     }),
   );
 

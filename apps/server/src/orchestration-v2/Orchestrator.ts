@@ -8,6 +8,7 @@ import {
   updateLimitRecovery,
 } from "./usageLimitRecovery.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
+import { answersWithoutAttachmentPaths } from "../provider/userInputAttachments.ts";
 import { makeAutomaticResolutionGuard } from "./ThreadAutomaticResolutionGuard.ts";
 import { runTerminalRunReactor } from "./TerminalRunReactor.ts";
 import {
@@ -67,6 +68,7 @@ import {
   type ProviderSessionId,
   RunId,
   RuntimeMode,
+  ThreadExecutionRecord,
   ThreadLinkedPullRequest,
   ThreadId,
   type TurnItemId,
@@ -141,6 +143,7 @@ import {
   ThreadForkServiceV2,
 } from "./ThreadForkService.ts";
 import { planThreadDeletion } from "./ThreadDeletion.ts";
+import * as HandoffTurnGate from "../handoff/HandoffTurnGate.ts";
 import * as ServiceUpdateHold from "../serviceUpdate/ServiceUpdateHold.ts";
 
 export class OrchestratorDispatchError extends Schema.TaggedError<OrchestratorDispatchError>()(
@@ -427,6 +430,7 @@ function isGoalCommand(message: {
 }
 
 const threadPullRequestLinksEqual = Schema.toEquivalence(Schema.NullOr(ThreadLinkedPullRequest));
+const threadExecutionRecordsEqual = Schema.toEquivalence(ThreadExecutionRecord);
 
 function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
   switch (command.type) {
@@ -477,6 +481,7 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "thread.background-work.settle":
     case "thread.stop":
     case "thread.project-move.record":
+    case "thread.execution.record":
     case "thread.project.adopt":
     case "thread.move-to-project":
     case "provider.switch":
@@ -873,6 +878,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const admission = yield* ProjectAdmission.ProjectAdmission;
   // While the service is held for an update, nothing may start new work.
   const updateHold = yield* ServiceUpdateHold.optional;
+  const handoffGate = yield* HandoffTurnGate.HandoffTurnGate;
   const projects = yield* ProjectStore.ProjectStoreV2;
   const serverSettings = yield* Effect.serviceOption(ServerSettingsService);
   const projectPermissionUpdates = yield* Semaphore.make(1);
@@ -1383,6 +1389,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       // Every terminal run checks the queue. Only a deliverable queued run
       // needs the transcript for provider handoff and legacy import context.
       if (!(yield* projectionStore.canStartQueuedRun(threadId))) return;
+      // A fenced handoff copy keeps its queue; the machine running it now takes the work.
+      if ((yield* handoffGate.check(threadId)) !== null) return;
       const projection = yield* readCommandProjection(threadId);
       if (
         projection.thread.archivedAt !== null ||
@@ -2638,7 +2646,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       return yield* new OrchestratorDispatchError({
         commandId: command.commandId,
         commandType: command.type,
-        cause: "This thread moved to another project, so it no longer watches pull requests.",
+        cause:
+          thread.movedTo.kind === "handoff"
+            ? "This thread continues on another machine, which watches its pull requests now."
+            : "This thread moved to another project, so it no longer watches pull requests.",
       });
     }
     if (command.type === "thread.archive" && thread.archivedAt !== null) {
@@ -4683,7 +4694,19 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,
           commandType: command.type,
-          cause: `This thread moved to another project. Continue in its new thread "${movedTo.title}" (${movedTo.threadId}).`,
+          cause:
+            movedTo.kind === "handoff"
+              ? `This thread continues on ${movedTo.machineLabel ?? "another machine"} in "${movedTo.title}" (${movedTo.threadId}); it no longer starts turns here.`
+              : `This thread moved to another project. Continue in its new thread "${movedTo.title}" (${movedTo.threadId}).`,
+        });
+      }
+      // Handoff mode: one execution owner per thread. A fenced or stale copy never starts a turn.
+      const handoffRefusal = yield* handoffGate.check(command.threadId);
+      if (handoffRefusal !== null) {
+        return yield* new OrchestratorDispatchError({
+          commandId: command.commandId,
+          commandType: command.type,
+          cause: handoffRefusal,
         });
       }
       if (command.manualContinuationOfRunId !== undefined) {
@@ -7568,7 +7591,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               ? {
                   questionAnswer: {
                     requestId: command.requestId,
-                    answers: command.answers ?? {},
+                    // The card lists the files itself; their server paths stay out of it.
+                    answers: answersWithoutAttachmentPaths(
+                      command.answers ?? {},
+                      command.attachmentsByQuestionId ?? {},
+                    ),
                     attachmentsByQuestionId: command.attachmentsByQuestionId ?? {},
                     questionTextById: Object.fromEntries(
                       approvalTurnItem.questions.map((question) => [
@@ -7579,6 +7606,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
                     ...(command.answeredByThreadId === undefined
                       ? {}
                       : { answeredByThreadId: command.answeredByThreadId }),
+                    ...(command.answeredInChat === true ? { answeredInChat: true } : {}),
                   },
                 }
               : {}),
@@ -7597,10 +7625,24 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             cause: "The question for this request was not found.",
           });
         }
-        const replies: string[] = [];
+        // The reply carries the files themselves, so the path lines added for
+        // provider answer protocols are dropped from its text.
+        const replies: Array<{ question: string; answer: string }> = [];
+        const attachments: ChatAttachment[] = [];
         for (const question of approvalTurnItem.questions) {
-          const answer = command.answers?.[question.id];
-          if (typeof answer !== "string" || answer.trim().length === 0) {
+          const files = command.attachmentsByQuestionId?.[question.id] ?? [];
+          const answer = answersWithoutAttachmentPaths(
+            command.answers ?? {},
+            command.attachmentsByQuestionId ?? {},
+          )[question.id];
+          const text = (
+            typeof answer === "string"
+              ? answer
+              : Array.isArray(answer)
+                ? answer.filter((entry) => typeof entry === "string").join(", ")
+                : ""
+          ).trim();
+          if (text.length === 0 && files.length === 0) {
             if (question.required === false) continue;
             return yield* new OrchestratorDispatchError({
               commandId: command.commandId,
@@ -7608,7 +7650,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               cause: "Answer each question before sending.",
             });
           }
-          replies.push(`${question.question}\n${answer.trim()}`);
+          attachments.push(...files);
+          replies.push({ question: question.question, answer: text });
         }
         if (replies.length === 0) {
           return yield* new OrchestratorDispatchError({
@@ -7657,8 +7700,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             commandId: command.commandId,
             threadId: command.threadId,
             messageId: MessageId.make(`async-answer:${command.requestId}`),
-            text: replies.join("\n\n"),
-            attachments: [],
+            // A reply typed in chat to a single question reads as the user wrote it.
+            text:
+              command.answeredInChat === true && replies.length === 1
+                ? replies[0]!.answer
+                : replies
+                    .map(({ question, answer }) =>
+                      answer.length > 0 ? `${question}\n${answer}` : question,
+                    )
+                    .join("\n\n"),
+            attachments,
             createdBy: "user",
             creationSource: "server",
             dispatchMode,
@@ -9615,7 +9666,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             : `Thread ${command.threadId} already replaced ${current.threadId}.`,
         );
       }
-      if (command.side === "source" && thread.archivedAt === null) {
+      // A handoff keeps the source readable and unarchived: it is fenced (it
+      // refuses new turns) and links to the machine that continues it.
+      if (
+        command.side === "source" &&
+        thread.archivedAt === null &&
+        command.link.kind !== "handoff"
+      ) {
         // Archiving cancels the queue and ends pull request watches, so nothing
         // the source still holds can start in the wrong project.
         yield* dispatchThreadMutation(
@@ -9643,6 +9700,47 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       });
     },
   );
+
+  /** Where a thread lives and runs; see `thread.execution.record`. */
+  const dispatchExecutionRecord = Effect.fn("orchestrationV2.dispatch.executionRecord")(function* (
+    command: Extract<OrchestrationV2ServerCommand, { readonly type: "thread.execution.record" }>,
+    events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+  ) {
+    const thread = yield* projectionStore
+      .getThread(command.threadId)
+      .pipe(
+        Effect.mapError(
+          (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
+        ),
+      );
+    if (thread.deletedAt !== null) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: `Thread ${command.threadId} is deleted.`,
+      });
+    }
+    const current = thread.execution ?? null;
+    if (current !== null && current.epoch > command.execution.epoch) {
+      return yield* new OrchestratorDispatchError({
+        commandId: command.commandId,
+        commandType: command.type,
+        cause: `Thread ${command.threadId} already runs under epoch ${current.epoch}; epoch ${command.execution.epoch} is stale.`,
+      });
+    }
+    if (current !== null && threadExecutionRecordsEqual(current, command.execution)) return;
+    const now = yield* DateTime.now;
+    yield* emit(
+      events,
+      command,
+    )({
+      type: "thread.metadata-updated",
+      threadId: command.threadId,
+      providerInstanceId: thread.providerInstanceId,
+      occurredAt: now,
+      payload: { ...thread, execution: command.execution, updatedAt: now },
+    });
+  });
 
   const dispatchCheckpointRollback = (
     command: Extract<OrchestrationV2Command, { readonly type: "checkpoint.rollback" }>,
@@ -10852,6 +10950,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       case "thread.project-move.record":
         yield* dispatchProjectMoveRecord(command, events, effects);
         break;
+      case "thread.execution.record":
+        yield* dispatchExecutionRecord(command, events);
+        break;
       case "thread.project.adopt":
         yield* dispatchProjectAdopt(command, events);
         break;
@@ -11052,6 +11153,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         command.type === "thread.background-work.settle" ||
         command.type === "thread.stop" ||
         command.type === "thread.project-move.record" ||
+        command.type === "thread.execution.record" ||
         command.type === "thread.project.adopt"
           ? Effect.succeed(planned)
           : Effect.fail(

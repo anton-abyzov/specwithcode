@@ -1,7 +1,8 @@
 /** Looks at the machine: what is installed, where, and whether it runs. Changes nothing. */
 import type { ProvisionProvider, ProvisionService } from "@specweave-studio/contracts";
 
-import { type ProvisionHost } from "./host.ts";
+import { isUserBusError } from "../systemdUserBus.ts";
+import { type ProvisionHost, userManagerExec } from "./host.ts";
 import { nodeDownload, parseVersion } from "./manifest.ts";
 
 import { type CheckedTarget } from "./target.ts";
@@ -129,14 +130,30 @@ export function searchPathFor(ctx: Ctx): string {
     "/usr/sbin",
     "/sbin",
   ];
-  return [...new Set(parts.filter((part) => part.length > 0))].join(":");
+  // fnm's per-shell folders vanish with their shell; the stable alias folder later on the PATH holds the same commands.
+  return [
+    ...new Set(parts.filter((part) => part.length > 0 && !part.includes("/fnm_multishells/"))),
+  ].join(":");
 }
 
-export async function versionOf(host: ProvisionHost, path: string | null, args = ["--version"]) {
+/**
+ * `pathValue` is the PATH the command runs with: a `#!/usr/bin/env node` script such as an
+ * npm-installed codex needs the agents' PATH to find its node.
+ */
+export async function versionOf(
+  host: ProvisionHost,
+  path: string | null,
+  args = ["--version"],
+  pathValue?: string,
+) {
   if (!path) return null;
   const result = await host.exec(path, args, {
     timeoutMs: 20_000,
-    env: { DISABLE_AUTOUPDATER: "1", NO_COLOR: "1" },
+    env: {
+      DISABLE_AUTOUPDATER: "1",
+      NO_COLOR: "1",
+      ...(pathValue === undefined ? {} : { PATH: pathValue }),
+    },
   });
   return result.code === 0 ? parseVersion(`${result.stdout}\n${result.stderr}`) : null;
 }
@@ -217,7 +234,8 @@ export async function probeAll(ctx: Ctx): Promise<Probes> {
   let linger: boolean | null = null;
   let sleepMasked: boolean | null = null;
   if (isLinux(ctx.target)) {
-    const result = await host.exec(
+    const result = await userManagerExec(
+      host,
       "loginctl",
       ["show-user", host.user, "-p", "Linger", "--value"],
       { timeoutMs: 5000 },
@@ -230,18 +248,22 @@ export async function probeAll(ctx: Ctx): Promise<Probes> {
     sleepMasked = /masked/u.test(sleep.stdout);
   }
 
-  const providers = await probeProviders(ctx, { claude: claudePath, codex: codexPath, gh: ghPath });
+  const providers = await probeProviders(
+    ctx,
+    { claude: claudePath, codex: codexPath, gh: ghPath },
+    searchPath,
+  );
   return {
     searchPath,
-    git: { found: await versionOf(host, gitPath), path: gitPath },
+    git: { found: await versionOf(host, gitPath, undefined, searchPath), path: gitPath },
     gh: {
-      found: await versionOf(host, ghPath),
+      found: await versionOf(host, ghPath, undefined, searchPath),
       path: ghPath,
       ours: await ownsLauncher(ctx, join(paths.binDir, "gh"), join(paths.home, "tools/gh"), ghPath),
     },
     node,
     claude: {
-      found: await versionOf(host, claudePath),
+      found: await versionOf(host, claudePath, undefined, searchPath),
       path: claudePath,
       ours: await ownsLauncher(
         ctx,
@@ -251,7 +273,7 @@ export async function probeAll(ctx: Ctx): Promise<Probes> {
       ),
     },
     codex: {
-      found: await versionOf(host, codexPath),
+      found: await versionOf(host, codexPath, undefined, searchPath),
       path: codexPath,
       ours: await ownsLauncher(
         ctx,
@@ -261,7 +283,7 @@ export async function probeAll(ctx: Ctx): Promise<Probes> {
       ),
     },
     tailscale: {
-      found: await versionOf(host, tailscalePath, ["version"]),
+      found: await versionOf(host, tailscalePath, ["version"], searchPath),
       path: tailscalePath,
       state: tailscaleState,
     },
@@ -315,16 +337,22 @@ export async function probeService(ctx: Ctx): Promise<ProvisionService> {
   const { host, paths } = ctx;
   if (isLinux(ctx.target)) {
     const unit = await host.readText(paths.unitPath);
-    const active =
-      (
-        await host.exec("systemctl", ["--user", "is-active", SYSTEMD_UNIT], { timeoutMs: 10_000 })
-      ).stdout.trim() === "active";
+    const status = await userManagerExec(host, "systemctl", ["--user", "is-active", SYSTEMD_UNIT], {
+      timeoutMs: 10_000,
+    });
+    const active = status.stdout.trim() === "active";
+    // "inactive" is a stopped service; a bus error says nothing about it.
+    const managerError =
+      !active && isUserBusError(`${status.stdout}\n${status.stderr}`)
+        ? (status.stderr.trim().split(/\r?\n/u)[0] ?? "").slice(0, 300)
+        : undefined;
     const version = unit ? (/runtime\/versions\/([^/\s]+)\//u.exec(unit)?.[1] ?? null) : null;
     return {
       manager: "systemd",
       unit: unit === null ? null : paths.unitPath,
       installed: unit !== null,
       active,
+      ...(managerError === undefined ? {} : { managerError }),
       version: version ?? (unit ? await serviceStatusVersion(ctx) : null),
       home: paths.home,
       missingOnPath: [],
@@ -370,14 +398,15 @@ export async function probeServicePath(
   let managerPath = "";
   if (ctx.options.serverPath !== undefined) managerPath = ctx.options.serverPath;
   else if (isLinux(ctx.target) && service.installed) {
-    const shown = await ctx.host.exec(
+    const shown = await userManagerExec(
+      ctx.host,
       "systemctl",
       ["--user", "show", SYSTEMD_UNIT, "-p", "Environment", "--value"],
       { timeoutMs: 10_000 },
     );
     managerPath = /(?:^|\s)"?PATH=([^\s"]+)/u.exec(shown.stdout)?.[1] ?? "";
     if (!managerPath) {
-      const env = await ctx.host.exec("systemctl", ["--user", "show-environment"], {
+      const env = await userManagerExec(ctx.host, "systemctl", ["--user", "show-environment"], {
         timeoutMs: 10_000,
       });
       managerPath = /^PATH=(.*)$/mu.exec(env.stdout)?.[1] ?? "/usr/local/bin:/usr/bin:/bin";
@@ -410,6 +439,7 @@ export async function probeServicePath(
 export async function probeProviders(
   ctx: Ctx,
   paths: { claude: string | null; codex: string | null; gh: string | null },
+  searchPath: string,
 ): Promise<ProvisionProvider[]> {
   const { host } = ctx;
   const claudeSignedIn = async () => {
@@ -434,14 +464,14 @@ export async function probeProviders(
     {
       id: "claude",
       found: paths.claude !== null,
-      version: await versionOf(host, paths.claude),
+      version: await versionOf(host, paths.claude, undefined, searchPath),
       path: paths.claude,
       signedIn: paths.claude ? await claudeSignedIn() : null,
     },
     {
       id: "codex",
       found: paths.codex !== null,
-      version: await versionOf(host, paths.codex),
+      version: await versionOf(host, paths.codex, undefined, searchPath),
       path: paths.codex,
       signedIn: paths.codex
         ? ((await host.readText(join(codexHome, "auth.json")))?.trim().length ?? 0) > 0
@@ -450,7 +480,7 @@ export async function probeProviders(
     {
       id: "gh",
       found: paths.gh !== null,
-      version: await versionOf(host, paths.gh),
+      version: await versionOf(host, paths.gh, undefined, searchPath),
       path: paths.gh,
       signedIn: paths.gh
         ? (await host.exec(paths.gh, ["auth", "status"], { timeoutMs: 15_000 })).code === 0

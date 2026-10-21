@@ -176,6 +176,12 @@ export const HandoffCheckpoint = Schema.Struct({
   skipped: Schema.Array(HandoffSkippedFile).check(Schema.isMaxLength(200)),
   /** Untracked secret-like files (.env and friends) left out of the snapshot. */
   excludedSecretCount: NonNegativeInt,
+  /**
+   * Secret-like and ignored env files the source worktree has (paths only,
+   * never contents). The destination must already hold each one, through
+   * the folder copy's secret step, before a thread can move there.
+   */
+  requiredSecretPaths: Schema.optional(Schema.Array(bounded(1024)).check(Schema.isMaxLength(200))),
   transcriptMessageCount: NonNegativeInt,
   note: Schema.NullOr(HandoffNote),
   pushedToOrigin: Schema.Boolean,

@@ -109,6 +109,8 @@ const setup = (
         }),
     }),
     Layer.mock(HandoffMode.HandoffMode)({
+      environmentId: EnvironmentId.make("env-m4"),
+      machineLabel: "M4",
       snapshot: Effect.succeed(snapshot),
       fence: () =>
         Effect.succeed(

@@ -33,6 +33,7 @@ import { selectThreadRightPanelState, useRightPanelStore } from "../../src/right
 import { parseStudioThreadHref } from "@specweave-studio/shared/studioThreadLinks";
 import { StudioThreadLink } from "../../src/components/StudioThreadLink";
 import { reportKey } from "@specweave-studio/shared/threadReport";
+import { routineTasks } from "./routines-fixture";
 import {
   knowledgeLoadedAt,
   knowledgeReindex,
@@ -1133,19 +1134,7 @@ export const useEnvironmentQuery = (q) => ({
                 })),
               }
             : q?.kind === "routines"
-              ? {
-                  tasks: [
-                    {
-                      id: "r1",
-                      projectId: "project",
-                      title: "Daily project review",
-                      enabled: true,
-                      threadId: "idle",
-                      nextRunAt: "2026-10-10T13:00:00Z",
-                    },
-                    { id: "foreign", projectId: "other", title: "Foreign routine", enabled: true },
-                  ],
-                }
+              ? { tasks: routineTasks() }
               : q?.kind === "threadIncrementProgress"
                 ? { threads: [] }
                 : q?.kind === "starters"
@@ -1299,6 +1288,7 @@ export const serverEnvironment = withFallback({
   updateSettings: "updateSettings",
   setScheduledTaskEnabled: "routineToggle",
   runScheduledTaskNow: "routineRun",
+  upsertScheduledTask: "routineSave",
 });
 export const threadEnvironment = withFallback({
   loadEarlierHistory: "history",
@@ -1321,7 +1311,11 @@ export const useThreadActions = () => ({
 export const isElectron = false;
 export const useNavigate = () => () => {};
 export const useParams = () => ({});
-export const Link = ({ children, to, ...props }) => <a href={to}>{children}</a>;
+export const Link = ({ children, to, search, className }) => (
+  <a href={search ? `${to}?${new URLSearchParams(search)}` : to} className={className}>
+    {children}
+  </a>
+);
 export const WorkspacePageHeader = ({ children, className }) => (
   <header className={`flex items-center px-5 ${className}`}>{children}</header>
 );
@@ -1616,7 +1610,10 @@ export const environmentPresentations = {
 export const environmentSummaries = fixtureAnything("environmentSummaries");
 export const useEnvironmentPresentation = fixtureAnything("useEnvironmentPresentation");
 // Router pieces the shell reaches for; the fixture is one page with nowhere to go.
-export const useLocation = () => ({ pathname: "/", search: {}, hash: "" });
+export const useLocation = (options?: { select?: (location: object) => unknown }) => {
+  const location = { pathname: "/", search: {}, hash: "", href: "/" };
+  return options?.select ? options.select(location) : location;
+};
 export const useRouter = () => ({
   navigate: () => {},
   state: { location: { pathname: "/", search: {}, hash: "" } },
