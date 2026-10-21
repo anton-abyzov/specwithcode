@@ -17,6 +17,7 @@ import {
   type RunId,
   type RuntimeMode,
   type ScheduledTaskId,
+  type TaskRoutingDecision,
   ThreadId,
 } from "@specweave-studio/contracts";
 import * as Cause from "effect/Cause";
@@ -163,6 +164,8 @@ export interface ThreadLaunchInput {
   readonly title: string;
   readonly generateTitle?: boolean;
   readonly modelSelection: ModelSelection;
+  /** The Auto routing decision behind `modelSelection`, kept on the thread. */
+  readonly routing?: TaskRoutingDecision | undefined;
   readonly runtimeMode: RuntimeMode;
   readonly interactionMode: ProviderInteractionMode;
   readonly workspaceStrategy: ThreadLaunchWorkspaceStrategy;
@@ -967,6 +970,7 @@ const make = Effect.gen(function* () {
                 interactionMode: input.interactionMode,
                 branch: initialBranch,
                 worktreePath: initialWorktreePath,
+                ...(input.routing === undefined ? {} : { routing: input.routing }),
                 ...(input.importedNativeThread === undefined
                   ? {}
                   : { importedNativeThread: input.importedNativeThread }),

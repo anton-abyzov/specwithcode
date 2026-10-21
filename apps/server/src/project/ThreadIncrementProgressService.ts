@@ -30,7 +30,8 @@ import * as SqlClient from "effect/sql/SqlClient";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import {
-  listProjectIncrements,
+  incrementExists,
+  queryProjectIncrements,
   readThreadIncrementProgress,
   type ThreadIncrementSource,
 } from "./ThreadIncrementProgress.ts";
@@ -216,8 +217,13 @@ export const make = Effect.gen(function* () {
       const project = yield* projectOf(input.projectId);
       const thread =
         input.threadId === undefined ? null : yield* threadOf(input.projectId, input.threadId);
-      const increments = yield* Effect.promise(() =>
-        listProjectIncrements(project.workspaceRoot, thread?.worktreePath ?? null),
+      const page = yield* Effect.promise(() =>
+        queryProjectIncrements(project.workspaceRoot, thread?.worktreePath ?? null, {
+          ...(input.query === undefined ? {} : { query: input.query }),
+          ...(input.status === undefined ? {} : { status: input.status }),
+          ...(input.offset === undefined ? {} : { offset: input.offset }),
+          ...(input.limit === undefined ? {} : { limit: input.limit }),
+        }),
       );
       const link =
         input.threadId === undefined
@@ -225,7 +231,7 @@ export const make = Effect.gen(function* () {
           : toTarget((yield* linksFor(input.projectId, [input.threadId])).get(input.threadId));
       return {
         projectId: input.projectId,
-        increments,
+        ...page,
         ...(link === undefined ? {} : { link }),
       };
     }).pipe(asWorkspaceError(input.projectId));
@@ -241,9 +247,9 @@ export const make = Effect.gen(function* () {
       const incrementId = input.link.type === "increment" ? input.link.incrementId : null;
       if (incrementId !== null) {
         const known = yield* Effect.promise(() =>
-          listProjectIncrements(project.workspaceRoot, thread.worktreePath),
+          incrementExists(project.workspaceRoot, thread.worktreePath, incrementId),
         );
-        if (!known.some((increment) => increment.incrementId === incrementId)) {
+        if (!known) {
           return yield* new ProjectWorkspaceError({
             code: "not_found",
             projectId: input.projectId,

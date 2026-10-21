@@ -473,6 +473,8 @@ export function applyServerSettingsPatch(
     ...(patch.defaultModelSelection !== undefined
       ? { defaultModelSelection: patch.defaultModelSelection }
       : {}),
+    // Policy replacement: deepMerge would keep a cleared class tier or exclusion.
+    ...(patch.taskRouting !== undefined ? { taskRouting: patch.taskRouting } : {}),
     ...(patch.defaultProjectScripts !== undefined
       ? { defaultProjectScripts: patch.defaultProjectScripts }
       : {}),

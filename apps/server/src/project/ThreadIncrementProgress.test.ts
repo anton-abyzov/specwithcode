@@ -111,10 +111,18 @@ describe("readThreadIncrementProgress", () => {
     ]);
     expect(progress!.tasks.find((task) => task.id === "T-04")!.note).toBe("Out of scope");
     expect(progress!.criteria).toEqual([
-      { id: "AC-01", text: "The card shows done, current and next", met: false },
-      { id: "AC-02", text: "Lists show 3/5", met: false },
-      { id: "AC-03", text: "Nobody cites this one", met: false },
+      {
+        id: "AC-01",
+        text: "The card shows done, current and next",
+        met: false,
+        state: "open",
+        tasks: ["T-01", "T-02"],
+      },
+      { id: "AC-02", text: "Lists show 3/5", met: false, state: "open", tasks: ["T-02", "T-03"] },
+      { id: "AC-03", text: "Nobody cites this one", met: false, state: "uncovered", tasks: [] },
     ]);
+    // A done task carries the time the ledger accepted it, the anchor for "verified".
+    expect(progress!.tasks.find((task) => task.id === "T-01")!.doneAt).toMatch(/^2026-/u);
   });
 
   it("prefers SpecWeave's checkpoint pointer and reads the thread's worktree ledger", async () => {
@@ -347,5 +355,69 @@ describe("criteriaWithState", () => {
         ],
       ).map((criterion) => criterion.met),
     ).toEqual([true, false]);
+  });
+});
+
+describe("criteriaWithState traceability", () => {
+  const criteria = [
+    { id: "AC-01", text: "evidenced and verified", story: "US-001" },
+    { id: "AC-02", text: "shared by two tasks" },
+    { id: "AC-03", text: "no task", checked: true },
+    { id: "AC-04", text: "no task, no tick" },
+    { id: "AC-05", text: "skipped" },
+    { id: "AC-06", text: "legacy done" },
+  ];
+  const tasks = [
+    { id: "T-01", status: "done", criteria: ["AC-01", "AC-02"], doneAt: "2026-10-20T10:00:00Z" },
+    { id: "T-02", status: "claimed", criteria: ["AC-02"] },
+    { id: "T-03", status: "skipped", criteria: ["AC-05"] },
+    { id: "T-04", status: "done", criteria: ["AC-06"] },
+  ];
+  const states = (verify: { ok: boolean; ranAt: string } | null) =>
+    criteriaWithState(criteria, tasks, { verify }).map((criterion) => [
+      criterion.id,
+      criterion.state,
+    ]);
+
+  it("separates verified, evidenced, declared, skipped, open and uncovered", () => {
+    expect(states({ ok: true, ranAt: "2026-10-20T11:00:00Z" })).toEqual([
+      ["AC-01", "verified"],
+      ["AC-02", "open"],
+      ["AC-03", "declared"],
+      ["AC-04", "uncovered"],
+      ["AC-05", "skipped"],
+      ["AC-06", "declared"],
+    ]);
+  });
+
+  it("never reads a verify run older than the evidence, or a failed one, as verified", () => {
+    expect(states({ ok: true, ranAt: "2026-10-20T09:00:00Z" })[0]).toEqual(["AC-01", "evidenced"]);
+    expect(states({ ok: false, ranAt: "2026-10-20T11:00:00Z" })[0]).toEqual(["AC-01", "evidenced"]);
+    expect(states(null)[0]).toEqual(["AC-01", "evidenced"]);
+  });
+
+  it("does not read a criterion as verified when one of its tasks was skipped", () => {
+    const [criterion] = criteriaWithState(
+      [{ id: "AC-01", text: "half skipped" }],
+      [
+        { id: "T-01", status: "done", criteria: ["AC-01"], doneAt: "2026-10-20T10:00:00Z" },
+        { id: "T-02", status: "skipped", criteria: ["AC-01"] },
+      ],
+      { verify: { ok: true, ranAt: "2026-10-20T11:00:00Z" } },
+    );
+    expect(criterion?.state).toBe("evidenced");
+  });
+
+  it("lists every covering task, many-to-many, and the story", () => {
+    const traced = criteriaWithState(criteria, tasks);
+    expect(traced[0]).toMatchObject({ tasks: ["T-01"], story: "US-001", met: true });
+    expect(traced[1]).toMatchObject({ tasks: ["T-01", "T-02"], met: false });
+    expect(traced[3]).toMatchObject({ tasks: [], met: false });
+  });
+
+  it("says unknown, not uncovered, when the ledger cannot be read", () => {
+    expect(
+      criteriaWithState(criteria.slice(2, 4), [], { readable: false }).map((c) => c.state),
+    ).toEqual(["declared", "unknown"]);
   });
 });

@@ -31,6 +31,7 @@ import {
   type ThreadPlanStep,
   type ThreadPlanView,
 } from "../../studio/threadPlanProgress";
+import { criteriaSummary, ThreadPlanCriteria } from "./ThreadPlanCriteria";
 
 /** Opens an https step link in the system browser, like the thread's other link cards. */
 function openStepLinkExternally(url: string) {
@@ -203,7 +204,6 @@ export const ThreadPlanCard = memo(function ThreadPlanCard({
   const { increment } = plan;
   const fromIncrement = plan.source === "increment" && increment !== null;
   const criteria = fromIncrement ? increment.criteria : [];
-  const criteriaMet = criteria.filter((criterion) => criterion.met).length;
   const allDone = plan.total > 0 && plan.completed >= plan.total;
   // Nothing to say yet: a chip, not a full-width bar.
   const empty = plan.source === "none" && status === null;
@@ -324,24 +324,12 @@ export const ThreadPlanCard = memo(function ThreadPlanCard({
                   aria-hidden
                   className={cn("size-3.5 transition-transform", !criteriaOpen && "-rotate-90")}
                 />
-                Acceptance criteria {criteriaMet}/{criteria.length}
+                Acceptance criteria
+                <span className="text-2xs" data-plan-criteria-summary>
+                  {criteriaSummary(criteria)}
+                </span>
               </button>
-              {criteriaOpen ? (
-                <ul role="list" aria-label="Acceptance criteria" className="mt-1 space-y-0.5">
-                  {criteria.map((criterion) => (
-                    <StepRow
-                      key={criterion.id}
-                      step={{
-                        key: criterion.id,
-                        id: criterion.id,
-                        text: criterion.text,
-                        state: criterion.met ? "done" : "open",
-                        note: null,
-                      }}
-                    />
-                  ))}
-                </ul>
-              ) : null}
+              {criteriaOpen ? <ThreadPlanCriteria criteria={criteria} /> : null}
             </div>
           ) : null}
           {(increment && onOpenPath) || onLinkIncrement || (increment && onUnlinkIncrement) ? (

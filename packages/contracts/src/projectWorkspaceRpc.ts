@@ -120,11 +120,6 @@ const planChange = {
 };
 const planTask = { ...planChange, taskId: ProjectPlanTaskInput.fields.taskId };
 export const projectWorkspaceRpcs = [
-  Rpc.make(PROJECT_WORKSPACE_RPC_METHODS.projectsFolderCheck, {
-    payload: ProjectFolderCheckInput,
-    success: ProjectFolderCheck,
-    error: Schema.Union([ProjectFolderCheckError, EnvironmentAuthorizationError]),
-  }),
   Rpc.make(PROJECT_WORKSPACE_RPC_METHODS.projectsEnvironmentImportPreview, {
     payload: ProjectEnvironmentImportPreviewInput,
     success: ProjectEnvironmentImportPreview,
@@ -272,6 +267,19 @@ export const projectWorkspaceRpcs = [
     payload: ProjectThreadReportSaveInput,
     success: ProjectThreadReportsSnapshot,
     error: Schema.Union([ProjectLibraryError, EnvironmentAuthorizationError]),
+  }),
+] as const;
+
+/**
+ * SpecWeave planning: the folder check (which reports the planning root a
+ * change would read) and increment progress, listing and links. Registered as
+ * their own group for the same depth reason (see `WsProjectPlanningRpcGroup`).
+ */
+export const projectPlanningRpcs = [
+  Rpc.make(PROJECT_WORKSPACE_RPC_METHODS.projectsFolderCheck, {
+    payload: ProjectFolderCheckInput,
+    success: ProjectFolderCheck,
+    error: Schema.Union([ProjectFolderCheckError, EnvironmentAuthorizationError]),
   }),
   Rpc.make(PROJECT_WORKSPACE_RPC_METHODS.projectsThreadIncrementProgressRead, {
     payload: ThreadIncrementProgressInput,

@@ -166,6 +166,8 @@ export interface EnvironmentThreadShell {
   readonly limitRecovery?:
     | import("@specweave-studio/contracts").OrchestrationV2LimitRecovery
     | null;
+  /** Auto model routing's decision for this thread, when Auto chose its model. */
+  readonly routing?: import("@specweave-studio/contracts").TaskRoutingDecision | null;
   readonly pinnedAt: string | null;
   readonly autoSettleDisabledAt?: string | null;
   /** Slot in the user-arranged pinned order; null for keyless (legacy) pins. */
@@ -371,6 +373,7 @@ export function presentThreadShell(
     snoozedUntil: nullableIso(thread.snoozedUntil ?? null),
     snoozedAt: nullableIso(thread.snoozedAt ?? null),
     limitRecovery: thread.limitRecovery ?? null,
+    routing: thread.routing ?? null,
     pinnedAt: nullableIso(thread.pinnedAt ?? null),
     autoSettleDisabledAt: nullableIso(thread.autoSettleDisabledAt ?? null),
     pinOrderKey: thread.pinOrderKey ?? null,

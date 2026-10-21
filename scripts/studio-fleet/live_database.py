@@ -83,10 +83,51 @@ def _holder(result):
     return None if kind == fcntl.F_UNLCK else pid
 
 
+# Descriptors kept open while a connection of this process stays open across lock_holder calls
+# (read_watermark): {absolute path: descriptor}. Closing a probe would drop that connection's own
+# locks, so lock_holder asks through the held descriptor while it still names the same file.
+_held = {}
+
+
+def hold_probe(path):
+    """Opens `path` once for lock_holder and keeps it open until release_probe; returns its
+    (device, inode). Raises OSError like os.open."""
+    path = os.path.abspath(str(path))
+    release_probe(path)
+    descriptor = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    _held[path] = descriptor
+    status = os.fstat(descriptor)
+    return status.st_dev, status.st_ino
+
+
+def release_probe(path):
+    """Closes a hold_probe descriptor. Only once this process's connection to the file is closed:
+    the close drops every lock this process holds on it."""
+    descriptor = _held.pop(os.path.abspath(str(path)), None)
+    if descriptor is not None:
+        os.close(descriptor)
+
+
+def held_probe(path):
+    """The hold_probe descriptor of `path` while it is still the file at that path, else None.
+    Reading through it never drops this process's locks; opening and closing the path does."""
+    held = _held.get(os.path.abspath(str(path)))
+    if held is None:
+        return None
+    try:
+        current, probe = os.stat(str(path)), os.fstat(held)
+    except FileNotFoundError:
+        return None
+    return held if (current.st_dev, current.st_ino) == (probe.st_dev, probe.st_ino) else None
+
+
 def lock_holder(path, start, length):
     """The pid of a process whose lock on bytes [start, start+length) of `path` would block a write
     lock, None when no process holds one. Opening and closing the file here only ever drops this
-    process's own locks."""
+    process's own locks; a held probe (hold_probe) on the same file drops none."""
+    held = held_probe(path)
+    if held is not None:
+        return _holder(fcntl.fcntl(held, fcntl.F_GETLK, _flock(start, length)))
     descriptor = os.open(str(path), os.O_RDONLY | os.O_NOFOLLOW)
     try:
         return _holder(fcntl.fcntl(descriptor, fcntl.F_GETLK, _flock(start, length)))

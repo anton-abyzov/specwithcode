@@ -35,6 +35,7 @@ vi.mock("./useScopedSettings", () => ({
 vi.mock("../chat/ProviderModelPicker", () => ({ ProviderModelPicker: () => null }));
 vi.mock("../chat/TraitsPicker", () => ({ TraitsPicker: () => null }));
 vi.mock("./ProviderLimitSettings", () => ({ ProviderLimitSettings: () => null }));
+vi.mock("./TaskRoutingSettings", () => ({ TaskRoutingSettings: () => null }));
 vi.mock("../ui/toast", () => ({ toastManager: { add: vi.fn() } }));
 vi.mock("./settingsLayout", () => ({
   SETTINGS_PICKER_TRIGGER_CLASSNAME: "",

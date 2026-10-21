@@ -44,18 +44,19 @@ import {
   requestWorkGrantChange,
   requestWorkGrants,
 } from "./fleetRequest";
+import { environmentConnectedAtom } from "./connected";
 
 const fleetAtom = Atom.family((environmentId: EnvironmentId) =>
   connectionAtomRuntime
     .atom((get) => {
-      const presentation = get(environmentPresentations.presentationAtom(environmentId));
+      const connected = get(environmentConnectedAtom(environmentId));
       const session = get(environmentSession.sessionStateAtom(environmentId));
       const grant = Option.getOrNull(AsyncResult.value(session));
       const prepared = Option.getOrNull(
         get(environmentSession.preparedConnectionValueAtom(environmentId)),
       );
       if (
-        presentation?.connection.phase !== "connected" ||
+        !connected ||
         session._tag === "Failure" ||
         !grant ||
         !sessionGrantsScope(grant, AuthOrchestrationReadScope) ||
@@ -71,14 +72,14 @@ const workGrantsAtom = Atom.family((environmentId: EnvironmentId | null) =>
   connectionAtomRuntime
     .atom((get) => {
       if (environmentId === null) return Effect.succeed(null);
-      const presentation = get(environmentPresentations.presentationAtom(environmentId));
+      const connected = get(environmentConnectedAtom(environmentId));
       const session = get(environmentSession.sessionStateAtom(environmentId));
       const grant = Option.getOrNull(AsyncResult.value(session));
       const prepared = Option.getOrNull(
         get(environmentSession.preparedConnectionValueAtom(environmentId)),
       );
       if (
-        presentation?.connection.phase !== "connected" ||
+        !connected ||
         session._tag === "Failure" ||
         !grant ||
         !sessionGrantsScope(grant, AuthAccessReadScope) ||
@@ -96,14 +97,14 @@ const remoteWorkersAtom = Atom.family((key: string) => {
   };
   return connectionAtomRuntime
     .atom((get) => {
-      const presentation = get(environmentPresentations.presentationAtom(environmentId));
+      const connected = get(environmentConnectedAtom(environmentId));
       const session = get(environmentSession.sessionStateAtom(environmentId));
       const grant = Option.getOrNull(AsyncResult.value(session));
       const prepared = Option.getOrNull(
         get(environmentSession.preparedConnectionValueAtom(environmentId)),
       );
       if (
-        presentation?.connection.phase !== "connected" ||
+        !connected ||
         session._tag === "Failure" ||
         !grant ||
         !sessionGrantsScope(grant, AuthOrchestrationReadScope) ||

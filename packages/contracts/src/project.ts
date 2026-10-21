@@ -261,6 +261,8 @@ export const ProjectMutation = Schema.Union([
     workspaceRoot: TrimmedNonEmptyString,
     /** The user chose a folder whose repository differs from the current one. */
     confirmDifferentRepository: Schema.optional(Schema.Boolean),
+    /** The user accepted that plan cards will read another SpecWeave planning root. */
+    confirmPlanningImpact: Schema.optional(Schema.Boolean),
   }),
 ]);
 export type ProjectMutation = typeof ProjectMutation.Type;
@@ -305,6 +307,35 @@ export const ProjectFolderCheck = Schema.Struct({
   keptInPlaceCount: NonNegativeInt,
   /** The folder holds a SpecWeave workspace whose repositories can be imported afterwards. */
   specweaveWorkspace: Schema.Boolean,
+  /**
+   * What the target folder holds, found by a bounded walk of that folder only.
+   * Optional: older servers do not send it.
+   */
+  layout: Schema.optional(
+    Schema.Struct({
+      kind: Schema.Literals(["single", "umbrella", "nested", "plain"]),
+      rootIsRepository: Schema.Boolean,
+      repositories: Schema.Array(Schema.String),
+      repositoryCount: NonNegativeInt,
+      truncated: Schema.Boolean,
+    }),
+  ),
+  /**
+   * The SpecWeave planning root plan cards read before and after the change.
+   * `changes` means the user must confirm (confirmPlanningImpact); manual
+   * increment links in `brokenLinks` would show "not found" until the folder
+   * changes back. Absent when neither folder has increments in reach.
+   */
+  planning: Schema.optional(
+    Schema.Struct({
+      currentRoot: Schema.NullOr(Schema.String),
+      currentIncrements: NonNegativeInt,
+      targetRoot: Schema.NullOr(Schema.String),
+      targetIncrements: NonNegativeInt,
+      brokenLinks: Schema.Array(Schema.String),
+      changes: Schema.Boolean,
+    }),
+  ),
 });
 export type ProjectFolderCheck = typeof ProjectFolderCheck.Type;
 

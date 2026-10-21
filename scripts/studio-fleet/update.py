@@ -6,6 +6,7 @@ if not __debug__:
 import argparse
 import contextlib
 import copy
+import ctypes
 import datetime
 import errno
 import hashlib
@@ -13,10 +14,10 @@ import json
 import os
 import pathlib
 import plistlib
-import posixpath
 import re
 import shlex
 import shutil
+import signal
 import socket
 import sqlite3
 import subprocess
@@ -39,8 +40,30 @@ from release_retention import prune_releases, prune_state_backups
 import database_continuity as continuity
 import database_restart
 import idle_agents
+import install_progress
 import live_database
+import read_delta
+import read_watermark
 import settings_continuity
+from update_receipt import describe_error, write_preflight_failure
+from update_read import (TERMINAL_RUNS, _queue_held, run_work, AUTHORITY_TABLES, _read_state, _read_tables,
+                         assert_idle, SINGLE_SCAN_SQLITE, ORDINARY_TABLE, virtual_tables, guarded_hashes,
+                         guarded_rows, ACTIVITY_KEY, LOG_TABLES, STREAM_COLUMNS, CURSOR_COLUMNS, encoded_row,
+                         rows_digest, table_columns, stream_key, has_rowid, stream_column,
+                         append_only_activity, activity_digest, valid_activity, rowid_is_a_column,
+                         has_covering_index, log_prefixes, carried_since, AUTH_INVARIANT_KEY,
+                         AUTH_HEARTBEAT_COLUMN, AUTH_APP_VERSION_COLUMN, auth_invariant_hash,
+                         is_projection_table, carried_applies, log_rows_carried)
+from update_migration import (_column_definition, accepted_widenings, narrowed_rows, assert_migration_preserved,
+                              auth_comparison, typed_auth_rows, typed_auth_rows_hash, verify_migration_heartbeat_witness,
+                              heartbeat_window_start, prove_migration_preserved, assert_migration_typed_cells,
+                              assert_migration_protected_schema)
+from update_compare import (rows_carried_forward, same_guarded_rows, database_allowance, assert_capture_carried,
+                            auth_since, guarded_row_counts, settings_preserved)
+from update_service import (OTHER_SERVICE_PORTS, service_owns_listener, HOLD_REFUSAL, _utc, assert_held,
+                            restart_old_release, native_work_counts, _name, descendant_names)
+from state_backup import (BACKUP_SPACE_MARGIN, assert_backup_space, assert_clone_headroom, backup_state,
+                          clone_state, discard_unused_backup, write_private as _write_private)
 from service_launch_agent import upgraded_service_plist
 import managed_updates
 import studio_paths
@@ -51,35 +74,6 @@ ENV_KEYS = {'HOME', 'USER', 'LOGNAME', 'PATH', 'LANG', 'TMPDIR', 'STUDIO_HOME',
             'STUDIO_HOST', 'STUDIO_PORT', 'STUDIO_MODE', 'STUDIO_NO_BROWSER',
             'STUDIO_LOG_LEVEL', 'STUDIO_ENABLE_HOSTED_SERVICES', 'STUDIO_DEV_ALLOWED_ORIGINS',
             'STUDIO_AUTO_BOOTSTRAP_PROJECT_FROM_CWD', 'PWDEBUG', 'PLAYWRIGHT_HTML_OPEN'}
-TERMINAL_RUNS = {'completed', 'interrupted', 'failed', 'cancelled', 'rolled_back'}
-
-def _queue_held(payload):
-    """A queued run's payload says it waits in a held queue (`"queueHeld": true`)."""
-    try:
-        return json.loads(payload).get('queueHeld') is True
-    except (TypeError, ValueError, AttributeError):
-        return False
-
-def run_work(db):
-    """(statuses of the runs that are work, held queued runs). A queued run in a held queue
-    (after Stop, a restart or a provider failure) starts only when someone resumes the queue,
-    so it never quiets on its own: it is not work, and it stays held across the update.
-    ServiceUpdatePreparation.readBlockerRows applies the same rule. A database without run
-    payloads (older fixtures) counts every run."""
-    columns = {row[1] for row in db.execute('PRAGMA table_info(orchestration_v2_projection_runs)')}
-    if 'payload_json' not in columns:
-        return [row[0] for row in db.execute('SELECT status FROM orchestration_v2_projection_runs')], 0
-    statuses = [row[0] for row in db.execute(
-        "SELECT status FROM orchestration_v2_projection_runs WHERE status IS NOT 'queued'")]
-    held = 0
-    for (payload,) in db.execute(
-            "SELECT payload_json FROM orchestration_v2_projection_runs WHERE status = 'queued'"):
-        if _queue_held(payload):
-            held += 1
-        else:
-            statuses.append('queued')
-    return statuses, held
-
 def digest(value):
     return hashlib.sha256(value).hexdigest()
 
@@ -109,264 +103,11 @@ def release_verified(release):
     assert {str(p.relative_to(release)) for p in release.rglob('*') if p.is_file() or p.is_symlink()} == declared | {'studio-manifest.json'}
     return manifest
 
-# Sign-in sessions, pairing credentials, provider runtime and schedules: rows here grant
-# access or run work, so a migration may create these tables only empty and may never add
-# a trigger that touches them.
-AUTHORITY_TABLES = ('auth_pairing_links', 'auth_sessions', 'provider_session_runtime',
-                    'scheduled_tasks', 'scheduled_task_run_receipts')
-
-def _read_state(state, include_auth, since=None, include_database=False, widen_from=None):
-    """Protected rows, private auth, rows appended after `since` and the complete database
-    capture, all measured in one read-only transaction. `widen_from` (an earlier capture's
-    schema columns) also measures tables that gained columns since (accepted_widenings)."""
-    db = live_database.connect(state / 'statev2.sqlite')
-    try:
-        db.execute('BEGIN')
-        tables = [row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")]
-        counts, hashes = {}, {}
-        for table in tables:
-            if not re.fullmatch('[a-z0-9_]+', table):
-                raise AssertionError('Unexpected table identifier')
-            if table.startswith(('projection_', 'orchestration_', 'project_')) or table in AUTHORITY_TABLES:
-                # Hash only in memory. Never return columns, credentials, prompts or native IDs.
-                rows = sorted(json.dumps(list(row), default=lambda value: value.hex(), separators=(',', ':')) for row in db.execute('SELECT * FROM ' + table))
-                counts[table] = len(rows)
-                hashes[table] = digest(('\n'.join(rows)).encode())
-        runs = run_work(db)[0]
-        requests = db.execute("SELECT count(*) FROM orchestration_v2_projection_runtime_requests WHERE status='pending'").fetchone()[0]
-        # EffectOutbox.ts uses succeeded (not run-status completed). Unknown/NULL
-        # values remain nonidle; retain every terminal row in the preservation hash.
-        effects = db.execute("SELECT count(*) FROM orchestration_v2_effect_outbox WHERE status IS NULL OR status NOT IN ('succeeded','failed','cancelled')").fetchone()[0]
-        sessions = db.execute("SELECT count(*) FROM orchestration_v2_projection_provider_sessions WHERE status IN ('running','working','connecting','starting')").fetchone()[0]
-        assert all(status in TERMINAL_RUNS for status in runs) and requests == effects == sessions == 0, 'Native work is not idle'
-        thread_ids = {row[0] for row in db.execute('SELECT thread_id FROM projection_threads')}
-        if 'orchestration_v2_projection_threads' in tables:
-            thread_ids.update(row[0] for row in db.execute('SELECT thread_id FROM orchestration_v2_projection_threads'))
-        proof = {'projectIds': sorted(row[0] for row in db.execute('SELECT project_id FROM projection_projects')),
-                 'threadIds': sorted(thread_ids),
-                 'counts': counts, 'hashes': hashes, 'nativeWorkIdle': True}
-        if 'auth_sessions' in tables:
-            proof[AUTH_INVARIANT_KEY] = auth_invariant_hash(db)
-        proof[ACTIVITY_KEY] = append_only_activity(db, tables)
-        # Keep complete auth cells separate from every serializable public proof. A database
-        # without the auth table has no session to capture (a migration may create it).
-        auth = read_auth_sessions_in_transaction(db, proof) if include_auth and 'auth_sessions' in tables else None
-        # Measured in the same read transaction as the proof it is compared with.
-        carried = carried_since(db, tables, since) if since is not None else None
-        # Complete schema and typed cells of every table, bound to the protected rows in
-        # this same read transaction. Hashes and schema text only; no cell values.
-        database = None
-        if include_database:
-            database = (continuity.capture_connection(db) if widen_from is None
-                        else continuity.capture_connection(db, widen_from))
-        if database is not None: continuity.bind_rows(database, proof)
-        return proof, auth, carried, database
-    finally:
-        db.close()
-
 def _rows_snapshot(state, include_auth, since=None, *, include_database=False):
     """(rows, auth, carried), or (rows, auth, databaseCapture) with include_database."""
     assert since is None or not include_database, 'Use _read_state for appended rows with a capture'
     proof, auth, carried, database = _read_state(state, include_auth, since, include_database)
     return (proof, auth, database) if include_database else (proof, auth, carried)
-
-# A running service appends on its own while a thread waits on a usage limit: each
-# availability check adds an event and a command receipt, and the projector rewrites
-# that thread's projection row and its cursor. A starting release can do the same for
-# a project: a settings save is a project event (stream_id is the project id), its
-# receipt and that project's projection row. The new release opens the same database,
-# so these rows carry forward. The proof records where each log ended and a hash per
-# stream (thread or project) of the projection rows keyed by it, so a later read can
-# show that every earlier row is untouched and that projection changes belong to
-# streams with new events. The set of projects and threads, deletes, edits of earlier
-# rows and every other table stay exact. (The proof keys keep their thread names.)
-ACTIVITY_KEY = 'appendOnlyActivity'
-LOG_TABLES = ('orchestration_events', 'orchestration_command_receipts',
-              'orchestration_v2_events', 'orchestration_v2_command_receipts')
-STREAM_COLUMNS = {'orchestration_events': 'stream_id', 'orchestration_v2_events': 'thread_id'}
-CURSOR_COLUMNS = {'orchestration_v2_projection_metadata': ('last_sequence', 'updated_at'),
-                  'projection_state': ('last_applied_sequence', 'updated_at')}
-
-def encoded_row(row):
-    return json.dumps(list(row), default=lambda value: value.hex(), separators=(',', ':'))
-
-def rows_digest(lines):
-    return digest(('\n'.join(sorted(lines))).encode())
-
-def table_columns(db, table):
-    return [row[1] for row in db.execute('PRAGMA table_info(' + table + ')')]
-
-def stream_key(value):
-    return value if isinstance(value, str) else '#' + json.dumps(value, default=lambda item: item.hex())
-
-def has_rowid(db, table):
-    try:
-        db.execute('SELECT rowid FROM ' + table + ' LIMIT 0')
-        return True
-    except sqlite3.OperationalError:
-        return False
-
-def stream_column(columns):
-    """A projection row belongs to its thread, or, with no thread column, its project."""
-    return 'thread_id' if 'thread_id' in columns else 'project_id' if 'project_id' in columns else None
-
-def append_only_activity(db, tables):
-    """In-memory hashes and row positions only; no content leaves the transaction."""
-    logs = {table: db.execute('SELECT coalesce(max(rowid), 0) FROM ' + table).fetchone()[0]
-            for table in LOG_TABLES if table in tables and has_rowid(db, table)}
-    thread_tables, buckets = [], {}
-    for table in tables:
-        columns = table_columns(db, table)
-        key = stream_column(columns)
-        if not (is_projection_table(table) and key) or table in CURSOR_COLUMNS:
-            continue
-        thread_tables.append(table)
-        index = columns.index(key)
-        for row in db.execute('SELECT * FROM ' + table):
-            buckets.setdefault(stream_key(row[index]), []).append(json.dumps(table) + ',' + encoded_row(row))
-    cursors = {}
-    for table, moving in CURSOR_COLUMNS.items():
-        if table in tables:
-            columns = table_columns(db, table)
-            keep = [index for index, name in enumerate(columns) if name not in moving]
-            cursors[table] = digest(('studio-projection-cursor-v1\n' + '\n'.join(sorted(
-                json.dumps([[columns[index], row[index]] for index in keep], default=lambda value: value.hex(),
-                           separators=(',', ':')) for row in db.execute('SELECT * FROM ' + table)))).encode())
-    return {'logRowids': logs, 'threadTables': sorted(thread_tables),
-            'threadSha256': {key: digest(('studio-thread-rows-v1\n' + '\n'.join(sorted(lines))).encode())
-                             for key, lines in buckets.items()},
-            'cursorSha256': cursors}
-
-def activity_digest(activity):
-    return digest(json.dumps(activity, sort_keys=True, separators=(',', ':')).encode())
-
-def valid_activity(activity):
-    return (isinstance(activity, dict) and set(activity) == {'logRowids', 'threadTables', 'threadSha256', 'cursorSha256'}
-            and isinstance(activity['logRowids'], dict) and isinstance(activity['threadTables'], list)
-            and isinstance(activity['threadSha256'], dict) and isinstance(activity['cursorSha256'], dict)
-            and all(table in LOG_TABLES and type(value) is int and value >= 0 for table, value in activity['logRowids'].items()))
-
-def carried_since(db, tables, expected):
-    """Rows the running service appended after `expected` was measured. Earlier log rows
-    are rehashed at the recorded positions, in the format of the proof's table hashes."""
-    activity = expected.get(ACTIVITY_KEY) if isinstance(expected, dict) else None
-    if not valid_activity(activity):
-        return None
-    prefix, typed, appended, streams = {}, {}, {}, set()
-    for table, boundary in activity['logRowids'].items():
-        if table not in tables or not has_rowid(db, table):
-            return None
-        earlier = list(db.execute('SELECT * FROM ' + table + ' WHERE rowid <= ?', (boundary,)))
-        lines = [encoded_row(row) for row in earlier]
-        prefix[table] = [len(lines), rows_digest(lines)]
-        # The same earlier rows with SQLite storage classes, for the complete database check.
-        typed[table] = {'count': len(earlier), 'sha256': continuity.typed_rows_hash(earlier)}
-        appended[table] = db.execute('SELECT count(*) FROM ' + table + ' WHERE rowid > ?', (boundary,)).fetchone()[0]
-        column = STREAM_COLUMNS.get(table)
-        if column and column in table_columns(db, table):
-            streams.update(stream_key(row[0]) for row in
-                           db.execute('SELECT ' + column + ' FROM ' + table + ' WHERE rowid > ?', (boundary,)))
-    return {'activitySha256': activity_digest(activity), 'logPrefix': prefix, 'typedLogPrefix': typed,
-            'appendedRows': appended, 'touchedStreams': sorted(streams)}
-
-def carried_applies(expected, actual, carried):
-    return (isinstance(expected, dict) and isinstance(actual, dict) and isinstance(carried, dict)
-            and valid_activity(expected.get(ACTIVITY_KEY)) and valid_activity(actual.get(ACTIVITY_KEY))
-            and carried.get('activitySha256') == activity_digest(expected[ACTIVITY_KEY])
-            and isinstance(expected.get('counts'), dict) and isinstance(actual.get('counts'), dict)
-            and isinstance(expected.get('hashes'), dict) and isinstance(actual.get('hashes'), dict))
-
-def log_rows_carried(table, expected, actual, carried):
-    """Every earlier row is byte-identical at its position; new rows only follow them."""
-    before = [expected['counts'].get(table), expected['hashes'].get(table)]
-    if before == [actual['counts'].get(table), actual['hashes'].get(table)]:
-        return True
-    return (carried['logPrefix'].get(table) == before
-            and actual['counts'].get(table) == before[0] + carried['appendedRows'].get(table, -1))
-
-def rows_carried_forward(expected, actual, carried, auth_heartbeat=True):
-    """True when `actual` is `expected` plus rows the running service appended: new log
-    rows, projection rows of threads or projects that have new events, and the projection
-    cursor."""
-    exempt = {'counts', 'hashes', 'threadIds', ACTIVITY_KEY}
-    if set(expected) != set(actual) or any(expected[key] != actual[key] for key in expected if key not in exempt):
-        return False  # Projects, idle state and the auth invariant stay exact.
-    if set(expected['counts']) != set(actual['counts']) or set(expected['hashes']) != set(actual['hashes']):
-        return False
-    before, now = expected[ACTIVITY_KEY], actual[ACTIVITY_KEY]
-    if before['threadTables'] != now['threadTables'] or set(before['cursorSha256']) != set(now['cursorSha256']):
-        return False
-    streams = set(carried['touchedStreams'])
-    grew = any(count > 0 for count in carried['appendedRows'].values())
-    heartbeat = auth_heartbeat and isinstance(expected.get(AUTH_INVARIANT_KEY), str)
-    for table in expected['hashes']:
-        same = (expected['counts'].get(table) == actual['counts'].get(table)
-                and expected['hashes'][table] == actual['hashes'][table])
-        if table == 'auth_sessions' and heartbeat:
-            continue  # Compared through the invariant hash above.
-        if table in before['logRowids']:
-            if not log_rows_carried(table, expected, actual, carried):
-                return False
-        elif table in before['cursorSha256']:
-            if now['cursorSha256'][table] != before['cursorSha256'][table] or not (same or grew):
-                return False
-        elif table in before['threadTables']:
-            continue  # Compared per thread below.
-        elif not same:
-            return False
-    old_threads, new_threads = before['threadSha256'], now['threadSha256']
-    if any(key not in new_threads or (new_threads[key] != value and key not in streams) for key, value in old_threads.items()):
-        return False
-    if any(key not in streams for key in set(new_threads) - set(old_threads)):
-        return False
-    old_ids, new_ids = set(expected['threadIds']), set(actual['threadIds'])
-    return old_ids <= new_ids and all(key in streams for key in new_ids - old_ids)
-
-AUTH_INVARIANT_KEY = 'authSessionsInvariantSha256'
-AUTH_HEARTBEAT_COLUMN = 'last_connected_at'
-# The app version a connect reports (AuthSessions.ts setClientConnectionRow), shown in the sessions
-# list only. A desktop app relaunched into a new release reports it on its first connect, which landed
-# between the agent's snapshot and the apply on every first attempt from 1.0.46 to 1.0.60. The surface
-# written beside it stays guarded: the heartbeat proof classifies sessions by it (active_session), so
-# a change refuses here, before the restart, rather than rolling back after it.
-AUTH_APP_VERSION_COLUMN = 'client_app_version'
-
-def auth_invariant_hash(db):
-    """Hash every auth_sessions cell except what a connect rewrites on its own: the heartbeat (a
-    connected browser or desktop app rewrites last_connected_at every few seconds) and the app
-    version it reports (AUTH_APP_VERSION_COLUMN). Identity, surface, scopes, credentials, expiry
-    and revocation all stay guarded, including SQLite types and the complete schema. Hashed in
-    memory only. Older invariant hashes fail closed: read a receipt back with the release's own
-    helper (v2 until 1.0.60 also hashed the app version)."""
-    columns = [row[1] for row in db.execute('PRAGMA table_info(auth_sessions)')]
-    skipped = {AUTH_HEARTBEAT_COLUMN, AUTH_APP_VERSION_COLUMN}
-    keep = [index for index, name in enumerate(columns) if name not in skipped]
-    schema = [[list(row) for row in db.execute('PRAGMA table_xinfo(auth_sessions)')],
-              [list(row) for row in db.execute(
-                  "SELECT type,name,tbl_name,sql FROM sqlite_master WHERE tbl_name='auth_sessions' ORDER BY type,name")]]
-    rows = sorted(encoded([(columns[index], type(row[index]).__name__, row[index]) for index in keep])
-                  for row in db.execute('SELECT * FROM auth_sessions'))
-    return digest(('studio-auth-invariant-v3\n' + encoded(schema) + '\n' + '\n'.join(rows)).encode())
-
-def same_guarded_rows(expected, actual, carried=None, *, auth_heartbeat=True):
-    """Protected rows are unchanged, allowing auth_sessions heartbeats and, with `carried`
-    measured against `expected`, rows the running service appended (rows_carried_forward).
-    Without the invariant hash on both sides (an older snapshot) the comparison stays
-    byte-exact."""
-    if carried_applies(expected, actual, carried):
-        return rows_carried_forward(expected, actual, carried, auth_heartbeat)
-    if not auth_heartbeat:
-        return expected == actual
-    if not (isinstance(expected, dict) and isinstance(actual, dict)
-            and isinstance(expected.get(AUTH_INVARIANT_KEY), str) and isinstance(actual.get(AUTH_INVARIANT_KEY), str)
-            and isinstance(expected.get('hashes'), dict) and isinstance(actual.get('hashes'), dict)):
-        return expected == actual
-    def without_heartbeat(rows):
-        rest = dict(rows)
-        rest['hashes'] = {table: value for table, value in rows['hashes'].items() if table != 'auth_sessions'}
-        return rest, set(rows['hashes'])
-    (left, left_tables), (right, right_tables) = without_heartbeat(expected), without_heartbeat(actual)
-    return left == right and left_tables == right_tables
 
 def rows_snapshot(state):
     return _rows_snapshot(state, False)[0]
@@ -384,54 +125,6 @@ def rows_since_with_database(state, expected_rows):
     """rows_since plus the complete database capture, in the same read transaction."""
     proof, _, carried, database = _read_state(state, False, expected_rows, True)
     return proof, carried, database
-
-def auth_since(state, expected_rows):
-    """The complete auth cells, and `expected_rows` with the auth count and hash those cells have,
-    in one read: a proof over them never mixes two reads of a table every connect writes."""
-    db = live_database.connect(state / 'statev2.sqlite')
-    try:
-        db.execute('BEGIN')
-        rows = [list(row) for row in db.execute('SELECT * FROM auth_sessions')]
-        view = {**expected_rows, 'counts': {**expected_rows['counts'], 'auth_sessions': len(rows)},
-                'hashes': {**expected_rows['hashes'], 'auth_sessions': rows_hash(rows)}}
-        return read_auth_sessions_in_transaction(db, view), view
-    finally:
-        db.close()
-
-def database_allowance(expected, actual, carried, *, auth_heartbeat=True):
-    """Tables of a complete capture that the guarded row comparison has already proven.
-
-    Call only after same_guarded_rows(expected, actual, carried, auth_heartbeat=...) passed.
-    auth_sessions may differ when both invariant hashes (every cell but the heartbeat and the
-    reported app version, with SQLite types and the auth schema) are equal. With `carried` measured
-    against `expected`, thread projection rows and projection cursors may differ, and log
-    tables may grow when their earlier rows are typed-identical (`logPrefixes`). Every
-    other table and the schema must stay exactly equal."""
-    tables, prefixes = set(), {}
-    if (auth_heartbeat and isinstance(expected, dict) and isinstance(actual, dict)
-            and isinstance(expected.get(AUTH_INVARIANT_KEY), str)
-            and expected.get(AUTH_INVARIANT_KEY) == actual.get(AUTH_INVARIANT_KEY)):
-        tables.add('auth_sessions')
-    if carried_applies(expected, actual, carried):
-        activity = expected[ACTIVITY_KEY]
-        tables.update(activity['threadTables'])
-        tables.update(activity['cursorSha256'])
-        typed = carried.get('typedLogPrefix')
-        assert isinstance(typed, dict) and set(typed) == set(activity['logRowids']), 'Typed log prefixes missing'
-        prefixes = dict(typed)
-    return {'tables': sorted(tables), 'logPrefixes': prefixes}
-
-def assert_capture_carried(expected, actual, expected_rows, actual_rows, carried, *, auth_heartbeat=True,
-                           message='Complete database prestate changed'):
-    """Complete database continuity with the same allowance as the guarded rows."""
-    assert isinstance(expected, dict) and isinstance(actual, dict), 'Complete database proof missing'
-    allowance = database_allowance(expected_rows, actual_rows, carried, auth_heartbeat=auth_heartbeat)
-    try:
-        continuity.assert_database_continuity(expected['summary'], actual['summary'],
-                                              carried_tables=allowance['tables'],
-                                              log_prefixes=allowance['logPrefixes'])
-    except AssertionError as error:
-        raise AssertionError(message) from error
 
 LSOF_TIMEOUT_SECONDS = 30
 LSOF_ATTEMPTS = 2
@@ -502,23 +195,6 @@ def assert_database_locked(state):
     locks = live_database.service_locks(state / 'statev2.sqlite')
     assert locks['database'] is not None and locks['index'] is not None, LOCKS_LOST
 
-# Ports of other local services: the model proxy (8317), Switch (8318) and the worker tunnels
-# (18319, 28319). Their own launchd jobs restart them, and a tunnel reconnects after any
-# network blip, so a listener there changing is not this update's doing and never refuses it.
-# What an update must not do is take one of them: that is the guarded fact.
-OTHER_SERVICE_PORTS = [8317, 8318, 18319, 28319]
-
-
-def service_owns_listener(other_listeners, root_pid, processes):
-    """True when a listener on another service's port is the Studio service or its descendant."""
-    tree, grew = {root_pid}, True
-    while grew:
-        found = {pid for pid, process in processes.items() if process['parent'] in tree} - tree
-        grew = bool(found)
-        tree |= found
-    return any(pid in tree for pids in other_listeners.values() for pid in pids)
-
-
 def _service(identity):
     """The verified installation and its running service: receipt, LaunchAgent, launcher,
     runtime record, port owner and executable. Reads no database."""
@@ -577,7 +253,9 @@ def _service(identity):
 
 SERVICE_KEYS = ('home', 'own', 'installation', 'receipt', 'label', 'plist', 'wrapper', 'launcher', 'content', 'node', 'runtime')
 
-def _snapshot(identity, include_auth, since=None, widen_from=None):
+def _snapshot(identity, include_auth, since=None, widen_from=None, reads=None):
+    """`reads`, an earlier _read_state result for the same `since`, stands in for the database read
+    (snapshot_reusing); every service, file, process and listener check runs again."""
     service = _service(identity)
     home, own, installation, receipt, label, plist, wrapper, launcher, content, node, runtime = (service[key] for key in SERVICE_KEYS)
     protected = {'launcher': launcher, 'plist': plist, 'wrapper': wrapper, 'installation': installation,
@@ -589,7 +267,7 @@ def _snapshot(identity, include_auth, since=None, widen_from=None):
     file_hashes = {name: digest(data) for name, data in contents.items()}
     assert_database_attached(runtime['pid'], own / 'userdata')
     assert_database_locked(own / 'userdata')
-    rows, auth, carried, database = _read_state(own / 'userdata', include_auth, since, True, widen_from)
+    rows, auth, carried, database = reads or _read_state(own / 'userdata', include_auth, since, True, widen_from)
     other = {str(port): listeners(port) for port in OTHER_SERVICE_PORTS if port != receipt['port']}
     proof = {'schemaVersion': 1, 'identity': identity, 'uid': service['owner'].uid, 'port': receipt['port'], 'webSessionPolicy': service['owner'].policy, 'serviceLabel': label, 'servicePid': runtime['pid'],
             'archiveSha256': receipt['archiveSha256'], 'artifactSourceCommit': receipt['sourceCommit'],
@@ -605,40 +283,6 @@ def _snapshot(identity, include_auth, since=None, widen_from=None):
 
 def snapshot(identity):
     return _snapshot(identity, False)[0]
-
-HOLD_REFUSAL = 'The service is not held for this update request'
-
-def _utc(value):
-    """An ISO time with its zone (`Z` included), or None."""
-    if not isinstance(value, str) or not 0 < len(value) <= 64:
-        return None
-    try:
-        parsed = datetime.datetime.fromisoformat(value[:-1] + '+00:00' if value.endswith('Z') else value)
-    except ValueError:
-        return None
-    return parsed if parsed.tzinfo is not None else None
-
-def assert_held(service, request, now=None):
-    """The running service holds itself for this very forced request: its `updates/hold.json`
-    (written by ServiceUpdateHold while held, removed when the hold ends) names the running
-    pid, began after this process started and has not ended; and `updates/config.json` still
-    asks to force-install `request`, made during this hold and not cancelled. A service that
-    restarted, a hold that ended or a request that changed refuses the reap."""
-    updates = service['own'] / 'updates'
-    values = {}
-    for name in ('hold.json', 'config.json'):
-        path = safe_path(updates / name, service['home'])
-        assert path.is_file() and not path.is_symlink() and path.stat().st_size <= 64 << 10, HOLD_REFUSAL
-        values[name] = json.loads(path.read_text())
-        assert isinstance(values[name], dict), HOLD_REFUSAL
-    hold, config, runtime = values['hold.json'], values['config.json'], service['runtime']
-    now = now or datetime.datetime.now(datetime.timezone.utc)
-    began, ends, launched = _utc(hold.get('startedAt')), _utc(hold.get('expiresAt')), _utc(runtime.get('startedAt'))
-    requested, cancelled = _utc(request), config.get('installCancelledAt')
-    assert hold.get('schemaVersion') == 1 and type(hold.get('pid')) is int and hold['pid'] == runtime['pid'], HOLD_REFUSAL
-    assert None not in (began, ends, launched, requested) and launched <= began <= requested <= now < ends, HOLD_REFUSAL
-    assert config.get('installMode') == 'force' and config.get('installRequestedAt') == request, HOLD_REFUSAL
-    assert cancelled is None or (_utc(cancelled) is not None and _utc(cancelled) <= requested), HOLD_REFUSAL
 
 def reap(identity, request, report=None):
     """Update now's fallback when a held service never quiets: stop the processes left beneath
@@ -657,18 +301,6 @@ def reap(identity, request, report=None):
                      guard=lambda: assert_held(service, request))
     report.update(result='reaped', observedAt=datetime.datetime.now(datetime.timezone.utc).isoformat())
     return dict(report)
-
-def guarded_row_counts(state):
-    """Each guarded table's row count, as in _read_state's proof, without reading a row."""
-    db = live_database.connect(state / 'statev2.sqlite')
-    try:
-        db.execute('BEGIN')
-        tables = [row[0] for row in db.execute("SELECT name FROM sqlite_master WHERE type='table' ORDER BY name")]
-        assert all(re.fullmatch('[a-z0-9_]+', table) for table in tables), 'Unexpected table identifier'
-        return {table: db.execute('SELECT count(*) FROM ' + table).fetchone()[0] for table in tables
-                if table.startswith(('projection_', 'orchestration_', 'project_')) or table in AUTHORITY_TABLES}
-    finally:
-        db.close()
 
 IDLE_WINDOW_RESETS = {'Native work is not idle', idle_agents.NOT_ALLOWED, 'Owned service has unexpected descendants',
                       'Owned service has unexpected or missing descendants'}
@@ -826,7 +458,18 @@ def database_restart_refusal(identity, error, report=None, now=None):
         _write_private(marker_path, (json.dumps({'schemaVersion': 1, 'servicePid': pid, 'restartedAt': now.isoformat()}) + '\n').encode())
         if os.path.lexists(str(quiet_path)):
             quiet_path.unlink()
-        restart_service(owner.domain, service['label'], service['plist'], None, None, pid, service['receipt']['port'])
+        if reason == 'detached':
+            try:
+                stop_then_start_service(owner.domain, service['label'], pid)
+            except AssertionError as stopped:
+                if str(stopped) != DETACHED_STOP_TIMEOUT:
+                    raise
+                # Still running and still saving, or stuck: never killed. RESTART_EVERY holds the
+                # next attempt; the person sees the agent's error until then.
+                report['result'] = 'stop-timed-out'
+                return database_restart.refusal(reason, retry=int(database_restart.RESTART_EVERY.total_seconds()))
+        else:
+            restart_service(owner.domain, service['label'], service['plist'], None, None, pid, service['receipt']['port'])
         report['result'] = 'restart-requested'
         report['newServicePid'] = wait_for_database_owner(identity, pid)
         if report['newServicePid'] is not None:
@@ -856,313 +499,34 @@ def snapshot_since(identity, expected_rows, include_auth=False, widen_from=None)
     """Snapshot (and private auth when asked) plus the rows appended after `expected_rows`."""
     return _snapshot(identity, include_auth, expected_rows, widen_from)
 
-def is_projection_table(table):
-    return table.startswith('projection_') or '_projection_' in table
+def snapshot_reusing(identity, earlier, carried):
+    """A snapshot whose rows, appended rows and capture are those of `earlier` (taken with the
+    same `since`), for a database the read watermark shows unchanged since that read."""
+    return _snapshot(identity, False, reads=(earlier['rows'], None, carried, earlier['databaseCapture']))[0]
 
-def _column_definition(column):
-    """How SQLite writes `ALTER TABLE ... ADD COLUMN name [type]` into the table's sql."""
-    return column[1] + (' ' + column[2] if column[2] else '')
-
-def accepted_widenings(before_capture, after_capture, before):
-    """Protected tables a migration widened with plain nullable columns, as
-    `ALTER TABLE t ADD COLUMN c [type]` does: every earlier column, row and typed cell is
-    unchanged (compared through the earlier columns), and every added column has no
-    constraint, no default and no value in any row. {table: widening} from the after
-    capture. Projection tables may change anyway; auth_sessions and the event and receipt
-    logs are never widened."""
-    accepted = {}
-    for table, widening in (after_capture.get('widened') or {}).items():
-        if table not in before.get('counts', {}) or is_projection_table(table):
-            continue
-        assert table != 'auth_sessions' and table not in LOG_TABLES, \
-            'A migration added columns to the auth sessions or history tables'
-        for column in widening['added']:
-            # PRAGMA table_xinfo: cid, name, type, notnull, dflt_value, pk, hidden.
-            assert column[3] == 0 and column[4] is None and column[5] == 0 and column[6] == 0, \
-                'A migration added a protected column with a constraint or default'
-            assert re.fullmatch('[a-z0-9_]+', column[1]) and re.fullmatch('[A-Z]*', column[2]), \
-                'A migration added a protected column with an unexpected name or type'
-        assert widening['filledRows'] == 0, 'A migration filled a new column of a protected table'
-        old = [item for item in before_capture['schema']['objects'] if item[0] == 'table' and item[1] == table]
-        new = [item for item in after_capture['schema']['objects'] if item[0] == 'table' and item[1] == table]
-        assert len(old) == len(new) == 1 and isinstance(old[0][3], str) and old[0][3].endswith(')'), \
-            'History, provider, schedule or pairing table definition changed during migration'
-        widened_sql = old[0][3][:-1] + ''.join(', ' + _column_definition(column) for column in widening['added']) + ')'
-        assert new[0][:3] == old[0][:3] and new[0][3] == widened_sql, \
-            'History, provider, schedule or pairing table definition changed during migration'
-        accepted[table] = widening
-    return accepted
-
-def narrowed_rows(rows, widenings):
-    """`rows` with each widened table hashed through its earlier columns, so the
-    byte-identical comparison of protected rows applies to every earlier cell."""
-    narrowed = copy.deepcopy(rows)
-    for table, widening in widenings.items():
-        narrowed['counts'][table] = widening['legacy']['count']
-        narrowed['hashes'][table] = widening['legacy']['sha256']
-    return narrowed
-
-def assert_migration_preserved(before, after, carried=None):
-    """A new release's migrations may add tables and rebuild projections. Nothing is lost:
-    every project, thread and protected table survives; event history, provider, schedule
-    pairing and auth rows stay byte-identical; projections may grow. With
-    `carried` measured against `before`, the event and receipt logs may also gain rows
-    after their byte-identical earlier rows (a thread waiting on a usage limit)."""
-    assert after.get('nativeWorkIdle') is True, 'Native work is not idle after restart'
-    assert set(before['projectIds']) <= set(after['projectIds']), 'A project disappeared during migration'
-    assert set(before['threadIds']) <= set(after['threadIds']), 'A thread disappeared during migration'
-    before_counts, after_counts = before.get('counts', {}), after.get('counts', {})
-    before_hashes, after_hashes = before.get('hashes', {}), after.get('hashes', {})
-    logs = before[ACTIVITY_KEY]['logRowids'] if carried_applies(before, after, carried) else {}
-    for table in AUTHORITY_TABLES:
-        if table not in before_counts and table in after_counts:
-            assert after_counts[table] == 0, 'A migration created a session, pairing, provider or schedule table holding rows'
-    for table in set(before_counts) | set(before_hashes):
-        assert table in after_counts or table in after_hashes, 'A protected table disappeared during migration'
-        if is_projection_table(table):
-            assert after_counts.get(table, 0) >= before_counts.get(table, 0), 'Rows disappeared during migration'
-        elif table in logs:
-            assert log_rows_carried(table, before, after, carried), \
-                'History, provider, schedule or pairing rows changed during migration'
-        else:
-            assert after_counts.get(table) == before_counts.get(table) and after_hashes.get(table) == before_hashes.get(table), \
-                'History, provider, schedule or pairing rows changed during migration'
-
-def auth_comparison(before, after):
-    """Private comparison view; retain actual auth evidence and all old non-auth rows."""
-    return {**before,
-            'counts': {**before['counts'], 'auth_sessions': after['counts']['auth_sessions']},
-            'hashes': {**before['hashes'], 'auth_sessions': after['hashes']['auth_sessions']}}
-
-def typed_auth_rows(auth):
-    # The legacy public encoder maps BLOB bytes to hex strings. Compare SQLite types
-    # as well as values so an equal public hash cannot hide a BLOB-to-TEXT change.
-    return sorted(encoded([(type(value).__name__, value) for value in row]) for row in auth['rows'])
-
-def typed_auth_rows_hash(auth):
-    return digest(('studio-migration-auth-typed-v1\n' + '\n'.join(typed_auth_rows(auth))).encode())
-
-def verify_migration_heartbeat_witness(before, after, witness, current_auth, *, identity, state=None, web_session_policy=None,
-                                       before_capture=None, after_capture=None):
-    """Recheck actual migration snapshots and type-bound complete private auth.
-
-    Appended logs require a fresh, coherent read of the trusted database at `state`.
-    Receipt counts alone cannot prove that earlier log rows survived. A migration that
-    added columns to a protected table (accepted_widenings) needs the receipt's before and
-    after database captures.
-    """
-    carried = None
-    if state is not None:
-        measured_rows, measured_auth, carried = _rows_snapshot(state, True, before)
-        assert measured_rows == after, 'Current database differs from the migration after-snapshot'
-        assert measured_auth is not None, 'Auth sessions table disappeared after the migration'
-        assert measured_auth['schema'] == current_auth['schema'] and measured_auth['columns'] == current_auth['columns'] and typed_auth_rows(measured_auth) == typed_auth_rows(current_auth), \
-            'Current private auth differs from the migration database'
-
-    typed = witness.get('migrationTypedAuth')
-    assert isinstance(typed, dict) and set(typed) == {'schemaVersion', 'beforeSha256', 'afterSha256'}, 'Migration requires typed auth commitments'
-    assert type(typed['schemaVersion']) is int and typed['schemaVersion'] == 1, 'Unknown typed auth commitment version'
-    assert typed_auth_rows_hash(current_auth) == typed['afterSha256'], 'Current auth cell values or types changed'
-    heartbeat = {key: value for key, value in witness.items() if key != 'migrationTypedAuth'}
-    verify_restart_witness(before, auth_comparison(before, after), heartbeat,
-                           current_auth, identity=identity, web_session_policy=web_session_policy)
-    original = restore_witness(current_auth, heartbeat, before)
-    assert typed_auth_rows_hash(original) == typed['beforeSha256'], 'Reconstructed auth cell values or types changed'
-    widenings = {}
-    if before_capture is not None or after_capture is not None:
-        assert before_capture is not None and after_capture is not None, 'Widened migration readback needs both database captures'
-        continuity.bind_rows(before_capture, before)
-        continuity.bind_rows(after_capture, after)
-        widenings = accepted_widenings(before_capture, after_capture, before)
-    assert_migration_preserved(before, auth_comparison(narrowed_rows(after, widenings), before), carried)
-    return witness
-
-def heartbeat_window_start(opened_at, closed_at, auth):
-    """The restart window's start: no earlier than any heartbeat stamped during the baseline
-    read, and no later than that read, so every reconnect after it falls inside the window.
-    A row stamped after the read (a clock that stepped back) never moves the start."""
-    latest, closed = utc_timestamp(opened_at), utc_timestamp(closed_at)
-    if auth:
-        column = auth['columns'].index('last_connected_at')
-        for row in auth['rows']:
-            with contextlib.suppress(AssertionError):
-                stamped = utc_timestamp(row[column])
-                if stamped <= closed:
-                    latest = max(latest, stamped)
-    return latest.isoformat()
-
-def prove_migration_preserved(before, after, original_auth, current_auth, restart_started_at,
-                              observed_after_at, *, identity, allow_existing_browser_heartbeat, carried=None, web_session_policy=None):
-    """Prove auth independently, then permit only the existing projection migrations.
-
-    Complete private auth cells are bound to both public snapshots. A comparison copy
-    may reverse a proven heartbeat; receipt snapshots always retain their actual hashes.
-    Auth schema migrations require a separate explicit transformation proof. A database
-    without an auth table has no session to protect, so a migration may create the table.
-    """
-    if original_auth is None:
-        assert 'auth_sessions' not in before.get('counts', {}), 'Existing auth sessions were not captured'
-        if current_auth is not None:
-            bind_auth(current_auth, after)
-            # A new table holds no session: new auth sessions are never permitted.
-            assert current_auth['rows'] == [], 'A migration created the auth table holding sessions'
-        assert_migration_preserved(before, after, carried)
+def _clonefile():
+    """libc clonefile(2) (macOS), or None where there is none."""
+    try:
+        function = ctypes.CDLL(None, use_errno=True).clonefile
+    except (OSError, AttributeError, TypeError):
         return None
-    assert current_auth is not None, 'Auth sessions table disappeared during migration'
-    bind_auth(original_auth, before)
-    bind_auth(current_auth, after)
-    assert original_auth['schema'] == current_auth['schema'], 'Complete auth schema changed'
-    heartbeat = None
-    comparison = after
-    if (before['counts']['auth_sessions'] == after['counts']['auth_sessions'] and
-            before['hashes']['auth_sessions'] == after['hashes']['auth_sessions']):
-        assert typed_auth_rows(original_auth) == typed_auth_rows(current_auth), 'Auth cell values or types changed'
-    else:
-        assert allow_existing_browser_heartbeat, 'Auth changed during migration without a heartbeat proof'
-        # Retain all auth counts and hashes from the real after-snapshot. The existing
-        # heartbeat prover checks every auth cell, identity, schema and timestamp.
-        auth_after = auth_comparison(before, after)
-        heartbeat = prove_restart_heartbeat(before, auth_after, original_auth, current_auth,
-                                           restart_started_at, observed_after_at, identity=identity, web_session_policy=web_session_policy)
-        assert heartbeat is not None, 'Changed auth requires a complete heartbeat witness'
-        heartbeat = {**heartbeat, 'migrationTypedAuth': {
-            'schemaVersion': 1, 'beforeSha256': typed_auth_rows_hash(original_auth),
-            'afterSha256': typed_auth_rows_hash(current_auth)}}
-        comparison = auth_comparison(after, before)
-    assert_migration_preserved(before, comparison, carried)
-    return heartbeat
+    function.argtypes = (ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint32)
+    function.restype = ctypes.c_int
+    return function
 
-def assert_migration_typed_cells(before_capture, after_capture, before, after, carried=None, widenings=None):
-    """Protected tables a migration must keep byte-identical also keep each cell's SQLite type.
-
-    The protected-row hash writes a BLOB as its hex text, so a pairing credential, provider
-    or schedule cell, or an earlier event rewritten as that text would compare equal there.
-    Compares the typed hashes of the complete captures, which _read_state bound to these
-    rows in the same read. Projection tables may be rebuilt; auth_sessions is proven cell by
-    cell in prove_migration_preserved; a log that grew compares the typed hash of the earlier
-    rows measured with `carried`."""
-    old, new = before_capture['summary']['tables'], after_capture['summary']['tables']
-    logs = before[ACTIVITY_KEY]['logRowids'] if carried_applies(before, after, carried) else {}
-    for table in before.get('counts', {}):
-        if is_projection_table(table) or table == 'auth_sessions':
-            continue
-        assert table in old and table in new, 'A protected table disappeared during migration'
-        expected = old[table]
-        if table in (widenings or {}):
-            actual = widenings[table]['typed']
-        elif table in logs and new[table] != expected:
-            actual = carried.get('typedLogPrefix', {}).get(table)
-        else:
-            actual = new[table]
-        assert actual == expected, 'History, provider, schedule or pairing cell values or types changed during migration'
-
-def assert_migration_protected_schema(before_capture, after_capture, before, widenings=None):
-    """Protected tables a migration must keep byte-identical also keep their definition,
-    columns and foreign keys, and no new trigger may touch a session, pairing, provider or
-    schedule table.
-
-    Both row hashes ignore column names, so swapping two column names would keep every hash.
-    A foreign key with ON UPDATE or ON DELETE CASCADE lets a write to another table rewrite
-    or delete protected rows, and a trigger on any table could write sessions or credentials
-    after the update verified. A trigger may sit on any table, including projections and
-    project tables, as long as it names none of these tables. New indexes stay allowed."""
-    old, new = before_capture['schema'], after_capture['schema']
-    def definition(objects, table):
-        return [item for item in objects if item[0] == 'table' and item[1] == table]
-    for table in before.get('counts', {}):
-        if is_projection_table(table) or table == 'auth_sessions':
-            continue
-        assert old['foreignKeys'].get(table) == new['foreignKeys'].get(table), \
-            'History, provider, schedule or pairing foreign keys changed during migration'
-        if table in (widenings or {}):
-            # accepted_widenings checked the added columns and the widened definition.
-            assert old['columns'].get(table) + widenings[table]['added'] == new['columns'].get(table), \
-                'History, provider, schedule or pairing columns changed during migration'
-            continue
-        assert old['columns'].get(table) == new['columns'].get(table), \
-            'History, provider, schedule or pairing columns changed during migration'
-        assert definition(old['objects'], table) == definition(new['objects'], table), \
-            'History, provider, schedule or pairing table definition changed during migration'
-    existing = {encoded(item) for item in old['objects']}
-    touches = re.compile(r'\b(?:' + '|'.join(AUTHORITY_TABLES) + r')\b', re.IGNORECASE)
-    for item in new['objects']:
-        if item[0] == 'trigger' and encoded(item) not in existing:
-            assert not touches.search(str(item[2]) + ' ' + str(item[3] or '')), \
-                'A migration added a trigger touching sessions, pairing, provider or schedule rows'
-
-def _write_private(path, data):
-    """A new 0600 file, never through a link; replaces `path` atomically."""
-    temporary = path.with_name(path.name + '.owned-update-' + uuid.uuid4().hex)
-    fd = os.open(str(temporary), os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+def clone_file(source, target):
+    """Copies `source` to the new file `target` as an APFS clone (clonefile(2)): no data is
+    written, so a multi-GB database is back in well under a second while the service is
+    stopped. clonefile never copies: where it cannot clone (ENOTSUP on another file system,
+    EXDEV across volumes) it fails at once. Any failure, or no clonefile at all (not macOS),
+    falls back to a plain byte copy, which replaces anything a failed clone left at `target`."""
+    clonefile = _clonefile()
     try:
-        with os.fdopen(fd, 'wb') as handle:
-            handle.write(data)
-        os.replace(temporary, path)
-    finally:
-        if temporary.exists(): temporary.unlink()
-
-def backup_state(own, commit):
-    """Consistent copy of the state database, and the exact settings.json beside it, before
-    the new release can migrate them."""
-    home = pathlib.Path.home().resolve()
-    stamp = datetime.datetime.now(datetime.timezone.utc).strftime('%Y%m%dT%H%M%SZ')
-    root = safe_path(studio_paths.backups_root(home), home)
-    root.mkdir(mode=0o700, exist_ok=True)
-    target_dir = root / ('pre-%s-%s-%s' % (re.sub('[^a-f0-9]', '', str(commit))[:12] or 'unknown', stamp, uuid.uuid4().hex))
-    target_dir.mkdir(mode=0o700)
-    target = target_dir / 'statev2.sqlite'
-    source = live_database.connect(own / 'userdata' / 'statev2.sqlite')
-    try:
-        copy = sqlite3.connect(str(target))
-        try:
-            source.backup(copy)
-        finally:
-            copy.close()
-    except BaseException:
-        # A copy cut short (a full disk) would otherwise stay behind and keep the disk full.
-        discard_unused_backup(target)
-        raise
-    finally:
-        source.close()
-    target.chmod(0o600)
-    settings = own / 'userdata' / 'settings.json'
-    if settings.is_file() and not settings.is_symlink():
-        _write_private(target_dir / 'settings.json', settings.read_bytes())
-    return target
-
-BACKUP_SPACE_MARGIN = 2 * 1024 ** 3
-
-def assert_backup_space(own, home):
-    """Refuses an update whose pre-update copy of the database cannot fit. The copy is
-    about the database and its write-ahead log; the margin covers the release staged
-    beside it and leaves the Mac room to run. Sizes come from stat alone: the live
-    database is never opened here."""
-    needed = BACKUP_SPACE_MARGIN
-    for name in ('statev2.sqlite', 'statev2.sqlite-wal'):
-        try:
-            needed += os.stat(str(own / 'userdata' / name)).st_size
-        except FileNotFoundError:
-            pass
-    root = studio_paths.backups_root(home)
-    while not root.exists() and root != root.parent:
-        root = root.parent  # The first update makes the backups folder; measure its disk.
-    free = shutil.disk_usage(str(root)).free
-    assert free >= needed, 'Not enough free disk space for the pre-update backup: needs %.1f GB, %.1f GB free' % (
-        needed / 1e9, free / 1e9)
-
-def discard_unused_backup(backup):
-    """Removes a backup_state copy that no restart used (a copy of a 2.5 GB database each
-    retry would otherwise pile up). Only the files backup_state writes, in its own folder."""
-    home = pathlib.Path.home().resolve()
-    folder = backup.parent
-    if (backup.name != 'statev2.sqlite' or not folder.name.startswith('pre-')
-            or folder.parent != safe_path(studio_paths.backups_root(home), home)):
-        return
-    for name in ('statev2.sqlite', 'settings.json'):
-        with contextlib.suppress(FileNotFoundError):
-            (folder / name).unlink()
-    with contextlib.suppress(OSError):
-        folder.rmdir()
+        cloned = clonefile is not None and clonefile(os.fsencode(source), os.fsencode(target), 0) == 0
+    except (OSError, ctypes.ArgumentError):
+        cloned = False
+    if not cloned:
+        shutil.copyfile(source, target)
 
 def restore_state(backup, own):
     """Puts the pre-update database, and the settings.json saved with it, back while the
@@ -1170,7 +534,7 @@ def restore_state(backup, own):
     state = own / 'userdata'
     staged = state / ('statev2.sqlite.owned-restore-' + str(uuid.uuid4()))
     try:
-        shutil.copyfile(backup, staged)
+        clone_file(backup, staged)
         staged.chmod(0o600)
         for suffix in ('-wal', '-shm'):
             sidecar = state / ('statev2.sqlite' + suffix)
@@ -1185,15 +549,6 @@ def restore_state(backup, own):
         if current.is_symlink() or not current.is_file() or current.read_bytes() != data:
             _write_private(current, data)
 
-def settings_preserved(before, after):
-    """Settings across the restart: byte-identical, or every user value kept with only the
-    documented migrations (settings_continuity). Without both proofs the bytes must match."""
-    if after['fileHashes']['settings'] == before['fileHashes']['settings']:
-        return {'result': 'byte-identical'}
-    proofs = before.get('settingsProof'), after.get('settingsProof')
-    assert all(isinstance(proof, dict) for proof in proofs), 'User settings changed after restart'
-    return settings_continuity.assert_settings_preserved(*proofs)
-
 def wait_for_stopped(pid, timeout=30, *, port=8319):
     for attempt in range(int(timeout / 0.5)):
         alive = subprocess.run(['/bin/kill', '-0', str(pid)], capture_output=True, timeout=5).returncode == 0
@@ -1201,26 +556,90 @@ def wait_for_stopped(pid, timeout=30, *, port=8319):
         time.sleep(0.5)
     raise AssertionError('Owned service did not stop for the state restore')
 
-def restart_service(domain, label, plist, old, new, pid, port):
-    """Restart the service. `new` is a rewritten LaunchAgent (service_launch_agent): launchd
-    reads it only on bootstrap, so the job is booted out and bootstrapped again; otherwise
-    `kickstart -k`. The job is always loaded again, from the original file if launchd refuses
-    the rewritten one. Bounded to 135 s, inside the rollback reserve after a late restart."""
-    if new is None:
-        run(['/bin/launchctl', 'kickstart', '-k', domain + '/' + label])
-        return
-    mode = plist.stat().st_mode & 0o777
-    atomic(plist, new, mode)
-    try:
-        run(['/bin/launchctl', 'bootout', domain + '/' + label], timeout=45)
-        wait_for_stopped(pid, port=port)
-    finally:
+DETACHED_STOP_TIMEOUT = 'The SpecWithCode service did not stop within the time given to save its database log'
+
+def stop_then_start_service(domain, label, pid, timeout=database_restart.DETACHED_STOP_SECONDS):
+    """Restart a service whose -wal was deleted from disk without losing that log's commits.
+
+    Only the service still has the deleted log open, and its commits there are on no file another
+    process can read. SQLite writes them into the database file when the service closes its
+    connection (the last one checkpoints, into the database inode the service still holds), which
+    the server does on SIGTERM (NodeRuntime.runMain interrupts, nodeSqliteClient's finalizer closes
+    the database). `launchctl kickstart -k` may kill it before that. So: SIGTERM to the service
+    itself, wait for it to exit, never SIGKILL, then start the job if launchd has not already."""
+    os.kill(pid, signal.SIGTERM)
+    deadline = time.monotonic() + timeout
+    while True:
         try:
-            run(['/bin/launchctl', 'bootstrap', domain, str(plist)], timeout=30)
-        except BaseException:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            break
+        if time.monotonic() >= deadline:
+            raise AssertionError(DETACHED_STOP_TIMEOUT)
+        time.sleep(0.5)
+    run(['/bin/launchctl', 'kickstart', domain + '/' + label])
+
+def restart_service(domain, label, plist, old, new, pid, port):
+    """`kickstart -k` (database_restart). An update stops and starts the service itself
+    (stop_service, start_service), which also loads a rewritten LaunchAgent."""
+    assert new is None, 'An update restarts with stop_service and start_service'
+    run(['/bin/launchctl', 'kickstart', '-k', domain + '/' + label])
+
+def stop_service(domain, label, pid, port):
+    """The service stopped and its job unloaded, so launchd (KeepAlive) cannot start it again
+    while its database is copied: bootout, then the process gone and its port free."""
+    run(['/bin/launchctl', 'bootout', domain + '/' + label], timeout=45)
+    wait_for_stopped(pid, port=port)
+
+def start_service(domain, plist, old, new):
+    """Load the job again, from `new` (a rewritten LaunchAgent, which launchd reads only on
+    bootstrap) when given, and from the original file if launchd refuses the rewritten one."""
+    mode = plist.stat().st_mode & 0o777
+    if new is not None:
+        atomic(plist, new, mode)
+    try:
+        run(['/bin/launchctl', 'bootstrap', domain, str(plist)], timeout=30)
+    except BaseException:
+        if new is not None:
             atomic(plist, old, mode)
             run(['/bin/launchctl', 'bootstrap', domain, str(plist)], timeout=30)
-            raise
+        raise
+
+def job_loaded(domain, label):
+    """True when launchd has the job loaded (launchctl print answers for it)."""
+    try:
+        run(['/bin/launchctl', 'print', domain + '/' + label], text=True)
+        return True
+    except (AssertionError, OSError, subprocess.TimeoutExpired):
+        return False
+
+def backup_state_clone(own, commit):
+    """The pre-update copy, taken while the old service is stopped (state_backup.clone_state):
+    (backup, 'clone' or 'sqlite-backup')."""
+    return clone_state(own, commit, _clonefile())
+
+def service_answers(identity, old_pid, archive_sha, source_commit):
+    """Readiness without reading a row: the restarted service runs the intended release under a
+    new pid, as _service verifies it (receipt, LaunchAgent, launcher, runtime record, port and
+    executable), and has its own database open and locked."""
+    service = _service(identity)
+    pid, receipt, state = service['runtime']['pid'], service['receipt'], service['own'] / 'userdata'
+    assert pid != old_pid, 'The service has not restarted yet'
+    assert receipt['archiveSha256'] == archive_sha and receipt['sourceCommit'] == source_commit, \
+        'Updated service is not the intended artifact'
+    assert_database_attached(pid, state)
+    assert_database_locked(state)
+    return pid
+
+def wait_until_answering(identity, old_pid, archive_sha, source_commit, ready_by):
+    """service_answers' pid, polled every 0.5 s until `ready_by`; None if it never answered."""
+    while time.monotonic() < ready_by:
+        time.sleep(0.5)
+        try:
+            return service_answers(identity, old_pid, archive_sha, source_commit)
+        except (AssertionError, OSError, ValueError, KeyError, TypeError, sqlite3.Error, subprocess.TimeoutExpired):
+            continue
+    return None
 
 def assert_prestate(expected, actual, carried=None):
     for key in ['identity', 'uid', 'serviceLabel', 'servicePid', 'archiveSha256', 'artifactSourceCommit', 'fileHashes', 'rows', 'otherListenersOwned', 'cookieName', 'processQuiescence']:
@@ -1267,9 +686,8 @@ STAGE_TIMEOUT_SECONDS = 600
 # A restart needs at least this long to prove the new service ready. When the work before it
 # ran so long that less is left, the update stops before writing anything: nothing changed,
 # and the updater may try again, rather than restarting into a rollback it cannot avoid.
-# Everything before the restart thus ends within READY_BY_SECONDS_FROM_START - this (420 s
-# with the old 900 s budget)
-# plus one reading in flight, which keeps the helper under the agent's 900 s.
+# Everything before the restart thus ends within READY_BY_SECONDS_FROM_START - this (420 s with
+# the old 900 s budget) plus one reading in flight, which keeps the helper under the agent's 900 s.
 # With a budget beyond the old 900 s the restart always keeps the full readiness wait.
 MIN_READINESS_SECONDS = min(READINESS_DEADLINE_SECONDS, max(60, READY_BY_SECONDS_FROM_START - 420))
 TOO_SLOW_TO_RESTART = 'Preparing the update took too long to leave time for the restart; nothing was changed'
@@ -1372,16 +790,41 @@ def apply(identity, expected, archive, archive_sha, output, *, allow_existing_br
     with installation_lock(owner['home']):
         guard = (contextlib.nullcontext() if remote_authorization is None else
                  managed_updates.remote_apply_guard(identity, remote_authorization))
-        with guard:
+        own = studio_paths.identity_home(owner['home'], identity)
+        with guard, install_progress.ProgressWriter(safe_path(own / 'updates', owner['home']), receipt=output) as progress_file, \
+                contextlib.closing(read_watermark.Watermark.open(own / 'userdata' / 'statev2.sqlite')) as watermark:
             return _apply(identity, expected, archive, archive_sha, output,
                           allow_existing_browser_heartbeat=allow_existing_browser_heartbeat,
-                          allow_project_migrations=allow_project_migrations)
+                          allow_project_migrations=allow_project_migrations, progress_file=progress_file, watermark=watermark)
 
 def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_browser_heartbeat=False,
-          allow_project_migrations=False):
+          allow_project_migrations=False, progress_file=None, watermark=None):
+    """`progress_file` (install_progress.ProgressWriter) is told each lap and the result. `watermark`
+    (read_watermark.Watermark, open on the database) lets a re-read before the restart reuse the
+    last full read when nothing has changed since; without either, nothing is written and every
+    re-read is a full read."""
     validate_identity(identity)
     web_session_policy(identity, expected.get('webSessionPolicy'))
+    progress_file, watermark = progress_file or install_progress.UNWRITTEN, watermark or read_watermark.NEVER_UNCHANGED
     started = time.monotonic()
+    # Whole milliseconds per phase, in every receipt from 'prepared' on: each lap names the
+    # phase that just ended. Additive, for reading only; the proofs and checks are unchanged.
+    timings, lap_started = {}, [started]
+    def lap(phase):
+        now = time.monotonic()
+        timings[phase] = timings.get(phase, 0) + round((now - lap_started[0]) * 1000)
+        lap_started[0] = now
+        progress_file.lap(phase, timings)
+    def unchanged_since(mark):
+        """True, and the check is booked as watermarkSkip, when no commit, file swap, log reset or
+        reconnect happened since `mark` was taken right before a full read that passed."""
+        if not watermark.unchanged(mark):
+            return False
+        lap('watermarkSkip')
+        return True
+    def finish(phase):
+        lap(phase)
+        timings['total'] = round((time.monotonic() - started) * 1000)
     def budget_left(reserve=0):
         left = READY_BY_SECONDS_FROM_START - MIN_READINESS_SECONDS - (time.monotonic() - started)
         assert left > reserve, TOO_SLOW_TO_RESTART
@@ -1392,16 +835,41 @@ def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_b
     # the restart already accept that heartbeat. Recorded in the receipt only once the restart
     # is next, so a refusal before it stays one the update agent retries.
     read_opened_at = datetime.datetime.now(datetime.timezone.utc).isoformat()
-    # Measure appended rows and private auth in the same transaction as the proof.
+    home = pathlib.Path.home().resolve()
+    own = studio_paths.identity_home(home, identity)
+    # Measure appended rows and private auth in the same transaction as the proof. The watermark
+    # is taken first, so a commit at any point after it shows; the -wal position too, so a re-read
+    # can read only what committed since (read_delta). `base` is the last exact read.
+    before_mark = watermark.take()
+    position = read_delta.position(own / 'userdata' / 'statev2.sqlite')
     before, original_auth, carried = snapshot_since(identity, expected['rows'], capture_auth)
+    # One base per log position appended rows are measured against: the agent's snapshot
+    # (the prestate check) and this read itself (the checks after the gate). Measured against
+    # its own rows, this read appended nothing after them, so it carries nothing (None): the
+    # rows a later re-read returns must then match `before` exactly but for auth sessions, as
+    # they do whenever read_delta returns.
+    base = {'expected': {'position': position, 'since': expected['rows'],
+                         'reads': (before['rows'], carried, before.get('databaseCapture'))},
+            'before': {'position': position, 'since': before['rows'],
+                       'reads': (before['rows'], None, before.get('databaseCapture'))}}
+    def delta_since(since_key, since):
+        """(position, reads): the -wal position, taken before this re-read, and the re-read of only
+        what committed since the last exact read, or None when a full read must decide."""
+        position = read_delta.position(own / 'userdata' / 'statev2.sqlite')
+        try:
+            reads = read_delta.reread(own / 'userdata', base[since_key], since)
+        except (OSError, sqlite3.Error):  # The full read meets the same fault and decides.
+            reads = None
+        if reads is not None:
+            lap('deltaRead')
+        return position, reads
     restart_started_at = heartbeat_window_start(
         read_opened_at, datetime.datetime.now(datetime.timezone.utc).isoformat(), original_auth)
     assert_prestate(expected, before, carried)
     # Without migrations, a heartbeat proof compares existing sessions: refuse before any write.
     assert allow_project_migrations or not allow_existing_browser_heartbeat or original_auth is not None, \
         'Restart heartbeat proof requires the auth sessions table'
-    home = pathlib.Path.home().resolve()
-    own = studio_paths.identity_home(home, identity)
+    lap('beforeRead')
     # Each copy is the size of the database (2.5 GB on a long-used Mac): keep the newest one
     # beside the copy made below, so updates never pile them up and fill the disk. Pruned
     # first, so the space it frees counts in the free-space check that follows.
@@ -1411,6 +879,7 @@ def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_b
         pruned_state_backups, prune_error = [], type(error).__name__
     # A disk too full for the copy refuses here, before staging, a pointer or a stop.
     assert_backup_space(own, home)
+    lap('backupSpace')
     old_bytes = {name: (own / name).read_bytes() for name in ['installation.json', 'launch.sh']}
     receipt = json.loads(old_bytes['installation.json'])
     port = before.get('port', receipt.get('port', 8319))
@@ -1444,15 +913,10 @@ def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_b
         manifest = release_verified(staged_release)
         validate_upgrade(release_verified(pathlib.Path(old_release))['version'], manifest['version'])
         budget_left()
-        current, _, current_carried = snapshot_since(identity, expected['rows'])
-        assert_prestate(expected, current, current_carried)
+        # A published release is inert: no pointer names it until the check below passes, and
+        # a retry reuses it (publish_release), so the prestate is checked once, before pointers.
         manifest = publish_release(staged_release, new_release)
-    backup = own / 'owned-updates' / str(uuid.uuid4())
-    backup.mkdir(parents=True, mode=0o700)
-    for name, value in old_bytes.items(): (backup / name).write_bytes(value)
-    (backup / 'cli-wrapper.sh').write_bytes(old_wrapper)
-    shutil.copyfile(home / 'Library/LaunchAgents' / (before['serviceLabel'] + '.plist'), backup / 'service.plist')
-    (backup / 'prestate.json').write_text(json.dumps(before, indent=2) + '\n')
+    progress_file.set(version=manifest['version'])
     def replaced(value):
         lines = value.decode().splitlines()
         assert len(lines) == 5 and lines[4].startswith('exec ')
@@ -1468,8 +932,27 @@ def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_b
     receipt.update({'version': manifest['version'], 'sourceCommit': manifest['sourceCommit'], 'archiveSha256': archive_sha, 'release': str(new_release),
                     'startup': {'autoBootstrapProjectFromCwd': False, 'presentation': 'overview'}})
     budget_left()
-    current, _, current_carried = snapshot_since(identity, expected['rows'])
+    lap('verifyAndStage')
+    if unchanged_since(before_mark):  # The rows, appended rows and capture of the read above.
+        current, current_carried = snapshot_reusing(identity, before, carried), carried
+    else:
+        position, reads = delta_since('expected', expected['rows'])
+        if reads is not None:  # Only auth sessions changed: every other check of a snapshot runs.
+            current_carried = reads[1]
+            current = snapshot_reusing(identity, {'rows': reads[0], 'databaseCapture': reads[2]}, current_carried)
+        else:
+            current, _, current_carried = snapshot_since(identity, expected['rows'])
+        base['expected'] = {'position': position, 'since': expected['rows'],
+                            'reads': (current['rows'], current_carried, current.get('databaseCapture'))}
     assert_prestate(expected, current, current_carried)
+    lap('prestateCheck')
+    # Written only once the prestate holds, so a refusal above leaves no folder behind.
+    backup = own / 'owned-updates' / str(uuid.uuid4())
+    backup.mkdir(parents=True, mode=0o700)
+    for name, value in old_bytes.items(): (backup / name).write_bytes(value)
+    (backup / 'cli-wrapper.sh').write_bytes(old_wrapper)
+    shutil.copyfile(home / 'Library/LaunchAgents' / (before['serviceLabel'] + '.plist'), backup / 'service.plist')
+    (backup / 'prestate.json').write_text(json.dumps(before, indent=2) + '\n')
     budget_left(INSTALL_GATE_SETTLE_SECONDS)
     new_launcher = replaced(old_bytes['launch.sh'])
     cli_prefix[-1] = str(new_release / 'bin.mjs')
@@ -1496,10 +979,12 @@ def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_b
                 'prunedStateBackups': pruned_state_backups}
     if prune_error:
         progress['stateBackupPruneError'] = prune_error
+    progress['timings'] = timings  # The phases done when each receipt below is written.
     output.write_text(json.dumps(progress, indent=2) + '\n')
     restart_requested = False
     plist_hashes = {before['fileHashes']['plist']}  # Plus the rewritten LaunchAgent once written.
     state_backup = None
+    service_stopped = service_started = False
     after = None
     after_carried = None
     current_auth = None
@@ -1523,6 +1008,7 @@ def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_b
             if old_alias is not None:
                 (backup / 'cli-alias.sh').write_bytes(old_alias)
         atomic(own / 'installation.json', new_bytes['installation.json'], 0o600)
+        lap('swapPointers')
         progress['phase'] = 'pointers-written'
         output.write_text(json.dumps(progress, indent=2) + '\n')
         # The old service starts nothing more on its own from here (scheduler, webhooks, run
@@ -1531,11 +1017,20 @@ def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_b
         # again) stays idle for the readiness and rollback snapshots.
         write_install_gate(own, home)
         time.sleep(INSTALL_GATE_SETTLE_SECONDS)
+        lap('gateSettle')
+        passed = [before_mark]  # Taken right before the last read (full or read_delta) that matched `before`.
         def assert_unchanged_before_restart():
-            if 'databaseCapture' in before:
+            if unchanged_since(passed[0]):  # That read stands: it would read the same rows again.
+                return
+            mark = watermark.take()
+            position, reads = delta_since('before', before['rows'])
+            if reads is not None:
+                current_rows, current_carried, current_database = reads
+            elif 'databaseCapture' in before:
                 current_rows, current_carried, current_database = rows_since_with_database(own / 'userdata', before['rows'])
             else:
                 current_rows, current_carried = rows_since(own / 'userdata', before['rows'])
+                current_database = None
             assert same_guarded_rows(before['rows'], current_rows, current_carried,
                                      auth_heartbeat=allow_existing_browser_heartbeat), 'Native work changed before restart'
             assert_provable_reconnects(current_rows)
@@ -1543,6 +1038,8 @@ def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_b
                 assert_capture_carried(before['databaseCapture'], current_database, before['rows'], current_rows,
                                        current_carried, auth_heartbeat=allow_existing_browser_heartbeat,
                                        message='Complete database changed before restart')
+            passed[0] = mark
+            base['before'] = {'position': position, 'since': before['rows'], 'reads': (current_rows, current_carried, current_database)}
         def assert_provable_reconnects(current_rows):
             # Auth may differ only as the proof after the restart accepts, so a connect it would roll
             # back (a CLI session, a revoked session, one past the session counts) refuses here, with
@@ -1566,6 +1063,7 @@ def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_b
             assert re.search(r'^\s*pid = ' + str(before['servicePid']) + r'\s*$', live, re.M), \
                 'The service restarted on its own before the update restarted it'
         assert_same_service_pid()
+        lap('checkBeforeRestart')
         plist = home / 'Library/LaunchAgents' / (before['serviceLabel'] + '.plist')
         old_plist = plist.read_bytes()
         assert digest(old_plist) == before['fileHashes']['plist'], 'Verified LaunchAgent changed before restart'
@@ -1580,19 +1078,31 @@ def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_b
                 progress['serverBrowserStop'] = dict(browser_stop)
         if stopped:
             progress['serverBrowserStop'] = stopped
+        lap('stop')
+        # Nothing may change between this last check and the stop: the copy below is what a
+        # rollback restores, and the after-snapshot is compared with `before`. Checked here, last,
+        # so a write the old service made meanwhile stops the update with the old release still
+        # running instead of rolling the new one back.
+        assert_same_service_pid()
+        assert_unchanged_before_restart()
+        watermark.close()  # No connection of this helper stays open while the service closes its own.
+        # Refused before the stop, with the old service running: no room for the copy, or no time left.
+        assert_clone_headroom(own, home)
+        budget_left()  # At least MIN_READINESS_SECONDS left before ready_by.
+        lap('finalCheck')
+        # Stopped and unloaded before the copy, so no writer can change the files it clones. If the
+        # stop or the copy fails, the old release is started again on its untouched database.
+        # Recorded first, so a receipt left by a helper that dies from here on shows the job may be
+        # unloaded; serviceStopped follows once the stop is confirmed (or the failure path finds
+        # the job unloaded), so a bootout that left the old service running is not a restart.
+        service_stopped = progress['stopAttempted'] = True
+        output.write_text(json.dumps(progress, indent=2) + '\n')
+        stop_service(domain, before['serviceLabel'], before['servicePid'], port)
+        progress['serviceStopped'] = True
+        lap('serviceStop')
         # The new release migrates the database on start; a rollback must restore both.
-        state_backup = backup_state(own, before['artifactSourceCommit'])
-        # Nothing may change between the backup and the restart: the rollback restores this
-        # copy, and the after-snapshot is compared with `before`. Checked again here, last,
-        # so a write the old service made meanwhile stops the update with the old release
-        # still running instead of rolling the new one back.
-        try:
-            assert_same_service_pid()
-            assert_unchanged_before_restart()
-        except BaseException:
-            with contextlib.suppress(OSError, AssertionError):
-                discard_unused_backup(state_backup)
-            raise
+        state_backup, progress['stateBackupMethod'] = backup_state_clone(own, before['artifactSourceCommit'])
+        lap('backupClone')
         progress['phase'] = 'restart-requested'
         progress['restartStartedAt'] = restart_started_at
         progress['stateBackup'] = str(state_backup)
@@ -1601,26 +1111,36 @@ def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_b
         if new_plist is not None:
             plist_hashes.add(digest(new_plist))
             progress['serviceLaunchAgent'] = 'process-type-interactive-added'
-        restart_service(domain, before['serviceLabel'], plist, old_plist, new_plist, before['servicePid'], port)
-        # One reading can take a minute when the process inventory times out and retries, so
-        # the loop is bounded by time, not attempts: the rollback must finish well inside the
-        # update agent's APPLY_TIMEOUT (900 s), which kills the helper outright.
+        start_service(domain, plist, old_plist, new_plist)
+        service_started = True
+        progress_file.set(serviceRestartedAt=install_progress.now())
+        lap('restart')
         restarted_at = time.monotonic()
         # A migration may widen a protected table (accepted_widenings); measure it in the
         # same read as the after-snapshot.
         widen = ({'widen_from': before['databaseCapture']['schema']['columns']}
                  if allow_project_migrations and 'databaseCapture' in before else {})
+        # Bounded by time, not attempts: one reading can take a minute when the process inventory times
+        # out and retries, and the rollback must finish well inside the update agent's APPLY_TIMEOUT,
+        # which kills the helper outright. Readiness itself is the cheap check (service_answers: the new
+        # pid, release and database locks, no rows), polled until the deadline. The full read the proofs
+        # below need then runs once, however late: it is never skipped, and tried again only while it
+        # cannot be taken and the deadline allows.
         ready_by = min(restarted_at + READINESS_DEADLINE_SECONDS, started + READY_BY_SECONDS_FROM_START)
-        while time.monotonic() < ready_by:
-            time.sleep(0.5)
+        wait_until_answering(identity, before['servicePid'], archive_sha, manifest['sourceCommit'], ready_by)
+        lap('readinessCheap')
+        while True:
             try:
                 after, current_auth, after_carried = snapshot_since(identity, before['rows'], capture_auth, **widen)
                 if after['servicePid'] != before['servicePid']: break
             # A process inventory that timed out twice is retried here like any other
             # not-yet-ready reading, rather than rolling back a service that is starting.
-            except (AssertionError, OSError, sqlite3.Error, subprocess.TimeoutExpired): continue
+            except (AssertionError, OSError, sqlite3.Error, subprocess.TimeoutExpired): pass
+            if time.monotonic() >= ready_by: break
+            time.sleep(0.5)
         assert after and after['servicePid'] != before['servicePid'], \
             'Updated service did not become ready within %d s' % max(0, round(ready_by - restarted_at))
+        lap('readiness')
         assert after['archiveSha256'] == archive_sha and after['artifactSourceCommit'] == manifest['sourceCommit'], 'Updated service is not the intended artifact'
         for row_key, pointer_key in [('launcher', 'launch.sh'), ('wrapper', 'wrapper'), ('installation', 'installation.json')]:
             assert after['fileHashes'][row_key] == progress['expectedNewHashes'][pointer_key], 'Updated pointer differs from the intended artifact'
@@ -1699,6 +1219,7 @@ def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_b
         # A release may rewrite settings.json once on start (a one-time migration); the values
         # the user set must survive it. Environment identity and the LaunchAgent stay exact.
         settings_continuity_report = settings_preserved(before, after)
+        lap('guardedComparison')
         result = {'phase': 'verified', 'before': before, 'after': after, 'backup': str(backup), 'cliAlias': progress['cliAlias'], 'preservedRowsAuthAndIdentity': True, 'originalServicesPreserved': True,
                   'onlyKnownOwnedServiceRestarted': True, 'startupBootstrap': False, 'inferenceExecuted': False,
                   'restartStartedAt': restart_started_at, 'rowsByteIdentical': before['rows'] == after['rows'],
@@ -1738,9 +1259,17 @@ def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_b
         # The new release's update agent replaces an older one, as the desktop installs its own: a Mac
         # whose desktop app is old or never opened kept its first agent otherwise. Never fails the update.
         result['updateAgent'] = update_request.refresh_agent(home, identity, new_release)
+        finish('cleanup')
+        result['timings'] = timings
         output.write_text(json.dumps(result, indent=2) + '\n')
+        progress_file.finish('verified', timings)
         print(json.dumps({'identity': identity, 'result': 'updated', 'archiveSha256': archive_sha, 'servicePid': after['servicePid'], 'report': str(output)}))
     except BaseException as error:
+        lap('untilFailure')  # The phase that failed, up to the failure.
+        progress_file.rollback()
+        if restart_requested and not service_started:
+            # launchd refused the job or did not answer: the new release may run only if it is loaded.
+            restart_requested = service_started = job_loaded(domain, before['serviceLabel'])
         failure = {**progress, 'result': 'update-failed', 'rollback': 'held-for-safe-review',
                    'error': describe_error(error), 'attemptedAfter': after}
         if restart_requested:
@@ -1848,89 +1377,39 @@ def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_b
                 failure['rollback'] = 'restored-runtime-pointers-and-state'
                 failure['stateDeltaRetained'] = False
             else:
-                restore_old_pointers()
+                try:
+                    restore_old_pointers()
+                finally:
+                    # Stopped for the copy, then the stop, the copy or the start failed: nothing of the
+                    # new release ran, so the old one starts again on its untouched database, once
+                    # its launcher is back (it alone names the release that starts).
+                    if service_stopped and not service_started:
+                        restart_old_release(failure, state_backup, lambda: job_loaded(domain, before['serviceLabel']),
+                                            (own / 'launch.sh').read_bytes() == old_bytes['launch.sh'],
+                                            lambda: run(['/bin/launchctl', 'bootstrap', domain, str(plist)], timeout=60),
+                                            discard_unused_backup)
                 failure['rollback'] = 'restored-exact-owned-runtime-pointers'
                 # No state/auth/config migration is undone by a pointer rollback.
                 failure['stateDeltaRetained'] = True
+            finish('rollback')
             output.write_text(json.dumps(failure, indent=2) + '\n')
         except (AssertionError, OSError, sqlite3.Error, subprocess.TimeoutExpired) as rollback_error:
             # Retain the failed receipt and leave active or unverified services untouched;
             # the receipt names the check that stopped the rollback.
             failure['rollbackError'] = describe_error(rollback_error)
+            finish('rollback')
             try:
                 output.write_text(json.dumps(failure, indent=2) + '\n')
             except OSError:
                 pass
+        progress_file.finish(install_progress.result_of(failure), timings)
         raise
     finally:
         clear_install_gate(own, home)
 
-def describe_error(error):
-    """Type and message of a failed proof, bounded; messages here never carry row content."""
-    message = str(error)
-    if len(message) > 2000:
-        message = message[:2000] + '...'
-    return type(error).__name__ + (': ' + message if message else '')
-
-def write_preflight_failure(output, identity, error):
-    """apply() writes its own receipt from phase 'prepared' on. A failure before that point
-    (snapshot, prestate checks, staging, version gate, publish) leaves one here, so the
-    updater's "See the update receipt" always names a real file. Never overwrites."""
-    if output.exists() or output.is_symlink():
-        return
-    failure = {'identity': identity, 'phase': 'preflight', 'result': 'update-failed',
-               'error': describe_error(error),
-               'pointers': 'unchanged'}
-    try:
-        fd = os.open(str(output), os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
-        with os.fdopen(fd, 'w') as handle:
-            handle.write(json.dumps(failure, indent=2) + '\n')
-    except OSError:
-        pass  # The original error is what the caller needs; it is re-raised.
-
 # Refusals the next snapshot may not repeat: processes or the database moved while being read,
 # or a process listed by ps exited before the kernel read of it.
 BUSY_REFUSALS = {'Owned process identities changed during inventory', 'Owned service process identity changed'} | VANISHED_READS
-
-def native_work_counts(state):
-    """The per-check counts behind 'Native work is not idle', read again (read-only) for the
-    refusal line. The same predicates as _read_state, which alone decides."""
-    db = live_database.connect(state / 'statev2.sqlite')
-    try:
-        def count(query):
-            return db.execute(query).fetchone()[0]
-        statuses, held = run_work(db)
-        runs = sum(1 for status in statuses if status not in TERMINAL_RUNS and status != 'queued')
-        return {'runs': runs,
-                'queued': statuses.count('queued'),
-                'requests': count("SELECT count(*) FROM orchestration_v2_projection_runtime_requests WHERE status='pending'"),
-                'effects': count("SELECT count(*) FROM orchestration_v2_effect_outbox WHERE status IS NULL OR status NOT IN ('succeeded','failed','cancelled')"),
-                'sessions': count("SELECT count(*) FROM orchestration_v2_projection_provider_sessions WHERE status IN ('running','working','connecting','starting')"),
-                # Held queued runs never block; the count says why a queue still shows.
-                'held': held}
-    finally:
-        db.close()
-
-def _name(value):
-    return re.sub(r'[^A-Za-z0-9._+-]', '_', posixpath.basename(str(value)))[:40] or '_'
-
-def descendant_names(pid, processes):
-    """Executable basenames beneath the service, with counts; the one supervisor is left out.
-    Only `ps comm` is read, never argv, so no argument or secret can appear."""
-    names, pending, seen, supervisor = {}, [pid], {pid}, False
-    while pending:
-        parent = pending.pop()
-        for child in sorted(processes.values(), key=lambda item: item['pid']):
-            if child['parent'] != parent or child['pid'] in seen:
-                continue
-            seen.add(child['pid'])
-            pending.append(child['pid'])
-            if not supervisor and parent == pid and child['executable'] == '/usr/bin/caffeinate':
-                supervisor = True
-                continue
-            name = _name(child['executable'])
-            names[name] = names.get(name, 0) + 1
-    return ' '.join('%s=%d' % item for item in sorted(names.items())[:8]) or ('none' if supervisor else 'no-supervisor')
 
 def _refusal_detail(code, own):
     """Counts or names for a refusal, read again after the failed check; '' when unreadable."""

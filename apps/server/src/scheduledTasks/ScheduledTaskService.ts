@@ -154,6 +154,16 @@ export class ScheduledTaskService extends Context.Service<
       input: ScheduledTaskGetWebhookDeliveryInput,
     ) => Effect.Effect<ScheduledTaskGetWebhookDeliveryResult, ScheduledTaskError>;
     /**
+     * A run counts as succeeded once its message is dispatched. When that
+     * message's turn fails later, record the failure, unless the task has run
+     * again since. "running" means the dispatch has not been recorded yet.
+     */
+    readonly recordTurnFailure: (input: {
+      readonly id: ScheduledTaskId;
+      readonly requestedAt: DateTime.DateTime;
+      readonly error: string;
+    }) => Effect.Effect<"recorded" | "running" | "stale", ScheduledTaskError>;
+    /**
      * Verifies, logs and dispatches one webhook request. Returns as soon as the
      * delivery is logged; the run itself continues in the background so senders
      * with short timeouts get their answer immediately.
@@ -477,6 +487,41 @@ export const layer = Layer.effect(
           taskError("Could not record schedule task run.", { taskId: input.id, cause }),
         ),
       );
+
+    const recordTurnFailure = Effect.fn("ScheduledTaskService.recordTurnFailure")(
+      function* (input: {
+        readonly id: ScheduledTaskId;
+        readonly requestedAt: DateTime.DateTime;
+        readonly error: string;
+      }) {
+        const now = yield* localNow;
+        const rows = yield* sql<{ last_run_status: string }>`
+        UPDATE scheduled_tasks
+        SET updated_at = ${iso(now)},
+            last_run_status = 'failed',
+            last_run_error = ${input.error}
+        WHERE task_id = ${input.id}
+          AND last_run_status = 'succeeded'
+          AND last_run_at <= ${iso(input.requestedAt)}
+        RETURNING last_run_status
+      `.pipe(
+          Effect.mapError((cause) =>
+            taskError("Could not record schedule task turn failure.", { taskId: input.id, cause }),
+          ),
+        );
+        if (rows.length > 0) {
+          yield* notifyChanged;
+          return "recorded" as const;
+        }
+        const current = yield* findTask(input.id);
+        return current !== null &&
+          current.lastRunStatus === "running" &&
+          current.lastRunAt !== null &&
+          current.lastRunAt <= iso(input.requestedAt)
+          ? ("running" as const)
+          : ("stale" as const);
+      },
+    );
 
     // Best-effort escape hatch: if anything fails between markRunning and
     // markCompleted, write a full terminal record so runDueTasks neither skips
@@ -1782,6 +1827,7 @@ export const layer = Layer.effect(
       listWebhookDeliveries,
       getWebhookDelivery,
       triggerWebhook,
+      recordTurnFailure,
     });
   }),
 ).pipe(Layer.provide(ProjectAdmission.layer));

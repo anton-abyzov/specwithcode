@@ -11,7 +11,7 @@ import * as Fallback from "./ProviderFallbackWorker.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
 
-it.effect("builds the production fallback layer and registers its sweep", () =>
+it.effect("builds the production fallback layer and registers its sweeps", () =>
   Effect.gen(function* () {
     yield* TestClock.setTime(60_000);
     const registrations: string[] = [];
@@ -39,6 +39,7 @@ it.effect("builds the production fallback layer and registers its sweep", () =>
     // Do not supply ProjectAdmission here: the exported production layer must
     // wire its own shared admission dependency, as the recovery worker does.
     yield* Layer.build(Fallback.layer.pipe(Layer.provide(dependencies)));
-    assert.deepEqual(registrations, ["provider-fallback"]);
+    // The layer also carries Auto routing's escalation sweep (see the layer's comment).
+    assert.deepEqual([...registrations].sort(), ["provider-fallback", "task-routing-escalation"]);
   }).pipe(Effect.scoped),
 );

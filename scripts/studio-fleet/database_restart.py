@@ -25,6 +25,13 @@ locks are lost. The snapshot still refuses; the restart waits until the new serv
 locks again, and the next snapshot decides as before. The update agent says it is restarting
 the app only for a line with restarted=, wait= or retry=; any other restart-needed line is an
 error that asks the person to restart SpecWithCode. Stdlib only, Python 3.9 compatible.
+
+A deleted log is stopped, not killed (update.stop_then_start_service): SIGTERM, wait up to
+DETACHED_STOP_SECONDS for the service to close its database, which writes the deleted log's
+commits into the database file, then `launchctl kickstart` without -k. A service that does not
+exit in time is left running and is tried again after RESTART_EVERY. On M4, 2026-10-20, the
+service ran on a deleted log from 2:52 PM and other readers later saw "database disk image is
+malformed"; `kickstart -k` there could have dropped commits only that log held.
 """
 import datetime
 import subprocess
@@ -35,6 +42,9 @@ CODE = 'restart-needed'
 MARKER = 'database-restart.json'  # The last restart: service pid and time, for RESTART_EVERY.
 QUIET_MARKER = 'database-restart-quiet.json'  # idle_agents.observe's record for the quiet window.
 RESTART_EVERY = datetime.timedelta(minutes=30)
+# How long a service with a deleted log gets to close its database after SIGTERM. Closing writes
+# the whole log into the database file, so a large log takes a while; it is never killed instead.
+DETACHED_STOP_SECONDS = 180
 READY_SECONDS = 120  # How long the restart waits for the new service to hold its locks.
 
 

@@ -78,7 +78,7 @@ describe("parseSpecweaveSpec", () => {
         "**Satisfies ACs**: AC-US1-01 | **Status**: [ ] pending",
       ].join("\n"),
     );
-    assert.deepEqual(parsed.criteria, [{ id: "AC-US1-01", text: "Works" }]);
+    assert.deepEqual(parsed.criteria, [{ id: "AC-US1-01", text: "Works", story: "US-001" }]);
     assert.deepEqual(parsed.tasks, [
       { id: "T-001", title: "Build it", criteria: ["AC-US1-01"], checked: true },
       { id: "T-002", title: "Test it", criteria: ["AC-US1-01"], checked: false },
@@ -104,10 +104,28 @@ describe("parseSpecweaveSpec criteria forms", () => {
       ].join("\n"),
     );
     assert.deepEqual(parsed.criteria, [
-      { id: "AC-US1-01", text: "Rows show the project path." },
-      { id: "AC-US1-02", text: "Rows show the user path." },
+      { id: "AC-US1-01", text: "Rows show the project path.", story: "US-001" },
+      { id: "AC-US1-02", text: "Rows show the user path.", story: "US-001" },
     ]);
     assert.deepEqual(parsed.tasks[0]?.criteria, ["AC-US1-01", "AC-US1-02", "AC-US1-09"]);
+  });
+});
+
+describe("parseSpecweaveSpec traceability", () => {
+  plainIt("keeps an AC tick as a declaration and the story heading it sits under", () => {
+    const parsed = parseSpecweaveSpec(
+      [
+        "## User Stories",
+        "### US-002: Search",
+        "- [x] AC-01: Finds by id",
+        "## Acceptance Criteria",
+        "- [ ] AC-02: Pages",
+      ].join("\n"),
+    );
+    assert.deepEqual(parsed.criteria, [
+      { id: "AC-01", text: "Finds by id", checked: true, story: "US-002" },
+      { id: "AC-02", text: "Pages" },
+    ]);
   });
 });
 

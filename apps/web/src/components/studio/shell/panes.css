@@ -645,6 +645,43 @@ button.sws-subagent-row:focus-visible {
   text-underline-offset: 2px;
   cursor: pointer;
 }
+.sws-routing-popover {
+  display: flex;
+  flex-direction: column;
+  font-size: 12.5px;
+}
+.sws-routing-popover > header {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 10px 12px 6px;
+  border-bottom: 1px solid var(--border);
+}
+.sws-routing-popover > header strong {
+  font-weight: 600;
+  font-size: 13px;
+}
+.sws-routing-popover > header span {
+  color: var(--muted-foreground);
+  font-size: 11.5px;
+}
+.sws-routing-popover dl {
+  display: grid;
+  grid-template-columns: max-content 1fr;
+  gap: 4px 12px;
+  margin: 0;
+  padding: 8px 12px 10px;
+}
+.sws-routing-popover dt {
+  color: var(--muted-foreground);
+}
+.sws-routing-popover dd {
+  margin: 0;
+}
+.sws-routing-popover ol {
+  margin: 0;
+  padding-inline-start: 16px;
+}
 
 /* Routines: one bordered list, a row per routine with its state, cadence, next
    run and destination, and its actions on the right (below it when narrow). */

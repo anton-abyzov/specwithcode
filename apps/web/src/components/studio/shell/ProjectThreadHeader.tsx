@@ -44,7 +44,8 @@ import { PULL_REQUEST_STATE_PRESENTATION } from "../../pullRequest/pullRequestIc
 import { toastManager } from "../../ui/toast";
 import type { SubagentEntry } from "../../../studio/threadSubagents";
 import { isCoordinatorNamedThread, threadTitleTip } from "../../../studio/threadTitles";
-import { ModelBadge } from "./ModelBadge";
+import { ModelBadge, useProviderEntries } from "./ModelBadge";
+import { RoutingDecisionChip } from "./RoutingDecisionChip";
 import { SubagentsChip } from "./SubagentsChip";
 import { Tip } from "./Tip";
 import { HandoffThreadHeaderBadge } from "../../handoff/HandoffBadge";
@@ -104,6 +105,7 @@ export function ProjectThreadHeader(props: {
   toolsSlotRef?: (node: HTMLSpanElement | null) => void;
 }) {
   const { thread } = props;
+  const providerEntries = useProviderEntries(thread.environmentId);
   const threadRef = useMemo(
     () => scopeThreadRef(thread.environmentId, thread.id),
     [thread.environmentId, thread.id],
@@ -215,6 +217,7 @@ export function ProjectThreadHeader(props: {
             instanceId={thread.modelSelection.instanceId}
             model={thread.modelSelection.model}
           />
+          <RoutingDecisionChip routing={thread.routing} entries={providerEntries} />
           {pr && link ? (
             <button
               type="button"

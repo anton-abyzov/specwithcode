@@ -25,6 +25,7 @@ vi.mock("../../../state/use-orchestration-command", () => ({
 vi.mock("./ModelBadge", () => ({
   ModelBadge: (props: { model: string }) => <span className="sws-model">{props.model}</span>,
   useProviderEntriesByEnvironment: () => new Map(),
+  useProviderEntries: () => new Map(),
 }));
 
 import type { SubagentEntry } from "../../../studio/threadSubagents";

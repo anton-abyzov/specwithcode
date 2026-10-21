@@ -21,6 +21,7 @@ import { EMPTY_SERVER_PROVIDERS } from "../../state/server";
 import { resolveEnvModeLabel, WORKTREE_SUBMODULES_LABELS } from "../BranchToolbar.logic";
 import { ProviderModelPicker } from "../chat/ProviderModelPicker";
 import { ProviderLimitSettings } from "./ProviderLimitSettings";
+import { TaskRoutingSettings } from "./TaskRoutingSettings";
 import { runtimeModeConfig, runtimeModeOptions } from "../chat/runtimeModeConfig";
 import { PULL_REQUEST_MERGE_METHOD_LABELS } from "../pullRequest/pullRequestDetail.logic";
 import { THREAD_FINISH_ACTION_LABELS } from "./threadFinishAction";
@@ -475,6 +476,7 @@ export function ProjectDefaultsSettings({
           />
           {category === "project" ? startFromOriginRow : null}
           <ProviderLimitSettings />
+          <TaskRoutingSettings />
         </>
       ) : category === "source-control" ? (
         <>

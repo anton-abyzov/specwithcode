@@ -1,0 +1,8 @@
+@import "../../src/index.css";
+@import "../../src/components/studio/projectWorkspace.css";
+@source "../../src";
+body {
+  margin: 0;
+  background: var(--background);
+  color: var(--foreground);
+}

@@ -16,6 +16,7 @@ import {
 import { AgentElapsed } from "../../chat/AgentElapsed";
 import ChatView from "../../ChatView";
 import { ModelBadge, useProviderEntriesByEnvironment } from "./ModelBadge";
+import { RoutingDecisionChip } from "./RoutingDecisionChip";
 import { Tip } from "./Tip";
 
 export function SubagentPeek(props: {
@@ -77,6 +78,7 @@ export function SubagentPeek(props: {
               instanceId={instanceId}
               model={model}
             />
+            <RoutingDecisionChip routing={thread.routing} entries={providerEntries} />
             {entry?.startedAt && status ? (
               <AgentElapsed
                 agent={{ status, startedAt: entry.startedAt, completedAt: entry.completedAt }}

@@ -71,6 +71,7 @@ export interface ChangeProjectFolderInput extends CommandMetadata {
   readonly projectId: ProjectId;
   readonly workspaceRoot: string;
   readonly confirmDifferentRepository?: boolean;
+  readonly confirmPlanningImpact?: boolean;
 }
 
 export interface DeleteProjectInput extends CommandMetadata {
@@ -370,6 +371,7 @@ const mutateProject = Effect.fn("EnvironmentCommands.mutateProject")(function* (
         readonly projectId: ProjectId;
         readonly workspaceRoot: string;
         readonly confirmDifferentRepository?: boolean;
+        readonly confirmPlanningImpact?: boolean;
       },
 ) {
   return yield* request(WS_METHODS.projectsMutate, mutation);
@@ -431,6 +433,9 @@ export const changeProjectFolder = Effect.fn("EnvironmentCommands.changeProjectF
     ...(input.confirmDifferentRepository === undefined
       ? {}
       : { confirmDifferentRepository: input.confirmDifferentRepository }),
+    ...(input.confirmPlanningImpact === undefined
+      ? {}
+      : { confirmPlanningImpact: input.confirmPlanningImpact }),
   });
 });
 

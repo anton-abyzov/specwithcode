@@ -158,6 +158,7 @@ export class ProjectFolderChangeError extends Schema.TaggedError<ProjectFolderCh
       "folder_conflict",
       "repository_mismatch",
       "active_work",
+      "planning_impact",
     ]),
     detail: Schema.String,
   },

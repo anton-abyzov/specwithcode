@@ -9,6 +9,9 @@ import {
   type OrchestrationV2ThreadShell,
   type Project as ProjectRecord,
   type ServerProvider,
+  type TaskRoutingSettings,
+  DEFAULT_SERVER_SETTINGS,
+  DEFAULT_TASK_ROUTING_SETTINGS,
 } from "@specweave-studio/contracts";
 import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -25,6 +28,7 @@ import * as ServerConfig from "../../../config.ts";
 import * as ProjectActionRequests from "../../../project/ProjectActionRequests.ts";
 import * as Project from "../../../project/ProjectService.ts";
 import * as ProviderRegistry from "../../../provider/ProviderRegistry.ts";
+import * as ServerSettings from "../../../serverSettings.ts";
 import * as ManagedProjectFolders from "../../../project/ManagedProjectFolders.ts";
 import * as GitVcsDriver from "../../../vcs/GitVcsDriver.ts";
 import * as VcsProcess from "../../../vcs/VcsProcess.ts";
@@ -347,6 +351,8 @@ const clientLaunchHarness = (input: {
   readonly runtimeModeCeiling: "approval-required" | "auto-accept-edits" | "auto" | "full-access";
   readonly launched: Array<ThreadLaunch.ThreadLaunchInput>;
   readonly workspaceRoot?: string;
+  readonly providers?: ReadonlyArray<ServerProvider>;
+  readonly taskRouting?: Partial<TaskRoutingSettings>;
 }) => {
   const projectId = ProjectId.make("project:client-target");
   const modelSelection = { instanceId: ProviderInstanceId.make("claude"), model: "claude-opus" };
@@ -395,27 +401,35 @@ const clientLaunchHarness = (input: {
         ),
     }),
     Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/projects" }),
+    Layer.mock(ServerSettings.ServerSettingsService)({
+      getSettings: Effect.succeed({
+        ...DEFAULT_SERVER_SETTINGS,
+        taskRouting: { ...DEFAULT_TASK_ROUTING_SETTINGS, ...input.taskRouting },
+      }),
+    }),
     Layer.mock(ProviderRegistry.ProviderRegistry)({
-      getProviders: Effect.succeed([
-        {
-          instanceId: modelSelection.instanceId,
-          models: [
-            {
-              slug: modelSelection.model,
-              capabilities: {
-                optionDescriptors: [
-                  {
-                    id: "effort",
-                    label: "Reasoning",
-                    type: "select",
-                    options: ["low", "medium", "high", "max"].map((id) => ({ id, label: id })),
-                  },
-                ],
+      getProviders: Effect.succeed(
+        input.providers ?? [
+          {
+            instanceId: modelSelection.instanceId,
+            models: [
+              {
+                slug: modelSelection.model,
+                capabilities: {
+                  optionDescriptors: [
+                    {
+                      id: "effort",
+                      label: "Reasoning",
+                      type: "select",
+                      options: ["low", "medium", "high", "max"].map((id) => ({ id, label: id })),
+                    },
+                  ],
+                },
               },
-            },
-          ],
-        } as unknown as ServerProvider,
-      ]),
+            ],
+          } as unknown as ServerProvider,
+        ],
+      ),
     }),
     NodeServices.layer,
   ).pipe(
@@ -486,6 +500,63 @@ it.effect("a launch runs at the requested effort, or the nearest level the model
     const unknown = yield* handle({ title: "Research", projectId, effort: "turbo" });
     expect(unknown.at(-1)?.result).toMatchObject({ code: "invalid_request" });
     expect(launched).toHaveLength(1);
+  }),
+);
+
+it.effect("a launch with a task class routes under Auto and keeps the decision on the thread", () =>
+  Effect.gen(function* () {
+    const launched: Array<ThreadLaunch.ThreadLaunchInput> = [];
+    const claude = ProviderInstanceId.make("claude");
+    const ready = {
+      instanceId: claude,
+      driver: "claudeAgent",
+      enabled: true,
+      installed: true,
+      status: "ready",
+      auth: { status: "authenticated" },
+      models: [
+        { slug: "claude-opus", name: "Claude Opus 5.5", isCustom: false, capabilities: null },
+        {
+          slug: "claude-sonnet-5-5",
+          name: "Claude Sonnet 5.5",
+          isCustom: false,
+          capabilities: null,
+        },
+      ],
+    } as unknown as ServerProvider;
+    const run = (taskRouting: Partial<TaskRoutingSettings>) =>
+      Effect.gen(function* () {
+        const { projectId, dependencies } = clientLaunchHarness({
+          runtimeModeCeiling: "auto-accept-edits",
+          launched,
+          providers: [ready],
+          taskRouting,
+        });
+        const toolkit = yield* ProjectToolkit.pipe(
+          Effect.provide(
+            McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(
+              Layer.provide(dependencies),
+            ),
+          ),
+        );
+        return yield* toolkit
+          .handle("studio_thread_launch", {
+            title: "Spanish docs",
+            projectId,
+            taskClass: "translation",
+            message: "Translate docs/guide.md into Spanish.",
+          })
+          .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
+      });
+
+    const routed = yield* run({ mode: "auto" });
+    expect(launched[0]?.modelSelection).toEqual({ instanceId: claude, model: "claude-sonnet-5-5" });
+    expect(launched[0]?.routing).toMatchObject({ taskClass: "translation", moved: true });
+    expect(routed.at(-1)?.result).toMatchObject({ routing: { taskClass: "translation" } });
+
+    yield* run({ mode: "off" });
+    expect(launched[1]?.modelSelection.model).toBe("claude-opus");
+    expect(launched[1]?.routing).toBeUndefined();
   }),
 );
 

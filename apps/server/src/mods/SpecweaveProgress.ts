@@ -151,7 +151,14 @@ const isoOrNull = (value: unknown): string | null =>
 
 interface ParsedSpec {
   readonly title: string | null;
-  readonly criteria: ReadonlyArray<{ readonly id: string; readonly text: string }>;
+  readonly criteria: ReadonlyArray<{
+    readonly id: string;
+    readonly text: string;
+    /** Ticked in the spec (`- [x] AC-..`): a declaration, never proof. Absent when unticked. */
+    readonly checked?: true;
+    /** The user story it belongs to (`US-001`), from its id or the story heading above it. */
+    readonly story?: string;
+  }>;
   readonly tasks: ReadonlyArray<{
     readonly id: string;
     readonly title: string;
@@ -165,11 +172,15 @@ interface ParsedSpec {
  * Reads acceptance criteria (`- [ ] AC-NN: text`, also the older
  * `- [ ] **AC-US1-01**: text` and `- AC-US1-01 — text` forms) and tasks (`### T-NN Title`, also
  * `### T-001: Title`) with the AC ids each task cites. Fenced blocks are
- * skipped. The spec's checkboxes are not authoritative and are ignored.
+ * skipped. The spec's checkboxes are not authoritative: an AC's tick is kept
+ * only as `checked`, a declaration readers must not show as verified. An AC
+ * belongs to the user story its id names (`AC-US2-01`) or, failing that, the
+ * `US-NNN` heading above it.
  */
 export function parseSpecweaveSpec(spec: string): ParsedSpec {
   let title: string | null = null;
-  const criteria = new Map<string, string>();
+  const criteria = new Map<string, { text: string; checked: boolean; story: string | null }>();
+  let story: string | null = null;
   const tasks: Array<{ id: string; title: string; criteria: string[]; checked: boolean }> = [];
   let current: { id: string; title: string; criteria: string[]; checked: boolean } | null = null;
   let fenced = false;
@@ -197,20 +208,33 @@ export function parseSpecweaveSpec(spec: string): ParsedSpec {
       tasks.push(current);
       continue;
     }
+    const storyHeading = /^#{2,4}\s+\**(US-\d{1,4})\b/u.exec(line);
+    if (storyHeading) {
+      current = null;
+      story = storyHeading[1]!;
+      continue;
+    }
     if (/^#{1,3} /u.test(line)) {
       current = null;
+      if (/^## /u.test(line)) story = null;
       continue;
     }
     // A task's own `- AC-..` bullet cites criteria; it does not define them.
     const criterion =
       current === null
-        ? /^\s*- (?:\[[ xX]\]\s*)?\**(AC-[A-Za-z0-9_-]{1,40})\**\s*(?::|—|–|-)?\**\s*(.*)$/u.exec(
+        ? /^\s*- (?:\[([ xX])\]\s*)?\**(AC-[A-Za-z0-9_-]{1,40})\**\s*(?::|—|–|-)?\**\s*(.*)$/u.exec(
             line,
           )
         : null;
     if (criterion) {
-      if (criteria.size < MAX_CRITERIA && !criteria.has(criterion[1]!)) {
-        criteria.set(criterion[1]!, bounded(criterion[2], 300) ?? criterion[1]!);
+      const id = criterion[2]!;
+      if (criteria.size < MAX_CRITERIA && !criteria.has(id)) {
+        const named = /^AC-US(\d{1,4})-/u.exec(id);
+        criteria.set(id, {
+          text: bounded(criterion[3], 300) ?? id,
+          checked: criterion[1] !== undefined && criterion[1].toLowerCase() === "x",
+          story: named ? `US-${named[1]!.padStart(3, "0")}` : story,
+        });
       }
       continue;
     }
@@ -225,7 +249,12 @@ export function parseSpecweaveSpec(spec: string): ParsedSpec {
   }
   return {
     title,
-    criteria: [...criteria.entries()].map(([id, text]) => ({ id, text })),
+    criteria: [...criteria.entries()].map(([id, entry]) => ({
+      id,
+      text: entry.text,
+      ...(entry.checked ? { checked: true as const } : {}),
+      ...(entry.story === null ? {} : { story: entry.story }),
+    })),
     tasks,
   };
 }

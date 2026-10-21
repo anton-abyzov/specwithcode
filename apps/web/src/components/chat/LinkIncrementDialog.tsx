@@ -80,12 +80,34 @@ export function LinkIncrementDialogHost() {
   );
 }
 
+const PAGE = 50;
+/** The server answers at most this many per request; past it, search narrows the list. */
+const MOST_LISTED = 300;
+
+/** The list request for what the reader typed, the status chip and how many pages they opened. */
+export function incrementListInput(filter: string, status: string | null, pages: number) {
+  const query = filter.trim();
+  return {
+    ...(query === "" ? {} : { query }),
+    ...(status === null ? {} : { status }),
+    limit: Math.min(MOST_LISTED, PAGE * Math.max(1, pages)),
+  };
+}
+
+/** Status chips, busiest first, with "all" in front. */
+export function statusChips(counts: Readonly<Record<string, number>> | undefined) {
+  return Object.entries(counts ?? {}).toSorted(
+    ([leftStatus, left], [rightStatus, right]) =>
+      right - left || leftStatus.localeCompare(rightStatus),
+  );
+}
+
 const sameTarget = (left: ThreadIncrementLinkTarget, right: ThreadIncrementLinkTarget) =>
   left.type === right.type &&
   (left.type !== "increment" ||
     (right.type === "increment" && left.incrementId === right.incrementId));
 
-function LinkIncrementDialog({
+export function LinkIncrementDialog({
   threadRef,
   projectId,
   onClose,
@@ -94,18 +116,36 @@ function LinkIncrementDialog({
   projectId: ProjectId;
   onClose: () => void;
 }) {
+  const [filter, setFilter] = useState("");
+  const [searched, setSearched] = useState("");
+  const [status, setStatus] = useState<string | null>(null);
+  const [pages, setPages] = useState(1);
+  useEffect(() => {
+    const timer = window.setTimeout(() => {
+      setSearched(filter);
+      setPages(1);
+    }, 250);
+    return () => window.clearTimeout(timer);
+  }, [filter]);
   const query = useEnvironmentQuery(
     useMemo(
       () =>
         projectWorkspace.incrementsList({
           environmentId: threadRef.environmentId,
-          input: { projectId, threadId: threadRef.threadId },
+          input: {
+            projectId,
+            threadId: threadRef.threadId,
+            ...incrementListInput(searched, status, pages),
+          },
         }),
-      [projectId, threadRef.environmentId, threadRef.threadId],
+      [pages, projectId, searched, status, threadRef.environmentId, threadRef.threadId],
     ),
   );
-  const current: ThreadIncrementLinkTarget = query.data?.link ?? { type: "auto" };
-  const [filter, setFilter] = useState("");
+  // A new search or page starts a fresh query; keep the last reply on screen
+  // until it lands, so the list does not blank and the link is never guessed.
+  const [data, setData] = useState(query.data);
+  if (query.data && query.data !== data) setData(query.data);
+  const current: ThreadIncrementLinkTarget | null = data ? (data.link ?? { type: "auto" }) : null;
   const [choice, setChoice] = useState<ThreadIncrementLinkTarget | null>(null);
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -118,19 +158,12 @@ function LinkIncrementDialog({
     return () => window.cancelAnimationFrame(frame);
   }, []);
 
-  const increments = useMemo(() => {
-    const needle = filter.trim().toLowerCase();
-    const all = query.data?.increments ?? [];
-    return needle === ""
-      ? all
-      : all.filter((increment) =>
-          `${increment.incrementId} ${increment.title ?? ""} ${increment.status}`
-            .toLowerCase()
-            .includes(needle),
-        );
-  }, [filter, query.data]);
+  const increments = data?.increments ?? [];
+  const total = data?.total ?? increments.length;
+  const chips = statusChips(data?.statusCounts);
 
   const submit = useCallback(async () => {
+    if (!selected) return;
     setError(null);
     setPending(true);
     try {
@@ -145,7 +178,7 @@ function LinkIncrementDialog({
   }, [onClose, projectId, selected, setLink, threadRef]);
 
   const option = (target: ThreadIncrementLinkTarget, label: string, detail: string | null) => {
-    const active = sameTarget(selected, target);
+    const active = selected !== null && sameTarget(selected, target);
     return (
       <li key={target.type === "increment" ? target.incrementId : target.type}>
         <button
@@ -185,7 +218,7 @@ function LinkIncrementDialog({
         <DialogPanel>
           <Input
             ref={inputRef}
-            placeholder="Filter increments"
+            placeholder="Search increments by number or title"
             value={filter}
             onChange={(event) => setFilter(event.target.value)}
             onKeyDown={(event) => {
@@ -196,13 +229,46 @@ function LinkIncrementDialog({
               else void submit();
             }}
           />
+          {chips.length > 1 || status !== null ? (
+            <div
+              className="mt-2 flex flex-wrap gap-1"
+              role="group"
+              aria-label="Status"
+              data-link-increment-status
+            >
+              {[["all", null] as const, ...chips.map(([name]) => [name, name] as const)].map(
+                ([label, value]) => (
+                  <button
+                    key={label}
+                    type="button"
+                    aria-pressed={status === value}
+                    className={cn(
+                      "rounded-full border px-2 py-0.5 text-xs",
+                      status === value
+                        ? "border-foreground/40 bg-accent text-accent-foreground"
+                        : "border-border/70 text-muted-foreground hover:text-foreground",
+                    )}
+                    onClick={() => {
+                      setStatus(value);
+                      setPages(1);
+                    }}
+                  >
+                    {label}
+                    {value === null ? null : (
+                      <span className="ms-1 tabular-nums">{data?.statusCounts?.[value]}</span>
+                    )}
+                  </button>
+                ),
+              )}
+            </div>
+          ) : null}
           <ul
             role="radiogroup"
             aria-label="Increments"
             className="mt-2 max-h-[45vh] space-y-0.5 overflow-y-auto"
             data-link-increment-options
           >
-            {filter.trim() === ""
+            {filter.trim() === "" && status === null
               ? [
                   option({ type: "auto" }, "Automatic", "ledger writes, title or branch"),
                   option({ type: "none" }, "No increment", "the agent's todo list only"),
@@ -218,9 +284,30 @@ function LinkIncrementDialog({
               ),
             )}
           </ul>
-          {query.data && query.data.increments.length === 0 ? (
+          {data && total > increments.length ? (
+            <p
+              className="mt-2 flex items-center gap-2 text-xs text-muted-foreground"
+              data-link-increment-more
+            >
+              Showing {increments.length} of {total}.
+              {increments.length < MOST_LISTED ? (
+                <button
+                  type="button"
+                  className="underline underline-offset-2 hover:text-foreground"
+                  onClick={() => setPages((count) => count + 1)}
+                >
+                  Load more
+                </button>
+              ) : (
+                <span>Search to narrow the list.</span>
+              )}
+            </p>
+          ) : null}
+          {data && total === 0 ? (
             <p className="mt-2 text-xs text-muted-foreground">
-              No increments in this thread's checkout (.specweave/increments).
+              {searched.trim() !== "" || status !== null
+                ? "No increment matches."
+                : "No increments in this thread's checkout (.specweave/increments)."}
             </p>
           ) : null}
           {(error ?? query.error) ? (
@@ -237,7 +324,7 @@ function LinkIncrementDialog({
             type="button"
             size="sm"
             onClick={() => void submit()}
-            disabled={pending || sameTarget(selected, current)}
+            disabled={pending || !selected || !current || sameTarget(selected, current)}
           >
             {pending ? "Saving..." : "Save"}
           </Button>

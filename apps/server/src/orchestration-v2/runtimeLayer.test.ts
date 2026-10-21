@@ -2,6 +2,7 @@ import { verifyNativeRecovery } from "./usageLimitRecovery.testkit.ts";
 import * as StudioCapacity from "../studio/Capacity.ts";
 import { limitRecoveryCommand } from "./UsageLimitRecoveryWorker.ts";
 import { providerFallbackCommand } from "./ProviderFallbackWorker.ts";
+import { taskRoutingEscalationCommand } from "./TaskRoutingEscalationWorker.ts";
 import { provider as providerSnapshot } from "../studio/fixtures.ts";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -4936,6 +4937,182 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
       yield* orchestrator.dispatch(providerFallbackCommand(shell, providers, rule, nowMs)!);
       assert.lengthOf((yield* orchestrator.getThreadProjection(threadId)).runs, 2);
     }),
+  );
+  it.effect.each(["routed", "unrouted"] as const)(
+    "continues a failed %s run once on the escalation model, and nothing else reopens it",
+    (variant) =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const events = yield* EventSink.EventSinkV2;
+        const threadId = ThreadId.make(`route-escalate:${variant}`);
+        const projectId = ProjectId.make(`route-escalate:project:${variant}`);
+        const now = yield* DateTime.now;
+        const cheap = { instanceId: modelSelection.instanceId, model: "gpt-5.4-mini" };
+        yield* seedProject({
+          projectId,
+          title: "Routed project",
+          workspaceRoot: process.cwd(),
+          defaultModelSelection: modelSelection,
+          createdAt: DateTime.formatIso(now),
+        });
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make(`route-escalate:create:${variant}`),
+          threadId,
+          projectId,
+          title: "Routed thread",
+          modelSelection: cheap,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          createdBy: "user",
+          creationSource: "server",
+          ...(variant === "routed"
+            ? {
+                routing: {
+                  taskClass: "translation" as const,
+                  confidence: "high" as const,
+                  moved: true,
+                  tier: "economy" as const,
+                  selection: cheap,
+                  baseline: modelSelection,
+                  escalation: modelSelection,
+                  billing: "subscription" as const,
+                  reason: "Translation fits Economy: GPT-5.4 Mini instead of GPT-5.4.",
+                  signals: ["translate"],
+                  decidedAt: DateTime.formatIso(now),
+                },
+              }
+            : {}),
+        });
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make(`route-escalate:start:${variant}`),
+          threadId,
+          messageId: MessageId.make(`route-escalate:start:${variant}`),
+          text: "Translate the notes.",
+          attachments: [],
+          dispatchMode: { type: "defer_start" },
+          createdBy: "user",
+          creationSource: "web",
+        });
+        const [source] = (yield* orchestrator.getThreadProjection(threadId)).runs as [
+          OrchestrationV2Run,
+        ];
+        yield* events.write({
+          events: [
+            {
+              id: EventId.make(`route-escalate:stop:${variant}`),
+              type: "run.updated",
+              threadId,
+              occurredAt: now,
+              payload: { ...source, status: "failed", completedAt: now },
+            },
+            {
+              id: EventId.make(`route-escalate:error:${variant}`),
+              type: "turn-item.updated",
+              threadId,
+              occurredAt: now,
+              payload: {
+                id: TurnItemId.make(`route-escalate:error:${variant}`),
+                type: "error",
+                threadId,
+                runId: source.id,
+                nodeId: source.rootNodeId,
+                providerThreadId: null,
+                providerTurnId: null,
+                nativeItemRef: null,
+                parentItemId: null,
+                ordinal: 2,
+                status: "failed",
+                title: "Provider error",
+                startedAt: now,
+                completedAt: now,
+                updatedAt: now,
+                failure: {
+                  class: "provider_error",
+                  message: "The model gave up.",
+                  code: null,
+                  retryable: null,
+                  resetAt: null,
+                },
+              },
+            },
+          ],
+        });
+        // The run never started, so its workspace preparation ends with it.
+        const preparing = (yield* orchestrator.getThreadProjection(threadId)).turnItems.filter(
+          (item) =>
+            item.runId === source.id && item.status !== "failed" && item.status !== "completed",
+        );
+        if (preparing.length > 0)
+          yield* events.write({
+            events: preparing.map((item) => ({
+              id: EventId.make(`route-escalate:prepared:${item.id}`),
+              type: "turn-item.updated" as const,
+              threadId,
+              occurredAt: now,
+              payload: { ...item, status: "completed" as const, completedAt: now, updatedAt: now },
+            })),
+          });
+        const shell = (yield* orchestrator.getShellSnapshot()).threads.find(
+          (thread) => thread.id === threadId,
+        )!;
+        const providers = [
+          {
+            ...providerSnapshot(modelSelection.instanceId, "codex", DateTime.toEpochMillis(now)),
+            models: [
+              { slug: "gpt-5.4", name: "GPT-5.4", isCustom: false, capabilities: null },
+              { slug: "gpt-5.4-mini", name: "GPT-5.4 Mini", isCustom: false, capabilities: null },
+            ],
+          },
+        ];
+        if (variant === "unrouted") {
+          // Without a routing record nothing builds the command, and the Orchestrator
+          // still refuses a hand-made continuation of a failed run.
+          assert.isNull(taskRoutingEscalationCommand(shell, providers));
+          const exit = yield* orchestrator
+            .dispatch({
+              type: "message.dispatch",
+              commandId: CommandId.make(`route-escalate:manual:${variant}`),
+              threadId,
+              messageId: MessageId.make(`route-escalate:manual:${variant}`),
+              manualContinuationOfRunId: source.id,
+              modelSelection,
+              text: "Continue.",
+              attachments: [],
+              dispatchMode: { type: "start_immediately" },
+              createdBy: "user",
+              creationSource: "server",
+            })
+            .pipe(Effect.exit);
+          assert.equal(exit._tag, "Failure");
+          assert.lengthOf((yield* orchestrator.getThreadProjection(threadId)).runs, 1);
+          return;
+        }
+        assert.equal(shell.lastErrorClass, "provider_error");
+        const command = taskRoutingEscalationCommand(shell, providers);
+        assert.equal(command?.type, "message.dispatch");
+        yield* orchestrator.dispatch(command!);
+        const after = yield* orchestrator.getThreadProjection(threadId);
+        assert.lengthOf(after.runs, 2);
+        assert.deepEqual(
+          {
+            instanceId: after.runs[1]?.modelSelection.instanceId,
+            model: after.runs[1]?.modelSelection.model,
+          },
+          modelSelection,
+        );
+        assert.equal(after.thread.modelSelection.model, modelSelection.model);
+        // A replay of the one id is a receipt, and the moved thread no longer qualifies.
+        yield* orchestrator.dispatch(command!);
+        assert.lengthOf((yield* orchestrator.getThreadProjection(threadId)).runs, 2);
+        const moved = (yield* orchestrator.getShellSnapshot()).threads.find(
+          (thread) => thread.id === threadId,
+        )!;
+        assert.isNull(taskRoutingEscalationCommand(moved, providers));
+      }),
   );
   it.effect.each([
     "early",

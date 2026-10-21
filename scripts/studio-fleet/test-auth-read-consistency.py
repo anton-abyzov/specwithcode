@@ -17,6 +17,7 @@ from unittest.mock import patch
 
 import auth_heartbeat as heartbeat
 import update
+import update_read
 import database_continuity as continuity
 from launcher import runtime_path
 
@@ -97,7 +98,7 @@ class CoherentAuthRead(unittest.TestCase):
             self.advance()  # A separate connection commits while the RO snapshot remains open.
             return reader(db, expected)
 
-        with patch.object(update, 'read_auth_sessions_in_transaction', side_effect=concurrent_commit):
+        with patch.object(update_read, 'read_auth_sessions_in_transaction', side_effect=concurrent_commit):
             protected, private = update.rows_snapshot_with_auth(self.state)
         self.assertEqual(protected, baseline)
         self.assertEqual(private['rows'][0][private['columns'].index('last_connected_at')], OLD)
@@ -117,7 +118,7 @@ class CoherentAuthRead(unittest.TestCase):
             self.writer.commit()
             return reader(db, expected)
 
-        with patch.object(update, 'read_auth_sessions_in_transaction', side_effect=concurrent_schema_commit):
+        with patch.object(update_read, 'read_auth_sessions_in_transaction', side_effect=concurrent_schema_commit):
             paired, private = update.rows_snapshot_with_auth(self.state)
         self.assertEqual((paired, private), (before, original))
         fresh, fresh_auth = update.rows_snapshot_with_auth(self.state)
@@ -201,7 +202,7 @@ class CoherentAuthRead(unittest.TestCase):
         with patch.object(pathlib.Path, 'home', return_value=self.home), patch.object(pwd, 'getpwuid', return_value=types.SimpleNamespace(pw_name=user, pw_dir=str(self.home))), \
              patch.object(update, 'run', side_effect=transport), patch.object(update, 'listeners', side_effect=lambda p: [pid] if p == 8319 else []), \
              patch.object(update, 'capture_quiescence', return_value={'synthetic': 'idle'}), \
-             patch.object(update, 'read_auth_sessions_in_transaction', side_effect=concurrent_commit):
+             patch.object(update_read, 'read_auth_sessions_in_transaction', side_effect=concurrent_commit):
             public, private = update.snapshot_with_auth('m3')
         self.assertEqual(public['rows'], baseline)
         self.assertEqual(public['databaseCapture'], full_baseline)

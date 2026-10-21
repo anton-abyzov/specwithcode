@@ -59,6 +59,7 @@ import { SWEEP_SHELL_SNAPSHOT_MAX_AGE_MS } from "./ShellSnapshotCache.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
 import { recoverySnoozeBlocks } from "./usageLimitRecovery.ts";
 import { withSimulatedUsage } from "../usage/providerUsageSummary.ts";
+import * as TaskRoutingEscalationWorker from "./TaskRoutingEscalationWorker.ts";
 
 /** The shell snapshot is not free; the scheduler ticks every five seconds. */
 export const PROVIDER_FALLBACK_SWEEP_INTERVAL_MS = 30_000;
@@ -1861,4 +1862,9 @@ export const layer = Layer.effectDiscard(
     const scheduler = yield* Scheduler.Scheduler;
     yield* scheduler.register("provider-fallback", sweep());
   }),
-).pipe(Layer.provide(ProjectAdmission.layer));
+).pipe(
+  Layer.provide(ProjectAdmission.layer),
+  // Auto routing's escalation sweep needs the same services. It is wired here, not in
+  // runtimeLayer.ts: one more import there trips TS2589 in ws.ts's handler layer.
+  Layer.merge(TaskRoutingEscalationWorker.layer),
+);

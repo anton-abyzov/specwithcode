@@ -534,7 +534,7 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
       cancelAllUnsettled: ({ reason }) =>
         Effect.gen(function* () {
           const now = DateTime.formatIso(yield* DateTime.now);
-          // The same predicate as update.py's idle check: NULL or any status
+          // The same predicate as update_read.py's idle check: NULL or any status
           // that is not settled counts as unsettled.
           const rows = yield* sql<{
             readonly effect_id: string;

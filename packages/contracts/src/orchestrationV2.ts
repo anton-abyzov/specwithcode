@@ -63,6 +63,7 @@ import {
   OrchestrationGetTurnDiffResult,
 } from "./checkpointDiff.ts";
 import { ModelSelection } from "./modelSelection.ts";
+import { TaskRoutingDecision } from "./taskRouting.ts";
 import {
   ThreadLinkedPullRequest,
   ThreadPullRequestLink,
@@ -434,6 +435,8 @@ export const OrchestrationV2AppThread = Schema.Struct({
   snoozedUntil: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   snoozedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   limitRecovery: Schema.optional(Schema.NullOr(OrchestrationV2LimitRecovery)),
+  /** The Auto routing decision the thread was created with; absent when nothing routed it. */
+  routing: Schema.optional(Schema.NullOr(TaskRoutingDecision)),
   pinnedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   autoSettleDisabledAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   // Fractional-index slot in the user-arranged pinned order. Optional so
@@ -735,6 +738,8 @@ export const OrchestrationV2Subagent = Schema.Struct({
   prompt: Schema.String,
   title: Schema.NullOr(Schema.String),
   model: Schema.NullOr(Schema.String),
+  /** The Auto routing decision that chose `model`; absent when nothing routed it. */
+  routing: Schema.optional(Schema.NullOr(TaskRoutingDecision)),
   // Parent-wake policy for app-owned tasks: "always" offers a continuation on
   // every terminal (async delegations; queue_after_active sequences it behind
   // a live parent run), "settled_only" offers only when the parent has no
@@ -1977,6 +1982,7 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   lastError: Schema.optional(Schema.NullOr(Schema.String)),
   lastErrorClass: Schema.optional(Schema.NullOr(OrchestrationV2ProviderFailureClass)),
   usageLimitResetAt: Schema.optional(Schema.NullOr(IsoDateTime)),
+  routing: Schema.optional(Schema.NullOr(TaskRoutingDecision)),
   pendingRuntimeRequest: Schema.NullOr(OrchestrationV2PendingRuntimeRequestSummary),
   latestVisibleMessage: Schema.NullOr(OrchestrationV2LatestVisibleMessageSummary),
   latestUserMessageAt: Schema.NullOr(Schema.DateTimeUtc),
@@ -2768,6 +2774,7 @@ export const OrchestrationV2Command = Schema.Union([
     interactionMode: ProviderInteractionMode,
     branch: Schema.NullOr(TrimmedNonEmptyString),
     worktreePath: Schema.NullOr(TrimmedNonEmptyString),
+    routing: Schema.optional(TaskRoutingDecision),
     importedNativeThread: Schema.optional(
       Schema.Struct({
         ref: Schema.Struct({
@@ -3183,6 +3190,7 @@ export const OrchestrationV2Command = Schema.Union([
     task: TrimmedNonEmptyString,
     title: Schema.optional(TrimmedNonEmptyString),
     modelSelection: ModelSelection,
+    routing: Schema.optional(TaskRoutingDecision),
     runtimeMode: RuntimeMode,
     interactionMode: ProviderInteractionMode,
     // Omitted behaves as "settled_only" (no wake while the parent has a live
@@ -3424,6 +3432,8 @@ export const OrchestrationV2ThreadLaunchInput = Schema.Struct({
   title: TrimmedNonEmptyString,
   generateTitle: Schema.optional(Schema.Boolean),
   modelSelection: ModelSelection,
+  /** The Auto routing decision behind `modelSelection`, kept on the thread. */
+  routing: Schema.optional(TaskRoutingDecision),
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
   workspaceStrategy: OrchestrationV2ThreadLaunchWorkspaceStrategy,

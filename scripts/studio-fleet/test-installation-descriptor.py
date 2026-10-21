@@ -357,7 +357,10 @@ class GenericUpdate(unittest.TestCase):
         result = json.loads(case.output.read_text())
         self.assertEqual(result['phase'], 'verified')
         self.assertEqual((result['after']['uid'], result['after']['port'], result['after']['webSessionPolicy']), (502, 24319, 'browser-cookie'))
-        self.assertEqual(case.restart_calls, [['/bin/launchctl', 'kickstart', '-k', 'gui/502/com.specweave.studio.studio-lab-7']])
+        # The restart unloads this job (its copy is taken then) and loads it again, in its own domain.
+        self.assertEqual(case.restart_calls, [['/bin/launchctl', 'bootstrap', 'gui/502', str(case.plist)]])
+        self.assertIn(['/bin/launchctl', 'bootout', 'gui/502/com.specweave.studio.studio-lab-7'], self.commands)
+        self.assertEqual(self.stop_ports, [24319])
         self.assertEqual(case.quiescence_checks, [case.before['processQuiescence']])
 
     def test_generic_rollback_preserves_owner_domain_port_and_previous_bytes(self):
@@ -365,7 +368,7 @@ class GenericUpdate(unittest.TestCase):
         with self.assertRaises(AssertionError): case.execute()
         result = json.loads(case.output.read_text())
         self.assertEqual(result['rollback'], 'restored-runtime-pointers-and-state')
-        self.assertEqual(self.stop_ports, [24319])
+        self.assertEqual(self.stop_ports, [24319, 24319])  # The restart's stop, then the rollback's.
         self.assertIn(['/bin/launchctl', 'bootout', 'gui/502/com.specweave.studio.studio-lab-7'], self.commands)
         self.assertIn(['/bin/launchctl', 'bootstrap', 'gui/502', str(case.plist)], self.commands)
         self.assertTrue(all(path.read_bytes() == value for path, value in case.original.items()))
@@ -375,7 +378,8 @@ class GenericUpdate(unittest.TestCase):
         case.after_mutation = lambda after: after.update(archiveSha256='foreign-artifact')
         with self.assertRaises(AssertionError): case.execute()
         self.assertEqual(json.loads(case.output.read_text())['rollback'], 'held-new-release-rollback-checks-failed')
-        self.assertEqual(case.launchd, []); self.assertEqual(case.stops, [])
+        # Only the restart's own stop and start: the rollback never stops the busy new release.
+        self.assertEqual(case.launchd, ['bootout', 'bootstrap']); self.assertEqual(case.stops, [100])
 
     def test_generic_migration_and_normal_heartbeat_receive_authorized_policy(self):
         for migrations in (False, True):

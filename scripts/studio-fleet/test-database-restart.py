@@ -188,11 +188,33 @@ class RestartFallback(unittest.TestCase):
         detached.start()
         self.addCleanup(detached.stop)
         self.settings(installMode='force', installRequestedAt=REQUEST)
+        stop = mock.patch.object(update, 'stop_then_start_service', mock.Mock())
+        stopper = stop.start()
+        self.addCleanup(stop.stop)
         self.assertIsNone(self.refuse(0, update.DETACHED_DATABASE))  # Idle on disk proves nothing.
-        self.restart.assert_not_called()
+        stopper.assert_not_called()
         update.assert_held.side_effect = None
         self.assertEqual(self.refuse(0, update.DETACHED_DATABASE), 'REFUSAL restart-needed detached restarted=1')
-        self.assert_restarted_once()
+        # Stopped so it can save the deleted log, never `kickstart -k`.
+        stopper.assert_called_once_with('gui/501', 'com.specweave.studio.m4', 100)
+        self.restart.assert_not_called()
+
+    def test_a_deleted_log_service_that_does_not_stop_in_time_is_left_running(self):
+        detached = mock.patch.object(update, 'assert_database_attached',
+                                     mock.Mock(side_effect=AssertionError(update.DETACHED_DATABASE)))
+        detached.start()
+        self.addCleanup(detached.stop)
+        stop = mock.patch.object(update, 'stop_then_start_service',
+                                 mock.Mock(side_effect=AssertionError(update.DETACHED_STOP_TIMEOUT)))
+        stop.start()
+        self.addCleanup(stop.stop)
+        self.settings(installMode='force', installRequestedAt=REQUEST)
+        update.assert_held.side_effect = None
+        self.assertEqual(self.refuse(0, update.DETACHED_DATABASE), 'REFUSAL restart-needed detached retry=1800')
+        self.assertEqual(self.records()[0]['result'], 'stop-timed-out')
+        self.restart.assert_not_called()
+        # The next attempt waits RESTART_EVERY.
+        self.assertEqual(self.refuse(5, update.DETACHED_DATABASE), 'REFUSAL restart-needed detached retry=1500')
 
     def test_work_that_starts_while_lsof_runs_is_not_killed(self):
         # The quiet window has passed; a run starts during the (slow) lsof check.
@@ -308,6 +330,40 @@ class AgentText(unittest.TestCase):
         self.assertEqual(database_restart.refusal('locks-lost', wait=5, others=1),
                          'REFUSAL restart-needed locks-lost others=1 wait=5')
 
+
+
+class StopThenStartTest(unittest.TestCase):
+    """update.stop_then_start_service: SIGTERM, wait, never SIGKILL, start without -k."""
+
+    def setUp(self):
+        self.signals, self.commands, self.alive = [], [], [True, True, False]
+
+        def kill(pid, sig):
+            self.signals.append((pid, sig))
+            if sig == 0 and not self.alive.pop(0):
+                raise ProcessLookupError(pid)
+        for target, name, value in ((update.os, 'kill', kill),
+                                    (update, 'run', lambda command, **options: self.commands.append(command)),
+                                    (update.time, 'sleep', lambda seconds: None)):
+            patcher = mock.patch.object(target, name, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+
+    def test_terms_waits_for_exit_then_starts_without_kill(self):
+        update.stop_then_start_service('gui/501', 'com.specweave.studio.m4', 100)
+        self.assertEqual(self.signals[0], (100, update.signal.SIGTERM))
+        self.assertNotIn((100, update.signal.SIGKILL), self.signals)
+        self.assertEqual(self.commands, [['/bin/launchctl', 'kickstart', 'gui/501/com.specweave.studio.m4']])
+
+    def test_a_service_still_running_at_the_deadline_is_not_killed(self):
+        self.alive = [True] * 1000
+        clock = iter(range(0, 10000, 30))
+        with mock.patch.object(update.time, 'monotonic', lambda: next(clock)):
+            with self.assertRaises(AssertionError) as raised:
+                update.stop_then_start_service('gui/501', 'com.specweave.studio.m4', 100, timeout=60)
+        self.assertEqual(str(raised.exception), update.DETACHED_STOP_TIMEOUT)
+        self.assertEqual({sig for _, sig in self.signals}, {update.signal.SIGTERM, 0})
+        self.assertEqual(self.commands, [])
 
 if __name__ == '__main__':
     unittest.main()
