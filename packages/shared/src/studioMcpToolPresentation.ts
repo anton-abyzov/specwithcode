@@ -24,6 +24,7 @@ export type StudioMcpToolSummaryAction =
   | "thread-stop-all"
   | "thread-continue-all"
   | "thread-migrate"
+  | "thread-continue-here"
   | "thread-configuration"
   | "thread-configure"
   | "thread-fork"
@@ -166,6 +167,14 @@ const STUDIO_MCP_TOOLS: Readonly<Record<string, StudioMcpToolDefinition>> = {
   studio_thread_migrate: tool(
     ["Move", "Moving", "Moved", "SpecWithCode threads to another machine"],
     "thread-migrate",
+  ),
+  studio_handoff_ready_list: tool(
+    ["List", "Listing", "Listed", "SpecWithCode threads ready to continue here"],
+    "thread-list",
+  ),
+  studio_thread_continue_here: tool(
+    ["Continue", "Continuing", "Continued", "a SpecWithCode thread on this machine"],
+    "thread-continue-here",
   ),
   studio_worktree_handoff: tool(
     ["Hand off", "Handing off", "Handed off", "thread to a git worktree"],

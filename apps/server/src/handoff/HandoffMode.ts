@@ -2,8 +2,8 @@
  * Handoff mode (0967): checkpoints a thread's work after every turn and on an
  * interval, keeps one lease per thread with a growing epoch, and fences a
  * copy that another machine continued so no turn or external side effect
- * runs twice. Moving threads between machines lands in a later update; this
- * service already owns the state those moves read and write.
+ * runs twice. The moves themselves (HandoffMoves) need the fleet, which is
+ * built after this service, so they attach late through `attachMoves`.
  */
 import {
   HANDOFF_NOTE_MAX_WORDS,
@@ -17,6 +17,9 @@ import {
   type HandoffMachineRun,
   HandoffModeError,
   type HandoffModeSnapshot,
+  type HandoffPreflightInput,
+  type HandoffPreflightResult,
+  type EnvironmentId,
   type ModelSelection,
   type HandoffNote,
   type HandoffThreadState,
@@ -85,9 +88,34 @@ export interface SideEffectInput {
   readonly target: string;
 }
 
+/** The moves between machines and models, provided by HandoffMoves once the fleet exists. */
+export interface HandoffMovesPort {
+  readonly handOff: (input: HandOffInput) => Effect.Effect<HandOffResult, HandoffModeError>;
+  readonly handOffMachine: (
+    input: HandOffMachineInput,
+  ) => Effect.Effect<HandoffMachineRun, HandoffModeError>;
+  readonly continueHere: (
+    input: HandoffContinueHereInput,
+  ) => Effect.Effect<HandOffResult, HandoffModeError>;
+  readonly resumeFenced: Effect.Effect<HandoffModeSnapshot, HandoffModeError>;
+  readonly preflight: (
+    input: HandoffPreflightInput,
+  ) => Effect.Effect<ReadonlyArray<HandoffPreflightResult>, HandoffModeError>;
+  /** Heartbeats leases to the machines that hold replicas; marks silent sources unknown. */
+  readonly tick: Effect.Effect<void>;
+}
+
 export class HandoffMode extends Context.Service<
   HandoffMode,
   {
+    readonly environmentId: EnvironmentId;
+    readonly machineLabel: string;
+    /** The handoff document, shared with the turn gate (one cached file). */
+    readonly document: Effect.Effect<HandoffDocument, HandoffModeError>;
+    readonly updateDocument: <A>(
+      change: (document: HandoffDocument) => readonly [A, HandoffDocument],
+    ) => Effect.Effect<A, HandoffModeError>;
+    readonly attachMoves: (port: HandoffMovesPort) => Effect.Effect<void>;
     readonly snapshot: Effect.Effect<HandoffModeSnapshot, HandoffModeError>;
     readonly updateConfig: (
       patch: HandoffConfigPatch,
@@ -116,6 +144,9 @@ export class HandoffMode extends Context.Service<
       input: HandoffContinueHereInput,
     ) => Effect.Effect<HandOffResult, HandoffModeError>;
     readonly resumeFenced: Effect.Effect<HandoffModeSnapshot, HandoffModeError>;
+    readonly preflight: (
+      input: HandoffPreflightInput,
+    ) => Effect.Effect<ReadonlyArray<HandoffPreflightResult>, HandoffModeError>;
     /**
      * May this machine act for the thread now? `runId` checks the epoch the
      * run started under. Never fails: a store it cannot read counts as unleased.
@@ -134,11 +165,7 @@ export class HandoffMode extends Context.Service<
   }
 >()("specweave-studio/handoff/HandoffMode") {}
 
-const later = (what: string) =>
-  new HandoffModeError({
-    code: "failed",
-    message: `${what} arrives in a later SpecWithCode update.`,
-  });
+const notStarted = new HandoffModeError({ code: "busy", message: "Handoff is still starting." });
 
 const describe = (cause: unknown): string => {
   if (cause instanceof Error) return cause.message.slice(0, 500);
@@ -157,6 +184,7 @@ export const make = Effect.gen(function* () {
   const environmentId = yield* environment.getEnvironmentId;
   const machineLabel = (yield* environment.getDescriptor).label;
   const nowIso = Effect.map(DateTime.now, DateTime.formatIso);
+  let moves: HandoffMovesPort | null = null;
 
   const shellOf = (threadId: ThreadId) =>
     projections.getThreadShell(threadId).pipe(
@@ -339,7 +367,7 @@ export const make = Effect.gen(function* () {
       const shell = yield* shellOf(threadId);
       const record = document.threads[threadId] ?? emptyThreadRecord(shell.projectId);
       const effectiveMode = effectiveHandoffMode(document, shell.projectId, record.mode);
-      if (effectiveMode === "off" && reason !== "manual") return null;
+      if (effectiveMode === "off" && reason !== "manual" && reason !== "handoff") return null;
       if (record.continuedOn !== null) {
         if (reason !== "manual") return null;
         return yield* new HandoffModeError({
@@ -411,6 +439,7 @@ export const make = Effect.gen(function* () {
         reason,
         skipped: [...written.skipped],
         excludedSecretCount: written.excludedSecretCount,
+        requiredSecretPaths: [...written.requiredSecretPaths],
         transcriptMessageCount: messages.length,
         note,
         pushedToOrigin,
@@ -581,19 +610,34 @@ export const make = Effect.gen(function* () {
           yield* checkpoint(threadId, "interval").pipe(Effect.ignore);
         }
       }
-    }).pipe(Effect.catchCause((cause) => Effect.logWarning("Handoff mode tick failed", { cause })));
+    }).pipe(
+      Effect.catchCause((cause) => Effect.logWarning("Handoff mode tick failed", { cause })),
+      Effect.andThen(Effect.suspend(() => moves?.tick ?? Effect.void)),
+    );
+
+  const viaMoves = <A>(use: (port: HandoffMovesPort) => Effect.Effect<A, HandoffModeError>) =>
+    Effect.suspend(() => (moves === null ? Effect.fail(notStarted) : use(moves)));
 
   return HandoffMode.of({
+    environmentId,
+    machineLabel,
+    document: store.read,
+    updateDocument: store.update,
+    attachMoves: (port) =>
+      Effect.sync(() => {
+        moves = port;
+      }),
     snapshot,
     updateConfig,
     setThreadMode,
     setProjectMode,
     checkpointNow,
     checkpoint,
-    handOff: () => Effect.fail(later("Handing a thread off")),
-    handOffMachine: () => Effect.fail(later("Handing a machine off")),
-    continueHere: () => Effect.fail(later("Continuing a thread here")),
-    resumeFenced: Effect.fail(later("Resuming a fenced thread")),
+    handOff: (input) => viaMoves((port) => port.handOff(input)),
+    handOffMachine: (input) => viaMoves((port) => port.handOffMachine(input)),
+    continueHere: (input) => viaMoves((port) => port.continueHere(input)),
+    resumeFenced: viaMoves((port) => port.resumeFenced),
+    preflight: (input) => viaMoves((port) => port.preflight(input)),
     fence,
     guardSideEffect: guard,
     recordSideEffect: record,
@@ -617,6 +661,7 @@ export const layerRpcHandlers = WsHandoffModeRpcGroup.middleware(RpcInstrumentat
       [WS_METHODS.handoffModeHandOffMachine]: handoff.handOffMachine,
       [WS_METHODS.handoffModeContinueHere]: handoff.continueHere,
       [WS_METHODS.handoffModeResumeFenced]: () => handoff.resumeFenced,
+      [WS_METHODS.handoffModePreflight]: handoff.preflight,
     };
   }),
 );

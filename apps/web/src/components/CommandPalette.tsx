@@ -60,6 +60,7 @@ import {
 import { useLocation, useNavigate, useParams } from "@tanstack/react-router";
 import * as Option from "effect/Option";
 import {
+  ArrowRightLeftIcon,
   ActivityIcon,
   AppWindowIcon,
   ArrowLeftIcon,
@@ -87,6 +88,7 @@ import {
   SunIcon,
   TextSearchIcon,
 } from "lucide-react";
+import { requestHandOffMachine } from "./handoff/HandOffMachineDialog";
 import { useModsStore } from "../mods/modsStore";
 import {
   useCallback,
@@ -2621,6 +2623,17 @@ function OpenCommandPaletteDialog(props: {
     icon: <ActivityIcon className={ITEM_ICON_CLASS} />,
     run: async () => {
       await navigate({ to: "/status" });
+    },
+  });
+
+  actionItems.push({
+    kind: "action",
+    value: "action:handoff-machine",
+    searchTerms: ["hand off", "handoff", "machine", "move threads", "sleep", "close laptop"],
+    title: "Hand off this machine…",
+    icon: <ArrowRightLeftIcon className={ITEM_ICON_CLASS} />,
+    run: async () => {
+      requestHandOffMachine();
     },
   });
 

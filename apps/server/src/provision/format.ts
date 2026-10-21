@@ -37,7 +37,7 @@ export function formatReadback(readback: ProvisionReadback): string {
   }
   lines.push(
     `  Home:    ${readback.service.home ?? "unknown"}`,
-    `  Server:  wanted ${readback.server.wanted}, found ${readback.server.found ?? "none"}; service ${readback.service.installed ? (readback.service.active ? "running" : "stopped") : "not installed"}${readback.service.unit ? ` (${readback.service.unit})` : ""}`,
+    `  Server:  wanted ${readback.server.wanted}, found ${readback.server.found ?? "none"}; service ${readback.service.managerError !== undefined ? "unknown (user manager unreachable)" : readback.service.installed ? (readback.service.active ? "running" : "stopped") : "not installed"}${readback.service.unit ? ` (${readback.service.unit})` : ""}`,
     "",
   );
   for (const item of readback.items) lines.push(formatItemLine(item));

@@ -39,8 +39,9 @@ describe("SpecWithCode orchestration provider instructions", () => {
     assert.notInclude(STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS, "<browser_automation>");
     // About 350 tokens; it was about 1,900. The computer-use line routes
     // native-app requests that tool names alone did not; the machines line
-    // separates launching on a machine from moving a running thread.
-    assert.isAtMost(STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS.length, 1_560);
+    // separates launching on a machine, moving a running thread and continuing
+    // another machine's handoff-ready thread.
+    assert.isAtMost(STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS.length, 1_680);
   });
 
   it("separates launching on a machine from moving an existing thread", () => {
@@ -51,6 +52,10 @@ describe("SpecWithCode orchestration provider instructions", () => {
     assert.include(
       STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS,
       "Switching the viewed orchestrator never moves a thread",
+    );
+    assert.include(
+      STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS,
+      "`studio_handoff_ready_list` and `studio_thread_continue_here` pick up another machine's handoff-ready threads",
     );
   });
 

@@ -25,6 +25,7 @@ import {
 import { latestWorkStep } from "../studio/coordinatorProgress";
 import { threadBlocker } from "../studio/projectWorkspaceModel";
 import { useMachineNicknames } from "../studio/machineNickname";
+import { threadHandoffState, useHandoffModeSnapshot } from "../studio/handoffMode";
 import { useOpenThread } from "../hooks/useOpenThread";
 import { runThreadLifecycleShortcut } from "../lib/threadLifecycleShortcut";
 import { settleAfter, settleCaught } from "../lib/settle";
@@ -99,6 +100,7 @@ import {
   clearQuestionAttachmentDraft,
   useQuestionAttachmentPreparation,
 } from "../questionAttachments";
+import { planQuestionChatReply, type QuestionChatReply } from "../questionChatReply";
 import { useAttachmentUploadStore } from "../lib/attachmentUploadQueue";
 import {
   AuthOrchestrationOperateScope,
@@ -8866,8 +8868,47 @@ function useChatViewActions(
   );
   const movedTo = serverProjection?.thread.movedTo ?? null;
   const movedFrom = serverProjection?.thread.movedFrom ?? null;
+  // Handoff mode: another machine continues this thread, so this copy takes no new turns.
+  const handoffSnapshot = useHandoffModeSnapshot(activeThread?.environmentId ?? null).snapshot;
+  const handoffMachineName = useMachineNicknames();
+  const handoffContinuedOn =
+    activeThread === undefined
+      ? null
+      : (threadHandoffState(handoffSnapshot, activeThread.id)?.continuedOn ?? null);
   const threadMoveBannerItem = useMemo<ComposerBannerStackItem | null>(() => {
     const link = movedTo ?? movedFrom;
+    if (link === null && handoffContinuedOn !== null && activeThread !== undefined) {
+      const machine = handoffMachineName(
+        handoffContinuedOn.environmentId,
+        handoffContinuedOn.machineLabel,
+      );
+      const continuation = scopeThreadRef(
+        handoffContinuedOn.environmentId,
+        handoffContinuedOn.threadId,
+      );
+      return {
+        id: `thread-handoff-continued:${activeThread.id}`,
+        variant: "info",
+        icon: <FolderInputIcon />,
+        title: `Continued on ${machine}`,
+        description:
+          "This thread handed off. It is read-only here; send new messages in the continuation.",
+        actions: (
+          <Button
+            size="xs"
+            variant="ghost"
+            onClick={() =>
+              void navigate({
+                to: "/$environmentId/$threadId",
+                params: buildThreadRouteParams(continuation),
+              })
+            }
+          >
+            Open continuation
+          </Button>
+        ),
+      };
+    }
     if (link === null || activeThread === undefined) return null;
     const projectTitle =
       allProjects.find(
@@ -8907,7 +8948,15 @@ function useChatViewActions(
             </Button>
           ),
         };
-  }, [activeThread, allProjects, movedFrom, movedTo, navigate]);
+  }, [
+    activeThread,
+    allProjects,
+    handoffContinuedOn,
+    handoffMachineName,
+    movedFrom,
+    movedTo,
+    navigate,
+  ]);
   const settledNote = activeThreadSettled ? (serverProjection?.thread.settledNote ?? null) : null;
   const parkedThreadBannerItem = useMemo<ComposerBannerStackItem | null>(() => {
     if (!activeThreadSnoozed && !activeThreadSettled) {
@@ -11644,6 +11693,20 @@ export default function ChatView(props: ChatViewProps) {
         notifyDirectAnnotationAttached();
         return;
       }
+      // Whatever is in the composer answers the question in chat.
+      const reply = planQuestionChatReply({
+        draft: useComposerDraftStore.getState().getComposerDraft(composerDraftTarget),
+        allowCustomAnswer: activePendingProgress.activeQuestion?.allowCustomAnswer,
+        supportsQuestionAttachments,
+      });
+      if (reply.kind === "blocked") {
+        setThreadError(activeThreadId, reply.reason);
+        return;
+      }
+      if (reply.kind === "reply") {
+        await onReplyToActivePendingUserInputInChat(reply);
+        return;
+      }
       onAdvanceActivePendingUserInput();
       return;
     }
@@ -13088,7 +13151,15 @@ export default function ChatView(props: ChatViewProps) {
   );
 
   const onRespondToUserInput = useCallback(
-    async (requestId: RuntimeRequestId, answers: Record<string, unknown>) => {
+    async (
+      requestId: RuntimeRequestId,
+      answers: Record<string, unknown>,
+      /** Files sent from the chat composer with the reply to one question. */
+      chatReply?: {
+        readonly questionId: string;
+        readonly attachments: ReadonlyArray<ContractChatAttachment>;
+      },
+    ) => {
       if (!activeThreadId || !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope))
         return;
       const pendingInput = pendingUserInputs.find((input) => input.requestId === requestId);
@@ -13109,8 +13180,10 @@ export default function ChatView(props: ChatViewProps) {
         if ((useQuestionAttachmentPreparation.getState().counts[target] ?? 0) > 0) return;
         const draft = useComposerDraftStore.getState().getComposerDraft(target);
         const attachments = draft ? [...draft.images, ...draft.files] : [];
-        if (attachments.length === 0) continue;
-        const uploaded = getUploadedAttachments({ environmentId, images: attachments });
+        const fromChat = chatReply?.questionId === question.id ? chatReply.attachments : [];
+        if (attachments.length === 0 && fromChat.length === 0) continue;
+        const fromDraft = getUploadedAttachments({ environmentId, images: attachments });
+        const uploaded = fromDraft ? [...fromDraft, ...fromChat] : null;
         if (!uploaded) {
           setThreadError(
             activeThreadId,
@@ -13137,6 +13210,7 @@ export default function ChatView(props: ChatViewProps) {
           ...(attachmentsByQuestionId.size > 0
             ? { attachmentsByQuestionId: Object.fromEntries(attachmentsByQuestionId) }
             : {}),
+          ...(chatReply ? { answeredInChat: true } : {}),
         },
       });
       if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
@@ -13243,31 +13317,22 @@ export default function ChatView(props: ChatViewProps) {
           },
         };
       });
-      promptRef.current = "";
-      composerRef.current?.resetCursorState({ cursor: 0 });
     },
     [
       activePendingProgress?.activeQuestion,
       activePendingUserInput,
       activePendingRequestKey,
       composerDraftTarget,
-      composerRef,
       pendingUserInputAnswersByRequestId,
       setComposerDraftPrompt,
       activePendingProgress,
       setPendingUserInputAnswersByRequestId,
-      promptRef,
     ],
   );
 
+  // The answer box of the review-only request panel; the chat composer keeps the thread draft.
   const onChangeActivePendingUserInputCustomAnswer = useCallback(
-    (
-      questionId: string,
-      value: string,
-      nextCursor: number,
-      expandedCursor: number,
-      _cursorAdjacentToMention: boolean,
-    ) => {
+    (questionId: string, value: string) => {
       if (!activePendingUserInput) {
         return;
       }
@@ -13275,7 +13340,6 @@ export default function ChatView(props: ChatViewProps) {
       if (!question || question.allowCustomAnswer === false) {
         return;
       }
-      promptRef.current = value;
       setPendingUserInputAnswersByRequestId((existing) => ({
         ...existing,
         [activePendingRequestKey]: {
@@ -13286,22 +13350,8 @@ export default function ChatView(props: ChatViewProps) {
           ),
         },
       }));
-      const snapshot = composerRef.current?.readSnapshot();
-      if (
-        snapshot?.value !== value ||
-        snapshot.cursor !== nextCursor ||
-        snapshot.expandedCursor !== expandedCursor
-      ) {
-        composerRef.current?.focusAt(nextCursor);
-      }
     },
-    [
-      activePendingUserInput,
-      activePendingRequestKey,
-      composerRef,
-      promptRef,
-      setPendingUserInputAnswersByRequestId,
-    ],
+    [activePendingUserInput, activePendingRequestKey, setPendingUserInputAnswersByRequestId],
   );
 
   const onAdvanceActivePendingUserInput = useCallback(() => {
@@ -13327,6 +13377,67 @@ export default function ChatView(props: ChatViewProps) {
     onRespondToUserInput,
     setActivePendingUserInputQuestionIndex,
   ]);
+
+  /**
+   * Answers the active question with the chat composer's text and files. The
+   * draft stays in the composer until the answer is accepted.
+   */
+  const onReplyToActivePendingUserInputInChat = async (
+    reply: Extract<QuestionChatReply, { kind: "reply" }>,
+  ) => {
+    const request = activePendingUserInput;
+    const question = activePendingProgress?.activeQuestion;
+    if (!request || !question || !activePendingProgress || !activeThreadId) return;
+    if (request.responseCapability === "not_resumable") return;
+    const files = [...reply.images, ...reply.files];
+    const uploaded = getUploadedAttachments({ environmentId, images: files });
+    if (!uploaded) {
+      setThreadError(
+        activeThreadId,
+        "Wait for attachments to finish uploading, or remove failed uploads.",
+      );
+      return;
+    }
+    const store = useComposerDraftStore.getState();
+    const sentDraft = store.getComposerDraft(composerDraftTarget);
+    const clearSentDraft = () => {
+      if (useComposerDraftStore.getState().getComposerDraft(composerDraftTarget) !== sentDraft)
+        return;
+      promptRef.current = "";
+      clearComposerDraftContent(composerDraftTarget);
+      composerRef.current?.resetCursorState({ cursor: 0 });
+    };
+    if (!activePendingProgress.isLastQuestion) {
+      // Later questions still wait: the reply becomes this question's answer
+      // and its files move to the answer, keeping their uploads.
+      const target = questionAttachmentDraftId(
+        environmentId,
+        activeThreadId,
+        request.requestId,
+        question.id,
+      );
+      if (reply.images.length > 0) store.addImages(target, [...reply.images]);
+      if (reply.files.length > 0)
+        store.addFiles(target, [...reply.files], { appendReference: false });
+      onChangeActivePendingUserInputCustomAnswer(question.id, reply.text);
+      clearSentDraft();
+      setActivePendingUserInputQuestionIndex(activePendingProgress.questionIndex + 1);
+      return;
+    }
+    const answers = buildPendingUserInputAnswers(request.questions, {
+      ...activePendingDraftAnswers,
+      [question.id]: { customAnswer: reply.text, attachmentCount: files.length },
+    });
+    if (!answers) {
+      setThreadError(activeThreadId, "Answer each question on the card before sending.");
+      return;
+    }
+    const result = await onRespondToUserInput(request.requestId, answers, {
+      questionId: question.id,
+      attachments: uploaded,
+    });
+    if (result?._tag === "Success") clearSentDraft();
+  };
 
   const onPreviousActivePendingUserInputQuestion = useCallback(() => {
     if (!activePendingProgress) {
@@ -14130,9 +14241,7 @@ export default function ChatView(props: ChatViewProps) {
         progress={activePendingProgress}
         respondingQuestions={respondingUserInputRequestIds}
         onOption={onSelectActivePendingUserInputOption}
-        onCustomAnswer={(id, value) =>
-          onChangeActivePendingUserInputCustomAnswer(id, value, value.length, value.length, false)
-        }
+        onCustomAnswer={onChangeActivePendingUserInputCustomAnswer}
         questionAttachmentContext={
           supportsQuestionAttachments && supportsAttachmentUploads && activeThreadId
             ? { environmentId, threadId: activeThreadId, maxFileBytes: maxFileAttachmentBytes }
@@ -14770,9 +14879,6 @@ export default function ChatView(props: ChatViewProps) {
                               onDismissActivePendingUserInput={onDismissUserInput}
                               onPreviousActivePendingUserInputQuestion={
                                 onPreviousActivePendingUserInputQuestion
-                              }
-                              onChangeActivePendingUserInputCustomAnswer={
-                                onChangeActivePendingUserInputCustomAnswer
                               }
                               onProviderModelSelect={onProviderModelSelect}
                               onOpenProviderSetup={openProviderSetup}

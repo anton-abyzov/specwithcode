@@ -1,6 +1,7 @@
 import * as ProjectRuntimeAccess from "../project/ProjectRuntimeAccess.ts";
 import * as MachineHandoff from "../fleet/MachineHandoff.ts";
 import * as HandoffMode from "../handoff/HandoffMode.ts";
+import * as HandoffTurnGate from "../handoff/HandoffTurnGate.ts";
 import * as CoordinatorReplicas from "../project/CoordinatorReplicas.ts";
 import * as ProjectLink from "../project/ProjectLink.ts";
 import * as LinkedMemoryHistory from "../project/LinkedMemoryHistory.ts";
@@ -289,6 +290,8 @@ const layerOrchestratorProvided = Orchestrator.layer.pipe(
       layerProviderSwitchServiceProvided,
       layerRunExecutionServiceProvided,
       ThreadForkService.layer,
+      // Shares HandoffModeStore.layer with HandoffMode.layer (one cached document).
+      HandoffTurnGate.layer,
     ),
   ),
 );

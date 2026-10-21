@@ -1271,14 +1271,6 @@
   }
 }
 
-@utility project-routine {
-  padding: 20px 0;
-  border-bottom: 1px solid var(--desk-line);
-  & h3 {
-    font-weight: 550;
-  }
-}
-
 @utility project-project-links {
   display: flex;
   gap: 8px;

@@ -1588,6 +1588,10 @@ export function ProjectWorkspaceSurface({
                   admissionBlocked={Boolean(
                     snapshot?.settings.paused || snapshot?.settings.archived,
                   )}
+                  personal={snapshot?.settings.kind === "personal"}
+                  modelSelection={model ?? null}
+                  machineLabel={machineName}
+                  onOpenThread={openThread}
                   bar={paneBar}
                 />
               ) : (

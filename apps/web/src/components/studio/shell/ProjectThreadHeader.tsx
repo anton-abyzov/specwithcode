@@ -47,6 +47,9 @@ import { isCoordinatorNamedThread, threadTitleTip } from "../../../studio/thread
 import { ModelBadge } from "./ModelBadge";
 import { SubagentsChip } from "./SubagentsChip";
 import { Tip } from "./Tip";
+import { HandoffThreadHeaderBadge } from "../../handoff/HandoffBadge";
+import { useOpenThread } from "../../../hooks/useOpenThread";
+import { usePrimaryEnvironmentId } from "../../../state/environments";
 
 const FOLDED_CONTROL_ICONS: ReadonlyArray<readonly [RegExp, string]> = [
   [/thread details/i, "square-menu"],
@@ -128,6 +131,8 @@ export function ProjectThreadHeader(props: {
     },
   });
   const menuButton = useRef<HTMLButtonElement>(null);
+  const localEnvironmentId = usePrimaryEnvironmentId();
+  const { openThread } = useOpenThread();
   const settled = thread.settledOverride === "settled";
   const archived = thread.archivedAt !== null;
   const resolveLabel = archived || settled ? "Reopen" : "Resolve";
@@ -223,6 +228,15 @@ export function ProjectThreadHeader(props: {
             </button>
           ) : null}
         </span>
+        <HandoffThreadHeaderBadge
+          environmentId={thread.environmentId}
+          threadId={thread.id}
+          localEnvironmentId={localEnvironmentId}
+          canOperate={props.canChange}
+          onOpenThread={(threadId, environmentId) =>
+            void openThread(scopeThreadRef(environmentId, threadId))
+          }
+        />
         {/* Outside the chip row, which clips as the panel narrows: subagents stay reachable. */}
         <SubagentsChip
           environmentId={thread.environmentId}

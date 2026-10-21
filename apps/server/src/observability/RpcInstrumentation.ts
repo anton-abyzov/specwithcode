@@ -46,6 +46,7 @@ const RPC_AGGREGATES = {
   [WS_METHODS.handoffModeHandOffMachine]: "handoffMode",
   [WS_METHODS.handoffModeContinueHere]: "handoffMode",
   [WS_METHODS.handoffModeResumeFenced]: "handoffMode",
+  [WS_METHODS.handoffModePreflight]: "handoffMode",
   [WS_METHODS.machineHandoffPrepare]: "projects",
   [WS_METHODS.machineHandoffReceive]: "projects",
   [WS_METHODS.projectsFingerprint]: "projects",

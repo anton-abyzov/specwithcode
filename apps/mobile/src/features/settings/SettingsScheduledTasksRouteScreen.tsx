@@ -73,6 +73,7 @@ import {
   scheduleFromDraft,
   type ScheduledTaskDraft as Draft,
 } from "./scheduledTaskDraft";
+import { routineCadenceLabel } from "@specweave-studio/shared/routineBrief";
 import { settingsTargetsForProject } from "./settings-environment-filter.logic";
 import { useScheduledTaskEditor } from "./scheduled-task-editor";
 import { scheduledTaskEditorSessionAtom } from "./scheduled-task-editor-state";
@@ -100,6 +101,8 @@ const DAYS = [
 ] as const;
 
 function describeSchedule(task: ScheduledTask): string {
+  if (task.schedule.type === "manual" || task.schedule.type === "monthly")
+    return routineCadenceLabel(task.schedule);
   if (task.schedule.type === "webhook") return "On webhook";
   if (task.schedule.type === "interval") return formatScheduledTaskInterval(task.schedule.everyMs);
   const days = task.schedule.weekdays?.length ? repeatLabel(task.schedule.weekdays) : "Every day";
@@ -847,6 +850,8 @@ function TaskForm({
               { value: "fixed_time", label: "At a time" },
               { value: "interval", label: "Interval" },
               { value: "webhook", label: "On webhook" },
+              // A manual or monthly routine keeps its cadence unless another is picked.
+              ...(draft.schedule.kept ? [{ value: "kept" as const, label: "As set" }] : []),
             ]}
             selected={draft.schedule.mode}
             onSelect={(mode) => {
@@ -932,6 +937,10 @@ function TaskForm({
               }}
             />
           </>
+        ) : draft.schedule.mode === "kept" && draft.schedule.kept ? (
+          <Text className="border-t border-border-subtle px-4 py-3 text-sm text-foreground-muted">
+            {`${routineCadenceLabel(draft.schedule.kept)}. Change this cadence in SpecWithCode on desktop or web; saving here keeps it.`}
+          </Text>
         ) : draft.schedule.mode === "webhook" ? (
           <>
             <WebhookScheduleDetails

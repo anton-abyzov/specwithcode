@@ -2,6 +2,12 @@ import { THREAD_LIFECYCLE_LABELS } from "@specweave-studio/shared/threadLifecycl
 import { scopeProjectRef } from "@specweave-studio/client-runtime/environment";
 import { requestCustomSnooze } from "../components/CustomSnoozeDialog";
 import { requestThreadMove } from "../components/ThreadMoveDialog";
+import {
+  readHandoffModeSnapshot,
+  setThreadHandoffMode,
+  threadHandoffMenuState,
+} from "../studio/handoffMode";
+import { requestHandOffThread } from "../components/handoff/HandOffThreadDialog";
 import { threadMoveBlockedReason } from "../components/threadMove.logic";
 import {
   type AtomCommandResult,
@@ -158,6 +164,7 @@ export function useThreadActionMenu(input: {
         // what the user is looking at.
         const thread = readThreadShell(threadRef);
         if (!thread) return;
+        const handoffSnapshot = readHandoffModeSnapshot(threadRef.environmentId);
         const now = new Date();
         const supports = {
           settlement: readEnvironmentSupportsSettlement(threadRef.environmentId),
@@ -191,6 +198,7 @@ export function useThreadActionMenu(input: {
           isRunning: !threadRuntimeCanArchive(thread.runtime),
           canOpenProjectWindow: canOpenProjectWindowFor(menuProjectKey),
           moveToProjectBlockedReason: threadMoveBlockedReason(thread, menuProject),
+          handoff: threadHandoffMenuState(handoffSnapshot, thread.id),
           supports,
           snoozePresets,
         });
@@ -347,6 +355,22 @@ export function useThreadActionMenu(input: {
             return;
           case "copy-thread-id":
             copyThreadIdToClipboard(thread.id, { threadId: thread.id });
+            return;
+          case "handoff-mode":
+            return;
+          case "handoff-mode:inherit":
+          case "handoff-mode:on":
+          case "handoff-mode:off": {
+            const result = await setThreadHandoffMode(
+              threadRef.environmentId,
+              threadRef.threadId,
+              action.slice("handoff-mode:".length) as "inherit" | "on" | "off",
+            );
+            if (!result.ok) failureToast("Couldn't change handoff mode", new Error(result.error));
+            return;
+          }
+          case "hand-off":
+            requestHandOffThread(threadRef);
             return;
           case "move-to-project":
             await requestThreadMove(threadRef);

@@ -39,7 +39,8 @@ export function scheduledTaskDefaultModel(
 }
 
 export type ScheduleDraft = {
-  readonly mode: "fixed_time" | "interval" | "webhook";
+  /** "kept": a cadence mobile does not edit (manual, monthly), saved back unchanged. */
+  readonly mode: "fixed_time" | "interval" | "webhook" | "kept";
   readonly timeOfDay: string;
   readonly weekdays: ReadonlyArray<number>;
   readonly intervalMinutes: string;
@@ -47,6 +48,7 @@ export type ScheduleDraft = {
   readonly signature: ScheduledTaskWebhookSignature | null;
   /** Minutes as typed; empty runs every held request regardless of age. */
   readonly maxDeliveryAgeMinutes: string;
+  readonly kept: Extract<ScheduledTaskUpsertSchedule, { type: "manual" | "monthly" }> | null;
 };
 
 export const DEFAULT_SCHEDULE: ScheduleDraft = {
@@ -56,6 +58,7 @@ export const DEFAULT_SCHEDULE: ScheduleDraft = {
   intervalMinutes: "15",
   signature: null,
   maxDeliveryAgeMinutes: "",
+  kept: null,
 };
 
 export function scheduleDraftForTask(task: Pick<ScheduledTask, "schedule">): ScheduleDraft {
@@ -84,10 +87,14 @@ export function scheduleDraftForTask(task: Pick<ScheduledTask, "schedule">): Sch
             ? ""
             : String(task.schedule.maxDeliveryAgeMinutes),
       };
+    case "manual":
+    case "monthly":
+      return { ...DEFAULT_SCHEDULE, mode: "kept", kept: task.schedule };
   }
 }
 
 export function scheduleFromDraft(draft: ScheduleDraft): ScheduledTaskUpsertSchedule | null {
+  if (draft.mode === "kept") return draft.kept;
   if (draft.mode === "webhook") {
     const maxDeliveryAgeMinutes = parseMaxDeliveryAge(draft.maxDeliveryAgeMinutes);
     if (maxDeliveryAgeMinutes === undefined) return null;

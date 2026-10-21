@@ -1,5 +1,10 @@
-/** The project's Scheduled tab: its routines, with run and pause in place. */
-import type { EnvironmentId, ProjectId } from "@specweave-studio/contracts";
+/** The project's Routines tab: its routines, with run and pause in place. */
+import type {
+  EnvironmentId,
+  ModelSelection,
+  ProjectId,
+  ThreadId,
+} from "@specweave-studio/contracts";
 
 import { ProjectRoutines } from "../ProjectRoutines";
 import { ProjectPaneBar, type ProjectPaneBarProps } from "./ProjectPaneBar";
@@ -10,6 +15,10 @@ export function ScheduledPane(props: {
   projectKey: string;
   canOperate: boolean;
   admissionBlocked: boolean;
+  personal: boolean;
+  modelSelection: ModelSelection | null;
+  machineLabel: string | null;
+  onOpenThread: (threadId: ThreadId) => void;
   bar: ProjectPaneBarProps;
 }) {
   return (
@@ -27,6 +36,10 @@ export function ScheduledPane(props: {
           projectKey={props.projectKey}
           canOperate={props.canOperate}
           admissionBlocked={props.admissionBlocked}
+          personal={props.personal}
+          modelSelection={props.modelSelection}
+          machineLabel={props.machineLabel}
+          onOpenThread={props.onOpenThread}
         />
       </div>
     </>

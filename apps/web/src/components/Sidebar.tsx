@@ -12,6 +12,12 @@ import {
 import { discardComposerDraft } from "../lib/discardComposerDraft";
 import { requestCustomSnooze } from "./CustomSnoozeDialog";
 import { requestThreadMove } from "./ThreadMoveDialog";
+import {
+  readHandoffModeSnapshot,
+  setThreadHandoffMode,
+  threadHandoffMenuState,
+} from "../studio/handoffMode";
+import { requestHandOffThread } from "./handoff/HandOffThreadDialog";
 import { threadMoveBlockedReason } from "./threadMove.logic";
 import { useSupportsMultiplePullRequests } from "~/hooks/useSupportsMultiplePullRequests";
 import { resolveThreadCurrentPullRequestLink } from "@specweave-studio/shared/threadPullRequests";
@@ -4645,6 +4651,7 @@ export default function Sidebar() {
           serverConfigs.get(thread.environmentId)?.environment.capabilities.threadProjectMove ===
           true;
         const threadShell = readThreadShell(threadRef);
+        const handoffSnapshot = readHandoffModeSnapshot(threadRef.environmentId);
         const isRegeneratingTitle = thread.titleRegeneration != null;
         const isSettled = settledThreadKeysRef.current.has(threadKey);
         const isSnoozed = snoozedThreadKeysRef.current.has(threadKey);
@@ -4691,6 +4698,7 @@ export default function Sidebar() {
                       threadShell,
                       projectByKey.get(`${thread.environmentId}:${thread.projectId}`),
                     ),
+              handoff: threadHandoffMenuState(handoffSnapshot, thread.id),
               supports: {
                 settlement: supportsSettlement,
                 autoSettleOptOut: supportsAutoSettleOptOut,
@@ -4837,6 +4845,27 @@ export default function Sidebar() {
             return;
           case "copy-thread-id":
             copyThreadIdToClipboard(thread.id, { threadId: thread.id });
+            return;
+          case "handoff-mode":
+            return;
+          case "handoff-mode:inherit":
+          case "handoff-mode:on":
+          case "handoff-mode:off": {
+            const result = await setThreadHandoffMode(
+              threadRef.environmentId,
+              threadRef.threadId,
+              clicked.value.slice("handoff-mode:".length) as "inherit" | "on" | "off",
+            );
+            if (!result.ok)
+              toastManager.add({
+                type: "error",
+                title: "Couldn't change handoff mode",
+                description: result.error,
+              });
+            return;
+          }
+          case "hand-off":
+            requestHandOffThread(threadRef);
             return;
           case "move-to-project":
             await requestThreadMove(threadRef);

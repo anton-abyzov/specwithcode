@@ -49,6 +49,18 @@ struct FixtureEngineTests {
     #expect(model.projects.isEmpty)
   }
 
+  @Test func longScenarioGivesAideALongHistoryWithLinks() throws {
+    let (model, engine) = make(.long)
+    let aide = try #require(model.aide)
+    let session = model.session(for: .aide(aide.ref))
+    engine.open(session)
+    #expect(session.rows.count == 122)
+    if case let .user(text, _) = session.rows.first?.kind { #expect(text == "Start of history") } else { Issue.record("The oldest row should be the user's first message") }
+    let links = session.rows.filter { if case let .assistant(text, _) = $0.kind { text.contains("](https://") } else { false } }
+    #expect(links.count == 6)
+    #expect(model.projects.count == 4, "The rest of the sample data stays as in default")
+  }
+
   @Test func openFillsTheRichThread() throws {
     let (model, engine) = make()
     let session = model.session(for: .thread(release))

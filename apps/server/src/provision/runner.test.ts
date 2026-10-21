@@ -4,6 +4,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import type { ExecResult, ProvisionHost } from "./host.ts";
 import { ChecksumMismatchError } from "./host.ts";
+import { formatReadback } from "./format.ts";
 import { installFailureReason } from "./install.ts";
 import {
   CLAUDE_VERSION,
@@ -23,7 +24,12 @@ const CODEX = codexDownload("linux-x64").version;
 const UBUNTU_2404 =
   'ID=ubuntu\nVERSION_ID="24.04"\nVERSION_CODENAME=noble\nPRETTY_NAME="Ubuntu 24.04.5 LTS"\n';
 
-type Answer = ExecResult | ((args: ReadonlyArray<string>) => ExecResult);
+type Answer =
+  | ExecResult
+  | ((
+      args: ReadonlyArray<string>,
+      env?: Readonly<Record<string, string | undefined>>,
+    ) => ExecResult);
 const out = (stdout: string, code = 0): ExecResult => ({ code, stdout, stderr: "" });
 
 interface Fake extends ProvisionHost {
@@ -56,11 +62,11 @@ function fakeHost(platform: "linux" | "darwin" = "linux"): Fake {
     uid: 1000,
     env: { PATH: "/usr/bin:/bin" },
     interactive: false,
-    exec: async (command, args) => {
+    exec: async (command, args, execOptions) => {
       const key = `${command} ${args.join(" ")}`;
       calls.push(key);
       const answer = answers.get(key) ?? answers.get(command);
-      if (answer) return typeof answer === "function" ? answer(args) : answer;
+      if (answer) return typeof answer === "function" ? answer(args, execOptions?.env) : answer;
       if (args[0] === "--version" && isExec(command)) {
         const text = files.get(resolve(command))!.text;
         return out(/version (\S+)/u.exec(text)?.[1] ?? "");
@@ -262,6 +268,35 @@ describe("runProvision", () => {
     expect(byId(readback.items, "server").status).toBe("kept-newer");
   });
 
+  it("reads an fnm codex script's version with the agents' PATH, not a per-shell folder", async () => {
+    const host = provisionedLinux();
+    host.files.delete(`${BIN}/codex`);
+    const fnm = `${HOME}/.local/share/fnm`;
+    const shellDir = "/run/user/1000/fnm_multishells/123_456/bin";
+    for (const dir of [`${fnm}/aliases/default/bin`, shellDir]) {
+      host.files.set(`${dir}/codex`, { text: "#!/usr/bin/env node\n", mode: 0o755 });
+      // `#!/usr/bin/env node` only starts when node's folder is on its PATH.
+      host.answers.set(`${dir}/codex --version`, (_args, env) =>
+        (env?.PATH ?? "").split(":").includes(`${fnm}/aliases/default/bin`)
+          ? out("codex-cli 0.163.0")
+          : { code: 127, stdout: "", stderr: "/usr/bin/env: 'node': No such file or directory" },
+      );
+    }
+    const readback = await runProvision(
+      host,
+      options({
+        dryRun: true,
+        loginShellPath: () => `${shellDir}:${fnm}/aliases/default/bin:/usr/bin:/bin`,
+      }),
+    );
+    const codex = byId(readback.items, "codex");
+    expect(codex.status).toBe("kept-newer");
+    expect(codex.found).toBe("0.163.0");
+    expect(readback.providers.find((entry) => entry.id === "codex")?.path).toBe(
+      `${fnm}/aliases/default/bin/codex`,
+    );
+  });
+
   it("leaves an older install it did not make to the user instead of shadowing it", async () => {
     const host = provisionedLinux();
     host.links.delete(`${BIN}/gh`);
@@ -331,6 +366,62 @@ describe("runProvision", () => {
     await runProvision(host, options());
     expect(host.calls).toContain(`${entry} service install`);
     expect(host.calls).not.toContain(`${BIN}/specwithcode service install`);
+  });
+
+  it("reaches the user manager from an `env -i` launcher through /run/user/<uid>", async () => {
+    const host = provisionedLinux();
+    host.files.set("/run/user/1000/bus", { text: "", mode: 0o666 });
+    const envs: Array<Readonly<Record<string, string | undefined>> | undefined> = [];
+    const busAnswer =
+      (stdout: string) =>
+      (_args: ReadonlyArray<string>, env?: Readonly<Record<string, string | undefined>>) => {
+        envs.push(env);
+        return env?.XDG_RUNTIME_DIR === "/run/user/1000" &&
+          env.DBUS_SESSION_BUS_ADDRESS === "unix:path=/run/user/1000/bus"
+          ? out(stdout)
+          : { code: 1, stdout: "", stderr: "Failed to connect to bus: No medium found" };
+      };
+    host.answers.set("systemctl --user is-active studio.service", busAnswer("active"));
+    for (let run = 0; run < 2; run += 1) {
+      const readback = await runProvision(host, options());
+      expect(byId(readback.items, "service").status).toBe("ok");
+      expect(byId(readback.items, "service").detail).toMatch(/is running\.$/u);
+      expect(readback.changed).toBe(false);
+      expect(readback.ok).toBe(true);
+    }
+    expect(envs.length).toBeGreaterThan(0);
+    expect(host.calls).not.toContain("systemctl --user start studio.service");
+  });
+
+  it("reports an unreachable user manager instead of planning to start a running service", async () => {
+    const host = provisionedLinux();
+    host.answers.set("systemctl --user is-active studio.service", {
+      code: 1,
+      stdout: "",
+      stderr: "Failed to connect to bus: No medium found",
+    });
+    const dry = await runProvision(host, options({ dryRun: true }));
+    const planned = byId(dry.items, "service");
+    expect(planned.status).toBe("failed");
+    expect(planned.detail).toMatch(
+      /^Cannot reach the systemd user manager \(Failed to connect to bus: No medium found\)/u,
+    );
+    expect(planned.detail).not.toMatch(/Starts the installed service/u);
+    expect(dry.service.managerError).toBe("Failed to connect to bus: No medium found");
+    expect(formatReadback(dry)).toMatch(/service unknown \(user manager unreachable\)/u);
+    const real = await runProvision(host, options());
+    expect(real.ok).toBe(false);
+    expect(byId(real.items, "server").status).toBe("ok");
+    expect(host.calls.some((call) => /^systemctl --user (start|restart)/u.test(call))).toBe(false);
+  });
+
+  it("still plans to start a service that is installed and stopped", async () => {
+    const host = provisionedLinux();
+    host.answers.set("systemctl --user is-active studio.service", out("inactive", 3));
+    const readback = await runProvision(host, options({ dryRun: true }));
+    expect(byId(readback.items, "service").status).toBe("planned");
+    expect(byId(readback.items, "service").detail).toBe("Starts the installed service.");
+    expect(readback.service.managerError).toBeUndefined();
   });
 
   it("refuses --resume when there is no unfinished run", async () => {

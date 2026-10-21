@@ -7,6 +7,7 @@ import {
   type ModelSelection,
   type RuntimeMode,
   type ProviderInteractionMode,
+  type ScheduledTaskWebhookDeliveryOutcome,
   type ServerSettings,
 } from "@specweave-studio/contracts";
 import { parseMaxDeliveryAge } from "@specweave-studio/client-runtime/scheduled-task-webhook";
@@ -16,6 +17,7 @@ import {
   type LegacyProjectSettingsFields,
 } from "@specweave-studio/shared/projectSettings";
 import type { ProviderInstanceEntry } from "../../providerInstances";
+import { formatRelativeTime } from "../../timestampFormat";
 
 import type { ResolvedSettingsScope } from "./settingsScope";
 
@@ -36,6 +38,8 @@ export function matchesScheduledTaskScope(
 
 /** Opens the editor with a ready-made routine, such as the one Settings > Google links to. */
 export const MORNING_BRIEFING_TEMPLATE = "morning-briefing" as const;
+/** Opens a blank editor with the linked project chosen, from a project's Routines tab. */
+export const NEW_ROUTINE_TEMPLATE = "new" as const;
 
 /** A routed editor may return only to a local screen, never to an external URL. */
 export function scheduledTaskReturnTo(value: unknown): string | undefined {
@@ -75,7 +79,9 @@ export function validateScheduledTasksSearch(raw: Record<string, unknown>) {
     ...(typeof raw.taskId === "string" && raw.taskId.trim()
       ? { taskId: ScheduledTaskId.make(raw.taskId) }
       : {}),
-    ...(raw.template === MORNING_BRIEFING_TEMPLATE ? { template: MORNING_BRIEFING_TEMPLATE } : {}),
+    ...(raw.template === MORNING_BRIEFING_TEMPLATE || raw.template === NEW_ROUTINE_TEMPLATE
+      ? { template: raw.template }
+      : {}),
     ...(typeof raw.projectId === "string" && raw.projectId.trim()
       ? { projectId: raw.projectId as ProjectId }
       : {}),
@@ -120,7 +126,7 @@ export function morningBriefingDraft(
   };
 }
 
-export type ScheduleMode = "fixed" | "interval" | "webhook";
+export type ScheduleMode = "fixed" | "interval" | "webhook" | "manual" | "monthly";
 export type WorkspaceMode = "root" | "worktree" | "existing_worktree";
 
 export interface DraftState {
@@ -132,6 +138,8 @@ export interface DraftState {
   readonly intervalMinutes: string;
   readonly timeOfDay: string;
   readonly weekdays: ReadonlySet<number>;
+  /** Day of the month, 1 to 28, for a monthly routine. */
+  readonly dayOfMonth?: number;
   readonly projectId: string;
   readonly threadId: string;
   readonly workspaceMode: WorkspaceMode;
@@ -193,6 +201,14 @@ export function scheduleFromDraft(draft: DraftState): ScheduledTaskUpsertSchedul
     const everyMs = Math.round(Number(draft.intervalMinutes) * 60_000);
     return { type: "interval", everyMs };
   }
+  if (draft.scheduleMode === "manual") return { type: "manual" };
+  if (draft.scheduleMode === "monthly") {
+    return {
+      type: "monthly",
+      dayOfMonth: Math.min(28, Math.max(1, draft.dayOfMonth ?? 1)),
+      timeOfDay: draft.timeOfDay || "09:00",
+    };
+  }
   const selectedEveryDay = draft.weekdays.size === 0 || draft.weekdays.size === 7;
   return {
     type: "fixed_time",
@@ -212,11 +228,12 @@ export function taskToDraft(task: ScheduledTask): DraftState {
     title: task.title,
     prompt: task.prompt,
     enabled: task.enabled,
-    scheduleMode:
-      schedule.type === "interval" ? "interval" : schedule.type === "webhook" ? "webhook" : "fixed",
+    scheduleMode: schedule.type === "fixed_time" ? "fixed" : schedule.type,
     intervalMinutes:
       schedule.type === "interval" ? String(Math.max(1, schedule.everyMs / 60_000)) : "15",
-    timeOfDay: schedule.type === "fixed_time" ? schedule.timeOfDay : "09:00",
+    timeOfDay:
+      schedule.type === "fixed_time" || schedule.type === "monthly" ? schedule.timeOfDay : "09:00",
+    dayOfMonth: schedule.type === "monthly" ? schedule.dayOfMonth : 1,
     weekdays,
     projectId: task.projectId,
     threadId: task.threadId ?? "",
@@ -284,4 +301,49 @@ export function scheduledTaskDefaultModel(
   );
   const fallback = models.find(({ model }) => model.isDefault) ?? models[0];
   return fallback ? { instanceId: fallback.instanceId, model: fallback.model.slug } : null;
+}
+
+/**
+ * Human label for a run timestamp. `formatRelativeTime` only handles the
+ * past, and `nextRunAt` is a future instant — render "in 5m" style labels
+ * for upcoming runs instead of a misleading "just now".
+ */
+export function relativeLabel(value: string | null): string {
+  if (!value) return "Not scheduled";
+  const diffMs = new Date(value).getTime() - Date.now();
+  if (diffMs <= 0) {
+    const relative = formatRelativeTime(value);
+    if (!relative) return "Not scheduled";
+    return relative.suffix ? `${relative.value} ${relative.suffix}` : relative.value;
+  }
+  const minutes = Math.ceil(diffMs / 60_000);
+  if (minutes < 2) return "in under a minute";
+  if (minutes < 60) return `in ${minutes}m`;
+  const hours = Math.round(minutes / 60);
+  if (hours < 24) return `in ${hours}h`;
+  return `in ${Math.round(hours / 24)}d`;
+}
+
+export const DELIVERY_OUTCOME_LABELS: Record<ScheduledTaskWebhookDeliveryOutcome, string> = {
+  accepted: "Ran",
+  dispatch_failed: "Run failed",
+  rejected_signature: "Bad signature",
+  disabled: "Task paused",
+  rate_limited: "Rate limited",
+  expired: "Too old",
+};
+
+export function deliveryOutcomeVariant(outcome: ScheduledTaskWebhookDeliveryOutcome) {
+  if (outcome === "accepted") return "success";
+  if (outcome === "disabled" || outcome === "rate_limited" || outcome === "expired") {
+    return "warning";
+  }
+  return "error";
+}
+
+export function statusVariant(status: ScheduledTask["lastRunStatus"]) {
+  if (status === "failed") return "error";
+  if (status === "succeeded") return "success";
+  if (status === "running") return "info";
+  return "outline";
 }

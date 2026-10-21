@@ -1,0 +1,48 @@
+/* Handoff mode badges. "Handoff ready" carries the accent color; the rest stay quiet. */
+.sws-handoff-badge {
+  flex: none;
+  white-space: nowrap;
+}
+.sws-handoff-badge[data-handoff="ready"],
+.sws-handoff-badge[data-handoff="source-unreachable"] {
+  border-color: color-mix(in srgb, var(--primary) 45%, transparent);
+  color: var(--primary);
+}
+.sws-handoff-badge[data-handoff="behind"],
+.sws-handoff-badge[data-handoff="paused"] {
+  color: var(--warning-foreground, var(--muted-foreground));
+}
+/* Inside a row's meta line the chip reads as text, like the PR and machine pills. */
+.sws-thread-meta > .sws-handoff-badge {
+  height: auto;
+  padding: 0;
+  border: 0;
+  font-size: inherit;
+}
+button.sws-handoff-action {
+  color: var(--foreground);
+}
+/* A row's one-click action sits before the hover-only Resolve, never under it. */
+.sws-thread-handoff-action {
+  flex: none;
+  align-self: center;
+  margin-right: 8px;
+  height: 24px;
+  padding: 0 8px;
+  border: 1px solid color-mix(in srgb, var(--primary) 45%, var(--border));
+  border-radius: 7px;
+  background: var(--card);
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--primary);
+  cursor: pointer;
+}
+.sws-thread-handoff-action:disabled {
+  cursor: not-allowed;
+  color: var(--muted-foreground);
+}
+@media (hover: hover) {
+  .sws-thread-row:is(:hover, :has(.sws-thread-action:focus-visible)) .sws-thread-handoff-action {
+    margin-right: 96px;
+  }
+}

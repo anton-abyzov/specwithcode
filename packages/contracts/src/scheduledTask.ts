@@ -122,6 +122,26 @@ const ScheduledTaskUpsertWebhookSchedule = Schema.Struct({
     "Run on each request to the task's webhook URL. The prompt may use {{body.path}}, {{headers.name}}, {{query.name}}, {{body}} and {{request}} placeholders.",
 });
 
+const ScheduledTaskManualSchedule = Schema.Struct({
+  type: Schema.Literal("manual").annotate({
+    description: "Run only when asked: Run now, or run_scheduled_task_now.",
+  }),
+}).annotate({
+  description: "Never runs on its own; for reusable work the user starts when it is needed.",
+});
+
+const ScheduledTaskMonthlySchedule = Schema.Struct({
+  type: Schema.Literal("monthly").annotate({
+    description: "Select a monthly run.",
+  }),
+  dayOfMonth: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 28 })).annotate({
+    description: "Day of the month, 1 to 28, so every month has it.",
+  }),
+  timeOfDay: TimeOfDay,
+}).annotate({
+  description: "Run once a month on a day of the month at a local wall-clock time.",
+});
+
 /**
  * Read model for persisted schedules. Keep accepting legacy sub-minute rows so
  * users can list, disable, edit, or delete them after the write minimum changes.
@@ -130,9 +150,11 @@ export const ScheduledTaskSchedule = Schema.Union([
   ScheduledTaskIntervalSchedule,
   ScheduledTaskFixedTimeSchedule,
   ScheduledTaskWebhookSchedule,
+  ScheduledTaskManualSchedule,
+  ScheduledTaskMonthlySchedule,
 ]).annotate({
   description:
-    "Structured trigger. Pass an object with type 'interval', 'fixed_time' or 'webhook'.",
+    "Structured trigger. Pass an object with type 'interval', 'fixed_time', 'webhook', 'manual' or 'monthly'.",
 });
 export type ScheduledTaskSchedule = typeof ScheduledTaskSchedule.Type;
 
@@ -152,8 +174,11 @@ export const ScheduledTaskUpsertSchedule = Schema.Union([
   }),
   ScheduledTaskFixedTimeSchedule,
   ScheduledTaskUpsertWebhookSchedule,
+  ScheduledTaskManualSchedule,
+  ScheduledTaskMonthlySchedule,
 ]).annotate({
-  description: "Writable trigger. Pass an object with type 'interval', 'fixed_time' or 'webhook'.",
+  description:
+    "Writable trigger. Pass an object with type 'interval', 'fixed_time', 'webhook', 'manual' (only when asked) or 'monthly'.",
 });
 export type ScheduledTaskUpsertSchedule = typeof ScheduledTaskUpsertSchedule.Type;
 
@@ -187,6 +212,46 @@ export const ScheduledTaskCheck = Schema.Struct({
 }).annotate({ description: "Run a shell check first and wake the agent only when it passes." });
 export type ScheduledTaskCheck = typeof ScheduledTaskCheck.Type;
 
+export const ROUTINE_BRIEF_MAX_INPUTS = 8;
+
+/** One thing a routine works from, which the user named: a folder, a file or a URL. */
+export const ScheduledTaskBriefInput = Schema.Struct({
+  label: TrimmedNonEmptyString.check(Schema.isMaxLength(80)).annotate({
+    description: "Short name, such as 'Receipts folder'.",
+  }),
+  location: TrimmedNonEmptyString.check(Schema.isMaxLength(500)).annotate({
+    description: "Where it is: a folder or file path, or a URL. Only what the user named.",
+  }),
+});
+export type ScheduledTaskBriefInput = typeof ScheduledTaskBriefInput.Type;
+
+/**
+ * What a reusable routine works from and produces. Each run's message opens
+ * with it, so every run checks the same inputs and updates the same output.
+ */
+export const ScheduledTaskBrief = Schema.Struct({
+  inputs: Schema.Array(ScheduledTaskBriefInput)
+    .check(Schema.isMaxLength(ROUTINE_BRIEF_MAX_INPUTS))
+    .annotate({
+      description:
+        "Up to 8 inputs. Each run checks they exist and are current before any work, and stops with a list when one is missing or stale.",
+    }),
+  output: Schema.NullOr(TrimmedNonEmptyString.check(Schema.isMaxLength(500))).annotate({
+    description:
+      "Where the result goes, such as a file path with {period}; a rerun updates it in place. Null to answer in the thread only.",
+  }),
+  prepareOnly: Schema.Boolean.annotate({
+    description:
+      "Prepare and draft only: never file, pay, send, post or change an account; list those actions for the user.",
+  }),
+}).annotate({ description: "Inputs, output and limits every run of this routine follows." });
+export type ScheduledTaskBrief = typeof ScheduledTaskBrief.Type;
+
+const ScheduledTaskOwnThread = Schema.Boolean.annotate({
+  description:
+    "Give the routine a thread of its own: the first run starts it, titled after the routine, and later runs continue it. A deleted or archived thread is replaced on the next run.",
+});
+
 const ScheduledTaskModelPinned = Schema.Boolean.annotate({
   description:
     "Run every time on modelSelection. Off by default: a run in a bound thread uses the model that thread's next turn would use, and never moves it to another provider.",
@@ -216,6 +281,8 @@ export const ScheduledTask = Schema.Struct({
   webhook: Schema.optional(ScheduledTaskWebhookEndpoint),
   modelPinned: Schema.optional(ScheduledTaskModelPinned),
   check: Schema.optional(Schema.NullOr(ScheduledTaskCheck)),
+  brief: Schema.optional(Schema.NullOr(ScheduledTaskBrief)),
+  ownThread: Schema.optional(ScheduledTaskOwnThread),
 });
 export type ScheduledTask = typeof ScheduledTask.Type;
 
@@ -249,6 +316,8 @@ export const ScheduledTaskUpsertInput = Schema.Struct({
   creationSource: Schema.optional(OrchestrationV2CreationSource),
   modelPinned: Schema.optional(ScheduledTaskModelPinned),
   check: Schema.optional(Schema.NullOr(ScheduledTaskCheck)),
+  brief: Schema.optional(Schema.NullOr(ScheduledTaskBrief)),
+  ownThread: Schema.optional(ScheduledTaskOwnThread),
 });
 export type ScheduledTaskUpsertInput = typeof ScheduledTaskUpsertInput.Type;
 

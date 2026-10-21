@@ -130,6 +130,42 @@ it.live("offers a plain copy while chats run and never fences the coordinator", 
   }).pipe(Effect.provide(h.layer));
 });
 
+it.live("names the source by its machine nickname, else its host label", () =>
+  Effect.gen(function* () {
+    const offerFrom = (machineNicknames?: Record<string, { name: string; updatedAt: string }>) => {
+      const h = makeHarness({
+        workspaceRoot: sourceFolder(),
+        endpoints: tailnet,
+        ...(machineNicknames ? { machineNicknames } : {}),
+      });
+      return Effect.gen(function* () {
+        const service = yield* MachineHandoff.MachineHandoff;
+        return yield* service.copyOffer({
+          projectId,
+          operationId: id,
+          mode: "copy-only",
+          destinationEnvironmentId: other,
+        });
+      }).pipe(Effect.provide(h.layer));
+    };
+    const at = "2026-10-20T00:00:00.000Z";
+    // Imported branches read swc/from-M4/…, not the shared or long host name.
+    expect(
+      (yield* offerFrom({
+        "source-env": { name: "  M4 ", updatedAt: at },
+        "other-env": { name: "Minis", updatedAt: at },
+      })).sourceMachine,
+    ).toBe("M4");
+    expect(
+      (yield* offerFrom({ "other-env": { name: "Minis", updatedAt: at } })).sourceMachine,
+    ).toBe("Source Mac");
+    // An empty nickname means "use the default name".
+    expect((yield* offerFrom({ "source-env": { name: "", updatedAt: at } })).sourceMachine).toBe(
+      "Source Mac",
+    );
+  }),
+);
+
 it.live("refuses to move the coordinator while a chat in the folder is running", () => {
   const h = makeHarness({ workspaceRoot: sourceFolder(), endpoints: tailnet, busy: true });
   return Effect.gen(function* () {

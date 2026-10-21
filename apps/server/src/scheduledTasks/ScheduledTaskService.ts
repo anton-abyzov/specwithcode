@@ -60,6 +60,12 @@ import { constantTimeEquals, verifyWebhookSignature } from "./webhookVerificatio
 import * as ProjectAdmission from "../project/ProjectAdmission.ts";
 import { assertTaskAdmission, suspendedProjectState } from "./ScheduledTaskAdmission.ts";
 import { reserveRun, completeRun } from "./ScheduledTaskRunReceipt.ts";
+import {
+  bindOwnThread,
+  ownThreadLaunchCommandId,
+  withLiveOwnThread,
+} from "./ScheduledTaskOwnThread.ts";
+import { routineBriefHeader } from "@specweave-studio/shared/routineBrief";
 
 import {
   decodeRow,
@@ -565,7 +571,14 @@ export const layer = Layer.effect(
         // The in-memory snapshot may be stale: re-read before touching run
         // state. The task may have been deleted, paused, or postponed since
         // the poll loaded it — none of those may fire.
-        const active = yield* findTask(task.id);
+        const stored = yield* findTask(task.id);
+        // An own thread that is gone counts as none: this run starts a new one.
+        const active =
+          stored === null
+            ? null
+            : yield* withLiveOwnThread(stored).pipe(
+                Effect.provideService(SqlClient.SqlClient, sql),
+              );
         if (active === null) {
           if (webhook !== undefined) {
             return yield* new WebhookDeliverySkipped({
@@ -642,6 +655,15 @@ export const layer = Layer.effect(
         // after the poll read are honoured. A webhook prompt was rendered
         // from the row when the request arrived.
         let prompt = webhook?.prompt ?? active.prompt;
+        if (active.brief) {
+          const { year, month, day } = DateTime.toParts(startedAt);
+          prompt =
+            routineBriefHeader({
+              title: active.title,
+              brief: active.brief,
+              date: { year, month, day },
+            }) + prompt;
+        }
         // A command routine wakes the thread only when its check passes; a
         // quiet check ends the run here, without any agent or provider.
         const check = active.check ?? null;
@@ -707,6 +729,45 @@ export const layer = Layer.effect(
             ),
           );
 
+        // A routine with a thread of its own starts it, titled after the
+        // routine, and binds it; a launch resumed after an interrupted run
+        // gets this run's prompt as a follow-up.
+        const launchOwnThread = (replacing: string | null) =>
+          threadLaunch
+            .launch({
+              commandId: ownThreadLaunchCommandId(active, replacing),
+              projectId: active.projectId,
+              title: active.title,
+              modelSelection: active.modelSelection,
+              runtimeMode: active.runtimeMode,
+              interactionMode: active.interactionMode,
+              workspaceStrategy: active.workspaceStrategy,
+              initialMessage: {
+                messageId,
+                scheduledTaskId: active.id,
+                text: prompt,
+                attachments: [],
+              },
+              createdBy: active.createdBy,
+              creationSource: active.creationSource,
+            })
+            .pipe(
+              Effect.tap(({ threadId }) =>
+                bindOwnThread({
+                  taskId: active.id,
+                  replacing,
+                  threadId,
+                  updatedAt: startedAtIso,
+                }).pipe(Effect.provideService(SqlClient.SqlClient, sql)),
+              ),
+              // Resumed by a later run: its prompt is not in the thread yet.
+              Effect.flatMap(({ threadId, resumed, projection }) =>
+                resumed && !projection.messages.some((message) => message.id === messageId)
+                  ? sendTo(threadId, prompt)
+                  : Effect.void,
+              ),
+            );
+
         // Effect.exit (not Effect.result) so defects and interruptions in the
         // dispatch are also captured and recorded as a failed run instead of
         // aborting before markCompleted.
@@ -717,41 +778,43 @@ export const layer = Layer.effect(
               ? Exit.void
               : active.threadId !== null
                 ? yield* Effect.exit(sendTo(ThreadId.make(active.threadId), prompt))
-                : coordinators !== undefined
-                  ? // A routine with no thread of its own wakes the project's
-                    // coordinator, which answers it or starts the threads it
-                    // needs on the project's recommended model.
-                    yield* Effect.exit(
-                      coordinators
-                        .start({
-                          projectId: active.projectId,
-                          commandId: CommandId.make(`${commandId}:coordinator`),
-                        })
-                        .pipe(
-                          Effect.flatMap(({ threadId }) =>
-                            sendTo(threadId, routineCoordinatorPrompt(active, prompt)),
+                : active.ownThread
+                  ? yield* Effect.exit(launchOwnThread(stored?.threadId ?? null))
+                  : coordinators !== undefined
+                    ? // A routine with no thread of its own wakes the project's
+                      // coordinator, which answers it or starts the threads it
+                      // needs on the project's recommended model.
+                      yield* Effect.exit(
+                        coordinators
+                          .start({
+                            projectId: active.projectId,
+                            commandId: CommandId.make(`${commandId}:coordinator`),
+                          })
+                          .pipe(
+                            Effect.flatMap(({ threadId }) =>
+                              sendTo(threadId, routineCoordinatorPrompt(active, prompt)),
+                            ),
                           ),
-                        ),
-                    )
-                  : yield* Effect.exit(
-                      threadLaunch.launch({
-                        commandId,
-                        projectId: active.projectId,
-                        title: active.title,
-                        modelSelection: active.modelSelection,
-                        runtimeMode: active.runtimeMode,
-                        interactionMode: active.interactionMode,
-                        workspaceStrategy: active.workspaceStrategy,
-                        initialMessage: {
-                          messageId,
-                          scheduledTaskId: active.id,
-                          text: prompt,
-                          attachments: [],
-                        },
-                        createdBy: active.createdBy,
-                        creationSource: active.creationSource,
-                      }),
-                    );
+                      )
+                    : yield* Effect.exit(
+                        threadLaunch.launch({
+                          commandId,
+                          projectId: active.projectId,
+                          title: active.title,
+                          modelSelection: active.modelSelection,
+                          runtimeMode: active.runtimeMode,
+                          interactionMode: active.interactionMode,
+                          workspaceStrategy: active.workspaceStrategy,
+                          initialMessage: {
+                            messageId,
+                            scheduledTaskId: active.id,
+                            text: prompt,
+                            attachments: [],
+                          },
+                          createdBy: active.createdBy,
+                          creationSource: active.creationSource,
+                        }),
+                      );
 
         const completedAt = yield* localNow;
         const runSucceeded = result._tag === "Success";
@@ -1034,7 +1097,11 @@ export const layer = Layer.effect(
           enabled: input.enabled,
           schedule,
           projectId: input.projectId,
-          threadId: input.threadId ?? null,
+          // A form that leaves the thread out keeps an own thread bound.
+          threadId:
+            input.threadId === undefined && (input.ownThread ?? existingTask?.ownThread)
+              ? (existingTask?.threadId ?? null)
+              : (input.threadId ?? null),
           workspaceStrategy: input.workspaceStrategy,
           modelSelection: input.modelSelection,
           runtimeMode: input.runtimeMode,
@@ -1058,6 +1125,10 @@ export const layer = Layer.effect(
           ...((input.check === undefined ? existingTask?.check : input.check)
             ? { check: (input.check === undefined ? existingTask?.check : input.check)! }
             : {}),
+          ...((input.brief === undefined ? existingTask?.brief : input.brief)
+            ? { brief: (input.brief === undefined ? existingTask?.brief : input.brief)! }
+            : {}),
+          ...((input.ownThread ?? existingTask?.ownThread) ? { ownThread: true } : {}),
         };
         yield* saveTask(task, input.requireExisting === true, webhook);
         yield* notifyChanged;
@@ -1115,7 +1186,11 @@ export const layer = Layer.effect(
 
     const runNow: ScheduledTaskService["Service"]["runNow"] = (input: ScheduledTaskRunNowInput) =>
       Effect.gen(function* () {
-        const task = yield* loadTask(input.id);
+        const task = yield* loadTask(input.id).pipe(
+          Effect.flatMap((loaded) =>
+            withLiveOwnThread(loaded).pipe(Effect.provideService(SqlClient.SqlClient, sql)),
+          ),
+        );
         if (task.schedule.type === "webhook") {
           // There is no request to render the prompt from.
           return yield* taskError("Webhook tasks run when their URL receives a request.", {

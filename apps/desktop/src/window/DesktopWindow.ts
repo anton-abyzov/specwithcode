@@ -167,7 +167,11 @@ export class DesktopWindow extends Context.Service<
     readonly prepareCaptureReveal: Effect.Effect<void>;
     readonly dispatchMenuAction: (
       action: string,
-      options?: { readonly reveal?: boolean },
+      options?: {
+        readonly reveal?: boolean;
+        /** "main" reaches the main window even when no app window has focus. */
+        readonly target?: "main" | "focused-app";
+      },
     ) => Effect.Effect<void, DesktopWindowError>;
     /**
      * Push a capture lifecycle event to the renderer. Only `started` reveals the
@@ -1271,7 +1275,7 @@ export const make = Effect.gen(function* () {
       yield* Effect.annotateCurrentSpan({ action });
       yield* dispatchRendererEvent(MENU_ACTION_CHANNEL, action, {
         ...options,
-        target: "focused-app",
+        target: options?.target ?? "focused-app",
       });
     }),
     dispatchSnapShotEvent: Effect.fn("desktop.window.dispatchSnapShotEvent")(function* (event) {

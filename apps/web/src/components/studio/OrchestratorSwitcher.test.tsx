@@ -96,10 +96,26 @@ it("starts a coordinator on a ready workers-only copy", async () => {
   expect(calls.onView).not.toHaveBeenCalled();
 });
 
-it("leaves thread migration off until thread handoff is available", async () => {
+it("opens thread migration as its own action, after the menu closes", async () => {
+  const calls = handlers();
+  const menuOpenAtMigrate: boolean[] = [];
+  const onMigrate = vi.fn(() =>
+    menuOpenAtMigrate.push(document.querySelector('[role="menu"]') !== null),
+  );
+  await renderSwitcher({ ...calls, onMigrate });
+  await act(async () => item("menuitem", "Migrate M4's threads")!.click());
+  await vi.waitFor(() => expect(onMigrate).toHaveBeenCalledTimes(1));
+  expect(menuOpenAtMigrate).toEqual([false]);
+  expect(calls.onView).not.toHaveBeenCalled();
+  expect(calls.onMove).not.toHaveBeenCalled();
+  expect(calls.onStart).not.toHaveBeenCalled();
+});
+
+it("leaves thread migration off while the viewed machine is unreachable", async () => {
   await renderSwitcher(handlers());
   const migrate = item("menuitem", "Migrate threads");
   expect(migrate?.getAttribute("aria-disabled")).toBe("true");
+  expect(migrate?.textContent).toContain("M4 unreachable");
 });
 
 it("lists a linked machine never synced here as Unknown", async () => {

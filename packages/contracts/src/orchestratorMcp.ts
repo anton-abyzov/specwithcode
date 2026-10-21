@@ -20,6 +20,7 @@ import {
   TurnItemId,
 } from "./baseSchemas.ts";
 import {
+  ScheduledTaskBrief,
   ScheduledTaskCheck,
   ScheduledTaskRunStatus,
   ScheduledTaskSchedule,
@@ -117,7 +118,7 @@ const OrchestratorMcpSchedule = Schema.Union([
   OrchestratorMcpScheduleFromJsonString,
 ]).annotate({
   description:
-    "Trigger object: {type:'interval', everyMs}, {type:'fixed_time', timeOfDay, weekdays?}, or {type:'webhook'} to run on each request to a generated URL. Never stringify it unless the provider requires the compatibility form.",
+    "Trigger object: {type:'interval', everyMs}, {type:'fixed_time', timeOfDay, weekdays?}, {type:'monthly', dayOfMonth (1-28), timeOfDay}, {type:'manual'} to run only when asked (Run now or run_scheduled_task_now), or {type:'webhook'} to run on each request to a generated URL. Never stringify it unless the provider requires the compatibility form.",
 });
 
 /**
@@ -755,6 +756,63 @@ export const OrchestratorMcpThreadMigrateResult = Schema.Struct({
 });
 export type OrchestratorMcpThreadMigrateResult = typeof OrchestratorMcpThreadMigrateResult.Type;
 
+export const OrchestratorMcpHandoffReadyListInput = Schema.Struct({
+  includeContinued: Schema.optional(Schema.Boolean).annotate({
+    description: "Also list threads this machine already continued. Defaults to false.",
+  }),
+});
+export type OrchestratorMcpHandoffReadyListInput = typeof OrchestratorMcpHandoffReadyListInput.Type;
+
+/** A thread another machine replicated here for this project, which this machine can continue. */
+export const OrchestratorMcpHandoffReadyThread = Schema.Struct({
+  source: Schema.Struct({ environmentId: EnvironmentId, label: Schema.String }),
+  sourceThreadId: ThreadId,
+  title: Schema.String,
+  checkpointAt: IsoDateTime,
+  branch: Schema.NullOr(Schema.String),
+  sourceUnreachable: Schema.Boolean,
+  sourceLastSeenAt: Schema.NullOr(IsoDateTime),
+  /** False while the source still renews the lease: continuing now is refused as busy. */
+  canContinueNow: Schema.Boolean,
+  continuedThreadId: Schema.NullOr(ThreadId),
+});
+export type OrchestratorMcpHandoffReadyThread = typeof OrchestratorMcpHandoffReadyThread.Type;
+
+export const OrchestratorMcpHandoffReadyListResult = Schema.Struct({
+  projectId: ProjectId,
+  threads: Schema.Array(OrchestratorMcpHandoffReadyThread),
+});
+export type OrchestratorMcpHandoffReadyListResult =
+  typeof OrchestratorMcpHandoffReadyListResult.Type;
+
+export const OrchestratorMcpThreadContinueHereInput = Schema.Struct({
+  sourceThreadId: ThreadId.annotate({
+    description: "The source machine's thread id, from studio_handoff_ready_list.",
+  }),
+  machine: Schema.optional(OrchestratorMcpMachineTarget).annotate({
+    description:
+      "The source machine's id or label, only needed when two machines replicated the same thread id.",
+  }),
+  modelSelection: Schema.optional(ModelSelection).annotate({
+    description:
+      "Model to continue with here; omitted keeps the thread's model or this machine's default.",
+  }),
+});
+export type OrchestratorMcpThreadContinueHereInput =
+  typeof OrchestratorMcpThreadContinueHereInput.Type;
+
+export const OrchestratorMcpThreadContinueHereResult = Schema.Struct({
+  source: Schema.Struct({ environmentId: EnvironmentId, label: Schema.String }),
+  sourceThreadId: ThreadId,
+  /** The thread that continues the work on this machine. */
+  threadId: ThreadId,
+  machineLabel: Schema.String,
+  modelSelection: Schema.NullOr(ModelSelection),
+  notice: Schema.NullOr(Schema.String),
+});
+export type OrchestratorMcpThreadContinueHereResult =
+  typeof OrchestratorMcpThreadContinueHereResult.Type;
+
 /**
  * What a machine shares about one provider's usage so another machine can
  * judge it as a limit handoff target. Never a token or an account name: the
@@ -905,6 +963,16 @@ export const OrchestratorMcpScheduleTaskInput = Schema.Struct({
         "True (default) posts each run into this thread; false creates a fresh top-level thread per run.",
     }),
   ),
+  ownThread: Schema.optional(
+    Schema.Boolean.annotate({
+      description:
+        "Give the routine a thread of its own, titled after it: the first run starts it and later runs continue it. Implies bindToCurrentThread false. Use for reusable work such as a monthly report.",
+    }),
+  ),
+  brief: Schema.optional(ScheduledTaskBrief).annotate({
+    description:
+      "Inputs the user named (label and location), the output location and prepareOnly. Every run opens with it and checks the inputs before working.",
+  }),
   check: Schema.optional(ScheduledTaskCheck).annotate({
     description:
       "Make this a command routine: run the shell command on each trigger and wake the agent with the prompt (and the command's output) only when it exits 0. Quiet runs use no AI provider. Prefer this for watches such as disk space, a URL's status or a file's existence.",
@@ -937,6 +1005,8 @@ export const OrchestratorMcpScheduledTask = Schema.Struct({
     description: "Whether requests must carry a valid signature.",
   }),
   check: Schema.optional(ScheduledTaskCheck),
+  brief: Schema.optional(ScheduledTaskBrief),
+  ownThread: Schema.optional(Schema.Boolean),
   /** Present only when runs are pinned to one model instead of following the thread. */
   pinnedModel: Schema.optional(ModelSelection),
 });
@@ -969,6 +1039,10 @@ export const OrchestratorMcpUpdateScheduledTaskInput = Schema.Struct({
   schedule: Schema.optional(OrchestratorMcpSchedule),
   enabled: Schema.optional(Schema.Boolean),
   bindToCurrentThread: Schema.optional(Schema.Boolean),
+  ownThread: Schema.optional(Schema.Boolean),
+  brief: Schema.optional(Schema.NullOr(ScheduledTaskBrief)).annotate({
+    description: "Set the routine's brief (see schedule_task), or null to remove it.",
+  }),
   check: Schema.optional(Schema.NullOr(ScheduledTaskCheck)).annotate({
     description: "Set a shell check (see schedule_task), or null to remove it.",
   }),

@@ -72,6 +72,7 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.handoffModeHandOffMachine]: AuthOrchestrationOperateScope,
   [WS_METHODS.handoffModeContinueHere]: AuthOrchestrationOperateScope,
   [WS_METHODS.handoffModeResumeFenced]: AuthOrchestrationOperateScope,
+  [WS_METHODS.handoffModePreflight]: AuthOrchestrationReadScope,
   [WS_METHODS.projectLinkDigest]: AuthOrchestrationReadScope,
   [WS_METHODS.projectLinkMemoryExport]: AuthOrchestrationReadScope,
   [WS_METHODS.projectLinkMemoryMerge]: AuthSettingsWriteScope,

@@ -40,6 +40,7 @@ import {
   type MachineReadiness,
   type MachineReadinessInput,
 } from "@specweave-studio/contracts";
+import { normalizeMachineNickname } from "@specweave-studio/shared/machineNicknames";
 import { resolveProjectSettings } from "@specweave-studio/shared/projectSettings";
 import * as ServerSettings from "../serverSettings.ts";
 import * as KeyedLock from "@specweave-studio/shared/KeyedLock";
@@ -548,6 +549,20 @@ const make = Effect.gen(function* () {
           : Effect.succeed(record),
       ),
     );
+  /**
+   * This machine as the person named it (AC-10), else its host label. The
+   * destination names imported branches `swc/from-<machine>/…` and kept-both
+   * files `<name>.from-<machine>` after it, so two machines that share a host
+   * name (or a long one, "Anton's MacBook M4MAX") still read as "M4".
+   */
+  const ownMachineName = (environmentId: string) =>
+    Effect.gen(function* () {
+      const settings = yield* serverSettings.getSettings.pipe(Effect.option);
+      const nickname = Option.isSome(settings)
+        ? normalizeMachineNickname(settings.value.machineNicknames[environmentId]?.name ?? "")
+        : "";
+      return nickname !== "" ? nickname : (yield* environment.getDescriptor).label;
+    });
   const copyOffer: MachineHandoff["Service"]["copyOffer"] = (input) =>
     admission.withLock(
       input.projectId,
@@ -560,7 +575,7 @@ const make = Effect.gen(function* () {
         if (input.mode === "copy-and-move")
           yield* idle(input.projectId, current.workspaceRoot).pipe(Effect.mapError(asCopyError));
         const sourceUrl = yield* privateUrl;
-        const descriptor = yield* environment.getDescriptor;
+        const sourceMachine = yield* ownMachineName(sourceEnvironmentId);
         const offered = yield* attempt(() =>
           sources.offer({
             operationId: input.operationId,
@@ -574,7 +589,7 @@ const make = Effect.gen(function* () {
           ...offered,
           sourceEnvironmentId,
           sourceUrl,
-          sourceMachine: descriptor.label,
+          sourceMachine,
           title: current.workspaceSettings?.logicalProject?.title ?? current.title,
         });
       }),

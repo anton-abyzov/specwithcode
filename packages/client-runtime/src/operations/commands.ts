@@ -216,6 +216,8 @@ export interface RespondToThreadUserInputInput extends ThreadCommandInput {
   readonly requestId: RuntimeRequestId;
   readonly answers: ProviderUserInputAnswers;
   readonly attachmentsByQuestionId?: import("@specweave-studio/contracts").UserInputAttachments;
+  /** The answer was sent from the chat composer and stays in the conversation. */
+  readonly answeredInChat?: boolean;
 }
 
 export interface DismissThreadUserInputInput extends ThreadCommandInput {
@@ -944,6 +946,7 @@ export const respondToThreadUserInput = Effect.fn("EnvironmentCommands.respondTo
       ...(input.attachmentsByQuestionId === undefined
         ? {}
         : { attachmentsByQuestionId: input.attachmentsByQuestionId }),
+      ...(input.answeredInChat === true ? { answeredInChat: true } : {}),
     });
   },
 );

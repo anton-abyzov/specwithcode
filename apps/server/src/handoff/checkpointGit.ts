@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off - the checkpoint runs Git with a private index file.
+import * as NodeCrypto from "node:crypto";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -14,6 +15,7 @@ import { gitText, runGit } from "../fleet/folderTransfer/git.ts";
 import { isSecretLikeProjectPath } from "../workspace/WorkspaceSensitivePaths.ts";
 
 const SKIPPED_LIST_MAX = 200;
+const REQUIRED_SECRET_PATHS_MAX = 200;
 const CHECKPOINT_IDENTITY = {
   GIT_AUTHOR_NAME: "SpecWithCode",
   GIT_AUTHOR_EMAIL: "handoff@specwithcode.invalid",
@@ -37,19 +39,40 @@ export interface CheckpointCommit {
   readonly ref: string;
   readonly skipped: ReadonlyArray<HandoffSkippedFile>;
   readonly excludedSecretCount: number;
+  /** Secret-like and ignored env files present in the worktree (paths only), sorted. */
+  readonly requiredSecretPaths: ReadonlyArray<string>;
   /** False when the tree matched the previous checkpoint, which was kept. */
   readonly changed: boolean;
 }
 
-export function handoffRef(threadId: string): string {
+const REF_COMPONENT = /^[A-Za-z0-9_-][A-Za-z0-9_.-]*$/;
+
+/**
+ * One Git ref path component for an id. Real ids carry `:` and `%`, which a
+ * ref cannot hold, so anything outside the plain set becomes a readable slug
+ * plus a hash of the whole id: deterministic, unique and always valid.
+ */
+export function refComponent(id: string): string {
   if (
-    !/^[A-Za-z0-9_-][A-Za-z0-9_.-]*$/.test(threadId) ||
-    threadId.includes("..") ||
-    threadId.endsWith(".lock")
+    id.length > 0 &&
+    id.length <= 120 &&
+    REF_COMPONENT.test(id) &&
+    !id.includes("..") &&
+    !id.endsWith(".") &&
+    !id.endsWith(".lock")
   ) {
-    throw new CheckpointError("failed", "The thread id cannot name a Git ref.");
+    return id;
   }
-  return `${HANDOFF_HIDDEN_REF_PREFIX}${threadId}`;
+  const slug =
+    id
+      .replace(/[^A-Za-z0-9_-]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 60) || "id";
+  return `${slug}-${NodeCrypto.createHash("sha256").update(id).digest("hex").slice(0, 16)}`;
+}
+
+export function handoffRef(threadId: string): string {
+  return `${HANDOFF_HIDDEN_REF_PREFIX}${refComponent(threadId)}`;
 }
 
 async function repositoryRoot(cwd: string): Promise<string> {
@@ -91,10 +114,19 @@ export async function writeCheckpoint(input: {
   try {
     const env = { GIT_INDEX_FILE: NodePath.join(scratch, "index") };
     await runGit(root, ["read-tree", baseCommit], { env });
-    const [untracked, changed] = await Promise.all([
+    const [untracked, changed, ignored] = await Promise.all([
       runGit(root, ["ls-files", "-z", "--others", "--exclude-standard"], { env }),
       runGit(root, ["diff", "--name-only", "-z", "--no-renames", baseCommit], { env }),
+      runGit(
+        root,
+        ["ls-files", "-z", "--others", "--ignored", "--exclude-standard", "--directory"],
+        { env },
+      ),
     ]);
+    const secretPaths = new Set<string>();
+    for (const entry of ignored.stdout.split("\0")) {
+      if (entry && !entry.endsWith("/") && isSecretLikeProjectPath(entry)) secretPaths.add(entry);
+    }
     const candidates = new Set<string>();
     for (const entry of changed.stdout.split("\0")) if (entry) candidates.add(entry);
     for (const entry of untracked.stdout.split("\0")) if (entry) candidates.add(entry);
@@ -112,6 +144,7 @@ export async function writeCheckpoint(input: {
       }
       if (isSecretLikeProjectPath(path)) {
         excludedSecretCount += 1;
+        secretPaths.add(path);
         continue;
       }
       const stat = await NodeFSP.lstat(NodePath.join(root, path)).catch(() => null);
@@ -139,6 +172,10 @@ export async function writeCheckpoint(input: {
       });
     }
     const ownTree = (await runGit(root, ["write-tree"], { env })).stdout.trim();
+    const requiredSecretPaths = [...secretPaths]
+      .filter((path) => path.length <= 1024)
+      .toSorted()
+      .slice(0, REQUIRED_SECRET_PATHS_MAX);
 
     const previous = await runGit(root, ["rev-parse", "--verify", "-q", `${ref}^{commit}`], {
       allowFailure: true,
@@ -160,6 +197,7 @@ export async function writeCheckpoint(input: {
           ref,
           skipped,
           excludedSecretCount,
+          requiredSecretPaths,
           changed: false,
         };
       }
@@ -180,7 +218,17 @@ export async function writeCheckpoint(input: {
       )
     ).stdout.trim();
     await runGit(root, ["update-ref", ref, commit]);
-    return { root, commit, baseCommit, branch, ref, skipped, excludedSecretCount, changed: true };
+    return {
+      root,
+      commit,
+      baseCommit,
+      branch,
+      ref,
+      skipped,
+      excludedSecretCount,
+      requiredSecretPaths,
+      changed: true,
+    };
   } finally {
     await NodeFSP.rm(scratch, { recursive: true, force: true });
   }
