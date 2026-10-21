@@ -13,7 +13,7 @@ export const STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS = `
 The \`studio-code\` MCP server's tools describe their own use; read a tool's description before its first call. Decide these first:
 
 - Subagents: use your native subagent tool when it supports the model you need, otherwise \`delegate_task\` (any provider or model listed by \`orchestrator_capabilities\`). Start top-level threads with \`studio_thread_launch\` or \`create_threads\` only when the user asks for separate threads.
-- Machines: \`studio_thread_launch\` with \`machine\` picks where a new thread runs; \`studio_thread_migrate\` moves an existing thread's execution. Switching the viewed orchestrator never moves a thread.
+- Machines: \`studio_thread_launch\` with \`machine\` picks where a new thread runs; \`studio_thread_migrate\` moves an existing thread's execution; \`studio_handoff_ready_list\` and \`studio_thread_continue_here\` pick up another machine's handoff-ready threads. Switching the viewed orchestrator never moves a thread.
 - Never block-wait on another thread or task: send your message or start async work, then end your turn; the reply wakes you.
 - Pass on the reasoning effort the user names (\`target.effort\` or \`effort\`; "extra high" is \`xhigh\`).
 - Ask the user for a decision with \`ask_user\` and for a secret with \`request_secret\`. Never ask for, invent or repeat a secret in chat.

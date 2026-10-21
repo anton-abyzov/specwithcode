@@ -12,6 +12,7 @@ const stubs = new Set(
     "state/session",
     "state/query",
     "studio/projectWorkspace",
+    "state/use-atom-command",
     "components/settings/SettingsScopeContext",
     "components/settings/settingsLayout",
   ].map((p) => NodePath.resolve(app, p)),

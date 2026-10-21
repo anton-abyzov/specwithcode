@@ -19,7 +19,6 @@ import {
   questionAttachmentDraftId,
   countQuestionAttachments,
   useQuestionAttachmentPreparation,
-  changeQuestionAttachmentPreparation,
 } from "../../questionAttachments";
 import type {
   ApprovalRequestId,
@@ -1691,13 +1690,6 @@ export interface ChatComposerProps {
   onAdvanceActivePendingUserInput: () => void;
   onDismissActivePendingUserInput: (requestId: RuntimeRequestId) => void;
   onPreviousActivePendingUserInputQuestion: () => void;
-  onChangeActivePendingUserInputCustomAnswer: (
-    questionId: string,
-    value: string,
-    nextCursor: number,
-    expandedCursor: number,
-    cursorAdjacentToMention: boolean,
-  ) => void;
 
   onProviderModelSelect: (
     instanceId: ProviderInstanceId,
@@ -1809,7 +1801,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     onAdvanceActivePendingUserInput,
     onDismissActivePendingUserInput,
     onPreviousActivePendingUserInputQuestion,
-    onChangeActivePendingUserInputCustomAnswer,
     onProviderModelSelect,
     onOpenProviderSetup,
     getModelDisabledReason,
@@ -1843,37 +1834,17 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // happened while they awaited.
   const composerDraftTargetKeyRef = useRef("");
   composerDraftTargetKeyRef.current = composerDraftTargetKey;
-  const questionAttachmentTarget =
-    pendingUserInputs[0] && activePendingProgress?.activeQuestion
-      ? questionAttachmentDraftId(
-          environmentId,
-          activeThreadId!,
-          pendingUserInputs[0].requestId,
-          activePendingProgress.activeQuestion.id,
-        )
-      : null;
-  const attachmentDraftTarget = questionAttachmentTarget ?? composerDraftTarget;
-  const attachmentDraft = useComposerThreadDraft(attachmentDraftTarget);
-  const attachmentTargetKey = composerTargetKey(attachmentDraftTarget);
-  // An import that finishes after a draft change must compare against the draft open *now*, not
-  // the one captured in the closure that started it.
-  const attachmentTargetKeyRef = useRef(attachmentTargetKey);
-  attachmentTargetKeyRef.current = attachmentTargetKey;
-  const questionPreparations = useQuestionAttachmentPreparation((state) => state.counts);
   const prompt = composerDraft.prompt;
-  const composerImages = attachmentDraft.images;
-  const composerFiles = attachmentDraft.files;
-  // A question answer has no chips: its files live in the question draft and show in the
-  // strip. Only the thread prompt's references decide which files leave the strip.
+  const composerImages = composerDraft.images;
+  const composerFiles = composerDraft.files;
   const inlineFileIdSet = useMemo(() => {
-    if (questionAttachmentTarget) return new Set<string>();
     const contextIds = new Set(collectInlineContextIds(prompt));
     return new Set(
       composerFiles
         .filter((file) => contextIds.has(toKindScopedComposerContextId("file", file.id)))
         .map((file) => file.id),
     );
-  }, [composerFiles, prompt, questionAttachmentTarget]);
+  }, [composerFiles, prompt]);
   const composerVideos = composerFiles.filter((file) =>
     isPreviewableComposerVideo(file, environmentId),
   );
@@ -1905,7 +1876,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     );
     return composerImages.filter((image) => !previewAnnotationIds.has(image.id));
   }, [composerImages, composerPreviewAnnotations]);
-  const nonPersistedComposerImageIds = attachmentDraft.nonPersistedImageIds;
+  const nonPersistedComposerImageIds = composerDraft.nonPersistedImageIds;
   const uploadsByImageId = useAttachmentUploadStore((state) => state.uploadsByImageId);
   const openPrLink = useOpenPrLink(routeThreadRef);
   const [previewFileId, setPreviewFileId] = useState<string | null>(null);
@@ -1979,7 +1950,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     maxFileAttachmentBytes,
   });
   const attachmentBlockReason =
-    (questionAttachmentTarget &&
+    // While a question waits, a send answers it.
+    (activePendingProgress &&
     !supportsQuestionAttachments &&
     (composerImages.length > 0 || composerFiles.length > 0)
       ? "Update this server to send files with question answers"
@@ -2065,12 +2037,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       startAttachmentUpload({
         environmentId,
         image: attachment,
-        draftTarget: attachmentDraftTarget,
+        draftTarget: composerDraftTarget,
       });
     }
   }, [
     attachmentUploadsCapabilityKnown,
-    attachmentDraftTarget,
+    composerDraftTarget,
     canOperateThread,
     composerFiles,
     composerImages,
@@ -2092,7 +2064,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       const upload = uploadsByImageId[file.id];
       if (upload?.status === "ready" && upload.environmentId === environmentId) {
         setComposerDraftFileUpload(
-          attachmentDraftTarget,
+          composerDraftTarget,
           file.id,
           environmentId,
           upload.attachmentId,
@@ -2101,7 +2073,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     }
   }, [
     attachmentUploadsCapabilityKnown,
-    attachmentDraftTarget,
+    composerDraftTarget,
     composerFiles,
     environmentId,
     maxFileAttachmentBytes,
@@ -3130,10 +3102,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         ? {
             questionIndex: activePendingProgress.questionIndex,
             isLastQuestion: activePendingProgress.isLastQuestion,
+            // Text or files in the composer answer the question in chat.
             canAdvance:
-              activePendingProgress.canAdvance &&
-              !attachmentBlockReason &&
-              !(questionPreparations[attachmentTargetKey] ?? 0),
+              (activePendingProgress.canAdvance ||
+                (activePendingProgress.activeQuestion?.allowCustomAnswer !== false &&
+                  composerDraftHasUserContent(composerDraft))) &&
+              !attachmentBlockReason,
             isResponding: activePendingIsResponding,
             isComplete: Boolean(activePendingResolvedAnswers),
           }
@@ -3143,8 +3117,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       activePendingProgress,
       activePendingResolvedAnswers,
       attachmentBlockReason,
-      questionPreparations,
-      attachmentTargetKey,
+      composerDraft,
     ],
   );
   const showResumeAction =
@@ -3177,40 +3150,33 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   );
 
   const addComposerImage = useCallback(
-    (image: ComposerImageAttachment) => addComposerDraftImages(attachmentDraftTarget, [image]),
-    [attachmentDraftTarget, addComposerDraftImages],
+    (image: ComposerImageAttachment) => addComposerDraftImages(composerDraftTarget, [image]),
+    [composerDraftTarget, addComposerDraftImages],
   );
 
   const addComposerImagesToDraft = useCallback(
-    (images: ComposerImageAttachment[]) => addComposerDraftImages(attachmentDraftTarget, images),
-    [attachmentDraftTarget, addComposerDraftImages],
+    (images: ComposerImageAttachment[]) => addComposerDraftImages(composerDraftTarget, images),
+    [composerDraftTarget, addComposerDraftImages],
   );
 
   const addComposerFilesToDraft = useCallback(
     (files: ComposerFileAttachment[]) =>
-      addComposerDraftFiles(attachmentDraftTarget, files, {
-        appendReference: questionAttachmentTarget === null,
-      }),
-    [addComposerDraftFiles, attachmentDraftTarget, questionAttachmentTarget],
+      addComposerDraftFiles(composerDraftTarget, files, { appendReference: true }),
+    [addComposerDraftFiles, composerDraftTarget],
   );
 
   const removeComposerImageFromDraft = useCallback(
     (imageId: string) => {
-      if (questionAttachmentTarget && activePendingIsResponding) return;
+      if (activePendingIsResponding) return;
       releaseAttachmentUpload(imageId);
-      removeComposerDraftImage(attachmentDraftTarget, imageId);
+      removeComposerDraftImage(composerDraftTarget, imageId);
     },
-    [
-      attachmentDraftTarget,
-      questionAttachmentTarget,
-      activePendingIsResponding,
-      removeComposerDraftImage,
-    ],
+    [composerDraftTarget, activePendingIsResponding, removeComposerDraftImage],
   );
 
   const removeComposerFileFromDraft = useCallback(
     (fileId: string) => {
-      if (questionAttachmentTarget && activePendingIsResponding) return;
+      if (activePendingIsResponding) return;
       // Release by the draft attachment, not the bare queue key: a hydrated
       // file's upload lives server-side under its persisted attachment id.
       const file = composerFilesRef.current.find((candidate) => candidate.id === fileId);
@@ -3219,15 +3185,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       } else {
         releaseAttachmentUpload(fileId);
       }
-      removeComposerDraftFile(attachmentDraftTarget, fileId);
+      removeComposerDraftFile(composerDraftTarget, fileId);
     },
-    [
-      attachmentDraftTarget,
-      questionAttachmentTarget,
-      activePendingIsResponding,
-      composerFilesRef,
-      removeComposerDraftFile,
-    ],
+    [composerDraftTarget, activePendingIsResponding, composerFilesRef, removeComposerDraftFile],
   );
 
   const addComposerDraftTerminalContexts = useComposerDraftStore(
@@ -3348,7 +3308,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       const file = new File([blob], record.name, { type: record.mimeType || blob.type });
       // The draft these bytes belong to may have been sent or switched away from while they
       // downloaded. Dropping them here keeps them out of whatever draft is open now.
-      if (attachmentTargetKeyRef.current !== importTargetKey) return;
+      if (composerDraftTargetKeyRef.current !== importTargetKey) return;
       if (record.kind === "image") {
         const accepted = addComposerImage({
           type: "image",
@@ -3378,7 +3338,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           fail("The draft rejected this attachment (duplicate or attachment limit reached).");
       }
     },
-    [addComposerFilesToDraft, addComposerImage, attachmentTargetKey, createAssetUrl],
+    [addComposerFilesToDraft, addComposerImage, composerDraftTargetKey, createAssetUrl],
   );
   const importAttachmentRecord = useCallback(
     async (
@@ -3389,7 +3349,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       // The chip lands in the draft immediately while these bytes are still downloading. Count
       // the transfer against its own draft so a send cannot snapshot a message whose chip has no
       // attachment behind it, and so bytes for an abandoned draft never enter the next one.
-      const importTargetKey = attachmentTargetKey;
+      const importTargetKey = composerDraftTargetKey;
       pendingDraftWork.begin(importTargetKey);
       try {
         await runAttachmentImport(record, localId, sourceEnvironmentId, importTargetKey);
@@ -3397,7 +3357,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         pendingDraftWork.end(importTargetKey);
       }
     },
-    [attachmentTargetKey, runAttachmentImport],
+    [composerDraftTargetKey, runAttachmentImport],
   );
   /**
    * Brings records into this draft (paste, stash restore). Binaries are transferred only
@@ -3602,57 +3562,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     composerMenuSearchKey,
   ]);
 
-  const lastSyncedPendingInputRef = useRef<{
-    requestId: string | null;
-    questionId: string | null;
-  } | null>(null);
-
-  useEffect(() => {
-    const nextCustomAnswer = activePendingProgress?.customAnswer;
-    if (typeof nextCustomAnswer !== "string") {
-      // The question is gone and the editor shows the thread draft again. The
-      // ref still holds the last answer text, and Send reads the ref. Place
-      // the caret at the end so the next keystroke appends.
-      if (lastSyncedPendingInputRef.current !== null) {
-        promptRef.current = prompt;
-        const { cursor, trigger } = composerStateAtPromptEnd(prompt);
-        setComposerCursor(cursor);
-        resetComposerTrigger(trigger);
-      }
-      lastSyncedPendingInputRef.current = null;
-      return;
-    }
-
-    const nextRequestId = activePendingUserInput?.requestId ?? null;
-    const nextQuestionId = activePendingProgress?.activeQuestion?.id ?? null;
-    const questionChanged =
-      lastSyncedPendingInputRef.current?.requestId !== nextRequestId ||
-      lastSyncedPendingInputRef.current?.questionId !== nextQuestionId;
-    const textChangedExternally = promptRef.current !== nextCustomAnswer;
-
-    lastSyncedPendingInputRef.current = {
-      requestId: nextRequestId,
-      questionId: nextQuestionId,
-    };
-
-    if (!questionChanged && !textChangedExternally) {
-      return;
-    }
-
-    promptRef.current = nextCustomAnswer;
-    const { cursor, trigger } = composerStateAtPromptEnd(nextCustomAnswer);
-    setComposerCursor(cursor);
-    resetComposerTrigger(trigger);
-    setComposerHighlightedItemId(null);
-  }, [
-    activePendingProgress?.customAnswer,
-    activePendingProgress?.activeQuestion?.id,
-    activePendingUserInput?.requestId,
-    prompt,
-    promptRef,
-    resetComposerTrigger,
-  ]);
-
   // ------------------------------------------------------------------
   // Reset compositor state on thread/draft change
   // ------------------------------------------------------------------
@@ -3725,11 +3634,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     let cancelled = false;
     void (async () => {
       if (composerImages.length === 0) {
-        clearComposerDraftPersistedAttachments(attachmentDraftTarget);
+        clearComposerDraftPersistedAttachments(composerDraftTarget);
         return;
       }
       const getPersistedAttachmentsForThread = () =>
-        getComposerDraft(attachmentDraftTarget)?.persistedAttachments ?? [];
+        getComposerDraft(composerDraftTarget)?.persistedAttachments ?? [];
       try {
         const currentPersistedAttachments = getPersistedAttachmentsForThread();
         const existingPersistedById = new Map(
@@ -3758,7 +3667,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         );
         const serialized = Array.from(stagedAttachmentById.values());
         if (cancelled) return;
-        syncComposerDraftPersistedAttachments(attachmentDraftTarget, serialized);
+        syncComposerDraftPersistedAttachments(composerDraftTarget, serialized);
       } catch {
         const currentImageIds = new Set(composerImages.map((image) => image.id));
         const fallbackPersistedAttachments = getPersistedAttachmentsForThread();
@@ -3773,14 +3682,14 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           fallbackPersistedIdSet.has(attachment.id),
         );
         if (cancelled) return;
-        syncComposerDraftPersistedAttachments(attachmentDraftTarget, fallbackAttachments);
+        syncComposerDraftPersistedAttachments(composerDraftTarget, fallbackAttachments);
       }
     })();
     return () => {
       cancelled = true;
     };
   }, [
-    attachmentDraftTarget,
+    composerDraftTarget,
     clearComposerDraftPersistedAttachments,
     composerImages,
     getComposerDraft,
@@ -3824,21 +3733,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       contextIds: string[],
     ) => {
       expandComposerForEditorChange();
-      if (activePendingProgress?.activeQuestion && pendingUserInputs.length > 0) {
-        if (activePendingProgress.activeQuestion.allowCustomAnswer === false) return;
-        setComposerCursor(nextCursor);
-        setComposerTrigger(
-          cursorAdjacentToMention ? null : detectComposerTrigger(nextPrompt, expandedCursor),
-        );
-        onChangeActivePendingUserInputCustomAnswer(
-          activePendingProgress.activeQuestion.id,
-          nextPrompt,
-          nextCursor,
-          expandedCursor,
-          cursorAdjacentToMention,
-        );
-        return;
-      }
       promptRef.current = nextPrompt;
       setPrompt(nextPrompt);
       // Any edit ends browsing, even one later undone by hand: typing a
@@ -3925,17 +3819,17 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         removeComposerDraftPreviewAnnotation(composerDraftTarget, annotationId);
       }
       for (const restored of attachmentChanges.annotationsToRestore) {
-        if (restored.image) addComposerDraftImages(attachmentDraftTarget, [restored.image]);
+        if (restored.image) addComposerDraftImages(composerDraftTarget, [restored.image]);
         addComposerDraftPreviewAnnotation(composerDraftTarget, restored.annotation, {
           appendReference: false,
         });
       }
       for (const fileId of attachmentChanges.filesToRemove) {
         // The retained File and upload are still sendable if the editor restores the chip.
-        removeComposerDraftFile(attachmentDraftTarget, fileId);
+        removeComposerDraftFile(composerDraftTarget, fileId);
       }
       if (attachmentChanges.filesToRestore.length > 0) {
-        addComposerDraftFiles(attachmentDraftTarget, attachmentChanges.filesToRestore);
+        addComposerDraftFiles(composerDraftTarget, attachmentChanges.filesToRestore);
       }
       setComposerCursor(nextCursor);
       setComposerTrigger(
@@ -3943,10 +3837,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       );
     },
     [
-      activePendingProgress?.activeQuestion,
       expandComposerForEditorChange,
-      pendingUserInputs.length,
-      onChangeActivePendingUserInputCustomAnswer,
       promptRef,
       setPrompt,
       setComposerTrigger,
@@ -3966,7 +3857,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       addComposerDraftPreviewAnnotation,
       addComposerDraftImages,
       addComposerDraftFiles,
-      attachmentDraftTarget,
+      composerDraftTarget,
     ],
   );
 
@@ -4015,18 +3906,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         });
       }
       promptRef.current = next.text;
-      const activePendingQuestion = activePendingProgress?.activeQuestion;
-      if (activePendingQuestion && activePendingUserInput) {
-        onChangeActivePendingUserInputCustomAnswer(
-          activePendingQuestion.id,
-          next.text,
-          nextCursor,
-          nextExpandedCursor,
-          false,
-        );
-      } else {
-        setPrompt(next.text);
-      }
+      setPrompt(next.text);
       setComposerCursor(nextCursor);
       setComposerTrigger(detectComposerTrigger(next.text, nextExpandedCursor));
       if (options?.focusEditorAfterReplace !== false) {
@@ -4044,7 +3924,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     [
       activePendingProgress?.activeQuestion,
       activePendingUserInput,
-      onChangeActivePendingUserInputCustomAnswer,
       promptRef,
       setPrompt,
       setComposerTrigger,
@@ -4353,7 +4232,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       // files clear the pending counter within a microtask.
       if (
         activeThreadId &&
-        (pendingImageCompressionsRef.current.get(attachmentTargetKey) ?? 0) > 0
+        (pendingImageCompressionsRef.current.get(composerDraftTargetKey) ?? 0) > 0
       ) {
         event?.preventDefault();
         toastManager.add({
@@ -4365,7 +4244,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       }
       // A pasted chip's bytes arrive over the network, so the same hazard applies for longer:
       // sending now would snapshot a chip with no attachment behind it.
-      if (pendingDraftWork.has(attachmentTargetKey)) {
+      if (pendingDraftWork.has(composerDraftTargetKey)) {
         event?.preventDefault();
         toastManager.add({
           type: "info",
@@ -4422,7 +4301,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       explicitCreditOffer,
       selectedProviderStatus,
       creditSendContext,
-      attachmentTargetKey,
+      composerDraftTargetKey,
       blurMobileComposerAfterSend,
       environmentId,
       isSendDisabled,
@@ -5050,7 +4929,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const stashCurrentPrompt = useCallback(async () => {
     // Stashing clears the draft. A pasted attachment still downloading would then land in the
     // emptied composer instead of travelling with the entry it belongs to.
-    if (pendingDraftWork.has(attachmentTargetKeyRef.current)) {
+    if (pendingDraftWork.has(composerDraftTargetKeyRef.current)) {
       toastManager.add({
         type: "info",
         title: "Still bringing a pasted attachment into this message.",
@@ -5882,26 +5761,24 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   // ------------------------------------------------------------------
   // Callbacks: attachments
   // ------------------------------------------------------------------
-  /** Answers to the other questions of a pending request send in the same response. */
+  /** Files already answering the pending request's questions send in the same response. */
   const otherQuestionAttachmentKeys = () => {
     const questionRequest = pendingUserInputs[0];
-    return questionAttachmentTarget && questionRequest && activeThreadId
-      ? questionRequest.questions
-          .map((question) =>
-            questionAttachmentDraftId(
-              environmentId,
-              activeThreadId,
-              questionRequest.requestId,
-              question.id,
-            ),
-          )
-          .filter((key) => key !== questionAttachmentTarget)
+    return questionRequest && activeThreadId
+      ? questionRequest.questions.map((question) =>
+          questionAttachmentDraftId(
+            environmentId,
+            activeThreadId,
+            questionRequest.requestId,
+            question.id,
+          ),
+        )
       : [];
   };
   const countReservedAttachments = () =>
     composerImagesRef.current.length +
     composerFilesRef.current.length +
-    (pendingImageCompressionsRef.current.get(attachmentTargetKey) ?? 0) +
+    (pendingImageCompressionsRef.current.get(composerDraftTargetKey) ?? 0) +
     countQuestionAttachments(otherQuestionAttachmentKeys());
   /**
    * Counts images and their bytes the way the send path does. Images still
@@ -5914,7 +5791,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       images: composerImagesRef.current,
       files: composerFilesRef.current,
     });
-    let count = usage.count + (pendingImageCompressionsRef.current.get(attachmentTargetKey) ?? 0);
+    let count =
+      usage.count + (pendingImageCompressionsRef.current.get(composerDraftTargetKey) ?? 0);
     let { bytes } = usage;
     for (const key of otherQuestionAttachmentKeys()) {
       const draft = store.getComposerDraft(key);
@@ -5936,8 +5814,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     if (!activeThreadId || files.length === 0 || isRevertingCheckpointRef.current) return false;
     if (
       pendingUserInputs.length > 0 &&
-      (!supportsQuestionAttachments ||
-        activePendingProgress?.activeQuestion?.allowCustomAnswer === false ||
+      (activePendingProgress?.activeQuestion?.allowCustomAnswer === false ||
         activePendingIsResponding)
     ) {
       toastManager.add({
@@ -5953,22 +5830,21 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     // Images landing with no prose live on the shelf with no chip. Read before
     // the awaits below: compression is async and the prompt may change while it
     // runs. An explicit selection replace and states where the editor refuses
-    // input (connecting, approval, pending questions, project selection) still
-    // get chips so the image is never invisible, unless paste-as-text explicitly
-    // requests no inline image chip.
+    // input (connecting, approval, project selection) still get chips so the
+    // image is never invisible, unless paste-as-text explicitly requests no
+    // inline image chip.
     const imageAttachmentsGetChips =
       !options?.skipImageInlineChip &&
       (options?.selection !== undefined ||
         isConnecting ||
         isComposerApprovalState ||
-        pendingUserInputs.length > 0 ||
         projectSelectionRequired ||
         stripInlineContextReferences(promptRef.current).trim().length > 0);
 
     // Validation happens synchronously so concurrent pastes see each other:
     // accepted files reserve their attachment slots (via the pending counter)
     // before the first await, keeping the total under the limit.
-    const pendingCount = pendingImageCompressionsRef.current.get(attachmentTargetKey) ?? 0;
+    const pendingCount = pendingImageCompressionsRef.current.get(composerDraftTargetKey) ?? 0;
     let reservedCount = countReservedAttachments();
     const reservedImages = countReservedImages();
     let reservedImageCount = reservedImages.count;
@@ -6121,11 +5997,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     if (acceptedImages.length === 0) return insertedAny;
 
     pendingImageCompressionsRef.current.set(
-      attachmentTargetKey,
+      composerDraftTargetKey,
       pendingCount + acceptedImages.length,
     );
-    if (questionAttachmentTarget)
-      changeQuestionAttachmentPreparation(questionAttachmentTarget, acceptedImages.length);
     try {
       const nextImages: ComposerImageAttachment[] = [];
       for (const file of acceptedImages) {
@@ -6161,13 +6035,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           file: attachmentFile,
         });
       }
-      if (
-        questionAttachmentTarget &&
-        !useQuestionAttachmentPreparation.getState().counts[questionAttachmentTarget]
-      ) {
-        for (const image of nextImages) URL.revokeObjectURL(image.previewUrl);
-        return false;
-      }
       const existingImageKeys = new Set(composerImagesRef.current.map(composerImageDedupKey));
       const storedImageIds = new Set(
         nextImages.length === 1 && nextImages[0]
@@ -6199,14 +6066,13 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         setThreadError(threadId, problems);
       }
     } finally {
-      if (questionAttachmentTarget)
-        changeQuestionAttachmentPreparation(questionAttachmentTarget, -acceptedImages.length);
       const remaining =
-        (pendingImageCompressionsRef.current.get(attachmentTargetKey) ?? 0) - acceptedImages.length;
+        (pendingImageCompressionsRef.current.get(composerDraftTargetKey) ?? 0) -
+        acceptedImages.length;
       if (remaining > 0) {
-        pendingImageCompressionsRef.current.set(attachmentTargetKey, remaining);
+        pendingImageCompressionsRef.current.set(composerDraftTargetKey, remaining);
       } else {
-        pendingImageCompressionsRef.current.delete(attachmentTargetKey);
+        pendingImageCompressionsRef.current.delete(composerDraftTargetKey);
       }
     }
     return insertedAny;
@@ -6223,9 +6089,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     selection?: { start: number; end: number },
   ): boolean => {
     if (references.length === 0) return false;
-    // Question answers carry attachments beside the answer, never as chips. Falling back to
-    // the thread prompt here would hide the file behind a reference the question never shows.
-    if (questionAttachmentTarget) return false;
     if (selection) {
       const edit = inlineContextReferenceReplacement(promptRef.current, selection, references);
       return applyPromptReplacement(edit.start, edit.end, edit.text);
@@ -6270,8 +6133,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   ): boolean => {
     const questionCanAttach =
       pendingUserInputs.length === 0 ||
-      (supportsQuestionAttachments &&
-        activePendingProgress?.activeQuestion?.allowCustomAnswer !== false &&
+      (activePendingProgress?.activeQuestion?.allowCustomAnswer !== false &&
         !activePendingIsResponding);
     const hasAttachmentSlot = countReservedAttachments() < PROVIDER_SEND_TURN_MAX_ATTACHMENTS;
     const selection = selectionOverride ?? composerEditorRef.current?.readSelectionRange();
@@ -6310,8 +6172,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       return true;
     }
 
-    if (pastedTextFileNamesRef.current.targetKey !== attachmentTargetKey) {
-      pastedTextFileNamesRef.current = { targetKey: attachmentTargetKey, names: new Set() };
+    if (pastedTextFileNamesRef.current.targetKey !== composerDraftTargetKey) {
+      pastedTextFileNamesRef.current = { targetKey: composerDraftTargetKey, names: new Set() };
     }
     const reservedNames = pastedTextFileNamesRef.current.names;
     for (const file of composerFilesRef.current) reservedNames.add(file.name);
@@ -6383,7 +6245,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         text.length === 0 ||
         isConnecting ||
         isComposerApprovalState ||
-        pendingUserInputs.length > 0 ||
         projectSelectionRequired ||
         (options?.citationCommentAnchor && !composerEditorRef.current)
       ) {
@@ -6418,7 +6279,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       applyPromptReplacement,
       isComposerApprovalState,
       isConnecting,
-      pendingUserInputs.length,
       projectSelectionRequired,
       promptRef,
       readComposerSnapshot,
@@ -6642,7 +6502,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         focusComposer();
       },
       hasPendingAttachments: () =>
-        (pendingImageCompressionsRef.current.get(attachmentTargetKey) ?? 0) > 0,
+        (pendingImageCompressionsRef.current.get(composerDraftTargetKey) ?? 0) > 0,
       insertTextAtEnd: insertComposerTextAtEnd,
       pasteTextAtEnd: (text: string, options) => {
         const bypassAutoAttachment =
@@ -7297,7 +7157,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
 
               {!isComposerCollapsedMobile &&
                 !isComposerApprovalState &&
-                pendingUserInputs.length === 0 &&
                 (uncommittedSnapShotIds.length > 0 ||
                   composerVideos.length > 0 ||
                   expandedComposerImages.length > 0) && (
@@ -7417,7 +7276,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                                         retryAttachmentUpload({
                                           environmentId,
                                           image,
-                                          draftTarget: attachmentDraftTarget,
+                                          draftTarget: composerDraftTarget,
                                         })
                                       }
                                       disabled={!canOperateThread}
@@ -7517,7 +7376,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                                       retryAttachmentUpload({
                                         environmentId,
                                         image: file,
-                                        draftTarget: attachmentDraftTarget,
+                                        draftTarget: composerDraftTarget,
                                       })
                                     }
                                     disabled={!canOperateThread}
@@ -7596,7 +7455,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                                       retryAttachmentUpload({
                                         environmentId,
                                         image: file,
-                                        draftTarget: attachmentDraftTarget,
+                                        draftTarget: composerDraftTarget,
                                       })
                                     }
                                     disabled={!canOperateThread}
@@ -7687,13 +7546,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     }
                     editorRef={composerEditorRef}
                     richTextEnabled={settings.composerRichTextEnabled}
-                    value={
-                      isComposerApprovalState
-                        ? ""
-                        : activePendingProgress
-                          ? activePendingProgress.customAnswer
-                          : prompt
-                    }
+                    value={isComposerApprovalState ? "" : prompt}
                     cursor={composerCursor}
                     contextRecords={composerContextRecords}
                     buildContextClipboardFragment={buildContextClipboardFragment}
@@ -7724,7 +7577,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                         : activePendingProgress
                           ? isChoiceOnlyPendingQuestion
                             ? "Choose an option above"
-                            : "Type your own answer, or leave this blank to use the selected option"
+                            : "Reply in chat, or pick an option above"
                           : showPlanFollowUpPrompt && activeProposedPlan
                             ? "Add feedback to refine the plan, or leave this blank to implement it"
                             : environmentUnavailable !== null

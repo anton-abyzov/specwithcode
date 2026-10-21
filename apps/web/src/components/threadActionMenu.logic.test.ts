@@ -41,6 +41,35 @@ function allIds(state: ThreadActionMenuState): string[] {
 }
 
 describe("buildThreadActionMenuItems", () => {
+  it("offers Handoff mode and Hand off to… only where the server has handoff mode", () => {
+    expect(allIds(baseState)).not.toContain("handoff-mode");
+    const items = buildThreadActionMenuItems({
+      ...baseState,
+      handoff: { mode: "inherit", effective: "on", continued: false },
+    });
+    const mode = items.find((item) => item.id === "handoff-mode");
+    expect(mode?.children?.map((child) => [child.label, child.checked])).toEqual([
+      ["Default (On)", true],
+      ["On", false],
+      ["Off", false],
+    ]);
+    expect(items.find((item) => item.id === "hand-off")).toMatchObject({
+      label: "Hand off to…",
+      disabled: false,
+    });
+    const continued = buildThreadActionMenuItems({
+      ...baseState,
+      handoff: { mode: "on", effective: "on", continued: true },
+    });
+    expect(continued.find((item) => item.id === "hand-off")?.disabled).toBe(true);
+    const readOnly = buildThreadActionMenuItems({
+      ...baseState,
+      canOperate: false,
+      handoff: { mode: "on", effective: "on", continued: false },
+    });
+    expect(readOnly.find((item) => item.id === "hand-off")?.disabled).toBe(true);
+  });
+
   it("keeps rename and regenerate out of a coordinator-named thread's menu", () => {
     expect(ids(baseState)).toEqual(expect.arrayContaining(["rename", "regenerate-title"]));
     const locked = ids({ ...baseState, titleLocked: true });

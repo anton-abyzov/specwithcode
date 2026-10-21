@@ -15,7 +15,14 @@ import {
   NODE_VERSION,
   TAILSCALE_MIN_VERSION,
 } from "./manifest.ts";
-import { type Ctx, PATH_DROP_IN, type Probe, type Probes, isLinux } from "./context.ts";
+import {
+  type Ctx,
+  PATH_DROP_IN,
+  type Probe,
+  type Probes,
+  SYSTEMD_UNIT,
+  isLinux,
+} from "./context.ts";
 import { probeAll } from "./probe.ts";
 
 export const SOURCES: Record<ProvisionItemId, string> = {
@@ -223,7 +230,7 @@ export function planItems(ctx: Ctx, p: Probes): ProvisionItem[] {
         "specwithcode update",
       ),
     );
-  else if (p.server.found !== null && p.service.active)
+  else if (p.server.found !== null && (p.service.active || p.service.managerError !== undefined))
     items.push(
       item(
         "server",
@@ -247,7 +254,18 @@ export function planItems(ctx: Ctx, p: Probes): ProvisionItem[] {
 
   if (manager) {
     // Added above with the server.
-  } else if (p.service.installed && p.service.active)
+  } else if (p.service.managerError !== undefined)
+    items.push(
+      item(
+        "service",
+        ctx.wantedServer,
+        p.service.version,
+        "failed",
+        `Cannot reach the systemd user manager (${p.service.managerError}), so whether ${SYSTEMD_UNIT} runs is unknown. Nothing was started. Run this as the service user in a login session, or set XDG_RUNTIME_DIR=/run/user/$(id -u).`,
+        "systemctl --user status",
+      ),
+    );
+  else if (p.service.installed && p.service.active)
     items.push(
       item("service", ctx.wantedServer, p.service.version, "ok", `${p.service.unit} is running.`),
     );
@@ -422,7 +440,9 @@ export async function reprobe(ctx: Ctx, id: ProvisionItemId, probes: Probes): Pr
         path: fresh.service.unit,
         detail: fresh.service.active
           ? `${fresh.service.unit} is running.`
-          : "The service is not running.",
+          : fresh.service.managerError !== undefined
+            ? `Cannot reach the systemd user manager: ${fresh.service.managerError}`
+            : "The service is not running.",
       };
     case "service-path":
       return {

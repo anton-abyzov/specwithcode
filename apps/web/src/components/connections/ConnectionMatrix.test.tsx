@@ -1,7 +1,7 @@
 import { act } from "react";
 import { create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
-import { ConnectionMatrix } from "./ConnectionMatrix";
+import { ConnectionMatrix, FOLDER_ONLY_NOTE } from "./ConnectionMatrix";
 import type { NativeConnectionsSnapshot } from "@specweave-studio/contracts";
 let renderer: ReactTestRenderer;
 beforeEach(() => vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true));
@@ -254,11 +254,19 @@ describe("connection matrix", () => {
     expect(groupTitles).toEqual([
       "Your connections · 2",
       "From plugins · 2",
-      "Private projects only · 1",
+      "Only in one folder (Claude Code) · 1",
     ]);
     expect(text()).toContain("Plugin GitHub · http");
     expect(text()).toContain("ships it turned off");
-    expect(text()).toContain("Private project penn +1 · http");
+    expect(text()).toContain("Claude Code, only in penn and 1 more folder · http");
+    // The group says what a folder-only entry is and that nothing else gets it.
+    expect(
+      renderer.root.findByProps({ "data-testid": "folder-only-note" }).findByType("td").children,
+    ).toEqual([FOLDER_ONLY_NOTE]);
+    expect(FOLDER_ONLY_NOTE).toContain("only when it runs in that folder");
+    expect(FOLDER_ONLY_NOTE).toContain("Other folders, projects and providers do not get them");
+    expect(FOLDER_ONLY_NOTE).toContain("~/.claude.json");
+    expect(text()).not.toMatch(/[Pp]rivate project/);
     expect(text()).toContain("Windsurf (invalid)");
     expect(
       renderer.root.findByProps({ "data-testid": "connection-counts" }).children.join(""),
@@ -272,6 +280,12 @@ describe("connection matrix", () => {
       renderer.root.findByProps({ "aria-label": "github Codex details" }).props.onClick(),
     );
     expect(text()).toContain("Codex plugin GitHub");
+    await act(() =>
+      renderer.root.findByProps({ "aria-label": "playwright Claude Code details" }).props.onClick(),
+    );
+    expect(text()).toContain("Claude Code, only in penn (~/.claude.json)");
+    expect(text()).toContain("Claude Code, only in ClientPortal (~/.claude.json)");
+    expect(text()).not.toMatch(/[Pp]rivate project/);
   });
   it("offers turn off, copy everywhere, remove and plugin toggles from the details", async () => {
     const onApply = vi.fn();

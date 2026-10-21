@@ -18,6 +18,9 @@ public enum FixtureScenario: String, Sendable, CaseIterable {
   case m4Blip = "m4-blip"
   /// `fleet`, then Minis goes offline and comes back.
   case minisBlip = "minis-blip"
+  /// Like `default`, but Aide's chat holds a long history with links, for
+  /// scroll, link and app lifecycle checks on a simulator.
+  case long
 
   var isFleet: Bool { self == .fleet || self == .m4Blip || self == .minisBlip }
 }
@@ -545,7 +548,8 @@ public final class FixtureEngine: AppEngine {
   private func initialTranscript(for target: ChatTarget) -> [TranscriptRow] {
     switch target {
     case .aide:
-      return FixtureSample.aideTranscript.map { row("a", $0) }
+      let rows = scenario == .long ? FixtureSample.longAideTranscript : FixtureSample.aideTranscript
+      return rows.map { row("a", $0) }
     case let .project(ref):
       let title = model?.project(ref)?.title ?? "this project"
       let threads = model?.threads(in: ref) ?? []
@@ -772,6 +776,21 @@ private enum FixtureSample {
     .user(text: "Remind me to check the release after lunch."),
     .assistant(markdown: "Done. I'll bring it up at 1:00 PM.", streaming: false),
   ]
+
+  /// Sixty check-ins, oldest first: the oldest message is "Start of history"
+  /// and every tenth reply links to the release notes.
+  static let longAideTranscript: [TranscriptRow.Kind] = {
+    var rows: [TranscriptRow.Kind] = [.user(text: "Start of history"), .assistant(markdown: "Noted. This is where our chat begins.", streaming: false)]
+    for day in 1...60 {
+      rows.append(.user(text: "Check-in \(day): anything new?"))
+      var reply = "Check-in \(day): two threads moved forward and nothing needs you."
+      if day % 10 == 0 {
+        reply += "\n\nThe [release notes](https://spec-weave.com/docs/whats-new) list what shipped this week."
+      }
+      rows.append(.assistant(markdown: reply, streaming: false))
+    }
+    return rows
+  }()
 
   static let releaseTranscript: [TranscriptRow.Kind] = [
     .user(text: "Prepare the 3.1 release. Run the full checks, update the changelog and publish to the next tag when everything passes."),

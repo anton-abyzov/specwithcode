@@ -912,7 +912,7 @@ describe("project coordinator surface", () => {
       "Threads",
       "Library",
       "PRs",
-      "Scheduled",
+      "Routines",
     ]);
     expect(tabs()[0]!.getAttribute("aria-selected")).toBe("true");
     expect(tabs()[2]!.textContent).toContain("1");

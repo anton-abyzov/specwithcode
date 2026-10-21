@@ -30,6 +30,11 @@ export type ThreadActionMenuId =
   | "copy-branch"
   | "copy-thread-id"
   | "move-to-project"
+  | "handoff-mode:inherit"
+  | "handoff-mode:on"
+  | "handoff-mode:off"
+  | "handoff-mode"
+  | "hand-off"
   | "archive"
   | "delete";
 
@@ -121,6 +126,17 @@ export interface ThreadActionMenuState {
    * Undefined on surfaces that do not offer the move.
    */
   readonly moveToProjectBlockedReason?: string | null | undefined;
+  /**
+   * The thread's handoff mode setting and what it resolves to; undefined where
+   * the server has no handoff mode. `continued` disables "Hand off to…".
+   */
+  readonly handoff?:
+    | {
+        readonly mode: "inherit" | "on" | "off";
+        readonly effective: "on" | "off";
+        readonly continued: boolean;
+      }
+    | undefined;
   readonly supports: {
     readonly settlement: boolean;
     /** Server understands thread.auto-settle.set. */
@@ -301,6 +317,35 @@ export function buildThreadActionMenuItems(
             icon: "folder-input",
             separatorBefore: true,
             disabled: state.moveToProjectBlockedReason !== null,
+          },
+        ]
+      : []),
+    ...(state.handoff
+      ? [
+          {
+            id: "handoff-mode" as const,
+            label: "Handoff mode",
+            icon: "arrow-right-left",
+            separatorBefore: true,
+            children: [
+              {
+                id: "handoff-mode:inherit" as const,
+                label: `Default (${state.handoff.mode === "inherit" ? (state.handoff.effective === "on" ? "On" : "Off") : "project or app setting"})`,
+                checked: state.handoff.mode === "inherit",
+              },
+              { id: "handoff-mode:on" as const, label: "On", checked: state.handoff.mode === "on" },
+              {
+                id: "handoff-mode:off" as const,
+                label: "Off",
+                checked: state.handoff.mode === "off",
+              },
+            ],
+          },
+          {
+            id: "hand-off" as const,
+            label: "Hand off to…",
+            icon: "laptop",
+            disabled: state.handoff.continued,
           },
         ]
       : []),

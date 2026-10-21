@@ -194,6 +194,9 @@ import * as ThreadFinishActionService from "./orchestration-v2/ThreadFinishActio
 import * as IdAllocator from "./orchestration-v2/IdAllocator.ts";
 import * as StaleRunWatchdog from "./orchestration-v2/StaleRunWatchdog.ts";
 import * as HandoffModeReactor from "./handoff/HandoffModeReactor.ts";
+import * as HandoffMoves from "./handoff/HandoffMoves.ts";
+import * as HandoffReceiver from "./handoff/HandoffReceiver.ts";
+import * as HandoffRoute from "./handoff/handoffRoute.ts";
 import * as AuthSessions from "./persistence/AuthSessions.ts";
 import * as TemporaryProjects from "./project/TemporaryProjects.ts";
 import * as ThreadPullRequestService from "./orchestration-v2/ThreadPullRequestService.ts";
@@ -619,6 +622,11 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   layerThreadFinishActionWorker,
   // Handoff mode: leases, checkpoints after each turn and while a turn runs long.
   Layer.effectDiscard(HandoffModeReactor.start),
+  // Handoff moves between machines; the receiver also serves the peer route.
+  HandoffMoves.layerFleet.pipe(
+    Layer.provideMerge(HandoffReceiver.layer),
+    Layer.provide(Layer.merge(RemoteWorkers.layerFleetWorkers, ProjectionStoreV2.layer)),
+  ),
   // Ends runs a provider finished but never reported ended (stuck Working),
   // and runs nothing drives any more (their session ended or nobody reads
   // their provider events).
@@ -837,6 +845,7 @@ const layerMakeRoutes = Layer.mergeAll(
     ServerHttp.layerAssetRoute,
     ServerHttp.layerAttachmentUploadRoute,
     FolderTransferRoute.layer,
+    HandoffRoute.layer,
     MachineNicknameSync.routeLayer,
     GoogleOAuthRoute.layer,
     DeviceHubProxy.layer,

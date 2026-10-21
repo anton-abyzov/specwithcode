@@ -1,0 +1,254 @@
+import type {
+  EnvironmentId,
+  HandoffMachineRun,
+  HandoffPreflightResult,
+  ThreadId,
+} from "@specweave-studio/contracts";
+import { createRoot } from "react-dom/client";
+
+import { HandoffBadgeActions, HandoffBadgeChip } from "../../src/components/handoff/HandoffBadge";
+import { HandOffMachineDialogView } from "../../src/components/handoff/HandOffMachineDialog";
+import type { HandoffDestination } from "../../src/components/handoff/HandoffResults";
+import { HandOffThreadDialogView } from "../../src/components/handoff/HandOffThreadDialog";
+import type { HandoffBadgeView } from "../../src/studio/handoffMode";
+import "./fixture.css";
+
+const params = new URLSearchParams(location.search);
+const view = params.get("view") || "badges";
+document.documentElement.classList.toggle("dark", params.get("theme") === "dark");
+
+const M4 = "env-m4" as EnvironmentId;
+const MINIS = "env-minis" as EnvironmentId;
+const M3 = "env-m3" as EnvironmentId;
+const tid = (id: string) => id as ThreadId;
+const noop = () => {};
+
+const destinations: HandoffDestination[] = [
+  { environmentId: M4, label: "M4", state: "this-machine" },
+  { environmentId: MINIS, label: "Minis", state: "reachable" },
+  { environmentId: M3, label: "M3", state: "offline" },
+];
+
+const rows: Array<{ title: string; model: string; badge: HandoffBadgeView }> = [
+  {
+    title: "Fix the release build",
+    model: "Opus 5.5",
+    badge: { kind: "ready", label: "Handoff ready" },
+  },
+  {
+    title: "Migrate settings storage",
+    model: "Sonnet 5.5",
+    badge: { kind: "behind", label: "Checkpoint behind", detail: "Minis: retrying" },
+  },
+  {
+    title: "Write the release notes",
+    model: "Opus 5.5",
+    badge: { kind: "handing-off", label: "Handing off…" },
+  },
+  {
+    title: "Phone pairing review",
+    model: "Opus 5.5",
+    badge: {
+      kind: "continued",
+      label: "Continued on Minis",
+      environmentId: MINIS,
+      threadId: tid("t-9"),
+    },
+  },
+  {
+    title: "Checkpoint replication tests",
+    model: "Opus 5.5",
+    badge: {
+      kind: "source-unreachable",
+      label: "Handoff ready · M3 unreachable",
+      replica: { sourceEnvironmentId: M3, sourceThreadId: tid("t-5") } as never,
+    },
+  },
+  { title: "Sleep handoff flush", model: "Sonnet 5.5", badge: { kind: "paused", label: "Paused" } },
+];
+
+function Badges() {
+  return (
+    <div className="sws-thread-list" style={{ maxWidth: 560 }}>
+      {rows.map((row) => (
+        <article key={row.title} className="sws-thread-row project-thread-card" data-tone="idle">
+          <button type="button" className="sws-thread-open">
+            <span className="sws-dot" data-tone="none" aria-hidden />
+            <span className="sws-thread-text">
+              <strong>{row.title}</strong>
+              <span className="sws-thread-meta">
+                <span>{row.model}</span>
+                <HandoffBadgeChip badge={row.badge} />
+              </span>
+            </span>
+            <time className="sws-thread-age">4m</time>
+          </button>
+          {row.badge.kind === "source-unreachable" || row.badge.kind === "paused" ? (
+            <HandoffBadgeActions
+              badge={row.badge}
+              environmentId={M4}
+              localEnvironmentId={M4}
+              onOpenThread={noop}
+              className="sws-thread-handoff-action"
+            />
+          ) : null}
+        </article>
+      ))}
+      <div
+        className="sws-thread-head"
+        style={{ display: "flex", gap: 8, padding: 12, alignItems: "center" }}
+      >
+        <h2 style={{ fontWeight: 600 }}>Phone pairing review</h2>
+        <HandoffBadgeChip badge={rows[3]!.badge} />
+        <HandoffBadgeActions
+          badge={rows[3]!.badge}
+          environmentId={M4}
+          localEnvironmentId={M4}
+          onOpenThread={noop}
+        />
+      </div>
+    </div>
+  );
+}
+
+const failing: HandoffPreflightResult = {
+  threadId: tid("t-1"),
+  title: "Fix the release build",
+  ok: false,
+  failures: [
+    { check: "ignored-files", message: "Minis: no .env.local" },
+    { check: "provider", message: "Minis: Claude not signed in" },
+  ],
+  resume: true,
+  runEnding: "active",
+};
+
+function ModelPickerStub() {
+  return (
+    <button
+      type="button"
+      className="inline-flex h-8 w-fit items-center gap-2 rounded-md border border-input px-3 text-sm"
+    >
+      Claude · Opus 5.5
+    </button>
+  );
+}
+
+function ThreadDialog() {
+  const done = view === "thread-done";
+  const ok = view === "thread-ready";
+  return (
+    <HandOffThreadDialogView
+      title="Fix the release build"
+      destinations={destinations}
+      destinationId={MINIS}
+      onDestination={noop}
+      modelPicker={<ModelPickerStub />}
+      preflight={{
+        state: "done",
+        results: [ok ? { ...failing, ok: true, failures: [] } : failing],
+      }}
+      onRecheck={noop}
+      submitting={false}
+      error={null}
+      result={
+        done
+          ? {
+              machine: "Minis",
+              value: {
+                environmentId: MINIS,
+                machineLabel: "Minis",
+                threadId: tid("t-9"),
+                modelSelection: null,
+                notice: "Started with Opus 5.5; the turn that was running continues.",
+              } as never,
+            }
+          : null
+      }
+      onSubmit={noop}
+      onCancel={noop}
+      onOpenContinuation={noop}
+    />
+  );
+}
+
+const threads = [
+  { threadId: tid("a"), title: "Fix the release build" },
+  { threadId: tid("b"), title: "Migrate settings storage" },
+  { threadId: tid("c"), title: "Write the release notes" },
+];
+const run: HandoffMachineRun = {
+  destinationEnvironmentId: MINIS,
+  destinationLabel: "Minis",
+  reason: "manual",
+  startedAt: "2026-10-20T20:00:00.000Z",
+  finishedAt: "2026-10-20T20:00:05.000Z",
+  results: [
+    {
+      threadId: tid("a"),
+      title: "Fix the release build",
+      outcome: "moved",
+      detail: null,
+      continuedThreadId: tid("a2"),
+      resumed: true,
+    },
+    {
+      threadId: tid("b"),
+      title: "Migrate settings storage",
+      outcome: "stayed",
+      detail: "Minis: no .env.local",
+      continuedThreadId: null,
+      resumed: false,
+    },
+    {
+      threadId: tid("c"),
+      title: "Write the release notes",
+      outcome: "skipped",
+      detail: "You left it out.",
+      continuedThreadId: null,
+      resumed: false,
+    },
+  ],
+} as HandoffMachineRun;
+
+function MachineDialog() {
+  return (
+    <HandOffMachineDialogView
+      machineName="M4"
+      projectName={view === "migrate" ? "atlas" : null}
+      destinations={destinations.filter((item) => item.state !== "this-machine")}
+      destinationId={MINIS}
+      onDestination={noop}
+      threads={threads}
+      selected={new Set([tid("a"), tid("b")])}
+      onToggle={noop}
+      checking={false}
+      preflight={
+        new Map([
+          [tid("a"), { ...failing, threadId: tid("a"), ok: true, failures: [] }],
+          [tid("b"), { ...failing, threadId: tid("b"), failures: [failing.failures[0]!] }],
+        ])
+      }
+      preflightError={null}
+      submitting={false}
+      error={null}
+      run={view === "machine-done" ? run : null}
+      destinationName="Minis"
+      onSubmit={noop}
+      onCancel={noop}
+      onOpenThread={noop}
+    />
+  );
+}
+
+function Fixture() {
+  return (
+    <main className="min-h-screen bg-background p-4 text-foreground" data-testid="fixture">
+      {view === "badges" ? <Badges /> : null}
+      {view.startsWith("thread") ? <ThreadDialog /> : null}
+      {view.startsWith("machine") || view === "migrate" ? <MachineDialog /> : null}
+    </main>
+  );
+}
+
+createRoot(document.getElementById("root")!).render(<Fixture />);

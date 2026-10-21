@@ -23,6 +23,10 @@ import {
   OrchestratorMcpThreadInterruptResult,
   OrchestratorMcpThreadListInput,
   OrchestratorMcpThreadListResult,
+  OrchestratorMcpHandoffReadyListInput,
+  OrchestratorMcpHandoffReadyListResult,
+  OrchestratorMcpThreadContinueHereInput,
+  OrchestratorMcpThreadContinueHereResult,
   OrchestratorMcpThreadMigrateInput,
   OrchestratorMcpThreadMigrateResult,
   OrchestratorMcpThreadReadInput,
@@ -111,7 +115,7 @@ const TaskCancelTool = Tool.make("task_cancel", {
 
 export const ScheduleTaskTool = Tool.make("schedule_task", {
   description:
-    "Create persistent work in the app scheduler that runs even when no turn is active. Pass schedule as a STRUCTURED OBJECT, never JSON text. Timers: {type:'interval', everyMs:3600000} is hourly; {type:'fixed_time', timeOfDay:'09:00', weekdays:[1,2,3,4,5]} is weekday mornings; report the returned nextRunAt. Webhooks: {type:'webhook'} runs once per request to a generated URL. The run sees the request ONLY through prompt placeholders: {{body.path}} (e.g. {{body.action}}, {{body.release.tag_name}}), {{headers.name}}, {{query.name}}, {{body}}, or {{request}} (method, headers with credentials redacted, and body). For a sender that signs requests, first call request_secret so the user enters the secret privately (never ask for it in chat or invent one), then set signature with the returned secretRef, e.g. GitHub: {type:'webhook', signature:{header:'x-hub-signature-256', encoding:'hex', prefix:'sha256=', secretRef}}. The result's webhookUrl is the public URL to give the user; if it is absent, this environment has no SpecWithCode Connect managed tunnel, so tell the user to enable SpecWithCode Connect remote access rather than sharing a path. Omit projectId for this thread's project. In this thread's project, runs post into THIS thread by default (bindToCurrentThread=true), which suits an orchestrator that sees every trigger, delegates work, and can dedupe against what is in flight; with false each run goes to the project's coordinator, which answers it or starts the threads it needs. Elsewhere each run goes to that project's coordinator. Runtime settings inherit from this thread. Runs use the model this thread's next turn would use, and threads the coordinator starts use the project's recommended model on whichever provider has room; pass modelSelection only to pin one. For a watch whose condition a shell command can test (disk space, a URL's status, a file appearing), set check so the agent wakes only when the command exits 0 and quiet runs cost nothing (full-access threads only, since the command runs without approval).",
+    "Create persistent work in the app scheduler that runs even when no turn is active. Pass schedule as a STRUCTURED OBJECT, never JSON text. Timers: {type:'interval', everyMs:3600000} is hourly; {type:'fixed_time', timeOfDay:'09:00', weekdays:[1,2,3,4,5]} is weekday mornings; {type:'monthly', dayOfMonth:1, timeOfDay:'09:00'} is monthly; report the returned nextRunAt. Reusable work the user starts when needed (monthly bookkeeping, a report, a research brief): {type:'manual'} with ownThread:true and a brief; it never runs on its own, and each Run now continues the routine's own thread. Never turn on a cadence the user did not ask for. Webhooks: {type:'webhook'} runs once per request to a generated URL. The run sees the request ONLY through prompt placeholders: {{body.path}} (e.g. {{body.action}}, {{body.release.tag_name}}), {{headers.name}}, {{query.name}}, {{body}}, or {{request}} (method, headers with credentials redacted, and body). For a sender that signs requests, first call request_secret so the user enters the secret privately (never ask for it in chat or invent one), then set signature with the returned secretRef, e.g. GitHub: {type:'webhook', signature:{header:'x-hub-signature-256', encoding:'hex', prefix:'sha256=', secretRef}}. The result's webhookUrl is the public URL to give the user; if it is absent, this environment has no SpecWithCode Connect managed tunnel, so tell the user to enable SpecWithCode Connect remote access rather than sharing a path. Omit projectId for this thread's project. In this thread's project, runs post into THIS thread by default (bindToCurrentThread=true), which suits an orchestrator that sees every trigger, delegates work, and can dedupe against what is in flight; with false each run goes to the project's coordinator, which answers it or starts the threads it needs. Elsewhere each run goes to that project's coordinator. Runtime settings inherit from this thread. Runs use the model this thread's next turn would use, and threads the coordinator starts use the project's recommended model on whichever provider has room; pass modelSelection only to pin one. For a watch whose condition a shell command can test (disk space, a URL's status, a file appearing), set check so the agent wakes only when the command exits 0 and quiet runs cost nothing (full-access threads only, since the command runs without approval).",
   parameters: OrchestratorMcpScheduleTaskInput,
   success: OrchestratorMcpScheduleTaskResult,
   failure: OrchestratorMcpFailure,
@@ -321,6 +325,33 @@ const ThreadMigrateTool = Tool.make("studio_thread_migrate", {
   .annotate(Tool.Destructive, true)
   .annotate(Tool.OpenWorld, true);
 
+const HandoffReadyListTool = Tool.make("studio_handoff_ready_list", {
+  description:
+    "List this project's threads that another machine replicated here through handoff mode and that this machine can continue, such as M4's threads when M4 is closed. Each row names the source machine, the checkpoint time, whether the source is unreachable and whether it can be continued now (false while the source still renews its lease).",
+  parameters: OrchestratorMcpHandoffReadyListInput,
+  success: OrchestratorMcpHandoffReadyListResult,
+  failure: OrchestratorMcpFailure,
+  failureMode: "return",
+  dependencies: [...dependencies, HandoffMode.HandoffMode],
+})
+  .annotate(Tool.Title, "List SpecWithCode threads ready to continue here")
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.OpenWorld, false);
+
+const ThreadContinueHereTool = Tool.make("studio_thread_continue_here", {
+  description:
+    "Continue one handoff-ready thread from studio_handoff_ready_list on this machine, in one call. Returns the thread that continues the work here. Refused while the source machine still renews the thread's lease, so two machines never run it; a thread already continued here returns that thread.",
+  parameters: OrchestratorMcpThreadContinueHereInput,
+  success: OrchestratorMcpThreadContinueHereResult,
+  failure: OrchestratorMcpFailure,
+  failureMode: "return",
+  dependencies: [...dependencies, ProjectService.ProjectService, HandoffMode.HandoffMode],
+})
+  .annotate(Tool.Title, "Continue a SpecWithCode thread on this machine")
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.OpenWorld, true);
+
 export const OrchestratorToolkit = Toolkit.make(
   OrchestratorCapabilitiesTool,
   DelegateTaskTool,
@@ -342,4 +373,6 @@ export const OrchestratorToolkit = Toolkit.make(
   ThreadsStopAllTool,
   ThreadsContinueAllTool,
   ThreadMigrateTool,
+  HandoffReadyListTool,
+  ThreadContinueHereTool,
 );

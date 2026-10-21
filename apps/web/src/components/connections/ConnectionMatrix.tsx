@@ -19,8 +19,8 @@ const sourceNames: Record<string, string> = {
   "codex-project": "Project .codex/config.toml",
   "codex-plugins": "Codex plugins",
   "claude-user": "Claude user .claude.json",
-  "claude-local": "Private project entry in .claude.json",
-  "claude-all-projects": "Private project entries in .claude.json",
+  "claude-local": "This folder's entry in ~/.claude.json",
+  "claude-all-projects": "Folder-only entries in ~/.claude.json",
   "claude-project": "Project .mcp.json",
   "claude-plugins": "Claude Code plugins",
   "claude-user-settings": "Claude user settings.json",
@@ -55,14 +55,20 @@ const stateName = {
   disabled: "Disabled",
   invalid: "Invalid declaration",
 };
-/** Declared in a file the user edits, as opposed to a plugin or another project. */
+/** Declared in a file the user edits, as opposed to a plugin or one folder's local entry. */
 const own = (c: NativeConnection) => c.plugin === undefined && c.project === undefined;
 const groups = [
   { id: "own", title: "Your connections" },
   { id: "plugin", title: "From plugins" },
-  { id: "project", title: "Private projects only" },
+  { id: "project", title: "Only in one folder (Claude Code)" },
 ] as const;
 type Group = (typeof groups)[number]["id"];
+/** Claude Code local scope: `projects.<folder>.mcpServers` in the user's own file. */
+export const FOLDER_ONLY_NOTE =
+  "Claude Code loads these only when it runs in that folder. Other folders, projects and providers do not get them. They are stored in your ~/.claude.json.";
+/** "Claude Code, only in <folder>", naming how many other folders declare the same server. */
+const folderOnly = (folder: string, more: number) =>
+  `Claude Code, only in ${folder}${more > 0 ? ` and ${more} more ${more === 1 ? "folder" : "folders"}` : ""}`;
 
 /** Configuration evidence only: no cell claims native authentication, trust, or admission. */
 export function ConnectionMatrix({
@@ -133,11 +139,11 @@ export function ConnectionMatrix({
       return `Plugin ${connection.plugin} · ${connection.transport}`;
     if (connection.project !== undefined) {
       const more = entries.filter((c) => c.project !== undefined).length - 1;
-      return `Private project ${connection.project}${more > 0 ? ` +${more}` : ""} · ${connection.transport}`;
+      return `${folderOnly(connection.project, more)} · ${connection.transport}`;
     }
     const scope =
       connection.scope === "local"
-        ? "Private project"
+        ? "Only in this folder"
         : connection.scope === "project"
           ? "Project"
           : "User";
@@ -362,7 +368,7 @@ export function ConnectionMatrix({
     c.plugin !== undefined
       ? `${toolName(c.provider)} plugin ${c.plugin}`
       : c.project !== undefined
-        ? `Private project ${c.project} in .claude.json`
+        ? `${folderOnly(c.project, 0)} (~/.claude.json)`
         : sourceName(c.sourceId);
   const columns = 1 + providers.length + others.length;
   return (
@@ -370,7 +376,7 @@ export function ConnectionMatrix({
       <p className="text-sm text-muted-foreground">
         {project
           ? "Project configuration includes user declarations and project overrides."
-          : "User configurations, plugins and private project entries on this execution machine."}{" "}
+          : "User configurations, plugins and folder-only Claude Code entries on this machine."}{" "}
         Authentication and session availability are unverified.
       </p>
       {names.length > 0 && (
@@ -436,6 +442,13 @@ export function ConnectionMatrix({
                     <th scope="colgroup" colSpan={columns}>
                       {group.title} · {group.names.length}
                     </th>
+                  </tr>
+                )}
+                {group.id === "project" && (
+                  <tr data-testid="folder-only-note">
+                    <td colSpan={columns} className="text-xs text-muted-foreground">
+                      {FOLDER_ONLY_NOTE}
+                    </td>
                   </tr>
                 )}
                 {group.names.map((name) => (

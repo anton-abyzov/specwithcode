@@ -18,6 +18,7 @@ import { installDesktopIpcHandlers } from "../ipc/DesktopIpcHandlers.ts";
 import * as DesktopAppActivation from "./DesktopAppActivation.ts";
 import * as DesktopAppIdentity from "./DesktopAppIdentity.ts";
 import * as DesktopClerk from "./DesktopClerk.ts";
+import { registerHandoffSleepNotice } from "./DesktopHandoffSleep.ts";
 import * as DesktopApplicationMenu from "../window/DesktopApplicationMenu.ts";
 import * as DesktopWindow from "../window/DesktopWindow.ts";
 import * as DesktopBackendPool from "../backend/DesktopBackendPool.ts";
@@ -465,6 +466,12 @@ const startup = Effect.gen(function* () {
   };
   yield* powerMonitor.onSimpleEvent("resume", checkIfStale("resume"));
   yield* powerMonitor.onSimpleEvent("unlock-screen", checkIfStale("unlock"));
+  // Handoff mode: the main window asks the local server to move running threads
+  // to the chosen machine before this Mac sleeps (no reveal; it may be hidden).
+  const handoffWindow = yield* DesktopWindow.DesktopWindow;
+  yield* registerHandoffSleepNotice(powerMonitor, (action) =>
+    handoffWindow.dispatchMenuAction(action, { reveal: false, target: "main" }),
+  );
   yield* electronApp.on("browser-window-focus", checkIfStale("focus"));
   yield* DesktopRemoteUpdates.listen;
   yield* linuxUrlHandler.register;

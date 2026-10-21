@@ -98,6 +98,23 @@ describe("writeCheckpoint", () => {
     ]);
     expect(git(root, "show", `${checkpoint.commit}:tracked.txt`)).toBe("two");
     expect(git(root, "show", `${checkpoint.commit}:staged.txt`)).toBe("staged");
+    expect(checkpoint.requiredSecretPaths).toEqual([".env"]);
+  });
+
+  it("lists ignored env files the destination needs, without their contents", async () => {
+    const root = repository();
+    NodeFS.writeFileSync(NodePath.join(root, ".gitignore"), "build/\n.env.local\nnode_modules/\n");
+    git(root, "commit", "-q", "-am", "ignore env");
+    NodeFS.writeFileSync(NodePath.join(root, ".env.local"), "TOKEN=secret\n");
+    NodeFS.mkdirSync(NodePath.join(root, "node_modules", "pkg"), { recursive: true });
+    NodeFS.writeFileSync(NodePath.join(root, "node_modules", "pkg", ".env"), "X=1\n");
+    NodeFS.writeFileSync(NodePath.join(root, "notes.txt"), "plain\n");
+
+    const checkpoint = await writeCheckpoint({ cwd: root, threadId: "thread-env" });
+
+    expect(checkpoint.requiredSecretPaths).toEqual([".env.local"]);
+    expect(checkpoint.excludedSecretCount).toBe(0);
+    expect(files(root, checkpoint.commit)).not.toContain(".env.local");
   });
 
   it("keeps the previous checkpoint when nothing changed and writes a new one when it did", async () => {
@@ -148,11 +165,27 @@ describe("writeCheckpoint", () => {
 });
 
 describe("handoffRef", () => {
-  it("refuses a thread id that cannot name a ref", () => {
+  const validRef = (ref: string) =>
+    NodeChildProcess.spawnSync("git", ["check-ref-format", ref]).status === 0;
+
+  it("keeps a plain id and maps any other id to a valid, distinct ref", () => {
     expect(handoffRef("thread_1.a-b")).toBe("refs/specwithcode/handoff/thread_1.a-b");
-    expect(() => handoffRef("../main")).toThrow(CheckpointError);
-    expect(() => handoffRef("..")).toThrow(CheckpointError);
-    expect(() => handoffRef("thread.lock")).toThrow(CheckpointError);
-    expect(() => handoffRef("a b")).toThrow(CheckpointError);
+    const real = [
+      "thread:project:project%3A1:0b9f1c2e-7d4a-4c1e-9f61-2b0a7c8d9e10",
+      "thread:project:project%3A1:0b9f1c2e-7d4a-4c1e-9f61-2b0a7c8d9e11",
+      "../main",
+      "..",
+      "thread.lock",
+      "a b",
+      "x".repeat(300),
+    ];
+    const refs = real.map(handoffRef);
+    for (const ref of refs) {
+      expect(ref.startsWith("refs/specwithcode/handoff/")).toBe(true);
+      expect(ref.slice("refs/specwithcode/handoff/".length)).not.toContain("/");
+      expect(validRef(ref)).toBe(true);
+    }
+    expect(new Set(refs).size).toBe(refs.length);
+    expect(handoffRef(real[0]!)).toBe(refs[0]);
   });
 });

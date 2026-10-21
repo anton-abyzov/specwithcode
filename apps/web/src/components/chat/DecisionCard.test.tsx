@@ -57,6 +57,14 @@ describe("DecisionCard", () => {
     expect(markup).not.toContain("Clear regenerable caches on the M4 to free disk space?");
   });
 
+  it("says a reply typed in chat was answered there", () => {
+    const markup = renderToStaticMarkup(
+      <DecisionCard item={item({ answers: { q1: "Use this layout" }, answeredInChat: true })} />,
+    );
+    expect(markup).toContain("Answered in chat");
+    expect(markup).not.toContain("Sent to the agent");
+  });
+
   it("counts several answered questions and lists every choice", () => {
     const two = item({ answers: { q1: "Clear caches", q2: "Weekly" } });
     const markup = renderToStaticMarkup(

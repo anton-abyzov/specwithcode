@@ -273,6 +273,14 @@ describe("summarizeStudioToolCalls", () => {
       ]).label,
     ).toBe("Moved 1 thread to another machine");
     expect(
+      summarizeStudioToolCalls("thread-continue-here", [
+        completed(
+          { sourceThreadId: "thread-1" },
+          { sourceThreadId: "thread-1", threadId: "thread-1-minis" },
+        ),
+      ]).label,
+    ).toBe("Continued 1 thread on this machine");
+    expect(
       summarizeStudioToolCalls("task-cancel", [
         completed({ taskId: "task-1" }, { taskId: "task-1", status: "cancel_requested" }),
       ]).label,

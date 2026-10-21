@@ -78,8 +78,12 @@ export function DecisionCard(props: {
                 {chosen.join(", ")}
               </span>
               <span className="ms-auto shrink-0 text-xs text-muted-foreground">
-                {byAgent ? "Answered by an agent" : "Sent to the agent"} ·{" "}
-                <time dateTime={answeredDate.toISOString()}>{when}</time>
+                {byAgent
+                  ? "Answered by an agent"
+                  : item.questionAnswer.answeredInChat
+                    ? "Answered in chat"
+                    : "Sent to the agent"}{" "}
+                · <time dateTime={answeredDate.toISOString()}>{when}</time>
               </span>
             </span>
           </span>

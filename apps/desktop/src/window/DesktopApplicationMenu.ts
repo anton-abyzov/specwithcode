@@ -10,6 +10,7 @@ import { makeComponentLogger } from "../app/DesktopObservability.ts";
 import * as ElectronDialog from "../electron/ElectronDialog.ts";
 import * as ElectronMenu from "../electron/ElectronMenu.ts";
 import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
+import { HANDOFF_MACHINE_ACTION } from "../app/DesktopHandoffSleep.ts";
 import * as DesktopUpdates from "../updates/DesktopUpdates.ts";
 import * as DesktopWindow from "./DesktopWindow.ts";
 
@@ -137,6 +138,9 @@ export const make = Effect.gen(function* () {
     const settingsClick = () => {
       runMenuEffect("open-settings", dispatchMenuAction("open-settings"));
     };
+    const handOffMachineClick = () => {
+      runMenuEffect(HANDOFF_MACHINE_ACTION, dispatchMenuAction(HANDOFF_MACHINE_ACTION));
+    };
     // Chromium already pastes as plain text for this chord, so the accelerator
     // needs nothing from the menu: the composer and the terminal each arm
     // themselves from the same keydown. Routing it through the renderer anyway
@@ -196,6 +200,8 @@ export const make = Effect.gen(function* () {
                 },
                 { type: "separator" as const },
               ]),
+          { label: "Hand Off This Machine...", click: handOffMachineClick },
+          { type: "separator" as const },
           { role: environment.platform === "darwin" ? "close" : "quit" },
         ],
       },

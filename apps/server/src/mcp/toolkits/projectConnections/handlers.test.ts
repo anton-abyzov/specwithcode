@@ -1,3 +1,6 @@
+// @effect-diagnostics nodeBuiltinImport:off -- the source scan reads toolkit files synchronously.
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
 import { expect, it } from "@effect/vitest";
 import {
   CommandId,
@@ -57,6 +60,28 @@ const fixture = () => {
   const calls: { operation: string; input: unknown }[] = [];
   const deps = Layer.mergeAll(
     Layer.mock(Connections.ProjectConnectionService)({
+      // Two folders' Claude Code local entries: agents must never reach them.
+      discoverNative: (input) =>
+        Effect.sync(() => {
+          calls.push({ operation: "discoverNative", input });
+          return {
+            observedAt: "2026-10-20T00:00:00.000Z",
+            sources: [],
+            connections: ["callerFolder", "otherFolder"].map((project) => ({
+              id: `claude:claude-all-projects:${project}`,
+              name: `${project}-server`,
+              provider: "claude" as const,
+              sourceId: "claude-all-projects",
+              scope: "local" as const,
+              transport: "stdio" as const,
+              state: "configured" as const,
+              shadowed: false,
+              project,
+            })),
+            truncated: false,
+            runtime: "unverified" as const,
+          };
+        }),
       read: (input) =>
         Effect.sync(() => {
           calls.push({ operation: "read", input });
@@ -98,9 +123,9 @@ it.effect(
         ]);
         expect(JSON.stringify(listed)).not.toContain("host-only");
         expect(JSON.stringify(listed)).not.toContain("HOST_ONLY_KEY");
-      const spoofed = { ...request, actor: "thread:forged" };
-      const result = yield* toolkit
-        .handle("studio_project_connection_call", spoofed)
+        const spoofed = { ...request, actor: "thread:forged" };
+        const result = yield* toolkit
+          .handle("studio_project_connection_call", spoofed)
           .pipe(Stream.unwrap, Stream.runCollect);
         expect(result.at(-1)?.result).toEqual({ isError: false, content: "Synthetic result" });
         expect(f.calls).toEqual([
@@ -172,4 +197,34 @@ it("exposes no agent method to configure or grant connection permissions", () =>
     "studio_project_connection_call",
     "studio_project_connections_list",
   ]);
+});
+
+it.effect(
+  "never lists Claude Code folder entries, the caller's or another folder's, to an agent",
+  () =>
+    Effect.gen(function* () {
+      const f = fixture();
+      yield* Effect.gen(function* () {
+        const toolkit = yield* ProjectConnectionsToolkit;
+        const listed = yield* toolkit
+          .handle("studio_project_connections_list", {})
+          .pipe(Stream.unwrap, Stream.runCollect);
+        expect(JSON.stringify(listed)).not.toMatch(/callerFolder|otherFolder/);
+        expect(f.calls.map((c) => c.operation)).toEqual(["read"]);
+      }).pipe(Effect.provide(f.layer));
+    }),
+);
+
+it("keeps native configuration discovery out of every agent toolkit", () => {
+  const root = NodePath.resolve(import.meta.dirname, "../..");
+  const sources = (NodeFS.readdirSync(root, { recursive: true }) as string[]).filter(
+    (file) => file.endsWith(".ts") && !file.endsWith(".test.ts"),
+  );
+  const offenders = sources.filter((file) =>
+    /discoverNative|NativeConnectionDiscovery|nativeConnectionsRead/.test(
+      NodeFS.readFileSync(NodePath.join(root, file), "utf8"),
+    ),
+  );
+  expect(sources.length).toBeGreaterThan(10);
+  expect(offenders).toEqual([]);
 });

@@ -22,6 +22,9 @@ import { ConversationFindBar } from "../components/find/ConversationFindBar";
 import { ModsHost } from "../mods/ModsHost";
 import { CustomSnoozeDialogHost } from "../components/CustomSnoozeDialog";
 import { ThreadMoveDialogHost } from "../components/ThreadMoveDialog";
+import { HandoffDesktopBridge } from "../components/handoff/HandoffDesktopBridge";
+import { HandOffMachineDialogHost } from "../components/handoff/HandOffMachineDialog";
+import { HandOffThreadDialogHost } from "../components/handoff/HandOffThreadDialog";
 import { ConfirmDialogHost } from "../components/ConfirmDialogHost";
 import { KeybindingsConfigWarning } from "../components/KeybindingsConfigWarning";
 import { FirstRunGate } from "../components/onboarding/FirstRunGate";
@@ -193,8 +196,11 @@ function RootRouteView() {
           {/* Outside FirstRunGate: a session can run while this window is still in onboarding. */}
           {isElectron && primaryEnvironmentAuthenticated ? <KeepAwakeWhileWorking /> : null}
           {isElectron && primaryEnvironmentAuthenticated ? <ComputerUseHost /> : null}
+          {isElectron && primaryEnvironmentAuthenticated ? <HandoffDesktopBridge /> : null}
           <CustomSnoozeDialogHost />
           <ThreadMoveDialogHost />
+          <HandOffThreadDialogHost />
+          <HandOffMachineDialogHost />
           <CommandPalette>
             <AppSidebarLayout>
               <Outlet />
@@ -239,6 +245,7 @@ function RootRouteView() {
         {/* Outside FirstRunGate: a session can run while this window is still in onboarding. */}
         {isElectron && primaryEnvironmentAuthenticated ? <KeepAwakeWhileWorking /> : null}
         {isElectron && primaryEnvironmentAuthenticated ? <ComputerUseHost /> : null}
+        {isElectron && primaryEnvironmentAuthenticated ? <HandoffDesktopBridge /> : null}
         <ChatGptWelcomeCoordinator />
         <FirstRunGate
           enabled={primaryEnvironmentAuthenticated}
@@ -260,6 +267,8 @@ function RootRouteView() {
           <ConfirmDialogHost />
           <CustomSnoozeDialogHost />
           <ThreadMoveDialogHost />
+          <HandOffThreadDialogHost />
+          <HandOffMachineDialogHost />
           <SlowRpcRequestToastCoordinator />
           <PermissionUpdateNotice />
           {primaryEnvironmentAuthenticated ? <LegacyThreadMigrationToast /> : null}

@@ -84,6 +84,8 @@ export const ProvisionService = Schema.Struct({
   unit: Schema.NullOr(bounded(500)),
   installed: Schema.Boolean,
   active: Schema.Boolean,
+  /** Set when the service manager could not be asked at all; `active` is then unknown, not false. */
+  managerError: Schema.optional(bounded(500)),
   version: Schema.NullOr(bounded(80)),
   home: Schema.NullOr(bounded(4096)),
   /** Agent commands the service cannot find on the PATH its server reads at start. */

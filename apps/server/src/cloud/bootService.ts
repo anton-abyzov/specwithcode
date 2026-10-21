@@ -23,6 +23,7 @@ import {
   type NpmPackageRuntime,
 } from "../environment/ServerReleaseManifest.ts";
 import * as ProcessRunner from "../processRunner.ts";
+import { userBusCandidates, userBusEnv } from "../systemdUserBus.ts";
 import {
   ensurePinnedRuntimeInstalled,
   pinnedRuntimeCommand,
@@ -583,6 +584,25 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const runner = yield* ProcessRunner.ProcessRunner;
+  // The launchers start from `env -i`, so `systemctl --user` and `loginctl` would miss the user bus.
+  const busEnvironment = {
+    XDG_RUNTIME_DIR: Option.getOrUndefined(
+      yield* Config.String("XDG_RUNTIME_DIR").pipe(Config.option),
+    ),
+    DBUS_SESSION_BUS_ADDRESS: Option.getOrUndefined(
+      yield* Config.String("DBUS_SESSION_BUS_ADDRESS").pipe(Config.option),
+    ),
+  };
+  const busPresent = new Set<string>();
+  if (platform === "linux")
+    for (const candidate of userBusCandidates(busEnvironment, uid))
+      if (yield* fs.exists(candidate).pipe(Effect.orElseSucceed(() => false)))
+        busPresent.add(candidate);
+  const userBus = userBusEnv(busEnvironment, uid, (candidate) => busPresent.has(candidate));
+  const userManagerEnv = (command: string) =>
+    (command === "systemctl" || command === "loginctl") && Object.keys(userBus).length > 0
+      ? { env: userBus }
+      : {};
   const host = input.host ?? { execPath: hostExecPath };
   const npmPackage =
     input.npmPackage === undefined ? yield* findNpmPackageRuntime() : input.npmPackage;
@@ -681,20 +701,22 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     args: ReadonlyArray<string>,
     options?: { readonly timeout?: Duration.Input },
   ) {
-    return yield* runner.run({ command, args, timeout: options?.timeout }).pipe(
-      Effect.mapError((cause) => new BootServiceCommandError({ step, cause })),
-      Effect.filterOrFail(
-        (result) => result.code === 0,
-        (result) =>
-          new BootServiceCommandError({
-            step,
-            exitCode: Number(result.code),
-            stdoutLength: result.stdout.length,
-            stderrLength: result.stderr.length,
-          }),
-      ),
-      Effect.tapError(logFailure),
-    );
+    return yield* runner
+      .run({ command, args, timeout: options?.timeout, ...userManagerEnv(command) })
+      .pipe(
+        Effect.mapError((cause) => new BootServiceCommandError({ step, cause })),
+        Effect.filterOrFail(
+          (result) => result.code === 0,
+          (result) =>
+            new BootServiceCommandError({
+              step,
+              exitCode: Number(result.code),
+              stdoutLength: result.stdout.length,
+              stderrLength: result.stderr.length,
+            }),
+        ),
+        Effect.tapError(logFailure),
+      );
   });
 
   const runSteps = (steps: ReadonlyArray<BootServiceStep>) =>
@@ -715,7 +737,9 @@ export const make = Effect.fn("cloud.boot_service.make")(function* (input: {
     );
 
   const probe = (command: string, args: ReadonlyArray<string>) =>
-    runner.run({ command, args, timeout: Duration.seconds(5) }).pipe(Effect.option);
+    runner
+      .run({ command, args, timeout: Duration.seconds(5), ...userManagerEnv(command) })
+      .pipe(Effect.option);
   const succeeded = (result: Option.Option<ProcessRunner.ProcessRunOutput>) =>
     Option.isSome(result) && result.value.code === 0;
   const lingerArgs = [

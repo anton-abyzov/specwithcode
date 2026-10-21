@@ -3104,6 +3104,8 @@ export const OrchestrationV2Command = Schema.Union([
     attachmentsByQuestionId: Schema.optional(UserInputAttachments),
     /** Set when an agent answered on the user's behalf; absent means the user chose. */
     answeredByThreadId: Schema.optional(ThreadId),
+    /** The user replied from the chat composer; the reply stays in the conversation. */
+    answeredInChat: Schema.optional(Schema.Boolean),
   }),
   Schema.Struct({
     type: Schema.Literal("thread.user-input.dismiss"),
@@ -3274,6 +3276,16 @@ const OrchestrationV2InternalCommand = Schema.Union([
     threadId: ThreadId,
     side: Schema.Literals(["source", "target"]),
     link: OrchestrationV2ThreadProjectMoveLink,
+  }),
+  /**
+   * Replaces where a thread lives and runs (handoff mode). Records nothing
+   * when the record is unchanged; never archives or stops the thread.
+   */
+  Schema.Struct({
+    type: Schema.Literal("thread.execution.record"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    execution: ThreadExecutionRecord,
   }),
   /**
    * Gives a thread outside every project (the Scratch project) to a project as

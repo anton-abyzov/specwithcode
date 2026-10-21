@@ -269,9 +269,10 @@ const interruptRun = (
     return run.id;
   });
 
-// The recovery query only looks at runs from the last day, so tests run near
-// the present rather than at the TestClock's epoch.
-const recentTime = 1792469222856; // October 20, 2026, 04:07:02.856Z, the 1.0.60 install
+// The recovery query compares against SQLite's wall-clock 'now' and only looks
+// at runs from the last day, so tests run a minute before the real present.
+// (TestClock replaces Clock here, so the wall clock is read from performance.)
+const recentTime = Math.floor(performance.timeOrigin + performance.now()) - 60_000;
 
 const continueAll = Effect.gen(function* () {
   const recovery = yield* ProviderRuntimeRecoveryService.ProviderRuntimeRecoveryService;

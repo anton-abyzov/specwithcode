@@ -36,6 +36,12 @@ function recordEffect(action: string) {
 
 vi.mock("../components/CustomSnoozeDialog", () => ({ requestCustomSnooze: vi.fn() }));
 vi.mock("../components/ThreadMoveDialog", () => ({ requestThreadMove: vi.fn() }));
+vi.mock("../components/handoff/HandOffThreadDialog", () => ({ requestHandOffThread: vi.fn() }));
+vi.mock("../studio/handoffMode", () => ({
+  readHandoffModeSnapshot: () => null,
+  setThreadHandoffMode: vi.fn(),
+  threadHandoffMenuState: () => undefined,
+}));
 vi.mock("react", () => ({
   useCallback: (callback: unknown) => callback,
   useMemo: (factory: () => unknown) => factory(),

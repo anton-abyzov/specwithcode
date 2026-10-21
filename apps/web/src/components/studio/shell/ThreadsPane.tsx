@@ -65,6 +65,7 @@ import { compactThreadPlan } from "../../../studio/threadPlanProgress";
 import { useProjectThreadIncrementProgress } from "../../../studio/useThreadIncrementProgress";
 import { ProjectPaneBar, type ProjectPaneBarProps } from "./ProjectPaneBar";
 import { Tip } from "./Tip";
+import { HandoffRowAction, HandoffRowBadge } from "../../handoff/HandoffBadge";
 import { useUnreachableHosts } from "../../../studio/unreachableHosts";
 
 const SORT_STORAGE_KEY = "studio:project-threads-sort:v1";
@@ -505,6 +506,12 @@ export function ThreadsPane({
                                   <TooltipPopup side="bottom">{machine.description}</TooltipPopup>
                                 </Tooltip>
                               ) : null}
+                              <HandoffRowBadge
+                                environmentId={thread.environmentId}
+                                threadId={thread.id}
+                                localEnvironmentId={props.environmentId}
+                                hostOffline={hostOffline}
+                              />
                               {thread.runtime?.lastError ? (
                                 <span className="sws-thread-error">{thread.runtime.lastError}</span>
                               ) : null}
@@ -517,6 +524,18 @@ export function ThreadsPane({
                             {compactAge(sessionStateSince(thread), now)}
                           </time>
                         </button>
+                        <HandoffRowAction
+                          environmentId={thread.environmentId}
+                          threadId={thread.id}
+                          localEnvironmentId={props.environmentId}
+                          hostOffline={hostOffline}
+                          canOperate={
+                            props.canChangeThread ? props.canChangeThread(thread) : props.canChange
+                          }
+                          onOpenThread={(threadId, environmentId) =>
+                            props.onOpen(threadId, environmentId)
+                          }
+                        />
                         <Tip label={`${action} ${thread.title}`}>
                           <button
                             type="button"

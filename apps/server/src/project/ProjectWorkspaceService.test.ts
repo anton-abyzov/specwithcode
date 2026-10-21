@@ -560,6 +560,10 @@ it("makes the personal assistant route owned work and every other coordinator ac
   assert.include(assistant, "ask the user once with ask_user");
   assert.include(assistant, "route it once to each owning project");
   assert.include(assistant, "Never add approved folders");
+  // Repeating work becomes a routine that runs when asked and only prepares.
+  assert.include(assistant, "{type:'manual'}, ownThread true");
+  assert.include(assistant, "Turn on a cadence (monthly, daily) only when the user asks");
+  assert.include(assistant, "A routine run never takes such an action");
   assert.notInclude(assistant, "Routed from personal assistant");
   const coordinator = Workspace.projectContextText({
     projectId: "p",
@@ -571,6 +575,7 @@ it("makes the personal assistant route owned work and every other coordinator ac
   assert.include(coordinator, "Routed from personal assistant");
   assert.include(coordinator, "Never restart or revive a cancelled or stopped thread");
   assert.notInclude(coordinator, "studio_route_targets");
+  assert.notInclude(coordinator, "ownThread true");
   // Workers get neither.
   const worker = Workspace.projectContextText({
     projectId: "p",

@@ -1205,6 +1205,10 @@ export const DesktopThreadNotificationInputSchema = Schema.Struct({
 });
 export type DesktopThreadNotificationInput = typeof DesktopThreadNotificationInputSchema.Type;
 
+/** Handoff mode menu actions the desktop sends over `onMenuAction`. */
+export const DESKTOP_HANDOFF_SLEEP_ACTION = "handoff-mode:sleep";
+export const DESKTOP_HANDOFF_MACHINE_ACTION = "handoff-mode:open-machine-dialog";
+
 export interface DesktopBridge {
   getAppBranding: () => DesktopAppBranding | null;
   /** Absolute path of a dropped or picked file; absent on desktop builds predating it. */

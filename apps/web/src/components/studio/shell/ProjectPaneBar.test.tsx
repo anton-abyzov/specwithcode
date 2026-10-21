@@ -43,7 +43,7 @@ describe("the project panel's header row", () => {
     expect(rows).toHaveLength(1);
     const row = rows[0]!;
     expect([...row.querySelectorAll('[role="tab"]')].map((tab) => tab.textContent?.trim())).toEqual(
-      ["Threads2 waiting on you", "Library", "PRs", "Scheduled"],
+      ["Threads2 waiting on you", "Library", "PRs", "Routines"],
     );
     for (const label of ["New", "Find a thread", "Expand panel", "Hide overview"])
       expect(row.querySelector(`[aria-label="${label}"]`)).not.toBeNull();

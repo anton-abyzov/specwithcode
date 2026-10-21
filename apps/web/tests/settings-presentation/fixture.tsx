@@ -3,7 +3,13 @@ import { createRoot } from "react-dom/client";
 import { ProjectWorkspaceSettings } from "../../src/components/studio/ProjectWorkspaceSettings";
 import { ProjectLocation } from "../../src/components/studio/ProjectLocation";
 import { SettingsRow, SettingsSection } from "../../src/components/settings/settingsLayout";
-import { project, useEnvironmentQuery } from "./mocks";
+import { project, serverEnvironment, useEnvironmentQuery } from "./mocks";
+import { Atom } from "effect/reactivity";
+import { EnvironmentId } from "@specweave-studio/contracts";
+import { PlusIcon } from "lucide-react";
+import { ScheduledTaskRow } from "../../src/components/settings/ScheduledTaskRow";
+import { Button } from "../../src/components/ui/button";
+import { managerRoutines } from "../project-workspace/routines-fixture";
 const path =
   "/Users/developer/.local/share/specweave/fleet/handoff-proof-20261013/" +
   "copilot116-echo-root-m3-4e1b616b097a49d4b8baf6a3043d65a8/".repeat(5) +
@@ -35,9 +41,51 @@ connectionState.connections.push({
   revision: 1,
   status: "saved",
 });
-const shared = new URLSearchParams(location.search).has("shared");
+const search = new URLSearchParams(location.search);
+const shared = search.has("shared");
+// `?routines`: Settings > Routines rows across two projects. Saving is synthetic: the
+// fixture host allows edits and records each command in window.__projectCalls.
+if (search.has("routines") && !search.has("tab")) {
+  const allowed = Atom.make(true);
+  Object.assign(serverEnvironment, {
+    upsertScheduledTask: Object.assign(() => ({ kind: "routineSave" }), {
+      permissionAtom: () => allowed,
+    }),
+  });
+}
+const projectTitles = new Map([
+  ["project", "Atlas Studio"],
+  ["beacon", "Beacon"],
+]);
 createRoot(document.getElementById("root")!).render(
-  shared ? (
+  search.has("routines") && !search.has("tab") ? (
+    <main style={{ maxWidth: 960, margin: "24px auto", padding: 16 }}>
+      <SettingsSection
+        title="Routines"
+        variant="plain"
+        headerAction={
+          <Button size="xs" variant="ghost-muted">
+            <PlusIcon className="size-3" />
+            New routine
+          </Button>
+        }
+      >
+        <SettingsSection title="Development Mac">
+          {managerRoutines().map((task) => (
+            <ScheduledTaskRow
+              key={task.id as string}
+              environmentId={EnvironmentId.make("environment-local")}
+              task={task as never}
+              projectLabel={projectTitles.get(task.projectId as string) ?? null}
+              onEdit={() => {
+                document.body.dataset.edited = task.id as string;
+              }}
+            />
+          ))}
+        </SettingsSection>
+      </SettingsSection>
+    </main>
+  ) : shared ? (
     <main style={{ maxWidth: 900, margin: "24px auto", padding: 16 }}>
       <SettingsSection
         title="Project folders"
@@ -60,7 +108,7 @@ createRoot(document.getElementById("root")!).render(
       project={project}
       projectKey="atlas"
       snapshot={snapshot}
-      initialTab="environment"
+      initialTab={(search.get("tab") ?? "environment") as never}
       canOperate
       onClose={() => {
         document.body.dataset.closed = "true";

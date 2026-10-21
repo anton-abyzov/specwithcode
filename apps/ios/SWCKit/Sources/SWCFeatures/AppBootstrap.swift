@@ -3,7 +3,7 @@ import SWCSync
 
 /// Builds the app model and routes incoming links.
 ///
-/// Launch arguments: `-SWCFixture [default|empty|running]` serves sample data,
+/// Launch arguments: `-SWCFixture [default|empty|running|fleet|m4-blip|minis-blip|long]` serves sample data,
 /// `-SWCAppearance light|dark` forces an appearance, and
 /// `-SWCRoute overview|settings|projectSettings|machines|pair|thread|drawer|search`
 /// opens a screen once data is in, for screenshots.

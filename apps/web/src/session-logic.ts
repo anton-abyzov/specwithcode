@@ -622,9 +622,12 @@ export function deriveTimelineEntriesFromVisibleTurnItems(
     return undefined;
   };
 
+  // A picked option lives on its decision card; a reply typed in chat stays a message.
   const foldedAnswerMessageIds = new Set(
     input.visibleTurnItems.flatMap(({ item }) =>
-      item.type === "user_input_request" && item.questionAnswer
+      item.type === "user_input_request" &&
+      item.questionAnswer &&
+      item.questionAnswer.answeredInChat !== true
         ? [`async-answer:${item.questionAnswer.requestId}`]
         : [],
     ),

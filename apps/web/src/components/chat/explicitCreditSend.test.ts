@@ -449,7 +449,7 @@ function actualComposer(changes: Record<string, unknown> = {}) {
     AuthOrchestrationOperateScope: "operate",
     activeThreadId: context.threadId,
     pendingImageCompressionsRef: { current: new Map() },
-    attachmentTargetKey: "draft",
+    composerDraftTargetKey: "draft",
     pendingDraftWork: new Set(),
     toastManager: { add: toast },
     submitComposerDraft,

@@ -163,6 +163,67 @@ describe("native connection configuration discovery", () => {
         expect(JSON.stringify(result)).not.toContain("foreign");
       }),
   );
+  it.effect("carries only a folder's base name, transport and server name for folder entries", () =>
+    Effect.gen(function* () {
+      const clientFolder = NodePath.join(root, "home", "anton", "Clients", "acme-portal");
+      yield* put("custom-claude/.claude.json", {
+        projects: {
+          [clientFolder]: {
+            mcpServers: {
+              figma: {
+                type: "http",
+                url: "https://mcp.invalid/acme?key=private-url-token",
+                headers: { Authorization: "Bearer private-header-token" },
+              },
+              playwright: {
+                command: "/opt/private-bin/playwright",
+                args: ["--token", "private-arg-token"],
+                env: { API_SECRET: "private-env-token" },
+              },
+            },
+          },
+        },
+      });
+      const result = yield* scan();
+      const folder = result.connections.filter((c) => c.sourceId === "claude-all-projects");
+      expect(folder.map((c) => [c.name, c.transport, c.project])).toEqual([
+        ["figma", "http", "acme-portal"],
+        ["playwright", "stdio", "acme-portal"],
+      ]);
+      for (const entry of folder)
+        expect(Object.keys(entry).toSorted()).toEqual([
+          "id",
+          "name",
+          "project",
+          "provider",
+          "scope",
+          "shadowed",
+          "sourceId",
+          "state",
+          "transport",
+        ]);
+      const payload = JSON.stringify(result);
+      expect(payload).not.toMatch(
+        /private-|mcp\.invalid|Authorization|API_SECRET|--token|private-bin|Clients|anton/,
+      );
+      expect(payload).not.toContain(root);
+    }),
+  );
+  it.effect("reads only the given folder's local entries, never another folder's", () =>
+    Effect.gen(function* () {
+      yield* put("custom-claude/.claude.json", {
+        projects: {
+          [NodePath.join(root, "repo")]: { mcpServers: { ownServer: { command: "own" } } },
+          [NodePath.join(root, "other")]: { mcpServers: { otherServer: { command: "other" } } },
+        },
+      });
+      const result = yield* scan(true);
+      expect(
+        result.connections.filter((c) => c.scope === "local").map((c) => [c.name, c.project]),
+      ).toEqual([["ownServer", undefined]]);
+      expect(JSON.stringify(result)).not.toMatch(/otherServer|"other"/);
+    }),
+  );
   it.effect("marks oversized, non-file, malformed and unsupported sources explicitly", () =>
     Effect.gen(function* () {
       yield* put("custom-codex/config.toml", " ".repeat(2 * 1024 * 1024 + 1));

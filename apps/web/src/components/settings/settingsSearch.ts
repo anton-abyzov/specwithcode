@@ -106,7 +106,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/archived": "Archive",
   "/settings/agents": "Agents",
   "/settings/providers": "Providers",
-  "/settings/scheduled-tasks": "Scheduled Tasks",
+  "/settings/scheduled-tasks": "Routines",
   "/settings/mods": "Mods",
   "/settings/source-control": "Source Control",
   "/settings/storage": "Storage",
@@ -1086,6 +1086,20 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: [
       "worker grant revoke coordinator fleet remote work machine access projects sign-ins accounts delegation",
     ],
+  },
+  {
+    id: "handoff-mode",
+    title: "Handoff mode",
+    to: "/settings/machines",
+    searchTerms: [
+      "handoff hand off continue another machine model checkpoint replicate note push origin project default takeover unreachable",
+    ],
+  },
+  {
+    id: "handoff-sleep-target",
+    title: "When this Mac sleeps, hand off running threads",
+    to: "/settings/machines",
+    searchTerms: ["sleep suspend lid close laptop hand off threads machine handoff"],
   },
   {
     id: "private-machines-auto-connect",

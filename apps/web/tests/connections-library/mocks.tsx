@@ -48,6 +48,16 @@ export function useSettingsScope() {
     environments,
   };
 }
+export function useEnvironments() {
+  useFixture();
+  return {
+    environments: environments.map((e) => ({
+      environmentId: e.environmentId,
+      entry: null,
+      connection: { phase: mode === "offline" ? "disconnected" : "connected" },
+    })),
+  };
+}
 export function useEnvironment() {
   useFixture();
   return { connection: { phase: mode === "offline" ? "disconnected" : "connected" } };
@@ -56,7 +66,43 @@ export function useEnvironmentScope() {
   useFixture();
   return mode !== "denied";
 }
-export const projectWorkspace = { nativeConnections: (request: unknown) => request };
+export const projectWorkspace = {
+  nativeConnections: (request: unknown) => request,
+  nativeConnectionApply: "nativeConnectionApply",
+};
+/** The fixture never writes: every command reports the machine as unavailable. */
+export function useAtomCommand() {
+  return async () => ({ _tag: "Failure" as const, cause: new Error("Fixture is read-only") });
+}
+/** Claude Code local-scope entries outside project context, as Settings lists them. */
+const folderEntry = (name: string, folder: string, transport: "http" | "stdio") => ({
+  id: `claude:claude-all-projects:${name}:${folder}`,
+  name,
+  provider: "claude" as const,
+  sourceId: "claude-all-projects",
+  scope: "local" as const,
+  transport,
+  state: "configured" as const,
+  shadowed: false,
+  project: folder,
+});
+const folderEntries: NativeConnectionsSnapshot["connections"] = [
+  {
+    id: "codex-user:posthog",
+    name: "PostHog",
+    provider: "codex",
+    sourceId: "codex-user",
+    scope: "user",
+    transport: "http",
+    state: "configured",
+    shadowed: false,
+  },
+  folderEntry("design-mcp", "sample-portal", "http"),
+  folderEntry("browser-mcp", "sample-portal", "stdio"),
+  folderEntry("browser-mcp", "demo-site", "stdio"),
+  folderEntry("browser-mcp", "notes-app", "stdio"),
+  folderEntry("scheduler", "travel-demo", "http"),
+];
 export function useEnvironmentQuery(
   atom: { environmentId: string; input: { projectId?: string } } | null,
 ) {
@@ -73,18 +119,20 @@ export function useEnvironmentQuery(
     connections:
       mode === "empty" || mode === "invalid"
         ? []
-        : [
-            {
-              id: sourceId,
-              name: provider === "claude" ? "Remote analytics" : "PostHog",
-              provider,
-              scope,
-              sourceId,
-              transport: "http",
-              state: scope === "project" ? "disabled" : "configured",
-              shadowed: false,
-            },
-          ],
+        : mode === "folders"
+          ? folderEntries
+          : [
+              {
+                id: sourceId,
+                name: provider === "claude" ? "Remote analytics" : "PostHog",
+                provider,
+                scope,
+                sourceId,
+                transport: "http",
+                state: scope === "project" ? "disabled" : "configured",
+                shadowed: false,
+              },
+            ],
   };
   return {
     data: mode === "loading" ? null : snapshot,
@@ -96,10 +144,21 @@ export function useEnvironmentQuery(
 export function SettingsPageContainer({ children }: { children: ReactNode }) {
   return <main className="mx-auto max-w-4xl p-4">{children}</main>;
 }
-export function SettingsSection({ title, children }: { title: string; children: ReactNode }) {
+export function SettingsSection({
+  title,
+  headerAction,
+  children,
+}: {
+  title: string;
+  headerAction?: ReactNode;
+  children: ReactNode;
+}) {
   return (
     <section className="space-y-5 rounded-xl border border-border bg-background p-4">
-      <h1 className="text-xl font-medium">{title}</h1>
+      <div className="flex items-center justify-between gap-2">
+        <h1 className="text-xl font-medium">{title}</h1>
+        {headerAction}
+      </div>
       {children}
     </section>
   );

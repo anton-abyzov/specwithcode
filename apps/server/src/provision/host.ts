@@ -16,6 +16,8 @@ import * as NodePath from "node:path";
 
 import { listLoginShellCandidates, readPathFromLoginShell } from "@specweave-studio/shared/shell";
 
+import { userBusCandidates, userBusEnv } from "../systemdUserBus.ts";
+
 /** The PATH an interactive login shell gives this user: what the server merges in when it starts. */
 export function loginShellPath(): string | undefined {
   // oxlint-disable-next-line studio/no-global-process-runtime -- the runner is plain async I/O outside any Effect runtime.
@@ -106,6 +108,27 @@ export interface ProvisionHost {
   /** The first executable named `name` on `pathValue`. */
   which(name: string, pathValue: string): Promise<string | null>;
   now(): Date;
+}
+
+/** XDG_RUNTIME_DIR and the session bus for `systemctl --user` and `loginctl`, when this process lacks them. */
+export async function userManagerEnv(host: ProvisionHost): Promise<Record<string, string>> {
+  const present = new Set<string>();
+  for (const path of userBusCandidates(host.env, host.uid))
+    if (await host.exists(path)) present.add(path);
+  return userBusEnv(host.env, host.uid, (path) => present.has(path));
+}
+
+/** Runs `systemctl --user` or `loginctl` with the user manager's variables filled in. */
+export async function userManagerExec(
+  host: ProvisionHost,
+  command: "systemctl" | "loginctl",
+  args: ReadonlyArray<string>,
+  options: ExecOptions = {},
+): Promise<ExecResult> {
+  return host.exec(command, args, {
+    ...options,
+    env: { ...(await userManagerEnv(host)), ...options.env },
+  });
 }
 
 /**

@@ -5,7 +5,7 @@ import type {
   ProvisionRootStep,
 } from "@specweave-studio/contracts";
 
-import { mirroredUrl } from "./host.ts";
+import { type ExecOptions, mirroredUrl, userManagerEnv } from "./host.ts";
 import {
   CLAUDE_VERSION,
   claudeDownload,
@@ -161,8 +161,17 @@ export async function fetchPinned(
   return file;
 }
 
-export async function must(ctx: Ctx, command: string, args: string[], what: string) {
-  const result = await ctx.host.exec(command, args, { timeoutMs: 10 * 60_000 });
+export async function must(
+  ctx: Ctx,
+  command: string,
+  args: string[],
+  what: string,
+  env?: ExecOptions["env"],
+) {
+  const result = await ctx.host.exec(command, args, {
+    timeoutMs: 10 * 60_000,
+    ...(env === undefined ? {} : { env }),
+  });
   if (result.code !== 0) throw new Error(`${what} failed: ${installFailureReason(result)}`);
   return result;
 }
@@ -290,8 +299,8 @@ export async function installCodex(ctx: Ctx) {
 }
 
 /**
- * The release's own entry, as install.sh uses it: it keeps this session's environment, which
- * `systemctl --user` needs (XDG_RUNTIME_DIR). The launchers start from `env -i` and lose it.
+ * The release's own entry, as install.sh uses it, rather than the `env -i` launcher. The server
+ * fills in the user manager's variables itself (systemdUserBus.ts), so either works.
  */
 async function serviceEntry(ctx: Ctx, probes: Probes): Promise<string> {
   const found = probes.server.found;
@@ -315,7 +324,13 @@ export async function applyServerItem(
   }
   if (id === "service") {
     if (isLinux(ctx.target) && probes.service.installed)
-      await must(ctx, "systemctl", ["--user", "start", SYSTEMD_UNIT], "Starting the service");
+      await must(
+        ctx,
+        "systemctl",
+        ["--user", "start", SYSTEMD_UNIT],
+        "Starting the service",
+        await userManagerEnv(ctx.host),
+      );
     else
       await must(
         ctx,
@@ -350,13 +365,25 @@ export async function applyServerItem(
     `# Written by specwithcode provision: the folders of the agent commands the service could not find.\n[Service]\nEnvironment="PATH=${pathValue}"\n`,
     0o644,
   );
-  await must(ctx, "systemctl", ["--user", "daemon-reload"], "Reloading systemd");
+  await must(
+    ctx,
+    "systemctl",
+    ["--user", "daemon-reload"],
+    "Reloading systemd",
+    await userManagerEnv(ctx.host),
+  );
   if (
     ctx.options.mode === "cli" &&
     ctx.options.restartService &&
     (await serviceIdle(ctx)) === true
   ) {
-    await must(ctx, "systemctl", ["--user", "restart", SYSTEMD_UNIT], "Restarting the service");
+    await must(
+      ctx,
+      "systemctl",
+      ["--user", "restart", SYSTEMD_UNIT],
+      "Restarting the service",
+      await userManagerEnv(ctx.host),
+    );
     return null;
   }
   return {

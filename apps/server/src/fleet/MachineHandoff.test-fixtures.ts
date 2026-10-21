@@ -30,6 +30,7 @@ import {
   type Project,
   type MachineHandoffBundle,
   type MachineHandoffReceiveInput,
+  type MachineNicknames,
   type RuntimeMode,
   type ServerDirectEndpoint,
 } from "@specweave-studio/contracts";
@@ -84,6 +85,7 @@ const makeHarness = (
     coordinatorRuntimeMode?: RuntimeMode;
     /** This machine's own default for new projects. */
     defaultRuntimeMode?: RuntimeMode;
+    machineNicknames?: MachineNicknames;
     /** The source project's folder; folder copies scan it for real. */
     workspaceRoot?: string;
     /** This machine's private addresses; omitted leaves the service without any. */
@@ -144,6 +146,9 @@ const makeHarness = (
       ...(options.defaultRuntimeMode === undefined
         ? {}
         : { defaultRuntimeMode: options.defaultRuntimeMode }),
+      ...(options.machineNicknames === undefined
+        ? {}
+        : { machineNicknames: options.machineNicknames }),
     }),
     Layer.succeed(ServerEnvironment.ServerEnvironment, {
       getEnvironmentId: Effect.succeed(EnvironmentId.make(options.environment ?? "source-env")),

@@ -15,6 +15,8 @@ import {
   HandOffMachineInput,
   HandOffResult,
   HandoffMachineRun,
+  HandoffPreflightInput,
+  HandoffPreflightResult,
 } from "./handoffMode.ts";
 
 export const HANDOFF_MODE_RPC_METHODS = {
@@ -27,6 +29,7 @@ export const HANDOFF_MODE_RPC_METHODS = {
   handoffModeHandOffMachine: "handoffMode.handOffMachine",
   handoffModeContinueHere: "handoffMode.continueHere",
   handoffModeResumeFenced: "handoffMode.resumeFenced",
+  handoffModePreflight: "handoffMode.preflight",
 } as const;
 
 const M = HANDOFF_MODE_RPC_METHODS;
@@ -73,6 +76,11 @@ export const handoffModeRpcs = [
   Rpc.make(M.handoffModeResumeFenced, {
     payload: HandoffModeEmptyInput,
     success: HandoffModeSnapshot,
+    error,
+  }),
+  Rpc.make(M.handoffModePreflight, {
+    payload: HandoffPreflightInput,
+    success: Schema.Array(HandoffPreflightResult),
     error,
   }),
 ] as const;

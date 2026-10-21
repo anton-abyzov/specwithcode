@@ -61,7 +61,7 @@ export function migrateSummary(
 }
 
 /** Only this project's coordinator, or a caller in full-access/default mode, moves its threads. */
-const assertMayMigrate = (context: Caller, caller: OrchestrationV2ThreadShell) =>
+export const assertMayMigrate = (context: Caller, caller: OrchestrationV2ThreadShell) =>
   Effect.gen(function* () {
     if (
       context.limits.runtimeMode === "full-access" &&
@@ -76,7 +76,7 @@ const assertMayMigrate = (context: Caller, caller: OrchestrationV2ThreadShell) =
     if (project !== undefined && isProjectCoordinatorThreadId(caller.id, project)) return;
     return yield* failure(
       "capability_denied",
-      "Only this project's coordinator, or a thread in full-access mode, moves threads to another machine.",
+      "Only this project's coordinator, or a thread in full-access mode, moves threads between machines.",
     );
   });
 

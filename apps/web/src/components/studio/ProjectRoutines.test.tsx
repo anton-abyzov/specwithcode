@@ -8,13 +8,15 @@ const state = vi.hoisted(() => ({
   run: vi.fn(),
   toggle: vi.fn(),
   refresh: vi.fn(),
-  tasks: [] as { id: string; projectId: string; title: string; enabled: boolean }[],
+  upsert: vi.fn(),
+  tasks: [] as Array<Record<string, unknown> & { id: string; enabled: boolean }>,
 }));
 vi.mock("../../state/server", () => ({
   serverEnvironment: {
     scheduledTasksLive: () => ({}),
     setScheduledTaskEnabled: "toggle",
     runScheduledTaskNow: "run",
+    upsertScheduledTask: "upsert",
   },
 }));
 vi.mock("../../state/query", () => ({
@@ -24,7 +26,7 @@ vi.mock("../../state/query", () => ({
   }),
 }));
 vi.mock("../../state/use-atom-command", () => ({
-  useAtomCommand: (name: "run" | "toggle") => state[name],
+  useAtomCommand: (name: "run" | "toggle" | "upsert") => state[name],
 }));
 vi.mock("@specweave-studio/client-runtime/state/runtime", () => ({
   squashAtomCommandFailure: (r: { error: Error }) => r.error,
@@ -40,9 +42,17 @@ beforeEach(() => {
   state.run.mockReset().mockResolvedValue({ _tag: "Success" });
   state.toggle.mockReset().mockResolvedValue({ _tag: "Success" });
   state.refresh.mockReset();
+  state.upsert.mockReset().mockResolvedValue({ _tag: "Success" });
+  const daily = { type: "fixed_time", timeOfDay: "09:00" };
   state.tasks = [
-    { id: "daily", projectId: "project", title: "Daily review", enabled: true },
-    { id: "foreign", projectId: "another", title: "Foreign routine", enabled: true },
+    { id: "daily", projectId: "project", title: "Daily review", enabled: true, schedule: daily },
+    {
+      id: "foreign",
+      projectId: "another",
+      title: "Foreign routine",
+      enabled: true,
+      schedule: daily,
+    },
   ];
   container = document.createElement("div");
   document.body.append(container);
@@ -52,7 +62,8 @@ afterEach(async () => {
   await act(async () => root.unmount());
   container.remove();
 });
-async function render(canOperate = true, admissionBlocked = false) {
+const openThread = vi.fn();
+async function render(canOperate = true, admissionBlocked = false, personal = false) {
   await act(async () =>
     root.render(
       <ProjectRoutines
@@ -61,6 +72,9 @@ async function render(canOperate = true, admissionBlocked = false) {
         projectKey="atlas"
         canOperate={canOperate}
         admissionBlocked={admissionBlocked}
+        personal={personal}
+        modelSelection={{ instanceId: "claudeAgent", model: "fixture" } as never}
+        onOpenThread={openThread}
       />,
     ),
   );
@@ -168,5 +182,68 @@ describe("Project routine admission and durable browser receipts", () => {
     } finally {
       spy.mockRestore();
     }
+  });
+});
+// A fictional household: nothing here names a real person, account or folder.
+describe("Personal routines", () => {
+  it("shows a routine's cadence, inputs, result and thread, without Pause when run by hand", async () => {
+    state.tasks = [
+      {
+        id: "tax",
+        projectId: "project",
+        title: "Monthly tax prep",
+        enabled: true,
+        schedule: { type: "manual" },
+        ownThread: true,
+        threadId: "routine-thread-1",
+        brief: {
+          inputs: [{ label: "Receipts", location: "/fixtures/example-household/receipts" }],
+          output: "tax/{period}-prep.md",
+          prepareOnly: true,
+        },
+      },
+    ];
+    await render(true, false, true);
+    expect(container.querySelector("[data-routine-cadence]")?.textContent).toBe("When you ask");
+    expect(container.textContent).toContain("/fixtures/example-household/receipts");
+    expect(container.textContent).toContain("tax/{period}-prep.md");
+    expect(button("Pause")).toBeUndefined();
+    await click("Open its thread");
+    expect(openThread).toHaveBeenCalledWith("routine-thread-1");
+  });
+  it("saves a template as a hand-run, prepare-only routine with its own thread", async () => {
+    state.tasks = [];
+    await render(true, false, true);
+    expect(container.textContent).toContain("Start from a template");
+    await act(async () =>
+      [...container.querySelectorAll<HTMLButtonElement>("button.sws-routine-template")]
+        .find((b) => b.textContent?.includes("Monthly tax prep"))!
+        .click(),
+    );
+    // Nothing is saved until Save.
+    expect(state.upsert).not.toHaveBeenCalled();
+    const receipts = container.querySelector<HTMLInputElement>(
+      'input[placeholder="Folder with receipts"]',
+    )!;
+    await act(async () => {
+      const set = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+      set.call(receipts, "/fixtures/example-household/receipts");
+      receipts.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    await click("Save routine");
+    const input = state.upsert.mock.calls[0]![0].input;
+    expect(input.schedule).toEqual({ type: "manual" });
+    expect(input.ownThread).toBe(true);
+    expect(input.threadId).toBeNull();
+    expect(input.brief).toEqual({
+      inputs: [{ label: "Receipts", location: "/fixtures/example-household/receipts" }],
+      output: "tax/{period}-prep.md",
+      prepareOnly: true,
+    });
+    expect(state.refresh).toHaveBeenCalled();
+  });
+  it("offers no templates outside a personal project", async () => {
+    await render();
+    expect(container.textContent).not.toContain("Start from a template");
   });
 });

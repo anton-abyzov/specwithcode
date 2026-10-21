@@ -5,6 +5,7 @@
 @import "./components/studio/shell/panes.css";
 @import "./components/studio/shell/voice.css";
 @import "./components/studio/shell/threadCards.css";
+@import "./components/studio/shell/handoff.css";
 
 :root {
   color-scheme: light;

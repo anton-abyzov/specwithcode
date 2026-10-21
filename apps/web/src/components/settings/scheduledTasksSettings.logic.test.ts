@@ -36,6 +36,14 @@ describe("routed scheduled task editor navigation", () => {
     expect(scheduledTaskEditorCloseHref(editor, origin, "dismissed")).toBe(origin);
   });
 
+  it("accepts the new-routine link from a project's Routines tab and nothing else", () => {
+    expect(validateScheduledTasksSearch({ template: "new", projectId: "atlas" })).toEqual({
+      template: "new",
+      projectId: "atlas",
+    });
+    expect(validateScheduledTasksSearch({ template: "other" }).template).toBeUndefined();
+  });
+
   it.each([
     undefined,
     null,
@@ -366,4 +374,15 @@ describe("scheduled task model defaults", () => {
       ),
     ).toBeNull();
   });
+});
+
+describe("routine cadences", () => {
+  it.each([{ type: "manual" }, { type: "monthly", dayOfMonth: 2, timeOfDay: "08:30" }] as const)(
+    "round-trips $type through the editor",
+    (schedule) => {
+      const draft = taskToDraft({ ...legacyTask, schedule });
+      expect(draft.scheduleMode).toBe(schedule.type);
+      expect(scheduleFromDraft(draft)).toEqual(schedule);
+    },
+  );
 });

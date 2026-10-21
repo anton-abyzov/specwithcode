@@ -1,4 +1,5 @@
 import { listFederatedProjectThreads } from "./federatedProjectThreads.ts";
+import { continueHere, listHandoffReady } from "./continueHere.ts";
 import { migrateThreads } from "./migrate.ts";
 import { OrchestratorToolkit } from "./tools.ts";
 import * as Effect from "effect/Effect";
@@ -301,6 +302,8 @@ const handlers = {
     (input) => (input.threadIds ?? []).map(localThreadIdOf),
     migrateThreads,
   ),
+  studio_handoff_ready_list: McpToolAccess.readsAsCaller(listHandoffReady),
+  studio_thread_continue_here: McpToolAccess.writes(continueHere),
 } satisfies McpToolAccess.Handlers<typeof OrchestratorToolkit.tools>;
 
 export const layer = McpToolAccess.toLayer(OrchestratorToolkit, handlers);

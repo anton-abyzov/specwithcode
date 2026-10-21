@@ -6,7 +6,10 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as ServerConfig from "../config.ts";
-import { appendUserInputAttachmentPaths } from "./userInputAttachments.ts";
+import {
+  answerWithoutAttachmentPaths,
+  appendUserInputAttachmentPaths,
+} from "./userInputAttachments.ts";
 
 const layer = ServerConfig.layerTest(process.cwd(), { prefix: "studio-answer-paths-" }).pipe(
   Layer.provideMerge(NodeServices.layer),
@@ -56,6 +59,27 @@ describe("question answer paths", () => {
         attachmentsByQuestionId: { q: [attachment] },
       }).pipe(Effect.result);
       expect(result._tag).toBe("Failure");
+    }).pipe(Effect.provide(layer)),
+  );
+  it.effect("a reply carrying its files reads as the user wrote it", () =>
+    Effect.gen(function* () {
+      const config = yield* ServerConfig.ServerConfig;
+      NodeFS.writeFileSync(NodePath.join(config.attachmentsDir, `${attachment.id}.txt`), "spec");
+      const original = { text: "Line one\n\nLine two", only: "", picked: ["First"] };
+      const answers = yield* appendUserInputAttachmentPaths({
+        answers: original,
+        attachmentsDir: config.attachmentsDir,
+        attachmentsByQuestionId: { text: [attachment], only: [attachment], picked: [attachment] },
+      });
+      for (const key of ["text", "only", "picked"] as const) {
+        expect(answerWithoutAttachmentPaths(answers[key] as string, [attachment])).toEqual(
+          original[key],
+        );
+      }
+      // Text that only looks like a path line stays.
+      expect(answerWithoutAttachmentPaths("Attached file elsewhere", [attachment])).toBe(
+        "Attached file elsewhere",
+      );
     }).pipe(Effect.provide(layer)),
   );
 });

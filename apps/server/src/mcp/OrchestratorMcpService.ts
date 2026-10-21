@@ -324,6 +324,8 @@ function scheduledTaskSummary(task: ScheduledTask, mayRun: boolean): Orchestrato
       ? {}
       : { webhookSignature: task.webhook.hasSecret ? "set" : "none" }),
     ...(task.check ? { check: task.check } : {}),
+    ...(task.brief ? { brief: task.brief } : {}),
+    ...(task.ownThread ? { ownThread: true } : {}),
     ...(isModelPinned(task) ? { pinnedModel: task.modelSelection } : {}),
   };
 }
@@ -1799,9 +1801,12 @@ const make = Effect.gen(function* () {
         const project = yield* requireProject(projectId);
         yield* assertCheckAllowed(input.check, [limits]);
         // Binding means "wake this thread", which only a thread caller in that project has.
+        // An own-thread routine starts its own thread on its first run.
         const bindToCurrentThread =
-          input.bindToCurrentThread ??
-          (parent !== undefined && parent.thread.projectId === projectId);
+          input.ownThread === true
+            ? false
+            : (input.bindToCurrentThread ??
+              (parent !== undefined && parent.thread.projectId === projectId));
         if (
           bindToCurrentThread &&
           (parent === undefined || parent.thread.projectId !== projectId)
@@ -1837,6 +1842,8 @@ const make = Effect.gen(function* () {
           creationSource: "mcp",
           modelPinned: input.modelSelection !== undefined,
           ...(input.check === undefined ? {} : { check: input.check }),
+          ...(input.brief === undefined ? {} : { brief: input.brief }),
+          ...(input.ownThread === undefined ? {} : { ownThread: input.ownThread }),
           // Scope the idempotency key by provider session so two callers
           // reusing the same clientRequestId cannot collide on one task row.
           ...(input.clientRequestId === undefined
@@ -1894,11 +1901,13 @@ const make = Effect.gen(function* () {
           );
         }
         const threadId =
-          input.bindToCurrentThread === undefined
-            ? existing.threadId
-            : input.bindToCurrentThread && parent !== undefined
-              ? parent.thread.id
-              : null;
+          input.ownThread === true && !existing.ownThread
+            ? null
+            : input.bindToCurrentThread === undefined
+              ? existing.threadId
+              : input.bindToCurrentThread && parent !== undefined
+                ? parent.thread.id
+                : null;
         // Rebinding changes where runs execute, so the workspace strategy must
         // follow: unbinding a root-strategy task would otherwise run loose
         // prompts in the shared project checkout.
@@ -1924,6 +1933,8 @@ const make = Effect.gen(function* () {
             ? {}
             : { modelPinned: input.modelSelection !== null }),
           ...(input.check === undefined ? {} : { check: input.check }),
+          ...(input.brief === undefined ? {} : { brief: input.brief }),
+          ...(input.ownThread === undefined ? {} : { ownThread: input.ownThread }),
         };
         const { task } = yield* scheduledTasks
           .upsert(upsertInput)
