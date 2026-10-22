@@ -88,6 +88,8 @@ export function useProjectCoordinatorModelControls(input: {
     | undefined;
   providers: ReadonlyArray<ServerProvider> | null | undefined;
   model: ModelSelection | null | undefined;
+  /** Actual displayed selection; a return hint exists only while the saved provider is limited. */
+  running?: { value: ModelSelection; returnsTo: string | null } | null;
   canOperate: boolean;
   connected: boolean;
   revision: number | null;
@@ -126,6 +128,7 @@ export function useProjectCoordinatorModelControls(input: {
     controls: createElement(CoordinatorModelPicker, {
       environmentId: input.project.environmentId,
       value: input.model ?? null,
+      running: input.running ?? null,
       requiresFolderGrants,
       folderPolicy,
       disabled:

@@ -130,7 +130,12 @@ try {
     assert.equal(await longRunning.getByRole("button", { name: "Stop command" }).count(), 1);
     await thread.screenshot({ path: shot("4-running-and-failed") });
     await longRunning.getByRole("button", { name: "Stop command" }).click();
-    await longRunning.getByText("Exit 130").waitFor();
+    await longRunning.getByText("Stopped", { exact: true }).waitFor();
+    assert.equal(
+      await longRunning.locator('[data-shell-run="exited"]').getAttribute("data-shell-run-exit"),
+      "0",
+      "a native zero exit code plus SIGINT is shown as stopped, not successful",
+    );
     await page.screenshot({ path: shot("5-full-page"), fullPage: true });
 
     assert.deepEqual(errors, []);

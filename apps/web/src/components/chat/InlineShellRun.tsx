@@ -59,6 +59,7 @@ export interface InlineShellRun {
   readonly visible: boolean;
   readonly output: string;
   readonly exitCode: number | null;
+  readonly exitSignal: number | null;
   readonly status: "idle" | "starting" | "running" | "exited" | "error" | "closed";
   readonly error: string | null;
   readonly environmentId: EnvironmentId | null;
@@ -174,6 +175,7 @@ export function useInlineShellRun(command: string | null): InlineShellRun {
     visible: confirming || error !== null || attached,
     output,
     exitCode: session.exitCode,
+    exitSignal: session.exitSignal,
     status,
     error: error ?? (attached ? session.error : null),
     environmentId,
@@ -247,7 +249,8 @@ function exitLabel(run: InlineShellRun): { text: string; failed: boolean } | nul
     return { text: "Running", failed: false };
   if (run.status === "error") return { text: "Could not run", failed: true };
   if (run.status === "exited") {
-    if (run.exitCode === null) return { text: "Stopped", failed: true };
+    if ((run.exitSignal ?? 0) > 0 || run.exitCode === null)
+      return { text: "Stopped", failed: true };
     return { text: `Exit ${run.exitCode}`, failed: run.exitCode !== 0 };
   }
   return null;

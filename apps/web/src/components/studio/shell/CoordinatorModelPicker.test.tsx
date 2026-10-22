@@ -7,6 +7,7 @@ const state = vi.hoisted(() => ({
   entries: [] as Array<Record<string, unknown>>,
   navigate: vi.fn(),
   pickerProps: null as Record<string, unknown> | null,
+  traitsProps: null as Record<string, unknown> | null,
   options: new Map<string, Array<{ slug: string; name: string; isUnavailable?: boolean }>>(),
   serverConfig: { providers: [] } as { providers: unknown[] } | undefined,
   refresh: vi.fn(),
@@ -74,7 +75,12 @@ vi.mock("../../chat/ProviderModelPicker", () => ({
     );
   },
 }));
-vi.mock("../../chat/TraitsPicker", () => ({ TraitsPicker: () => null }));
+vi.mock("../../chat/TraitsPicker", () => ({
+  TraitsPicker: (props: Record<string, unknown>) => {
+    state.traitsProps = props;
+    return null;
+  },
+}));
 vi.mock("./ModelBadge", () => ({ ModelBadge: () => null, ModelBadgeMark: () => null }));
 
 import { CoordinatorModelPicker } from "./CoordinatorModelPicker";
@@ -129,6 +135,7 @@ beforeEach(() => {
   state.refresh.mockReset().mockResolvedValue({ _tag: "Success" });
   state.canRefresh = true;
   state.pickerProps = null;
+  state.traitsProps = null;
   state.options = new Map([["codex", [{ slug: "gpt-6", name: "GPT-6" }]]]);
 });
 
@@ -698,5 +705,97 @@ describe("project coordinator actual policy precedence", () => {
         "claude-opus-5.5",
       ),
     ).toContain("current restricted policy");
+  });
+});
+
+describe("CoordinatorModelPicker limit fallback", () => {
+  const saved = { instanceId: "codex", model: "gpt-6" } as never;
+  const running = { value: { instanceId: "copilot", model: "gpt-6" } as never, returnsTo: "Codex" };
+
+  it("shows the provider that runs now with the way back, and a hand pick still saves", async () => {
+    state.entries = [entry("codex", true), entry("copilot", true)];
+    state.options.set("copilot", [{ slug: "gpt-6", name: "GPT-6" }]);
+    const { onChange } = await mount(false, { value: saved, running });
+    expect(state.pickerProps).toMatchObject({ activeInstanceId: "copilot", model: "gpt-6" });
+    expect(String(state.pickerProps!.triggerLabel)).toMatch(/^Copilot · /);
+    expect(container.querySelector("[data-model-fallback-hint]")?.textContent).toBe(
+      "Codex after reset",
+    );
+    const pick = state.pickerProps!.onInstanceModelChange as (id: string, model: string) => void;
+    await act(async () => pick("copilot", "gpt-6"));
+    expect(onChange).toHaveBeenCalledExactlyOnceWith({ instanceId: "copilot", model: "gpt-6" });
+    // The saved model is still the saved one: choosing it again changes nothing.
+    await act(async () => pick("codex", "gpt-6"));
+    expect(onChange).toHaveBeenCalledOnce();
+  });
+
+  it("shows the saved model without a fallback", async () => {
+    state.entries = [entry("codex", true)];
+    await mount(false, { value: saved, running: null });
+    expect(state.pickerProps).toMatchObject({ activeInstanceId: "codex" });
+    expect(container.querySelector("[data-model-fallback-hint]")).toBeNull();
+  });
+
+  it("shows an active selection without claiming a reset and keeps edits tied to the saved preference", async () => {
+    state.entries = [entry("codex", true), entry("copilot", true)];
+    state.options.set("copilot", [{ slug: "gpt-6", name: "GPT-6" }]);
+    const { onChange } = await mount(false, {
+      value: saved,
+      running: { ...running, returnsTo: null },
+    });
+    expect(state.pickerProps).toMatchObject({ activeInstanceId: "copilot", model: "gpt-6" });
+    expect(String(state.pickerProps!.triggerAriaLabel)).toContain("running on Copilot");
+    expect(String(state.pickerProps!.triggerAriaLabel)).not.toContain("reset");
+    expect(container.querySelector("[data-model-fallback-hint]")).toBeNull();
+    expect(state.traitsProps).toBeNull();
+    const pick = state.pickerProps!.onInstanceModelChange as (id: string, model: string) => void;
+    await act(async () => pick("codex", "gpt-6"));
+    expect(onChange).not.toHaveBeenCalled();
+    await act(async () => pick("copilot", "gpt-6"));
+    expect(onChange).toHaveBeenCalledExactlyOnceWith({ instanceId: "copilot", model: "gpt-6" });
+  });
+
+  it("renders an actual running model before any preference is saved, and allows saving it", async () => {
+    state.entries = [entry("copilot", true)];
+    state.options.set("copilot", [{ slug: "gpt-6", name: "GPT-6" }]);
+    const { onChange } = await mount(false, {
+      value: null,
+      running: { ...running, returnsTo: null },
+    });
+    expect(state.pickerProps).toMatchObject({ activeInstanceId: "copilot", model: "gpt-6" });
+    expect(container.textContent).not.toContain("Choose model");
+    expect(state.traitsProps).toBeNull();
+    await act(async () =>
+      (state.pickerProps!.onInstanceModelChange as (id: string, model: string) => void)(
+        "copilot",
+        "gpt-6",
+      ),
+    );
+    expect(onChange).toHaveBeenCalledExactlyOnceWith({ instanceId: "copilot", model: "gpt-6" });
+  });
+
+  it("keeps effort editing on the saved selection when no different turn is shown", async () => {
+    state.entries = [entry("codex", true)];
+    const selection = {
+      instanceId: "codex",
+      model: "gpt-6",
+      options: [{ id: "reasoningEffort", value: "low" }],
+    } as never;
+    const { onChange } = await mount(false, { value: selection });
+    expect(state.traitsProps).toMatchObject({
+      instanceId: "codex",
+      model: "gpt-6",
+      modelOptions: [{ id: "reasoningEffort", value: "low" }],
+    });
+    await act(async () =>
+      (state.traitsProps!.onModelOptionsChange as (options: unknown) => void)([
+        { id: "reasoningEffort", value: "high" },
+      ]),
+    );
+    expect(onChange).toHaveBeenCalledExactlyOnceWith({
+      instanceId: "codex",
+      model: "gpt-6",
+      options: [{ id: "reasoningEffort", value: "high" }],
+    });
   });
 });

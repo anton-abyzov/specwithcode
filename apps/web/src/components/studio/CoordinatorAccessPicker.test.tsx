@@ -107,3 +107,34 @@ it("keeps access in the controls row, right after the model and effort", async (
   expect(model?.textContent).toBe("model and effort");
   expect(access?.querySelector("select")?.getAttribute("aria-label")).toBe("Project permissions");
 });
+
+it("names the provider in use now, or says the fallback is out of usage too", async () => {
+  const label = (provider: string, model: string) => ({
+    provider,
+    model,
+    full: `${provider} · ${model}`,
+  });
+  const render = (spent: boolean) =>
+    act(async () =>
+      root.render(
+        <CoordinatorComposerControls
+          project={{ environmentId: "host" as never, id: "project" as never }}
+          fallback={{
+            saved: label("Codex", "GPT-6.1-Sol"),
+            now: label(spent ? "Copilot" : "Claude Code", spent ? "GPT-6.1-Sol" : "Opus 5.5"),
+            reason: "weekly limit reached, resets in 5d 8h",
+            spent,
+          }}
+        >
+          <span />
+        </CoordinatorComposerControls>,
+      ),
+    );
+  await render(false);
+  const line = () => container.querySelector("[data-model-fallback]")!;
+  expect(line().querySelector("strong")?.textContent).toBe("Switched to Claude Code");
+  expect(line().textContent).toContain("Codex weekly limit reached, resets in 5d 8h.");
+  await render(true);
+  expect(line().querySelector("strong")?.textContent).toBe("Copilot is out of usage too");
+  expect(line().textContent).not.toContain("Switched to");
+});
