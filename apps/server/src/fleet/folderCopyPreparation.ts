@@ -2,6 +2,7 @@ import {
   FolderCopyError,
   MachineHandoffError,
   type FolderCopyReleaseInput,
+  type MachineHandoffManifest,
   type MachineHandoffPrepareResult,
   type ProjectCoordinatorBinding,
   type ProjectId,
@@ -11,6 +12,12 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
+import {
+  copiedProjectFolder,
+  resolveCopyScope,
+  verifyCopiedProjectFolder,
+  validProjectRelativePath,
+} from "./folderCopyScope.ts";
 import { attempt, folderCopyManifestRepositories } from "./FolderCopyHandoff.ts";
 import type { DestinationCopies } from "./folderTransfer/destinationService.ts";
 import type { SourceTransfers } from "./folderTransfer/sourceService.ts";
@@ -60,8 +67,16 @@ export const makeProjectIdleCheck =
 
 /** The manifest a folder-copy handoff carries: repositories and heads from the offered scan. */
 export const makeFolderCopyManifest =
-  (sources: SourceTransfers) =>
-  (operationId: string, projectId: ProjectId, destinationEnvironmentId: string) =>
+  (
+    sources: SourceTransfers,
+    idle?: (id: ProjectId, root: string) => Effect.Effect<void, MachineHandoffError>,
+  ) =>
+  (
+    operationId: string,
+    projectId: ProjectId,
+    destinationEnvironmentId: string,
+    workspaceRoot: string,
+  ) =>
     Effect.gen(function* () {
       const record = yield* Effect.tryPromise({
         try: () => sources.read(operationId),
@@ -76,6 +91,13 @@ export const makeFolderCopyManifest =
         ["failed", "released", "cancelled"].includes(record.state)
       )
         return yield* new MachineHandoffError({ code: "invalid" });
+      if (idle) yield* idle(projectId, record.folder);
+      const scope = yield* Effect.tryPromise({
+        try: () => resolveCopyScope(workspaceRoot, record.folder),
+        catch: () => new MachineHandoffError({ code: "source_changed" }),
+      });
+      if (scope.projectRelativePath !== (record.projectRelativePath ?? "."))
+        return yield* new MachineHandoffError({ code: "source_changed" });
       if (record.state === "committed")
         yield* Effect.tryPromise({
           try: () => sources.assertCurrentSnapshot(operationId),
@@ -84,14 +106,26 @@ export const makeFolderCopyManifest =
       return {
         version: 1 as const,
         operationId,
+        ...(record.projectRelativePath !== undefined ? { copyScope: scope } : {}),
         repositories: folderCopyManifestRepositories(operationId, record.summary),
       };
     });
 
 /** The destination half proves its copy was applied into this exact project folder. */
 export const makeAppliedFolderCopyCheck =
-  (copies: DestinationCopies, fs: FileSystem.FileSystem, path: Path.Path) =>
-  (operationId: string, projectId: ProjectId, sourceEnvironmentId: string, workspaceRoot: string) =>
+  (
+    copies: DestinationCopies,
+    fs: FileSystem.FileSystem,
+    path: Path.Path,
+    idle?: (id: ProjectId, root: string) => Effect.Effect<void, MachineHandoffError>,
+  ) =>
+  (
+    operationId: string,
+    projectId: ProjectId,
+    sourceEnvironmentId: string,
+    workspaceRoot: string,
+    manifest: MachineHandoffManifest,
+  ) =>
     Effect.gen(function* () {
       const record = yield* Effect.tryPromise({
         try: () => copies.read(operationId),
@@ -108,9 +142,18 @@ export const makeAppliedFolderCopyCheck =
         record.checks.some((check) => !check.ok) ||
         record.projectId !== projectId ||
         record.sourceEnvironmentId !== sourceEnvironmentId ||
-        (yield* real(record.targetFolder)) !== (yield* real(workspaceRoot))
+        !validProjectRelativePath(record.projectRelativePath ?? ".") ||
+        (record.projectRelativePath ?? ".") !== (manifest.copyScope?.projectRelativePath ?? ".") ||
+        (manifest.copyScope !== undefined && record.copyRoot !== manifest.copyScope.copyRoot) ||
+        (yield* real(copiedProjectFolder(record.targetFolder, record.projectRelativePath))) !==
+          (yield* real(workspaceRoot))
       )
         return yield* new MachineHandoffError({ code: "conflict" });
+      if (idle) yield* idle(projectId, record.targetFolder);
+      yield* Effect.tryPromise({
+        try: () => verifyCopiedProjectFolder(record.targetFolder, record.projectRelativePath),
+        catch: () => new MachineHandoffError({ code: "conflict" }),
+      });
     });
 
 /** Never roll back ownership once publication might have reached the destination. */

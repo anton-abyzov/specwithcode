@@ -81,6 +81,9 @@ export function classifyFile(input: {
   if (input.insideGitData) return "repository";
   if (input.gitState === "tracked") return "tracked";
   if (isSecretLikeProjectPath(input.relative)) return "secret";
+  // Finder metadata is recreated locally and may only be hidden by the source
+  // user's global ignore file, which deliberately does not move to another host.
+  if (input.relative.split("/").at(-1) === ".DS_Store") return "rebuildable";
   if (input.gitState === "ignored")
     return isRebuildablePath(input.relative) ? "rebuildable" : "ignoredData";
   if (input.gitState === "outside" && isRebuildablePath(input.relative)) return "rebuildable";

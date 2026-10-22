@@ -3,6 +3,14 @@ import { WS_METHODS } from "@specweave-studio/contracts";
 import { connectionAtomRuntime } from "../connection/runtime";
 
 export const machineHandoff = {
+  copyScopes: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "machine-handoff:copy-scopes",
+    tag: WS_METHODS.machineHandoffCopyScopes,
+  }),
+  copyCapabilities: createEnvironmentRpcCommand(connectionAtomRuntime, {
+    label: "machine-handoff:copy-capabilities",
+    tag: WS_METHODS.machineHandoffCopyCapabilities,
+  }),
   prepare: createEnvironmentRpcCommand(connectionAtomRuntime, {
     label: "machine-handoff:prepare",
     tag: WS_METHODS.machineHandoffPrepare,

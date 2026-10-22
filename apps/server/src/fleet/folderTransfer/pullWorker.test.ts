@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off globalTimers:off - disposable real Git fixtures only.
 import * as NodeFS from "node:fs";
+import * as NodeCrypto from "node:crypto";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
@@ -112,8 +113,12 @@ describe("pull into staging", () => {
     ).rejects.toThrow();
     const same = (entry: ManifestEntry) => {
       try {
-        return NodeFS.readFileSync(stagedPath(staging, entry.path)).equals(
-          NodeFS.readFileSync(NodePath.join(fixture.root, entry.path)),
+        // Git pointers can be normalized into a portable source snapshot.
+        // Resume must match the advertised bytes, not a live source pathname.
+        return (
+          NodeCrypto.createHash("sha256")
+            .update(NodeFS.readFileSync(stagedPath(staging, entry.path)))
+            .digest("hex") === entry.sha256
         );
       } catch {
         return false;

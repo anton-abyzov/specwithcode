@@ -28,13 +28,19 @@ function Fixture() {
                 id: "source",
                 environmentId: "m4",
                 title: "SpecWeave",
-                workspaceRoot: "/Users/you/Projects/github/specweave-umb",
+                workspaceRoot:
+                  "/Users/you/Projects/github/specweave-umb/repositories/anton-abyzov/specweave",
               } as never
             }
             coordinatorId={"coordinator" as never}
             sourceLabel="MacBook M4"
             method="copy"
-            machines={[{ id: "linux" as never, label: "ministorm", unavailable: null }]}
+            machines={[
+              { id: "m1" as never, label: "Anton’s MacBook Pro M1Max (190)", unavailable: null },
+              { id: "m3" as never, label: "Anton’s MacBook Pro", unavailable: null },
+              { id: "linux" as never, label: "ministorm", unavailable: null },
+            ]}
+            preferredMachine={"linux" as never}
             savedFolder={() => null}
             canMove
             onBusyChange={setBusy}

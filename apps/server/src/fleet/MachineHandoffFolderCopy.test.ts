@@ -503,11 +503,18 @@ it.live("serializes abandoning a copied context against publishing it", () => {
   }).pipe(Effect.provide(h.layer));
 });
 
-it.live.each([false, true])(
-  "preflights a registered copy with its exact logical identity (custom coordinator=%s)",
-  (customCoordinator) => {
+it.live.each([
+  { customCoordinator: false, relative: "." },
+  { customCoordinator: true, relative: "." },
+  { customCoordinator: false, relative: "repositories/acme/app" },
+  { customCoordinator: true, relative: "repositories/acme/app" },
+])(
+  "preflights a registered copy with its exact logical identity (%j)",
+  ({ customCoordinator, relative }) => {
     const folder = sourceFolder();
-    const h = makeHarness({ endpoints: tailnet, workspaceRoot: folder });
+    const projectFolder = NodePath.join(folder, relative);
+    NodeFS.mkdirSync(projectFolder, { recursive: true });
+    const h = makeHarness({ endpoints: tailnet, workspaceRoot: projectFolder });
     return Effect.gen(function* () {
       const service = yield* MachineHandoff.MachineHandoff;
       const store = yield* MachineHandoffStore.MachineHandoffStore;
@@ -519,7 +526,18 @@ it.live.each([false, true])(
           coordinatorThreadId: threadId,
         },
       });
-      const bundle = folderCopyBundle(prepared.bundle);
+      const original = folderCopyBundle(prepared.bundle);
+      const { digest: _originalDigest, ...contents } = original;
+      const scoped = {
+        ...contents,
+        manifest: {
+          ...contents.manifest,
+          ...(relative !== "."
+            ? { copyScope: { copyRoot: "/source/umbrella", projectRelativePath: relative } }
+            : {}),
+        },
+      };
+      const bundle = { ...scoped, digest: MachineHandoff.machineHandoffDigest(scoped) };
       const targetCoordinator = customCoordinator ? ThreadId.make("custom-coordinator") : threadId;
       const current = h.projects.get(projectId)!;
       h.projects.set(projectId, {
@@ -543,6 +561,9 @@ it.live.each([false, true])(
       });
       const record: DestinationRecord = {
         version: 1,
+        ...(relative !== "."
+          ? { copyRoot: "/source/umbrella", projectRelativePath: relative }
+          : {}),
         operationId: id,
         sourceUrl: "https://other.example.ts.net",
         token: "unused",
@@ -614,6 +635,82 @@ it.live.each([false, true])(
       });
       expect(result.phase).toBe("started");
       expect(result.coordinatorThreadId).toBe(targetCoordinator);
+      expect(result.workspacePath).toBe(projectFolder);
+      expect(h.state.creations).toHaveLength(0);
+      if (relative !== ".") {
+        const mapping = JSON.parse(NodeFS.readFileSync(`${result.contextPath}-paths`, "utf8"));
+        expect(mapping).toMatchObject({
+          sourceCopyRoot: "/source/umbrella",
+          destinationCopyRoot: folder,
+          destinationProjectRoot: projectFolder,
+        });
+        expect(h.state.starts[0]?.prompt).toContain(`${result.contextPath}-paths`);
+        expect(JSON.parse(NodeFS.readFileSync(result.contextPath!, "utf8")).context).toEqual(
+          bundle.context,
+        );
+      }
+    }).pipe(Effect.provide(h.layer));
+  },
+);
+
+it.live(
+  "offers the verified umbrella while keeping the source project and rechecks membership",
+  () => {
+    const folder = sourceFolder();
+    const child = NodePath.join(folder, "custom/services/app");
+    NodeFS.mkdirSync(child, { recursive: true });
+    NodeFS.mkdirSync(NodePath.join(folder, ".specweave"));
+    const config = NodePath.join(folder, ".specweave/config.json");
+    NodeFS.writeFileSync(
+      config,
+      JSON.stringify({ workspace: { repos: [{ path: "custom/services/app" }] } }),
+    );
+    const h = makeHarness({ workspaceRoot: child, endpoints: tailnet });
+    return Effect.gen(function* () {
+      const service = yield* MachineHandoff.MachineHandoff;
+      const scopes = yield* service.copyScopes({ projectId });
+      expect(scopes.recommendedCopyRoot).toBe(NodeFS.realpathSync(folder));
+      const offer = yield* service.copyOffer({
+        projectId,
+        operationId: id,
+        mode: "copy-and-move",
+        destinationEnvironmentId: other,
+        copyRoot: folder,
+      });
+      expect(offer.projectRelativePath).toBe("custom/services/app");
+      expect(offer.sourceProjectId).toBe(projectId);
+      yield* scanned(service);
+      const prepared = yield* service.prepare(copyPreview);
+      expect(prepared.bundle.manifest.copyScope).toEqual({
+        copyRoot: NodeFS.realpathSync(folder),
+        projectRelativePath: "custom/services/app",
+      });
+      expect(h.projects.get(projectId)?.workspaceRoot).toBe(child);
+      expect(
+        (yield* failureOnly(
+          service.copyOffer({
+            projectId,
+            operationId: id,
+            mode: "copy-and-move",
+            destinationEnvironmentId: other,
+            copyRoot: child,
+          }),
+        )).code,
+      ).toBe("invalid");
+      NodeFS.writeFileSync(
+        config,
+        JSON.stringify({ workspace: { repos: [{ path: "different" }] } }),
+      );
+      expect(
+        (yield* failureOnly(
+          service.prepare({
+            ...copyPreview,
+            publish: true,
+            expectedDigest: prepared.bundle.digest,
+          }),
+        )).code,
+      ).toBe("source_changed");
+      expect(h.projects.get(projectId)?.workspaceSettings?.coordinatorBinding).toBeUndefined();
     }).pipe(Effect.provide(h.layer));
   },
 );

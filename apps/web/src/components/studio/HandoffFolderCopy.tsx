@@ -24,6 +24,8 @@ import {
   cloneableRows,
   copySettled,
   copyDestinationKey,
+  copiedProjectFolder,
+  savedCopyRoot,
   suggestedCopyFolder,
   DEFAULT_COPY_SELECTION,
   formatBytes,
@@ -42,6 +44,8 @@ import {
   CopyUndoPreview,
 } from "./HandoffCopyPreview";
 import { ProjectLinkDialog } from "./ProjectLinkDialog";
+import { HandoffCopyActions } from "./HandoffCopyActions";
+import { HandoffCopyScope, CopyScopeMapping, useCopyScope } from "./HandoffCopyScope";
 
 export interface CopyMachine {
   readonly id: EnvironmentId;
@@ -67,6 +71,8 @@ interface PendingCopy {
   readonly mode: FolderCopyMode;
   readonly targetFolder: string;
   readonly projectId: string | null;
+  readonly copyRoot?: string;
+  readonly projectRelativePath?: string;
 }
 
 const POLL_MS = 1000;
@@ -152,6 +158,8 @@ export function HandoffFolderCopy({
     readonly folder: string;
   }) => void;
 }) {
+  const scope = useCopyScope(project);
+  const capabilities = useAtomCommand(machineHandoff.copyCapabilities, { reportFailure: false });
   const offerCopy = useAtomCommand(machineHandoff.copyOffer, { reportFailure: false });
   const sourceStatus = useAtomCommand(machineHandoff.copySourceStatus, { reportFailure: false });
   const sourceCancel = useAtomCommand(machineHandoff.copySourceCancel, { reportFailure: false });
@@ -177,9 +185,11 @@ export function HandoffFolderCopy({
     machines.find((machine) => !machine.unavailable)?.id ??
     null;
   const [machine, setMachine] = useState<EnvironmentId | null>(firstMachine);
-  const [folderDraft, setFolderDraft] = useState<{ machine: EnvironmentId; value: string } | null>(
-    null,
-  );
+  const [folderDraft, setFolderDraft] = useState<{
+    machine: EnvironmentId;
+    value: string;
+    copyRoot?: string;
+  } | null>(null);
   const access = useFilesystemReadAccess(machine);
   const home = useEnvironmentQuery(
     machine && access.canReadFiles
@@ -188,12 +198,15 @@ export function HandoffFolderCopy({
   );
   // The query belongs to the selected machine. A late home response never replaces a typed path.
   const folder = machine
-    ? folderDraft?.machine === machine
+    ? folderDraft?.machine === machine &&
+      (!folderDraft.copyRoot || folderDraft.copyRoot === scope.selected.copyRoot)
       ? folderDraft.value
-      : (savedFolder(machine) ?? suggestedCopyFolder(project.workspaceRoot, home.data?.parentPath))
+      : (savedCopyRoot(savedFolder(machine), scope.selected.projectRelativePath) ??
+        suggestedCopyFolder(scope.selected.copyRoot, home.data?.parentPath))
     : "";
-  const setFolder = (value: string, environmentId = machine) => {
-    if (environmentId) setFolderDraft({ machine: environmentId, value });
+  const setFolder = (value: string, environmentId = machine, copyRoot?: string) => {
+    if (environmentId)
+      setFolderDraft({ machine: environmentId, value, ...(copyRoot ? { copyRoot } : {}) });
   };
   const [mode, setMode] = useState<FolderCopyMode>("copy-only");
   const [stage, setStage] = useState<Stage>("setup");
@@ -364,7 +377,6 @@ export function HandoffFolderCopy({
     stage === "done" && mode === "copy-only" && copy?.projectId ? copy.projectId : null;
   useEffect(() => {
     if (linkTarget && machine && link === null) void linkCopy(machine, linkTarget);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [linkTarget, machine]);
 
   const destinationPlan = (
@@ -477,7 +489,16 @@ export function HandoffFolderCopy({
     setStage("moving");
     setTransferRecovery(true);
     try {
-      await continueThere(operationId, environmentId, projectId, applied?.targetFolder ?? folder);
+      await continueThere(
+        operationId,
+        environmentId,
+        projectId,
+        applied?.projectFolder ??
+          copiedProjectFolder(
+            applied?.targetFolder ?? folder,
+            applied?.projectRelativePath ?? pending?.projectRelativePath,
+          ),
+      );
     } catch (cause) {
       if (cause instanceof DestinationContextPreviewError) {
         // No publish was attempted here. Starting fresh still asks the source to
@@ -572,14 +593,25 @@ export function HandoffFolderCopy({
 
   const measure = () =>
     run(async () => {
-      if (!machine || target?.unavailable) return;
+      if (!machine || target?.unavailable || scope.loading) return;
       if (!folder.startsWith("/") && !/^[A-Za-z]:[\\/]/.test(folder))
         throw new Error("Enter the full absolute path of the folder on the destination machine.");
+      if (scope.selected.projectRelativePath !== ".") {
+        try {
+          const supported = unwrap(await capabilities({ environmentId: machine, input: {} }));
+          if (supported.scopeVersion !== 1) throw new Error("unsupported");
+        } catch {
+          throw new Error(
+            `Update or reconnect ${targetLabel} before copying an umbrella. You can still select this project folder only.`,
+          );
+        }
+      }
+      const projectFolder = copiedProjectFolder(folder, scope.selected.projectRelativePath);
       const operationId = randomUUID();
       const destinationProjectId =
         mode === "copy-and-move"
-          ? (knownProject(machine, folder)?.id ??
-            copiedProjects.current.get(copyDestinationKey(machine, folder)) ??
+          ? (knownProject(machine, projectFolder)?.id ??
+            copiedProjects.current.get(copyDestinationKey(machine, projectFolder)) ??
             randomUUID())
           : null;
       remember({
@@ -587,6 +619,8 @@ export function HandoffFolderCopy({
         environmentId: machine,
         mode,
         targetFolder: folder,
+        copyRoot: scope.selected.copyRoot,
+        projectRelativePath: scope.selected.projectRelativePath,
         projectId: destinationProjectId,
       });
       setStage("scanning");
@@ -599,6 +633,9 @@ export function HandoffFolderCopy({
               operationId: operationId,
               mode,
               destinationEnvironmentId: machine,
+              ...(scope.selected.projectRelativePath !== "."
+                ? { copyRoot: scope.selected.copyRoot }
+                : {}),
             },
           }),
         );
@@ -641,6 +678,10 @@ export function HandoffFolderCopy({
               title: offer.title,
               mode: offer.mode,
               targetFolder: pending.targetFolder,
+              ...(offer.copyRoot ? { copyRoot: offer.copyRoot } : {}),
+              ...(offer.projectRelativePath
+                ? { projectRelativePath: offer.projectRelativePath }
+                : {}),
               selection,
               ...(pending.projectId ? { projectId: ProjectId.make(pending.projectId) } : {}),
             },
@@ -800,10 +841,21 @@ export function HandoffFolderCopy({
         const destinationEnvironment =
           (pending?.environmentId as EnvironmentId | undefined) ?? machine;
         copiedProjects.current.set(
-          copyDestinationKey(destinationEnvironment, copy.targetFolder),
+          copyDestinationKey(
+            destinationEnvironment,
+            copy.projectFolder ??
+              copiedProjectFolder(
+                copy.targetFolder,
+                copy.projectRelativePath ?? pending?.projectRelativePath,
+              ),
+          ),
           copy.projectId,
         );
-        setFolder(copy.targetFolder, destinationEnvironment);
+        setFolder(
+          copy.targetFolder,
+          destinationEnvironment,
+          copy.copyRoot ?? pending?.copyRoot ?? scope.selected.copyRoot,
+        );
       }
       setTransferRecovery(false);
       contextPublished.current = false;
@@ -830,15 +882,11 @@ export function HandoffFolderCopy({
     <div className="space-y-4" data-slot="handoff-folder-copy" data-stage={stage}>
       {(stage === "setup" || stage === "scanning") && (
         <>
-          <div className="space-y-1 text-sm" data-slot="copy-source-folder">
-            <p className="font-medium">Source folder on {sourceLabel}</p>
-            <p className="font-mono text-xs wrap-anywhere">{project.workspaceRoot}</p>
-            <p className="text-xs text-muted-foreground">
-              Copies this folder and the folders and repositories inside it, preserving their
-              layout. For the whole umbrella, open the umbrella project or choose its root in
-              Project settings. Folders outside this root and linked folders are not followed.
-            </p>
-          </div>
+          <HandoffCopyScope
+            scope={scope}
+            sourceLabel={sourceLabel}
+            disabled={busy || pending !== null}
+          />
           <fieldset className="min-w-0 space-y-2" disabled={busy}>
             <legend className="mb-2 text-sm font-medium">Copy to</legend>
             {machines.length === 0 ? (
@@ -854,7 +902,6 @@ export function HandoffFolderCopy({
                   setMachine(id);
                   setFolderDraft(null);
                 }}
-                className="gap-2"
               >
                 {machines.map((entry) => (
                   <label
@@ -892,6 +939,17 @@ export function HandoffFolderCopy({
               onChange={(event) => setFolder(event.currentTarget.value)}
               aria-label={`Folder on ${targetLabel}`}
             />
+            {scope.selected.projectRelativePath !== "." && folder && (
+              <span
+                className="block text-xs text-muted-foreground"
+                data-slot="copy-destination-project"
+              >
+                Project / coordinator folder:{" "}
+                <span className="font-mono wrap-anywhere">
+                  {copiedProjectFolder(folder, scope.selected.projectRelativePath)}
+                </span>
+              </span>
+            )}
             <span className="block text-xs text-muted-foreground">
               A new or empty folder gets an exact copy. An existing folder is compared first and
               nothing there changes without your approval.
@@ -903,7 +961,6 @@ export function HandoffFolderCopy({
               aria-label="After the copy"
               value={mode}
               onValueChange={(value) => setMode(value as FolderCopyMode)}
-              className="gap-2"
             >
               <label className="flex cursor-pointer items-start gap-3 text-sm">
                 <span className="flex h-5 items-center">
@@ -934,25 +991,27 @@ export function HandoffFolderCopy({
               </label>
             </RadioGroup>
           </fieldset>
-          {stage === "setup" && pending ? (
-            <div className="space-y-2 text-sm">
-              <p>
-                A copy to {pending.targetFolder} on {targetLabel} is unfinished. Check it again once{" "}
-                {targetLabel} is reachable.
-              </p>
-              <Button disabled={busy} onClick={() => resume(pending)}>
-                Check the copy again
-              </Button>
-            </div>
-          ) : (
-            <Button
-              disabled={busy || !machine || !!target?.unavailable || !folder.trim()}
-              onClick={() => void measure()}
-            >
-              {stage === "scanning" ? "Measuring the folder…" : "Measure the folder"}
-            </Button>
+          {stage === "setup" && pending && (
+            <p className="text-sm">
+              A copy to {pending.targetFolder} on {targetLabel} is unfinished. Check it again once{" "}
+              {targetLabel} is reachable.
+            </p>
           )}
         </>
+      )}
+
+      {stage !== "setup" && stage !== "scanning" && pending && (
+        <CopyScopeMapping
+          source={copy?.copyRoot ?? offer?.copyRoot ?? pending.copyRoot ?? project.workspaceRoot}
+          target={copy?.targetFolder ?? pending.targetFolder}
+          projectFolder={
+            copy?.projectFolder ??
+            copiedProjectFolder(
+              copy?.targetFolder ?? pending.targetFolder,
+              copy?.projectRelativePath ?? pending.projectRelativePath,
+            )
+          }
+        />
       )}
 
       {stage === "select" && summary && (
@@ -963,14 +1022,6 @@ export function HandoffFolderCopy({
             onChange={setSelection}
             disabled={busy}
           />
-          <div className="flex flex-wrap gap-2">
-            <Button disabled={busy || selection.length === 0} onClick={() => void plan()}>
-              Preview on {targetLabel}
-            </Button>
-            <Button variant="outline" disabled={busy} onClick={() => void stop()}>
-              Cancel copy
-            </Button>
-          </div>
         </>
       )}
 
@@ -1011,23 +1062,6 @@ export function HandoffFolderCopy({
               onConfirmedChange={setSecretsConfirmed}
             />
           )}
-          <div className="flex flex-wrap gap-2">
-            <Button
-              disabled={
-                busy ||
-                (copy.totals?.decisionsNeeded ?? 1) > 0 ||
-                (secretPaths.length > 0 && !secretsConfirmed)
-              }
-              onClick={() => void apply()}
-            >
-              {mode === "copy-and-move"
-                ? `Copy and transfer context to ${targetLabel}`
-                : `Copy and apply on ${targetLabel}`}
-            </Button>
-            <Button variant="outline" disabled={busy} onClick={() => void stop()}>
-              Cancel copy
-            </Button>
-          </div>
         </>
       )}
 
@@ -1040,11 +1074,6 @@ export function HandoffFolderCopy({
           ) : (
             <CopyProgress status={copy} />
           )}
-          {stage === "copying" && copy.state !== "applying" && copy.state !== "applied" && (
-            <Button variant="outline" disabled={working} onClick={() => void stop()}>
-              Cancel copy
-            </Button>
-          )}
         </>
       )}
 
@@ -1056,16 +1085,6 @@ export function HandoffFolderCopy({
               : (copy.error?.message ?? "The copy stopped.")}
             {failedBeforeApply ? ` Nothing in ${copy.targetFolder} changed.` : ""}
           </p>
-          <div className="flex flex-wrap gap-2">
-            <Button disabled={busy} onClick={() => void retryCopy()}>
-              Retry
-            </Button>
-            {failedBeforeApply && (
-              <Button variant="outline" disabled={busy} onClick={() => void stop()}>
-                Cancel copy
-              </Button>
-            )}
-          </div>
         </div>
       )}
 
@@ -1073,7 +1092,7 @@ export function HandoffFolderCopy({
         <div className="space-y-3 text-sm" data-slot="copy-done">
           <p role="status">
             {mode === "copy-and-move" && contextTransferred
-              ? `The coordinator continues on ${targetLabel} in ${copy.targetFolder}.`
+              ? `The coordinator continues on ${targetLabel} in ${copy.projectFolder ?? copiedProjectFolder(copy.targetFolder, copy.projectRelativePath)}.`
               : mode === "copy-and-move"
                 ? `${targetLabel} has a copy in ${copy.targetFolder}. Coordinator context has not finished transferring.`
                 : `${targetLabel} has a copy in ${copy.targetFolder}. The coordinator stays on ${sourceLabel}.`}
@@ -1082,21 +1101,6 @@ export function HandoffFolderCopy({
             <p role="status" className="text-xs text-warning-foreground">
               {transferNotice}
             </p>
-          )}
-          {copyAgain && (
-            <Button disabled={busy} onClick={fresh}>
-              Copy again
-            </Button>
-          )}
-          {mode === "copy-and-move" && !contextTransferred && !copyAgain && pending && (
-            <Button
-              disabled={busy}
-              onClick={() =>
-                void run(() => moveCoordinator(pending.operationId, machine!, copy.projectId!))
-              }
-            >
-              Transfer coordinator context
-            </Button>
           )}
           {mode === "copy-only" && link && (
             <p
@@ -1147,13 +1151,144 @@ export function HandoffFolderCopy({
               The backups from this copy were removed after 14 days, so it can no longer be undone.
             </p>
           )}
-          <div className="flex flex-wrap gap-2">
+
+          {linkDialog && machine && (
+            <ProjectLinkDialog
+              open
+              onOpenChange={(open) => !open && setLinkDialog(false)}
+              project={project}
+              initialCandidate={{ environmentId: machine, projectId: copy.projectId }}
+              initialKept="here"
+              autoReview
+              onLinked={() => setLink({ status: "linked" })}
+            />
+          )}
+        </div>
+      )}
+
+      {stage === "undone" && (
+        <div className="space-y-2 text-sm">
+          <p role="status">
+            {copy?.state === "undone"
+              ? `${copy.targetFolder} is back to how it was before the copy.`
+              : "The copy was cancelled."}
+          </p>
+        </div>
+      )}
+
+      <HandoffCopyActions>
+        {error && (
+          <p
+            role="alert"
+            className="max-h-24 basis-full overflow-y-auto wrap-anywhere text-sm text-destructive-foreground"
+          >
+            {error}
+          </p>
+        )}
+        {(stage === "setup" || stage === "scanning") &&
+          (stage === "setup" && pending ? (
+            <Button disabled={busy} onClick={() => resume(pending)}>
+              Check the copy again
+            </Button>
+          ) : (
             <Button
+              disabled={
+                busy || scope.loading || !machine || !!target?.unavailable || !folder.trim()
+              }
+              onClick={() => void measure()}
+            >
+              {stage === "scanning" ? "Measuring the folder…" : "Measure the folder"}
+            </Button>
+          ))}
+        {(stage === "select" || stage === "planning") && (
+          <>
+            <Button disabled={busy || selection.length === 0} onClick={() => void plan()}>
+              {stage === "planning" ? "Comparing folders…" : `Preview on ${targetLabel}`}
+            </Button>
+            <Button variant="outline" disabled={busy} onClick={() => void stop()}>
+              Cancel copy
+            </Button>
+          </>
+        )}
+        {stage === "preview" && copy && (
+          <>
+            <Button
+              disabled={
+                busy ||
+                (copy.totals?.decisionsNeeded ?? 1) > 0 ||
+                (secretPaths.length > 0 && !secretsConfirmed)
+              }
+              onClick={() => void apply()}
+            >
+              {mode === "copy-and-move"
+                ? `Copy and transfer context to ${targetLabel}`
+                : `Copy and apply on ${targetLabel}`}
+            </Button>
+            <Button variant="outline" disabled={busy} onClick={() => void stop()}>
+              Cancel copy
+            </Button>
+          </>
+        )}
+        {(stage === "copying" || stage === "moving") && (
+          <>
+            <Button disabled>
+              {stage === "moving"
+                ? "Transferring context…"
+                : copy?.state === "applying"
+                  ? "Applying files…"
+                  : "Copying files…"}
+            </Button>
+            {stage === "copying" &&
+              copy &&
+              copy.state !== "applying" &&
+              copy.state !== "applied" && (
+                <Button variant="outline" disabled={working} onClick={() => void stop()}>
+                  Cancel copy
+                </Button>
+              )}
+          </>
+        )}
+        {stage === "failed" && copy && (
+          <>
+            <Button disabled={busy} onClick={() => void retryCopy()}>
+              Retry
+            </Button>
+            {failedBeforeApply && (
+              <Button variant="outline" disabled={busy} onClick={() => void stop()}>
+                Cancel copy
+              </Button>
+            )}
+          </>
+        )}
+        {stage === "done" && copy && copy.projectId && (
+          <>
+            {copyAgain && (
+              <Button disabled={busy} onClick={fresh}>
+                Copy again
+              </Button>
+            )}
+            {mode === "copy-and-move" && !contextTransferred && !copyAgain && pending && (
+              <Button
+                disabled={busy}
+                onClick={() =>
+                  void run(() => moveCoordinator(pending.operationId, machine!, copy.projectId!))
+                }
+              >
+                Transfer coordinator context
+              </Button>
+            )}
+            <Button
+              variant={mode === "copy-and-move" && !contextTransferred ? "outline" : "default"}
               onClick={() =>
                 onOpenProject({
                   environmentId: machine!,
                   projectId: copy.projectId!,
-                  folder: copy.targetFolder,
+                  folder:
+                    copy.projectFolder ??
+                    copiedProjectFolder(
+                      copy.targetFolder,
+                      copy.projectRelativePath ?? pending?.projectRelativePath,
+                    ),
                 })
               }
             >
@@ -1187,39 +1322,14 @@ export function HandoffFolderCopy({
             <Button variant="ghost" disabled={busy || transferRecovery} onClick={fresh}>
               Start a new copy
             </Button>
-          </div>
-          {linkDialog && machine && (
-            <ProjectLinkDialog
-              open
-              onOpenChange={(open) => !open && setLinkDialog(false)}
-              project={project}
-              initialCandidate={{ environmentId: machine, projectId: copy.projectId }}
-              initialKept="here"
-              autoReview
-              onLinked={() => setLink({ status: "linked" })}
-            />
-          )}
-        </div>
-      )}
-
-      {stage === "undone" && (
-        <div className="space-y-2 text-sm">
-          <p role="status">
-            {copy?.state === "undone"
-              ? `${copy.targetFolder} is back to how it was before the copy.`
-              : "The copy was cancelled."}
-          </p>
+          </>
+        )}
+        {stage === "undone" && (
           <Button variant="outline" onClick={fresh}>
             Start a new copy
           </Button>
-        </div>
-      )}
-
-      {error && (
-        <p role="alert" className="wrap-anywhere text-sm text-destructive-foreground">
-          {error}
-        </p>
-      )}
+        )}
+      </HandoffCopyActions>
     </div>
   );
 }

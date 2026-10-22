@@ -49,6 +49,8 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.projectLinkCommit]: AuthSettingsWriteScope,
   [WS_METHODS.projectUnlink]: AuthSettingsWriteScope,
   [WS_METHODS.machineHandoffCopyOffer]: AuthOrchestrationOperateScope,
+  [WS_METHODS.machineHandoffCopyScopes]: AuthFilesystemReadScope,
+  [WS_METHODS.machineHandoffCopyCapabilities]: AuthFilesystemReadScope,
   [WS_METHODS.machineHandoffCopySourceStatus]: AuthFilesystemReadScope,
   [WS_METHODS.machineHandoffCopySourceCancel]: AuthOrchestrationOperateScope,
   [WS_METHODS.machineHandoffCopyRelease]: AuthOrchestrationOperateScope,
@@ -192,6 +194,8 @@ const decodePrepareThread = Schema.decodeUnknownSync(GitPreparePullRequestThread
 function folderCopyScopes(method: string, input: unknown): readonly AuthEnvironmentScope[] | null {
   const read = [AuthOrchestrationReadScope, AuthFilesystemReadScope] as const;
   switch (method) {
+    case WS_METHODS.machineHandoffCopyScopes:
+    case WS_METHODS.machineHandoffCopyCapabilities:
     case WS_METHODS.machineHandoffCopySourceStatus:
     case WS_METHODS.machineHandoffCopyStatus:
     case WS_METHODS.machineHandoffSentSecrets:

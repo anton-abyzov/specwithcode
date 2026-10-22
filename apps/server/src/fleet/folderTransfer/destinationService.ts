@@ -17,6 +17,7 @@ import {
   type Choice,
   type Plan,
 } from "./reconcile.ts";
+import { validProjectRelativePath } from "../folderCopyScope.ts";
 import { isSafeRelativePath } from "./paths.ts";
 import { SourceClient, SourceClientError } from "./sourceClient.ts";
 import { previewUndo, undoApply, type UndoPreview, type UndoResult } from "./undo.ts";
@@ -67,6 +68,8 @@ export interface CopyProgress {
 }
 
 export interface DestinationRecord {
+  readonly copyRoot?: string;
+  readonly projectRelativePath?: string;
   readonly version: 1;
   readonly operationId: string;
   readonly sourceUrl: string;
@@ -107,6 +110,8 @@ export interface DestinationRecord {
 }
 
 export interface StartCopyInput {
+  readonly copyRoot?: string;
+  readonly projectRelativePath?: string;
   readonly operationId: string;
   readonly sourceUrl: string;
   readonly token: string;
@@ -264,6 +269,17 @@ export class DestinationCopies {
 
   /** Records the copy and starts the preview: manifest from the source, then the plan. */
   async start(input: StartCopyInput): Promise<DestinationRecord> {
+    const { record, created } = await this.locked(input.operationId, () => this.startLocked(input));
+    // Preview updates take this same lock; launch only after creation releases it.
+    if (created)
+      this.background(input.operationId, "scanning", (signal) => this.preview(record, signal));
+    return record;
+  }
+
+  /** The lock owns the directory through hello, persistence, and failed-start cleanup. */
+  private async startLocked(
+    input: StartCopyInput,
+  ): Promise<{ record: DestinationRecord; created: boolean }> {
     if (!NodePath.isAbsolute(input.targetFolder))
       throw new CopyError("not_a_folder", "Choose an absolute folder for the copy.");
     const target = NodePath.resolve(input.targetFolder);
@@ -272,9 +288,18 @@ export class DestinationCopies {
       throw new CopyError("refused", "Secret-like files are not copied in this step.");
     const existing = await this.read(input.operationId);
     if (existing) {
-      if (existing.sourceUrl !== input.sourceUrl || existing.targetFolder !== target)
+      if (
+        existing.sourceUrl !== input.sourceUrl ||
+        existing.targetFolder !== target ||
+        existing.sourceEnvironmentId !== input.sourceEnvironmentId ||
+        existing.sourceProjectId !== input.sourceProjectId ||
+        existing.mode !== input.mode ||
+        existing.requestedProjectId !== (input.projectId ?? null) ||
+        (input.copyRoot !== undefined && existing.copyRoot !== input.copyRoot) ||
+        (existing.projectRelativePath ?? ".") !== (input.projectRelativePath ?? ".")
+      )
         throw new CopyError("refused", "This copy already exists with different details.");
-      return existing;
+      return { record: existing, created: false };
     }
     const stat = await NodeFSP.lstat(target).catch(() => null);
     if (stat && !stat.isDirectory())
@@ -283,7 +308,7 @@ export class DestinationCopies {
     const paths = this.paths(input.operationId);
     await privateDirectory(paths.directory);
     const now = this.now();
-    const record: DestinationRecord = {
+    let record: DestinationRecord = {
       version: 1,
       operationId: input.operationId,
       sourceUrl: input.sourceUrl,
@@ -312,16 +337,29 @@ export class DestinationCopies {
       createdAt: now,
       updatedAt: now,
     };
-    await writeJson(paths.record, record);
     // Check the source answers before going to the background.
     try {
-      await this.client(record).hello(input.sourceEnvironmentId);
+      const hello = await this.client(record).hello(input.sourceEnvironmentId);
+      const relative = hello.projectRelativePath ?? ".";
+      if (
+        !validProjectRelativePath(relative) ||
+        (input.projectRelativePath ?? ".") !== relative ||
+        (input.copyRoot !== undefined && input.copyRoot !== hello.copyRoot) ||
+        (hello.projectId !== undefined && hello.projectId !== input.sourceProjectId) ||
+        (relative !== "." && (!hello.copyRoot || hello.projectId !== input.sourceProjectId))
+      )
+        throw new CopyError("refused", "The source copy scope changed. Start a new copy.");
+      record = {
+        ...record,
+        ...(hello.copyRoot ? { copyRoot: hello.copyRoot } : {}),
+        projectRelativePath: relative,
+      };
+      await writeJson(paths.record, record);
     } catch (cause) {
       await NodeFSP.rm(paths.directory, { recursive: true, force: true });
       throw toCopyError(cause);
     }
-    this.background(input.operationId, "scanning", (signal) => this.preview(record, signal));
-    return record;
+    return { record, created: true };
   }
 
   /** Changes decisions, clone rows or "mirror exactly", then re-plans. */
@@ -585,15 +623,26 @@ export class DestinationCopies {
     }
   }
 
+  private checkedManifest(record: DestinationRecord, manifest: Manifest): Manifest {
+    if (
+      (manifest.header.projectRelativePath ?? ".") !== (record.projectRelativePath ?? ".") ||
+      (record.copyRoot !== undefined && manifest.header.copyRoot !== record.copyRoot)
+    )
+      throw new CopyError("refused", "The source manifest belongs to a different copy scope.");
+    return manifest;
+  }
+
   private async fetchManifest(record: DestinationRecord, signal: AbortSignal) {
     const client = this.client(record, signal);
     const paths = this.paths(record.operationId);
-    if (await exists(paths.manifest)) return readManifestFile(paths.manifest);
+    if (await exists(paths.manifest))
+      return this.checkedManifest(record, await readManifestFile(paths.manifest));
     await client.requestManifest(record.selection);
     for (;;) {
       signal.throwIfAborted();
       const result = await client.manifest();
       if ("entries" in result) {
+        this.checkedManifest(record, result);
         await writeManifest(paths.manifest, result);
         return result;
       }
@@ -720,7 +769,7 @@ export class DestinationCopies {
     const op = record.operationId;
     const paths = this.paths(op);
     const plan = await this.readPlan(op);
-    const manifest = await readManifestFile(paths.manifest);
+    const manifest = this.checkedManifest(record, await readManifestFile(paths.manifest));
     if (!plan) throw new CopyError("copy_failed", "The copy plan is missing.");
     const unstable = new Set(record.unstable);
     const result = await applyPlan({
@@ -773,6 +822,7 @@ export class DestinationCopies {
 
   /** Tells the source the copy is complete, then registers the folder here. */
   private async finish(record: DestinationRecord) {
+    this.checkedManifest(record, await readManifestFile(this.paths(record.operationId).manifest));
     let current = record;
     if (!current.committed && current.secretsDone !== true)
       current = await this.receiveSecrets(current);

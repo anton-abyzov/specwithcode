@@ -5,7 +5,7 @@ import * as NodePath from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
 
 import { isSecretLikeProjectPath } from "../../workspace/WorkspaceSensitivePaths.ts";
-import { DEFAULT_SELECTION, EXACT_SELECTION } from "./classify.ts";
+import { classifyFile, DEFAULT_SELECTION, EXACT_SELECTION } from "./classify.ts";
 import { makeUmbrella, type UmbrellaFixture } from "./folderFixture.testkit.ts";
 import {
   CHUNK_SIZE,
@@ -188,5 +188,23 @@ describe("paths and secret-like files", () => {
       expect(isSecretLikeProjectPath(path)).toBe(true);
     for (const path of ["README.md", "src/env.ts", "docs/aws.md", "environment.json"])
       expect(isSecretLikeProjectPath(path)).toBe(false);
+  });
+});
+
+describe("cross-machine Finder metadata", () => {
+  it.each(["ignored", "untracked", "outside"] as const)(
+    "excludes %s Finder cache by default while exact copies retain it",
+    (gitState) => {
+      const kind = classifyFile({ relative: "nested/.DS_Store", insideGitData: false, gitState });
+      expect(kind).toBe("rebuildable");
+      expect(DEFAULT_SELECTION).not.toContain(kind);
+      expect(EXACT_SELECTION).toContain(kind);
+    },
+  );
+
+  it("retains deliberately tracked Finder metadata as source work", () => {
+    expect(
+      classifyFile({ relative: "nested/.DS_Store", insideGitData: false, gitState: "tracked" }),
+    ).toBe("tracked");
   });
 });

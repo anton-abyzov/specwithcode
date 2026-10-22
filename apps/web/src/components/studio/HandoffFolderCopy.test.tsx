@@ -1,8 +1,9 @@
 // @vitest-environment jsdom
-import { act } from "react";
+import { act, useCallback, useState } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import { HandoffFolderCopy } from "./HandoffFolderCopy";
+import { MachineHandoffDialog } from "./MachineHandoffDialog";
 import { DEFAULT_COPY_SELECTION } from "../../studio/folderCopy";
 
 const state = vi.hoisted(() => ({
@@ -115,6 +116,7 @@ let container: HTMLDivElement;
 let statuses: Array<Record<string, unknown>>;
 const onOpenProject = vi.fn();
 const onBusyChange = vi.fn();
+const onDialogClose = vi.fn();
 const names = () => state.calls.map(([name]) => name);
 const button = (label: string) => {
   const element = [...container.querySelectorAll<HTMLButtonElement>("button")].find(
@@ -127,38 +129,86 @@ const click = async (label: string) => {
   await act(async () => button(label).click());
   await act(async () => new Promise((resolve) => setTimeout(resolve, 0)));
 };
-const mount = (
-  overrides: {
-    coordinatorId?: string | null;
-    canMove?: boolean;
-    savedFolder?: string;
-    m1Available?: boolean;
-    savedProject?: (environmentId: string, folder: string) => Record<string, unknown> | null;
-  } = {},
-) =>
-  act(async () =>
-    root.render(
-      <HandoffFolderCopy
-        project={project as never}
-        coordinatorId={(overrides.coordinatorId ?? "coordinator") as never}
-        sourceLabel="M4"
-        method="copy"
-        machines={[
-          { id: "m3" as never, label: "M3", unavailable: null },
-          {
-            id: "m1" as never,
-            label: "M1",
-            unavailable: overrides.m1Available ? null : "Connect first",
-          },
-        ]}
-        savedFolder={() => overrides.savedFolder ?? null}
-        savedProject={overrides.savedProject as never}
-        canMove={overrides.canMove ?? true}
-        onBusyChange={onBusyChange}
-        onOpenProject={onOpenProject}
-      />,
-    ),
+interface FixtureOptions {
+  coordinatorId?: string | null;
+  canMove?: boolean;
+  savedFolder?: string;
+  m1Available?: boolean;
+  savedProject?: (environmentId: string, folder: string) => Record<string, unknown> | null;
+  dialog?: boolean;
+  workspaceRoot?: string;
+}
+function CopyFixture(overrides: FixtureOptions) {
+  const [busy, setBusy] = useState(false);
+  const updateBusy = useCallback((value: boolean) => {
+    onBusyChange(value);
+    setBusy(value);
+  }, []);
+  const flow = (
+    <HandoffFolderCopy
+      project={
+        { ...project, workspaceRoot: overrides.workspaceRoot ?? project.workspaceRoot } as never
+      }
+      coordinatorId={(overrides.coordinatorId ?? "coordinator") as never}
+      sourceLabel="M4"
+      method="copy"
+      machines={[
+        { id: "m3" as never, label: "M3", unavailable: null },
+        {
+          id: "m1" as never,
+          label: "M1",
+          unavailable: overrides.m1Available ? null : "Connect first",
+        },
+      ]}
+      savedFolder={() => overrides.savedFolder ?? null}
+      savedProject={overrides.savedProject as never}
+      canMove={overrides.canMove ?? true}
+      onBusyChange={overrides.dialog ? updateBusy : onBusyChange}
+      onOpenProject={onOpenProject}
+    />
   );
+  return overrides.dialog ? (
+    <MachineHandoffDialog
+      open
+      onOpenChange={onDialogClose}
+      sourceLabel="M4"
+      projectTitle="Project"
+      destinations={[]}
+      selected=""
+      onSelect={() => {}}
+      method="copy"
+      onMethodChange={() => {}}
+      copyBusy={busy}
+      copyFlow={flow}
+      preview={null}
+      phase="choose"
+      consent={false}
+      onConsent={() => {}}
+      error={null}
+      onReview={() => {}}
+      onContinue={() => {}}
+      onOpenDestination={() => {}}
+    />
+  ) : (
+    flow
+  );
+}
+const mount = (overrides: FixtureOptions = {}) =>
+  act(async () => root.render(<CopyFixture {...overrides} />));
+const dialogButton = (label: string) => {
+  const matches = [...document.querySelectorAll<HTMLButtonElement>("button")].filter(
+    (element) => element.textContent?.trim() === label,
+  );
+  expect(matches).toHaveLength(1);
+  const result = matches[0]!;
+  expect(result.closest('[data-slot="dialog-footer"]')).not.toBeNull();
+  expect(result.closest('[data-slot="scroll-area-viewport"]')).toBeNull();
+  return result;
+};
+const dialogClick = async (label: string) => {
+  await act(async () => dialogButton(label).click());
+  await act(async () => new Promise((resolve) => setTimeout(resolve, 0)));
+};
 
 beforeEach(() => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -170,6 +220,21 @@ beforeEach(() => {
   state.link = vi.fn<(...args: unknown[]) => Promise<unknown>>(async () => ({ status: "linked" }));
   statuses = [copyStatus("previewed"), copyStatus("applied")];
   state.handlers = {
+    copyScopes: () => ({
+      projectRoot: project.workspaceRoot,
+      recommendedCopyRoot: project.workspaceRoot,
+      scopes: [
+        {
+          copyRoot: project.workspaceRoot,
+          projectRelativePath: ".",
+          kind: "project",
+          label: "This project folder",
+          repositories: [],
+          truncated: false,
+        },
+      ],
+    }),
+    copyCapabilities: () => ({ scopeVersion: 1 }),
     copyOffer: ({ input }: any) => ({
       operationId: input.operationId,
       sourceEnvironmentId: "m4",
@@ -222,7 +287,7 @@ it("measures, previews and applies a copy that leaves the coordinator on the sou
   await mount();
   expect(container.textContent).toContain("Folder on M3");
   await click("Measure the folder");
-  expect(state.calls[0]).toEqual([
+  expect(state.calls.find(([name]) => name === "copyOffer")).toEqual([
     "copyOffer",
     {
       environmentId: "m4",
@@ -793,3 +858,342 @@ it("reads a destination registration that arrived while Apply was running", asyn
     logicalProjectId: "arrived-logical-project",
   });
 });
+
+it("keeps live actions in the real dialog footer through measurement, preview, apply and completion", async () => {
+  const originalOffer = state.handlers.copyOffer!;
+  let finishOffer!: () => void;
+  state.handlers.copyOffer = (input) =>
+    new Promise((resolve) => {
+      finishOffer = () => resolve(originalOffer(input));
+    });
+  await mount({ dialog: true });
+  await dialogClick("Measure the folder");
+  const measuring = dialogButton("Measuring the folder…");
+  expect(measuring.disabled).toBe(true);
+  expect(dialogButton("Close").disabled).toBe(true);
+  await act(async () => {
+    measuring.click();
+    dialogButton("Close").click();
+    measuring.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+  });
+  expect(names().filter((name) => name === "copyOffer")).toHaveLength(1);
+  expect(onDialogClose).not.toHaveBeenCalled();
+  await act(async () => finishOffer());
+  dialogButton("Preview on M3");
+  let finishPreview!: () => void;
+  state.handlers.copyStart = () =>
+    new Promise((resolve) => {
+      finishPreview = () => resolve(copyStatus("scanning"));
+    });
+  await dialogClick("Preview on M3");
+  expect(dialogButton("Comparing folders…").disabled).toBe(true);
+  expect(dialogButton("Close").disabled).toBe(true);
+  await act(async () => finishPreview());
+  dialogButton("Copy and apply on M3");
+  let finishApply!: () => void;
+  state.handlers.copyApprove = () =>
+    new Promise((resolve) => {
+      finishApply = () => resolve(copyStatus("approved"));
+    });
+  await dialogClick("Copy and apply on M3");
+  expect(dialogButton("Copying files…").disabled).toBe(true);
+  expect(dialogButton("Close").disabled).toBe(true);
+  await act(async () => finishApply());
+  await dialogClick("Open on M3");
+  expect(onOpenProject).toHaveBeenCalledOnce();
+  dialogButton("Start a new copy");
+  expect(
+    document.querySelector('[data-slot="dialog-panel"] [data-slot="copy-actions"]'),
+  ).toBeNull();
+});
+
+it("keeps a measurement error and its retry action together in the footer", async () => {
+  const offer = state.handlers.copyOffer!;
+  state.handlers.copyOffer = () => {
+    throw new Error("The source folder cannot be read.");
+  };
+  await mount({ dialog: true });
+  await dialogClick("Measure the folder");
+  const alert = document.querySelector('[data-slot="dialog-footer"] [role="alert"]');
+  expect(alert?.textContent).toContain("The source folder cannot be read.");
+  expect(dialogButton("Measure the folder").disabled).toBe(false);
+  state.handlers.copyOffer = offer;
+  await dialogClick("Measure the folder");
+  dialogButton("Preview on M3");
+  expect(document.querySelector('[data-slot="dialog-footer"] [role="alert"]')).toBeNull();
+});
+
+it("keeps deferred context retry in the footer with current handlers", async () => {
+  deferredCopy();
+  const prepare = state.handlers.prepare!;
+  state.handlers.prepare = () => {
+    throw Object.assign(new Error("busy"), { code: "busy" });
+  };
+  await mount({ dialog: true });
+  await act(async () => {
+    const choice = [...document.querySelectorAll<HTMLElement>("label")].find((element) =>
+      element.textContent?.includes("Copy and transfer coordinator context"),
+    );
+    choice!.click();
+  });
+  await dialogClick("Measure the folder");
+  await dialogClick("Preview on M3");
+  await dialogClick("Copy and transfer context to M3");
+  expect(document.querySelector('[data-slot="copy-done"]')?.textContent).toContain(
+    "Work is still running",
+  );
+  expect(dialogButton("Transfer coordinator context").disabled).toBe(false);
+  state.handlers.prepare = prepare;
+  await dialogClick("Transfer coordinator context");
+  expect(document.querySelector('[data-slot="copy-done"]')?.textContent).toContain(
+    "The coordinator continues",
+  );
+  dialogButton("Open on M3");
+  expect(document.querySelector('[data-slot="dialog-footer"]')?.textContent).not.toContain(
+    "Transfer coordinator context",
+  );
+});
+
+it("keeps failed-copy Retry and cancellation in the footer", async () => {
+  statuses = [
+    copyStatus("previewed"),
+    copyStatus("failed", { failedStep: "transfer", error: { message: "Copy connection lost." } }),
+  ];
+  await mount({ dialog: true });
+  await dialogClick("Measure the folder");
+  await dialogClick("Preview on M3");
+  await dialogClick("Copy and apply on M3");
+  expect(dialogButton("Retry").disabled).toBe(false);
+  dialogButton("Cancel copy");
+  state.handlers.copyRetry = () => copyStatus("approved");
+  await dialogClick("Retry");
+  expect(names().filter((name) => name === "copyRetry")).toHaveLength(1);
+  dialogButton("Open on M3");
+});
+
+const umbrellaRoot = "/Users/me/Projects/umbrella";
+const childPath = "repos/org/app";
+const childRoot = `${umbrellaRoot}/${childPath}`;
+const umbrellaDestination = "/home/anton/Projects/umbrella";
+const childDestination = `${umbrellaDestination}/${childPath}`;
+const enableUmbrella = () => {
+  state.handlers.copyScopes = () => ({
+    projectRoot: childRoot,
+    recommendedCopyRoot: umbrellaRoot,
+    scopes: [
+      {
+        copyRoot: childRoot,
+        projectRelativePath: ".",
+        kind: "project",
+        label: "This project folder",
+        repositories: [],
+        truncated: false,
+      },
+      {
+        copyRoot: umbrellaRoot,
+        projectRelativePath: childPath,
+        kind: "workspace",
+        label: "umbrella",
+        repositories: [childPath, "custom/api"],
+        truncated: true,
+      },
+    ],
+  });
+  const base = state.handlers.copyOffer!;
+  state.handlers.copyOffer = (request: any) => ({
+    ...(base(request) as object),
+    copyRoot: request.input.copyRoot ?? childRoot,
+    projectRelativePath: request.input.copyRoot === umbrellaRoot ? childPath : ".",
+  });
+};
+const selectScope = async (root: string) =>
+  act(async () =>
+    [...container.querySelectorAll<HTMLElement>('[aria-label="Source folder"] [role="radio"]')]
+      .find((node) => node.closest("label")?.querySelector(".font-mono")?.textContent === root)!
+      .click(),
+  );
+
+it("defaults a nested project to its verified umbrella and maps the saved child registration once", async () => {
+  enableUmbrella();
+  await mount({ workspaceRoot: childRoot, savedFolder: "/srv/team/repos/org/app/" });
+  const source = container.querySelector('[aria-label="Source folder"]')!;
+  expect(source.querySelector('[aria-checked="true"]')?.closest("label")?.textContent).toContain(
+    "Whole umbrella · umbrella (recommended)",
+  );
+  expect(source.textContent).toContain("This project folder only");
+  expect(container.textContent).toContain("Included repositories (2+)");
+  expect(container.textContent).not.toContain("open the umbrella project or choose its root");
+  expect(inputFolder().value).toBe("/srv/team");
+  expect(container.querySelector('[data-slot="copy-destination-project"]')?.textContent).toContain(
+    "/srv/team/repos/org/app",
+  );
+  await click("Measure the folder");
+  expect(names().indexOf("copyCapabilities")).toBeLessThan(names().indexOf("copyOffer"));
+  expect(state.calls.find(([name]) => name === "copyOffer")?.[1]).toMatchObject({
+    input: { copyRoot: umbrellaRoot },
+  });
+  await click("Preview on M3");
+  expect(state.calls.find(([name]) => name === "copyStart")?.[1]).toMatchObject({
+    input: {
+      copyRoot: umbrellaRoot,
+      projectRelativePath: childPath,
+      targetFolder: "/srv/team",
+    },
+  });
+});
+
+it("refreshes automatic scope suggestions but preserves a manually entered destination", async () => {
+  enableUmbrella();
+  await mount({ workspaceRoot: childRoot, savedFolder: "/srv/unrelated/app" });
+  expect(inputFolder().value).toBe(umbrellaDestination);
+  await selectScope(childRoot);
+  expect(inputFolder().value).toBe("/srv/unrelated/app");
+  await editFolder("/srv/explicit-copy");
+  await selectScope(umbrellaRoot);
+  expect(inputFolder().value).toBe("/srv/explicit-copy");
+  expect(container.querySelector('[data-slot="copy-destination-project"]')?.textContent).toContain(
+    "/srv/explicit-copy/repos/org/app",
+  );
+});
+
+it("blocks measurement until source discovery finishes, then visibly selects the recommendation", async () => {
+  enableUmbrella();
+  const scopes = state.handlers.copyScopes!(undefined);
+  let resolve!: (value: unknown) => void;
+  state.handlers.copyScopes = () =>
+    new Promise((done) => {
+      resolve = done;
+    });
+  await mount({ workspaceRoot: childRoot });
+  expect(button("Measure the folder").disabled).toBe(true);
+  await click("Measure the folder");
+  expect(names()).not.toContain("copyOffer");
+  await act(async () => resolve(scopes));
+  expect(button("Measure the folder").disabled).toBe(false);
+  expect(inputFolder().value).toBe(umbrellaDestination);
+});
+
+it("keeps a root-only copy available when an older source cannot discover umbrellas", async () => {
+  state.handlers.copyScopes = () => {
+    throw new Error("Unknown method");
+  };
+  await mount();
+  expect(container.textContent).toContain("Only this project folder is available");
+  await click("Measure the folder");
+  expect(names()).not.toContain("copyCapabilities");
+  expect(state.calls.find(([name]) => name === "copyOffer")?.[1]).not.toHaveProperty(
+    "input.copyRoot",
+  );
+});
+
+it.each(["unavailable", "old-version"])(
+  "refuses an umbrella on an unsupported destination before creating any copy (%s)",
+  async (reason) => {
+    enableUmbrella();
+    state.handlers.copyCapabilities = () => {
+      if (reason === "unavailable") throw new Error("Unknown method");
+      return { scopeVersion: 0 };
+    };
+    await mount({ workspaceRoot: childRoot });
+    await click("Measure the folder");
+    expect(container.textContent).toContain("Update or reconnect M3 before copying an umbrella");
+    expect(names()).not.toContain("copyOffer");
+    expect(localStorage.getItem("specwithcode:folder-copy:m4:source")).toBeNull();
+    await selectScope(childRoot);
+    await click("Measure the folder");
+    expect(names()).toContain("copyOffer");
+  },
+);
+
+it("registers, previews context and opens the child project while copying the whole umbrella", async () => {
+  enableUmbrella();
+  const existing = {
+    id: "existing-child",
+    environmentId: "m3",
+    workspaceRoot: childDestination,
+    workspaceSettings: { coordinatorThreadId: "child-coordinator" },
+  };
+  statuses = [
+    copyStatus("previewed", {
+      targetFolder: umbrellaDestination,
+      copyRoot: umbrellaRoot,
+      projectRelativePath: childPath,
+      projectFolder: childDestination,
+    }),
+    copyStatus("applied", {
+      targetFolder: umbrellaDestination,
+      copyRoot: umbrellaRoot,
+      projectRelativePath: childPath,
+      projectFolder: childDestination,
+      projectId: existing.id,
+    }),
+  ];
+  await mount({
+    workspaceRoot: childRoot,
+    savedFolder: childDestination,
+    savedProject: (machine, folder) =>
+      machine === "m3" && folder === childDestination ? existing : null,
+  });
+  await selectMove();
+  await click("Measure the folder");
+  await click("Preview on M3");
+  expect(state.calls.find(([name]) => name === "copyStart")?.[1]).toMatchObject({
+    input: { projectId: existing.id, targetFolder: umbrellaDestination },
+  });
+  await click("Copy and transfer context to M3");
+  expect(state.calls.find(([name]) => name === "prepare")?.[1]).toMatchObject({
+    input: { destination: { projectId: existing.id, coordinatorThreadId: "child-coordinator" } },
+  });
+  expect(container.textContent).toContain(`The coordinator continues on M3 in ${childDestination}`);
+  await click("Open on M3");
+  expect(onOpenProject).toHaveBeenCalledExactlyOnceWith({
+    environmentId: "m3",
+    projectId: existing.id,
+    folder: childDestination,
+  });
+});
+
+it.each(["same", "child-only", "different-root"])(
+  "reuses the canonical copied child only at the same registered folder (%s)",
+  async (nextScope) => {
+    enableUmbrella();
+    const registration = "copied-child";
+    const canonical = "/srv/canonical/umbrella";
+    const canonicalChild = `${canonical}/${childPath}`;
+    statuses = [
+      copyStatus("previewed"),
+      copyStatus("applied", {
+        targetFolder: canonical,
+        copyRoot: umbrellaRoot,
+        projectRelativePath: childPath,
+        projectFolder: canonicalChild,
+        projectId: registration,
+      }),
+    ];
+    state.handlers.prepare = () => {
+      throw Object.assign(new Error("busy"), { code: "busy" });
+    };
+    await mount({ workspaceRoot: childRoot });
+    await selectMove();
+    await click("Measure the folder");
+    await click("Preview on M3");
+    await click("Copy and transfer context to M3");
+    await click("Start a new copy");
+    expect(inputFolder().value).toBe(canonical);
+    if (nextScope === "different-root") await editFolder("/srv/other");
+    if (nextScope === "child-only") {
+      await selectScope(childRoot);
+      expect(inputFolder().value).toBe(childDestination);
+      await editFolder(canonicalChild);
+    }
+    statuses = [copyStatus("previewed")];
+    await click("Measure the folder");
+    await click("Preview on M3");
+    const start = state.calls.findLast(([name]) => name === "copyStart")?.[1] as any;
+    if (nextScope === "different-root") expect(start.input.projectId).not.toBe(registration);
+    else expect(start.input.projectId).toBe(registration);
+    expect(start.input.targetFolder).toBe(
+      nextScope === "same" ? canonical : nextScope === "child-only" ? canonicalChild : "/srv/other",
+    );
+  },
+);

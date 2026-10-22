@@ -22,6 +22,7 @@ import {
   type RepositoryInfo,
 } from "./manifest.ts";
 import { isSafeRelativePath } from "./paths.ts";
+import { preparePortableGit, sourceEntryRoot } from "./portableGit.ts";
 import {
   MAX_SECRET_FILE_BYTES,
   type SecretApproval,
@@ -44,6 +45,8 @@ import {
   OPERATION_ID,
   sha256Hex,
 } from "./wire.ts";
+
+import { validProjectRelativePath } from "../folderCopyScope.ts";
 
 export type CopyMode = "copy-only" | "copy-and-move";
 export type SourceState =
@@ -77,6 +80,7 @@ export interface SourceOperationRecord {
   readonly operationId: string;
   readonly projectId: string;
   readonly folder: string;
+  readonly projectRelativePath?: string;
   readonly mode: CopyMode;
   readonly destinationEnvironmentId: string;
   readonly createdAt: number;
@@ -87,6 +91,8 @@ export interface SourceOperationRecord {
   readonly progress: { readonly files: number; readonly bytes: number } | null;
   readonly error: string | null;
   readonly releaseReason: string | null;
+  /** Retried on a later terminal status read; never invalidates an applied copy. */
+  readonly snapshotCleanupPending?: boolean;
   /** Snapshot caveats captured when the offer was made, retained across restarts. */
   readonly warnings?: ReadonlyArray<string>;
   /** Secret files the person ticked for this destination; absent until they approve any. */
@@ -116,6 +122,9 @@ interface Loaded {
   chunks: Map<string, { path: string; offset: number; length: number }> | null;
   header: ManifestHeader | null;
   building: Promise<void> | null;
+  readers: Set<Promise<void>>;
+  terminalUpdate: Promise<void>;
+  saving: Promise<void>;
 }
 
 const TERMINAL: ReadonlySet<SourceState> = new Set(["committed", "released", "cancelled"]);
@@ -139,7 +148,7 @@ function summarize(scan: FolderScan, warnings: ReadonlyArray<string> = []): Sour
     linksOutside: scan.entries.filter(
       (entry) => entry.type === "symlink" && entry.target?.startsWith("/"),
     ).length,
-    warnings: [...new Set([...warnings, ...scan.warnings])].slice(0, 50),
+    warnings: [...new Set([...warnings, ...scan.warnings, ...(scan.notices ?? [])])].slice(0, 50),
   };
 }
 
@@ -177,10 +186,12 @@ export class SourceTransfers {
 
   private async save(loaded: Loaded, patch: Partial<SourceOperationRecord>) {
     loaded.record = { ...loaded.record, ...patch };
-    await writeJson(
-      NodePath.join(this.directory(loaded.record.operationId), "operation.json"),
-      loaded.record,
+    const record = loaded.record;
+    const saved = loaded.saving.then(() =>
+      writeJson(NodePath.join(this.directory(record.operationId), "operation.json"), record),
     );
+    loaded.saving = saved.catch(() => undefined);
+    await saved;
   }
 
   private async load(operationId: string): Promise<Loaded | null> {
@@ -190,6 +201,9 @@ export class SourceTransfers {
       NodePath.join(this.directory(operationId), "operation.json"),
     );
     if (!record) return null;
+    // Another request may have populated the cache during the disk read.
+    const concurrent = this.operations.get(operationId);
+    if (concurrent) return concurrent;
     const loaded: Loaded = {
       record,
       scan: null,
@@ -197,6 +211,9 @@ export class SourceTransfers {
       chunks: null,
       header: null,
       building: null,
+      readers: new Set(),
+      terminalUpdate: Promise.resolve(),
+      saving: Promise.resolve(),
     };
     this.operations.set(operationId, loaded);
     return loaded;
@@ -211,22 +228,28 @@ export class SourceTransfers {
     readonly operationId: string;
     readonly projectId: string;
     readonly folder: string;
+    readonly projectRelativePath?: string;
     readonly mode: CopyMode;
     readonly destinationEnvironmentId: string;
     readonly warnings?: ReadonlyArray<string>;
   }): Promise<{ readonly token: string; readonly record: SourceOperationRecord }> {
+    const folder = await NodeFSP.realpath(input.folder);
+    const projectRelativePath = input.projectRelativePath ?? ".";
+    if (!validProjectRelativePath(projectRelativePath))
+      throw new SourceTransferError(400, "invalid_scope");
     const directory = this.directory(input.operationId);
     const existing = await this.load(input.operationId);
     if (
       existing &&
       (existing.record.projectId !== input.projectId ||
         existing.record.destinationEnvironmentId !== input.destinationEnvironmentId ||
-        existing.record.mode !== input.mode)
+        existing.record.mode !== input.mode ||
+        existing.record.folder !== folder ||
+        (existing.record.projectRelativePath ?? ".") !== projectRelativePath)
     )
       throw new SourceTransferError(409, "conflict");
     if (existing && TERMINAL.has(existing.record.state))
       throw new SourceTransferError(409, "finished");
-    const folder = await NodeFSP.realpath(input.folder);
     await privateDirectory(NodePath.dirname(directory));
     await privateDirectory(directory);
     const minted = mintTransferGrant({
@@ -249,6 +272,7 @@ export class SourceTransfers {
         operationId: input.operationId,
         projectId: input.projectId,
         folder,
+        projectRelativePath,
         mode: input.mode,
         destinationEnvironmentId: input.destinationEnvironmentId,
         createdAt: this.now(),
@@ -266,6 +290,9 @@ export class SourceTransfers {
       chunks: null,
       header: null,
       building: null,
+      readers: new Set(),
+      terminalUpdate: Promise.resolve(),
+      saving: Promise.resolve(),
     };
     this.operations.set(input.operationId, loaded);
     await this.save(loaded, {});
@@ -275,7 +302,10 @@ export class SourceTransfers {
 
   private async scan(loaded: Loaded): Promise<void> {
     try {
-      loaded.scan = await scanFolder(loaded.record.folder);
+      loaded.scan = await preparePortableGit(
+        await scanFolder(loaded.record.folder),
+        this.snapshotRoot(loaded),
+      );
       await this.save(loaded, {
         state: "scanned",
         summary: summarize(loaded.scan, loaded.record.warnings),
@@ -288,7 +318,13 @@ export class SourceTransfers {
   }
 
   async read(operationId: string): Promise<SourceOperationRecord | null> {
-    return (await this.load(operationId))?.record ?? null;
+    const loaded = await this.load(operationId);
+    if (loaded?.record.snapshotCleanupPending && TERMINAL.has(loaded.record.state))
+      await this.transition(loaded, async () => {
+        await this.clearSnapshot(loaded);
+        return loaded.record;
+      });
+    return loaded?.record ?? null;
   }
 
   /** Checks the bearer on every request; the refreshed last use is saved lazily. */
@@ -308,6 +344,9 @@ export class SourceTransfers {
   hello(loaded: Loaded, environmentId: string) {
     return {
       version: 1,
+      projectId: loaded.record.projectId,
+      copyRoot: loaded.record.folder,
+      projectRelativePath: loaded.record.projectRelativePath ?? ".",
       environmentId,
       operationId: loaded.record.operationId,
       mode: loaded.record.mode,
@@ -321,49 +360,71 @@ export class SourceTransfers {
     loaded: Loaded,
     selection: ReadonlyArray<string>,
   ): Promise<SourceOperationRecord> {
-    const classes = selection.filter(
-      (item): item is FileClass =>
-        (FILE_CLASSES as ReadonlyArray<string>).includes(item) && item !== "secret",
-    );
-    if (classes.length === 0) throw new SourceTransferError(400, "invalid_selection");
-    if (loaded.record.selection) {
-      if ([...loaded.record.selection].sort().join() !== [...classes].sort().join())
-        throw new SourceTransferError(409, "conflict");
+    return this.transition(loaded, async () => {
+      if (TERMINAL.has(loaded.record.state))
+        throw new SourceTransferError(409, loaded.record.state);
+      const classes = selection.filter(
+        (item): item is FileClass =>
+          (FILE_CLASSES as ReadonlyArray<string>).includes(item) && item !== "secret",
+      );
+      if (classes.length === 0) throw new SourceTransferError(400, "invalid_selection");
+      if (loaded.record.selection) {
+        if ([...loaded.record.selection].sort().join() !== [...classes].sort().join())
+          throw new SourceTransferError(409, "conflict");
+        return loaded.record;
+      }
+      if (loaded.building) await loaded.building;
+      if (loaded.record.state !== "scanned" && loaded.record.state !== "scanning")
+        throw new SourceTransferError(409, loaded.record.state);
+      await this.save(loaded, {
+        state: "building",
+        selection: classes,
+        progress: { files: 0, bytes: 0 },
+      });
+      loaded.building = this.build(loaded, new Set(classes));
       return loaded.record;
-    }
-    if (loaded.building) await loaded.building;
-    if (loaded.record.state !== "scanned" && loaded.record.state !== "scanning")
-      throw new SourceTransferError(409, loaded.record.state);
-    await this.save(loaded, {
-      state: "building",
-      selection: classes,
-      progress: { files: 0, bytes: 0 },
     });
-    loaded.building = this.build(loaded, new Set(classes));
-    return loaded.record;
   }
 
   private async build(loaded: Loaded, selection: ReadonlySet<FileClass>): Promise<void> {
     try {
       let scan = loaded.scan ?? (await scanFolder(loaded.record.folder));
+      // Measurement may already have normalized an external worktree to kind
+      // "main". Re-read its live index/refs before making the actual manifest.
+      if (scan.entries.some((entry) => entry.portableGit))
+        scan = await scanFolder(loaded.record.folder);
       if (selection.has("rebuildable")) scan = await expandCollapsed(scan);
+      scan = await preparePortableGit(scan, this.snapshotRoot(loaded));
       let lastSaved = 0;
-      await hashSelected(scan, selection, (done) => {
-        loaded.record = { ...loaded.record, progress: done };
-        if (this.now() - lastSaved > 2_000) {
-          lastSaved = this.now();
-          void this.save(loaded, {}).catch(() => undefined);
-        }
-      });
+      await hashSelected(
+        scan,
+        selection,
+        (done) => {
+          loaded.record = { ...loaded.record, progress: done };
+          if (this.now() - lastSaved > 2_000) {
+            lastSaved = this.now();
+            void this.save(loaded, {}).catch(() => undefined);
+          }
+        },
+        (entry) => sourceEntryRoot(loaded.record.folder, this.snapshotRoot(loaded), entry),
+      );
       const entries = selectEntries(scan.entries, selection);
       const header: ManifestHeader = {
         version: 1,
         operationId: loaded.record.operationId,
+        copyRoot: loaded.record.folder,
+        projectRelativePath: loaded.record.projectRelativePath ?? ".",
         chunkSize: CHUNK_SIZE,
         selection: [...selection],
         repositories: scan.repositories,
         totals: scan.totals,
-        warnings: [...new Set([...(loaded.record.warnings ?? []), ...scan.warnings])],
+        warnings: [
+          ...new Set([
+            ...(loaded.record.warnings ?? []),
+            ...scan.warnings,
+            ...(scan.notices ?? []),
+          ]),
+        ],
         entryCount: entries.length,
       };
       await writeManifest(this.manifestFile(loaded.record.operationId), { header, entries });
@@ -379,6 +440,63 @@ export class SourceTransfers {
 
   private manifestFile(operationId: string) {
     return NodePath.join(this.directory(operationId), "manifest.ndjson.gz");
+  }
+
+  private snapshotRoot(loaded: Loaded) {
+    return NodePath.join(this.directory(loaded.record.operationId), "portable-git");
+  }
+
+  private entryRoot(loaded: Loaded, path: string) {
+    const entry = loaded.entries?.get(path);
+    return entry
+      ? sourceEntryRoot(loaded.record.folder, this.snapshotRoot(loaded), entry)
+      : loaded.record.folder;
+  }
+
+  private async snapshotRead<T>(loaded: Loaded, read: () => Promise<T>): Promise<T> {
+    if (TERMINAL.has(loaded.record.state)) throw new SourceTransferError(409, loaded.record.state);
+    let finished!: () => void;
+    const pending = new Promise<void>((resolve) => {
+      finished = resolve;
+    });
+    loaded.readers.add(pending);
+    try {
+      return await read();
+    } finally {
+      loaded.readers.delete(pending);
+      finished();
+    }
+  }
+
+  private transition(loaded: Loaded, change: () => Promise<SourceOperationRecord>) {
+    const result = loaded.terminalUpdate.then(change);
+    loaded.terminalUpdate = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    return result;
+  }
+
+  /** Only the generated overlay is disposable; the manifest supports later context checks. */
+  private async clearSnapshot(loaded: Loaded) {
+    await Promise.all(loaded.readers);
+    const warning = "Temporary Git snapshot cleanup is pending; the copy result is unchanged.";
+    try {
+      await NodeFSP.rm(this.snapshotRoot(loaded), { recursive: true, force: true });
+      loaded.scan = null;
+      if (loaded.record.snapshotCleanupPending)
+        await this.save(loaded, {
+          snapshotCleanupPending: false,
+          warnings: (loaded.record.warnings ?? []).filter((item) => item !== warning),
+        });
+    } catch {
+      // The files were already applied and the grant ended. Housekeeping must
+      // not turn that acknowledgment into a failure that cannot be retried.
+      await this.save(loaded, {
+        snapshotCleanupPending: true,
+        warnings: [...new Set([...(loaded.record.warnings ?? []), warning])],
+      }).catch(() => undefined);
+    }
   }
 
   private index(loaded: Loaded, header: ManifestHeader, entries: ReadonlyArray<ManifestEntry>) {
@@ -428,108 +546,114 @@ export class SourceTransfers {
 
   /** Reads each requested chunk and re-hashes it, so a changed file is reported, never sent. */
   async chunks(loaded: Loaded, hashes: ReadonlyArray<string>): Promise<Array<ChunkFrame>> {
-    await this.ready(loaded);
-    const frames: Array<ChunkFrame> = [];
-    for (const sha256 of hashes) {
-      const location = loaded.chunks!.get(sha256);
-      if (!location) {
-        frames.push({ sha256, status: CHUNK_UNKNOWN, data: Buffer.alloc(0) });
-        continue;
-      }
-      let data: Buffer;
-      try {
-        const handle = await openInside(loaded.record.folder, location.path);
-        try {
-          data = Buffer.alloc(location.length);
-          const { bytesRead } = await handle.read(data, 0, location.length, location.offset);
-          data = data.subarray(0, bytesRead);
-        } finally {
-          await handle.close();
+    return this.snapshotRead(loaded, async () => {
+      await this.ready(loaded);
+      const frames: Array<ChunkFrame> = [];
+      for (const sha256 of hashes) {
+        const location = loaded.chunks!.get(sha256);
+        if (!location) {
+          frames.push({ sha256, status: CHUNK_UNKNOWN, data: Buffer.alloc(0) });
+          continue;
         }
-      } catch {
-        frames.push({ sha256, status: CHUNK_CHANGED, data: Buffer.alloc(0) });
-        continue;
+        let data: Buffer;
+        try {
+          const handle = await openInside(this.entryRoot(loaded, location.path), location.path);
+          try {
+            data = Buffer.alloc(location.length);
+            const { bytesRead } = await handle.read(data, 0, location.length, location.offset);
+            data = data.subarray(0, bytesRead);
+          } finally {
+            await handle.close();
+          }
+        } catch {
+          frames.push({ sha256, status: CHUNK_CHANGED, data: Buffer.alloc(0) });
+          continue;
+        }
+        frames.push(
+          sha256Hex(data) === sha256
+            ? { sha256, status: CHUNK_OK, data }
+            : { sha256, status: CHUNK_CHANGED, data: Buffer.alloc(0) },
+        );
       }
-      frames.push(
-        sha256Hex(data) === sha256
-          ? { sha256, status: CHUNK_OK, data }
-          : { sha256, status: CHUNK_CHANGED, data: Buffer.alloc(0) },
-      );
-    }
-    return frames;
+      return frames;
+    });
   }
 
   /** Current size and mtime of manifest paths, for the final consistency pass. */
   async stat(loaded: Loaded, paths: ReadonlyArray<string>) {
-    await this.ready(loaded);
-    const result: Array<
-      | { path: string; missing: true }
-      | {
-          path: string;
-          type: "file" | "directory" | "symlink" | "other";
-          size: number;
-          mtimeMs: number;
-          target?: string;
+    return this.snapshotRead(loaded, async () => {
+      await this.ready(loaded);
+      const result: Array<
+        | { path: string; missing: true }
+        | {
+            path: string;
+            type: "file" | "directory" | "symlink" | "other";
+            size: number;
+            mtimeMs: number;
+            target?: string;
+          }
+      > = [];
+      for (const path of paths) {
+        if (!loaded.entries!.has(path)) continue;
+        const absolute = NodePath.join(this.entryRoot(loaded, path), path);
+        const stat = await NodeFSP.lstat(absolute).catch(() => null);
+        if (!stat) {
+          result.push({ path, missing: true });
+          continue;
         }
-    > = [];
-    for (const path of paths) {
-      if (!loaded.entries!.has(path)) continue;
-      const absolute = NodePath.join(loaded.record.folder, path);
-      const stat = await NodeFSP.lstat(absolute).catch(() => null);
-      if (!stat) {
-        result.push({ path, missing: true });
-        continue;
+        result.push({
+          path,
+          type: stat.isFile()
+            ? "file"
+            : stat.isDirectory()
+              ? "directory"
+              : stat.isSymbolicLink()
+                ? "symlink"
+                : "other",
+          size: stat.size,
+          mtimeMs: Math.trunc(stat.mtimeMs),
+          ...(stat.isSymbolicLink() ? { target: await NodeFSP.readlink(absolute) } : {}),
+        });
       }
-      result.push({
-        path,
-        type: stat.isFile()
-          ? "file"
-          : stat.isDirectory()
-            ? "directory"
-            : stat.isSymbolicLink()
-              ? "symlink"
-              : "other",
-        size: stat.size,
-        mtimeMs: Math.trunc(stat.mtimeMs),
-        ...(stat.isSymbolicLink() ? { target: await NodeFSP.readlink(absolute) } : {}),
-      });
-    }
-    return result;
+      return result;
+    });
   }
 
   /** Re-reads files that changed after the manifest and returns their new entries. */
   async refresh(loaded: Loaded, paths: ReadonlyArray<string>) {
-    await this.ready(loaded);
-    const updated: Array<ManifestEntry | { path: string; missing: true }> = [];
-    for (const path of paths) {
-      const previous = loaded.entries!.get(path);
-      if (!previous) continue;
-      const absolute = NodePath.join(loaded.record.folder, path);
-      const stat = await NodeFSP.lstat(absolute).catch(() => null);
-      if (
-        !stat ||
-        (previous.type === "file" && !stat.isFile()) ||
-        (previous.type === "symlink" && !stat.isSymbolicLink())
-      ) {
-        updated.push({ path, missing: true });
-        continue;
+    return this.snapshotRead(loaded, async () => {
+      await this.ready(loaded);
+      const updated: Array<ManifestEntry | { path: string; missing: true }> = [];
+      for (const path of paths) {
+        const previous = loaded.entries!.get(path);
+        if (!previous) continue;
+        const absolute = NodePath.join(this.entryRoot(loaded, path), path);
+        const stat = await NodeFSP.lstat(absolute).catch(() => null);
+        if (
+          !stat ||
+          (previous.type === "file" && !stat.isFile()) ||
+          (previous.type === "symlink" && !stat.isSymbolicLink())
+        ) {
+          updated.push({ path, missing: true });
+          continue;
+        }
+        let next: ManifestEntry;
+        if (stat.isSymbolicLink()) {
+          next = {
+            ...previous,
+            target: await NodeFSP.readlink(absolute),
+            mtimeMs: Math.trunc(stat.mtimeMs),
+          };
+        } else {
+          const hashed = await hashFile(absolute, false);
+          next = { ...previous, ...hashed, mode: stat.mode & 0o7777 };
+        }
+        loaded.entries!.set(path, next);
+        this.indexChunks(loaded, next);
+        updated.push(next);
       }
-      let next: ManifestEntry;
-      if (stat.isSymbolicLink()) {
-        next = {
-          ...previous,
-          target: await NodeFSP.readlink(absolute),
-          mtimeMs: Math.trunc(stat.mtimeMs),
-        };
-      } else {
-        const hashed = await hashFile(absolute, false);
-        next = { ...previous, ...hashed, mode: stat.mode & 0o7777 };
-      }
-      loaded.entries!.set(path, next);
-      this.indexChunks(loaded, next);
-      updated.push(next);
-    }
-    return updated;
+      return updated;
+    });
   }
 
   /** A later context transfer must never run against an older copied tree. */
@@ -541,10 +665,23 @@ export class SourceTransfers {
     // the destination may have omitted a changing file or kept its own version.
     const copied = await readManifestFile(this.manifestFile(operationId));
     const selection = new Set(copied.header.selection);
-    const current = await scanFolder(loaded.record.folder, {
-      expandRebuildable: selection.has("rebuildable"),
-    });
-    await hashSelected(current, selection);
+    const checkRoot = await NodeFSP.mkdtemp(
+      NodePath.join(this.directory(operationId), "git-check-"),
+    );
+    let current: FolderScan;
+    try {
+      current = await preparePortableGit(
+        await scanFolder(loaded.record.folder, {
+          expandRebuildable: selection.has("rebuildable"),
+        }),
+        checkRoot,
+      );
+      await hashSelected(current, selection, undefined, (entry) =>
+        sourceEntryRoot(loaded.record.folder, checkRoot, entry),
+      );
+    } finally {
+      await NodeFSP.rm(checkRoot, { recursive: true, force: true });
+    }
     const entries = selectEntries(current.entries, selection);
     const signature = (items: ReadonlyArray<ManifestEntry>) =>
       JSON.stringify(
@@ -670,28 +807,41 @@ export class SourceTransfers {
 
   /** The destination failed before Apply: unfence a moving coordinator and end the grant. */
   async release(loaded: Loaded, reason: string): Promise<SourceOperationRecord> {
-    if (loaded.record.state === "committed") throw new SourceTransferError(409, "committed");
-    if (loaded.record.state === "released" || loaded.record.state === "cancelled")
+    return this.transition(loaded, async () => {
+      if (loaded.building) await loaded.building;
+      if (loaded.record.state === "committed") throw new SourceTransferError(409, "committed");
+      if (loaded.record.state === "released" || loaded.record.state === "cancelled") {
+        await this.clearSnapshot(loaded);
+        return loaded.record;
+      }
+      const text = reason.slice(0, 500) || "The copy stopped before Apply.";
+      if (loaded.record.mode === "copy-and-move") await this.hooks.release?.(loaded.record, text);
+      await this.save(loaded, {
+        state: "released",
+        releaseReason: text,
+        grant: revokeTransferGrant(loaded.record.grant, "released", this.now()),
+      });
+      await this.clearSnapshot(loaded);
       return loaded.record;
-    const text = reason.slice(0, 500) || "The copy stopped before Apply.";
-    if (loaded.record.mode === "copy-and-move") await this.hooks.release?.(loaded.record, text);
-    await this.save(loaded, {
-      state: "released",
-      releaseReason: text,
-      grant: revokeTransferGrant(loaded.record.grant, "released", this.now()),
     });
-    return loaded.record;
   }
 
   /** The destination applied and verified the copy; from now on it cannot be released. */
   async commit(loaded: Loaded): Promise<SourceOperationRecord> {
-    if (loaded.record.state === "committed") return loaded.record;
-    if (loaded.record.state !== "ready") throw new SourceTransferError(409, loaded.record.state);
-    await this.save(loaded, {
-      state: "committed",
-      grant: revokeTransferGrant(loaded.record.grant, "committed", this.now()),
+    return this.transition(loaded, async () => {
+      if (loaded.building) await loaded.building;
+      if (loaded.record.state === "committed") {
+        await this.clearSnapshot(loaded);
+        return loaded.record;
+      }
+      if (loaded.record.state !== "ready") throw new SourceTransferError(409, loaded.record.state);
+      await this.save(loaded, {
+        state: "committed",
+        grant: revokeTransferGrant(loaded.record.grant, "committed", this.now()),
+      });
+      await this.clearSnapshot(loaded);
+      return loaded.record;
     });
-    return loaded.record;
   }
 
   /** Invalidates only deferred context transfer; the applied destination files stay intact.
@@ -704,15 +854,21 @@ export class SourceTransfers {
     const loaded = await this.load(operationId);
     if (!loaded || loaded.record.mode !== "copy-and-move")
       throw new SourceTransferError(409, "invalid");
-    if (loaded.record.state === "released") return loaded.record;
-    if (loaded.record.state !== "committed") throw new SourceTransferError(409, "not_committed");
-    await this.save(loaded, {
-      state: "released",
-      releaseReason:
-        reason.slice(0, 500) ||
-        "Coordinator context transfer was abandoned; the copied files remain.",
+    return this.transition(loaded, async () => {
+      if (loaded.record.state === "released") {
+        await this.clearSnapshot(loaded);
+        return loaded.record;
+      }
+      if (loaded.record.state !== "committed") throw new SourceTransferError(409, "not_committed");
+      await this.save(loaded, {
+        state: "released",
+        releaseReason:
+          reason.slice(0, 500) ||
+          "Coordinator context transfer was abandoned; the copied files remain.",
+      });
+      await this.clearSnapshot(loaded);
+      return loaded.record;
     });
-    return loaded.record;
   }
 
   /** Checked before replaying a cached prepared handoff, including after a restart. */
@@ -726,16 +882,22 @@ export class SourceTransfers {
   async cancel(operationId: string, reason: string): Promise<SourceOperationRecord> {
     const loaded = await this.load(operationId);
     if (!loaded) throw new SourceTransferError(404, "not_found");
-    if (loaded.record.state === "committed") throw new SourceTransferError(409, "committed");
-    if (loaded.record.state === "cancelled" || loaded.record.state === "released")
+    return this.transition(loaded, async () => {
+      if (loaded.building) await loaded.building;
+      if (loaded.record.state === "committed") throw new SourceTransferError(409, "committed");
+      if (loaded.record.state === "cancelled" || loaded.record.state === "released") {
+        await this.clearSnapshot(loaded);
+        return loaded.record;
+      }
+      if (loaded.record.mode === "copy-and-move") await this.hooks.release?.(loaded.record, reason);
+      await this.save(loaded, {
+        state: "cancelled",
+        releaseReason: reason.slice(0, 500),
+        grant: revokeTransferGrant(loaded.record.grant, "cancelled", this.now()),
+      });
+      await this.clearSnapshot(loaded);
       return loaded.record;
-    if (loaded.record.mode === "copy-and-move") await this.hooks.release?.(loaded.record, reason);
-    await this.save(loaded, {
-      state: "cancelled",
-      releaseReason: reason.slice(0, 500),
-      grant: revokeTransferGrant(loaded.record.grant, "cancelled", this.now()),
     });
-    return loaded.record;
   }
 }
 

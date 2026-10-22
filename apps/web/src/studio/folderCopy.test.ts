@@ -8,6 +8,8 @@ import {
   cloneableRows,
   copySettled,
   suggestedCopyFolder,
+  copiedProjectFolder,
+  savedCopyRoot,
   DEFAULT_COPY_SELECTION,
   EXACT_COPY_SELECTION,
   formatBytes,
@@ -157,5 +159,25 @@ describe("destination folder suggestions", () => {
     expect(suggestedCopyFolder("/Users/me/Projects/project", "C:\\Users\\anton")).toBe(
       "C:\\Users\\anton\\Projects\\project",
     );
+  });
+});
+
+describe("umbrella destination paths", () => {
+  it("maps a saved child registration to its containing copy root only on an exact suffix", () => {
+    expect(savedCopyRoot("/srv/umbrella/repos/org/app/", "repos/org/app")).toBe("/srv/umbrella");
+    expect(savedCopyRoot("/srv/other/app", "repos/org/app")).toBeNull();
+    expect(savedCopyRoot("/srv/umbrella/notrepos/org/app", "repos/org/app")).toBeNull();
+    expect(savedCopyRoot("/srv/child/", ".")).toBe("/srv/child/");
+    expect(savedCopyRoot(null, "repos/app")).toBeNull();
+  });
+  it("joins the project relative path once and keeps Windows destination syntax", () => {
+    expect(copiedProjectFolder("/srv/umbrella/", "repos/org/app")).toBe(
+      "/srv/umbrella/repos/org/app",
+    );
+    expect(copiedProjectFolder("/srv/project/", ".")).toBe("/srv/project/");
+    expect(copiedProjectFolder("C:\\Work\\umbrella", "repos/app")).toBe(
+      "C:\\Work\\umbrella\\repos\\app",
+    );
+    expect(savedCopyRoot("C:\\Work\\umbrella\\repos\\app", "repos/app")).toBe("C:\\Work\\umbrella");
   });
 });

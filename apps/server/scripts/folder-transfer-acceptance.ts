@@ -1,11 +1,12 @@
 // @effect-diagnostics nodeBuiltinImport:off globalTimers:off globalDate:off globalConsole:off - Standalone host verifier owns native HTTP, wall-clock deadlines, signal cleanup and receipt output.
 // A disposable cross-machine harness around the actual folder-transfer engine.
 // Never opens the app's store, registers projects, copies credentials, or runs providers.
-import assert from "node:assert/strict";
-import { randomUUID, createHash } from "node:crypto";
-import * as fs from "node:fs/promises";
-import http from "node:http";
-import path from "node:path";
+import * as NodeAssert from "node:assert/strict";
+import * as NodeCrypto from "node:crypto";
+import * as NodeFSP from "node:fs/promises";
+import * as NodeHttp from "node:http";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 
 import { DEFAULT_SELECTION } from "../src/fleet/folderTransfer/classify.ts";
 import { DestinationCopies } from "../src/fleet/folderTransfer/destinationService.ts";
@@ -13,31 +14,35 @@ import { runGit } from "../src/fleet/folderTransfer/git.ts";
 import {
   hashFile,
   hashSelected,
+  readManifestFile,
   scanFolder,
   selectEntries,
 } from "../src/fleet/folderTransfer/manifest.ts";
+import { preparePortableGit, sourceEntryRoot } from "../src/fleet/folderTransfer/portableGit.ts";
 import {
   handleSourceRequest,
   FOLDER_TRANSFER_PREFIX,
 } from "../src/fleet/folderTransfer/sourceRoutes.ts";
 import { SourceTransfers } from "../src/fleet/folderTransfer/sourceService.ts";
+import { exerciseRemoteConsolidation } from "./folder-transfer-consolidation.ts";
 
 const [role, configFile] = process.argv.slice(2);
-assert.equal(process.versions.node.split(".")[0], "22", "Use Node 22 for acceptance");
-const config = JSON.parse(await fs.readFile(configFile!, "utf8"));
+NodeAssert.equal(process.versions.node.split(".")[0], "22", "Use Node 22 for acceptance");
+const config = JSON.parse(await NodeFSP.readFile(configFile!, "utf8"));
 const json = async (file: string, value: unknown) => {
   const temporary = `${file}.${process.pid}.tmp`;
-  await fs.writeFile(temporary, JSON.stringify(value, null, 2) + "\n", { mode: 0o600 });
-  await fs.rename(temporary, file);
+  await NodeFSP.writeFile(temporary, JSON.stringify(value, null, 2) + "\n", { mode: 0o600 });
+  await NodeFSP.rename(temporary, file);
 };
-const digest = (value: unknown) => createHash("sha256").update(JSON.stringify(value)).digest("hex");
+const digest = (value: unknown) =>
+  NodeCrypto.createHash("sha256").update(JSON.stringify(value)).digest("hex");
 
 async function serve(
   transfers: SourceTransfers,
   environmentId: string,
   counts: Record<string, number> = {},
 ) {
-  const server = http.createServer(async (request, response) => {
+  const server = NodeHttp.createServer(async (request, response) => {
     try {
       const pathname = new URL(request.url ?? "/", "http://127.0.0.1").pathname;
       if (!pathname.startsWith(FOLDER_TRANSFER_PREFIX)) {
@@ -71,28 +76,33 @@ async function settle(copies: DestinationCopies, operationId: string, states: st
     const record = await copies.read(operationId);
     if (record?.state === "failed") throw new Error(JSON.stringify(record.error));
     if (record && states.includes(record.state)) return record;
-    assert.ok(Date.now() < deadline, "Copy timed out");
+    NodeAssert.ok(Date.now() < deadline, "Copy timed out");
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
 }
 
 /** APFS cannot originate both names, so exercise this Linux behavior on Linux. */
 async function linuxCaseCheck(base: string, targetAlias?: string) {
-  const source = path.join(base, "linux-case-source");
-  const target = targetAlias ?? path.join(base, "linux-case-target");
-  await fs.mkdir(source, { mode: 0o700 });
-  await fs.writeFile(path.join(source, "Readme.txt"), "Mixed case\n", { flag: "wx" });
-  await fs.writeFile(path.join(source, "README.txt"), "Upper case\n", { flag: "wx" });
-  await fs.symlink("Readme.txt", path.join(source, "readme-link"));
-  await fs.writeFile(path.join(source, "execute.sh"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
-  await fs.mkdir(path.join(source, "node_modules"));
-  await fs.writeFile(
-    path.join(source, "node_modules/rebuildable-placeholder.txt"),
+  const source = NodePath.join(base, "linux-case-source");
+  const target = targetAlias ?? NodePath.join(base, "linux-case-target");
+  await NodeFSP.mkdir(source, { mode: 0o700 });
+  await NodeFSP.writeFile(NodePath.join(source, "Readme.txt"), "Mixed case\n", { flag: "wx" });
+  await NodeFSP.writeFile(NodePath.join(source, "README.txt"), "Upper case\n", { flag: "wx" });
+  await NodeFSP.symlink("Readme.txt", NodePath.join(source, "readme-link"));
+  await NodeFSP.writeFile(NodePath.join(source, "execute.sh"), "#!/bin/sh\nexit 0\n", {
+    mode: 0o755,
+  });
+  await NodeFSP.mkdir(NodePath.join(source, "node_modules"));
+  await NodeFSP.writeFile(
+    NodePath.join(source, "node_modules/rebuildable-placeholder.txt"),
     "must not arrive\n",
   );
-  await fs.writeFile(path.join(source, ".env.local"), "SYNTHETIC_TRANSFER_TEST=must-not-arrive\n");
-  const transfers = new SourceTransfers(path.join(base, "linux-case-source-state"));
-  const operationId = randomUUID();
+  await NodeFSP.writeFile(
+    NodePath.join(source, ".env.local"),
+    "SYNTHETIC_TRANSFER_TEST=must-not-arrive\n",
+  );
+  const transfers = new SourceTransfers(NodePath.join(base, "linux-case-source-state"));
+  const operationId = NodeCrypto.randomUUID();
   const offer = await transfers.offer({
     operationId,
     projectId: "linux-case",
@@ -101,7 +111,7 @@ async function linuxCaseCheck(base: string, targetAlias?: string) {
     destinationEnvironmentId: "linux-case-destination",
   });
   const { server, port } = await serve(transfers, "linux-case-source");
-  const copies = new DestinationCopies(path.join(base, "linux-case-destination-state"), {
+  const copies = new DestinationCopies(NodePath.join(base, "linux-case-destination-state"), {
     allowLoopback: true,
     pollMs: 20,
   });
@@ -120,34 +130,40 @@ async function linuxCaseCheck(base: string, targetAlias?: string) {
     await settle(copies, operationId, ["previewed"]);
     await copies.approve(operationId);
     const copied = await settle(copies, operationId, ["applied"]);
-    assert.equal(await fs.readFile(path.join(target, "Readme.txt"), "utf8"), "Mixed case\n");
-    assert.equal(await fs.readFile(path.join(target, "README.txt"), "utf8"), "Upper case\n");
-    assert.equal(await fs.readlink(path.join(target, "readme-link")), "Readme.txt");
-    assert.equal((await fs.stat(path.join(target, "execute.sh"))).mode & 0o777, 0o755);
+    NodeAssert.equal(
+      await NodeFSP.readFile(NodePath.join(target, "Readme.txt"), "utf8"),
+      "Mixed case\n",
+    );
+    NodeAssert.equal(
+      await NodeFSP.readFile(NodePath.join(target, "README.txt"), "utf8"),
+      "Upper case\n",
+    );
+    NodeAssert.equal(await NodeFSP.readlink(NodePath.join(target, "readme-link")), "Readme.txt");
+    NodeAssert.equal((await NodeFSP.stat(NodePath.join(target, "execute.sh"))).mode & 0o777, 0o755);
     const excludedPaths = [
       ".env.local",
       "node_modules",
       "node_modules/rebuildable-placeholder.txt",
     ];
     for (const relative of excludedPaths)
-      assert.equal(
-        await fs.lstat(path.join(target, relative)).then(
+      NodeAssert.equal(
+        await NodeFSP.lstat(NodePath.join(target, relative)).then(
           () => true,
           () => false,
         ),
         false,
         `Excluded path arrived: ${relative}`,
       );
-    const receivedEntries = (await fs.readdir(target)).sort();
-    assert.deepEqual(
+    const receivedEntries = (await NodeFSP.readdir(target)).sort();
+    NodeAssert.deepEqual(
       receivedEntries,
       ["README.txt", "Readme.txt", "execute.sh", "readme-link"],
       "No extra or rebuildable entries may arrive",
     );
     const undone = await copies.undo(operationId, false);
-    assert.equal(undone.record.state, "undone");
-    assert.equal(
-      await fs.lstat(target).then(
+    NodeAssert.equal(undone.record.state, "undone");
+    NodeAssert.equal(
+      await NodeFSP.lstat(target).then(
         () => true,
         () => false,
       ),
@@ -172,10 +188,17 @@ async function linuxCaseCheck(base: string, targetAlias?: string) {
   }
 }
 
-async function capture(folder: string) {
-  const scan = await scanFolder(folder);
+async function capture(folder: string, portableRoot?: string) {
+  let scan = await scanFolder(folder);
+  NodeAssert.ok(
+    !scan.entries.some((entry) => /(^|\/)statev2\.sqlite(?:-|$)/.test(entry.path)),
+    "Never read a live Codex database",
+  );
+  if (portableRoot) scan = await preparePortableGit(scan, portableRoot);
   const selection = new Set(DEFAULT_SELECTION);
-  await hashSelected(scan, selection);
+  await hashSelected(scan, selection, undefined, (entry) =>
+    portableRoot ? sourceEntryRoot(folder, portableRoot, entry) : folder,
+  );
   const entries = selectEntries(scan.entries, selection).map((entry) => ({
     path: entry.path,
     type: entry.type,
@@ -185,11 +208,13 @@ async function capture(folder: string) {
   }));
   const repositories = await Promise.all(
     scan.repositories.map(async (repository) => {
-      const cwd = path.join(folder, repository.path);
+      const cwd = NodePath.join(folder, repository.path);
       const git = async (args: string[]) => (await runGit(cwd, args)).stdout.trim();
       return {
         path: repository.path,
         head: await git(["rev-parse", "HEAD"]),
+        branch: await git(["branch", "--show-current"]),
+        index: await git(["ls-files", "--stage"]),
         refs: await git([
           "for-each-ref",
           "--format=%(refname) %(objectname)",
@@ -221,10 +246,10 @@ async function capture(folder: string) {
 }
 
 if (role === "source") {
-  const before = await capture(config.folder);
+  const before = await capture(config.folder, NodePath.join(config.stateRoot, "expected-git"));
   await json(config.expectedFile, before);
   const transfers = new SourceTransfers(config.stateRoot);
-  const operationId = randomUUID();
+  const operationId = NodeCrypto.randomUUID();
   const offered = await transfers.offer({
     operationId,
     projectId: "remote-copy-fixture",
@@ -234,7 +259,21 @@ if (role === "source") {
   });
   const counts: Record<string, number> = {};
   const { server, port } = await serve(transfers, "remote-copy-source", counts);
-  await json(config.offerFile, { operationId, token: offered.token, port });
+  const repeat = config.exerciseScenarios
+    ? await transfers.offer({
+        operationId: NodeCrypto.randomUUID(),
+        projectId: "remote-copy-fixture",
+        folder: config.folder,
+        mode: "copy-only",
+        destinationEnvironmentId: "remote-copy-ministorm",
+      })
+    : null;
+  await json(config.offerFile, {
+    operationId,
+    token: offered.token,
+    port,
+    repeat: repeat ? { operationId: repeat.record.operationId, token: repeat.token } : null,
+  });
   console.log(JSON.stringify({ ready: true, port, files: before.entries.length }));
   let finishing = false;
   const finish = async () => {
@@ -242,11 +281,17 @@ if (role === "source") {
     finishing = true;
     server.closeAllConnections();
     await new Promise<void>((resolve) => server.close(() => resolve()));
-    const after = await capture(config.folder);
+    const after = await capture(config.folder, NodePath.join(config.stateRoot, "after-git"));
     const unchanged = before.digest === after.digest;
     const record = await transfers.read(operationId);
+    const generatedGitSnapshotRemoved = !(await NodeFSP.stat(
+      NodePath.join(config.stateRoot, "folder-sources", operationId, "portable-git"),
+    ).catch(() => null));
     await json(config.receiptFile, {
+      generatedGitSnapshotRemoved,
       sourceUnchanged: unchanged,
+      liveSource: config.liveSource === true,
+      sourceReadOnly: true,
       beforeDigest: before.digest,
       afterDigest: after.digest,
       operationId,
@@ -258,7 +303,7 @@ if (role === "source") {
       selectedEntries: before.entries.length,
       warnings: before.warnings,
     });
-    process.exit(unchanged ? 0 : 1);
+    process.exit((unchanged || config.liveSource) && generatedGitSnapshotRemoved ? 0 : 1);
   };
   process.on(
     "SIGTERM",
@@ -277,11 +322,12 @@ if (role === "source") {
       }),
   );
 } else if (role === "destination") {
-  assert.equal(process.platform, "linux", "Remote destination must be Linux");
-  const offer = JSON.parse(await fs.readFile(config.offerFile, "utf8"));
-  const expected = JSON.parse(await fs.readFile(config.expectedFile, "utf8"));
-  assert.equal(
-    await fs.lstat(config.targetFolder).then(
+  // eslint-disable-next-line studio/no-global-process-runtime -- Standalone acceptance CLI verifies the actual destination OS; no Effect runtime is used.
+  NodeAssert.equal(NodeOS.platform(), "linux", "Remote destination must be Linux");
+  const offer = JSON.parse(await NodeFSP.readFile(config.offerFile, "utf8"));
+  const expected = JSON.parse(await NodeFSP.readFile(config.expectedFile, "utf8"));
+  NodeAssert.equal(
+    await NodeFSP.lstat(config.targetFolder).then(
       () => true,
       () => false,
     ),
@@ -290,6 +336,14 @@ if (role === "source") {
   );
   const copies = new DestinationCopies(config.stateRoot, { allowLoopback: true, pollMs: 50 });
   const started = Date.now();
+  console.log(
+    JSON.stringify({
+      stage: "destination-started",
+      pid: process.pid,
+      target: config.targetFolder,
+      at: new Date().toISOString(),
+    }),
+  );
   try {
     await copies.start({
       operationId: offer.operationId,
@@ -303,8 +357,8 @@ if (role === "source") {
       title: "Disposable SpecWeave transfer acceptance",
     });
     await settle(copies, offer.operationId, ["previewed"]);
-    assert.equal(
-      await fs.lstat(config.targetFolder).then(
+    NodeAssert.equal(
+      await NodeFSP.lstat(config.targetFolder).then(
         () => true,
         () => false,
       ),
@@ -313,23 +367,46 @@ if (role === "source") {
     );
     await copies.approve(offer.operationId);
     const applied = await settle(copies, offer.operationId, ["applied"]);
-    assert.deepEqual(applied.unstable, [], "Immutable fixture must have no unstable files");
+    if (!config.liveSource)
+      NodeAssert.deepEqual(applied.unstable, [], "Immutable fixture must have no unstable files");
+    const finalPlan = await copies.readPlan(offer.operationId);
+    const received = await readManifestFile(
+      NodePath.join(config.stateRoot, "folder-copies", offer.operationId, "manifest.ndjson.gz"),
+    );
+    const finalEntries = new Map(
+      finalPlan!.actions
+        .filter((action) => action.entry)
+        .map((action) => [action.path, action.entry!]),
+    );
+    const expectedEntries = config.liveSource
+      ? received.entries
+          .map((entry) => finalEntries.get(entry.path) ?? entry)
+          .filter((entry) => !applied.unstable.includes(entry.path))
+      : expected.entries;
+    console.log(
+      JSON.stringify({
+        stage: "applied",
+        files: expectedEntries.length,
+        elapsedMs: Date.now() - started,
+      }),
+    );
     const copied = await capture(config.targetFolder);
-    assert.deepEqual(copied.repositories, expected.repositories, "Git state must match");
-    assert.deepEqual(
+    if (!config.liveSource)
+      NodeAssert.deepEqual(copied.repositories, expected.repositories, "Git state must match");
+    NodeAssert.deepEqual(
       copied.allPaths.sort(),
-      expected.entries.map((entry: { path: string }) => entry.path).sort(),
+      expectedEntries.map((entry: { path: string }) => entry.path).sort(),
       "Received entry paths must exactly match the selected source",
     );
     const changedPointers: string[] = [];
     let checkedFiles = 0;
-    for (const entry of expected.entries) {
-      const location = path.join(config.targetFolder, entry.path);
-      const stat = await fs.lstat(location);
+    for (const entry of expectedEntries) {
+      const location = NodePath.join(config.targetFolder, entry.path);
+      const stat = await NodeFSP.lstat(location);
       // Linux symlink mode is always 0777; macOS may report 0755. File and
       // directory modes are portable, while a link is checked by type/target.
       if (entry.type !== "symlink")
-        assert.equal(stat.mode & 0o777, entry.mode, `Mode differs: ${entry.path}`);
+        NodeAssert.equal(stat.mode & 0o777, entry.mode, `Mode differs: ${entry.path}`);
       if (entry.type === "file") {
         const actual = await hashFile(location, false);
         if (
@@ -337,42 +414,71 @@ if (role === "source") {
           (entry.path.endsWith("/.git") || /\.git\/worktrees\/[^/]+\/gitdir$/.test(entry.path))
         ) {
           changedPointers.push(entry.path); // Git repaired machine-specific worktree paths.
-        } else assert.equal(actual.sha256, entry.sha256, `Hash differs: ${entry.path}`);
+        } else NodeAssert.equal(actual.sha256, entry.sha256, `Hash differs: ${entry.path}`);
         checkedFiles += 1;
       } else if (entry.type === "symlink") {
-        assert.ok(stat.isSymbolicLink(), `Not a symlink: ${entry.path}`);
-        assert.equal(await fs.readlink(location), entry.target);
-      } else assert.ok(stat.isDirectory(), `Not a directory: ${entry.path}`);
+        NodeAssert.ok(stat.isSymbolicLink(), `Not a symlink: ${entry.path}`);
+        NodeAssert.equal(await NodeFSP.readlink(location), entry.target);
+      } else NodeAssert.ok(stat.isDirectory(), `Not a directory: ${entry.path}`);
     }
     const excluded = expected.excluded.filter(
       (entry: { type: string; collapsed: boolean }) =>
         entry.type !== "directory" || entry.collapsed,
     );
     for (const entry of excluded)
-      assert.equal(
-        await fs.lstat(path.join(config.targetFolder, entry.path)).then(
+      NodeAssert.equal(
+        await NodeFSP.lstat(NodePath.join(config.targetFolder, entry.path)).then(
           () => true,
           () => false,
         ),
         false,
         `Excluded path arrived: ${entry.path}`,
       );
-    const preview = await copies.undoPreview(offer.operationId);
-    assert.equal(preview.edited, 0, "Untouched copy must undo without force");
-    const undone = await copies.undo(offer.operationId, false);
-    assert.equal(undone.record.state, "undone");
-    assert.equal(
-      await fs.lstat(config.targetFolder).then(
-        () => true,
-        () => false,
-      ),
-      false,
-      "Undo must remove the new target",
+    console.log(
+      JSON.stringify({
+        stage: "verified",
+        checkedFiles,
+        repositories: copied.repositories.length,
+        elapsedMs: Date.now() - started,
+      }),
     );
-    const linuxCase = await linuxCaseCheck(path.dirname(config.stateRoot), config.linuxCaseTarget);
+    const consolidation = offer.repeat
+      ? await exerciseRemoteConsolidation({
+          copies,
+          offer: offer.repeat,
+          target: config.targetFolder,
+          sourceUrl: `http://127.0.0.1:${config.port}`,
+          capture,
+          settle,
+        })
+      : null;
+    const preview = await copies.undoPreview(offer.operationId);
+    // Completed fixture commits must remain a usable repository. The repeated
+    // transaction above proves Undo restores it; the wrapper removes the whole
+    // explicitly owned fixture only after recording that evidence.
+    if (!consolidation) {
+      NodeAssert.equal(preview.edited, 0, "Untouched copy must undo without force");
+      const undone = await copies.undo(offer.operationId, false);
+      NodeAssert.equal(undone.record.state, "undone");
+      NodeAssert.deepEqual(undone.result?.problems, []);
+      NodeAssert.equal(
+        await NodeFSP.lstat(config.targetFolder).then(
+          () => true,
+          () => false,
+        ),
+        false,
+        "Undo must remove the new target",
+      );
+    }
+    const linuxCase = await linuxCaseCheck(
+      NodePath.dirname(config.stateRoot),
+      config.linuxCaseTarget,
+    );
     await json(config.receiptFile, {
       passed: true,
-      platform: process.platform,
+      // eslint-disable-next-line studio/no-global-process-runtime -- Standalone acceptance CLI verifies the actual destination OS; no Effect runtime is used.
+      platform: NodeOS.platform(),
+      liveSource: config.liveSource === true,
       node: process.version,
       operationId: offer.operationId,
       elapsedMs: Date.now() - started,
@@ -390,8 +496,10 @@ if (role === "source") {
       warnings: applied.warnings,
       unstable: applied.unstable,
       previewDidNotWrite: true,
-      undoRemovedTarget: true,
+      undoRemovedTarget: !consolidation,
       undoEdited: preview.edited,
+      continuedRepositoryRetainedUntilFixtureCleanup: Boolean(consolidation),
+      consolidation,
       linuxCase,
     });
     console.log(
@@ -401,7 +509,8 @@ if (role === "source") {
     await copies.close();
   }
 } else if (role === "linux-case") {
-  assert.equal(process.platform, "linux");
+  // eslint-disable-next-line studio/no-global-process-runtime -- Standalone acceptance CLI verifies the actual destination OS; no Effect runtime is used.
+  NodeAssert.equal(NodeOS.platform(), "linux");
   const receipt = await linuxCaseCheck(config.base, config.targetAlias);
   await json(config.receiptFile, receipt);
   console.log(JSON.stringify(receipt));
