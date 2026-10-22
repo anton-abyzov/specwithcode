@@ -6,6 +6,7 @@ import {
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
   PROVIDER_SEND_TURN_SUPPORTED_IMAGE_MIME_TYPES,
 } from "./chatAttachment.ts";
+import { DesignAssetName, DesignId, DesignOwnerInput } from "./design.ts";
 import { ProjectFaviconPath } from "./project.ts";
 import { ToolActivityNativeAppReference } from "./providerRuntime.ts";
 
@@ -63,6 +64,13 @@ export const AssetResource = Schema.Union([
   Schema.TaggedStruct("github-media", {
     cwd: TrimmedNonEmptyString.check(Schema.isMaxLength(ASSET_PATH_MAX_LENGTH)),
     url: TrimmedNonEmptyString.check(Schema.isMaxLength(2048)),
+  }),
+  // An image of a design, by its content-addressed name. The server finds the file from the
+  // design's owner, never from a client path, and serves it only to callers who may view it.
+  Schema.TaggedStruct("design-asset", {
+    owner: DesignOwnerInput,
+    designId: DesignId,
+    asset: DesignAssetName,
   }),
 ]);
 export type AssetResource = typeof AssetResource.Type;
@@ -227,7 +235,9 @@ export class AssetWorkspaceAssetNotFoundError extends Schema.TaggedError<AssetWo
       ? "Media file was not found."
       : this.resource._tag === "tool-output-image"
         ? "Tool output image was not found."
-        : "Workspace asset was not found.";
+        : this.resource._tag === "design-asset"
+          ? "Design image was not found."
+          : "Workspace asset was not found.";
   }
 }
 

@@ -900,6 +900,9 @@ function eventPathContainsSelector(event: Event, selector: string): boolean {
 }
 
 const SECRET_REQUEST_SELECTOR = '[data-v2-item-type="secret_request"]';
+// Surfaces that handle their own keys (the design canvas, a device stream). The chat
+// listens on the window in capture phase, so it must leave their keys alone.
+const KEYBOARD_OWNER_SELECTOR = '[role="application"]';
 
 /**
  * Whether input that landed outside any editable or interactive element
@@ -911,6 +914,7 @@ function shouldRedirectInputToComposer(event: Event): boolean {
   // Near a pending secret request, input is meant for its private field: it
   // must never land in the composer draft, which is persisted and sent.
   if (eventPathContainsSelector(event, SECRET_REQUEST_SELECTOR)) return false;
+  if (eventPathContainsSelector(event, KEYBOARD_OWNER_SELECTOR)) return false;
   if (eventPathContainsSelector(event, TYPE_TO_FOCUS_EDITABLE_SELECTOR)) return false;
   if (eventPathContainsSelector(event, TYPE_TO_FOCUS_INTERACTIVE_SELECTOR)) return false;
   if (document.querySelector(TYPE_TO_FOCUS_FLOATING_LAYER_SELECTOR)) return false;
@@ -7806,6 +7810,7 @@ function useChatViewActions(
             event.metaKey ||
             event.shiftKey ||
             eventPathContainsSelector(event, TYPE_TO_FOCUS_EDITABLE_SELECTOR) ||
+            eventPathContainsSelector(event, KEYBOARD_OWNER_SELECTOR) ||
             document.querySelector(TYPE_TO_FOCUS_FLOATING_LAYER_SELECTOR)
           ) {
             return;
@@ -10548,6 +10553,7 @@ export default function ChatView(props: ChatViewProps) {
       if (!activeThreadId || isCommandPaletteOpen()) {
         return;
       }
+      if (eventPathContainsSelector(event, KEYBOARD_OWNER_SELECTOR)) return;
       const terminalFocusOwner = getTerminalFocusOwner();
       if (event.defaultPrevented && terminalFocusOwner === null) {
         return;

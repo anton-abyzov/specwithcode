@@ -15,12 +15,16 @@ import {
   ProjectId,
   ThreadId,
 } from "@specweave-studio/contracts";
+import { filesystemEnvironment, useFilesystemReadAccess } from "../../state/filesystem";
+import { useEnvironmentQuery } from "../../state/query";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { machineHandoff } from "../../studio/machineHandoff";
 import { linkCopyAsWorkers, projectLink, type CopyLinkOutcome } from "../../studio/projectLink";
 import {
   cloneableRows,
   copySettled,
+  copyDestinationKey,
+  suggestedCopyFolder,
   DEFAULT_COPY_SELECTION,
   formatBytes,
   type HandoffFolderMethod,
@@ -95,6 +99,13 @@ const isNotFound = (cause: unknown) =>
 const messageOf = (cause: unknown) =>
   cause instanceof Error && cause.message ? cause.message : "The copy could not continue.";
 
+/** A destination refusal happened before this attempt could publish a source fence. */
+class DestinationContextPreviewError extends Error {
+  constructor(cause: unknown) {
+    super(messageOf(cause), { cause });
+  }
+}
+
 const sleep = (ms: number, signal: AbortSignal) =>
   new Promise<void>((resolve, reject) => {
     const timer = setTimeout(resolve, ms);
@@ -115,6 +126,7 @@ export function HandoffFolderCopy({
   method,
   machines,
   savedFolder,
+  savedProject,
   preferredMachine = null,
   canMove,
   onBusyChange,
@@ -126,6 +138,10 @@ export function HandoffFolderCopy({
   readonly method: Exclude<HandoffFolderMethod, "folder">;
   readonly machines: ReadonlyArray<CopyMachine>;
   readonly savedFolder: (environmentId: EnvironmentId) => string | null;
+  readonly savedProject?: (
+    environmentId: EnvironmentId,
+    folder: string,
+  ) => EnvironmentProject | null;
   /** The remembered or last-used machine, preselected when it can take the copy. */
   readonly preferredMachine?: EnvironmentId | null;
   readonly canMove: boolean;
@@ -161,9 +177,24 @@ export function HandoffFolderCopy({
     machines.find((machine) => !machine.unavailable)?.id ??
     null;
   const [machine, setMachine] = useState<EnvironmentId | null>(firstMachine);
-  const [folder, setFolder] = useState(() =>
-    firstMachine ? (savedFolder(firstMachine) ?? project.workspaceRoot) : project.workspaceRoot,
+  const [folderDraft, setFolderDraft] = useState<{ machine: EnvironmentId; value: string } | null>(
+    null,
   );
+  const access = useFilesystemReadAccess(machine);
+  const home = useEnvironmentQuery(
+    machine && access.canReadFiles
+      ? filesystemEnvironment.browse({ environmentId: machine, input: { partialPath: "~/" } })
+      : null,
+  );
+  // The query belongs to the selected machine. A late home response never replaces a typed path.
+  const folder = machine
+    ? folderDraft?.machine === machine
+      ? folderDraft.value
+      : (savedFolder(machine) ?? suggestedCopyFolder(project.workspaceRoot, home.data?.parentPath))
+    : "";
+  const setFolder = (value: string, environmentId = machine) => {
+    if (environmentId) setFolderDraft({ machine: environmentId, value });
+  };
   const [mode, setMode] = useState<FolderCopyMode>("copy-only");
   const [stage, setStage] = useState<Stage>("setup");
   const [offer, setOffer] = useState<FolderCopyOffer | null>(null);
@@ -176,10 +207,27 @@ export function HandoffFolderCopy({
   const [pending, setPending] = useState<PendingCopy | null>(null);
   const [undoPreview, setUndoPreview] = useState<FolderCopyUndoResult | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [transferNotice, setTransferNotice] = useState<string | null>(null);
+  const [contextTransferred, setContextTransferred] = useState(false);
+  const [copyAgain, setCopyAgain] = useState(false);
+  const [transferRecovery, setTransferRecovery] = useState(false);
   const [working, setWorking] = useState(false);
   const [link, setLink] = useState<CopyLinkOutcome | { readonly status: "linking" } | null>(null);
   const [linkDialog, setLinkDialog] = useState(false);
   const running = useRef(false);
+  const contextPublished = useRef(false);
+  const copiedProjects = useRef(new Map<string, ProjectId>());
+  // Applying files can register or update a project while an async command is in flight.
+  const latestSavedProject = useRef(savedProject);
+  latestSavedProject.current = savedProject;
+  const knownProject = (environmentId: EnvironmentId, targetFolder: string) => {
+    const known = latestSavedProject.current?.(environmentId, targetFolder);
+    return known &&
+      copyDestinationKey(known.environmentId, known.workspaceRoot) ===
+        copyDestinationKey(environmentId, targetFolder)
+      ? known
+      : null;
+  };
   const abort = useRef(new AbortController());
   useEffect(() => {
     const controller = abort.current;
@@ -249,7 +297,7 @@ export function HandoffFolderCopy({
   const resume = (saved: PendingCopy) => {
     setPending(saved);
     setMachine(saved.environmentId as EnvironmentId);
-    setFolder(saved.targetFolder);
+    setFolder(saved.targetFolder, saved.environmentId as EnvironmentId);
     setMode(saved.mode);
     void run(async () => {
       const environmentId = saved.environmentId as EnvironmentId;
@@ -275,8 +323,11 @@ export function HandoffFolderCopy({
         return;
       }
       show(next);
-      if (saved.mode === "copy-and-move" && next.state === "applied" && next.projectId)
-        await moveCoordinator(saved.operationId, environmentId, next.projectId);
+      if (saved.mode === "copy-and-move" && next.state === "applied" && next.projectId) {
+        // A prior request may already have fenced the source. Keep its recovery pointer.
+        setTransferRecovery(true);
+        setTransferNotice("The files are copied. Transfer coordinator context when you are ready.");
+      }
     });
   };
   useEffect(() => {
@@ -316,34 +367,96 @@ export function HandoffFolderCopy({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [linkTarget, machine]);
 
-  const destinationPlan = (environmentId: EnvironmentId, projectId: ProjectId) => ({
-    environmentId,
-    projectId,
-    executionMode: "project-folder" as const,
-    transport: "folder-copy" as const,
-    coordinatorThreadId: ThreadId.make(`project-coordinator:${projectId}`),
-    joinExistingProject: true,
-  });
+  const destinationPlan = (
+    environmentId: EnvironmentId,
+    projectId: ProjectId,
+    targetFolder: string,
+  ) => {
+    const known = knownProject(environmentId, targetFolder);
+    if (known && known.id !== projectId)
+      throw new DestinationContextPreviewError(
+        new Error(
+          "The destination registration changed. Check this copied folder before transferring context.",
+        ),
+      );
+    return {
+      environmentId,
+      projectId,
+      executionMode: "project-folder" as const,
+      transport: "folder-copy" as const,
+      coordinatorThreadId:
+        known?.workspaceSettings?.coordinatorThreadId ??
+        ThreadId.make(`project-coordinator:${projectId}`),
+      ...(known?.workspaceSettings?.logicalProject
+        ? { logicalProjectId: known.workspaceSettings.logicalProject.id }
+        : {}),
+      joinExistingProject: true,
+    };
+  };
 
   /** Fences the source coordinator for a move; repeated calls return the same published bundle. */
-  const fence = async (operationId: string, environmentId: EnvironmentId, projectId: ProjectId) => {
+  const fence = async (
+    operationId: string,
+    environmentId: EnvironmentId,
+    projectId: ProjectId,
+    targetFolder: string,
+  ) => {
     if (!coordinatorId) throw new Error("Open this project’s coordinator before moving it.");
     const base = {
       projectId: project.id,
       sourceThreadId: coordinatorId,
       operationId: operationId,
-      destination: destinationPlan(environmentId, projectId),
+      destination: destinationPlan(environmentId, projectId, targetFolder),
     };
     const prepared = unwrap(
       await prepare({ environmentId: project.environmentId, input: { ...base, publish: false } }),
     );
-    if (prepared.publication === "published") return prepared.bundle;
-    return unwrap(
+    if (prepared.publication === "published") {
+      contextPublished.current = true;
+      return prepared.bundle;
+    }
+    // Check the actual registration, logical identity, coordinator and idle state
+    // before fencing the source. Conversation contents stay on the source here.
+    const bundle = prepared.bundle;
+    try {
+      const checked = unwrap(
+        await receive({
+          environmentId,
+          input: {
+            projectId,
+            operationId: bundle.manifest.operationId,
+            mode: "preview",
+            manifest: bundle.manifest,
+            sourceEnvironmentId: bundle.sourceEnvironmentId,
+            sourceProjectId: bundle.sourceProjectId,
+            sourceThreadId: bundle.sourceThreadId,
+            digest: bundle.digest,
+            ...(bundle.logicalProject ? { logicalProject: bundle.logicalProject } : {}),
+            ...(bundle.coordinatorBinding ? { coordinatorBinding: bundle.coordinatorBinding } : {}),
+            ...(bundle.destination ? { destination: bundle.destination } : {}),
+          },
+        }),
+      );
+      if (checked.executionMode !== "project-folder" || checked.projectId !== projectId)
+        throw new Error(
+          "Update or check the destination before transferring context into this copied folder.",
+        );
+    } catch (cause) {
+      throw new DestinationContextPreviewError(cause);
+    }
+    const published = unwrap(
       await prepare({
         environmentId: project.environmentId,
-        input: { ...base, publish: true, expectedDigest: prepared.bundle.digest },
+        input: {
+          ...base,
+          destination: bundle.destination ?? base.destination,
+          publish: true,
+          expectedDigest: bundle.digest,
+        },
       }),
     ).bundle;
+    contextPublished.current = true;
+    return published;
   };
 
   /** After the files are applied, the coordinator continues on the destination. */
@@ -351,15 +464,62 @@ export function HandoffFolderCopy({
     operationId: string,
     environmentId: EnvironmentId,
     projectId: ProjectId,
+    applied: FolderCopyStatus | null = copy,
   ) => {
-    setStage("moving");
-    try {
-      await continueThere(operationId, environmentId, projectId);
-    } catch (cause) {
-      // The applied files stay; Retry only repeats the coordinator step.
-      setStage("failed");
-      throw cause;
+    if (applied && (applied.unstable.length > 0 || applied.checks.some((check) => !check.ok))) {
+      setCopyAgain(true);
+      setTransferNotice(
+        "The files are copied with changes or checks still unresolved. Copy again before transferring coordinator context.",
+      );
+      setStage("done");
+      return;
     }
+    setStage("moving");
+    setTransferRecovery(true);
+    try {
+      await continueThere(operationId, environmentId, projectId, applied?.targetFolder ?? folder);
+    } catch (cause) {
+      if (cause instanceof DestinationContextPreviewError) {
+        // No publish was attempted here. Starting fresh still asks the source to
+        // release the operation, so a fence from an older session cannot be lost.
+        setTransferRecovery(false);
+        setTransferNotice(
+          `The files are copied. ${targetLabel} is not ready for coordinator context: ${cause.message} Retry this step, or start a new copy to update the destination.`,
+        );
+        setStage("done");
+        return;
+      }
+      if (
+        typeof cause === "object" &&
+        cause !== null &&
+        (cause as { code?: unknown }).code === "busy" &&
+        !contextPublished.current
+      ) {
+        setTransferRecovery(false);
+        setTransferNotice(
+          `The files are copied. Work is still running on ${sourceLabel}, so coordinator context has not transferred. Retry this step when that work is idle.`,
+        );
+        setStage("done");
+        return;
+      }
+      const changed =
+        typeof cause === "object" &&
+        cause !== null &&
+        (cause as { code?: unknown }).code === "source_changed" &&
+        !contextPublished.current;
+      setCopyAgain(changed);
+      if (changed) setTransferRecovery(false);
+      setTransferNotice(
+        changed
+          ? "The files are copied, but the source has changed. Copy again before transferring coordinator context."
+          : `The files are copied. Coordinator context transfer is pending: ${messageOf(cause)}`,
+      );
+      setStage("done");
+      return;
+    }
+    setTransferRecovery(false);
+    setContextTransferred(true);
+    setTransferNotice(null);
     // Undo is for copies only; a finished move has nothing left to resume.
     remember(null);
     setStage("done");
@@ -369,8 +529,14 @@ export function HandoffFolderCopy({
     operationId: string,
     environmentId: EnvironmentId,
     projectId: ProjectId,
+    targetFolder: string,
   ) => {
-    const bundle: MachineHandoffBundle = await fence(operationId, environmentId, projectId);
+    const bundle: MachineHandoffBundle = await fence(
+      operationId,
+      environmentId,
+      projectId,
+      targetFolder,
+    );
     const started = unwrap(
       await receive({
         environmentId,
@@ -389,7 +555,8 @@ export function HandoffFolderCopy({
             operationId: bundle.manifest.operationId,
             publish: true,
             expectedDigest: bundle.digest,
-            destination: bundle.destination ?? destinationPlan(environmentId, projectId),
+            destination:
+              bundle.destination ?? destinationPlan(environmentId, projectId, targetFolder),
             acknowledgment: {
               operationId: bundle.manifest.operationId,
               environmentId,
@@ -406,10 +573,15 @@ export function HandoffFolderCopy({
   const measure = () =>
     run(async () => {
       if (!machine || target?.unavailable) return;
-      if (!folder.startsWith("/"))
-        throw new Error("Enter the full path of the folder, starting with /.");
+      if (!folder.startsWith("/") && !/^[A-Za-z]:[\\/]/.test(folder))
+        throw new Error("Enter the full absolute path of the folder on the destination machine.");
       const operationId = randomUUID();
-      const destinationProjectId = mode === "copy-and-move" ? randomUUID() : null;
+      const destinationProjectId =
+        mode === "copy-and-move"
+          ? (knownProject(machine, folder)?.id ??
+            copiedProjects.current.get(copyDestinationKey(machine, folder)) ??
+            randomUUID())
+          : null;
       remember({
         operationId,
         environmentId: machine,
@@ -526,9 +698,6 @@ export function HandoffFolderCopy({
             },
           }),
         );
-      if (pending.mode === "copy-and-move" && pending.projectId)
-        // Work on the source pauses while its files are copied and applied.
-        await fence(operationId, machine, ProjectId.make(pending.projectId));
       setStage("copying");
       try {
         setCopy(unwrap(await approve({ environmentId: machine, input: { operationId } })));
@@ -541,7 +710,7 @@ export function HandoffFolderCopy({
       show(next);
       if (next.state === "failed") return;
       if (pending.mode === "copy-and-move" && next.projectId)
-        await moveCoordinator(operationId, machine, next.projectId);
+        await moveCoordinator(operationId, machine, next.projectId, next);
     });
 
   const retryCopy = () =>
@@ -557,7 +726,7 @@ export function HandoffFolderCopy({
       const next = await pollCopy(machine, operationId);
       show(next);
       if (next.state !== "failed" && pending.mode === "copy-and-move" && next.projectId)
-        await moveCoordinator(operationId, machine, next.projectId);
+        await moveCoordinator(operationId, machine, next.projectId, next);
     });
 
   const stop = () =>
@@ -609,19 +778,50 @@ export function HandoffFolderCopy({
       setStage("undone");
     });
 
-  const fresh = () => {
-    remember(null);
-    setOffer(null);
-    setSummary(null);
-    setCopy(null);
-    setUndoPreview(null);
-    setLink(null);
-    setError(null);
-    setSelection(DEFAULT_COPY_SELECTION);
-    setSecretPaths([]);
-    setSecretsConfirmed(false);
-    setStage("setup");
-  };
+  const fresh = () =>
+    run(async () => {
+      // A reload may have lost the publish result. The source must confirm that
+      // abandoning this operation cannot orphan a fenced coordinator.
+      if (pending?.mode === "copy-and-move") {
+        unwrap(
+          await release({
+            environmentId: project.environmentId,
+            input: {
+              projectId: project.id,
+              operationId: pending.operationId,
+              reason: "Starting a fresh copy before transferring coordinator context.",
+            },
+          }),
+        );
+      }
+      if (copy?.state === "applied" && copy.committed && copy.projectId && machine) {
+        // Keep the server's canonical folder and registration across a fresh copy.
+        // Creating a second id for that same folder would fail only after Apply.
+        const destinationEnvironment =
+          (pending?.environmentId as EnvironmentId | undefined) ?? machine;
+        copiedProjects.current.set(
+          copyDestinationKey(destinationEnvironment, copy.targetFolder),
+          copy.projectId,
+        );
+        setFolder(copy.targetFolder, destinationEnvironment);
+      }
+      setTransferRecovery(false);
+      contextPublished.current = false;
+      remember(null);
+      setOffer(null);
+      setSummary(null);
+      setCopy(null);
+      setUndoPreview(null);
+      setLink(null);
+      setError(null);
+      setTransferNotice(null);
+      setContextTransferred(false);
+      setCopyAgain(false);
+      setSelection(DEFAULT_COPY_SELECTION);
+      setSecretPaths([]);
+      setSecretsConfirmed(false);
+      setStage("setup");
+    });
 
   const failedBeforeApply =
     copy?.state === "failed" && copy.failedStep !== "applying" && copy.failedStep !== "applied";
@@ -630,6 +830,15 @@ export function HandoffFolderCopy({
     <div className="space-y-4" data-slot="handoff-folder-copy" data-stage={stage}>
       {(stage === "setup" || stage === "scanning") && (
         <>
+          <div className="space-y-1 text-sm" data-slot="copy-source-folder">
+            <p className="font-medium">Source folder on {sourceLabel}</p>
+            <p className="font-mono text-xs wrap-anywhere">{project.workspaceRoot}</p>
+            <p className="text-xs text-muted-foreground">
+              Copies this folder and the folders and repositories inside it, preserving their
+              layout. For the whole umbrella, open the umbrella project or choose its root in
+              Project settings. Folders outside this root and linked folders are not followed.
+            </p>
+          </div>
           <fieldset className="min-w-0 space-y-2" disabled={busy}>
             <legend className="mb-2 text-sm font-medium">Copy to</legend>
             {machines.length === 0 ? (
@@ -643,7 +852,7 @@ export function HandoffFolderCopy({
                 onValueChange={(value) => {
                   const id = value as EnvironmentId;
                   setMachine(id);
-                  setFolder(savedFolder(id) ?? project.workspaceRoot);
+                  setFolderDraft(null);
                 }}
                 className="gap-2"
               >
@@ -673,6 +882,11 @@ export function HandoffFolderCopy({
             <span className="font-medium">Folder on {targetLabel}</span>
             <Input
               value={folder}
+              placeholder={
+                home.isPending
+                  ? "Finding the destination home folder…"
+                  : "Absolute path on the destination"
+              }
               disabled={busy}
               spellCheck={false}
               onChange={(event) => setFolder(event.currentTarget.value)}
@@ -698,8 +912,8 @@ export function HandoffFolderCopy({
                 <span className="leading-5">
                   Copy files only
                   <span className="block text-xs text-muted-foreground">
-                    The coordinator stays on {sourceLabel}. {targetLabel} gets its own project in
-                    the copied folder.
+                    Keeps this coordinator on {sourceLabel}. {targetLabel} gets a separate checkout;
+                    you can start its own coordinator in Project settings.
                   </span>
                 </span>
               </label>
@@ -710,10 +924,11 @@ export function HandoffFolderCopy({
                   <Radio value="copy-and-move" disabled={!canMove} />
                 </span>
                 <span className="leading-5">
-                  Copy and move the coordinator here
+                  Copy and transfer coordinator context
                   <span className="block text-xs text-muted-foreground">
-                    Work on {sourceLabel} pauses during the copy. The coordinator continues on{" "}
-                    {targetLabel} once the files are applied and checked.
+                    Copies files first, then transfers this coordinator's context and responsibility
+                    to {targetLabel} when source work is idle. Each machine keeps its own server;
+                    running workers and provider processes are not moved.
                   </span>
                 </span>
               </label>
@@ -806,7 +1021,7 @@ export function HandoffFolderCopy({
               onClick={() => void apply()}
             >
               {mode === "copy-and-move"
-                ? `Copy, apply and move to ${targetLabel}`
+                ? `Copy and transfer context to ${targetLabel}`
                 : `Copy and apply on ${targetLabel}`}
             </Button>
             <Button variant="outline" disabled={busy} onClick={() => void stop()}>
@@ -857,10 +1072,32 @@ export function HandoffFolderCopy({
       {stage === "done" && copy && copy.projectId && (
         <div className="space-y-3 text-sm" data-slot="copy-done">
           <p role="status">
-            {mode === "copy-and-move"
+            {mode === "copy-and-move" && contextTransferred
               ? `The coordinator continues on ${targetLabel} in ${copy.targetFolder}.`
-              : `${targetLabel} has a copy in ${copy.targetFolder}. The coordinator stays on ${sourceLabel}.`}
+              : mode === "copy-and-move"
+                ? `${targetLabel} has a copy in ${copy.targetFolder}. Coordinator context has not finished transferring.`
+                : `${targetLabel} has a copy in ${copy.targetFolder}. The coordinator stays on ${sourceLabel}.`}
           </p>
+          {transferNotice && (
+            <p role="status" className="text-xs text-warning-foreground">
+              {transferNotice}
+            </p>
+          )}
+          {copyAgain && (
+            <Button disabled={busy} onClick={fresh}>
+              Copy again
+            </Button>
+          )}
+          {mode === "copy-and-move" && !contextTransferred && !copyAgain && pending && (
+            <Button
+              disabled={busy}
+              onClick={() =>
+                void run(() => moveCoordinator(pending.operationId, machine!, copy.projectId!))
+              }
+            >
+              Transfer coordinator context
+            </Button>
+          )}
           {mode === "copy-only" && link && (
             <p
               className="text-muted-foreground text-xs wrap-anywhere"
@@ -947,7 +1184,7 @@ export function HandoffFolderCopy({
                 Link…
               </Button>
             )}
-            <Button variant="ghost" disabled={busy} onClick={fresh}>
+            <Button variant="ghost" disabled={busy || transferRecovery} onClick={fresh}>
               Start a new copy
             </Button>
           </div>

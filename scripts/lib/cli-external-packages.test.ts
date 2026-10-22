@@ -96,6 +96,7 @@ describe("selectCliRuntimeExternalDependencies", () => {
         "@napi-rs/keyring",
         "node-pty",
         "playwright-core",
+        "typescript-legacy",
         "zod",
       ],
     );

@@ -1,3 +1,4 @@
+import { DesignScreenshotToolkit, DesignToolkit } from "../../mcp/toolkits/design/tools.ts";
 import { ProjectPlanToolkit } from "../../mcp/toolkits/projectPlan/tools.ts";
 import { ProjectMemoryToolkit } from "../../mcp/toolkits/projectMemory/tools.ts";
 import { ProjectKnowledgeToolkit } from "../../mcp/toolkits/projectKnowledge/tools.ts";
@@ -863,6 +864,8 @@ describe("ClaudeAdapterV2 MCP query overrides", () => {
       ...Object.values(PreviewControlsToolkit.tools),
       ...Object.values(HtmlToolkit.tools),
       ...Object.values(MachinesToolkit.tools),
+      ...Object.values(DesignToolkit.tools),
+      ...Object.values(DesignScreenshotToolkit.tools),
     ]
       .filter((tool) => Context.get(tool.annotations, Tool.Readonly))
       .map((tool) => `mcp__studio-code__${tool.name}`)
@@ -4098,6 +4101,59 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           terminal.failure.code,
           terminalReason === "overloaded_status" ? "api_error_529" : terminalReason,
         );
+      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+    ),
+  );
+
+  it.effect.each([
+    {
+      label: "an error result",
+      subtype: "error_during_execution",
+      terminalReason: "prompt_too_long",
+    },
+    {
+      label: "an HTTP 400 result",
+      apiErrorStatus: 400,
+      isError: true,
+      terminalReason: "prompt_too_long",
+    },
+    {
+      label: "an error result after compaction",
+      subtype: "error_during_execution",
+      terminalReason: "rapid_refill_breaker",
+    },
+  ] as const)("keeps the overflow reason as the code of $label", (input) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-overflow-terminal-code"),
+            text: "Complete the task.",
+            attachments: [],
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000000215",
+            result: "Prompt is too long",
+            terminalReason: input.terminalReason,
+            ...("subtype" in input ? { subtype: input.subtype, errors: [] } : {}),
+            ...("apiErrorStatus" in input
+              ? { apiErrorStatus: input.apiErrorStatus, isError: input.isError }
+              : {}),
+          }),
+        );
+        const terminal = yield* Queue.take(harness.terminalReceipts);
+        assert.equal(terminal.status, "failed");
+        if (terminal.status !== "failed") return;
+        assert.equal(terminal.failure.class, "provider_error");
+        assert.equal(terminal.failure.code, input.terminalReason);
       }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
     ),
   );

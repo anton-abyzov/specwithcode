@@ -88,6 +88,7 @@ import type {
   TakeoverRequest,
   TakeoverResponse,
 } from "./handoffWire.ts";
+import { HANDOFF_APP_VERSION, HANDOFF_PROTOCOL_VERSION, versionFailure } from "./handoffWire.ts";
 
 /** A refusal the source reports verbatim; nothing changed here. */
 export class HandoffRefusal extends Data.TaggedError("HandoffRefusal")<{
@@ -369,12 +370,34 @@ export const make = Effect.gen(function* () {
   const preflight = (caller: ReceiverCaller, request: PeerPreflightRequest) =>
     Effect.gen(function* () {
       yield* sameSource(caller, request.sourceEnvironmentId);
+      const mismatch = versionFailure({
+        peerLabel: "The source machine",
+        peerProtocolVersion: request.protocolVersion,
+        peerAppVersion: request.appVersion,
+        selfLabel: label,
+      });
+      // A source from before the version check cannot decode check "version";
+      // it still reads the message under a check it knows.
+      const version =
+        mismatch === null
+          ? null
+          : request.protocolVersion === undefined
+            ? { ...mismatch, check: "checkpoint" as const }
+            : mismatch;
       const results = yield* Effect.forEach(request.threads, (thread) =>
         threadFailures(caller, thread).pipe(
-          Effect.map((failures) => ({ sourceThreadId: thread.sourceThreadId, failures })),
+          Effect.map((failures) => ({
+            sourceThreadId: thread.sourceThreadId,
+            failures: version === null ? failures : [version, ...failures],
+          })),
         ),
       );
-      return { machineLabel: label, results } satisfies PeerPreflightResponse;
+      return {
+        machineLabel: label,
+        protocolVersion: HANDOFF_PROTOCOL_VERSION,
+        appVersion: HANDOFF_APP_VERSION,
+        results,
+      } satisfies PeerPreflightResponse;
     });
 
   /** A worktree at the checkpoint's base commit holding its files as uncommitted changes. */

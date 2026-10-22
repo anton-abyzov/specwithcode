@@ -79,6 +79,25 @@ export function HandoffPreflightFailures({ result }: { result: HandoffPreflightR
   );
 }
 
+const VERSION_FAILURE = /^(.+?) runs SpecWithCode .* Update (.+) first\.$/s;
+
+/**
+ * True when a version check says to update the destination first. The
+ * destination words it "<destination> runs SpecWithCode … Update <machine>
+ * first.", so the machine to update is the destination when both names match.
+ */
+export function versionFailureNamesDestination(
+  results: readonly HandoffPreflightResult[],
+): boolean {
+  return results.some((result) =>
+    result.failures.some((failure) => {
+      if (failure.check !== "version") return false;
+      const match = VERSION_FAILURE.exec(failure.message);
+      return match !== null && match[1]!.toLowerCase() === match[2]!.toLowerCase();
+    }),
+  );
+}
+
 /** One thread's preflight verdict, then what happens to its run. */
 export function preflightSummary(result: HandoffPreflightResult): string {
   if (!result.ok) return "Stays here: a check failed.";

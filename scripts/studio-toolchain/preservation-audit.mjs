@@ -8,7 +8,7 @@ export const LOCK_UPSTREAM = "10f39eb9ac80c9a4b7f5097575dd2addc3b6f631";
 // A record edit is not an approval. This digest pins the reviewed closed set of
 // lock changes, so approving another one also takes a reviewed edit here.
 export const LOCK_REVIEW_SHA256 =
-  "3645ecb283248bc87b66c37b200fdcb118e2434ce99963219fa6ba98e452f042";
+  "eaa80b5f4b2de998a88c5e214094198fd80306bfcca9102c8baf943d7792cde3";
 const LOCK_REVIEW_PATH = "scripts/studio-toolchain/reviewed-lock-changes.json";
 const sha256 = (bytes) => createHash("sha256").update(bytes).digest("hex");
 const LAYOUT = "Pinned lock data must keep pnpm's two-space block layout";
@@ -77,6 +77,7 @@ const keyOf = (line) => {
   return key.startsWith("'") ? key.slice(1, -1).replaceAll("''", "'") : key;
 };
 const REVIEWED_SECTIONS = new Set([
+  "overrides:",
   "patchedDependencies:",
   "importers:",
   "packages:",
@@ -116,6 +117,18 @@ function validateLockChange(change) {
   assert.ok(REVIEWED_SECTIONS.has(section), `${where}: section ${section} is not reviewable`);
   const text = change.op === "add" ? change.lines : [change.before, change.after];
   assert.ok(Array.isArray(text) && text.length > 0 && text.every(lineOk), `${where}: lines`);
+  // An override may only cut one dependency edge (`parent>child: '-'`); pinning
+  // or replacing a version through an override is not reviewable here.
+  if (section === "overrides:") {
+    const key =
+      change.op === "add" && change.lines.length === 1
+        ? /^('[^']+'|[^\s':]+): '-'$/.exec(change.lines[0])?.[1]
+        : undefined;
+    assert.ok(
+      change.parent.length === 1 && key !== undefined && key.includes(">"),
+      `${where}: section overrides: is not reviewable except to add one dependency removal (parent>child: '-')`,
+    );
+  }
   if (change.op === "replace") {
     assert.notEqual(section, "packages:", `${where}: registry metadata can only be added`);
     // A patch hash is pinned by its patch file, which only an added entry names.

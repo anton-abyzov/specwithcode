@@ -66,5 +66,10 @@ describe("routine brief", () => {
       routineCadenceLabel({ type: "fixed_time", timeOfDay: "08:00", weekdays: [1, 2, 3, 4, 5] }),
     ).toBe("Weekdays at 08:00");
     expect(routineCadenceLabel({ type: "interval", everyMs: 3_600_000 })).toBe("Every 60 min");
+    // Local time without an offset, so the label does not depend on the test's time zone.
+    expect(routineCadenceLabel({ type: "once", at: "2030-10-22T07:03:00" })).toBe(
+      "Once at 07:03 on Oct 22 2030",
+    );
+    expect(routineCadenceLabel({ type: "once", at: "soon" })).toBe("Once at soon");
   });
 });

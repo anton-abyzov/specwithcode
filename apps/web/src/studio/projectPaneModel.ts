@@ -25,6 +25,7 @@ export const LIBRARY_TYPE_FILTERS = [
   "code",
   "data",
   "links",
+  "designs",
 ] as const;
 export type LibraryTypeFilter = (typeof LIBRARY_TYPE_FILTERS)[number];
 export const LIBRARY_TYPE_FILTER_LABELS: Record<LibraryTypeFilter, string> = {
@@ -34,8 +35,10 @@ export const LIBRARY_TYPE_FILTER_LABELS: Record<LibraryTypeFilter, string> = {
   code: "Code",
   data: "Data",
   links: "Links",
+  designs: "Designs",
 };
-export type LibraryFileType = Exclude<LibraryTypeFilter, "all">;
+export type LibraryFileType = Exclude<LibraryTypeFilter, "all" | "designs">;
+export type LibraryEntryKind = "file" | "directory" | "link" | "design";
 
 const EXTENSION_TYPES: Record<string, LibraryFileType> = {};
 for (const [type, extensions] of [
@@ -84,18 +87,22 @@ const KIND_NAMES: Record<string, string> = {
 };
 
 /** The Kind column, as a file manager names it. */
-export function libraryKindLabel(entry: { kind: "file" | "directory" | "link"; name: string }) {
+export function libraryKindLabel(entry: { kind: LibraryEntryKind; name: string }) {
   if (entry.kind === "directory") return "Folder";
+  if (entry.kind === "design") return "Design";
   if (entry.kind === "link") return "Link";
   const extension = libraryFileExtension(entry.name);
   return KIND_NAMES[extension] ?? (extension ? `${extension.toUpperCase()} file` : "File");
 }
 
+/** Designs show only under All and Designs; folders always show, so their contents stay reachable. */
 export function libraryMatchesType(
   filter: LibraryTypeFilter,
-  entry: { kind: "file" | "directory" | "link"; name: string },
+  entry: { kind: LibraryEntryKind; name: string },
 ): boolean {
   if (filter === "all" || entry.kind === "directory") return true;
+  if (entry.kind === "design") return filter === "designs";
+  if (filter === "designs") return false;
   if (entry.kind === "link") return filter === "links";
   return libraryFileType(entry.name) === filter;
 }

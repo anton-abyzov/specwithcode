@@ -1,4 +1,5 @@
 import "vite-plus/test/config";
+import { createRequire } from "node:module";
 import { defineConfig, mergeConfig } from "vite-plus";
 
 import baseConfig from "../../vite.config.ts";
@@ -20,6 +21,13 @@ import {
 } from "../../scripts/lib/cli-external-packages.ts";
 
 export { shouldBundleCliDependency };
+
+// jsonc-parser's `main` is a UMD build whose factory calls require() at run time,
+// which the bundle cannot follow; bundle its ESM build instead. Plain Node (tests,
+// dev) keeps the CommonJS entry, since the ESM build uses extensionless imports.
+const jsoncParserEsm = createRequire(import.meta.url)
+  .resolve("jsonc-parser")
+  .replace(/lib[\\/]umd[\\/]main\.js$/, "lib/esm/main.js");
 
 const repoEnv = loadRepoEnv();
 const cliBuildChannel = /^[^-+]+-(?:nightly|preview)\./.test(packageJson.version)
@@ -82,6 +90,7 @@ export default mergeConfig(
       outDir: packExecutable ? "dist-exe" : "dist",
       sourcemap: !packExecutable,
       clean: true,
+      alias: { "jsonc-parser": jsoncParserEsm },
       ...(packExecutable
         ? {
             exe: {

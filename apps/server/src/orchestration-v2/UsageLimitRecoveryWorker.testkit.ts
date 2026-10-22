@@ -1,0 +1,212 @@
+import * as ProjectAdmission from "../project/ProjectAdmission.ts";
+import * as ProjectStore from "./ProjectStore.ts";
+import * as Option from "effect/Option";
+import {
+  DEFAULT_PROJECT_WORKSPACE_SETTINGS,
+  ProjectId,
+  ProviderInstanceId,
+  RunId,
+  ThreadId,
+  type OrchestrationV2ServerCommand,
+  type OrchestrationV2ThreadProjection,
+  type ServerProvider,
+} from "@specweave-studio/contracts";
+import * as Clock from "effect/Clock";
+import * as DateTime from "effect/DateTime";
+import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
+import * as Providers from "../provider/ProviderRegistry.ts";
+import * as Settings from "../serverSettings.ts";
+import * as ProjectionStore from "./ProjectionStore.ts";
+import * as ThreadManagement from "./ThreadManagementService.ts";
+import * as Orchestrator from "./Orchestrator.ts";
+import * as Availability from "./UsageLimitAvailability.ts";
+import { MachineLimitHandoff } from "./MachineLimitHandoff.ts";
+import { makeSweep } from "./UsageLimitRecoveryWorker.ts";
+import { updateLimitRecovery } from "./usageLimitRecovery.ts";
+
+/**
+ * A Claude thread stops on its 5-hour limit. Claude has no availability probe,
+ * so the reset time alone decides: nothing happens before it, the thread
+ * continues once after it, and a sweep built after a restart does the same
+ * from the persisted choice.
+ */
+export const claudeLimitStop = (resetMs: number) => {
+  const claude = ProviderInstanceId.make("claudeAgent");
+  const reset = DateTime.formatIso(DateTime.makeUnsafe(resetMs));
+  return {
+    id: ThreadId.make("claude-limited"),
+    providerInstanceId: claude,
+    status: "failed",
+    lastErrorClass: "usage_limit",
+    latestRunId: RunId.make("failed-run"),
+    latestRunCompletedAt: DateTime.makeUnsafe(0),
+    updatedAt: DateTime.makeUnsafe(0),
+    usageLimitResetAt: reset,
+    archivedAt: null,
+    settledOverride: null,
+    pendingRuntimeRequest: null,
+    snoozedUntil: null,
+    limitRecovery: null,
+  } satisfies ProjectionStore.ProjectionLimitRecoveryCandidate;
+};
+
+export const claudeSweepHarness = (input: {
+  thread: ProjectionStore.ProjectionLimitRecoveryCandidate;
+  projectAutoResume?: boolean;
+  globalAutoResume?: boolean;
+  /** The provider registry's snapshot; absent builds the sweep without a registry. */
+  provider?: (nowMs: number) => ServerProvider;
+  /**
+   * A request pending on the thread: the shell shows only its summary (the
+   * candidate read leaves such threads out), the thread's records its detail.
+   */
+  pending?: {
+    readonly summary: NonNullable<
+      ProjectionStore.ProjectionLimitRecoveryCandidate["pendingRuntimeRequest"]
+    >;
+    readonly records: Pick<OrchestrationV2ThreadProjection, "runtimeRequests" | "nodes" | "runs">;
+  };
+  /** The instance the stopped run ran on, as the thread's records give it. */
+  runInstance?: ProviderInstanceId;
+  /** Commands the orchestrator refuses; a refused id is refused again on replay. */
+  refuses?: (command: OrchestrationV2ServerCommand) => boolean;
+  /** Runs after a resume is built and before it is sent (the handoff check). */
+  beforeSend?: (state: { current: ProjectionStore.ProjectionLimitRecoveryCandidate }) => void;
+}) => {
+  const projectId = ProjectId.make("claude-limit-project");
+  const state = {
+    current: input.thread,
+    commands: [] as OrchestrationV2ServerCommand[],
+    /** The persisted handoff state keeps the thread from starting a turn here. */
+    handoffBlocked: false,
+    /** The registry snapshot, replaced by each refresh. */
+    snapshot: undefined as ServerProvider | undefined,
+    refreshes: 0,
+    /** Every dispatch attempt, refused or not. */
+    attempts: [] as string[],
+    rejected: new Set<string>(),
+  };
+  const deps = Layer.mergeAll(
+    ProjectAdmission.layer,
+    Settings.layerTest({
+      providerLimitAction: "wait",
+      autoResumeLimitedThreads: input.globalAutoResume ?? false,
+    }),
+    Layer.mock(Availability.UsageLimitAvailability)({
+      // What the real service answers for a provider without a native probe.
+      check: () => Effect.succeed({ codex: false, observation: null }),
+    }),
+    Layer.mock(ProjectStore.ProjectStoreV2)({
+      get: () =>
+        Effect.succeed(
+          Option.some({
+            projectId,
+            deletedAt: null,
+            workspaceSettings: {
+              ...DEFAULT_PROJECT_WORKSPACE_SETTINGS,
+              autoResume: input.projectAutoResume ?? false,
+            },
+          } as ProjectStore.ProjectRow),
+        ),
+    }),
+    Layer.mock(ProjectionStore.ProjectionStoreV2)({
+      getLimitRecoveryCandidates: () => Effect.sync(() => [state.current]),
+      getThreadShell: () =>
+        Effect.sync(
+          () =>
+            ({
+              ...state.current,
+              projectId,
+              ...(input.pending ? { pendingRuntimeRequest: input.pending.summary } : {}),
+            }) as never,
+        ),
+      getThreadProjection: () =>
+        input.pending || input.runInstance
+          ? Effect.sync(
+              () =>
+                ({
+                  runtimeRequests: [],
+                  nodes: [],
+                  ...input.pending?.records,
+                  runs: [
+                    ...(input.pending?.records.runs ?? []),
+                    ...(input.runInstance && state.current.latestRunId
+                      ? [{ id: state.current.latestRunId, providerInstanceId: input.runInstance }]
+                      : []),
+                  ],
+                }) as unknown as OrchestrationV2ThreadProjection,
+            )
+          : Effect.die("unused getThreadProjection"),
+    }),
+    Layer.mock(ThreadManagement.ThreadManagementService)({
+      dispatch: (command) =>
+        Effect.suspend(
+          (): Effect.Effect<
+            { sequence: number; storedEvents: [] },
+            Orchestrator.OrchestratorV2Error
+          > => {
+            state.attempts.push(command.commandId);
+            if (state.rejected.has(command.commandId))
+              return Effect.fail(
+                new Orchestrator.OrchestratorCommandPreviouslyRejectedError({
+                  commandId: command.commandId,
+                  commandType: command.type,
+                  detail: "refused",
+                }),
+              );
+            if (input.refuses?.(command)) {
+              state.rejected.add(command.commandId);
+              return Effect.fail(
+                new Orchestrator.OrchestratorDispatchError({
+                  commandId: command.commandId,
+                  commandType: command.type,
+                  cause: "refused",
+                }),
+              );
+            }
+            state.commands.push(command);
+            if (command.type === "thread.metadata.update" && command.limitRecovery)
+              state.current = {
+                ...state.current,
+                limitRecovery: updateLimitRecovery(
+                  state.current.limitRecovery,
+                  command.limitRecovery,
+                  command.commandId,
+                  command.limitRecoveryPolicyArm === true,
+                )!,
+              };
+            return Effect.succeed({ sequence: state.commands.length, storedEvents: [] });
+          },
+        ),
+    }),
+  );
+  const registry = input.provider
+    ? Layer.mock(Providers.ProviderRegistry)({
+        getProviders: Effect.sync(() => (state.snapshot ? [state.snapshot] : [])),
+        refreshInstance: () =>
+          Effect.gen(function* () {
+            state.refreshes += 1;
+            state.snapshot = input.provider!(yield* Clock.currentTimeMillis);
+            return [state.snapshot];
+          }),
+      })
+    : Layer.empty;
+  const provided = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+    effect.pipe(
+      Effect.provide(Layer.merge(deps, registry)),
+      Effect.provideService(MachineLimitHandoff, {
+        ...MachineLimitHandoff.defaultValue(),
+        localTurnBlocked: () =>
+          Effect.sync(() => {
+            input.beforeSend?.(state);
+            return state.handoffBlocked;
+          }),
+      }),
+    );
+  // A fresh sweep per call: nothing survives in memory, as after a restart.
+  const sweep = provided(Effect.flatMap(makeSweep, (run) => run()));
+  // One sweep kept across calls, as the scheduler runs it.
+  const running = provided(makeSweep).pipe(Effect.map((run) => provided(run())));
+  return { state, sweep, running };
+};

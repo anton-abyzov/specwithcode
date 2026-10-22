@@ -123,4 +123,16 @@ describe("UpdatePreferencesSection", () => {
     await render();
     expect(installButton()!.props.disabled).toBe(false);
   });
+
+  it("offers no Install now while an Update now run goes on", async () => {
+    bridge.getServiceUpdateState.mockImplementationOnce(
+      async () =>
+        ({
+          ...waiting,
+          run: { runId: "run-1", terminal: false, phase: "installing" },
+        }) as unknown as typeof waiting,
+    );
+    await render();
+    expect(installButton()).toBeUndefined();
+  });
 });

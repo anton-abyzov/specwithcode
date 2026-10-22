@@ -21,6 +21,17 @@
  * that continues threads after restarts continues them and queues the cancelled
  * messages again; elsewhere the person continues them by hand.
  *
+ * Every question and approval the drain closes is recorded first
+ * (`ServiceUpdateClosedQuestions`): before any turn is stopped, since an
+ * interrupt can cancel a request itself, then for any asked meanwhile at each
+ * stop round, at each look while turns wind down, before agent processes are
+ * closed and just before the leftovers are dismissed and cancelled. A record
+ * that cannot be written fails the drain (the hold ends) so nothing more is
+ * closed unrecorded. They are asked again
+ * after the update (`ServiceUpdateReopenQuestions`), and the preview names
+ * them by thread (`questions`, `approvals` on a `request` blocker) so the
+ * confirm dialog can say so before anything closes.
+ *
  * An automatic install waits for quiet instead, and a turn that only waits on a
  * person for an approval nobody gave would keep it waiting forever. While the
  * update agent waits for quiet, a sweep every `STALE_WAIT_SWEEP_MS` looks for
@@ -28,7 +39,9 @@
  * all approvals (`APPROVAL_REQUEST_KINDS`) older than `STALE_WAIT_MS` and that
  * thread has had no activity for as long, those threads are stopped the way the
  * drain stops them (`releaseStaleWaits`): the turn ends `interrupted`, so the
- * person continues it, and the request is cancelled with a reason. A thread
+ * person continues it, and the request is cancelled with a reason. Each such
+ * approval is recorded first and asked again after the restart that installs
+ * the update; a thread whose record cannot be written is left waiting. A thread
  * that waits on a real question or a sign-in is never stopped: it stays in
  * Needs you and keeps the install waiting. Just before each thread is stopped
  * its pending requests and latest event are read again, and a thread that
@@ -57,6 +70,7 @@ import { resolveProjectSettings } from "@specweave-studio/shared/projectSettings
 import * as Cause from "effect/Cause";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
+import * as Data from "effect/Data";
 import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -75,7 +89,18 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as TerminalManager from "../terminal/Manager.ts";
 import * as ServiceUpdateCleanup from "./ServiceUpdateCleanup.ts";
+import * as ClosedQuestions from "./ServiceUpdateClosedQuestions.ts";
 import * as ServiceUpdateHold from "./ServiceUpdateHold.ts";
+import { captureOpenRequests } from "./ServiceUpdateReopenQuestions.ts";
+
+/** The questions and approvals a drain is about to close could not be recorded. */
+export class ClosedQuestionsNotRecorded extends Data.TaggedError("ClosedQuestionsNotRecorded")<{
+  readonly cause?: unknown;
+}> {}
+
+/** What Update now says when it stopped because it could not record what it would close. */
+export const NOT_RECORDED_MESSAGE =
+  "Could not save the open questions and approvals before closing them, so the update stopped. Check that the disk has free space, then try again.";
 
 /** Run statuses update.py accepts; every other status keeps the service busy. */
 export const TERMINAL_RUN_STATUSES = [
@@ -184,6 +209,8 @@ export interface BlockerRow {
   readonly projectTitle: string | null;
   /** Set for `run` and `queued` rows. */
   readonly runId?: string | null;
+  /** Set for `request` rows: the runtime request's kind. */
+  readonly requestKind?: string | null;
 }
 
 const KIND_ORDER: Record<ServiceUpdateBlockerKind, number> = {
@@ -211,6 +238,20 @@ export function summarizeBlockers(rows: ReadonlyArray<BlockerRow>): Array<Servic
       threadTitle: row.threadTitle,
       projectId: row.projectId === null ? null : ProjectId.make(row.projectId),
       projectTitle: row.projectTitle,
+    });
+  }
+  // What a forced press closes and asks again: questions and approvals by thread.
+  for (const row of rows) {
+    if (row.kind !== "request" || row.requestKind === undefined) continue;
+    const key = `${row.kind}\u0000${row.threadId ?? ""}`;
+    const blocker = grouped.get(key);
+    if (blocker === undefined) continue;
+    const kind = row.requestKind ?? "";
+    grouped.set(key, {
+      ...blocker,
+      questions:
+        (blocker.questions ?? 0) + (ClosedQuestions.QUESTION_REQUEST_KINDS.has(kind) ? 1 : 0),
+      approvals: (blocker.approvals ?? 0) + (ClosedQuestions.APPROVAL_KINDS.has(kind) ? 1 : 0),
     });
   }
   return [...grouped.values()].toSorted(
@@ -274,28 +315,33 @@ export const makePartsWithTimings = (timings: ServiceUpdatePreparationTimings) =
     const hold = yield* Effect.serviceOption(ServiceUpdateHold.ServiceUpdateHold);
     const terminals = yield* Effect.serviceOption(TerminalManager.TerminalManager);
     const settings = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
+    // Absent in tools and tests that build the runtime alone: nothing is recorded then.
+    const closedQuestions = yield* Effect.serviceOption(
+      ClosedQuestions.ServiceUpdateClosedQuestions,
+    );
 
     const readBlockerRows = Effect.gen(function* () {
       const rows = yield* sql.unsafe<{
         readonly kind: ServiceUpdateBlockerKind;
         readonly thread_id: string | null;
         readonly run_id: string | null;
+        readonly request_kind: string | null;
       }>(`
         SELECT CASE WHEN status = 'queued' THEN 'queued' ELSE 'run' END AS kind,
-               thread_id, run_id
+               thread_id, run_id, NULL AS request_kind
           FROM orchestration_v2_projection_runs
          WHERE status NOT IN (${TERMINAL_RUNS_SQL})
            -- A held queue starts only when someone resumes it, so it is not work the
            -- update waits for, and it stays held across the restart (update.py agrees).
            AND NOT (status = 'queued' AND json_extract(payload_json, '$.queueHeld') IS 1)
         UNION ALL
-        SELECT 'request', thread_id, NULL FROM orchestration_v2_projection_runtime_requests
+        SELECT 'request', thread_id, NULL, kind FROM orchestration_v2_projection_runtime_requests
          WHERE status = 'pending'
         UNION ALL
-        SELECT 'effect', thread_id, NULL FROM orchestration_v2_effect_outbox
+        SELECT 'effect', thread_id, NULL, NULL FROM orchestration_v2_effect_outbox
          WHERE status IS NULL OR status NOT IN (${TERMINAL_EFFECTS_SQL})
         UNION ALL
-        SELECT 'session', thread_id, NULL FROM orchestration_v2_projection_provider_sessions
+        SELECT 'session', thread_id, NULL, NULL FROM orchestration_v2_projection_provider_sessions
          WHERE status IN (${WORKING_SESSIONS_SQL})
       `);
       const threadIds = [
@@ -332,6 +378,7 @@ export const makePartsWithTimings = (timings: ServiceUpdatePreparationTimings) =
         projectTitle:
           row.thread_id === null ? null : (names.get(row.thread_id)?.projectTitle ?? null),
         runId: row.run_id,
+        ...(row.kind === "request" ? { requestKind: row.request_kind } : {}),
       }));
     });
 
@@ -427,11 +474,58 @@ export const makePartsWithTimings = (timings: ServiceUpdatePreparationTimings) =
           ),
         );
 
-    /** Polls until no run (that `only` keeps) is active or the time is up; true when none is left. */
-    const awaitRunsSettled = (budgetMs: number, only: (run: ActiveRun) => boolean = () => true) =>
+    /**
+     * Records every question and approval still open (of `threadIds`, when
+     * given) that `known` does not hold yet, before anything closes it. Fails
+     * when the record cannot be read or written: nothing may then be closed.
+     */
+    const recordOpenRequests = (
+      known: Set<string>,
+      options: { readonly threadIds?: ReadonlyArray<string>; readonly afterRestart?: boolean } = {},
+    ): Effect.Effect<void, ClosedQuestionsNotRecorded> =>
+      Option.match(closedQuestions, {
+        onNone: () => Effect.void,
+        onSome: (store) =>
+          Effect.gen(function* () {
+            const entries = yield* captureOpenRequests({
+              sql,
+              threads,
+              ...(options.threadIds === undefined ? {} : { threadIds: options.threadIds }),
+              skip: (requestId) => known.has(requestId),
+            });
+            if (entries.length === 0) return;
+            const written = yield* store.record(
+              options.afterRestart === true
+                ? entries.map((entry) => ({ ...entry, reopenAfterRestart: true }))
+                : entries,
+            );
+            if (!written) return yield* new ClosedQuestionsNotRecorded({});
+            for (const entry of entries) known.add(entry.requestId);
+          }).pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning("service-update.prepare.record-questions-failed", { cause }).pipe(
+                Effect.andThen(Effect.fail(new ClosedQuestionsNotRecorded({ cause }))),
+              ),
+            ),
+          ),
+      });
+    const whileDraining = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
+      Option.isSome(closedQuestions) ? closedQuestions.value.draining(effect) : effect;
+
+    /**
+     * Polls until no run (that `only` keeps) is active or the time is up; true
+     * when none is left. `onLook` runs at each look (a drain records what was
+     * asked meanwhile, before the turn's end can cancel it).
+     */
+    const awaitRunsSettled = <E = never>(
+      budgetMs: number,
+      only: (run: ActiveRun) => boolean = () => true,
+      onLook: Effect.Effect<void, E> = Effect.void,
+    ) =>
       Effect.gen(function* () {
         const deadline = (yield* Clock.currentTimeMillis) + budgetMs;
         while (true) {
+          yield* onLook;
           const active = (yield* readActiveRuns).filter(only);
           if (active.length === 0) return true;
           if ((yield* Clock.currentTimeMillis) >= deadline) return false;
@@ -469,8 +563,11 @@ export const makePartsWithTimings = (timings: ServiceUpdatePreparationTimings) =
       nonce: string,
       deadline: number,
       only: (run: ActiveRun) => boolean = () => true,
+      record: Effect.Effect<void, ClosedQuestionsNotRecorded> = Effect.void,
     ) =>
       Effect.gen(function* () {
+        // Closing a process cancels what its turn asked: recorded first.
+        yield* record;
         const endRun = (run: ActiveRun) =>
           Effect.gen(function* () {
             // Close its process, then end the turn the way a completed Stop does.
@@ -502,7 +599,7 @@ export const makePartsWithTimings = (timings: ServiceUpdatePreparationTimings) =
           deadline,
           Effect.forEach(runs, endRun, { concurrency: "unbounded", discard: true }),
         );
-        yield* awaitRunsSettled(yield* within(deadline, timings.settleMs), only);
+        yield* awaitRunsSettled(yield* within(deadline, timings.settleMs), only, record);
       });
 
     /** Rollbacks the cancel stopped before they ran: their thread is told so it stops waiting. */
@@ -574,8 +671,15 @@ export const makePartsWithTimings = (timings: ServiceUpdatePreparationTimings) =
      * rest of its delegated work. Stop is the fallback for a run that cannot be
      * interrupted and for a request whose run has already ended.
      */
-    const stopRound = (nonce: string, touched: Set<string>, deadline: number) =>
+    const stopRound = (
+      nonce: string,
+      touched: Set<string>,
+      deadline: number,
+      record: Effect.Effect<void, ClosedQuestionsNotRecorded>,
+    ) =>
       Effect.gen(function* () {
+        // What a turn asked since the last round, before this round stops it.
+        yield* record;
         const rows = yield* readBlockerRows;
         yield* cancelQueued(nonce, rows, touched);
         const interrupted = new Set<string>();
@@ -611,8 +715,14 @@ export const makePartsWithTimings = (timings: ServiceUpdatePreparationTimings) =
             })
             .pipe(logged("stop-failed", { threadId }));
         }
-        if (!(yield* awaitRunsSettled(yield* within(deadline, timings.interruptGraceMs))))
-          yield* forceEndRuns(nonce, deadline);
+        if (
+          !(yield* awaitRunsSettled(
+            yield* within(deadline, timings.interruptGraceMs),
+            undefined,
+            record,
+          ))
+        )
+          yield* forceEndRuns(nonce, deadline, undefined, record);
       });
 
     /**
@@ -620,8 +730,14 @@ export const makePartsWithTimings = (timings: ServiceUpdatePreparationTimings) =
      * requests whose run already ended, session rows whose process is gone,
      * effects nobody will finish, and terminal shells.
      */
-    const clearLeftovers = (nonce: string, deadline: number) =>
+    const clearLeftovers = (
+      nonce: string,
+      deadline: number,
+      record: Effect.Effect<void, ClosedQuestionsNotRecorded>,
+    ) =>
       Effect.gen(function* () {
+        // Closing an agent process cancels what its turn asked: recorded first.
+        yield* record;
         // Agent processes, including any still busy after Stop, also block the helper.
         yield* boundedBy(
           deadline,
@@ -631,7 +747,7 @@ export const makePartsWithTimings = (timings: ServiceUpdatePreparationTimings) =
         );
         // Closing a busy session can end its turn through the provider's own events.
         if ((yield* readActiveRuns).length > 0)
-          yield* awaitRunsSettled(yield* within(deadline, timings.settleMs));
+          yield* awaitRunsSettled(yield* within(deadline, timings.settleMs), undefined, record);
         // A finished turn waits on its checkpoint; a restart would replay it, so it
         // gets what is left of the effect grace before the turn is closed without one.
         const captureUntil =
@@ -643,6 +759,8 @@ export const makePartsWithTimings = (timings: ServiceUpdatePreparationTimings) =
         yield* cleanup
           .finalizeStuckRuns({ nonce, reason: STOP_REASON })
           .pipe(logged("finalize-runs-failed", {}));
+        // Anything asked since the last record is recorded before it is closed.
+        yield* record;
         for (const request of yield* cleanup.listMessageModeRequests.pipe(
           Effect.orElseSucceed(() => []),
         )) {
@@ -671,7 +789,11 @@ export const makePartsWithTimings = (timings: ServiceUpdatePreparationTimings) =
         });
       });
 
-    const stopWork = (input: { readonly rounds: number; readonly deadline: number }) =>
+    const stopWork = (input: {
+      readonly rounds: number;
+      readonly deadline: number;
+      readonly record: Effect.Effect<void, ClosedQuestionsNotRecorded>;
+    }) =>
       Effect.gen(function* () {
         const nonce = yield* Clock.currentTimeMillis;
         const touched = new Set<string>();
@@ -679,11 +801,15 @@ export const makePartsWithTimings = (timings: ServiceUpdatePreparationTimings) =
         // An interrupted worker can wake its coordinator, which queues or starts a new
         // turn; later rounds stop that too. A held service defers those wakes.
         for (let round = 0; round < input.rounds; round += 1) {
-          yield* stopRound(`${nonce}:${round}`, touched, input.deadline);
+          yield* stopRound(`${nonce}:${round}`, touched, input.deadline, input.record);
           const left = yield* readBlockerRows;
           if (!left.some((row) => row.kind === "run" || row.kind === "queued")) break;
         }
-        const closedTerminals = yield* clearLeftovers(`${nonce}:cleanup`, input.deadline);
+        const closedTerminals = yield* clearLeftovers(
+          `${nonce}:cleanup`,
+          input.deadline,
+          input.record,
+        );
         const interruptedRuns = (yield* readRunStatuses(activeBefore)).filter(
           (row) => row.status === "interrupted",
         ).length;
@@ -737,9 +863,13 @@ export const makePartsWithTimings = (timings: ServiceUpdatePreparationTimings) =
         // Held before the drain, so nothing new starts behind it.
         yield* acquire(true);
         const deadline = (yield* Clock.currentTimeMillis) + timings.deadlineMs;
+        // Recorded before any turn stops (an interrupt can cancel its own
+        // request), and again before each step that can close one.
+        const known = new Set<string>();
         const drained = yield* stopWork({
           rounds: input.holding ? HELD_STOP_ROUNDS : STOP_ROUNDS,
           deadline,
+          record: recordOpenRequests(known),
         });
         // At least one look, even when the budget is spent.
         let rows = yield* awaitIdle(yield* within(deadline, timings.settleMs));
@@ -809,7 +939,7 @@ export const makePartsWithTimings = (timings: ServiceUpdatePreparationTimings) =
           yield* Effect.logWarning("service-update.hold.refused", {
             reason: "no service update is on its way",
           });
-        const { rows, drained } = yield* drain({ holding, reason }).pipe(
+        const { rows, drained } = yield* whileDraining(drain({ holding, reason })).pipe(
           // A drain that failed or was cut off (a closed window) installs nothing:
           // nobody would release the hold, so work may start again now.
           Effect.onError(() =>
@@ -842,7 +972,11 @@ export const makePartsWithTimings = (timings: ServiceUpdatePreparationTimings) =
                 Effect.andThen(
                   Effect.fail(
                     new ServerPrepareServiceUpdateError({
-                      message: "Could not check what is still running.",
+                      message: Cause.findErrorOption(cause).pipe(
+                        Option.exists((error) => error instanceof ClosedQuestionsNotRecorded),
+                      )
+                        ? NOT_RECORDED_MESSAGE
+                        : "Could not check what is still running.",
                     }),
                   ),
                 ),
@@ -873,7 +1007,8 @@ export const makePartsWithTimings = (timings: ServiceUpdatePreparationTimings) =
     /**
      * The threads that only wait on an approval, when nothing else blocks the
      * update: every blocker is a run, request or session of such a thread, each
-     * of its pending requests is an approval older than `STALE_WAIT_MS`, and
+     * of its pending requests is an approval (or a card asking a closed approval
+     * again) older than `STALE_WAIT_MS`, and
      * nothing was recorded on it for as long. Empty otherwise.
      */
     const selectStaleWaits = Effect.gen(function* () {
@@ -896,7 +1031,9 @@ export const makePartsWithTimings = (timings: ServiceUpdatePreparationTimings) =
         if (
           !requests.every(
             (request) =>
-              APPROVAL_REQUEST_KINDS.has(request.kind) &&
+              // A card that asks a closed approval again waits like that approval did.
+              (APPROVAL_REQUEST_KINDS.has(request.kind) ||
+                ClosedQuestions.isReopenedApprovalRequestId(request.runtime_request_id)) &&
               request.created_at !== null &&
               atOrBefore(request.created_at, cutoffMs),
           )
@@ -946,6 +1083,16 @@ export const makePartsWithTimings = (timings: ServiceUpdatePreparationTimings) =
             });
             continue;
           }
+          // Recorded before anything closes, and asked again after the restart
+          // that installs the update. Without a record the thread keeps waiting.
+          const recorded = yield* recordOpenRequests(new Set(), {
+            threadIds: [thread.threadId],
+            afterRestart: true,
+          }).pipe(
+            Effect.as(true),
+            Effect.orElseSucceed(() => false),
+          );
+          if (!recorded) continue;
           stale.push(thread.threadId);
           for (const run of activeRuns) {
             if (run.threadId !== thread.threadId) continue;

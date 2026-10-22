@@ -1,10 +1,3 @@
-import type {
-  DesktopUpdatePreferences,
-  DesktopUpdatePreferencesPatch,
-  StudioServiceUpdateState,
-  ManagedUpdateLocalConsentRequest,
-  ManagedUpdateStatus,
-} from "./managedUpdates.ts";
 export {
   DesktopUpdatePreferencesSchema,
   DesktopUpdatePreferencesPatchSchema,
@@ -17,13 +10,8 @@ export type {
   StudioServiceUpdateStatus,
   StudioServiceUpdateState,
 } from "./managedUpdates.ts";
-import type { DesktopUpdateChannel, DesktopUpdateState } from "./desktopUpdateState.ts";
-import type {
-  DesktopUpdateActionResult,
-  DesktopUpdateCheckResult,
-  DesktopUpdateInstallOptions,
-  StudioServiceInstallOptions,
-} from "./desktopUpdateActions.ts";
+import type { DesktopUpdateBridge } from "./desktopUpdateBridge.ts";
+export type { DesktopUpdateBridge } from "./desktopUpdateBridge.ts";
 export * from "./desktopUpdateState.ts";
 export * from "./desktopUpdateActions.ts";
 import * as Schema from "effect/Schema";
@@ -1072,7 +1060,7 @@ export type DesktopThreadNotificationInput = typeof DesktopThreadNotificationInp
 export const DESKTOP_HANDOFF_SLEEP_ACTION = "handoff-mode:sleep";
 export const DESKTOP_HANDOFF_MACHINE_ACTION = "handoff-mode:open-machine-dialog";
 
-export interface DesktopBridge {
+export interface DesktopBridge extends DesktopUpdateBridge {
   getAppBranding: () => DesktopAppBranding | null;
   /** Absolute path of a dropped or picked file; absent on desktop builds predating it. */
   getPathForFile?: (file: File) => string;
@@ -1308,47 +1296,6 @@ export interface DesktopBridge {
   onQuitShortcut?: (listener: (event: QuitShortcutHintEvent) => void) => () => void;
   getWindowFullscreenState: () => boolean;
   onWindowFullscreenStateChange: (listener: (fullscreen: boolean) => void) => () => void;
-  getUpdateState: () => Promise<DesktopUpdateState>;
-  setUpdateChannel: (channel: DesktopUpdateChannel) => Promise<DesktopUpdateState>;
-  checkForUpdate: () => Promise<DesktopUpdateCheckResult>;
-  /**
-   * Checks only when the last check is over a minute old and automatic checks
-   * are on; for opening the Settings page with the version row. Absent on
-   * desktop builds predating it.
-   */
-  checkForUpdateIfStale?: () => Promise<void>;
-  downloadUpdate: () => Promise<DesktopUpdateActionResult>;
-  installUpdate: (options?: DesktopUpdateInstallOptions) => Promise<DesktopUpdateActionResult>;
-  onUpdateState: (listener: (state: DesktopUpdateState) => void) => () => void;
-  /** Update preferences; absent on desktop builds predating them. */
-  requestManagedUpdateConsent?: (
-    input: ManagedUpdateLocalConsentRequest,
-  ) => Promise<ManagedUpdateStatus | null>;
-  getUpdatePreferences?: () => Promise<DesktopUpdatePreferences>;
-  setUpdatePreferences?: (
-    patch: DesktopUpdatePreferencesPatch,
-  ) => Promise<DesktopUpdatePreferences>;
-  /** Background updates of the Studio service installed on this computer. */
-  getServiceUpdateState?: () => Promise<StudioServiceUpdateState>;
-  checkServiceUpdate?: () => Promise<StudioServiceUpdateState>;
-  /**
-   * Asks the update agent to install now. `force` keeps it retrying until the
-   * drained service is quiet enough to snapshot, instead of waiting for quiet.
-   */
-  installServiceUpdate?: (
-    options?: StudioServiceInstallOptions,
-  ) => Promise<StudioServiceUpdateState>;
-  /**
-   * Withdraws a pending install request; absent on older desktop builds.
-   * Rejects when the withdrawal could not be saved.
-   */
-  cancelServiceUpdate?: () => Promise<StudioServiceUpdateState>;
-  /**
-   * Settings' Repair of this Mac's update agent (launchctl enable, bootstrap,
-   * kickstart), only on a person's click; absent on desktops without Repair.
-   */
-  repairServiceUpdateAgent?: () => Promise<StudioServiceUpdateState>;
-  onServiceUpdateState?: (listener: (state: StudioServiceUpdateState) => void) => () => void;
   /** Present when the desktop shell accepts `specweave-studio app` activation requests. */
   appActivation?: {
     setReady: (ready: boolean) => Promise<void>;

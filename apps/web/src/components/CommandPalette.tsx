@@ -634,6 +634,13 @@ export function CommandPalette({ children }: { children: ReactNode }) {
         void navigate({ to: "/usage" });
         return;
       }
+      if (command === "design.open") {
+        event.preventDefault();
+        event.stopPropagation();
+        setOpen(false);
+        void navigate({ to: "/design" });
+        return;
+      }
       const mode = overlayModeForCommand(command);
       if (mode === null) {
         return;
@@ -2564,6 +2571,18 @@ function OpenCommandPaletteDialog(props: {
     shortcutCommand: "usage.open",
     run: async () => {
       await navigate({ to: "/usage" });
+    },
+  });
+
+  actionItems.push({
+    kind: "action",
+    value: "action:design",
+    searchTerms: ["design", "designs", "canvas", "mockup", "prototype", "playground", "gallery"],
+    title: "Open Design",
+    icon: <PaletteIcon className={ITEM_ICON_CLASS} />,
+    shortcutCommand: "design.open",
+    run: async () => {
+      await navigate({ to: "/design" });
     },
   });
 

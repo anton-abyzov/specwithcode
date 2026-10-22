@@ -154,6 +154,40 @@ describe("agentVerdictForHold", () => {
   });
 });
 
+describe("installRequestOpen", () => {
+  const nowMs = Date.parse("2026-10-21T10:00:00.000Z");
+  const reading = (fields: Partial<Hold.AgentStateReading>): Hold.AgentStateReading => ({
+    status: "waiting-for-quiet",
+    message: null,
+    updatedAtMs: null,
+    handledInstallRequestAt: null,
+    installRequestedAt: "2026-10-21T09:58:00.000Z",
+    installHoldUntilMs: nowMs + 60_000,
+    ...fields,
+  });
+
+  it("is true while a request the agent has not finished with is within its time", () => {
+    expect(Hold.installRequestOpen(reading({}), nowMs)).toBe(true);
+    // Handled (installed, rolled back or given up), cancelled, or out of time: over.
+    expect(
+      Hold.installRequestOpen(
+        reading({ handledInstallRequestAt: "2026-10-21T09:58:00.000Z" }),
+        nowMs,
+      ),
+    ).toBe(false);
+    expect(Hold.installRequestOpen(reading({ installRequestedAt: undefined }), nowMs)).toBe(false);
+    expect(Hold.installRequestOpen(reading({ installHoldUntilMs: nowMs - 1 }), nowMs)).toBe(false);
+    // A request without a hold time counts for the hold's own time limit.
+    expect(Hold.installRequestOpen(reading({ installHoldUntilMs: null }), nowMs)).toBe(true);
+    expect(
+      Hold.installRequestOpen(
+        reading({ installHoldUntilMs: null }),
+        Date.parse("2026-10-21T09:58:00.000Z") + Hold.HOLD_TTL_MS,
+      ),
+    ).toBe(false);
+  });
+});
+
 describe("updatePendingFor", () => {
   const reading = (fields: Partial<Hold.AgentStateReading>): Hold.AgentStateReading => ({
     status: "up-to-date",
@@ -297,6 +331,46 @@ it.live("releases itself once the update agent handled this request", () =>
       status: "installed",
       updatedAt: yield* isoIn(2),
       handledInstallRequestAt: requested,
+    });
+    assert.isTrue(yield* awaitSelfRelease(hold));
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+// 0988: an agent with runs adds `runSupport` to state.json and the desktop
+// names the run in config.json (`installRunId`); this service still reads both.
+it.live("reads the state of an agent with update runs as before", () =>
+  Effect.gen(function* () {
+    const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const dir = yield* fs.makeTempDirectoryScoped({ prefix: "service-update-hold-run-" });
+    const statePath = path.join(dir, "state.json");
+    const configPath = path.join(dir, "config.json");
+    const hold = yield* holdAt(statePath, { pollMs: 10 });
+    yield* writeJson(statePath, {
+      status: "downloaded",
+      updatedAt: yield* isoIn(-60_000),
+      runSupport: 1,
+    });
+    yield* hold.acquire();
+    const requested = yield* isoIn(0);
+    yield* writeJson(configPath, {
+      installRequestedAt: requested,
+      installMode: "force",
+      installRunId: "0f0e7b0e-5f3a-4c43-9d1e-1c2b3a4d5e6f",
+    });
+    yield* writeJson(statePath, {
+      status: "installing",
+      updatedAt: yield* isoIn(1),
+      runSupport: 1,
+    });
+    yield* Effect.sleep(Duration.millis(60));
+    assert.isTrue(yield* hold.isHeld);
+    assert.isTrue(yield* hold.updatePending);
+    yield* writeJson(statePath, {
+      status: "installed",
+      updatedAt: yield* isoIn(2),
+      handledInstallRequestAt: requested,
+      runSupport: 1,
     });
     assert.isTrue(yield* awaitSelfRelease(hold));
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
@@ -733,4 +807,14 @@ describe("orchestrator admission while an install's gate is live", () => {
       yield* orchestrator.dispatch(message("after-gate"));
     }).pipe(Effect.provide(layerTest)),
   );
+});
+
+describe("automaticInstallUnderway", () => {
+  it("is true only while an install waits for quiet or installs", () => {
+    expect(Hold.automaticInstallUnderway({ status: "waiting-for-quiet" })).toBe(true);
+    expect(Hold.automaticInstallUnderway({ status: "installing" })).toBe(true);
+    // Installed, failed, refused, or nothing on its way: what its sweep closed is asked again.
+    for (const status of ["up-to-date", "error", "manual-required", "available", undefined])
+      expect(Hold.automaticInstallUnderway({ status })).toBe(false);
+  });
 });

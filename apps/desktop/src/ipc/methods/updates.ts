@@ -54,7 +54,9 @@ export const installUpdate = DesktopIpc.makeIpcMethod({
     const updates = yield* DesktopUpdates.DesktopUpdates;
     return options?.expectedVersion === undefined
       ? yield* updates.install
-      : yield* updates.installPrepared(options.expectedVersion);
+      : yield* updates.installPrepared(options.expectedVersion, {
+          serviceLacksRelease: options.serviceLacksRelease === true,
+        });
   }),
 });
 

@@ -114,33 +114,52 @@ function SidebarServerUpdateRow({
       data-testid="sidebar-server-update"
       className="flex min-h-7 items-center gap-1.5 rounded-lg px-2 text-2xs leading-4 text-muted-foreground [&_svg]:size-3.5 [&_svg]:shrink-0"
     >
-      <ComposerServerUpdateIcon status={state.status} />
-      <span className="min-w-0 flex-1 truncate">
-        {state.status !== "idle" ? (
-          <ComposerServerUpdateStatus state={state} serverLabel={serverLabel} />
-        ) : rowText === null ? null : (
-          <Tooltip>
-            <TooltipTrigger
-              render={
-                // The name truncates first so the versions stay readable.
-                <button
-                  type="button"
-                  aria-description={description}
-                  className="inline-flex max-w-full cursor-help gap-1 text-left"
+      {state.status !== "idle" ? (
+        <>
+          <ComposerServerUpdateIcon status={state.status} />
+          <span className="min-w-0 flex-1 truncate">
+            <ComposerServerUpdateStatus state={state} serverLabel={serverLabel} />
+          </span>
+        </>
+      ) : rowText === null ? null : (
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              // Two 14px lines, as tall as the one-line running and failed rows:
+              // the icon and the machine, then "1.0.20 → 1.0.25" from under the
+              // icon, so the version Update installs gets the icon's width too.
+              // The versions line is reversed so that, short of room, the current
+              // version wraps onto a second flex line that is clipped away whole;
+              // only then does the target truncate, with an ellipsis. Screen
+              // readers hear the label, which says "to"; the description is read
+              // once, on Update. The negative margin gives the focus ring room
+              // without moving the text.
+              <button
+                type="button"
+                aria-label={rowText.label}
+                className="-mx-0.5 grid min-w-0 flex-1 cursor-help grid-cols-[auto_minmax(0,1fr)] gap-x-1.5 rounded-sm px-0.5 text-left leading-3.5 outline-hidden focus-visible:ring-2 focus-visible:ring-ring"
+              >
+                <ComposerServerUpdateIcon status={state.status} />
+                <span data-testid="sidebar-server-update-name" className="truncate">
+                  {rowText.name}
+                </span>{" "}
+                <span
+                  data-testid="sidebar-server-update-versions"
+                  className="col-span-2 flex h-3.5 flex-row-reverse flex-wrap justify-end gap-x-1 overflow-hidden whitespace-nowrap"
                 >
-                  <span data-testid="sidebar-server-update-name" className="min-w-0 truncate">
-                    {rowText.name}
+                  <span data-testid="sidebar-server-update-current" className="order-1">
+                    {rowText.serverVersion}
                   </span>{" "}
-                  <span data-testid="sidebar-server-update-versions" className="shrink-0">
-                    {rowText.versions}
+                  <span data-testid="sidebar-server-update-target" className="min-w-0 truncate">
+                    → {rowText.clientVersion}
                   </span>
-                </button>
-              }
-            />
-            <TooltipPopup side="top">{description}</TooltipPopup>
-          </Tooltip>
-        )}
-      </span>
+                </span>
+              </button>
+            }
+          />
+          <TooltipPopup side="top">{description}</TooltipPopup>
+        </Tooltip>
+      )}
       {state.status !== "running" && actionable && mismatch ? (
         <ServerUpdateAction
           environmentId={environmentId}

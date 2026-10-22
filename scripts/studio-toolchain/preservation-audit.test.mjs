@@ -35,6 +35,10 @@ const runtimeHeader = "  apps/server:\n    dependencies:\n";
 const smolToml = "      smol-toml:\n        specifier: 1.8.0\n        version: 1.8.0\n";
 const museIntegrity =
   "sha512-/6pblfm1gN96L4c6DZpNIl4TQn+x/PQJ4H0xoqNyJ6Kb+HmSm4FdflydB2MM0iCnPz6Wx2l2r95mmrGDTtvVhw==";
+const postcssValueParserIntegrity =
+  "sha512-1NNCs6uurfkVbeXG4S8JFT9t19m45ICnif8zWLd5oPSZ50QnwMfK+H3jv408d4jw/7Bttv5axS5IiHoLaVNHeQ==";
+const pptxgenjsIntegrity =
+  "sha512-TeJISr8wouAuXw4C1F/mC33xbZs/FuEG6nH9FG1Zj+nuPcGMP5YRHl6X+j3HSUnS1f3at6k75ZZXPMZlA5Lj9A==";
 const patchedBuilder =
   "app-builder-lib: 26.15.6(patch_hash=4688f96749e3d76cf27bc535d874470bf264610a331db13644df7715d699acf1)(dmg-builder@26.15.6)(electron-builder-squirrel-windows@26.15.6)";
 
@@ -62,7 +66,11 @@ test("accepts the actual lock: identity map, exact SDK promotion and reviewed ch
   // Every upstream registry integrity is still present, in order, and the only
   // added ones are the reviewed registry records.
   const added = reviewed.filter((c) => c.integrity).map((c) => `integrity: ${c.integrity}}`);
-  assert.deepEqual(added, [`integrity: ${museIntegrity}}`]);
+  assert.deepEqual(added, [
+    `integrity: ${museIntegrity}}`,
+    `integrity: ${postcssValueParserIntegrity}}`,
+    `integrity: ${pptxgenjsIntegrity}}`,
+  ]);
   assert.deepEqual(
     integrities(current).filter((line) => !added.includes(line)),
     integrities(original),
@@ -278,6 +286,24 @@ test("reviewed patch entries pin their patch file bytes", () => {
   } finally {
     rmSync(temp, { recursive: true, force: true });
   }
+});
+
+test("accepts an override only when it cuts one dependency edge", () => {
+  const cut = reviewed.find((c) => c.parent[0] === "overrides:");
+  assert.ok(cut, "The pptxgenjs edge cuts are reviewed overrides");
+  for (const line of ["pptxgenjs>image-size: 2.0.4", "image-size: '-'", "'@a/b': 1.0.0"]) {
+    const changes = reviewed.map((c) => (c === cut ? { ...c, lines: [line] } : c));
+    assert.throws(
+      () => validateReviewedLockChanges({ ...record, changes }),
+      /overrides: is not reviewable/,
+      line,
+    );
+  }
+  const twoLines = reviewed.map((c) => (c === cut ? { ...c, lines: [...c.lines, c.lines[0]] } : c));
+  assert.throws(
+    () => validateReviewedLockChanges({ ...record, changes: twoLines }),
+    /not reviewable/,
+  );
 });
 
 const muse = reviewed.find((c) => c.integrity);

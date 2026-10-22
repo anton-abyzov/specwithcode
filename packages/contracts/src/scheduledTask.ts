@@ -142,6 +142,69 @@ const ScheduledTaskMonthlySchedule = Schema.Struct({
   description: "Run once a month on a day of the month at a local wall-clock time.",
 });
 
+const ONCE_AT_PATTERN =
+  /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.\d{1,9})?)?(?:Z|[+-](\d{2}):(\d{2}))$/;
+
+/**
+ * Whether `value` is an ISO 8601 date and time with an explicit offset or Z,
+ * naming a real calendar day and clock time. A naive local time is refused:
+ * it means a different instant on every host that reads it.
+ */
+export function isScheduledTaskOnceAt(value: string): boolean {
+  const match = ONCE_AT_PATTERN.exec(value);
+  if (match === null || !Number.isFinite(Date.parse(value))) return false;
+  const [year, month, day, hour, minute, second, offsetHour, offsetMinute] = match
+    .slice(1)
+    .map((part) => (part === undefined ? 0 : Number(part)));
+  // @effect-diagnostics-next-line globalDate:off -- Pure calendar validation of a stored string, outside any Effect.
+  const date = new Date(Date.UTC(year!, month! - 1, day!));
+  return (
+    date.getUTCFullYear() === year &&
+    date.getUTCMonth() === month! - 1 &&
+    date.getUTCDate() === day &&
+    hour! <= 23 &&
+    minute! <= 59 &&
+    second! <= 59 &&
+    offsetHour! <= 23 &&
+    offsetMinute! <= 59
+  );
+}
+
+const ONCE_AT_DESCRIPTION =
+  "ISO 8601 date and time with an offset or Z, such as 2026-10-22T09:30:00-04:00 or 2026-10-22T13:30:00Z.";
+
+/** As stored: any date and time JavaScript can read, so older rows still list. */
+const ScheduledTaskStoredOnceAt = TrimmedNonEmptyString.check(
+  Schema.makeFilter((value: string) => Number.isFinite(Date.parse(value)), {
+    expected: "an ISO 8601 date and time",
+  }),
+).annotate({ description: ONCE_AT_DESCRIPTION });
+
+/** As written: strict ISO 8601 with an offset or Z, such as 2026-10-22T09:30:00-04:00. */
+const ScheduledTaskOnceAt = TrimmedNonEmptyString.check(
+  Schema.makeFilter(isScheduledTaskOnceAt, {
+    expected: "an ISO 8601 date and time with an offset or Z, such as 2026-10-22T13:30:00Z",
+  }),
+).annotate({ description: ONCE_AT_DESCRIPTION });
+
+const onceScheduleFields = {
+  type: Schema.Literal("once").annotate({
+    description: "Select a single run at one date and time.",
+  }),
+};
+const ONCE_SCHEDULE_DESCRIPTION =
+  "Run once at a date and time, then turn off. A run the host missed (asleep or offline) fires as soon as it can, and one whose provider cannot start waits for it.";
+
+const ScheduledTaskOnceSchedule = Schema.Struct({
+  ...onceScheduleFields,
+  at: ScheduledTaskStoredOnceAt,
+}).annotate({ description: ONCE_SCHEDULE_DESCRIPTION });
+
+const ScheduledTaskUpsertOnceSchedule = Schema.Struct({
+  ...onceScheduleFields,
+  at: ScheduledTaskOnceAt,
+}).annotate({ description: ONCE_SCHEDULE_DESCRIPTION });
+
 /**
  * Read model for persisted schedules. Keep accepting legacy sub-minute rows so
  * users can list, disable, edit, or delete them after the write minimum changes.
@@ -152,9 +215,10 @@ export const ScheduledTaskSchedule = Schema.Union([
   ScheduledTaskWebhookSchedule,
   ScheduledTaskManualSchedule,
   ScheduledTaskMonthlySchedule,
+  ScheduledTaskOnceSchedule,
 ]).annotate({
   description:
-    "Structured trigger. Pass an object with type 'interval', 'fixed_time', 'webhook', 'manual' or 'monthly'.",
+    "Structured trigger. Pass an object with type 'interval', 'fixed_time', 'once', 'webhook', 'manual' or 'monthly'.",
 });
 export type ScheduledTaskSchedule = typeof ScheduledTaskSchedule.Type;
 
@@ -176,9 +240,10 @@ export const ScheduledTaskUpsertSchedule = Schema.Union([
   ScheduledTaskUpsertWebhookSchedule,
   ScheduledTaskManualSchedule,
   ScheduledTaskMonthlySchedule,
+  ScheduledTaskUpsertOnceSchedule,
 ]).annotate({
   description:
-    "Writable trigger. Pass an object with type 'interval', 'fixed_time', 'webhook', 'manual' (only when asked) or 'monthly'.",
+    "Writable trigger. Pass an object with type 'interval', 'fixed_time', 'once', 'webhook', 'manual' (only when asked) or 'monthly'.",
 });
 export type ScheduledTaskUpsertSchedule = typeof ScheduledTaskUpsertSchedule.Type;
 

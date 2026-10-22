@@ -172,7 +172,115 @@ function causeMessage(cause: unknown): string | undefined {
   return message;
 }
 
-function stringField(value: unknown, key: "message" | "code" | "detail"): string | undefined {
+// Session and adapter wrappers name internal ids (provider-session:…, run and
+// thread ids); makeProviderFailure translates them into curated guidance.
+const INTERNAL_ID_WRAPPER_TAGS: ReadonlySet<string> = new Set([
+  "ProviderSessionOpenError",
+  "ProviderAdapterOpenSessionError",
+  "ProviderAdapterCloseSessionError",
+  "ProviderAdapterResumeThreadError",
+  "ProviderAdapterEnsureThreadError",
+  "ProviderAdapterReadThreadSnapshotError",
+  "ProviderAdapterRollbackThreadError",
+  "ProviderAdapterForkThreadError",
+  "ProviderAdapterTurnStartError",
+  "ProviderAdapterSteerRunUnsupportedError",
+  "ProviderAdapterSteerRunError",
+  "ProviderAdapterInterruptError",
+  "ProviderAdapterRuntimeRequestResponseError",
+  "ProviderAdapterEventStreamError",
+]);
+
+// Causes whose text causeMessage rebuilds from a closed set instead of reading it.
+const CURATED_CAUSE_TAGS: ReadonlySet<string> = new Set([
+  "ProjectEnvironmentError",
+  "ContextHandoffBudgetError",
+  "ContextHandoffDeliveryUncertainError",
+]);
+
+// Errors whose message is deliberate, user-facing text; their raw cause (fetch,
+// JSON or fs errors that may name local paths) is never shown in its place.
+const REASON_BEARING_TAGS: ReadonlySet<string> = new Set([
+  "AcpRegistryError",
+  "AcpRegistryOperationError",
+  "ProviderSetupError",
+  "ClaudeBackgroundWorkBlocksQueryReplacementError",
+]);
+
+/** Studio's own id forms (IdAllocator), such as `provider-session:…` or `run:thread:…`. */
+const INTERNAL_ID_PATTERN =
+  /(?:^|[^\w-])(?:provider-session|provider-thread|provider-turn|run-attempt|run|thread|turn-item):[\w-]/u;
+
+const MAX_CAUSE_DEPTH = 16;
+
+/** Walks a cause chain, squashing Effect Causes, bounded and cycle-safe; stops on a throw. */
+function walkCauses(error: unknown, visit: (cause: unknown) => "stop" | void): void {
+  const seen = new Set<unknown>();
+  let cause = error;
+  for (let depth = 0; depth < MAX_CAUSE_DEPTH && cause != null && !seen.has(cause); depth++) {
+    seen.add(cause);
+    try {
+      if (Cause.isCause(cause)) {
+        cause = Cause.squash(cause);
+        continue;
+      }
+      if (visit(cause) === "stop" || typeof cause !== "object") return;
+      cause = (cause as Record<string, unknown>).cause;
+    } catch {
+      return;
+    }
+  }
+}
+
+const readableReason = (text: string | undefined): string | undefined => {
+  const trimmed = text?.trim();
+  return trimmed && !INTERNAL_ID_PATTERN.test(trimmed) ? trimmed : undefined;
+};
+
+/**
+ * The innermost readable reason in a start failure's cause chain: a plain
+ * string or an error message that names no internal ids, skipping the
+ * session and adapter wrappers. A reason-bearing error ends the walk with its
+ * own text. Undefined when only wrappers speak, or when a curated cause should
+ * be translated by makeProviderFailure instead.
+ */
+export function innermostCauseMessage(error: unknown): string | undefined {
+  let message: string | undefined;
+  walkCauses(error, (cause) => {
+    if (typeof cause === "string") {
+      message = readableReason(cause) ?? message;
+      return "stop";
+    }
+    const tag = stringField(cause, "_tag");
+    if (tag !== undefined && CURATED_CAUSE_TAGS.has(tag)) {
+      message = undefined;
+      return "stop";
+    }
+    if (tag !== undefined && REASON_BEARING_TAGS.has(tag)) {
+      message = readableReason(stringField(cause, "message")) ?? message;
+      return "stop";
+    }
+    if (tag === undefined || !INTERNAL_ID_WRAPPER_TAGS.has(tag)) {
+      message = readableReason(stringField(cause, "message")) ?? message;
+    }
+  });
+  return message;
+}
+
+/** The innermost string `code` in a cause chain, so a wrapped typed error keeps its own. */
+function causeCode(error: unknown): string | undefined {
+  let code: string | undefined;
+  walkCauses(error, (cause) => {
+    const candidate = stringField(cause, "code");
+    if (candidate !== undefined && candidate.trim().length > 0) code = candidate;
+  });
+  return code;
+}
+
+function stringField(
+  value: unknown,
+  key: "_tag" | "message" | "code" | "detail",
+): string | undefined {
   if (typeof value !== "object" || value === null) return undefined;
   try {
     const candidate = (value as Record<string, unknown>)[key];
@@ -266,7 +374,7 @@ export function makeProviderFailure(input: {
     (setup?.unavailable && failureClass !== "usage_limit"
       ? ORCHESTRATION_V2_PROVIDER_UNAVAILABLE_FAILURE_CODE
       : undefined) ??
-    stringField(input.cause, "code") ??
+    causeCode(input.cause) ??
     null;
   const code =
     rawCode === null ? null : boundedText(rawCode, MAX_PROVIDER_FAILURE_CODE_LENGTH) || null;

@@ -30,6 +30,7 @@ import {
   ConciergeBellIcon,
   LaptopIcon,
   LayoutGridIcon,
+  PaletteIcon,
   PlusIcon,
   SearchIcon,
   SlidersVerticalIcon,
@@ -149,6 +150,7 @@ import { canRenameChat, checkChatTitle } from "../../../studio/threadTitles";
 import { ModelBadgeMark, useProviderEntriesByEnvironment } from "./ModelBadge";
 import { SidebarChatRow } from "./SidebarChatRow";
 import {
+  designsProjectId,
   displayNameOf,
   ProjectRow,
   SidebarProjectList,
@@ -192,6 +194,10 @@ export default function StudioSidebar() {
   const actions = useThreadActions();
   const now = nowFromMinute(useNowMinute());
   const onOverview = useLocation({ select: (location) => location.pathname === "/" });
+  const onDesign = useLocation({
+    select: (location) =>
+      location.pathname === "/design" || location.pathname.startsWith("/design/"),
+  });
   const activeProjectKey = useParams({
     strict: false,
     select: (params) => (params as { projectKey?: string }).projectKey ?? null,
@@ -536,6 +542,13 @@ export default function StudioSidebar() {
     name: displayNameOf(group, displayedCheckouts.get(group.projectKey)),
     archived,
   }));
+  const designsFor = (group: SidebarProjectSnapshot) =>
+    designsProjectId(
+      group,
+      displayedCheckouts.get(group.projectKey),
+      primaryEnvironmentId,
+      scratchRootFor,
+    );
   const renameFor = (group: SidebarProjectSnapshot): ProjectRename => {
     const current = namedProjects.find((entry) => entry.projectKey === group.projectKey) ?? {
       projectKey: group.projectKey,
@@ -680,6 +693,7 @@ export default function StudioSidebar() {
                     onOpen={closeMobile}
                     onArchive={(archived) => void setGroupArchived(group, archived)}
                     rename={renameFor(group)}
+                    designsProjectId={designsFor(group)}
                   />
                 ))}
               </ul>
@@ -699,6 +713,15 @@ export default function StudioSidebar() {
                 </button>
               </Tip>
             )}
+            <Link
+              to="/design"
+              className="sws-side-row"
+              aria-current={onDesign ? "page" : undefined}
+              onClick={closeMobile}
+            >
+              <PaletteIcon aria-hidden />
+              <span className="sws-side-row-label">Design</span>
+            </Link>
           </div>
 
           <div className="sws-side-section" role="group" aria-labelledby="sws-side-projects">
@@ -734,6 +757,7 @@ export default function StudioSidebar() {
                   current: group.projectKey === activeProjectKey,
                   hint: nameHints.get(group.projectKey),
                   rename: renameFor(group),
+                  designsProjectId: designsFor(group),
                 })}
                 onOpen={closeMobile}
                 onMove={moveProjectTo}
@@ -789,6 +813,7 @@ export default function StudioSidebar() {
                         onOpen={closeMobile}
                         onArchive={(archived) => void setGroupArchived(group, archived)}
                         rename={renameFor(group)}
+                        designsProjectId={designsFor(group)}
                       />
                     ))}
                   </ul>

@@ -152,12 +152,25 @@ export const deliverContextHandoffs = Effect.fn("orchestrationV2.deliverContextH
   },
 );
 
+/** The stable failure code of a handoff that does not fit (see ContextOverflowRecoveryWorker). */
+export const CONTEXT_HANDOFF_BUDGET_FAILURE_CODE = "context_handoff_budget";
+
+/**
+ * How the failure message starts. A turn-start failure keeps the message of
+ * the error it wraps but not its code, so the recovery worker also reads this.
+ */
+export const CONTEXT_HANDOFF_BUDGET_MESSAGE_PREFIX =
+  "Insufficient context allowance for the provider handoff.";
+
 export class ContextHandoffBudgetError extends Schema.TaggedError<ContextHandoffBudgetError>()(
   "ContextHandoffBudgetError",
   {},
 ) {
+  get code() {
+    return CONTEXT_HANDOFF_BUDGET_FAILURE_CODE;
+  }
   override get message() {
-    return "Insufficient context allowance for the provider handoff. Compact the target conversation or use a larger-context model; the current request has not been truncated.";
+    return `${CONTEXT_HANDOFF_BUDGET_MESSAGE_PREFIX} SpecWithCode compacts the conversation and sends the request again once; if it still does not fit, use a larger-context model. The current request has not been truncated.`;
   }
 }
 export class ContextHandoffDeliveryUncertainError extends Schema.TaggedError<ContextHandoffDeliveryUncertainError>()(

@@ -182,19 +182,37 @@ describe("SidebarServerUpdate", () => {
     const [row] = rows();
     const description =
       "SpecWithCode on the server runs 1.0.65; this app runs 1.0.66. " +
-      "Update installs 1.0.66 on the server and restarts its server. " +
+      "Update installs 1.0.66 on the server and restarts it. " +
       "Threads running there stop for the restart. " +
       "Nothing else on the server changes: no settings, no other software.";
-    const [label, update] = tooltips(row!);
+    const rowTooltips = tooltips(row!);
+    const [label, update] = rowTooltips;
 
     expect(rows()).toHaveLength(1);
+    expect(rowTooltips).toHaveLength(2);
     expect(text(label!.trigger)).toBe("Server 1.0.65 → 1.0.66");
     expect(label!.popup).toBe(description);
-    expect(label!.trigger.props["aria-description"]).toBe(description);
     expect(update!.trigger).toBe(updateButton(row!));
     expect(update!.popup).toBe(description);
     expect(update!.trigger.props["aria-description"]).toBe(description);
     expect(text(row!)).not.toContain("Server update");
+  });
+
+  it("reads the row's versions with 'to' and its description once, on Update", () => {
+    server("only");
+    render();
+
+    const [row] = rows();
+    const [label] = tooltips(row!);
+    // Host elements only: Update's button carries the description, nothing else in the row.
+    const described = row!.findAll(
+      (node) => typeof node.type === "string" && node.props["aria-description"] !== undefined,
+    );
+
+    expect(label!.trigger.props["aria-label"]).toBe("Server 1.0.65 to 1.0.66");
+    expect(label!.trigger.props["aria-description"]).toBeUndefined();
+    expect(described).toHaveLength(1);
+    expect(described[0]).toBe(updateButton(row!));
   });
 
   it("names each machine and words its own update path", () => {
@@ -212,11 +230,12 @@ describe("SidebarServerUpdate", () => {
       "ministorm 1.0.65 → 1.0.66",
       "Update",
     ]);
+    expect(ministorm![0]!.trigger.props["aria-label"]).toBe("ministorm 1.0.65 to 1.0.66");
     for (const { popup } of ministorm!) {
       expect(popup).toBe(
         "SpecWithCode on ministorm runs 1.0.65; this app runs 1.0.66. " +
           "Update installs the newest SpecWithCode release on ministorm and relaunches the app there. " +
-          "Threads running there stop for the restart. " +
+          "Threads running there stop for the relaunch. " +
           "Nothing else on ministorm changes: no settings, no other software.",
       );
     }
@@ -224,6 +243,7 @@ describe("SidebarServerUpdate", () => {
       "Build box 1.0.64 → 1.0.66",
       "Update",
     ]);
+    expect(box![0]!.trigger.props["aria-label"]).toBe("Build box 1.0.64 to 1.0.66");
     for (const { popup } of box!) {
       expect(popup).toBe(
         "SpecWithCode on Build box runs 1.0.64; this app runs 1.0.66. " +
@@ -235,17 +255,44 @@ describe("SidebarServerUpdate", () => {
   });
 
   it.each([
-    { threadContinuation: true, setting: true, threads: "continue after the restart" },
-    { threadContinuation: true, setting: false, threads: "stop for the restart" },
-    { threadContinuation: false, setting: true, threads: "stop for the restart" },
-  ])(
-    "says threads $threads when continuation is $threadContinuation and the setting is $setting",
-    ({ threadContinuation, setting, threads }) => {
-      server("only", { serverUpdateThreadContinuation: threadContinuation });
+    {
+      selfUpdate: "boot-service",
+      threadContinuation: true,
+      setting: true,
+      threads: "continue after the restart",
+    },
+    {
+      selfUpdate: "boot-service",
+      threadContinuation: true,
+      setting: false,
+      threads: "stop for the restart",
+    },
+    {
+      selfUpdate: "boot-service",
+      threadContinuation: false,
+      setting: true,
+      threads: "stop for the restart",
+    },
+    {
+      selfUpdate: "desktop-managed",
+      threadContinuation: true,
+      setting: true,
+      threads: "continue after the relaunch",
+    },
+  ] as const)(
+    "says threads $threads on a $selfUpdate server when continuation is $threadContinuation and the setting is $setting",
+    ({ selfUpdate, threadContinuation, setting, threads }) => {
+      server("only", {
+        serverSelfUpdate: selfUpdate,
+        desktopAppUpdate: true,
+        serverUpdateThreadContinuation: threadContinuation,
+      });
       state.continueThreadsAfterServerUpdate = setting;
       render();
 
-      for (const { popup } of tooltips(rows()[0]!)) {
+      const rowTooltips = tooltips(rows()[0]!);
+      expect(rowTooltips).toHaveLength(2);
+      for (const { popup } of rowTooltips) {
         expect(popup).toContain(` Threads running there ${threads}. `);
       }
     },

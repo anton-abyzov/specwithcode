@@ -34,6 +34,7 @@ import * as ElectronUpdater from "../electron/ElectronUpdater.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as IpcChannels from "../ipc/channels.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
+import { type LocalServiceProbe, makeAppActivationControl } from "./appActivationControl.ts";
 import { normalizeDesktopUpdateReleaseNotes } from "./releaseNotes.ts";
 import { resolveDefaultDesktopUpdateChannel } from "./updateChannels.ts";
 import { updateTokenResolver } from "./updateToken.ts";
@@ -284,9 +285,18 @@ export class DesktopUpdates extends Context.Service<
     readonly install: Effect.Effect<DesktopUpdateActionResult>;
     readonly installPrepared: (
       expectedVersion: string,
+      options?: { readonly serviceLacksRelease?: boolean },
     ) => Effect.Effect<DesktopPreparedUpdateInstallResult>;
     /** Re-reads the saved update preferences and applies them to the updater. */
     readonly applyPreferences: Effect.Effect<void>;
+    /**
+     * How to read the local service: the app swaps itself for a downloaded
+     * release only once that service runs it (appActivationGate.ts). Without
+     * a probe, or when it returns null, there is no service to wait for.
+     */
+    readonly registerLocalServiceProbe: (probe: LocalServiceProbe) => Effect.Effect<void>;
+    /** Reads the local service again and applies the swap gate. */
+    readonly refreshActivation: Effect.Effect<void>;
   }
 >()("@specweave-studio/desktop/updates/DesktopUpdates") {}
 
@@ -689,6 +699,9 @@ export const make = Effect.gen(function* () {
 
     return yield* Effect.gen(function* () {
       yield* setState(reduceDesktopUpdateStateOnDownloadStart(state));
+      // Squirrel stages the download for install-on-quit if the flag is set
+      // when it finishes: set it now, for this version.
+      yield* Effect.suspend(() => activation.applyActivation);
       yield* electronUpdater.setDisableDifferentialDownload(
         isArm64HostRunningIntelBuild(environment.runtimeInfo),
       );
@@ -798,13 +811,26 @@ export const make = Effect.gen(function* () {
     }),
   );
 
-  const applyInstallPreference = Effect.gen(function* () {
-    if (!(yield* Ref.get(updaterConfiguredRef))) return;
-    const settings = yield* desktopSettings.get;
-    // The app installs a downloaded update when it quits; the user can also
-    // restart into it from Settings at any time.
-    yield* electronUpdater.setAutoInstallOnAppQuit(settings.updatePreferences.installAutomatically);
+  // Install-on-quit follows the saved preference and the app swap gate.
+  const activation = makeAppActivationControl({
+    updaterConfigured: Ref.get(updaterConfiguredRef),
+    getState: Ref.get(updateStateRef),
+    updateState,
+    installAutomatically: desktopSettings.get.pipe(
+      Effect.map((settings) => settings.updatePreferences.installAutomatically),
+    ),
+    setAutoInstallOnAppQuit: electronUpdater.setAutoInstallOnAppQuit,
+    backgroundScope: Ref.get(backgroundScopeRef),
+    checkForUpdates: (reason) => checkForUpdates(reason),
+    startAutomaticDownload,
+    tryStartDownload: tryStartUpdateAction("download"),
+    finishDownload: finishUpdateAction("download"),
+    downloadUpdate: electronUpdater
+      .setDisableDifferentialDownload(isArm64HostRunningIntelBuild(environment.runtimeInfo))
+      .pipe(Effect.andThen(electronUpdater.downloadUpdate)),
+    downloadStallLimit: DOWNLOAD_STALL_LIMIT,
   });
+  const applyInstallPreference = activation.applyActivation;
 
   // Tells the primary backend that the coming stop is an update restart, so it
   // keeps its managed tunnel for the backend the updated app starts. Best
@@ -868,9 +894,17 @@ export const make = Effect.gen(function* () {
     );
   });
 
-  const installDownloadedUpdate = (expectedVersion?: string) =>
+  const installDownloadedUpdate = (expectedVersion?: string, serviceLacksRelease = false) =>
     Effect.scoped(
       Effect.gen(function* () {
+        if (yield* activation.refusesInstall(expectedVersion, serviceLacksRelease)) {
+          return {
+            accepted: false,
+            completed: false,
+            failed: false,
+            reason: "service-behind" as const,
+          };
+        }
         const actionCompletions = yield* PubSub.subscribe(finishedUpdateActions);
         let admission: "admitted" | "refused" | "wait-for-check" = "wait-for-check";
         let refusal: DesktopUpdateRefusalReason = "busy";
@@ -977,6 +1011,7 @@ export const make = Effect.gen(function* () {
 
   const installWithExpectedVersion = Effect.fn("desktop.updates.install")(function* (
     expectedVersion?: string,
+    serviceLacksRelease = false,
   ) {
     if (yield* Ref.get(desktopState.quitting)) {
       return {
@@ -992,7 +1027,7 @@ export const make = Effect.gen(function* () {
       completed: boolean;
       failed: boolean;
       reason?: DesktopUpdateRefusalReason;
-    } = yield* installDownloadedUpdate(expectedVersion);
+    } = yield* installDownloadedUpdate(expectedVersion, serviceLacksRelease);
     return {
       accepted: result.accepted,
       completed: result.completed,
@@ -1217,6 +1252,7 @@ export const make = Effect.gen(function* () {
           const state = yield* Ref.get(updateStateRef);
           yield* setState(reduceDesktopUpdateStateOnDownloadComplete(state, info.version));
           yield* logUpdaterInfo("update downloaded", { version: info.version });
+          yield* activation.applyActivation;
           yield* announceUpdate("downloaded", info.version);
           // Downloaded is done, even when the updater's download promise never
           // settles: release the updater so a restart can install it.
@@ -1277,9 +1313,7 @@ export const make = Effect.gen(function* () {
       yield* Ref.set(backgroundScopeRef, Option.some(yield* Effect.scope));
 
       yield* electronUpdater.setAutoDownload(false);
-      yield* electronUpdater.setAutoInstallOnAppQuit(
-        settings.updatePreferences.installAutomatically,
-      );
+      yield* activation.applyActivation;
       yield* applyAutoUpdaterChannel(settings.updateChannel);
       yield* electronUpdater.setDisableDifferentialDownload(
         isArm64HostRunningIntelBuild(environment.runtimeInfo),
@@ -1381,9 +1415,12 @@ export const make = Effect.gen(function* () {
       };
     }).pipe(Effect.withSpan("desktop.updates.download")),
     install: installWithExpectedVersion(),
-    installPrepared: (expectedVersion) => installWithExpectedVersion(expectedVersion),
+    installPrepared: (expectedVersion, options) =>
+      installWithExpectedVersion(expectedVersion, options?.serviceLacksRelease === true),
     checkIfStale,
     applyPreferences: applyInstallPreference,
+    registerLocalServiceProbe: activation.registerProbe,
+    refreshActivation: activation.applyActivation,
   });
 });
 

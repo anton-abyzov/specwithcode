@@ -1,5 +1,7 @@
 import * as Schema from "effect/Schema";
 
+import { StudioServiceUpdateStatusSchema } from "./managedUpdates.ts";
+
 /** The desktop app's own update state, as its main process reports it to the window. */
 
 export type DesktopUpdateStatus =
@@ -50,7 +52,38 @@ export interface DesktopUpdateState {
    * reports its plain package version, which may not be released yet.
    */
   productionBuild?: boolean;
+  /**
+   * Whether the downloaded release may replace the app now. The local service
+   * updates first: until it runs this release, the app neither installs on
+   * quit nor restarts into it. Absent from older desktops.
+   */
+  swapGate?: DesktopAppSwapGate;
 }
+
+/**
+ * `closed` holds the app swap only; the app keeps running against the older
+ * service. `service-unknown`: a managed service exists but its version could
+ * not be read. `service-manual`: the service needs a manual step, so the app
+ * no longer waits for it. `service-lacks-release`: a press installs the app
+ * alone because the service's agent has no such release to install.
+ */
+export const DesktopAppSwapGateSchema = Schema.Struct({
+  gate: Schema.Literals(["open", "closed"]),
+  reason: Schema.Literals([
+    "no-local-service",
+    "not-a-release",
+    "service-current",
+    "service-behind",
+    "service-unknown",
+    "service-manual",
+    "service-lacks-release",
+  ]),
+  targetVersion: Schema.NullOr(Schema.String),
+  serviceVersion: Schema.NullOr(Schema.String),
+  serviceStatus: Schema.NullOr(StudioServiceUpdateStatusSchema),
+  serviceMessage: Schema.NullOr(Schema.String),
+});
+export type DesktopAppSwapGate = typeof DesktopAppSwapGateSchema.Type;
 
 export interface DesktopUpdateReleaseNote {
   version: string;
@@ -82,4 +115,5 @@ export const DesktopUpdateStateSchema = Schema.Struct({
   errorContext: Schema.NullOr(Schema.Literals(["check", "download", "install"])),
   canRetry: Schema.Boolean,
   productionBuild: Schema.optionalKey(Schema.Boolean),
+  swapGate: Schema.optionalKey(DesktopAppSwapGateSchema),
 });

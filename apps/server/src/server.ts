@@ -40,6 +40,8 @@ import * as NodePtyAdapter from "./terminal/NodePtyAdapter.ts";
 import * as PullRequestHttp from "./pullRequest/http.ts";
 import * as PullRequestProviderRegistry from "./pullRequest/PullRequestProviderRegistry.ts";
 import * as PullRequestService from "./pullRequest/PullRequestService.ts";
+import * as DesignRpc from "./design/DesignRpc.ts";
+import { DesignSystemProposals } from "./design/systems/DesignSystemService.ts";
 import * as SqlitePersistence from "./persistence/Sqlite.ts";
 import * as PullRequestFilesViewed from "./persistence/PullRequestFilesViewed.ts";
 import * as ServerLifecycleEvents from "./serverLifecycleEvents.ts";
@@ -61,6 +63,7 @@ import * as ForgejoCli from "./sourceControl/ForgejoCli.ts";
 import * as TextGeneration from "./textGeneration/TextGeneration.ts";
 import * as ProviderInstanceRegistryHydration from "./provider/ProviderInstanceRegistryHydration.ts";
 import * as TerminalManager from "./terminal/Manager.ts";
+import * as ServiceUpdateClosedQuestions from "./serviceUpdate/ServiceUpdateClosedQuestions.ts";
 import * as ServiceUpdateHold from "./serviceUpdate/ServiceUpdateHold.ts";
 import * as McpHttpServer from "./mcp/McpHttpServer.ts";
 import * as McpSessionRegistry from "./mcp/McpSessionRegistry.ts";
@@ -814,6 +817,9 @@ const layerRuntimeDependencies = layerRuntimeCoreDependencies.pipe(
   // One hold for the whole service: the update drain sets it, and the
   // orchestrator, schedulers, pollers and terminals read it.
   Layer.provideMerge(ServiceUpdateHold.layer),
+  // What a forced update closed, so it is asked again after the update: the drain
+  // records it, the reopen worker and restart continuations read it.
+  Layer.provideMerge(ServiceUpdateClosedQuestions.layer),
   // The desktop app's host stream and the computer_* MCP tools share one broker. Its RPC
   // handlers live here because connections read handlers from the request context, and
   // registering them in ws.ts pushed its handler graph past TypeScript's instantiation limit.
@@ -878,6 +884,9 @@ const layerMakeRoutes = Layer.mergeAll(
   // Both transports consume the same service instance, so caches single-flight across clients
   // and mutations observed on WebSocket invalidate patches subsequently read over HTTP.
   Layer.provide(layerPullRequestService),
+  Layer.provide(DesignRpc.layerWsHandlers),
+  // Design-system proposals made over MCP are the ones Settings reviews over WebSocket.
+  Layer.provide(DesignSystemProposals.layer),
   // The relay route, the Settings RPCs and the chrome_* MCP tools share one hub.
   Layer.provide(BrowserExtension.layer),
   // The stream route and the WebSocket RPCs share one browser.

@@ -59,6 +59,8 @@ const declaredFailure = (result: McpSchema.CallToolResult) => {
 import { PullRequestsToolkit } from "./pullRequests/tools.ts";
 import { HtmlToolkit } from "./html/tools.ts";
 import { ProjectKnowledgeToolkit } from "./projectKnowledge/tools.ts";
+import { DesignScreenshotToolkit, DesignToolkit } from "./design/tools.ts";
+import { DesignSystemsToolkit } from "./designSystems/tools.ts";
 import {
   resolveStudioMcpToolDefinition,
   resolveStudioMcpToolPresentation,
@@ -83,6 +85,9 @@ it("publishes unique tool names with reference-free object-root inputs", () => {
     PullRequestsToolkit,
     HtmlToolkit,
     ProjectKnowledgeToolkit,
+    DesignToolkit,
+    DesignScreenshotToolkit,
+    DesignSystemsToolkit,
   ]) {
     for (const tool of Object.values(toolkit.tools)) {
       expect(names.has(tool.name)).toBe(false);

@@ -59,8 +59,12 @@ const server = await createServer({
     },
     react(),
   ],
-  // The client sees itself as 1.0.25, so a 1.0.20 server is behind it.
-  define: { "import.meta.env.APP_VERSION": JSON.stringify("1.0.25") },
+  // The client sees itself as 1.0.25, so a 1.0.20 server is behind it; in the nightly
+  // scene it is a nightly build, so a 1.0.66 server is. In dev, Vite evaluates this
+  // expression in the page when a module reads import.meta.env.
+  define: {
+    "import.meta.env.APP_VERSION": `(new URLSearchParams(location.search).get("scene") === "server-nightly" ? ${JSON.stringify("1.0.67-nightly.20261021.882")} : ${JSON.stringify("1.0.25")})`,
+  },
   resolve: { alias: { "~": NodePath.join(app, "src") } },
   server: { host: "127.0.0.1", port, strictPort: true, fs: { allow: [repo] } },
 });

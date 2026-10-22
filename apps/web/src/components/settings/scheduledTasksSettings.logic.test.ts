@@ -17,6 +17,8 @@ import { resolveSettingsScope, type SettingsScopeSearch } from "./settingsScope"
 
 import { deriveProviderInstanceEntries } from "../../providerInstances";
 import {
+  defaultOnceAt,
+  onceAtIso,
   scheduledTaskDefaultModel,
   matchesScheduledTaskScope,
   scheduleFromDraft,
@@ -225,6 +227,51 @@ describe("editing scheduled task branch settings", () => {
       workspaceStrategy: { type: "worktree", baseRef: "release", startFromOrigin },
     });
     expect(draft.startFromOrigin).toBe(startFromOrigin);
+  });
+});
+
+describe("one-time scheduled tasks", () => {
+  it("edits the run's moment in local time and saves it as an ISO date-time", () => {
+    const at = new Date(2030, 9, 22, 7, 3).toISOString();
+    const draft = taskToDraft({ ...legacyTask, schedule: { type: "once", at } });
+    expect(draft.scheduleMode).toBe("once");
+    expect(draft.onceAt).toBe("2030-10-22T07:03");
+    expect(scheduleFromDraft(draft)).toEqual({ type: "once", at });
+  });
+
+  it("saves an unchanged time exactly as it was, seconds and all", () => {
+    const at = new Date(2030, 9, 22, 7, 3, 41, 250).toISOString();
+    const draft = taskToDraft({ ...legacyTask, schedule: { type: "once", at } });
+    expect(draft.onceAt).toBe("2030-10-22T07:03");
+    expect(scheduleFromDraft(draft)).toEqual({ type: "once", at });
+    // A title edit leaves the time alone too.
+    expect(scheduleFromDraft({ ...draft, title: "Renamed" })).toEqual({ type: "once", at });
+  });
+
+  it("saves the input's time once the person changes it", () => {
+    const at = new Date(2030, 9, 22, 7, 3, 41).toISOString();
+    const draft = taskToDraft({ ...legacyTask, schedule: { type: "once", at } });
+    expect(scheduleFromDraft({ ...draft, onceAt: "2030-10-22T09:15" })).toEqual({
+      type: "once",
+      at: new Date(2030, 9, 22, 9, 15).toISOString(),
+    });
+  });
+
+  it("rewrites a stored time without an offset as an ISO time the server accepts", () => {
+    const draft = taskToDraft({
+      ...legacyTask,
+      schedule: { type: "once", at: "2030-10-22T07:03" },
+    });
+    expect(scheduleFromDraft(draft)).toEqual({
+      type: "once",
+      at: new Date(2030, 9, 22, 7, 3).toISOString(),
+    });
+  });
+
+  it("offers the next whole hour and refuses an empty time", () => {
+    expect(defaultOnceAt(new Date(2030, 9, 22, 7, 3))).toBe("2030-10-22T08:00");
+    expect(onceAtIso("")).toBeNull();
+    expect(onceAtIso("not a date")).toBeNull();
   });
 });
 

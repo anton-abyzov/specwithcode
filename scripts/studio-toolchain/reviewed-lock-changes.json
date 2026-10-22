@@ -259,6 +259,121 @@
       "commit": "dd3426484f69f0e472dbc6dd2e30413b6297adbf",
       "pr": 469,
       "reason": "With the relay no longer depending on @effect/sql-pg directly, pnpm marks its snapshot optional; it stays only as an optional peer of drizzle-orm."
+    },
+    {
+      "op": "add",
+      "parent": ["importers:", "apps/server:", "dependencies:"],
+      "lines": ["jsonc-parser:", "  specifier: 3.3.1", "  version: 3.3.1"],
+      "commit": "64316bf4f428ad3bd20682c13449f05e163bf025",
+      "pr": 511,
+      "reason": "Design-system import reads Weave JSONC token files with source offsets; jsonc-parser@3.3.1 (MIT) is already a pinned upstream package."
+    },
+    {
+      "op": "add",
+      "parent": ["importers:", "apps/server:", "dependencies:"],
+      "lines": ["postcss:", "  specifier: 8.5.28", "  version: 8.5.28"],
+      "commit": "64316bf4f428ad3bd20682c13449f05e163bf025",
+      "pr": 511,
+      "reason": "Design-system import parses CSS custom properties from project stylesheets; postcss@8.5.28 (MIT) is already a pinned upstream package."
+    },
+    {
+      "op": "add",
+      "parent": ["importers:", "apps/server:", "dependencies:"],
+      "lines": ["postcss-value-parser:", "  specifier: 4.2.0", "  version: 4.2.0"],
+      "commit": "64316bf4f428ad3bd20682c13449f05e163bf025",
+      "pr": 511,
+      "reason": "Design-system import splits CSS values (var() references, colors) deterministically; postcss-value-parser@4.2.0 is MIT with no dependencies."
+    },
+    {
+      "op": "add",
+      "parent": ["importers:", "apps/server:", "dependencies:"],
+      "lines": [
+        "typescript-legacy:",
+        "  specifier: npm:typescript@6.0.3",
+        "  version: typescript@6.0.3"
+      ],
+      "commit": "64316bf4f428ad3bd20682c13449f05e163bf025",
+      "pr": 511,
+      "reason": "Design-system import reads TypeScript theme objects with the TypeScript compiler API, which TypeScript 7 (native) does not ship; aliased to the already pinned typescript@6.0.3."
+    },
+    {
+      "op": "add",
+      "parent": ["importers:", "apps/server:", "devDependencies:"],
+      "lines": ["typescript:", "  specifier: 'catalog:'", "  version: 7.0.2"],
+      "commit": "518b2844dc986efd81feb027093418fbd16f0edd",
+      "pr": 511,
+      "reason": "Keeps the server's tsc bin on the catalog TypeScript 7 so the aliased typescript-legacy package does not shadow it in apps/server/node_modules/.bin."
+    },
+    {
+      "op": "add",
+      "parent": ["packages:"],
+      "package": "postcss-value-parser@4.2.0",
+      "integrity": "sha512-1NNCs6uurfkVbeXG4S8JFT9t19m45ICnif8zWLd5oPSZ50QnwMfK+H3jv408d4jw/7Bttv5axS5IiHoLaVNHeQ==",
+      "lines": [
+        "postcss-value-parser@4.2.0:",
+        "  resolution: {integrity: sha512-1NNCs6uurfkVbeXG4S8JFT9t19m45ICnif8zWLd5oPSZ50QnwMfK+H3jv408d4jw/7Bttv5axS5IiHoLaVNHeQ==}"
+      ],
+      "commit": "64316bf4f428ad3bd20682c13449f05e163bf025",
+      "pr": 511,
+      "reason": "Registry record of postcss-value-parser@4.2.0 (MIT, no dependencies), added for the design-system CSS value parser."
+    },
+    {
+      "op": "add",
+      "parent": ["snapshots:"],
+      "lines": ["postcss-value-parser@4.2.0: {}"],
+      "commit": "64316bf4f428ad3bd20682c13449f05e163bf025",
+      "pr": 511,
+      "reason": "Snapshot of postcss-value-parser@4.2.0, which has no dependencies or peers."
+    },
+    {
+      "op": "add",
+      "parent": ["importers:", "apps/server:", "dependencies:"],
+      "lines": ["pptxgenjs:", "  specifier: 4.0.1", "  version: 4.0.1"],
+      "reason": "Design PPTX export (0975) writes decks with pptxgenjs@4.0.1 (MIT, gitbrent/PptxGenJS), bundled into the server.",
+      "commit": "168cbd47aecc359eefe47fb6f36f95cbd96900d9",
+      "pr": 529
+    },
+    {
+      "op": "add",
+      "parent": ["packages:"],
+      "package": "pptxgenjs@4.0.1",
+      "integrity": "sha512-TeJISr8wouAuXw4C1F/mC33xbZs/FuEG6nH9FG1Zj+nuPcGMP5YRHl6X+j3HSUnS1f3at6k75ZZXPMZlA5Lj9A==",
+      "lines": [
+        "pptxgenjs@4.0.1:",
+        "  resolution: {integrity: sha512-TeJISr8wouAuXw4C1F/mC33xbZs/FuEG6nH9FG1Zj+nuPcGMP5YRHl6X+j3HSUnS1f3at6k75ZZXPMZlA5Lj9A==}"
+      ],
+      "reason": "Registry record of pptxgenjs@4.0.1 (MIT), the PPTX writer for design and slide exports.",
+      "commit": "168cbd47aecc359eefe47fb6f36f95cbd96900d9",
+      "pr": 529
+    },
+    {
+      "op": "add",
+      "parent": ["snapshots:"],
+      "lines": [
+        "pptxgenjs@4.0.1:",
+        "  dependencies:",
+        "    '@types/node': 24.12.4",
+        "    jszip: 3.10.1"
+      ],
+      "reason": "Snapshot of pptxgenjs@4.0.1; @types/node@24.12.4 and jszip@3.10.1 are already pinned upstream packages, and its unused image-size and https edges are cut by overrides.",
+      "commit": "168cbd47aecc359eefe47fb6f36f95cbd96900d9",
+      "pr": 529
+    },
+    {
+      "op": "add",
+      "parent": ["overrides:"],
+      "lines": ["pptxgenjs>image-size: '-'"],
+      "commit": "7cc4119124c4f195556cede29c9889963afb5f3c",
+      "pr": 529,
+      "reason": "pptxgenjs@4.0.1 never imports image-size (only commented-out code mentions require('sizeof')); cutting the edge keeps image-size 1.x and GHSA-5p2g-fcmc-qvqq / GHSA-w3rx-r6r6-pgpr out of the lock."
+    },
+    {
+      "op": "add",
+      "parent": ["overrides:"],
+      "lines": ["pptxgenjs>https: '-'"],
+      "commit": "7cc4119124c4f195556cede29c9889963afb5f3c",
+      "pr": 529,
+      "reason": "pptxgenjs@4.0.1 lists https@1.0.0, an empty placeholder package, but imports node:https; cutting the edge keeps the placeholder out of the lock."
     }
   ]
 }

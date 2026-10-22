@@ -20,6 +20,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 
 import {
+  innermostCauseMessage,
   makeProviderFailure,
   providerFailureDiagnostics,
   makeProviderFailureTurnItem,
@@ -35,6 +36,9 @@ import {
   ProviderAdapterOpenSessionError,
   ProviderAdapterTurnStartError,
 } from "./ProviderAdapter.ts";
+import { ProviderSessionOpenError } from "./ProviderSessionManager.ts";
+import { AcpRegistryError } from "../provider/acp/AcpRegistrySupport.ts";
+import * as EffectAcpErrors from "@specweave-studio/effect-acp/errors";
 
 it("redacts credentials and URL secrets from provider failures", () => {
   const failure = makeProviderFailure({
@@ -275,6 +279,119 @@ it("does not expose defect text nested inside a known error category", () => {
   assert.notInclude(failure.message, "user:pass");
   assert.notInclude(failure.message, "token=secret");
   assert.isBelow(failure.message.length, MAX_PROVIDER_FAILURE_MESSAGE_LENGTH);
+});
+
+const acpOpenChain = (inner: unknown) =>
+  new ProviderSessionOpenError({
+    instanceId: ProviderInstanceId.make("acpRegistry_copilot"),
+    providerSessionId: ProviderSessionId.make("provider-session:copilot"),
+    cause: new ProviderAdapterOpenSessionError({
+      driver: ProviderDriverKind.make("acpRegistry"),
+      providerSessionId: ProviderSessionId.make("provider-session:copilot"),
+      cause: new EffectAcpErrors.AcpSpawnError({ command: "copilot", cause: inner }),
+    }),
+  });
+
+it("reads the innermost reason through session, adapter and ACP wrappers", () => {
+  const detail = "Copilot 1.0.101 is not prepared.";
+  const chain = acpOpenChain(new AcpRegistryError({ reason: "runner_unavailable", detail }));
+  for (const wrapped of [chain, Cause.fail(chain), Cause.die(chain)]) {
+    assert.equal(innermostCauseMessage(wrapped), detail);
+  }
+  // A plain string at the bottom is a deliberate reason.
+  assert.equal(
+    innermostCauseMessage(acpOpenChain("Agent binary missing.")),
+    "Agent binary missing.",
+  );
+  // Error.cause and bare objects with a cause field are followed too.
+  assert.equal(
+    innermostCauseMessage(new Error("outer", { cause: { message: "inner reason" } })),
+    "inner reason",
+  );
+});
+
+it("keeps a registry error's own detail over its raw cause", () => {
+  const detail = "Could not fetch ACP Registry index.";
+  const raw = new Error(
+    "ENOENT: no such file or directory, open '/Users/x/.specwithcode/acp/index.json'",
+  );
+  const chain = acpOpenChain(
+    new AcpRegistryError({ reason: "registry_unavailable", detail, cause: raw }),
+  );
+  for (const wrapped of [chain, Cause.fail(chain), Cause.die(chain)]) {
+    assert.equal(innermostCauseMessage(wrapped), detail);
+  }
+  const setup = new ProviderSetupError({
+    instanceId: ProviderInstanceId.make("acpRegistry_copilot"),
+    operation: "open",
+    detail: "Copilot is not installed.",
+    cause: new SyntaxError("Unexpected token < in JSON at position 0"),
+  });
+  assert.equal(innermostCauseMessage(acpOpenChain(setup)), "Copilot is not installed.");
+});
+
+it("skips messages that name internal ids and wrappers that only name sessions", () => {
+  const idBearing = new Error("Lost run:thread:abc:ordinal:3 on provider-session:x");
+  // The ACP spawn message is the innermost readable one left.
+  assert.equal(
+    innermostCauseMessage(acpOpenChain(idBearing)),
+    "Failed to spawn ACP process for command: copilot",
+  );
+  assert.isUndefined(
+    innermostCauseMessage(
+      new ProviderAdapterOpenSessionError({
+        driver: ProviderDriverKind.make("acpRegistry"),
+        providerSessionId: ProviderSessionId.make("provider-session:copilot"),
+        cause: "Session thread:t1 closed",
+      }),
+    ),
+  );
+  // A curated cause is left to makeProviderFailure's own translation.
+  assert.isUndefined(innermostCauseMessage(acpOpenChain(new ContextHandoffBudgetError())));
+  assert.isUndefined(innermostCauseMessage(new Error("")));
+});
+
+it("walks cyclic and unreadable cause chains without looping", () => {
+  const a: { message: string; cause?: unknown } = { message: "first" };
+  const b: { message: string; cause?: unknown } = { message: "second", cause: a };
+  a.cause = b;
+  assert.equal(innermostCauseMessage(a), "second");
+  let deep: unknown = "bottom";
+  for (let index = 0; index < 100; index++) deep = { message: `level ${index}`, cause: deep };
+  assert.equal(innermostCauseMessage(deep), "level 84");
+  assert.equal(
+    innermostCauseMessage({
+      message: "readable",
+      get cause() {
+        throw new Error("unreadable");
+      },
+    }),
+    "readable",
+  );
+});
+
+it("keeps a typed code from a wrapped cause", () => {
+  const budget = new ProviderAdapterTurnStartError({
+    driver: ProviderDriverKind.make("codex"),
+    threadId: ThreadId.make("thread:budget-code"),
+    providerThreadId: ProviderThreadId.make("provider-thread:budget-code"),
+    runId: RunId.make("run:budget-code"),
+    cause: new ContextHandoffBudgetError(),
+  });
+  for (const wrapped of [
+    budget,
+    Cause.fail(budget),
+    Cause.die(new Error("x", { cause: budget })),
+  ]) {
+    assert.equal(makeProviderFailure({ cause: wrapped }).code, "context_handoff_budget");
+  }
+  // Innermost wins; an explicit code and the unavailable rule still come first.
+  assert.equal(
+    makeProviderFailure({ cause: { code: "outer", cause: { code: "inner" } } }).code,
+    "inner",
+  );
+  assert.equal(makeProviderFailure({ cause: budget, code: "explicit" }).code, "explicit");
+  assert.equal(makeProviderFailure({ cause: { code: "outer", cause: { code: 7 } } }).code, "outer");
 });
 
 it("handles cyclic causes and throwing accessors", () => {

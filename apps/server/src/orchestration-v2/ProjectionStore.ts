@@ -79,6 +79,11 @@ import type * as Statement from "effect/sql/Statement";
 
 import { threadHtmlRenderAttachmentIds } from "../attachmentStore.ts";
 import * as ShellSnapshotCache from "./ShellSnapshotCache.ts";
+import {
+  isBlockingRuntimeRequest,
+  type PendingRequestSummary,
+  withPendingRequestDetail,
+} from "./blockingRuntimeRequest.ts";
 import { summarizeTodoPlanPayload } from "@specweave-studio/shared/planProgress";
 import {
   isThreadHistoryUserTurn,
@@ -151,6 +156,12 @@ export type ProjectionRecoveryKind =
   | "update-requeue";
 
 /** Persisted state needed for limit recovery, without transcript or fork history. */
+/** A pending request with the detail that tells whether it holds the thread. */
+export type PendingLimitRecoveryRequest = NonNullable<
+  OrchestrationV2ThreadShell["pendingRuntimeRequest"]
+> &
+  PendingRequestSummary;
+
 export type ProjectionLimitRecoveryCandidate = Pick<
   OrchestrationV2ThreadShell,
   | "id"
@@ -161,12 +172,11 @@ export type ProjectionLimitRecoveryCandidate = Pick<
   | "usageLimitResetAt"
   | "archivedAt"
   | "settledOverride"
-  | "pendingRuntimeRequest"
   | "latestRunCompletedAt"
   | "updatedAt"
   | "limitRecovery"
   | "snoozedUntil"
->;
+> & { readonly pendingRuntimeRequest: PendingLimitRecoveryRequest | null };
 
 /** The thread fields pull request sync reads, for a thread with at least one link. */
 export type ProjectionThreadPullRequests = Pick<
@@ -3565,15 +3575,39 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       function* (options: Parameters<ProjectionStoreV2Shape["getLimitRecoveryCandidates"]>[0]) {
         // Indexed latest-run and root-error lookups avoid reading run histories,
         // counting transcript items, or walking fork ancestors on scheduler ticks.
+        // A pending request holds the thread only when it really waits (see
+        // isBlockingRuntimeRequest): a question the next message answers, or a
+        // request an earlier run left behind, does not. A request whose run
+        // cannot be found counts as the stopped run's, so it holds.
         const rows = yield* sql<{
           readonly payload_json: string;
           readonly run_id: string;
           readonly completed_at: string | null;
           readonly failure_payload_json: string;
           readonly last_error: string | null;
+          readonly pending_request_payload_json: string | null;
+          readonly pending_request_run_id: string | null;
         }>`
           SELECT t.payload_json, r.run_id, r.completed_at,
             item.payload_json AS failure_payload_json,
+            (
+              SELECT request.payload_json
+              FROM orchestration_v2_projection_runtime_requests request
+              WHERE request.thread_id = t.thread_id AND request.status = 'pending'
+              ORDER BY request.created_at DESC, request.runtime_request_id DESC
+              LIMIT 1
+            ) AS pending_request_payload_json,
+            (
+              SELECT COALESCE(node.run_id, owner.run_id)
+              FROM orchestration_v2_projection_runtime_requests request
+              LEFT JOIN orchestration_v2_projection_nodes node ON node.node_id = request.node_id
+              LEFT JOIN orchestration_v2_projection_runs owner
+                ON owner.thread_id = t.thread_id
+                AND json_extract(owner.payload_json, '$.rootNodeId') = request.node_id
+              WHERE request.thread_id = t.thread_id AND request.status = 'pending'
+              ORDER BY request.created_at DESC, request.runtime_request_id DESC
+              LIMIT 1
+            ) AS pending_request_run_id,
             (
               SELECT json_extract(session.payload_json, '$.lastError')
               FROM orchestration_v2_projection_provider_sessions session
@@ -3638,7 +3672,16 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             )
             AND NOT EXISTS (
               SELECT 1 FROM orchestration_v2_projection_runtime_requests request
+              LEFT JOIN orchestration_v2_projection_nodes node ON node.node_id = request.node_id
+              LEFT JOIN orchestration_v2_projection_runs owner
+                ON owner.thread_id = t.thread_id
+                AND json_extract(owner.payload_json, '$.rootNodeId') = request.node_id
               WHERE request.thread_id = t.thread_id AND request.status = 'pending'
+                AND NOT (
+                  request.kind = 'user_input'
+                  AND json_extract(request.payload_json, '$.responseCapability.type') IS 'message'
+                )
+                AND COALESCE(node.run_id, owner.run_id, r.run_id) = r.run_id
             )
           ORDER BY t.thread_id
         `;
@@ -3651,6 +3694,24 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             row.last_error,
           );
           if (summary.lastErrorClass !== "usage_limit") continue;
+          const request =
+            row.pending_request_payload_json === null
+              ? null
+              : yield* decodeRuntimeRequestPayload(row.pending_request_payload_json);
+          // With its detail, so the worker sees the request holds nothing too.
+          const pendingRuntimeRequest: PendingLimitRecoveryRequest | null =
+            request === null
+              ? null
+              : {
+                  id: request.id,
+                  kind: request.kind,
+                  createdAt: request.createdAt,
+                  responseCapability: request.responseCapability,
+                  runId:
+                    row.pending_request_run_id === null
+                      ? undefined
+                      : RunId.make(row.pending_request_run_id),
+                };
           candidates.push({
             id: thread.id,
             providerInstanceId: thread.providerInstanceId,
@@ -3663,7 +3724,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             updatedAt: thread.updatedAt,
             archivedAt: thread.archivedAt,
             settledOverride: thread.settledOverride,
-            pendingRuntimeRequest: null,
+            pendingRuntimeRequest,
             limitRecovery: thread.limitRecovery ?? null,
             snoozedUntil: thread.snoozedUntil ?? null,
           });
@@ -6276,13 +6337,14 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
                   thread.archivedAt === null &&
                   thread.settledOverride !== "settled",
               )
-              .map(threadShellFromProjection)
-              .filter(
-                (thread) =>
-                  thread.status === "failed" &&
+              .flatMap((projection) => {
+                const thread = threadShellFromProjection(projection);
+                return thread.status === "failed" &&
                   thread.lastErrorClass === "usage_limit" &&
-                  thread.pendingRuntimeRequest === null,
-              )
+                  !isBlockingRuntimeRequest(projection, thread.latestRunId)
+                  ? [withPendingRequestDetail(thread, projection)]
+                  : [];
+              })
               .filter((thread) => {
                 const resetMs = Date.parse(thread.usageLimitResetAt!);
                 const nowMs = DateTime.toEpochMillis(options.now);

@@ -22,7 +22,7 @@ import * as Preparation from "./ServiceUpdatePreparation.ts";
 /** The columns update.py and this service read, nothing else. */
 const schema = [
   `CREATE TABLE orchestration_v2_projection_runs (run_id TEXT, thread_id TEXT, status TEXT, provider_thread_id TEXT, payload_json TEXT)`,
-  `CREATE TABLE orchestration_v2_projection_runtime_requests (thread_id TEXT, status TEXT)`,
+  `CREATE TABLE orchestration_v2_projection_runtime_requests (thread_id TEXT, status TEXT, kind TEXT DEFAULT 'command')`,
   `CREATE TABLE orchestration_v2_effect_outbox (thread_id TEXT, status TEXT, command_id TEXT, effect_type TEXT)`,
   `CREATE TABLE orchestration_v2_projection_provider_sessions (thread_id TEXT, status TEXT)`,
   `CREATE TABLE orchestration_v2_projection_threads (thread_id TEXT, title TEXT, project_id TEXT)`,
@@ -445,7 +445,7 @@ it.live(
       Effect.gen(function* () {
         const sql = yield* SqlClient.SqlClient;
         yield* sql`INSERT INTO orchestration_v2_projection_runs (run_id, thread_id, status, provider_thread_id) VALUES ('r1', 't1', 'preparing', NULL)`;
-        yield* sql`INSERT INTO orchestration_v2_projection_runtime_requests VALUES ('t2', 'pending')`;
+        yield* sql`INSERT INTO orchestration_v2_projection_runtime_requests (thread_id, status) VALUES ('t2', 'pending')`;
         const preparation = yield* Preparation.ServiceUpdatePreparation;
         const result = yield* preparation.prepare({ stopWork: true });
         assert.deepEqual(result, {
@@ -476,7 +476,7 @@ it.live("clears what Stop leaves behind even without a hold", () => {
       // A turn that never reached its provider, a request on an ended run, an
       // effect nobody will finish and a session row whose process is gone.
       yield* sql`INSERT INTO orchestration_v2_projection_runs (run_id, thread_id, status, provider_thread_id) VALUES ('r1', 't1', 'starting', NULL)`;
-      yield* sql`INSERT INTO orchestration_v2_projection_runtime_requests VALUES ('t2', 'pending')`;
+      yield* sql`INSERT INTO orchestration_v2_projection_runtime_requests (thread_id, status) VALUES ('t2', 'pending')`;
       yield* sql`INSERT INTO orchestration_v2_effect_outbox (thread_id, status) VALUES ('t2', 'pending')`;
       yield* sql`INSERT INTO orchestration_v2_projection_provider_sessions VALUES ('t1', 'working')`;
       const preparation = yield* Preparation.ServiceUpdatePreparation;
@@ -532,7 +532,7 @@ it.live("Update now holds the service before draining, then closes terminals", (
         // r1 waits on its checkpoint; r2 never reached its provider.
         yield* sql`INSERT INTO orchestration_v2_projection_runs (run_id, thread_id, status, provider_thread_id) VALUES
           ('r1', 't1', 'waiting', NULL), ('r2', 't2', 'starting', NULL)`;
-        yield* sql`INSERT INTO orchestration_v2_projection_runtime_requests VALUES ('t2', 'pending')`;
+        yield* sql`INSERT INTO orchestration_v2_projection_runtime_requests (thread_id, status) VALUES ('t2', 'pending')`;
         const preparation = yield* Preparation.ServiceUpdatePreparation;
 
         const looked = yield* preparation.prepare({ stopWork: false });

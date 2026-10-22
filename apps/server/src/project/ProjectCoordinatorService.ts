@@ -48,6 +48,7 @@ import {
   limitStopIsCurrent,
   ProviderFallbackEnv,
 } from "../orchestration-v2/ProviderFallbackWorker.ts";
+import { heldInstances } from "../orchestration-v2/UnopenableHolds.ts";
 
 export interface ProjectCoordinatorRouteInput {
   readonly projectId: ProjectId;
@@ -256,6 +257,9 @@ const make = Effect.gen(function* () {
         ).settings;
         const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
         const limited = new Set<string>(simulatedUsageLimitInstances(yield* ProviderFallbackEnv));
+        // A provider a thread recently could not open is held off fallbacks;
+        // the coordinator keeps off it too, whatever its snapshot still says.
+        for (const instanceId of yield* heldInstances(nowMs)) limited.add(instanceId);
         if (
           shell &&
           shell.status === "failed" &&

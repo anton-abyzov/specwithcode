@@ -26,6 +26,8 @@ import {
   ServiceAgentError,
   type ServiceUpdateController,
 } from "../../updates/studioServiceUpdates.ts";
+import { readRun } from "../../updates/updateRun.ts";
+import { memoryRunFiles } from "../../updates/updateRunTestFiles.ts";
 import * as DesktopIpc from "../DesktopIpc.ts";
 import * as IpcChannels from "../channels.ts";
 
@@ -357,6 +359,7 @@ describe("installServiceUpdates", () => {
     afterStart: (
       appChanges: Queue.Queue<DesktopUpdateState>,
       readState: Effect.Effect<StudioServiceUpdateState>,
+      invoke: (channel: string, payload?: unknown) => Effect.Effect<unknown>,
     ) => Effect.Effect<void>,
   ) => {
     fake.controller = controller;
@@ -402,6 +405,9 @@ describe("installServiceUpdates", () => {
             changes: Stream.fromQueue(changes),
           }),
           applyPreferences: Effect.void,
+          registerLocalServiceProbe: () => Effect.void,
+          refreshActivation: Effect.void,
+          get: Effect.succeed(appState(null)),
         } as unknown as DesktopUpdates.DesktopUpdates["Service"]),
         Layer.succeed(DesktopLocalService.DesktopLocalService, {
           attached: Effect.succeed(Option.none()),
@@ -413,7 +419,9 @@ describe("installServiceUpdates", () => {
           // The app settles and runs its own agent pass.
           yield* TestClock.adjust(Duration.seconds(20));
           yield* settleAll;
-          yield* afterStart(changes, readState);
+          yield* afterStart(changes, readState, (channel, payload) =>
+            Effect.promise(async () => handlers.get(channel)!({ sender: { id: 1 } }, payload)),
+          );
         }),
       ).pipe(Effect.provide(layer));
     }).pipe(
@@ -439,6 +447,8 @@ describe("installServiceUpdates", () => {
     },
     repairAgent: async () => undefined,
     pendingForcedInstall: () => false,
+    runFiles: () => null,
+    runSupported: () => false,
     ...overrides,
   });
 
@@ -575,6 +585,193 @@ describe("installServiceUpdates", () => {
         yield* Queue.offer(appChanges, appState("1.0.61"));
         yield* settleAll;
         expect(kicks.slice(before)).toEqual([]);
+      }),
+    );
+  });
+
+  /** A controller whose run records live in memory, with or without the agent's run support. */
+  const runController = (
+    supported: boolean,
+    configs: Array<Record<string, unknown>>,
+    overrides: Partial<ServiceUpdateController> = {},
+  ) => {
+    const files = memoryRunFiles();
+    const controller = controllerWith(
+      {
+        ensureAgent: async () => undefined,
+        writeConfig: (input) => {
+          configs.push({ ...input });
+          // config.json as the agent reads it: each change over the last.
+          const previous = JSON.parse(files.read("config.json") ?? "{}") as object;
+          files.writeAtomic("config.json", JSON.stringify({ ...previous, ...input }));
+        },
+        runFiles: () => files,
+        runSupported: () => supported,
+        ...overrides,
+      },
+      [],
+    );
+    return { controller, files };
+  };
+
+  const beginRun = (invoke: (channel: string, payload?: unknown) => Effect.Effect<unknown>) =>
+    Effect.gen(function* () {
+      const begun = (yield* invoke(IpcChannels.SERVICE_UPDATE_RUN_CHANNEL, {
+        type: "begin",
+        targetVersion: "1.0.61",
+        appTargetVersion: null,
+      })) as { run: { runId: string } };
+      yield* invoke(IpcChannels.SERVICE_UPDATE_INSTALL_CHANNEL, {
+        force: true,
+        version: "1.0.61",
+        runId: begun.run.runId,
+      });
+      yield* settleAll;
+      return begun.run.runId;
+    });
+
+  effectIt.effect("fails the run at once when its install request could not be saved", () => {
+    const configs: Array<Record<string, unknown>> = [];
+    const { controller, files } = runController(true, configs, {
+      writeConfig: (input) => {
+        if (input.installRequestedAt !== undefined) throw new Error("disk full");
+      },
+    });
+    return withServiceUpdates(controller, (_changes, _readState, invoke) =>
+      Effect.gen(function* () {
+        yield* beginRun(invoke);
+        // Not a live run with no button for half an hour: it ended, with why.
+        expect(readRun(files)).toMatchObject({
+          phase: "failed",
+          message: "The update request could not be saved. Try again in a moment.",
+        });
+      }),
+    );
+  });
+
+  effectIt.effect("fails the run and withdraws its request when the agent cannot start", () => {
+    const configs: Array<Record<string, unknown>> = [];
+    const { controller, files } = runController(true, configs, {
+      ensureAgent: async () => {
+        throw new ServiceAgentError({ step: "disabled", message: SERVICE_AGENT_DISABLED_MESSAGE });
+      },
+    });
+    return withServiceUpdates(controller, (_changes, _readState, invoke) =>
+      Effect.gen(function* () {
+        yield* beginRun(invoke);
+        expect(readRun(files)).toMatchObject({
+          phase: "failed",
+          message: SERVICE_AGENT_DISABLED_MESSAGE,
+        });
+        expect(configs.at(-1)).toMatchObject({ installRequestedAt: null, installRunId: null });
+      }),
+    );
+  });
+
+  effectIt.effect(
+    "an Update now run: begin, then its request names the run and its deadline",
+    () => {
+      const configs: Array<Record<string, unknown>> = [];
+      const { controller, files } = runController(true, configs);
+      return withServiceUpdates(controller, (_changes, readState, invoke) =>
+        Effect.gen(function* () {
+          const begun = (yield* invoke(IpcChannels.SERVICE_UPDATE_RUN_CHANNEL, {
+            type: "begin",
+            targetVersion: "1.0.61",
+            appTargetVersion: null,
+          })) as {
+            supported: boolean;
+            created: boolean;
+            run: { runId: string; deadlineAt: string };
+          };
+          expect(begun).toMatchObject({ supported: true, created: true });
+          yield* invoke(IpcChannels.SERVICE_UPDATE_INSTALL_CHANNEL, {
+            force: true,
+            holdUntil: "2000-01-01T00:00:00.000Z",
+            version: "1.0.61",
+            runId: begun.run.runId,
+          });
+          yield* settleAll;
+          expect(configs.at(-1)).toMatchObject({
+            installMode: "force",
+            installHoldUntil: begun.run.deadlineAt,
+            installRunId: begun.run.runId,
+            installRequest: { version: "1.0.61" },
+          });
+          expect(readRun(files)).toMatchObject({ phase: "requested" });
+          // A second window pressing now follows the same run.
+          expect(
+            yield* invoke(IpcChannels.SERVICE_UPDATE_RUN_CHANNEL, {
+              type: "begin",
+              targetVersion: "1.0.61",
+              appTargetVersion: null,
+            }),
+          ).toMatchObject({ created: false, run: { runId: begun.run.runId } });
+          expect(yield* readState).toMatchObject({ status: "up-to-date" });
+        }),
+      );
+    },
+  );
+
+  effectIt.effect("refuses the install request of a run that already ended", () => {
+    const configs: Array<Record<string, unknown>> = [];
+    const { controller, files } = runController(true, configs);
+    return withServiceUpdates(controller, (_changes, _readState, invoke) =>
+      Effect.gen(function* () {
+        const begun = (yield* invoke(IpcChannels.SERVICE_UPDATE_RUN_CHANNEL, {
+          type: "begin",
+          targetVersion: "1.0.61",
+          appTargetVersion: null,
+        })) as { run: { runId: string; deadlineAt: string } };
+        yield* invoke(IpcChannels.SERVICE_UPDATE_RUN_CHANNEL, {
+          type: "cancel",
+          runId: begun.run.runId,
+        });
+        expect(readRun(files)).toMatchObject({ phase: "cancelled" });
+        const before = configs.length;
+        // Refused, so the window that asked releases the work it held.
+        const refused = yield* invoke(IpcChannels.SERVICE_UPDATE_INSTALL_CHANNEL, {
+          force: true,
+          holdUntil: begun.run.deadlineAt,
+          version: "1.0.61",
+          runId: begun.run.runId,
+        }).pipe(
+          Effect.as(null),
+          Effect.catchDefect((defect) => Effect.succeed(defect)),
+        );
+        expect(String(refused)).toContain("This update ended before its install was requested");
+        yield* settleAll;
+        // No forced install nobody tracks: config.json is not asked to install.
+        expect(
+          configs.slice(before).filter((config) => config.installRequestedAt !== undefined),
+        ).toEqual([]);
+        expect(readRun(files)).toMatchObject({ phase: "cancelled" });
+      }),
+    );
+  });
+
+  effectIt.effect("without run support, begin says so and the request is written as before", () => {
+    const configs: Array<Record<string, unknown>> = [];
+    const { controller, files } = runController(false, configs);
+    return withServiceUpdates(controller, (_changes, _readState, invoke) =>
+      Effect.gen(function* () {
+        expect(
+          yield* invoke(IpcChannels.SERVICE_UPDATE_RUN_CHANNEL, {
+            type: "begin",
+            targetVersion: "1.0.61",
+            appTargetVersion: null,
+          }),
+        ).toEqual({ supported: false, created: false, run: null });
+        const before = configs.length;
+        yield* invoke(IpcChannels.SERVICE_UPDATE_INSTALL_CHANNEL, {
+          force: true,
+          version: "1.0.61",
+        });
+        yield* settleAll;
+        expect(configs.length).toBeGreaterThan(before);
+        expect(configs[before]).toMatchObject({ installMode: "force", installRunId: null });
+        // No run record: only config.json, written as before runs.
+        expect([...files.files.keys()]).toEqual(["config.json"]);
       }),
     );
   });

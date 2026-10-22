@@ -40,6 +40,7 @@ import { liveThreadShell } from "../mcp/McpToolAccess.testkit.ts";
 import { provider } from "../studio/fixtures.ts";
 import { OrchestratorDispatchError } from "../orchestration-v2/Orchestrator.ts";
 import { ServiceUpdateInProgressError } from "../serviceUpdate/ServiceUpdateHold.ts";
+import { UnopenableHolds } from "../orchestration-v2/UnopenableHolds.ts";
 
 const id = ProjectId.make("project:coordinator");
 const commandId = CommandId.make("request:one");
@@ -847,5 +848,48 @@ it.effect("keeps a coordinator on its fallback while the saved model's provider 
       });
       expect(f.sends.at(-1)?.modelSelection).toEqual(model);
     }).pipe(Effect.provide(Coordinator.layer), Effect.provide(f.dependencies));
+  }),
+);
+
+it.effect("keeps a coordinator off a provider a thread recently could not open", () =>
+  Effect.gen(function* () {
+    const f = fixture();
+    const fallback = { instanceId: ProviderInstanceId.make("codex"), model: "codex-model" };
+    f.setProject({
+      workspaceSettings: {
+        ...DEFAULT_PROJECT_WORKSPACE_SETTINGS,
+        coordinatorModelSelection: model,
+      },
+    });
+    let held: ReadonlyMap<string, number> = new Map([[model.instanceId, 0]]);
+    yield* Effect.gen(function* () {
+      const service = yield* Coordinator.ProjectCoordinatorService;
+      const { threadId } = yield* service.start({ projectId: id, commandId });
+      f.shells.set(threadId, { ...f.shells.get(threadId)!, modelSelection: fallback });
+      // Both read as having room; only the hold says the saved one would not open.
+      f.setProviders([
+        readyWithUsage(model.instanceId, "claudeAgent", 10),
+        readyWithUsage("codex", "codex", 20),
+      ]);
+      yield* service.send({
+        projectId: id,
+        commandId: CommandId.make("request:held"),
+        prompt: "Next",
+      });
+      expect(f.sends.at(-1)?.modelSelection).toEqual(fallback);
+      held = new Map();
+      yield* service.send({
+        projectId: id,
+        commandId: CommandId.make("request:released"),
+        prompt: "Next",
+      });
+      expect(f.sends.at(-1)?.modelSelection).toEqual(model);
+    }).pipe(
+      Effect.provide(Coordinator.layer.pipe(Layer.provideMerge(f.dependencies))),
+      Effect.provideService(UnopenableHolds, {
+        get: Effect.sync(() => held),
+        set: () => Effect.void,
+      }),
+    );
   }),
 );
