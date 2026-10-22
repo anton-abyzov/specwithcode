@@ -2,6 +2,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   deriveDecision,
+  deriveQuestionStep,
   linkifyQuestionPaths,
   presentQuestionOption,
   questionOptionIndexForKey,
@@ -108,5 +109,51 @@ describe("deriveDecision", () => {
         attachmentsByQuestionId: {},
       })[0]?.choices,
     ).toEqual([{ letter: null, label: "Only the Xcode ones" }]);
+  });
+});
+
+describe("deriveQuestionStep", () => {
+  const base = {
+    questionIndex: 0,
+    questionCount: 4,
+    selectedCount: 0,
+    isLastQuestion: false,
+    canAdvance: false,
+    isComplete: false,
+    isResponding: false,
+  };
+
+  it("offers Next once something is picked on an earlier question", () => {
+    expect(deriveQuestionStep(base)).toEqual({
+      label: "Next",
+      isSubmit: false,
+      enabled: false,
+      selection: "None selected yet",
+    });
+    expect(deriveQuestionStep({ ...base, selectedCount: 3, canAdvance: true })).toMatchObject({
+      label: "Next",
+      enabled: true,
+      selection: "3 selected",
+    });
+  });
+
+  it("submits on the last question only when every question is answered", () => {
+    const last = { ...base, questionIndex: 3, isLastQuestion: true, canAdvance: true };
+    expect(deriveQuestionStep(last)).toMatchObject({
+      label: "Submit answers",
+      isSubmit: true,
+      enabled: false,
+    });
+    expect(deriveQuestionStep({ ...last, isComplete: true }).enabled).toBe(true);
+    expect(
+      deriveQuestionStep({ ...last, questionCount: 1, questionIndex: 0, isComplete: true }).label,
+    ).toBe("Submit");
+  });
+
+  it("holds the step while the answer is being sent", () => {
+    expect(deriveQuestionStep({ ...base, canAdvance: true, isResponding: true })).toMatchObject({
+      label: "Submitting…",
+      enabled: false,
+    });
   });
 });

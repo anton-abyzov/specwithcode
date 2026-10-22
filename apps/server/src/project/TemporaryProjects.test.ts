@@ -10,6 +10,7 @@ import * as Result from "effect/Result";
 
 import { MCP_CLIENT_SUBJECT } from "../auth/EnvironmentAuth.ts";
 import { planProjectCommand } from "../orchestration-v2/ProjectCommands.ts";
+import { createdOrigin } from "./ProjectService.ts";
 import {
   isTemporaryAgentSession,
   PROJECT_CLI_SESSION_LABEL,
@@ -127,5 +128,54 @@ describe("project.create", () => {
       workspaceSettings: { temporarySessionId?: string };
     };
     assert.equal(payload.workspaceSettings.temporarySessionId, "s-proof");
+  });
+});
+
+describe("project origin", () => {
+  it("records an origin on the new project", () => {
+    const result = planProjectCommand({
+      command: {
+        type: "project.create",
+        commandId: CommandId.make("cmd-create-origin"),
+        projectId: ProjectId.make("check"),
+        title: "Run shell acceptance 357",
+        workspaceRoot: "/Users/x/.specwithcode/m4/scratch/run-shell/workspace",
+        origin: "automated",
+      },
+      state: { project: undefined, workspaceOwner: undefined },
+      eventId: EventId.make("event:planned-origin"),
+      now,
+    });
+    assert.isTrue(Result.isSuccess(result));
+    const payload = Result.getOrThrow(result).payload as {
+      workspaceSettings: { origin?: string };
+    };
+    assert.equal(payload.workspaceSettings.origin, "automated");
+  });
+
+  it("saves an origin only when the creator gives one or a temporary token makes it", () => {
+    assert.deepStrictEqual(createdOrigin({ origin: "automated" }), { origin: "automated" });
+    assert.deepStrictEqual(createdOrigin({ temporarySessionId: "s" }), { origin: "automated" });
+    // A folder that looks like a check's is judged when shown, never saved.
+    assert.deepStrictEqual(createdOrigin({}), {});
+  });
+
+  it("never deletes a temporary project the person moved to their own", () => {
+    const due = temporaryProjectsToDelete({
+      projects: [
+        {
+          id: ProjectId.make("kept"),
+          workspaceSettings: {
+            ...DEFAULT_PROJECT_WORKSPACE_SETTINGS,
+            temporarySessionId: "s-gone",
+            origin: "user",
+          },
+        },
+      ],
+      openThreads: [],
+      sessions: new Map(),
+      now,
+    });
+    assert.deepStrictEqual(due, []);
   });
 });

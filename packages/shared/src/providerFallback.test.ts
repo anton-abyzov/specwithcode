@@ -15,6 +15,8 @@ import {
   limitRestartRequest,
   providerUsedPercent,
   isClaudeApiKeyProvider,
+  isGeminiSpendProvider,
+  isPerTokenProvider,
   isApiCreditExhaustedMessage,
   isApiCreditProvider,
   isDirectClaudeApiKeyProvider,
@@ -689,6 +691,113 @@ describe("resolveProviderFallback ordering", () => {
   });
 });
 
+describe("Gemini and Vertex spend", () => {
+  const gemini = provider("acpRegistry_gemini", "acpRegistry", null, {
+    displayName: "Gemini CLI",
+    auth: { status: "authenticated", type: "oauth-personal" },
+  });
+  const vertex = provider("custom-agent", "acpRegistry", null, {
+    auth: { status: "authenticated", type: "vertex-ai" },
+  });
+  const antigravity = provider("antigravity", "antigravity", 15);
+
+  it("treats the Gemini CLI and Vertex as per-token, and leaves Antigravity alone", () => {
+    expect(isGeminiSpendProvider(gemini)).toBe(true);
+    expect(isPerTokenProvider(gemini)).toBe(true);
+    expect(isGeminiSpendProvider(provider("acpRegistry_gemini_2", "acpRegistry", null))).toBe(true);
+    expect(isGeminiSpendProvider(provider("acpRegistry_gemini_cli", "acpRegistry", null))).toBe(
+      true,
+    );
+    expect(isPerTokenProvider(vertex)).toBe(true);
+    expect(isGeminiSpendProvider(antigravity)).toBe(false);
+    expect(isPerTokenProvider(antigravity)).toBe(false);
+    expect(isPerTokenProvider(codex)).toBe(false);
+  });
+
+  it("never falls back onto Gemini, including an order entry or the project default", () => {
+    const full = provider("claudeAgent", "claudeAgent", 100);
+    const geminiWithRoom = provider("acpRegistry_gemini", "acpRegistry", 10, {
+      auth: { status: "authenticated", type: "oauth-personal" },
+    });
+    const geminiModel = {
+      instanceId: geminiWithRoom.instanceId,
+      model: "acpRegistry-default",
+    };
+    const codexModel = { instanceId: codex.instanceId, model: "codex-default" };
+    const base = {
+      currentInstanceId: full.instanceId,
+      currentModel: "claudeAgent-default",
+      nowMs: now,
+      anyReady: true,
+    };
+    expect(resolveProviderFallback({ ...base, providers: [full, gemini, codex], rule })).toEqual(
+      codexModel,
+    );
+    expect(
+      resolveProviderFallback({ ...base, providers: [full, gemini, vertex], rule }),
+    ).toBeNull();
+    expect(
+      resolveProviderFallback({
+        ...base,
+        providers: [full, geminiWithRoom],
+        rule: { ...rule, defaultModelSelection: geminiModel },
+      }),
+    ).toBeNull();
+    expect(
+      describeFallbackOrder({
+        providers: [full, geminiWithRoom, codex],
+        currentInstanceId: full.instanceId,
+        rule: {
+          providerLimitFallbackModels: [geminiModel, codexModel],
+          providerLimitFallbackModelSelection: null,
+        },
+        nowMs: now,
+      }).map((entry) => entry.unavailable),
+    ).toEqual(["per-token", null]);
+    expect(
+      resolveProviderFallback({
+        ...base,
+        providers: [full, geminiWithRoom, codex],
+        rule: {
+          providerLimitFallbackModels: [geminiModel, codexModel],
+          defaultModelSelection: null,
+          providerLimitFallbackModelSelection: null,
+        },
+      }),
+    ).toEqual(codexModel);
+    expect(
+      resolveProviderFallback({
+        ...base,
+        providers: [full, antigravity],
+        rule,
+      }),
+    ).toEqual({ instanceId: antigravity.instanceId, model: "antigravity-default" });
+  });
+
+  it.each(["gemini-api-key", "agent-platform"])(
+    "blocks Antigravity's paid %s sign-in from automatic fallback",
+    (type) => {
+      const paid = provider("antigravity", "antigravity", 10, {
+        auth: { status: "authenticated", type },
+      });
+      expect(isGeminiSpendProvider(paid)).toBe(true);
+      expect(isPerTokenProvider(paid)).toBe(true);
+      expect(
+        resolveProviderFallback({
+          providers: [provider("claudeAgent", "claudeAgent", 100), paid, codex],
+          currentInstanceId: claude.instanceId,
+          rule: {
+            ...rule,
+            defaultModelSelection: { instanceId: paid.instanceId, model: "antigravity-default" },
+          },
+          nowMs: now,
+          anyReady: true,
+        }),
+      ).toEqual({ instanceId: codex.instanceId, model: "codex-default" });
+    },
+  );
+});
+
 describe("resolveCoordinatorTurnSelection", () => {
   const saved = {
     instanceId: ProviderInstanceId.make("claudeAgent"),
@@ -871,6 +980,42 @@ describe("review follow-ups", () => {
         nowMs: now,
       }).reason,
     ).toBe("staying-on-fallback");
+  });
+
+  it.each([
+    provider("acpRegistry_gemini", "acpRegistry", null),
+    provider("custom-vertex", "acpRegistry", null, {
+      auth: { status: "authenticated", type: "vertex-ai" },
+    }),
+    ...["gemini-api-key", "agent-platform"].map((type) =>
+      provider("antigravity", "antigravity", null, {
+        auth: { status: "authenticated", type },
+      }),
+    ),
+  ])("leaves a prior Gemini/Vertex fallback despite API-credit consent: $instanceId", (paid) => {
+    const thread = { instanceId: paid.instanceId, model: "acpRegistry-default" };
+    const providers = [provider("claudeAgent", "claudeAgent", 100), paid, codex];
+    expect(
+      resolveCoordinatorTurnSelection({
+        saved,
+        thread,
+        providers,
+        rule: { ...switchRule, providerLimitUseApiCredits: true },
+        nowMs: now,
+      }),
+    ).toEqual({
+      selection: { instanceId: codex.instanceId, model: "codex-default" },
+      reason: "fallback",
+    });
+    expect(
+      resolveCoordinatorTurnSelection({
+        saved: thread,
+        thread,
+        providers,
+        rule: switchRule,
+        nowMs: now,
+      }),
+    ).toEqual({ selection: thread, reason: "saved" });
   });
 
   it("leaves redeeming and credits to the limit sweep before switching", () => {

@@ -192,6 +192,8 @@ public enum ShellSummaries {
     var summary = primary.summary
     summary.members = members
     summary.isPinned = copies.contains { $0.summary.isPinned }
+    // Automated only when no machine holds it as the person's own.
+    summary.isAutomated = copies.allSatisfy { $0.summary.isAutomated }
     summary.workingCount = copies.reduce(0) { $0 + $1.summary.workingCount }
     summary.hasUnread = copies.contains { $0.summary.hasUnread }
     return (summary, threads)
@@ -291,6 +293,7 @@ public enum ShellSummaries {
       isPinned: false,
       paused: project.isPaused,
       archived: project.isArchived,
+      isAutomated: project.isAutomated,
       workingCount: threads.filter { !$0.isUnknown && ($0.activity == .working || $0.activity == .needsYou) }.count,
       hasUnread: threads.contains { $0.isUnread }
     )

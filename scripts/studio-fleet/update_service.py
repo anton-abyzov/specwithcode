@@ -68,6 +68,25 @@ def assert_held(service, request, now=None):
     assert config.get('installMode') == 'force' and config.get('installRequestedAt') == request, HOLD_REFUSAL
     assert cancelled is None or (_utc(cancelled) is not None and _utc(cancelled) <= requested), HOLD_REFUSAL
 
+# The install gate's settle when the running service holds itself for this very forced request:
+# a held service has refused every command that starts work and skipped its background ticks since
+# the hold began (apps/server/src/serviceUpdate/ServiceUpdateHold.ts), so the gate's 5 s poll in
+# releases up to 1.0.46 cannot let a run start; 2 s covers a commit already under way.
+HELD_GATE_SETTLE_SECONDS = 2
+
+def gate_settle(own, home, service_pid, full):
+    """('held', HELD_GATE_SETTLE_SECONDS) when assert_held passes for the request in
+    `updates/config.json` and the service `service_pid` that `userdata/server-runtime.json`
+    names, else ('full', full). Never raises."""
+    try:
+        runtime = json.loads(owned_path(own / 'userdata' / 'server-runtime.json', home).read_text())
+        config = json.loads(owned_path(own / 'updates' / 'config.json', home).read_text())
+        assert isinstance(runtime, dict) and isinstance(config, dict) and runtime.get('pid') == service_pid
+        assert_held({'own': own, 'home': home, 'runtime': runtime}, config.get('installRequestedAt'))
+        return 'held', HELD_GATE_SETTLE_SECONDS
+    except Exception:  # Any doubt keeps the full settle.
+        return 'full', full
+
 def restart_old_release(failure, state_backup, loaded, launcher_restored, bootstrap, discard):
     """After a failed stop, copy or start, before anything of the new release ran: load the old
     release again once its launcher is back (it alone names the release that starts), and only

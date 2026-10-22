@@ -29,7 +29,7 @@ import urllib.error
 import urllib.request
 import uuid
 from launcher import (cli_alias_state, is_studio_wrapper, migrate_runtime_path, render_cli,
-                      render_legacy_cli, render_unnamed_cli, swap_cli_alias)
+                      render_legacy_cli, render_unnamed_cli, swap_cli_alias, restore_cli_alias, repoint_cli_alias)
 from release_policy import validate_manifest, validate_package, validate_upgrade
 from auth_heartbeat import (bind_auth, encoded, prove_restart_heartbeat,
                             read_auth_sessions_in_transaction, restore_witness, rows_hash,
@@ -37,6 +37,7 @@ from auth_heartbeat import (bind_auth, encoded, prove_restart_heartbeat,
 from quiescence import (VANISHED_READS, capture_quiescence, assert_quiescence, quiescence_core, read_processes,
                         reap_descendants, idle_providers, idle_provider_trees)
 from release_retention import prune_releases, prune_state_backups
+import after_proof
 import database_continuity as continuity
 import database_restart
 import idle_agents
@@ -61,7 +62,7 @@ from update_migration import (_column_definition, accepted_widenings, narrowed_r
 from update_compare import (rows_carried_forward, same_guarded_rows, database_allowance, assert_capture_carried,
                             auth_since, guarded_row_counts, settings_preserved)
 from update_service import (OTHER_SERVICE_PORTS, service_owns_listener, HOLD_REFUSAL, _utc, assert_held,
-                            restart_old_release, native_work_counts, _name, descendant_names)
+                            restart_old_release, native_work_counts, _name, descendant_names, gate_settle)
 from state_backup import (BACKUP_SPACE_MARGIN, assert_backup_space, assert_clone_headroom, backup_state,
                           clone_state, discard_unused_backup, write_private as _write_private)
 from service_launch_agent import upgraded_service_plist
@@ -734,37 +735,6 @@ def clear_install_gate(own, home):
     except (AssertionError, OSError):
         pass
 
-def restore_cli_alias(alias, original, written, report=None):
-    """Undo this update's alias write, only while the alias still holds `written` (or
-    already `original` again). Anything else there is left alone and reported; a launcher
-    removed meanwhile is not recreated."""
-    try:
-        if original is None:
-            outcome, _ = swap_cli_alias(alias, None, {written}, report=report)
-            names = {'removed': 'removed-on-rollback', 'absent': 'already-absent'}
-        else:
-            outcome, _ = swap_cli_alias(alias, original, {written, original}, create=False, report=report)
-            names = {'replaced': 'restored-on-rollback'}
-        if outcome == 'foreign-kept-aside':
-            return 'changed-outside-kept-aside'
-        return names.get(outcome, 'changed-outside-left-untouched')
-    except OSError:
-        return 'restore-failed-left-as-is'
-
-def repoint_cli_alias(alias, rolled_back, original, written):
-    """Put back this update's launcher after a rollback step undid it but the identity
-    pointers had to return to the new release. Returns True when the alias holds `written`."""
-    try:
-        if rolled_back == 'removed-on-rollback':
-            outcome, _ = swap_cli_alias(alias, written, set())
-        elif rolled_back == 'restored-on-rollback':
-            outcome, _ = swap_cli_alias(alias, written, {original}, create=False)
-        else:
-            return False
-        return outcome in {'created', 'replaced'}
-    except OSError:
-        return False
-
 def publish_release(staged, destination):
     manifest = release_verified(staged)  # The installer anchored staged bytes to the verified archive.
     if destination.exists():
@@ -842,7 +812,8 @@ def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_b
     # can read only what committed since (read_delta). `base` is the last exact read.
     before_mark = watermark.take()
     position = read_delta.position(own / 'userdata' / 'statev2.sqlite')
-    before, original_auth, carried = snapshot_since(identity, expected['rows'], capture_auth)
+    with after_proof.keeping(own / 'userdata' / 'statev2.sqlite') as kept:  # Its lines, for the proof after the restart.
+        before, original_auth, carried = snapshot_since(identity, expected['rows'], capture_auth)
     # One base per log position appended rows are measured against: the agent's snapshot
     # (the prestate check) and this read itself (the checks after the gate). Measured against
     # its own rows, this read appended nothing after them, so it carries nothing (None): the
@@ -1016,7 +987,8 @@ def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_b
         # Kept until the finally below: the new release (or the old one a rollback starts
         # again) stays idle for the readiness and rollback snapshots.
         write_install_gate(own, home)
-        time.sleep(INSTALL_GATE_SETTLE_SECONDS)
+        progress['gateSettle'], settle = gate_settle(own, home, before['servicePid'], INSTALL_GATE_SETTLE_SECONDS)
+        time.sleep(settle)
         lap('gateSettle')
         passed = [before_mark]  # Taken right before the last read (full or read_delta) that matched `before`.
         def assert_unchanged_before_restart():
@@ -1084,6 +1056,7 @@ def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_b
         # so a write the old service made meanwhile stops the update with the old release still
         # running instead of rolling the new one back.
         assert_same_service_pid()
+        held = after_proof.mark(own / 'userdata' / 'statev2.sqlite')  # The old log, for the proof after the restart.
         assert_unchanged_before_restart()
         watermark.close()  # No connection of this helper stays open while the service closes its own.
         # Refused before the stop, with the old service running: no room for the copy, or no time left.
@@ -1102,6 +1075,7 @@ def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_b
         lap('serviceStop')
         # The new release migrates the database on start; a rollback must restore both.
         state_backup, progress['stateBackupMethod'] = backup_state_clone(own, before['artifactSourceCommit'])
+        held = after_proof.stopped(held, state_backup, progress['stateBackupMethod'])
         lap('backupClone')
         progress['phase'] = 'restart-requested'
         progress['restartStartedAt'] = restart_started_at
@@ -1123,15 +1097,19 @@ def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_b
         # Bounded by time, not attempts: one reading can take a minute when the process inventory times
         # out and retries, and the rollback must finish well inside the update agent's APPLY_TIMEOUT,
         # which kills the helper outright. Readiness itself is the cheap check (service_answers: the new
-        # pid, release and database locks, no rows), polled until the deadline. The full read the proofs
-        # below need then runs once, however late: it is never skipped, and tried again only while it
-        # cannot be taken and the deadline allows.
+        # pid, release and database locks, no rows), polled until the deadline. The read the proofs below
+        # need then runs once, however late: the page proof (after_proof: what the restart changed, the
+        # same result) when it decides, else the full read, tried again only while it cannot be taken.
         ready_by = min(restarted_at + READINESS_DEADLINE_SECONDS, started + READY_BY_SECONDS_FROM_START)
         wait_until_answering(identity, before['servicePid'], archive_sha, manifest['sourceCommit'], ready_by)
         lap('readinessCheap')
+        reads = None if allow_project_migrations else after_proof.decide(
+            own / 'userdata', held, kept, base['before'], before['rows'], capture_auth, progress, lap)
         while True:
+            earlier, reads = reads, None  # The page proof's read stands in once; a retry reads in full.
             try:
-                after, current_auth, after_carried = snapshot_since(identity, before['rows'], capture_auth, **widen)
+                after, current_auth, after_carried = _snapshot(identity, capture_auth, before['rows'], reads=earlier) \
+                    if earlier else snapshot_since(identity, before['rows'], capture_auth, **widen)
                 if after['servicePid'] != before['servicePid']: break
             # A process inventory that timed out twice is retried here like any other
             # not-yet-ready reading, rather than rolling back a service that is starting.
@@ -1236,12 +1214,8 @@ def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_b
             # Names only: which protected tables gained which empty columns.
             result['migrationAddedColumns'] = {table: [column[1] for column in widening['added']]
                                                for table, widening in sorted(widenings.items())}
-        if 'serviceLaunchAgent' in progress:
-            result['serviceLaunchAgent'] = progress['serviceLaunchAgent']
-        if 'serverBrowserStop' in progress:
-            result['serverBrowserStop'] = progress['serverBrowserStop']
-        if 'cliAliasKeptAside' in progress:
-            result['cliAliasKeptAside'] = progress['cliAliasKeptAside']
+        result.update({key: progress[key] for key in ('serviceLaunchAgent', 'serverBrowserStop', 'cliAliasKeptAside', 'afterProof')
+                       if key in progress})
         if after_carried is not None:
             # Counts only: how many log rows the services appended after the prestate.
             result['appendedLogRows'] = after_carried['appendedRows']

@@ -8,6 +8,7 @@ struct DrawerView: View {
   @Environment(AppModel.self) private var model
   @Environment(AppRouter.self) private var router
   @State private var showAllProjects = false
+  @State private var showAutomated = false
   @State private var settingUpAide = false
 
   private static let collapsedProjectCount = 6
@@ -123,42 +124,62 @@ struct DrawerView: View {
 
   @ViewBuilder private var projectsSection: some View {
     let projects = model.pinnedProjects + model.otherProjects
-    if !projects.isEmpty {
+    let automated = model.automatedProjects
+    if !projects.isEmpty || !automated.isEmpty {
       DrawerSectionLabel("Projects")
       let visible = showAllProjects ? projects : Array(projects.prefix(Self.collapsedProjectCount))
-      let shared = Self.sharedTitles(projects)
-      ForEach(visible) { project in
-        let target = ChatTarget.project(project.ref)
-        // The machine name only tells apart projects with the same name.
-        WeaveRow(project.title, subtitle: shared.contains(project.title.lowercased()) ? project.machineLabel : nil, titleLineLimit: 1, subtitleLineLimit: 1, action: { router.open(target) }) {
-          ProjectAvatar(icon: project.icon.avatarIcon, title: project.title, size: 24, style: .plain)
-            .frame(width: 28)
-            .accessibilityHidden(true)
-        } trailing: {
-          ProjectStatusGlyphs(project: project)
-        }
-        .accessibilityValue(ProjectStatusGlyphs.spoken(project))
-        .drawerSelection(isSelected(target))
-      }
+      let shared = Self.sharedTitles(projects + automated)
+      ForEach(visible) { project in projectRow(project, shared: shared) }
       if projects.count > Self.collapsedProjectCount {
-        Button {
-          withAnimation(.snappy) { showAllProjects.toggle() }
-        } label: {
-          HStack(spacing: WeaveSpacing.s1) {
-            Text(showAllProjects ? "Show less" : "Show all \(projects.count)")
-            Image(systemName: showAllProjects ? "chevron.up" : "chevron.down")
-              .font(.system(size: 12, weight: .semibold))
-              .accessibilityHidden(true)
-          }
-          .font(.weave(.callout))
-          .foregroundStyle(Color.weave.muted)
-          .padding(.horizontal, WeaveSpacing.s4)
-          .frame(minHeight: WeaveSize.minTap)
-          .contentShape(Rectangle())
+        foldButton(showAllProjects ? "Show less" : "Show all \(projects.count)", open: showAllProjects) {
+          showAllProjects.toggle()
         }
-        .buttonStyle(.plain)
+      }
+      if !automated.isEmpty {
+        // Checks and agents make these for themselves; they stay folded until asked for.
+        let open = showAutomated || automated.contains { isSelected(.project($0.ref)) }
+        foldButton(open ? "Hide automated" : "Automated (\(automated.count))", open: open) {
+          showAutomated = !open
+        }
+        if open {
+          ForEach(automated) { project in projectRow(project, shared: shared) }
+        }
       }
     }
+  }
+
+  private func projectRow(_ project: ProjectSummary, shared: Set<String>) -> some View {
+    let target = ChatTarget.project(project.ref)
+    // The machine name only tells apart projects with the same name.
+    return WeaveRow(project.title, subtitle: shared.contains(project.title.lowercased()) ? project.machineLabel : nil, titleLineLimit: 1, subtitleLineLimit: 1, action: { router.open(target) }) {
+      ProjectAvatar(icon: project.icon.avatarIcon, title: project.title, size: 24, style: .plain)
+        .frame(width: 28)
+        .accessibilityHidden(true)
+    } trailing: {
+      ProjectStatusGlyphs(project: project)
+    }
+    .accessibilityValue(ProjectStatusGlyphs.spoken(project))
+    .drawerSelection(isSelected(target))
+  }
+
+  private func foldButton(_ title: String, open: Bool, toggle: @escaping () -> Void) -> some View {
+    Button {
+      withAnimation(.snappy) { toggle() }
+    } label: {
+      HStack(spacing: WeaveSpacing.s1) {
+        Text(title)
+        Image(systemName: open ? "chevron.up" : "chevron.down")
+          .font(.system(size: 12, weight: .semibold))
+          .accessibilityHidden(true)
+      }
+      .font(.weave(.callout))
+      .foregroundStyle(Color.weave.muted)
+      .padding(.horizontal, WeaveSpacing.s4)
+      .frame(minHeight: WeaveSize.minTap)
+      .contentShape(Rectangle())
+    }
+    .buttonStyle(.plain)
+    .accessibilityAddTraits(.isButton)
   }
 
   static func sharedTitles(_ projects: [ProjectSummary]) -> Set<String> {

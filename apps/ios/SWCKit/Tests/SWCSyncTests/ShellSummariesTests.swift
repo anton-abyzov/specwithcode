@@ -141,6 +141,34 @@ import SWCWire
     #expect(Set(output.recentThreads.map(\.ref.threadId)) == ["chat", "work"])
   }
 
+  @Test func checkProjectsAreAutomatedAndUserProjectsAreNot() throws {
+    let user = try TestData.project(id: "user", title: "EasyChamp", root: "/Users/x/Projects/sw-easychamp")
+    let check = try TestData.project(id: "check", title: "Run shell acceptance 357", root: "/Users/x/.specwithcode/m4/scratch/run-shell/workspace")
+    let proof = try TestData.project(id: "proof", title: "EasyChamp", root: "/Users/x/.local/share/specweave/fleet/handoff-proof/sw-easychamp")
+    var kept = try TestData.project(id: "kept", title: "Fixture lab", root: "/Users/x/Projects/fixture-lab")
+    kept.workspaceSettings?.origin = .user
+    var flagged = try TestData.project(id: "flagged", title: "Flagged", root: "/Users/x/Projects/flagged")
+    flagged.workspaceSettings?.origin = .automated
+    let named = try TestData.project(id: "named", title: "Scratch notes", root: "/Users/x/.specwithcode/m4/projects/scratch-notes")
+    let output = ShellSummaries.build([machine("env", threads: [], projects: [user, check, proof, kept, flagged, named])])
+    let automated = Set(output.projects.filter(\.isAutomated).map(\.ref.projectId))
+    #expect(automated == ["check", "proof", "flagged"])
+  }
+
+  @Test func linkedProjectIsAutomatedOnlyWhenEveryCopyIs() throws {
+    let logical = LogicalProject(id: "logical:1", title: "EasyChamp", coordinatorId: "coordinator:logical:1", members: [])
+    var mine = try TestData.project(id: "mine", title: "EasyChamp", root: "/Users/x/Projects/sw-easychamp")
+    mine.workspaceSettings?.logicalProject = logical
+    var copy = try TestData.project(id: "copy", title: "EasyChamp", root: "/Users/x/Projects/scratch/sw-easychamp")
+    copy.workspaceSettings?.logicalProject = logical
+    let output = ShellSummaries.build([
+      machine("a", threads: [], projects: [mine]),
+      machine("b", threads: [], projects: [copy]),
+    ])
+    #expect(output.projects.count == 1)
+    #expect(output.projects.first?.isAutomated == false)
+  }
+
   @Test func aideComesFromTheLowestEnvironmentId() throws {
     var personal = try TestData.project(id: "aide", title: "Aide")
     personal.workspaceSettings?.kind = .personal

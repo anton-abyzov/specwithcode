@@ -521,6 +521,13 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
             message:
               "A project started from its title takes only a title; set scripts or defaultModelSelection afterwards with studio_project_update.",
           });
+        // A title-only project is a new repository for the person; a check brings its own folder.
+        if (input.origin === "automated")
+          return yield* new OrchestratorMcpFailure({
+            code: "invalid_request",
+            message:
+              "A check's project needs its own folder: pass workspaceRoot (for example under the scratch folder) with origin automated.",
+          });
         const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
         const created = yield* folders
           .createNamedProject({ name: input.title })
@@ -543,6 +550,13 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
           ...(created.commitError === undefined ? {} : { commitError: created.commitError }),
         };
       }
+      // An agent may mark its own check's project; only the person files a project as theirs.
+      if (input.origin === "user")
+        return yield* new OrchestratorMcpFailure({
+          code: "invalid_request",
+          message:
+            'Only the user moves a project to their own projects. Omit origin for a project they asked for, or pass origin "automated" for a check.',
+        });
       const commandId = yield* newCommandId();
       return yield* projects
         .create({ ...input, workspaceRoot, commandId, projectId: ProjectId.make(commandId) })
@@ -570,6 +584,14 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
           code: "invalid_request",
           message:
             "Pause, auto-resume and the worker machine are the user's to change in project settings. To archive or restore a project, call studio_project_request; the user approves it.",
+        });
+      // Which list a project sits in is the person's choice once the project exists:
+      // an agent must not hide their project under Automated or lift a check into theirs.
+      if (lifecycle?.origin !== undefined)
+        return yield* new OrchestratorMcpFailure({
+          code: "invalid_request",
+          message:
+            "Whether a project is listed under Automated is the user's to change from its sidebar menu. Pass origin when you create a check's project instead.",
         });
       // The context labels these the user's own instructions, ranked above agent memory;
       // an agent that could rewrite them could raise its own text to that rank.

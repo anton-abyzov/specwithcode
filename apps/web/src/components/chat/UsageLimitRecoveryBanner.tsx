@@ -7,9 +7,16 @@ import {
   type OrchestrationV2LimitRecovery,
   type OrchestrationV2LimitRecoveryUpdate,
   type RunId,
+  type ServerProvider,
   type ThreadId,
 } from "@specweave-studio/contracts";
-import type { FallbackOrderUnavailable } from "@specweave-studio/shared/providerFallback";
+import {
+  canTakeTurn,
+  hasUsableFallbackCapacity,
+  providerUsedPercent,
+  reportsNoUsage,
+  type FallbackOrderUnavailable,
+} from "@specweave-studio/shared/providerFallback";
 import { ChevronDownIcon, GaugeIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Button } from "../ui/button";
@@ -443,6 +450,29 @@ export function usageApproachingBannerItem(props: {
   };
 }
 
+/** Why the room of a stood-in model is unknown: it reports no usage, or its reading is out of date. */
+export type LimitPairingRoomUnknown = "unreported" | "stale";
+
+/**
+ * Whether the model a fallback stood in for can take the thread back. Room
+ * needs a fresh usage reading below 100% (`hasUsableFallbackCapacity`). A
+ * provider that reports no usage (Copilot and other agents) or whose reading
+ * is out of date is unknown, never "has room".
+ */
+export function limitPairingRoom(
+  provider: ServerProvider | undefined,
+  nowMs: number,
+  model: string,
+): { readonly hasRoom: boolean; readonly roomUnknown?: LimitPairingRoomUnknown } {
+  if (provider === undefined || !canTakeTurn(provider)) return { hasRoom: false };
+  if (reportsNoUsage(provider)) return { hasRoom: false, roomUnknown: "unreported" };
+  if (hasUsableFallbackCapacity(provider, nowMs, model)) return { hasRoom: true };
+  const used = providerUsedPercent(provider, nowMs, model);
+  return used !== null && used >= 100
+    ? { hasRoom: false }
+    : { hasRoom: false, roomUnknown: "stale" };
+}
+
 /**
  * The thread runs on a limit fallback: "On Codex · GPT-6 Astra for Claude Code ·
  * Claude Opus 5.5", with the way back once the original model has room.
@@ -455,6 +485,8 @@ export function limitFallbackPairingBannerItem(props: {
   resetAt: number | null;
   /** The original model can take the next turn now. */
   hasRoom: boolean;
+  /** The original model can take a turn, but whether its limit lifted is unknown. */
+  roomUnknown?: LimitPairingRoomUnknown | undefined;
   onBack: () => void;
   onDismiss: () => void;
 }): ComposerBannerStackItem {
@@ -467,15 +499,25 @@ export function limitFallbackPairingBannerItem(props: {
     title: `Continuing on ${props.current}`,
     description: props.hasRoom
       ? `${props.original} stopped at its limit and has room again.`
-      : props.resetAt === null
-        ? `${props.original} stopped at its limit and is still limited.`
-        : `${props.original} stopped at its limit and resets at ${new Date(props.resetAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}.`,
+      : props.roomUnknown === "unreported"
+        ? `${props.original} stopped at its limit and reports no usage, so its room is unknown.`
+        : props.roomUnknown === "stale"
+          ? `${props.original} stopped at its limit and its usage reading is out of date, so its room is unknown.`
+          : props.resetAt === null
+            ? `${props.original} stopped at its limit and is still limited.`
+            : `${props.original} stopped at its limit and resets at ${new Date(props.resetAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}.`,
     actions: (
       <Button
         size="xs"
         variant="outline"
-        disabled={!props.hasRoom}
-        title={props.hasRoom ? undefined : `${props.original} has no room yet`}
+        disabled={!props.hasRoom && props.roomUnknown === undefined}
+        title={
+          props.hasRoom
+            ? undefined
+            : props.roomUnknown === undefined
+              ? `${props.original} has no room yet`
+              : `${props.original} may stop at its limit again`
+        }
         onClick={props.onBack}
       >
         {`Back to ${props.original}`}

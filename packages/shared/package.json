@@ -498,6 +498,10 @@
     "./personalAssistant": {
       "types": "./src/personalAssistant.ts",
       "import": "./src/personalAssistant.ts"
+    },
+    "./projectOrigin": {
+      "types": "./src/projectOrigin.ts",
+      "import": "./src/projectOrigin.ts"
     }
   },
   "scripts": {

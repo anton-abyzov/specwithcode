@@ -40,6 +40,35 @@ export function questionOptionIndexForKey(key: string, optionCount: number): num
   return -1;
 }
 
+/**
+ * The step a multi-select card's own footer offers. Multi-select options never
+ * auto-advance, so the card carries the Next/Submit control beside its choices.
+ */
+export function deriveQuestionStep(input: {
+  questionIndex: number;
+  questionCount: number;
+  selectedCount: number;
+  isLastQuestion: boolean;
+  canAdvance: boolean;
+  isComplete: boolean;
+  isResponding: boolean;
+}): { label: string; enabled: boolean; selection: string; isSubmit: boolean } {
+  const isSubmit = input.isLastQuestion;
+  const label = input.isResponding
+    ? "Submitting…"
+    : !isSubmit
+      ? "Next"
+      : input.questionCount > 1
+        ? "Submit answers"
+        : "Submit";
+  return {
+    label,
+    isSubmit,
+    enabled: !input.isResponding && (isSubmit ? input.isComplete : input.canAdvance),
+    selection: input.selectedCount === 0 ? "None selected yet" : `${input.selectedCount} selected`,
+  };
+}
+
 const RECOMMENDED_SUFFIX = /\s*[([]\s*recommended\s*[)\]]\s*$/i;
 
 /**

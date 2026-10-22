@@ -6889,6 +6889,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     questionIndex={activePendingQuestionIndex}
                     onToggleOption={onSelectActivePendingUserInputOption}
                     onAdvance={onAdvanceActivePendingUserInput}
+                    onPrevious={onPreviousActivePendingUserInputQuestion}
                     onDismiss={onDismissActivePendingUserInput}
                     onReplyInChat={replyToPendingQuestionInChat}
                     renderText={renderPendingQuestionText}
@@ -6912,64 +6913,32 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       questionIndex={activePendingQuestionIndex}
                       onToggleOption={onSelectActivePendingUserInputOption}
                       onAdvance={onAdvanceActivePendingUserInput}
+                      onPrevious={onPreviousActivePendingUserInputQuestion}
                       onDismiss={onDismissActivePendingUserInput}
                       onReplyInChat={replyToPendingQuestionInChat}
                       renderText={renderPendingQuestionText}
                     />
-                    {!isChoiceOnlyPendingQuestion ||
-                    activePendingProgress?.activeQuestion?.multiSelect ? (
+                    {!isChoiceOnlyPendingQuestion ? (
+                      // Multi-select steps live in the card's own footer above.
                       <ComposerBanner.Body>
                         <div
                           data-chat-composer-mobile-pending-compact="true"
-                          className={cn(
-                            "flex min-w-0 items-center gap-2 rounded-lg border border-border/55 bg-background/55 p-1.5 pl-3 transition-colors hover:bg-background/80",
-                            !activePendingProgress?.activeQuestion?.multiSelect && "p-0",
-                          )}
+                          className="flex min-w-0 items-center gap-2 rounded-lg border border-border/55 bg-background/55 transition-colors hover:bg-background/80"
                         >
-                          {!isChoiceOnlyPendingQuestion ? (
-                            <button
-                              type="button"
-                              className={cn(
-                                "min-w-0 flex-1 truncate bg-transparent py-1.5 text-left text-sm",
-                                activePendingProgress?.customAnswer
-                                  ? "text-foreground"
-                                  : "text-placeholder",
-                                !activePendingProgress?.activeQuestion?.multiSelect && "px-3 py-2",
-                              )}
-                              onPointerDown={(event) => event.preventDefault()}
-                              onClick={expandMobileComposer}
-                              aria-label="Write custom answer"
-                            >
-                              {activePendingProgress?.customAnswer || "Write custom answer"}
-                            </button>
-                          ) : null}
-                          {activePendingProgress?.activeQuestion?.multiSelect ? (
-                            <ComposerPrimaryActions
-                              compact
-                              canOperateThread={canOperateThread}
-                              pendingAction={pendingPrimaryAction}
-                              isRunning={false}
-                              canInterrupt={false}
-                              showPlanFollowUpPrompt={false}
-                              promptHasText={false}
-                              isSendBusy={isSendBusy}
-                              sendDisabledReason={sendDisabledReason}
-                              isConnecting={isConnecting}
-                              isEnvironmentUnavailable={
-                                environmentUnavailable !== null ||
-                                noProviderAvailable ||
-                                projectSelectionRequired
-                              }
-                              isPreparingWorktree={false}
-                              hasSendableContent={false}
-                              preserveComposerFocusOnPointerDown
-                              onPreviousPendingQuestion={onPreviousActivePendingUserInputQuestion}
-                              onInterrupt={handleInterruptPrimaryAction}
-                              onImplementPlanInNewThread={
-                                handleImplementPlanInNewThreadPrimaryAction
-                              }
-                            />
-                          ) : null}
+                          <button
+                            type="button"
+                            className={cn(
+                              "min-w-0 flex-1 truncate bg-transparent px-3 py-2 text-left text-sm",
+                              activePendingProgress?.customAnswer
+                                ? "text-foreground"
+                                : "text-placeholder",
+                            )}
+                            onPointerDown={(event) => event.preventDefault()}
+                            onClick={expandMobileComposer}
+                            aria-label="Write custom answer"
+                          >
+                            {activePendingProgress?.customAnswer || "Write custom answer"}
+                          </button>
                         </div>
                       </ComposerBanner.Body>
                     ) : null}

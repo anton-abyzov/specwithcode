@@ -35,6 +35,7 @@ import { ChatCanvas } from "./chat/ChatCanvas";
 import {
   fallbackUnavailableReason,
   limitFallbackPairingBannerItem,
+  limitPairingRoom,
   type FallbackChoice,
   usageApproachingBannerItem,
   usageLimitRecoveryBannerItem,
@@ -204,7 +205,6 @@ import {
 } from "@specweave-studio/shared/orchestrationV2ThreadError";
 import { resolveProjectSettings } from "@specweave-studio/shared/projectSettings";
 import {
-  canTakeTurn,
   isApiCreditExhaustedMessage,
   limitRestartRequest,
   limitStopWaitsForReset,
@@ -10308,11 +10308,7 @@ export default function ChatView(props: ChatViewProps) {
             pairingProvider === undefined
               ? null
               : usageResetAt(pairingProvider, 100, approachingNowMs, pairing.original.model),
-          hasRoom:
-            pairingProvider !== undefined &&
-            canTakeTurn(pairingProvider) &&
-            (providerUsedPercent(pairingProvider, approachingNowMs, pairing.original.model) ?? 0) <
-              100,
+          ...limitPairingRoom(pairingProvider, approachingNowMs, pairing.original.model),
           onBack: () => {
             const selection = {
               instanceId: pairing.original.instanceId,
