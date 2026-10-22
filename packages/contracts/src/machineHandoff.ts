@@ -19,6 +19,13 @@ export type MachineHandoffRepository = typeof MachineHandoffRepository.Type;
 export const MachineHandoffManifest = Schema.Struct({
   version: Schema.Literal(1),
   operationId: MachineHandoffOperationId,
+  /** Immutable folder-copy coordinates; bound into the retained bundle digest. */
+  copyScope: Schema.optional(
+    Schema.Struct({
+      copyRoot: bounded(4096),
+      projectRelativePath: bounded(4096),
+    }),
+  ),
   repositories: Schema.Array(MachineHandoffRepository).check(
     Schema.isMinLength(1),
     Schema.isMaxLength(128),

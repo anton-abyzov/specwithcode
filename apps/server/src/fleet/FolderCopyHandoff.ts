@@ -22,6 +22,7 @@ import {
 } from "./folderTransfer/sourceService.ts";
 import type { SentSecret } from "./folderTransfer/secrets.ts";
 import type { UndoPreview, UndoResult } from "./folderTransfer/undo.ts";
+import { copiedProjectFolder } from "./folderCopyScope.ts";
 import { handoffRef, safeRelativePath } from "./handoffGitTypes.ts";
 
 /** Conflicts listed per row; the rest are counted so a status stays small. */
@@ -66,6 +67,8 @@ export const attempt = <A>(task: () => Promise<A>) =>
 
 export function sourceStatus(record: SourceOperationRecord): FolderCopySourceStatus {
   return {
+    copyRoot: record.folder,
+    projectRelativePath: record.projectRelativePath ?? ".",
     operationId: record.operationId,
     projectId: ProjectId.make(record.projectId),
     mode: record.mode,
@@ -138,6 +141,9 @@ function row(planRow: Plan["rows"][number]): FolderCopyRow {
 /** The destination record as the browser sees it; the transfer token never leaves the server. */
 export function copyStatus(record: DestinationRecord, plan: Plan | null): FolderCopyStatus {
   return {
+    ...(record.copyRoot ? { copyRoot: record.copyRoot } : {}),
+    projectRelativePath: record.projectRelativePath ?? ".",
+    projectFolder: copiedProjectFolder(record.targetFolder, record.projectRelativePath),
     operationId: record.operationId,
     sourceEnvironmentId: EnvironmentId.make(record.sourceEnvironmentId),
     sourceProjectId: ProjectId.make(record.sourceProjectId),
@@ -224,6 +230,8 @@ export function offerResult(input: {
   readonly title: string;
 }): FolderCopyOffer {
   return {
+    copyRoot: input.record.folder,
+    projectRelativePath: input.record.projectRelativePath ?? ".",
     operationId: input.record.operationId,
     sourceEnvironmentId: EnvironmentId.make(input.sourceEnvironmentId),
     sourceProjectId: ProjectId.make(input.record.projectId),

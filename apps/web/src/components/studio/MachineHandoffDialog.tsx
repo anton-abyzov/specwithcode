@@ -1,11 +1,12 @@
 import { ArrowRightIcon, CheckIcon, LaptopIcon } from "lucide-react";
-import type { ComponentProps, ReactNode } from "react";
+import { useState, type ComponentProps, type ReactNode } from "react";
 import type { HandoffFolderMethod } from "../../studio/folderCopy";
 import { groupMachineFolders } from "../../studio/projectMachineFolders";
 import { cn } from "../../lib/utils";
 import { Button } from "../ui/button";
 import { Checkbox } from "../ui/checkbox";
 import { Radio, RadioGroup } from "../ui/radio-group";
+import { HandoffCopyActionsTarget } from "./HandoffCopyActions";
 import {
   Dialog,
   DialogDescription,
@@ -130,6 +131,7 @@ export function MachineHandoffDialog({
         disabled={frozen}
       />
     ) : null;
+  const [copyActionsTarget, setCopyActionsTarget] = useState<HTMLDivElement | null>(null);
   return (
     <Dialog
       open={open}
@@ -149,7 +151,9 @@ export function MachineHandoffDialog({
         <DialogPanel>
           {chooser}
           {copying ? (
-            copyFlow
+            <HandoffCopyActionsTarget.Provider value={copyActionsTarget}>
+              {copyFlow}
+            </HandoffCopyActionsTarget.Provider>
           ) : complete ? (
             <div className="flex items-center gap-3 rounded-lg bg-muted p-4 text-sm" role="status">
               <CheckIcon className="size-5 shrink-0" aria-hidden />
@@ -323,11 +327,18 @@ export function MachineHandoffDialog({
             </p>
           )}
         </DialogPanel>
-        <DialogFooter>
+        <DialogFooter className={copying ? "shrink-0 flex-row flex-wrap items-end" : undefined}>
           {copying ? (
-            <Button variant="outline" disabled={busy} onClick={() => onOpenChange(false)}>
-              Close
-            </Button>
+            <>
+              <div
+                ref={setCopyActionsTarget}
+                className="min-w-0 flex-1"
+                data-slot="copy-actions-outlet"
+              />
+              <Button variant="outline" disabled={busy} onClick={() => onOpenChange(false)}>
+                Close
+              </Button>
+            </>
           ) : complete ? (
             <Button
               className="h-auto min-h-9 min-w-0 max-w-full shrink whitespace-normal wrap-anywhere py-2 sm:h-auto sm:min-h-8"

@@ -133,6 +133,9 @@ export class SourceClient {
       mode: string;
       state: string;
       expiresAt: number;
+      projectId?: string;
+      copyRoot?: string;
+      projectRelativePath?: string;
     }>(await this.request("GET", "hello"));
     if (
       hello.environmentId !== expectedEnvironmentId ||
