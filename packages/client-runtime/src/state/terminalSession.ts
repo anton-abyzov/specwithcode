@@ -31,6 +31,8 @@ export interface TerminalSessionState {
   readonly error: string | null;
   /** The process's exit code once it exits; null while it runs or when unknown. */
   readonly exitCode: number | null;
+  /** A positive signal means the process was terminated, even when its raw exit code is zero. */
+  readonly exitSignal: number | null;
   readonly hasRunningSubprocess: boolean;
   readonly updatedAt: string | null;
   readonly version: number;
@@ -42,6 +44,7 @@ export interface TerminalBufferState {
   readonly status: TerminalSessionSnapshot["status"] | "closed";
   readonly error: string | null;
   readonly exitCode: number | null;
+  readonly exitSignal: number | null;
   readonly updatedAt: string | null;
   readonly version: number;
   readonly lifecycleVersion: number;
@@ -71,6 +74,7 @@ export const EMPTY_TERMINAL_BUFFER_STATE = Object.freeze<TerminalBufferState>({
   status: "closed",
   error: null,
   exitCode: null,
+  exitSignal: null,
   updatedAt: null,
   version: 0,
   lifecycleVersion: 0,
@@ -82,6 +86,7 @@ export const EMPTY_TERMINAL_SESSION_STATE = Object.freeze<TerminalSessionState>(
   status: "closed",
   error: null,
   exitCode: null,
+  exitSignal: null,
   hasRunningSubprocess: false,
   updatedAt: null,
   version: 0,
@@ -111,6 +116,7 @@ function terminalBufferStateFromSnapshot(
     status: snapshot.status,
     error: null,
     exitCode: snapshot.exitCode,
+    exitSignal: snapshot.exitSignal,
     updatedAt: snapshot.updatedAt,
     version: current.version + 1,
     lifecycleVersion: current.lifecycleVersion,
@@ -133,6 +139,7 @@ export function combineTerminalSessionState(
     status: buffer.version > 0 ? buffer.status : (summary?.status ?? buffer.status),
     error: buffer.error,
     exitCode: buffer.version > 0 ? buffer.exitCode : (summary?.exitCode ?? buffer.exitCode),
+    exitSignal: buffer.version > 0 ? buffer.exitSignal : (summary?.exitSignal ?? buffer.exitSignal),
     hasRunningSubprocess: summary?.hasRunningSubprocess ?? false,
     updatedAt: latestTimestamp(summary?.updatedAt ?? null, buffer.updatedAt),
     version: buffer.version,
@@ -178,6 +185,7 @@ export function applyTerminalAttachStreamEvent(
         status: "exited",
         error: null,
         exitCode: event.exitCode,
+        exitSignal: event.exitSignal,
         version: current.version + 1,
       };
     case "closed":

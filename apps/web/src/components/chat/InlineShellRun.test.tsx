@@ -124,7 +124,11 @@ function target(runtimeMode: RuntimeMode): ShellRunTarget {
   };
 }
 
-function exitedSession(output: string, exitCode: number): TerminalSessionState {
+function exitedSession(
+  output: string,
+  exitCode: number,
+  exitSignal: number | null = null,
+): TerminalSessionState {
   const buffer = applyTerminalAttachStreamEvent(EMPTY_TERMINAL_BUFFER_STATE, {
     type: "snapshot",
     snapshot: {
@@ -136,7 +140,7 @@ function exitedSession(output: string, exitCode: number): TerminalSessionState {
       pid: null,
       history: output,
       exitCode,
-      exitSignal: null,
+      exitSignal,
       label: "zsh",
       updatedAt: "2026-10-17T23:55:00.000Z",
     },
@@ -266,6 +270,33 @@ describe("inline shell code block runs", () => {
     });
     expect(commands.open).not.toHaveBeenCalled();
   });
+
+  it.each([2, 15])(
+    "shows Stopped for signal %s even when the raw exit code is zero",
+    async (signal) => {
+      terminal.known = [inlineRunTerminalId(COMMAND)];
+      terminal.state = exitedSession("^C\r\n", 0, signal);
+      const renderer = await render("```bash\n" + COMMAND + "\n```", target("full-access"));
+
+      const status = renderer.root.findByProps({ "data-shell-run-status": "" });
+      expect(status.props.children).toBe("Stopped");
+      expect(status.props.className).toContain("text-destructive-foreground");
+      expect(commands.open).not.toHaveBeenCalled();
+    },
+  );
+
+  it.each([null, 0])(
+    "preserves successful Exit 0 when the termination signal is %s",
+    async (signal) => {
+      terminal.known = [inlineRunTerminalId(COMMAND)];
+      terminal.state = exitedSession("done\r\n", 0, signal);
+      const renderer = await render("```bash\n" + COMMAND + "\n```", target("full-access"));
+
+      expect(renderer.root.findByProps({ "data-shell-run-status": "" }).props.children).toBe(
+        "Exit 0",
+      );
+    },
+  );
 
   it("offers no Run while streaming, for open fences, or outside a thread", async () => {
     const cases: Array<[string, ShellRunTarget | null, boolean]> = [

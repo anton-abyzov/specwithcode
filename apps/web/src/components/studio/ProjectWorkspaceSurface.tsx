@@ -49,11 +49,8 @@ import type {
 import { scopedThreadKey, scopeThreadRef } from "@specweave-studio/client-runtime/environment";
 import { squashAtomCommandFailure } from "@specweave-studio/client-runtime/state/runtime";
 import { resolveCoordinatorModelSelection } from "@specweave-studio/shared/coordinatorDefault";
+import { modelSelectionsEqual } from "@specweave-studio/shared/model";
 import { resolveProjectSettings } from "@specweave-studio/shared/projectSettings";
-import {
-  coordinatorFallbackReason,
-  coordinatorOnLimitFallback,
-} from "@specweave-studio/shared/providerFallback";
 import { formatDuration } from "@specweave-studio/shared/usageLimits";
 import {
   useAllEnvironmentShellsBootstrapped,
@@ -102,6 +99,7 @@ import { RemoteWorkerCards } from "./RemoteWorkerCards";
 import { useProjectRemoteWorkers } from "../../studio/fleet";
 import { visibleRemoteWorkers } from "../../studio/remoteWorkerCards";
 import { coordinatorTurnFailure, sentStarterIds } from "../../studio/coordinatorTurnState";
+import { coordinatorModelDisplay } from "../../studio/coordinatorRunningModel";
 import { WorkspacePageHeader } from "../WorkspacePageHeader";
 import { SidebarInset } from "../ui/sidebar";
 import { Button } from "../ui/button";
@@ -520,43 +518,42 @@ export function ProjectWorkspaceSurface({
   // Only a saved provider that really has no room is a limit: a coordinator a
   // scheduled run moved, or one whose limit has reset, goes back to the saved
   // model with the next message, so the line must not claim a limit then.
-  const fallbackInput =
-    coordinator && savedCoordinatorModel && hostProviders && hostSettings
-      ? {
-          saved: savedCoordinatorModel,
-          thread: coordinator.modelSelection,
-          providers: hostProviders,
-          rule: resolveProjectSettings(hostSettings, project.id, project).settings,
-          nowMs: Date.now(),
-          // Only a run that stopped on a real usage limit marks its provider limited.
-          limitedInstanceIds: new Set<string>(
-            coordinator.limitRecovery ? [coordinator.providerInstanceId] : [],
-          ),
-        }
-      : null;
-  const fallbackReason =
-    fallbackInput && coordinatorOnLimitFallback(fallbackInput)
-      ? coordinatorFallbackReason(fallbackInput)
-      : null;
-  const coordinatorFallback =
-    coordinator && savedCoordinatorModel && fallbackReason
-      ? {
-          reason:
-            fallbackReason.resetsAt === null || fallbackReason.resetsAt <= Date.now()
-              ? fallbackReason.text
-              : `${fallbackReason.text}, resets in ${formatDuration(fallbackReason.resetsAt - Date.now())}`,
-          now: modelLabel(
-            providerEntries.get(coordinator.modelSelection.instanceId) ?? null,
-            coordinator.modelSelection.instanceId,
-            coordinator.modelSelection.model,
-          ),
-          saved: modelLabel(
-            providerEntries.get(savedCoordinatorModel.instanceId) ?? null,
-            savedCoordinatorModel.instanceId,
-            savedCoordinatorModel.model,
-          ),
-        }
-      : null;
+  // The fallback never rewrites the saved model. An ongoing run names its actual
+  // provider; after it ends, thread metadata reflects a later Switch back.
+  const coordinatorDisplay = coordinatorModelDisplay({
+    picked: model ?? null,
+    saved: coordinator ? savedCoordinatorModel : null,
+    thread: coordinator?.modelSelection ?? null,
+    runs: coordinatorThread?.projection.runs,
+    latestFailureClass: coordinator?.runtime?.lastErrorClass,
+    providers: hostProviders,
+    rule: hostSettings ? resolveProjectSettings(hostSettings, project.id, project).settings : null,
+    nowMs: Date.now(),
+    // Only a run that stopped on a real usage limit marks its provider limited.
+    limitedInstanceIds: new Set<string>(
+      coordinator?.limitRecovery ? [coordinator.providerInstanceId] : [],
+    ),
+  });
+  const runningFallback = coordinatorDisplay.fallback;
+  const coordinatorFallback = runningFallback
+    ? {
+        reason:
+          runningFallback.reason.resetsAt === null || runningFallback.reason.resetsAt <= Date.now()
+            ? runningFallback.reason.text
+            : `${runningFallback.reason.text}, resets in ${formatDuration(runningFallback.reason.resetsAt - Date.now())}`,
+        now: modelLabel(
+          providerEntries.get(runningFallback.now.instanceId) ?? null,
+          runningFallback.now.instanceId,
+          runningFallback.now.model,
+        ),
+        saved: modelLabel(
+          providerEntries.get(runningFallback.saved.instanceId) ?? null,
+          runningFallback.saved.instanceId,
+          runningFallback.saved.model,
+        ),
+        spent: runningFallback.spent,
+      }
+    : null;
   // "Switch back" puts the coordinator on its saved model; the host still moves it
   // again on the next turn if that model's limit has not reset.
   const setCoordinatorModel = useOrchestrationCommand(threadEnvironment.updateMetadata, {
@@ -618,6 +615,15 @@ export function ProjectWorkspaceSurface({
       coordinator,
       providers: hostProviders,
       model,
+      // The picker shows what runs now; picking by hand still saves and overrides it.
+      running:
+        coordinatorDisplay.shown &&
+        (!model || !modelSelectionsEqual(coordinatorDisplay.shown, model))
+          ? {
+              value: coordinatorDisplay.shown,
+              returnsTo: coordinatorFallback?.saved.provider ?? null,
+            }
+          : null,
       canOperate,
       connected,
       revision,
@@ -1486,16 +1492,8 @@ export function ProjectWorkspaceSurface({
                       onOpenProjectUsage={() => setTab("usage")}
                       projectEnvironmentId={project.environmentId}
                       // The provider that runs the next turn, not the saved one it moved off.
-                      providerInstanceId={
-                        coordinatorFallback && coordinator
-                          ? coordinator.modelSelection.instanceId
-                          : (model?.instanceId ?? null)
-                      }
-                      model={
-                        coordinatorFallback && coordinator
-                          ? coordinator.modelSelection.model
-                          : (model?.model ?? null)
-                      }
+                      providerInstanceId={coordinatorDisplay.shown?.instanceId ?? null}
+                      model={coordinatorDisplay.shown?.model ?? null}
                     />
                   </>
                 }

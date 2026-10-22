@@ -53,7 +53,14 @@ const state = vi.hoisted(() => ({
   }>,
   attachments: [] as import("@specweave-studio/contracts").ChatAttachment[],
   /** The coordinator thread's runs and turn items, which its live progress line reads. */
-  runs: [] as Array<{ id: string; ordinal: number; status: string; requestedAt: string }>,
+  runs: [] as Array<{
+    id: string;
+    ordinal: number;
+    status: string;
+    requestedAt: string;
+    providerInstanceId?: string;
+    modelSelection?: { instanceId: string; model: string };
+  }>,
   turnItems: [] as Array<{
     runId: string;
     ordinal: number;
@@ -66,6 +73,8 @@ const state = vi.hoisted(() => ({
     instanceId: string;
     model: string;
   } | null,
+  /** Exercise the real workspace-to-picker assembly in model-display regressions. */
+  realCoordinatorModelPicker: false,
   shells: [] as EnvironmentThreadShell[],
   /** The source control status every thread card reads. */
   git: null as Record<string, unknown> | null,
@@ -177,9 +186,22 @@ vi.mock("../../state/entities", () => ({
         kept.deletedAt === next.deletedAt,
     ),
   readThreadShells: () => state.shells,
-  useThreadProjection: () => ({
-    projection: { messages: state.messages, runs: state.runs, turnItems: state.turnItems },
-  }),
+  useThreadProjection: () => {
+    const selection = state.shells.find(
+      (shell) => shell.id === state.coordinatorId,
+    )?.modelSelection;
+    return {
+      projection: {
+        messages: state.messages,
+        runs: state.runs.map((run) => ({
+          ...run,
+          modelSelection: run.modelSelection ?? selection,
+          providerInstanceId: run.providerInstanceId ?? selection?.instanceId,
+        })),
+        turnItems: state.turnItems,
+      },
+    };
+  },
   useThreadShell: (ref: { threadId: string } | null) =>
     ref === null ? null : (state.shells.find((shell) => shell.id === ref.threadId) ?? null),
   useThreadHistory: () => ({ hasMoreHistory: false }),
@@ -425,25 +447,26 @@ vi.mock("../../hooks/useSettings", async () => {
       },
   };
 });
-vi.mock("./shell/CoordinatorModelPicker", () => ({
-  CoordinatorModelPicker: ({
-    value,
-    disabled,
-    onChange,
-  }: {
-    value: { instanceId: string; model: string } | null;
-    disabled: boolean;
-    onChange: (value: { instanceId: string; model: string }) => void;
-  }) => (
-    <button
-      data-coordinator-model
-      data-disabled={disabled ? "true" : "false"}
-      onClick={() => onChange({ instanceId: "codex-native", model: "picked-model" })}
-    >
-      {value?.model ?? "none"}
-    </button>
-  ),
-}));
+vi.mock("./shell/CoordinatorModelPicker", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./shell/CoordinatorModelPicker")>();
+  return {
+    CoordinatorModelPicker: (props: Parameters<typeof actual.CoordinatorModelPicker>[0]) => {
+      if (state.realCoordinatorModelPicker) return <actual.CoordinatorModelPicker {...props} />;
+      const { value, running, disabled, onChange } = props;
+      return (
+        <button
+          data-coordinator-model
+          data-running-instance={running?.value.instanceId}
+          data-returns-to={running?.returnsTo}
+          data-disabled={disabled ? "true" : "false"}
+          onClick={() => onChange({ instanceId: "codex-native" as never, model: "picked-model" })}
+        >
+          {(running?.value ?? value)?.model ?? "none"}
+        </button>
+      );
+    },
+  };
+});
 vi.mock("./shell/ProjectUsageIndicator", () => ({
   ProjectUsageIndicator: ({ onOpenProjectUsage }: { onOpenProjectUsage: () => void }) => (
     <button data-usage-indicator onClick={onOpenProjectUsage}>
@@ -453,6 +476,7 @@ vi.mock("./shell/ProjectUsageIndicator", () => ({
 }));
 vi.mock("./shell/ModelBadge", () => ({
   ModelBadge: ({ model }: { model: string }) => <span data-model-badge>{model}</span>,
+  ModelBadgeMark: () => null,
   useProviderEntries: () => new Map(),
   useProviderEntriesByEnvironment: () => new Map(),
 }));
@@ -683,6 +707,7 @@ beforeEach(() => {
   localStorage.clear();
   state.coordinatorId = "coord";
   state.coordinatorModel = { instanceId: "claude-native", model: "coordinator-model" };
+  state.realCoordinatorModelPicker = false;
   state.goal = "";
   state.git = null;
   state.pullRequestRequests = [];

@@ -36,6 +36,74 @@ const BASE_SNAPSHOT: TerminalSessionSnapshot = {
 };
 
 describe("terminal session reducers", () => {
+  it("retains a live termination signal while running metadata is stale", () => {
+    const running = applyTerminalAttachStreamEvent(EMPTY_TERMINAL_BUFFER_STATE, {
+      type: "snapshot",
+      snapshot: BASE_SNAPSHOT,
+    });
+    const exited = applyTerminalAttachStreamEvent(running, {
+      type: "exited",
+      threadId: TARGET.threadId,
+      terminalId: TARGET.terminalId,
+      exitCode: 0,
+      exitSignal: 2,
+    });
+
+    expect(
+      combineTerminalSessionState({ ...BASE_SNAPSHOT, hasRunningSubprocess: false }, exited),
+    ).toMatchObject({ status: "exited", exitCode: 0, exitSignal: 2 });
+  });
+
+  it("restores termination signals from snapshots and metadata before attachment", () => {
+    const stopped = {
+      ...BASE_SNAPSHOT,
+      status: "exited" as const,
+      pid: null,
+      exitCode: 0,
+      exitSignal: 2,
+    };
+    const restored = applyTerminalAttachStreamEvent(EMPTY_TERMINAL_BUFFER_STATE, {
+      type: "snapshot",
+      snapshot: stopped,
+    });
+
+    expect(combineTerminalSessionState(null, restored)).toMatchObject({
+      status: "exited",
+      exitCode: 0,
+      exitSignal: 2,
+    });
+    expect(
+      combineTerminalSessionState(
+        { ...stopped, hasRunningSubprocess: false },
+        EMPTY_TERMINAL_BUFFER_STATE,
+      ),
+    ).toMatchObject({ status: "exited", exitCode: 0, exitSignal: 2 });
+  });
+
+  it("clears a previous termination signal when the terminal restarts", () => {
+    const stopped = {
+      ...BASE_SNAPSHOT,
+      status: "exited" as const,
+      pid: null,
+      exitCode: 0,
+      exitSignal: 2,
+    };
+    const exited = applyTerminalAttachStreamEvent(EMPTY_TERMINAL_BUFFER_STATE, {
+      type: "snapshot",
+      snapshot: stopped,
+    });
+    const restarted = applyTerminalAttachStreamEvent(exited, {
+      type: "restarted",
+      threadId: TARGET.threadId,
+      terminalId: TARGET.terminalId,
+      snapshot: BASE_SNAPSHOT,
+    });
+
+    expect(
+      combineTerminalSessionState({ ...stopped, hasRunningSubprocess: false }, restarted),
+    ).toMatchObject({ status: "running", exitCode: null, exitSignal: null });
+  });
+
   it("prefers live attach status over stale metadata after the attach stream starts", () => {
     const summary = applyTerminalMetadataStreamEvent([], {
       type: "snapshot",

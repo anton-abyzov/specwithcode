@@ -13,6 +13,7 @@ interface FakeSession {
   history: string;
   status: "running" | "exited";
   exitCode: number | null;
+  exitSignal: number | null;
   timers: ReturnType<typeof setTimeout>[];
 }
 
@@ -55,7 +56,13 @@ function script(command: string): { lines: string[]; exitCode: number | null } {
 function open({ input }: { input: { terminalId: string; command?: string } }) {
   const previous = sessions.get(input.terminalId);
   previous?.timers.forEach(clearTimeout);
-  const session: FakeSession = { history: "", status: "running", exitCode: null, timers: [] };
+  const session: FakeSession = {
+    history: "",
+    status: "running",
+    exitCode: null,
+    exitSignal: null,
+    timers: [],
+  };
   sessions.set(input.terminalId, session);
   const { lines, exitCode } = script(input.command ?? "");
   lines.forEach((line, index) => {
@@ -91,7 +98,9 @@ function write({ input }: { input: { terminalId: string; data: string } }) {
     session.timers.forEach(clearTimeout);
     session.history += "^C\r\n";
     session.status = "exited";
-    session.exitCode = 130;
+    // Native PTYs can report zero plus SIGINT instead of a shell's conventional 130.
+    session.exitCode = 0;
+    session.exitSignal = 2;
     notify();
   }
   return Promise.resolve(ok);
@@ -143,7 +152,7 @@ export function useAttachedTerminalSession(input: {
       pid: null,
       history: session.history,
       exitCode: session.exitCode,
-      exitSignal: null,
+      exitSignal: session.exitSignal,
       label: "zsh",
       updatedAt: "2026-10-17T23:55:00.000Z",
     },
