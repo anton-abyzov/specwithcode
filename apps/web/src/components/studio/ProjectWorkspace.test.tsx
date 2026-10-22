@@ -94,6 +94,9 @@ describe("project coordinator surface", () => {
       state.providers = [claude(20), codex];
       await render();
       expect(container.querySelector("[data-model-fallback]")).toBeNull();
+      expect(
+        container.querySelector("[data-coordinator-model]")?.hasAttribute("data-running-instance"),
+      ).toBe(false);
       // The weekly is spent: the session's room cannot be used, so the limit is real.
       state.providers = [claude(100), codex];
       await render();
@@ -102,6 +105,11 @@ describe("project coordinator surface", () => {
       expect(line?.textContent).toContain("Switched to Codex");
       expect(line?.textContent).toContain("Claude Code weekly limit reached, resets in 1d 15h");
       expect(line?.textContent).toContain("goes back to Claude Code on its own");
+      // The picker under it names what runs, not the saved model it moved off.
+      const picker = container.querySelector("[data-coordinator-model]");
+      expect(picker?.getAttribute("data-running-instance")).toBe("codex");
+      expect(picker?.getAttribute("data-returns-to")).toBe("Claude Code");
+      expect(picker?.textContent).toBe("gpt-6.1-sol");
       // The saved model runs the next turn once asked; the host decides if it has room.
       state.send.mockClear();
       await click("Switch back to Claude Code");

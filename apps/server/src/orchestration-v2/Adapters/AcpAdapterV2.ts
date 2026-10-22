@@ -124,6 +124,7 @@ import {
   backgroundWorkNotification,
 } from "../Notification.ts";
 import { makeProviderFailure, makeProviderRetryTurnItem } from "../ProviderFailure.ts";
+import { limitReplyTurnFailure } from "./acpLimitReply.ts";
 import { acpSelectionTransition } from "../ProviderSelectionTransition.ts";
 import {
   isProviderNativeImageAttachment,
@@ -1191,6 +1192,19 @@ interface ActiveTextStream {
   nextSegment: number;
 }
 
+/**
+ * The failure for a turn that did no work and replied only with a usage
+ * limit notice (see limitReplyTurnFailure); null for anything else.
+ */
+function acpLimitReplyFailure(context: ActiveAcpTurn): OrchestrationV2ProviderFailure | null {
+  return limitReplyTurnFailure({
+    messageText: context.input.message.text,
+    continuation: acpIsProviderContinuationMessage(context.input.message),
+    didWork: context.tools.size > 0 || context.subagents.size > 0,
+    assistantText: [...context.closedAssistantText, context.assistant.current?.text ?? ""],
+  });
+}
+
 interface ActiveAcpTurn {
   readonly input: ProviderAdapter.ProviderAdapterV2TurnInput;
   readonly providerTurnId: OrchestrationV2ProviderTurn["id"];
@@ -1204,6 +1218,8 @@ interface ActiveAcpTurn {
   readonly user: ActiveTextStream;
   readonly assistant: ActiveTextStream;
   readonly reasoning: ActiveTextStream;
+  /** Root assistant text of the segments already closed this turn. */
+  readonly closedAssistantText: Array<string>;
   providerRetry?:
     | {
         readonly failure: OrchestrationV2ProviderFailure;
@@ -2607,6 +2623,7 @@ export function makeAcpAdapterV2(
           const stream = textStreamFor(context, kind);
           if (stream.current === null) return;
           yield* emitTextSegment(context, kind, true);
+          if (kind === "assistant") context.closedAssistantText.push(stream.current.text);
           stream.current = null;
         });
 
@@ -6509,10 +6526,26 @@ export function makeAcpAdapterV2(
 
         const finalizeTurn = Effect.fnUntraced(function* (
           context: ActiveAcpTurn,
-          status: "completed" | "interrupted" | "failed" | "cancelled",
-          failure?: OrchestrationV2ProviderFailure,
+          requestedStatus: "completed" | "interrupted" | "failed" | "cancelled",
+          requestedFailure?: OrchestrationV2ProviderFailure,
         ) {
           if (context.finalized) return;
+          // Every normal end (prompt return, deferred finalize, wake settle)
+          // passes here: a turn whose whole reply is the agent's limit notice
+          // stopped on that limit, so the limit fallback can move the thread.
+          const limitReply =
+            requestedStatus === "completed" && !context.interrupted
+              ? acpLimitReplyFailure(context)
+              : null;
+          if (limitReply !== null)
+            yield* Effect.logInfo("orchestration-v2.acp-limit-reply", {
+              driver,
+              providerSessionId: input.providerSessionId,
+              providerTurnId: context.providerTurnId,
+              runId: context.input.runId,
+            });
+          const status = limitReply === null ? requestedStatus : "failed";
+          const failure = limitReply ?? requestedFailure;
           const settledStatus = context.interrupted ? "interrupted" : status;
           context.finalizedStatus = settledStatus;
           context.finalized = true;
@@ -6951,6 +6984,7 @@ export function makeAcpAdapterV2(
               user: { current: null, nextSegment: 0 },
               assistant: { current: null, nextSegment: 0 },
               reasoning: { current: null, nextSegment: 0 },
+              closedAssistantText: [],
               contextUsage: rememberedContextUsage ?? turnInput.providerThread.contextUsage ?? null,
               nativeMetadata: initialNativeMetadata,
               tools: new Map(),

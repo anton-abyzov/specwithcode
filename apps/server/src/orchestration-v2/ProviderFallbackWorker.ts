@@ -79,7 +79,7 @@ import {
   LIMIT_STOP_MAX_AGE_MS,
   previousRunOnInstance,
 } from "./providerOpenFailure.ts";
-import { UnopenableHolds } from "./UnopenableHolds.ts";
+import { UnopenableHolds, UsageLimitHolds } from "./UnopenableHolds.ts";
 import {
   type FallbackThread,
   latestOpenFailure,
@@ -135,6 +135,9 @@ const FAILED_INSTANCE_READ_INTERVAL_MS = 5 * 60_000;
 
 /** A provider that reports no usage is read again before a fallback onto it, at most this often. */
 const UNREPORTED_TARGET_CHECK_MAX_AGE_MS = 60_000;
+
+/** No-usage fallbacks the way back passes on its way home, at most. */
+const LIMIT_RETURN_MAX_NO_USAGE_HOPS = 4;
 
 /**
  * Whether a usage-limit stop still describes the account: its reset time is
@@ -271,7 +274,10 @@ function stoppedOnLimit(
  * on their limit, each held until that stop's reset, or for as long as an
  * unknown reset counts as current. Nothing else tells the sweep they are
  * full, so without this a thread moved off one would be moved back onto it.
- * Folds the threads seen now into `held` and drops holds that ended.
+ * Hold only the instance that actually failed. A provider's current settings
+ * cannot identify the account used by a historical run, so neither matching
+ * icons nor homes justify holding a sibling. It may fail once before its own
+ * hold is learned. Folds the threads seen now into `held` and drops expired holds.
  */
 export function unreportedLimitStops(
   held: ReadonlyMap<string, number>,
@@ -728,18 +734,50 @@ export const makeSweep = Effect.gen(function* () {
         .getThreadRecords(thread.id, ["runs"])
         .pipe(Effect.orElseSucceed(() => null));
       if (records === null) return null;
-      const found = apiCreditOrigin(
+      let found = apiCreditOrigin(
         thread,
         records.runs,
         apiCredits ? API_CREDIT_MESSAGE_PREFIX : LIMIT_FALLBACK_MESSAGE_PREFIX,
       );
+      const stoppedResetAt = (runId: OrchestrationV2Run["id"]) =>
+        projections.getThreadRecords(thread.id, ["turnItems"], { turnItemRunIds: [runId] }).pipe(
+          Effect.map(({ turnItems }) => limitResetAt(runId, turnItems)),
+          Effect.orElseSucceed(() => undefined),
+        );
       if (found === null) origin = null;
       else {
-        const stopped = yield* projections
-          .getThreadRecords(thread.id, ["turnItems"], { turnItemRunIds: [found.stoppedRunId] })
-          .pipe(Effect.orElseSucceed(() => null));
-        if (stopped === null) return null;
-        origin = { ...found, resetAt: limitResetAt(found.stoppedRunId, stopped.turnItems) };
+        let resetAt = yield* stoppedResetAt(found.stoppedRunId);
+        if (resetAt === undefined) return null;
+        // A fallback that reports no usage (Copilot) and stopped with no reset
+        // never reads as having room, so the way back would never fire: it
+        // leads on to where the thread ran before that fallback.
+        const noUsageHome = (selection: ModelSelection) => {
+          const home = providers.find((provider) => provider.instanceId === selection.instanceId);
+          return home !== undefined && reportsNoUsage(home);
+        };
+        for (
+          let hops = 0;
+          !apiCredits &&
+          hops < LIMIT_RETURN_MAX_NO_USAGE_HOPS &&
+          resetAt === null &&
+          noUsageHome(found.modelSelection);
+          hops++
+        ) {
+          const via: ApiCreditOrigin = found;
+          const stoppedOrdinal = records.runs.find((run) => run.id === via.stoppedRunId)?.ordinal;
+          if (stoppedOrdinal === undefined) break;
+          const earlier = apiCreditOrigin(
+            { id: thread.id, providerInstanceId: via.modelSelection.instanceId },
+            records.runs.filter((run) => run.ordinal <= stoppedOrdinal),
+            LIMIT_FALLBACK_MESSAGE_PREFIX,
+          );
+          if (earlier === null) break;
+          const earlierResetAt = yield* stoppedResetAt(earlier.stoppedRunId);
+          if (earlierResetAt === undefined) return null;
+          found = { ...earlier, continuedByRunId: via.continuedByRunId };
+          resetAt = earlierResetAt;
+        }
+        origin = { ...found, resetAt };
       }
       const cached = origin;
       yield* Ref.update(origins, (current) => new Map(current).set(key, cached));
@@ -1172,8 +1210,9 @@ export const makeSweep = Effect.gen(function* () {
       now,
     );
     yield* Ref.set(unopenableHeld, unopenableHeldNow);
-    // Shared with the coordinator's turn selection.
+    // Shared with the coordinator's turn selection and new workers' launch.
     yield* (yield* UnopenableHolds).set(unopenableHeldNow);
+    yield* (yield* UsageLimitHolds).set(held);
     const limited: ReadonlySet<string> = new Set([...held.keys(), ...unopenableHeldNow.keys()]);
     const reads: Reads = new Map();
     const rereadProviders = Effect.map(registry.getProviders, (read) => {

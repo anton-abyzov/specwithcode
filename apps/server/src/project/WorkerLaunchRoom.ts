@@ -11,6 +11,7 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 
 import { simulatedUsageLimitInstances } from "../orchestration-v2/ProviderFailure.ts";
+import { usageLimitHeldInstances } from "../orchestration-v2/UnopenableHolds.ts";
 import { ProviderFallbackEnv } from "../orchestration-v2/ProviderFallbackWorker.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { projectCompatibleProviders } from "./ProjectProviderCompatibility.ts";
@@ -38,6 +39,9 @@ export const workerLaunchWithRoom = Effect.fn("project.workerLaunchWithRoom")(fu
   const rule = resolveProjectSettings(preferences, input.project.id, input.project).settings;
   const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
   const limited = new Set<string>(simulatedUsageLimitInstances(yield* ProviderFallbackEnv));
+  // A provider that reports no usage but stopped a thread on its limit
+  // (Copilot's monthly quota) reads as ready: no new worker starts there.
+  for (const instanceId of yield* usageLimitHeldInstances(nowMs)) limited.add(instanceId);
   const providers = projectCompatibleProviders({
     project: input.project,
     providers: input.providers,

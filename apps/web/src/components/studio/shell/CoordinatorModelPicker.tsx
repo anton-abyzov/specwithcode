@@ -32,6 +32,7 @@ import { COORDINATOR_RECOMMENDED_TRAITS, modelLabel } from "../../../studio/shel
 import { ProviderModelPicker } from "../../chat/ProviderModelPicker";
 import { TraitsPicker } from "../../chat/TraitsPicker";
 import { ModelBadge, ModelBadgeMark } from "./ModelBadge";
+import { Tip } from "./Tip";
 import { useCoordinatorModelsLoading } from "./useCoordinatorModelsLoading";
 
 function CoordinatorProviderRecovery(props: {
@@ -104,6 +105,11 @@ function CoordinatorProviderRecovery(props: {
 export function CoordinatorModelPicker(props: {
   environmentId: EnvironmentId;
   value: ModelSelection | null;
+  /**
+   * The coordinator runs on this instead of `value`, which remains the saved preference.
+   * A return hint is present only while the saved provider is actually limited.
+   */
+  running?: { value: ModelSelection; returnsTo: string | null } | null;
   disabled: boolean;
   saving: boolean;
   requiresFolderGrants?: boolean;
@@ -119,16 +125,31 @@ export function CoordinatorModelPicker(props: {
   const entries = sortProviderInstanceEntries(
     applyProviderInstanceSettings(deriveProviderInstanceEntries(providers), settings),
   );
+  const value = props.value;
+  // Display follows the admitted turn; choices still compare against the saved model.
+  const running = props.running ?? null;
+  const shown = running?.value ?? value;
   const options = getCustomModelOptionsByInstance(
     settings,
     providers,
-    props.value?.instanceId,
-    props.value?.model,
+    shown?.instanceId,
+    shown?.model,
   );
-  const value = props.value;
   const active = value
     ? (entries.find((entry) => entry.instanceId === value.instanceId) ?? null)
     : null;
+  const shownEntry = shown
+    ? (entries.find((entry) => entry.instanceId === shown.instanceId) ?? null)
+    : null;
+  const fallbackHint = running?.returnsTo ? (
+    <Tip
+      label={`Runs on ${modelLabel(shownEntry, running.value.instanceId, running.value.model).provider} until ${running.returnsTo} has room again. Pick a model to change it.`}
+    >
+      <span className="text-xs text-muted-foreground" data-model-fallback-hint="">
+        {running.returnsTo} after reset
+      </span>
+    </Tip>
+  ) : null;
   const available = entries.filter((entry) => entry.enabled && entry.isAvailable);
   const modelsLoading = useCoordinatorModelsLoading(environment?.serverConfig);
   const machineLabel = useMachineNickname(props.environmentId, environment?.label);
@@ -169,7 +190,7 @@ export function CoordinatorModelPicker(props: {
   };
 
   const content = () => {
-    if (!value) {
+    if (!shown) {
       // Providers have not arrived from the host or are still being checked: nothing is
       // missing yet, so ask for nothing.
       if (modelsLoading)
@@ -230,9 +251,11 @@ export function CoordinatorModelPicker(props: {
         </span>
       );
     }
-    const label = modelLabel(active, value.instanceId, value.model);
+    const current = shown;
+    const label = modelLabel(shownEntry, current.instanceId, current.model);
     const recovery =
       !props.disabled &&
+      value &&
       getModelDisabledReason(value.instanceId, value.model) &&
       !coordinatorFolderCompatibility(
         props.requiresFolderGrants === true,
@@ -254,12 +277,13 @@ export function CoordinatorModelPicker(props: {
         <span className="sws-model-pick sws-model-pick-static">
           <span role="img" aria-label={`Coordinator model: ${label.full}`}>
             <ModelBadge
-              entry={active}
-              instanceId={value.instanceId}
-              model={value.model}
+              entry={shownEntry}
+              instanceId={current.instanceId}
+              model={current.model}
               variant="chip"
             />
           </span>
+          {fallbackHint}
           {!props.disabled ? (
             <button
               type="button"
@@ -275,18 +299,26 @@ export function CoordinatorModelPicker(props: {
       );
     return (
       <span className="sws-model-pick" data-saving={props.saving ? "true" : undefined}>
-        <ModelBadgeMark entry={active} instanceId={value.instanceId} provider={label.provider} />
+        <ModelBadgeMark
+          entry={shownEntry}
+          instanceId={current.instanceId}
+          provider={label.provider}
+        />
         <ProviderModelPicker
           key="model"
-          activeInstanceId={value.instanceId}
-          model={value.model}
+          activeInstanceId={current.instanceId}
+          model={current.model}
           lockedProvider={null}
           instanceEntries={entries}
           modelOptionsByInstance={options}
           size="sm"
           triggerClassName="sws-model-trigger"
           triggerLabel={`${label.provider} · ${label.model}`}
-          triggerAriaLabel={`Coordinator model: ${label.full}. Change model`}
+          triggerAriaLabel={
+            running
+              ? `Coordinator model: running on ${label.full}${running.returnsTo ? `, back to ${running.returnsTo} after reset` : ""}. Change model`
+              : `Coordinator model: ${label.full}. Change model`
+          }
           disabled={props.saving}
           getModelDisabledReason={getModelDisabledReason}
           usage={usage}
@@ -294,8 +326,10 @@ export function CoordinatorModelPicker(props: {
           onManageProviders={() => openProviderSetup()}
           onInstanceModelChange={changeModel}
         />
+        {fallbackHint}
         {recovery}
-        {active ? (
+        {/* Effort belongs to the saved model, which is not the one running now. */}
+        {value && active && !running ? (
           <TraitsPicker
             provider={active.driverKind}
             instanceId={value.instanceId}
