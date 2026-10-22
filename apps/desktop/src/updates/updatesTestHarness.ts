@@ -1,5 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import type { DesktopUpdateState } from "@specweave-studio/contracts";
+import type * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as PlatformError from "effect/PlatformError";
@@ -39,12 +40,22 @@ export interface UpdatesHarnessOptions {
   readonly isPackaged?: boolean;
   /** Contents of the resources/package-type marker a Linux package ships. */
   readonly packageType?: string | undefined;
+  /**
+   * Models electron-updater's MacUpdater: Squirrel.Mac stages a download only
+   * when it finishes with install-on-quit set, and quitAndInstall on an
+   * unstaged bundle with that flag set only waits, so nothing quits.
+   */
+  readonly squirrel?: boolean;
+  /** How long Squirrel.Mac unpacks after electron-updater hands it the download. */
+  readonly squirrelUnpack?: Duration.Duration;
 }
 
 export function makeHarness(options: UpdatesHarnessOptions = {}) {
   let checkCount = 0;
   let quitAndInstallCount = 0;
   let downloadCount = 0;
+  let squirrelStaged = false;
+  let quitCount = 0;
   // Every value the updater was given for install-on-quit, in order.
   const installOnQuitValues: boolean[] = [];
   let allowDowngrade = false;
@@ -99,11 +110,29 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
     }).pipe(Effect.andThen(options.checkForUpdates ?? Effect.void)),
     downloadUpdate: Effect.sync(() => {
       downloadCount += 1;
-    }).pipe(Effect.andThen(options.downloadUpdate ?? Effect.void)),
+    }).pipe(
+      Effect.andThen(options.downloadUpdate ?? Effect.void),
+      Effect.tap(() => {
+        if (installOnQuitValues.at(-1) !== true) return Effect.void;
+        const stage = Effect.sync(() => {
+          squirrelStaged = true;
+        });
+        return options.squirrelUnpack === undefined
+          ? stage
+          : Effect.sleep(options.squirrelUnpack).pipe(Effect.andThen(stage), Effect.forkDetach);
+      }),
+    ),
+    installReady: Effect.sync(() => !options.squirrel || squirrelStaged),
     quitAndInstall: () =>
       Effect.sync(() => {
         quitAndInstallCount += 1;
         installSteps.push("quitAndInstall");
+        if (!options.squirrel || squirrelStaged) quitCount += 1;
+        else if (installOnQuitValues.at(-1) !== true) {
+          // MacUpdater starts the native fetch itself, which stages and quits.
+          squirrelStaged = true;
+          quitCount += 1;
+        }
       }).pipe(Effect.andThen(options.quitAndInstall ?? Effect.void)),
     on: (eventName, listener) =>
       Effect.acquireRelease(
@@ -287,6 +316,8 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
     layer,
     checkCount: () => checkCount,
     quitAndInstalls: () => quitAndInstallCount,
+    /** quitAndInstall calls that really quit the app. */
+    quits: () => quitCount,
     installSteps,
     updateRestartMarkers,
     files,

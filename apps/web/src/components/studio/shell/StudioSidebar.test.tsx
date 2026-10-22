@@ -1065,6 +1065,57 @@ describe("cleaning up the projects list", () => {
     expect(container.querySelectorAll(".sws-project-row .sws-side-row-hint").length).toBe(2);
   });
 
+  const automatedSample = {
+    projectKey: "host:/Users/me/.specwithcode/m4/scratch/run-shell/workspace",
+    displayName: "Run shell acceptance 357",
+    workspaceRoot: "/Users/me/.specwithcode/m4/scratch/run-shell/workspace",
+    memberProjects: [
+      {
+        environmentId: "host",
+        id: "run-shell",
+        workspaceRoot: "/Users/me/.specwithcode/m4/scratch/run-shell/workspace",
+        workspaceSettings: { kind: "code" as const, archived: false, revision: 1 },
+      },
+    ],
+  };
+
+  it("folds projects checks made under Automated (N) and moves one back to the person's list", async () => {
+    state.groups.push(automatedSample);
+    await render();
+    expect(projectNames()).toEqual(["Atlas", "Borealis"]);
+    const toggle = [...container.querySelectorAll("button")].find(
+      (b) => b.textContent === "Automated (1)",
+    )!;
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    await act(async () => toggle.click());
+    expect(toggle.textContent).toBe("Hide automated");
+    const list = container.querySelector('[aria-label="Automated projects"]')!;
+    expect(list.textContent).toContain("Run shell acceptance 357");
+    const trigger = list.querySelector<HTMLButtonElement>(
+      '[aria-label="Actions for Run shell acceptance 357"]',
+    )!;
+    await act(async () => {
+      trigger.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, button: 0 }));
+      trigger.click();
+    });
+    const item = [...document.querySelectorAll('[role="menuitem"]')].find(
+      (entry) => entry.textContent === "Move to my projects",
+    ) as HTMLElement;
+    await act(async () => item.click());
+    expect(state.updateProject).toHaveBeenLastCalledWith({
+      environmentId: "host",
+      input: { projectId: "run-shell", workspaceSettings: { expectedRevision: 1, origin: "user" } },
+    });
+  });
+
+  it("opens Automated while one of its projects is open", async () => {
+    state.groups.push(automatedSample);
+    state.params = { projectKey: automatedSample.projectKey };
+    await render();
+    const row = container.querySelector('[aria-label="Automated projects"] a')!;
+    expect(row.getAttribute("aria-current")).toBe("page");
+  });
+
   it("archives and restores a project through its row menu", async () => {
     state.groups.push(archivedSample);
     await render();

@@ -13,11 +13,12 @@ import {
   derivePendingUserInputProgress,
   type PendingUserInputDraftAnswer,
 } from "../../pendingUserInput";
-import { CheckIcon, CornerDownLeftIcon } from "lucide-react";
+import { ArrowRightIcon, CheckIcon, ChevronLeftIcon, CornerDownLeftIcon } from "lucide-react";
 import { Collapsible, CollapsiblePanel, CollapsibleTrigger } from "../ui/collapsible";
-import { cn } from "~/lib/utils";
+import { cn, isMacPlatform } from "~/lib/utils";
 import { ComposerBanner } from "./ComposerBanner";
 import {
+  deriveQuestionStep,
   presentQuestionOption,
   questionOptionIndexForKey,
   questionOptionLetter,
@@ -40,6 +41,11 @@ interface PendingUserInputPanelProps {
   questionIndex: number;
   onToggleOption: (questionId: string, optionValue: string) => void;
   onAdvance: () => void;
+  /**
+   * Steps back one question. When present, multi-select questions get their
+   * own Back / Next / Submit footer; hosts with their own buttons omit it.
+   */
+  onPrevious?: (() => void) | undefined;
   onDismiss: (requestId: RuntimeRequestId) => void;
   /** Moves focus to where a free-text answer is typed. Hidden when absent. */
   onReplyInChat?: (() => void) | undefined;
@@ -54,6 +60,7 @@ export const ComposerPendingUserInputPanel = memo(function ComposerPendingUserIn
   questionIndex,
   onToggleOption,
   onAdvance,
+  onPrevious,
   onDismiss,
   onReplyInChat,
   renderText = renderPlainQuestionText,
@@ -73,6 +80,7 @@ export const ComposerPendingUserInputPanel = memo(function ComposerPendingUserIn
       questionIndex={questionIndex}
       onToggleOption={onToggleOption}
       onAdvance={onAdvance}
+      onPrevious={onPrevious}
       onDismiss={onDismiss}
       onReplyInChat={onReplyInChat}
       renderText={renderText}
@@ -89,6 +97,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   questionIndex,
   onToggleOption,
   onAdvance,
+  onPrevious,
   onDismiss,
   onReplyInChat,
   renderText,
@@ -102,6 +111,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   questionIndex: number;
   onToggleOption: (questionId: string, optionValue: string) => void;
   onAdvance: () => void;
+  onPrevious: (() => void) | undefined;
   onDismiss: (requestId: RuntimeRequestId) => void;
   onReplyInChat: (() => void) | undefined;
   renderText: QuestionTextRenderer;
@@ -222,6 +232,50 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
     document.addEventListener("keydown", handler);
     return () => document.removeEventListener("keydown", handler);
   }, [activeQuestion, handleOptionSelection, isCollapsed, responseDisabled]);
+
+  const showStepFooter = Boolean(onPrevious && activeQuestion?.multiSelect);
+  const step = deriveQuestionStep({
+    questionIndex: progress.questionIndex,
+    questionCount: prompt.questions.length,
+    selectedCount:
+      progress.customAnswer.trim().length > 0 ? 0 : progress.selectedOptionValues.length,
+    isLastQuestion: progress.isLastQuestion,
+    canAdvance: progress.canAdvance,
+    isComplete: progress.isComplete,
+    isResponding,
+  });
+  const canStep = showStepFooter && step.enabled && !responseDisabled;
+  const isMac = isMacPlatform(typeof navigator === "undefined" ? "" : navigator.platform);
+
+  // Cmd/Ctrl+Enter takes the footer's step from anywhere outside a text field;
+  // inside the composer, Enter already submits the same answer.
+  useEffect(() => {
+    if (!canStep || isCollapsed) return;
+    const handler = (event: globalThis.KeyboardEvent) => {
+      if (event.key !== "Enter" || !(event.metaKey || event.ctrlKey)) return;
+      if (event.altKey || event.shiftKey || event.repeat || event.defaultPrevented) return;
+      const target = event.target;
+      if (
+        target instanceof HTMLInputElement ||
+        target instanceof HTMLTextAreaElement ||
+        target instanceof HTMLSelectElement
+      ) {
+        return;
+      }
+      if (
+        target instanceof HTMLElement &&
+        target.closest(
+          '[contenteditable]:not([contenteditable="false"]),[role="dialog"],[role="menu"]',
+        )
+      ) {
+        return;
+      }
+      event.preventDefault();
+      onAdvanceRef.current();
+    };
+    document.addEventListener("keydown", handler);
+    return () => document.removeEventListener("keydown", handler);
+  }, [canStep, isCollapsed]);
 
   // Arrow keys move between options like a list; Enter or Space picks one.
   const moveOptionFocus = useCallback((event: ReactKeyboardEvent<HTMLDivElement>) => {
@@ -381,6 +435,14 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
                     onKeyDown={(event) => {
                       if (event.target !== event.currentTarget) return;
                       if (event.key !== "Enter" && event.key !== " ") return;
+                      // Let the card's step shortcut reach its document handler.
+                      if (
+                        showStepFooter &&
+                        event.key === "Enter" &&
+                        (event.metaKey || event.ctrlKey)
+                      ) {
+                        return;
+                      }
                       event.preventDefault();
                       handleOptionSelection(activeQuestion.id, optionValue);
                     }}
@@ -434,7 +496,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
                 );
               })}
             </div>
-            {onReplyInChat && activeQuestion.allowCustomAnswer !== false ? (
+            {onReplyInChat && activeQuestion.allowCustomAnswer !== false && !showStepFooter ? (
               <p className="mt-1.5 px-1.5 text-xs text-muted-foreground">
                 Or just{" "}
                 <button
@@ -450,6 +512,75 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
             ) : null}
           </div>
         </ComposerBanner.Scroll>
+        {showStepFooter ? (
+          // Outside the scroll area, so the step stays in reach however long
+          // the option list is.
+          <div
+            data-question-step
+            className="mx-2 mt-0.5 flex items-center gap-2 border-t border-border/60 pt-2 pb-1 sm:mx-3"
+          >
+            <p className="flex min-w-0 flex-1 items-baseline px-1.5 text-xs text-muted-foreground">
+              <span
+                aria-live="polite"
+                data-question-step-selection
+                className={cn(
+                  "shrink-0 whitespace-nowrap tabular-nums",
+                  progress.selectedOptionValues.length > 0 && "text-foreground",
+                )}
+              >
+                {step.selection}
+              </span>
+              {onReplyInChat && activeQuestion.allowCustomAnswer !== false ? (
+                // Narrow panels keep the count and the step; the composer below
+                // still takes a typed reply.
+                <span className="min-w-0 truncate whitespace-pre @max-[420px]:hidden">
+                  <span aria-hidden> · </span>
+                  <button
+                    type="button"
+                    data-question-reply-in-chat
+                    className="cursor-pointer underline decoration-muted-foreground/50 underline-offset-2 hover:text-foreground hover:decoration-foreground/60 focus-visible:text-foreground focus-visible:outline-none"
+                    onClick={onReplyInChat}
+                  >
+                    or reply in chat
+                  </button>
+                </span>
+              ) : null}
+            </p>
+            {progress.questionIndex > 0 && onPrevious ? (
+              <button
+                type="button"
+                data-question-step-back
+                disabled={responseDisabled}
+                onClick={onPrevious}
+                className="inline-flex h-7 shrink-0 cursor-pointer items-center gap-1 rounded-full px-2.5 text-xs font-medium text-muted-foreground outline-none transition-colors hover:bg-muted/55 hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring disabled:pointer-events-none disabled:opacity-50"
+              >
+                <ChevronLeftIcon aria-hidden className="size-3.5" />
+                Back
+              </button>
+            ) : null}
+            <button
+              type="button"
+              data-question-step-next={step.isSubmit ? "submit" : "next"}
+              disabled={!canStep}
+              aria-keyshortcuts={isMac ? "Meta+Enter" : "Control+Enter"}
+              onClick={() => onAdvanceRef.current()}
+              className="inline-flex h-7 shrink-0 cursor-pointer items-center gap-1.5 rounded-full bg-message-action pr-1.5 pl-3 text-xs font-medium text-message-action-foreground shadow-xs shadow-message-action/24 outline-none transition-colors hover:bg-message-action-hover focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-1 focus-visible:ring-offset-background disabled:pointer-events-none disabled:opacity-(--disabled-opacity) disabled:shadow-none"
+            >
+              {step.label}
+              {step.isSubmit ? (
+                <CheckIcon aria-hidden className="size-3.5" />
+              ) : (
+                <ArrowRightIcon aria-hidden className="size-3.5" />
+              )}
+              <span
+                aria-hidden
+                className="hidden rounded bg-message-action-foreground/15 px-1 text-3xs leading-4 sm:inline"
+              >
+                {isMac ? "⌘↵" : "Ctrl+↵"}
+              </span>
+            </button>
+          </div>
+        ) : null}
       </CollapsiblePanel>
     </Collapsible>
   );

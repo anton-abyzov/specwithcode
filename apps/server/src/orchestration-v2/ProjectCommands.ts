@@ -9,6 +9,7 @@ import {
   type ProjectWorkspaceSettings,
   type ProjectWorkspacePatch,
   type ProjectKind,
+  type ProjectOrigin,
   type ThreadId,
   type CommandId,
   type EventId,
@@ -77,6 +78,8 @@ export interface ProjectCreateCommand {
   readonly initialWorkerModelSelection?: ModelSelection | null;
   /** Internal: the temporary auth session creating the project; see TemporaryProjects. */
   readonly temporarySessionId?: string;
+  /** Set for a project a check or agent makes for itself; see projectOrigin. */
+  readonly origin?: ProjectOrigin;
 }
 
 export interface ProjectMetaUpdateCommand {
@@ -608,6 +611,7 @@ export function planProjectCommand(input: {
             ...(command.temporarySessionId
               ? { temporarySessionId: command.temporarySessionId }
               : {}),
+            ...(command.origin ? { origin: command.origin } : {}),
           },
           createdAt: occurredAt,
           updatedAt: occurredAt,

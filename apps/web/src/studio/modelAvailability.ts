@@ -357,7 +357,7 @@ export function availabilityText(
     case "unknown":
       return availability.reason === "probeFailed"
         ? {
-            short: "Usage unknown",
+            short: "Usage unavailable",
             long: `${provider} usage could not be read. The model stays selectable.`,
             tone: "muted",
           }

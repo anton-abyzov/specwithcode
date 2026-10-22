@@ -2,13 +2,16 @@ import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import {
   CommandId,
+  ProviderDriverKind,
   ProviderInstanceId,
   RunId,
   type OrchestrationV2LimitRecovery,
+  type ServerProvider,
 } from "@specweave-studio/contracts";
 import {
   formatResetIn,
   limitFallbackPairingBannerItem,
+  limitPairingRoom,
   usageApproachingBannerItem,
   usageLimitRecoveryBannerItem,
 } from "./UsageLimitRecoveryBanner";
@@ -335,6 +338,113 @@ it("pairs a fallback thread with its original model and offers the way back", as
   });
   await act(async () => button("Back to Claude · Claude Opus 5.5").props.onClick());
   expect(onBack).toHaveBeenCalledOnce();
+});
+it("does not claim room for an original model that reports no usage", async () => {
+  const onBack = vi.fn();
+  const unknown = limitFallbackPairingBannerItem({
+    id: "pairing",
+    current: "Gemini CLI (Vertex AI) · Default",
+    original: "Copilot managed · Claude Opus 5.5",
+    resetAt: null,
+    hasRoom: false,
+    roomUnknown: "unreported",
+    onBack,
+    onDismiss: () => {},
+  });
+  expect(unknown.description).toBe(
+    "Copilot managed · Claude Opus 5.5 stopped at its limit and reports no usage, so its room is unknown.",
+  );
+  await act(() => {
+    renderer = create(<>{unknown.actions}</>);
+  });
+  const back = button("Back to Copilot managed · Claude Opus 5.5");
+  expect(back.props.disabled).toBe(false);
+  expect(back.props.title).toBe("Copilot managed · Claude Opus 5.5 may stop at its limit again");
+  await act(async () => back.props.onClick());
+  expect(onBack).toHaveBeenCalledOnce();
+  const stale = limitFallbackPairingBannerItem({
+    id: "pairing",
+    current: "Codex · GPT-6 Astra",
+    original: "Claude · Claude Opus 5.5",
+    resetAt: null,
+    hasRoom: false,
+    roomUnknown: "stale",
+    onBack,
+    onDismiss: () => {},
+  });
+  expect(stale.description).toBe(
+    "Claude · Claude Opus 5.5 stopped at its limit and its usage reading is out of date, so its room is unknown.",
+  );
+});
+it("knows a stood-in model has room only from a fresh usage reading", () => {
+  const nowMs = Date.parse("2026-10-22T14:10:00.000Z");
+  const fresh = "2026-10-22T14:09:00.000Z";
+  const provider = (
+    usage: {
+      readonly usedPercent: number;
+      readonly checkedAt?: string;
+      readonly resetsAt?: string;
+      readonly model?: string;
+      readonly unavailable?: boolean;
+    } | null,
+    status = "ready",
+  ): ServerProvider =>
+    ({
+      instanceId: ProviderInstanceId.make("claudeAgent"),
+      driver: ProviderDriverKind.make("claudeAgent"),
+      enabled: true,
+      installed: true,
+      status,
+      auth: { status: "authenticated" },
+      checkedAt: fresh,
+      version: null,
+      models: [
+        { slug: "claude-opus-5-5", name: "Claude Opus 5.5", isCustom: false, capabilities: null },
+      ],
+      slashCommands: [],
+      skills: [],
+      ...(usage === null
+        ? {}
+        : {
+            usageLimits: {
+              checkedAt: usage.checkedAt ?? fresh,
+              ...(usage.unavailable ? { unavailable: { reason: "probeFailed" } } : {}),
+              windows: usage.unavailable
+                ? []
+                : [
+                    {
+                      id: "five-hour",
+                      kind: "session",
+                      label: "5-hour",
+                      usedPercent: usage.usedPercent,
+                      resetsAt: usage.resetsAt ?? "2026-10-22T18:00:00.000Z",
+                      ...(usage.model === undefined ? {} : { model: usage.model }),
+                    },
+                  ],
+            },
+          }),
+    }) as ServerProvider;
+  const room = (target: ServerProvider | undefined) =>
+    limitPairingRoom(target, nowMs, "claude-opus-5-5");
+  // Copilot and other agents report no usage: the quota they hit may still hold.
+  expect(room(provider(null))).toEqual({ hasRoom: false, roomUnknown: "unreported" });
+  expect(room(provider({ usedPercent: 40 }))).toEqual({ hasRoom: true });
+  expect(room(provider({ usedPercent: 100 }))).toEqual({ hasRoom: false });
+  // A reading too old to trust, an expired window or a failed probe is not room.
+  expect(room(provider({ usedPercent: 40, checkedAt: "2026-10-22T12:00:00.000Z" }))).toEqual({
+    hasRoom: false,
+    roomUnknown: "stale",
+  });
+  expect(room(provider({ usedPercent: 100, resetsAt: "2026-10-22T14:00:00.000Z" }))).toEqual({
+    hasRoom: false,
+    roomUnknown: "stale",
+  });
+  expect(room(provider({ usedPercent: 0, unavailable: true }))).toEqual({
+    hasRoom: false,
+    roomUnknown: "stale",
+  });
+  expect(room(provider(null, "error"))).toEqual({ hasRoom: false });
+  expect(room(undefined)).toEqual({ hasRoom: false });
 });
 it("lays its buttons out below the title instead of in a column beside it", () => {
   const item = usageLimitRecoveryBannerItem({ ...props, onChange: vi.fn() });

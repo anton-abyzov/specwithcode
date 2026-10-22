@@ -362,6 +362,38 @@ describe("resolveTaskRouting", () => {
     });
   });
 
+  it("never moves work onto the Gemini CLI, even when paid API spend is allowed", () => {
+    const flash = [model("gemini-3.8-flash-high", "Gemini 3.8 Flash High", { capabilities: null })];
+    const geminiCli = provider("acpRegistry_gemini", "acpRegistry", flash, {
+      displayName: "Gemini CLI",
+      auth: { status: "authenticated", type: "oauth-personal" },
+    });
+    const decision = route("Translate the emails", {
+      providers: [{ ...claude, status: "error" as const }, geminiCli],
+      policy: { ...auto, paidApi: "standard" },
+    });
+    expect(decision.moved).toBe(false);
+    expect(decision.reason).toContain("Gemini spend is off");
+  });
+
+  it.each(["gemini-api-key", "agent-platform"])(
+    "never routes Auto through Antigravity's paid %s sign-in",
+    (type) => {
+      const paid = provider(
+        "antigravity",
+        "antigravity",
+        [model("gemini-3.8-flash-high", "Gemini 3.8 Flash High", { capabilities: null })],
+        { auth: { status: "authenticated", type } },
+      );
+      const decision = route("Translate the emails", {
+        providers: [{ ...claude, status: "error" as const }, paid],
+        policy: { ...auto, paidApi: "standard" },
+      });
+      expect(decision.moved).toBe(false);
+      expect(decision.reason).toContain("Gemini spend is off");
+    },
+  );
+
   it("treats API-key sign-ins under any driver name, and unknown sign-ins, as paid", () => {
     const flash = [model("gemini-3.8-flash-high", "Gemini 3.8 Flash High", { capabilities: null })];
     const gemini = provider("antigravity", "antigravity", flash, {
@@ -405,7 +437,7 @@ describe("resolveTaskRouting", () => {
         providers: [claude, gemini],
         policy: { ...policy, paidApi: "standard" },
       }),
-    ).toMatchObject({ moved: true, billing: "api", selection: { instanceId: "antigravity" } });
+    ).toMatchObject({ moved: false, selection: opus });
   });
 
   it("keeps a baseline whose tier is unknown", () => {

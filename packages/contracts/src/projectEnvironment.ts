@@ -3,6 +3,9 @@ import { CommandId, NonNegativeInt, ProjectId } from "./baseSchemas.ts";
 
 export const ProjectKind = Schema.Literals(["code", "personal"]);
 export type ProjectKind = typeof ProjectKind.Type;
+/** Who a project is for; see `@specweave-studio/shared/projectOrigin`. */
+export const ProjectOrigin = Schema.Literals(["user", "automated"]);
+export type ProjectOrigin = typeof ProjectOrigin.Type;
 export const ProjectRepositoryId = Schema.String.check(
   Schema.isPattern(/^[a-zA-Z0-9][a-zA-Z0-9_-]{0,63}$/),
 );

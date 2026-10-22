@@ -127,6 +127,8 @@ public struct ProjectSummary: Identifiable, Hashable, Sendable {
   public var isPinned: Bool
   public var paused: Bool
   public var archived: Bool
+  /// Made by a check or agent for itself; listed under "Automated", apart from the person's projects.
+  public var isAutomated: Bool
   /// Threads of this project that are working right now.
   public var workingCount: Int
   public var hasUnread: Bool
@@ -134,7 +136,7 @@ public struct ProjectSummary: Identifiable, Hashable, Sendable {
   /// first. Empty for a project on one machine.
   public var members: [ProjectMember]
 
-  public init(ref: ProjectRef, title: String, icon: ProjectIcon = .none, kind: ProjectKind = .code, machineLabel: String, machineOnline: Bool, isPinned: Bool = false, paused: Bool = false, archived: Bool = false, workingCount: Int = 0, hasUnread: Bool = false, members: [ProjectMember] = []) {
+  public init(ref: ProjectRef, title: String, icon: ProjectIcon = .none, kind: ProjectKind = .code, machineLabel: String, machineOnline: Bool, isPinned: Bool = false, paused: Bool = false, archived: Bool = false, isAutomated: Bool = false, workingCount: Int = 0, hasUnread: Bool = false, members: [ProjectMember] = []) {
     self.ref = ref
     self.title = title
     self.icon = icon
@@ -144,6 +146,7 @@ public struct ProjectSummary: Identifiable, Hashable, Sendable {
     self.isPinned = isPinned
     self.paused = paused
     self.archived = archived
+    self.isAutomated = isAutomated
     self.workingCount = workingCount
     self.hasUnread = hasUnread
     self.members = members
@@ -518,8 +521,10 @@ public final class AppModel {
     engine.start(model: self)
   }
 
-  public var pinnedProjects: [ProjectSummary] { projects.filter { $0.isPinned && !$0.archived } }
-  public var otherProjects: [ProjectSummary] { projects.filter { !$0.isPinned && !$0.archived } }
+  public var pinnedProjects: [ProjectSummary] { projects.filter { $0.isPinned && !$0.archived && !$0.isAutomated } }
+  public var otherProjects: [ProjectSummary] { projects.filter { !$0.isPinned && !$0.archived && !$0.isAutomated } }
+  /// Projects checks and agents made for themselves, listed apart under "Automated".
+  public var automatedProjects: [ProjectSummary] { projects.filter { $0.isAutomated && !$0.archived } }
 
   public func machine(_ id: String) -> MachineSummary? { machines.first { $0.id == id } }
 

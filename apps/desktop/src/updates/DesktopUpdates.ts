@@ -35,6 +35,7 @@ import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as IpcChannels from "../ipc/channels.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import { type LocalServiceProbe, makeAppActivationControl } from "./appActivationControl.ts";
+import { APP_INSTALL_APPLY_MS } from "./appFollowUp.ts";
 import { normalizeDesktopUpdateReleaseNotes } from "./releaseNotes.ts";
 import { resolveDefaultDesktopUpdateChannel } from "./updateChannels.ts";
 import { updateTokenResolver } from "./updateToken.ts";
@@ -62,6 +63,12 @@ const PREPARED_INSTALL_CHECK_WAIT = Duration.seconds(90);
 // download (seen after an error event at 100%), holding the updater; the
 // download is given up after this long so the lock cannot stay taken.
 const DOWNLOAD_STALL_LIMIT = Duration.minutes(30);
+// Squirrel.Mac unpacks and checks the bundle after electron-updater hands it
+// the download; an install waits this long for that before giving up.
+const SQUIRREL_STAGE_WAIT_POLLS = 240;
+const SQUIRREL_STAGE_POLL = Duration.millis(500);
+const INSTALL_NOT_STAGED = "macOS did not prepare the update. Try restarting to update again.";
+const INSTALL_DID_NOT_QUIT = "SpecWithCode did not restart to install the update.";
 // A new release shows in the sidebar within this long. Ten minutes keeps a
 // machine at six feed requests an hour, far below GitHub's limits, and also
 // bounds re-checks on wake, unlock and window focus.
@@ -554,6 +561,9 @@ export const make = Effect.gen(function* () {
   });
 
   const activeUpdateAction = Ref.get(activeUpdateActionRef);
+  const isInstallActive = activeUpdateAction.pipe(
+    Effect.map((action) => Option.isSome(action) && action.value === "install"),
+  );
 
   const tryStartUpdateAction = (action: UpdateAction): Effect.Effect<boolean> =>
     Ref.modify(activeUpdateActionRef, (activeAction) =>
@@ -819,6 +829,7 @@ export const make = Effect.gen(function* () {
     installAutomatically: desktopSettings.get.pipe(
       Effect.map((settings) => settings.updatePreferences.installAutomatically),
     ),
+    holdInstallOnQuit: Effect.sync(() => stagingForInstall),
     setAutoInstallOnAppQuit: electronUpdater.setAutoInstallOnAppQuit,
     backgroundScope: Ref.get(backgroundScopeRef),
     checkForUpdates: (reason) => checkForUpdates(reason),
@@ -864,6 +875,53 @@ export const make = Effect.gen(function* () {
     { discard: true },
   );
 
+  // While an install stages the download, an updater error belongs to that
+  // download (it fails on its own), not to a quit that has not started.
+  let stagingForInstall = false;
+  // Each accepted install arms one watch; a later install disarms older ones.
+  let installAttempt = 0;
+
+  const waitForStaging = Effect.gen(function* () {
+    for (let poll = 0; poll < SQUIRREL_STAGE_WAIT_POLLS; poll++) {
+      if (yield* electronUpdater.installReady) return true;
+      yield* Effect.sleep(SQUIRREL_STAGE_POLL);
+    }
+    return yield* electronUpdater.installReady;
+  });
+
+  // Squirrel.Mac stages a download only when it finishes with install-on-quit
+  // set; quitAndInstall on an unstaged one never quits by itself. Fetch it
+  // again (from electron-updater's cache) with the flag set so Squirrel
+  // stages it, then wait for that. A restage that just handed it over may
+  // still be unpacking, so that one is waited for instead of fetched again.
+  const stageForInstall = (restaged: boolean) =>
+    Effect.gen(function* () {
+      if (restaged && (yield* waitForStaging)) return true;
+      yield* logUpdaterInfo("staging the downloaded update before installing it");
+      yield* electronUpdater.setAutoInstallOnAppQuit(true);
+      const finished = yield* electronUpdater
+        .setDisableDifferentialDownload(isArm64HostRunningIntelBuild(environment.runtimeInfo))
+        .pipe(
+          Effect.andThen(electronUpdater.downloadUpdate),
+          Effect.timeoutOption(DOWNLOAD_STALL_LIMIT),
+        );
+      if (Option.isNone(finished)) return false;
+      return yield* waitForStaging;
+    }).pipe(
+      Effect.catchTags({
+        ElectronUpdaterDownloadUpdateError: (error) =>
+          logUpdaterError(error.message, { errorTag: error._tag, channel: error.channel }).pipe(
+            Effect.as(false),
+          ),
+      }),
+      Effect.ensuring(
+        Effect.sync(() => {
+          stagingForInstall = false;
+        }),
+      ),
+      Effect.withSpan("desktop.updates.stageForInstall"),
+    );
+
   const recoverFailedInstall = Effect.fn("desktop.updates.recoverFailedInstall")(function* (
     message: string,
   ) {
@@ -894,6 +952,19 @@ export const make = Effect.gen(function* () {
     );
   });
 
+  const recoverStalledInstall = Effect.gen(function* () {
+    if (!(yield* isInstallActive)) return;
+    yield* logUpdaterWarning(INSTALL_DID_NOT_QUIT);
+    yield* recoverFailedInstall(INSTALL_DID_NOT_QUIT);
+  }).pipe(
+    Effect.catchCause((cause) =>
+      Cause.hasInterruptsOnly(cause)
+        ? Effect.failCause(cause)
+        : logUpdaterError("Could not recover from an install that did not quit."),
+    ),
+    Effect.withSpan("desktop.updates.recoverStalledInstall"),
+  );
+
   const installDownloadedUpdate = (expectedVersion?: string, serviceLacksRelease = false) =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -905,6 +976,9 @@ export const make = Effect.gen(function* () {
             reason: "service-behind" as const,
           };
         }
+        // The gate that just opened may have forked a restage; installing
+        // ahead of it would leave Squirrel without the staged bundle.
+        const restaged = yield* activation.awaitRestage(PREPARED_INSTALL_CHECK_WAIT);
         const actionCompletions = yield* PubSub.subscribe(finishedUpdateActions);
         let admission: "admitted" | "refused" | "wait-for-check" = "wait-for-check";
         let refusal: DesktopUpdateRefusalReason = "busy";
@@ -953,6 +1027,28 @@ export const make = Effect.gen(function* () {
           return { accepted: false, completed: false, failed: false, reason: refusal };
         }
 
+        // Taken at admission, so an older install's watch never acts on this one.
+        const attempt = ++installAttempt;
+
+        if (!(yield* electronUpdater.installReady)) {
+          stagingForInstall = true;
+          const staged = yield* stageForInstall(restaged).pipe(
+            Effect.onInterrupt(() =>
+              finishUpdateAction("install").pipe(Effect.andThen(activation.applyActivation)),
+            ),
+          );
+          if (!staged) {
+            yield* updateState((current) =>
+              reduceDesktopUpdateStateOnInstallFailure(current, INSTALL_NOT_STAGED),
+            );
+            yield* finishUpdateAction("install");
+            // Back to the install-on-quit setting the preference and gate allow.
+            yield* activation.applyActivation;
+            yield* logUpdaterError(INSTALL_NOT_STAGED);
+            return { accepted: true, completed: false, failed: true };
+          }
+        }
+
         yield* Ref.set(desktopState.quitting, true);
 
         return yield* Effect.gen(function* () {
@@ -974,6 +1070,19 @@ export const make = Effect.gen(function* () {
             isSilent: true,
             isForceRunAfter: true,
           });
+          // An accepted install quits within seconds. Still running after
+          // APP_INSTALL_APPLY_MS, the app gets its updater and backends back.
+          const scope = yield* Ref.get(backgroundScopeRef);
+          if (Option.isSome(scope)) {
+            yield* Effect.sleep(Duration.millis(APP_INSTALL_APPLY_MS)).pipe(
+              Effect.andThen(
+                Effect.suspend(() =>
+                  attempt === installAttempt ? recoverStalledInstall : Effect.void,
+                ),
+              ),
+              Effect.forkIn(scope.value),
+            );
+          }
           return { accepted: true, completed: false, failed: false };
         }).pipe(
           Effect.catchTags({
@@ -1183,7 +1292,7 @@ export const make = Effect.gen(function* () {
       }),
       cause,
     });
-    if (Option.isSome(activeAction) && activeAction.value === "install") {
+    if (Option.isSome(activeAction) && activeAction.value === "install" && !stagingForInstall) {
       yield* recoverFailedInstall(error.message);
       yield* logUpdaterError(error.message, {
         errorTag: error._tag,
@@ -1275,9 +1384,7 @@ export const make = Effect.gen(function* () {
   return DesktopUpdates.of({
     getState: Ref.get(updateStateRef),
     isActionActive: activeUpdateAction.pipe(Effect.map(Option.isSome)),
-    isInstallActive: activeUpdateAction.pipe(
-      Effect.map((action) => Option.isSome(action) && action.value === "install"),
-    ),
+    isInstallActive,
     subscribe: stateMutex.withPermits(1)(
       Effect.gen(function* () {
         const subscription = yield* PubSub.subscribe(stateChanges);

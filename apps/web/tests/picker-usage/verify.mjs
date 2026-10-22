@@ -169,6 +169,38 @@ try {
         );
       }
 
+      for (const [scenario, usageLabel, detail] of [
+        ["grok-no-windows", "No limits reported", /Grok reported no limit windows/],
+        ["grok-probe-failed", "Usage unavailable", /Grok usage could not be read/],
+      ]) {
+        await open(scenario, theme, width);
+        const trigger = page.locator("[data-chat-provider-model-picker]");
+        assert.match(
+          (await trigger.locator('[data-model-usage-meter="unknown"]').textContent()) ?? "",
+          new RegExp(usageLabel),
+        );
+        if (width >= 520) assert.match(await trigger.innerText(), new RegExp(usageLabel));
+        assert.doesNotMatch((await trigger.textContent()) ?? "", /\bUnknown\b/);
+        assert.match((await trigger.getAttribute("aria-label")) ?? "", detail);
+        assert.equal(await trigger.locator('[data-provider-logo="grok"]').count(), 1);
+        await rail("Grok").click();
+        assert.equal(await rail("Grok").locator('[data-provider-logo="grok"]').count(), 1);
+        assert.equal(await blocked(), 0, "missing Grok usage never blocks selection");
+        await contained(width);
+        await page.screenshot({ path: join(output, `${scenario}-${width}-${theme}.png`) });
+        await rail("Codex").click();
+        await page.getByRole("option", { name: /^GPT-6\.1-Sol/ }).click();
+        assert.equal(await selection(), "codex:gpt-6.1-sol");
+        await trigger.click();
+        await rail("Grok").click();
+        await page.getByRole("option", { name: /^Grok 4\.7/ }).click();
+        await page.locator("[data-model-picker-content]").waitFor({ state: "detached" });
+        assert.equal(await selection(), "grok:grok-4.7");
+        checks.push(
+          `${scenario} ${width}px ${theme}: explicit usage reason, Grok logos, selectable`,
+        );
+      }
+
       // The thread's provider was never prepared here: the picker opens on it and
       // still lists the ready models (screenshot of October 21, 9:50 AM).
       await open("unprepared", theme, width);

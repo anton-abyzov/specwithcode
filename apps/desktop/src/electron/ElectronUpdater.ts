@@ -69,6 +69,13 @@ export class ElectronUpdater extends Context.Service<
     readonly setDisableDifferentialDownload: (value: boolean) => Effect.Effect<void>;
     readonly checkForUpdates: Effect.Effect<void, ElectronUpdaterCheckForUpdatesError>;
     readonly downloadUpdate: Effect.Effect<void, ElectronUpdaterDownloadUpdateError>;
+    /**
+     * False while Squirrel.Mac has not staged the download (it stages one
+     * only when the download finishes with install-on-quit set). Then
+     * quitAndInstall does not quit: it leaves a listener that quits whenever
+     * a later staging finishes, or only waits when the flag is set.
+     */
+    readonly installReady: Effect.Effect<boolean>;
     readonly quitAndInstall: (options: {
       readonly isSilent: boolean;
       readonly isForceRunAfter: boolean;
@@ -136,6 +143,13 @@ export const make = ElectronUpdater.of({
       try: () => autoUpdater.downloadUpdate(),
       catch: (cause) => new ElectronUpdaterDownloadUpdateError({ channel, cause }),
     }).pipe(Effect.asVoid);
+  }),
+  // MacUpdater (electron-updater 6.8.9) keeps squirrelDownloadedUpdate; other
+  // platforms have no such field and install from the download itself.
+  installReady: Effect.sync(() => {
+    const staged = (autoUpdater as unknown as { squirrelDownloadedUpdate?: unknown })
+      .squirrelDownloadedUpdate;
+    return typeof staged !== "boolean" || staged;
   }),
   quitAndInstall: ({ isSilent, isForceRunAfter }) =>
     Effect.suspend(() => {

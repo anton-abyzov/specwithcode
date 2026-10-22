@@ -45,12 +45,17 @@ def legacy_line(row):
     return json.dumps(list(row), default=lambda value: value.hex(), separators=(',', ':'))
 
 
-def typed_rows_hash(rows):
+def typed_rows_hash(rows, keep=None):
+    """`keep` (kept_lines.Kept.keeper) is handed the sorted lines and returns this same hash."""
+    if keep is not None:
+        return keep(sorted(typed_line(row) for row in rows))
     return digest('\n'.join(sorted(typed_line(row) for row in rows)))
 
 
-def legacy_rows_hash(rows):
+def legacy_rows_hash(rows, keep=None):
     """The protected-row hash update.rows_snapshot publishes (BLOBs as hex strings)."""
+    if keep is not None:
+        return keep(sorted(legacy_line(row) for row in rows))
     return digest('\n'.join(sorted(legacy_line(row) for row in rows)))
 
 
@@ -63,7 +68,7 @@ def joined_digest(lines, size=1 << 16):
     return hasher.hexdigest()
 
 
-def whole_and_prefix(rows, line, boundary):
+def whole_and_prefix(rows, line, boundary, keep=None):
     """({count, sha256} of every row, of the earlier rows) for rows read as `SELECT rowid, *`
     in scan order, hashed as typed_rows_hash or legacy_rows_hash (`line`) hashes the rows
     without their rowid. The earlier rows are what `WHERE rowid <= boundary` reads from the
@@ -71,10 +76,11 @@ def whole_and_prefix(rows, line, boundary):
     (on a page whose cells are out of rowid order, a later row at or below it is not read).
     One sort serves both: the earlier rows, in the sorted order, are their sorted lines, and
     equal lines are interchangeable. The lines stay for the second hash, so the joined text is
-    hashed without encoding it whole (joined_digest)."""
+    hashed without encoding it whole (joined_digest). `keep` (kept_lines.Kept.keeper) hashes the
+    sorted lines in its place, to the same value, and may keep them."""
     leading = next((position for position, row in enumerate(rows) if row[0] > boundary), len(rows))
     pairs = sorted(((line(row[1:]), position) for position, row in enumerate(rows)), key=operator.itemgetter(0))
-    whole = {'count': len(pairs), 'sha256': joined_digest([text for text, _ in pairs])}
+    whole = {'count': len(pairs), 'sha256': (keep or joined_digest)([text for text, _ in pairs])}
     if leading == len(pairs):
         return whole, dict(whole)
     earlier = [text for text, position in pairs if position < leading]
@@ -117,7 +123,7 @@ def widened_tables(db, structure, widen_from):
     return widened
 
 
-def capture_connection(db, widen_from=None, *, visit=None, prefixes=None):
+def capture_connection(db, widen_from=None, *, visit=None, prefixes=None, keep=None):
     """Capture the complete database inside the caller's open read transaction. With
     `widen_from`, also measure tables that gained columns since then (widened_tables).
     `visit(table, rows)` is handed each table's rows from this scan, so a caller that
@@ -127,23 +133,27 @@ def capture_connection(db, widen_from=None, *, visit=None, prefixes=None):
     once as `SELECT rowid, *` from its table b-tree (the caller leaves out a table with an index
     holding every column, which that read could scan instead), and its entry gains 'legacy' and
     'typed' {count, sha256} of the rows `WHERE rowid <= boundary` would read, hashed as those
-    rows would hash (whole_and_prefix). The capture itself is the same with or without it."""
+    rows would hash (whole_and_prefix). The capture itself is the same with or without it.
+    `keep` (kept_lines.Kept, opt-in) is handed each table's sorted lines as they are hashed, so the
+    page proof after a restart can hash a grown table again without reading it (after_proof); the
+    capture is the same with or without it too."""
     assert db.in_transaction, 'Complete database capture requires an existing read transaction'
     structure = schema(db)
     tables, legacy, sequences = {}, {}, None
     for table in structure['columns']:
         rows = None  # The previous table's rows go before this table is read and hashed.
+        typed_keep, legacy_keep = (keep.keeper(table, 'typed'), keep.keeper(table, 'legacy')) if keep is not None else (None, None)
         if prefixes is not None and table in prefixes:
             entry = prefixes[table]
             positioned = list(db.execute('SELECT rowid, * FROM ' + identifier(table)))
-            tables[table], entry['typed'] = whole_and_prefix(positioned, typed_line, entry['boundary'])
-            legacy[table], entry['legacy'] = whole_and_prefix(positioned, legacy_line, entry['boundary'])
+            tables[table], entry['typed'] = whole_and_prefix(positioned, typed_line, entry['boundary'], typed_keep)
+            legacy[table], entry['legacy'] = whole_and_prefix(positioned, legacy_line, entry['boundary'], legacy_keep)
             rows = [row[1:] for row in positioned] if visit is not None or table == 'sqlite_sequence' else None
             del positioned
         else:
             rows = list(db.execute('SELECT * FROM ' + identifier(table)))
-            tables[table] = {'count': len(rows), 'sha256': typed_rows_hash(rows)}
-            legacy[table] = {'count': len(rows), 'sha256': legacy_rows_hash(rows)}
+            tables[table] = {'count': len(rows), 'sha256': typed_rows_hash(rows, typed_keep)}
+            legacy[table] = {'count': len(rows), 'sha256': legacy_rows_hash(rows, legacy_keep)}
         if table == 'sqlite_sequence':
             # AUTOINCREMENT counters: table names and integers only, so a log that grew can
             # be told apart from any other change to this bookkeeping table.

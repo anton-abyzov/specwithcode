@@ -157,3 +157,73 @@ describe("ComposerPendingUserInputPanel question card", () => {
     expect(renderPanel()).not.toContain("data-question-reply-in-chat");
   });
 });
+
+describe("ComposerPendingUserInputPanel multi-select step", () => {
+  const multi: PendingUserInput = {
+    ...prompt,
+    questions: [
+      { ...prompt.questions[0]!, id: "q1", multiSelect: true },
+      { ...prompt.questions[0]!, id: "q2", header: "Rollout", multiSelect: true },
+    ],
+  };
+  const render = (props: {
+    pendingUserInput?: PendingUserInput;
+    answers?: Record<string, { selectedOptionValues?: string[] }>;
+    questionIndex?: number;
+    withPrevious?: boolean;
+  }) =>
+    renderToStaticMarkup(
+      <ComposerPendingUserInputPanel
+        pendingUserInputs={[props.pendingUserInput ?? multi]}
+        respondingRequestIds={[]}
+        answers={props.answers ?? {}}
+        questionIndex={props.questionIndex ?? 0}
+        onToggleOption={() => {}}
+        onAdvance={() => {}}
+        onPrevious={props.withPrevious === false ? undefined : () => {}}
+        onDismiss={() => {}}
+        onReplyInChat={() => {}}
+      />,
+    );
+  const nextButton = (markup: string) =>
+    markup.match(/<button[^>]*data-question-step-next="[^"]*"[^>]*>/)?.[0];
+
+  it("puts a disabled Next beside the choices until one is picked", () => {
+    const markup = render({});
+    expect(markup).toContain("data-question-step");
+    expect(markup).toContain("None selected yet");
+    expect(nextButton(markup)).toContain('data-question-step-next="next"');
+    expect(nextButton(markup)).toContain(`disabled=""`);
+    expect(markup).not.toContain("data-question-step-back");
+    // Reply in chat moves into the footer instead of a second line.
+    expect(markup.match(/data-question-reply-in-chat/g)).toHaveLength(1);
+  });
+
+  it("enables Next with a count once options are picked", () => {
+    const markup = render({
+      answers: { q1: { selectedOptionValues: ["Incremental", "Big bang"] } },
+    });
+    expect(markup).toContain("2 selected");
+    expect(nextButton(markup)).not.toContain(`disabled=""`);
+    expect(nextButton(markup)).toMatch(/aria-keyshortcuts="(Meta|Control)\+Enter"/);
+  });
+
+  it("offers Back and Submit answers on the last question", () => {
+    const markup = render({
+      questionIndex: 1,
+      answers: {
+        q1: { selectedOptionValues: ["Incremental"] },
+        q2: { selectedOptionValues: ["Big bang"] },
+      },
+    });
+    expect(markup).toContain("data-question-step-back");
+    expect(nextButton(markup)).toContain('data-question-step-next="submit"');
+    expect(nextButton(markup)).not.toContain(`disabled=""`);
+    expect(markup).toContain("Submit answers");
+  });
+
+  it("leaves single-select cards and hosts with their own buttons alone", () => {
+    expect(render({ pendingUserInput: prompt })).not.toContain("data-question-step");
+    expect(render({ withPrevious: false })).not.toContain("data-question-step");
+  });
+});

@@ -117,8 +117,9 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
     usage && activeEntry && showsSingleModel
       ? usage.availability(activeInstanceId, selectedModel?.slug ?? props.model)
       : null;
-  const selectedUsageText =
-    usage && selectedUsage ? usage.text(activeInstanceId, selectedUsage).long : null;
+  const selectedUsageCopy =
+    usage && selectedUsage ? usage.text(activeInstanceId, selectedUsage) : null;
+  const selectedUsageText = selectedUsageCopy?.long ?? null;
 
   const setIsMenuOpen = (open: boolean) => {
     props.onOpenChange?.(open);
@@ -313,9 +314,10 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
               )}
             </TooltipPopup>
           </Tooltip>
-          {selectedUsage ? (
+          {selectedUsage && selectedUsageCopy ? (
             <ModelUsageMeter
               state={selectedUsage}
+              text={selectedUsageCopy}
               {...(props.usageValueHiddenClassName
                 ? { hideValueClassName: props.usageValueHiddenClassName }
                 : {})}

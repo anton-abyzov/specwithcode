@@ -51,6 +51,52 @@ publish({
   params: { environmentId: "host", threadId: "lane-0951" },
 });
 
+// `?scenario=projects`: the projects list from the October 22 report, where two
+// check projects sat among the person's own; the checks carry no origin flag, so
+// their folders decide, as on a machine that has not run the backfill yet.
+if (params.get("scenario") === "projects") {
+  const code = (
+    key: string,
+    name: string,
+    root: string,
+    settings: Record<string, unknown> = {},
+  ) => ({
+    projectKey: `host:${root}`,
+    displayName: name,
+    workspaceRoot: root,
+    memberProjects: [
+      {
+        environmentId: "host",
+        id: key,
+        title: name,
+        workspaceRoot: root,
+        workspaceSettings: { kind: "code", archived: false, revision: 1, ...settings },
+      },
+    ],
+  });
+  publish({
+    groups: [
+      code("easychamp", "EasyChamp", "/Users/me/Projects/sw-easychamp"),
+      code("olysense", "olysense", "/Users/me/Projects/olysense"),
+      code(
+        "run-shell",
+        "Run shell acceptance 357",
+        "/Users/me/.specwithcode/m4/scratch/run-shell-blocks-installed/workspace",
+      ),
+      code("sketchmate", "sketchmate_dont_confuse", "/Users/me/Projects/sketchmate_dont_confuse"),
+      code("specweave", "specweave", "/Users/me/Projects/specweave"),
+      code(
+        "swc-copy",
+        "swc copy check 2026-10-20",
+        "/Users/me/Projects/scratch/swc-copy-source-2026-10-20/specweave-copy-fixture",
+      ),
+      code("hack", "emergeAmericas_hackathon", "/Users/me/Projects/_events/hackathon", {
+        archived: true,
+      }),
+    ],
+  });
+}
+
 const LANES = ["lane-0949", "lane-0948", "lane-0951", "prep"];
 let tick = 0;
 /** One server event: a streamed item, a tool call or a status change on one lane. */
@@ -97,6 +143,7 @@ Object.assign(window, {
         ),
       });
     },
+    projectUpdates: () => [...fixture.projectUpdates],
     newChat() {
       const now = new Date().toISOString();
       publish({

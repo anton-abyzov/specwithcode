@@ -24,12 +24,15 @@ import {
   PERSONAL_ASSISTANT_LABEL,
   type EnvironmentId,
   type ProjectId,
+  type ProjectOrigin,
 } from "@specweave-studio/contracts";
 import { Link, useNavigate, useRouter } from "@tanstack/react-router";
 import {
   ArchiveIcon,
   ArrowDownIcon,
   ArrowUpIcon,
+  BotIcon,
+  BotOffIcon,
   MoreHorizontalIcon,
   PaletteIcon,
   PencilIcon,
@@ -99,6 +102,8 @@ export interface ProjectRowState {
   rename?: ProjectRename | undefined;
   /** The project the Designs item opens; absent where the row has no Designs item. */
   designsProjectId?: ProjectId | undefined;
+  /** True for a project a check or agent made for itself; see projectOrigin. */
+  automated?: boolean | undefined;
 }
 
 /** Renames a project in place: `check` validates a draft, `commit` saves it or says why not. */
@@ -132,6 +137,7 @@ export function SidebarProjectList(props: {
   canStep: (projectKey: string, direction: "up" | "down") => boolean;
   onPin: (projectKey: string) => void;
   onArchive: (group: SidebarProjectSnapshot, archived: boolean) => void;
+  onOriginChange?: ((group: SidebarProjectSnapshot, origin: ProjectOrigin) => void) | undefined;
 }) {
   const { visible, listedKeys } = props;
   const listRef = useRef<HTMLUListElement | null>(null);
@@ -292,6 +298,9 @@ export function SidebarProjectList(props: {
       onKeyDown={(event) => onRowKeyDown(group.projectKey, event)}
       onPin={() => props.onPin(group.projectKey)}
       onArchive={(archived) => props.onArchive(group, archived)}
+      {...(props.onOriginChange
+        ? { onOriginChange: (origin: ProjectOrigin) => props.onOriginChange?.(group, origin) }
+        : {})}
       onStep={(direction) => step(group.projectKey, direction)}
       canStep={(direction) => props.canStep(group.projectKey, direction)}
     />
@@ -411,6 +420,10 @@ export function ProjectRow(props: {
   onStep?: (direction: "up" | "down") => void;
   canStep?: (direction: "up" | "down") => boolean;
   onArchive: (archived: boolean) => void;
+  /** Moves the project to or from the Automated list; absent where it cannot move. */
+  onOriginChange?: ((origin: ProjectOrigin) => void) | undefined;
+  /** True for a project a check or agent made for itself; see projectOrigin. */
+  automated?: boolean | undefined;
   /** Rows of the main list can be dragged; archived rows keep no order. */
   sortable?: boolean;
   onKeyDown?: (event: KeyboardEvent) => void;
@@ -607,6 +620,14 @@ export function ProjectRow(props: {
               </MenuItem>
               <MenuSeparator />
             </>
+          ) : null}
+          {props.onOriginChange ? (
+            <MenuItem
+              onClick={() => props.onOriginChange?.(props.automated ? "user" : "automated")}
+            >
+              {props.automated ? <BotOffIcon aria-hidden /> : <BotIcon aria-hidden />}
+              {props.automated ? "Move to my projects" : "Move to Automated"}
+            </MenuItem>
           ) : null}
           <MenuItem onClick={() => props.onArchive(!archived)}>
             <ArchiveIcon aria-hidden />
