@@ -1,4 +1,5 @@
 import { ProjectWorkspaceSettings, ProjectWorkspacePatch } from "./projectWorkspace.ts";
+import { ProjectOrigin } from "./projectEnvironment.ts";
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
 import { RepositoryIdentity, ThreadEnvMode } from "./environment.ts";
@@ -218,6 +219,8 @@ export const ProjectCreatePayload = Schema.Struct({
   createWorkspaceRootIfMissing: Schema.optional(Schema.Boolean),
   defaultModelSelection: Schema.optional(Schema.NullOr(ModelSelection)),
   scripts: Schema.optional(Schema.Array(ProjectScript)),
+  /** "automated" for a project a check or agent makes for itself; see ProjectWorkspaceSettings. */
+  origin: Schema.optional(ProjectOrigin),
 });
 export type ProjectCreatePayload = typeof ProjectCreatePayload.Type;
 

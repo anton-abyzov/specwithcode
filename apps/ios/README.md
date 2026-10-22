@@ -58,6 +58,12 @@ Debug builds use the bundle id `com.specwithcode.ios.dev` and appear as "SpecWit
 
 Simulator builds need no signing. To build for a device, set `STUDIO_APPLE_TEAM_ID` to your team id before you run `make project`.
 
+To put the current Release build on your own phone without waiting for TestFlight, run `DEVICE=<name> STUDIO_APPLE_TEAM_ID=… Tools/device.sh` (`Tools/device.sh list` shows device names). It builds, installs over any TestFlight copy and launches; the header of the script lists the optional settings.
+
+`Tools/device.sh help` (also `--help` or `-h`) shows usage. Unsupported arguments stop before building or installing. Any launch failure, including a locked phone, returns the original nonzero exit status even when installation succeeded; the original `devicectl` diagnostic remains visible.
+
+Run `bash Tools/test-device.sh` for the isolated shell regression checks; all build and device commands are stubbed.
+
 ## Simulator-first testing
 
 Routine checks run on a simulator, never on a phone: nobody has to unlock an iPhone or watch a screen. `Tools/sim.sh` creates one dedicated simulator ("SWC Sim-First", iPhone 17 Pro on the newest iOS runtime), boots it with `simctl` without opening the Simulator app, and keeps every build and test on it. It also drops the `GIT_CONFIG_*` variables some agent harnesses inject, which break SwiftPM inside `xcodebuild`.

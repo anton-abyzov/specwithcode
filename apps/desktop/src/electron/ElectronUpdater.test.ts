@@ -17,6 +17,7 @@ const { autoUpdaterMock } = vi.hoisted(() => ({
     quitAndInstall: vi.fn(),
     removeListener: vi.fn(),
     setFeedURL: vi.fn(),
+    squirrelDownloadedUpdate: undefined as boolean | undefined,
   },
 }));
 
@@ -43,6 +44,7 @@ describe("ElectronUpdater", () => {
     autoUpdaterMock.quitAndInstall.mockClear();
     autoUpdaterMock.removeListener.mockClear();
     autoUpdaterMock.setFeedURL.mockClear();
+    autoUpdaterMock.squirrelDownloadedUpdate = undefined;
   });
 
   it.effect("scopes updater event listeners", () =>
@@ -107,6 +109,25 @@ describe("ElectronUpdater", () => {
 
       yield* updater.setFullChangelog(false);
       assert.equal(autoUpdaterMock.fullChangelog, false);
+    }).pipe(Effect.provide(ElectronUpdater.layer)),
+  );
+
+  it.effect("is not ready to install while Squirrel.Mac has not staged the download", () =>
+    Effect.gen(function* () {
+      const updater = yield* ElectronUpdater.ElectronUpdater;
+      // Windows and Linux updaters have no Squirrel state.
+      assert.isTrue(yield* updater.installReady);
+
+      autoUpdaterMock.squirrelDownloadedUpdate = false;
+      autoUpdaterMock.autoInstallOnAppQuit = true;
+      assert.isFalse(yield* updater.installReady);
+
+      autoUpdaterMock.autoInstallOnAppQuit = false;
+      assert.isFalse(yield* updater.installReady);
+
+      autoUpdaterMock.autoInstallOnAppQuit = true;
+      autoUpdaterMock.squirrelDownloadedUpdate = true;
+      assert.isTrue(yield* updater.installReady);
     }).pipe(Effect.provide(ElectronUpdater.layer)),
   );
 

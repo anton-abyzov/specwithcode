@@ -23,6 +23,7 @@ import {
   ProjectId,
   type Project,
   type ProjectCreatePayload,
+  type ProjectOrigin,
   type ProjectUpdatePayload,
   type ProjectSnapshot,
   type OrchestrationV2ThreadShell,
@@ -62,6 +63,18 @@ import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import { machineAssistantOf } from "@specweave-studio/shared/personalAssistant";
+
+/**
+ * The origin a new project saves: the one its creator gave, or "automated" for a
+ * project a temporary agent token makes. Anything else stays unset, so its folder
+ * is judged each time it is shown (projectOrigin) and a wrong guess is never saved.
+ */
+export function createdOrigin(input: Pick<ProjectCreateInput, "origin" | "temporarySessionId">): {
+  origin?: ProjectOrigin;
+} {
+  if (input.origin !== undefined) return { origin: input.origin };
+  return input.temporarySessionId !== undefined ? { origin: "automated" } : {};
+}
 
 /** The key every personal create waits on, so concurrent ones see each other. */
 const PERSONAL_ASSISTANT_LOCK = "\u0000personal-assistant";
@@ -587,6 +600,7 @@ export const make = Effect.gen(function* () {
         ...(input.temporarySessionId === undefined
           ? {}
           : { temporarySessionId: input.temporarySessionId }),
+        ...createdOrigin(input),
       });
       yield* projectEnrichment.invalidate([workspaceRoot]);
       yield* seedNewProjectFinishAction(input.projectId);

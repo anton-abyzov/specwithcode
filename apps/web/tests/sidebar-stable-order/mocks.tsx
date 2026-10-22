@@ -3,7 +3,7 @@
  * sidebar component, its chat sort and its styles are the real ones.
  */
 import type { PropsWithChildren } from "react";
-import { useSyncExternalStore } from "react";
+import { createContext, useSyncExternalStore } from "react";
 import * as Cause from "effect/Cause";
 import type { EnvironmentThreadShell } from "@specweave-studio/client-runtime/state/shell";
 
@@ -17,6 +17,10 @@ export const fixture = {
   renames: [] as Array<{ threadId: string; title: string }>,
   /** A reason the next rename is refused with, as the server would. */
   refuseNextRename: null as string | null,
+  /** Project groups the sidebar lists; null keeps the default single project. */
+  groups: null as unknown[] | null,
+  /** Workspace-settings patches the sidebar sent, in order. */
+  projectUpdates: [] as unknown[],
 };
 export function publish(change: Partial<typeof fixture>): void {
   Object.assign(fixture, change);
@@ -32,6 +36,8 @@ function useFixture<T>(select: () => T): T {
 // @effect/atom-react
 export const primaryServerKeybindingsAtom = { name: "keybindings" };
 export const primaryServerConfigAtom = { name: "config" };
+export const environmentServerConfigsAtom = { name: "server-configs" };
+export const RegistryContext = createContext(null);
 const keybindings = [
   {
     command: "thread.next",
@@ -92,7 +98,34 @@ export const unreachableEnvironmentIds = () => [];
 const NO_IDS: string[] = [];
 export const useUnreachableEnvironmentIds = () => NO_IDS;
 export const projectEnvironment = { update: {} };
-export const useAtomCommand = () => async () => ({ _tag: "Success", value: undefined });
+export const useAtomCommand =
+  () =>
+  async ({
+    environmentId,
+    input,
+  }: {
+    environmentId: string;
+    input: { projectId: string; workspaceSettings?: Record<string, unknown> };
+  }) => {
+    fixture.projectUpdates.push({ environmentId, input });
+    // Stored on the simulated project, the way the server's projection would.
+    if (fixture.groups && input.workspaceSettings) {
+      const { expectedRevision: _revision, ...patch } = input.workspaceSettings;
+      publish({
+        groups: (fixture.groups as Array<{ memberProjects: Array<Record<string, any>> }>).map(
+          (group) => ({
+            ...group,
+            memberProjects: group.memberProjects.map((member) =>
+              member.environmentId === environmentId && member.id === input.projectId
+                ? { ...member, workspaceSettings: { ...member.workspaceSettings, ...patch } }
+                : member,
+            ),
+          }),
+        ),
+      });
+    }
+    return { _tag: "Success", value: undefined };
+  };
 
 // state/session, state/threads, state/use-orchestration-command: a rename is
 // stored on the simulated shell, the way the server's projection would.
@@ -150,7 +183,7 @@ const GROUPS = [
     memberProjects: [{ environmentId: "host", id: "p-specweave" }],
   },
 ];
-export const useSettingsProjectGroups = () => GROUPS;
+export const useSettingsProjectGroups = () => useFixture(() => fixture.groups ?? GROUPS);
 const NO_PLANS = { plans: new Map(), loaders: null };
 export const useSidebarThreadPlans = () => NO_PLANS;
 export const ProjectFavicon = () => <i className="inline-block size-4 rounded bg-amber-500/60" />;

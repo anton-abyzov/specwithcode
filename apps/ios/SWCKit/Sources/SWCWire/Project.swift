@@ -159,13 +159,15 @@ public struct ProjectWorkspaceSettings: Codable, Hashable, Sendable {
   public var autoResume: Bool
   public var workerMachine: WorkerMachine?
   public var temporarySessionId: String?
+  /// "automated" for a project a check made for itself; absent on older projects.
+  public var origin: ProjectOrigin?
 
   enum CodingKeys: String, CodingKey {
     case logicalProject, coordinatorBinding, kind, environment, revision, goal, instructions
-    case coordinatorModelSelection, coordinatorThreadId, paused, archived, autoResume, workerMachine, temporarySessionId
+    case coordinatorModelSelection, coordinatorThreadId, paused, archived, autoResume, workerMachine, temporarySessionId, origin
   }
 
-  public init(kind: WorkspaceKind = .code, environment: ProjectEnvironment = ProjectEnvironment(), revision: Int = 0, goal: String = "", instructions: String = "", coordinatorModelSelection: ModelSelection? = nil, coordinatorThreadId: String? = nil, paused: Bool = false, archived: Bool = false, autoResume: Bool = false, logicalProject: LogicalProject? = nil, coordinatorBinding: CoordinatorBinding? = nil, workerMachine: WorkerMachine? = nil, temporarySessionId: String? = nil) {
+  public init(kind: WorkspaceKind = .code, environment: ProjectEnvironment = ProjectEnvironment(), revision: Int = 0, goal: String = "", instructions: String = "", coordinatorModelSelection: ModelSelection? = nil, coordinatorThreadId: String? = nil, paused: Bool = false, archived: Bool = false, autoResume: Bool = false, logicalProject: LogicalProject? = nil, coordinatorBinding: CoordinatorBinding? = nil, workerMachine: WorkerMachine? = nil, temporarySessionId: String? = nil, origin: ProjectOrigin? = nil) {
     self.kind = kind
     self.environment = environment
     self.revision = revision
@@ -180,6 +182,7 @@ public struct ProjectWorkspaceSettings: Codable, Hashable, Sendable {
     self.coordinatorBinding = coordinatorBinding
     self.workerMachine = workerMachine
     self.temporarySessionId = temporarySessionId
+    self.origin = origin
   }
 
   public init(from decoder: Decoder) throws {
@@ -198,6 +201,8 @@ public struct ProjectWorkspaceSettings: Codable, Hashable, Sendable {
     autoResume = try c.decodeIfPresent(Bool.self, forKey: .autoResume) ?? false
     workerMachine = try? c.decodeIfPresent(WorkerMachine.self, forKey: .workerMachine)
     temporarySessionId = try c.decodeIfPresent(String.self, forKey: .temporarySessionId)
+    // A value from a newer server reads as unset, so its folder decides.
+    origin = try? c.decodeIfPresent(ProjectOrigin.self, forKey: .origin)
   }
 
   /// True while the coordinator is handing off to another machine.

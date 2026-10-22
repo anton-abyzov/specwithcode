@@ -29,7 +29,12 @@ import {
 
 import * as DateTime from "effect/DateTime";
 
-import { canTakeTurn, isPerTokenProvider, providerUsedPercent } from "./providerFallback.ts";
+import {
+  canTakeTurn,
+  isGeminiSpendProvider,
+  isPerTokenProvider,
+  providerUsedPercent,
+} from "./providerFallback.ts";
 
 // ── Tiers ────────────────────────────────────────────────────────────
 
@@ -550,6 +555,10 @@ export function resolveTaskRouting(input: ResolveTaskRoutingInput): TaskRoutingD
       }
       if (!canTakeTurn(provider)) {
         skipped.push(`${label}: not ready`);
+        continue;
+      }
+      if (isGeminiSpendProvider(provider)) {
+        skipped.push(`${label}: Gemini spend is off`);
         continue;
       }
       const billing = billingOf(provider);

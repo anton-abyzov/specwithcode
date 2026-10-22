@@ -21,8 +21,9 @@ const dark = params.get("theme") === "dark";
 document.documentElement.classList.toggle("dark", dark);
 applyThemePalette("studio-chat", dark ? "dark" : "light");
 
-// The verify script freezes the clock here; every reset is relative to it.
+// Keep usage reads deterministic in both the verifier and browser previews.
 const NOW = Date.parse("2026-10-21T15:00:00Z");
+Date.now = () => NOW;
 const MIN = 60_000;
 const HOUR = 60 * MIN;
 const iso = (ms: number) => new Date(ms).toISOString();
@@ -116,6 +117,17 @@ const codexLimits = (scenario: string): ServerProviderUsageLimits | undefined =>
         ]);
 
 const scenarioProviders = (scenario: string): ServerProvider[] => [
+  provider(
+    "grok",
+    "grok",
+    "Grok",
+    [{ slug: "grok-4.7", name: "Grok 4.7" }],
+    limits(
+      [],
+      2 * MIN,
+      scenario === "grok-probe-failed" ? { unavailable: { reason: "probeFailed" } } : {},
+    ),
+  ),
   provider(
     "codex",
     "codex",
@@ -253,9 +265,11 @@ function Fixture() {
   const running = scenario === "running";
   const initial = running
     ? { instanceId: "codex", model: "gpt-6.1-sol" }
-    : scenario === "unprepared"
-      ? { instanceId: "github-copilot-cm", model: "claude-opus-5.5" }
-      : OPUS;
+    : scenario.startsWith("grok-")
+      ? { instanceId: "grok", model: "grok-4.7" }
+      : scenario === "unprepared"
+        ? { instanceId: "github-copilot-cm", model: "claude-opus-5.5" }
+        : OPUS;
   return (
     <main className="mx-auto flex min-h-screen max-w-3xl flex-col justify-end gap-3 p-4 pb-6">
       <p className="text-sm text-muted-foreground">

@@ -18,6 +18,7 @@ import { scopedThreadKey, scopeThreadRef } from "@specweave-studio/client-runtim
 import {
   AuthOrchestrationOperateScope,
   type EnvironmentId,
+  type ProjectOrigin,
   type SidebarProjectOrder,
   PERSONAL_ASSISTANT_DESCRIPTION,
   PERSONAL_ASSISTANT_LABEL,
@@ -26,6 +27,7 @@ import { Link, useLocation, useParams, useSearch } from "@tanstack/react-router"
 import * as Schema from "effect/Schema";
 import {
   ArchiveIcon,
+  BotIcon,
   ChevronRightIcon,
   ConciergeBellIcon,
   LaptopIcon,
@@ -76,6 +78,8 @@ import {
   isArchivedGroup,
   membersToToggle,
   partitionProjectGroups,
+  membersToMark,
+  originWorkspacePatch,
   sameNameHints,
 } from "../../../studio/projectListVisibility";
 import { chooseCoordinatorView } from "../../../studio/projectCoordinatorMachine";
@@ -231,6 +235,8 @@ export default function StudioSidebar() {
   const [showAllProjects, setShowAllProjects] = useState(false);
   // Null follows the open project: the list opens while an archived project is open.
   const [showArchived, setShowArchived] = useState<boolean | null>(null);
+  // Null follows the open project too: Automated opens while one of its projects is open.
+  const [showAutomated, setShowAutomated] = useState<boolean | null>(null);
   const serverConfigs = useServerConfigs();
   const updateProject = useAtomCommand(projectEnvironment.update, { reportFailure: false });
   const updateThreadMetadata = useOrchestrationCommand(threadEnvironment.updateMetadata, {
@@ -323,12 +329,20 @@ export default function StudioSidebar() {
   // The machines' "No project" folders are not projects. Archived projects are listed
   // only under Archived, even while open, and never carry a waiting count: the
   // person archived them, so nothing in them asks for attention here.
-  const { listed: listedProjects, archived: archivedProjects } = useMemo(
+  // Projects checks and agents made for themselves leave the main list for Automated,
+  // so the main list holds only the person's own projects.
+  const {
+    listed: listedProjects,
+    automated: automatedProjects,
+    archived: archivedProjects,
+  } = useMemo(
     () => partitionProjectGroups(projectGroups, scratchRootFor),
     [projectGroups, scratchRootFor],
   );
   const archivedOpen =
     showArchived ?? archivedProjects.some((group) => group.projectKey === activeProjectKey);
+  const automatedOpen =
+    showAutomated ?? automatedProjects.some((group) => group.projectKey === activeProjectKey);
   const chatGroupInput = useMemo(
     () => ({
       now,
@@ -507,6 +521,26 @@ export default function StudioSidebar() {
       }
     }
   };
+  // Moves the project to or from Automated on every machine that has it.
+  const setGroupOrigin = async (group: SidebarProjectSnapshot, origin: ProjectOrigin) => {
+    for (const member of membersToMark(group, origin, scratchRootFor)) {
+      const result = await updateProject({
+        environmentId: member.environmentId,
+        input: { projectId: member.id, workspaceSettings: originWorkspacePatch(member, origin) },
+      });
+      if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+        const cause = squashAtomCommandFailure(result);
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: `Could not move ${displayedCheckouts.get(group.projectKey)?.title ?? group.displayName}`,
+            description: cause instanceof Error ? cause.message : "Try again in a moment.",
+          }),
+        );
+        return;
+      }
+    }
+  };
   // Renames a project wherever it lives; the first machine that refuses says why.
   const renameGroup = async (group: SidebarProjectSnapshot, name: string) => {
     const plan = renameTargets(group.memberProjects, name);
@@ -536,6 +570,7 @@ export default function StudioSidebar() {
   // Every project the sidebar can show, archived ones too, so no two share a name.
   const namedProjects: NamedProject[] = [
     ...listedProjects.map((group) => ({ group, archived: false })),
+    ...automatedProjects.map((group) => ({ group, archived: false })),
     ...archivedProjects.map((group) => ({ group, archived: true })),
   ].map(({ group, archived }) => ({
     projectKey: group.projectKey,
@@ -586,7 +621,7 @@ export default function StudioSidebar() {
   // Each machine has its own: this machine's leads, and with more than one
   // machine each row names its machine. A duplicate from before that rule is marked extra.
   // Archived ones too: an archived earlier assistant is still its machine's own.
-  const assistantMembers = [...listedProjects, ...archivedProjects]
+  const assistantMembers = [...listedProjects, ...automatedProjects, ...archivedProjects]
     .filter(isPersonalGroup)
     .flatMap((group) => group.memberProjects);
   const assistantOf = (group: (typeof listedProjects)[number]) =>
@@ -644,6 +679,10 @@ export default function StudioSidebar() {
     saveProjectOrder(next);
   };
   const hasAssistant = projectGroups.some(isPersonalGroup);
+  const automatedWaiting = automatedProjects.reduce(
+    (sum, group) => sum + (waitingByProject.get(group.projectKey) ?? 0),
+    0,
+  );
   const newChatShortcut = shortcutLabelForCommand(keybindings, "chat.new");
   const searchShortcut = shortcutLabelForCommand(keybindings, "commandPalette.toggle");
 
@@ -741,7 +780,9 @@ export default function StudioSidebar() {
                 </button>
               </Tip>
             </div>
-            {codeProjects.length === 0 && archivedProjects.length === 0 ? (
+            {codeProjects.length === 0 &&
+            automatedProjects.length === 0 &&
+            archivedProjects.length === 0 ? (
               <p className="sws-side-empty">No projects yet. Create one or open a folder.</p>
             ) : (
               <SidebarProjectList
@@ -772,6 +813,7 @@ export default function StudioSidebar() {
                   saveProjectOrder(toggleProjectPin(projectOrder, listedKeys, projectKey))
                 }
                 onArchive={(group, archived) => void setGroupArchived(group, archived)}
+                onOriginChange={(group, origin) => void setGroupOrigin(group, origin)}
               />
             )}
             {hiddenProjects > 0 || (showAllProjects && codeProjects.length > PROJECT_PAGE + 1) ? (
@@ -783,6 +825,55 @@ export default function StudioSidebar() {
               >
                 {showAllProjects ? "Show fewer" : `Show ${hiddenProjects} more`}
               </button>
+            ) : null}
+            {automatedProjects.length > 0 ? (
+              <>
+                <Tip
+                  side="right"
+                  label="Projects that checks and agents made for themselves. Move one to your projects from its menu."
+                >
+                  <button
+                    type="button"
+                    className="sws-side-more"
+                    aria-expanded={automatedOpen}
+                    aria-controls="sws-side-automated"
+                    onClick={() => setShowAutomated(!automatedOpen)}
+                  >
+                    <BotIcon aria-hidden className="sws-side-more-icon" />
+                    {automatedOpen ? "Hide automated" : `Automated (${automatedProjects.length})`}
+                    {!automatedOpen && automatedWaiting > 0 ? (
+                      <span className="sws-count sws-count-waiting">
+                        {automatedWaiting}
+                        <span className="sr-only"> waiting on you</span>
+                      </span>
+                    ) : null}
+                  </button>
+                </Tip>
+                {automatedOpen ? (
+                  <ul
+                    id="sws-side-automated"
+                    className="sws-side-list"
+                    aria-label="Automated projects"
+                  >
+                    {automatedProjects.map((group) => (
+                      <ProjectRow
+                        key={group.projectKey}
+                        group={group}
+                        displayedProject={displayedCheckouts.get(group.projectKey)}
+                        archived={isArchivedGroup(group, scratchRootFor)}
+                        automated
+                        waiting={waitingByProject.get(group.projectKey) ?? 0}
+                        current={group.projectKey === activeProjectKey}
+                        onOpen={closeMobile}
+                        onArchive={(archived) => void setGroupArchived(group, archived)}
+                        onOriginChange={(origin) => void setGroupOrigin(group, origin)}
+                        rename={renameFor(group)}
+                        designsProjectId={designsFor(group)}
+                      />
+                    ))}
+                  </ul>
+                ) : null}
+              </>
             ) : null}
             {archivedProjects.length > 0 ? (
               <>

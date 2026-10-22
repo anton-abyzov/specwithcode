@@ -15,6 +15,7 @@ import sqlite3
 
 from auth_heartbeat import encoded, read_auth_sessions_in_transaction
 import database_continuity as continuity
+import kept_lines
 import live_database
 
 
@@ -92,9 +93,15 @@ def _read_state(state, include_auth, since=None, include_database=False, widen_f
         assert_idle(db)
         if not include_database:
             return _read_tables(db, tables, include_auth, since, False, None)
+        # Inside kept_lines.keeping (update.py's read before the restart) the single scan also
+        # hands over the sorted lines of the largest tables for after_proof; nothing else changes.
+        keep = kept_lines.active()
         try:
-            return _read_tables(db, tables, include_auth, since, True, widen_from, once=True)
+            return _read_tables(db, tables, include_auth, since, True, widen_from, once=True,
+                                **({'keep': keep} if keep is not None else {}))
         except Exception:
+            if keep is not None:
+                keep.clear()
             # The single scan met a fault (a read that succeeds never comes here; an interrupt
             # is not caught). If SQLite has already ended the transaction (an I/O, disk-full or
             # out-of-memory error), its error stands: no snapshot is left to read again.
@@ -108,14 +115,15 @@ def _read_state(state, include_auth, since=None, include_database=False, widen_f
     finally:
         db.close()
 
-def _read_tables(db, tables, include_auth, since, include_database, widen_from, *, once=False, check_idle=False):
+def _read_tables(db, tables, include_auth, since, include_database, widen_from, *, once=False, check_idle=False, keep=None):
     """The rest of _read_state, in its read transaction. With `once`, the complete capture
     comes first: its legacy hashes are the guarded hashes (the same encoding), it hashes the
     logs' earlier rows in the same scan (log_prefixes), and it hands over the rows of
     auth_sessions and the projection cursors, the only rows kept. The thread-keyed projections
     are read again, row by row, as before. Otherwise every part reads its own rows in the
     original order, the capture last; with `check_idle`, protected rows first, then the idle
-    check, then the rest."""
+    check, then the rest. `keep` (kept_lines.Kept, with `once` only) is handed the capture's sorted
+    lines."""
     database, scanned, prefixes = None, None, None
     if once:
         # Complete schema and typed cells of every table, bound to the protected rows in
@@ -124,7 +132,8 @@ def _read_tables(db, tables, include_auth, since, include_database, widen_from, 
         def visit(table, rows):
             if table == 'auth_sessions' or table in CURSOR_COLUMNS: scanned[table] = rows
         prefixes = log_prefixes(db, tables, since) if since is not None else None
-        database = continuity.capture_connection(db, widen_from, visit=visit, prefixes=prefixes)
+        database = continuity.capture_connection(db, widen_from, visit=visit, prefixes=prefixes,
+                                                  **({'keep': keep} if keep is not None else {}))
         guarded = [table for table in tables
                    if table.startswith(('projection_', 'orchestration_', 'project_')) or table in AUTHORITY_TABLES]
         counts = {table: database['legacy'][table]['count'] for table in guarded}
@@ -152,6 +161,7 @@ def _read_tables(db, tables, include_auth, since, include_database, widen_from, 
         database = continuity.capture_connection(db, widen_from)
     # After a single scan, whose guarded hashes came from the capture, bind_rows checks the shape.
     if database is not None: continuity.bind_rows(database, proof)
+    if keep is not None: keep.complete = True
     return proof, auth, carried, database
 
 def assert_idle(db):
@@ -251,8 +261,7 @@ def append_only_activity(db, tables, scanned=None):
     read here, row by row."""
     def rows_of(table):
         return scanned.pop(table) if scanned is not None and table in scanned else db.execute('SELECT * FROM ' + table)
-    logs = {table: db.execute('SELECT coalesce(max(rowid), 0) FROM ' + table).fetchone()[0]
-            for table in LOG_TABLES if table in tables and has_rowid(db, table)}
+    logs = log_rowids(db, tables)
     thread_tables, buckets = [], {}
     for table in tables:
         columns = table_columns(db, table)
@@ -262,7 +271,25 @@ def append_only_activity(db, tables, scanned=None):
         thread_tables.append(table)
         index = columns.index(key)
         for row in rows_of(table):
-            buckets.setdefault(stream_key(row[index]), []).append(json.dumps(table) + ',' + encoded_row(row))
+            buckets.setdefault(stream_key(row[index]), []).append(thread_line(table, row))
+    return {'logRowids': logs, 'threadTables': sorted(thread_tables),
+            'threadSha256': {key: thread_digest(lines) for key, lines in buckets.items()},
+            'cursorSha256': cursor_hashes(db, tables, rows_of)}
+
+def log_rowids(db, tables):
+    """{log table: its largest rowid} (appendOnlyActivity logRowids)."""
+    return {table: db.execute('SELECT coalesce(max(rowid), 0) FROM ' + table).fetchone()[0]
+            for table in LOG_TABLES if table in tables and has_rowid(db, table)}
+
+def thread_line(table, row):
+    return json.dumps(table) + ',' + encoded_row(row)
+
+def thread_digest(lines):
+    """The hash of one stream's projection rows (appendOnlyActivity threadSha256)."""
+    return digest(('studio-thread-rows-v1\n' + '\n'.join(sorted(lines))).encode())
+
+def cursor_hashes(db, tables, rows_of):
+    """{cursor table: hash of its rows without the moving columns} (appendOnlyActivity cursorSha256)."""
     cursors = {}
     for table, moving in CURSOR_COLUMNS.items():
         if table in tables:
@@ -271,10 +298,7 @@ def append_only_activity(db, tables, scanned=None):
             cursors[table] = digest(('studio-projection-cursor-v1\n' + '\n'.join(sorted(
                 json.dumps([[columns[index], row[index]] for index in keep], default=lambda value: value.hex(),
                            separators=(',', ':')) for row in rows_of(table)))).encode())
-    return {'logRowids': logs, 'threadTables': sorted(thread_tables),
-            'threadSha256': {key: digest(('studio-thread-rows-v1\n' + '\n'.join(sorted(lines))).encode())
-                             for key, lines in buckets.items()},
-            'cursorSha256': cursors}
+    return cursors
 
 def activity_digest(activity):
     return digest(json.dumps(activity, sort_keys=True, separators=(',', ':')).encode())

@@ -2,6 +2,7 @@ import { useSettingsProjectGroups } from "../settings/useSettingsProjectGroups";
 import { useNowMinute } from "../../hooks/useNowMinute";
 import {
   archivedMemberKeys,
+  automatedMemberKeys,
   partitionProjectGroups,
   projectPickerMembers,
   type ScratchRootLookup,
@@ -127,17 +128,21 @@ export function StudioOverview() {
     (environmentId) => configs.get(environmentId)?.scratchWorkspaceRoot ?? null,
     [configs],
   );
-  // Projects in use: no machine's "No project" folder and nothing archived.
+  // Projects in use: no machine's "No project" folder, nothing archived and no check's project.
   const listedGroups = useMemo(
     () => partitionProjectGroups(projectGroups, scratchRootFor).listed,
     [projectGroups, scratchRootFor],
   );
-  // Threads of archived projects stay out of Overview, as the projects stay out of the sidebar.
+  // Threads of archived and automated projects stay out of Overview, as the projects
+  // stay out of its cards, so its counts match the projects it shows.
   const shells = useMemo(() => {
-    const archived = archivedMemberKeys(projectGroups, scratchRootFor);
-    return archived.size === 0
+    const hidden = new Set([
+      ...archivedMemberKeys(projectGroups, scratchRootFor),
+      ...automatedMemberKeys(projectGroups, scratchRootFor),
+    ]);
+    return hidden.size === 0
       ? allShells
-      : allShells.filter((thread) => !archived.has(`${thread.environmentId}:${thread.projectId}`));
+      : allShells.filter((thread) => !hidden.has(`${thread.environmentId}:${thread.projectId}`));
   }, [allShells, projectGroups, scratchRootFor]);
   const bootstrapped = useAllEnvironmentShellsBootstrapped();
   const { environments, isReady, networkStatus } = useEnvironments();

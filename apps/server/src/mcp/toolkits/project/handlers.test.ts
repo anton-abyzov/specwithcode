@@ -339,6 +339,8 @@ it.effect("starts a project from just a title when workspaceRoot is omitted", ()
     for (const extra of [
       { scripts: [] },
       { defaultModelSelection: { instanceId: providerInstanceId, model: "gpt-5" } },
+      // A check brings its own folder; it never gets a new repository from a title.
+      { origin: "automated" as const },
     ]) {
       const rejected = yield* handle({ title: "Configured", ...extra });
       expect(rejected.at(-1)?.result).toMatchObject({ code: "invalid_request" });
@@ -692,6 +694,17 @@ it.effect("refuses agent changes to pause, archive, auto-resume and project inst
       })
       .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(layerDependencies), Effect.exit);
     expect(JSON.stringify(instructions)).toContain("Project instructions are the user's");
+    expect(updates).toHaveLength(0);
+    // Which list a project sits in is the person's: an agent can neither hide nor promote one.
+    for (const origin of ["automated", "user"] as const) {
+      const moved = yield* toolkit
+        .handle("studio_project_update", {
+          projectId,
+          workspaceSettings: { expectedRevision: 1, origin },
+        })
+        .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(layerDependencies), Effect.exit);
+      expect(JSON.stringify(moved)).toContain("listed under Automated is the user's");
+    }
     expect(updates).toHaveLength(0);
     yield* toolkit
       .handle("studio_project_update", {

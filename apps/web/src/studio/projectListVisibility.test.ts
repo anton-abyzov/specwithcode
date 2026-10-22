@@ -5,6 +5,9 @@ import {
   archivedMemberKeys,
   archiveWorkspacePatch,
   isArchivedGroup,
+  isAutomatedGroup,
+  membersToMark,
+  originWorkspacePatch,
   isScratchGroup,
   membersToToggle,
   partitionProjectGroups,
@@ -23,7 +26,7 @@ function member(
   environmentId: string,
   id: string,
   workspaceRoot: string,
-  settings?: { archived?: boolean; revision?: number },
+  settings?: { archived?: boolean; revision?: number; origin?: "user" | "automated" },
 ): ProjectListMember {
   return {
     environmentId: environmentId as EnvironmentId,
@@ -68,11 +71,13 @@ describe("project list visibility", () => {
     const unknown = group("unknown", member("other", "y", "/home/user/.studio/scratch"));
     // A project on the data folder that holds scratch is not scratch itself.
     const parent = group("parent", member("host", "z", "/home/user/.studio"));
-    expect(
-      partitionProjectGroups([lookalike, unknown, parent], scratchRootFor).listed.map(
-        (entry) => entry.projectKey,
-      ),
-    ).toEqual(["lookalike", "unknown", "parent"]);
+    const { listed, automated } = partitionProjectGroups(
+      [lookalike, unknown, parent],
+      scratchRootFor,
+    );
+    // Still rows: a folder named scratch reads as a check's project, not as "No project".
+    expect(listed.map((entry) => entry.projectKey)).toEqual(["parent"]);
+    expect(automated.map((entry) => entry.projectKey)).toEqual(["lookalike", "unknown"]);
   });
 
   it("moves a project archived on every machine to the archived list", () => {
@@ -178,5 +183,65 @@ describe("archivedMemberKeys", () => {
       () => null,
     );
     expect([...keys].sort()).toEqual(["m1:a", "m4:b"]);
+  });
+});
+
+describe("automated projects", () => {
+  const check = group(
+    "check",
+    member("host", "c1", "/Users/x/.specwithcode/m4/scratch/run-shell/workspace", {
+      revision: 1,
+    }),
+  );
+  const flagged = group("flagged", member("host", "f1", "/work/flagged", { origin: "automated" }));
+  const kept = group("kept", member("host", "k1", "/work/scratch/kept", { origin: "user" }));
+  // One machine's copy is the person's own, so the project stays in the main list.
+  const mixed = group(
+    "mixed",
+    member("host", "m1", "/work/mixed"),
+    member("remote", "m2", "/tmp/mixed-copy"),
+  );
+
+  it("lists projects checks made apart from the person's own", () => {
+    const { listed, automated, archived } = partitionProjectGroups(
+      [atlas, check, flagged, kept, mixed, samples, hostScratch],
+      scratchRootFor,
+    );
+    expect(listed.map((g) => g.projectKey)).toEqual(["atlas", "kept", "mixed"]);
+    expect(automated.map((g) => g.projectKey)).toEqual(["check", "flagged"]);
+    expect(archived.map((g) => g.projectKey)).toEqual(["remote:samples"]);
+    expect(isAutomatedGroup(hostScratch, scratchRootFor)).toBe(false);
+  });
+
+  it("keeps an archived automated project under Archived", () => {
+    const archivedCheck = group("old-check", member("host", "o1", "/tmp/old", { archived: true }));
+    const { automated, archived } = partitionProjectGroups([archivedCheck], scratchRootFor);
+    expect(automated).toEqual([]);
+    expect(archived.map((g) => g.projectKey)).toEqual(["old-check"]);
+  });
+
+  it("offers the person's projects first in pickers, then automated ones", () => {
+    expect(projectPickerGroups([check, atlas], scratchRootFor).map((g) => g.projectKey)).toEqual([
+      "atlas",
+      "check",
+    ]);
+    expect(
+      projectPickerMembers([...check.memberProjects, ...atlas.memberProjects], scratchRootFor).map(
+        (m) => m.id,
+      ),
+    ).toEqual(["a1", "c1"]);
+  });
+
+  it("moves every machine's copy with its revision, skipping copies already there", () => {
+    expect(membersToMark(check, "user", scratchRootFor).map((m) => m.id)).toEqual(["c1"]);
+    expect(originWorkspacePatch(check.memberProjects[0]!, "user")).toEqual({
+      expectedRevision: 1,
+      origin: "user",
+    });
+    expect(membersToMark(kept, "user", scratchRootFor)).toEqual([]);
+    expect(membersToMark(mixed, "automated", scratchRootFor).map((m) => m.id)).toEqual([
+      "m1",
+      "m2",
+    ]);
   });
 });

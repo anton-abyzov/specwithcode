@@ -396,6 +396,8 @@ export function makeMacSwapUpdater(
       try: () => download().catch(fail),
       catch: (cause) => new ElectronUpdaterDownloadUpdateError({ channel, cause }),
     }),
+    // The swap installs from its own staged copy, and refuses loudly without one.
+    installReady: Effect.succeed(true),
     quitAndInstall: ({ isSilent, isForceRunAfter }) =>
       Effect.try({
         try: () => {

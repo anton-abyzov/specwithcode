@@ -1,7 +1,9 @@
 import type { DesktopUpdateState } from "@specweave-studio/contracts";
 import * as Cause from "effect/Cause";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
 import * as Option from "effect/Option";
 import type * as Scope from "effect/Scope";
 
@@ -39,6 +41,8 @@ export interface AppActivationControlDeps {
   ) => Effect.Effect<DesktopUpdateState>;
   /** The saved "install automatically" preference. */
   readonly installAutomatically: Effect.Effect<boolean>;
+  /** True while an install stages the download: install-on-quit stays on. */
+  readonly holdInstallOnQuit: Effect.Effect<boolean>;
   readonly setAutoInstallOnAppQuit: (value: boolean) => Effect.Effect<void>;
   readonly backgroundScope: Effect.Effect<Option.Option<Scope.Scope>>;
   readonly checkForUpdates: (reason: string) => Effect.Effect<boolean>;
@@ -59,6 +63,10 @@ export function makeAppActivationControl(deps: AppActivationControlDeps) {
   let probe: LocalServiceProbe | null = null;
   // A restage (a second, cached download) runs only once per opened gate.
   let lastGate: "open" | "closed" | null = null;
+  // Set in the tick that forks a restage, so an install made in that same
+  // tick (the update run's follow-up) waits for it instead of racing it.
+  // Holds whether the restage handed the download to Squirrel.
+  let restaging: Deferred.Deferred<boolean> | null = null;
 
   const readActivation = (targetVersion: string | null, serviceLacksRelease = false) =>
     Effect.gen(function* () {
@@ -83,16 +91,16 @@ export function makeAppActivationControl(deps: AppActivationControlDeps) {
   // "downloaded"; the regular download path skips that state.
   const restageDownloadedUpdate = Effect.gen(function* () {
     const checked = yield* deps.checkForUpdates("service caught up");
-    if (!checked) return;
+    if (!checked) return false;
     const state = yield* deps.getState;
     if (state.status === "available") {
       // A newer release appeared: the normal download stages it with the flag set.
       yield* deps.startAutomaticDownload;
-      return;
+      return false;
     }
-    if (state.status !== "downloaded" || state.downloadedVersion === null) return;
-    if (!(yield* deps.tryStartDownload)) return;
-    yield* Effect.gen(function* () {
+    if (state.status !== "downloaded" || state.downloadedVersion === null) return false;
+    if (!(yield* deps.tryStartDownload)) return false;
+    return yield* Effect.gen(function* () {
       yield* logInfo("staging downloaded update for install on quit", {
         version: state.downloadedVersion,
       });
@@ -101,11 +109,15 @@ export function makeAppActivationControl(deps: AppActivationControlDeps) {
       );
       if (Option.isNone(finished)) {
         yield* logWarning("Staging the downloaded update stopped responding.");
+        return false;
       }
+      return true;
     }).pipe(
       Effect.catchTags({
         ElectronUpdaterDownloadUpdateError: (error) =>
-          logError(error.message, { errorTag: error._tag, channel: error.channel }),
+          logError(error.message, { errorTag: error._tag, channel: error.channel }).pipe(
+            Effect.as(false),
+          ),
       }),
       Effect.ensuring(deps.finishDownload),
     );
@@ -113,7 +125,7 @@ export function makeAppActivationControl(deps: AppActivationControlDeps) {
     Effect.catchCause((cause) =>
       Cause.hasInterruptsOnly(cause)
         ? Effect.failCause(cause)
-        : logWarning("Could not stage the downloaded update."),
+        : logWarning("Could not stage the downloaded update.").pipe(Effect.as(false)),
     ),
     Effect.withSpan("desktop.updates.restageDownloadedUpdate"),
   );
@@ -125,7 +137,7 @@ export function makeAppActivationControl(deps: AppActivationControlDeps) {
     const before = yield* deps.getState;
     const swapGate = yield* readActivation(activationTarget(before));
     const installOnQuit = installOnQuitAllowed(yield* deps.installAutomatically, swapGate);
-    yield* deps.setAutoInstallOnAppQuit(installOnQuit);
+    yield* deps.setAutoInstallOnAppQuit(installOnQuit || (yield* deps.holdInstallOnQuit));
     const after = yield* deps.getState;
     if (!sameActivation(after.swapGate, swapGate)) {
       yield* deps.updateState((current) => ({ ...current, swapGate }));
@@ -142,8 +154,18 @@ export function makeAppActivationControl(deps: AppActivationControlDeps) {
     lastGate = swapGate.gate;
     if (opened && installOnQuit && after.status === "downloaded") {
       const scope = yield* deps.backgroundScope;
-      if (Option.isSome(scope)) {
-        yield* restageDownloadedUpdate.pipe(Effect.forkIn(scope.value));
+      if (Option.isSome(scope) && restaging === null) {
+        const done = yield* Deferred.make<boolean>();
+        restaging = done;
+        yield* restageDownloadedUpdate.pipe(
+          Effect.onExit((exit) =>
+            Effect.suspend(() => {
+              if (restaging === done) restaging = null;
+              return Deferred.succeed(done, Exit.isSuccess(exit) && exit.value);
+            }),
+          ),
+          Effect.forkIn(scope.value),
+        );
       }
     }
   }).pipe(
@@ -185,5 +207,19 @@ export function makeAppActivationControl(deps: AppActivationControlDeps) {
       probe = next;
     }).pipe(Effect.andThen(applyActivation));
 
-  return { applyActivation, refusesInstall, registerProbe };
+  /**
+   * Waits up to `limit` for a restage forked by the gate opening; true when
+   * it handed the download to Squirrel, which may still be unpacking it.
+   */
+  const awaitRestage = (limit: Duration.Duration) =>
+    Effect.suspend(() =>
+      restaging === null
+        ? Effect.succeed(false)
+        : Deferred.await(restaging).pipe(
+            Effect.timeoutOption(limit),
+            Effect.map(Option.getOrElse(() => false)),
+          ),
+    );
+
+  return { applyActivation, awaitRestage, refusesInstall, registerProbe };
 }

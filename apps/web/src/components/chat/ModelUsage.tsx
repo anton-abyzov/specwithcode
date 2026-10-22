@@ -196,9 +196,11 @@ function MeterRing({
  */
 export function ModelUsageMeter({
   state,
+  text,
   hideValueClassName,
 }: {
   readonly state: ModelAvailability;
+  readonly text: AvailabilityText;
   /** Classes that hide the number when the composer is narrow; the ring stays. */
   readonly hideValueClassName?: string;
 }) {
@@ -235,7 +237,7 @@ export function ModelUsageMeter({
       break;
     case "unknown":
       ring = { percent: null, tone: "muted", dashed: true };
-      value = "Unknown";
+      value = text.short;
       break;
     case "offline":
       ring = { percent: null, tone: "muted", dashed: true };

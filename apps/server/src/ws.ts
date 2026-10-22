@@ -1881,7 +1881,8 @@ const layerWsRpc = (
         const result = yield* projectMutationOperation(
           { ...projectService, changeFolder: projectFolders.change },
           mutation,
-          mutation.type === "project.create"
+          mutation.type === "project.create" ||
+            (mutation.type === "project.update" && mutation.workspaceSettings?.origin !== undefined)
             ? yield* TemporaryProjects.temporarySessionIdFor(currentSessionId).pipe(
                 Effect.provideService(SqlClient.SqlClient, sql),
               )

@@ -1218,6 +1218,49 @@ class PreflightFailureReceipt(unittest.TestCase):
  def test_success_writes_no_preflight_receipt(self):
   with tempfile.TemporaryDirectory() as tmp:
    self.assertFalse(self.run_main(tmp).exists())
+class GateSettle(unittest.TestCase):
+ """AC-06: the install gate settles 2 s when the running service holds itself for this forced request, else 12 s."""
+ def held(self,own,pid=100):
+  (own/'updates').mkdir(parents=True,exist_ok=True);(own/'userdata').mkdir(parents=True,exist_ok=True)
+  now=datetime.datetime.now(datetime.timezone.utc);at=lambda seconds:(now+datetime.timedelta(seconds=seconds)).isoformat().replace('+00:00','Z')
+  write=lambda name,**value:(own/name).write_text(json.dumps(value))
+  write('userdata/server-runtime.json',pid=pid,host='127.0.0.1',port=8319,startedAt=at(-600))
+  write('updates/hold.json',schemaVersion=1,holdId='h',pid=pid,startedAt=at(-60),expiresAt=at(600))
+  write('updates/config.json',installMode='force',installRequestedAt=at(-30),installCancelledAt=None)
+  return write,at
+ def fixture(self):
+  temp=tempfile.TemporaryDirectory(prefix='studio-gate-settle-');self.addCleanup(temp.cleanup)
+  home=pathlib.Path(temp.name).resolve();own=home/'.specwithcode/m4'
+  return home,own,self.held(own)
+ def test_a_service_held_for_this_request_settles_in_two_seconds(self):
+  home,own,_=self.fixture()
+  self.assertEqual(update.gate_settle(own,home,100,update.INSTALL_GATE_SETTLE_SECONDS),('held',2))
+ def test_anything_else_keeps_the_full_settle(self):
+  self.assertEqual(update.INSTALL_GATE_SETTLE_SECONDS,12)
+  config=lambda write,at,**changes:write('updates/config.json',**dict({'installMode':'force','installRequestedAt':at(-30)},**changes))
+  cases={'another service':lambda own,write,at:None,
+   'no hold':lambda own,write,at:(own/'updates/hold.json').unlink(),
+   'a hold of another process':lambda own,write,at:write('updates/hold.json',schemaVersion=1,pid=5151,startedAt=at(-60),expiresAt=at(600)),
+   'a hold that ended':lambda own,write,at:write('updates/hold.json',schemaVersion=1,pid=100,startedAt=at(-60),expiresAt=at(-1)),
+   'not forced':lambda own,write,at:config(write,at,installMode='normal'),
+   'cancelled':lambda own,write,at:config(write,at,installCancelledAt=at(-1)),
+   'no request':lambda own,write,at:config(write,at,installRequestedAt=None),
+   'no runtime':lambda own,write,at:(own/'userdata/server-runtime.json').unlink(),
+   'malformed config':lambda own,write,at:(own/'updates/config.json').write_text('[]')}
+  for name,change in cases.items():
+   with self.subTest(name):
+    home,own,(write,at)=self.fixture();change(own,write,at)
+    self.assertEqual(update.gate_settle(own,home,101 if name=='another service' else 100,12),('full',12))
+ def test_apply_sleeps_two_seconds_only_for_a_held_request(self):
+  for held,settle,mode in ((True,2000,'held'),(False,12000,'full')):
+   with self.subTest(held=held):
+    fixture=ApplyRecovery(methodName='runTest');fixture.setUp();self.addCleanup(fixture.tearDown);seen={}
+    if held:self.held(fixture.own)
+    fixture.on_restart=lambda:seen.update(json.loads(fixture.output.read_text()))
+    fixture.execute()
+    result=json.loads(fixture.output.read_text())
+    self.assertEqual((result['phase'],result['timings']['gateSettle'],seen['gateSettle']),('verified',settle,mode))
+    self.assertNotIn('gateSettle',result)
 class ReleasePolicyVersionTests(unittest.TestCase):
  def test_stable_1_x_follows_the_alpha_line_and_never_goes_back(self):
   import release_policy

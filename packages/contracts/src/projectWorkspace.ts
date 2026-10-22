@@ -3,6 +3,7 @@ import * as Schema from "effect/Schema";
 import * as Effect from "effect/Effect";
 import {
   ProjectKind,
+  ProjectOrigin,
   ProjectEnvironmentSettings,
   DEFAULT_PROJECT_ENVIRONMENT,
 } from "./projectEnvironment.ts";
@@ -79,6 +80,13 @@ export const ProjectWorkspaceSettings = Schema.Struct({
    * this project. The server deletes the project once that session ends.
    */
   temporarySessionId: Schema.optionalKey(Schema.String),
+  /**
+   * "automated" for a project a check or agent made for itself, listed apart from
+   * the person's projects; "user" once the person keeps it as their own. Absent:
+   * the folder decides (projectOrigin). A string on the wire, so a value a newer
+   * version adds reads as absent instead of failing the whole project.
+   */
+  origin: Schema.optionalKey(Schema.String),
 });
 export type ProjectWorkspaceSettings = typeof ProjectWorkspaceSettings.Type;
 export const DEFAULT_PROJECT_WORKSPACE_SETTINGS: ProjectWorkspaceSettings = {
@@ -104,6 +112,7 @@ export const ProjectWorkspacePatch = Schema.Struct({
   archived: Schema.optional(Schema.Boolean),
   autoResume: Schema.optional(Schema.Boolean),
   workerMachine: Schema.optional(Schema.NullOr(ProjectWorkerMachine)),
+  origin: Schema.optional(ProjectOrigin),
 });
 export type ProjectWorkspacePatch = typeof ProjectWorkspacePatch.Type;
 export const ProjectWorkspaceReadInput = Schema.Struct({ projectId: ProjectId });

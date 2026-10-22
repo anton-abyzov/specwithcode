@@ -80,7 +80,9 @@ export const layer = HttpApiBuilder.group(
           const operation = projectMutationOperation(
             { ...projects, changeFolder: folders.change },
             args.payload,
-            args.payload.type === "project.create"
+            args.payload.type === "project.create" ||
+              (args.payload.type === "project.update" &&
+                args.payload.workspaceSettings?.origin !== undefined)
               ? yield* temporarySessionIdFor(session.sessionId)
               : undefined,
           );

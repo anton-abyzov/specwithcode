@@ -61,7 +61,8 @@ export const temporarySessionIdFor = Effect.fn("TemporaryProjects.temporarySessi
 
 /**
  * Temporary projects to delete now: their session has ended (revoked, expired or
- * gone) and none of their threads is still open. A thread someone kept open
+ * gone), none of their threads is still open and the person has not moved them to
+ * their own projects. A thread someone kept open
  * keeps the project; it stays until that thread is archived.
  */
 export function temporaryProjectsToDelete<
@@ -75,6 +76,8 @@ export function temporaryProjectsToDelete<
   const busy = new Set(input.openThreads.map((thread) => thread.projectId));
   return input.projects.filter((project) => {
     const sessionId = project.workspaceSettings?.temporarySessionId;
+    // A project the person moved to their own list is theirs to keep.
+    if (project.workspaceSettings?.origin === "user") return false;
     if (sessionId === undefined || busy.has(project.id)) return false;
     const session = input.sessions.get(sessionId);
     return (

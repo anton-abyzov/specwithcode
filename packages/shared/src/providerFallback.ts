@@ -108,13 +108,29 @@ export function isDirectClaudeApiKeyProvider(provider: ServerProvider | undefine
 }
 
 /**
+ * The Gemini CLI, including a second instance (`acpRegistry_gemini_2`) and a
+ * Vertex sign-in under any name. Those turns bill a Google Cloud project.
+ * A Google account login is not a flat-rate seat, so nothing may move a
+ * thread here on its own. Antigravity's plan login is separate, but its
+ * Gemini API-key and Agent Platform sign-ins also bill a Cloud project.
+ */
+export function isGeminiSpendProvider(provider: ServerProvider | undefined): boolean {
+  if (provider === undefined) return false;
+  if (/gemini|vertex/i.test(provider.instanceId)) return true;
+  if (/gemini|vertex/i.test(provider.displayName ?? "")) return true;
+  return /gemini|vertex|agent[-_ ]platform/i.test(provider.auth.type ?? "");
+}
+
+/**
  * Any instance whose turns are billed per token: a Claude API-key, proxy or
- * Bedrock instance, or another driver signed in with an API key (Codex on
- * an OpenAI key). Nothing picks one by itself.
+ * Bedrock instance, another driver signed in with an API key (Codex on an
+ * OpenAI key), or Gemini / Vertex. Nothing picks one by itself. Gemini stays
+ * out even when a fallback order or the project default names it.
  */
 export function isPerTokenProvider(provider: ServerProvider | undefined): boolean {
   return (
     isClaudeApiKeyProvider(provider) ||
+    isGeminiSpendProvider(provider) ||
     provider?.auth.type === "apiKey" ||
     provider?.auth.type === "api_key" ||
     provider?.auth.type === "bedrock" ||
@@ -495,8 +511,11 @@ export function resolveProviderFallback(input: {
   ): provider is ServerProvider => {
     if (provider === undefined || provider.instanceId === input.currentInstanceId) return false;
     if (input.limitedInstanceIds?.has(provider.instanceId)) return false;
-    // An API key reports no usage either, but spends money: it needs the
-    // API-credit rule, never a guess.
+    // Gemini and Vertex bill a Cloud project even when a read shows room
+    // or the project default names them. Other API keys that report usage
+    // can still be that default; one that reports none needs the API-credit
+    // rule, never a guess.
+    if (isGeminiSpendProvider(provider)) return false;
     if (reportsNoUsage(provider)) return canTakeTurn(provider) && !isPerTokenProvider(provider);
     if (!hasUsableFallbackCapacity(provider, input.nowMs, model)) return false;
     const used = providerUsedPercent(provider, input.nowMs, model);
@@ -957,8 +976,11 @@ export function resolveCoordinatorTurnSelection(input: {
   const thread = input.thread;
   if (thread !== null && thread.instanceId !== input.saved.instanceId) {
     const current = input.providers.find((provider) => provider.instanceId === thread.instanceId);
-    // Never keeps paying per token unless the rule allows API credits.
-    const paid = isPerTokenProvider(current) && input.rule.providerLimitUseApiCredits !== true;
+    // Gemini/Vertex never continue as an automatic fallback, including one
+    // selected before this guard. API-credit consent applies to other providers.
+    const paid =
+      isGeminiSpendProvider(current) ||
+      (isPerTokenProvider(current) && input.rule.providerLimitUseApiCredits !== true);
     if (current !== undefined && !paid && canTakeTurn(current) && !full(current, thread.model))
       return { selection: thread, reason: "staying-on-fallback" };
   }

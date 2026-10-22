@@ -31,15 +31,20 @@ export const projectMutationOperation = Effect.fn("projectMutationOperation")(fu
           ? {}
           : { defaultModelSelection: mutation.defaultModelSelection }),
         ...(mutation.scripts === undefined ? {} : { scripts: mutation.scripts }),
+        ...(mutation.origin === undefined ? {} : { origin: mutation.origin }),
       });
 
-    case "project.update":
+    case "project.update": {
+      // Which list a project sits in is the person's choice; a temporary agent token
+      // cannot move a project between their projects and Automated.
+      const workspaceSettings =
+        temporarySessionId === undefined || mutation.workspaceSettings === undefined
+          ? mutation.workspaceSettings
+          : (({ origin: _origin, ...rest }) => rest)(mutation.workspaceSettings);
       return yield* projects.update({
         commandId: mutation.commandId,
         projectId: mutation.projectId,
-        ...(mutation.workspaceSettings === undefined
-          ? {}
-          : { workspaceSettings: mutation.workspaceSettings }),
+        ...(workspaceSettings === undefined ? {} : { workspaceSettings }),
         ...(mutation.title === undefined ? {} : { title: mutation.title }),
         ...(mutation.workspaceRoot === undefined ? {} : { workspaceRoot: mutation.workspaceRoot }),
         ...(mutation.defaultModelSelection === undefined
@@ -53,6 +58,7 @@ export const projectMutationOperation = Effect.fn("projectMutationOperation")(fu
           : { defaultThreadEnvMode: mutation.defaultThreadEnvMode }),
         ...(mutation.scripts === undefined ? {} : { scripts: mutation.scripts }),
       });
+    }
 
     case "project.delete":
       return yield* projects.delete({

@@ -219,3 +219,36 @@ def swap_cli_alias(alias, content, owned, *, create=True, report=None):
     finally:
         if os.path.lexists(str(staged)):
             os.unlink(str(staged))
+
+
+def restore_cli_alias(alias, original, written, report=None):
+    """Undo this update's alias write, only while the alias still holds `written` (or
+    already `original` again). Anything else there is left alone and reported; a launcher
+    removed meanwhile is not recreated."""
+    try:
+        if original is None:
+            outcome, _ = swap_cli_alias(alias, None, {written}, report=report)
+            names = {'removed': 'removed-on-rollback', 'absent': 'already-absent'}
+        else:
+            outcome, _ = swap_cli_alias(alias, original, {written, original}, create=False, report=report)
+            names = {'replaced': 'restored-on-rollback'}
+        if outcome == 'foreign-kept-aside':
+            return 'changed-outside-kept-aside'
+        return names.get(outcome, 'changed-outside-left-untouched')
+    except OSError:
+        return 'restore-failed-left-as-is'
+
+
+def repoint_cli_alias(alias, rolled_back, original, written):
+    """Put back this update's launcher after a rollback step undid it but the identity
+    pointers had to return to the new release. Returns True when the alias holds `written`."""
+    try:
+        if rolled_back == 'removed-on-rollback':
+            outcome, _ = swap_cli_alias(alias, written, set())
+        elif rolled_back == 'restored-on-rollback':
+            outcome, _ = swap_cli_alias(alias, written, {original}, create=False)
+        else:
+            return False
+        return outcome in {'created', 'replaced'}
+    except OSError:
+        return False
