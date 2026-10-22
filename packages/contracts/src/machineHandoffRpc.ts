@@ -10,6 +10,9 @@ import {
 } from "./machineHandoff.ts";
 import {
   FolderCopyCancelInput,
+  FolderCopyCapabilities,
+  FolderCopyScopes,
+  FolderCopyScopesInput,
   FolderCopyDecideInput,
   FolderCopyError,
   FolderCopyOffer,
@@ -28,6 +31,8 @@ import {
 } from "./folderCopy.ts";
 import { MachineReadiness, MachineReadinessInput } from "./machineReadiness.ts";
 export const MACHINE_HANDOFF_RPC_METHODS = {
+  machineHandoffCopyScopes: "machineHandoff.copyScopes",
+  machineHandoffCopyCapabilities: "machineHandoff.copyCapabilities",
   machineHandoffPrepare: "machineHandoff.prepare",
   machineHandoffReceive: "machineHandoff.receive",
   machineHandoffCopyOffer: "machineHandoff.copyOffer",
@@ -63,6 +68,16 @@ export const machineHandoffRpcs = [
 
 /** Folder copy RPCs, registered as their own group (see `WsFolderCopyRpcGroup`). */
 export const folderCopyRpcs = [
+  Rpc.make(M.machineHandoffCopyScopes, {
+    payload: FolderCopyScopesInput,
+    success: FolderCopyScopes,
+    error: copyError,
+  }),
+  Rpc.make(M.machineHandoffCopyCapabilities, {
+    payload: Schema.Struct({}),
+    success: FolderCopyCapabilities,
+    error: copyError,
+  }),
   Rpc.make(M.machineHandoffCopyOffer, {
     payload: FolderCopyOfferInput,
     success: FolderCopyOffer,

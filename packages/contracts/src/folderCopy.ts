@@ -9,6 +9,31 @@ import { MachineHandoffOperationId } from "./machineHandoff.ts";
 const bounded = (max: number) => Schema.String.check(Schema.isMaxLength(max));
 const count = Schema.Number;
 
+export const FolderCopyScopesInput = Schema.Struct({ projectId: ProjectId });
+export type FolderCopyScopesInput = typeof FolderCopyScopesInput.Type;
+export const FolderCopyScopes = Schema.Struct({
+  projectRoot: bounded(4096),
+  recommendedCopyRoot: bounded(4096),
+  scopes: Schema.Array(
+    Schema.Struct({
+      copyRoot: bounded(4096),
+      projectRelativePath: bounded(4096),
+      kind: Schema.Literals(["project", "workspace"]),
+      label: bounded(200),
+      repositories: Schema.Array(bounded(4096)),
+      truncated: Schema.Boolean,
+    }),
+  ),
+});
+export type FolderCopyScopes = typeof FolderCopyScopes.Type;
+export const FolderCopyCapabilities = Schema.Struct({ scopeVersion: Schema.Literal(1) });
+const scopeFields = {
+  /** Canonical source folder explicitly selected for this operation. */
+  copyRoot: Schema.optional(bounded(4096)),
+  /** Coordinator project inside that folder; absent means the legacy root project. */
+  projectRelativePath: Schema.optional(bounded(4096)),
+};
+
 export const FolderCopyMode = Schema.Literals(["copy-only", "copy-and-move"]);
 export type FolderCopyMode = typeof FolderCopyMode.Type;
 export const FolderCopyFileClass = Schema.Literals([
@@ -58,6 +83,7 @@ export const FolderCopySourceSummary = Schema.Struct({
 export type FolderCopySourceSummary = typeof FolderCopySourceSummary.Type;
 
 export const FolderCopySourceStatus = Schema.Struct({
+  ...scopeFields,
   operationId: MachineHandoffOperationId,
   projectId: ProjectId,
   mode: FolderCopyMode,
@@ -92,10 +118,12 @@ export const FolderCopyOfferInput = Schema.Struct({
   operationId: MachineHandoffOperationId,
   mode: FolderCopyMode,
   destinationEnvironmentId: EnvironmentId,
+  copyRoot: Schema.optional(bounded(4096)),
 });
 export type FolderCopyOfferInput = typeof FolderCopyOfferInput.Type;
 /** What the destination needs to pull. The browser relays it once; the token expires with the copy. */
 export const FolderCopyOffer = Schema.Struct({
+  ...scopeFields,
   operationId: MachineHandoffOperationId,
   sourceEnvironmentId: EnvironmentId,
   sourceProjectId: ProjectId,
@@ -156,6 +184,7 @@ export const FolderCopyReleaseResult = Schema.Struct({
 });
 
 export const FolderCopyStartInput = Schema.Struct({
+  ...scopeFields,
   operationId: MachineHandoffOperationId,
   sourceEnvironmentId: EnvironmentId,
   sourceProjectId: ProjectId,
@@ -246,6 +275,9 @@ export const FolderCopyState = Schema.Literals([
 export type FolderCopyState = typeof FolderCopyState.Type;
 
 export const FolderCopyStatus = Schema.Struct({
+  ...scopeFields,
+  /** Registered coordinator workspace, which can be below targetFolder. */
+  projectFolder: Schema.optional(bounded(4096)),
   operationId: MachineHandoffOperationId,
   sourceEnvironmentId: EnvironmentId,
   sourceProjectId: ProjectId,

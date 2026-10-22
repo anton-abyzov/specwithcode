@@ -18,7 +18,11 @@ afterEach(() => {
 const projectId = ProjectId.make("source-project");
 const operationId = "00000000-0000-4000-8000-000000000990";
 
-async function snapshot(withRepository = false) {
+async function snapshot(
+  withRepository = false,
+  commit = true,
+  hooks: ConstructorParameters<typeof SourceTransfers>[1] = {},
+) {
   const base = NodeFS.realpathSync(
     NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "swc-copy-snapshot-")),
   );
@@ -45,7 +49,7 @@ async function snapshot(withRepository = false) {
       "initial",
     ]);
   }
-  const sources = new SourceTransfers(state);
+  const sources = new SourceTransfers(state, hooks);
   const offered = await sources.offer({
     operationId,
     projectId,
@@ -62,14 +66,15 @@ async function snapshot(withRepository = false) {
     if (record?.state === "ready") break;
     await new Promise((resolve) => setTimeout(resolve, 5));
   }
-  await sources.commit(loaded);
-  return { sources, folder, state, repo };
+  await loaded.building; // The ready record is visible before its final durable write settles.
+  if (commit) await sources.commit(loaded);
+  return { sources, folder, state, repo, loaded, token: offered.token };
 }
 
 describe("a completed copy before coordinator context transfer", () => {
   it.live("retains the activity warning in the status, manifest and restarted source", () =>
     Effect.gen(function* () {
-      const { sources, state } = yield* Effect.promise(() => snapshot());
+      const { sources, state, folder } = yield* Effect.promise(() => snapshot());
       expect((yield* Effect.promise(() => sources.read(operationId)))?.summary?.warnings).toContain(
         ACTIVE_COPY_WARNING,
       );
@@ -83,7 +88,7 @@ describe("a completed copy before coordinator context transfer", () => {
       ).toContain(ACTIVE_COPY_WARNING);
       yield* Effect.promise(() => restarted.assertCurrentSnapshot(operationId));
       expect(
-        yield* makeFolderCopyManifest(restarted)(operationId, projectId, "destination"),
+        yield* makeFolderCopyManifest(restarted)(operationId, projectId, "destination", folder),
       ).toMatchObject({ operationId });
     }),
   );
@@ -106,6 +111,7 @@ describe("a completed copy before coordinator context transfer", () => {
           operationId,
           projectId,
           "destination",
+          folder,
         ).pipe(Effect.flip);
         expect(result.code).toBe("source_changed");
         expect((yield* Effect.promise(() => sources.read(operationId)))?.state).toBe("committed");
@@ -140,6 +146,13 @@ describe("a completed copy before coordinator context transfer", () => {
     });
   });
 
+  it("ignores Git runtime locks and fsmonitor sockets in the context snapshot fence", async () => {
+    const { sources, repo } = await snapshot(true);
+    NodeFS.writeFileSync(NodePath.join(repo, ".git/index.lock"), "transient lock");
+    NodeFS.writeFileSync(NodePath.join(repo, ".git/fsmonitor--daemon.ipc"), "transient endpoint");
+    await expect(sources.assertCurrentSnapshot(operationId)).resolves.toBeUndefined();
+  });
+
   it("ignores newly created excluded caches", async () => {
     const { sources, folder } = await snapshot();
     NodeFS.mkdirSync(NodePath.join(folder, "node_modules"));
@@ -155,5 +168,125 @@ describe("a completed copy before coordinator context transfer", () => {
     await expect(sources.assertCurrentSnapshot(operationId)).rejects.toMatchObject({
       code: "source_changed",
     });
+  });
+});
+
+describe("terminal source snapshot cleanup", () => {
+  it("retains the manifest for context checks but removes generated Git data after commit and restart", async () => {
+    const { sources, state, folder, loaded } = await snapshot(true, false);
+    const directory = NodePath.join(state, "folder-sources", operationId);
+    expect(NodeFS.existsSync(NodePath.join(directory, "portable-git"))).toBe(true);
+    await sources.commit(loaded);
+    expect(NodeFS.existsSync(NodePath.join(directory, "portable-git"))).toBe(false);
+    expect(NodeFS.existsSync(NodePath.join(directory, "manifest.ndjson.gz"))).toBe(true);
+    expect(NodeFS.readFileSync(NodePath.join(folder, "unfinished.txt"), "utf8")).toBe(
+      "unfinished work\n",
+    );
+    await sources.commit(loaded);
+    await sources.assertCurrentSnapshot(operationId);
+    await new SourceTransfers(state).assertCurrentSnapshot(operationId);
+  });
+
+  it("finishes an authorized Git chunk read before terminal cleanup, including cold concurrent loads", async () => {
+    const { state, token } = await snapshot(true, false);
+    const restarted = new SourceTransfers(state);
+    const [first, second] = await Promise.all([
+      restarted.authorize(operationId, token),
+      restarted.authorize(operationId, token),
+    ]);
+    expect(first).toBe(second);
+    const manifest = await readManifestFile(
+      NodePath.join(state, "folder-sources", operationId, "manifest.ndjson.gz"),
+    );
+    const entry = manifest.entries.find((item) => item.portableGit && item.chunks?.length);
+    expect(entry).toBeDefined();
+    const reading = restarted.chunks(first, entry!.chunks!);
+    const committing = restarted.commit(second);
+    expect((await reading).every((frame) => frame.status === 0)).toBe(true);
+    expect((await committing).state).toBe("committed");
+    expect(
+      NodeFS.existsSync(NodePath.join(state, "folder-sources", operationId, "portable-git")),
+    ).toBe(false);
+    await expect(restarted.chunks(first, entry!.chunks!)).rejects.toMatchObject({
+      code: "committed",
+    });
+  });
+
+  it.each(["release", "cancel"] as const)(
+    "%s waits for a new manifest build and cannot be overwritten by it",
+    async (action) => {
+      const { sources, state, folder } = await snapshot(true);
+      const nextId = "00000000-0000-4000-8000-000000000991";
+      const offered = await sources.offer({
+        operationId: nextId,
+        projectId,
+        folder,
+        mode: "copy-only",
+        destinationEnvironmentId: "destination",
+      });
+      const loaded = await sources.authorize(nextId, offered.token);
+      await sources.requestManifest(loaded, DEFAULT_SELECTION);
+      expect(loaded.building).not.toBeNull();
+      const record =
+        action === "release"
+          ? await sources.release(loaded, "test")
+          : await sources.cancel(nextId, "test");
+      expect(record.state).toBe(action === "release" ? "released" : "cancelled");
+      expect(loaded.building).toBeNull();
+      expect((await new SourceTransfers(state).read(nextId))?.state).toBe(record.state);
+      expect(
+        NodeFS.existsSync(NodePath.join(state, "folder-sources", nextId, "portable-git")),
+      ).toBe(false);
+      await expect(sources.requestManifest(loaded, DEFAULT_SELECTION)).rejects.toMatchObject({
+        code: record.state,
+      });
+    },
+  );
+
+  it("serializes a yielding release hook against commit and preserves terminal replay", async () => {
+    let unblock!: () => void;
+    let entered!: () => void;
+    const releaseGate = new Promise<void>((resolve) => {
+      unblock = resolve;
+    });
+    const hookEntered = new Promise<void>((resolve) => {
+      entered = resolve;
+    });
+    const { sources, loaded } = await snapshot(true, false, {
+      release: async () => {
+        entered();
+        await releaseGate;
+      },
+    });
+    const releasing = sources.release(loaded, "stopped");
+    await hookEntered;
+    const committing = sources.commit(loaded).then(
+      () => "unexpected",
+      (error: { code: string }) => error.code,
+    );
+    unblock();
+    expect((await releasing).state).toBe("released");
+    expect(await committing).toBe("released");
+    expect((await sources.release(loaded, "again")).state).toBe("released");
+  });
+
+  it("acknowledges a committed copy even if cleanup fails and retries housekeeping on status read", async () => {
+    const { sources, loaded, state } = await snapshot(true, false);
+    const overlay = NodePath.join(state, "folder-sources", operationId, "portable-git");
+    NodeFS.chmodSync(overlay, 0o500);
+    try {
+      expect((await sources.commit(loaded)).state).toBe("committed");
+      expect(loaded.record.snapshotCleanupPending).toBe(true);
+    } finally {
+      NodeFS.chmodSync(overlay, 0o700);
+    }
+    const retried = await new SourceTransfers(state).read(operationId);
+    expect(retried?.snapshotCleanupPending).toBe(false);
+    expect(retried?.warnings).not.toContain(
+      "Temporary Git snapshot cleanup is pending; the copy result is unchanged.",
+    );
+    expect(
+      NodeFS.existsSync(NodePath.join(state, "folder-sources", operationId, "portable-git")),
+    ).toBe(false);
   });
 });

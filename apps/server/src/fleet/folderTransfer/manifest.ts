@@ -42,6 +42,8 @@ export interface ManifestEntry {
   collapsed?: { files: number };
   /** The file kept changing while it was read; it is copied as last read and flagged. */
   unstable?: boolean;
+  /** Source-owned generated Git data in the operation's private snapshot. */
+  readonly portableGit?: boolean;
 }
 
 export interface RepositoryInfo {
@@ -73,6 +75,8 @@ export interface FolderScan {
   readonly repositories: Array<RepositoryInfo>;
   readonly totals: ClassTotals;
   readonly warnings: Array<string>;
+  /** Informational scope/portability notes, not incomplete-snapshot warnings. */
+  readonly notices?: Array<string>;
 }
 
 export class FolderScanError extends Error {
@@ -305,6 +309,7 @@ export async function scanFolder(
   const repositories: Array<RepositoryInfo> = [];
   const totals = emptyTotals();
   const warnings: Array<string> = [];
+  const notices: Array<string> = [];
   const push = (entry: ManifestEntry) => {
     if (entries.length >= maxEntries) throw new FolderScanError("too-many-entries");
     entries.push(entry);
@@ -337,6 +342,11 @@ export async function scanFolder(
           if (stat.isDirectory() || stat.isFile()) {
             const read = await readRepository(realRoot, absolute, stat);
             repositories.push(read.info);
+            const outside = read.info.worktrees.filter((tree) => tree.path === null);
+            if (outside.length > 0)
+              notices.push(
+                `${read.info.path}: ${outside.length} worktree(s) outside this folder are not copied: ${outside.map((tree) => tree.name).join(", ")}. Copy those working folders separately to preserve their uncommitted changes.`,
+              );
             scope = [...repos, read.context];
           }
         } catch (cause) {
@@ -364,6 +374,10 @@ export async function scanFolder(
         continue;
       }
       const gitData = insideGitData || (child.name === ".git" && innermost?.absolute === absolute);
+      // Git daemon sockets and transient writer locks are local runtime state,
+      // never part of a portable snapshot or a reason to block later transfer.
+      if (gitData && (child.name === "fsmonitor--daemon.ipc" || child.name.endsWith(".lock")))
+        continue;
       const inner = innermost ? insideRepo(innermost.path, relative) : null;
       const gitState = gitData
         ? "outside"
@@ -417,7 +431,7 @@ export async function scanFolder(
   };
 
   await walk(realRoot, [], false);
-  return { root: realRoot, entries, repositories, totals, warnings };
+  return { root: realRoot, entries, repositories, totals, warnings, notices };
 }
 
 /** Re-lists a collapsed rebuildable folder once the person selects rebuildable files. */
@@ -512,6 +526,7 @@ export async function hashSelected(
   scan: FolderScan,
   selection: ReadonlySet<FileClass>,
   onProgress?: (done: { files: number; bytes: number }) => void,
+  rootForEntry: (entry: ManifestEntry) => string = () => scan.root,
 ): Promise<void> {
   const targets = scan.entries.filter(
     (entry) => entry.type === "file" && selection.has(entry.class) && entry.sha256 === undefined,
@@ -519,7 +534,7 @@ export async function hashSelected(
   let files = 0;
   let bytes = 0;
   await forEachLimited(targets, HASH_CONCURRENCY, async (entry) => {
-    const absolute = NodePath.join(scan.root, entry.path);
+    const absolute = NodePath.join(rootForEntry(entry), entry.path);
     for (let attempt = 0; ; attempt += 1) {
       try {
         const hashed = await hashFile(absolute, attempt < 2);
@@ -541,6 +556,8 @@ export async function hashSelected(
 }
 
 export interface ManifestHeader {
+  readonly copyRoot?: string;
+  readonly projectRelativePath?: string;
   readonly version: 1;
   readonly operationId: string;
   readonly chunkSize: number;

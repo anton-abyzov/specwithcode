@@ -22,8 +22,10 @@ Both machines must be in your private fleet. If they are not yet, follow
 | **Use the folder as it is**            | The older path: committed work is pushed to Git remotes and an existing checkout on the destination advances. |
 | **Clone from origin per repository**   | Like a copy, but clean repositories are cloned from their remotes instead of being copied byte for byte.      |
 
-4. Check **Source folder**. This is the registered project root, not necessarily
-   the Git repository containing the current thread. Under **Folder on
+4. Check the source scope. When this repository belongs to a configured
+   SpecWeave umbrella, the dialog offers the containing workspace and shows its
+   path. You can copy that workspace or just the current project folder without
+   leaving the dialog. Under **Folder on
    &lt;destination&gt;**, choose where the copy goes. The suggested path uses the
    destination machine’s home; a saved destination takes precedence. An empty
    or missing folder gets a plain copy. A folder that already holds the project
@@ -38,9 +40,10 @@ Both machines must be in your private fleet. If they are not yet, follow
      is idle and its copied snapshot is still current, its coordinator context
      and responsibility transfer to the destination. If work is active, the
      files remain copied and the dialog offers an explicit later retry.
-6. Choose **Measure the folder**, check the sizes, then **Preview on
+6. Use **Measure the folder** in the dialog footer, check the sizes, then **Preview on
    &lt;destination&gt;**, and finally **Copy and apply on &lt;destination&gt;** (or
-   **Copy and transfer context to &lt;destination&gt;**).
+   **Copy and transfer context to &lt;destination&gt;**). These actions stay in the
+   footer while the contents above them scroll.
 
 The source keeps working while the copy runs. Unfinished tasks and uncommitted
 edits are allowed. Active writers produce a warning because the copy is not an
@@ -50,18 +53,32 @@ the copied snapshot, copy again before transferring context.
 
 ## Which folder moves
 
-Copy preserves the registered source folder and its relative layout. A single
+Copy preserves the selected source folder and its relative layout. A single
 Git repository, a SpecWeave umbrella such as `repositories/<org>/<repo>`, and
 custom nested repositories all use the same recursive discovery. For example,
 copying `specweave-umb` includes its child repositories and root `.specweave`
 context; copying only `specweave-umb/repositories/anton-abyzov/specweave` includes
 only that subtree. The app never silently includes parent folders or siblings.
 
-Choose the umbrella as the project folder when the whole umbrella should travel.
-Additional folders outside the root are not included. External symbolic links
-stay links, so their targets must exist separately on the destination. A linked
-worktree whose main repository is outside the copied root becomes plain files,
-with a warning; it cannot retain that external Git relationship.
+The umbrella choice is discovered from workspace configuration and verified
+containment, even when the umbrella is not an active project in the sidebar.
+Selecting it does not change the source project's registration. Its coordinator
+still uses the same child repository, at the corresponding relative path inside
+the destination workspace. The destination must support workspace-scoped copies.
+
+Additional working folders outside the selected root are not silently included.
+They are listed so you can copy them separately. External symbolic links stay
+links, so their targets must exist separately on the destination. A selected
+linked worktree whose main repository is outside the copied root becomes an
+independent Git repository, preserving its branch, history, stashes and staged
+changes. You can commit its unfinished work on the destination without reaching
+back to the source machine.
+
+An external worktree in the middle of a Git merge, rebase, cherry-pick or revert
+must finish or abort that Git operation before it can be copied independently.
+Ordinary staged and unstaged changes do not require a commit first. Worktrees
+outside a copied main repository keep their branches in its history, but their
+working folders must be copied separately.
 
 ## Coordinators on different machines
 

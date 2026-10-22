@@ -23,9 +23,15 @@ export const useEnvironmentQuery = () => ({
   isPending: false,
 });
 let applied = false;
+let attempted = false;
+let published = false;
 let op = "";
 let mode = "copy-only";
 let targetFolder = "";
+const umbrella = "/Users/you/Projects/github/specweave-umb";
+const child = "repositories/anton-abyzov/specweave";
+let copyRoot = umbrella;
+let projectRelativePath = child;
 const status = (state: string) => ({
   operationId: op,
   sourceEnvironmentId: "m4",
@@ -33,12 +39,16 @@ const status = (state: string) => ({
   sourceMachine: "MacBook M4",
   mode,
   targetFolder,
+  copyRoot,
+  projectRelativePath,
+  projectFolder:
+    projectRelativePath === "." ? targetFolder : `${targetFolder}/${projectRelativePath}`,
   title: "SpecWeave",
   selection: [],
   mirror: false,
   state,
-  failedStep: null,
-  error: null,
+  failedStep: state === "failed" ? "transfer" : null,
+  error: state === "failed" ? { message: "The copy connection was interrupted." } : null,
   progress: null,
   disk: null,
   rows: [],
@@ -51,19 +61,118 @@ const status = (state: string) => ({
   createdAt: "2026-10-21T00:00:00Z",
   updatedAt: "2026-10-21T00:00:00Z",
 });
+type Gate = { readonly promise: Promise<void>; readonly release: () => void };
+const gates = new Map<string, Gate>();
+const failures = new Map<string, { code: string; message: string }>();
+export const fixture = {
+  calls: [] as string[],
+  copyRequests: [] as Array<{
+    copyRoot: string;
+    projectRelativePath: string;
+    targetFolder: string;
+  }>,
+  transferReady: false,
+  failCopy: false,
+  pauseNext(name: string) {
+    let release!: () => void;
+    const promise = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    gates.set(name, { promise, release });
+  },
+  release(name: string) {
+    const gate = gates.get(name);
+    if (!gate) throw new Error(`No pending synthetic command: ${name}`);
+    gates.delete(name);
+    gate.release();
+  },
+  failNext(name: string, code: string, message: string) {
+    failures.set(name, { code, message });
+  },
+};
+declare global {
+  interface Window {
+    __folderCopyFixture: typeof fixture;
+  }
+}
+window.__folderCopyFixture = fixture;
 export const useAtomCommand =
   (name: string) =>
   async ({ input }: any) => {
-    if (name === "prepare")
+    fixture.calls.push(name);
+    await gates.get(name)?.promise;
+    const failure = failures.get(name);
+    if (failure) {
+      failures.delete(name);
       return {
         _tag: "Failure",
-        error: Object.assign(new Error("Work is running"), { code: "busy" }),
+        error: Object.assign(new Error(failure.message), { code: failure.code }),
       };
+    }
     let value;
-    if (name === "copyOffer") {
+    if (name === "copyScopes") {
+      value = {
+        projectRoot: `${umbrella}/${child}`,
+        recommendedCopyRoot: umbrella,
+        scopes: [
+          {
+            copyRoot: `${umbrella}/${child}`,
+            projectRelativePath: ".",
+            kind: "project",
+            label: "This project folder",
+            repositories: [],
+            truncated: false,
+          },
+          {
+            copyRoot: umbrella,
+            projectRelativePath: child,
+            kind: "workspace",
+            label: "specweave-umb",
+            repositories: [
+              child,
+              "repositories/anton-abyzov/specwithcode",
+              "repositories/anton-abyzov/vskill",
+              "custom/tools",
+            ],
+            truncated: false,
+          },
+        ],
+      };
+    } else if (name === "copyCapabilities") {
+      value = { scopeVersion: 1 };
+    } else if (name === "prepare") {
+      if (!fixture.transferReady)
+        return {
+          _tag: "Failure",
+          error: Object.assign(new Error("Work is running"), { code: "busy" }),
+        };
+      published ||= input.publish === true;
+      value = {
+        publication: published ? "published" : "unpublished",
+        bundle: {
+          digest: "d".repeat(64),
+          manifest: { operationId: input.operationId, repositories: [] },
+          destination: input.destination,
+          sourceEnvironmentId: "m4",
+          sourceProjectId: "source",
+          sourceThreadId: "coordinator",
+        },
+      };
+    } else if (name === "receive") {
+      value = {
+        phase: input.mode === "preview" ? "ready" : "started",
+        executionMode: "project-folder",
+        projectId: input.projectId,
+        coordinatorThreadId: `project-coordinator:${input.projectId}`,
+      };
+    } else if (name === "copyOffer") {
+      copyRoot = input.copyRoot ?? `${umbrella}/${child}`;
+      projectRelativePath = copyRoot === umbrella ? child : ".";
       op = input.operationId;
       mode = input.mode;
       applied = false;
+      attempted = false;
+      published = false;
       value = {
         operationId: op,
         sourceEnvironmentId: "m4",
@@ -73,15 +182,27 @@ export const useAtomCommand =
         token: "synthetic",
         title: "SpecWeave",
         mode,
+        copyRoot,
+        projectRelativePath,
         status: { state: "scanned", summary, error: null },
       };
     } else if (name === "copyStart") {
       targetFolder = input.targetFolder;
+      fixture.copyRequests.push({
+        copyRoot: input.copyRoot,
+        projectRelativePath: input.projectRelativePath,
+        targetFolder,
+      });
       value = status("previewed");
-    } else if (name === "copyApprove") {
-      applied = true;
-      value = status("applied");
-    } else if (name === "copyStatus") value = status(applied ? "applied" : "previewed");
+    } else if (name === "copyApprove" || name === "copyRetry") {
+      if (name === "copyRetry") fixture.failCopy = false;
+      attempted = true;
+      applied = !fixture.failCopy;
+      value = status(applied ? "applied" : "failed");
+    } else if (name === "copyStatus")
+      value = status(applied ? "applied" : attempted ? "failed" : "previewed");
+    else if (name === "copyRelease") value = { released: true };
+    else if (name === "copyCancel" || name === "copySourceCancel") value = status("cancelled");
     else value = {};
     return { _tag: "Success", value };
   };

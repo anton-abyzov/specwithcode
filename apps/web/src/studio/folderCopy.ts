@@ -188,7 +188,7 @@ export function suggestedCopyFolder(
   const source = sourceRoot.replaceAll("\\", "/").replace(/\/+$/, "");
   const homeRelative = /^(?:\/(?:Users|home)\/[^/]+|[A-Za-z]:\/Users\/[^/]+)\/(.+)$/.exec(source);
   const suffix =
-    homeRelative?.[1] ?? `Projects/${source.split("/").filter(Boolean).at(-1) ?? "project"}`;
+    homeRelative?.[1] ?? `Projects/${source.split("/").findLast(Boolean) ?? "project"}`;
   const separator = destinationHome.includes("\\") ? "\\" : "/";
   return `${destinationHome.replace(/[/\\]+$/, "")}${separator}${suffix.replaceAll("/", separator)}`;
 }
@@ -196,3 +196,24 @@ export function suggestedCopyFolder(
 /** A copied registration belongs to one exact folder on one destination machine. */
 export const copyDestinationKey = (environmentId: string, folder: string): string =>
   JSON.stringify([environmentId, folder.replace(/[/\\]+$/, "")]);
+
+/** The copy root and registered project can differ for a containing workspace. */
+export function copiedProjectFolder(targetFolder: string, projectRelativePath = "."): string {
+  if (projectRelativePath === ".") return targetFolder;
+  const separator = targetFolder.includes("\\") ? "\\" : "/";
+  return `${targetFolder.replace(/[/\\]+$/, "")}${separator}${projectRelativePath.replaceAll("/", separator)}`;
+}
+
+/** A saved registration is a project folder, not necessarily the root being copied. */
+export function savedCopyRoot(
+  savedProjectFolder: string | null,
+  projectRelativePath: string,
+): string | null {
+  if (!savedProjectFolder || projectRelativePath === ".") return savedProjectFolder;
+  const normalized = savedProjectFolder.replaceAll("\\", "/").replace(/\/+$/, "");
+  const suffix = `/${projectRelativePath}`;
+  if (!normalized.endsWith(suffix)) return null;
+  const root = normalized.slice(0, -suffix.length);
+  if (!root) return "/";
+  return savedProjectFolder.includes("\\") ? root.replaceAll("/", "\\") : root;
+}
