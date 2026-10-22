@@ -1,3 +1,5 @@
+import type { OrchestrationV2ThreadShell } from "@specweave-studio/contracts";
+import { ModelStateTag } from "../../chat/ModelStateTag";
 import { isProviderDriverKind, ProviderDriverKind } from "@specweave-studio/contracts";
 import { useMemo } from "react";
 import { cn } from "~/lib/utils";
@@ -129,5 +131,45 @@ export function ModelBadge(props: {
         </>
       )}
     </span>
+  );
+}
+
+/** Shared shell identity: works in unopened rows without loading transcripts. */
+export function ThreadModelBadge(props: {
+  thread: Pick<OrchestrationV2ThreadShell, "modelSelection" | "modelIdentity">;
+  entries: ReadonlyMap<string, ProviderInstanceEntry>;
+}) {
+  const identity = props.thread.modelIdentity;
+  const current = identity?.current ?? props.thread.modelSelection;
+  const preferred = identity?.preferred;
+  const label = preferred
+    ? modelLabel(
+        props.entries.get(preferred.instanceId) ?? null,
+        preferred.instanceId,
+        preferred.model,
+      )
+    : null;
+  return (
+    <>
+      <ModelBadge
+        entry={props.entries.get(current.instanceId) ?? null}
+        instanceId={current.instanceId}
+        model={current.model}
+      />
+      {label ? (
+        <ModelStateTag
+          state={
+            identity?.kind === "fallback"
+              ? {
+                  kind: "fallback",
+                  pick: label.full,
+                  pickModel: label.model,
+                  reason: "usage limit",
+                }
+              : { kind: "preferred", pick: label.full }
+          }
+        />
+      ) : null}
+    </>
   );
 }

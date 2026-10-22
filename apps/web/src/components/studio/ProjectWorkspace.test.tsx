@@ -56,7 +56,7 @@ describe("project coordinator surface", () => {
     expect(chip.getAttribute("data-moved")).toBe("true");
     expect(container.querySelector("[data-thread-id='coord'] .sws-thread-machine")).toBeNull();
   });
-  it("says which model runs next when the limit rule moved the coordinator", async () => {
+  it("names the model the coordinator is on, then the pick, when the limit rule moved it", async () => {
     const saved = { instanceId: "claudeAgent", model: "claude-opus-5-5" };
     Object.assign(state.project, { workspaceSettings: { coordinatorModelSelection: saved } });
     state.shells = [
@@ -90,20 +90,35 @@ describe("project coordinator surface", () => {
       models: [{ slug: "gpt-6.1-sol", name: "GPT-6.1 Sol", isCustom: false }],
     };
     try {
-      // Claude has room: running elsewhere is no limit, so no banner says so.
+      // Claude reads as having room: the coordinator is still on Codex, so the line
+      // names Codex and the pick, and claims no limit it cannot read.
       state.providers = [claude(20), codex];
       await render();
-      expect(container.querySelector("[data-model-fallback]")).toBeNull();
+      const unread = container.querySelector("p[data-model-fallback]");
+      expect(unread?.querySelector("[data-model-now]")?.textContent).toBe(
+        "Now on Codex · GPT-6.1 Sol.",
+      );
+      expect(unread?.querySelector("[data-model-pick]")?.textContent).toBe(
+        "Your pick: Claude Code · Opus 5.5.",
+      );
+      expect(unread?.textContent).not.toContain("limit");
       expect(
-        container.querySelector("[data-coordinator-model]")?.hasAttribute("data-running-instance"),
+        container.querySelector("[data-coordinator-model]")?.getAttribute("data-running-instance"),
+      ).toBe("codex");
+      expect(
+        container.querySelector("[data-coordinator-model]")?.hasAttribute("data-returns-to"),
       ).toBe(false);
       // The weekly is spent: the session's room cannot be used, so the limit is real.
       state.providers = [claude(100), codex];
       await render();
       const line = container.querySelector("p[data-model-fallback]");
       // The line names the reason, the target and the way back.
-      expect(line?.textContent).toContain("Switched to Codex");
-      expect(line?.textContent).toContain("Claude Code weekly limit reached, resets in 1d 15h");
+      expect(line?.querySelector("[data-model-now]")?.textContent).toBe(
+        "Now on Codex · GPT-6.1 Sol.",
+      );
+      expect(line?.textContent).toContain(
+        "Your pick: Claude Code · Opus 5.5, weekly limit reached, resets in 1d 15h",
+      );
       expect(line?.textContent).toContain("goes back to Claude Code on its own");
       // The picker under it names what runs, not the saved model it moved off.
       const picker = container.querySelector("[data-coordinator-model]");

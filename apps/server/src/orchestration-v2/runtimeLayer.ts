@@ -234,6 +234,8 @@ const layerProviderTurnStartServiceProvided = ProviderTurnStartService.layer.pip
       layerProviderAuthServiceProvided,
       layerRunExecutionServiceProvided,
       layerRuntimePolicyProvided,
+      // Optional: points provider handoffs at this machine's native transcripts.
+      AgentSessionScanner.layer.pipe(Layer.provide(ProjectStore.layer)),
     ),
   ),
 );

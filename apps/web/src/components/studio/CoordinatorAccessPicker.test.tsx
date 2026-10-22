@@ -108,33 +108,53 @@ it("keeps access in the controls row, right after the model and effort", async (
   expect(access?.querySelector("select")?.getAttribute("aria-label")).toBe("Project permissions");
 });
 
-it("names the provider in use now, or says the fallback is out of usage too", async () => {
+it("names the model running now first, then the pick and why it is out", async () => {
   const label = (provider: string, model: string) => ({
     provider,
     model,
     full: `${provider} · ${model}`,
   });
-  const render = (spent: boolean) =>
+  const render = (over: { spent?: boolean; live?: boolean; reason?: string | null }) =>
     act(async () =>
       root.render(
         <CoordinatorComposerControls
           project={{ environmentId: "host" as never, id: "project" as never }}
           fallback={{
             saved: label("Codex", "GPT-6.1-Sol"),
-            now: label(spent ? "Copilot" : "Claude Code", spent ? "GPT-6.1-Sol" : "Opus 5.5"),
-            reason: "weekly limit reached, resets in 5d 8h",
-            spent,
+            now: label(
+              over.spent ? "Copilot" : "Claude Code",
+              over.spent ? "GPT-6.1-Sol" : "Opus 5.5",
+            ),
+            reason: "reason" in over ? over.reason! : "weekly limit reached, resets in 5d 8h",
+            spent: over.spent ?? false,
+            live: over.live ?? false,
           }}
         >
           <span />
         </CoordinatorComposerControls>,
       ),
     );
-  await render(false);
   const line = () => container.querySelector("[data-model-fallback]")!;
-  expect(line().querySelector("strong")?.textContent).toBe("Switched to Claude Code");
-  expect(line().textContent).toContain("Codex weekly limit reached, resets in 5d 8h.");
-  await render(true);
-  expect(line().querySelector("strong")?.textContent).toBe("Copilot is out of usage too");
-  expect(line().textContent).not.toContain("Switched to");
+  await render({});
+  expect(line().querySelector("[data-model-now]")?.textContent).toBe(
+    "Now on Claude Code · Opus 5.5.",
+  );
+  expect(line().querySelector("[data-model-pick]")?.textContent).toBe(
+    "Your pick: Codex · GPT-6.1-Sol, weekly limit reached, resets in 5d 8h.",
+  );
+  await render({ live: true });
+  expect(line().querySelector("[data-model-now]")?.textContent).toBe(
+    "Running now on Claude Code · Opus 5.5.",
+  );
+  expect(line().hasAttribute("data-model-fallback-live")).toBe(true);
+  await render({ spent: true });
+  expect(line().querySelector("[data-model-now]")?.textContent).toBe(
+    "Now on Copilot · GPT-6.1-Sol, which is out of usage too.",
+  );
+  // A reason the client cannot read is left out, never invented.
+  await render({ reason: null });
+  expect(line().querySelector("[data-model-pick]")?.textContent).toBe(
+    "Your pick: Codex · GPT-6.1-Sol.",
+  );
+  expect(line().textContent).not.toContain("goes back");
 });

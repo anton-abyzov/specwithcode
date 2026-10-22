@@ -29,10 +29,10 @@ import { readEnvironmentScope, useEnvironmentScope } from "../../../state/sessio
 import { useAtomCommand } from "../../../state/use-atom-command";
 import { useMachineNickname } from "../../../studio/machineNickname";
 import { COORDINATOR_RECOMMENDED_TRAITS, modelLabel } from "../../../studio/shellModel";
+import { ModelStateTag } from "../../chat/ModelStateTag";
 import { ProviderModelPicker } from "../../chat/ProviderModelPicker";
 import { TraitsPicker } from "../../chat/TraitsPicker";
 import { ModelBadge, ModelBadgeMark } from "./ModelBadge";
-import { Tip } from "./Tip";
 import { useCoordinatorModelsLoading } from "./useCoordinatorModelsLoading";
 
 function CoordinatorProviderRecovery(props: {
@@ -109,7 +109,12 @@ export function CoordinatorModelPicker(props: {
    * The coordinator runs on this instead of `value`, which remains the saved preference.
    * A return hint is present only while the saved provider is actually limited.
    */
-  running?: { value: ModelSelection; returnsTo: string | null } | null;
+  running?: {
+    value: ModelSelection;
+    returnsTo: string | null;
+    /** The coordinator is off its saved pick (not just running before one is saved). */
+    offPick?: boolean;
+  } | null;
   disabled: boolean;
   saving: boolean;
   requiresFolderGrants?: boolean;
@@ -141,15 +146,18 @@ export function CoordinatorModelPicker(props: {
   const shownEntry = shown
     ? (entries.find((entry) => entry.instanceId === shown.instanceId) ?? null)
     : null;
-  const fallbackHint = running?.returnsTo ? (
-    <Tip
-      label={`Runs on ${modelLabel(shownEntry, running.value.instanceId, running.value.model).provider} until ${running.returnsTo} has room again. Pick a model to change it.`}
-    >
-      <span className="text-xs text-muted-foreground" data-model-fallback-hint="">
-        {running.returnsTo} after reset
-      </span>
-    </Tip>
-  ) : null;
+  // The chip names what runs; the tag says it is not the saved pick, so neither reads as the other.
+  const fallbackHint =
+    running?.offPick && value ? (
+      <ModelStateTag
+        state={{
+          kind: "fallback",
+          pick: modelLabel(active, value.instanceId, value.model).full,
+          pickModel: modelLabel(active, value.instanceId, value.model).model,
+          reason: running.returnsTo ? `back to ${running.returnsTo} after its reset` : null,
+        }}
+      />
+    ) : null;
   const available = entries.filter((entry) => entry.enabled && entry.isAvailable);
   const modelsLoading = useCoordinatorModelsLoading(environment?.serverConfig);
   const machineLabel = useMachineNickname(props.environmentId, environment?.label);
@@ -298,7 +306,11 @@ export function CoordinatorModelPicker(props: {
         </span>
       );
     return (
-      <span className="sws-model-pick" data-saving={props.saving ? "true" : undefined}>
+      <span
+        className="sws-model-pick"
+        data-saving={props.saving ? "true" : undefined}
+        data-off-pick={running?.offPick ? "" : undefined}
+      >
         <ModelBadgeMark
           entry={shownEntry}
           instanceId={current.instanceId}
@@ -316,7 +328,7 @@ export function CoordinatorModelPicker(props: {
           triggerLabel={`${label.provider} · ${label.model}`}
           triggerAriaLabel={
             running
-              ? `Coordinator model: running on ${label.full}${running.returnsTo ? `, back to ${running.returnsTo} after reset` : ""}. Change model`
+              ? `Coordinator model: running on ${label.full}${running.offPick && value ? ` instead of your pick, ${modelLabel(active, value.instanceId, value.model).full}` : ""}${running.returnsTo ? `, back to ${running.returnsTo} after reset` : ""}. Change model`
               : `Coordinator model: ${label.full}. Change model`
           }
           disabled={props.saving}

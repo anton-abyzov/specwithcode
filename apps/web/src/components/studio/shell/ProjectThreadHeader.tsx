@@ -44,7 +44,7 @@ import { PULL_REQUEST_STATE_PRESENTATION } from "../../pullRequest/pullRequestIc
 import { toastManager } from "../../ui/toast";
 import type { SubagentEntry } from "../../../studio/threadSubagents";
 import { isCoordinatorNamedThread, threadTitleTip } from "../../../studio/threadTitles";
-import { ModelBadge, useProviderEntries } from "./ModelBadge";
+import { ModelBadge, ThreadModelBadge, useProviderEntries } from "./ModelBadge";
 import { RoutingDecisionChip } from "./RoutingDecisionChip";
 import { SubagentsChip } from "./SubagentsChip";
 import { Tip } from "./Tip";
@@ -212,11 +212,7 @@ export function ProjectThreadHeader(props: {
           </Tip>
         )}
         <span className="sws-thread-head-chips">
-          <ModelBadge
-            entry={props.providerEntry}
-            instanceId={thread.modelSelection.instanceId}
-            model={thread.modelSelection.model}
-          />
+          <ThreadModelBadge thread={thread} entries={providerEntries} />
           <RoutingDecisionChip routing={thread.routing} entries={providerEntries} />
           {pr && link ? (
             <button

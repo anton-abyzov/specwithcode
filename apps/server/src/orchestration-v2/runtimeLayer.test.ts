@@ -4261,7 +4261,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         for (const run of queued) {
           assert.deepEqual(
             held.runs.find((row) => row.id === run.id),
-            { ...run, queueHeld: true },
+            { ...run, queueHeld: true, queueHeldForRestart: true },
           );
           assert.deepEqual(
             held.messages.find((row) => row.id === run.userMessageId),

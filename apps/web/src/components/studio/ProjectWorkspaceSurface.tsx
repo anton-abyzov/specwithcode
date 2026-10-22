@@ -529,18 +529,28 @@ export function ProjectWorkspaceSurface({
     providers: hostProviders,
     rule: hostSettings ? resolveProjectSettings(hostSettings, project.id, project).settings : null,
     nowMs: Date.now(),
-    // Only a run that stopped on a real usage limit marks its provider limited.
+    // Only a run that stopped on a real usage limit marks its provider limited: the
+    // provider of that run, which a fallback since then has already left.
     limitedInstanceIds: new Set<string>(
-      coordinator?.limitRecovery ? [coordinator.providerInstanceId] : [],
+      coordinator?.limitRecovery
+        ? [
+            coordinatorThread?.projection.runs.find(
+              (run) => run.id === coordinator.limitRecovery?.runId,
+            )?.providerInstanceId ?? coordinator.providerInstanceId,
+          ]
+        : [],
     ),
   });
   const runningFallback = coordinatorDisplay.fallback;
   const coordinatorFallback = runningFallback
     ? {
         reason:
-          runningFallback.reason.resetsAt === null || runningFallback.reason.resetsAt <= Date.now()
-            ? runningFallback.reason.text
-            : `${runningFallback.reason.text}, resets in ${formatDuration(runningFallback.reason.resetsAt - Date.now())}`,
+          runningFallback.reason === null
+            ? null
+            : runningFallback.reason.resetsAt === null ||
+                runningFallback.reason.resetsAt <= Date.now()
+              ? runningFallback.reason.text
+              : `${runningFallback.reason.text}, resets in ${formatDuration(runningFallback.reason.resetsAt - Date.now())}`,
         now: modelLabel(
           providerEntries.get(runningFallback.now.instanceId) ?? null,
           runningFallback.now.instanceId,
@@ -552,6 +562,7 @@ export function ProjectWorkspaceSurface({
           runningFallback.saved.model,
         ),
         spent: runningFallback.spent,
+        live: runningFallback.live,
       }
     : null;
   // "Switch back" puts the coordinator on its saved model; the host still moves it
@@ -621,7 +632,9 @@ export function ProjectWorkspaceSurface({
         (!model || !modelSelectionsEqual(coordinatorDisplay.shown, model))
           ? {
               value: coordinatorDisplay.shown,
-              returnsTo: coordinatorFallback?.saved.provider ?? null,
+              // Back after a reset only when a limit is known to keep the pick out.
+              returnsTo: coordinatorFallback?.reason ? coordinatorFallback.saved.provider : null,
+              offPick: coordinatorFallback !== null,
             }
           : null,
       canOperate,

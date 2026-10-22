@@ -179,6 +179,58 @@ export function hasUsableFallbackCapacity(
 }
 
 /**
+ * Tokens a target's window keeps free for tools, instructions and the work
+ * after a handoff: a quarter of the window, at least 16k. The server's
+ * handoff budget (ContextHandoffBudget) holds back the same amount.
+ */
+export function contextHandoffReserve(window: number): number {
+  return Math.max(16_000, Math.ceil(window / 4));
+}
+
+/**
+ * Room a handoff must still find in the target's window after the request and
+ * the reserve: the coverage note and at least the latest exchange.
+ */
+export const CONTEXT_FIT_MIN_HANDOFF_TOKENS = 4_096;
+
+/**
+ * What a target must hold to take a thread over. History moved to another
+ * provider is compacted to a capped handoff (the coverage note plus the items
+ * that fit, the rest stays readable through thread_read), so what has to fit
+ * is the request that is never truncated, the reserve and that handoff.
+ */
+export interface ContextFitRequirement {
+  /** The request sent whole: its text in bytes plus attachment allowances. */
+  readonly requestTokens: number;
+  /** A candidate's context window in tokens, or null when nothing reports it. */
+  readonly windowOf: (selection: ModelSelection) => number | null;
+}
+
+/**
+ * Whether a request and a compacted handoff fit a window, next to what a
+ * reused native session already holds. An unknown window fits: refusing
+ * every model that does not publish its size would refuse most of them.
+ */
+export function contextFits(
+  window: number | null | undefined,
+  requestTokens: number,
+  nativeUsedTokens = 0,
+): boolean {
+  if (window == null || !Number.isFinite(window) || window <= 0) return true;
+  return (
+    window -
+      Math.max(0, nativeUsedTokens) -
+      Math.max(0, requestTokens) -
+      contextHandoffReserve(window) >=
+    CONTEXT_FIT_MIN_HANDOFF_TOKENS
+  );
+}
+
+function fitsContext(fit: ContextFitRequirement | undefined, selection: ModelSelection): boolean {
+  return fit === undefined || contextFits(fit.windowOf(selection), fit.requestTokens);
+}
+
+/**
  * A provider that reports no usage at all: GitHub Copilot and the other
  * agents behind ACP. Its room can only be learned by trying it, so it counts
  * as having room while it can take a turn and nothing marks it limited.
@@ -229,6 +281,8 @@ export function resolveSameModelElsewhere(input: {
   readonly limitedInstanceIds?: ReadonlySet<string> | undefined;
   /** Selections already tried for this stop (`fallbackSelectionKey`), skipped. */
   readonly excludedSelections?: ReadonlySet<string> | undefined;
+  /** Only candidates whose window holds the thread (see `contextFits`). */
+  readonly contextFit?: ContextFitRequirement | undefined;
 }): ModelSelection | null {
   const currentProvider = input.providers.find(
     (provider) => provider.instanceId === input.current.instanceId,
@@ -245,6 +299,7 @@ export function resolveSameModelElsewhere(input: {
     if (slug === undefined) return [];
     const key = fallbackSelectionKey({ instanceId: provider.instanceId, model: slug });
     if (input.excludedSelections?.has(key)) return [];
+    if (!fitsContext(input.contextFit, { instanceId: provider.instanceId, model: slug })) return [];
     const room = roomOn(provider, slug, {
       nowMs: input.nowMs,
       belowPercent: input.belowPercent,
@@ -408,6 +463,8 @@ export type FallbackOrderUnavailable =
   | "signed-out"
   | "per-token"
   | "full"
+  /** Its context window cannot hold the thread's request and handoff. */
+  | "too-small"
   /** Installed but its usage is unknown: the user may still choose it. */
   | "unverified"
   /** Not installed, not prepared or not ready on this machine: nothing can run on it. */
@@ -437,6 +494,7 @@ export function describeFallbackOrder(input: {
   readonly nowMs: number;
   readonly belowPercent?: number | null | undefined;
   readonly limitedInstanceIds?: ReadonlySet<string> | undefined;
+  readonly contextFit?: ContextFitRequirement | undefined;
 }): ReadonlyArray<FallbackOrderEntry> {
   return fallbackModelOrder(input.rule).map((selection) => {
     const provider = input.providers.find((entry) => entry.instanceId === selection.instanceId);
@@ -455,6 +513,7 @@ export function describeFallbackOrder(input: {
       !provider.models.some((model) => model.slug === selection.model && !model.isCustom)
     )
       return entry("missing");
+    if (!fitsContext(input.contextFit, selection)) return entry("too-small");
     if (input.limitedInstanceIds?.has(provider.instanceId)) return entry("limited");
     if (isPerTokenProvider(provider)) return entry("per-token");
     if (!canTakeTurn(provider)) {
@@ -500,11 +559,24 @@ export function resolveProviderFallback(input: {
   readonly proven?: ModelSelection | null;
   /** Fallback order entries already tried for this stop (`fallbackSelectionKey`), skipped. */
   readonly excludedSelections?: ReadonlySet<string>;
+  /**
+   * Every step skips a target whose window cannot hold the thread's request
+   * and its compacted handoff (see `contextFits`).
+   */
+  readonly contextFit?: ContextFitRequirement | undefined;
+  /**
+   * Try the project's default model first, before the fallback order: the
+   * thread goes home once home has room. Used after a context overflow,
+   * which says nothing about home's usage.
+   */
+  readonly preferDefault?: boolean;
 }): ModelSelection | null {
-  // Every step below skips what this stop already tried, not only the user's order.
+  // Every step below skips what this stop already tried, not only the user's order,
+  // and every target whose window cannot hold the thread.
   const excluded = (instanceId: ProviderInstanceId, model: string | undefined) =>
     model !== undefined &&
-    (input.excludedSelections?.has(fallbackSelectionKey({ instanceId, model })) ?? false);
+    ((input.excludedSelections?.has(fallbackSelectionKey({ instanceId, model })) ?? false) ||
+      !fitsContext(input.contextFit, { instanceId, model }));
   const usable = (
     provider: ServerProvider | undefined,
     model: string | undefined,
@@ -532,11 +604,26 @@ export function resolveProviderFallback(input: {
       nowMs: input.nowMs,
       belowPercent: input.belowPercent,
       limitedInstanceIds: input.limitedInstanceIds,
+      contextFit: input.contextFit,
     }).find(
       (entry) =>
         entry.unavailable === null &&
         !input.excludedSelections?.has(fallbackSelectionKey(entry.selection)),
     )?.selection;
+  const home = () => {
+    const selection = input.rule.defaultModelSelection;
+    if (selection === null) return null;
+    const provider = input.providers.find((entry) => entry.instanceId === selection.instanceId);
+    return usable(provider, selection.model) &&
+      !excluded(provider.instanceId, selection.model) &&
+      provider.models.some((model) => model.slug === selection.model && !model.isCustom)
+      ? selection
+      : null;
+  };
+  if (input.preferDefault === true) {
+    const back = home();
+    if (back !== null) return back;
+  }
   if (explicitOrder) {
     const ordered = firstAvailable();
     if (ordered !== undefined) return ordered;
@@ -550,6 +637,7 @@ export function resolveProviderFallback(input: {
       belowPercent: input.belowPercent,
       limitedInstanceIds: input.limitedInstanceIds,
       excludedSelections: input.excludedSelections,
+      contextFit: input.contextFit,
     });
     if (same !== null) return same;
   }
@@ -557,16 +645,8 @@ export function resolveProviderFallback(input: {
     const legacy = firstAvailable();
     if (legacy !== undefined) return legacy;
   }
-  for (const selection of [input.rule.defaultModelSelection]) {
-    if (selection === null) continue;
-    const provider = input.providers.find((entry) => entry.instanceId === selection.instanceId);
-    if (
-      usable(provider, selection.model) &&
-      !excluded(provider.instanceId, selection.model) &&
-      provider.models.some((model) => model.slug === selection.model && !model.isCustom)
-    )
-      return selection;
-  }
+  const back = home();
+  if (back !== null) return back;
   const proven = input.proven ?? null;
   if (
     proven !== null &&

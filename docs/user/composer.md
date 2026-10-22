@@ -178,6 +178,9 @@ to a steer, or remove it.
 If the server restarts, saved queued messages keep their order and are held. Press
 **Resume** in an empty composer on web or desktop, or **Resume queue** in the queue
 sheet on mobile, to continue. You can edit, reorder, or remove held messages without starting them.
+When the restart or an update continues a turn it cut off, the messages it held run after that
+turn, and the ones an update removed from the queue are queued again behind them. A queue you held
+with Stop stays held until you resume it.
 
 The pencil on a queued row opens that message in the composer for editing. The original message
 stays in the queue until you save, and its row is highlighted while you edit. The message's

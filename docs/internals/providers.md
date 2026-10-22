@@ -9,6 +9,31 @@ A driver kind identifies an integration; an instance identifies one configuratio
 lifecycle. Route work by instance, so two accounts using the same driver do not share mutable
 session or catalog state.
 
+## Failure messages and context recovery
+
+SpecWithCode decodes bounded, explicitly supplied JSON error envelopes before credential
+redaction and truncation. Display formatting also cleans older stored failures. Arbitrary
+provider causes remain behind the existing curated diagnostic boundary.
+
+Context overflow has its own readable title and recovery actions. It never becomes an account
+usage limit or triggers quota fallback. A current failure offers a new thread in the same
+project, and native compaction only when the selected provider supports it. Compaction uses
+the composer permission, activity and pending-request guards. Earlier turns and recovered
+retries remain history, without recovery actions.
+
+A thread never dead-ends on a handoff that does not fit. History handed to another provider is
+capped (`ContextHandoffBudget`), so only the request and what a reused native session already holds
+can crowd it out. When the target's native session is too full for the waiting handoff, the turn
+start opens a fresh native session and hands it the whole thread as a capped summary
+(`nativeSessionTooFullForHandoff`). A handoff that still does not fit, an overflow whose
+compaction or resend overflowed again, and an overflow on a provider without native compaction
+are context stops (`contextOverflowStop`): under the `switch` rule the provider fallback moves the
+thread to the project's default model first (after reading its usage again when the reading is
+older than five minutes), then down the fallback order, and only to a model whose window holds the
+request, its reserve and the handoff (`contextFits`; a window comes from the model's
+`contextWindow` option or from what the model's sessions in this thread reported). A context stop
+never holds the provider for other threads. Delegated subagents get context recovery too.
+
 ## Process and account isolation
 
 The `opencode` driver probes the installed version and runs the 1.x or 2.x runtime. OpenCode's MCP

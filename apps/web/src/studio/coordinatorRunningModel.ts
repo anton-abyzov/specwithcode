@@ -1,7 +1,7 @@
 /**
- * What the coordinator actually runs on while a usage-limit fallback holds it
- * off its saved model. The fallback never changes the saved choice, so the
- * picker and the line above it read an ongoing run or the thread's selection.
+ * What the coordinator actually runs on when that is not its saved model. The
+ * fallback never changes the saved choice, so the picker and the line above it
+ * read an ongoing run or the thread's selection, never a guess about the next turn.
  */
 import type {
   ModelSelection,
@@ -24,14 +24,21 @@ export type CoordinatorRunSummary = Pick<
 export interface CoordinatorModelDisplay {
   /** The model the picker shows. */
   readonly shown: ModelSelection | null;
-  /** Set only while a limit fallback runs the coordinator off its saved model. */
+  /** Set whenever the coordinator runs, or last ran, on another model than its saved one. */
   readonly fallback: {
     readonly saved: ModelSelection;
     /** The provider and model the coordinator is on now. */
     readonly now: ModelSelection;
+    /** A turn is running there right now. */
+    readonly live: boolean;
     /** Its newest run there also stopped on a usage limit, and nothing newer runs. */
     readonly spent: boolean;
-    readonly reason: CoordinatorFallbackReason;
+    /**
+     * Why the saved model has no room, when this client's usage read shows it. The
+     * host also holds providers back on evidence the client does not have, so a
+     * missing reason never means the next turn goes back.
+     */
+    readonly reason: CoordinatorFallbackReason | null;
   } | null;
 }
 
@@ -49,6 +56,10 @@ function runSelection(run: CoordinatorRunSummary): ModelSelection {
   return run.modelSelection.instanceId === run.providerInstanceId
     ? run.modelSelection
     : { ...run.modelSelection, instanceId: run.providerInstanceId };
+}
+
+function sameModel(a: ModelSelection, b: ModelSelection): boolean {
+  return a.instanceId === b.instanceId && a.model === b.model;
 }
 
 export function coordinatorModelDisplay(input: {
@@ -79,32 +90,38 @@ export function coordinatorModelDisplay(input: {
   // cannot change the provider/model of a turn already admitted.
   const none = { shown: activeSelection ?? input.picked, fallback: null };
   const { saved, providers, rule } = input;
-  if (saved === null || !providers || !rule) return none;
+  if (saved === null) return none;
   const now = activeSelection ?? input.thread;
-  if (now === null || now.instanceId === saved.instanceId) return none;
-  const check = {
-    saved,
-    thread: now,
-    providers,
-    rule,
-    nowMs: input.nowMs,
-    ...(input.limitedInstanceIds === undefined
-      ? {}
-      : { limitedInstanceIds: input.limitedInstanceIds }),
-  };
-  // A model picked by hand that has room, or a saved provider whose limit reset, ends the fallback.
-  if (!coordinatorOnLimitFallback(check)) return none;
+  if (now === null || sameModel(now, saved)) return none;
+  const check =
+    providers && rule
+      ? {
+          saved,
+          thread: now,
+          providers,
+          rule,
+          nowMs: input.nowMs,
+          ...(input.limitedInstanceIds === undefined
+            ? {}
+            : { limitedInstanceIds: input.limitedInstanceIds }),
+        }
+      : null;
+  // What runs is a fact; whether the saved model has room again is only this client's read.
   return {
     shown: now,
     fallback: {
       saved,
       now,
+      live: activeSelection !== null,
       spent:
         latest?.status === "failed" &&
         latest.providerInstanceId === now.instanceId &&
         latest.modelSelection.model === now.model &&
         input.latestFailureClass === "usage_limit",
-      reason: coordinatorFallbackReason(check),
+      reason:
+        check !== null && now.instanceId !== saved.instanceId && coordinatorOnLimitFallback(check)
+          ? coordinatorFallbackReason(check)
+          : null,
     },
   };
 }

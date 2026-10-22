@@ -1,4 +1,8 @@
 import {
+  limitFallbackPairing,
+  threadModelIdentity,
+} from "@specweave-studio/shared/threadModelIdentity";
+import {
   heldQueuedRunCount,
   latestRootProviderFailure,
   latestUnheldRun,
@@ -8,6 +12,7 @@ import {
 import { threadPullRequestsOf } from "@specweave-studio/shared/threadPullRequests";
 import { reportBlocker } from "@specweave-studio/shared/reportDocument";
 import type {
+  ModelSelection,
   OrchestrationV2AppThread,
   OrchestrationV2CheckpointScope,
   OrchestrationV2ExecutionNode,
@@ -33,6 +38,7 @@ import type {
   MessageId,
 } from "@specweave-studio/contracts";
 import {
+  ModelSelection as ModelSelectionSchema,
   OrchestrationV2AppThreadJson as OrchestrationV2AppThreadJsonSchema,
   OrchestrationV2CheckpointJson as OrchestrationV2CheckpointJsonSchema,
   OrchestrationV2CheckpointScopeJson as OrchestrationV2CheckpointScopeJsonSchema,
@@ -79,6 +85,7 @@ import type * as Statement from "effect/sql/Statement";
 
 import { threadHtmlRenderAttachmentIds } from "../attachmentStore.ts";
 import * as ShellSnapshotCache from "./ShellSnapshotCache.ts";
+import { cancelledForUpdate } from "./RestartQueueHold.ts";
 import {
   isBlockingRuntimeRequest,
   type PendingRequestSummary,
@@ -555,7 +562,10 @@ function needsRecovery(
     case "delegated-completions":
       return projection.runs.some((run) => run.delegatedCompletion?.delivery != null);
     case "update-interrupted": {
-      const latest = projection.runs.findLast((run) => run.status !== "queued");
+      // Messages an update cancelled never started and keep their later ordinals.
+      const latest = projection.runs.findLast(
+        (run) => run.status !== "queued" && !cancelledForUpdate(run),
+      );
       return (
         latest?.status === "interrupted" &&
         projection.turnItems.some(
@@ -973,6 +983,8 @@ type PayloadRow = {
 };
 
 type ShellThreadRow = {
+  readonly running_model_json: string | null;
+  readonly fallback_pairing_json: string | null;
   readonly thread_id: string;
   readonly payload_json: string;
   readonly forked_from_run_source_thread_id: string | null;
@@ -1510,6 +1522,16 @@ export function threadShellFromProjection(
     turnItems: projection.turnItems,
     toMillis: DateTime.toEpochMillis,
   });
+  const modelRun = projection.runs
+    .filter(
+      (run) =>
+        ["preparing", "queued", "starting", "running", "waiting"].includes(run.status) &&
+        run.queueHeld !== true,
+    )
+    .toSorted(
+      (a, b) =>
+        Number(a.status === "queued") - Number(b.status === "queued") || b.ordinal - a.ordinal,
+    )[0];
   return {
     createdBy: projection.thread.createdBy,
     creationSource: projection.thread.creationSource,
@@ -1545,6 +1567,18 @@ export function threadShellFromProjection(
     latestRunRequestedAt: latestRun?.requestedAt ?? null,
     latestRunStartedAt: latestRun?.startedAt ?? null,
     latestRunCompletedAt: latestRun?.completedAt ?? null,
+    modelIdentity: threadModelIdentity({
+      thread: projection.thread.modelSelection,
+      running: modelRun
+        ? { ...modelRun.modelSelection, instanceId: modelRun.providerInstanceId }
+        : null,
+      fallbackFrom:
+        (limitFallbackPairing(
+          projection.messages,
+          projection.runs,
+          projection.thread.modelSelection,
+        )?.original as ModelSelection | undefined) ?? null,
+    }),
     activeRunId: activeRun?.id ?? null,
     activityRunStatus: activityRun?.status ?? subagentActivity?.status ?? null,
     activityRunStartedAt:
@@ -1666,6 +1700,7 @@ function isActivityRunForShell(
 }
 
 type ShellThreadState = {
+  readonly modelIdentity: OrchestrationV2ThreadShell["modelIdentity"];
   readonly thread: OrchestrationV2ThreadProjection["thread"];
   readonly latestRunId: RunId | null;
   readonly latestRunStatus: OrchestrationV2ShellThreadStatus;
@@ -1881,6 +1916,7 @@ function shellFromState(input: {
     latestRunRequestedAt: input.state.latestRunRequestedAt,
     latestRunStartedAt: input.state.latestRunStartedAt,
     latestRunCompletedAt: input.state.latestRunCompletedAt,
+    modelIdentity: input.state.modelIdentity,
     activeRunId: input.state.activeRunId,
     activityRunStatus: input.state.activityRunStatus,
     activityRunStartedAt: input.state.activityRunStartedAt,
@@ -3786,6 +3822,14 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                     WHERE later.thread_id = latest.thread_id
                       AND later.status <> 'queued'
                       AND later.ordinal > latest.ordinal
+                      -- The update cancelled the messages queued behind it first;
+                      -- they never started and keep their later ordinals.
+                      AND NOT (
+                        later.status = 'cancelled'
+                        AND CASE WHEN json_valid(later.payload_json)
+                          THEN json_extract(later.payload_json, '$.cancelledForUpdate') IS 1
+                          ELSE 0 END
+                      )
                   )
                   AND EXISTS (
                     SELECT 1 FROM orchestration_v2_projection_turn_items AS item
@@ -5209,6 +5253,37 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             SELECT
               t.thread_id,
               t.payload_json,
+              (
+                SELECT json_set(json_extract(r.payload_json, '$.modelSelection'), '$.instanceId', r.provider_instance_id)
+                FROM orchestration_v2_projection_runs r
+                WHERE r.thread_id = t.thread_id AND r.status IN ('preparing', 'queued', 'starting', 'running', 'waiting')
+                  AND COALESCE(json_extract(r.payload_json, '$.queueHeld'), 0) = 0
+                ORDER BY CASE WHEN r.status = 'queued' THEN 1 ELSE 0 END, r.ordinal DESC LIMIT 1
+              ) AS running_model_json,
+              (
+                SELECT json_object('original', json_extract(stopped.payload_json, '$.modelSelection'))
+                FROM orchestration_v2_projection_messages continuation
+                JOIN orchestration_v2_projection_runs stopped
+                  ON stopped.thread_id = t.thread_id
+                  AND substr(continuation.message_id, -length(stopped.run_id) - 1) = ':' || stopped.run_id
+                LEFT JOIN orchestration_v2_projection_runs resumed
+                  ON resumed.run_id = continuation.run_id
+                WHERE continuation.thread_id = t.thread_id
+                  AND continuation.message_id = (
+                    SELECT m.message_id FROM orchestration_v2_projection_messages m
+                    WHERE m.thread_id = t.thread_id
+                      AND (m.message_id LIKE 'limit-fallback:%' OR m.message_id LIKE 'provider-fallback:%')
+                    ORDER BY m.created_at DESC, m.message_id DESC LIMIT 1
+                  )
+                  AND continuation.message_id LIKE 'limit-fallback:%'
+                  AND json_extract(stopped.payload_json, '$.modelSelection.instanceId') <> json_extract(t.payload_json, '$.modelSelection.instanceId')
+                  AND NOT EXISTS (
+                    SELECT 1 FROM orchestration_v2_projection_runs returned
+                    WHERE returned.thread_id = t.thread_id AND returned.ordinal > resumed.ordinal
+                      AND json_extract(returned.payload_json, '$.modelSelection.instanceId') = json_extract(stopped.payload_json, '$.modelSelection.instanceId')
+                  )
+                ORDER BY length(stopped.run_id) DESC LIMIT 1
+              ) AS fallback_pairing_json,
               CASE
                 WHEN json_extract(t.payload_json, '$.forkedFrom.type') = 'run'
                   THEN json_extract(t.payload_json, '$.forkedFrom.threadId')
@@ -5914,6 +5989,21 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             providerThreadsByThreadId.get(thread.id) ?? [],
             thread.activeProviderThreadId,
           ),
+          modelIdentity: threadModelIdentity({
+            thread: thread.modelSelection,
+            running:
+              row.running_model_json === null
+                ? null
+                : yield* Schema.decodeUnknownEffect(Schema.fromJsonString(ModelSelectionSchema))(
+                    row.running_model_json,
+                  ),
+            fallbackFrom:
+              row.fallback_pairing_json === null
+                ? null
+                : (yield* Schema.decodeUnknownEffect(
+                    Schema.fromJsonString(Schema.Struct({ original: ModelSelectionSchema })),
+                  )(row.fallback_pairing_json)).original,
+          }),
           itemCount: row.item_count,
           runlessItemCount: row.runless_item_count,
           heldQueuedCount: Number(row.held_queued_count ?? 0),

@@ -1,5 +1,9 @@
 import { resolveThreadWorkingStartedAt } from "@specweave-studio/client-runtime/state/models";
-import { providerFailureDisplayMessage } from "@specweave-studio/shared/orchestrationV2ThreadError";
+import {
+  isContextLimitError,
+  providerFailureDisplayMessage,
+  providerFailureDisplayTitle,
+} from "@specweave-studio/shared/orchestrationV2ThreadError";
 import {
   type AssetResource,
   type OrchestrationV2ExecutionNode,
@@ -402,8 +406,8 @@ export function providerErrorPresentation(
   if (item.retry === undefined) {
     return {
       label:
-        item.failure.class === "usage_limit"
-          ? "Usage limit reached"
+        item.failure.class === "usage_limit" || isContextLimitError(item.failure.message)
+          ? providerFailureDisplayTitle(item.failure)
           : item.title?.trim() || "Provider error",
       detail: providerFailureDisplayMessage(item.failure),
     };
@@ -418,7 +422,7 @@ export function providerErrorPresentation(
       : item.status === "completed"
         ? `Provider recovered (${progress} retries)`
         : item.status === "failed"
-          ? `${item.failure.class === "usage_limit" ? "Usage limit reached" : "Provider error"} after ${progress} retries`
+          ? `${providerFailureDisplayTitle(item.failure)} after ${progress} retries`
           : `Provider retry stopped (${progress})`;
   const retryDelay =
     item.status === "running" && item.retry.retryDelayMs !== null && item.retry.retryDelayMs > 0

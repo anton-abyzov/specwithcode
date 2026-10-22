@@ -26,6 +26,7 @@ import {
 } from "./ContextHandoffBudget.ts";
 import { projectContextHandoffForWire } from "./WireProjection.ts";
 import { deliverContextHandoffs } from "./ContextHandoffDelivery.ts";
+import { renderNativeSessionPointers } from "./NativeSessionPointers.ts";
 
 const encodeJson = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 const decodeHandoff = Schema.decodeUnknownSync(OrchestrationV2ContextHandoff);
@@ -669,13 +670,101 @@ describe("handoff delivery", () => {
     }),
   );
 
-  it.effect("fails before delivery when even the coverage marker cannot fit", () =>
+  const nativeSessions = renderNativeSessionPointers([
+    {
+      label: "Claude Code",
+      sessionId: "0b878647-0b05-4925-8073-e844050d7cf4",
+      file: "/Users/test/.claude/projects/-work/0b878647-0b05-4925-8073-e844050d7cf4.jsonl",
+    },
+    {
+      label: "Codex",
+      sessionId: "01a15acc-ee93-7c13-b157-8b7c6635575c",
+      file: "/Users/test/.codex/sessions/2026/10/20/rollout-2026-10-20T15-32-22-01a15acc-ee93-7c13-b157-8b7c6635575c.jsonl",
+    },
+  ]);
+
+  it.effect("points at the native transcripts beside the selected history", () =>
+    Effect.gen(function* () {
+      const result = yield* deliverContextHandoffs({
+        handoffs: [handoff],
+        providerThread,
+        budget: 16_000,
+        nativeSessions,
+        alreadyDeliveredItemIds: new Set(),
+        persist: () => Effect.void,
+      });
+      assert.include(result.context, "Full native transcripts of this conversation");
+      assert.include(result.context, "rollout-2026-10-20T15-32-22-01a15acc");
+      assert.include(result.context, "never repeat credentials or tokens");
+      assert.include(result.context, "Partial work");
+      assert.isAtMost(historyCost([], result.context), 16_000);
+    }),
+  );
+
+  it.effect("looks up transcripts only when a handoff is delivered", () =>
+    Effect.gen(function* () {
+      let lookups = 0;
+      const lookup = Effect.sync(() => {
+        lookups++;
+        return nativeSessions;
+      });
+      const input = {
+        providerThread,
+        budget: 16_000,
+        nativeSessions: lookup,
+        alreadyDeliveredItemIds: new Set<string>(),
+        persist: () => Effect.void,
+      };
+      yield* deliverContextHandoffs({ ...input, handoffs: [] });
+      assert.equal(lookups, 0);
+      const result = yield* deliverContextHandoffs({ ...input, handoffs: [handoff] });
+      assert.equal(lookups, 1);
+      assert.include(result.context, "rollout-2026-10-20T15-32-22-01a15acc");
+    }),
+  );
+
+  it.effect("delivers a pointer-only handoff when no history item fits", () =>
+    Effect.gen(function* () {
+      let durable = handoff;
+      let captured: ProviderAdapterV2HistoricalContext | undefined;
+      yield* deliverContextHandoffs({
+        handoffs: [handoff],
+        providerThread,
+        budget: 0,
+        nativeSessions,
+        alreadyDeliveredItemIds: new Set(),
+        inject: (history) =>
+          Effect.sync(() => {
+            captured = history;
+            return true;
+          }),
+        persist: (value) =>
+          Effect.sync(() => {
+            durable = value;
+          }),
+      });
+      assert.isDefined(captured);
+      assert.deepEqual(captured.messages, []);
+      assert.include(captured.context, "studio_thread_read");
+      assert.include(captured.context, "Selected 0 intact items; omitted 2 items");
+      assert.include(captured.context, "/Users/test/.claude/projects/-work/0b878647");
+      assert.isAtMost(historyCost([], captured.context), 4_096);
+      assert.equal(durable.delivery?.status, "injected");
+      assert.deepEqual(
+        durable.delivery?.omittedItemIds,
+        messages.map((item) => item.itemId),
+      );
+    }),
+  );
+
+  it.effect("fails before delivery only when even the pointer cannot fit", () =>
     Effect.gen(function* () {
       let calls = 0;
       const result = yield* deliverContextHandoffs({
         handoffs: [handoff],
         providerThread,
         budget: 0,
+        nativeSessions: "x".repeat(5_000),
         alreadyDeliveredItemIds: new Set(),
         inject: () =>
           Effect.sync(() => {

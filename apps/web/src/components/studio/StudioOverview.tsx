@@ -51,7 +51,7 @@ import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../
 import { SidebarInset } from "../ui/sidebar";
 import { CapacityFleet } from "./CapacityFleet";
 import type { ProviderInstanceEntry } from "../../providerInstances";
-import { ModelBadge, useProviderEntriesByEnvironment } from "./shell/ModelBadge";
+import { ThreadModelBadge, useProviderEntriesByEnvironment } from "./shell/ModelBadge";
 import { PlanProgressChip } from "./PlanProgressChip";
 import { compactThreadPlan } from "../../studio/threadPlanProgress";
 import { useThreadIncrementProgress } from "../../studio/useThreadIncrementProgress";
@@ -547,11 +547,7 @@ export function StudioOverview() {
                           providersFor(s.thread.environmentId),
                           s.thread.providerInstanceId,
                         )}
-                        entry={
-                          providerEntries
-                            .get(s.thread.environmentId)
-                            ?.get(s.thread.modelSelection?.instanceId ?? "") ?? null
-                        }
+                        entries={providerEntries.get(s.thread.environmentId) ?? new Map()}
                         now={now}
                       />
                     ))}
@@ -938,14 +934,14 @@ function SessionItem({
   target,
   host,
   provider,
-  entry,
+  entries,
   now,
 }: {
   session: SessionView;
   target: ChatTarget;
   host: string;
   provider: string;
-  entry: ProviderInstanceEntry | null;
+  entries: ReadonlyMap<string, ProviderInstanceEntry>;
   now: number;
 }) {
   // A cached row from an older host can arrive without its model.
@@ -971,11 +967,7 @@ function SessionItem({
             {s.project?.title ?? "Project unavailable"}
           </span>
           <span aria-hidden="true">·</span> {host} <span aria-hidden="true">·</span>{" "}
-          {selection ? (
-            <ModelBadge entry={entry} instanceId={selection.instanceId} model={selection.model} />
-          ) : (
-            provider
-          )}
+          {selection ? <ThreadModelBadge thread={s.thread} entries={entries} /> : provider}
           {plan ? (
             <>
               {" "}

@@ -802,9 +802,13 @@ if (fallbackFixture) {
     ...settings,
     coordinatorModelSelection: { instanceId: "claudeAgent", model: "claude-opus-5-5" },
   };
-  shells = shells.map((s) =>
-    s.id === "coord" ? { ...s, modelSelection: { instanceId: "codex", model: "gpt-6.1-sol" } } : s,
-  );
+  // `?fallback=gemini`: the October 22 live case. Claude reads as having room, but the
+  // host keeps the coordinator on Gemini CLI; the composer must still name Gemini.
+  const fallbackModel =
+    new URLSearchParams(window.location.search).get("fallback") === "gemini"
+      ? { instanceId: "acpRegistry_gemini", model: "default" }
+      : { instanceId: "codex", model: "gpt-6.1-sol" };
+  shells = shells.map((s) => (s.id === "coord" ? { ...s, modelSelection: fallbackModel } : s));
 }
 // `?mention`: the coordinator named a worker by its plain title, without a link.
 const mentionFixture = new URLSearchParams(window.location.search).has("mention");
@@ -1560,6 +1564,16 @@ const fixtureHosts = new Map([
             instanceId: "github-copilot-cli",
             displayName: "GitHub Copilot",
           }),
+          // Only the live-case fixture adds Gemini; other checks count these providers.
+          ...(new URLSearchParams(window.location.search).get("fallback") === "gemini"
+            ? [
+                fixtureProvider("acpRegistry", {
+                  instanceId: "acpRegistry_gemini",
+                  displayName: "Gemini CLI",
+                  models: [{ slug: "default", name: "Default", isCustom: false }],
+                }),
+              ]
+            : []),
           fixtureProvider("grok", {
             auth: { status: "authenticated", label: "SuperGrok" },
             usageLimits: {

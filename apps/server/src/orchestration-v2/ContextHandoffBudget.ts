@@ -10,6 +10,10 @@ import type {
 } from "@specweave-studio/contracts";
 
 import * as Config from "effect/Config";
+import {
+  CONTEXT_FIT_MIN_HANDOFF_TOKENS,
+  contextHandoffReserve,
+} from "@specweave-studio/shared/providerFallback";
 
 export const DEFAULT_HANDOFF_TOKEN_CAP = 16_000;
 const HANDOFF_BYTE_CAP = 64_000;
@@ -132,7 +136,7 @@ export function handoffBudget(input: {
       // Cap only imported history. Attachment transport limits belong to adapters;
       // they may send binary/base64 data separately from the history request.
       HANDOFF_BYTE_CAP,
-      window - native - current - Math.max(16_000, Math.ceil(window / 4)),
+      window - native - current - contextHandoffReserve(window),
     ),
   );
 }
@@ -279,4 +283,35 @@ export function handoffCoverage(input: {
     `Source item range: ${input.items.at(0)?.id ?? "none"} through ${input.items.at(-1)?.id ?? "none"}.`,
     `Recover omitted history using studio_thread_read({threadId:"${input.threadId}",view:"activity",limit:20,maxCharsPerItem:4000}); paginate with afterPosition=nextPosition. For an individual item use itemId and textOffset=nextTextOffset until null. Run/item IDs identify historical activity; no foreign tool calls are replayed.`,
   ].join("\n");
+}
+
+/**
+ * Whether a reused native session is too full to take a pending handoff while
+ * a fresh session of the same model would take it. Its measured occupancy
+ * leaves less than `CONTEXT_FIT_MIN_HANDOFF_TOKENS` after the request and the
+ * reserve, so delivery would refuse before choosing any history
+ * (`ContextHandoffBudgetError`), even though the history is capped. False
+ * when the occupancy is unknown or a fresh session would not fit either.
+ */
+export function nativeSessionTooFullForHandoff(input: {
+  readonly tokenCap: number;
+  readonly userText: string;
+  readonly attachments: ReadonlyArray<ChatAttachment>;
+  readonly providerThread: OrchestrationV2ProviderThread;
+  readonly modelContextWindow?: number | undefined;
+}): boolean {
+  if (input.providerThread.contextUsage?.usedTokens === undefined) return false;
+  const budget = (providerThread: OrchestrationV2ProviderThread) =>
+    handoffBudget({
+      tokenCap: input.tokenCap,
+      userText: input.userText,
+      attachments: input.attachments,
+      providerThread,
+      nativeContextEstimate: 0,
+      modelContextWindow: input.modelContextWindow ?? input.providerThread.contextUsage?.maxTokens,
+    });
+  return (
+    budget(input.providerThread) < CONTEXT_FIT_MIN_HANDOFF_TOKENS &&
+    budget({ ...input.providerThread, contextUsage: null }) >= CONTEXT_FIT_MIN_HANDOFF_TOKENS
+  );
 }

@@ -1,3 +1,4 @@
+import { modelLabel as threadIdentityLabel } from "../studio/shellModel";
 import { registerChatViewWindowInput } from "./chat/chatViewWindowInput";
 import type {
   ChatViewProps,
@@ -81,6 +82,7 @@ import { visibleThreadPullRequests } from "@specweave-studio/shared/threadPullRe
 import {
   latestExecutedRun,
   latestRootProviderFailure,
+  latestRootProviderFailureItem,
   providerFailureDisplayMessage,
   threadErrorIsLive,
 } from "@specweave-studio/shared/orchestrationV2ThreadError";
@@ -616,6 +618,7 @@ import { resolveThreadSyncPhase } from "../threadSync";
 import {
   hasAvailableCompactionProvider,
   hasDismissedResumeCompaction,
+  providerSupportsManualCompaction,
   shouldOfferResumeCompaction,
 } from "./chat/ContextWindowMeter.logic";
 import { deriveLatestContextWindowSnapshot, formatContextWindowTokens } from "../lib/contextWindow";
@@ -9922,6 +9925,37 @@ export default function ChatView(props: ChatViewProps) {
     computerUsePermissionBannerItem,
     retryAfterComputerUsePermission,
   } = useChatViewActions(props, chatViewState);
+  const contextLimitRecovery = useMemo(() => {
+    const failedRun = serverProjection?.runs.find((run) => run.id === activeActivityRun?.runId);
+    const failureItemId = failedRun
+      ? (latestRootProviderFailureItem(failedRun, serverProjection!.turnItems)?.id ?? null)
+      : null;
+    return canOperateThread && isServerThread && activeProject && !suspendChatInput
+      ? {
+          failureItemId,
+          ...(providerSupportsManualCompaction(selectedProviderEntry)
+            ? {
+                onCompactContext: () => {
+                  if (!compactDisabled) composerRef.current?.compactContext();
+                },
+                compactDisabledReason,
+              }
+            : {}),
+          onNewThread: handleNewThreadInActiveProject,
+        }
+      : undefined;
+  }, [
+    canOperateThread,
+    suspendChatInput,
+    serverProjection,
+    activeActivityRun?.runId,
+    isServerThread,
+    activeProject,
+    selectedProviderEntry,
+    compactDisabled,
+    compactDisabledReason,
+    handleNewThreadInActiveProject,
+  ]);
   // Starts the thread over on another machine from a written handoff: when
   // this one's provider hit its limit, or this machine can't be reached. A
   // chat without a project gets a new chat folder there, never a worktree.
@@ -10273,8 +10307,15 @@ export default function ChatView(props: ChatViewProps) {
       : null,
   );
   // A thread a usage limit moved to a fallback stays paired with the model it stood in for.
-  const pairing =
-    activeThreadShell && serverProjection
+  const pairing = activeThreadShell?.modelIdentity
+    ? activeThreadShell.modelIdentity.kind === "fallback" &&
+      activeThreadShell.modelIdentity.preferred
+      ? {
+          original: activeThreadShell.modelIdentity.preferred,
+          stoppedRunId: `model:${activeThreadShell.modelIdentity.preferred.instanceId}:${activeThreadShell.modelIdentity.preferred.model}`,
+        }
+      : null
+    : activeThreadShell && serverProjection
       ? limitFallbackPairing(
           serverProjection.messages,
           serverProjection.runs,
@@ -10287,13 +10328,12 @@ export default function ChatView(props: ChatViewProps) {
       : providerStatuses.find((provider) => provider.instanceId === pairing.original.instanceId);
   const pairingKey =
     pairing === null ? null : `limit-pairing:${routeThreadKey}:${pairing.stoppedRunId}`;
-  const selectionLabel = (selection: { readonly instanceId: string; readonly model: string }) => {
-    const provider = providerStatuses.find((entry) => entry.instanceId === selection.instanceId);
-    if (provider === undefined) return selection.model;
-    const model =
-      provider.models.find((entry) => entry.slug === selection.model)?.name ?? selection.model;
-    return `${resolveProviderInstanceDisplayName(provider)} · ${model}`;
-  };
+  const selectionLabel = (selection: { readonly instanceId: string; readonly model: string }) =>
+    threadIdentityLabel(
+      providerInstanceEntries.find((entry) => entry.instanceId === selection.instanceId) ?? null,
+      selection.instanceId,
+      selection.model,
+    ).full;
   const pairingBanner = useBannerItem(
     limitFallbackPairingBannerItem,
     pairing !== null &&
@@ -10302,13 +10342,22 @@ export default function ChatView(props: ChatViewProps) {
       !dismissedUsageApproaching.has(pairingKey)
       ? {
           id: pairingKey,
-          current: selectionLabel(activeThreadShell.modelSelection),
+          current: selectionLabel(
+            activeThreadShell.modelIdentity?.current ?? activeThreadShell.modelSelection,
+          ),
           original: selectionLabel(pairing.original),
           resetAt:
             pairingProvider === undefined
               ? null
               : usageResetAt(pairingProvider, 100, approachingNowMs, pairing.original.model),
-          ...limitPairingRoom(pairingProvider, approachingNowMs, pairing.original.model),
+          ...limitPairingRoom(
+            pairingProvider,
+            approachingNowMs,
+            pairing.original.model,
+            activeThreadShell
+              ? provenFallbackSelection(activeThreadShell, activeCoordinatorShell)
+              : null,
+          ),
           onBack: () => {
             const selection = {
               instanceId: pairing.original.instanceId,
@@ -14445,6 +14494,7 @@ export default function ChatView(props: ChatViewProps) {
               />
               <ThreadErrorBanner
                 error={timelineThreadError}
+                contextLimitRecovery={contextLimitRecovery}
                 errorClass={
                   localServerError === null && visibleThreadError === serverRuntimeError
                     ? (serverRuntime?.lastErrorClass ?? null)
@@ -14514,6 +14564,9 @@ export default function ChatView(props: ChatViewProps) {
                 }
               >
                 <MessagesTimeline
+                  contextLimitRecovery={
+                    paintOnlyDisplayedTimeline ? undefined : contextLimitRecovery
+                  }
                   citationRequest={paintOnlyDisplayedTimeline ? null : citationRequest}
                   citationHistoryLoading={threadDetailLoading}
                   {...(!paintOnlyDisplayedTimeline
@@ -14746,6 +14799,7 @@ export default function ChatView(props: ChatViewProps) {
                               allowManualCodexCredits={!routesViaCoordinator(projectRouting)}
                               canOperateThread={canOperateThread}
                               reportedModelSelection={reportedModelSelection}
+                              limitFallbackFrom={pairing?.original ?? null}
                               multipleModelSelections={multipleModelSelections}
                               supportsMultipleModels={
                                 serverConfig?.environment.capabilities.requiredWorktreeBootstrap ===

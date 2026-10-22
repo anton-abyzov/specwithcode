@@ -1,3 +1,4 @@
+import { threadModelIdentity } from "@specweave-studio/shared/threadModelIdentity";
 import {
   consumeExplicitCreditSendOffer,
   deriveExplicitCreditSendOffer,
@@ -273,6 +274,8 @@ import {
 import { useEnvironmentQuery } from "~/state/query";
 import { useDebouncedValue } from "~/state/queries";
 import { ProviderModelPicker } from "./ProviderModelPicker";
+import { ModelStateTag } from "./ModelStateTag";
+import { modelLabel } from "../../studio/shellModel";
 import { resolveModelPickerSelectedModel } from "./ModelPickerContent";
 import {
   type ComposerCommandItem,
@@ -1623,6 +1626,8 @@ export interface ChatComposerProps {
   activeProjectDefaultModelSelection: ModelSelection | null | undefined;
   activeThreadModelSelection: ModelSelection | null | undefined;
   reportedModelSelection?: ModelSelection | null;
+  /** The picked model a usage-limit fallback runs instead of; null when none. */
+  limitFallbackFrom?: { readonly instanceId: string; readonly model: string } | null;
 
   // Context window
   activeContextWindow: ContextWindowSnapshot | null;
@@ -1766,6 +1771,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     activeProjectDefaultModelSelection,
     activeThreadModelSelection,
     reportedModelSelection,
+    limitFallbackFrom = null,
     activeContextWindow,
     compactThreadUnavailable,
     compactDisabled,
@@ -2469,6 +2475,48 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       ? selectedModelForPicker
       : (normalizeModelSlug(selectedModelForPicker, selectedProvider) ?? selectedModelForPicker);
   }, [modelOptionsByInstance, selectedInstanceId, selectedModelForPicker, selectedProvider]);
+
+  // Persisted thread/run facts own display; local drafts still own the next send.
+  const composerModelLabel = (selection: { readonly instanceId: string; readonly model: string }) =>
+    modelLabel(
+      providerInstanceEntries.find((entry) => entry.instanceId === selection.instanceId) ?? null,
+      selection.instanceId,
+      selection.model,
+    );
+  const displayedIdentity =
+    props.activeThreadShell?.modelIdentity ??
+    threadModelIdentity({
+      thread: activeThreadModelSelection ?? {
+        instanceId: selectedInstanceId,
+        model: selectedModelForPickerWithCustomFallback,
+      },
+      running: runningModelSelection,
+      fallbackFrom: limitFallbackFrom as ModelSelection | null,
+    });
+  const displayedModel = displayedIdentity.current;
+  const preferredLabel = displayedIdentity.preferred
+    ? composerModelLabel(displayedIdentity.preferred)
+    : null;
+  const pendingNextLabel =
+    composerDraft.modelSelectionExplicit &&
+    (selectedInstanceId !== displayedModel.instanceId ||
+      selectedModelForPickerWithCustomFallback !== displayedModel.model)
+      ? composerModelLabel({
+          instanceId: selectedInstanceId,
+          model: selectedModelForPickerWithCustomFallback,
+        }).full
+      : null;
+  const composerModelStateValue =
+    preferredLabel === null
+      ? null
+      : displayedIdentity.kind === "fallback"
+        ? {
+            kind: "fallback" as const,
+            pick: preferredLabel.full,
+            pickModel: preferredLabel.model,
+            reason: "usage limit",
+          }
+        : { kind: "preferred" as const, pick: preferredLabel.full };
 
   // ------------------------------------------------------------------
   // Context window
@@ -5585,16 +5633,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
               },
             }
           : {})}
-        activeInstanceId={
-          providerCatalogPending
-            ? (activeThreadModelSelection?.instanceId ?? selectedInstanceId)
-            : selectedInstanceId
-        }
-        model={
-          providerCatalogPending
-            ? (activeThreadModelSelection?.model ?? selectedModelForPickerWithCustomFallback)
-            : selectedModelForPickerWithCustomFallback
-        }
+        activeInstanceId={selectedInstanceId}
+        model={selectedModelForPickerWithCustomFallback}
+        triggerInstanceId={displayedModel.instanceId}
+        triggerModel={displayedModel.model}
         lockedProvider={lockedProvider}
         lockedContinuationGroupKey={lockedContinuationGroupKey}
         instanceEntries={providerInstanceEntries}
@@ -5627,6 +5669,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             }
           : {})}
         onOpenChange={setIsComposerModelPickerOpen}
+        {...(!providerCatalogPending && (activeThreadModelSelection || composerModelStateValue)
+          ? { triggerText: composerModelLabel(displayedModel).full }
+          : {})}
         getModelDisabledReason={getModelDisabledReason}
         {...(routesProjectMessage ? {} : { usage: modelPickerUsage })}
         usageValueHiddenClassName="@max-[520px]/composer-surface:hidden"
@@ -5637,6 +5682,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         onOpenProviderSetup={onOpenProviderSetup}
         quickSetup={providerQuickSetup}
       />
+      {pendingNextLabel && !providerCatalogPending ? (
+        <ModelStateTag state={{ kind: "next", pick: pendingNextLabel }} />
+      ) : null}
+      {composerModelStateValue && !providerCatalogPending ? (
+        <ModelStateTag
+          state={composerModelStateValue}
+          className="@max-[400px]/composer-surface:hidden"
+        />
+      ) : null}
 
       <>
         {restingBlockDefs.map((def, index) => {

@@ -10,6 +10,80 @@ import {
 } from "./ThreadErrorBanner";
 
 describe("ThreadErrorBanner", () => {
+  const contextError = JSON.stringify({
+    error: {
+      message: JSON.stringify({
+        error: {
+          code: 400,
+          message: "The input token count exceeds the maximum number of tokens allowed 1048576.",
+        },
+      }),
+    },
+  });
+
+  it("cleans persisted JSON even when the error class is unknown", () => {
+    const markup = renderToStaticMarkup(<ThreadErrorBanner error={contextError} />);
+    expect(markup).toContain("Context limit reached");
+    expect(markup).toContain("The input token count exceeds");
+    expect(markup).not.toContain("&quot;message&quot;");
+    expect(markup).toContain('data-variant="warning"');
+  });
+
+  it("offers only supported recovery and explains disabled compaction", () => {
+    const onNewThread = () => {};
+    const unsupported = renderToStaticMarkup(
+      <ThreadErrorBanner error={contextError} contextLimitRecovery={{ onNewThread }} />,
+    );
+    expect(unsupported).toContain("New thread");
+    expect(unsupported).not.toContain("Compact context");
+    const disabled = renderToStaticMarkup(
+      <ThreadErrorBanner
+        error={contextError}
+        contextLimitRecovery={{
+          onNewThread,
+          onCompactContext: () => {},
+          compactDisabledReason: "Wait for the pending approval.",
+        }}
+      />,
+    );
+    expect(disabled).toContain("Compact context");
+    expect(disabled).toContain('disabled=""');
+    expect(disabled).toContain("Wait for the pending approval.");
+  });
+
+  it("keeps quota errors out of context recovery", () => {
+    const quotaFailure = {
+      // oxlint-disable-next-line shadcn/no-unknown-classes -- This is a provider failure enum, not a CSS class.
+      class: "usage_limit",
+      message: "Tokens per minute rate limit reached.",
+    } as const;
+    const markup = renderToStaticMarkup(
+      <ThreadErrorBanner
+        error={JSON.stringify({ error: { message: quotaFailure.message } })}
+        errorClass={quotaFailure.class}
+        contextLimitRecovery={{ onNewThread: () => {}, onCompactContext: () => {} }}
+      />,
+    );
+    expect(markup).toContain("Usage limit reached");
+    expect(markup).toContain("Tokens per minute rate limit reached.");
+    expect(markup).not.toContain("New thread");
+    expect(markup).not.toContain("Compact context");
+  });
+
+  it("gives ordinary nested provider errors a readable title and message", () => {
+    const markup = renderToStaticMarkup(
+      <ThreadErrorBanner
+        error={JSON.stringify({
+          error: { message: "Requests ending with a model turn are not supported." },
+        })}
+      />,
+    );
+    expect(markup).toContain("Provider error");
+    expect(markup).toContain("Requests ending with a model turn are not supported.");
+    expect(markup).not.toContain("&quot;error&quot;");
+    expect(markup).not.toContain("data-context-limit-recovery");
+  });
+
   it("formats the persisted reset timestamp in the banner", () => {
     const error = "Next observed reset: 2026-10-18T03:58:37.000Z. Select an eligible profile.";
     const markup = renderToStaticMarkup(<ThreadErrorBanner error={error} />);

@@ -325,6 +325,12 @@ function makeLocalCommandHarness(input: {
    * fallback succeeds, then reading history for its handoff fails.
    */
   readonly historyReadFailureAfterFallback?: unknown;
+  /**
+   * With `historyReadFailureAfterFallback`: resume would succeed, the native
+   * session holds `usedTokens` of a 258,400 window and a handoff from another
+   * provider waits for this run.
+   */
+  readonly nativeSessionUsedTokens?: number;
   readonly interruptOpen?: boolean;
   readonly interruptRunBeforeOpenFailure?: boolean;
   readonly writeFailure?: unknown;
@@ -512,8 +518,41 @@ function makeLocalCommandHarness(input: {
     projection = {
       ...projection,
       providerThreads: projection.providerThreads.map((candidate) =>
-        candidate.id === providerThreadId ? { ...candidate, nativeThreadRef } : candidate,
+        candidate.id === providerThreadId
+          ? {
+              ...candidate,
+              nativeThreadRef,
+              ...(input.nativeSessionUsedTokens === undefined
+                ? {}
+                : {
+                    contextUsage: {
+                      usedTokens: input.nativeSessionUsedTokens,
+                      maxTokens: 258_400,
+                    },
+                  }),
+            }
+          : candidate,
       ),
+      contextHandoffs:
+        input.nativeSessionUsedTokens === undefined
+          ? []
+          : [
+              {
+                id: "handoff-gemini-to-codex" as never,
+                transferId: null,
+                threadId,
+                targetRunId: runId,
+                fromProviderThreadIds: [oldProviderThreadId],
+                toProviderThreadId: providerThreadId,
+                coveredRunOrdinals: { from: 1, to: 1 },
+                strategy: "delta_since_target_last_seen",
+                status: "ready",
+                summaryMessageId: null,
+                summaryText: "",
+                createdAt: now,
+                updatedAt: now,
+              } as never,
+            ],
     };
   }
   const events: Array<OrchestrationV2DomainEvent> = [];
@@ -542,17 +581,25 @@ function makeLocalCommandHarness(input: {
       ),
     ),
   );
+  const resumeThread = vi.fn(() =>
+    input.nativeSessionUsedTokens !== undefined
+      ? Effect.succeed(projection.providerThreads.find((entry) => entry.id === providerThreadId)!)
+      : Effect.fail(
+          new ProviderAdapterEventStreamError({
+            driver: providerThread.driver,
+            providerSessionId,
+            cause: "native thread is gone",
+          }),
+        ),
+  );
+  const fallbackEnsureThread = vi.fn(
+    (_input: { readonly existingProviderThread?: { readonly nativeThreadRef: unknown } }) =>
+      Effect.succeed(providerThread),
+  );
   const resumeFallbackSession = {
     driver: providerThread.driver,
-    resumeThread: () =>
-      Effect.fail(
-        new ProviderAdapterEventStreamError({
-          driver: providerThread.driver,
-          providerSessionId,
-          cause: "native thread is gone",
-        }),
-      ),
-    ensureThread: () => Effect.succeed(providerThread),
+    resumeThread,
+    ensureThread: fallbackEnsureThread,
   };
   const nativeStarts = vi.fn((_input: ProviderAdapterV2TurnInput) => Effect.void);
   const open = vi.fn(() =>
@@ -725,6 +772,8 @@ function makeLocalCommandHarness(input: {
   );
   return {
     open,
+    resumeThread,
+    fallbackEnsureThread,
     nativeStarts,
     writeIfRunCurrent,
     startRootRun,
@@ -1177,6 +1226,36 @@ effectIt.effect(
       expect(harness.writeIfRunCurrent).not.toHaveBeenCalled();
       expect(harness.projection().runs.at(-1)?.status).toBe("starting");
       expect(harness.events).toEqual([]);
+    }),
+);
+
+effectIt.effect(
+  "starts a fresh native session instead of handing off into a full one (DCFC run 45)",
+  () =>
+    Effect.gen(function* () {
+      const full = makeLocalCommandHarness({
+        text: "Why do payments show all zeros? Complete the job!",
+        historyReadFailureAfterFallback: new Error("database unavailable"),
+        nativeSessionUsedTokens: 221_400,
+      });
+      // The fresh session's full-thread handoff reads history; that read fails here.
+      const error = yield* full.start.pipe(Effect.flip);
+      expect((error.cause as { _tag?: string } | undefined)?._tag).toBe("ProjectionStoreReadError");
+      expect(full.resumeThread).not.toHaveBeenCalled();
+      expect(full.fallbackEnsureThread).toHaveBeenCalledOnce();
+      expect(
+        full.fallbackEnsureThread.mock.calls[0]?.[0].existingProviderThread?.nativeThreadRef,
+      ).toBeNull();
+
+      // A session with room is resumed as before.
+      const roomy = makeLocalCommandHarness({
+        text: "Continue",
+        historyReadFailureAfterFallback: new Error("database unavailable"),
+        nativeSessionUsedTokens: 40_000,
+      });
+      yield* Effect.exit(roomy.start);
+      expect(roomy.resumeThread).toHaveBeenCalledOnce();
+      expect(roomy.fallbackEnsureThread).not.toHaveBeenCalled();
     }),
 );
 

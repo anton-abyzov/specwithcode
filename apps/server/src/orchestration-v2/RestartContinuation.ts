@@ -18,6 +18,13 @@ import {
   type ClosedQuestion,
 } from "../serviceUpdate/ServiceUpdateClosedQuestions.ts";
 import { isNativeMaintenanceCommand } from "./Orchestrator.ts";
+import {
+  cancelledForUpdate,
+  personHoldsQueue,
+  RESTART_CONTINUATION_MESSAGE_PREFIX,
+  UPDATE_CONTINUATION_MESSAGE_PREFIX,
+  UPDATE_REQUEUE_MESSAGE_PREFIX,
+} from "./RestartQueueHold.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import {
   isRestartNoteSource,
@@ -41,7 +48,9 @@ export function restartContinuationRun(
   // Queued runs never started; recovery holds them behind the cut run.
   const run = projection.runs.reduce<OrchestrationV2Run | undefined>(
     (latest, candidate) =>
-      candidate.status !== "queued" && (!latest || runRanAfter(candidate, latest))
+      candidate.status !== "queued" &&
+      !cancelledForUpdate(candidate) &&
+      (!latest || runRanAfter(candidate, latest))
         ? candidate
         : latest,
     undefined,
@@ -112,8 +121,12 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
     if (!enabled) return;
     const threads = yield* ThreadManagementService.ThreadManagementService;
     // The id names why the run stopped, so the timeline can say "Resumed after update".
-    const restartMessageId = MessageId.make(`message:restart-continuation:${input.sourceRunId}`);
-    const updateMessageId = MessageId.make(`message:update-continuation:${input.sourceRunId}`);
+    const restartMessageId = MessageId.make(
+      `${RESTART_CONTINUATION_MESSAGE_PREFIX}${input.sourceRunId}`,
+    );
+    const updateMessageId = MessageId.make(
+      `${UPDATE_CONTINUATION_MESSAGE_PREFIX}${input.sourceRunId}`,
+    );
     const projection = yield* threads.getThreadRecords(
       input.threadId,
       ["messages", "runs", "providerTurns", "attempts"],
@@ -143,10 +156,15 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
     )
       return;
     // A user submission after reconciliation takes precedence over an automatic
-    // prompt. Queued runs never started and stay held behind this one.
+    // prompt. Queued runs never started and stay held behind this one, as did
+    // the messages the update cancelled before it interrupted this run.
     if (
       projection.runs.some(
-        (run) => run.id !== source.id && run.status !== "queued" && runRanAfter(run, source),
+        (run) =>
+          run.id !== source.id &&
+          run.status !== "queued" &&
+          !cancelledForUpdate(run) &&
+          runRanAfter(run, source),
       )
     )
       return;
@@ -222,9 +240,13 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
       creationSource: "server",
       restartContinuationOfRunId: input.sourceRunId,
     });
-    // Restart recovery and the update stop hold the queue; a continued thread
-    // keeps its queue in order and drains it after the continuation.
-    if (projection.runs.some((run) => run.status === "queued" && run.queueHeld === true)) {
+    // Restart recovery holds the queue; a continued thread keeps its queue in
+    // order and drains it after the continuation. A queue a person held (Stop,
+    // or a failure) stays held for them.
+    if (
+      projection.runs.some((run) => run.status === "queued" && run.queueHeld === true) &&
+      !personHoldsQueue(projection.runs)
+    ) {
       yield* threads
         .dispatch({
           type: "queue.resume",
@@ -282,7 +304,8 @@ export const resumeQueueAfterRestart = Effect.fn("RestartContinuation.resumeQueu
       .filter((run) => run.status === "cancelled" && run.cancelledForUpdate === true)
       .toSorted((left, right) => left.ordinal - right.ordinal);
     if (cancelled.length > 0) {
-      const requeueId = (runId: RunId) => MessageId.make(`message:update-requeue:${runId}`);
+      const requeueId = (runId: RunId) =>
+        MessageId.make(`${UPDATE_REQUEUE_MESSAGE_PREFIX}${runId}`);
       const { messages } = yield* threads.getThreadRecords(input.threadId, ["messages"], {
         messageIds: cancelled.flatMap((run) => [run.userMessageId, requeueId(run.id)]),
       });
@@ -317,6 +340,7 @@ export const resumeQueueAfterRestart = Effect.fn("RestartContinuation.resumeQueu
     if (!input.releaseHeld) return;
     const { runs: current } = yield* threads.getThreadRecords(input.threadId, ["runs"]);
     if (!current.some((run) => run.status === "queued" && run.queueHeld === true)) return;
+    if (personHoldsQueue(current)) return;
     yield* threads.dispatch({
       type: "queue.resume",
       commandId: CommandId.make(`command:restart-queue-resume:${input.effectId}`),

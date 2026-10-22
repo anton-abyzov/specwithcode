@@ -107,10 +107,12 @@ export function CoordinatorComposerControls({
   fallback: {
     saved: ModelLabel;
     now: ModelLabel;
-    /** Why the saved model has no room: `weekly limit reached, resets in 1d 15h`. */
-    reason: string;
+    /** Why the saved model has no room, when known: `weekly limit reached, resets in 1d 15h`. */
+    reason: string | null;
     /** `now` stopped on its own usage limit too, and nothing else runs the coordinator yet. */
     spent?: boolean;
+    /** A turn runs on `now` at this moment. */
+    live?: boolean;
     switching?: boolean;
     onSwitchBack?: (() => void) | null;
   } | null;
@@ -119,25 +121,35 @@ export function CoordinatorComposerControls({
   return (
     <>
       {fallback ? (
-        // The saved model stays saved; this line says what the coordinator runs on now.
+        // The saved model stays saved; this line names what actually runs, then the pick.
         <p
           className="sws-model-fallback"
           role="status"
           data-model-fallback
+          data-model-fallback-live={fallback.live ? "" : undefined}
           data-model-fallback-spent={fallback.spent ? "" : undefined}
         >
           <ZapIcon aria-hidden />
           <span className="sws-model-fallback-text">
-            <strong>
-              {fallback.spent
-                ? `${fallback.now.provider} is out of usage too`
-                : `Switched to ${fallback.now.provider}`}
-            </strong>
-            {": "}
-            {fallback.saved.provider} {fallback.reason}.{" "}
-            <span className="sws-model-fallback-note">
-              The next turn after it has room goes back to {fallback.saved.provider} on its own.
+            <span className="sws-model-fallback-now" data-model-now="">
+              <span className="sws-model-fallback-label">
+                {fallback.live ? "Running now on" : "Now on"}
+              </span>{" "}
+              <strong>{fallback.now.full}</strong>
+              {fallback.spent ? ", which is out of usage too" : ""}.
+            </span>{" "}
+            <span data-model-pick="">
+              <span className="sws-model-fallback-label">Your pick:</span> {fallback.saved.full}
+              {fallback.reason ? `, ${fallback.reason}` : ""}.
             </span>
+            {fallback.reason ? (
+              <>
+                {" "}
+                <span className="sws-model-fallback-note">
+                  The next turn after it has room goes back to {fallback.saved.provider} on its own.
+                </span>
+              </>
+            ) : null}
           </span>
           {fallback.onSwitchBack ? (
             <Tip

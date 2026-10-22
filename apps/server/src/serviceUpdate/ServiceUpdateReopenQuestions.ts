@@ -76,6 +76,7 @@ import type * as SqlClient from "effect/sql/SqlClient";
 import * as EventSink from "../orchestration-v2/EventSink.ts";
 import * as IdAllocator from "../orchestration-v2/IdAllocator.ts";
 import { ProjectionStoreThreadNotFoundError } from "../orchestration-v2/ProjectionStore.ts";
+import { cancelledForUpdate } from "../orchestration-v2/RestartQueueHold.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as ClosedQuestions from "./ServiceUpdateClosedQuestions.ts";
@@ -196,13 +197,21 @@ export const captureOpenRequests = (input: {
  * threads after restarts, and that turn is the thread's latest and was
  * interrupted for the update, or a continuation of it already started.
  */
-type RunOrder = Pick<OrchestrationV2Run, "id" | "status" | "ordinal" | "completedAt">;
+type RunOrder = Pick<
+  OrchestrationV2Run,
+  "id" | "status" | "ordinal" | "completedAt" | "cancelledForUpdate"
+>;
 
-/** The thread's latest turn that has started (a queued one has not). */
+/**
+ * The thread's latest turn that has started (a queued one has not, nor one the
+ * update cancelled while it was queued).
+ */
 function latestRun<R extends RunOrder>(runs: ReadonlyArray<R>): R | undefined {
   return runs.reduce<R | undefined>(
     (current, candidate) =>
-      candidate.status !== "queued" && (current === undefined || runRanAfter(candidate, current))
+      candidate.status !== "queued" &&
+      !cancelledForUpdate(candidate) &&
+      (current === undefined || runRanAfter(candidate, current))
         ? candidate
         : current,
     undefined,

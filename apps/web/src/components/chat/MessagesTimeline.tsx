@@ -9,7 +9,9 @@ import {
 } from "./usageWarningResolution";
 import { formatDisplayDates } from "../../lib/displayDates";
 import { FailureDetail } from "./FailureDetail";
+import { ContextLimitRecovery, type ContextLimitRecoveryActions } from "./ContextLimitRecovery";
 import {
+  isContextLimitError,
   providerFailureDisplayMessage,
   timelineFailureIsHistory,
 } from "@specweave-studio/shared/orchestrationV2ThreadError";
@@ -442,6 +444,7 @@ interface TimelineRowSharedState {
   onCancelWorktreeSetup: (() => void) | null;
   retryableWorkspacePreparationRunIds: ReadonlySet<RunId>;
   onRetryWorkspacePreparation: ((runId: RunId) => void) | null;
+  contextLimitRecovery: ContextLimitRecoveryActions | undefined;
   onWorktreeSetupWorkLocally: (() => void) | null;
   onOpenWorktreeSetupTerminal: ((terminalId: string) => void) | null;
   workGroupViewState: WorkGroupViewState;
@@ -596,6 +599,7 @@ interface MessagesTimelineProps {
   /** Runs whose failed workspace preparation can be retried, keyed by run id. */
   retryableWorkspacePreparationRunIds?: ReadonlySet<RunId>;
   onRetryWorkspacePreparation?: (runId: RunId) => void;
+  contextLimitRecovery?: ContextLimitRecoveryActions | undefined;
   /** Whether the thread is resolved; its failed turns then read as history. */
   threadSettled?: boolean;
   onWorktreeSetupWorkLocally?: () => void;
@@ -696,6 +700,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   onCancelWorktreeSetup,
   retryableWorkspacePreparationRunIds = EMPTY_RUN_IDS,
   onRetryWorkspacePreparation,
+  contextLimitRecovery,
   threadSettled = false,
   onWorktreeSetupWorkLocally,
   onOpenWorktreeSetupTerminal,
@@ -1426,6 +1431,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onCancelWorktreeSetup: onCancelWorktreeSetup ?? null,
       retryableWorkspacePreparationRunIds,
       onRetryWorkspacePreparation: onRetryWorkspacePreparation ?? null,
+      contextLimitRecovery,
       onWorktreeSetupWorkLocally: onWorktreeSetupWorkLocally ?? null,
       onOpenWorktreeSetupTerminal: onOpenWorktreeSetupTerminal ?? null,
       workGroupViewState,
@@ -1467,6 +1473,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onCancelWorktreeSetup,
       retryableWorkspacePreparationRunIds,
       onRetryWorkspacePreparation,
+      contextLimitRecovery,
       onWorktreeSetupWorkLocally,
       onOpenWorktreeSetupTerminal,
       workGroupViewState,
@@ -6020,7 +6027,8 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
   const { workEntry, workspaceRoot, displayLabel } = props;
   const ctx = use(TimelineRowCtx);
   const { threadRef, onImageExpand, timestampFormat } = ctx;
-  const { retryableWorkspacePreparationRunIds, onRetryWorkspacePreparation } = ctx;
+  const { retryableWorkspacePreparationRunIds, onRetryWorkspacePreparation, contextLimitRecovery } =
+    ctx;
   const createdThread =
     workEntry.projectedItem?.item.type === "thread_created"
       ? workEntry.projectedItem.item
@@ -6159,6 +6167,13 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
       >
         {!warning ? (
           <FailureDetail message={failureMessage} timestampFormat={timestampFormat} />
+        ) : null}
+        {!warning &&
+        isContextLimitError(failureItem.failure.message) &&
+        contextLimitRecovery?.failureItemId === failureItem.id ? (
+          <div className="ms-7 py-1">
+            <ContextLimitRecovery recovery={contextLimitRecovery} />
+          </div>
         ) : null}
         {retryRunId !== null && onRetryWorkspacePreparation ? (
           <div className="ms-7 pb-1">

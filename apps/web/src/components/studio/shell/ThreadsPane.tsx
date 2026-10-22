@@ -59,7 +59,7 @@ import {
   MenuTrigger,
 } from "../../ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../../ui/tooltip";
-import { ModelBadge, useProviderEntriesByEnvironment } from "./ModelBadge";
+import { ThreadModelBadge, useProviderEntriesByEnvironment } from "./ModelBadge";
 import { PlanProgressChip } from "../PlanProgressChip";
 import { compactThreadPlan } from "../../../studio/threadPlanProgress";
 import { useProjectThreadIncrementProgress } from "../../../studio/useThreadIncrementProgress";
@@ -395,12 +395,11 @@ export function ThreadsPane({
                     const entry =
                       entriesByEnvironment
                         .get(thread.environmentId)
-                        ?.get(thread.modelSelection.instanceId) ?? null;
-                    const label = modelLabel(
-                      entry,
-                      thread.modelSelection.instanceId,
-                      thread.modelSelection.model,
-                    );
+                        ?.get(
+                          (thread.modelIdentity?.current ?? thread.modelSelection).instanceId,
+                        ) ?? null;
+                    const currentModel = thread.modelIdentity?.current ?? thread.modelSelection;
+                    const label = modelLabel(entry, currentModel.instanceId, currentModel.model);
                     const settled = thread.settledOverride === "settled";
                     const archived = thread.archivedAt !== null;
                     const action = archived || settled ? "Reopen" : "Resolve";
@@ -467,10 +466,11 @@ export function ThreadsPane({
                                     );
                                   })()
                                 : null}
-                              <ModelBadge
-                                entry={entry}
-                                instanceId={thread.modelSelection.instanceId}
-                                model={thread.modelSelection.model}
+                              <ThreadModelBadge
+                                thread={thread}
+                                entries={
+                                  entriesByEnvironment.get(thread.environmentId) ?? new Map()
+                                }
                               />
                               {plan ? <PlanProgressChip plan={plan} /> : null}
                               {pullRequest ? (
