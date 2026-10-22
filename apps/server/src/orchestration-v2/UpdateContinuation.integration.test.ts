@@ -44,7 +44,8 @@ import type { ProviderAdapterV2Shape } from "./ProviderAdapter.ts";
 import * as ProviderRuntimeRecoveryService from "./ProviderRuntimeRecoveryService.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
-import { continueRestartedRun } from "./RestartContinuation.ts";
+import { continueRestartedRun, resumeQueueAfterRestart } from "./RestartContinuation.ts";
+import { holdForRestart } from "./RestartQueueHold.ts";
 import * as RuntimeLayer from "./runtimeLayer.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
@@ -135,7 +136,16 @@ const layerTest = Layer.mergeAll(
 const interruptedThread = (name: string, cause: "service_update" | "user") =>
   Effect.gen(function* () {
     const orchestrator = yield* Orchestrator.OrchestratorV2;
-    const eventSink = yield* EventSink.EventSinkV2;
+    const threadId = yield* startedThread(name);
+    const initial = yield* orchestrator.getThreadProjection(threadId);
+    const runId = yield* interruptRun(name, threadId, initial.runs[0]!.id, cause);
+    return { threadId, runId };
+  });
+
+/** A thread whose first turn has been sent and not yet settled. */
+const startedThread = (name: string) =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
     const projects = yield* ProjectStore.ProjectStoreV2;
     const threadId = ThreadId.make(`thread:${name}`);
     const projectId = ProjectId.make(`project:${name}`);
@@ -186,9 +196,30 @@ const interruptedThread = (name: string, cause: "service_update" | "user") =>
       attachments: [],
       dispatchMode: { type: "start_immediately" },
     });
-    const initial = yield* orchestrator.getThreadProjection(threadId);
-    const runId = yield* interruptRun(name, threadId, initial.runs[0]!.id, cause);
-    return { threadId, runId };
+    return threadId;
+  });
+
+/** Queues a message the user sent behind the thread's active turn. */
+const queueMessage = (name: string, threadId: ThreadId, text: string) =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    yield* orchestrator.dispatch({
+      type: "message.dispatch",
+      createdBy: "user",
+      creationSource: "web",
+      commandId: CommandId.make(`${name}:queue:${text}`),
+      threadId,
+      messageId: MessageId.make(`${name}:queue:${text}`),
+      text,
+      attachments: [],
+      dispatchMode: { type: "queue_after_active" },
+    });
+    const projection = yield* orchestrator.getThreadProjection(threadId);
+    const run = projection.runs.find(
+      (candidate) => candidate.userMessageId === `${name}:queue:${text}`,
+    );
+    assert.equal(run?.status, "queued");
+    return run!.id;
   });
 
 /** Marks a pending run as running on a provider turn, then interrupts it with `cause`. */
@@ -197,6 +228,7 @@ const interruptRun = (
   threadId: ThreadId,
   runId: RunId,
   cause: "service_update" | "user",
+  holdQueue?: true,
 ) =>
   Effect.gen(function* () {
     const orchestrator = yield* Orchestrator.OrchestratorV2;
@@ -244,6 +276,7 @@ const interruptRun = (
       runId: run.id,
       reason: cause === "service_update" ? "SpecWithCode is updating" : "Stopped by the user",
       cause,
+      ...(holdQueue === undefined ? {} : { holdQueue }),
     });
     const interrupted = yield* orchestrator.getThreadProjection(threadId);
     const current = interrupted.runs.find((candidate) => candidate.id === run.id)!;
@@ -438,6 +471,216 @@ it.layer(layerTest)("update continuation through real projections", (it) => {
       assert.deepEqual(
         cards.map((card) => [card.status, card.responseMode, card.questions[0]?.question]),
         [["waiting", "message", "Which database should I use?"]],
+      );
+    }),
+  );
+  // shared-champion-highlight, October 21: a forced update cancelled the two
+  // messages queued behind run 3, then interrupted it. The cancelled rows have
+  // higher ordinals, and the thread was never continued.
+  it.effect("continues a turn whose queued messages the update cancelled, then requeues them", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(recentTime);
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const name = "update-cancelled-queue";
+      const threadId = yield* startedThread(name);
+      const first = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!.id;
+      const queued = [
+        yield* queueMessage(name, threadId, "First follow-up."),
+        yield* queueMessage(name, threadId, "Second follow-up."),
+      ];
+      // The update's drain: queued messages first, then the running turn.
+      for (const runId of queued) {
+        yield* orchestrator.dispatch({
+          type: "queued-run.cancel",
+          commandId: CommandId.make(`${name}:cancel:${runId}`),
+          threadId,
+          runId,
+          cause: "service_update",
+        });
+      }
+      const runId = yield* interruptRun(name, threadId, first, "service_update");
+      const outbox = yield* continueAll;
+      const effects = yield* outbox.listByCommandId(
+        CommandId.make(`command:update-continue:${runId}`),
+      );
+      assert.deepEqual(
+        effects.map((effect) => effect.request),
+        [{ type: "provider-runtime.continue", sourceRunId: runId }],
+      );
+      // Effects on a thread run in order: the continuation, then the requeue.
+      yield* continueRestartedRun({ threadId, sourceRunId: runId });
+      yield* resumeQueueAfterRestart({ threadId, effectId: `${name}:1`, releaseHeld: false });
+      yield* continueAll;
+      yield* continueRestartedRun({ threadId, sourceRunId: runId });
+      yield* resumeQueueAfterRestart({ threadId, effectId: `${name}:2`, releaseHeld: false });
+      const after = yield* orchestrator.getThreadProjection(threadId);
+      const textOf = (messageId: string) =>
+        after.messages.find((message) => message.id === messageId)?.text;
+      assert.deepEqual(
+        after.runs.map((run) => [
+          run.status,
+          run.restartContinuationOfRunId === runId ? "continuation" : textOf(run.userMessageId),
+          run.queueHeld === true,
+        ]),
+        [
+          ["interrupted", "Start work.", false],
+          ["cancelled", "First follow-up.", false],
+          ["cancelled", "Second follow-up.", false],
+          [after.runs[3]!.status, "continuation", false],
+          ["queued", "First follow-up.", false],
+          ["queued", "Second follow-up.", false],
+        ],
+      );
+      assert.notEqual(after.runs[3]!.status, "queued");
+    }),
+  );
+
+  it.effect("holds the queue for the person when they stop the turn", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(recentTime);
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const name = "person-stop-holds";
+      const threadId = yield* startedThread(name);
+      const first = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!.id;
+      const queuedId = yield* queueMessage(name, threadId, "Later.");
+      // Stop: the interrupt holds the rest of the thread.
+      yield* interruptRun(name, threadId, first, "user", true);
+      const after = yield* orchestrator.getThreadProjection(threadId);
+      const held = after.runs.find((run) => run.id === queuedId)!;
+      assert.deepEqual(
+        [held.status, held.queueHeld, held.queueHeldForRestart],
+        ["queued", true, undefined],
+      );
+    }),
+  );
+
+  // A person held this queue (Stop) before the update cut the turn off. The
+  // continuation resumes the turn and leaves the held messages for the person;
+  // a message the update cancelled is queued again behind that hold. The hold is
+  // written as versions before the restart mark saved it.
+  it.effect("keeps a queue a person held when it continues the turn", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(recentTime);
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const name = "person-held-queue";
+      const threadId = yield* startedThread(name);
+      const first = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!.id;
+      const heldId = yield* queueMessage(name, threadId, "Wait for me.");
+      const cancelledId = yield* queueMessage(name, threadId, "Cancelled by the update.");
+      yield* orchestrator.dispatch({
+        type: "queued-run.cancel",
+        commandId: CommandId.make(`${name}:cancel`),
+        threadId,
+        runId: cancelledId,
+        cause: "service_update",
+      });
+      const held = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
+        (run) => run.id === heldId,
+      )!;
+      const now = yield* DateTime.now;
+      yield* eventSink.write({
+        commandId: CommandId.make(`${name}:hold`),
+        events: [
+          {
+            id: EventId.make(`${name}:hold`),
+            type: "run.updated",
+            threadId,
+            runId: heldId,
+            occurredAt: now,
+            payload: { ...held, queueHeld: true },
+          },
+        ],
+      });
+      const runId = yield* interruptRun(name, threadId, first, "service_update");
+      yield* continueAll;
+      yield* continueRestartedRun({ threadId, sourceRunId: runId });
+      const after = yield* orchestrator.getThreadProjection(threadId);
+      assert.equal(
+        after.runs.find((run) => run.restartContinuationOfRunId === runId)?.threadId,
+        threadId,
+      );
+      const stillHeld = after.runs.find((run) => run.id === heldId)!;
+      assert.deepEqual([stillHeld.status, stillHeld.queueHeld], ["queued", true]);
+      yield* resumeQueueAfterRestart({ threadId, effectId: `${name}:requeue`, releaseHeld: true });
+      const requeued = yield* orchestrator.getThreadProjection(threadId);
+      assert.deepEqual(
+        requeued.runs
+          .filter((run) => run.status === "queued")
+          .map((run) => [run.userMessageId, run.queueHeld, run.queueHeldForRestart]),
+        [
+          [held.userMessageId, true, undefined],
+          [`message:update-requeue:${cancelledId}`, true, undefined],
+        ],
+      );
+    }),
+  );
+
+  // When the update cannot interrupt a turn it stops the thread. That Stop holds
+  // the queue for the restart, which releases it with the continuation.
+  it.effect("holds the queue for the restart when the update stops the thread", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(recentTime);
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const name = "update-stop-holds";
+      const threadId = yield* startedThread(name);
+      const queuedId = yield* queueMessage(name, threadId, "Behind the update.");
+      yield* orchestrator.dispatch({
+        type: "thread.stop",
+        commandId: CommandId.make(`${name}:stop`),
+        threadId,
+        reason: "SpecWithCode is updating",
+        cause: "service_update",
+      });
+      const after = yield* orchestrator.getThreadProjection(threadId);
+      const held = after.runs.find((run) => run.id === queuedId)!;
+      assert.deepEqual(
+        [held.status, held.queueHeld, held.queueHeldForRestart],
+        ["queued", true, true],
+      );
+    }),
+  );
+
+  // Messages queued behind a turn the restart cut off are held by the restart
+  // itself (its shutdown recovery); the continuation releases them to run after it.
+  it.effect("releases the queue the restart held when it continues the turn", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(recentTime);
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const name = "restart-held-queue";
+      const threadId = yield* startedThread(name);
+      const first = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!.id;
+      const queuedId = yield* queueMessage(name, threadId, "After the update.");
+      const queued = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
+        (run) => run.id === queuedId,
+      )!;
+      const now = yield* DateTime.now;
+      yield* eventSink.write({
+        commandId: CommandId.make(`${name}:hold`),
+        events: [
+          {
+            id: EventId.make(`${name}:hold`),
+            type: "run.updated",
+            threadId,
+            runId: queuedId,
+            occurredAt: now,
+            payload: holdForRestart(queued),
+          },
+        ],
+      });
+      const runId = yield* interruptRun(name, threadId, first, "service_update");
+      yield* continueAll;
+      yield* continueRestartedRun({ threadId, sourceRunId: runId });
+      const after = yield* orchestrator.getThreadProjection(threadId);
+      assert.equal(
+        after.runs.find((run) => run.restartContinuationOfRunId === runId)?.threadId,
+        threadId,
+      );
+      const released = after.runs.find((run) => run.id === queuedId)!;
+      assert.deepEqual(
+        [released.status, released.queueHeld === true, released.queueHeldForRestart],
+        ["queued", false, undefined],
       );
     }),
   );

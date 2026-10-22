@@ -85,31 +85,4 @@ export function restartContinuationNote(message: { readonly id: string }): strin
   return kind === "update" ? "Resumed after update" : "Resumed after restart";
 }
 
-/**
- * The thread runs on a limit fallback: the last usage-limit continuation moved
- * it off `original`, and no later run has gone back. Null once a run returns to
- * the original provider or the thread's next turn is set there, and after a
- * move off a provider that could not start, which has nothing to go back to.
- */
-export function limitFallbackPairing(
-  messages: ReadonlyArray<{ readonly id: string; readonly runId?: string | null | undefined }>,
-  runs: readonly Run[],
-  current: RunSelection,
-): { readonly original: RunSelection; readonly stoppedRunId: string } | null {
-  const continuation = messages.findLast((message) => {
-    const kind = limitContinuationKind(message.id);
-    return kind === "fallback" || kind === "provider-fallback";
-  });
-  if (continuation === undefined || limitContinuationKind(continuation.id) !== "fallback")
-    return null;
-  const stopped = continuedRun(continuation.id, runs);
-  const original = stopped?.modelSelection;
-  if (stopped === undefined || original === undefined || current.instanceId === original.instanceId)
-    return null;
-  const stoppedRunId = stopped.id;
-  const ownIndex = continuation.runId ? runs.findIndex((run) => run.id === continuation.runId) : -1;
-  const returned = runs
-    .slice(ownIndex >= 0 ? ownIndex + 1 : runs.length)
-    .some((run) => run.modelSelection?.instanceId === original.instanceId);
-  return returned ? null : { original, stoppedRunId };
-}
+export { limitFallbackPairing } from "@specweave-studio/shared/threadModelIdentity";

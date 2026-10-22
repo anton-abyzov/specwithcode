@@ -14,7 +14,10 @@ import {
   ORCHESTRATION_V2_PROVIDER_UNAVAILABLE_FAILURE_CODE,
   ProjectEnvironmentError,
 } from "@specweave-studio/contracts";
-import { providerFailureFallbackMessage } from "@specweave-studio/shared/orchestrationV2ThreadError";
+import {
+  providerFailureFallbackMessage,
+  unwrapProviderErrorMessage,
+} from "@specweave-studio/shared/orchestrationV2ThreadError";
 import * as DateTime from "effect/DateTime";
 import * as Cause from "effect/Cause";
 import * as Schema from "effect/Schema";
@@ -368,7 +371,10 @@ export function makeProviderFailure(input: {
   // untranslated cause text stays in the server log.
   const fallbackMessage = providerFailureFallbackMessage(failureClass);
   const rawMessage = input.message ?? causeMessage(input.cause) ?? fallbackMessage;
-  const message = boundedText(rawMessage, MAX_PROVIDER_FAILURE_MESSAGE_LENGTH);
+  const message = boundedText(
+    unwrapProviderErrorMessage(rawMessage),
+    MAX_PROVIDER_FAILURE_MESSAGE_LENGTH,
+  );
   const rawCode =
     input.code ??
     (setup?.unavailable && failureClass !== "usage_limit"

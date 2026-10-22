@@ -1,4 +1,5 @@
 import * as OtelEnvironment from "@specweave-studio/shared/otelEnvironment";
+import * as AgentSessionScanner from "../../project/AgentSessionScanner.ts";
 import { DEFAULT_SIGNAL_EXPORT } from "@specweave-studio/shared/observability";
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import type { ProviderDriverKind, ProviderReplayTranscript } from "@specweave-studio/contracts";
@@ -264,6 +265,8 @@ export function layerWithRegistry<Error>(
     // as server startup does after a crash or restart.
     readonly recoverOnStartup?: boolean;
     readonly continueThreadsAfterServerUpdate?: boolean;
+    // Native transcript lookup for handoff pointers; absent in most fixtures.
+    readonly agentSessions?: AgentSessionScanner.AgentSessionScanner["Service"];
   } = {},
 ): Layer.Layer<
   | Orchestrator.OrchestratorV2
@@ -384,6 +387,9 @@ export function layerWithRegistry<Error>(
         }),
         layerRunExecutionServiceProvided,
         layerRuntime,
+        options.agentSessions === undefined
+          ? Layer.empty
+          : Layer.succeed(AgentSessionScanner.AgentSessionScanner, options.agentSessions),
       ),
     ),
   );

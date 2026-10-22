@@ -10,7 +10,10 @@ import {
   type ServerProvider,
   ThreadId,
 } from "@specweave-studio/contracts";
-import { latestRootProviderFailure } from "@specweave-studio/shared/orchestrationV2ThreadError";
+import {
+  isContextHandoffBudgetMessage,
+  latestRootProviderFailure,
+} from "@specweave-studio/shared/orchestrationV2ThreadError";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -19,10 +22,7 @@ import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
-import {
-  CONTEXT_HANDOFF_BUDGET_FAILURE_CODE,
-  CONTEXT_HANDOFF_BUDGET_MESSAGE_PREFIX,
-} from "./ContextHandoffDelivery.ts";
+import { CONTEXT_HANDOFF_BUDGET_FAILURE_CODE } from "./ContextHandoffDelivery.ts";
 import {
   CONTEXT_COMPACT_MESSAGE_PREFIX,
   CONTEXT_RETRY_MESSAGE_PREFIX,
@@ -64,9 +64,14 @@ import {
  * request is still resent after them. A compaction that fails because its
  * provider could not open or ran into a usage limit is left to the provider
  * fallback and limit recovery; once their continuation of it ends, the
- * request is resent as after the compaction itself. There is no command that
- * starts a fresh native session on the same provider, so step 3 does not try
- * one.
+ * request is resent as after the compaction itself.
+ *
+ * A handoff that does not fit (`ContextHandoffBudgetError`) is not compacted:
+ * the turn start already replaces a native session too full for the handoff,
+ * so what is left does not fit even a fresh session of that model, and
+ * compaction cannot shrink the request. That stop, and step 3, belong to the
+ * provider fallback, which moves the thread to a model whose window holds it
+ * (see `contextOverflowStop`).
  */
 
 export {
@@ -113,12 +118,21 @@ type FailureFacts = Pick<OrchestrationV2ProviderFailure, "class" | "code" | "mes
 const isOwnedElsewhere = (failure: FailureFacts): boolean =>
   failure.class === "usage_limit" || isOpenFailure({ retryable: null, ...failure });
 
+/** Whether a run failed because its handoff to the provider did not fit, in either wording. */
+function isContextHandoffBudgetFailure(failure: FailureFacts | null | undefined): boolean {
+  if (failure == null || isOwnedElsewhere(failure)) return false;
+  return (
+    failure.code === CONTEXT_HANDOFF_BUDGET_FAILURE_CODE ||
+    isContextHandoffBudgetMessage(failure.message)
+  );
+}
+
 /** Whether a run failed because its conversation does not fit the model. */
 export function isContextOverflowFailure(failure: FailureFacts | null | undefined): boolean {
   if (failure == null || isOwnedElsewhere(failure)) return false;
   if (failure.code != null && OVERFLOW_CODES.has(failure.code)) return true;
   return (
-    failure.message.startsWith(CONTEXT_HANDOFF_BUDGET_MESSAGE_PREFIX) ||
+    isContextHandoffBudgetMessage(failure.message) ||
     OVERFLOW_MESSAGES.some((pattern) => pattern.test(failure.message))
   );
 }
@@ -149,8 +163,10 @@ type RecoveryThread = Pick<
  * Whether the shell alone allows a recovery step: the latest run ended
  * recently and nothing else is going on. Busy threads, questions that hold
  * the thread (an approval or live question, see isBlockingRuntimeRequest; a
- * shell summary without the request's detail counts as one), settled threads
- * and delegated subagents are left alone. A held queue is read from the runs
+ * shell summary without the request's detail counts as one) and settled
+ * threads are left alone. A delegated subagent is recovered too: someone is
+ * waiting for its answer, and the per-thread cap keeps it from repeating.
+ * A held queue is read from the runs
  * (`queueAllowsRecovery`): the failure itself holds it.
  */
 export function isContextRecoveryCandidate(thread: RecoveryThread, nowMs: number): boolean {
@@ -161,7 +177,6 @@ export function isContextRecoveryCandidate(thread: RecoveryThread, nowMs: number
     isBlockingRuntimeRequest(thread, thread.latestRunId) ||
     (thread.activityRunStatus ?? null) !== null ||
     thread.settledOverride === "settled" ||
-    thread.lineage.relationshipToParent === "subagent" ||
     (thread.status !== "failed" && thread.status !== "completed") ||
     (thread.status === "failed" && thread.lastErrorClass === "usage_limit")
   )
@@ -227,7 +242,11 @@ export type ContextRecoveryStep =
   | {
       readonly type: "stop";
       readonly failedRunId: OrchestrationV2Run["id"];
-      readonly reason: "compact-overflowed" | "retry-overflowed" | "no-compaction";
+      readonly reason:
+        | "compact-overflowed"
+        | "retry-overflowed"
+        | "no-compaction"
+        | "handoff-too-large";
     };
 
 /**
@@ -258,6 +277,8 @@ export function contextRecoveryStep(
   const retried = recoveredRunId(run.userMessageId, CONTEXT_RETRY_MESSAGE_PREFIX, threadId);
   if (retried !== null)
     return overflowed ? { type: "stop", failedRunId: retried, reason: "retry-overflowed" } : null;
+  if (overflowed && isContextHandoffBudgetFailure(failure))
+    return { type: "stop", failedRunId: run.id, reason: "handoff-too-large" };
   return overflowed ? { type: "compact", failedRunId: run.id } : null;
 }
 

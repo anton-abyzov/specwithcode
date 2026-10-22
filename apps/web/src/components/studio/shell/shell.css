@@ -909,11 +909,32 @@ html.dark[data-theme-id=""] [data-app-sidebar] {
   outline: 2px solid var(--ring);
   outline-offset: 1px;
 }
-/* The saved model stays in the picker, quieter than the line that says what runs now. */
-.sws-composer-foot[data-model-fallback]
-  .sws-model-pick
-  .sws-model-trigger:not(.sws-effort-trigger) {
+.sws-model-fallback-label {
   color: var(--muted-foreground);
+}
+.sws-model-fallback-now strong {
+  color: var(--foreground);
+}
+.sws-model-fallback[data-model-fallback-live] > svg {
+  animation: sws-model-live 1.6s ease-in-out infinite;
+}
+@keyframes sws-model-live {
+  50% {
+    opacity: 0.35;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sws-model-fallback[data-model-fallback-live] > svg {
+    animation: none;
+  }
+}
+/* The chip names the model that runs now; an amber ring says it is not the saved pick. */
+.sws-model-pick[data-off-pick] {
+  gap: 4px;
+}
+.sws-model-pick[data-off-pick] .sws-model-trigger:not(.sws-effort-trigger) {
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--warning) 55%, transparent);
+  background: color-mix(in srgb, var(--warning) 8%, transparent);
 }
 
 .sws-model-pick-loading {

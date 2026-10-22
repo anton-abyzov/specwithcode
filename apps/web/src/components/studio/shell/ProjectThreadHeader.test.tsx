@@ -24,6 +24,13 @@ vi.mock("../../../state/use-orchestration-command", () => ({
 }));
 vi.mock("./ModelBadge", () => ({
   ModelBadge: (props: { model: string }) => <span className="sws-model">{props.model}</span>,
+  ThreadModelBadge: (props: {
+    thread: { modelSelection: { model: string }; modelIdentity?: { current: { model: string } } };
+  }) => (
+    <span className="sws-model">
+      {props.thread.modelIdentity?.current.model ?? props.thread.modelSelection.model}
+    </span>
+  ),
   useProviderEntriesByEnvironment: () => new Map(),
   useProviderEntries: () => new Map(),
 }));
@@ -65,11 +72,11 @@ const subagent = (key: string): SubagentEntry => ({
   depth: 0,
 });
 const SUBAGENTS = [subagent("a"), subagent("b")];
-const render = (expanded = false) =>
+const render = (expanded = false, overrides: Partial<EnvironmentThreadShell> = {}) =>
   act(() =>
     root.render(
       <ProjectThreadHeader
-        thread={thread}
+        thread={{ ...thread, ...overrides }}
         subagents={SUBAGENTS}
         onPeekSubagent={vi.fn()}
         providerEntry={null}
@@ -96,6 +103,22 @@ afterEach(() => {
 });
 
 describe("an open thread's header", () => {
+  it("shows the authoritative active model instead of the persisted next model", async () => {
+    await render(false, {
+      modelIdentity: {
+        current: { instanceId: thread.modelSelection.instanceId, model: "active-model" },
+        preferred: thread.modelSelection,
+        kind: "running",
+      },
+    });
+    expect(container.querySelector(".sws-thread-head-chips")?.textContent).toContain(
+      "active-model",
+    );
+    expect(container.querySelector(".sws-thread-head-chips")?.textContent).not.toContain(
+      "worker-model",
+    );
+  });
+
   it("is one row: Threads breadcrumb, title, chips and the thread's controls", async () => {
     await render();
     const rows = container.querySelectorAll(".sws-pane-head");

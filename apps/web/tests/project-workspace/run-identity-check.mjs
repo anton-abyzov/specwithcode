@@ -17,41 +17,54 @@ const browser = await chromium.launch({
 });
 const base = `http://127.0.0.1:${process.env.PROJECT_UI_PORT ?? 5788}/`;
 // `?fallback`: a project on another machine whose coordinator the usage-limit rule
-// moved from Claude to Codex. Machine, provider and model must read plainly everywhere.
+// moved from Claude to Codex. `?fallback=gemini` is the October 22 live case: Claude
+// reads as having room, yet the coordinator runs on Gemini. Either way the composer must
+// name the model it is on first, then the saved pick, never the pick alone.
 try {
   const results = {};
-  for (const [width, scheme] of [
-    [1440, "dark"],
-    [1440, "light"],
-    [1000, "light"],
-  ]) {
-    const page = await browser.newPage({ viewport: { width, height: 900 }, colorScheme: scheme });
-    await page.goto(`${base}?fallback`);
-    await page.locator("p[data-model-fallback]").waitFor();
-    const read = {
-      fallback: await page.locator("p[data-model-fallback]").innerText(),
-      machine: await page.locator("[data-project-machine]").innerText(),
-      host: await page.locator(".sws-host-name").first().innerText(),
-      notes: await page.locator(".project-inline-notice").allInnerTexts(),
-      userBubbles: await page.locator(".project-message-user").count(),
-      headers: await page.locator("[data-request-execution]").allInnerTexts(),
-      usage: await page.locator(".sws-composer-meta").innerText(),
-    };
-    NodeAssert.match(read.fallback, /Claude Code limit reached/);
-    NodeAssert.match(read.fallback, /running on Codex · GPT-6\.1 Sol/);
-    NodeAssert.match(read.fallback, /Switch back/);
-    NodeAssert.ok(read.machine.trim(), "the header names the machine that runs the project");
-    NodeAssert.ok(read.host.trim(), "the composer names the machine, not just a dot");
-    NodeAssert.deepEqual(read.notes, [
-      "Claude Code limit reached · continued on Codex · GPT-6.1 Sol",
-    ]);
-    NodeAssert.equal(read.userBubbles, 1, "the resent request is a note, not a second bubble");
-    for (const header of read.headers)
-      NodeAssert.doesNotMatch(header, /claudeAgent|claude-opus|gpt-6\.1-sol/, "friendly names");
-    await page.screenshot({ path: NodePath.join(output, `run-identity-${width}-${scheme}.png`) });
-    results[`${width}-${scheme}`] = read;
-    await page.close();
-  }
+  for (const [variant, now] of [
+    ["fallback", /^Now on Codex · GPT-6\.1 Sol\.$/],
+    ["fallback=gemini", /^Now on Gemini · Default\.$/],
+  ])
+    for (const [width, scheme] of [
+      [1440, "dark"],
+      [1440, "light"],
+      [1000, "light"],
+    ]) {
+      const page = await browser.newPage({ viewport: { width, height: 900 }, colorScheme: scheme });
+      await page.goto(`${base}?${variant}`);
+      await page.locator("p[data-model-fallback]").waitFor();
+      const read = {
+        now: await page.locator("[data-model-now]").innerText(),
+        pick: await page.locator("[data-model-pick]").innerText(),
+        chip: await page.locator("[data-coordinator-model-controls]").first().innerText(),
+        tag: await page.locator('[data-model-state="fallback"]').innerText(),
+        machine: await page.locator("[data-project-machine]").innerText(),
+        host: await page.locator(".sws-host-name").first().innerText(),
+        notes: await page.locator(".project-inline-notice").allInnerTexts(),
+        userBubbles: await page.locator(".project-message-user").count(),
+        headers: await page.locator("[data-request-execution]").allInnerTexts(),
+      };
+      NodeAssert.match(read.now, now);
+      NodeAssert.equal(read.pick, "Your pick: Claude Code · Opus 5.5.");
+      // The chip itself names the model that runs, not the pick.
+      const chipModel = read.chip.split("\n").slice(0, 3).join(" ");
+      NodeAssert.equal(`Now on ${chipModel}.`, read.now);
+      NodeAssert.equal(read.tag, "Fallback for Opus 5.5");
+      NodeAssert.match(await page.locator("p[data-model-fallback]").innerText(), /Switch back/);
+      NodeAssert.ok(read.machine.trim(), "the header names the machine that runs the project");
+      NodeAssert.ok(read.host.trim(), "the composer names the machine, not just a dot");
+      NodeAssert.equal(read.userBubbles, 1, "the resent request is a note, not a second bubble");
+      for (const header of read.headers)
+        NodeAssert.doesNotMatch(header, /claudeAgent|claude-opus|gpt-6\.1-sol/, "friendly names");
+      const name = `run-identity-${variant.replace("=", "-")}-${width}-${scheme}`;
+      await page.screenshot({ path: NodePath.join(output, `${name}.png`) });
+      const composer = page.locator(".sws-composer").first();
+      if (await composer.count())
+        await composer.screenshot({ path: NodePath.join(output, `${name}-composer.png`) });
+      results[name] = read;
+      await page.close();
+    }
   await NodeFSP.writeFile(
     NodePath.join(output, "run-identity.json"),
     JSON.stringify(results, null, 2),

@@ -7,7 +7,11 @@ import {
   type ServerProvider,
 } from "@specweave-studio/contracts";
 import { describe, expect, it } from "vite-plus/test";
-import { resolveCoordinatorTurnSelection } from "@specweave-studio/shared/providerFallback";
+import {
+  coordinatorOnLimitFallback,
+  isPerTokenProvider,
+  resolveCoordinatorTurnSelection,
+} from "@specweave-studio/shared/providerFallback";
 
 import { coordinatorModelDisplay, type CoordinatorRunSummary } from "./coordinatorRunningModel";
 
@@ -91,14 +95,66 @@ describe("coordinatorModelDisplay", () => {
       shown: codex,
       fallback: null,
     });
-    // Codex has room again: a Copilot run left over from the fallback is no limit.
+  });
+
+  it("shows what the coordinator is on, not a guess about its next turn", () => {
+    // Codex reads as having room again, but the host can still hold it back on
+    // evidence this client lacks: the chip names Copilot, with no limit reason.
+    const result = display({
+      thread: copilot,
+      runs: [run(1, copilot, "completed")],
+      providers: [provider("codex", 40), provider("copilot", null)],
+    });
+    expect(result.shown).toEqual(copilot);
+    expect(result.fallback).toMatchObject({
+      saved: codex,
+      now: copilot,
+      live: false,
+      reason: null,
+    });
+    // Without a usage read or rule it still names the model it is on.
+    expect(display({ thread: copilot, providers: null }).shown).toEqual(copilot);
+    expect(display({ thread: copilot, rule: null }).fallback).toMatchObject({ reason: null });
+  });
+
+  it("keeps the idle Gemini identity when the saved Console-billed Claude is excluded, not limited", () => {
+    const gemini = select("acpRegistry_gemini", "default");
+    const consoleClaude: ServerProvider = {
+      ...provider("claudeAgent", null),
+      auth: { status: "authenticated", apiKeyBilling: true },
+    };
+    const providers = [
+      consoleClaude,
+      {
+        ...provider("acpRegistry_gemini", null),
+        driver: ProviderDriverKind.make("acpRegistry"),
+        displayName: "Gemini CLI (Vertex AI)",
+      },
+    ];
+    expect(isPerTokenProvider(consoleClaude)).toBe(true);
     expect(
-      display({
-        thread: copilot,
-        runs: [run(1, copilot, "completed")],
-        providers: [provider("codex", 40), provider("copilot", null)],
-      }),
-    ).toEqual({ shown: codex, fallback: null });
+      coordinatorOnLimitFallback({ saved: claude, thread: gemini, providers, rule, nowMs }),
+    ).toBe(false);
+    const result = display({
+      saved: claude,
+      picked: claude,
+      thread: gemini,
+      runs: Array.from({ length: 8 }, (_, index) => run(666 + index, gemini, "completed")),
+      providers,
+      limitedInstanceIds: new Set(),
+    });
+    expect(result.shown).toEqual(gemini);
+    expect(result.fallback).toMatchObject({
+      saved: claude,
+      now: gemini,
+      live: false,
+      reason: null,
+    });
+  });
+
+  it("treats another model on the saved provider as off the pick", () => {
+    const astra = { ...codex, model: "gpt-6-astra" };
+    expect(display({ thread: astra }).fallback).toMatchObject({ now: astra, reason: null });
   });
 
   it("shows Copilot while the Codex limit runs the coordinator there", () => {
@@ -139,8 +195,13 @@ describe("coordinatorModelDisplay", () => {
 
   it("shows a model picked by hand after the fallback", () => {
     const runs = [run(1, codex, "failed"), run(2, copilot, "completed")];
-    // Picked Claude, which has room: the fallback is over and the pick is shown.
-    expect(display({ picked: claude, saved: claude, thread: copilot, runs })).toEqual({
+    // Picked Claude: until a turn runs there, the chip names Copilot and the line
+    // names Claude as the pick, so neither claims the other.
+    expect(display({ picked: claude, saved: claude, thread: copilot, runs })).toMatchObject({
+      shown: copilot,
+      fallback: { saved: claude, now: copilot, reason: null },
+    });
+    expect(display({ picked: claude, saved: claude, thread: claude, runs })).toEqual({
       shown: claude,
       fallback: null,
     });
@@ -196,13 +257,14 @@ describe("coordinatorModelDisplay", () => {
   it.each(["preparing", "queued", "starting", "running", "waiting"] as const)(
     "shows the admitted %s model when the saved provider regains quota",
     (status) => {
-      expect(
-        display({
-          thread: codex,
-          runs: [run(2, copilot, status)],
-          providers: [provider("codex", 40), provider("copilot", null)],
-        }),
-      ).toEqual({ shown: copilot, fallback: null });
+      const result = display({
+        thread: codex,
+        runs: [run(2, copilot, status)],
+        providers: [provider("codex", 40), provider("copilot", null)],
+      });
+      expect(result.shown).toEqual(copilot);
+      // The turn runs there now; the saved model's room only drops the limit reason.
+      expect(result.fallback).toMatchObject({ now: copilot, live: true, reason: null });
     },
   );
 

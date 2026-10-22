@@ -622,6 +622,12 @@ export const OrchestrationV2Run = Schema.Struct({
   queuePosition: Schema.optional(Schema.NullOr(PositiveInt)),
   /** Restart recovery holds the queue until the user explicitly resumes it. */
   queueHeld: Schema.optional(Schema.Boolean),
+  /**
+   * The restart (or update) held this queue, so its continuation releases it. A hold
+   * without this mark (Stop, a failure, or one saved before the mark existed) is the
+   * person's, and only the person releases it.
+   */
+  queueHeldForRestart: Schema.optional(Schema.Boolean),
   /** A service update cancelled this queued run; the restart queues its message again. */
   cancelledForUpdate: Schema.optional(Schema.Boolean),
   requestedAt: Schema.DateTimeUtc,
@@ -1944,6 +1950,14 @@ export const OrchestrationV2ThreadPlanProgress = Schema.Struct({
 export type OrchestrationV2ThreadPlanProgress = typeof OrchestrationV2ThreadPlanProgress.Type;
 
 export const OrchestrationV2ThreadShell = Schema.Struct({
+  /** Authoritative current and preferred models, independent of client drafts. */
+  modelIdentity: Schema.optional(
+    Schema.Struct({
+      current: ModelSelection,
+      preferred: Schema.NullOr(ModelSelection),
+      kind: Schema.NullOr(Schema.Literals(["fallback", "running"])),
+    }),
+  ),
   ...OrchestrationV2CreationFields,
   id: ThreadId,
   projectId: ProjectId,

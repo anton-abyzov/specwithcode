@@ -54,6 +54,11 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   triggerClassName?: string;
   /** Aggregate settings can show a neutral value without claiming one provider is selected. */
   triggerLabel?: string;
+  /** Text for a trigger that still names the active provider, so its icon stays. */
+  triggerText?: string;
+  /** Provider mark for the active execution label, independent of the next-send menu selection. */
+  triggerInstanceId?: ProviderInstanceId;
+  triggerModel?: string;
   /** Nothing is chosen yet, so `activeInstanceId` only says where the list opens. */
   unset?: boolean;
   triggerAriaLabel?: string;
@@ -108,17 +113,26 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   const triggerLabel = selectedModel
     ? `${getTriggerDisplayModelLabel(selectedModel)}${selectedModel.isUnavailable ? " (Unavailable)" : ""}`
     : triggerTitle;
+  const triggerEntry = props.triggerInstanceId
+    ? (props.instanceEntries.find((entry) => entry.instanceId === props.triggerInstanceId) ??
+      activeEntry)
+    : activeEntry;
   const showInstanceBadge =
-    activeEntry !== null && shouldShowInstanceBadge(activeEntry, props.instanceEntries);
+    triggerEntry !== null && shouldShowInstanceBadge(triggerEntry, props.instanceEntries);
   const usage = useModelPickerUsage(props.usage, props.instanceEntries, isMenuOpen);
   const showsSingleModel =
     props.selectedModels === undefined && props.triggerLabel === undefined && !props.unset;
   const selectedUsage =
-    usage && activeEntry && showsSingleModel
-      ? usage.availability(activeInstanceId, selectedModel?.slug ?? props.model)
+    usage && triggerEntry && showsSingleModel
+      ? usage.availability(
+          props.triggerInstanceId ?? activeInstanceId,
+          props.triggerModel ?? selectedModel?.slug ?? props.model,
+        )
       : null;
   const selectedUsageCopy =
-    usage && selectedUsage ? usage.text(activeInstanceId, selectedUsage) : null;
+    usage && selectedUsage
+      ? usage.text(props.triggerInstanceId ?? activeInstanceId, selectedUsage)
+      : null;
   const selectedUsageText = selectedUsageCopy?.long ?? null;
 
   const setIsMenuOpen = (open: boolean) => {
@@ -213,7 +227,11 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   const allModelNames = selectedEntries
     ? selectedEntries.map((selection) => selection.label).join(", ") || "Choose models"
     : undefined;
-  const triggerName = props.triggerLabel ?? allModelNames ?? triggerLabel;
+  const activeText = props.triggerText;
+  const triggerName =
+    props.triggerLabel ??
+    allModelNames ??
+    (activeText ? `${activeText}. Next message: ${triggerLabel}` : triggerLabel);
   const triggerTooltipContent = shortcutLabel ? `${triggerName} · ${shortcutLabel}` : triggerName;
 
   return (
@@ -275,13 +293,13 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
                 </span>
               ) : null}
             </span>
-          ) : activeEntry && props.triggerLabel === undefined ? (
+          ) : triggerEntry && props.triggerLabel === undefined ? (
             <ProviderInstanceIcon
-              driverKind={activeEntry.driverKind}
-              displayName={activeEntry.displayName}
-              accentColor={activeEntry.accentColor}
-              acpRegistryAgentId={activeEntry.acpRegistryAgentId}
-              acpRegistryIconUrl={activeEntry.acpRegistryIconUrl}
+              driverKind={triggerEntry.driverKind}
+              displayName={triggerEntry.displayName}
+              accentColor={triggerEntry.accentColor}
+              acpRegistryAgentId={triggerEntry.acpRegistryAgentId}
+              acpRegistryIconUrl={triggerEntry.acpRegistryIconUrl}
               showBadge={showInstanceBadge}
               className="size-4"
               iconClassName={cn("size-4", props.activeProviderIconClassName)}
@@ -301,7 +319,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
                 />
               }
             >
-              {props.triggerLabel ?? multipleLabel ?? triggerTitle}
+              {props.triggerLabel ?? multipleLabel ?? props.triggerText ?? triggerTitle}
             </TooltipTrigger>
             <TooltipPopup side="top">
               {selectedUsageText ? (
@@ -323,7 +341,10 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
                 : {})}
             />
           ) : null}
-          {selectedModel?.isUnavailable && !selectedEntries && props.triggerLabel === undefined ? (
+          {selectedModel?.isUnavailable &&
+          !props.triggerText &&
+          !selectedEntries &&
+          props.triggerLabel === undefined ? (
             <Badge variant="outline" size="sm">
               Unavailable
             </Badge>

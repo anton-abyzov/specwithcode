@@ -66,6 +66,12 @@ describe("continuationExpected", () => {
     expect(Reopen.continuationExpected(continued, "r2", true)).toBe(true);
     const queuedBehind = [run("r2", 2, "interrupted"), run("r3", 3, "queued")] as never;
     expect(Reopen.continuationExpected(queuedBehind, "r2", true)).toBe(true);
+    // The update cancels the messages queued behind the turn before it stops it.
+    const cancelledBehind = [
+      run("r2", 2, "interrupted"),
+      run("r3", 3, "cancelled", { cancelledForUpdate: true }),
+    ] as never;
+    expect(Reopen.continuationExpected(cancelledBehind, "r2", true)).toBe(true);
   });
 });
 

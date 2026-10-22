@@ -502,6 +502,10 @@
     "./projectOrigin": {
       "types": "./src/projectOrigin.ts",
       "import": "./src/projectOrigin.ts"
+    },
+    "./threadModelIdentity": {
+      "types": "./src/threadModelIdentity.ts",
+      "import": "./src/threadModelIdentity.ts"
     }
   },
   "scripts": {

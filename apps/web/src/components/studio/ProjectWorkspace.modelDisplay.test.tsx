@@ -67,17 +67,27 @@ describe("ProjectWorkspace actual coordinator picker", () => {
       state.providers = [provider("codex", "codex", 100), provider("copilot", "copilot")];
       await render();
       expect(modelButton()?.getAttribute("aria-label")).toContain("Copilot");
-      expect(container.querySelector("[data-model-fallback-hint]")?.textContent).toBe(
-        "Codex after reset",
+      expect(modelButton()?.getAttribute("aria-label")).toContain("back to Codex after reset");
+      expect(container.querySelector('[data-model-state="fallback"]')?.textContent).toBe(
+        "Fallback for GPT-6.1 Sol",
+      );
+      expect(container.querySelector("[data-model-now]")?.textContent).toContain("Running now on");
+      expect(container.querySelector("[data-model-pick]")?.textContent).toContain(
+        "session limit reached",
       );
 
+      // Codex reads as having room again, but the turn still runs on Copilot: the
+      // chip and the line keep naming it, and only the limit reason goes.
       state.providers = [provider("codex", "codex", 20), provider("copilot", "copilot")];
       await render();
       expect(modelButton()?.getAttribute("aria-label")).toContain("running on");
       expect(modelButton()?.textContent).toContain("Copilot");
       expect(modelButton()?.textContent).toContain("GPT-6 Astra");
-      expect(container.querySelector("[data-model-fallback]")).toBeNull();
-      expect(container.querySelector("[data-model-fallback-hint]")).toBeNull();
+      expect(container.querySelector("[data-model-now]")?.textContent).toContain("GPT-6 Astra");
+      expect(container.querySelector("[data-model-pick]")?.textContent).toBe(
+        "Your pick: Codex · GPT-6.1 Sol.",
+      );
+      expect(container.querySelector('[data-model-state="fallback"]')).not.toBeNull();
       expect(modelButton()?.getAttribute("aria-label")).not.toContain("after reset");
       expect(state.coordinatorModel).toEqual(saved);
       expect(state.send).not.toHaveBeenCalled();
@@ -87,6 +97,8 @@ describe("ProjectWorkspace actual coordinator picker", () => {
       expect(modelButton()?.textContent).toContain("Codex");
       expect(modelButton()?.textContent).toContain("GPT-6.1 Sol");
       expect(modelButton()?.getAttribute("aria-label")).not.toContain("running on");
+      expect(container.querySelector("[data-model-fallback]")).toBeNull();
+      expect(container.querySelector('[data-model-state="fallback"]')).toBeNull();
     } finally {
       Object.assign(state.project, { workspaceSettings: undefined });
     }
@@ -107,7 +119,10 @@ describe("ProjectWorkspace actual coordinator picker", () => {
       expect(modelButton()?.textContent).toContain(
         active.instanceId === "copilot" ? "Copilot" : "Codex",
       );
-      expect(container.querySelector("[data-model-fallback-hint]")).toBeNull();
+      // Off the saved pick, the tag says so; with nothing saved there is no pick to be off.
+      expect(container.querySelector('[data-model-state="fallback"]') !== null).toBe(
+        preference !== null,
+      );
       expect(modelButton()?.getAttribute("aria-label")).not.toContain("after reset");
       expect(state.coordinatorModel).toEqual(preference);
       expect(state.send).not.toHaveBeenCalled();

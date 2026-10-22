@@ -710,7 +710,11 @@ describe("project coordinator actual policy precedence", () => {
 
 describe("CoordinatorModelPicker limit fallback", () => {
   const saved = { instanceId: "codex", model: "gpt-6" } as never;
-  const running = { value: { instanceId: "copilot", model: "gpt-6" } as never, returnsTo: "Codex" };
+  const running = {
+    value: { instanceId: "copilot", model: "gpt-6" } as never,
+    returnsTo: "Codex",
+    offPick: true,
+  };
 
   it("shows the provider that runs now with the way back, and a hand pick still saves", async () => {
     state.entries = [entry("codex", true), entry("copilot", true)];
@@ -718,9 +722,12 @@ describe("CoordinatorModelPicker limit fallback", () => {
     const { onChange } = await mount(false, { value: saved, running });
     expect(state.pickerProps).toMatchObject({ activeInstanceId: "copilot", model: "gpt-6" });
     expect(String(state.pickerProps!.triggerLabel)).toMatch(/^Copilot · /);
-    expect(container.querySelector("[data-model-fallback-hint]")?.textContent).toBe(
-      "Codex after reset",
-    );
+    // The chip names what runs; the tag beside it says that is not the saved pick.
+    const tag = container.querySelector('[data-model-state="fallback"]');
+    expect(tag?.textContent).toBe("Fallback for GPT-6");
+    expect(tag?.getAttribute("aria-label")).toContain("instead of your pick");
+    expect(tag?.getAttribute("aria-label")).toContain("back to Codex after its reset");
+    expect(container.querySelector(".sws-model-pick")?.hasAttribute("data-off-pick")).toBe(true);
     const pick = state.pickerProps!.onInstanceModelChange as (id: string, model: string) => void;
     await act(async () => pick("copilot", "gpt-6"));
     expect(onChange).toHaveBeenCalledExactlyOnceWith({ instanceId: "copilot", model: "gpt-6" });
@@ -733,7 +740,7 @@ describe("CoordinatorModelPicker limit fallback", () => {
     state.entries = [entry("codex", true)];
     await mount(false, { value: saved, running: null });
     expect(state.pickerProps).toMatchObject({ activeInstanceId: "codex" });
-    expect(container.querySelector("[data-model-fallback-hint]")).toBeNull();
+    expect(container.querySelector("[data-model-state]")).toBeNull();
   });
 
   it("shows an active selection without claiming a reset and keeps edits tied to the saved preference", async () => {
@@ -746,7 +753,10 @@ describe("CoordinatorModelPicker limit fallback", () => {
     expect(state.pickerProps).toMatchObject({ activeInstanceId: "copilot", model: "gpt-6" });
     expect(String(state.pickerProps!.triggerAriaLabel)).toContain("running on Copilot");
     expect(String(state.pickerProps!.triggerAriaLabel)).not.toContain("reset");
-    expect(container.querySelector("[data-model-fallback-hint]")).toBeNull();
+    // Off the saved pick without a known limit: still tagged, no reset claimed.
+    const tag = container.querySelector('[data-model-state="fallback"]');
+    expect(tag).not.toBeNull();
+    expect(tag?.getAttribute("aria-label")).not.toContain("reset");
     expect(state.traitsProps).toBeNull();
     const pick = state.pickerProps!.onInstanceModelChange as (id: string, model: string) => void;
     await act(async () => pick("codex", "gpt-6"));

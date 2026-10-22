@@ -1,13 +1,19 @@
 import type { OrchestrationV2ProviderFailureClass } from "@specweave-studio/contracts";
+import {
+  isContextLimitError,
+  providerFailureDisplayMessage,
+  providerFailureDisplayTitle,
+} from "@specweave-studio/shared/orchestrationV2ThreadError";
 import { memo } from "react";
 import { useClientSettings } from "../../hooks/useSettings";
 import { formatDisplayDates } from "../../lib/displayDates";
-import { Alert, AlertAction, AlertDescription } from "../ui/alert";
+import { Alert, AlertAction, AlertDescription, AlertTitle } from "../ui/alert";
 import { Button } from "../ui/button";
 import { CircleAlertIcon, XIcon } from "lucide-react";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { OpenAI } from "../Icons";
 import { ChatGptUsageButton } from "../settings/ChatGptUsageButton";
+import { ContextLimitRecovery, type ContextLimitRecoveryActions } from "./ContextLimitRecovery";
 
 export function getThreadErrorBannerKey(threadKey: string, error: string | null): string | null {
   return error === null ? null : `${threadKey}\u0000${error}`;
@@ -43,16 +49,21 @@ export const ThreadErrorBanner = memo(function ThreadErrorBanner({
   onDismiss,
   errorClass,
   chatGptUsageLimit = false,
+  contextLimitRecovery,
 }: {
   error: string | null;
   errorClass?: OrchestrationV2ProviderFailureClass | null;
   onDismiss?: () => void;
   chatGptUsageLimit?: boolean;
+  contextLimitRecovery?: ContextLimitRecoveryActions | undefined;
 }) {
   const timestampFormat = useClientSettings((settings) => settings.timestampFormat);
   if (!error) return null;
-  const displayError = formatDisplayDates(error, timestampFormat);
-  const variant = errorClass === "usage_limit" ? "warning" : "error";
+  const failure = { class: errorClass ?? "unknown", message: error } as const;
+  const cleanError = providerFailureDisplayMessage(failure);
+  const displayError = formatDisplayDates(cleanError, timestampFormat);
+  const contextLimit = errorClass !== "usage_limit" && isContextLimitError(error);
+  const variant = errorClass === "usage_limit" || contextLimit ? "warning" : "error";
   return (
     <div className="pointer-events-auto mx-auto w-fit max-w-[min(48rem,calc(100%-2rem))] pt-3">
       <Alert variant={variant} surface="lane" controlAlignment="first-line" data-variant={variant}>
@@ -61,6 +72,9 @@ export const ThreadErrorBanner = memo(function ThreadErrorBanner({
         ) : (
           <CircleAlertIcon />
         )}
+        {!chatGptUsageLimit ? (
+          <AlertTitle>{providerFailureDisplayTitle(failure)}</AlertTitle>
+        ) : null}
         <AlertDescription>
           {chatGptUsageLimit ? (
             <div className="space-y-1">
@@ -73,7 +87,9 @@ export const ThreadErrorBanner = memo(function ThreadErrorBanner({
                 render={
                   <div
                     className={
-                      displayError === error ? "line-clamp-3" : "whitespace-pre-wrap break-words"
+                      displayError === cleanError && !contextLimit
+                        ? "line-clamp-3"
+                        : "whitespace-pre-wrap break-words"
                     }
                   />
                 }
@@ -85,6 +101,7 @@ export const ThreadErrorBanner = memo(function ThreadErrorBanner({
               </TooltipPopup>
             </Tooltip>
           )}
+          {contextLimit ? <ContextLimitRecovery recovery={contextLimitRecovery} /> : null}
         </AlertDescription>
         {(chatGptUsageLimit || onDismiss) && (
           <AlertAction>

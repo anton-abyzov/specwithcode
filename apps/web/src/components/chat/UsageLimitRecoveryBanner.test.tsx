@@ -373,7 +373,7 @@ it("does not claim room for an original model that reports no usage", async () =
     onDismiss: () => {},
   });
   expect(stale.description).toBe(
-    "Claude · Claude Opus 5.5 stopped at its limit and its usage reading is out of date, so its room is unknown.",
+    "Claude · Claude Opus 5.5 stopped at its limit. Its last usage reading showed room but is out of date; switching back re-checks it.",
   );
 });
 it("knows a stood-in model has room only from a fresh usage reading", () => {
@@ -445,6 +445,23 @@ it("knows a stood-in model has room only from a fresh usage reading", () => {
   });
   expect(room(provider(null, "error"))).toEqual({ hasRoom: false });
   expect(room(undefined)).toEqual({ hasRoom: false });
+  // The coordinator running on it right now is room, whatever the reading's age.
+  const stale = provider({ usedPercent: 40, checkedAt: "2026-10-22T12:00:00.000Z" });
+  expect(
+    limitPairingRoom(stale, nowMs, "claude-opus-5-5", {
+      instanceId: ProviderInstanceId.make("claudeAgent"),
+    }),
+  ).toEqual({ hasRoom: true });
+  expect(
+    limitPairingRoom(stale, nowMs, "claude-opus-5-5", {
+      instanceId: ProviderInstanceId.make("codex"),
+    }),
+  ).toEqual({ hasRoom: false, roomUnknown: "stale" });
+  expect(
+    limitPairingRoom(provider(null, "error"), nowMs, "claude-opus-5-5", {
+      instanceId: ProviderInstanceId.make("claudeAgent"),
+    }),
+  ).toEqual({ hasRoom: false });
 });
 it("lays its buttons out below the title instead of in a column beside it", () => {
   const item = usageLimitRecoveryBannerItem({ ...props, onChange: vi.fn() });
