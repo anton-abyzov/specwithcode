@@ -1,10 +1,11 @@
-import type { DesktopUpdateState } from "@specweave-studio/contracts";
+import type { DesktopUpdateState, StudioServiceUpdateState } from "@specweave-studio/contracts";
 import type { ReactElement, ReactNode } from "react";
 import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 const state = vi.hoisted(() => ({
   app: null as DesktopUpdateState | null,
+  service: null as StudioServiceUpdateState | null,
   addToast: vi.fn(),
   closeToast: vi.fn(),
   announceDownload: vi.fn(),
@@ -14,6 +15,9 @@ const state = vi.hoisted(() => ({
 
 vi.mock("../../env", () => ({ isElectron: true }));
 vi.mock("../../state/desktopUpdate", () => ({ useDesktopUpdateState: () => state.app }));
+vi.mock("../../state/serviceUpdate", () => ({
+  useStudioServiceUpdateState: () => state.service,
+}));
 vi.mock("../../hooks/useMediaQuery", () => ({ useMediaQuery: () => true }));
 vi.mock("../../localApi", () => ({
   ensureLocalApi: () => ({ dialogs: { confirm: state.confirm } }),
@@ -164,6 +168,7 @@ describe("manual sidebar update checks", () => {
 
   beforeEach(() => {
     state.app = current;
+    state.service = null;
     state.addToast.mockReset();
     state.closeToast.mockReset();
     state.announceDownload.mockReset();
@@ -335,6 +340,29 @@ describe("manual sidebar update checks", () => {
     expect(bridge.checkForUpdate).not.toHaveBeenCalled();
     expect(bridge.installUpdate).not.toHaveBeenCalled();
     expect(state.addToast).not.toHaveBeenCalled();
+  });
+
+  it("offers no install while an Update now run goes on", async () => {
+    state.app = {
+      ...current,
+      status: "downloaded",
+      availableVersion: "1.0.11",
+      downloadedVersion: "1.0.11",
+    };
+    state.service = {
+      status: "installing",
+      run: { runId: "run-1", terminal: false, phase: "installing" },
+    } as unknown as StudioServiceUpdateState;
+    render();
+    const button = renderer!.root.findByType("button");
+    expect(button.props["aria-label"]).not.toContain("Click to restart and install");
+    await click();
+    expect(state.requestRestart).not.toHaveBeenCalled();
+    expect(bridge.installUpdate).not.toHaveBeenCalled();
+    expect(bridge.checkForUpdate).not.toHaveBeenCalled();
+    expect(state.addToast).toHaveBeenCalledWith(
+      expect.objectContaining({ title: "Update in progress" }),
+    );
   });
 
   it("says how to install when no Restart to update button can take the click", async () => {

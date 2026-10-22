@@ -1,22 +1,18 @@
 import { stringifyJson } from "../json.ts";
 import {
   CommandId,
-  isProviderAvailable,
   type ManualCodexCreditIntent,
   MessageId,
-  ORCHESTRATION_V2_PROVIDER_UNAVAILABLE_FAILURE_CODE,
   projectExecutionIsFenced,
   type ModelSelection,
   type OrchestrationV2Run,
   type OrchestrationV2ServerCommand,
   type OrchestrationV2ThreadShell,
-  type OrchestrationV2TurnItem,
   type ProviderInstanceId,
   type ServerProvider,
   type ServerSettings as ServerSettingsValue,
   ThreadId,
 } from "@specweave-studio/contracts";
-import { latestRootProviderFailure } from "@specweave-studio/shared/orchestrationV2ThreadError";
 import { resolveProjectSettings } from "@specweave-studio/shared/projectSettings";
 import {
   canTakeTurn,
@@ -29,14 +25,12 @@ import {
   limitRestartRequest,
   limitStopWaitsForReset,
   provenFallbackSelection,
-  providerUsedPercent,
   type ProviderFallbackRule,
   reportsNoUsage,
   resolveApiCreditSelection,
   resolveProviderFallback,
   shouldSwitchBeforeTurn,
 } from "@specweave-studio/shared/providerFallback";
-import { windowAppliesToModel } from "@specweave-studio/shared/usageWindows";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -60,55 +54,87 @@ import * as ThreadManagement from "./ThreadManagementService.ts";
 import { recoverySnoozeBlocks } from "./usageLimitRecovery.ts";
 import { withSimulatedUsage } from "../usage/providerUsageSummary.ts";
 import * as TaskRoutingEscalationWorker from "./TaskRoutingEscalationWorker.ts";
+import {
+  isBlockingRuntimeRequest,
+  pendingRequestDetailMemo,
+  withPendingRequestDetail,
+} from "./blockingRuntimeRequest.ts";
+import {
+  API_CREDIT_MESSAGE_PREFIX,
+  API_CREDIT_RETURN_ATTEMPTS,
+  API_CREDIT_RETURN_COOLDOWN_MS,
+  type ApiCreditOrigin,
+  apiCreditOrigin,
+  apiCreditReturnCommand,
+  limitFallbackReturnCommand,
+  limitResetAt,
+  queuedRunsPinnedTo,
+  reachedLimitWindow,
+  usageWindowKey,
+} from "./limitFallbackReturn.ts";
+import { queuedRunsHoldingWayBack } from "./QueueFollowsThread.ts";
+import {
+  epochMs,
+  LIMIT_FALLBACK_MESSAGE_PREFIX,
+  LIMIT_STOP_MAX_AGE_MS,
+  previousRunOnInstance,
+} from "./providerOpenFailure.ts";
+import { UnopenableHolds } from "./UnopenableHolds.ts";
+import {
+  type FallbackThread,
+  latestOpenFailure,
+  needsPreviousRun,
+  type OpenFailure,
+  PROVIDER_FALLBACK_CONTINUE_TEXT,
+  PROVIDER_RETRY_MESSAGE_PREFIX,
+  providerRetryAwaitsRead,
+  providerRetryCommand,
+  threadIsFree,
+  unopenableFallbackCommand,
+  unopenableHolds,
+  type UnopenableStop,
+  unopenableStop,
+  unopenableStopIsLive,
+} from "./unopenableFallback.ts";
+
+export {
+  API_CREDIT_IDLE_RETURN_MS,
+  type ApiCreditOrigin,
+  apiCreditOrigin,
+  apiCreditReturnCommand,
+  limitFallbackReturnCommand,
+  limitResetAt,
+  reachedLimitWindow,
+} from "./limitFallbackReturn.ts";
+export {
+  LIMIT_FALLBACK_MESSAGE_PREFIX,
+  LIMIT_STOP_MAX_AGE_MS,
+  PROVIDER_FALLBACK_MESSAGE_PREFIX,
+} from "./providerOpenFailure.ts";
+export {
+  LIMIT_FALLBACK_MAX_HOPS,
+  type OpenFailure,
+  PROVIDER_FALLBACK_CONTINUE_TEXT,
+  PROVIDER_RETRY_MESSAGE_PREFIX,
+  providerRetryCommand,
+  UNOPENABLE_HOLD_MS,
+  type UnopenableStop,
+  unopenableFallbackCommand,
+  unopenableHolds,
+  unopenableStop,
+} from "./unopenableFallback.ts";
 
 /** The shell snapshot is not free; the scheduler ticks every five seconds. */
 export const PROVIDER_FALLBACK_SWEEP_INTERVAL_MS = 30_000;
 
-export const PROVIDER_FALLBACK_CONTINUE_TEXT = "Continue where you left off.";
-
-type FallbackThread = Pick<
-  OrchestrationV2ThreadShell,
-  | "id"
-  | "providerInstanceId"
-  | "modelSelection"
-  | "status"
-  | "lastErrorClass"
-  | "latestRunId"
-  | "activeRunId"
-  | "pendingRuntimeRequest"
-  | "settledOverride"
-> &
-  Partial<
-    Pick<
-      OrchestrationV2ThreadShell,
-      | "lastError"
-      | "usageLimitResetAt"
-      | "latestRunCompletedAt"
-      | "activityRunStatus"
-      | "pendingBackgroundTasks"
-      | "snoozedUntil"
-      | "limitRecovery"
-      | "worktreePath"
-      | "runtimeMode"
-      | "interactionMode"
-    >
-  >;
-
-/** A stop with no reset time counts as a live limit for one session window. */
-export const LIMIT_STOP_MAX_AGE_MS = 5 * 60 * 60_000;
-
-/** With no reset time to wait for, an idle thread leaves API credits after this long. */
-export const API_CREDIT_IDLE_RETURN_MS = 15 * 60_000;
-
-/** A failed way back is retried this many times, each under its own command id, then rests. */
-const API_CREDIT_RETURN_ATTEMPTS = 5;
-const API_CREDIT_RETURN_COOLDOWN_MS = 30 * 60_000;
-
 /** A usage read that failed is tried again on this many sweeps before the stop is left alone. */
 const LIMIT_READ_ATTEMPTS = 3;
 
-const epochMs = (at: DateTime.Utc | null | undefined): number =>
-  at == null ? Number.NaN : DateTime.toEpochMillis(at);
+/** The instance a provider-ready retry waits on is read by the sweep at most this often. */
+const FAILED_INSTANCE_READ_INTERVAL_MS = 5 * 60_000;
+
+/** A provider that reports no usage is read again before a fallback onto it, at most this often. */
+const UNREPORTED_TARGET_CHECK_MAX_AGE_MS = 60_000;
 
 /**
  * Whether a usage-limit stop still describes the account: its reset time is
@@ -132,51 +158,6 @@ export const ProviderFallbackEnv = Context.Reference<Readonly<Record<string, str
   { defaultValue: () => process.env },
 );
 
-/** The window the switch belongs to, so a thread moves once per usage window. */
-function usageWindowKey(
-  provider: ServerProvider | undefined,
-  nowMs: number,
-  model?: string | null,
-): string {
-  const used = provider === undefined ? null : providerUsedPercent(provider, nowMs, model);
-  const window = provider?.usageLimits?.windows.find(
-    (w) => w.usedPercent === used && windowAppliesToModel(w, model),
-  );
-  return window?.resetsAt ?? "open";
-}
-
-/**
- * The real limit window the account is in right now, keyed by its reset
- * time, or null when the account's own usage read shows no limit. A thread
- * can stop with `usage_limit` for other reasons (a simulated stop, a window
- * that has since reset), so anything that costs the account checks this on a
- * fresh read, never the thread's error class.
- */
-export function reachedLimitWindow(
-  provider: ServerProvider | undefined,
-  nowMs: number,
-  /** The model the thread runs on: a spent model-scoped window limits only its own models. */
-  model?: string | null,
-): string | null {
-  const limits = provider?.usageLimits;
-  if (limits === undefined || limits.unavailable !== undefined) return null;
-  const live = limits.windows.filter((window) => {
-    const resetsAt = window.resetsAt === undefined ? Number.NaN : Date.parse(window.resetsAt);
-    return !(Number.isFinite(resetsAt) && resetsAt <= nowMs);
-  });
-  const full = live.filter(
-    (window) => window.usedPercent >= 100 && windowAppliesToModel(window, model),
-  );
-  if (full.length > 0) {
-    const resets = full
-      .map((window) => window.resetsAt)
-      .filter((at): at is string => at !== undefined);
-    return resets.length === 0 ? "open" : resets.sort()[0]!;
-  }
-  if (limits.ordinaryUsageAllowed === false) return usageWindowKey(provider, nowMs, model);
-  return null;
-}
-
 /**
  * What the `switch` rule does for one thread, or null. A turn that stopped on
  * the usage limit continues on the fallback (a manual continuation, so the
@@ -196,7 +177,7 @@ export function providerFallbackCommand(
   failed?: ReadonlySet<string>,
 ): OrchestrationV2ServerCommand | null {
   if (rule.providerLimitAction !== "switch") return null;
-  if (thread.activeRunId !== null || thread.pendingRuntimeRequest !== null) return null;
+  if (!threadIsFree(thread)) return null;
   if (thread.settledOverride === "settled" || thread.latestRunId === null) return null;
   const current = providers.find((provider) => provider.instanceId === thread.providerInstanceId);
   if (thread.status === "failed" && thread.lastErrorClass === "usage_limit") {
@@ -279,8 +260,7 @@ function stoppedOnLimit(
   return (
     thread.status === "failed" &&
     thread.lastErrorClass === "usage_limit" &&
-    thread.activeRunId === null &&
-    thread.pendingRuntimeRequest === null &&
+    threadIsFree(thread) &&
     thread.settledOverride !== "settled" &&
     thread.latestRunId !== null
   );
@@ -313,206 +293,6 @@ export function unreportedLimitStops(
   for (const [instanceId, until] of next) if (until <= nowMs) next.delete(instanceId);
   return next;
 }
-
-/** Fallback moves one stop may make after its first, each because the last target could not open. */
-export const LIMIT_FALLBACK_MAX_HOPS = 3;
-
-/** How long an instance that could not open stays out of fallbacks without a newer ready read. */
-export const UNOPENABLE_HOLD_MS = 30 * 60_000;
-
-/** A provider that reports no usage is read again before a fallback onto it, at most this often. */
-const UNREPORTED_TARGET_CHECK_MAX_AGE_MS = 60_000;
-
-/**
- * A turn that failed because its provider cannot run on this machine until
- * its setup is fixed (`provider_unavailable`: not prepared, not installed,
- * signed out). Retrying cannot help, so under `switch` it is a stop like a
- * usage limit.
- */
-export interface UnopenableStop {
-  /** The run that failed to open. */
-  readonly runId: OrchestrationV2Run["id"];
-  readonly instanceId: ProviderInstanceId;
-  readonly selection: ModelSelection;
-  readonly failedAtMs: number;
-  /**
-   * The stop the fallback answers: the run a limit-fallback continuation
-   * continued when the failed run was one, else the failed run itself.
-   */
-  readonly originRunId: OrchestrationV2Run["id"];
-  /** Which move from that stop the next fallback is: 0 for the first. */
-  readonly nextHop: number;
-  /**
-   * The stop was a usage limit, so its moves are `limit-fallback:` and the
-   * way back may return to it; otherwise `provider-fallback:`, and never back.
-   */
-  readonly originIsLimit: boolean;
-}
-
-/**
- * The run a continuation's message id names, and which move it was. The run
- * id comes last, since run ids hold colons; a hop after the first carries
- * `hop-N:` before it, so each move gets its own idempotent id while the way
- * back still finds the original stop.
- */
-function continuedRun(messageId: string, prefix: string): { runId: string; hop: number } | null {
-  if (!messageId.startsWith(prefix)) return null;
-  const rest = messageId.slice(prefix.length);
-  const hop = /^hop-(\d+):/.exec(rest);
-  return hop === null
-    ? { runId: rest, hop: 0 }
-    : { runId: rest.slice(hop[0].length), hop: Number(hop[1]) };
-}
-
-/**
- * Whether the thread's latest run failed to open its provider, read from the
- * run's own failure code (never its message), and which stop that answers.
- */
-export function unopenableStop(
-  thread: Pick<
-    FallbackThread,
-    "id" | "status" | "lastErrorClass" | "latestRunId" | "latestRunCompletedAt"
-  >,
-  runs: ReadonlyArray<OrchestrationV2Run>,
-  turnItems: ReadonlyArray<OrchestrationV2TurnItem>,
-): UnopenableStop | null {
-  if (thread.status !== "failed" || thread.lastErrorClass === "usage_limit") return null;
-  const run = runs.find((candidate) => candidate.id === thread.latestRunId);
-  if (run === undefined) return null;
-  const failure = latestRootProviderFailure(run, turnItems);
-  if (failure?.code !== ORCHESTRATION_V2_PROVIDER_UNAVAILABLE_FAILURE_CODE) return null;
-  const fromLimit = continuedRun(
-    run.userMessageId,
-    `${LIMIT_FALLBACK_MESSAGE_PREFIX}${thread.id}:`,
-  );
-  const continued =
-    fromLimit ??
-    continuedRun(run.userMessageId, `${PROVIDER_FALLBACK_MESSAGE_PREFIX}${thread.id}:`);
-  const origin =
-    continued === null ? undefined : runs.find((candidate) => candidate.id === continued.runId);
-  return {
-    runId: run.id,
-    instanceId: run.providerInstanceId,
-    selection: run.modelSelection,
-    failedAtMs: epochMs(run.completedAt ?? thread.latestRunCompletedAt),
-    originRunId: origin?.id ?? run.id,
-    nextHop: origin === undefined || continued === null ? 0 : continued.hop + 1,
-    originIsLimit: origin !== undefined && fromLimit !== null,
-  };
-}
-
-/** The thread still sits on the failed run, with nothing else going on. */
-function unopenableStopIsIdle(thread: FallbackThread, stop: UnopenableStop) {
-  return (
-    thread.status === "failed" &&
-    thread.lastErrorClass !== "usage_limit" &&
-    thread.latestRunId === stop.runId &&
-    thread.activeRunId === null &&
-    thread.pendingRuntimeRequest === null &&
-    thread.settledOverride !== "settled"
-  );
-}
-
-/**
- * An unopenable stop the rule may still act on: still the thread's latest
- * run with nothing else going on, recent, and within the hop cap, so a chain
- * of providers that cannot open ends instead of cycling.
- */
-function unopenableStopIsLive(thread: FallbackThread, stop: UnopenableStop, nowMs: number) {
-  return (
-    unopenableStopIsIdle(thread, stop) &&
-    nowMs - stop.failedAtMs < LIMIT_STOP_MAX_AGE_MS &&
-    stop.nextHop <= LIMIT_FALLBACK_MAX_HOPS
-  );
-}
-
-/**
- * The `switch` rule's move for a thread whose provider could not open. It
- * answers the original stop: each hop has its own command id, and the
- * selections this stop already tried are skipped. There is no
- * `manualContinuationOfRunId`, since the orchestrator continues only an
- * interrupted or usage-limited run; the new provider picks up the thread's
- * history the way any provider change does.
- */
-export function unopenableFallbackCommand(
-  thread: FallbackThread,
-  providers: ReadonlyArray<ServerProvider>,
-  rule: ProviderFallbackRule,
-  nowMs: number,
-  stop: UnopenableStop,
-  options: {
-    readonly proven?: ModelSelection | null;
-    readonly limited?: ReadonlySet<string> | undefined;
-    readonly failed?: ReadonlySet<string> | undefined;
-  } = {},
-): Extract<OrchestrationV2ServerCommand, { type: "message.dispatch" }> | null {
-  if (rule.providerLimitAction !== "switch" || !unopenableStopIsLive(thread, stop, nowMs))
-    return null;
-  const target = resolveProviderFallback({
-    providers,
-    currentInstanceId: thread.providerInstanceId,
-    currentModel: thread.modelSelection.model,
-    rule,
-    nowMs,
-    belowPercent: rule.providerLimitSwitchAtPercent ?? 100,
-    anyReady: true,
-    proven: options.proven ?? null,
-    // The instance that failed is out, whatever its snapshot still says.
-    limitedInstanceIds: new Set([...(options.limited ?? []), stop.instanceId]),
-    ...(options.failed === undefined ? {} : { excludedSelections: options.failed }),
-  });
-  if (target === null) return null;
-  // Only a usage-limit stop is `limit-fallback:`: the way back reads that
-  // prefix, and must never return a thread to a provider that could not start.
-  const prefix = stop.originIsLimit
-    ? LIMIT_FALLBACK_MESSAGE_PREFIX
-    : PROVIDER_FALLBACK_MESSAGE_PREFIX;
-  const id = `${prefix}${thread.id}:${stop.nextHop === 0 ? "" : `hop-${stop.nextHop}:`}${stop.originRunId}`;
-  return {
-    type: "message.dispatch",
-    commandId: CommandId.make(id),
-    messageId: MessageId.make(id),
-    threadId: thread.id,
-    modelSelection: target,
-    text: PROVIDER_FALLBACK_CONTINUE_TEXT,
-    attachments: [],
-    dispatchMode: { type: "start_immediately" },
-    createdBy: "user",
-    creationSource: "server",
-  };
-}
-
-/**
- * Instances a thread recently failed to open on, each held from the failure
- * until a provider read taken after it shows the instance can take a turn,
- * or `UNOPENABLE_HOLD_MS` passes. Without this another thread stopped on a
- * limit would be routed onto the same broken provider. Folds the stops seen
- * now into `held` and drops holds that ended.
- */
-export function unopenableHolds(
-  held: ReadonlyMap<string, number>,
-  stops: Iterable<UnopenableStop>,
-  providers: ReadonlyArray<ServerProvider>,
-  nowMs: number,
-): ReadonlyMap<string, number> {
-  const next = new Map(held);
-  for (const stop of stops)
-    if (nowMs - stop.failedAtMs < UNOPENABLE_HOLD_MS)
-      next.set(stop.instanceId, Math.max(next.get(stop.instanceId) ?? 0, stop.failedAtMs));
-  for (const [instanceId, failedAt] of next) {
-    const provider = providers.find((entry) => entry.instanceId === instanceId);
-    const readAt = Date.parse(provider?.checkedAt ?? "");
-    if (
-      nowMs - failedAt >= UNOPENABLE_HOLD_MS ||
-      (provider !== undefined && readAt > failedAt && canTakeTurn(provider))
-    )
-      next.delete(instanceId);
-  }
-  return next;
-}
-
-/** The message id prefix of a continuation the API-credit rule sent; the way back reads it. */
-const API_CREDIT_MESSAGE_PREFIX = "limit-api:";
 
 /**
  * Continue the stopped run on the provider it stopped on, or, for `api`, on
@@ -700,258 +480,9 @@ export function providerLimitStep(
   return command === null ? null : { type: "switch", command };
 }
 
-/** The subscription run the API-credit rule continued, and the run that continued it. */
-export interface ApiCreditOrigin {
-  readonly stoppedRunId: OrchestrationV2Run["id"];
-  readonly continuedByRunId: OrchestrationV2Run["id"];
-  readonly modelSelection: ModelSelection;
-  /** When the stopped run's limit resets, if the provider said. */
-  readonly resetAt: string | null;
-}
-
-/**
- * Where a thread running on an API-key instance came from, when the
- * API-credit rule put it there and it has run nowhere else since. Null for a
- * thread a person moved there, which stays where they put it.
- */
-export function apiCreditOrigin(
-  thread: Pick<FallbackThread, "id" | "providerInstanceId">,
-  runs: ReadonlyArray<
-    Pick<
-      OrchestrationV2Run,
-      "id" | "ordinal" | "providerInstanceId" | "modelSelection" | "userMessageId"
-    >
-  >,
-  messagePrefix: string = API_CREDIT_MESSAGE_PREFIX,
-  depth = 0,
-): ApiCreditOrigin | null {
-  const prefix = `${messagePrefix}${thread.id}:`;
-  const latestFirst = runs.toSorted((a, b) => b.ordinal - a.ordinal);
-  for (const run of latestFirst) {
-    if (run.providerInstanceId !== thread.providerInstanceId) return null;
-    if (!run.userMessageId.startsWith(prefix)) continue;
-    // A continuation that itself stopped and was continued again leads back
-    // through each one to the subscription run the first of them continued.
-    let stopped = runs.find(
-      (candidate) => candidate.id === continuedRun(run.userMessageId, prefix)?.runId,
-    );
-    const seen = new Set<string>();
-    while (
-      stopped !== undefined &&
-      stopped.providerInstanceId === thread.providerInstanceId &&
-      stopped.userMessageId.startsWith(prefix) &&
-      !seen.has(stopped.id)
-    ) {
-      seen.add(stopped.id);
-      const earlier = continuedRun(stopped.userMessageId, prefix)?.runId;
-      stopped = runs.find((candidate) => candidate.id === earlier);
-    }
-    if (stopped === undefined || stopped.providerInstanceId === thread.providerInstanceId)
-      return null;
-    // The stopped run can itself be on an API account the rule moved the
-    // thread to before that account ran out of credits: the way back leads
-    // on to the subscription that one came from.
-    const ordinal = stopped.ordinal;
-    const earlier =
-      messagePrefix === API_CREDIT_MESSAGE_PREFIX && depth < 8
-        ? apiCreditOrigin(
-            { id: thread.id, providerInstanceId: stopped.providerInstanceId },
-            runs.filter((candidate) => candidate.ordinal <= ordinal),
-            messagePrefix,
-            depth + 1,
-          )
-        : null;
-    return earlier !== null
-      ? { ...earlier, continuedByRunId: run.id }
-      : {
-          stoppedRunId: stopped.id,
-          continuedByRunId: run.id,
-          modelSelection: stopped.modelSelection,
-          resetAt: null,
-        };
-  }
-  return null;
-}
-
-/** The latest reset time a stopped run's usage-limit failure named, or null. */
-export function limitResetAt(
-  runId: OrchestrationV2Run["id"],
-  turnItems: ReadonlyArray<OrchestrationV2TurnItem>,
-): string | null {
-  let latest: string | null = null;
-  for (const item of turnItems) {
-    if (item.type !== "error" || item.runId !== runId || item.failure.class !== "usage_limit")
-      continue;
-    const resetAt = item.failure.resetAt ?? null;
-    if (resetAt === null || !Number.isFinite(Date.parse(resetAt))) continue;
-    if (latest === null || Date.parse(resetAt) > Date.parse(latest)) latest = resetAt;
-  }
-  return latest;
-}
-
-/** Background work the provider session hosts; a pull request watch is Studio's own. */
-const hostsBackgroundWork = (thread: FallbackThread): boolean =>
-  (thread.pendingBackgroundTasks ?? []).some(
-    (task) => !task.taskId.startsWith("pull-request-watch:"),
-  );
-
-/**
- * The way back from API credits: an idle thread the rule moved to an API-key
- * instance returns to its subscription before its next turn. It goes back as
- * soon as the rule is off for its project; with the rule on, once the limit
- * that stopped it has reset, or the subscription's own usage read shows no
- * limit. A stop that named no reset time goes back after
- * `API_CREDIT_IDLE_RETURN_MS` idle instead, since the usage read is only
- * taken while someone is looking at it. Never while the thread is working
- * or its session still hosts background work, which a move would orphan.
- * `attempt` numbers the command, because a rejected command id stays
- * rejected.
- */
-export function apiCreditReturnCommand(
-  thread: FallbackThread,
-  origin: ApiCreditOrigin,
-  providers: ReadonlyArray<ServerProvider>,
-  nowMs: number,
-  options: { readonly ruleOn: boolean; readonly attempt?: number } = { ruleOn: true },
-): Extract<OrchestrationV2ServerCommand, { type: "thread.model-selection.set" }> | null {
-  if (thread.activeRunId !== null || thread.pendingRuntimeRequest !== null) return null;
-  if (thread.settledOverride === "settled") return null;
-  if (thread.activityRunStatus != null || hostsBackgroundWork(thread)) return null;
-  if (
-    !isClaudeApiKeyProvider(
-      providers.find((provider) => provider.instanceId === thread.providerInstanceId),
-    )
-  )
-    return null;
-  const subscription = providers.find(
-    (provider) => provider.instanceId === origin.modelSelection.instanceId,
-  );
-  // A stale denial of ordinary usage must not strand the thread, so this
-  // does not ask `canTakeTurn`; a turn that still hits the limit stops there.
-  if (
-    subscription === undefined ||
-    subscription.driver !== "claudeAgent" ||
-    isClaudeApiKeyProvider(subscription) ||
-    !subscription.enabled ||
-    !subscription.installed ||
-    !isProviderAvailable(subscription) ||
-    subscription.auth.status === "unauthenticated"
-  )
-    return null;
-  const limits = subscription.usageLimits;
-  const readShowsNoLimit =
-    limits !== undefined &&
-    limits.unavailable === undefined &&
-    limits.windows.length > 0 &&
-    reachedLimitWindow(subscription, nowMs, origin.modelSelection.model) === null;
-  const resetMs = Date.parse(origin.resetAt ?? "");
-  const waitedOut = Number.isFinite(resetMs)
-    ? resetMs <= nowMs
-    : nowMs - epochMs(thread.latestRunCompletedAt) >= API_CREDIT_IDLE_RETURN_MS;
-  if (options.ruleOn && !readShowsNoLimit && !waitedOut) return null;
-  const attempt = options.attempt ?? 0;
-  return {
-    type: "thread.model-selection.set",
-    commandId: CommandId.make(
-      `limit-api-return:${thread.id}:${origin.continuedByRunId}${attempt === 0 ? "" : `:${attempt}`}`,
-    ),
-    threadId: thread.id,
-    modelSelection: origin.modelSelection,
-  };
-}
-
 /** Tries of one fallback step whose dispatch fails, and the wait that grows after each. */
 export const FALLBACK_DISPATCH_ATTEMPTS = 3;
 export const FALLBACK_DISPATCH_BACKOFF_MS = 60_000;
-
-/**
- * The message id prefix of the continuation the `switch` rule sent on a
- * usage-limit stop: `limit-fallback:<thread>:<stopped run>`, or
- * `limit-fallback:<thread>:hop-N:<stopped run>` for a later move after a
- * target could not open.
- */
-export const LIMIT_FALLBACK_MESSAGE_PREFIX = "limit-fallback:";
-
-/**
- * The same for a stop that was no usage limit, a provider that could not
- * start: `provider-fallback:<thread>[:hop-N]:<failed run>`. Nothing goes back.
- */
-export const PROVIDER_FALLBACK_MESSAGE_PREFIX = "provider-fallback:";
-
-/**
- * The way back from a `switch` fallback. The fallback covers the runs the
- * limit stopped, not the thread from then on: once the provider it stopped
- * on reads as having room again (or its reset has passed), the idle thread
- * goes back to the model it ran before the limit. A thread whose fallback
- * could not open (`unopenable`, see `unopenableStop`) still has its turn to
- * finish, and nothing else resumes a provider error: it goes back with a
- * continuation instead.
- */
-export function limitFallbackReturnCommand(
-  thread: FallbackThread,
-  origin: ApiCreditOrigin,
-  providers: ReadonlyArray<ServerProvider>,
-  nowMs: number,
-  attempt = 0,
-  unopenable: UnopenableStop | null = null,
-): Extract<
-  OrchestrationV2ServerCommand,
-  { type: "thread.model-selection.set" | "message.dispatch" }
-> | null {
-  if (thread.activeRunId !== null || thread.pendingRuntimeRequest !== null) return null;
-  if (thread.settledOverride === "settled") return null;
-  if (thread.activityRunStatus != null || hostsBackgroundWork(thread)) return null;
-  const home = providers.find(
-    (provider) => provider.instanceId === origin.modelSelection.instanceId,
-  );
-  if (
-    home === undefined ||
-    !home.enabled ||
-    !home.installed ||
-    !isProviderAvailable(home) ||
-    home.auth.status === "unauthenticated"
-  )
-    return null;
-  const limits = home.usageLimits;
-  const readShowsNoLimit =
-    limits !== undefined &&
-    limits.unavailable === undefined &&
-    limits.windows.length > 0 &&
-    reachedLimitWindow(home, nowMs, origin.modelSelection.model) === null;
-  const resetMs = Date.parse(origin.resetAt ?? "");
-  if (!readShowsNoLimit && !(Number.isFinite(resetMs) && resetMs <= nowMs)) return null;
-  const suffix = attempt === 0 ? "" : `:${attempt}`;
-  if (
-    unopenable !== null &&
-    unopenableStopIsIdle(thread, unopenable) &&
-    unopenable.instanceId !== origin.modelSelection.instanceId &&
-    // Recent, or it failed while waiting for the reset this way back follows.
-    (nowMs - unopenable.failedAtMs < LIMIT_STOP_MAX_AGE_MS ||
-      (Number.isFinite(resetMs) && unopenable.failedAtMs < resetMs))
-  ) {
-    // The orchestrator continues only an interrupted or usage-limited latest
-    // run, so this is a plain turn; the sweep resends a request never answered.
-    const id = `limit-return:${thread.id}:${unopenable.runId}`;
-    return {
-      type: "message.dispatch",
-      commandId: CommandId.make(`${id}${suffix}`),
-      messageId: MessageId.make(id),
-      threadId: thread.id,
-      modelSelection: origin.modelSelection,
-      text: PROVIDER_FALLBACK_CONTINUE_TEXT,
-      attachments: [],
-      dispatchMode: { type: "start_immediately" },
-      createdBy: "user",
-      creationSource: "server",
-    };
-  }
-  return {
-    type: "thread.model-selection.set",
-    commandId: CommandId.make(`limit-return:${thread.id}:${origin.continuedByRunId}${suffix}`),
-    threadId: thread.id,
-    modelSelection: origin.modelSelection,
-  };
-}
 
 function anyLimitRule(settings: ServerSettingsValue): boolean {
   const active = (rule: {
@@ -1100,6 +631,27 @@ export const makeSweep = Effect.gen(function* () {
     Ref.updateAndGet(readAttempts, (current) =>
       new Map(current).set(key, (current.get(key) ?? 0) + 1),
     ).pipe(Effect.map((attempts) => attempts.get(key) ?? 0));
+  // A pending request holds a thread only when it really waits (see
+  // isBlockingRuntimeRequest). The shell names its newest one alone, so a
+  // thread with one is read for the rest, once per thread state.
+  const requestDetails = pendingRequestDetailMemo<FallbackThread["pendingRuntimeRequest"]>();
+  const withRequestDetail = <T extends FallbackThread>(thread: T) =>
+    Effect.gen(function* () {
+      const pending = thread.pendingRuntimeRequest;
+      if (pending === null) return thread;
+      let detailed = requestDetails.get(thread);
+      if (detailed === undefined) {
+        const records = yield* projections
+          .getThreadRecords(thread.id, ["runtimeRequests", "nodes"])
+          .pipe(Effect.orElseSucceed(() => null));
+        if (records === null) return thread;
+        detailed = isBlockingRuntimeRequest(records, thread.latestRunId)
+          ? pending
+          : withPendingRequestDetail(thread, records).pendingRuntimeRequest;
+        requestDetails.set(thread, detailed);
+      }
+      return { ...thread, pendingRuntimeRequest: detailed } as T;
+    });
   // Admission precedes the settings lock, matching project writes and message
   // dispatch. Native probes happen before this bounded decision/commit section.
   const withCurrentPolicy = <A, E, R>(
@@ -1136,7 +688,7 @@ export const makeSweep = Effect.gen(function* () {
           )
             return;
           return yield* use(
-            current,
+            yield* withRequestDetail(current),
             resolveProjectSettings(preferences, current.projectId).settings,
             project.value,
           );
@@ -1158,7 +710,6 @@ export const makeSweep = Effect.gen(function* () {
     providers: ReadonlyArray<ServerProvider>,
     nowMs: number,
     ruleOn: boolean,
-    unopenable: UnopenableStop | null = null,
   ) {
     if (thread.latestRunId === null) return null;
     // On an API-key instance the API-credit rule put it there; anywhere else,
@@ -1169,7 +720,7 @@ export const makeSweep = Effect.gen(function* () {
     const returnCommand = (current: FallbackThread, found: ApiCreditOrigin, attempt: number) =>
       apiCredits
         ? apiCreditReturnCommand(current, found, providers, nowMs, { ruleOn, attempt })
-        : limitFallbackReturnCommand(current, found, providers, nowMs, attempt, unopenable);
+        : limitFallbackReturnCommand(current, found, providers, nowMs, attempt);
     const key = `${thread.id}:${thread.latestRunId}:${thread.providerInstanceId}`;
     let origin = (yield* Ref.get(origins)).get(key);
     if (origin === undefined) {
@@ -1215,34 +766,41 @@ export const makeSweep = Effect.gen(function* () {
     providers: ReadonlyArray<ServerProvider>,
     nowMs: number,
     ruleOn: boolean,
-    unopenable: UnopenableStop | null = null,
   ) {
-    const plan = yield* apiCreditReturnPlan(thread, providers, nowMs, ruleOn, unopenable);
+    const plan = yield* apiCreditReturnPlan(thread, providers, nowMs, ruleOn);
     if (plan === null) return null;
     const { origin, attemptKey, tries, returnCommand } = plan;
     // Checked against the thread as it is now: a turn may have started since the snapshot.
-    const current = yield* projections
+    const shell = yield* projections
       .getThreadShell(thread.id)
       .pipe(Effect.orElseSucceed(() => null));
     if (
-      current === null ||
-      current.latestRunId !== thread.latestRunId ||
-      current.providerInstanceId !== thread.providerInstanceId
+      shell === null ||
+      shell.latestRunId !== thread.latestRunId ||
+      shell.providerInstanceId !== thread.providerInstanceId
     )
       return null;
+    const current = yield* withRequestDetail(shell);
     const command = returnCommand(current, origin, tries.next);
     if (command === null) return null;
-    // A queued message keeps the instance it was queued on and would pull the
-    // thread straight back, so the thread goes back after the queue has run.
-    const queued = yield* projections.getThreadRecords(thread.id, ["runs"]).pipe(
-      Effect.map((records) =>
-        records.runs.some(
-          (run) => run.status === "queued" && run.providerInstanceId === thread.providerInstanceId,
-        ),
-      ),
-      Effect.orElseSucceed(() => true),
-    );
-    if (queued) return null;
+    // The queue that would pull the thread straight back runs first; the sends
+    // the way back moves home, held or not, do not hold it.
+    const records = yield* projections.getThreadRecords(thread.id, ["runs"]).pipe(Effect.option);
+    if (Option.isNone(records)) return null;
+    const pinned = queuedRunsPinnedTo(records.value.runs, thread.providerInstanceId);
+    if (pinned.length > 0) {
+      const { messages = [] } = yield* projections
+        .getThreadRecords(thread.id, ["messages"], {
+          messageIds: pinned.map((run) => run.userMessageId),
+        })
+        .pipe(Effect.orElseSucceed(() => ({ messages: [] })));
+      const holding = queuedRunsHoldingWayBack(
+        { thread: current, runs: pinned, messages },
+        thread.providerInstanceId,
+        origin.modelSelection,
+      );
+      if (holding.length > 0) return null;
+    }
     return { command, attemptKey, tries };
   });
   // A thread the provider never answered resends its request instead of
@@ -1439,14 +997,40 @@ export const makeSweep = Effect.gen(function* () {
     },
   );
   // A failed run's failure code is fixed once it settles: read once per run.
-  const unopenableReads = yield* Ref.make(new Map<string, UnopenableStop | null>());
+  type OpenFailureRead = { readonly failed: OpenFailure; readonly stop: UnopenableStop | null };
+  const unopenableReads = yield* Ref.make(new Map<string, OpenFailureRead | null>());
   const unopenableHeld = yield* Ref.make<ReadonlyMap<string, number>>(new Map());
+  const readOpenFailure = Effect.fn("ProviderFallbackWorker.readOpenFailure")(function* (
+    thread: OrchestrationV2ThreadShell & { readonly latestRunId: OrchestrationV2Run["id"] },
+  ) {
+    const records = yield* projections
+      .getThreadRecords(thread.id, ["runs", "turnItems"], {
+        turnItemRunIds: [thread.latestRunId],
+      })
+      .pipe(Effect.orElseSucceed(() => null));
+    if (records === null) return undefined;
+    const failed = latestOpenFailure(thread, records.runs, records.turnItems);
+    if (failed === null) return null;
+    let turnItems = records.turnItems;
+    // Only a repeat on the same instance makes this failure a stop.
+    const latest = records.runs.find((run) => run.id === failed.runId);
+    const previous = latest === undefined ? undefined : previousRunOnInstance(latest, records.runs);
+    if (needsPreviousRun(thread.id, failed) && previous?.status === "failed") {
+      const earlier = yield* projections
+        .getThreadRecords(thread.id, ["turnItems"], { turnItemRunIds: [previous.id] })
+        .pipe(Effect.orElseSucceed(() => null));
+      if (earlier === null) return undefined;
+      turnItems = [...turnItems, ...earlier.turnItems];
+    }
+    return { failed, stop: unopenableStop(thread, records.runs, turnItems) };
+  });
   const unopenableStops = Effect.fn("ProviderFallbackWorker.unopenableStops")(function* (
     shells: ReadonlyArray<OrchestrationV2ThreadShell>,
   ) {
     const cached = yield* Ref.get(unopenableReads);
-    const next = new Map<string, UnopenableStop | null>();
-    const found = new Map<string, UnopenableStop>();
+    const next = new Map<string, OpenFailureRead | null>();
+    const stops = new Map<string, UnopenableStop>();
+    const failures = new Map<string, OpenFailure>();
     for (const thread of shells) {
       // A session failure can clear the class, so only a usage limit rules a thread out.
       if (
@@ -1457,21 +1041,89 @@ export const makeSweep = Effect.gen(function* () {
       )
         continue;
       const key = `${thread.id}:${thread.latestRunId}`;
-      let stop = cached.get(key);
-      if (stop === undefined) {
-        const records = yield* projections
-          .getThreadRecords(thread.id, ["runs", "turnItems"], {
-            turnItemRunIds: [thread.latestRunId],
-          })
-          .pipe(Effect.orElseSucceed(() => null));
-        if (records === null) continue;
-        stop = unopenableStop(thread, records.runs, records.turnItems);
+      let read = cached.get(key);
+      if (read === undefined) {
+        read = yield* readOpenFailure({ ...thread, latestRunId: thread.latestRunId });
+        if (read === undefined) continue;
       }
-      next.set(key, stop);
-      if (stop !== null) found.set(thread.id, stop);
+      next.set(key, read);
+      if (read === null) continue;
+      failures.set(thread.id, read.failed);
+      if (read.stop !== null) stops.set(thread.id, read.stop);
     }
     yield* Ref.set(unopenableReads, next);
-    return found;
+    return { stops, failures };
+  });
+  // Provider reads follow client demand, so on an unattended host nothing
+  // reads the instance a retry waits on after its failure: it is read here,
+  // each instance at most once per interval.
+  const failedReads = yield* Ref.make(new Map<ProviderInstanceId, number>());
+  const readFailedInstance = Effect.fn("ProviderFallbackWorker.readFailedInstance")(function* (
+    thread: FallbackThread,
+    failed: OpenFailure,
+    candidates: ReadonlyArray<ServerProvider>,
+    nowMs: number,
+  ) {
+    if (!providerRetryAwaitsRead(thread, failed, candidates, nowMs)) return false;
+    if ((yield* Ref.get(sent)).has(`${PROVIDER_RETRY_MESSAGE_PREFIX}${thread.id}:${failed.runId}`))
+      return false;
+    const lastRead = (yield* Ref.get(failedReads)).get(failed.instanceId) ?? -Infinity;
+    if (nowMs - lastRead < FAILED_INSTANCE_READ_INTERVAL_MS) return false;
+    yield* Ref.update(failedReads, (current) => new Map(current).set(failed.instanceId, nowMs));
+    yield* registry.refreshInstance(failed.instanceId).pipe(
+      Effect.timeoutOption("60 seconds"),
+      Effect.catchCause(() => Effect.void),
+    );
+    yield* Effect.logInfo("orchestration-v2.provider-fallback.failed-provider-read", {
+      threadId: thread.id,
+      instanceId: failed.instanceId,
+    });
+    return true;
+  });
+  // Once per failed run: a thread whose provider could not open, that no
+  // fallback moved on, runs again once its provider can (see providerRetryCommand).
+  const providerRetry = Effect.fn("ProviderFallbackWorker.providerRetry")(function* (
+    thread: OrchestrationV2ThreadShell,
+    failed: OpenFailure,
+    providersFor: (
+      current: FallbackThread,
+      project?: Option.Option.Value<Effect.Success<ReturnType<typeof projects.getById>>>,
+    ) => ReadonlyArray<ServerProvider>,
+    nowMs: number,
+    reread: Effect.Effect<void>,
+  ) {
+    if (yield* readFailedInstance(thread, failed, providersFor(thread), nowMs)) yield* reread;
+    const planned = providerRetryCommand(thread, failed, providersFor(thread), nowMs);
+    if (planned === null || (yield* Ref.get(sent)).has(planned.commandId)) return;
+    yield* withCurrentPolicy(thread, (current, _rule, currentProject) =>
+      Effect.gen(function* () {
+        const command = providerRetryCommand(
+          current,
+          failed,
+          providersFor(current, currentProject),
+          DateTime.toEpochMillis(yield* DateTime.now),
+        );
+        if (command?.commandId !== planned.commandId) return;
+        if ((yield* Ref.get(sent)).has(command.commandId)) return;
+        // Sent once, whatever happens: the id is the run's, so a restart cannot repeat it either.
+        yield* markSent(command.commandId);
+        yield* threads.dispatch(yield* withRestartRequest(thread.id, failed.runId, command)).pipe(
+          Effect.tap(() =>
+            Effect.logInfo("orchestration-v2.provider-fallback.provider-retried", {
+              threadId: thread.id,
+              runId: failed.runId,
+              to: command.modelSelection?.instanceId,
+            }),
+          ),
+          Effect.catchCause((cause) =>
+            Effect.logWarning("orchestration-v2.provider-fallback.dispatch-failed", {
+              threadId: thread.id,
+              cause,
+            }),
+          ),
+        );
+      }),
+    );
   });
   return Effect.fn("ProviderFallbackWorker.sweep")(function* () {
     const now = DateTime.toEpochMillis(yield* DateTime.now);
@@ -1480,8 +1132,10 @@ export const makeSweep = Effect.gen(function* () {
     const preferences = yield* settings.getSettings;
     let providers = withSimulatedUsage(yield* registry.getProviders, now, env);
     // The way back does not depend on a rule: a thread the rule moved must
-    // not keep spending after the rule is turned off.
-    if (!anyLimitRule(preferences) && !providers.some(isClaudeApiKeyProvider)) return;
+    // not keep spending after the rule is turned off. Nor does the retry of a
+    // provider that could not open, which needs some provider ready.
+    const retryOnly = !anyLimitRule(preferences) && !providers.some(isClaudeApiKeyProvider);
+    if (retryOnly && !providers.some(canTakeTurn)) return;
     // Simulated limits test the banner and the switch; they never redeem or spend.
     const simulated = simulatedUsageLimitInstances(env).length > 0;
     // Only active threads are swept (`snapshot.threads`), so this shares the
@@ -1491,6 +1145,7 @@ export const makeSweep = Effect.gen(function* () {
       unsettledOnly: true,
       maxAgeMs: SWEEP_SHELL_SNAPSHOT_MAX_AGE_MS,
     });
+    requestDetails.retain(snapshot.threads.map((thread) => thread.id));
     const held = unreportedLimitStops(
       yield* Ref.get(unreportedStops),
       snapshot.threads,
@@ -1498,7 +1153,7 @@ export const makeSweep = Effect.gen(function* () {
       now,
     );
     yield* Ref.set(unreportedStops, held);
-    const unopenable = yield* unopenableStops(snapshot.threads);
+    const { stops: unopenable, failures: openFailures } = yield* unopenableStops(snapshot.threads);
     // The selection that could not open counts as tried for the stop it answered.
     yield* Ref.update(failedTargets, (current) => {
       const next = new Map(current);
@@ -1517,8 +1172,13 @@ export const makeSweep = Effect.gen(function* () {
       now,
     );
     yield* Ref.set(unopenableHeld, unopenableHeldNow);
+    // Shared with the coordinator's turn selection.
+    yield* (yield* UnopenableHolds).set(unopenableHeldNow);
     const limited: ReadonlySet<string> = new Set([...held.keys(), ...unopenableHeldNow.keys()]);
     const reads: Reads = new Map();
+    const rereadProviders = Effect.map(registry.getProviders, (read) => {
+      providers = withSimulatedUsage(read, now, env);
+    });
     // Many threads share a project: read each one once per sweep, not per thread.
     const projectsById = new Map<string, Effect.Success<ReturnType<typeof projects.getById>>>();
     // A stopped worker may continue where its coordinator runs (see provenFallbackSelection).
@@ -1536,7 +1196,8 @@ export const makeSweep = Effect.gen(function* () {
         coordinators.set(coordinatorThreadId, shell);
         return shell;
       });
-    for (const thread of snapshot.threads) {
+    for (const listed of snapshot.threads) {
+      const thread = yield* withRequestDetail(listed);
       let found = projectsById.get(thread.projectId);
       if (found === undefined) {
         found = yield* projects
@@ -1561,6 +1222,12 @@ export const makeSweep = Effect.gen(function* () {
                 },
               }),
         });
+      const openFailure = openFailures.get(thread.id);
+      if (retryOnly) {
+        if (openFailure !== undefined)
+          yield* providerRetry(thread, openFailure, providersFor, now, rereadProviders);
+        continue;
+      }
       const resolved = resolveProjectSettings(preferences, thread.projectId).settings;
       const resetKey = `limit-reset-attempt:${thread.id}:${thread.latestRunId}`;
       const apiAttemptKey = `limit-api-attempt:${thread.id}:${thread.latestRunId}`;
@@ -1681,11 +1348,12 @@ export const makeSweep = Effect.gen(function* () {
         // Most threads have no way back to send. Judged on the snapshot first,
         // so they cost no lock, settings read or shell re-read each sweep.
         // The rule-off answer is the looser one: it can only find more.
-        if (
-          (yield* apiCreditReturnPlan(thread, providersFor(thread), now, false, failedOpen)) ===
-          null
-        )
+        if ((yield* apiCreditReturnPlan(thread, providersFor(thread), now, false)) === null) {
+          // No way back: a provider that could not open runs the turn again once it can.
+          if (openFailure !== undefined)
+            yield* providerRetry(thread, openFailure, providersFor, now, rereadProviders);
           continue;
+        }
         // Nothing to continue: a thread the rule moved to API credits goes back
         // to its subscription. Sent once: after that, where the thread runs is
         // the person's choice again.
@@ -1696,10 +1364,9 @@ export const makeSweep = Effect.gen(function* () {
               providersFor(current, currentProject),
               now,
               rule.providerLimitUseApiCredits === true,
-              failedOpen,
             );
             if (back === null) return;
-            // Going home from a fallback that could not open continues its failed run.
+            // Going home from a fallback whose turn failed continues that turn.
             const command =
               back.command.type === "message.dispatch" && current.latestRunId !== null
                 ? yield* withRestartRequest(thread.id, current.latestRunId, back.command)
@@ -1781,13 +1448,25 @@ export const makeSweep = Effect.gen(function* () {
         }
       }
       let command = step.type === "redeem-reset" ? step.continuation : step.command;
-      if ((yield* Ref.get(sent)).has(command.commandId)) continue;
       // A dispatch that failed is tried again under a fresh id (the orchestrator
       // refuses a rejected id for good), a few times, further apart each time.
+      // After that it rests, like the way back, then starts a fresh round,
+      // instead of giving up until the server restarts.
       const baseCommandId = command.commandId;
-      const tries = (yield* Ref.get(dispatchTries)).get(baseCommandId);
+      let tries = (yield* Ref.get(dispatchTries)).get(baseCommandId);
+      if (tries !== undefined && tries.failures >= FALLBACK_DISPATCH_ATTEMPTS) {
+        if (now - tries.lastFailureAt < API_CREDIT_RETURN_COOLDOWN_MS) continue;
+        const rested = { ...tries, failures: 0 };
+        tries = rested;
+        yield* Ref.update(dispatchTries, (current) => new Map(current).set(baseCommandId, rested));
+        yield* Ref.update(sent, (current) => {
+          const without = new Set(current);
+          without.delete(baseCommandId);
+          return without;
+        });
+      }
+      if ((yield* Ref.get(sent)).has(command.commandId)) continue;
       if (tries !== undefined) {
-        if (tries.failures >= FALLBACK_DISPATCH_ATTEMPTS) continue;
         if (now - tries.lastFailureAt < FALLBACK_DISPATCH_BACKOFF_MS * tries.failures) continue;
         if (tries.next > 0)
           command = {

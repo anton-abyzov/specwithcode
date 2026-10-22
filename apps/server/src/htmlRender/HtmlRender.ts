@@ -128,6 +128,44 @@ export class HtmlRender extends Context.Service<
       | PreviewBrowserHost.PreviewBrowserHostError
       | HeadlessChrome.HtmlRenderBrowserError
     >;
+    /**
+     * Renders a self-contained page of a known size (a design frame) to a PNG
+     * of exactly `width` x `height` at `scale`, or to a PDF using the page's
+     * own `@page` sizes. Base64 bytes.
+     */
+    readonly capture: (input: {
+      readonly html: string;
+      readonly width: number;
+      readonly height: number;
+      readonly scale: number;
+      readonly format: "png" | "pdf";
+    }) => Effect.Effect<
+      string,
+      | PreviewBrowser.PreviewBrowserInstallError
+      | PreviewBrowser.PreviewBrowserInstallingError
+      | PreviewBrowser.PreviewBrowserUnsupportedError
+      | PreviewBrowserHost.PreviewBrowserHostError
+      | HeadlessChrome.HtmlRenderBrowserError
+    >;
+    /**
+     * Transparent PNGs of several self-contained documents of known sizes at
+     * `scale`, from one browser launch, in order. Base64 bytes.
+     */
+    readonly captureImages: (input: {
+      readonly items: ReadonlyArray<{
+        readonly html: string;
+        readonly width: number;
+        readonly height: number;
+      }>;
+      readonly scale: number;
+    }) => Effect.Effect<
+      ReadonlyArray<string>,
+      | PreviewBrowser.PreviewBrowserInstallError
+      | PreviewBrowser.PreviewBrowserInstallingError
+      | PreviewBrowser.PreviewBrowserUnsupportedError
+      | PreviewBrowserHost.PreviewBrowserHostError
+      | HeadlessChrome.HtmlRenderBrowserError
+    >;
   }
 >()("specweave-studio/htmlRender/HtmlRender") {}
 
@@ -503,7 +541,40 @@ const make = Effect.gen(function* () {
     } satisfies HtmlPreview;
   });
 
-  return HtmlRender.of({ prepare, publish, preview });
+  const capture = Effect.fn("HtmlRender.capture")(function* (input: {
+    readonly html: string;
+    readonly width: number;
+    readonly height: number;
+    readonly scale: number;
+    readonly format: "png" | "pdf";
+  }) {
+    const executable = yield* previewBrowser.executable;
+    const captured = yield* launching(executable, (noSandbox) =>
+      HeadlessChrome.captureFixedHtml({ executable, noSandbox, ...input }).pipe(
+        Effect.provideContext(services),
+      ),
+    );
+    return captured.data;
+  });
+
+  const captureImages = Effect.fn("HtmlRender.captureImages")(function* (input: {
+    readonly items: ReadonlyArray<{
+      readonly html: string;
+      readonly width: number;
+      readonly height: number;
+    }>;
+    readonly scale: number;
+  }) {
+    if (input.items.length === 0) return [];
+    const executable = yield* previewBrowser.executable;
+    return yield* launching(executable, (noSandbox) =>
+      HeadlessChrome.captureFixedHtmlImages({ executable, noSandbox, ...input }).pipe(
+        Effect.provideContext(services),
+      ),
+    );
+  });
+
+  return HtmlRender.of({ prepare, publish, preview, capture, captureImages });
 });
 
 export const layer = Layer.effect(HtmlRender, make);

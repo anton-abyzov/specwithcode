@@ -18,6 +18,7 @@ export const SETTINGS_PROJECT_PATHS: ReadonlySet<string> = new Set([
 export const SETTINGS_GLOBAL_PATHS: ReadonlySet<string> = new Set([
   "/settings/general",
   "/settings/appearance",
+  "/settings/design-systems",
   "/settings/keybindings",
   "/settings/snap-shot",
   "/settings/privacy",

@@ -1,4 +1,5 @@
 import { isElectron } from "~/env";
+import { DESIGN_FEATURES } from "~/components/design/designFeatures";
 import { isMacPlatform, isWindowsPlatform, normalizeSearchText } from "~/lib/utils";
 import { STATIC_KEYBINDING_COMMANDS, type KeybindingCommand } from "@specweave-studio/contracts";
 import type { EnvironmentId } from "@specweave-studio/contracts";
@@ -19,6 +20,7 @@ export type SettingsPath =
   | "/settings/privacy"
   | "/settings/agents"
   | "/settings/appearance"
+  | "/settings/design-systems"
   | "/settings/keybindings"
   | "/settings/snap-shot"
   | "/settings/providers"
@@ -100,6 +102,7 @@ export const SETTINGS_SECTION_LABELS: Readonly<Record<SettingsPath, string>> = {
   "/settings/skills": "Skills",
   "/settings/general": "General",
   "/settings/appearance": "Appearance",
+  "/settings/design-systems": "Design systems",
   "/settings/keybindings": "Keybindings",
   "/settings/snap-shot": "SnapShots",
   "/settings/privacy": "Data & privacy",
@@ -133,6 +136,8 @@ export const SETTINGS_NAV_GROUPS: ReadonlyArray<{
     paths: [
       "/settings/general",
       "/settings/appearance",
+      // Shown once the server wires the design-system import (designFeatures.ts).
+      ...(DESIGN_FEATURES.designSystems ? (["/settings/design-systems"] as const) : []),
       "/settings/keybindings",
       "/settings/snap-shot",
       "/settings/privacy",
@@ -1189,6 +1194,18 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/google",
     searchTerms: ["gmail calendar drive google email personal agent briefing oauth sign in"],
   },
+  ...(DESIGN_FEATURES.designSystems
+    ? [
+        {
+          id: "design-systems",
+          title: "Design systems",
+          to: "/settings/design-systems",
+          searchTerms: [
+            "design system tokens components import figma variables dtcg tokens studio theme css proposals review rescan",
+          ],
+        } as const,
+      ]
+    : []),
   {
     id: "archive",
     title: "Archived threads",
@@ -1207,6 +1224,7 @@ const SETTINGS_CATEGORY_SCOPES: Readonly<Record<SettingsPath, SettingsSearchScop
   "/settings/general": null,
   "/settings/agents": "project-defaults",
   "/settings/appearance": null,
+  "/settings/design-systems": null,
   "/settings/snap-shot": null,
   // Keybindings fan out to the selection; Providers shows the representative
   // environment at any selection. Neither needs a particular scope to render.

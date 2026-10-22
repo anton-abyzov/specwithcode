@@ -93,10 +93,16 @@ export async function installWhenUpdaterFree(
   expectedVersion: string | null,
   onProgress: (progress: LatestUpdateProgress) => void = () => undefined,
   timeoutMs = UPDATER_BUSY_WAIT_MS,
+  // The app installs alone because the service's agent lacks the release:
+  // main may then let it go ahead of the service (appActivationGate.ts).
+  serviceLacksRelease = false,
 ): Promise<DesktopUpdateActionResult> {
   const deadline = Date.now() + timeoutMs;
+  const options = expectedVersion
+    ? { expectedVersion, ...(serviceLacksRelease ? { serviceLacksRelease: true } : {}) }
+    : undefined;
   for (;;) {
-    const result = await bridge.installUpdate(expectedVersion ? { expectedVersion } : undefined);
+    const result = await bridge.installUpdate(options);
     if (result.accepted || result.reason !== "busy" || Date.now() >= deadline) return result;
     const state = await bridge.getUpdateState().catch(() => result.state);
     onProgress({

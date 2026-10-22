@@ -41,6 +41,14 @@ export const ServiceUpdateBlocker = Schema.Struct({
    * continues and a cancelled queued message is queued again. Older services omit it.
    */
   continuesAfterRestart: Schema.optional(Schema.Boolean),
+  /**
+   * On a `request` blocker: how many of its requests are questions (a question
+   * or a sign-in) and how many are approvals. A forced update closes them and
+   * asks them again after the update. Older services, which close them without
+   * asking again, omit both.
+   */
+  questions: Schema.optional(NonNegativeInt),
+  approvals: Schema.optional(NonNegativeInt),
 });
 export type ServiceUpdateBlocker = typeof ServiceUpdateBlocker.Type;
 

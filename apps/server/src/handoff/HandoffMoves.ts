@@ -63,6 +63,7 @@ import {
   effectiveHandoffMode,
   fenceRecord,
   findIncoming,
+  incomingKey,
   type HandoffDocument,
   type HandoffThreadRecord,
   isLeaseStale,
@@ -78,6 +79,7 @@ import {
   type TakeoverResponse,
   transcriptTail,
 } from "./handoffWire.ts";
+import { HANDOFF_APP_VERSION, HANDOFF_PROTOCOL_VERSION, versionFailure } from "./handoffWire.ts";
 
 const SETTLE_TIMEOUT = Duration.seconds(45);
 const SETTLE_POLL = Duration.millis(500);
@@ -217,6 +219,8 @@ export const make = Effect.gen(function* () {
         lease: record?.lease ?? null,
         transcript: yield* transcriptOf(shell.id),
         execution: thread.execution ?? null,
+        protocolVersion: HANDOFF_PROTOCOL_VERSION,
+        appVersion: HANDOFF_APP_VERSION,
       };
       const now = yield* nowIso;
       const label = yield* peerLabel(destination);
@@ -302,6 +306,8 @@ export const make = Effect.gen(function* () {
   ) => {
     const request = {
       sourceEnvironmentId: self,
+      protocolVersion: HANDOFF_PROTOCOL_VERSION,
+      appVersion: HANDOFF_APP_VERSION,
       threads: threads.map(({ shell, sequence, modelSelection }) => ({
         sourceThreadId: shell.id,
         sourceProjectId: shell.projectId,
@@ -313,7 +319,30 @@ export const make = Effect.gen(function* () {
       destination === self
         ? receiver.preflight(selfCaller, request)
         : peers.preflight(destination, request);
-    return answer.pipe(Effect.mapError(fromPeer));
+    return answer.pipe(
+      // A destination at another protocol version takes no thread, whatever it answered.
+      Effect.map((response) => {
+        const mismatch = versionFailure({
+          peerLabel: response.machineLabel,
+          peerProtocolVersion: response.protocolVersion,
+          peerAppVersion: response.appVersion,
+          selfLabel,
+        });
+        if (mismatch === null) return response;
+        return {
+          ...response,
+          results: response.results.map((result) => ({
+            ...result,
+            // This side words it: the destination's own copy cannot name it by its label.
+            failures: [
+              mismatch,
+              ...result.failures.filter((failure) => failure.check !== "version"),
+            ],
+          })),
+        };
+      }),
+      Effect.mapError(fromPeer),
+    );
   };
 
   /** A fresh checkpoint of the thread, replicated to `destination`. */
@@ -825,6 +854,16 @@ export const make = Effect.gen(function* () {
           )} seconds ago; it may still be running it.`,
         );
       }
+      const detail = (document.incomingDetails ?? {})[
+        incomingKey(input.sourceEnvironmentId, input.sourceThreadId)
+      ];
+      const mismatch = versionFailure({
+        peerLabel: replica.sourceLabel,
+        peerProtocolVersion: detail?.sourceProtocolVersion,
+        peerAppVersion: detail?.sourceAppVersion,
+        selfLabel,
+      });
+      if (mismatch !== null) return yield* failed("invalid", mismatch.message);
       const response = yield* receiver
         .takeover(
           { sourceEnvironmentId: input.sourceEnvironmentId, grant: null },

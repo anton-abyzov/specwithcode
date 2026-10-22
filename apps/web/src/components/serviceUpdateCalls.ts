@@ -73,7 +73,23 @@ export async function callPrepare(
   if (!prepare) return null;
   // An older service without this call, one already restarting, or one too busy
   // to answer still installs: the update agent checks for itself before it does.
-  return withTimeout(prepare(input), timeoutMs).catch(() => null);
+  const checked = await withTimeout(prepare(input), timeoutMs).catch(() => null);
+  if (checked !== null && !input.stopWork && input.releaseHold !== true) {
+    for (const listener of [...lookListeners]) listener(checked.blockers);
+  }
+  return checked;
+}
+
+// Whoever wants what the last look found (0991): the sidebar's automatic
+// install wait reuses the window's own looks instead of asking again.
+const lookListeners = new Set<(blockers: ReadonlyArray<ServiceUpdateBlocker>) => void>();
+
+/** Hears the blockers of every look (a prepare that stops nothing). */
+export function onServiceUpdateLook(
+  listener: (blockers: ReadonlyArray<ServiceUpdateBlocker>) => void,
+): () => void {
+  lookListeners.add(listener);
+  return () => void lookListeners.delete(listener);
 }
 
 export async function readAgentState(): Promise<StudioServiceUpdateState | null> {

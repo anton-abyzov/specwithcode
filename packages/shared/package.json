@@ -19,6 +19,18 @@
       "types": "./src/delimitedPreview.ts",
       "import": "./src/delimitedPreview.ts"
     },
+    "./designOps": {
+      "types": "./src/designOps.ts",
+      "import": "./src/designOps.ts"
+    },
+    "./designRender": {
+      "types": "./src/designRender.ts",
+      "import": "./src/designRender.ts"
+    },
+    "./slideLayouts": {
+      "types": "./src/slideLayouts.ts",
+      "import": "./src/slideLayouts.ts"
+    },
     "./composerPullRequestMatches": {
       "types": "./src/composerPullRequestMatches.ts",
       "import": "./src/composerPullRequestMatches.ts"

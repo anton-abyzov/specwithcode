@@ -447,6 +447,12 @@ export function summarizeStudioToolCalls(
     case "html-render":
       label = phrase("Rendered", "render", quantity(selected.length, "HTML page"));
       break;
+    case "design-read":
+      label = phrase("Read", "read", `designs ${times}`);
+      break;
+    case "design-edit":
+      label = phrase("Edited", "edit", `designs ${times}`);
+      break;
     case "capabilities":
       label = phrase("Checked", "check", `orchestration capabilities ${times}`);
       break;

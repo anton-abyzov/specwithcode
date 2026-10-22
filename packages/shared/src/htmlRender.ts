@@ -351,12 +351,16 @@ const BOOTSTRAP_SCRIPT = `(function(){var s=document.getElementById("studio-them
 // after the page's own handlers, and leaves a copy they handled alone.
 export const HTML_RENDER_EXACT_COPY_SCRIPT = String.raw`(function(){var I=/[\u200B\u2060\uFEFF\u00AD]/g,S=/[\u00A0\u202F\u2007]/g;function x(t){return String(t).replace(I,"").replace(S," ").replace(/\r\n?/g,"\n").replace(/^(?:[ \t]*\n)+/,"").replace(/\s+$/,"");}var c=navigator.clipboard;if(c&&typeof c.writeText==="function"){var w=c.writeText.bind(c);try{c.writeText=function(t){return w(x(t));};}catch(e){}}window.addEventListener("copy",function(e){if(e.defaultPrevented||!e.clipboardData)return;var a=document.activeElement,t,s=null;if(a&&(a.tagName==="TEXTAREA"||a.tagName==="INPUT")&&typeof a.selectionStart==="number"){t=a.value.slice(a.selectionStart,a.selectionEnd);}else{s=window.getSelection();t=s?s.toString():"";}if(!t)return;var v=x(t);if(v===t)return;e.clipboardData.setData("text/plain",v);if(s&&s.rangeCount>0){var d=document.createElement("div");for(var i=0;i<s.rangeCount;i++)d.appendChild(s.getRangeAt(i).cloneContents());e.clipboardData.setData("text/html",d.innerHTML);}e.preventDefault();});})();`;
 
-function bootstrapMarkup(markup: string): string {
+function bootstrapMarkup(markup: string, appearance?: ThemeAppearance): string {
   const dark = htmlRenderTheme(STUDIO_CODE_DARK_THEME_COLORS, "dark");
   const light = htmlRenderTheme(STUDIO_CODE_LIGHT_THEME_COLORS, "light");
   // Without a client-provided theme (a direct download, the headless preview
-  // without a fragment) the page follows the OS appearance.
-  const defaultCss = `${rootRule(dark)}@media (prefers-color-scheme: light){${rootRule(light)}}${BASE_CSS}`;
+  // without a fragment) the page follows the OS appearance, unless the caller
+  // pins one.
+  const defaultCss =
+    appearance === undefined
+      ? `${rootRule(dark)}@media (prefers-color-scheme: light){${rootRule(light)}}${BASE_CSS}`
+      : `${rootRule(appearance === "dark" ? dark : light)}${BASE_CSS}`;
   return [
     /<meta\s[^>]*charset/i.test(markup.slice(0, 4096)) ? "" : '<meta charset="utf-8">',
     /<meta\s[^>]*name\s*=\s*["']?viewport/i.test(markup)
@@ -397,11 +401,16 @@ const blankNonMarkup = (html: string) => {
 
 /**
  * Inserts the theme bootstrap at the start of the document head, so a page's
- * own styles and scripts come after it.
+ * own styles and scripts come after it. `before` goes ahead of the bootstrap
+ * (a Content-Security-Policy meta must precede everything it governs).
  */
-export function injectHtmlRenderBootstrap(html: string): string {
+export function injectHtmlRenderBootstrap(
+  html: string,
+  before = "",
+  appearance?: ThemeAppearance,
+): string {
   const scan = blankNonMarkup(html);
-  const markup = bootstrapMarkup(scan);
+  const markup = before + bootstrapMarkup(scan, appearance);
   const headOpen = /<head(?:\s[^>]*)?>/i.exec(scan);
   if (headOpen) {
     const at = headOpen.index + headOpen[0].length;

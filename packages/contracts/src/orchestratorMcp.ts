@@ -119,7 +119,7 @@ const OrchestratorMcpSchedule = Schema.Union([
   OrchestratorMcpScheduleFromJsonString,
 ]).annotate({
   description:
-    "Trigger object: {type:'interval', everyMs}, {type:'fixed_time', timeOfDay, weekdays?}, {type:'monthly', dayOfMonth (1-28), timeOfDay}, {type:'manual'} to run only when asked (Run now or run_scheduled_task_now), or {type:'webhook'} to run on each request to a generated URL. Never stringify it unless the provider requires the compatibility form.",
+    "Trigger object: {type:'interval', everyMs}, {type:'fixed_time', timeOfDay, weekdays?} (repeats every matching day), {type:'once', at} for a one-time run at an ISO date-time (turns itself off after it runs), {type:'monthly', dayOfMonth (1-28), timeOfDay}, {type:'manual'} to run only when asked (Run now or run_scheduled_task_now), or {type:'webhook'} to run on each request to a generated URL. Never stringify it unless the provider requires the compatibility form.",
 });
 
 /**

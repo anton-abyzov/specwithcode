@@ -3,10 +3,16 @@ import * as ProjectAdmission from "../project/ProjectAdmission.ts";
 import { guardProjectCreation } from "../project/ProjectCommandAdmission.ts";
 import {
   applyLimitObservation,
+  derivedLimitResumeAt,
   hasFreshLimitPermission,
   recoverySnoozeBlocks,
   updateLimitRecovery,
 } from "./usageLimitRecovery.ts";
+import {
+  isBlockingRuntimeRequest,
+  openMessageQuestionIds,
+  openQuestionReminder,
+} from "./blockingRuntimeRequest.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
 import { answersWithoutAttachmentPaths } from "../provider/userInputAttachments.ts";
 import { makeAutomaticResolutionGuard } from "./ThreadAutomaticResolutionGuard.ts";
@@ -100,6 +106,7 @@ import { CheckpointServiceV2 } from "./CheckpointService.ts";
 import { CommandPolicyV2, resolveMessageDispatchIntent } from "./CommandPolicy.ts";
 import { CommandReceiptStoreV2 } from "./CommandReceiptStore.ts";
 import { ContextHandoffServiceV2 } from "./ContextHandoffService.ts";
+import { CONTEXT_COMPACT_MESSAGE_PREFIX } from "./contextRecoveryIds.ts";
 import { notificationTurnItem } from "./Notification.ts";
 import { isRestartNoteSource } from "./RestartBackgroundNote.ts";
 import { isUndeliveredMailboxSteer } from "./NotificationMailbox.ts";
@@ -130,6 +137,16 @@ import * as RunExecutionService from "./RunExecutionService.ts";
 import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
 import { ProviderSwitchServiceV2 } from "./ProviderSwitchService.ts";
 import { isAutomaticCompletionRun, queuedRunsInDeliveryOrder } from "./QueuedRunOrder.ts";
+import { isLimitWayBack } from "./limitFallbackReturn.ts";
+import {
+  inheritedRunsLeftOnPreviousSelection,
+  isNativeMaintenanceCommand,
+  isServerContinuation,
+  queuedRunStartSelection,
+  wakesLeftOnAnotherInstance,
+} from "./QueueFollowsThread.ts";
+
+export { isNativeMaintenanceCommand };
 import { RuntimePolicyV2 } from "./RuntimePolicy.ts";
 import {
   makeSubagentChildThread,
@@ -409,15 +426,59 @@ function wakeWorkStartedAt(
   return previous === undefined ? {} : { workStartedAt: orchestrationV2RunWorkStartedAt(previous) };
 }
 
-/** A native /compact or /logout turn: provider maintenance, not agent work. */
-export function isNativeMaintenanceCommand(message: {
-  readonly text: string;
-  readonly attachments: ReadonlyArray<ChatAttachment>;
-  readonly context?: import("@specweave-studio/contracts").OrchestrationMessageContext | undefined;
+/** Usage-limit recovery's own resume of a stopped run (`limit-resume:`). */
+function isLimitRecoveryResume(command: {
+  readonly commandId: string;
+  readonly creationSource?: string | undefined;
 }): boolean {
-  return (
-    message.attachments.length === 0 &&
-    ["/compact", "/logout"].includes(message.text.trim().toLowerCase())
+  return command.creationSource === "server" && command.commandId.startsWith("limit-resume:");
+}
+
+/**
+ * Whether usage-limit recovery may still resume `runId`, read under the thread
+ * lock. The stop must still be the thread's usage-limit stop, armed for an
+ * automatic resume by the arm `armedBy` accepts, on the provider it stopped
+ * on, past its reset (or its derived wait, for a stop with no usable reset),
+ * neither settled nor snoozed, and with nothing waiting on a person. A
+ * request answered by a message or left by an earlier run does not wait on
+ * one (see `isBlockingRuntimeRequest`).
+ */
+function limitRecoveryResumeAllowed(
+  projection: OrchestrationV2ThreadProjection,
+  runId: RunId,
+  armedBy: (requestId: CommandId | undefined) => boolean,
+  nowMs: number,
+): boolean {
+  const run = usageLimitBlockedRun(projection.runs, projection.turnItems, null);
+  const failure = latestRootProviderFailure(run, projection.turnItems);
+  const recovery = projection.thread.limitRecovery;
+  const shell = threadShellFromProjection(projection);
+  const permitted = hasFreshLimitPermission(shell, nowMs);
+  // A stop with no usable reset, or one back after an automatic resume in the
+  // same window, resumes once its derived wait is over, the way the recovery
+  // worker decides (it sends only after a fresh read shows room). Pending
+  // requests are judged on the full records instead.
+  const derivedAt = derivedLimitResumeAt({ ...shell, pendingRuntimeRequest: null });
+  return !(
+    run == null ||
+    run.id !== runId ||
+    failure?.class !== "usage_limit" ||
+    shell.lastErrorClass !== "usage_limit" ||
+    !recovery?.autoResume ||
+    !armedBy(recovery.requestId) ||
+    recovery.runId !== run.id ||
+    recovery.resetAt !== (failure.resetAt ?? null) ||
+    (!permitted &&
+      (derivedAt === null
+        ? !recovery.resetAt || Date.parse(recovery.resetAt) > nowMs
+        : derivedAt > nowMs)) ||
+    (recovery.availability !== undefined && !permitted) ||
+    projection.thread.archivedAt !== null ||
+    projection.thread.deletedAt !== null ||
+    projection.thread.settledOverride === "settled" ||
+    projection.thread.providerInstanceId !== run.providerInstanceId ||
+    isBlockingRuntimeRequest(projection, run.id) ||
+    recoverySnoozeBlocks(shell, nowMs, permitted)
   );
 }
 
@@ -565,11 +626,13 @@ function takesDelegationAfterItEnded(
  * sending to the thread (the user, another thread, a restart or manual
  * continuation) continues it: the held messages are delivered in their order,
  * after a message that starts a run or together with one queued behind the active
- * run. Automatic deliveries (wakes, scheduled tasks, delegated results,
- * usage-limit recovery, the server's own idle /compact) do not decide that for the
- * user; the hold stays, they join it when they queue, and the thread keeps showing
- * its held queue. A native /compact or /logout is maintenance, not work, so it
- * leaves the hold too.
+ * run. Automatic deliveries (wakes, scheduled tasks, delegated results, a
+ * usage-limit continuation that is not the recovery's own `limit-resume:`, the
+ * server's own idle /compact) do not decide that for the user; the hold stays,
+ * they join it when they queue, and the thread keeps showing its held queue. A native /compact or /logout is maintenance, not work, so it
+ * leaves the hold too. The server's continuations of a stopped thread (provider
+ * fallback, the way back, usage-limit recovery) do continue it, so they release
+ * the hold like a send, and the deliveries held behind the failure follow them.
  */
 export function messageReleasesHeldQueue(
   command: Pick<
@@ -582,8 +645,15 @@ export function messageReleasesHeldQueue(
     | "createdBy"
     | "text"
     | "attachments"
-  >,
+  > &
+    Partial<
+      Pick<
+        Extract<OrchestrationV2Command, { readonly type: "message.dispatch" }>,
+        "commandId" | "messageId" | "creationSource"
+      >
+    >,
 ): boolean {
+  if (isServerContinuation(command) && !isNativeMaintenanceCommand(command)) return true;
   return (
     command.createdBy !== "system" &&
     !isNativeMaintenanceCommand(command) &&
@@ -1397,6 +1467,87 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     );
   });
 
+  /**
+   * The queued run as it starts on `selection`. A run that follows the thread
+   * onto another selection moves to the thread's root provider thread for that
+   * instance, or a new one when the thread never ran there.
+   */
+  const followThreadSelection = (
+    projection: OrchestrationV2ThreadProjection,
+    run: OrchestrationV2Run,
+    selection: ModelSelection,
+  ) =>
+    Effect.gen(function* () {
+      // A run a continuation re-pointed already carries the selection but still
+      // sits on the instance it was queued on, so it moves here.
+      if (
+        modelSelectionsEqual(run.modelSelection, selection) &&
+        run.providerInstanceId === selection.instanceId
+      ) {
+        return { run, moved: false, newProviderThread: undefined } as const;
+      }
+      if (run.providerInstanceId === selection.instanceId) {
+        return {
+          run: { ...run, modelSelection: selection },
+          moved: false,
+          newProviderThread: undefined,
+        } as const;
+      }
+      const activeProviderThread = projection.providerThreads.find(
+        (candidate) => candidate.id === projection.thread.activeProviderThreadId,
+      );
+      const existing =
+        activeProviderThread?.providerInstanceId === selection.instanceId
+          ? activeProviderThread
+          : rootProviderThreadsForProvider(projection, selection.instanceId)[0];
+      const newProviderThread: OrchestrationV2ProviderThread | undefined =
+        existing !== undefined
+          ? undefined
+          : yield* providerAdapters.get(selection.instanceId).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new OrchestratorDispatchError({
+                    commandId: CommandId.make(`command:system:start-queued:${run.id}`),
+                    commandType: "message.dispatch",
+                    cause,
+                  }),
+              ),
+              Effect.flatMap((adapter) =>
+                Effect.map(DateTime.now, (now) => ({
+                  id: idAllocator.derive.providerThread({
+                    driver: adapter.driver,
+                    nativeThreadId: `pending:${run.id}`,
+                  }),
+                  driver: adapter.driver,
+                  providerInstanceId: selection.instanceId,
+                  providerSessionId: null,
+                  appThreadId: projection.thread.id,
+                  ownerNodeId: null,
+                  nativeThreadRef: null,
+                  nativeConversationHeadRef: null,
+                  status: "not_loaded" as const,
+                  firstRunOrdinal: null,
+                  lastRunOrdinal: null,
+                  handoffIds: [],
+                  forkedFrom: null,
+                  createdAt: now,
+                  updatedAt: now,
+                })),
+              ),
+            );
+      const providerThreadId = existing?.id ?? newProviderThread!.id;
+      return {
+        run: {
+          ...run,
+          providerInstanceId: selection.instanceId,
+          modelSelection: selection,
+          providerThreadId,
+        },
+        moved: true,
+        newProviderThread,
+      } as const;
+    });
+
   const startNextQueuedRun = (threadId: ThreadId, options?: { readonly failedRunId?: RunId }) =>
     Effect.gen(function* () {
       // An update hold keeps the queue where it is; the drain cancels it. A
@@ -1436,10 +1587,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       if (usageLimitBlockedRun(projection.runs, projection.turnItems, sessionError) !== null) {
         return;
       }
-      const queuedRun = nextQueuedRun(projection);
-      if (queuedRun === undefined) {
+      const nextRun = nextQueuedRun(projection);
+      if (nextRun === undefined) {
         return;
       }
+      // A notification or delegated result follows the thread: it starts on the
+      // thread's selection, never pulling the thread back to the instance it was
+      // queued on.
+      const startSelection = queuedRunStartSelection(projection, nextRun);
       // Hold the queue after a failure the next message would repeat, so the
       // user decides when to resume it (see shouldHoldQueueAfterFailure).
       const failedRun = latestExecutedRun(projection.runs);
@@ -1447,11 +1602,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         failedRun?.id === options?.failedRunId
           ? latestRootProviderFailure(failedRun, projection.turnItems)
           : undefined;
+      // The server's /compact before a context retry holds the queue like the
+      // failure it recovers from: a wake that started now would take the turn
+      // the failed request is resent in. The context retry, a send, releases it.
+      const compactedForRetry =
+        failedRun?.status === "completed" &&
+        failedRun.userMessageId.startsWith(`${CONTEXT_COMPACT_MESSAGE_PREFIX}${threadId}:`);
       if (
+        compactedForRetry ||
         shouldHoldQueueAfterFailure({
           failure: failure ?? undefined,
           failedProviderInstanceId: failedRun?.providerInstanceId,
-          queuedProviderInstanceId: queuedRun.providerInstanceId,
+          queuedProviderInstanceId: startSelection.instanceId,
         })
       ) {
         const now = yield* DateTime.now;
@@ -1469,6 +1631,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         );
         return;
       }
+      const followed = yield* followThreadSelection(projection, nextRun, startSelection);
+      const queuedRun = followed.run;
       const rootNodeId = queuedRun.rootNodeId;
       const attemptId = queuedRun.activeAttemptId;
       const providerThreadId = queuedRun.providerThreadId;
@@ -1480,8 +1644,21 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         });
       }
 
-      const rootNode = projection.nodes.find((candidate) => candidate.id === rootNodeId);
-      const attempt = projection.attempts.find((candidate) => candidate.id === attemptId);
+      const storedRootNode = projection.nodes.find((candidate) => candidate.id === rootNodeId);
+      const storedAttempt = projection.attempts.find((candidate) => candidate.id === attemptId);
+      // A run that follows the thread moves its attempt and root node with it.
+      const rootNode =
+        storedRootNode === undefined || !followed.moved
+          ? storedRootNode
+          : { ...storedRootNode, providerThreadId };
+      const attempt =
+        storedAttempt === undefined || !followed.moved
+          ? storedAttempt
+          : {
+              ...storedAttempt,
+              providerInstanceId: queuedRun.providerInstanceId,
+              providerThreadId,
+            };
       const queuedMessage = projection.messages.find(
         (candidate) => candidate.id === queuedRun.userMessageId,
       );
@@ -1493,9 +1670,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           candidate.runId === queuedRun.id &&
           candidate.messageId === queuedRun.userMessageId,
       );
-      const queuedProviderThread = projection.providerThreads.find(
-        (candidate) => candidate.id === providerThreadId,
-      );
+      const queuedProviderThread =
+        projection.providerThreads.find((candidate) => candidate.id === providerThreadId) ??
+        followed.newProviderThread;
       const storedCheckpointScope = projection.checkpointScopes.find(
         (scope) => scope.id === rootNode?.checkpointScopeId,
       );
@@ -1866,6 +2043,39 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       );
       yield* writeSystemEvents(
         [
+          ...(followed.moved
+            ? [
+                ...(followed.newProviderThread === undefined
+                  ? []
+                  : [
+                      {
+                        type: "provider-thread.updated" as const,
+                        threadId,
+                        providerInstanceId: queuedRun.providerInstanceId,
+                        occurredAt: now,
+                        payload: followed.newProviderThread,
+                      },
+                    ]),
+                {
+                  type: "run-attempt.updated" as const,
+                  threadId,
+                  runId: queuedRun.id,
+                  nodeId: rootNode.id,
+                  providerInstanceId: queuedRun.providerInstanceId,
+                  occurredAt: now,
+                  payload: attempt,
+                },
+                {
+                  type: "node.updated" as const,
+                  threadId,
+                  runId: queuedRun.id,
+                  nodeId: rootNode.id,
+                  providerInstanceId: queuedRun.providerInstanceId,
+                  occurredAt: now,
+                  payload: rootNode,
+                },
+              ]
+            : []),
           ...(selectionChanged
             ? [
                 {
@@ -2884,13 +3094,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     if (command.type === "thread.metadata.update" && command.limitAvailability) {
       const projection = yield* loadProjectionForCommand(
         command,
-        ["runs", "runtimeRequests", "turnItems"],
+        ["runs", "runtimeRequests", "turnItems", "nodes"],
         { turnItemTypes: ["error"] },
       );
       const blocked = usageLimitBlockedRun(projection.runs, projection.turnItems, null);
       const observed =
         blocked?.id === command.limitAvailability.runId &&
-        !projection.runtimeRequests.some((request) => request.status === "pending")
+        !isBlockingRuntimeRequest(projection, blocked.id)
           ? applyLimitObservation(thread, command, now)
           : null;
       yield* emit(
@@ -2907,7 +3117,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     if (command.type === "thread.metadata.update" && command.limitRecovery != null) {
       const projection = yield* loadProjectionForCommand(
         command,
-        ["runs", "runtimeRequests", "turnItems"],
+        ["runs", "runtimeRequests", "turnItems", "nodes"],
         { turnItemTypes: ["error"] },
       );
       const run = usageLimitBlockedRun(projection.runs, projection.turnItems, null);
@@ -2930,7 +3140,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         failure?.class !== "usage_limit" ||
         (failure.resetAt ?? null) !== command.limitRecovery.resetAt ||
         thread.providerInstanceId !== run.providerInstanceId ||
-        projection.runtimeRequests.some((request) => request.status === "pending")
+        // A question the next message answers, or one an earlier run left, holds nothing.
+        isBlockingRuntimeRequest(projection, run.id)
       ) {
         return yield* new OrchestratorDispatchError({
           commandId: command.commandId,
@@ -2984,6 +3195,24 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
       markUnreadVisitedAt = DateTime.subtract(latestRunCompletedAt, { milliseconds: 1 });
     }
+    // The way back moves the thread home with no turn of its own. Queued sends
+    // that took the fallback's model go home with it, held or not: left on
+    // the fallback, the first to start would switch the thread straight back.
+    const runsFollowingWayBack =
+      command.type === "thread.model-selection.set" && isLimitWayBack(command.commandId)
+        ? yield* Effect.gen(function* () {
+            const { runs } = yield* loadProjectionForCommand(command, ["runs"]);
+            const queued = runs.filter((run) => run.status === "queued");
+            if (queued.length === 0) return [];
+            const { messages } = yield* loadProjectionForCommand(command, ["messages"], {
+              messageIds: queued.map((run) => run.userMessageId),
+            });
+            return inheritedRunsLeftOnPreviousSelection(
+              { thread, runs: queued, messages },
+              command.modelSelection,
+            );
+          })
+        : [];
     const updatedThread: OrchestrationV2AppThread = (() => {
       switch (command.type) {
         case "thread.archive":
@@ -3452,6 +3681,19 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       occurredAt: now,
       payload: extra === undefined ? updatedThread : { ...updatedThread, ...extra },
     });
+    for (const { run } of runsFollowingWayBack) {
+      yield* emit(
+        events,
+        command,
+      )({
+        type: "run.updated",
+        threadId: command.threadId,
+        runId: run.id,
+        providerInstanceId: run.providerInstanceId,
+        occurredAt: now,
+        payload: { ...run, modelSelection: updatedThread.modelSelection },
+      });
+    }
 
     if (command.type === "thread.metadata.update" && command.regenerateTitle === true) {
       yield* Ref.update(effects, (existing) => [
@@ -4703,6 +4945,39 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       ]);
     });
 
+  // A refused usage-limit resume is accepted without effect, so the worker's
+  // delivery is not retried. A snooze since the arm retires the arm: the
+  // resume after the snooze needs a fresh one.
+  const refuseLimitResume = (
+    command: Extract<OrchestrationV2Command, { readonly type: "message.dispatch" }>,
+    events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
+    projection: OrchestrationV2ThreadProjection,
+    runId: RunId,
+    armedBy: (requestId: CommandId | undefined) => boolean,
+    nowMs: number,
+  ) =>
+    Effect.gen(function* () {
+      const recovery = projection.thread.limitRecovery;
+      yield* emit(
+        events,
+        command,
+      )({
+        type: "thread.metadata-updated",
+        threadId: command.threadId,
+        occurredAt: DateTime.makeUnsafe(nowMs),
+        payload: {
+          ...projection.thread,
+          ...(recovery?.autoResume &&
+          armedBy(recovery.requestId) &&
+          recovery.runId === runId &&
+          projection.thread.snoozedUntil != null &&
+          DateTime.toEpochMillis(projection.thread.snoozedUntil) > nowMs
+            ? { limitRecovery: { ...recovery, requestId: command.commandId } }
+            : {}),
+        },
+      });
+    });
+
   const dispatchMessage = (
     command: Extract<OrchestrationV2Command, { readonly type: "message.dispatch" }>,
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
@@ -4745,7 +5020,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           latestExecutedRun(projection.runs)?.id !== source.id ||
           projection.thread.archivedAt !== null ||
           projection.thread.deletedAt !== null ||
-          projection.runtimeRequests.some((request) => request.status === "pending")
+          isBlockingRuntimeRequest(projection, source.id)
         ) {
           return yield* new OrchestratorDispatchError({
             commandId: command.commandId,
@@ -4753,52 +5028,41 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             cause: "This thread can no longer be resumed from that run.",
           });
         }
+        // Usage-limit recovery may resume a derived stop as a plain
+        // continuation. It is still the recovery's own resume, so it takes the
+        // recovery's checks here, under the thread lock: a cancel, Settle,
+        // snooze, switch or newer arm committed since the worker read the
+        // thread wins over it. Its id ends with the arm's request id.
+        if (isLimitRecoveryResume(command)) {
+          const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
+          const armedBy = (requestId: CommandId | undefined) =>
+            command.commandId.endsWith(`:${requestId ?? "legacy"}`);
+          if (!limitRecoveryResumeAllowed(projection, source.id, armedBy, nowMs)) {
+            yield* refuseLimitResume(command, events, projection, source.id, armedBy, nowMs);
+            return;
+          }
+        }
       }
       if (command.usageLimitContinuationOfRunId !== undefined) {
-        const run = usageLimitBlockedRun(projection.runs, projection.turnItems, null);
-        const failure = latestRootProviderFailure(run, projection.turnItems);
-        const recovery = projection.thread.limitRecovery;
-        const now = yield* DateTime.now;
-        const shell = threadShellFromProjection(projection);
-        const permitted = hasFreshLimitPermission(shell, DateTime.toEpochMillis(now));
+        const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
         if (
           command.dispatchMode.type !== "start_immediately" ||
           command.modelSelection !== undefined ||
-          run?.id !== command.usageLimitContinuationOfRunId ||
-          failure?.class !== "usage_limit" ||
-          threadShellFromProjection(projection).lastErrorClass !== "usage_limit" ||
-          !recovery?.autoResume ||
-          recovery.requestId !== command.usageLimitRecoveryRequestId ||
-          recovery.runId !== run.id ||
-          recovery.resetAt !== (failure.resetAt ?? null) ||
-          (!permitted &&
-            (!recovery.resetAt || Date.parse(recovery.resetAt) > DateTime.toEpochMillis(now))) ||
-          (recovery.availability !== undefined && !permitted) ||
-          projection.thread.archivedAt !== null ||
-          projection.thread.deletedAt !== null ||
-          projection.thread.settledOverride === "settled" ||
-          projection.thread.providerInstanceId !== run.providerInstanceId ||
-          projection.runtimeRequests.some((request) => request.status === "pending") ||
-          recoverySnoozeBlocks(shell, DateTime.toEpochMillis(now), permitted)
+          !limitRecoveryResumeAllowed(
+            projection,
+            command.usageLimitContinuationOfRunId,
+            (requestId) => requestId === command.usageLimitRecoveryRequestId,
+            nowMs,
+          )
         ) {
-          yield* emit(
-            events,
+          yield* refuseLimitResume(
             command,
-          )({
-            type: "thread.metadata-updated",
-            threadId: command.threadId,
-            occurredAt: now,
-            payload: {
-              ...projection.thread,
-              ...(recovery?.autoResume &&
-              recovery.requestId === command.usageLimitRecoveryRequestId &&
-              recovery.runId === command.usageLimitContinuationOfRunId &&
-              projection.thread.snoozedUntil != null &&
-              DateTime.toEpochMillis(projection.thread.snoozedUntil) > DateTime.toEpochMillis(now)
-                ? { limitRecovery: { ...recovery, requestId: command.commandId } }
-                : {}),
-            },
-          });
+            events,
+            projection,
+            command.usageLimitContinuationOfRunId,
+            (requestId) => requestId === command.usageLimitRecoveryRequestId,
+            nowMs,
+          );
           return;
         }
       }
@@ -5045,9 +5309,36 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           }
         }
       }
+      // A server continuation of a run whose question to the person is still
+      // open repeats the question: the open question does not hold the thread,
+      // and "continue" alone would leave the provider past it.
+      const continuedRunId =
+        isServerContinuation(command) && !isNativeMaintenanceCommand(command)
+          ? (command.usageLimitContinuationOfRunId ??
+            command.manualContinuationOfRunId ??
+            latestExecutedRun(projection.runs)?.id ??
+            null)
+          : null;
+      const openQuestionIds =
+        continuedRunId === null ? [] : openMessageQuestionIds(projection, continuedRunId);
+      const questionReminder =
+        openQuestionIds.length === 0
+          ? ""
+          : openQuestionReminder(
+              (yield* projectionStore
+                .getThreadRecords(command.threadId, ["turnItems"], {
+                  turnItemTypes: ["user_input_request"],
+                  turnItemRunIds: [continuedRunId],
+                })
+                .pipe(mapDispatchError(command))).turnItems.flatMap((item) =>
+                item.type === "user_input_request" && openQuestionIds.includes(item.requestId)
+                  ? item.questions
+                  : [],
+              ),
+            );
       const dispatchText =
         delegatedCompletion === undefined
-          ? command.text
+          ? `${command.text}${questionReminder}`
           : delegatedCompletionWakeDetail(delegatedCompletion.taskIds);
       const sourcePlanProjection =
         command.sourcePlanRef === undefined
@@ -5130,6 +5421,50 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         return;
       }
 
+      // A server continuation moving the thread off a provider that is limited or
+      // cannot open: wakes buffered by that provider are delivered as plain text,
+      // so they follow the thread like the server's own notifications. Queued
+      // sends that took the thread's model go with the thread too; left on the
+      // old model, the first one to start would switch the thread back.
+      // The hold releases below rewrite held runs, so they carry the new model too.
+      const runsFollowingContinuation = new Set<RunId>();
+      const releasedHeldRun = (run: OrchestrationV2Run): OrchestrationV2Run => ({
+        ...run,
+        ...(runsFollowingContinuation.has(run.id) ? { modelSelection } : {}),
+        queueHeld: false,
+      });
+      if (isServerContinuation(command) && !isNativeMaintenanceCommand(command)) {
+        const now = yield* DateTime.now;
+        for (const { run } of inheritedRunsLeftOnPreviousSelection(projection, modelSelection)) {
+          runsFollowingContinuation.add(run.id);
+          if (run.queueHeld === true) continue;
+          yield* emit(
+            events,
+            command,
+          )({
+            type: "run.updated",
+            threadId: command.threadId,
+            runId: run.id,
+            providerInstanceId: run.providerInstanceId,
+            occurredAt: now,
+            payload: { ...run, modelSelection },
+          });
+        }
+        for (const { run, message } of wakesLeftOnAnotherInstance(projection, modelSelection)) {
+          yield* emit(
+            events,
+            command,
+          )({
+            type: "message.updated",
+            threadId: command.threadId,
+            runId: run.id,
+            ...(run.rootNodeId === null ? {} : { nodeId: run.rootNodeId }),
+            providerInstanceId: run.providerInstanceId,
+            occurredAt: now,
+            payload: { ...message, creationSource: "server", updatedAt: now },
+          });
+        }
+      }
       const activeProviderThread = projection.providerThreads.find(
         (candidate) => candidate.id === projection.thread.activeProviderThreadId,
       );
@@ -5337,7 +5672,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               runId: held.id,
               providerInstanceId: held.providerInstanceId,
               occurredAt: now,
-              payload: { ...held, queueHeld: false },
+              payload: releasedHeldRun(held),
             });
           }
         }
@@ -5463,7 +5798,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             runId: run.id,
             providerInstanceId: run.providerInstanceId,
             occurredAt: now,
-            payload: { ...run, queueHeld: false },
+            payload: releasedHeldRun(run),
           });
         }
       }

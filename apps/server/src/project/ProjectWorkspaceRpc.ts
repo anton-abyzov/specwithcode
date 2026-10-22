@@ -5,8 +5,18 @@ import {
   WS_METHODS,
   WsProjectPlanningRpcGroup,
   WsProjectKnowledgeRpcGroup,
+  type AssetAccessError,
+  type AssetCreateUrlResult,
+  type AssetResource,
+  type WsDesignRpcGroup,
+  type WsDesignSystemImportRpcGroup,
 } from "@specweave-studio/contracts";
+import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
+import type * as Layer from "effect/Layer";
+import type * as Rpc from "effect/rpc/Rpc";
+import type * as RpcGroup from "effect/rpc/RpcGroup";
+import type { AuthenticatedSession } from "../auth/EnvironmentAuth.ts";
 import { RpcInstrumentation } from "../observability/RpcInstrumentation.ts";
 import * as ProjectWorkspaceService from "./ProjectWorkspaceService.ts";
 import * as ProjectStarterSuggestions from "./ProjectStarterSuggestions.ts";
@@ -87,3 +97,27 @@ export const layerKnowledgeRpcHandlers = WsProjectKnowledgeRpcGroup.middleware(
     };
   }),
 );
+
+export type DesignRpcHandlers = Rpc.ToHandler<
+  RpcGroup.Rpcs<typeof WsDesignRpcGroup> | RpcGroup.Rpcs<typeof WsDesignSystemImportRpcGroup>
+>;
+
+/**
+ * The design handlers for one `/ws` connection, built by `DesignRpc.layerWsHandlers`.
+ * ws.ts reads them through this service instead of importing the design modules:
+ * pulling those into ws.ts's import graph tips its RPC layer types past
+ * TypeScript's instantiation depth (TS2589).
+ */
+export class DesignWsHandlers extends Context.Service<
+  DesignWsHandlers,
+  {
+    readonly layerRpcHandlers: (
+      session: Pick<AuthenticatedSession, "subject">,
+    ) => Layer.Layer<DesignRpcHandlers>;
+    /** A signed URL for one of a design's images, after the caller's design.get checks. */
+    readonly issueAssetUrl: (
+      session: Pick<AuthenticatedSession, "subject">,
+      resource: Extract<AssetResource, { readonly _tag: "design-asset" }>,
+    ) => Effect.Effect<AssetCreateUrlResult, AssetAccessError>;
+  }
+>()("specweave-studio/project/ProjectWorkspaceRpc/DesignWsHandlers") {}

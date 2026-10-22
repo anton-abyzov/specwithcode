@@ -17,6 +17,11 @@ import { provisionRpcs } from "./provision.ts";
 import { BROWSER_BRIDGE_RPC_METHODS, browserBridgeRpcs } from "./browserBridge.ts";
 import { BROWSER_EXTENSION_RPC_METHODS, browserExtensionRpcs } from "./browserExtension.ts";
 import { COMPUTER_USE_RPC_METHODS, computerUseRpcs } from "./computerUse.ts";
+import { DESIGN_RPC_METHODS, designRpcs } from "./designRpc.ts";
+import {
+  DESIGN_SYSTEM_IMPORT_RPC_METHODS,
+  designSystemImportRpcs,
+} from "./designSystemImportRpc.ts";
 import {
   nativeConnectionApplyRpc,
   PROJECT_CONNECTION_RPC_METHODS,
@@ -419,6 +424,8 @@ export const WS_METHODS = {
   ...BROWSER_BRIDGE_RPC_METHODS,
   ...BROWSER_EXTENSION_RPC_METHODS,
   ...COMPUTER_USE_RPC_METHODS,
+  ...DESIGN_RPC_METHODS,
+  ...DESIGN_SYSTEM_IMPORT_RPC_METHODS,
   // Project registry methods
   projectsList: "projects.list",
   projectsAdd: "projects.add",
@@ -2276,6 +2283,14 @@ export const WsProjectKnowledgeRpcGroup = RpcGroup.make(...projectKnowledgeRpcs)
   RpcScopeAuthorization,
 );
 
+/** Designs, slides and design systems; its own group for the same depth reason. */
+export const WsDesignRpcGroup = RpcGroup.make(...designRpcs).middleware(RpcScopeAuthorization);
+
+/** Design-system import and review; its own group for the same depth reason. */
+export const WsDesignSystemImportRpcGroup = RpcGroup.make(...designSystemImportRpcs).middleware(
+  RpcScopeAuthorization,
+);
+
 /** Handoff mode checkpoints, leases and hand-offs; its own group for the same depth reason. */
 export const WsHandoffModeRpcGroup = RpcGroup.make(...handoffModeRpcs).middleware(
   RpcScopeAuthorization,
@@ -2301,4 +2316,6 @@ export const WsRpcGroup = WsCoreRpcGroup.merge(WsComposerDraftsRpcGroup)
   .merge(WsProjectPlanningRpcGroup)
   .merge(WsHandoffModeRpcGroup)
   .merge(WsCloneDestinationRpcGroup)
-  .merge(WsProvisionRpcGroup);
+  .merge(WsProvisionRpcGroup)
+  .merge(WsDesignRpcGroup)
+  .merge(WsDesignSystemImportRpcGroup);

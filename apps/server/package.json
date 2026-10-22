@@ -1,6 +1,6 @@
 {
   "name": "specweave-studio",
-  "version": "1.0.68",
+  "version": "1.0.69",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -45,12 +45,17 @@
     "diff": "8.0.3",
     "effect": "catalog:",
     "jose": "catalog:",
+    "jsonc-parser": "3.3.1",
     "node-pty": "^1.2.0-beta.15",
     "playwright-core": "1.60.0",
+    "postcss": "8.5.28",
+    "postcss-value-parser": "4.2.0",
+    "pptxgenjs": "4.0.1",
     "proper-lockfile": "4.1.2",
     "smol-toml": "1.8.0",
     "stream-chain": "^4.2.5",
     "stream-json": "3.6.0",
+    "typescript-legacy": "npm:typescript@6.0.3",
     "yaml": "catalog:",
     "yauzl": "^3.4.0",
     "zod": "4.6.5"
@@ -67,6 +72,7 @@
     "@types/node": "catalog:",
     "@types/proper-lockfile": "^4.1.4",
     "@types/yauzl": "^3.4.0",
+    "typescript": "catalog:",
     "vite-plus": "catalog:"
   },
   "engines": {

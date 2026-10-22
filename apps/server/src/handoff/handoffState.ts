@@ -89,6 +89,9 @@ export const HandoffIncomingDetail = Schema.Struct({
   /** The epoch this machine continued the thread at, and what it answered. */
   takeoverEpoch: Schema.NullOr(NonNegativeInt),
   takeover: Schema.NullOr(TakeoverResponse),
+  /** The handoff version the source ran when it sent this copy; absent before the check existed. */
+  sourceProtocolVersion: Schema.optional(NonNegativeInt),
+  sourceAppVersion: Schema.optional(Schema.String),
 });
 export type HandoffIncomingDetail = typeof HandoffIncomingDetail.Type;
 
@@ -486,6 +489,8 @@ export function upsertIncoming(
     execution: meta.execution,
     takeoverEpoch: null,
     takeover: null,
+    ...(meta.protocolVersion === undefined ? {} : { sourceProtocolVersion: meta.protocolVersion }),
+    ...(meta.appVersion === undefined ? {} : { sourceAppVersion: meta.appVersion }),
   };
   const next = replaceIncoming(document, replica);
   return {

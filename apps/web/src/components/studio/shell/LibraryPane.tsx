@@ -3,16 +3,19 @@
  * filter, list and grid views, an Add button, and a tree with Name, Date
  * modified, Size and Kind columns. It lists the artifacts the SpecWeave
  * project hub registers, then the folders where SpecWeave keeps shared output;
- * a folder without SpecWeave shows its own files.
+ * a folder without SpecWeave shows its own files. The project's designs
+ * (`.specweave/design/`) come first as their own group.
  */
 import {
   AuthFilesystemWriteScope,
+  type DesignSummary,
   type EnvironmentId,
   type ProjectEntry,
   type ProjectId,
   type ProjectLibrarySnapshot,
 } from "@specweave-studio/contracts";
 import { squashAtomCommandFailure } from "@specweave-studio/client-runtime/state/runtime";
+import { useRouter } from "@tanstack/react-router";
 import * as Schema from "effect/Schema";
 import {
   ChevronDownIcon,
@@ -25,7 +28,9 @@ import {
   LayoutGridIcon,
   LinkIcon,
   ListIcon,
+  PaletteIcon,
   PlusIcon,
+  PresentationIcon,
   RotateCwIcon,
   SearchIcon,
   SparklesIcon,
@@ -38,6 +43,7 @@ import { useEnvironmentScope } from "../../../state/session";
 import { useLocalStorage } from "../../../hooks/useLocalStorage";
 import { useEnvironmentQuery } from "../../../state/query";
 import { useAtomCommand } from "../../../state/use-atom-command";
+import { design } from "../../../studio/design";
 import { projectWorkspace } from "../../../studio/projectWorkspace";
 import {
   formatLibraryDate,
@@ -50,7 +56,10 @@ import {
   LIBRARY_TYPE_FILTERS,
   type LibraryTypeFilter,
 } from "../../../studio/projectPaneModel";
+import { designRoute } from "../../design/gallery/designLinks";
+import { LibraryDesignMenu } from "../../design/gallery/LibraryDesignMenu";
 import { useDirectoryEntries } from "../../files/useDirectoryEntries";
+import { toastManager } from "../../ui/toast";
 import { LibraryFileViewer, type LibraryViewerFile } from "./LibraryFileViewer";
 import {
   Menu,
@@ -69,12 +78,13 @@ import { CharacterCount } from "../../ui/character-count";
 const VIEW_STORAGE_KEY = "studio:project-library-view:v1";
 const ViewSchema = Schema.Literals(["list", "grid"]);
 const ARTIFACTS_ROW = "artifacts:";
+const DESIGNS_ROW = "designs:";
 
 /** One line of the tree: an artifact, a folder or a file inside one. */
 interface LibraryRow {
   readonly id: string;
   readonly name: string;
-  readonly kind: "file" | "directory" | "link";
+  readonly kind: "file" | "directory" | "link" | "design";
   readonly depth: number;
   /** Workspace-relative path for files and folders; the URL for a link. */
   readonly location: string | null;
@@ -84,6 +94,7 @@ interface LibraryRow {
   readonly expandable: boolean;
   readonly expanded: boolean;
   readonly note?: string;
+  readonly design?: DesignSummary;
 }
 
 /** What a row's type is read from: an artifact's file, not its title. */
@@ -93,6 +104,13 @@ function typed(row: LibraryRow) {
 
 function RowIcon({ row }: { row: LibraryRow }) {
   if (row.id === ARTIFACTS_ROW) return <SparklesIcon aria-hidden />;
+  if (row.id === DESIGNS_ROW) return <PaletteIcon aria-hidden />;
+  if (row.kind === "design")
+    return row.design?.kind === "slides" ? (
+      <PresentationIcon aria-hidden />
+    ) : (
+      <PaletteIcon aria-hidden />
+    );
   if (row.kind === "directory") return <FolderIcon aria-hidden />;
   if (row.kind === "link") return <LinkIcon aria-hidden />;
   const type = libraryFileType(typed(row).name);
@@ -118,6 +136,11 @@ export function LibraryPane({
     projectWorkspace.library({ environmentId, input: { projectId } }),
   );
   const addArtifact = useAtomCommand(projectWorkspace.libraryAddArtifact);
+  const designs = useEnvironmentQuery(
+    design.list({ environmentId, input: { filter: { kind: "project", projectId } } }),
+  );
+  const copyDesign = useAtomCommand(design.copy, { reportFailure: false });
+  const router = useRouter();
   const directory = useDirectoryEntries(environmentId, workspaceRoot, { details: true });
   const openLink = useOpenLink(null);
   // Adding writes the hub file, so it needs filesystem write, not only operate.
@@ -128,7 +151,9 @@ export function LibraryPane({
     ViewSchema,
   );
   const [type, setType] = useState<LibraryTypeFilter>("all");
-  const [expanded, setExpanded] = useState<ReadonlySet<string>>(() => new Set([ARTIFACTS_ROW]));
+  const [expanded, setExpanded] = useState<ReadonlySet<string>>(
+    () => new Set([ARTIFACTS_ROW, DESIGNS_ROW]),
+  );
   const [findOpen, setFindOpen] = useState(false);
   const [query, setQuery] = useState("");
   const findRef = useRef<HTMLInputElement>(null);
@@ -173,6 +198,38 @@ export function LibraryPane({
       }
     };
     if (!data) return result;
+    const projectDesigns = (designs.data?.designs ?? []).toSorted((a, b) =>
+      b.updatedAt.localeCompare(a.updatedAt),
+    );
+    if (projectDesigns.length > 0) {
+      const designsOpen = expanded.has(DESIGNS_ROW);
+      result.push({
+        id: DESIGNS_ROW,
+        name: "Designs",
+        kind: "directory",
+        depth: 0,
+        location: null,
+        modifiedAt: projectDesigns[0]?.updatedAt,
+        expandable: true,
+        expanded: designsOpen,
+        note: projectDesigns.length === 1 ? "1 design" : `${projectDesigns.length} designs`,
+      });
+      if (designsOpen) {
+        for (const summary of projectDesigns) {
+          result.push({
+            id: `design:${summary.ref.designId}`,
+            name: summary.title || "Untitled",
+            kind: "design",
+            depth: 1,
+            location: summary.ref.path,
+            modifiedAt: summary.updatedAt,
+            expandable: false,
+            expanded: false,
+            design: summary,
+          });
+        }
+      }
+    }
     const usesSpecWeave = data.specweave || data.hub !== null || data.folders.length > 0;
     if (!usesSpecWeave) {
       childrenOf("", 0);
@@ -222,16 +279,65 @@ export function LibraryPane({
       if (open) childrenOf(folder.path, 1);
     }
     return result;
-  }, [data, directory.directories, expanded]);
+  }, [data, designs.data, directory.directories, expanded]);
 
   const needle = query.trim().toLowerCase();
   const visible = rows.filter(
     (row) =>
+      (type !== "designs" || row.id === DESIGNS_ROW || row.kind === "design") &&
       libraryMatchesType(type, typed(row)) &&
       (needle === "" || row.kind === "directory" || row.name.toLowerCase().includes(needle)),
   );
 
+  const openDesign = (summary: DesignSummary) =>
+    void router.navigate(designRoute({ kind: "project", projectId }, summary.ref.designId));
+  /** The design's own file, opened in the Library viewer. */
+  const showDesignFile = (summary: DesignSummary) => {
+    const path = summary.ref.path.endsWith(".json")
+      ? summary.ref.path
+      : `${summary.ref.path.replace(/\/+$/, "")}/design.json`;
+    setOpened({ path, name: libraryBaseName(path), modifiedAt: summary.updatedAt });
+  };
+  const copyToPlayground = async (summary: DesignSummary) => {
+    const result = await copyDesign({
+      environmentId,
+      input: {
+        owner: { kind: "project", projectId },
+        designId: summary.ref.designId,
+        to: { kind: "playground" },
+      },
+    });
+    if (result._tag === "Failure") {
+      const error = squashAtomCommandFailure(result);
+      toastManager.add({
+        type: "error",
+        title: "Could not copy the design",
+        description: error instanceof Error ? error.message : "Nothing was copied.",
+      });
+      return;
+    }
+    const copy = result.value;
+    toastManager.add({
+      type: "success",
+      title: "Copied to your Playground",
+      actionProps: {
+        children: "Open copy",
+        onClick: () => void router.navigate(designRoute({ kind: "playground" }, copy.ref.designId)),
+      },
+    });
+  };
+  const designMenu = (summary: DesignSummary) => (
+    <LibraryDesignMenu
+      title={summary.title || "Untitled"}
+      canCopy={canWrite}
+      onOpen={() => openDesign(summary)}
+      onCopyToPlayground={() => void copyToPlayground(summary)}
+      onShowFile={() => showDesignFile(summary)}
+    />
+  );
+
   const open = (row: LibraryRow) => {
+    if (row.design) return openDesign(row.design);
     if (row.kind === "directory") return toggle(row);
     if (row.location === null || row.missing) return;
     if (row.kind === "link") {
@@ -243,6 +349,7 @@ export function LibraryPane({
 
   const refresh = () => {
     library.refresh();
+    designs.refresh();
     directory.refresh();
   };
 
@@ -449,7 +556,10 @@ export function LibraryPane({
         ) : view === "grid" ? (
           <ul className="sws-library-grid" aria-label="Library">
             {visible.map((row) => (
-              <li key={row.id}>
+              <li key={row.id} className="relative">
+                {row.design ? (
+                  <span className="absolute top-1 right-1 z-10">{designMenu(row.design)}</span>
+                ) : null}
                 <button
                   type="button"
                   className="sws-library-tile"
@@ -491,9 +601,15 @@ export function LibraryPane({
                 data-kind={row.kind}
                 data-missing={row.missing || undefined}
               >
-                <span role="gridcell" className="sws-library-name">
+                <span
+                  role="gridcell"
+                  className={
+                    row.design ? "sws-library-name flex items-center gap-1" : "sws-library-name"
+                  }
+                >
                   <button
                     type="button"
+                    className={row.design ? "w-auto! min-w-0 flex-1" : undefined}
                     style={{ paddingInlineStart: `${row.depth * 16 + 4}px` }}
                     onClick={() => open(row)}
                     aria-description={row.note ?? row.location ?? undefined}
@@ -513,10 +629,17 @@ export function LibraryPane({
                       <ExternalLinkIcon aria-hidden className="sws-library-external" />
                     ) : null}
                   </button>
+                  {row.design ? (
+                    <span className="flex-none [&>button]:size-6! [&>button]:w-6!">
+                      {designMenu(row.design)}
+                    </span>
+                  ) : null}
                 </span>
                 <span role="gridcell">{formatLibraryDate(row.modifiedAt, now)}</span>
                 <span role="gridcell">
-                  {row.kind === "directory" ? "--" : formatLibrarySize(row.byteLength)}
+                  {row.kind === "directory" || row.kind === "design"
+                    ? "--"
+                    : formatLibrarySize(row.byteLength)}
                 </span>
                 <span role="gridcell">
                   {row.missing

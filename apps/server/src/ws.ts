@@ -42,9 +42,7 @@ import {
   authScopeResponse,
   AuthAccessStreamError,
   type AuthAccessStreamEvent,
-  AuthOrchestrationOperateScope,
   type AuthEnvironmentScope,
-  type ScheduledTaskListResult,
   AuthSessionId,
   ClientConnectionMethod,
   ClientDeviceType,
@@ -145,7 +143,7 @@ import * as ThreadLaunchService from "./orchestration-v2/ThreadLaunchService.ts"
 import * as ThreadMoveService from "./orchestration-v2/ThreadMoveService.ts";
 import * as ThreadMessageIntake from "./orchestration-v2/ThreadMessageIntake.ts";
 import * as IdAllocator from "./orchestration-v2/IdAllocator.ts";
-import * as ScheduledTasks from "./scheduledTasks/ScheduledTaskService.ts";
+import * as ScheduledTaskRpc from "./scheduledTasks/ScheduledTaskRpc.ts";
 import * as SecretRequests from "./secrets/SecretRequests.ts";
 import {
   archivedShellStreamItemFromThreadShell,
@@ -597,12 +595,21 @@ const PROVIDER_STATUS_DEBOUNCE_MS = 200;
 // Middleware added later wraps middleware added earlier, so instrumentation wraps the deadline,
 // which wraps authorization, and a call answered at its deadline is still recorded.
 const ServerWsRpcGroup = WsRpcGroup.middleware(RpcDeadline).middleware(RpcInstrumentation);
-// Handlers register per group; composer drafts, native connection edits and the PR
-// check-failure log have their own layers. The group-wide `toLayer` typing grows with the
-// square of the group, so new methods past this size join as single handlers instead of
+// Handlers register per group; composer drafts, native connection edits, scheduled tasks and
+// the PR check-failure log have their own layers. The group-wide `toLayer` typing grows with
+// the square of the group, so new methods past this size join as single handlers instead of
 // tripping TypeScript's instantiation limit.
 const ServerWsCoreRpcGroup = WsCoreRpcGroup.middleware(RpcInstrumentation).omit(
   WS_METHODS.pullRequestsCheckFailureLog,
+  WS_METHODS.scheduledTasksList,
+  WS_METHODS.scheduledTasksSubscribe,
+  WS_METHODS.scheduledTasksUpsert,
+  WS_METHODS.scheduledTasksSetEnabled,
+  WS_METHODS.scheduledTasksDelete,
+  WS_METHODS.scheduledTasksRunNow,
+  WS_METHODS.scheduledTasksRotateWebhookToken,
+  WS_METHODS.scheduledTasksListWebhookDeliveries,
+  WS_METHODS.scheduledTasksGetWebhookDelivery,
 );
 // When a resuming client's cursor is more than this many events behind the
 // current head, skip the per-event catch-up replay and send a fresh shell
@@ -1248,6 +1255,7 @@ const layerWsRpc = (
   clientAnalyticsProps: Readonly<Record<string, unknown>>,
   previewAutomationBroker: PreviewAutomationBroker.PreviewAutomationBroker["Service"],
   serverBrowser: ServerBrowser.ServerBrowser["Service"],
+  designLayers: ProjectWorkspaceRpc.DesignWsHandlers["Service"],
 ) =>
   ServerWsCoreRpcGroup.toLayer(
     Effect.gen(function* () {
@@ -1283,7 +1291,6 @@ const layerWsRpc = (
       const threadLaunch = yield* ThreadLaunchService.ThreadLaunchService;
       const threadMove = yield* ThreadMoveService.ThreadMoveService;
       const providerSessionManager = yield* ProviderSessionManager.ProviderSessionManagerV2;
-      const scheduledTasks = yield* ScheduledTasks.ScheduledTaskService;
       const secretRequests = yield* SecretRequests.SecretRequests;
       const pullRequests = yield* PullRequestService.PullRequestService;
       const pullRequestSync = yield* PullRequestSyncReactor.PullRequestSyncReactor;
@@ -1392,14 +1399,6 @@ const layerWsRpc = (
       const processResourceMonitor = yield* ProcessResourceMonitor.ProcessResourceMonitor;
       const resourceTelemetry = yield* ResourceTelemetry.ResourceTelemetry;
       const relayClient = yield* RelayClient.RelayClient;
-      // A webhook URL starts agent runs, so only sessions that may operate
-      // see it; read-only sessions still see the task itself.
-      const withVisibleWebhookUrls = (result: ScheduledTaskListResult): ScheduledTaskListResult =>
-        currentSession.scopes.includes(AuthOrchestrationOperateScope)
-          ? result
-          : {
-              tasks: result.tasks.map(({ webhook: _webhook, ...task }) => task),
-            };
       // RpcScopeAuthorization checks each RPC's declared scope before its handler
       // runs. This covers the one RPC whose scope depends on its input.
       const authorizeEffect = <A, E, R>(
@@ -2149,38 +2148,9 @@ const layerWsRpc = (
               Effect.andThen(subscribeOrchestrationV2Thread(input)),
             ),
           ),
-        [WS_METHODS.scheduledTasksList]: (_input) =>
-          scheduledTasks.list().pipe(Effect.map(withVisibleWebhookUrls)),
-        [WS_METHODS.scheduledTasksSubscribe]: (_input) =>
-          scheduledTasks.subscribeList().pipe(Stream.map(withVisibleWebhookUrls)),
-        [WS_METHODS.scheduledTasksUpsert]: (input) => scheduledTasks.upsert(input),
-        [WS_METHODS.scheduledTasksSetEnabled]: (input) =>
-          Effect.annotateCurrentSpan({ "scheduled_task.id": input.id }).pipe(
-            Effect.andThen(scheduledTasks.setEnabled(input)),
-          ),
-        [WS_METHODS.scheduledTasksDelete]: (input) =>
-          Effect.annotateCurrentSpan({ "scheduled_task.id": input.id }).pipe(
-            Effect.andThen(scheduledTasks.delete(input)),
-          ),
-        [WS_METHODS.scheduledTasksRunNow]: (input) =>
-          Effect.annotateCurrentSpan({ "scheduled_task.id": input.id }).pipe(
-            Effect.andThen(scheduledTasks.runNow(input)),
-          ),
-        [WS_METHODS.scheduledTasksRotateWebhookToken]: (input) =>
-          Effect.annotateCurrentSpan({ "scheduled_task.id": input.id }).pipe(
-            Effect.andThen(scheduledTasks.rotateWebhookToken(input)),
-          ),
         [WS_METHODS.secretsAnswerRequest]: (input) =>
           Effect.annotateCurrentSpan({ "orchestration_v2.thread_id": input.threadId }).pipe(
             Effect.andThen(secretRequests.answer(input)),
-          ),
-        [WS_METHODS.scheduledTasksListWebhookDeliveries]: (input) =>
-          Effect.annotateCurrentSpan({ "scheduled_task.id": input.id }).pipe(
-            Effect.andThen(scheduledTasks.listWebhookDeliveries(input)),
-          ),
-        [WS_METHODS.scheduledTasksGetWebhookDelivery]: (input) =>
-          Effect.annotateCurrentSpan({ "scheduled_task.id": input.id }).pipe(
-            Effect.andThen(scheduledTasks.getWebhookDelivery(input)),
           ),
         [WS_METHODS.serverProbe]: (_input) => Effect.succeed({}),
         [WS_METHODS.serverGetConfig]: (_input) => loadServerConfig({ usageLimitsCommand: false }),
@@ -2815,6 +2785,9 @@ const layerWsRpc = (
             ) {
               return yield* issueAssetUrl({ resource: input.resource });
             }
+            if (input.resource._tag === "design-asset") {
+              return yield* designLayers.issueAssetUrl(currentSession, input.resource);
+            }
             if (input.resource._tag === "draft-workspace-file") {
               // A project draft names its workspace directly; there is no
               // thread to resolve one from.
@@ -3225,6 +3198,7 @@ const layerWsRpc = (
       return handlers;
     }),
   ).pipe(
+    Layer.merge(ScheduledTaskRpc.layerRpcHandlers(currentSession.scopes)),
     Layer.merge(
       ServerWsRpcGroup.toLayerHandler(
         WS_METHODS.pullRequestsCheckFailureLog,
@@ -3335,6 +3309,7 @@ const inferredWebSocketLayer = Layer.unwrap(
     const pullRequests = yield* PullRequestService.PullRequestService;
     const sql = yield* SqlClient.SqlClient;
     const browserExtension = yield* BrowserExtension.BrowserExtension;
+    const designLayers = yield* ProjectWorkspaceRpc.DesignWsHandlers;
     return HttpRouter.add(
       "GET",
       "/ws",
@@ -3362,6 +3337,7 @@ const inferredWebSocketLayer = Layer.unwrap(
               clientAnalyticsProps,
               previewAutomationBroker,
               serverBrowser,
+              designLayers,
             ).pipe(
               Layer.merge(ComposerDrafts.layerRpcHandlers),
               Layer.merge(StatusMonitor.layerRpcHandlers),
@@ -3373,7 +3349,13 @@ const inferredWebSocketLayer = Layer.unwrap(
               Layer.merge(MachineHandoff.layerRpcHandlers),
               Layer.merge(HandoffMode.layerRpcHandlers),
               Layer.merge(ProjectWorkspaceRpc.layerKnowledgeRpcHandlers),
-              Layer.merge(ProjectWorkspaceRpc.layerPlanningRpcHandlers),
+              // pipe takes at most 20 steps, so these two share one.
+              Layer.merge(
+                Layer.merge(
+                  ProjectWorkspaceRpc.layerPlanningRpcHandlers,
+                  designLayers.layerRpcHandlers(session),
+                ),
+              ),
               Layer.merge(
                 BrowserExtension.layerRpcHandlers.pipe(
                   Layer.provide(Layer.succeed(BrowserExtension.BrowserExtension, browserExtension)),

@@ -68,7 +68,9 @@ export type StudioMcpToolSummaryAction =
   | "browser"
   | "device"
   | "html-preview"
-  | "html-render";
+  | "html-render"
+  | "design-read"
+  | "design-edit";
 
 export interface StudioMcpToolDefinition {
   readonly displayName: string;
@@ -431,6 +433,24 @@ const STUDIO_MCP_TOOLS: Readonly<Record<string, StudioMcpToolDefinition>> = {
   ),
   html_preview: tool(["Preview", "Previewing", "Previewed", "an HTML page"], "html-preview"),
   html_render: tool(["Render", "Rendering", "Rendered", "an HTML page"], "html-render"),
+  design_list: tool(["List", "Listing", "Listed", "designs"], "design-read"),
+  design_get: tool(["Read", "Reading", "Read", "a design"], "design-read"),
+  design_create: tool(["Create", "Creating", "Created", "a design"], "design-edit"),
+  design_apply: tool(["Edit", "Editing", "Edited", "a design"], "design-edit"),
+  design_history: tool(["Read", "Reading", "Read", "design history"], "design-read"),
+  design_save_version: tool(["Save", "Saving", "Saved", "a design version"], "design-edit"),
+  design_restore: tool(["Restore", "Restoring", "Restored", "a design version"], "design-edit"),
+  design_screenshot: tool(["Capture", "Capturing", "Captured", "a design"], "design-read"),
+  design_system_list: tool(["List", "Listing", "Listed", "design systems"], "design-read"),
+  design_system_get: tool(["Read", "Reading", "Read", "a design system"], "design-read"),
+  design_system_scan: tool(
+    ["Scan", "Scanning", "Scanned", "code for a design system"],
+    "design-read",
+  ),
+  design_system_propose: tool(
+    ["Propose", "Proposing", "Proposed", "a design system"],
+    "design-edit",
+  ),
 };
 
 /**

@@ -25,6 +25,17 @@ import packageJson from "../../package.json" with { type: "json" };
 import * as ServerConfig from "../config.ts";
 import * as DeviceService from "../device/DeviceService.ts";
 import * as HtmlRender from "../htmlRender/HtmlRender.ts";
+import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
+import * as DesignService from "../design/DesignService.ts";
+import {
+  DesignScreenshotTool,
+  DesignScreenshotToolkit,
+  DesignToolkit,
+} from "./toolkits/design/tools.ts";
+import * as DesignHandlers from "./toolkits/design/handlers.ts";
+import * as DesignSystems from "../design/systems/adapters.ts";
+import { DesignSystemsToolkit } from "./toolkits/designSystems/tools.ts";
+import * as DesignSystemsHandlers from "./toolkits/designSystems/handlers.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
 import * as McpToolAccess from "./McpToolAccess.ts";
@@ -844,6 +855,37 @@ const registerHtmlPreview = Effect.fn("McpHttpServer.registerHtmlPreview")(funct
   );
 });
 
+const registerDesignScreenshot = Effect.fn("McpHttpServer.registerDesignScreenshot")(function* () {
+  const designs = yield* DesignService.DesignService;
+  const threads = yield* ThreadManagementService.ThreadManagementService;
+  const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
+  const environment = yield* ServerEnvironment.ServerEnvironmentIdentity;
+  const built = yield* DesignScreenshotToolkit;
+  yield* registerImageTool(
+    DesignScreenshotTool,
+    (payload) =>
+      built
+        .handle("design_screenshot", payload)
+        .pipe(Stream.unwrap, Stream.run(Sink.last()), Effect.flatMap(Effect.fromOption)),
+    (effect) =>
+      effect.pipe(
+        Effect.provideService(DesignService.DesignService, designs),
+        Effect.provideService(ThreadManagementService.ThreadManagementService, threads),
+        Effect.provideService(ManagedProjectFolders.ManagedProjectFolders, folders),
+        Effect.provideService(ServerEnvironment.ServerEnvironmentIdentity, environment),
+      ),
+    "screenshot",
+    // Design failures are written by the server for the agent. Image tools cannot return a
+    // structured failure, so the text starts with the same code the other design tools return.
+    (error) =>
+      isOrchestratorMcpFailure(error)
+        ? `${error.code}: ${error.message}`
+        : AiError.isAiError(error)
+          ? `invalid_request: ${error.message}`
+          : "orchestration_error: Design screenshot failed.",
+  );
+});
+
 /**
  * `McpServer.toolkit` for handlers that declared their access (see
  * `McpToolAccess`). Every toolkit on `/mcp` registers through this.
@@ -858,6 +900,15 @@ const imageToolRegistration = <Tools extends Record<string, Tool.Any>, A, E, R, 
   register: Effect.Effect<A, E, R>,
   handlers: McpToolAccess.HandlersLayer<Tools, EX, RX>,
 ) => Layer.effectDiscard(register).pipe(Layer.provide(McpToolAccess.HandlersLayer.layer(handlers)));
+
+export const layerDesignToolkit = Layer.mergeAll(
+  toolkitRegistration(DesignToolkit, DesignHandlers.layer),
+  imageToolRegistration(registerDesignScreenshot(), DesignHandlers.layerScreenshot),
+  // Proposals are the server's (server.ts), so the user reviews what agents propose here.
+  toolkitRegistration(DesignSystemsToolkit, DesignSystemsHandlers.layer).pipe(
+    Layer.provide(DesignSystems.layer),
+  ),
+).pipe(Layer.provide(DesignService.layerWithRender));
 
 export const layerHtmlToolkit = Layer.mergeAll(
   toolkitRegistration(HtmlRenderToolkit, HtmlHandlers.layerRender),
@@ -969,6 +1020,7 @@ export const layer = Layer.mergeAll(
   layerPullRequestsToolkit,
   layerDeviceToolkit,
   layerHtmlToolkit,
+  layerDesignToolkit,
   layerChromeToolkit,
   layerComputerToolkit,
 ).pipe(Layer.provideMerge(layerMcpTransport));

@@ -28,18 +28,26 @@ export interface StudioServiceInstallOptions {
    * version, and only if it starts within 10 minutes; older desktops ignore it.
    */
   readonly version?: string;
+  /**
+   * The run (updates/run.json) this request belongs to, made by the window's
+   * `serviceUpdateRun` begin. The desktop then writes the run's deadline as
+   * the hold and names the run to the agent; older desktops ignore it.
+   */
+  readonly runId?: string;
 }
 
 /**
  * Why an install request was not accepted: another update step holds the
  * updater (`busy`), the app is already quitting, there is no downloaded
- * update to install (`no-download`), or updates are off in this build.
+ * update to install (`no-download`), updates are off in this build, or the
+ * local service does not run the downloaded release yet (`service-behind`).
  */
 export const DesktopUpdateRefusalReasonSchema = Schema.Literals([
   "busy",
   "quitting",
   "no-download",
   "disabled",
+  "service-behind",
 ]);
 export type DesktopUpdateRefusalReason = typeof DesktopUpdateRefusalReasonSchema.Type;
 
@@ -67,6 +75,13 @@ export const DesktopUpdateInstallOptionsSchema = Schema.Struct({
    * check runs then waits for the check instead of being refused.
    */
   expectedVersion: Schema.optionalKey(Schema.String),
+  /**
+   * The press installs the app alone because the service's update agent lacks
+   * this release: its request failed for want of it. Main then lets the app
+   * swap ahead of the service, but only while the agent's own state agrees it
+   * has no such release (appActivationGate.ts, `service-lacks-release`).
+   */
+  serviceLacksRelease: Schema.optionalKey(Schema.Boolean),
 });
 export type DesktopUpdateInstallOptions = typeof DesktopUpdateInstallOptionsSchema.Type;
 

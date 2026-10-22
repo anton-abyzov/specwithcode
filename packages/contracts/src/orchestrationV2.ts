@@ -598,6 +598,15 @@ export const ORCHESTRATION_V2_WORKSPACE_PREPARATION_FAILURE_CODE = "workspace_pr
  */
 export const ORCHESTRATION_V2_PROVIDER_UNAVAILABLE_FAILURE_CODE = "provider_unavailable";
 
+/**
+ * Failure code on a `provider_error` whose provider session would not open
+ * after every start retry, for any other reason (a transport or handshake
+ * error, a crash, a session that never answered). One such failure can be
+ * transient, so the limit fallback moves on it only when retrying clearly did
+ * not help. `provider_unavailable` takes precedence.
+ */
+export const ORCHESTRATION_V2_PROVIDER_OPEN_FAILED_FAILURE_CODE = "provider_open_failed";
+
 export const OrchestrationV2Run = Schema.Struct({
   manualCodexCreditIntent: Schema.optional(ManualCodexCreditIntent),
   id: RunId,

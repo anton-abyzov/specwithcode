@@ -290,7 +290,9 @@ const makeHarness = (
           if (!state.starts.some((previous) => previous.commandId === input.commandId))
             state.starts.push(input);
           return {
-            threadId: ThreadId.make(`project-coordinator:${input.projectId}`),
+            threadId:
+              projects.get(input.projectId)?.workspaceSettings?.coordinatorThreadId ??
+              ThreadId.make(`project-coordinator:${input.projectId}`),
             created: true,
           };
         }),

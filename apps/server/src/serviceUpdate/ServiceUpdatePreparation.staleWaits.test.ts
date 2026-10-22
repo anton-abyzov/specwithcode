@@ -16,6 +16,7 @@ import * as ServerConfig from "../config.ts";
 import * as ProviderSessionManager from "../orchestration-v2/ProviderSessionManager.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as Cleanup from "./ServiceUpdateCleanup.ts";
+import * as ClosedQuestions from "./ServiceUpdateClosedQuestions.ts";
 import * as Preparation from "./ServiceUpdatePreparation.ts";
 
 /** The columns update.py, the drain and the stale-wait check read. */
@@ -63,6 +64,8 @@ type Parts = Effect.Success<ReturnType<typeof Preparation.makePartsWithTimings>>
 const run = <E>(
   fixture: Fixture,
   body: (parts: Parts) => Effect.Effect<void, E, SqlClient.SqlClient>,
+  /** Where what the sweep closes is recorded; absent in tools without one. */
+  store?: ClosedQuestions.ServiceUpdateClosedQuestionsShape,
 ) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
@@ -74,6 +77,15 @@ const run = <E>(
       threadIds === undefined ? "1" : threadIds.map((id) => `'${id}'`).join(", ");
     const mocks = Layer.mergeAll(
       Layer.mock(ThreadManagementService.ThreadManagementService)({
+        getThreadRecords: () =>
+          Effect.succeed({
+            thread: { title: "Worker" },
+            runtimeRequests: [{ id: "req1", nodeId: "n1", kind: "command", status: "pending" }],
+            nodes: [{ id: "n1", runId: "r1" }],
+            turnItems: [
+              { type: "approval_request", requestId: "req1", runId: "r1", prompt: "Run npm test" },
+            ],
+          } as never),
         dispatch: (command) =>
           Effect.gen(function* () {
             fixture.dispatched.push({
@@ -135,7 +147,13 @@ const run = <E>(
         }),
       }),
     );
-    const parts = yield* Preparation.makePartsWithTimings(fast).pipe(Effect.provide(mocks));
+    const parts = yield* Preparation.makePartsWithTimings(fast).pipe(
+      Effect.provide(
+        store === undefined
+          ? mocks
+          : Layer.merge(mocks, Layer.succeed(ClosedQuestions.ServiceUpdateClosedQuestions, store)),
+      ),
+    );
     yield* body(parts);
   }).pipe(Effect.provide(NodeSqliteClient.layer({ filename: ":memory:" })));
 
@@ -236,6 +254,32 @@ it.live("ends a waiting turn whose provider never answers the interrupt", () => 
         runs: [["r1", "interrupted"]],
         requests: [["req1", "cancelled"]],
       });
+    }),
+  );
+});
+
+it.live("releases a card that asks a closed approval again, as it released the approval", () => {
+  const fixture = newFixture(true);
+  return run(fixture, (parts) =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      // After the last install, the approval it released came back as a card,
+      // with no turn waiting behind it.
+      yield* sql`INSERT INTO orchestration_v2_projection_runtime_requests VALUES
+        ('update-reopen-approval:req0', 't1', 'pending', 'user_input', ${yield* minutesAgo(40)})`;
+      yield* sql`INSERT INTO orchestration_v2_events (thread_id, occurred_at)
+        VALUES ('t1', ${yield* minutesAgo(40)})`;
+      assert.deepEqual((yield* parts.releaseStaleWaits).releasedThreads, ["t1"]);
+      assert.deepEqual(yield* pending, {
+        runs: [],
+        requests: [["update-reopen-approval:req0", "cancelled"]],
+      });
+      // A card that asks a real question again keeps the install waiting.
+      yield* sql`INSERT INTO orchestration_v2_projection_runtime_requests VALUES
+        ('update-reopen:q0', 't2', 'pending', 'user_input', ${yield* minutesAgo(40)})`;
+      yield* sql`INSERT INTO orchestration_v2_events (thread_id, occurred_at)
+        VALUES ('t2', ${yield* minutesAgo(40)})`;
+      assert.deepEqual((yield* parts.releaseStaleWaits).releasedThreads, []);
     }),
   );
 });
@@ -478,5 +522,72 @@ describe("ServiceUpdatePreparation.layer", () => {
         assert.deepEqual(reads, []);
       }),
     ),
+  );
+});
+
+/** A record that keeps what it is given, or refuses every write. */
+const recordingStore = (
+  fixture: Fixture,
+  recorded: Array<ClosedQuestions.ClosedQuestion>,
+  writes: boolean,
+) =>
+  ClosedQuestions.ServiceUpdateClosedQuestions.of({
+    bootId: "this-process",
+    record: (entries) =>
+      Effect.sync(() => {
+        fixture.cleanupCalls.push({ step: "record" });
+        if (writes) recorded.push(...entries);
+        return writes;
+      }),
+    pending: Effect.sync(() => recorded),
+    forRun: () => Effect.succeed([]),
+    markReopened: () => Effect.succeed(true),
+    reopening: (effect) => effect,
+    draining: (effect) => effect,
+    isDraining: Effect.succeed(false),
+  });
+
+it.live("records each approval it releases, asked again only after the restart", () => {
+  const fixture = newFixture(true);
+  const recorded: Array<ClosedQuestions.ClosedQuestion> = [];
+  return run(
+    fixture,
+    (parts) =>
+      Effect.gen(function* () {
+        yield* waitingWorker(31, 31);
+        const result = yield* parts.releaseStaleWaits;
+        assert.deepEqual(result.releasedThreads, ["t1"]);
+        assert.deepEqual(
+          recorded.map((entry) => [
+            entry.requestId,
+            entry.kind,
+            entry.text,
+            entry.reopenAfterRestart,
+          ]),
+          [["req1", "command", "Run npm test", true]],
+        );
+        // Recorded before anything was stopped or cancelled.
+        assert.equal(fixture.cleanupCalls[0]?.step, "record");
+      }),
+    recordingStore(fixture, recorded, true),
+  );
+});
+
+it.live("leaves a thread waiting when what it would close cannot be recorded", () => {
+  const fixture = newFixture(true);
+  return run(
+    fixture,
+    (parts) =>
+      Effect.gen(function* () {
+        yield* waitingWorker(31, 31);
+        const result = yield* parts.releaseStaleWaits;
+        assert.deepEqual(result.releasedThreads, []);
+        assert.deepEqual(fixture.dispatched, []);
+        assert.deepEqual(yield* pending, {
+          runs: [["r1", "running"]],
+          requests: [["req1", "pending"]],
+        });
+      }),
+    recordingStore(fixture, [], false),
   );
 });

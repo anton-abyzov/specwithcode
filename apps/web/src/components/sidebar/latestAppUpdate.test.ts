@@ -185,4 +185,22 @@ describe("installWhenUpdaterFree", () => {
     expect(result.reason).toBe("no-download");
     expect(installUpdate).toHaveBeenCalledTimes(1);
   });
+  it("tells main the agent lacks the release on an app-only press", async () => {
+    const installUpdate = vi.fn(async (_options?: unknown) => ({
+      accepted: true,
+      completed: false,
+      state: downloaded("1.0.33"),
+    }));
+    await installWhenUpdaterFree(
+      { installUpdate, getUpdateState: vi.fn(async () => downloaded("1.0.33")) },
+      "1.0.33",
+      undefined,
+      undefined,
+      true,
+    );
+    expect(installUpdate).toHaveBeenCalledWith({
+      expectedVersion: "1.0.33",
+      serviceLacksRelease: true,
+    });
+  });
 });

@@ -9,6 +9,13 @@ import { buildProjectGroups } from "../../logicalProject";
 import { ProjectMachineHandoff } from "./ProjectMachineHandoff";
 import { handoffMachinePreferenceKey } from "../../studio/handoffMachinePreference";
 
+vi.mock("../../state/filesystem", () => ({
+  filesystemEnvironment: { browse: (input: unknown) => input },
+  useFilesystemReadAccess: () => ({ canReadFiles: false }),
+}));
+vi.mock("../../state/query", () => ({
+  useEnvironmentQuery: () => ({ data: null, isPending: false }),
+}));
 vi.mock("./HandoffFolderPicker", () => ({ HandoffFolderPicker: () => null }));
 vi.mock("./useHandoffSourceChanges", () => ({ useHandoffSourceChanges: () => null }));
 vi.mock("../../studio/fleet", () => ({
@@ -841,4 +848,29 @@ it("keeps the review editable when the publish marker cannot be saved", async ()
   expect(state.order).toEqual(["inspect", "preview", "preview"]);
   expect(props().error).toBe("Quota exceeded");
   expect(props().onBack).toBeDefined();
+});
+
+it("resolves a full saved copy registration only by destination machine and exact folder", async () => {
+  const target = state.projects.find((project) => project.id === "target")!;
+  target.workspaceSettings = {
+    coordinatorThreadId: "custom-target-coordinator",
+    logicalProject: { id: "known-logical-project" },
+  };
+  await mount();
+  const resolve = (
+    props().copyFlow as {
+      props: {
+        savedProject: (environmentId: string, folder: string) => Record<string, unknown> | null;
+      };
+    }
+  ).props.savedProject;
+  expect(resolve(String(target.environmentId), `${target.workspaceRoot}/`)).toBe(target);
+  expect(
+    resolve(String(target.environmentId), `${target.workspaceRoot}/`)?.workspaceSettings,
+  ).toEqual({
+    coordinatorThreadId: "custom-target-coordinator",
+    logicalProject: { id: "known-logical-project" },
+  });
+  expect(resolve("another-machine", String(target.workspaceRoot))).toBeNull();
+  expect(resolve(String(target.environmentId), `${target.workspaceRoot}-other`)).toBeNull();
 });

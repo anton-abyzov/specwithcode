@@ -1,0 +1,1 @@
+`weave/` holds byte-for-byte copies of Weave's canonical `design/weave/tokens.json` and `weave.css` from the specweave repository (October 20, 2026). The `.fixture` extension keeps the formatter from rewriting them, so line numbers in the tests match the originals.

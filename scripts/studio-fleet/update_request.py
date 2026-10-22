@@ -92,10 +92,11 @@ def bound(config):
     return record if record['at'] == config.get('installRequestedAt') else None
 
 
-def _verdict(config, state, installed, now, cancelled):
+def _verdict(config, state, installed, now, cancelled, ttl_until=None):
     """(pending, message) for the settings' install request; `installed` is the installed version
     as a tuple, or None. A request that is not pending is settled (copied into
-    handledInstallRequestAt); message says why when the user should know."""
+    handledInstallRequestAt); message says why when the user should know. `ttl_until`, the
+    deadline of the update run that owns the request, replaces REQUEST_TTL for it."""
     requested = config.get('installRequestedAt')
     if requested is None or requested == state.get('handledInstallRequestAt'):
         return False, None
@@ -105,18 +106,18 @@ def _verdict(config, state, installed, now, cancelled):
         at, wanted = _time(record['at']), _version(record['version'])
         settled = settled or at > now + CLOCK_SKEW
         settled = settled or (installed is not None and wanted <= installed)
-        expired = not settled and now - at > REQUEST_TTL
+        expired = not settled and (now > ttl_until if ttl_until is not None else now - at > REQUEST_TTL)
     if settled or expired:
         state['handledInstallRequestAt'] = requested
     return not (settled or expired), EXPIRED if expired else None
 
 
-def pending(config, state, installed, now, cancelled, failure):
+def pending(config, state, installed, now, cancelled, failure, ttl_until=None):
     """True while the settings hold an install request this pass should act on. A request that
     was cancelled, has a malformed record or asks for a version already installed is settled
     here and never acted on later. One that lapsed is settled too, and raises failure(EXPIRED)
     so the pass ends saying why instead of with an unrelated status."""
-    waiting, message = _verdict(config, state, installed, now, cancelled)
+    waiting, message = _verdict(config, state, installed, now, cancelled, ttl_until)
     if message:
         raise failure(message)
     return waiting
@@ -165,7 +166,7 @@ def arrived(agent, load):
 DEFAULT_SETTINGS = {'schemaVersion': 1, 'checkAutomatically': True, 'downloadInBackground': True,
                     'installAutomatically': True, 'channel': 'stable', 'quietMinutes': 10,
                     'installRequestedAt': None, 'checkRequestedAt': None, 'installMode': 'normal',
-                    'installHoldUntil': None, 'installCancelledAt': None, 'installRequest': None}
+                    'installHoldUntil': None, 'installCancelledAt': None, 'installRequest': None, 'installRunId': None}
 # update_agent.FORCE_WINDOW: one pass retries a forced request for at most this long.
 HOLD_MAX_MINUTES = 15
 _IDENTITY = re.compile(r'[a-z][a-z0-9_-]{0,31}')
@@ -272,7 +273,8 @@ def status(home, identity, run=None, launchd=True):
     for key in ('status', 'message', 'downloadedVersion', 'availableVersion', 'updatedAt',
                 'handledInstallRequestAt', 'lastInstall'):
         report[key] = state.get(key)
-    for key in ('installRequestedAt', 'installMode', 'installHoldUntil', 'installCancelledAt', 'installRequest'):
+    for key in ('installRequestedAt', 'installMode', 'installHoldUntil', 'installCancelledAt', 'installRequest',
+                'installRunId'):
         report[key] = config.get(key)
     report['installFinalized'] = finalized(own, identity, receipt, state)
     report.update(agent_status(identity, state, config, run, launchd=launchd, home=home))
@@ -323,7 +325,7 @@ def write_request(home, identity, version, force=False, hold_minutes=HOLD_MAX_MI
     config.update({'checkRequestedAt': stamp, 'installRequestedAt': stamp,
                    'installMode': 'force' if force else 'normal',
                    'installHoldUntil': _iso(now + datetime.timedelta(minutes=hold_minutes)) if force else None,
-                   'installRequest': {'at': stamp, 'version': version}})
+                   'installRequest': {'at': stamp, 'version': version}, 'installRunId': None})
     _write_config(updates, config)
     return {key: config[key] for key in ('installRequestedAt', 'installMode', 'installHoldUntil', 'installRequest')}
 
@@ -365,7 +367,7 @@ def cancel_request(home, identity, request, now=None):
 # (scripts/lib/studio-service-updater.ts MAC_SERVICE_UPDATER_FILES).
 AGENT_FILES = ('update_agent.py', 'update_agent_reap.py', 'update_agent_cache.py', 'update_request.py',
                'update_agent_recovery.py', 'installation_descriptor.py', 'managed_updates.py', 'studio_paths.py',
-               'migrate_home.py')
+               'migrate_home.py', 'update_agent_run.py')
 # Beside every copy of those files: the release they belong to, {schemaVersion, version}, written by
 # the runtime and desktop builds since 1.0.67. The installed copy's record also lists each file it
 # installed with its sha256.

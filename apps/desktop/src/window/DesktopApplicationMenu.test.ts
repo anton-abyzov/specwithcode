@@ -71,6 +71,8 @@ const layerDesktopUpdates = Layer.succeed(DesktopUpdates.DesktopUpdates, {
   installPrepared: () => Effect.die("unexpected installPrepared"),
   checkIfStale: () => Effect.void,
   applyPreferences: Effect.void,
+  registerLocalServiceProbe: () => Effect.void,
+  refreshActivation: Effect.void,
 } satisfies DesktopUpdates.DesktopUpdates["Service"]);
 
 const layerDesktopWindow = (selectedAction: Deferred.Deferred<string>) =>

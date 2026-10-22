@@ -71,8 +71,6 @@ import {
   attempt,
   copiedProjectId,
   copyStatus,
-  folderCopyError,
-  folderCopyManifestRepositories,
   offerResult,
   sentSecretsResult,
   sourceStatus,
@@ -87,6 +85,14 @@ import {
   type RawResponse,
 } from "./folderTransfer/sourceRoutes.ts";
 import { SourceTransfers } from "./folderTransfer/sourceService.ts";
+import {
+  ACTIVE_COPY_WARNING,
+  abandonCopiedContext,
+  makeFolderCopyContextCheck,
+  makeAppliedFolderCopyCheck,
+  makeFolderCopyManifest,
+  makeProjectIdleCheck,
+} from "./folderCopyPreparation.ts";
 
 class CopyRegistrationError extends Schema.TaggedError<CopyRegistrationError>()(
   "CopyRegistrationError",
@@ -297,40 +303,7 @@ const make = Effect.gen(function* () {
         return yield* new MachineHandoffError({ code: "invalid" });
       return found.value;
     });
-  const idle = (id: ProjectId, root: string) =>
-    guarded(
-      Effect.gen(function* () {
-        const rows = yield* sql<{
-          projectId: string;
-          workspaceRoot: string;
-          worktreePath: string | null;
-        }>`
-      SELECT DISTINCT t.project_id AS "projectId", p.workspace_root AS "workspaceRoot",
-        json_extract(t.payload_json, '$.worktreePath') AS "worktreePath"
-      FROM orchestration_v2_projection_threads t JOIN projection_projects p ON p.project_id=t.project_id
-      WHERE EXISTS (SELECT 1 FROM orchestration_v2_projection_runs r WHERE r.thread_id=t.thread_id AND r.status NOT IN ('completed','interrupted','failed','cancelled','rolled_back'))
-      OR EXISTS (SELECT 1 FROM orchestration_v2_projection_runtime_requests r WHERE r.thread_id=t.thread_id AND r.status='pending')
-      OR EXISTS (SELECT 1 FROM orchestration_v2_effect_outbox e WHERE e.thread_id=t.thread_id AND (e.status IS NULL OR e.status NOT IN ('succeeded','failed','cancelled')))
-      OR EXISTS (SELECT 1 FROM orchestration_v2_projection_provider_sessions s WHERE s.thread_id=t.thread_id AND s.status IN ('running','working','connecting','starting'))
-    `;
-        const normalized = (value: string) =>
-          fs.realPath(value).pipe(Effect.orElseSucceed(() => path.resolve(value)));
-        const left = yield* normalized(root);
-        const overlaps = (right: string) =>
-          left === right ||
-          left.startsWith(`${right}${path.sep}`) ||
-          right.startsWith(`${left}${path.sep}`);
-        for (const row of rows) {
-          if (
-            row.projectId === id ||
-            overlaps(yield* normalized(row.workspaceRoot)) ||
-            (row.worktreePath && overlaps(yield* normalized(row.worktreePath)))
-          )
-            return yield* new MachineHandoffError({ code: "busy" });
-        }
-      }),
-      "storage_failed",
-    );
+  const idle = makeProjectIdleCheck(sql, fs, path);
   const context = (id: ProjectId, selected: ThreadId, current: Project) =>
     guarded(
       Effect.gen(function* () {
@@ -571,9 +544,14 @@ const make = Effect.gen(function* () {
         const sourceEnvironmentId = yield* environment.getEnvironmentId;
         if (input.destinationEnvironmentId === sourceEnvironmentId)
           return yield* new FolderCopyError({ code: "invalid" });
-        // Moving the coordinator needs a quiet folder; a plain copy only reports what changed.
-        if (input.mode === "copy-and-move")
-          yield* idle(input.projectId, current.workspaceRoot).pipe(Effect.mapError(asCopyError));
+        const warnings = yield* idle(input.projectId, current.workspaceRoot).pipe(
+          Effect.as([] as ReadonlyArray<string>),
+          Effect.catch((cause) =>
+            cause.code === "busy"
+              ? Effect.succeed([ACTIVE_COPY_WARNING])
+              : Effect.fail(asCopyError(cause)),
+          ),
+        );
         const sourceUrl = yield* privateUrl;
         const sourceMachine = yield* ownMachineName(sourceEnvironmentId);
         const offered = yield* attempt(() =>
@@ -582,6 +560,7 @@ const make = Effect.gen(function* () {
             projectId: input.projectId,
             folder: current.workspaceRoot,
             mode: input.mode,
+            warnings,
             destinationEnvironmentId: input.destinationEnvironmentId,
           }),
         );
@@ -609,12 +588,27 @@ const make = Effect.gen(function* () {
       const record = yield* attempt(() => sources.read(input.operationId));
       if (record && record.projectId !== input.projectId)
         return yield* new FolderCopyError({ code: "invalid" });
-      // Once the destination committed it owns the files; the coordinator stays fenced for it.
       if (record?.state === "committed")
-        return yield* new FolderCopyError({
-          code: "refused",
-          detail: "The other machine already accepted the copy.",
-        });
+        return yield* locks.withLock(
+          `source:${input.operationId}`,
+          admission.withLock(
+            input.projectId,
+            Effect.gen(function* () {
+              const current = yield* project(input.projectId, true).pipe(
+                Effect.mapError(asCopyError),
+              );
+              const prepared = yield* loadSource(input.operationId).pipe(
+                Effect.mapError(asCopyError),
+              );
+              return yield* abandonCopiedContext(
+                sources,
+                input,
+                prepared,
+                current.workspaceSettings?.coordinatorBinding,
+              );
+            }),
+          ),
+        );
       const found = yield* projects
         .getById(input.projectId)
         .pipe(Effect.orElseSucceed(Option.none));
@@ -717,57 +711,9 @@ const make = Effect.gen(function* () {
     Effect.flatMap(environment.getEnvironmentId, (environmentId) =>
       Effect.promise(() => handleSourceRequest(sources, environmentId, request)),
     );
-  /** The manifest a folder-copy handoff carries: repositories and heads from the offered scan. */
-  const folderCopyManifest = (
-    operationId: string,
-    projectId: ProjectId,
-    destinationEnvironmentId: string,
-  ) =>
-    Effect.gen(function* () {
-      const record = yield* Effect.tryPromise({
-        try: () => sources.read(operationId),
-        catch: () => new MachineHandoffError({ code: "storage_failed" }),
-      });
-      if (
-        !record ||
-        record.projectId !== projectId ||
-        record.mode !== "copy-and-move" ||
-        record.destinationEnvironmentId !== destinationEnvironmentId ||
-        record.summary === null ||
-        ["failed", "released", "cancelled"].includes(record.state)
-      )
-        return yield* new MachineHandoffError({ code: "invalid" });
-      return {
-        version: 1 as const,
-        operationId,
-        repositories: folderCopyManifestRepositories(operationId, record.summary),
-      };
-    });
-  /** The destination half proves its copy was applied into this exact project folder. */
-  const appliedCopy = (
-    operationId: string,
-    projectId: ProjectId,
-    sourceEnvironmentId: string,
-    workspaceRoot: string,
-  ) =>
-    Effect.gen(function* () {
-      const record = yield* Effect.tryPromise({
-        try: () => copies.read(operationId),
-        catch: () => new MachineHandoffError({ code: "storage_failed" }),
-      });
-      const real = (value: string) =>
-        fs.realPath(value).pipe(Effect.orElseSucceed(() => path.resolve(value)));
-      if (
-        !record ||
-        record.mode !== "copy-and-move" ||
-        record.state !== "applied" ||
-        !record.committed ||
-        record.projectId !== projectId ||
-        record.sourceEnvironmentId !== sourceEnvironmentId ||
-        (yield* real(record.targetFolder)) !== (yield* real(workspaceRoot))
-      )
-        return yield* new MachineHandoffError({ code: "conflict" });
-    });
+  const folderCopyManifest = makeFolderCopyManifest(sources);
+  const copyContextAvailable = makeFolderCopyContextCheck(sources);
+  const appliedCopy = makeAppliedFolderCopyCheck(copies, fs, path);
   const prepare: MachineHandoff["Service"]["prepare"] = (input) =>
     locks.withLock(
       `source:${input.operationId}`,
@@ -857,6 +803,7 @@ const make = Effect.gen(function* () {
               );
             return saved;
           }
+          if (folderCopy && saved) yield* copyContextAvailable(input.operationId);
           if (saved?.publication === "published" || (saved && !input.publish)) return saved;
           yield* idle(input.projectId, current.workspaceRoot);
           const manifest = folderCopy

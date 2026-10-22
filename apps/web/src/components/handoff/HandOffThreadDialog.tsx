@@ -32,6 +32,7 @@ import {
   type HandoffDestination,
   type PreflightView,
 } from "./HandoffResults";
+import { HandoffDestinationUpdate } from "./HandoffDestinationUpdate";
 import { HandoffModelPicker } from "./HandoffModelPicker";
 import { useHandoffDestinations } from "./useHandoffDestinations";
 
@@ -58,6 +59,8 @@ export interface HandOffThreadDialogViewProps {
   onDestination: (environmentId: EnvironmentId) => void;
   modelPicker: ReactNode;
   preflight: PreflightView;
+  /** Update for the destination when its version check says to update it first. */
+  destinationUpdate?: ReactNode;
   onRecheck: () => void;
   submitting: boolean;
   error: string | null;
@@ -125,6 +128,7 @@ export function HandOffThreadDialogView(props: HandOffThreadDialogViewProps) {
                   ) : null}
                 </div>
                 <HandoffPreflightPanel preflight={props.preflight} />
+                {props.destinationUpdate}
                 {props.error ? (
                   <p role="alert" className="text-sm text-destructive-foreground">
                     {props.error}
@@ -275,6 +279,18 @@ function HandOffThreadDialog({ threadRef }: { threadRef: ScopedThreadRef }) {
         ) : null
       }
       preflight={preflight}
+      destinationUpdate={
+        preflight.state === "done" ? (
+          <HandoffDestinationUpdate
+            environmentId={destination}
+            label={
+              destinations.find((item) => item.environmentId === destination)?.label ??
+              (destination ? name(destination) : "")
+            }
+            results={preflight.results}
+          />
+        ) : null
+      }
       onRecheck={() => setCheck((value) => value + 1)}
       submitting={submitting}
       error={error}

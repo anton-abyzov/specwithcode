@@ -294,6 +294,7 @@ export const HandoffPreflightCheck = Schema.Literals([
   "model",
   "project-link",
   "lease",
+  "version",
 ]);
 export type HandoffPreflightCheck = typeof HandoffPreflightCheck.Type;
 

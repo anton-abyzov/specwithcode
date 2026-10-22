@@ -13,7 +13,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import { afterEach, describe, expect, it } from "vite-plus/test";
 
-import { makeMacSwapUpdater } from "./ElectronMacSwapUpdater.ts";
+import { makeMacSwapUpdater, STAGED_COMPLETE_FILE } from "./ElectronMacSwapUpdater.ts";
 
 const scratch: string[] = [];
 afterEach(() => {
@@ -117,5 +117,84 @@ describe.skipIf(process.platform !== "darwin")("makeMacSwapUpdater", () => {
     expect((installError as { cause?: Error } | null)?.cause?.message).toBe(
       "No downloaded update is ready to install.",
     );
+  });
+
+  it("keeps the staged release an update run is installing, and only that release", async () => {
+    for (const [retained, complete] of [
+      ["0.2.9", true],
+      [null, true],
+      ["0.3.0", true],
+      // An unpack cut short by a quit or a crash left no completion record.
+      ["0.2.9", false],
+    ] as const) {
+      const dir = FS.mkdtempSync(Path.join(OS.tmpdir(), "studio-swap-updater-"));
+      scratch.push(dir);
+      const zip = makeZip(dir, "Studio-0.2.9-arm64.zip", "0.2.9");
+      // What an earlier launch staged before the app quit for its update.
+      const stagedDir = Path.join(dir, "pending-update", "staged.noindex");
+      FS.mkdirSync(stagedDir, { recursive: true });
+      execFileSync("/usr/bin/ditto", [
+        "-x",
+        "-k",
+        Path.join(dir, "Studio-0.2.9-arm64.zip"),
+        stagedDir,
+      ]);
+      if (complete) {
+        FS.writeFileSync(
+          Path.join(stagedDir, STAGED_COMPLETE_FILE),
+          JSON.stringify({ version: "0.2.9", sha512: zip.sha512 }),
+        );
+      }
+      FS.writeFileSync(Path.join(dir, "pending-update", "swap.sh"), "");
+      let zipDownloads = 0;
+      const fetchImpl = (async (input: string | URL) => {
+        const url = String(input);
+        if (url.includes("/releases?")) {
+          return Response.json([
+            {
+              tag_name: "v0.2.9",
+              assets: [
+                { id: 10, name: "latest-mac.yml", size: 0 },
+                { id: 11, name: "Studio-0.2.9-arm64.zip", size: zip.bytes.length },
+              ],
+            },
+          ]);
+        }
+        if (url.endsWith("/10")) {
+          return new Response(
+            `version: 0.2.9\nfiles:\n  - url: Studio-0.2.9-arm64.zip\n    sha512: ${zip.sha512}\n    size: ${zip.bytes.length}\n`,
+          );
+        }
+        zipDownloads += 1;
+        return new Response(zip.bytes as unknown as BodyInit);
+      }) as typeof fetch;
+      const updater = makeMacSwapUpdater({
+        app: {
+          getPath: () => dir,
+          getVersion: () => "0.2.8",
+          quit: () => undefined,
+          on: () => undefined as never,
+        },
+        fetch: fetchImpl,
+        resolveToken: async () => null,
+        arch: "arm64",
+        execPath: Path.join(dir, "bin", "electron"),
+        pid: 999_999,
+        retainedVersion: () => retained,
+      });
+      await Effect.runPromise(
+        updater.setFeedURL({ provider: "github", owner: "o", repo: "r" } as never),
+      );
+      await Effect.runPromise(updater.checkForUpdates);
+      await Effect.runPromise(updater.downloadUpdate);
+      // The kept copy is the download: nothing is fetched again.
+      expect(zipDownloads).toBe(retained === "0.2.9" && complete ? 0 : 1);
+      // Every finished download records that it is complete.
+      expect(
+        JSON.parse(FS.readFileSync(Path.join(stagedDir, STAGED_COMPLETE_FILE), "utf8")).version,
+      ).toBe("0.2.9");
+      expect(FS.existsSync(Path.join(dir, "pending-update", "swap.sh"))).toBe(false);
+      expect(FS.existsSync(Path.join(stagedDir, "Studio.app"))).toBe(true);
+    }
   });
 });

@@ -8,6 +8,7 @@ import {
   CommandId,
   GitCommandError,
   latestProviderTurnForAttempt,
+  ORCHESTRATION_V2_PROVIDER_OPEN_FAILED_FAILURE_CODE,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2ProviderThread,
@@ -55,10 +56,12 @@ import * as IdAllocator from "./IdAllocator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import {
+  innermostCauseMessage,
   makeProviderFailure,
   simulatedUsageLimitFailure,
   WORKSPACE_BRANCH_MISSING_FAILURE_CODE,
 } from "./ProviderFailure.ts";
+import { makeSettleRunBeforeStart as makeSettleRunBeforeStartWith } from "./settleRunBeforeStart.ts";
 import { readSpecweaveCheckpointPreface } from "./SpecweaveCheckpoint.ts";
 import * as RunExecutionService from "./RunExecutionService.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
@@ -78,40 +81,13 @@ export class ProviderTurnStartError extends Schema.TaggedError<ProviderTurnStart
 
 const isProviderTurnStartError = Schema.is(ProviderTurnStartError);
 
-// Session and adapter wrappers name internal ids (provider-session:…, run and
-// thread ids); makeProviderFailure translates them into curated guidance.
-const INTERNAL_ID_WRAPPER_TAGS: ReadonlySet<string> = new Set([
-  "ProviderSessionOpenError",
-  "ProviderAdapterOpenSessionError",
-  "ProviderAdapterCloseSessionError",
-  "ProviderAdapterResumeThreadError",
-  "ProviderAdapterEnsureThreadError",
-  "ProviderAdapterReadThreadSnapshotError",
-  "ProviderAdapterRollbackThreadError",
-  "ProviderAdapterForkThreadError",
-  "ProviderAdapterTurnStartError",
-  "ProviderAdapterSteerRunUnsupportedError",
-  "ProviderAdapterSteerRunError",
-  "ProviderAdapterInterruptError",
-  "ProviderAdapterRuntimeRequestResponseError",
-  "ProviderAdapterEventStreamError",
-]);
-
 /**
- * A failed start's message: the setup detail, else a deliberate plain-string
- * reason, else the nearest error text that names no internal ids. Undefined
- * lets makeProviderFailure pick its curated translation of the cause.
+ * A failed start's message: the setup detail, else the innermost reason in the
+ * cause chain that names no internal ids (a deliberate plain string counts).
+ * Undefined lets makeProviderFailure pick its curated translation of the cause.
  */
 function startFailureMessage(error: Error): string | undefined {
-  const setupDetail = providerSetupFailureDetail(error);
-  if (setupDetail !== undefined) return setupDetail;
-  const nestedCause = "cause" in error ? error.cause : undefined;
-  if (typeof nestedCause === "string") return nestedCause;
-  const candidate = nestedCause instanceof Error ? nestedCause : error;
-  const tag = "_tag" in candidate ? candidate._tag : undefined;
-  return typeof tag === "string" && INTERNAL_ID_WRAPPER_TAGS.has(tag)
-    ? undefined
-    : candidate.message;
+  return providerSetupFailureDetail(error) ?? innermostCauseMessage(error);
 }
 
 const isGitCommandError = Schema.is(GitCommandError);
@@ -147,6 +123,17 @@ export interface ProviderTurnStartServiceV2Shape {
     readonly runId: RunId;
     readonly willRetry?: boolean;
   }) => Effect.Effect<void, ProviderTurnStartError>;
+  /**
+   * Fails a run whose start timed out before its provider session opened,
+   * with `provider_open_failed`; the fallback decides from that whether to
+   * retry or move. True when the run was settled; false for a run no longer
+   * starting or whose state is gone, which the caller ends.
+   */
+  readonly settleTimedOutStart?: (input: {
+    readonly threadId: ThreadId;
+    readonly runId: RunId;
+    readonly message: string;
+  }) => Effect.Effect<boolean>;
 }
 
 export class ProviderTurnStartServiceV2 extends Context.Service<
@@ -294,6 +281,8 @@ export const layer: Layer.Layer<
       };
     };
 
+    const makeSettleRunBeforeStart = makeSettleRunBeforeStartWith({ eventSink, idAllocator });
+
     const start = Effect.fn("orchestrationV2.providerTurnStart.start")(function* (input: {
       readonly threadId: ThreadId;
       readonly runId: RunId;
@@ -359,96 +348,12 @@ export const layer: Layer.Layer<
           cause: `Run ${runId} is missing its execution projection state.`,
         });
       }
-      // Settles a run that never reached the provider: one signal turn item plus
-      // terminal run, attempt and root node, written only while the run is still
-      // the current starting attempt.
-      const settleRunBeforeStart = Effect.fn("orchestrationV2.providerTurnStart.settleBeforeStart")(
-        function* (input: {
-          readonly signal: string;
-          readonly status: "completed" | "failed";
-          readonly now: DateTime.Utc;
-          /** Omitted when the run never started, so `startedAt` stays as projected. */
-          readonly startedAt?: DateTime.Utc;
-          readonly providerInstanceId: OrchestrationV2Run["providerInstanceId"];
-          readonly itemProviderThreadId: OrchestrationV2ProviderThread["id"];
-          readonly item:
-            | Pick<
-                Extract<OrchestrationV2TurnItem, { type: "error" }>,
-                "type" | "title" | "failure"
-              >
-            | Pick<
-                Extract<OrchestrationV2TurnItem, { type: "command_execution" }>,
-                "type" | "title" | "input" | "output" | "exitCode"
-              >;
-          /** Emitted after the run events when the provider thread should go idle. */
-          readonly providerThreadUpdate?: OrchestrationV2ProviderThread;
-        }) {
-          const { now, status } = input;
-          const started = input.startedAt === undefined ? {} : { startedAt: input.startedAt };
-          const item: OrchestrationV2TurnItem = {
-            id: idAllocator.derive.runSignalTurnItem({ runId, signal: input.signal }),
-            threadId: projection.thread.id,
-            runId,
-            nodeId: rootNode.id,
-            providerThreadId: input.itemProviderThreadId,
-            providerTurnId: null,
-            nativeItemRef: null,
-            parentItemId: null,
-            ordinal:
-              Math.max(
-                0,
-                ...projection.turnItems
-                  .filter((item) => item.runId === runId)
-                  .map((item) => item.ordinal),
-              ) + 1,
-            status,
-            startedAt: now,
-            completedAt: now,
-            updatedAt: now,
-            ...input.item,
-          };
-          const eventPayloads = [
-            { type: "turn-item.updated", payload: item },
-            { type: "run.updated", payload: { ...run, status, ...started, completedAt: now } },
-            {
-              type: "run-attempt.updated",
-              payload: { ...attempt, status, ...started, completedAt: now },
-            },
-            {
-              type: "node.updated",
-              payload: { ...rootNode, status, ...started, completedAt: now },
-            },
-            ...(input.providerThreadUpdate === undefined
-              ? []
-              : [
-                  {
-                    type: "provider-thread.updated" as const,
-                    payload: input.providerThreadUpdate,
-                  },
-                ]),
-          ] as const;
-          const events = yield* Effect.forEach(eventPayloads, (event) =>
-            Effect.gen(function* () {
-              return {
-                ...event,
-                id: yield* idAllocator.allocate.event({ threadId: projection.thread.id }),
-                threadId: projection.thread.id,
-                runId,
-                nodeId: rootNode.id,
-                providerInstanceId: input.providerInstanceId,
-                occurredAt: now,
-              } satisfies OrchestrationV2DomainEvent;
-            }),
-          );
-          yield* eventSink.writeIfRunCurrent({
-            threadId: projection.thread.id,
-            runId,
-            activeAttemptId: attempt.id,
-            expectedStatus: "starting",
-            events,
-          });
-        },
-      );
+      const settleRunBeforeStart = makeSettleRunBeforeStart({
+        projection,
+        run,
+        rootNode,
+        attempt,
+      });
       const simulatedLimit = simulatedUsageLimitFailure(run.providerInstanceId);
       if (simulatedLimit !== null) {
         const now = yield* DateTime.now;
@@ -732,6 +637,8 @@ export const layer: Layer.Layer<
         readonly signal: string;
         readonly title: string;
         readonly error: Error;
+        /** Set when a cause with its own setup code does not decide one. */
+        readonly code?: string;
       }) =>
         Effect.gen(function* () {
           yield* settleRunBeforeStart({
@@ -747,6 +654,7 @@ export const layer: Layer.Layer<
                 cause: failed.error,
                 message: startFailureMessage(failed.error),
                 class: "provider_error",
+                ...(failed.code === undefined ? {} : { code: failed.code }),
               }),
             },
           });
@@ -763,10 +671,15 @@ export const layer: Layer.Layer<
           setupFailure?.unavailable === undefined
         )
           return yield* sessionResult.failure;
+        // Every retry failed to open the session for some other reason: a
+        // stable code lets the fallback see it. A setup failure keeps its own.
         yield* settleStartFailure({
           signal: "provider-session-open-failure",
           title: "Provider session failed to open",
           error: sessionResult.failure,
+          ...(setupFailure?.usageLimit === undefined && setupFailure?.unavailable === undefined
+            ? { code: ORCHESTRATION_V2_PROVIDER_OPEN_FAILED_FAILURE_CODE }
+            : {}),
         });
         return;
       }
@@ -1534,7 +1447,58 @@ export const layer: Layer.Layer<
       });
     });
 
+    const settleTimedOutStart = Effect.fn("orchestrationV2.providerTurnStart.settleTimedOutStart")(
+      function* (input: {
+        readonly threadId: ThreadId;
+        readonly runId: RunId;
+        readonly message: string;
+      }) {
+        const projection = yield* projectionStore.getTurnStartContext(input.threadId, input.runId);
+        const run = projection.runs.find((candidate) => candidate.id === input.runId);
+        // A run already running opened its session: that hang is no open failure.
+        if (run === undefined || run.status !== "starting") return false;
+        const rootNode = projection.nodes.find((candidate) => candidate.id === run.rootNodeId);
+        const attempt = projection.attempts.find(
+          (candidate) => candidate.id === run.activeAttemptId,
+        );
+        const providerThread = projection.providerThreads.find(
+          (candidate) => candidate.id === run.providerThreadId,
+        );
+        if (rootNode === undefined || attempt === undefined || providerThread === undefined)
+          return false;
+        // Always a failed open, never an interrupt: one hang is retried once the
+        // provider reads ready, and a repeat on the same instance moves the
+        // thread (see unopenableStop), where an interrupted run would sit idle.
+        const now = yield* DateTime.now;
+        return yield* makeSettleRunBeforeStart({ projection, run, rootNode, attempt })({
+          signal: "provider-session-open-timeout",
+          status: "failed",
+          now,
+          providerInstanceId: run.providerInstanceId,
+          itemProviderThreadId: providerThread.id,
+          item: {
+            type: "error",
+            title: "Provider session failed to open",
+            failure: makeProviderFailure({
+              message: input.message,
+              class: "provider_error",
+              code: ORCHESTRATION_V2_PROVIDER_OPEN_FAILED_FAILURE_CODE,
+            }),
+          },
+        });
+      },
+    );
+
     return ProviderTurnStartServiceV2.of({
+      settleTimedOutStart: (input) =>
+        settleTimedOutStart(input).pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("could not settle a timed-out provider turn start", {
+              runId: input.runId,
+              cause,
+            }).pipe(Effect.as(false)),
+          ),
+        ),
       start: (input) =>
         start(input).pipe(
           Effect.mapError((cause) =>

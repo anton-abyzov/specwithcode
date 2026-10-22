@@ -8,6 +8,7 @@ import * as Effect from "effect/Effect";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  agentSupportsRuns,
   buildServiceAgentConfig,
   cancelServiceInstallChange,
   findManagedServiceInstallations,
@@ -339,6 +340,115 @@ describe("studioServiceUpdates", () => {
           channel: "latest",
         }).installRequest,
       ).toBeNull();
+    }
+  });
+
+  it("names an Update now run to the agent, keeps it across writes, and clears it otherwise", () => {
+    const named = buildServiceAgentConfig({
+      previous: null,
+      preferences: PREFERENCES,
+      channel: "latest",
+      installRequestedAt: "2026-10-21T12:00:00.000Z",
+      installMode: "force",
+      installHoldUntil: "2026-10-21T12:30:00.000Z",
+      installRunId: "6f1c2a34-7d1e-4f5a-9b2c-0e1d2c3b4a59",
+    });
+    expect(named.installRunId).toBe("6f1c2a34-7d1e-4f5a-9b2c-0e1d2c3b4a59");
+    const saved = buildServiceAgentConfig({
+      previous: named,
+      preferences: PREFERENCES,
+      channel: "latest",
+      checkRequestedAt: "2026-10-21T12:01:00.000Z",
+    });
+    expect(saved.installRunId).toBe(named.installRunId);
+    // A request outside a run (an older renderer, a fleet rollout) never names the old run.
+    const plain = buildServiceAgentConfig({
+      previous: saved,
+      preferences: PREFERENCES,
+      channel: "latest",
+      installRequestedAt: "2026-10-21T13:00:00.000Z",
+      installRunId: null,
+    });
+    expect(plain.installRunId).toBeNull();
+    expect(
+      buildServiceAgentConfig({
+        previous: saved,
+        preferences: PREFERENCES,
+        channel: "latest",
+        ...cancelServiceInstallChange("2026-10-21T12:02:00.000Z"),
+      }).installRunId,
+    ).toBeNull();
+    // A config that never had a run is written exactly as before runs.
+    expect(
+      "installRunId" in
+        buildServiceAgentConfig({ previous: null, preferences: PREFERENCES, channel: "latest" }),
+    ).toBe(false);
+    expect(
+      buildServiceAgentConfig({
+        previous: { installRunId: "../../x" as never },
+        preferences: PREFERENCES,
+        channel: "latest",
+      }).installRunId,
+    ).toBeNull();
+  });
+
+  it("reads run support from the agent's state, and the run every window follows", () => {
+    expect(agentSupportsRuns(null)).toBe(false);
+    expect(agentSupportsRuns("{")).toBe(false);
+    expect(agentSupportsRuns(JSON.stringify({ status: "up-to-date" }))).toBe(false);
+    expect(agentSupportsRuns(JSON.stringify({ status: "up-to-date", runSupport: 1 }))).toBe(true);
+    const home = NodeFS.mkdtempSync(Path.join(NodeOS.tmpdir(), "service-runs-"));
+    try {
+      const studioHome = Path.join(home, ".specweave-studio", "m4");
+      const updates = Path.join(studioHome, "updates");
+      NodeFS.mkdirSync(updates, { recursive: true });
+      NodeFS.writeFileSync(
+        Path.join(studioHome, "installation.json"),
+        installationJson("m4", { studioHome, stateDir: Path.join(studioHome, "userdata") }),
+      );
+      const controller = makeServiceUpdateController({
+        homeDirectory: home,
+        platform: "darwin",
+        agentScriptPath: () => null,
+      });
+      expect(controller.runSupported()).toBe(false);
+      expect("run" in controller.readState()).toBe(false);
+      NodeFS.writeFileSync(
+        Path.join(updates, "state.json"),
+        JSON.stringify({ status: "downloaded", runSupport: 1 }),
+      );
+      expect(controller.runSupported()).toBe(true);
+      const now = DateTime.toEpochMillis(DateTime.nowUnsafe());
+      NodeFS.writeFileSync(
+        Path.join(updates, "run.json"),
+        JSON.stringify({
+          schemaVersion: 1,
+          runId: "run-1",
+          rev: 3,
+          createdAt: DateTime.formatIso(DateTime.makeUnsafe(now - 5_000)),
+          createdBy: "desktop",
+          targetVersion: "0.2.0",
+          fromVersion: "0.1.4",
+          appTargetVersion: null,
+          requestedAt: DateTime.formatIso(DateTime.makeUnsafe(now - 4_000)),
+          deadlineAt: DateTime.formatIso(DateTime.makeUnsafe(now + 600_000)),
+          phase: "waiting",
+          owner: null,
+          heartbeatAt: null,
+          leaseUntil: null,
+          message: "Waiting for running tasks (attempt 1)",
+          receipt: null,
+          endedAt: null,
+        }),
+      );
+      expect(controller.readState().run).toMatchObject({
+        runId: "run-1",
+        phase: "waiting",
+        terminal: false,
+        message: "Waiting for running tasks (attempt 1)",
+      });
+    } finally {
+      NodeFS.rmSync(home, { recursive: true, force: true });
     }
   });
 

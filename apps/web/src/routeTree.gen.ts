@@ -14,6 +14,7 @@ import { Route as UsageRouteImport } from './routes/usage'
 import { Route as StatusRouteImport } from './routes/status'
 import { Route as SettingsRouteImport } from './routes/settings'
 import { Route as PairRouteImport } from './routes/pair'
+import { Route as DesignRouteImport } from './routes/design'
 import { Route as ConnectAgentRouteImport } from './routes/connect-agent'
 import { Route as ConnectRouteImport } from './routes/connect'
 import { Route as ChatRouteImport } from './routes/_chat'
@@ -35,12 +36,14 @@ import { Route as SettingsIntegrationsRouteImport } from './routes/settings.inte
 import { Route as SettingsGoogleRouteImport } from './routes/settings.google'
 import { Route as SettingsGeneralRouteImport } from './routes/settings.general'
 import { Route as SettingsDiagnosticsRouteImport } from './routes/settings.diagnostics'
+import { Route as SettingsDesignSystemsRouteImport } from './routes/settings.design-systems'
 import { Route as SettingsConnectionsRouteImport } from './routes/settings.connections'
 import { Route as SettingsChromeRouteImport } from './routes/settings.chrome'
 import { Route as SettingsArchivedRouteImport } from './routes/settings.archived'
 import { Route as SettingsAppearanceRouteImport } from './routes/settings.appearance'
 import { Route as SettingsAgentsRouteImport } from './routes/settings.agents'
 import { Route as ProjectsProjectKeyRouteImport } from './routes/projects.$projectKey'
+import { Route as DesignDesignKeyRouteImport } from './routes/design.$designKey'
 import { Route as ChatPullRequestsRouteImport } from './routes/_chat.pull-requests'
 import { Route as ChatDraftDraftIdRouteImport } from './routes/_chat.draft.$draftId'
 import { Route as ChatEnvironmentIdThreadIdRouteImport } from './routes/_chat.$environmentId.$threadId'
@@ -68,6 +71,11 @@ const SettingsRoute = SettingsRouteImport.update({
 const PairRoute = PairRouteImport.update({
   id: '/pair',
   path: '/pair',
+  getParentRoute: () => rootRouteImport,
+} as any)
+const DesignRoute = DesignRouteImport.update({
+  id: '/design',
+  path: '/design',
   getParentRoute: () => rootRouteImport,
 } as any)
 const ConnectAgentRoute = ConnectAgentRouteImport.update({
@@ -175,6 +183,11 @@ const SettingsDiagnosticsRoute = SettingsDiagnosticsRouteImport.update({
   path: '/diagnostics',
   getParentRoute: () => SettingsRoute,
 } as any)
+const SettingsDesignSystemsRoute = SettingsDesignSystemsRouteImport.update({
+  id: '/design-systems',
+  path: '/design-systems',
+  getParentRoute: () => SettingsRoute,
+} as any)
 const SettingsConnectionsRoute = SettingsConnectionsRouteImport.update({
   id: '/connections',
   path: '/connections',
@@ -205,6 +218,11 @@ const ProjectsProjectKeyRoute = ProjectsProjectKeyRouteImport.update({
   path: '/projects/$projectKey',
   getParentRoute: () => rootRouteImport,
 } as any)
+const DesignDesignKeyRoute = DesignDesignKeyRouteImport.update({
+  id: '/$designKey',
+  path: '/$designKey',
+  getParentRoute: () => DesignRoute,
+} as any)
 const ChatPullRequestsRoute = ChatPullRequestsRouteImport.update({
   id: '/pull-requests',
   path: '/pull-requests',
@@ -226,18 +244,21 @@ export interface FileRoutesByFullPath {
   '/': typeof ChatIndexRoute
   '/connect': typeof ConnectRoute
   '/connect-agent': typeof ConnectAgentRoute
+  '/design': typeof DesignRouteWithChildren
   '/pair': typeof PairRoute
   '/settings': typeof SettingsRouteWithChildren
   '/status': typeof StatusRoute
   '/usage': typeof UsageRoute
   '/welcome': typeof WelcomeRoute
   '/pull-requests': typeof ChatPullRequestsRoute
+  '/design/$designKey': typeof DesignDesignKeyRoute
   '/projects/$projectKey': typeof ProjectsProjectKeyRoute
   '/settings/agents': typeof SettingsAgentsRoute
   '/settings/appearance': typeof SettingsAppearanceRoute
   '/settings/archived': typeof SettingsArchivedRoute
   '/settings/chrome': typeof SettingsChromeRoute
   '/settings/connections': typeof SettingsConnectionsRoute
+  '/settings/design-systems': typeof SettingsDesignSystemsRoute
   '/settings/diagnostics': typeof SettingsDiagnosticsRoute
   '/settings/general': typeof SettingsGeneralRoute
   '/settings/google': typeof SettingsGoogleRoute
@@ -261,18 +282,21 @@ export interface FileRoutesByFullPath {
 export interface FileRoutesByTo {
   '/connect': typeof ConnectRoute
   '/connect-agent': typeof ConnectAgentRoute
+  '/design': typeof DesignRouteWithChildren
   '/pair': typeof PairRoute
   '/settings': typeof SettingsRouteWithChildren
   '/status': typeof StatusRoute
   '/usage': typeof UsageRoute
   '/welcome': typeof WelcomeRoute
   '/pull-requests': typeof ChatPullRequestsRoute
+  '/design/$designKey': typeof DesignDesignKeyRoute
   '/projects/$projectKey': typeof ProjectsProjectKeyRoute
   '/settings/agents': typeof SettingsAgentsRoute
   '/settings/appearance': typeof SettingsAppearanceRoute
   '/settings/archived': typeof SettingsArchivedRoute
   '/settings/chrome': typeof SettingsChromeRoute
   '/settings/connections': typeof SettingsConnectionsRoute
+  '/settings/design-systems': typeof SettingsDesignSystemsRoute
   '/settings/diagnostics': typeof SettingsDiagnosticsRoute
   '/settings/general': typeof SettingsGeneralRoute
   '/settings/google': typeof SettingsGoogleRoute
@@ -299,18 +323,21 @@ export interface FileRoutesById {
   '/_chat': typeof ChatRouteWithChildren
   '/connect': typeof ConnectRoute
   '/connect-agent': typeof ConnectAgentRoute
+  '/design': typeof DesignRouteWithChildren
   '/pair': typeof PairRoute
   '/settings': typeof SettingsRouteWithChildren
   '/status': typeof StatusRoute
   '/usage': typeof UsageRoute
   '/welcome': typeof WelcomeRoute
   '/_chat/pull-requests': typeof ChatPullRequestsRoute
+  '/design/$designKey': typeof DesignDesignKeyRoute
   '/projects/$projectKey': typeof ProjectsProjectKeyRoute
   '/settings/agents': typeof SettingsAgentsRoute
   '/settings/appearance': typeof SettingsAppearanceRoute
   '/settings/archived': typeof SettingsArchivedRoute
   '/settings/chrome': typeof SettingsChromeRoute
   '/settings/connections': typeof SettingsConnectionsRoute
+  '/settings/design-systems': typeof SettingsDesignSystemsRoute
   '/settings/diagnostics': typeof SettingsDiagnosticsRoute
   '/settings/general': typeof SettingsGeneralRoute
   '/settings/google': typeof SettingsGoogleRoute
@@ -338,18 +365,21 @@ export interface FileRouteTypes {
     | '/'
     | '/connect'
     | '/connect-agent'
+    | '/design'
     | '/pair'
     | '/settings'
     | '/status'
     | '/usage'
     | '/welcome'
     | '/pull-requests'
+    | '/design/$designKey'
     | '/projects/$projectKey'
     | '/settings/agents'
     | '/settings/appearance'
     | '/settings/archived'
     | '/settings/chrome'
     | '/settings/connections'
+    | '/settings/design-systems'
     | '/settings/diagnostics'
     | '/settings/general'
     | '/settings/google'
@@ -373,18 +403,21 @@ export interface FileRouteTypes {
   to:
     | '/connect'
     | '/connect-agent'
+    | '/design'
     | '/pair'
     | '/settings'
     | '/status'
     | '/usage'
     | '/welcome'
     | '/pull-requests'
+    | '/design/$designKey'
     | '/projects/$projectKey'
     | '/settings/agents'
     | '/settings/appearance'
     | '/settings/archived'
     | '/settings/chrome'
     | '/settings/connections'
+    | '/settings/design-systems'
     | '/settings/diagnostics'
     | '/settings/general'
     | '/settings/google'
@@ -410,18 +443,21 @@ export interface FileRouteTypes {
     | '/_chat'
     | '/connect'
     | '/connect-agent'
+    | '/design'
     | '/pair'
     | '/settings'
     | '/status'
     | '/usage'
     | '/welcome'
     | '/_chat/pull-requests'
+    | '/design/$designKey'
     | '/projects/$projectKey'
     | '/settings/agents'
     | '/settings/appearance'
     | '/settings/archived'
     | '/settings/chrome'
     | '/settings/connections'
+    | '/settings/design-systems'
     | '/settings/diagnostics'
     | '/settings/general'
     | '/settings/google'
@@ -448,6 +484,7 @@ export interface RootRouteChildren {
   ChatRoute: typeof ChatRouteWithChildren
   ConnectRoute: typeof ConnectRoute
   ConnectAgentRoute: typeof ConnectAgentRoute
+  DesignRoute: typeof DesignRouteWithChildren
   PairRoute: typeof PairRoute
   SettingsRoute: typeof SettingsRouteWithChildren
   StatusRoute: typeof StatusRoute
@@ -491,6 +528,13 @@ declare module '@tanstack/react-router' {
       path: '/pair'
       fullPath: '/pair'
       preLoaderRoute: typeof PairRouteImport
+      parentRoute: typeof rootRouteImport
+    }
+    '/design': {
+      id: '/design'
+      path: '/design'
+      fullPath: '/design'
+      preLoaderRoute: typeof DesignRouteImport
       parentRoute: typeof rootRouteImport
     }
     '/connect-agent': {
@@ -640,6 +684,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof SettingsDiagnosticsRouteImport
       parentRoute: typeof SettingsRoute
     }
+    '/settings/design-systems': {
+      id: '/settings/design-systems'
+      path: '/design-systems'
+      fullPath: '/settings/design-systems'
+      preLoaderRoute: typeof SettingsDesignSystemsRouteImport
+      parentRoute: typeof SettingsRoute
+    }
     '/settings/connections': {
       id: '/settings/connections'
       path: '/connections'
@@ -682,6 +733,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof ProjectsProjectKeyRouteImport
       parentRoute: typeof rootRouteImport
     }
+    '/design/$designKey': {
+      id: '/design/$designKey'
+      path: '/$designKey'
+      fullPath: '/design/$designKey'
+      preLoaderRoute: typeof DesignDesignKeyRouteImport
+      parentRoute: typeof DesignRoute
+    }
     '/_chat/pull-requests': {
       id: '/_chat/pull-requests'
       path: '/pull-requests'
@@ -722,12 +780,24 @@ const ChatRouteChildren: ChatRouteChildren = {
 
 const ChatRouteWithChildren = ChatRoute._addFileChildren(ChatRouteChildren)
 
+interface DesignRouteChildren {
+  DesignDesignKeyRoute: typeof DesignDesignKeyRoute
+}
+
+const DesignRouteChildren: DesignRouteChildren = {
+  DesignDesignKeyRoute: DesignDesignKeyRoute,
+}
+
+const DesignRouteWithChildren =
+  DesignRoute._addFileChildren(DesignRouteChildren)
+
 interface SettingsRouteChildren {
   SettingsAgentsRoute: typeof SettingsAgentsRoute
   SettingsAppearanceRoute: typeof SettingsAppearanceRoute
   SettingsArchivedRoute: typeof SettingsArchivedRoute
   SettingsChromeRoute: typeof SettingsChromeRoute
   SettingsConnectionsRoute: typeof SettingsConnectionsRoute
+  SettingsDesignSystemsRoute: typeof SettingsDesignSystemsRoute
   SettingsDiagnosticsRoute: typeof SettingsDiagnosticsRoute
   SettingsGeneralRoute: typeof SettingsGeneralRoute
   SettingsGoogleRoute: typeof SettingsGoogleRoute
@@ -753,6 +823,7 @@ const SettingsRouteChildren: SettingsRouteChildren = {
   SettingsArchivedRoute: SettingsArchivedRoute,
   SettingsChromeRoute: SettingsChromeRoute,
   SettingsConnectionsRoute: SettingsConnectionsRoute,
+  SettingsDesignSystemsRoute: SettingsDesignSystemsRoute,
   SettingsDiagnosticsRoute: SettingsDiagnosticsRoute,
   SettingsGeneralRoute: SettingsGeneralRoute,
   SettingsGoogleRoute: SettingsGoogleRoute,
@@ -780,6 +851,7 @@ const rootRouteChildren: RootRouteChildren = {
   ChatRoute: ChatRouteWithChildren,
   ConnectRoute: ConnectRoute,
   ConnectAgentRoute: ConnectAgentRoute,
+  DesignRoute: DesignRouteWithChildren,
   PairRoute: PairRoute,
   SettingsRoute: SettingsRouteWithChildren,
   StatusRoute: StatusRoute,

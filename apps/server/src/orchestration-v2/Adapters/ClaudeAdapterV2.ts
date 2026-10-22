@@ -1145,6 +1145,12 @@ export const CLAUDE_READ_ONLY_STUDIO_MCP_ALLOWED_TOOLS: ReadonlyArray<string> = 
   "mcp__studio-code__studio_queue_read",
   "mcp__studio-code__html_preview",
   "mcp__studio-code__html_render",
+  "mcp__studio-code__design_list",
+  "mcp__studio-code__design_get",
+  "mcp__studio-code__design_history",
+  "mcp__studio-code__design_screenshot",
+  "mcp__studio-code__design_system_list",
+  "mcp__studio-code__design_system_get",
 ];
 
 // Claude Code aborts an HTTP MCP call after 60 s ("The operation timed out.")
@@ -2776,13 +2782,20 @@ function providerFailureFromResult(
     : message.subtype === "success" && message.api_error_status === 429
       ? "Claude API rate limit reached. Try again later."
       : terminalResultError(message.terminal_reason, failureHint);
+  // A context overflow keeps its reason as the code whatever the envelope, so
+  // the overflow recovery reads it without matching the message.
+  const overflowCode =
+    message.terminal_reason === "prompt_too_long" ||
+    message.terminal_reason === "rapid_refill_breaker"
+      ? message.terminal_reason
+      : undefined;
   if (message.subtype !== "success") {
     return makeProviderFailure({
       message:
         listedError ??
         structuredError ??
         (message.errors.join("\n").trim() || claudeResultSubtypeMessage(message.subtype)),
-      code: message.subtype,
+      code: overflowCode ?? message.subtype,
       class: failureClass,
     });
   }
@@ -2794,9 +2807,10 @@ function providerFailureFromResult(
     message: listedError ?? structuredError ?? failureHint ?? message.result,
     code: creditsExhausted
       ? "credit_balance_too_low"
-      : apiErrorStatus === null
-        ? (message.terminal_reason ?? "sdk_result_error")
-        : `api_error_${apiErrorStatus}`,
+      : (overflowCode ??
+        (apiErrorStatus === null
+          ? (message.terminal_reason ?? "sdk_result_error")
+          : `api_error_${apiErrorStatus}`)),
     class: failureClass,
     retryable: apiErrorStatus === 429 || apiErrorStatus === 529 ? true : null,
   });

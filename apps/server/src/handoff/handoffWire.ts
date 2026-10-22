@@ -23,7 +23,37 @@ import {
   ThreadId,
 } from "@specweave-studio/contracts";
 
+import packageJson from "../../package.json" with { type: "json" };
+
 export const HANDOFF_PEER_PREFIX = "/api/handoff/v1";
+/**
+ * Bumped whenever what the two machines do with these messages changes, not
+ * only their shape. Machines hand off only at the same version; a build from
+ * before this field existed counts as 1.
+ */
+export const HANDOFF_PROTOCOL_VERSION = 2;
+export const HANDOFF_APP_VERSION: string = packageJson.version;
+
+/**
+ * The version check a handoff fails when the two machines speak different
+ * protocol versions, worded for the user: which machine to update first.
+ */
+export function versionFailure(input: {
+  readonly peerLabel: string;
+  readonly peerProtocolVersion: number | undefined;
+  readonly peerAppVersion: string | undefined;
+  readonly selfLabel: string;
+}): HandoffPreflightFailure | null {
+  const theirs = input.peerProtocolVersion ?? 1;
+  if (theirs === HANDOFF_PROTOCOL_VERSION) return null;
+  const older = theirs < HANDOFF_PROTOCOL_VERSION ? input.peerLabel : input.selfLabel;
+  const mention = older.startsWith("The ") ? `t${older.slice(1)}` : older;
+  const peerVersion = input.peerAppVersion ?? "an older version";
+  return {
+    check: "version",
+    message: `${input.peerLabel} runs SpecWithCode ${peerVersion} and ${input.selfLabel} runs ${HANDOFF_APP_VERSION}; they cannot hand off between these versions. Update ${mention} first.`,
+  };
+}
 export const HANDOFF_FRAME_META_MAX_BYTES = 4 * 1024 * 1024;
 export const HANDOFF_JSON_MAX_BYTES = 1024 * 1024;
 export const HANDOFF_TRANSCRIPT_MAX_MESSAGES = 8;
@@ -73,6 +103,8 @@ export const ReplicateMeta = Schema.Struct({
   ),
   /** The source thread's owner and execution history, carried into the continuation. */
   execution: Schema.NullOr(ThreadExecutionRecord),
+  protocolVersion: Schema.optional(NonNegativeInt),
+  appVersion: Schema.optional(text(40)),
 });
 export type ReplicateMeta = typeof ReplicateMeta.Type;
 export const ReplicateResponse = Schema.Struct({ sequence: NonNegativeInt });
@@ -80,6 +112,8 @@ export type ReplicateResponse = typeof ReplicateResponse.Type;
 
 export const PeerPreflightRequest = Schema.Struct({
   sourceEnvironmentId: EnvironmentId,
+  protocolVersion: Schema.optional(NonNegativeInt),
+  appVersion: Schema.optional(text(40)),
   threads: Schema.Array(
     Schema.Struct({
       sourceThreadId: ThreadId,
@@ -94,6 +128,8 @@ export const PeerPreflightRequest = Schema.Struct({
 export type PeerPreflightRequest = typeof PeerPreflightRequest.Type;
 export const PeerPreflightResponse = Schema.Struct({
   machineLabel: text(120),
+  protocolVersion: Schema.optional(NonNegativeInt),
+  appVersion: Schema.optional(text(40)),
   results: Schema.Array(
     Schema.Struct({
       sourceThreadId: ThreadId,

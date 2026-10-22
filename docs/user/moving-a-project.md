@@ -1,7 +1,7 @@
 # Move a project to another machine
 
 SpecWithCode can copy a project folder from one of your machines to another and,
-if you want, move the project's coordinator there. The copy carries the folder as
+if you want, transfer its coordinator context and responsibility there. The copy carries the folder as
 it is on disk: uncommitted edits, stashes, branches that were never pushed, new
 files and ignored project data such as reports. Nothing has to be pushed to a Git
 remote first.
@@ -22,7 +22,10 @@ Both machines must be in your private fleet. If they are not yet, follow
 | **Use the folder as it is**            | The older path: committed work is pushed to Git remotes and an existing checkout on the destination advances. |
 | **Clone from origin per repository**   | Like a copy, but clean repositories are cloned from their remotes instead of being copied byte for byte.      |
 
-4. Under **Folder on &lt;destination&gt;**, choose where the copy goes. An empty
+4. Check **Source folder**. This is the registered project root, not necessarily
+   the Git repository containing the current thread. Under **Folder on
+   &lt;destination&gt;**, choose where the copy goes. The suggested path uses the
+   destination machine’s home; a saved destination takes precedence. An empty
    or missing folder gets a plain copy. A folder that already holds the project
    gets a preview first; see [Copying into an existing folder](#copying-into-an-existing-folder).
 5. Under **After the copy**, choose:
@@ -31,14 +34,47 @@ Both machines must be in your private fleet. If they are not yet, follow
      [Shared projects](shared-projects.md#link-two-copies). If
      the link needs a choice (project notes that differ, or a refusal), the
      dialog says why and **Link…** opens the link review.
-   - **Copy and move the coordinator here**: once the files are in place, the
-     coordinator stops on the source and continues on the destination.
+   - **Copy and transfer coordinator context**: files copy first. Once the source
+     is idle and its copied snapshot is still current, its coordinator context
+     and responsibility transfer to the destination. If work is active, the
+     files remain copied and the dialog offers an explicit later retry.
 6. Choose **Measure the folder**, check the sizes, then **Preview on
    &lt;destination&gt;**, and finally **Copy and apply on &lt;destination&gt;** (or
-   **Copy, apply and move to &lt;destination&gt;**).
+   **Copy and transfer context to &lt;destination&gt;**).
 
-The source keeps working while the copy runs. Its coordinator is only paused for
-the short final step of a move.
+The source keeps working while the copy runs. Unfinished tasks and uncommitted
+edits are allowed. Active writers produce a warning because the copy is not an
+atomic snapshot. Only the final coordinator-context transfer requires idle work;
+it never silently stops an active provider session. If files have changed since
+the copied snapshot, copy again before transferring context.
+
+## Which folder moves
+
+Copy preserves the registered source folder and its relative layout. A single
+Git repository, a SpecWeave umbrella such as `repositories/<org>/<repo>`, and
+custom nested repositories all use the same recursive discovery. For example,
+copying `specweave-umb` includes its child repositories and root `.specweave`
+context; copying only `specweave-umb/repositories/anton-abyzov/specweave` includes
+only that subtree. The app never silently includes parent folders or siblings.
+
+Choose the umbrella as the project folder when the whole umbrella should travel.
+Additional folders outside the root are not included. External symbolic links
+stay links, so their targets must exist separately on the destination. A linked
+worktree whose main repository is outside the copied root becomes plain files,
+with a warning; it cannot retain that external Git relationship.
+
+## Coordinators on different machines
+
+Each linked machine can have its own coordinator, conversation and local
+execution. Viewing another machine’s coordinator just changes what you see.
+Copying files does not migrate running threads or provider sessions.
+
+Transferring coordinator context is a deliberate continuation of one coordinator
+assignment: the destination receives project goal, instructions, memory and
+retained conversation context, and creates a new local coordinator. The source
+binding becomes read-only so that assignment does not continue in two places.
+Provider credentials and running processes stay on their original machines.
+Moving individual running threads is the separate thread-handoff workflow.
 
 ## What is copied
 
@@ -52,16 +88,19 @@ the short final step of a move.
 | **Secret-like files**    | Never   | `.env*`, keys and similar files. You can send chosen ones, see below.     |
 
 Symbolic links stay links, file modes are kept, and linked worktrees keep their
-branch. A link that points outside the project folder is shown in the preview.
+branch when their main repository is also copied. A link that points outside
+the project folder is shown in the preview.
 
 The destination pulls the files over your private Tailscale addresses. The source
 only answers requests that carry a grant for this one copy, and the grant ends
 when the copy ends. Every file is checked against the source's checksum before it
 is used.
 
-If a file keeps changing while it is read (a log being written, for example),
-the copy takes the last version it read and lists the file in the preview, so you
-can decide whether that matters.
+Files that change during transfer are retried. Files that keep changing or
+disappear are listed and skipped during Apply. New files created after the scan
+may be absent. Review the warnings and copy again after work settles when you
+need a complete snapshot. An incomplete or stale copy cannot be used to transfer
+coordinator responsibility.
 
 ## Copying into an existing folder
 
@@ -137,6 +176,10 @@ A machine that runs an older SpecWithCode shows as not checkable; update it
 first.
 
 ## Interruptions and refusals
+
+- **Active work.** Measurement and copying continue with a warning. A busy
+  coordinator-context transfer waits for an explicit retry; copied files stay
+  in place.
 
 - **Network drops or a restart.** The copy resumes where it stopped when the
   destination starts again. Files already checked are not sent again.

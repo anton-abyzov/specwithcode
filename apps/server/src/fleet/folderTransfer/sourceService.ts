@@ -87,6 +87,8 @@ export interface SourceOperationRecord {
   readonly progress: { readonly files: number; readonly bytes: number } | null;
   readonly error: string | null;
   readonly releaseReason: string | null;
+  /** Snapshot caveats captured when the offer was made, retained across restarts. */
+  readonly warnings?: ReadonlyArray<string>;
   /** Secret files the person ticked for this destination; absent until they approve any. */
   readonly secrets?: SecretApproval | null;
 }
@@ -118,7 +120,7 @@ interface Loaded {
 
 const TERMINAL: ReadonlySet<SourceState> = new Set(["committed", "released", "cancelled"]);
 
-function summarize(scan: FolderScan): SourceSummary {
+function summarize(scan: FolderScan, warnings: ReadonlyArray<string> = []): SourceSummary {
   return {
     totals: scan.totals,
     repositories: scan.repositories.map((repo) => ({
@@ -137,7 +139,7 @@ function summarize(scan: FolderScan): SourceSummary {
     linksOutside: scan.entries.filter(
       (entry) => entry.type === "symlink" && entry.target?.startsWith("/"),
     ).length,
-    warnings: scan.warnings.slice(0, 50),
+    warnings: [...new Set([...warnings, ...scan.warnings])].slice(0, 50),
   };
 }
 
@@ -211,6 +213,7 @@ export class SourceTransfers {
     readonly folder: string;
     readonly mode: CopyMode;
     readonly destinationEnvironmentId: string;
+    readonly warnings?: ReadonlyArray<string>;
   }): Promise<{ readonly token: string; readonly record: SourceOperationRecord }> {
     const directory = this.directory(input.operationId);
     const existing = await this.load(input.operationId);
@@ -256,6 +259,7 @@ export class SourceTransfers {
         progress: null,
         error: null,
         releaseReason: null,
+        warnings: input.warnings ?? [],
       },
       scan: null,
       entries: null,
@@ -272,7 +276,10 @@ export class SourceTransfers {
   private async scan(loaded: Loaded): Promise<void> {
     try {
       loaded.scan = await scanFolder(loaded.record.folder);
-      await this.save(loaded, { state: "scanned", summary: summarize(loaded.scan) });
+      await this.save(loaded, {
+        state: "scanned",
+        summary: summarize(loaded.scan, loaded.record.warnings),
+      });
     } catch (cause) {
       await this.save(loaded, { state: "failed", error: errorText(cause) });
     } finally {
@@ -356,13 +363,13 @@ export class SourceTransfers {
         selection: [...selection],
         repositories: scan.repositories,
         totals: scan.totals,
-        warnings: scan.warnings,
+        warnings: [...new Set([...(loaded.record.warnings ?? []), ...scan.warnings])],
         entryCount: entries.length,
       };
       await writeManifest(this.manifestFile(loaded.record.operationId), { header, entries });
       loaded.scan = scan;
       this.index(loaded, header, entries);
-      await this.save(loaded, { state: "ready", summary: summarize(scan) });
+      await this.save(loaded, { state: "ready", summary: summarize(scan, loaded.record.warnings) });
     } catch (cause) {
       await this.save(loaded, { state: "failed", error: errorText(cause) });
     } finally {
@@ -525,6 +532,45 @@ export class SourceTransfers {
     return updated;
   }
 
+  /** A later context transfer must never run against an older copied tree. */
+  async assertCurrentSnapshot(operationId: string): Promise<void> {
+    const loaded = await this.load(operationId);
+    if (!loaded || loaded.record.state !== "committed")
+      throw new SourceTransferError(409, "not_committed");
+    // Compare against the durable original manifest, not mutable in-memory refreshes:
+    // the destination may have omitted a changing file or kept its own version.
+    const copied = await readManifestFile(this.manifestFile(operationId));
+    const selection = new Set(copied.header.selection);
+    const current = await scanFolder(loaded.record.folder, {
+      expandRebuildable: selection.has("rebuildable"),
+    });
+    await hashSelected(current, selection);
+    const entries = selectEntries(current.entries, selection);
+    const signature = (items: ReadonlyArray<ManifestEntry>) =>
+      JSON.stringify(
+        items
+          .map(({ path, type, mode, size, sha256, target }) => ({
+            path,
+            type,
+            mode,
+            size,
+            sha256,
+            target,
+          }))
+          .sort((a, b) => a.path.localeCompare(b.path)),
+      );
+    const repositories = (items: ReadonlyArray<RepositoryInfo>) =>
+      JSON.stringify(items.map(({ status: _status, worktrees: _worktrees, ...repo }) => repo));
+    if (
+      current.warnings.length > 0 ||
+      copied.entries.some((entry) => entry.unstable) ||
+      entries.some((entry) => entry.unstable) ||
+      signature(entries) !== signature(copied.entries) ||
+      repositories(current.repositories) !== repositories(copied.header.repositories)
+    )
+      throw new SourceTransferError(409, "source_changed");
+  }
+
   /** Whether each commit exists here and is an ancestor of (or equal to) the repository's HEAD. */
   async ancestry(loaded: Loaded, repository: string, commits: ReadonlyArray<string>) {
     await this.ready(loaded);
@@ -646,6 +692,34 @@ export class SourceTransfers {
       grant: revokeTransferGrant(loaded.record.grant, "committed", this.now()),
     });
     return loaded.record;
+  }
+
+  /** Invalidates only deferred context transfer; the applied destination files stay intact.
+   * The caller must hold the project admission lock and prove ownership was never published.
+   */
+  async abandonContextTransfer(
+    operationId: string,
+    reason: string,
+  ): Promise<SourceOperationRecord> {
+    const loaded = await this.load(operationId);
+    if (!loaded || loaded.record.mode !== "copy-and-move")
+      throw new SourceTransferError(409, "invalid");
+    if (loaded.record.state === "released") return loaded.record;
+    if (loaded.record.state !== "committed") throw new SourceTransferError(409, "not_committed");
+    await this.save(loaded, {
+      state: "released",
+      releaseReason:
+        reason.slice(0, 500) ||
+        "Coordinator context transfer was abandoned; the copied files remain.",
+    });
+    return loaded.record;
+  }
+
+  /** Checked before replaying a cached prepared handoff, including after a restart. */
+  async assertContextAvailable(operationId: string): Promise<void> {
+    const loaded = await this.load(operationId);
+    if (!loaded || ["released", "cancelled", "failed"].includes(loaded.record.state))
+      throw new SourceTransferError(409, "context_closed");
   }
 
   /** The person cancelled on the source. Refused once the destination committed. */

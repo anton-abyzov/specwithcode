@@ -20,6 +20,7 @@ import {
   RuntimeRequestId,
   TurnItemId,
   type ModelSelection,
+  type OrchestrationV2DomainEvent,
   type OrchestrationV2Run,
   ProjectId,
   type PullRequestDetail,
@@ -5757,8 +5758,11 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
             : 0),
       );
       if (scenario === "queued-resume") {
+        // The recovery's own resume continues the stopped thread like a send,
+        // so the message held behind the limit is released to run after it.
+        assert.equal(after.runs[2]?.userMessageId.startsWith("limit-resume:"), true);
         assert.equal(after.runs[1]?.status, "queued");
-        assert.isTrue(after.runs[1]?.queueHeld);
+        assert.isFalse(after.runs[1]?.queueHeld);
         const continuation = after.runs[2]!;
         const completedAt = yield* DateTime.now;
         yield* events.write({
@@ -5783,5 +5787,521 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
         assert.isFalse(resumed.runs[1]?.queueHeld);
       }
     }),
+  );
+
+  it.effect.each(["message-question", "earlier-run", "live-approval"] as const)(
+    "arms and resumes a usage-limited thread past a %s that holds nothing",
+    (scenario) =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const events = yield* EventSink.EventSinkV2;
+        const projections = yield* ProjectionStore.ProjectionStoreV2;
+        const threadId = ThreadId.make(`recovery-request:${scenario}`);
+        const projectId = ProjectId.make(`recovery-request:project:${scenario}`);
+        yield* seedProject({
+          projectId,
+          title: "Recovery project",
+          workspaceRoot: process.cwd(),
+          defaultModelSelection: modelSelection,
+          createdAt: DateTime.formatIso(yield* DateTime.now),
+        });
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make(`recovery-request:create:${scenario}`),
+          threadId,
+          projectId,
+          title: "Limited thread",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          createdBy: "user",
+          creationSource: "web",
+        });
+        const send = (key: string) =>
+          orchestrator.dispatch({
+            type: "message.dispatch",
+            commandId: CommandId.make(`recovery-request:${key}:${scenario}`),
+            threadId,
+            messageId: MessageId.make(`recovery-request:${key}:${scenario}`),
+            text: "Work on this.",
+            attachments: [],
+            dispatchMode: { type: "defer_start" },
+            createdBy: "user",
+            creationSource: "web",
+          });
+        yield* send("first");
+        let now = yield* DateTime.now;
+        // The request a run left: an approval nobody answered (earlier run,
+        // live approval) or a question the next message answers.
+        const first = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!;
+        const request = (
+          run: OrchestrationV2Run,
+        ): Extract<OrchestrationV2DomainEvent, { type: "runtime-request.updated" }> => ({
+          id: EventId.make(`recovery-request:request:${scenario}`),
+          type: "runtime-request.updated",
+          threadId,
+          nodeId: run.rootNodeId!,
+          occurredAt: now,
+          payload: {
+            id: RuntimeRequestId.make(`recovery-request:${scenario}`),
+            nodeId: run.rootNodeId!,
+            providerTurnId: null,
+            nativeRequestRef: null,
+            kind: scenario === "message-question" ? "user_input" : "command",
+            status: "pending",
+            responseCapability:
+              scenario === "message-question"
+                ? { type: "message" }
+                : { type: "not_resumable", reason: "The session ended." },
+            createdAt: now,
+            resolvedAt: null,
+          },
+        });
+        if (scenario === "earlier-run") {
+          yield* events.write({
+            commandId: CommandId.make(`recovery-request:first-done:${scenario}`),
+            events: [
+              {
+                id: EventId.make(`recovery-request:first-done:${scenario}`),
+                type: "run.updated",
+                threadId,
+                occurredAt: now,
+                payload: { ...first, status: "completed", completedAt: now },
+              },
+              request(first),
+            ],
+          });
+          yield* TestClock.adjust("1 second");
+          yield* send("second");
+          now = yield* DateTime.now;
+        }
+        const run = (yield* orchestrator.getThreadProjection(threadId)).runs.at(-1)!;
+        const resetAt = DateTime.formatIso(DateTime.add(now, { minutes: 1 }));
+        yield* events.write({
+          commandId: CommandId.make(`recovery-request:failure:${scenario}`),
+          events: [
+            {
+              id: EventId.make(`recovery-request:run:${scenario}`),
+              type: "run.updated",
+              threadId,
+              occurredAt: now,
+              payload: { ...run, status: "failed", completedAt: now },
+            },
+            {
+              id: EventId.make(`recovery-request:error:${scenario}`),
+              type: "turn-item.updated",
+              threadId,
+              occurredAt: now,
+              payload: {
+                id: TurnItemId.make(`recovery-request:error:${scenario}`),
+                type: "error",
+                threadId,
+                runId: run.id,
+                nodeId: run.rootNodeId,
+                providerThreadId: null,
+                providerTurnId: null,
+                nativeItemRef: null,
+                parentItemId: null,
+                ordinal: 2,
+                status: "failed",
+                title: "Usage limit reached",
+                startedAt: now,
+                completedAt: now,
+                updatedAt: now,
+                failure: {
+                  class: "usage_limit",
+                  message: "Plan limit reached.",
+                  code: "usageLimitExceeded",
+                  retryable: null,
+                  resetAt,
+                },
+              },
+            },
+            ...(scenario === "earlier-run" ? [] : [request(run)]),
+            ...(scenario === "message-question"
+              ? [
+                  {
+                    id: EventId.make(`recovery-request:question:${scenario}`),
+                    type: "turn-item.updated" as const,
+                    threadId,
+                    occurredAt: now,
+                    payload: {
+                      id: TurnItemId.make(`recovery-request:question:${scenario}`),
+                      type: "user_input_request" as const,
+                      threadId,
+                      runId: run.id,
+                      nodeId: run.rootNodeId,
+                      providerThreadId: null,
+                      providerTurnId: null,
+                      nativeItemRef: null,
+                      parentItemId: null,
+                      ordinal: 1,
+                      status: "pending" as const,
+                      title: "Question",
+                      startedAt: now,
+                      completedAt: null,
+                      updatedAt: now,
+                      requestId: RuntimeRequestId.make(`recovery-request:${scenario}`),
+                      questions: [
+                        {
+                          id: "ship",
+                          header: "Release",
+                          question: "Ship the build to TestFlight now?",
+                          options: [],
+                        },
+                      ],
+                      responseMode: "message" as const,
+                    },
+                  },
+                ]
+              : []),
+          ],
+        });
+        const candidate = () =>
+          DateTime.now.pipe(
+            Effect.flatMap((current) =>
+              projections.getLimitRecoveryCandidates({
+                now: current,
+                autoResume: true,
+                snooze: false,
+              }),
+            ),
+            Effect.map((all) => all.find((thread) => thread.id === threadId)),
+          );
+        if (scenario === "live-approval") {
+          // An approval the stopped run still waits on holds the thread.
+          assert.isUndefined(yield* candidate());
+          const refused = yield* orchestrator
+            .dispatch({
+              type: "thread.metadata.update",
+              commandId: CommandId.make(`recovery-request:arm:${scenario}`),
+              threadId,
+              limitRecoveryPolicyArm: true,
+              limitRecovery: { runId: run.id, resetAt, autoResume: true },
+            })
+            .pipe(Effect.exit);
+          assert.equal(refused._tag, "Failure");
+          return;
+        }
+        const stopped = yield* candidate();
+        assert.isDefined(stopped);
+        assert.equal(stopped!.latestRunId, run.id);
+        assert.equal(
+          stopped!.pendingRuntimeRequest?.runId,
+          scenario === "earlier-run" ? first.id : run.id,
+        );
+        const arm = limitRecoveryCommand(stopped!, true, DateTime.toEpochMillis(now));
+        assert.equal(arm?.type, "thread.metadata.update");
+        yield* orchestrator.dispatch(arm!);
+        const armed = yield* orchestrator.getThreadProjection(threadId);
+        assert.equal(armed.thread.limitRecovery?.requestId, arm!.commandId);
+        assert.isTrue(armed.thread.limitRecovery?.autoResume);
+        assert.isTrue(armed.runtimeRequests.some((pending) => pending.status === "pending"));
+
+        yield* TestClock.adjust("1 minute");
+        const due = yield* candidate();
+        const resume = limitRecoveryCommand(
+          due!,
+          true,
+          DateTime.toEpochMillis(yield* DateTime.now),
+        );
+        assert.equal(resume?.type, "message.dispatch");
+        if (resume?.type !== "message.dispatch") return;
+        assert.equal(resume.usageLimitContinuationOfRunId, run.id);
+        yield* orchestrator.dispatch(resume);
+        const resumed = yield* orchestrator.getThreadProjection(threadId);
+        const continuation = resumed.runs.at(-1)!;
+        assert.notEqual(continuation.id, run.id);
+        assert.equal(continuation.userMessageId, resume.messageId);
+        // The open question goes with the resume, so the provider neither
+        // drops it nor takes "continue" as the answer.
+        const sent = resumed.messages.find((message) => message.id === resume.messageId);
+        if (scenario === "message-question") {
+          assert.include(sent?.text, "Continue where you left off.");
+          assert.include(sent?.text, "Ship the build to TestFlight now?");
+          assert.include(sent?.text, "This message is not their answer.");
+        } else {
+          assert.equal(sent?.text, "Continue where you left off.");
+        }
+      }),
+  );
+
+  it.effect.each(["due", "cancelled", "settled", "switched", "other-arm"] as const)(
+    "takes a derived usage-limit continuation only for its own arm once the wait is over (%s)",
+    (scenario) =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const events = yield* EventSink.EventSinkV2;
+        const threadId = ThreadId.make(`recovery-derived:${scenario}`);
+        const projectId = ProjectId.make(`recovery-derived:project:${scenario}`);
+        yield* seedProject({
+          projectId,
+          title: "Recovery project",
+          workspaceRoot: process.cwd(),
+          defaultModelSelection: modelSelection,
+          createdAt: DateTime.formatIso(yield* DateTime.now),
+        });
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make(`recovery-derived:create:${scenario}`),
+          threadId,
+          projectId,
+          title: "Limited thread",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          createdBy: "user",
+          creationSource: "web",
+        });
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make(`recovery-derived:message:${scenario}`),
+          threadId,
+          messageId: MessageId.make(`recovery-derived:message:${scenario}`),
+          text: "Work on this.",
+          attachments: [],
+          dispatchMode: { type: "defer_start" },
+          createdBy: "user",
+          creationSource: "web",
+        });
+        const run = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!;
+        const now = yield* DateTime.now;
+        // The stop names no reset, so recovery waits on a derived time.
+        yield* events.write({
+          commandId: CommandId.make(`recovery-derived:failure:${scenario}`),
+          events: [
+            {
+              id: EventId.make(`recovery-derived:run:${scenario}`),
+              type: "run.updated",
+              threadId,
+              occurredAt: now,
+              payload: { ...run, status: "failed", completedAt: now },
+            },
+            {
+              id: EventId.make(`recovery-derived:error:${scenario}`),
+              type: "turn-item.updated",
+              threadId,
+              occurredAt: now,
+              payload: {
+                id: TurnItemId.make(`recovery-derived:error:${scenario}`),
+                type: "error",
+                threadId,
+                runId: run.id,
+                nodeId: run.rootNodeId,
+                providerThreadId: null,
+                providerTurnId: null,
+                nativeItemRef: null,
+                parentItemId: null,
+                ordinal: 2,
+                status: "failed",
+                title: "Usage limit reached",
+                startedAt: now,
+                completedAt: now,
+                updatedAt: now,
+                failure: {
+                  class: "usage_limit",
+                  message: "Plan limit reached.",
+                  code: "usageLimitExceeded",
+                  retryable: null,
+                },
+              },
+            },
+          ],
+        });
+        const shell = (yield* orchestrator.getShellSnapshot()).threads.find(
+          (thread) => thread.id === threadId,
+        )!;
+        const arm = limitRecoveryCommand(shell, true, DateTime.toEpochMillis(now));
+        assert.equal(arm?.type, "thread.metadata.update");
+        assert.include(arm!.commandId, ":chain:0:");
+        yield* orchestrator.dispatch(arm!);
+        // What the worker sends for a derived resume: the recovery it answers.
+        const resume = (key: string) =>
+          orchestrator.dispatch({
+            type: "message.dispatch",
+            commandId: CommandId.make(`limit-resume:derived:${scenario}:${key}`),
+            messageId: MessageId.make(`limit-resume:derived:${scenario}:${key}`),
+            threadId,
+            text: "Continue where you left off.",
+            attachments: [],
+            dispatchMode: { type: "start_immediately" },
+            createdBy: "user",
+            creationSource: "server",
+            usageLimitContinuationOfRunId: run.id,
+            usageLimitRecoveryRequestId:
+              scenario === "other-arm" ? CommandId.make("limit-arm:older") : arm!.commandId,
+          });
+        const runs = () =>
+          Effect.map(orchestrator.getThreadProjection(threadId), (current) => current.runs.length);
+
+        yield* TestClock.adjust("1 minute");
+        yield* resume("early");
+        assert.equal(yield* runs(), 1);
+
+        yield* TestClock.adjust("5 minutes");
+        if (scenario === "other-arm") yield* resume("due-other-arm");
+        assert.equal(yield* runs(), 1);
+        // The command the worker builds once a read after the stop shows
+        // room, whichever form it takes. A cancel committed after the worker
+        // read the thread still wins, under the thread lock.
+        const dueShell = (yield* orchestrator.getShellSnapshot()).threads.find(
+          (thread) => thread.id === threadId,
+        )!;
+        const worker = limitRecoveryCommand(
+          dueShell,
+          true,
+          DateTime.toEpochMillis(yield* DateTime.now),
+          false,
+          true,
+        );
+        assert.equal(worker?.type, "message.dispatch");
+        if (worker?.type !== "message.dispatch") return;
+        if (scenario === "cancelled")
+          yield* orchestrator.dispatch({
+            type: "thread.metadata.update",
+            commandId: CommandId.make(`recovery-derived:cancel:${scenario}`),
+            threadId,
+            limitRecovery: { runId: run.id, resetAt: null, autoResume: false },
+          });
+        if (scenario === "settled")
+          yield* orchestrator.dispatch({
+            type: "thread.settle",
+            commandId: CommandId.make(`recovery-derived:settle:${scenario}`),
+            threadId,
+          });
+        if (scenario === "switched")
+          yield* orchestrator.dispatch({
+            type: "thread.model-selection.set",
+            commandId: CommandId.make(`recovery-derived:switch:${scenario}`),
+            threadId,
+            modelSelection: { instanceId: alternateInstanceId, model: "gpt-5.5" },
+          });
+        const older = CommandId.make("limit-arm:older");
+        yield* orchestrator.dispatch(
+          scenario === "other-arm"
+            ? {
+                ...worker,
+                commandId: CommandId.make(`limit-resume:derived:${scenario}:${older}`),
+                messageId: MessageId.make(`limit-resume:derived:${scenario}:${older}`),
+                ...(worker.usageLimitRecoveryRequestId === undefined
+                  ? {}
+                  : { usageLimitRecoveryRequestId: older }),
+              }
+            : worker,
+        );
+        assert.equal(yield* runs(), scenario === "due" ? 2 : 1);
+      }),
+  );
+
+  it.effect.each(["way-back", "person-switch"] as const)(
+    "moves held sends that took the fallback's model home with the way back (%s)",
+    (scenario) =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const events = yield* EventSink.EventSinkV2;
+        const threadId = ThreadId.make(`way-back-held:${scenario}`);
+        const projectId = ProjectId.make(`way-back-held:project:${scenario}`);
+        const fallback = { instanceId: alternateInstanceId, model: "gpt-5.5" } as const;
+        yield* seedProject({
+          projectId,
+          title: "Way back project",
+          workspaceRoot: process.cwd(),
+          defaultModelSelection: modelSelection,
+          createdAt: DateTime.formatIso(yield* DateTime.now),
+        });
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          commandId: CommandId.make(`way-back-held:create:${scenario}`),
+          threadId,
+          projectId,
+          title: "Moved thread",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          createdBy: "user",
+          creationSource: "web",
+        });
+        // The fallback moved the thread; the person then sent twice on it.
+        yield* orchestrator.dispatch({
+          type: "thread.model-selection.set",
+          commandId: CommandId.make(`way-back-held:fallback:${scenario}`),
+          threadId,
+          modelSelection: fallback,
+        });
+        const send = (
+          key: string,
+          dispatchMode: { readonly type: "defer_start" | "queue_after_active" },
+        ) =>
+          orchestrator.dispatch({
+            type: "message.dispatch",
+            commandId: CommandId.make(`way-back-held:${key}:${scenario}`),
+            threadId,
+            messageId: MessageId.make(`way-back-held:${key}:${scenario}`),
+            text: "Work on this.",
+            attachments: [],
+            dispatchMode,
+            createdBy: "user",
+            creationSource: "web",
+          });
+        yield* send("first", { type: "defer_start" });
+        yield* send("held", { type: "queue_after_active" });
+        const [first, held] = (yield* orchestrator.getThreadProjection(threadId)).runs as [
+          OrchestrationV2Run,
+          OrchestrationV2Run,
+        ];
+        assert.equal(held.modelSelection.instanceId, alternateInstanceId);
+        const now = yield* DateTime.now;
+        yield* events.write({
+          events: [
+            {
+              id: EventId.make(`way-back-held:hold:${scenario}`),
+              type: "run.updated",
+              threadId,
+              occurredAt: now,
+              payload: { ...held, queueHeld: true },
+            },
+            {
+              id: EventId.make(`way-back-held:done:${scenario}`),
+              type: "run.updated",
+              threadId,
+              occurredAt: now,
+              payload: { ...first, status: "completed", completedAt: now },
+            },
+          ],
+        });
+        yield* orchestrator.dispatch({
+          type: "thread.model-selection.set",
+          commandId: CommandId.make(
+            scenario === "way-back"
+              ? `limit-api-return:${threadId}:${first.id}`
+              : `way-back-held:home:${scenario}`,
+          ),
+          threadId,
+          modelSelection,
+        });
+        const moved = yield* orchestrator.getThreadProjection(threadId);
+        const after = moved.runs.find((run) => run.id === held.id)!;
+        assert.equal(moved.thread.providerInstanceId, modelSelection.instanceId);
+        assert.isTrue(after.queueHeld);
+        // A person's own switch leaves their queued sends as they sent them.
+        assert.deepEqual(after.modelSelection, scenario === "way-back" ? modelSelection : fallback);
+        if (scenario !== "way-back") return;
+        yield* orchestrator.dispatch({
+          type: "queue.resume",
+          commandId: CommandId.make(`way-back-held:release:${scenario}`),
+          threadId,
+        });
+        const released = yield* orchestrator.getThreadProjection(threadId);
+        const started = released.runs.find((run) => run.id === held.id)!;
+        assert.notEqual(started.status, "queued");
+        assert.deepEqual(started.modelSelection, modelSelection);
+        assert.equal(released.thread.providerInstanceId, modelSelection.instanceId);
+      }),
   );
 });

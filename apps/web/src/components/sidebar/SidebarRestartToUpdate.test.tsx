@@ -621,7 +621,9 @@ describe("SidebarRestartToUpdate", () => {
     expect(state.closeToast).toHaveBeenCalledWith("toast-1");
     calls.length = 0;
     await advance(30_000);
-    expect(calls).toEqual([]);
+    // The desktop's state here still says the agent waits for quiet, so the
+    // sidebar only looks for questions that hold it (0991); nothing is followed.
+    expect(calls.filter((call) => call !== "prepare:false")).toEqual([]);
   });
 
   it("keeps the app open when the user keeps their work running", async () => {

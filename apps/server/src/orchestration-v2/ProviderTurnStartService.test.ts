@@ -37,6 +37,7 @@ import * as GitWorkflow from "../git/GitWorkflowService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProjectContextDelivery from "../project/ProjectContextDelivery.ts";
 import * as ProviderAuthService from "../provider/ProviderAuthService.ts";
+import { AcpRegistryError } from "../provider/acp/AcpRegistrySupport.ts";
 import * as ContextHandoffService from "./ContextHandoffService.ts";
 import * as EventSink from "./EventSink.ts";
 import * as IdAllocator from "./IdAllocator.ts";
@@ -695,6 +696,7 @@ function makeLocalCommandHarness(input: {
                 cause: input.historyReadFailureAfterFallback,
               }),
             ),
+          getThreadRecords: () => Effect.sync(() => projection as never),
         }),
         Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({ open }),
         Layer.mock(ProviderAuthService.ProviderAuthService)({ tryHandlePromptCommand }),
@@ -747,8 +749,62 @@ function makeLocalCommandHarness(input: {
         willRetry: true,
       });
     }).pipe(Effect.provide(layer)),
+    settleTimedOutStart: Effect.gen(function* () {
+      const service = yield* ProviderTurnStart.ProviderTurnStartServiceV2;
+      return yield* service.settleTimedOutStart!({
+        threadId,
+        runId,
+        message: "The provider session did not open within 2 minutes.",
+      });
+    }).pipe(Effect.provide(layer)),
   };
 }
+
+effectIt.effect("fails a start that hung opening as an open failure, never as an interrupt", () =>
+  Effect.gen(function* () {
+    // The user's own turn, first on this instance: it fails as an open
+    // failure too, so the fallback retries it once the provider reads ready
+    // and moves the thread on a repeat; an interrupted run would sit idle.
+    const own = makeLocalCommandHarness({ text: "Continue" });
+    expect(yield* own.settleTimedOutStart).toBe(true);
+    expect(own.projection().runs.at(-1)).toMatchObject({ status: "failed" });
+    expect(own.projection().turnItems).toMatchObject([
+      {
+        type: "error",
+        title: "Provider session failed to open",
+        failure: {
+          class: "provider_error",
+          code: "provider_open_failed",
+          message: "The provider session did not open within 2 minutes.",
+        },
+      },
+    ]);
+
+    // A fallback move that hangs fails the same way.
+    const moved = makeLocalCommandHarness({ text: "Continue" });
+    moved.editProjection((value) => ({
+      ...value,
+      runs: value.runs.map((run) => ({
+        ...run,
+        userMessageId: MessageId.make(`limit-fallback:${run.threadId}:run-stopped`),
+      })),
+    }));
+    expect(yield* moved.settleTimedOutStart).toBe(true);
+    expect(moved.projection().runs.at(-1)).toMatchObject({ status: "failed" });
+
+    // A run that already opened its session is no open failure.
+    const running = makeLocalCommandHarness({ text: "Continue" });
+    running.editProjection((value) => ({
+      ...value,
+      runs: value.runs.map((run) => ({
+        ...run,
+        status: "running" as const,
+        userMessageId: MessageId.make(`limit-fallback:${run.threadId}:run-stopped`),
+      })),
+    }));
+    expect(yield* running.settleTimedOutStart).toBe(false);
+  }),
+);
 
 effectIt.effect("terminalizes a starting run when its provider session cannot open", () =>
   Effect.gen(function* () {
@@ -875,6 +931,64 @@ effectIt.effect(
     }),
 );
 
+effectIt.effect("names the innermost reason of an ACP session that could not open", () =>
+  Effect.gen(function* () {
+    // The live chain: session manager, adapter, ACP spawn, then the registry
+    // error that says what is wrong, with no setup marker on the way.
+    const detail =
+      "GitHub Copilot 1.0.101 is not prepared. Use Install / update agent in Settings → Providers.";
+    const harness = makeLocalCommandHarness({
+      text: "Continue",
+      openFailure: new ProviderAdapterOpenSessionError({
+        driver: ProviderDriverKind.make("acpRegistry"),
+        providerSessionId: ProviderSessionId.make("provider-session:internal-fixture"),
+        cause: new EffectAcpErrors.AcpSpawnError({
+          command: "github-copilot-cli",
+          // The raw cause names a local path; the registry's own detail wins.
+          cause: new AcpRegistryError({
+            reason: "runner_unavailable",
+            detail,
+            cause: new Error(
+              "ENOENT: no such file or directory, open '/Users/x/.specwithcode/acp/index.json'",
+            ),
+          }),
+        }),
+      }),
+    });
+
+    yield* harness.start;
+
+    expect(harness.projection().turnItems).toMatchObject([
+      {
+        type: "error",
+        title: "Provider session failed to open",
+        failure: { class: "provider_error", code: "provider_open_failed", message: detail },
+      },
+    ]);
+  }),
+);
+
+effectIt.effect("falls back to curated guidance when only id-bearing wrappers speak", () =>
+  Effect.gen(function* () {
+    const harness = makeLocalCommandHarness({
+      text: "Continue",
+      openFailure: new ProviderAdapterOpenSessionError({
+        driver: ProviderDriverKind.make("acpRegistry"),
+        providerSessionId: ProviderSessionId.make("provider-session:internal-fixture"),
+        cause: new Error("Session provider-session:internal-fixture for thread:t1 is gone"),
+      }),
+    });
+
+    yield* harness.start;
+
+    const [item] = harness.projection().turnItems;
+    const failure = item?.type === "error" ? item.failure : undefined;
+    expect(failure?.message).toContain("could not be opened");
+    expect(failure?.message).not.toContain("provider-session:");
+    expect(failure?.message).not.toContain("thread:");
+  }),
+);
+
 effectIt.effect("keeps internal session ids out of a generic session-open failure", () =>
   Effect.gen(function* () {
     const openFailure = new ProviderAdapterOpenSessionError({
@@ -896,8 +1010,10 @@ effectIt.effect("keeps internal session ids out of a generic session-open failur
     yield* settled.start;
     const [item] = settled.projection().turnItems;
     const failure = item?.type === "error" ? item.failure : undefined;
-    expect(failure).toMatchObject({ class: "provider_error", code: null });
-    expect(failure?.message).toContain("could not be opened");
+    // After the last retry it carries the stable open-failure code the fallback reads.
+    expect(failure).toMatchObject({ class: "provider_error", code: "provider_open_failed" });
+    // The innermost cause says why; the wrappers' session ids stay out.
+    expect(failure?.message).toBe("registry index request timed out");
     expect(failure?.message).not.toContain("provider-session:");
   }),
 );

@@ -35,16 +35,18 @@ import * as ProjectionStore from "./ProjectionStore.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
 import * as Availability from "./UsageLimitAvailability.ts";
-import { MachineLimitHandoff } from "./MachineLimitHandoff.ts";
 import {
   autoResumeByDefault,
   limitRecoveryCommand,
   makeSweep,
   waitRuleArmsResume,
 } from "./UsageLimitRecoveryWorker.ts";
+import { claudeLimitStop, claudeSweepHarness } from "./UsageLimitRecoveryWorker.testkit.ts";
 import {
+  LIMIT_REARM_MAX,
   applyLimitObservation,
   hasFreshLimitPermission,
+  limitChainSuffix,
   updateLimitRecovery,
 } from "./usageLimitRecovery.ts";
 
@@ -356,8 +358,30 @@ it("requires fresh proof and preserves cancellation, snooze, CAS and repeated-fa
     { providerInstanceId: ProviderInstanceId.make("other") },
   ])
     assert.isNull(limitRecoveryCommand({ ...permitted, ...patch }, false, 0));
+  // A limit back in the same window is re-armed as the next attempt of its
+  // chain, which resumes only on a fresh read, and never past the cap.
+  const again = limitRecoveryCommand(
+    { ...thread, latestRunId: RunId.make("failed-again") },
+    true,
+    0,
+  );
+  assert.equal(
+    again?.commandId,
+    `limit-arm:limited:failed-again:${Date.parse(resetAt)}:chain:1:-1000`,
+  );
   assert.isNull(
-    limitRecoveryCommand({ ...thread, latestRunId: RunId.make("failed-again") }, true, 0),
+    limitRecoveryCommand(
+      {
+        ...thread,
+        latestRunId: RunId.make("failed-again"),
+        limitRecovery: {
+          ...thread.limitRecovery!,
+          requestId: CommandId.make(`limit-arm:x${limitChainSuffix(LIMIT_REARM_MAX, -2000)}`),
+        },
+      },
+      true,
+      0,
+    ),
   );
   assert.isNotNull(
     limitRecoveryCommand(
@@ -807,94 +831,6 @@ it("arms the resume at reset when the wait rule holds back an automatic switch",
   );
 });
 
-/**
- * A Claude thread stops on its 5-hour limit. Claude has no availability probe,
- * so the reset time alone decides: nothing happens before it, the thread
- * continues once after it, and a sweep built after a restart does the same
- * from the persisted choice.
- */
-const claudeLimitStop = (resetMs: number) => {
-  const claude = ProviderInstanceId.make("claudeAgent");
-  const reset = DateTime.formatIso(DateTime.makeUnsafe(resetMs));
-  return {
-    ...candidate(),
-    id: ThreadId.make("claude-limited"),
-    providerInstanceId: claude,
-    latestRunCompletedAt: DateTime.makeUnsafe(0),
-    updatedAt: DateTime.makeUnsafe(0),
-    usageLimitResetAt: reset,
-    limitRecovery: null,
-  } satisfies ProjectionStore.ProjectionLimitRecoveryCandidate;
-};
-
-const claudeSweepHarness = (input: {
-  thread: ProjectionStore.ProjectionLimitRecoveryCandidate;
-  projectAutoResume?: boolean;
-  globalAutoResume?: boolean;
-}) => {
-  const projectId = ProjectId.make("claude-limit-project");
-  const state = {
-    current: input.thread,
-    commands: [] as OrchestrationV2ServerCommand[],
-    /** The persisted handoff state keeps the thread from starting a turn here. */
-    handoffBlocked: false,
-  };
-  const deps = Layer.mergeAll(
-    ProjectAdmission.layer,
-    Settings.layerTest({
-      providerLimitAction: "wait",
-      autoResumeLimitedThreads: input.globalAutoResume ?? false,
-    }),
-    Layer.mock(Availability.UsageLimitAvailability)({
-      // What the real service answers for a provider without a native probe.
-      check: () => Effect.succeed({ codex: false, observation: null }),
-    }),
-    Layer.mock(ProjectStore.ProjectStoreV2)({
-      get: () =>
-        Effect.succeed(
-          Option.some({
-            projectId,
-            deletedAt: null,
-            workspaceSettings: {
-              ...DEFAULT_PROJECT_WORKSPACE_SETTINGS,
-              autoResume: input.projectAutoResume ?? false,
-            },
-          } as ProjectStore.ProjectRow),
-        ),
-    }),
-    Layer.mock(ProjectionStore.ProjectionStoreV2)({
-      getLimitRecoveryCandidates: () => Effect.sync(() => [state.current]),
-      getThreadShell: () => Effect.sync(() => ({ ...state.current, projectId }) as never),
-    }),
-    Layer.mock(ThreadManagement.ThreadManagementService)({
-      dispatch: (command) =>
-        Effect.sync(() => {
-          state.commands.push(command);
-          if (command.type === "thread.metadata.update" && command.limitRecovery)
-            state.current = {
-              ...state.current,
-              limitRecovery: updateLimitRecovery(
-                state.current.limitRecovery,
-                command.limitRecovery,
-                command.commandId,
-                command.limitRecoveryPolicyArm === true,
-              )!,
-            };
-          return { sequence: state.commands.length, storedEvents: [] };
-        }),
-    }),
-  );
-  // A fresh sweep per call: nothing survives in memory, as after a restart.
-  const sweep = Effect.flatMap(makeSweep, (run) => run()).pipe(
-    Effect.provide(deps),
-    Effect.provideService(MachineLimitHandoff, {
-      ...MachineLimitHandoff.defaultValue(),
-      localTurnBlocked: () => Effect.sync(() => state.handoffBlocked),
-    }),
-  );
-  return { state, sweep };
-};
-
 it.effect("auto-continues a Claude thread once its limit resets, across a restart", () =>
   Effect.gen(function* () {
     const resetMs = 5 * 60 * 60_000;
@@ -971,18 +907,6 @@ it.effect("arms a Claude stop by itself when only the global auto-resume setting
     yield* TestClock.adjust("61 minutes");
     yield* sweep;
     assert.equal(state.commands.at(-1)?.type, "message.dispatch");
-  }),
-);
-
-it.effect("leaves a Claude stop without a reset time for the person to continue", () =>
-  Effect.gen(function* () {
-    const { state, sweep } = claudeSweepHarness({
-      thread: { ...claudeLimitStop(0), usageLimitResetAt: null },
-      globalAutoResume: true,
-    });
-    yield* TestClock.adjust("6 hours");
-    yield* sweep;
-    assert.deepEqual(state.commands, []);
   }),
 );
 

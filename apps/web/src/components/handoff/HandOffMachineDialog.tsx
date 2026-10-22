@@ -9,7 +9,7 @@ import type {
   ThreadId,
 } from "@specweave-studio/contracts";
 import { useRouter } from "@tanstack/react-router";
-import { useEffect, useId, useMemo, useState } from "react";
+import { useEffect, useId, useMemo, useState, type ReactNode } from "react";
 import { create } from "zustand";
 
 import { readThreadShell, useProjects } from "../../state/entities";
@@ -41,6 +41,7 @@ import {
   preflightSummary,
   type HandoffDestination,
 } from "./HandoffResults";
+import { HandoffDestinationUpdate } from "./HandoffDestinationUpdate";
 import { useHandoffDestinations } from "./useHandoffDestinations";
 
 interface HandOffMachineRequest {
@@ -103,6 +104,10 @@ export interface HandOffMachineDialogViewProps {
   checking: boolean;
   preflight: ReadonlyMap<ThreadId, HandoffPreflightResult>;
   preflightError: string | null;
+  /** Runs the checks again, for example after the destination updated. */
+  onRecheck?: () => void;
+  /** Update for the destination when its version check says to update it first. */
+  destinationUpdate?: ReactNode;
   submitting: boolean;
   error: string | null;
   run: HandoffMachineRun | null;
@@ -207,6 +212,7 @@ export function HandOffMachineDialogView(props: HandOffMachineDialogViewProps) {
                     })}
                   </ul>
                 )}
+                {props.destinationUpdate}
                 {props.preflightError ? (
                   <p role="alert" className="text-xs text-destructive-foreground">
                     {`Couldn't check: ${props.preflightError}`}
@@ -235,6 +241,11 @@ export function HandOffMachineDialogView(props: HandOffMachineDialogViewProps) {
                 >
                   Cancel
                 </Button>
+                {props.onRecheck && !props.checking && movable < props.selected.size ? (
+                  <Button type="button" variant="outline" onClick={props.onRecheck}>
+                    Check again
+                  </Button>
+                ) : null}
                 <Button
                   type="submit"
                   disabled={
@@ -311,6 +322,7 @@ function HandOffMachineDialog({
   const destination =
     destinationId ?? destinations.find((item) => item.state === "reachable")?.environmentId ?? null;
   const selectedKey = [...selected].toSorted().join(",");
+  const [recheck, setRecheck] = useState(0);
 
   useEffect(() => {
     if (destination === null || selectedKey === "" || run) return;
@@ -335,7 +347,7 @@ function HandOffMachineDialog({
     return () => {
       live = false;
     };
-  }, [destination, environmentId, run, selectedKey]);
+  }, [destination, environmentId, recheck, run, selectedKey]);
 
   const destinationName = destination
     ? (destinations.find((item) => item.environmentId === destination)?.label ?? name(destination))
@@ -365,6 +377,14 @@ function HandOffMachineDialog({
       checking={checking}
       preflight={preflight}
       preflightError={preflightError}
+      onRecheck={() => setRecheck((count) => count + 1)}
+      destinationUpdate={
+        <HandoffDestinationUpdate
+          environmentId={destination}
+          label={destinationName}
+          results={[...preflight.values()]}
+        />
+      }
       submitting={submitting}
       error={error}
       run={run}

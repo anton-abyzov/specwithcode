@@ -205,6 +205,23 @@ describe("third-party license generation", () => {
     expect(manifest.entries.some((entry) => entry.name === "demo-dependency")).toBe(true);
   });
 
+  it("skips a declared dependency named like a Node builtin that is not installed", async () => {
+    // pptxgenjs declares `https`; with that edge cut by an override, resolving
+    // the name returns the builtin "https", which once made the walk loop forever.
+    const fixture = await createFixture();
+    await writeJson(fixture.appManifest, {
+      name: "fixture-app",
+      dependencies: { "demo-dependency": "1.2.3", https: "^1.0.0", "node:fs": "*" },
+    });
+
+    const manifest = await generateThirdPartyLicenseManifest({
+      configFile: fixture.configFile,
+      packageManifests: [{ bundle: "web", path: fixture.appManifest }],
+    });
+
+    expect(manifest.entries.map((entry) => entry.name)).toEqual(["demo-asset", "demo-dependency"]);
+  }, 10_000);
+
   it("includes custom notices selected by the dev server bundle", async () => {
     const fixture = await createFixture();
     await writeJson(fixture.configFile, {

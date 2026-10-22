@@ -97,6 +97,38 @@ export function nextRunAt(
   }
 }
 
+/**
+ * next_run_at after a run of `task`, read as it is now. A one-time schedule
+ * keeps its slot until the scheduled fire of that same slot takes it
+ * (`fired`), so a manual run, a restart or a stuck run never re-arms or drops
+ * it; every other schedule moves on to its next occurrence.
+ */
+export function nextRunAfter(
+  task: Pick<ScheduledTask, "enabled" | "schedule" | "nextRunAt">,
+  from: DateTime.DateTime,
+  fired: boolean,
+): string | null {
+  if (task.schedule.type !== "once") return nextRunAt(task, from);
+  return fired || !task.enabled ? null : task.nextRunAt;
+}
+
+/**
+ * next_run_at after a run that never finished (stuck, or cut off by a
+ * restart). A one-time task keeps its slot, but a slot already due comes back
+ * after `backoffMs`: firing it again at once would only loop on whatever
+ * stopped the run.
+ */
+export function nextRunAfterStuck(
+  task: Pick<ScheduledTask, "enabled" | "schedule" | "nextRunAt">,
+  from: DateTime.DateTime,
+  backoffMs: number,
+): string | null {
+  const next = nextRunAfter(task, from, false);
+  if (task.schedule.type !== "once" || next === null) return next;
+  const retryAt = DateTime.add(from, { milliseconds: backoffMs });
+  return Date.parse(next) >= DateTime.toEpochMillis(retryAt) ? next : iso(retryAt);
+}
+
 export function errorMessage(error: unknown): string {
   if (Cause.isCause(error)) return Cause.pretty(error);
   if (error instanceof Error) return error.message;
@@ -127,26 +159,55 @@ const ScheduledTaskRunPolicy = Schema.Struct({
   check: Schema.optional(Schema.NullOr(ScheduledTaskCheck)),
   brief: Schema.optional(Schema.NullOr(ScheduledTaskBrief)),
   ownThread: Schema.optional(Schema.Boolean),
+  /**
+   * A one-time task's arming, raised each time it is turned on or its time
+   * changes, so each arming fires under its own key (see scheduledFireKey).
+   */
+  onceGeneration: Schema.optional(Schema.Int),
 });
 const decodeRunPolicy = Schema.decodeUnknownEffect(Schema.fromJsonString(ScheduledTaskRunPolicy));
 const decodeRunPolicyJson = (json: string | null) =>
   json === null ? Effect.succeed({} as typeof ScheduledTaskRunPolicy.Type) : decodeRunPolicy(json);
 
 /** The run policy column: null when the task sets none of it. */
-export const encodeRunPolicyJson = (task: {
-  readonly modelPinned?: boolean | undefined;
-  readonly check?: ScheduledTaskCheck | null | undefined;
-  readonly brief?: ScheduledTaskBrief | null | undefined;
-  readonly ownThread?: boolean | undefined;
-}): string | null =>
-  task.modelPinned === undefined && !task.check && !task.brief && !task.ownThread
+export const encodeRunPolicyJson = (
+  task: {
+    readonly modelPinned?: boolean | undefined;
+    readonly check?: ScheduledTaskCheck | null | undefined;
+    readonly brief?: ScheduledTaskBrief | null | undefined;
+    readonly ownThread?: boolean | undefined;
+  },
+  onceGeneration = 0,
+): string | null =>
+  task.modelPinned === undefined &&
+  !task.check &&
+  !task.brief &&
+  !task.ownThread &&
+  onceGeneration === 0
     ? null
     : JSON.stringify({
         ...(task.modelPinned === undefined ? {} : { modelPinned: task.modelPinned }),
         ...(task.check ? { check: task.check } : {}),
         ...(task.brief ? { brief: task.brief } : {}),
         ...(task.ownThread ? { ownThread: true } : {}),
+        ...(onceGeneration === 0 ? {} : { onceGeneration }),
       });
+
+/** A task's one-time arming (see ScheduledTaskRunPolicy); 0 when never re-armed. */
+export const readOnceGeneration = Effect.fn("ScheduledTaskService.readOnceGeneration")(
+  function* (task: { readonly id: string; readonly createdAt: string }) {
+    const sql = yield* SqlClient.SqlClient;
+    const rows = yield* sql<{ readonly generation: number | null }>`
+    SELECT json_extract(run_policy_json, '$.onceGeneration') AS generation
+    FROM scheduled_tasks
+    WHERE task_id = ${task.id} AND created_at = ${task.createdAt}
+  `;
+    const generation = rows[0]?.generation;
+    return typeof generation === "number" && Number.isInteger(generation) && generation > 0
+      ? generation
+      : 0;
+  },
+);
 
 export const decodeRow = (
   row: ScheduledTaskRow,
@@ -198,6 +259,37 @@ export const decodeRow = (
       });
     }),
   );
+
+/**
+ * Releases a row a restart left 'running'. The dispatch may already have gone
+ * out, so the run counts and the task moves past it; a one-time task's due
+ * slot backs off instead (nextRunAfterStuck).
+ */
+export const recoverInterruptedRow = Effect.fn("ScheduledTaskService.recoverInterruptedRow")(
+  function* (row: ScheduledTaskRow, now: DateTime.DateTime, backoffMs: number) {
+    const sql = yield* SqlClient.SqlClient;
+    const decoded = yield* Effect.result(decodeRow(row));
+    if (Result.isFailure(decoded))
+      // The schedule cannot be decoded, so the next occurrence cannot be computed — still
+      // release the row from 'running' (the lenient poller skips it, so it cannot re-fire).
+      yield* Effect.logWarning("Recovering undecodable schedule task row without rescheduling", {
+        taskId: row.task_id,
+        cause: decoded.failure,
+      });
+    const next = Result.isSuccess(decoded)
+      ? sql`, next_run_at = ${nextRunAfterStuck(decoded.success, now, backoffMs)}`
+      : sql``;
+    yield* sql`
+      UPDATE scheduled_tasks
+      SET last_run_status = 'failed',
+          last_run_error = 'Run was interrupted by a server restart.',
+          updated_at = ${iso(now)},
+          run_count = run_count + 1${next}
+      WHERE task_id IS ${row.task_id} AND last_run_status = 'running'
+        AND last_run_at IS ${row.last_run_at} AND run_count = ${row.run_count}
+    `;
+  },
+);
 
 /** Select poll candidates before decoding their schedules or other JSON payloads. */
 export const listDueTasks = Effect.fn("ScheduledTaskService.listDueTasks")(function* (

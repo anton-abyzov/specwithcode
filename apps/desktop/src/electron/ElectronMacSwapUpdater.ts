@@ -4,6 +4,7 @@ import * as Layer from "effect/Layer";
 import { EventEmitter } from "node:events";
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- Electron updater events consume Node filesystem and stream handles for atomic bundle staging.
 import * as FS from "node:fs";
+import * as OS from "node:os";
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- Electron updater events consume Node filesystem and stream handles for atomic bundle staging.
 import * as Path from "node:path";
 // @effect-diagnostics-next-line nodeBuiltinImport:off -- Electron updater events consume Node filesystem and stream handles for atomic bundle staging.
@@ -34,6 +35,7 @@ import {
   unpackAppZip,
 } from "../updates/macSwapInstall.ts";
 import { resolveSwapTarget } from "../updates/macBundleName.ts";
+import { retainedRunAppVersion } from "../updates/runFollowUp.ts";
 import { updateTokenResolver } from "../updates/updateToken.ts";
 import {
   ElectronUpdater,
@@ -76,6 +78,25 @@ interface Candidate {
   readonly zipAsset: GitHubReleaseAsset;
 }
 
+/**
+ * Written into staged.noindex only after a download unpacked and passed its
+ * identity checks. A staged copy without it (an unpack cut short by a quit or
+ * a crash) is never adopted after a restart.
+ */
+export const STAGED_COMPLETE_FILE = ".complete";
+
+async function readStagedComplete(stagedDir: string): Promise<string | null> {
+  try {
+    const raw: unknown = JSON.parse(
+      await FS.promises.readFile(Path.join(stagedDir, STAGED_COMPLETE_FILE), "utf8"),
+    );
+    const version = (raw as { version?: unknown } | null)?.version;
+    return typeof version === "string" ? version : null;
+  } catch {
+    return null;
+  }
+}
+
 interface Pending {
   readonly version: string;
   readonly stagedBundle: string;
@@ -109,6 +130,12 @@ export function makeMacSwapUpdater(
     readonly arch?: string;
     readonly execPath?: string;
     readonly pid?: number;
+    /**
+     * The app release an Update now run is installing (updates/run-app.json),
+     * whose staged copy survives a restart instead of being cleared as a
+     * leftover. Null when no run names one.
+     */
+    readonly retainedVersion?: () => string | null;
   } = {},
 ): ElectronUpdater["Service"] {
   const app = deps.app ?? Electron.app;
@@ -134,10 +161,38 @@ export function makeMacSwapUpdater(
 
   const workDir = () => Path.join(app.getPath("userData"), "pending-update");
 
+  // A staged copy of the release an update run is installing is kept, when it
+  // is this app and that release; it becomes the pending update.
+  const keepRetained = async (): Promise<boolean> => {
+    const version = deps.retainedVersion?.() ?? null;
+    if (version === null) return false;
+    const stagedDir = Path.join(workDir(), "staged.noindex");
+    if ((await readStagedComplete(stagedDir)) !== version) return false;
+    const apps = (await FS.promises.readdir(stagedDir)).filter((name) => name.endsWith(".app"));
+    if (apps.length !== 1 || apps[0] === undefined) return false;
+    const stagedBundle = Path.join(stagedDir, apps[0]);
+    const current = resolveRunningAppBundle(execPath);
+    const [staged, running] = await Promise.all([
+      readBundleIdentity(stagedBundle),
+      current === null ? Promise.resolve(null) : readBundleIdentity(current),
+    ]);
+    if (staged.version !== version) return false;
+    if (running !== null && staged.bundleId !== running.bundleId) return false;
+    for (const name of await FS.promises.readdir(workDir())) {
+      if (name !== "staged.noindex") await removeTree(Path.join(workDir(), name));
+    }
+    pending = { version, stagedBundle, releaseNotes: null };
+    return true;
+  };
+
   // Leftovers from an earlier run belong to an update that either installed
-  // or was abandoned; the in-memory state is the only source of truth.
-  // Downloads wait for it so the cleanup cannot delete a fresh download.
-  const leftoversRemoved = removeTree(workDir()).catch(() => undefined);
+  // or was abandoned; the in-memory state is the only source of truth, except
+  // for a copy an update run keeps. Downloads wait for it so the cleanup
+  // cannot delete a fresh download.
+  const leftoversRemoved = keepRetained()
+    .catch(() => false)
+    .then((kept) => (kept ? undefined : removeTree(workDir())))
+    .catch(() => undefined);
 
   const currentFeed = async (): Promise<GitHubFeed> => {
     if (feedBase === null) throw new Error("No update feed is configured.");
@@ -221,6 +276,7 @@ export function makeMacSwapUpdater(
   const download = async () => {
     const target = candidate;
     if (target === null) throw new Error("Check for updates before downloading.");
+    await leftoversRemoved;
     if (pending?.version === target.version) {
       events.emit("update-downloaded", {
         version: target.version,
@@ -233,7 +289,6 @@ export function makeMacSwapUpdater(
     pending = null;
     const feed = await currentFeed();
     const dir = workDir();
-    await leftoversRemoved;
     await FS.promises.mkdir(dir, { recursive: true, mode: 0o700 });
     const partPath = Path.join(dir, `${target.zip.url}.part`);
     const response = await openReleaseAsset(feed, target.zipAsset.id, fetchImpl);
@@ -287,6 +342,11 @@ export function makeMacSwapUpdater(
         `The downloaded app reports version ${staged.version ?? "unknown"}, not ${target.version}.`,
       );
     }
+    await FS.promises.writeFile(
+      Path.join(dir, "staged.noindex", STAGED_COMPLETE_FILE),
+      `${JSON.stringify({ version: target.version, sha512: target.zip.sha512 })}\n`,
+      { mode: 0o600 },
+    );
     pending = { version: target.version, stagedBundle, releaseNotes: target.releaseNotes };
     events.emit("update-downloaded", {
       version: target.version,
@@ -360,4 +420,15 @@ export function makeMacSwapUpdater(
   });
 }
 
-export const layer = Layer.sync(ElectronUpdater, () => makeMacSwapUpdater());
+export const layer = Layer.sync(ElectronUpdater, () =>
+  makeMacSwapUpdater({
+    retainedVersion: () =>
+      retainedRunAppVersion(OS.homedir(), Electron.app.getVersion(), (path) => {
+        try {
+          return FS.readFileSync(path, "utf8");
+        } catch {
+          return null;
+        }
+      }),
+  }),
+);

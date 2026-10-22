@@ -1,0 +1,298 @@
+"""updates/run.json: the one record of an Update now press, and the agent's side of it (0988).
+
+The desktop creates the record (O_EXCL, keyed by runId) when a person presses Update now, and
+mirrors the request into config.json with `installRunId`. A pass of the update agent claims the
+run when config.json names it and asks for the same request; while it owns the run a heartbeat
+thread renews `leaseUntil` every HEARTBEAT_SECONDS, also while the detached install helper runs.
+The pass mirrors its status into `phase`, ends the run as `verified`, `failed` or `cancelled`
+when it decides the request, and otherwise lets go of it (owner null, lease now) so a later pass
+or the desktop's re-kick can take it on. The run's `deadlineAt` is the one clock of a run-era
+request: it replaces the forced retry window and the request TTL.
+
+`runSupport` in state.json tells the desktop this agent understands run records; an older agent
+rewriting state.json drops the key, so the desktop falls back to today's path on its own.
+
+Every write replaces the whole file, bumps `rev` and never overwrites a terminal record. Also
+holds the pass lock and the service log rotation, moved here from update_agent.py (file-size
+cap). Stdlib only and Python 3.9 compatible, like the agent it is installed beside.
+"""
+import datetime
+import errno
+import fcntl
+import os
+import stat
+import sys
+import threading
+import uuid
+
+RUN_SUPPORT = 1
+SCHEMA_VERSION = 1
+FILE = 'run.json'
+HEARTBEAT_SECONDS = 5
+LEASE = datetime.timedelta(seconds=90)
+LIVE = ('preparing', 'requested', 'downloading', 'waiting', 'installing')
+TERMINAL = ('verified', 'failed', 'cancelled', 'expired')
+# The agent status a pass sets, as the run's phase while the pass owns it.
+PHASE_OF = {'downloading': 'downloading', 'downloaded': 'downloading', 'waiting-for-quiet': 'waiting',
+            'installing': 'installing'}
+RUN_ID_LIMIT = 64
+# launchd's StandardOutPath and StandardErrorPath for the service grow forever otherwise
+# (52 MB seen); past the limit the newest SERVICE_LOG_KEPT bytes move to <name>.1.
+SERVICE_LOG_LIMIT = 16 << 20
+SERVICE_LOG_KEPT = 8 << 20
+
+
+def _ua(agent):
+    return sys.modules[type(agent).__module__]
+
+
+def valid_run_id(value):
+    return isinstance(value, str) and 0 < len(value) <= RUN_ID_LIMIT and all(
+        character.isalnum() or character == '-' for character in value)
+
+
+def stamp(line, moment=None):
+    """A pass's log line with the time it was written: agent.log had none (22 untimed lines)."""
+    moment = moment or datetime.datetime.now(datetime.timezone.utc)
+    return '%s %s' % (moment.strftime('%Y-%m-%dT%H:%M:%SZ'), line)
+
+
+def path(agent):
+    return agent.updates / FILE
+
+
+def load(agent):
+    """The run record, or None when there is none or it is not one this agent understands."""
+    ua = _ua(agent)
+    target = path(agent)
+    if not os.path.lexists(str(target)):
+        return None
+    try:
+        record = ua.read_json(target, agent.home, 1 << 20)
+    except ua.AgentError:
+        return None
+    if not (isinstance(record, dict) and record.get('schemaVersion') == SCHEMA_VERSION
+            and valid_run_id(record.get('runId')) and type(record.get('rev')) is int
+            and record.get('phase') in LIVE + TERMINAL and ua.parse_time(record.get('deadlineAt'))):
+        return None
+    return record
+
+
+class Run(object):
+    """The run this pass owns. Writes are serialized with the heartbeat thread."""
+
+    def __init__(self, agent, record):
+        self.agent = agent
+        self.ua = ua = _ua(agent)
+        self.run_id = record['runId']
+        self.requested_at = record.get('requestedAt')
+        self.target = record.get('targetVersion')
+        self.deadline = ua.parse_time(record['deadlineAt'])
+        self.lock = threading.Lock()
+        self.stopped = threading.Event()
+        self.thread = None
+        self.lost = False  # Replaced or ended by someone else: never written again.
+
+    def write(self, change):
+        """Re-read the record and apply `change` to it; False once it is no longer ours to write."""
+        ua = self.ua
+        with self.lock:
+            if self.lost:
+                return False
+            current = load(self.agent)
+            if current is None or current['runId'] != self.run_id or current['phase'] in TERMINAL:
+                self.lost = True
+                return False
+            change(current)
+            current['rev'] = current['rev'] + 1
+            try:
+                ua.write_json(path(self.agent), current, self.agent.home)
+            except (OSError, ua.AgentError):
+                return False
+            return True
+
+    def renew(self, record):
+        now = self.ua.utcnow()
+        record['heartbeatAt'] = self.ua.iso(now)
+        record['leaseUntil'] = self.ua.iso(now + LEASE)
+
+    def beat(self):
+        while not self.stopped.wait(HEARTBEAT_SECONDS):
+            if not self.write(self.renew):
+                return
+
+    def start(self):
+        self.thread = threading.Thread(target=self.beat, name='run-heartbeat', daemon=True)
+        self.thread.start()
+
+    def stop(self):
+        self.stopped.set()
+        if self.thread is not None:
+            self.thread.join(HEARTBEAT_SECONDS + 1)
+
+    def mirror(self, status, message):
+        phase = PHASE_OF.get(status)
+
+        def change(record):
+            if phase:
+                record['phase'] = phase
+            record['message'] = message
+            self.renew(record)
+        self.write(change)
+
+
+def claim(agent):
+    """Take on the run config.json names, when it asks for this same request and nobody else
+    holds a fresh lease on it. None otherwise: the pass then runs as it did before runs."""
+    ua = _ua(agent)
+    run_id = agent.config.get('installRunId')
+    if not valid_run_id(run_id):
+        return None
+    record = load(agent)
+    if record is None or record['runId'] != run_id or record['phase'] in TERMINAL \
+            or record.get('requestedAt') is None or record.get('requestedAt') != agent.config.get('installRequestedAt'):
+        return None
+    owner, lease = record.get('owner'), ua.parse_time(record.get('leaseUntil'))
+    if isinstance(owner, dict) and owner.get('pid') != os.getpid() and lease is not None and lease > ua.utcnow():
+        return None
+    run = Run(agent, record)
+    now = ua.iso(ua.utcnow())
+
+    def take(current):
+        current['owner'] = {'kind': 'agent', 'pid': os.getpid(), 'agentVersion': ua.AGENT_VERSION, 'claimedAt': now}
+        if current['phase'] in ('preparing', 'requested'):
+            current['phase'] = 'requested'
+        run.renew(current)
+    if not run.write(take):
+        return None
+    run.start()
+    return run
+
+
+def retry_until(agent):
+    """The run's deadline: until when a pass that owns a run retries its request."""
+    run = getattr(agent, 'run', None)
+    return run.deadline if run is not None else None
+
+
+def ttl_until(agent):
+    """A run-era request lapses at the run's deadline, not REQUEST_TTL after it was written."""
+    return retry_until(agent)
+
+
+def outcome(agent, run):
+    """The terminal phase this pass decided, with its message, or (None, None) when the run goes on."""
+    ua = _ua(agent)
+    state = agent.state
+    status, message = state.get('status'), state.get('message')
+    if os.path.lexists(str(agent.marker_path)):
+        return None, None  # The helper still runs (apply timed out): a later pass settles it.
+    if message == ua.CANCELLED:
+        return 'cancelled', message
+    if status in ('error', 'manual-required'):
+        return 'failed', message
+    installed = ua.version_tuple(state.get('installedVersion'))
+    wanted = ua.version_tuple(run.target)
+    if installed is not None and wanted is not None and installed >= wanted:
+        return 'verified', message
+    handled = state.get('handledInstallRequestAt') == run.requested_at
+    late = ua.utcnow() + datetime.timedelta(seconds=ua.RETRY_SECONDS) >= run.deadline
+    if handled or late:
+        return 'failed', message or 'SpecWithCode %s did not install.' % run.target
+    return None, None
+
+
+def release(agent):
+    """End the pass's hold on its run: terminal when the pass decided it, else ownerless."""
+    ua = _ua(agent)
+    run = getattr(agent, 'run', None)
+    if run is None:
+        return
+    agent.run = None
+    run.stop()
+    phase, message = outcome(agent, run)
+    last = agent.state.get('lastInstall') or {}
+    now = ua.iso(ua.utcnow())
+
+    def end(record):
+        record['owner'] = None
+        record['leaseUntil'] = now
+        if phase is None:
+            return
+        record['phase'] = phase
+        record['message'] = message
+        record['endedAt'] = now
+        if last.get('version') == run.target and isinstance(last.get('receipt'), str):
+            record['receipt'] = last['receipt']
+    run.write(end)
+    if phase in ('failed', 'cancelled') and agent.state.get('handledInstallRequestAt') != run.requested_at:
+        # An ended run's request never installs later, at some idle moment nobody asked for.
+        agent.state['handledInstallRequestAt'] = run.requested_at
+        try:
+            agent.save()
+        except (OSError, ua.AgentError):
+            pass
+
+
+# ---------------------------------------------------------------- moved from update_agent.py
+
+def acquire_lock(path):
+    """The pass lock's fd, held exclusively, or None while another pass (or its helper) holds it."""
+    fd = os.open(str(path), os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError as error:
+        os.close(fd)
+        if error.errno in (errno.EWOULDBLOCK, errno.EAGAIN, errno.EACCES):
+            return None
+        raise
+    return fd
+
+
+def rotate_service_log(path, limit=SERVICE_LOG_LIMIT, kept=SERVICE_LOG_KEPT):
+    """Bounds a log launchd appends to. Over `limit`, its newest `kept` bytes (from the first
+    whole line) replace <name>.1, written privately and never through a link, and the live
+    file is truncated in place: launchd opened it with O_APPEND, so the service's next write
+    lands at the new end. A disk too full for <name>.1 still truncates the live file. Returns
+    True when it truncated; never raises."""
+    try:
+        fd = os.open(str(path), os.O_RDWR | os.O_NOFOLLOW | os.O_NONBLOCK)
+    except OSError:
+        return False
+    try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_size <= limit:
+            return False
+        start = max(0, info.st_size - kept)
+        os.lseek(fd, start, os.SEEK_SET)
+        chunks, left = [], info.st_size - start
+        while left > 0:
+            chunk = os.read(fd, min(left, 1 << 20))
+            if not chunk:
+                break
+            chunks.append(chunk)
+            left -= len(chunk)
+        tail = b''.join(chunks)
+        if start and b'\n' in tail:
+            tail = tail.split(b'\n', 1)[1]  # The cut line's end alone would mislead a reader.
+        older = path.with_name(path.name + '.1')
+        temporary = path.with_name('%s.1.rotate-%s' % (path.name, uuid.uuid4().hex))
+        try:
+            out = os.open(str(temporary), os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
+            try:
+                with os.fdopen(out, 'wb') as handle:
+                    handle.write(tail)
+                os.replace(str(temporary), str(older))  # Replaces a link at .1 itself, never its target.
+            finally:
+                if os.path.lexists(str(temporary)):
+                    os.unlink(str(temporary))
+        except OSError as error:
+            # A full disk is when the bound matters most: drop the tail, keep the old .1.
+            if error.errno not in (errno.ENOSPC, errno.EDQUOT):
+                raise
+        os.ftruncate(fd, 0)
+        return True
+    except OSError:
+        return False
+    finally:
+        os.close(fd)

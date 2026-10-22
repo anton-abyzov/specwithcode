@@ -37,6 +37,8 @@ import {
   withdrawRequest,
   withTimeout,
 } from "./serviceUpdateCalls";
+import { startServiceUpdateRun } from "./serviceUpdateRunFlow";
+import { liveServiceUpdateRun } from "./serviceUpdateRunView";
 import {
   type AppFollowUp,
   finishedFollowUp,
@@ -836,6 +838,8 @@ export async function startServiceUpdateNow(
 ): Promise<ServiceUpdateStart> {
   const current = state.progress;
   if (state.starting || cancelling) return false;
+  // An Update now run is going on (0988): every window follows it, none asks again.
+  if (liveServiceUpdateRun(serviceState) !== null) return true;
   const thenApp = options.thenInstallApp ?? null;
   const target = options.targetVersion ?? current?.targetVersion ?? null;
   // Already under way: this press only adds the app's install to it.
@@ -899,6 +903,13 @@ export async function startServiceUpdateNow(
     latest !== null
       ? retryServiceUpdateProgress(latest, newestWrittenAgentState(serviceState) ?? lastAgentState)
       : startServiceUpdateProgress(serviceState, options.targetVersion);
+  // One durable run when the desktop and its agent support it; the desktop
+  // then installs the app after the service, with or without this window.
+  const viaRun = await startServiceUpdateRun({
+    targetVersion: start.targetVersion,
+    appTargetVersion: thenApp?.appVersion ?? null,
+  });
+  if (viaRun !== "legacy") return true;
   if (thenApp !== null) setFollowUp({ ...thenApp, serviceVersion: start.targetVersion });
   else if (latest === null) setFollowUp(null);
   await run({ ...start, startedAt: Date.now() });
@@ -1238,6 +1249,8 @@ export function useServiceUpdateFlow(
   );
   useEffect(() => registerPrepare(prepare), [prepare]);
   useEffect(() => {
+    // A hold an Update now run made is the run's: windows follow the run instead.
+    if (liveServiceUpdateRun(serviceState) !== null) return;
     void adoptHeldUpdate(serviceState, prepare);
   }, [prepare, serviceState]);
   return useSyncExternalStore(subscribe, readState, readState);

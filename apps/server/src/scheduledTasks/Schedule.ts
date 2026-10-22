@@ -3,6 +3,7 @@ import {
   type ScheduledTaskSchedule,
 } from "@specweave-studio/contracts";
 import * as DateTime from "effect/DateTime";
+import * as Option from "effect/Option";
 
 const MINUTE_MS = 60_000;
 
@@ -18,6 +19,15 @@ export function nextScheduledRunAt(
 ): DateTime.DateTime | null {
   if (schedule.type === "webhook" || schedule.type === "manual") return null;
   if (schedule.type === "monthly") return nextMonthlyRunAt(schedule, from);
+  // A one-time run is due at its own time, or at `from` once that is past: a
+  // late one fires once rather than being dropped. Each arming fires under its
+  // own key (scheduledFireKey), so turning a fired task back on posts it again
+  // instead of replaying the first post. The service clears it once fired.
+  if (schedule.type === "once") {
+    const at = Option.getOrNull(DateTime.make(schedule.at));
+    if (at === null) return null;
+    return DateTime.toEpochMillis(at) >= DateTime.toEpochMillis(from) ? at : from;
+  }
   if (schedule.type === "interval") {
     // Persisted rows created before the one-minute floor remain readable, but
     // they must not retain their old high-frequency execution rate.
@@ -87,6 +97,7 @@ export function isSameSchedule(a: ScheduledTaskSchedule, b: ScheduledTaskSchedul
   // Webhook tasks never have a next run, whatever their signature settings.
   if (a.type === "webhook") return b.type === "webhook";
   if (a.type === "manual") return b.type === "manual";
+  if (a.type === "once") return b.type === "once" && Date.parse(a.at) === Date.parse(b.at);
   if (a.type === "monthly") {
     const aTime = parseTimeOfDay(a.timeOfDay);
     const bTime = b.type === "monthly" ? parseTimeOfDay(b.timeOfDay) : null;
@@ -143,6 +154,7 @@ export function isMissedFixedTimeRun(
 function describeSchedule(schedule: ScheduledTaskSchedule): string {
   if (schedule.type === "webhook") return "On webhook";
   if (schedule.type === "manual") return "When asked";
+  if (schedule.type === "once") return `Once at ${schedule.at}`;
   if (schedule.type === "monthly") {
     return `At ${schedule.timeOfDay} on day ${schedule.dayOfMonth} of every month`;
   }

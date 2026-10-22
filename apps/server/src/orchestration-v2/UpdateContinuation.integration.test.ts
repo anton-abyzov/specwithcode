@@ -16,6 +16,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
@@ -28,6 +29,8 @@ import * as ProjectService from "../project/ProjectService.ts";
 import type { ProviderInstance } from "../provider/ProviderDriver.ts";
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as ClosedQuestions from "../serviceUpdate/ServiceUpdateClosedQuestions.ts";
+import * as ReopenQuestions from "../serviceUpdate/ServiceUpdateReopenQuestions.ts";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
 import * as StudioCapacity from "../studio/Capacity.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
@@ -35,6 +38,7 @@ import * as VcsProcess from "../vcs/VcsProcess.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as EffectOutbox from "./EffectOutbox.ts";
 import * as EventSink from "./EventSink.ts";
+import * as IdAllocator from "./IdAllocator.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import type { ProviderAdapterV2Shape } from "./ProviderAdapter.ts";
 import * as ProviderRuntimeRecoveryService from "./ProviderRuntimeRecoveryService.ts";
@@ -354,6 +358,86 @@ it.layer(layerTest)("update continuation through real projections", (it) => {
       assert.deepEqual(
         after.runs.map((run) => run.status),
         ["interrupted"],
+      );
+    }),
+  );
+  // A forced update closed the question this turn asked. After the update the
+  // thread asks it again on that turn, as a card the person answers by message,
+  // and a second pass (a crash before the record was marked) repeats nothing.
+  it.effect("asks a question an update closed again on its turn, once", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(recentTime);
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const { threadId, runId } = yield* interruptedThread("reopen-card", "service_update");
+      const entry: ClosedQuestions.ClosedQuestion = {
+        requestId: "ask-user:closed",
+        threadId,
+        threadTitle: "reopen-card",
+        runId,
+        kind: "user_input",
+        text: "Which database should I use?",
+        questions: [
+          {
+            id: "q1",
+            header: "Database",
+            question: "Which database should I use?",
+            options: [{ label: "Postgres", description: "The usual one." }],
+            allowCustomAnswer: true,
+          },
+        ],
+        askedAt: null,
+        closedAt: "2026-10-21T10:00:00.000Z",
+        reopenedAt: null,
+      };
+      const reopenWith = Effect.gen(function* () {
+        // Unmarked every time: as if the service stopped before it marked the entry.
+        const pending = yield* Ref.make<ReadonlyArray<ClosedQuestions.ClosedQuestion>>([entry]);
+        const store = ClosedQuestions.ServiceUpdateClosedQuestions.of({
+          bootId: "after-the-restart",
+          record: () => Effect.succeed(true),
+          pending: Ref.get(pending),
+          forRun: () => Effect.succeed([entry]),
+          markReopened: () => Ref.set(pending, []).pipe(Effect.as(true)),
+          draining: (effect) => effect,
+          isDraining: Effect.succeed(false),
+          reopening: (effect) => effect,
+        });
+        const reopener = yield* ReopenQuestions.makeReopener.pipe(
+          Effect.provide(
+            Layer.mergeAll(
+              Layer.succeed(ClosedQuestions.ServiceUpdateClosedQuestions, store),
+              IdAllocator.layer,
+              ServerSettings.layerTest({ continueThreadsAfterServerUpdate: false }),
+            ),
+          ),
+        );
+        return yield* reopener.reopenPending;
+      });
+      const first = yield* reopenWith;
+      assert.deepEqual(first[0]?.outcome, { type: "reopened", by: "card" });
+      yield* reopenWith;
+      const after = yield* orchestrator.getThreadProjection(threadId);
+      const reopened = after.runtimeRequests.filter(
+        (request) => request.id === "update-reopen:ask-user:closed",
+      );
+      assert.deepEqual(
+        reopened.map((request) => [request.kind, request.status, request.responseCapability.type]),
+        [["user_input", "pending", "message"]],
+      );
+      const notes = after.turnItems.flatMap((item) =>
+        item.type === "system_notice" && item.title === "Closed by the update" ? [item] : [],
+      );
+      assert.lengthOf(notes, 1);
+      assert.equal(notes[0]!.runId, runId);
+      assert.include(notes[0]!.message, "> Which database should I use?");
+      const cards = after.turnItems.flatMap((item) =>
+        item.type === "user_input_request" && item.requestId === "update-reopen:ask-user:closed"
+          ? [item]
+          : [],
+      );
+      assert.deepEqual(
+        cards.map((card) => [card.status, card.responseMode, card.questions[0]?.question]),
+        [["waiting", "message", "Which database should I use?"]],
       );
     }),
   );

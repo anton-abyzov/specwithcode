@@ -399,6 +399,9 @@ describe("restart to update", () => {
       "Download it from Settings",
     );
     expect(
+      describeInstallOutcome({ ...base, accepted: false, reason: "service-behind" }),
+    ).toContain("installs after the SpecWithCode service on this Mac");
+    expect(
       describeInstallOutcome(
         { ...base, accepted: false, reason: "no-download" },
         { downloadsInBackground: true },
@@ -1286,6 +1289,69 @@ describe("service update progress", () => {
     );
   });
 
+  it("names the questions and approvals a forced update closes and asks again (0991)", () => {
+    let thread = 0;
+    const request = (title: string | null, questions: number, approvals: number, other = 0) =>
+      ({
+        kind: "request",
+        count: questions + approvals + other,
+        threadId: `thread-${(thread += 1)}`,
+        threadTitle: title,
+        projectId: null,
+        projectTitle: null,
+        questions,
+        approvals,
+      }) as unknown as ServiceUpdateBlocker;
+    expect(
+      describeServiceUpdateStop({ blockers: [request("Fix login", 1, 1), request("Docs", 1, 0)] }),
+    ).toBe(
+      [
+        "Stop running work and update now?",
+        '2 questions and 1 approval will be closed and asked again after the update, in "Fix login" and "Docs".',
+      ].join("\n"),
+    );
+    expect(
+      describeServiceUpdateStop({
+        blockers: [
+          request("A", 1, 0),
+          request("B", 1, 0),
+          request("C", 1, 0),
+          request("D", 1, 0),
+          request(null, 0, 2),
+        ],
+      }),
+    ).toBe(
+      [
+        "Stop running work and update now?",
+        // D and the untitled thread: threads, not their 2 approvals.
+        '4 questions and 2 approvals will be closed and asked again after the update, in "A", "B", "C" and 2 other threads.',
+      ].join("\n"),
+    );
+    // Two threads with the same title are two threads.
+    expect(
+      describeServiceUpdateStop({
+        blockers: [request("New thread", 1, 0), request("New thread", 1, 0)],
+      }),
+    ).toBe(
+      [
+        "Stop running work and update now?",
+        '2 questions will be closed and asked again after the update, in "New thread" and 1 other thread.',
+      ].join("\n"),
+    );
+    // A request the app answers itself (a tool call) is closed, not asked again.
+    expect(
+      describeServiceUpdateStop({
+        blockers: [request("Tools", 0, 0, 1), request("Docs", 1, 0, 1)],
+      }),
+    ).toBe(
+      [
+        "Stop running work and update now?",
+        '1 question will be closed and asked again after the update, in "Docs".',
+        "2 other open requests will be closed.",
+      ].join("\n"),
+    );
+  });
+
   it("does not take the previous attempt's failure as this attempt's answer", () => {
     const failed = { ...serviceWaiting, status: "error" as const, message: "Did not install" };
     const retry = { ...requested, staleFailure: serviceFailureKey(failed), requestedAt: 1_000 };
@@ -1384,6 +1450,35 @@ describe("describeAppRestartWarning", () => {
         "3 running in 2 threads. Restarting interrupts this work.",
         "Still running: 1 running task in “Fix login”; 2 running tasks in “Docs”.",
         "Restart when idle lets it finish first: SpecWithCode restarts once nothing runs, or after the wait set in Settings, and the stopped work continues after the restart.",
+      ].join("\n"),
+    );
+  });
+
+  it("says which questions restarting now closes and asks again (0991)", () => {
+    const request = {
+      ...blocker("request", 2, "Fix login"),
+      questions: 1,
+      approvals: 1,
+    } as ServiceUpdateBlocker;
+    expect(
+      describeAppRestartWarning({ blockers: [request] }, { version: "1.0.70", listed: true }),
+    ).toBe(
+      [
+        "Restart to install SpecWithCode 1.0.70?",
+        "2 questions waiting in 1 thread. Restarting interrupts this work.",
+        '1 question and 1 approval will be closed and asked again after the update, in "Fix login".',
+      ].join("\n"),
+    );
+    // An older service does not split them: no line it cannot back.
+    expect(
+      describeAppRestartWarning(
+        { blockers: [blocker("request", 2, "Fix login")] },
+        { version: "1.0.70", listed: true },
+      ),
+    ).toBe(
+      [
+        "Restart to install SpecWithCode 1.0.70?",
+        "2 questions waiting in 1 thread. Restarting interrupts this work.",
       ].join("\n"),
     );
   });

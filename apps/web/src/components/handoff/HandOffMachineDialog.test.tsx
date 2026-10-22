@@ -108,3 +108,22 @@ it("says when the project has no running handoff-mode thread", async () => {
     "No thread of atlas in handoff mode is running on M4.",
   );
 });
+
+it("offers to check again while a selected thread fails a check", async () => {
+  const view = props({ onRecheck: vi.fn() });
+  await act(async () => root.render(<HandOffMachineDialogView {...view} />));
+  const recheck = [...document.querySelectorAll("button")].find(
+    (button) => button.textContent === "Check again",
+  );
+  await act(async () => recheck!.click());
+  expect(view.onRecheck).toHaveBeenCalledTimes(1);
+
+  await act(async () =>
+    root.render(
+      <HandOffMachineDialogView {...props({ onRecheck: vi.fn(), selected: new Set([ready]) })} />,
+    ),
+  );
+  expect(
+    [...document.querySelectorAll("button")].some((button) => button.textContent === "Check again"),
+  ).toBe(false);
+});

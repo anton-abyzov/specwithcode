@@ -8,6 +8,7 @@ import type {
 import { useCallback, useEffect, useState } from "react";
 
 import { startServiceUpdateNow, useServiceUpdateFlow } from "../serviceUpdateFlow";
+import { liveServiceUpdateRun } from "../serviceUpdateRunView";
 import { requestRestartToUpdate } from "../sidebar/restartToUpdateRequests";
 import { canPressUpdateAgain } from "../sidebar/SidebarRestartToUpdate.logic";
 import { Button } from "../ui/button";
@@ -83,7 +84,9 @@ export function UpdatePreferencesSection() {
 
   const serviceAction = serviceState ? resolveServiceUpdateAction(serviceState) : "none";
   // An install already under way is followed in its toast; it is not started twice.
+  const runLive = liveServiceUpdateRun(serviceState) !== null;
   const serviceUpdateBusy =
+    runLive ||
     serviceUpdate.starting ||
     (serviceUpdate.progress !== null && !canPressUpdateAgain(serviceUpdate.progress, Date.now()));
   const runServiceAction = useCallback(() => {
@@ -211,7 +214,7 @@ export function UpdatePreferencesSection() {
           title="SpecWithCode service"
           description={describeServiceUpdate(serviceState)}
           control={
-            serviceAction === "none" ? null : (
+            serviceAction === "none" || (runLive && serviceAction === "install") ? null : (
               <Button
                 size="sm"
                 variant="outline"

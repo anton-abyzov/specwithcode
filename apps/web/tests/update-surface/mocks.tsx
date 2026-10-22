@@ -53,6 +53,8 @@ export const useStudioServiceUpdateState = () => null;
 // A fake bridge: every call is recorded and nothing installs.
 (window as unknown as { desktopBridge: unknown }).desktopBridge = {
   getUpdateState: async () => desktopState,
+  // A restart asks the feed for the newest release first; 1.0.25 already is.
+  checkForUpdate: async () => ({ checked: true, state: desktopState }),
   onUpdateState: () => () => {},
   getUpdatePreferences: async () => ({
     automaticUpdatesAllowed: true,
@@ -96,7 +98,8 @@ export const useAtomCommand = (command: string) => async (args: unknown) => {
   return { _tag: "Success", value: { targetVersion: "1.0.25" } };
 };
 
-// state/server
+// state/server: every server's update starts idle; the runner switches it to running or
+// failed through fixture.tsx.
 const atoms = new Map<string, Atom.Atom<unknown>>();
 const fixtureAtom = <A,>(key: string, value: A) => {
   if (!atoms.has(key)) atoms.set(key, Atom.make(value as unknown));
@@ -108,6 +111,8 @@ export const serverEnvironment = {
   updateServer: "updateServer",
 };
 export const updateOutdatedServer = "updateOutdatedServer";
+// Project-clone atoms (via ProjectFavicon) read this lazily; nothing streams configs here.
+export const environmentServerConfigsAtom = Atom.make(new Map());
 
 // state/session: an authenticated session allowed to maintain the server.
 export const environmentSession = {
@@ -118,35 +123,80 @@ export const environmentSession = {
     ),
 };
 
-// hooks/useSettings
+// hooks/useSettings: "Continue threads after restarts" is on only in server-continue.
 export const useEnvironmentSettings = (
   _id: string,
   select: (settings: typeof DEFAULT_SERVER_SETTINGS) => unknown,
-) => select(DEFAULT_SERVER_SETTINGS);
+) =>
+  select({
+    ...DEFAULT_SERVER_SETTINGS,
+    continueThreadsAfterServerUpdate: scene === "server-continue",
+  });
+
+// state/entities: a remote server running an older version. In the desktop,
+// continue and nightly scenes a second server is not behind this app, so it
+// shows no row and the outdated one is named by its machine. In the desktop and
+// continue scenes it runs 1.0.25, this app's version. In the nightly scene this
+// app runs 1.0.67-nightly.20261021.882 (serve.mjs) and the second server 1.0.67:
+// unless both are nightly builds, the check compares only x.y.z (versionSkew.ts),
+// so 1.0.67 is not behind and 1.0.66 is.
+const serverConfig = (
+  environmentId: string,
+  label: string,
+  serverVersion: string,
+  capabilities: {
+    readonly serverSelfUpdate: string | null;
+    readonly desktopAppUpdate?: boolean;
+    readonly serverUpdateThreadContinuation?: boolean;
+  },
+) => ({
+  environment: {
+    environmentId,
+    label,
+    serverVersion,
+    capabilities: { desktopAppUpdate: false, ...capabilities },
+  },
+});
+const current = serverConfig("current", "Build box", "1.0.25", {
+  serverSelfUpdate: "boot-service",
+});
+const configs: Record<string, ReadonlyArray<ReturnType<typeof serverConfig>>> = {
+  server: [serverConfig("remote", "Build box", "1.0.20", { serverSelfUpdate: "boot-service" })],
+  "server-none": [serverConfig("remote", "Build box", "1.0.20", { serverSelfUpdate: null })],
+  "server-desktop": [
+    serverConfig("remote", "ministorm", "1.0.20", {
+      serverSelfUpdate: "desktop-managed",
+      desktopAppUpdate: true,
+    }),
+    current,
+  ],
+  "server-continue": [
+    serverConfig("remote", "Office Mac mini build box", "1.0.20", {
+      serverSelfUpdate: "respawn",
+      serverUpdateThreadContinuation: true,
+    }),
+    current,
+  ],
+  "server-nightly": [
+    serverConfig("remote", "Build box", "1.0.66", { serverSelfUpdate: "boot-service" }),
+    serverConfig("current", "ministorm", "1.0.67", { serverSelfUpdate: "boot-service" }),
+  ],
+};
+export const useServerConfigs = () =>
+  new Map((configs[scene] ?? []).map((config) => [config.environment.environmentId, config]));
+// The restart dialog groups running work by project; unknown projects get a folder icon.
+export const useProjects = () => [];
 
 // state/environments
 export const usePrimaryEnvironmentId = () => "host";
 export const useEnvironments = () => ({
   isReady: true,
-  environments: [{ environmentId: "remote", label: "Build box" }],
+  environments: (configs[scene] ?? []).map(({ environment }) => ({
+    environmentId: environment.environmentId,
+    label: environment.label,
+  })),
   presentationById: new Map(),
 });
-
-// state/entities: one remote server running an older version.
-const serverConfig = (serverSelfUpdate: string | null) => ({
-  environment: {
-    environmentId: "remote",
-    label: "Build box",
-    serverVersion: "1.0.20",
-    capabilities: { serverSelfUpdate, desktopAppUpdate: false },
-  },
-});
-export const useServerConfigs = () =>
-  scene === "server"
-    ? new Map([["remote", serverConfig("boot-service")]])
-    : scene === "server-none"
-      ? new Map([["remote", serverConfig(null)]])
-      : new Map();
 
 // @tanstack/react-router (toasts read route params)
 export const useParams = () => ({});

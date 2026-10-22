@@ -27,6 +27,13 @@ import {
   startServiceUpdateNow,
   useServiceUpdateFlow,
 } from "../serviceUpdateFlow";
+import { retryServiceUpdateRunApp, syncServiceUpdateRunToast } from "../serviceUpdateRunFlow";
+import {
+  describeAutomaticInstallWait,
+  describeQuestionWait,
+  describeServiceUpdateRun,
+  liveServiceUpdateRun,
+} from "../serviceUpdateRunView";
 import { getDesktopUpdateReleaseUrl } from "../desktopUpdate.logic";
 import { openDesktopUpdateReleaseNotes } from "../desktopUpdate.toast";
 import { Spinner } from "../ui/spinner";
@@ -47,6 +54,7 @@ import {
 } from "./restartHoldWindow";
 import { RestartRunningWorkList } from "./RestartRunningWorkList";
 import { onRestartToUpdateRequest } from "./restartToUpdateRequests";
+import { useServiceQuestionBlockers } from "./useServiceQuestionBlockers";
 import {
   canPressUpdateAgain,
   describeInstallOutcome,
@@ -118,6 +126,50 @@ function SidebarRestartToUpdateButton() {
   const environmentId = usePrimaryEnvironmentId();
   const watchdog = useRef<number | null>(null);
   const view = getRestartToUpdateView(appState, serviceState, { installOnQuit });
+  // An Update now run (0988): this window only follows it, in one toast.
+  const runState = serviceState?.run ?? null;
+  const liveRun = liveServiceUpdateRun(serviceState);
+  // An automatic install that waits for quiet never closes a question (0991):
+  // the sidebar names the questions it waits for, beside Update now.
+  const automaticWait =
+    liveRun === null && serviceState?.status === "waiting-for-quiet" && service.progress === null;
+  const runBlockers = useServiceQuestionBlockers(liveRun, automaticWait);
+  const serviceStateRef = useRef(serviceState);
+  useEffect(() => {
+    serviceStateRef.current = serviceState;
+  });
+  useEffect(() => {
+    const sync = () =>
+      syncServiceUpdateRunToast(runState, runBlockers, {
+        retry: () => {
+          if (runState === null) return;
+          void startServiceUpdateNow(serviceStateRef.current, {
+            targetVersion: runState.targetVersion,
+            thenInstallApp:
+              runState.appTargetVersion === null ? null : { appVersion: runState.appTargetVersion },
+          }).catch((error: unknown) =>
+            toastManager.add(
+              stackedThreadToast({
+                type: "error",
+                title: "Could not install update",
+                description: errorText(error, "An unexpected error occurred."),
+              }),
+            ),
+          );
+        },
+        restartApp: () => {
+          if (runState !== null) void retryServiceUpdateRunApp(runState);
+        },
+      });
+    sync();
+    if (runState === null || runState.terminal) return;
+    // Elapsed time moves on between publishes.
+    const clock = window.setInterval(() => {
+      setNow(Date.now());
+      sync();
+    }, 1_000);
+    return () => window.clearInterval(clock);
+  }, [runBlockers, runState]);
 
   useEffect(() => {
     let active = true;
@@ -408,9 +460,13 @@ function SidebarRestartToUpdateButton() {
           const drained = (await appOwnsLocalService(bridge)) && (await drainWorkForAppRestart());
           // A background check or download can hold the updater for a moment:
           // wait for it, showing what runs, instead of failing with "busy".
-          const result = await installWhenUpdaterFree(bridge, appVersion, setFetching).finally(() =>
-            setFetching(null),
-          );
+          const result = await installWhenUpdaterFree(
+            bridge,
+            appVersion,
+            setFetching,
+            undefined,
+            appOnly && lacking,
+          ).finally(() => setFetching(null));
           restarting = result.accepted && !result.failed;
           // The app restarts on its own: a failed service update is over. A
           // refused install keeps it, so the next press installs the app alone again.
@@ -463,6 +519,8 @@ function SidebarRestartToUpdateButton() {
   useEffect(
     () =>
       onRestartToUpdateRequest((request) => {
+        // A run is going on: the press is answered by following it.
+        if (liveRun !== null) return true;
         if (request.requireService ? !view?.service : !view) return false;
         void restart(
           request.requireService
@@ -473,7 +531,7 @@ function SidebarRestartToUpdateButton() {
         );
         return true;
       }),
-    [idleSince, restart, view],
+    [idleSince, liveRun, restart, view],
   );
 
   // A press whose service is already on its version installs only the app.
@@ -525,6 +583,42 @@ function SidebarRestartToUpdateButton() {
       window.clearTimeout(deadline);
     };
   }, [holdMinutes, idleSince, view?.app]);
+
+  if (liveRun !== null) {
+    const runView = describeServiceUpdateRun(liveRun, now, runBlockers);
+    const runDescription = [runView.title, ...runView.lines, runView.warning]
+      .filter(Boolean)
+      .join(" ");
+    // The threads it waits on are said in words, not only in the tooltip:
+    // a closed toast does not come back for the same run.
+    const questionWait = liveRun.phase === "waiting" ? describeQuestionWait(runBlockers) : null;
+    const runButton = (
+      <button
+        type="button"
+        data-testid="sidebar-restart-to-update"
+        aria-label={`${runView.label}. ${runDescription}`}
+        aria-busy
+        disabled
+        title={runDescription}
+        className={cn(
+          "inline-flex min-h-7 shrink-0 cursor-progress items-center gap-1.5 self-start rounded-lg bg-primary px-2.5 py-1 text-2xs leading-4 font-medium text-primary-foreground opacity-80",
+          runView.warning !== null && "bg-amber-600",
+        )}
+      >
+        <Spinner size="sm" className="shrink-0" />
+        <span>{runView.label}</span>
+      </button>
+    );
+    if (questionWait === null) return runButton;
+    return (
+      <div className="flex shrink-0 flex-col gap-1 self-start">
+        {runButton}
+        <p data-testid="sidebar-update-question-wait" className="text-2xs text-muted-foreground">
+          {questionWait}
+        </p>
+      </div>
+    );
+  }
 
   const progress = service.progress;
   // The button stays while a service update is under way, even once the agent no
@@ -614,8 +708,7 @@ function SidebarRestartToUpdateButton() {
       </TooltipPopup>
     </Tooltip>
   );
-  if (!releaseUrl) return button;
-  return (
+  const content = releaseUrl ? (
     <div className="flex items-center gap-1 self-start">
       {button}
       <Tooltip>
@@ -633,6 +726,18 @@ function SidebarRestartToUpdateButton() {
         />
         <TooltipPopup side="top">What&apos;s new</TooltipPopup>
       </Tooltip>
+    </div>
+  ) : (
+    button
+  );
+  const automaticWaitLine = automaticWait ? describeAutomaticInstallWait(runBlockers) : null;
+  if (automaticWaitLine === null) return content;
+  return (
+    <div className="flex shrink-0 flex-col gap-1 self-start">
+      {content}
+      <p data-testid="sidebar-update-question-wait" className="text-2xs text-muted-foreground">
+        {automaticWaitLine}
+      </p>
     </div>
   );
 }

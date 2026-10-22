@@ -48,6 +48,10 @@ export const CLI_RUNTIME_EXTERNAL_PREFIXES = [
   // becoming real if either is ever declared as a dependency.
   "bufferutil",
   "utf-8-validate",
+  // The TypeScript compiler (design-system scans read theme files and component
+  // barrels with it). It is CommonJS that reads `__filename` while it starts,
+  // which an ES module bundle chunk does not define; loaded with createRequire.
+  "typescript-legacy",
 ] as const;
 
 // These are Cursor's disk-backed dependency closure. Match package boundaries

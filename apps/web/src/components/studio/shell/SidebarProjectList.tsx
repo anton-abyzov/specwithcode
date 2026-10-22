@@ -22,13 +22,16 @@ import {
 import {
   PERSONAL_ASSISTANT_DESCRIPTION,
   PERSONAL_ASSISTANT_LABEL,
+  type EnvironmentId,
+  type ProjectId,
 } from "@specweave-studio/contracts";
-import { Link, useRouter } from "@tanstack/react-router";
+import { Link, useNavigate, useRouter } from "@tanstack/react-router";
 import {
   ArchiveIcon,
   ArrowDownIcon,
   ArrowUpIcon,
   MoreHorizontalIcon,
+  PaletteIcon,
   PencilIcon,
   PinIcon,
   PinOffIcon,
@@ -57,6 +60,7 @@ import { coordinatorMachineKey } from "../../../studio/projectCoordinatorMachine
 import { useMachineNicknames } from "../../../studio/machineNickname";
 import { copyRolesSummary } from "../../../studio/projectDomain";
 import type { ArrangedProjects, ProjectDropTarget } from "../../../studio/projectOrder";
+import { isScratchMember, type ScratchRootLookup } from "../../../studio/projectListVisibility";
 import { Tip } from "./Tip";
 import { requestProjectSettings } from "../../../studio/projectSettingsRequests";
 import type { ProjectNameCheck } from "../../../studio/projectRename";
@@ -93,6 +97,8 @@ export interface ProjectRowState {
   /** Tells this project apart from another listed under the same name. */
   hint?: string | undefined;
   rename?: ProjectRename | undefined;
+  /** The project the Designs item opens; absent where the row has no Designs item. */
+  designsProjectId?: ProjectId | undefined;
 }
 
 /** Renames a project in place: `check` validates a draft, `commit` saves it or says why not. */
@@ -362,6 +368,29 @@ export function displayNameOf(
     : (displayedProject?.title ?? group.displayName);
 }
 
+/**
+ * The project whose designs the row's Designs item shows: the group's checkout on
+ * the primary environment, preferring the one the row displays. A scratch folder
+ * and a project with no checkout there have none.
+ */
+export function designsProjectId(
+  group: SidebarProjectSnapshot,
+  displayedProject: SidebarProjectGroupMember | undefined,
+  primaryEnvironmentId: EnvironmentId | null,
+  scratchRootFor: ScratchRootLookup,
+): ProjectId | undefined {
+  if (primaryEnvironmentId === null) return undefined;
+  const candidates = group.memberProjects.filter(
+    (member) =>
+      member.environmentId === primaryEnvironmentId && !isScratchMember(member, scratchRootFor),
+  );
+  const displayed = candidates.find(
+    (member) =>
+      member.id === displayedProject?.id && member.environmentId === displayedProject.environmentId,
+  );
+  return (displayed ?? candidates[0])?.id;
+}
+
 function isPersonalGroup(group: SidebarProjectSnapshot): boolean {
   return group.memberProjects.some((member) => member.workspaceSettings?.kind === "personal");
 }
@@ -388,8 +417,11 @@ export function ProjectRow(props: {
   clickSuppressed?: () => boolean;
   /** Absent where the name cannot change; a double click then opens settings. */
   rename?: ProjectRename | undefined;
+  /** Absent where the project has no designs to show, such as a remote-only project. */
+  designsProjectId?: ProjectId | undefined;
 }) {
-  const { group, archived, pinned } = props;
+  const { group, archived, pinned, designsProjectId } = props;
+  const navigate = useNavigate();
   // An archived project never asks for attention from the sidebar.
   const waiting = archived ? 0 : props.waiting;
   const [renaming, setRenaming] = useState<RenameState | null>(null);
@@ -527,6 +559,20 @@ export function ProjectRow(props: {
             return keep;
           }}
         >
+          {designsProjectId ? (
+            <>
+              <MenuItem
+                onClick={() => {
+                  props.onOpen();
+                  void navigate({ to: "/design", search: { project: designsProjectId } });
+                }}
+              >
+                <PaletteIcon aria-hidden />
+                Designs
+              </MenuItem>
+              <MenuSeparator />
+            </>
+          ) : null}
           {props.rename ? (
             <>
               <MenuItem

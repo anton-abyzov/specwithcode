@@ -12,6 +12,11 @@ import * as Effect from "effect/Effect";
 import type { ProjectionRuntimeRecoveryState } from "./ProjectionStore.ts";
 
 import * as ServerSettings from "../serverSettings.ts";
+import {
+  closedQuestionsPrompt,
+  reopenCardRequestId,
+  type ClosedQuestion,
+} from "../serviceUpdate/ServiceUpdateClosedQuestions.ts";
 import { isNativeMaintenanceCommand } from "./Orchestrator.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import {
@@ -89,7 +94,19 @@ export function restartContinuationRun(
 }
 
 export const continueRestartedRun = Effect.fn("RestartContinuation.continueRestartedRun")(
-  function* (input: { readonly threadId: ThreadId; readonly sourceRunId: RunId }) {
+  function* (input: {
+    readonly threadId: ThreadId;
+    readonly sourceRunId: RunId;
+    /**
+     * The questions and approvals a forced update closed on the source run
+     * (`ServiceUpdateClosedQuestions`): the continuation tells the agent they
+     * were closed and to ask again. Absent where the service keeps no record.
+     */
+    readonly closedQuestions?: (
+      threadId: ThreadId,
+      runId: RunId,
+    ) => Effect.Effect<ReadonlyArray<ClosedQuestion>>;
+  }) {
     const settings = yield* ServerSettings.ServerSettingsService;
     const enabled = yield* settings.getSettings.pipe(Effect.orElseSucceed(() => null));
     if (!enabled) return;
@@ -167,6 +184,26 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
       note.work.length === 0 ? undefined : restartCancelledBackgroundWorkNote(note.work);
     // Only a stop for a service update leaves a continued run interrupted.
     const messageId = source.status === "interrupted" ? updateMessageId : restartMessageId;
+    // A question the update closed is asked again by the agent, before it goes on.
+    // One already asked again as a card is not asked a second time: marked so,
+    // or its card is there though the mark is not (written just before, or lost).
+    let toAsk =
+      input.closedQuestions === undefined
+        ? []
+        : (yield* input.closedQuestions(input.threadId, source.id)).filter(
+            (entry) => entry.reopenedBy !== "card",
+          );
+    if (toAsk.length > 0) {
+      const cards = yield* threads.getThreadRecords(input.threadId, ["runtimeRequests"]).pipe(
+        Effect.map(
+          (records) => new Set<string>(records.runtimeRequests.map((request) => request.id)),
+        ),
+        Effect.orElseSucceed(() => new Set<string>()),
+      );
+      toAsk = toAsk.filter((entry) => !cards.has(reopenCardRequestId(entry)));
+    }
+    const closed = closedQuestionsPrompt(toAsk);
+    const continueText = closed === null ? CONTINUE_PROMPT : `${closed}\n\n${CONTINUE_PROMPT}`;
     yield* threads.dispatch({
       type: "message.dispatch",
       commandId: CommandId.make(`command:restart-continuation:${input.sourceRunId}`),
@@ -174,10 +211,10 @@ export const continueRestartedRun = Effect.fn("RestartContinuation.continueResta
       messageId,
       text:
         noteText === undefined
-          ? CONTINUE_PROMPT
-          : note.settled
+          ? continueText
+          : note.settled && closed === null
             ? noteText
-            : `${noteText}\n\n${CONTINUE_PROMPT}`,
+            : `${noteText}\n\n${continueText}`,
       attachments: [],
       modelSelection: source.modelSelection,
       dispatchMode: { type: "start_immediately" },

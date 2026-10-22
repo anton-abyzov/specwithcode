@@ -53,6 +53,7 @@ export const SERVICE_UPDATE_CHECK_CHANNEL = "desktop:service-update-check";
 export const SERVICE_UPDATE_INSTALL_CHANNEL = "desktop:service-update-install";
 export const SERVICE_UPDATE_CANCEL_CHANNEL = "desktop:service-update-cancel";
 export const SERVICE_UPDATE_REPAIR_CHANNEL = "desktop:service-update-repair";
+export const SERVICE_UPDATE_RUN_CHANNEL = "desktop:service-update-run";
 export const MANAGED_UPDATE_CONSENT_CHANNEL = "desktop:managed-update-consent";
 export const GET_APP_BRANDING_CHANNEL = "desktop:get-app-branding";
 export const GET_SYSTEM_LOCALE_CHANNEL = "desktop:get-system-locale";

@@ -82,11 +82,26 @@ const ordinal = (day: number) => {
 
 const WEEKDAYS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 
+const pad2 = (value: number) => String(value).padStart(2, "0");
+
+/** A one-time run's moment in this device's time zone, such as "07:03 on Oct 22". */
+export function onceAtLabel(at: string): string {
+  // @effect-diagnostics-next-line globalDate:off -- The label reads the instant in this device's local time zone.
+  const date = new Date(at);
+  if (Number.isNaN(date.getTime())) return at;
+  const month = MONTHS[date.getMonth()]?.slice(0, 3) ?? "";
+  // @effect-diagnostics-next-line globalDate:off -- The year is shown only when it differs from this device's current year.
+  const year = date.getFullYear() === new Date().getFullYear() ? "" : ` ${date.getFullYear()}`;
+  return `${pad2(date.getHours())}:${pad2(date.getMinutes())} on ${month} ${date.getDate()}${year}`;
+}
+
 /** A routine's cadence in words, short enough for a phone row. */
 export function routineCadenceLabel(schedule: ScheduledTaskSchedule): string {
   switch (schedule.type) {
     case "manual":
       return "When you ask";
+    case "once":
+      return `Once at ${onceAtLabel(schedule.at)}`;
     case "monthly":
       return `Monthly on the ${ordinal(schedule.dayOfMonth)} at ${schedule.timeOfDay}`;
     case "webhook":

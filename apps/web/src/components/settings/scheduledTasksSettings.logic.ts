@@ -1,5 +1,6 @@
 import {
   EnvironmentId,
+  isScheduledTaskOnceAt,
   type ProjectId,
   ScheduledTaskId,
   type ScheduledTask,
@@ -126,7 +127,7 @@ export function morningBriefingDraft(
   };
 }
 
-export type ScheduleMode = "fixed" | "interval" | "webhook" | "manual" | "monthly";
+export type ScheduleMode = "fixed" | "interval" | "webhook" | "manual" | "monthly" | "once";
 export type WorkspaceMode = "root" | "worktree" | "existing_worktree";
 
 export interface DraftState {
@@ -140,6 +141,13 @@ export interface DraftState {
   readonly weekdays: ReadonlySet<number>;
   /** Day of the month, 1 to 28, for a monthly routine. */
   readonly dayOfMonth?: number;
+  /** A one-time run's local date and time, as a datetime-local input holds it. */
+  readonly onceAt?: string;
+  /**
+   * The task's saved one-time `at`, kept whole: the input holds minutes only,
+   * so a save that leaves the time alone sends this back rather than moving it.
+   */
+  readonly onceAtSaved?: string;
   readonly projectId: string;
   readonly threadId: string;
   readonly workspaceMode: WorkspaceMode;
@@ -178,6 +186,43 @@ export const WEBHOOK_SIGNATURE_DEFAULTS = {
   signaturePrefix: "sha256=",
 } as const;
 
+const pad2 = (value: number) => String(value).padStart(2, "0");
+
+/** `date` as a datetime-local input value, in this device's time zone. */
+export function dateTimeInputValue(date: Date): string {
+  return `${date.getFullYear()}-${pad2(date.getMonth() + 1)}-${pad2(date.getDate())}T${pad2(date.getHours())}:${pad2(date.getMinutes())}`;
+}
+
+/** The next whole hour from `now`, the default for a new one-time run. */
+export function defaultOnceAt(now: Date = new Date()): string {
+  const next = new Date(now);
+  next.setMinutes(0, 0, 0);
+  next.setHours(next.getHours() + 1);
+  return dateTimeInputValue(next);
+}
+
+/** A datetime-local value as an ISO date-time, or null when it is not a date. */
+export function onceAtIso(value: string | undefined): string | null {
+  const date = new Date(value ?? "");
+  return value && !Number.isNaN(date.getTime()) ? date.toISOString() : null;
+}
+
+/**
+ * The `at` a one-time draft saves: the task's own when the time was left as
+ * it opened (so the run is not moved to the whole minute and re-armed),
+ * otherwise the input's time.
+ */
+export function onceAtForSave(draft: Pick<DraftState, "onceAt" | "onceAtSaved">): string | null {
+  const saved = draft.onceAtSaved;
+  if (
+    saved !== undefined &&
+    isScheduledTaskOnceAt(saved) &&
+    draft.onceAt === dateTimeInputValue(new Date(saved))
+  )
+    return saved;
+  return onceAtIso(draft.onceAt);
+}
+
 /** Null when the draft's webhook age limit is invalid; the caller reports it and does not save. */
 export function scheduleFromDraft(draft: DraftState): ScheduledTaskUpsertSchedule | null {
   if (draft.scheduleMode === "webhook") {
@@ -202,6 +247,8 @@ export function scheduleFromDraft(draft: DraftState): ScheduledTaskUpsertSchedul
     return { type: "interval", everyMs };
   }
   if (draft.scheduleMode === "manual") return { type: "manual" };
+  // The caller checks the time first (onceAtIso), so an empty one never saves.
+  if (draft.scheduleMode === "once") return { type: "once", at: onceAtForSave(draft) ?? "" };
   if (draft.scheduleMode === "monthly") {
     return {
       type: "monthly",
@@ -234,6 +281,9 @@ export function taskToDraft(task: ScheduledTask): DraftState {
     timeOfDay:
       schedule.type === "fixed_time" || schedule.type === "monthly" ? schedule.timeOfDay : "09:00",
     dayOfMonth: schedule.type === "monthly" ? schedule.dayOfMonth : 1,
+    ...(schedule.type === "once"
+      ? { onceAt: dateTimeInputValue(new Date(schedule.at)), onceAtSaved: schedule.at }
+      : {}),
     weekdays,
     projectId: task.projectId,
     threadId: task.threadId ?? "",

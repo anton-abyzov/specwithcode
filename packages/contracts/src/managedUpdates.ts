@@ -1,5 +1,6 @@
 import * as Schema from "effect/Schema";
 import { EnvironmentId } from "./baseSchemas.ts";
+import { StudioServiceUpdateRunSchema } from "./serviceUpdateRun.ts";
 
 export const ManagedInstallationId = Schema.String.check(
   Schema.isPattern(/^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/),
@@ -206,5 +207,10 @@ export const StudioServiceUpdateStateSchema = Schema.Struct({
    * never runs this renderer) reads as no such failure.
    */
   agentStartFailed: Schema.optionalKey(Schema.Boolean),
+  /**
+   * The Update now run in `updates/run.json`, as every window follows it; null
+   * when there is none. Absent from desktops before runs (0988).
+   */
+  run: Schema.optionalKey(Schema.NullOr(StudioServiceUpdateRunSchema)),
 });
 export type StudioServiceUpdateState = typeof StudioServiceUpdateStateSchema.Type;

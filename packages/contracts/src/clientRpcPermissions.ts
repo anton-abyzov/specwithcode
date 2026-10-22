@@ -94,6 +94,33 @@ export const CLIENT_GUARDED_RPC_SCOPES = {
   [WS_METHODS.projectLinkPlanMerge]: AuthOrchestrationOperateScope,
   [WS_METHODS.projectsMemoryWrite]: AuthOrchestrationOperateScope,
   [WS_METHODS.projectsLibraryAddArtifact]: AuthFilesystemWriteScope,
+  // Designs are files in the project checkout or the app's Playground folder.
+  [WS_METHODS.designList]: AuthFilesystemReadScope,
+  [WS_METHODS.designGet]: AuthFilesystemReadScope,
+  [WS_METHODS.designHistory]: AuthFilesystemReadScope,
+  [WS_METHODS.designExport]: AuthFilesystemReadScope,
+  [WS_METHODS.designSystemList]: AuthFilesystemReadScope,
+  [WS_METHODS.designSystemGet]: AuthFilesystemReadScope,
+  [WS_METHODS.designSystemUsage]: AuthFilesystemReadScope,
+  [WS_METHODS.designCreate]: AuthFilesystemWriteScope,
+  [WS_METHODS.designApply]: AuthFilesystemWriteScope,
+  [WS_METHODS.designSaveVersion]: AuthFilesystemWriteScope,
+  [WS_METHODS.designRestore]: AuthFilesystemWriteScope,
+  [WS_METHODS.designCopy]: AuthFilesystemWriteScope,
+  [WS_METHODS.designDelete]: AuthFilesystemWriteScope,
+  [WS_METHODS.designAssetPut]: AuthFilesystemWriteScope,
+  [WS_METHODS.designSystemCopy]: AuthFilesystemWriteScope,
+  [WS_METHODS.designSystemRename]: AuthFilesystemWriteScope,
+  [WS_METHODS.designSystemDelete]: AuthFilesystemWriteScope,
+  // Design-system import reads the checkout and holds proposals; only confirm writes.
+  [WS_METHODS.designSystemScan]: AuthFilesystemReadScope,
+  [WS_METHODS.designSystemPropose]: AuthFilesystemReadScope,
+  [WS_METHODS.designSystemProposals]: AuthFilesystemReadScope,
+  [WS_METHODS.designSystemProposal]: AuthFilesystemReadScope,
+  [WS_METHODS.designSystemRescan]: AuthFilesystemReadScope,
+  [WS_METHODS.designSystemFigmaStatus]: AuthFilesystemReadScope,
+  [WS_METHODS.designSystemConfirm]: AuthFilesystemWriteScope,
+  [WS_METHODS.designSystemDiscard]: AuthFilesystemWriteScope,
   [WS_METHODS.projectsKnowledgeReindex]: AuthOrchestrationOperateScope,
   [WS_METHODS.projectsThreadReportSave]: AuthFilesystemWriteScope,
   [WS_METHODS.projectsConnectionSave]: AuthTerminalOperateScope,
@@ -253,6 +280,8 @@ export function clientRpcRequiredScopes(
   // Knowledge describes the project and quotes its Library files.
   if (method === WS_METHODS.projectsKnowledgeRead || method === WS_METHODS.projectsKnowledgeSearch)
     return [AuthOrchestrationReadScope, AuthFilesystemReadScope];
+  // A subscription, so not in the unary map.
+  if (method === WS_METHODS.designWatch) return [AuthFilesystemReadScope];
   if (method === WS_METHODS.projectsConnectionSave || method === WS_METHODS.projectsConnectionCheck)
     return [AuthOrchestrationOperateScope, AuthTerminalOperateScope];
   // Writes another tool's configuration, which that tool then runs as commands.

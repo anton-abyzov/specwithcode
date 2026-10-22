@@ -60,6 +60,7 @@ import * as Projects from "../project/ProjectService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { providerUsageSummary } from "../usage/providerUsageSummary.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
+import { isBlockingRuntimeRequest, type PendingRequestSummary } from "./blockingRuntimeRequest.ts";
 
 /** An idle thread at the threshold moves only when its latest turn ended this recently (D-06). */
 export const LIMIT_PREMOVE_RECENT_MS = 10 * 60_000;
@@ -159,15 +160,11 @@ export interface LimitHandoffTrigger {
 
 type TriggerThread = Pick<
   OrchestrationV2ThreadShell,
-  | "id"
-  | "status"
-  | "providerInstanceId"
-  | "latestRunId"
-  | "activeRunId"
-  | "pendingRuntimeRequest"
-  | "settledOverride"
+  "id" | "status" | "providerInstanceId" | "latestRunId" | "activeRunId" | "settledOverride"
 > &
-  Partial<Pick<OrchestrationV2ThreadShell, "latestRunCompletedAt">>;
+  Partial<Pick<OrchestrationV2ThreadShell, "latestRunCompletedAt">> & {
+    readonly pendingRuntimeRequest: PendingRequestSummary | null;
+  };
 
 type TriggerRule = Pick<
   ServerSettingsValue,
@@ -202,7 +199,10 @@ export function limitHandoffTrigger(input: {
   if (input.localStep === "switch" && rule.providerLimitTargetOrder === "same-machine-first")
     return null;
   if (thread.latestRunId === null || thread.activeRunId !== null) return null;
-  if (thread.pendingRuntimeRequest !== null || thread.settledOverride === "settled") return null;
+  // A question the next message answers, or one an earlier run left, holds
+  // nothing; the sweep fills in that detail (a bare summary still holds).
+  if (isBlockingRuntimeRequest(thread, thread.latestRunId) || thread.settledOverride === "settled")
+    return null;
   if (input.stopped)
     return {
       reason: "usage-limit",

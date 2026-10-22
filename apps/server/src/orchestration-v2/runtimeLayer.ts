@@ -25,6 +25,7 @@ import * as ThreadIncrementProgressService from "../project/ThreadIncrementProgr
 import * as UsageLimitAvailability from "./UsageLimitAvailability.ts";
 import * as UsageLimitRecoveryWorker from "./UsageLimitRecoveryWorker.ts";
 import * as ProviderFallbackWorker from "./ProviderFallbackWorker.ts";
+import * as ContextOverflowRecoveryWorker from "./ContextOverflowRecoveryWorker.ts";
 import * as MachineLimitHandoff from "./MachineLimitHandoff.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
 import * as Layer from "effect/Layer";
@@ -82,6 +83,7 @@ import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as ServiceUpdateCleanup from "../serviceUpdate/ServiceUpdateCleanup.ts";
 import * as ServiceUpdatePreparation from "../serviceUpdate/ServiceUpdatePreparation.ts";
+import * as ServiceUpdateReopenQuestions from "../serviceUpdate/ServiceUpdateReopenQuestions.ts";
 
 /** The shared application event log and its command receipts. */
 export const layerEventInfrastructure = Layer.mergeAll(
@@ -527,6 +529,15 @@ export const layerProduction = Layer.mergeAll(
       ),
     ),
   ),
+  ContextOverflowRecoveryWorker.layer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        ProjectionStore.layer,
+        layerThreadManagementProvided,
+        layerMachineLimitHandoffProvided,
+      ),
+    ),
+  ),
   layerProviderContinuationWorkerProvided,
   ServiceUpdatePreparation.layer.pipe(
     Layer.provide(
@@ -545,6 +556,12 @@ export const layerProduction = Layer.mergeAll(
           ),
         ),
       ),
+    ),
+  ),
+  // Asks again what a forced update closed, once the service is no longer held.
+  ServiceUpdateReopenQuestions.layer.pipe(
+    Layer.provide(
+      Layer.mergeAll(layerThreadManagementProvided, layerEventSinkProvided, IdAllocator.layer),
     ),
   ),
   layerAgentSessionImporterProvided,
