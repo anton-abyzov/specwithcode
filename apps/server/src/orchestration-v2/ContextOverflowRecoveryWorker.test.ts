@@ -253,6 +253,27 @@ describe("contextRecoveryStep", () => {
     expect(contextRecoveryStep("t1", { ...retry, status: "completed" }, null)).toBeNull();
   });
 
+  it("leaves a handoff that does not fit to the provider fallback, in either wording", () => {
+    for (const message of [
+      new ContextHandoffBudgetError().message,
+      "Insufficient context allowance for the provider handoff. SpecWithCode compacts the conversation and sends the request again once; if it still does not fit, use a larger-context model. The current request has not been truncated.",
+    ])
+      expect(
+        contextRecoveryStep("t1", failed, {
+          class: "provider_error",
+          code: null,
+          message,
+        }),
+      ).toEqual({ type: "stop", failedRunId: "r1", reason: "handoff-too-large" });
+    expect(
+      contextRecoveryStep("t1", failed, {
+        class: "provider_error",
+        code: "context_handoff_budget",
+        message: "x",
+      }),
+    ).toEqual({ type: "stop", failedRunId: "r1", reason: "handoff-too-large" });
+  });
+
   it("leaves a compaction that could not open or hit a limit to the other recoveries", () => {
     const compact = {
       ...failed,
@@ -297,7 +318,7 @@ describe("isContextRecoveryCandidate", () => {
     completedAt: failedAt,
   });
   const now = failedAt + 60_000;
-  it("leaves busy, waiting, settled, limited, old and subagent threads alone", () => {
+  it("leaves busy, waiting, settled, limited and old threads alone", () => {
     expect(isContextRecoveryCandidate(shell(failed) as never, now)).toBe(true);
     for (const overrides of [
       { activeRunId: "r9" },
@@ -306,15 +327,21 @@ describe("isContextRecoveryCandidate", () => {
       { settledOverride: "settled" },
       { lastErrorClass: "usage_limit" },
       { status: "running" },
-      {
-        lineage: {
-          parentThreadId: ThreadId.make("p"),
-          relationshipToParent: "subagent",
-          rootThreadId: ThreadId.make("p"),
-        },
-      },
     ])
       expect(isContextRecoveryCandidate(shell(failed, overrides) as never, now)).toBe(false);
+    // Someone waits for a delegated subagent's answer too.
+    expect(
+      isContextRecoveryCandidate(
+        shell(failed, {
+          lineage: {
+            parentThreadId: ThreadId.make("p"),
+            relationshipToParent: "subagent",
+            rootThreadId: ThreadId.make("p"),
+          },
+        }) as never,
+        now,
+      ),
+    ).toBe(true);
     expect(
       isContextRecoveryCandidate(shell(failed) as never, failedAt + CONTEXT_RECOVERY_MAX_AGE_MS),
     ).toBe(false);
@@ -482,7 +509,7 @@ describe("ContextOverflowRecoveryWorker sweep", () => {
     }),
   );
 
-  it.effect("leaves a failed /compact alone and recovers handoff budget failures", () =>
+  it.effect("leaves a failed /compact and a handoff that does not fit to the fallback", () =>
     Effect.gen(function* () {
       const { state, sweep, next } = yield* harness();
       state.messages = [message("m1", "/compact")];
@@ -510,9 +537,9 @@ describe("ContextOverflowRecoveryWorker sweep", () => {
       ];
       settle(state, r5);
       yield* next;
-      expect(state.dispatched.map((command) => command.commandId)).toEqual([
-        "context-compact:t1:r5",
-      ]);
+      // Compaction cannot shrink a request that does not fit a fresh session:
+      // the provider fallback moves it to a larger window instead.
+      expect(state.dispatched).toHaveLength(0);
     }),
   );
 

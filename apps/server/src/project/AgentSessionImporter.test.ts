@@ -31,6 +31,7 @@ it.effect("imports messages once and preserves the provider native resume bindin
   let imported = false;
   const scanner = AgentSessionScanner.AgentSessionScanner.of({
     scan: Effect.die("unused"),
+    locateSession: () => Effect.succeed(null),
     recentThreads: () =>
       Stream.succeed({
         _tag: "Importable",

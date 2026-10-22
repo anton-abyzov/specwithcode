@@ -12,6 +12,7 @@ import {
   turnItemOutputText,
 } from "@specweave-studio/client-runtime/work-log/item-detail";
 import { commandHighlightLanguage } from "@specweave-studio/client-runtime/work-log/command-label";
+import { providerFailureDisplayMessage } from "@specweave-studio/shared/orchestrationV2ThreadError";
 import { CheckIcon, CopyIcon, ExternalLinkIcon, GitBranchIcon, RotateCcwIcon } from "lucide-react";
 import { memo, Suspense, use, useMemo } from "react";
 
@@ -407,7 +408,9 @@ export const V2ItemInspector = memo(function V2ItemInspector(props: V2ItemInspec
       ) : null}
       {item.type === "notification" ? <StructuredValue value={item.detail} /> : null}
       {item.type === "system_notice" ? <NoticeDetail message={item.message} /> : null}
-      {item.type === "error" ? <StructuredValue value={item.failure.message} /> : null}
+      {item.type === "error" ? (
+        <StructuredValue value={providerFailureDisplayMessage(item.failure)} />
+      ) : null}
       {item.type === "proposed_plan" ? <StructuredValue value={item.markdown} /> : null}
       {item.type === "todo_list" ? (
         <StructuredValue

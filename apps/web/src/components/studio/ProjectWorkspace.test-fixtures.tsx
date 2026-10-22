@@ -476,6 +476,9 @@ vi.mock("./shell/ProjectUsageIndicator", () => ({
 }));
 vi.mock("./shell/ModelBadge", () => ({
   ModelBadge: ({ model }: { model: string }) => <span data-model-badge>{model}</span>,
+  ThreadModelBadge: ({ thread }: { thread: EnvironmentThreadShell }) => (
+    <span data-model-badge>{(thread.modelIdentity?.current ?? thread.modelSelection).model}</span>
+  ),
   ModelBadgeMark: () => null,
   useProviderEntries: () => new Map(),
   useProviderEntriesByEnvironment: () => new Map(),

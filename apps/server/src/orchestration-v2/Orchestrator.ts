@@ -145,6 +145,14 @@ import {
   queuedRunStartSelection,
   wakesLeftOnAnotherInstance,
 } from "./QueueFollowsThread.ts";
+import {
+  cancelledForUpdate,
+  holdForPerson,
+  holdForRestart,
+  isRestartDelivery,
+  personHoldsQueue,
+  releaseHold,
+} from "./RestartQueueHold.ts";
 
 export { isNativeMaintenanceCommand };
 import { RuntimePolicyV2 } from "./RuntimePolicy.ts";
@@ -633,6 +641,9 @@ function takesDelegationAfterItEnded(
  * leaves the hold too. The server's continuations of a stopped thread (provider
  * fallback, the way back, usage-limit recovery) do continue it, so they release
  * the hold like a send, and the deliveries held behind the failure follow them.
+ * Given the thread's runs, the restart's own deliveries (its continuation, the
+ * messages an update cancelled) release only a hold the restart set, never one a
+ * person set with Stop, one a failure set for them, or one saved without the mark.
  */
 export function messageReleasesHeldQueue(
   command: Pick<
@@ -652,7 +663,9 @@ export function messageReleasesHeldQueue(
         "commandId" | "messageId" | "creationSource"
       >
     >,
+  runs?: ReadonlyArray<OrchestrationV2Run>,
 ): boolean {
+  if (runs !== undefined && isRestartDelivery(command) && personHoldsQueue(runs)) return false;
   if (isServerContinuation(command) && !isNativeMaintenanceCommand(command)) return true;
   return (
     command.createdBy !== "system" &&
@@ -1626,7 +1639,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               runId: run.id,
               providerInstanceId: run.providerInstanceId,
               occurredAt: now,
-              payload: { ...run, queueHeld: true },
+              payload: holdForPerson(run),
             })),
         );
         return;
@@ -5077,8 +5090,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           projection.thread.deletedAt !== null ||
           projection.thread.providerInstanceId !== source.providerInstanceId ||
           // Held queued runs never started; they wait behind the continuation.
+          // Neither did the queued messages the update cancelled before it stopped the run.
           projection.runs.some(
-            (run) => run.id !== source.id && run.status !== "queued" && runRanAfter(run, source),
+            (run) =>
+              run.id !== source.id &&
+              run.status !== "queued" &&
+              !cancelledForUpdate(run) &&
+              runRanAfter(run, source),
           ) ||
           !(yield* onlyUpdateStoppedRun(command, command.threadId, source))
         ) {
@@ -5429,9 +5447,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       // The hold releases below rewrite held runs, so they carry the new model too.
       const runsFollowingContinuation = new Set<RunId>();
       const releasedHeldRun = (run: OrchestrationV2Run): OrchestrationV2Run => ({
-        ...run,
+        ...releaseHold(run),
         ...(runsFollowingContinuation.has(run.id) ? { modelSelection } : {}),
-        queueHeld: false,
       });
       if (isServerContinuation(command) && !isNativeMaintenanceCommand(command)) {
         const now = yield* DateTime.now;
@@ -5498,7 +5515,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         const now = yield* DateTime.now;
         const ordinal = nextRunOrdinal(projection);
         const runId = idAllocator.derive.run({ threadId: command.threadId, ordinal });
-        const releasesHeldQueue = messageReleasesHeldQueue(command);
+        const releasesHeldQueue = messageReleasesHeldQueue(command, projection.runs);
         const targetProviderThread =
           modelSelection.instanceId === queueProviderThread.providerInstanceId
             ? queueProviderThread
@@ -5590,7 +5607,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           projection.runs.some(
             (candidate) => candidate.status === "queued" && candidate.queueHeld === true,
           )
-            ? { queueHeld: true }
+            ? personHoldsQueue(projection.runs)
+              ? { queueHeld: true }
+              : { queueHeld: true, queueHeldForRestart: true }
             : {}),
           queuePosition:
             Math.max(
@@ -5786,7 +5805,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       // run now does. Left held, those messages would never start (the queue drains
       // only when nothing in it is held), and every message queued behind this run
       // would be held with them.
-      if (messageReleasesHeldQueue(command)) {
+      if (messageReleasesHeldQueue(command, projection.runs)) {
         for (const run of projection.runs) {
           if (run.status !== "queued" || run.queueHeld !== true) continue;
           yield* emit(
@@ -9332,14 +9351,18 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         ) {
           yield* markStoppedRun({ ...input, thread, run });
         }
-        if (run.status !== "queued" || run.queueHeld === true) continue;
+        if (run.status !== "queued") continue;
+        // The update's own Stop holds the queue for the restart to release. A person's
+        // Stop makes the queue theirs, including one the restart held.
+        const forUpdate = input.command.cause === "service_update";
+        if (run.queueHeld === true && (forUpdate || run.queueHeldForRestart !== true)) continue;
         yield* emitEvent({
           type: "run.updated",
           threadId: thread.id,
           runId: run.id,
           providerInstanceId: run.providerInstanceId,
           occurredAt: input.now,
-          payload: { ...run, queueHeld: true },
+          payload: forUpdate ? holdForRestart(run) : holdForPerson(run),
         });
       }
       const pullRequests = thread.pullRequests ?? [];
@@ -11369,7 +11392,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             runId: run.id,
             providerInstanceId: run.providerInstanceId,
             occurredAt: now,
-            payload: { ...run, queueHeld: false },
+            payload: releaseHold(run),
           });
         }
         if (queued.length === 0) {

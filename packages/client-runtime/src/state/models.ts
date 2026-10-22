@@ -103,6 +103,7 @@ export interface EnvironmentThreadShell {
   readonly createdBy?: OrchestrationV2ThreadShell["createdBy"];
   readonly providerInstanceId: ProviderInstanceId;
   readonly modelSelection: OrchestrationV2ThreadShell["modelSelection"];
+  readonly modelIdentity?: OrchestrationV2ThreadShell["modelIdentity"];
   readonly runtimeMode: OrchestrationV2ThreadShell["runtimeMode"];
   readonly interactionMode: OrchestrationV2ThreadShell["interactionMode"];
   readonly branch: string | null;
@@ -308,6 +309,7 @@ export function presentThreadShell(
     createdBy: thread.createdBy,
     providerInstanceId: thread.providerInstanceId,
     modelSelection: thread.modelSelection,
+    ...(thread.modelIdentity === undefined ? {} : { modelIdentity: thread.modelIdentity }),
     runtimeMode: thread.runtimeMode,
     interactionMode: thread.interactionMode,
     branch: thread.branch,

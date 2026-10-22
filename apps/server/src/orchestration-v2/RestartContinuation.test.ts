@@ -865,7 +865,14 @@ it.effect("continues a run and then releases the queue the restart held", () =>
       ...base,
       runs: [
         { ...base.runs[0]!, status: "cancelled" },
-        { ...base.runs[0]!, id: queuedRunId, ordinal: 2, status: "queued", queueHeld: true },
+        {
+          ...base.runs[0]!,
+          id: queuedRunId,
+          ordinal: 2,
+          status: "queued",
+          queueHeld: true,
+          queueHeldForRestart: true,
+        },
       ],
     } as unknown as OrchestrationV2ThreadProjection;
     const commands: Parameters<

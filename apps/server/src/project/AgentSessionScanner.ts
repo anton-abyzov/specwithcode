@@ -27,6 +27,7 @@ import {
   type AgentSessionProjectGit,
   type AgentSessionScanResult,
   type ProviderInstanceConfig,
+  type ServerSettings as ServerSettingsDocument,
 } from "@specweave-studio/contracts";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -46,6 +47,7 @@ import {
 } from "@specweave-studio/shared/git";
 import { HostProcessEnvironment, HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
 import { makeProjectExclusionFilter } from "./AgentSessionScannerExclusions.ts";
+import { findClaudeSessionFile, findCodexSessionFile } from "./nativeSessionFiles.ts";
 import { normalizeProjectPathForComparison } from "@specweave-studio/shared/path";
 
 import * as ServerConfig from "../config.ts";
@@ -201,6 +203,14 @@ export class AgentSessionScanner extends Context.Service<
       workspaceRoot: string,
       completedSources?: ReadonlyArray<AgentSessionImportSource>,
     ) => Stream.Stream<AgentSessionRecentThread, AgentSessionScanError>;
+    /**
+     * The transcript file of one native Claude or Codex session in any
+     * configured home on this machine, or null. Reads names, never contents.
+     */
+    readonly locateSession: (input: {
+      readonly source: "claudeAgent" | "codex";
+      readonly sessionId: string;
+    }) => Effect.Effect<string | null>;
   }
 >()("specweave-studio/project/AgentSessionScanner") {}
 
@@ -1070,6 +1080,78 @@ export const make = Effect.gen(function* () {
     }));
   });
 
+  /** Each distinct config home of the enabled Claude or Codex instances, built-in instance first. */
+  const sourceHomes = Effect.fn("AgentSessionScanner.sourceHomes")(function* (
+    settings: ServerSettingsDocument,
+    source: "claudeAgent" | "codex",
+  ) {
+    const instances: Array<{
+      readonly instanceId: ProviderInstanceId;
+      readonly config: ProviderInstanceConfig;
+    }> = Object.entries(settings.providerInstances)
+      .filter(
+        ([, instance]) => instance.driver === source && resolveProviderInstanceEnabled(instance),
+      )
+      .map(([instanceId, config]) => ({
+        instanceId: ProviderInstanceId.make(instanceId),
+        config,
+      }));
+    if (!Object.hasOwn(settings.providerInstances, source)) {
+      const legacyInstance = {
+        instanceId: ProviderInstanceId.make(source),
+        config: {
+          driver: ProviderDriverKind.make(source),
+          config: settings.providers[source],
+        },
+      };
+      if (resolveProviderInstanceEnabled(legacyInstance.config)) {
+        instances.push(legacyInstance);
+      }
+    }
+
+    // A shared home contains one copy of each session. Prefer the built-in
+    // instance as its owner, then keep configured order for custom accounts.
+    instances.sort((left, right) => {
+      const leftDefault = left.instanceId === source ? 0 : 1;
+      const rightDefault = right.instanceId === source ? 0 : 1;
+      return leftDefault - rightDefault;
+    });
+    const homes: Array<{ homePath: string; providerInstanceId: ProviderInstanceId }> = [];
+    const seenHomes = new Set<string>();
+    for (const { instanceId, config: instance } of instances) {
+      const homeVariable = source === "claudeAgent" ? "CLAUDE_CONFIG_DIR" : "CODEX_HOME";
+      const environmentHome =
+        instance.environment?.findLast((variable) => variable.name === homeVariable)?.value ??
+        hostEnvironment[homeVariable];
+
+      let homePath: string;
+      if (source === "claudeAgent") {
+        const config = decodeClaudeSettings(instance.config ?? {});
+        if (Option.isNone(config)) continue;
+        homePath = resolveClaudeConfigDir(config.value.homePath, environmentHome);
+      } else {
+        const config = decodeCodexSettings(instance.config ?? {});
+        if (Option.isNone(config)) continue;
+        const codexSettings =
+          config.value.homePath.trim().length === 0 &&
+          config.value.shadowHomePath.trim().length === 0 &&
+          environmentHome?.trim()
+            ? { ...config.value, homePath: environmentHome }
+            : config.value;
+        const layout = yield* resolveCodexHomeLayout(codexSettings).pipe(
+          Effect.provideService(Path.Path, path),
+        );
+        homePath = layout.sharedHomePath;
+      }
+
+      const homeKey = `${source}\0${yield* directoryIdentity(homePath)}`;
+      if (seenHomes.has(homeKey)) continue;
+      seenHomes.add(homeKey);
+      homes.push({ homePath, providerInstanceId: instanceId });
+    }
+    return homes;
+  });
+
   const collectCandidates = Effect.fn("AgentSessionScanner.collectCandidates")(function* () {
     const settings = yield* serverSettings.getSettings.pipe(
       Effect.mapError((cause) => new AgentSessionScanError({ operation: "read-settings", cause })),
@@ -1079,70 +1161,7 @@ export const make = Effect.gen(function* () {
     let truncated = false;
 
     for (const source of ["claudeAgent", "codex"] as const) {
-      const instances: Array<{
-        readonly instanceId: ProviderInstanceId;
-        readonly config: ProviderInstanceConfig;
-      }> = Object.entries(settings.providerInstances)
-        .filter(
-          ([, instance]) => instance.driver === source && resolveProviderInstanceEnabled(instance),
-        )
-        .map(([instanceId, config]) => ({
-          instanceId: ProviderInstanceId.make(instanceId),
-          config,
-        }));
-      if (!Object.hasOwn(settings.providerInstances, source)) {
-        const legacyInstance = {
-          instanceId: ProviderInstanceId.make(source),
-          config: {
-            driver: ProviderDriverKind.make(source),
-            config: settings.providers[source],
-          },
-        };
-        if (resolveProviderInstanceEnabled(legacyInstance.config)) {
-          instances.push(legacyInstance);
-        }
-      }
-
-      // A shared home contains one copy of each session. Prefer the built-in
-      // instance as its owner, then keep configured order for custom accounts.
-      instances.sort((left, right) => {
-        const leftDefault = left.instanceId === source ? 0 : 1;
-        const rightDefault = right.instanceId === source ? 0 : 1;
-        return leftDefault - rightDefault;
-      });
-      const homes: Array<{ homePath: string; providerInstanceId: ProviderInstanceId }> = [];
-      const seenHomes = new Set<string>();
-      for (const { instanceId, config: instance } of instances) {
-        const homeVariable = source === "claudeAgent" ? "CLAUDE_CONFIG_DIR" : "CODEX_HOME";
-        const environmentHome =
-          instance.environment?.findLast((variable) => variable.name === homeVariable)?.value ??
-          hostEnvironment[homeVariable];
-
-        let homePath: string;
-        if (source === "claudeAgent") {
-          const config = decodeClaudeSettings(instance.config ?? {});
-          if (Option.isNone(config)) continue;
-          homePath = resolveClaudeConfigDir(config.value.homePath, environmentHome);
-        } else {
-          const config = decodeCodexSettings(instance.config ?? {});
-          if (Option.isNone(config)) continue;
-          const codexSettings =
-            config.value.homePath.trim().length === 0 &&
-            config.value.shadowHomePath.trim().length === 0 &&
-            environmentHome?.trim()
-              ? { ...config.value, homePath: environmentHome }
-              : config.value;
-          const layout = yield* resolveCodexHomeLayout(codexSettings).pipe(
-            Effect.provideService(Path.Path, path),
-          );
-          homePath = layout.sharedHomePath;
-        }
-
-        const homeKey = `${source}\0${yield* directoryIdentity(homePath)}`;
-        if (seenHomes.has(homeKey)) continue;
-        seenHomes.add(homeKey);
-        homes.push({ homePath, providerInstanceId: instanceId });
-      }
+      const homes = yield* sourceHomes(settings, source);
 
       const transcriptCandidates: Array<TranscriptCandidate> = [];
       const baseOperationBudget = Math.floor(
@@ -1477,7 +1496,22 @@ export const make = Effect.gen(function* () {
     completedSources = [],
   ) => Stream.unwrap(prepareRecentThreads(workspaceRoot, completedSources));
 
-  return AgentSessionScanner.of({ scan, recentThreads });
+  const locateSession: AgentSessionScanner["Service"]["locateSession"] = (input) =>
+    Effect.gen(function* () {
+      const settings = yield* serverSettings.getSettings;
+      for (const home of yield* sourceHomes(settings, input.source)) {
+        const file = yield* input.source === "claudeAgent"
+          ? findClaudeSessionFile({ home: home.homePath, sessionId: input.sessionId })
+          : findCodexSessionFile({ home: home.homePath, sessionId: input.sessionId });
+        if (file !== null) return file;
+      }
+      return null;
+    }).pipe(
+      Effect.provideService(FileSystem.FileSystem, fileSystem),
+      Effect.orElseSucceed(() => null),
+    );
+
+  return AgentSessionScanner.of({ scan, recentThreads, locateSession });
 });
 
 export const layer = Layer.effect(AgentSessionScanner, make);

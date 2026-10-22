@@ -719,19 +719,20 @@ describe("orchestration v2 provider switching", () => {
           }
           if (reasoningScenario && replaceNative) {
             const replaced = yield* orchestrator.getThreadProjection(threadId);
-            assert.equal(
-              replaced.runs.at(-1)?.status,
-              scenario.includes("small") ? "failed" : "completed",
-            );
+            // A window too small for any history still takes the pointer
+            // handoff (where to recover it) instead of failing the run.
+            assert.equal(replaced.runs.at(-1)?.status, "completed");
             const target = replaced.providerThreads.find(
               (thread) => thread.providerInstanceId === CLAUDE_MODEL_SELECTION.instanceId,
             )!;
             assert.isNull(target.contextUsage);
             assert.equal(yield* Ref.get(generation), 2);
-            assert.equal(
-              (yield* Ref.get(capturedTurns)).at(-1)!.driver,
-              scenario.includes("small") ? CODEX_DRIVER : CLAUDE_DRIVER,
-            );
+            assert.equal((yield* Ref.get(capturedTurns)).at(-1)!.driver, CLAUDE_DRIVER);
+            if (scenario.includes("small")) {
+              const delivered = yield* encodeJson(yield* Ref.get(injectedHistory));
+              assert.include(delivered, "Selected 0 intact items");
+              assert.include(delivered, "studio_thread_read");
+            }
             return;
           }
           if (replaceNative) {
@@ -2875,6 +2876,145 @@ describe("orchestration v2 provider switching", () => {
         assert.equal(turns[0]?.providerThreadId, turns[2]?.providerThreadId);
       }),
     ),
+  );
+
+  it.live(
+    "starts a fresh native session with a pointer handoff when the resumed one is nearly full",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const cwd = yield* checkpointWorkspace("provider-switch");
+          const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+          const codexNativeThreadGeneration = yield* Ref.make(0);
+          const located: Array<string> = [];
+          // The DCFC thread on October 22, 2026: its Codex session held 221,400 of
+          // 258,400 tokens when a Claude limit sent it back to Codex.
+          const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
+            makeTestAdapter({
+              instanceId: ProviderInstanceId.make("codex"),
+              driver: CODEX_DRIVER,
+              capabilities: CodexProviderCapabilitiesV2,
+              modelSelection: CODEX_MODEL_SELECTION,
+              responseByRunOrdinal: { 1: "codex before switch", 3: "codex after return" },
+              capturedTurns,
+              nativeThreadGeneration: codexNativeThreadGeneration,
+              getModelContextWindow: () => 258_400,
+              tokenUsageByRunOrdinal: { 1: { usedTokens: 221_400, maxTokens: 258_400 } },
+            }),
+            makeTestAdapter({
+              instanceId: ProviderInstanceId.make("claudeAgent"),
+              driver: CLAUDE_DRIVER,
+              capabilities: ClaudeProviderCapabilitiesV2,
+              modelSelection: CLAUDE_MODEL_SELECTION,
+              responseByRunOrdinal: {
+                2: `claude switched response ${"dues proration detail ".repeat(4_000)}`,
+              },
+              capturedTurns,
+            }),
+          ]);
+          const dispatch = (
+            id: string,
+            text: string,
+            modelSelection: ModelSelection,
+          ): OrchestrationV2Command => ({
+            type: "message.dispatch",
+            createdBy: "user",
+            creationSource: "web",
+            commandId: CommandId.make(`command:context-full:${id}`),
+            threadId,
+            messageId: MessageId.make(`message:context-full:${id}`),
+            text,
+            attachments: [],
+            modelSelection,
+            dispatchMode: { type: "start_immediately" },
+          });
+          const projection = yield* Effect.gen(function* () {
+            const orchestrator = yield* Orchestrator.OrchestratorV2;
+            yield* orchestrator.dispatch({
+              type: "thread.create",
+              createdBy: "user",
+              creationSource: "web",
+              commandId: CommandId.make("command:context-full:create"),
+              threadId,
+              projectId,
+              title: "Context full return",
+              modelSelection: CODEX_MODEL_SELECTION,
+              runtimeMode: "full-access",
+              interactionMode: "default",
+              branch: null,
+              worktreePath: null,
+            });
+            yield* orchestrator.dispatch(dispatch("codex", firstPrompt, CODEX_MODEL_SELECTION));
+            yield* waitForIdle(threadId);
+            yield* orchestrator.dispatch(dispatch("claude", claudePrompt, CLAUDE_MODEL_SELECTION));
+            yield* waitForIdle(threadId);
+            yield* orchestrator.dispatch(dispatch("return", returnPrompt, CODEX_MODEL_SELECTION));
+            return yield* waitForIdle(threadId);
+          }).pipe(
+            Effect.provide(
+              ProviderReplayHarness.layerWithRegistry(
+                {
+                  name: "provider-switch-context-full",
+                  runtimePolicyOverride: {
+                    cwd,
+                    approvalPolicy: "never",
+                    sandboxPolicy: {
+                      type: "readOnly",
+                      access: { type: "fullAccess" },
+                      networkAccess: false,
+                    },
+                  },
+                },
+                layerRegistry,
+                {
+                  databaseLayer: fixtureProjectDatabase([projectId]),
+                  agentSessions: {
+                    scan: Effect.die("unused"),
+                    recentThreads: () => Stream.die("unused"),
+                    locateSession: ({ source, sessionId }) =>
+                      Effect.sync(() => {
+                        located.push(sessionId);
+                        return source === "claudeAgent"
+                          ? `/Users/test/.claude/projects/-work/${sessionId}.jsonl`
+                          : `/Users/test/.codex/sessions/2026/10/20/rollout-${sessionId}.jsonl`;
+                      }),
+                  },
+                },
+              ),
+            ),
+          );
+          const turns = yield* Ref.get(capturedTurns);
+
+          assert.deepEqual(
+            projection.runs.map((run) => [run.providerInstanceId, run.status]),
+            [
+              ["codex", "completed"],
+              ["claudeAgent", "completed"],
+              ["codex", "completed"],
+            ],
+          );
+          // The return skipped resuming the full session and bound a fresh one.
+          assert.equal(yield* Ref.get(codexNativeThreadGeneration), 2);
+          assert.equal(turns[2]?.nativeThreadId, `codex:${threadId}:1`);
+          assert.equal(turns[0]?.providerThreadId, turns[2]?.providerThreadId);
+          const text = turns[2]?.text ?? "";
+          assert.include(text, "Context handoff (full_thread_summary):");
+          assert.include(text, "codex before switch");
+          assert.include(text, "claude switched response");
+          assert.include(text, `User message:\n${returnPrompt}`);
+          assert.include(text, "Full native transcripts of this conversation on this machine");
+          assert.include(
+            text,
+            `- Claude Code session claudeAgent:${threadId}: /Users/test/.claude/projects/-work/claudeAgent:${threadId}.jsonl`,
+          );
+          // The full session it left is still on disk for the agent to search.
+          assert.include(text, `rollout-codex:${threadId}:0.jsonl`);
+          assert.includeMembers(located, [`claudeAgent:${threadId}`, `codex:${threadId}:0`]);
+          // History stays within the handoff allowance of the fresh session.
+          assert.isBelow(Buffer.byteLength(text), 80_000);
+          assert.notInclude(text, "Insufficient context allowance");
+        }),
+      ),
   );
 
   it.live("resolves a Claude fork into portable Codex context on first dispatch", () =>

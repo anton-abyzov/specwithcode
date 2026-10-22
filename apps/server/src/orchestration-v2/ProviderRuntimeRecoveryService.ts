@@ -22,6 +22,7 @@ import * as IdAllocator from "./IdAllocator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { restartContinuationRun } from "./RestartContinuation.ts";
+import { cancelledForUpdate, holdForRestart } from "./RestartQueueHold.ts";
 import {
   cancelledRosterTaskWork,
   cancelledTurnItemWork,
@@ -175,6 +176,7 @@ function latestStartedRun(
       run.providerThreadId === providerThreadId &&
       run.status !== "queued" &&
       run.status !== "rolled_back" &&
+      !cancelledForUpdate(run) &&
       (latest === undefined || runRanAfter(run, latest))
         ? run
         : latest,
@@ -300,7 +302,7 @@ export const make = Effect.gen(function* () {
           runId: run.id,
           providerInstanceId: run.providerInstanceId,
           occurredAt: now,
-          payload: { ...run, queueHeld: true },
+          payload: holdForRestart(run),
         });
       }
       for (const request of requests) {
@@ -852,9 +854,13 @@ export const make = Effect.gen(function* () {
             .continueThreadsAfterServerUpdate
         )
           return;
+        // The update cancelled the messages queued behind the run before it
+        // interrupted it; they never started.
         const run = runs.reduce<(typeof runs)[number] | undefined>(
           (latest, candidate) =>
-            candidate.status !== "queued" && (!latest || runRanAfter(candidate, latest))
+            candidate.status !== "queued" &&
+            !cancelledForUpdate(candidate) &&
+            (!latest || runRanAfter(candidate, latest))
               ? candidate
               : latest,
           undefined,

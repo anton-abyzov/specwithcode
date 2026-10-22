@@ -89,7 +89,7 @@ export function useProjectCoordinatorModelControls(input: {
   providers: ReadonlyArray<ServerProvider> | null | undefined;
   model: ModelSelection | null | undefined;
   /** Actual displayed selection; a return hint exists only while the saved provider is limited. */
-  running?: { value: ModelSelection; returnsTo: string | null } | null;
+  running?: { value: ModelSelection; returnsTo: string | null; offPick?: boolean } | null;
   canOperate: boolean;
   connected: boolean;
   revision: number | null;

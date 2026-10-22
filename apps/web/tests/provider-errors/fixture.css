@@ -1,0 +1,59 @@
+@import "../../src/index.css";
+@source "../../src";
+@source ".";
+
+html,
+body,
+#root {
+  min-width: 0;
+  min-height: 100%;
+  margin: 0;
+}
+
+.fixture-shell {
+  display: flex;
+  min-height: 100dvh;
+  flex-direction: column;
+}
+
+.fixture-header,
+.fixture-counters {
+  margin-inline: auto;
+  width: min(100%, 56rem);
+  padding: 1rem 1.25rem;
+}
+
+.fixture-banner {
+  min-width: 0;
+  padding-bottom: 1.25rem;
+}
+
+.fixture-timeline {
+  position: relative;
+  min-width: 0;
+  height: 24rem;
+  flex: 1 0 24rem;
+}
+
+.fixture-counters {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1.5rem;
+  font-size: 0.75rem;
+}
+
+.fixture-counters output {
+  font-variant-numeric: tabular-nums;
+}
+
+@media (max-width: 480px) {
+  .fixture-header,
+  .fixture-counters {
+    padding-inline: 1rem;
+  }
+
+  .fixture-timeline {
+    height: 28rem;
+    flex-basis: 28rem;
+  }
+}

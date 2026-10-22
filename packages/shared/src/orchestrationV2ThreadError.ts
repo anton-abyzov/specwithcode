@@ -10,6 +10,14 @@ export function latestRootProviderFailure(
   run: OrchestrationV2Run | null,
   turnItems: ReadonlyArray<OrchestrationV2TurnItem>,
 ): OrchestrationV2ProviderFailure | null {
+  return latestRootProviderFailureItem(run, turnItems)?.failure ?? null;
+}
+
+/** The exact terminal root item that owns the current failure and its recovery actions. */
+export function latestRootProviderFailureItem(
+  run: OrchestrationV2Run | null,
+  turnItems: ReadonlyArray<OrchestrationV2TurnItem>,
+): Extract<OrchestrationV2TurnItem, { type: "error" }> | null {
   if (run?.status !== "failed") return null;
   let latest: Extract<OrchestrationV2TurnItem, { type: "error" }> | null = null;
   for (const item of turnItems) {
@@ -29,7 +37,7 @@ export function latestRootProviderFailure(
       latest = item;
     }
   }
-  return latest?.failure ?? null;
+  return latest;
 }
 
 /**
@@ -44,14 +52,19 @@ export function threadErrorSummary(
 ) {
   const sessionError =
     latestRunStatus === "completed" || latestRunStatus === "cancelled" ? null : latestSessionError;
-  const currentFailure =
-    sessionError !== null && sessionError !== failure?.message ? null : failure;
+  const distinctSessionError =
+    sessionError !== null &&
+    (failure === null ||
+      (sessionError !== failure.message &&
+        (unwrapProviderErrorMessage(sessionError) === UNREADABLE_PROVIDER_ERROR ||
+          unwrapProviderErrorMessage(sessionError) !==
+            unwrapProviderErrorMessage(failure.message))));
+  const currentFailure = distinctSessionError ? null : failure;
   return {
     usageLimitResetAt:
       currentFailure?.class === "usage_limit" ? (currentFailure.resetAt ?? null) : null,
     lastError: sessionError ?? failure?.message ?? null,
-    lastErrorClass:
-      sessionError !== null && sessionError !== failure?.message ? null : (failure?.class ?? null),
+    lastErrorClass: distinctSessionError ? null : (failure?.class ?? null),
   };
 }
 
@@ -210,12 +223,123 @@ export function providerFailureFallbackMessage(
   }
 }
 
+/**
+ * What a provider handoff that does not fit the target says. History is
+ * compacted for every handoff; this is the case where even that does not fit
+ * next to the request, so the thread needs a model with a larger window.
+ */
+export const CONTEXT_HANDOFF_TOO_LARGE_MESSAGE =
+  "The conversation is too large to hand over to this model's context window. SpecWithCode moves it to a model with room when one is set up; otherwise choose a larger-context model. Your message was not truncated.";
+
+/** Builds before 1.0.73 stored this wording, which promised a compaction that did not always run. */
+const LEGACY_CONTEXT_HANDOFF_BUDGET_PREFIX =
+  "Insufficient context allowance for the provider handoff.";
+
+/** Whether a failure message is a handoff that did not fit, in either wording. */
+export function isContextHandoffBudgetMessage(message: string): boolean {
+  const text = message.trim();
+  return (
+    text.startsWith(LEGACY_CONTEXT_HANDOFF_BUDGET_PREFIX) ||
+    text.startsWith(CONTEXT_HANDOFF_TOO_LARGE_MESSAGE.slice(0, 64))
+  );
+}
+
 /** A failure's message for display, replacing the legacy generic text with its class's explanation. */
 export function providerFailureDisplayMessage(
   failure: Pick<OrchestrationV2ProviderFailure, "class" | "message">,
 ): string {
-  const message = failure.message.trim();
+  const message = unwrapProviderErrorMessage(failure.message);
+  if (isContextHandoffBudgetMessage(message)) return CONTEXT_HANDOFF_TOO_LARGE_MESSAGE;
   return message === "" || message === LEGACY_GENERIC_PROVIDER_FAILURE_MESSAGE
     ? providerFailureFallbackMessage(failure.class)
-    : failure.message;
+    : message;
+}
+
+const UNREADABLE_PROVIDER_ERROR = "The provider returned an error without a readable message.";
+const MAX_ERROR_ENVELOPE_LENGTH = 65_536;
+const MAX_ERROR_ENVELOPE_DEPTH = 16;
+
+/** Decode only explicit provider message envelopes, never arbitrary cause fields. */
+export function unwrapProviderErrorMessage(message: string): string {
+  if (!message.trim()) return "";
+  // Bound parsing work before JSON.parse; oversized diagnostics must not freeze a client.
+  if (message.length > MAX_ERROR_ENVELOPE_LENGTH) return UNREADABLE_PROVIDER_ERROR;
+  function read(value: unknown, depth: number): string | null {
+    if (depth >= MAX_ERROR_ENVELOPE_DEPTH) return null;
+    if (typeof value === "string") {
+      const text = value.trim();
+      if (!text) return null;
+      // Common CLI prefixes wrap an otherwise valid JSON payload.
+      const candidate = text.replace(/^(?:Error|API error|Provider error):\s*/iu, "");
+      if (
+        ["{", "[", '"'].some((prefix) => candidate.startsWith(prefix)) ||
+        /^(?:null|true|false|-?\d+(?:\.\d+)?)$/u.test(candidate)
+      ) {
+        try {
+          return read(JSON.parse(candidate), depth + 1);
+        } catch {
+          // Provider CLIs also prefix plain prose with tags such as [ACP].
+          const arrayContent = candidate.slice(1).trimStart();
+          return candidate.startsWith("{") ||
+            (candidate.startsWith("[") &&
+              ["{", '"'].some((prefix) => arrayContent.startsWith(prefix)))
+            ? UNREADABLE_PROVIDER_ERROR
+            : text;
+        }
+      }
+      return text;
+    }
+    if (typeof value !== "object" || value === null || Array.isArray(value)) return null;
+    const record = value as Record<string, unknown>;
+    let genericStatus: string | null = null;
+    // Prefer the nested error to a wrapper's generic HTTP status message.
+    for (const key of ["error", "response", "data", "message"] as const) {
+      const result = read(record[key], depth + 1);
+      if (result !== null) {
+        // Some HTTP wrappers put a status in `error` and useful prose in `message`.
+        if (
+          key === "error" &&
+          typeof record.error === "string" &&
+          /^(?:\d{3}\s+)?(?:bad request|invalid argument|invalid request(?: error)?|request failed|internal(?: server)? error|unknown error|error|unauthorized|forbidden|not found|resource exhausted|rate limit(?:ed| exceeded)?|(?:service )?unavailable)[.!]?$/iu.test(
+            result.replaceAll("_", " "),
+          )
+        ) {
+          genericStatus = result;
+          continue;
+        }
+        return record.code === "context_length_exceeded"
+          ? `Context length exceeded: ${result}`
+          : result;
+      }
+    }
+    return record.code === "context_length_exceeded"
+      ? "The model's context limit was exceeded."
+      : genericStatus;
+  }
+  return read(message, 0) ?? UNREADABLE_PROVIDER_ERROR;
+}
+
+/** Context capacity is per request, not an account's quota or a resettable usage limit. */
+export function isContextLimitError(message: string): boolean {
+  const cleanMessage = unwrapProviderErrorMessage(message);
+  if (isContextHandoffBudgetMessage(cleanMessage)) return true;
+  if (
+    /\b(?:output|completion) token count\b/iu.test(cleanMessage) &&
+    !/\b(?:input|prompt|context)\b/iu.test(cleanMessage)
+  )
+    return false;
+  return (
+    /\bcontext_length_exceeded\b/iu.test(message.slice(0, MAX_ERROR_ENVELOPE_LENGTH)) ||
+    /\bcontext[_ -](?:length[_ -]exceeded|window[_ -]exceeded)|\b(?:maximum|exceeds? (?:the )?max(?:imum)?) context (?:length|window)|\b(?:input )?token count(?:\s*\([\d,]+\))? exceeds (?:the )?maximum number of tokens|\bprompt (?:is )?too long\b|\b(?:input|request|conversation) (?:is )?too (?:long|large)\b.{0,100}\b(?:context|tokens?)\b|\bcontext (?:length|window|limit).{0,80}\b(?:exceed|exhaust|full|too (?:long|large))/iu.test(
+      cleanMessage,
+    )
+  );
+}
+
+export function providerFailureDisplayTitle(
+  failure: Pick<OrchestrationV2ProviderFailure, "class" | "message">,
+): string {
+  if (failure.class === "usage_limit") return "Usage limit reached";
+  if (isContextLimitError(failure.message)) return "Context limit reached";
+  return "Provider error";
 }

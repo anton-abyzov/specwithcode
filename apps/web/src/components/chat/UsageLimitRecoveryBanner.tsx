@@ -96,6 +96,8 @@ export function fallbackUnavailableReason(
       return resetAt === null
         ? "full"
         : `full until ${new Date(resetAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}`;
+    case "too-small":
+      return "context window too small";
     case "unverified":
       return "usage not read yet";
     case "not-ready":
@@ -455,16 +457,19 @@ export type LimitPairingRoomUnknown = "unreported" | "stale";
 
 /**
  * Whether the model a fallback stood in for can take the thread back. Room
- * needs a fresh usage reading below 100% (`hasUsableFallbackCapacity`). A
- * provider that reports no usage (Copilot and other agents) or whose reading
- * is out of date is unknown, never "has room".
+ * needs a fresh usage reading below 100% (`hasUsableFallbackCapacity`), or
+ * the project coordinator running on that provider right now (`proven`,
+ * see provenFallbackSelection). A provider that reports no usage (Copilot
+ * and other agents) or whose reading is out of date is unknown.
  */
 export function limitPairingRoom(
   provider: ServerProvider | undefined,
   nowMs: number,
   model: string,
+  proven?: { readonly instanceId: string } | null,
 ): { readonly hasRoom: boolean; readonly roomUnknown?: LimitPairingRoomUnknown } {
   if (provider === undefined || !canTakeTurn(provider)) return { hasRoom: false };
+  if (proven?.instanceId === provider.instanceId) return { hasRoom: true };
   if (reportsNoUsage(provider)) return { hasRoom: false, roomUnknown: "unreported" };
   if (hasUsableFallbackCapacity(provider, nowMs, model)) return { hasRoom: true };
   const used = providerUsedPercent(provider, nowMs, model);
@@ -502,7 +507,7 @@ export function limitFallbackPairingBannerItem(props: {
       : props.roomUnknown === "unreported"
         ? `${props.original} stopped at its limit and reports no usage, so its room is unknown.`
         : props.roomUnknown === "stale"
-          ? `${props.original} stopped at its limit and its usage reading is out of date, so its room is unknown.`
+          ? `${props.original} stopped at its limit. Its last usage reading showed room but is out of date; switching back re-checks it.`
           : props.resetAt === null
             ? `${props.original} stopped at its limit and is still limited.`
             : `${props.original} stopped at its limit and resets at ${new Date(props.resetAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}.`,

@@ -1,6 +1,7 @@
 import * as Path from "effect/Path";
 import { makeEnvironmentRuntime } from "../project/ProjectEnvironmentRuntime.ts";
 import * as ProjectContextDelivery from "../project/ProjectContextDelivery.ts";
+import * as AgentSessionScanner from "../project/AgentSessionScanner.ts";
 import { withProjectContext } from "../project/ProjectContextRuntime.ts";
 import { modelSelectionsEqual } from "@specweave-studio/shared/model";
 import { projectComposerContextForProvider } from "@specweave-studio/shared/composerContextReferences";
@@ -42,8 +43,13 @@ import {
   contextUsageForHandoff,
   historicalMessage,
   latestNativeContextUsage,
+  nativeSessionTooFullForHandoff,
 } from "./ContextHandoffBudget.ts";
 import { deliverContextHandoffs } from "./ContextHandoffDelivery.ts";
+import {
+  locateNativeSessionPointers,
+  renderNativeSessionPointers,
+} from "./NativeSessionPointers.ts";
 import {
   ProviderAdapterTurnStartError,
   providerSetupFailure,
@@ -177,6 +183,8 @@ export const layer: Layer.Layer<
     const projectContextService = yield* Effect.serviceOption(
       ProjectContextDelivery.ProjectContextDelivery,
     );
+    // Finds this machine's native transcripts for handoff pointers; optional.
+    const agentSessions = yield* Effect.serviceOption(AgentSessionScanner.AgentSessionScanner);
 
     // These callbacks outlive startup while a run drains background work. Build
     // them outside start's scope so they cannot retain its full thread history.
@@ -835,15 +843,42 @@ export const layer: Layer.Layer<
             handoff.delivery?.nativeThreadId === providerThread.nativeThreadRef?.nativeId &&
             handoff.delivery?.status === "pending",
         );
+        // A native session too full for the handoff waiting for it would
+        // refuse it before choosing any history. A fresh one takes the whole
+        // thread as a compacted handoff instead.
+        const sessionFull =
+          effectiveHandoffs.length > 0 &&
+          nativeSessionTooFullForHandoff({
+            tokenCap: yield* handoffTokenCapConfig.pipe(
+              Effect.orElseSucceed(() => DEFAULT_HANDOFF_TOKEN_CAP),
+            ),
+            userText: message.text,
+            attachments: message.attachments,
+            // Adapters that report usage per turn leave the row's usage empty;
+            // the latest measured turn on this native session counts too.
+            providerThread: {
+              ...providerThread,
+              contextUsage: {
+                ...providerThread.contextUsage,
+                ...latestNativeContextUsage(projection, providerThread)?.usage,
+              } as OrchestrationV2ProviderThread["contextUsage"],
+            },
+            modelContextWindow: session.getModelContextWindow?.(
+              run.modelSelection,
+              resolvedRuntimePolicy.cwd,
+            ),
+          });
         const resumed = yield* Effect.result(
-          uncertainDelivery
+          uncertainDelivery || sessionFull
             ? Effect.fail(
                 new ProviderAdapterTurnStartError({
                   driver: session.driver,
                   threadId: projection.thread.id,
                   providerThreadId: providerThread.id,
                   runId,
-                  cause: "Uncertain native history injection",
+                  cause: uncertainDelivery
+                    ? "Uncertain native history injection"
+                    : "Native session too full for the context handoff",
                 }),
               )
             : session.resumeThread({
@@ -861,7 +896,11 @@ export const layer: Layer.Layer<
           driver: session.driver,
           providerThreadId: providerThread.id,
           runId,
-          reason: uncertainDelivery ? "uncertain_history_delivery" : "resume_failed",
+          reason: uncertainDelivery
+            ? "uncertain_history_delivery"
+            : sessionFull
+              ? "native_session_full"
+              : "resume_failed",
           errorTag: resumed.failure._tag,
         });
         const replacement = yield* loadFromProvider(
@@ -1301,10 +1340,25 @@ export const layer: Layer.Layer<
                     createdAt: yield* DateTime.now,
                   }),
                 ];
+          // Looked up only when a handoff is delivered, and never allowed to
+          // hold up the turn: a stalled provider home yields no pointers.
+          const nativeSessions = Option.isNone(agentSessions)
+            ? undefined
+            : locateNativeSessionPointers({
+                providerThreads: projection.providerThreads,
+                locate: agentSessions.value.locateSession,
+              }).pipe(
+                Effect.map(renderNativeSessionPointers),
+                Effect.timeoutOrElse({
+                  duration: "3 seconds",
+                  orElse: () => Effect.succeed(""),
+                }),
+              );
           const delivery = yield* deliverContextHandoffs({
             handoffs: [...effectiveHandoffs, ...retryHandoff],
             deferInline: compact,
             ...(checkpointPreface === null ? {} : { preface: checkpointPreface }),
+            ...(nativeSessions === undefined ? {} : { nativeSessions }),
             providerThread: runningProviderThread,
             budget: Effect.gen(function* () {
               return handoffBudget({

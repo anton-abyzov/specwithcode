@@ -19,6 +19,39 @@ import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 
+it("decodes explicit JSON before redaction and bounding without exposing arbitrary causes", () => {
+  const secret = "sk-abcdefghijklmnopqrstuv";
+  const escaped = JSON.stringify({ error: { message: `Permission denied: ${secret}` } }).replace(
+    "sk-",
+    "\\u0073k-",
+  );
+  const failure = makeProviderFailure({
+    message: JSON.stringify({ error: { message: escaped } }),
+    class: "provider_error",
+  });
+  assert.equal(failure.message, "Permission denied: [REDACTED]");
+  assert.equal(failure.class, "provider_error");
+  assert.notInclude(failure.message, secret);
+  assert.notInclude(
+    makeProviderFailure({ cause: { message: escaped, error: { message: escaped } } }).message,
+    "Permission denied",
+  );
+});
+
+it("keeps explicit nested context failures separate from usage limits", () => {
+  const message = "The input token count exceeds the maximum number of tokens allowed 1048576.";
+  const failure = makeProviderFailure({
+    message: JSON.stringify({
+      error: { message: JSON.stringify({ error: { message, code: 400 } }) },
+    }),
+    class: "provider_error",
+    resetAt: "2026-10-23T04:00:00.000Z",
+  });
+  assert.equal(failure.message, message);
+  assert.equal(failure.class, "provider_error");
+  assert.notProperty(failure, "resetAt");
+});
+
 import {
   innermostCauseMessage,
   makeProviderFailure,

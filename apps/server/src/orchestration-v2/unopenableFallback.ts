@@ -14,6 +14,7 @@ import {
 import { latestRootProviderFailure } from "@specweave-studio/shared/orchestrationV2ThreadError";
 import {
   canTakeTurn,
+  type ContextFitRequirement,
   type ProviderFallbackRule,
   resolveProviderFallback,
 } from "@specweave-studio/shared/providerFallback";
@@ -110,6 +111,15 @@ export interface UnopenableStop extends OpenFailure {
    * way back may return to it; otherwise `provider-fallback:`, and never back.
    */
   readonly originIsLimit: boolean;
+  /**
+   * Why the thread must move: its provider could not open (the default), or
+   * the conversation no longer fits it and recovery on it cannot help
+   * (`contextOverflowStop`). A context stop never holds the instance for
+   * other threads and moves only to a model whose window fits.
+   */
+  readonly cause?: "open" | "context";
+  /** For a context stop: what the target must hold (`ContextFitRequirement`). */
+  readonly contextFit?: ContextFitRequirement;
 }
 
 type StopThread = Pick<
@@ -229,7 +239,7 @@ export function unopenableStop(
  * `instanceId`, when it has run nowhere else since, and the hop after the
  * move that put it there. Null when no limit fallback put it there.
  */
-function limitChainOnInstance(
+export function limitChainOnInstance(
   threadId: StopThread["id"],
   instanceId: ProviderInstanceId,
   run: OrchestrationV2Run,
@@ -308,6 +318,11 @@ export function unopenableFallbackCommand(
     // The instance that failed is out, whatever its snapshot still says.
     limitedInstanceIds: new Set([...(options.limited ?? []), stop.instanceId]),
     ...(options.failed === undefined ? {} : { excludedSelections: options.failed }),
+    // An overflow says nothing about usage: home goes first when it has
+    // room, and only a window that holds the thread is a target.
+    ...(stop.cause === "context"
+      ? { preferDefault: true, ...(stop.contextFit ? { contextFit: stop.contextFit } : {}) }
+      : {}),
   });
   if (target === null) return null;
   // Only a usage-limit stop is `limit-fallback:`: the way back reads that
@@ -345,7 +360,8 @@ export function unopenableHolds(
 ): ReadonlyMap<string, number> {
   const next = new Map(held);
   for (const stop of stops)
-    if (nowMs - stop.failedAtMs < UNOPENABLE_HOLD_MS)
+    // A conversation too large for a model says nothing about the provider.
+    if (stop.cause !== "context" && nowMs - stop.failedAtMs < UNOPENABLE_HOLD_MS)
       next.set(stop.instanceId, Math.max(next.get(stop.instanceId) ?? 0, stop.failedAtMs));
   for (const [instanceId, failedAt] of next) {
     const provider = providers.find((entry) => entry.instanceId === instanceId);

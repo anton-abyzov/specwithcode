@@ -8,6 +8,7 @@ import {
   type OrchestrationV2Run,
   type OrchestrationV2ServerCommand,
   type OrchestrationV2ThreadShell,
+  type OrchestrationV2TurnItem,
   type ProviderInstanceId,
   type ServerProvider,
   type ServerSettings as ServerSettingsValue,
@@ -80,6 +81,9 @@ import {
   previousRunOnInstance,
 } from "./providerOpenFailure.ts";
 import { UnopenableHolds, UsageLimitHolds } from "./UnopenableHolds.ts";
+import { contextOverflowStop } from "./contextOverflowFallback.ts";
+import { contextRecoveryStep, isContextOverflowFailure } from "./ContextOverflowRecoveryWorker.ts";
+import { latestRootProviderFailure } from "@specweave-studio/shared/orchestrationV2ThreadError";
 import {
   type FallbackThread,
   latestOpenFailure,
@@ -1035,11 +1039,44 @@ export const makeSweep = Effect.gen(function* () {
     },
   );
   // A failed run's failure code is fixed once it settles: read once per run.
-  type OpenFailureRead = { readonly failed: OpenFailure; readonly stop: UnopenableStop | null };
+  // A context stop has no open failure behind it, so no provider-ready retry.
+  type OpenFailureRead = {
+    readonly failed: OpenFailure | null;
+    readonly stop: UnopenableStop | null;
+  };
   const unopenableReads = yield* Ref.make(new Map<string, OpenFailureRead | null>());
   const unopenableHeld = yield* Ref.make<ReadonlyMap<string, number>>(new Map());
+  // An overflow that recovery on its model cannot fix moves like an open
+  // failure, to a model whose window holds the thread (contextOverflowStop).
+  const readContextStop = Effect.fn("ProviderFallbackWorker.readContextStop")(function* (
+    thread: OrchestrationV2ThreadShell & { readonly latestRunId: OrchestrationV2Run["id"] },
+    runs: ReadonlyArray<OrchestrationV2Run>,
+    turnItems: ReadonlyArray<OrchestrationV2TurnItem>,
+    providers: ReadonlyArray<ServerProvider>,
+  ) {
+    const run = runs.find((candidate) => candidate.id === thread.latestRunId);
+    if (run === undefined) return null;
+    const failure = latestRootProviderFailure(run, turnItems);
+    if (!isContextOverflowFailure(failure)) return null;
+    const step = contextRecoveryStep(thread.id, run, failure);
+    const answered = runs.find((candidate) => candidate.id === step?.failedRunId);
+    const extra = yield* projections
+      .getThreadRecords(thread.id, ["providerThreads", "messages"], {
+        messageIds: [run.userMessageId, ...(answered ? [answered.userMessageId] : [])],
+      })
+      .pipe(Effect.orElseSucceed(() => null));
+    if (extra === null) return undefined;
+    return contextOverflowStop(thread, {
+      runs,
+      turnItems,
+      messages: extra.messages,
+      providerThreads: extra.providerThreads,
+      providers,
+    });
+  });
   const readOpenFailure = Effect.fn("ProviderFallbackWorker.readOpenFailure")(function* (
     thread: OrchestrationV2ThreadShell & { readonly latestRunId: OrchestrationV2Run["id"] },
+    providers: ReadonlyArray<ServerProvider>,
   ) {
     const records = yield* projections
       .getThreadRecords(thread.id, ["runs", "turnItems"], {
@@ -1047,8 +1084,16 @@ export const makeSweep = Effect.gen(function* () {
       })
       .pipe(Effect.orElseSucceed(() => null));
     if (records === null) return undefined;
-    const failed = latestOpenFailure(thread, records.runs, records.turnItems);
-    if (failed === null) return null;
+    // A session failure can clear the class; any other class is never an open failure.
+    const failed =
+      thread.lastErrorClass == null || thread.lastErrorClass === "provider_error"
+        ? latestOpenFailure(thread, records.runs, records.turnItems)
+        : null;
+    if (failed === null) {
+      const stop = yield* readContextStop(thread, records.runs, records.turnItems, providers);
+      if (stop === undefined) return undefined;
+      return stop === null ? null : { failed: null, stop };
+    }
     let turnItems = records.turnItems;
     // Only a repeat on the same instance makes this failure a stop.
     const latest = records.runs.find((run) => run.id === failed.runId);
@@ -1064,29 +1109,31 @@ export const makeSweep = Effect.gen(function* () {
   });
   const unopenableStops = Effect.fn("ProviderFallbackWorker.unopenableStops")(function* (
     shells: ReadonlyArray<OrchestrationV2ThreadShell>,
+    providers: ReadonlyArray<ServerProvider>,
   ) {
     const cached = yield* Ref.get(unopenableReads);
     const next = new Map<string, OpenFailureRead | null>();
     const stops = new Map<string, UnopenableStop>();
     const failures = new Map<string, OpenFailure>();
     for (const thread of shells) {
-      // A session failure can clear the class, so only a usage limit rules a thread out.
+      // A session failure can clear the class, so only a usage limit rules a
+      // thread out; an overflow may carry any other class.
       if (
         thread.status !== "failed" ||
         thread.latestRunId === null ||
         thread.activeRunId !== null ||
-        (thread.lastErrorClass != null && thread.lastErrorClass !== "provider_error")
+        thread.lastErrorClass === "usage_limit"
       )
         continue;
       const key = `${thread.id}:${thread.latestRunId}`;
       let read = cached.get(key);
       if (read === undefined) {
-        read = yield* readOpenFailure({ ...thread, latestRunId: thread.latestRunId });
+        read = yield* readOpenFailure({ ...thread, latestRunId: thread.latestRunId }, providers);
         if (read === undefined) continue;
       }
       next.set(key, read);
       if (read === null) continue;
-      failures.set(thread.id, read.failed);
+      if (read.failed !== null) failures.set(thread.id, read.failed);
       if (read.stop !== null) stops.set(thread.id, read.stop);
     }
     yield* Ref.set(unopenableReads, next);
@@ -1191,7 +1238,10 @@ export const makeSweep = Effect.gen(function* () {
       now,
     );
     yield* Ref.set(unreportedStops, held);
-    const { stops: unopenable, failures: openFailures } = yield* unopenableStops(snapshot.threads);
+    const { stops: unopenable, failures: openFailures } = yield* unopenableStops(
+      snapshot.threads,
+      providers,
+    );
     // The selection that could not open counts as tried for the stop it answered.
     yield* Ref.update(failedTargets, (current) => {
       const next = new Map(current);
@@ -1321,8 +1371,10 @@ export const makeSweep = Effect.gen(function* () {
           }),
         );
       let step = stepFor(thread);
+      // A context stop reads stale providers before it moves, even when a
+      // target is found: home with an old reading may have room again.
       if (
-        step === null &&
+        (step === null || failedOpen?.cause === "context") &&
         (yield* refreshStaleTargets(thread, providersFor(thread), resolved, now, failedOpen))
       ) {
         providers = yield* registry.getProviders;
