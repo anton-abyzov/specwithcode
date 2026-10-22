@@ -48,7 +48,7 @@ LABEL = 'com.specweave.studio.m4.updater'
 # The modules install_launch_agent copies from their own paths (managed_updates.py and
 # migrate_home.py from the agent's folder): a test points each at the copy it installs.
 MODULES = ('update_agent', 'update_agent_reap', 'update_agent_cache', 'update_request', 'update_agent_recovery',
-           'installation_descriptor', 'studio_paths')
+           'installation_descriptor', 'studio_paths', 'update_agent_run')
 
 
 def sha256(path):

@@ -178,3 +178,21 @@ export function undecidedRows(rows: ReadonlyArray<FolderCopyRow>): number {
 export function cloneableRows(rows: ReadonlyArray<FolderCopyRow>): ReadonlyArray<string> {
   return rows.filter((row) => row.kind === "repository" && row.cloneAvailable).map((row) => row.id);
 }
+
+/** Build the destination from its own home, preserving a source home-relative layout. */
+export function suggestedCopyFolder(
+  sourceRoot: string,
+  destinationHome: string | null | undefined,
+): string {
+  if (!destinationHome) return "";
+  const source = sourceRoot.replaceAll("\\", "/").replace(/\/+$/, "");
+  const homeRelative = /^(?:\/(?:Users|home)\/[^/]+|[A-Za-z]:\/Users\/[^/]+)\/(.+)$/.exec(source);
+  const suffix =
+    homeRelative?.[1] ?? `Projects/${source.split("/").filter(Boolean).at(-1) ?? "project"}`;
+  const separator = destinationHome.includes("\\") ? "\\" : "/";
+  return `${destinationHome.replace(/[/\\]+$/, "")}${separator}${suffix.replaceAll("/", separator)}`;
+}
+
+/** A copied registration belongs to one exact folder on one destination machine. */
+export const copyDestinationKey = (environmentId: string, folder: string): string =>
+  JSON.stringify([environmentId, folder.replace(/[/\\]+$/, "")]);

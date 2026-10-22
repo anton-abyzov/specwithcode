@@ -179,6 +179,18 @@ export interface ServiceUpdateHoldShape {
    * The service is only held for one: a hold for nothing would just block work.
    */
   readonly updatePending: Effect.Effect<boolean>;
+  /**
+   * Whether an install request the agent has not finished with is still live
+   * (`installRequestOpen`): the update it asks for is not over yet, even while
+   * nothing holds the service between two drains for it.
+   */
+  readonly installRequestOpen: Effect.Effect<boolean>;
+  /**
+   * Whether an automatic install still waits for a quiet moment or is
+   * installing (`automaticInstallUnderway`): what its stale-wait sweep closed
+   * is asked again only once it is not.
+   */
+  readonly automaticInstallUnderway: Effect.Effect<boolean>;
 }
 
 /** Agent statuses with a release found, downloading, ready or installing. */
@@ -213,6 +225,30 @@ export function updatePendingFor(reading: AgentStateReading): boolean {
     if (difference !== 0) return difference > 0;
   }
   return false;
+}
+
+/**
+ * Whether the desktop's install request is still under way: written, not yet
+ * handled by the agent (it marks one handled when an attempt completes or
+ * fails for good), and within its time (a forced request's `installHoldUntil`,
+ * otherwise `HOLD_TTL_MS` from the request). A cancel clears the request.
+ */
+export function installRequestOpen(reading: AgentStateReading, nowMs: number): boolean {
+  const requestedAtMs = epochMillis(reading.installRequestedAt);
+  if (requestedAtMs === null) return false;
+  if (reading.handledInstallRequestAt === reading.installRequestedAt) return false;
+  return (reading.installHoldUntilMs ?? requestedAtMs + HOLD_TTL_MS) > nowMs;
+}
+
+/** Agent statuses of an install that still waits for quiet or is installing. */
+const AUTOMATIC_INSTALL_STATUSES: ReadonlyArray<unknown> = ["waiting-for-quiet", "installing"];
+
+/**
+ * Whether the update agent still waits for a quiet moment to install, or is
+ * installing. Installed, failed, cancelled or never started: it is not.
+ */
+export function automaticInstallUnderway(reading: Pick<AgentStateReading, "status">): boolean {
+  return AUTOMATIC_INSTALL_STATUSES.includes(reading.status);
 }
 
 export class ServiceUpdateHold extends Context.Service<ServiceUpdateHold, ServiceUpdateHoldShape>()(
@@ -685,6 +721,16 @@ export const makeWithOptions = (options: ServiceUpdateHoldOptions) =>
       awaitReleased,
       updatePending: Effect.map(readAgentState, (reading) =>
         Option.isSome(reading) ? updatePendingFor(reading.value) : false,
+      ),
+      installRequestOpen: Effect.gen(function* () {
+        const reading = yield* readAgentState;
+        return (
+          Option.isSome(reading) &&
+          installRequestOpen(reading.value, yield* Clock.currentTimeMillis)
+        );
+      }),
+      automaticInstallUnderway: Effect.map(readAgentState, (reading) =>
+        Option.isSome(reading) ? automaticInstallUnderway(reading.value) : false,
       ),
     });
   });

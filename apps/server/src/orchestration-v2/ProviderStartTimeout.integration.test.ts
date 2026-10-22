@@ -5,6 +5,7 @@ import {
   CommandId,
   EventId,
   MessageId,
+  ORCHESTRATION_V2_PROVIDER_OPEN_FAILED_FAILURE_CODE,
   type ModelSelection,
   ProjectId,
   ProviderDriverKind,
@@ -133,7 +134,7 @@ const layerTest = Layer.mergeAll(
 );
 
 it.effect(
-  "a provider turn start that never returns ends its run and the queue moves on",
+  "a provider turn start that never returns fails as an open failure and holds the queue",
   () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -172,14 +173,14 @@ it.effect(
           before.runs.map((run) => run.status),
           ["starting", "queued"],
         );
-        const nextStarting = yield* sink
+        const firstFailed = yield* sink
           .stream({ afterSequence: yield* sink.latestSequence(), eventType: "run.updated" })
           .pipe(
             Stream.filter(
               (stored) =>
                 stored.event.type === "run.updated" &&
-                stored.event.payload.id === before.runs[1]!.id &&
-                stored.event.payload.status === "starting",
+                stored.event.payload.id === before.runs[0]!.id &&
+                stored.event.payload.status === "failed",
             ),
             Stream.take(1),
             Stream.runDrain,
@@ -189,11 +190,18 @@ it.effect(
         yield* worker.drain().pipe(Effect.forkScoped);
         yield* Deferred.await(sessionOpening);
         yield* TestClock.adjust(EffectWorker.PROVIDER_TURN_START_TIMEOUT);
-        yield* Fiber.join(nextStarting);
+        yield* Fiber.join(firstFailed);
         const after = yield* orchestrator.getThreadProjection(threadId);
+        // The hang ends as a failed open, which the provider fallback retries or
+        // moves to another provider; the queue waits behind it instead of
+        // repeating the same open on the same provider.
         assert.deepEqual(
           after.runs.map((run) => run.status),
-          ["interrupted", "starting"],
+          ["failed", "queued"],
+        );
+        assert.strictEqual(
+          after.turnItems.find((item) => item.type === "error")?.failure.code,
+          ORCHESTRATION_V2_PROVIDER_OPEN_FAILED_FAILURE_CODE,
         );
       }),
     ).pipe(Effect.provide(layerTest)),

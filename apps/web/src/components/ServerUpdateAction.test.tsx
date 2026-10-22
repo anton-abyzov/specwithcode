@@ -239,7 +239,7 @@ describe("ServerUpdateAction", () => {
   });
 
   it("explains what the update changes on the button when given a description", () => {
-    const description = "Update installs 0.0.31 on the server and restarts its server.";
+    const description = "Update installs 0.0.31 on the server and restarts it.";
     const markup = renderToStaticMarkup(
       <ServerUpdateAction
         environmentId={"env-test" as EnvironmentId}

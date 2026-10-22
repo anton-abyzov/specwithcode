@@ -191,6 +191,14 @@
       "types": "./src/state/presentation.ts",
       "default": "./src/state/presentation.ts"
     },
+    "./state/design": {
+      "types": "./src/state/design.ts",
+      "default": "./src/state/design.ts"
+    },
+    "./state/designSystemImport": {
+      "types": "./src/state/designSystemImport.ts",
+      "default": "./src/state/designSystemImport.ts"
+    },
     "./state/device": {
       "types": "./src/state/device.ts",
       "default": "./src/state/device.ts"

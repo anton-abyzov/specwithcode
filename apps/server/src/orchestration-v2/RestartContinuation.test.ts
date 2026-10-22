@@ -933,6 +933,91 @@ it.effect("names an update continuation so the thread can say so", () =>
   }),
 );
 
+it.effect("tells the agent to ask again a question the update closed", () =>
+  Effect.gen(function* () {
+    const base = makeProjection();
+    const projection = {
+      ...base,
+      runs: [{ ...base.runs[0]!, status: "interrupted" }],
+      turnItems: [{ runId, type: "run_interrupt_request", cause: "service_update" }],
+      // A card already asks request:3 again, though its mark was never written.
+      runtimeRequests: [{ id: "update-reopen:request:3", status: "pending" }],
+    } as unknown as OrchestrationV2ThreadProjection;
+    const commands: Parameters<
+      ThreadManagementService.ThreadManagementService["Service"]["dispatch"]
+    >[0][] = [];
+    const asked: Array<[string, string]> = [];
+    yield* continueRestartedRun({
+      threadId,
+      sourceRunId: runId,
+      closedQuestions: (thread, run) =>
+        Effect.sync(() => {
+          asked.push([thread, run]);
+          return [
+            {
+              requestId: "request:1",
+              threadId: thread,
+              threadTitle: "Fix login",
+              runId: run,
+              kind: "user_input",
+              text: "Which database should I use?",
+              askedAt: null,
+              closedAt: "2026-10-21T10:00:00.000Z",
+              reopenedAt: null,
+            },
+            {
+              // Already asked again as a card (the continuation came late): not twice.
+              requestId: "request:2",
+              threadId: thread,
+              threadTitle: "Fix login",
+              runId: run,
+              kind: "user_input",
+              text: "Which region?",
+              askedAt: null,
+              closedAt: "2026-10-21T10:00:00.000Z",
+              reopenedAt: "2026-10-21T10:03:00.000Z",
+              reopenedBy: "card",
+            },
+            {
+              requestId: "request:3",
+              threadId: thread,
+              threadTitle: "Fix login",
+              runId: run,
+              kind: "user_input",
+              text: "Which port?",
+              askedAt: null,
+              closedAt: "2026-10-21T10:00:00.000Z",
+              reopenedAt: null,
+            },
+          ];
+        }),
+    }).pipe(
+      Effect.provide(
+        Layer.merge(
+          Layer.mock(ThreadManagementService.ThreadManagementService)({
+            getThreadRecords: () => Effect.succeed(projection),
+            recoverDelegatedTask: () => Effect.void,
+            dispatch: (command) => {
+              commands.push(command);
+              return Effect.succeed({} as never);
+            },
+          }),
+          ServerSettings.layerTest({ continueThreadsAfterServerUpdate: true }),
+        ),
+      ),
+    );
+    assert.deepEqual(asked, [[threadId, runId]]);
+    const continuation = commands[0]!;
+    const text = continuation.type === "message.dispatch" ? continuation.text : "";
+    assert.include(text, "the SpecWithCode update closed your question");
+    assert.include(text, "> Which database should I use?");
+    assert.include(text, "Ask it again");
+    assert.notInclude(text, "Which region?");
+    assert.notInclude(text, "Which port?");
+    assert.isTrue(text.endsWith("Continue where you left off."));
+  }),
+);
+
 it.effect("queues again, in order and once, the messages an update cancelled", () =>
   Effect.gen(function* () {
     const base = makeProjection();

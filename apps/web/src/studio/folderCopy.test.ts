@@ -7,6 +7,7 @@ import type {
 import {
   cloneableRows,
   copySettled,
+  suggestedCopyFolder,
   DEFAULT_COPY_SELECTION,
   EXACT_COPY_SELECTION,
   formatBytes,
@@ -137,5 +138,24 @@ describe("folder copy helpers", () => {
     );
     expect(progressFraction(copying)).toBe(0.25);
     expect(progressFraction(status({ progress: null }))).toBeNull();
+  });
+});
+
+describe("destination folder suggestions", () => {
+  it("maps a Mac umbrella to the Linux user's home without changing layout", () => {
+    expect(suggestedCopyFolder("/Users/me/Projects/github/specweave-umb", "/home/anton")).toBe(
+      "/home/anton/Projects/github/specweave-umb",
+    );
+  });
+  it("maps a custom source root by folder name and waits for remote home", () => {
+    expect(suggestedCopyFolder("/srv/custom/project", "/home/anton")).toBe(
+      "/home/anton/Projects/project",
+    );
+    expect(suggestedCopyFolder("/Users/me/project", null)).toBe("");
+  });
+  it("uses Windows separators when supplied by the destination", () => {
+    expect(suggestedCopyFolder("/Users/me/Projects/project", "C:\\Users\\anton")).toBe(
+      "C:\\Users\\anton\\Projects\\project",
+    );
   });
 });

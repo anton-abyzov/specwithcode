@@ -442,6 +442,9 @@ async function findPackageRoot(
   resolvedPath: string,
   expectedName?: string,
 ): Promise<{ readonly packageJson: PackageJson; readonly packageRoot: string } | null> {
+  // A builtin such as "https" resolves to its bare name, whose dirname is "."
+  // forever; only a file on disk has a package around it.
+  if (!NodePath.isAbsolute(resolvedPath)) return null;
   let current = NodePath.dirname(resolvedPath);
   const root = NodePath.parse(current).root;
 

@@ -12,7 +12,6 @@ update_agent_reap.py, update_agent_cache.py and update_request.py into the updat
 import argparse
 import datetime
 import errno
-import fcntl
 import hashlib
 import http.client
 import json
@@ -37,6 +36,7 @@ import update_agent_reap as reaper  # noqa: E402  Update now's fallback; install
 import update_agent_cache as cache  # noqa: E402  Shipped beside this file.
 import update_request  # noqa: E402  Shipped beside this file.
 import update_agent_recovery as recovery  # noqa: E402  Shipped beside this file.
+import update_agent_run as runs  # noqa: E402  Shipped beside this file: run.json, the pass lock, log rotation.
 import installation_descriptor  # noqa: E402  Shipped beside this file.
 import studio_paths  # noqa: E402  Shipped beside this file.
 
@@ -113,8 +113,7 @@ HELPER_MAX_BYTES = 64 << 20
 LOG_LIMIT = 1 << 20
 # launchd's StandardOutPath and StandardErrorPath for the service grow forever otherwise
 # (52 MB seen); past the limit the newest SERVICE_LOG_KEPT bytes move to <name>.1.
-SERVICE_LOG_LIMIT = 16 << 20
-SERVICE_LOG_KEPT = 8 << 20
+SERVICE_LOG_LIMIT, SERVICE_LOG_KEPT = runs.SERVICE_LOG_LIMIT, runs.SERVICE_LOG_KEPT
 SERVICE_LOGS = ('stdout.log', 'stderr.log')
 HELPER_TAIL = 4096  # Bytes of a failed helper's output kept in its fallback receipt.
 # The service appends to these logs on its own while a thread waits on a usage limit
@@ -130,11 +129,12 @@ TOKEN_SHAPE = re.compile(r'[A-Za-z0-9_.\-]{8,1024}')
 DEFAULT_CONFIG = {'schemaVersion': 1, 'checkAutomatically': True, 'downloadInBackground': True,
                   'installAutomatically': True, 'channel': 'stable', 'quietMinutes': 10,
                   'repository': DEFAULT_REPOSITORY, 'installRequestedAt': None, 'checkRequestedAt': None,
-                  'installMode': 'normal', 'installHoldUntil': None, 'installCancelledAt': None, 'installRequest': None}
+                  'installMode': 'normal', 'installHoldUntil': None, 'installCancelledAt': None, 'installRequest': None,
+                  'installRunId': None}
 STATE_KEYS = ('schemaVersion', 'agentVersion', 'status', 'installedVersion', 'installedSourceCommit',
               'availableVersion', 'availableTag', 'availableNotes', 'availablePublishedAt',
               'downloadedVersion', 'checkedAt', 'quietSince', 'message', 'lastInstall',
-              'handledInstallRequestAt', 'handledCheckRequestAt', 'updatedAt', 'automaticRetry')
+              'handledInstallRequestAt', 'handledCheckRequestAt', 'updatedAt', 'automaticRetry', 'runSupport')
 
 _REDACT = set()  # In-memory only: values scrubbed from any text the agent emits.
 
@@ -517,13 +517,14 @@ def load_config(updates, home):
              and isinstance(config['repository'], str) and REPOSITORY.fullmatch(config['repository']) is not None
              and '..' not in config['repository'] and config['installMode'] in ('normal', 'force')
              and all(config[key] is None or (isinstance(config[key], str) and 0 < len(config[key]) <= 100)
-                     for key in ('installRequestedAt', 'checkRequestedAt', 'installHoldUntil', 'installCancelledAt')))
+                     for key in ('installRequestedAt', 'checkRequestedAt', 'installHoldUntil', 'installCancelledAt'))
+             and (config['installRunId'] is None or runs.valid_run_id(config['installRunId'])))
     _refuse_if(not valid, 'Update settings are invalid')
     return config
 
 def blank_state():
     state = {key: None for key in STATE_KEYS}
-    state.update({'schemaVersion': 1, 'agentVersion': AGENT_VERSION, 'status': 'up-to-date'})
+    state.update({'schemaVersion': 1, 'agentVersion': AGENT_VERSION, 'status': 'up-to-date', 'runSupport': runs.RUN_SUPPORT})
     return state
 
 def load_state(path, home):
@@ -538,7 +539,7 @@ def load_state(path, home):
         value = raw.get(key)
         if key in ('lastInstall', 'automaticRetry'):
             state[key] = value if isinstance(value, dict) else None
-        elif key in ('schemaVersion', 'agentVersion'):
+        elif key in ('schemaVersion', 'agentVersion', 'runSupport'):
             continue
         elif key == 'status':
             state[key] = value if value in STATUSES else 'up-to-date'
@@ -702,6 +703,7 @@ class Agent(object):
         self.config = dict(DEFAULT_CONFIG)
         self.inst = None
         self.lock_fd = lock_fd  # Passed to the helper, which keeps the pass lock while it runs.
+        self.run = None  # The run.json record this pass owns (update_agent_run.claim).
         self._token = None
         self._token_resolved = False
 
@@ -716,6 +718,8 @@ class Agent(object):
         self.state['status'] = status
         self.state['message'] = redact(message) if message else None
         self.save()
+        if self.run is not None:
+            self.run.mirror(status, self.state['message'])
 
     def finish(self, status, message=None):
         self.set_status(status, message)
@@ -1011,6 +1015,8 @@ class Agent(object):
 
     def retry_deadline(self, started):
         """Until when a pending install request snapshots again within this pass."""
+        if runs.retry_until(self) is not None:
+            return runs.retry_until(self)  # A run's one clock.
         hold = parse_time(self.config['installHoldUntil']) if self.config['installMode'] == 'force' else None
         return min(hold, started + FORCE_WINDOW) if hold else started + REQUEST_WINDOW
 
@@ -1223,8 +1229,8 @@ class Agent(object):
                               'helperLog': str(log) if os.path.lexists(str(log)) else None,
                               'stderrTail': redact(read_tail(log, self.home))}, self.home)
         except (OSError, AgentError) as error:
-            print('update-agent %s: could not write the failed-install receipt (%s)'
-                  % (self.identity, type(error).__name__), file=sys.stderr)
+            print(runs.stamp('update-agent %s: could not write the failed-install receipt (%s)'
+                             % (self.identity, type(error).__name__)), file=sys.stderr)
 
     def failed_switch_stands(self, last):
         """A recorded failure clears only when its helper receipt verifies completion."""
@@ -1291,7 +1297,8 @@ class Agent(object):
                 if key == 'availableVersion':
                     self.clear_available()
                 state[key] = None
-        install_request = update_request.pending(config, state, installed, utcnow(), install_cancelled, AgentError)
+        install_request = update_request.pending(config, state, installed, utcnow(), install_cancelled, AgentError,
+                                                 ttl_until=runs.ttl_until(self))
         check_request = config['checkRequestedAt'] is not None and \
             config['checkRequestedAt'] != state.get('handledCheckRequestAt')
         if not config['checkAutomatically'] and not install_request and not check_request:
@@ -1359,67 +1366,12 @@ class Agent(object):
                 return self.finish('error', held)
         return self.quiet_then_install(verified, install_request)
 
-def rotate_service_log(path, limit=SERVICE_LOG_LIMIT, kept=SERVICE_LOG_KEPT):
-    """Bounds a log launchd appends to. Over `limit`, its newest `kept` bytes (from the first
-    whole line) replace <name>.1, written privately and never through a link, and the live
-    file is truncated in place: launchd opened it with O_APPEND, so the service's next write
-    lands at the new end. A disk too full for <name>.1 still truncates the live file. Returns
-    True when it truncated; never raises."""
-    try:
-        fd = os.open(str(path), os.O_RDWR | os.O_NOFOLLOW | os.O_NONBLOCK)
-    except OSError:
-        return False
-    try:
-        info = os.fstat(fd)
-        if not stat.S_ISREG(info.st_mode) or info.st_size <= limit:
-            return False
-        start = max(0, info.st_size - kept)
-        os.lseek(fd, start, os.SEEK_SET)
-        chunks, left = [], info.st_size - start
-        while left > 0:
-            chunk = os.read(fd, min(left, 1 << 20))
-            if not chunk:
-                break
-            chunks.append(chunk)
-            left -= len(chunk)
-        tail = b''.join(chunks)
-        if start and b'\n' in tail:
-            tail = tail.split(b'\n', 1)[1]  # The cut line's end alone would mislead a reader.
-        older = path.with_name(path.name + '.1')
-        temporary = path.with_name('%s.1.rotate-%s' % (path.name, uuid.uuid4().hex))
-        try:
-            out = os.open(str(temporary), os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW, 0o600)
-            try:
-                with os.fdopen(out, 'wb') as handle:
-                    handle.write(tail)
-                os.replace(str(temporary), str(older))  # Replaces a link at .1 itself, never its target.
-            finally:
-                if os.path.lexists(str(temporary)):
-                    os.unlink(str(temporary))
-        except OSError as error:
-            # A full disk is when the bound matters most: drop the tail, keep the old .1.
-            if error.errno not in (errno.ENOSPC, errno.EDQUOT):
-                raise
-        os.ftruncate(fd, 0)
-        return True
-    except OSError:
-        return False
-    finally:
-        os.close(fd)
+rotate_service_log = runs.rotate_service_log
 
 # ---------------------------------------------------------------- entry points
 
 def acquire_lock(path, home):
-    owned(path, home)
-    fd = os.open(str(path), os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW, 0o600)
-    try:
-        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except OSError as error:
-        os.close(fd)
-        if error.errno in (errno.EWOULDBLOCK, errno.EAGAIN, errno.EACCES):
-            return None
-        raise
-    return fd
+    return runs.acquire_lock(owned(path, home))
 
 def run_once(home, identity, test_mode, out):
     load_installation(home, identity)  # Refuse before creating locks, logs or update state.
@@ -1439,6 +1391,7 @@ def run_once(home, identity, test_mode, out):
             try:
                 agent.config = load_config(updates, home)
                 agent.inst = load_installation(home, identity)
+                agent.run = runs.claim(agent)
                 code = agent.run_pass()
             except AgentError as error:
                 agent.state['automaticRetry'] = None
@@ -1446,6 +1399,7 @@ def run_once(home, identity, test_mode, out):
             except Exception as error:  # Never let a traceback (with possible values) reach the log.
                 agent.state['automaticRetry'] = None
                 code = agent.finish('error', 'Unexpected updater failure (%s)' % type(error).__name__)
+            runs.release(agent)
             if not (again and update_request.arrived(agent, lambda: load_config(updates, home))):
                 return code
     finally:
@@ -1488,7 +1442,7 @@ def install_launch_agent(home, identity, out):
         os.chmod(str(target_dir), 0o700)
         files = [(owned(target_dir / os.path.basename(name), home), pathlib.Path(os.path.abspath(name)).read_bytes())
                  for name in (studio_paths.__file__, update_request.__file__, recovery.__file__, installation_descriptor.__file__,
-                              here / 'managed_updates.py', here / 'migrate_home.py', __file__)]  # Modules first.
+                              runs.__file__, here / 'managed_updates.py', here / 'migrate_home.py', __file__)]  # Modules first.
 
         def same(path, data):
             return path.is_file() and not path.is_symlink() and read_owned(path, home, 8 << 20) == data
@@ -1558,9 +1512,11 @@ def main(argv=None):
     mode.add_argument('--status', action='store_true')
     args = parser.parse_args(argv)
     home = pathlib.Path(args.home) if args.home else pathlib.Path.home()
+    passing = not (args.install_launch_agent or args.uninstall_launch_agent or args.repair_launch_agent or args.status)
+    timed = runs.stamp if passing else (lambda line: line)  # Install mode's JSON reply is parsed: never stamped.
 
     def out(line):
-        print(redact(line))
+        print(timed(redact(line)))
         sys.stdout.flush()
 
     try:
@@ -1576,10 +1532,10 @@ def main(argv=None):
             return show_status(home, args.identity, out)
         return run_once(home, args.identity, bool(args.home), out)
     except AgentError as error:
-        print('update-agent %s: error: %s' % (args.identity, redact(error.message)), file=sys.stderr)
+        print(timed('update-agent %s: error: %s' % (args.identity, redact(error.message))), file=sys.stderr)
         return 1
     except Exception as error:
-        print('update-agent %s: error: unexpected failure (%s)' % (args.identity, type(error).__name__),
+        print(timed('update-agent %s: error: unexpected failure (%s)' % (args.identity, type(error).__name__)),
               file=sys.stderr)
         return 1
 

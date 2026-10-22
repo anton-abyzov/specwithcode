@@ -53,7 +53,9 @@ import { readEnvironmentScope } from "~/state/session";
 import { useSettingsScope } from "./SettingsScopeContext";
 import {
   WEBHOOK_SIGNATURE_DEFAULTS,
+  defaultOnceAt,
   matchesScheduledTaskScope,
+  onceAtIso,
   MORNING_BRIEFING_TEMPLATE,
   NEW_ROUTINE_TEMPLATE,
   relativeLabel,
@@ -640,6 +642,10 @@ function ScheduledTaskEditorDialog({
       );
       return;
     }
+    if (draft.scheduleMode === "once" && onceAtIso(draft.onceAt) === null) {
+      reportFailure("Invalid time", "Pick the date and time to run it.");
+      return;
+    }
     const schedule = scheduleFromDraft(draft);
     if (schedule === null) {
       reportFailure(
@@ -967,11 +973,13 @@ function ScheduledTaskEditorDialog({
                       mode === "interval" ||
                       mode === "webhook" ||
                       mode === "manual" ||
-                      mode === "monthly"
+                      mode === "monthly" ||
+                      mode === "once"
                     )
                       setDraft((current) => ({
                         ...current,
                         scheduleMode: mode,
+                        onceAt: current.onceAt || defaultOnceAt(),
                         prompt:
                           mode === "webhook" && !current.prompt.trim()
                             ? DEFAULT_WEBHOOK_PROMPT
@@ -979,6 +987,7 @@ function ScheduledTaskEditorDialog({
                       }));
                   }}
                 >
+                  <Toggle value="once">Once</Toggle>
                   <Toggle value="fixed">At a time</Toggle>
                   <Toggle value="interval">Every interval</Toggle>
                   <Toggle value="webhook">On webhook</Toggle>
@@ -1103,6 +1112,21 @@ function ScheduledTaskEditorDialog({
                 <p className="text-sm text-muted-foreground">
                   Runs only when you press Run now, or an agent runs it for you.
                 </p>
+              ) : draft.scheduleMode === "once" ? (
+                <div className="flex flex-wrap items-center gap-2">
+                  <Label htmlFor="scheduled-task-once-at">Run once at</Label>
+                  <Input
+                    type="datetime-local"
+                    id="scheduled-task-once-at"
+                    nativeInput
+                    className="w-56"
+                    value={draft.onceAt ?? ""}
+                    onChange={(event) =>
+                      setDraft((current) => ({ ...current, onceAt: event.target.value }))
+                    }
+                  />
+                  <span className="text-xs text-muted-foreground">then it turns off</span>
+                </div>
               ) : draft.scheduleMode === "monthly" ? (
                 <div className="flex flex-wrap items-center gap-2">
                   <Label htmlFor="scheduled-task-day">Day</Label>

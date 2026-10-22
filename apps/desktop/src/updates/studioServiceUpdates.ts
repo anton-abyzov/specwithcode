@@ -2,6 +2,7 @@ import type {
   DesktopUpdateChannel,
   DesktopUpdatePreferences,
   StudioServicePendingInstall,
+  StudioServiceUpdateRun,
   StudioServiceUpdateState,
   StudioServiceUpdateStatus,
 } from "@specweave-studio/contracts";
@@ -24,6 +25,7 @@ import {
 } from "@specweave-studio/shared/studioIdentity";
 
 import { parseStudioInstallation } from "../backend/localServiceAttach.ts";
+import { readRunView, type RunFiles } from "./updateRun.ts";
 
 /**
  * Background updates of the fleet-installed Studio service on this Mac.
@@ -124,6 +126,11 @@ export interface ServiceAgentConfig {
    * Older agents ignore it and treat `installRequestedAt` as before.
    */
   readonly installRequest?: ServiceInstallRequestRecord | null;
+  /**
+   * The Update now run (updates/run.json) this request belongs to. An agent
+   * with run support claims that run; older agents ignore the key.
+   */
+  readonly installRunId?: string | null;
   readonly repository?: string;
 }
 
@@ -263,6 +270,8 @@ export interface ServiceAgentConfigChange {
   readonly installCancelledAt?: string;
   /** Null clears it; a request without one is not tied to a version. */
   readonly installRequest?: ServiceInstallRequestRecord | null;
+  /** Null clears it: a request outside a run must never be claimed for one. */
+  readonly installRunId?: string | null;
 }
 
 function stringOrNullValue(value: unknown): string | null {
@@ -281,6 +290,7 @@ export function cancelServiceInstallChange(at: string): ServiceAgentConfigChange
     installMode: "normal",
     installHoldUntil: null,
     installRequest: null,
+    installRunId: null,
   };
 }
 
@@ -349,8 +359,23 @@ export function buildServiceAgentConfig(
       input.installRequest !== undefined
         ? input.installRequest
         : installRequestRecord(previous.installRequest),
+    ...runIdField(input.installRunId, previous.installRunId),
     ...(typeof previous.repository === "string" ? { repository: previous.repository } : {}),
   };
+}
+
+/**
+ * `installRunId` only once a run has used it: a config written outside runs
+ * stays exactly as before them. A request outside a run clears a stale id.
+ */
+function runIdField(
+  change: string | null | undefined,
+  previous: unknown,
+): { readonly installRunId?: string | null } {
+  const kept =
+    typeof previous === "string" && /^[A-Za-z0-9-]{1,64}$/.test(previous) ? previous : null;
+  const value = change !== undefined ? change : kept;
+  return value !== null || previous !== undefined ? { installRunId: value } : {};
 }
 
 const AGENT_STATUSES = new Set<StudioServiceUpdateStatus>([
@@ -434,6 +459,8 @@ export function toServiceUpdateState(input: {
   readonly configText?: string | null;
   /** Decides whether a pending request has lapsed; now when omitted. */
   readonly nowMs?: number;
+  /** The Update now run every window follows; omitted or null when there is none. */
+  readonly run?: StudioServiceUpdateRun | null;
 }): StudioServiceUpdateState {
   const empty: StudioServiceUpdateState = {
     status: "not-managed",
@@ -502,6 +529,53 @@ export function toServiceUpdateState(input: {
     lastInstall,
     updatedAt: stringOrNull(record.updatedAt),
     pendingInstall: pending(status, record.handledInstallRequestAt),
+    ...(input.run ? { run: input.run } : {}),
+  };
+}
+
+/** The agent advertises run support (`runSupport: 1` in state.json); older agents never write it. */
+export function agentSupportsRuns(stateText: string | null): boolean {
+  if (stateText === null) return false;
+  try {
+    const record = JSON.parse(stateText) as { runSupport?: unknown } | null;
+    return record?.runSupport === 1;
+  } catch {
+    return false;
+  }
+}
+
+/** RunFiles over a service's `updates` folder. O_EXCL creation: a private temp file linked into place. */
+export function nodeRunFiles(updatesDir: string): RunFiles {
+  const at = (name: string) => Path.join(updatesDir, name);
+  return {
+    read: (name) => readTextOrNull(at(name)),
+    writeAtomic: (name, text) => writeTextAtomic(at(name), text),
+    createExclusive: (name, text) => {
+      FS.mkdirSync(updatesDir, { recursive: true, mode: 0o700 });
+      const temporary = `${at(name)}.${process.pid}.${DateTime.toEpochMillis(DateTime.nowUnsafe())}.create`;
+      FS.writeFileSync(temporary, text, { mode: 0o600, flag: "wx" });
+      try {
+        FS.linkSync(temporary, at(name));
+        return true;
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code === "EEXIST") return false;
+        throw error;
+      } finally {
+        FS.rmSync(temporary, { force: true });
+      }
+    },
+    rename: (from, to) => {
+      FS.mkdirSync(Path.dirname(at(to)), { recursive: true, mode: 0o700 });
+      FS.renameSync(at(from), at(to));
+    },
+    list: (directory) => {
+      try {
+        return FS.readdirSync(at(directory));
+      } catch {
+        return [];
+      }
+    },
+    remove: (name) => FS.rmSync(at(name), { force: true }),
   };
 }
 
@@ -652,11 +726,15 @@ function run(command: string, args: ReadonlyArray<string>, timeout: number): Pro
   });
 }
 
-function writeJsonAtomic(filePath: string, value: unknown) {
+function writeTextAtomic(filePath: string, text: string) {
   FS.mkdirSync(Path.dirname(filePath), { recursive: true, mode: 0o700 });
   const temporary = `${filePath}.${process.pid}.${DateTime.toEpochMillis(DateTime.nowUnsafe())}.tmp`;
-  FS.writeFileSync(temporary, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
+  FS.writeFileSync(temporary, text, { mode: 0o600 });
   FS.renameSync(temporary, filePath);
+}
+
+function writeJsonAtomic(filePath: string, value: unknown) {
+  writeTextAtomic(filePath, `${JSON.stringify(value, null, 2)}\n`);
 }
 
 function readTextOrNull(filePath: string): string | null {
@@ -692,6 +770,10 @@ export interface ServiceUpdateController {
   readonly repairAgent: () => Promise<void>;
   /** See `hasPendingForcedInstall`. */
   readonly pendingForcedInstall: (nowMs: number) => boolean;
+  /** The service's `updates` folder for run records; null when no service is managed here. */
+  readonly runFiles: () => RunFiles | null;
+  /** The agent writes `runSupport: 1` to its state: it claims Update now runs. */
+  readonly runSupported: () => boolean;
 }
 
 /**
@@ -798,6 +880,13 @@ export function makeServiceUpdateController(input: {
           target === null ? null : readTextOrNull(Path.join(updatesDir(target), "state.json")),
         configText:
           target === null ? null : readTextOrNull(Path.join(updatesDir(target), "config.json")),
+        run:
+          target === null
+            ? null
+            : readRunView(
+                nodeRunFiles(updatesDir(target)),
+                DateTime.toEpochMillis(DateTime.nowUnsafe()),
+              ),
       });
     },
     writeConfig: (config) => {
@@ -872,6 +961,17 @@ export function makeServiceUpdateController(input: {
       return hasPendingForcedInstall(
         readTextOrNull(Path.join(updatesDir(target), "config.json")),
         nowMs,
+      );
+    },
+    runFiles: () => {
+      const target = installation();
+      return target === null ? null : nodeRunFiles(updatesDir(target));
+    },
+    runSupported: () => {
+      const target = installation();
+      return (
+        target !== null &&
+        agentSupportsRuns(readTextOrNull(Path.join(updatesDir(target), "state.json")))
       );
     },
   };

@@ -36,12 +36,14 @@ import { HandoffMode } from "./HandoffMode.ts";
 import * as HandoffMoves from "./HandoffMoves.ts";
 import { HandoffPeerError, HandoffPeers } from "./handoffPeers.ts";
 import * as HandoffReceiver from "./HandoffReceiver.ts";
+import { HANDOFF_PROTOCOL_VERSION } from "./handoffWire.ts";
 import {
   EMPTY_HANDOFF_DOCUMENT,
   emptyThreadRecord,
   guardSideEffect,
   findIncoming,
   type HandoffDocument,
+  incomingKey,
 } from "./handoffState.ts";
 
 const temporary: Array<string> = [];
@@ -287,6 +289,8 @@ const scenario = (
       dropTakeoverAnswer: false,
       dropTakeoverRequest: false,
       refuseTakeover: null as "fenced" | "busy" | null,
+      olderDestination: false,
+      newerDestination: false,
     };
     const viaNetwork = <A>(effect: Effect.Effect<A, HandoffReceiver.HandoffRefusal>) =>
       network.down
@@ -314,7 +318,33 @@ const scenario = (
       negotiate: (_, request) => viaNetwork(destinationReceiver.negotiate(asSource, request)),
       replicate: (_, meta, bundle) =>
         viaNetwork(destinationReceiver.replicate(asSource, meta, bundle)),
-      preflight: (_, request) => viaNetwork(destinationReceiver.preflight(asSource, request)),
+      preflight: (_, request) =>
+        viaNetwork(destinationReceiver.preflight(asSource, request)).pipe(
+          // A destination from before the version check sends no versions.
+          Effect.map(({ protocolVersion: _p, appVersion: _a, ...answer }) =>
+            network.olderDestination
+              ? answer
+              : network.newerDestination
+                ? {
+                    ...answer,
+                    protocolVersion: HANDOFF_PROTOCOL_VERSION + 1,
+                    appVersion: "9.0.0",
+                    // What a newer destination's own check sends back.
+                    results: answer.results.map((result) => ({
+                      ...result,
+                      failures: [
+                        {
+                          check: "version" as const,
+                          message:
+                            "The source machine runs SpecWithCode 1.0.0 and Minis runs 9.0.0; they cannot hand off between these versions. Update the source machine first.",
+                        },
+                        ...result.failures,
+                      ],
+                    })),
+                  }
+                : { ...answer, protocolVersion: _p, appVersion: _a },
+          ),
+        ),
       takeover: (_, request) =>
         (network.refuseTakeover !== null
           ? Effect.fail(
@@ -480,6 +510,98 @@ describe("handoff between two machines", () => {
       expect(machine.results).toEqual([]);
       expect(destination.document.incoming).toHaveLength(0);
       expect(destination.launches).toHaveLength(0);
+    }),
+  );
+
+  it.effect("refuses to hand off to a machine on another handoff version", () =>
+    Effect.gen(function* () {
+      const { source, destination, moves, network, destinationRoot } = yield* scenario();
+      NodeFS.writeFileSync(NodePath.join(destinationRoot, ".env.local"), "TOKEN=minis\n");
+      network.olderDestination = true;
+      const failure = yield* handOff(moves).pipe(Effect.flip);
+      expect(failure.message).toContain("Minis runs SpecWithCode an older version");
+      expect(failure.message).toContain("Update Minis first.");
+      expect(source.document.threads[threadId]?.lease).toMatchObject({ epoch: 1, state: "active" });
+      expect(source.dispatched).toHaveLength(0);
+      expect(destination.launches).toHaveLength(0);
+      // Once both run the same version, the same handoff goes through.
+      network.olderDestination = false;
+      yield* handOff(moves);
+      expect(destination.launches).toHaveLength(1);
+    }),
+  );
+
+  it.effect("names this machine to update when the destination is newer", () =>
+    Effect.gen(function* () {
+      const { moves, network, destination } = yield* scenario();
+      network.newerDestination = true;
+      const failure = yield* handOff(moves).pipe(Effect.flip);
+      expect(failure.message).toContain("Minis runs SpecWithCode 9.0.0");
+      expect(failure.message).toContain("Update M4 first.");
+      expect(failure.message).not.toContain("the source machine");
+      expect(destination.launches).toHaveLength(0);
+    }),
+  );
+
+  it.effect("never continues here a copy from a machine on another handoff version", () =>
+    Effect.gen(function* () {
+      const { moves, destinationReceiver, destination, destinationRoot, destinationServices } =
+        yield* scenario();
+      NodeFS.writeFileSync(NodePath.join(destinationRoot, ".env.local"), "TOKEN=minis\n");
+      yield* moves.preflight({ destinationEnvironmentId: minis, threadIds: [threadId] });
+      const key = incomingKey(m4, threadId);
+      expect(destination.document.incomingDetails?.[key]?.sourceProtocolVersion).toBe(
+        HANDOFF_PROTOCOL_VERSION,
+      );
+      // A copy sent by a build from before the version check.
+      const {
+        sourceProtocolVersion: _v,
+        sourceAppVersion: _a,
+        ...older
+      } = destination.document.incomingDetails?.[key]!;
+      destination.document = {
+        ...destination.document,
+        incomingDetails: { ...destination.document.incomingDetails, [key]: older },
+      };
+      const renewedAt = Date.parse(
+        findIncoming(destination.document, m4, threadId)!.lease.renewedAt,
+      );
+      const minisMoves = yield* HandoffMoves.make.pipe(
+        Effect.provideService(HandoffReceiver.HandoffReceiver, destinationReceiver),
+        Effect.provideService(HandoffPeers, {} as never),
+        Effect.provide(destinationServices),
+      );
+      yield* TestClock.setTime(renewedAt + HANDOFF_LEASE_STALE_MS + 1_000);
+      const refused = yield* minisMoves
+        .continueHere({ sourceEnvironmentId: m4, sourceThreadId: threadId })
+        .pipe(Effect.flip);
+      expect(refused.code).toBe("invalid");
+      expect(refused.message).toContain("Update M4 first.");
+      expect(destination.launches).toHaveLength(0);
+    }),
+  );
+
+  it.effect("tells an older source which machine to update, in a check it can read", () =>
+    Effect.gen(function* () {
+      const { destinationReceiver, asSource } = yield* scenario();
+      const request = {
+        sourceEnvironmentId: m4,
+        threads: [
+          { sourceThreadId: threadId, sourceProjectId: sourceProject, sequence: 1, modelSelection },
+        ],
+      };
+      const older = yield* destinationReceiver.preflight(asSource, request);
+      expect(older.results[0]?.failures[0]).toMatchObject({ check: "checkpoint" });
+      expect(older.results[0]?.failures[0]?.message).toContain("Update the source machine first.");
+      const current = yield* destinationReceiver.preflight(asSource, {
+        ...request,
+        protocolVersion: HANDOFF_PROTOCOL_VERSION,
+        appVersion: "9.9.9",
+      });
+      expect(current.protocolVersion).toBe(HANDOFF_PROTOCOL_VERSION);
+      expect(current.results[0]?.failures.some((entry) => entry.message.includes("Update"))).toBe(
+        false,
+      );
     }),
   );
 

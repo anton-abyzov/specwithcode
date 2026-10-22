@@ -101,7 +101,11 @@ const DAYS = [
 ] as const;
 
 function describeSchedule(task: ScheduledTask): string {
-  if (task.schedule.type === "manual" || task.schedule.type === "monthly")
+  if (
+    task.schedule.type === "manual" ||
+    task.schedule.type === "monthly" ||
+    task.schedule.type === "once"
+  )
     return routineCadenceLabel(task.schedule);
   if (task.schedule.type === "webhook") return "On webhook";
   if (task.schedule.type === "interval") return formatScheduledTaskInterval(task.schedule.everyMs);

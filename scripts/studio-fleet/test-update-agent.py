@@ -1557,7 +1557,7 @@ runpy.run_path(script, run_name='__main__')
         shipped = re.search(r'MAC_SERVICE_UPDATER_FILES = \[([^\]]*)\]', build).group(1)
         # migrate_home is its own entry point, shipped and installed beside the agent.
         self.assertEqual(sorted(re.findall(r'"([a-z_]+)\.py"', shipped)), sorted(['update_agent', 'managed_updates', 'migrate_home'] + imported))
-        self.assertEqual(imported, ['installation_descriptor', 'studio_paths', 'update_agent_cache', 'update_agent_reap', 'update_agent_recovery', 'update_request'])
+        self.assertEqual(imported, ['installation_descriptor', 'studio_paths', 'update_agent_cache', 'update_agent_reap', 'update_agent_recovery', 'update_agent_run', 'update_request'])
 
     def hold_lock_and_install(self):
         holder = os.open(str(self.updates / 'agent.lock'), os.O_RDWR | os.O_CREAT, 0o600)

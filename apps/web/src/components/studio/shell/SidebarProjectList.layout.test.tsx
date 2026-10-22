@@ -10,6 +10,7 @@ vi.mock("@tanstack/react-router", () => ({
     <a {...(rest as object)}>{children}</a>
   ),
   useRouter: () => ({ routesById: {} }),
+  useNavigate: () => () => undefined,
 }));
 vi.mock("../../ProjectFavicon", () => ({ ProjectFavicon: () => null }));
 

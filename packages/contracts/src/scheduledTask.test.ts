@@ -50,3 +50,38 @@ describe("ScheduledTaskUpsertSchedule", () => {
     ).toThrow();
   });
 });
+
+describe("one-time schedule time", () => {
+  it("accepts ISO 8601 times with an offset or Z", () => {
+    for (const at of [
+      "2026-10-22T13:30:00Z",
+      "2026-10-22T13:30:00.000Z",
+      "2026-10-22T09:30:00-04:00",
+      "2026-10-22T09:30+05:30",
+    ]) {
+      expect(decodeUpsertSchedule({ type: "once", at })).toEqual({ type: "once", at });
+    }
+  });
+
+  it("refuses a naive local time and anything that is not a real date and time", () => {
+    for (const at of [
+      "2026-10-22T09:30:00",
+      "2026-10-22 09:30:00Z",
+      "2026-10-22",
+      "Oct 22 2026 09:30 GMT",
+      "1793000000000",
+      "2026-02-30T09:30:00Z",
+      "2026-10-22T24:00:00Z",
+      "2026-10-22T09:30:00+25:00",
+    ]) {
+      expect(() => decodeUpsertSchedule({ type: "once", at }), at).toThrow();
+    }
+  });
+
+  it("keeps a stored time that predates the strict check readable", () => {
+    expect(decodeSchedule({ type: "once", at: "2026-10-22T09:30:00" })).toEqual({
+      type: "once",
+      at: "2026-10-22T09:30:00",
+    });
+  });
+});

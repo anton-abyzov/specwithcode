@@ -245,6 +245,19 @@ afterEach(async () => {
 });
 
 describe("projects and chats sidebar", () => {
+  it("links Design after Overview and marks it on the gallery and the editor", async () => {
+    await render();
+    const labels = [...container.querySelectorAll(".sws-side-actions > .sws-side-row")].map(
+      (row) => row.querySelector(".sws-side-row-label")?.textContent,
+    );
+    expect(labels.indexOf("Design")).toBeGreaterThan(labels.indexOf("Overview"));
+    const design = () => container.querySelector('a[href="/design"]');
+    expect(design()?.getAttribute("aria-current")).toBeNull();
+    state.pathname = "/design/pg.d_1";
+    await render();
+    expect(design()?.getAttribute("aria-current")).toBe("page");
+  });
+
   it("lists projects, marks the open one and counts what waits on the person", async () => {
     state.params = { projectKey: "host:/b" };
     state.shells = state.shells.map((thread) =>
@@ -1089,6 +1102,37 @@ describe("cleaning up the projects list", () => {
         workspaceSettings: { expectedRevision: 2, archived: false },
       },
     });
+  });
+
+  it("opens a project's designs from its row menu, only where the primary host has it", async () => {
+    state.groups.push({
+      projectKey: "remote:/c",
+      displayName: "Cirrus",
+      memberProjects: [{ environmentId: "remote", id: "p3" }],
+    });
+    await render();
+    const openMenu = async (name: string) => {
+      const trigger = container.querySelector<HTMLButtonElement>(
+        `[aria-label="Actions for ${name}"]`,
+      )!;
+      await act(async () => {
+        trigger.dispatchEvent(new PointerEvent("pointerdown", { bubbles: true, button: 0 }));
+        trigger.click();
+      });
+    };
+    const designsItem = () =>
+      [...document.querySelectorAll<HTMLElement>('[role="menuitem"]')].find(
+        (entry) => entry.textContent === "Designs",
+      );
+    await openMenu("Cirrus");
+    expect(document.querySelector('[role="menuitem"]')).not.toBeNull();
+    expect(designsItem()).toBeUndefined();
+    await act(async () => {
+      document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true }));
+    });
+    await openMenu("Borealis");
+    await act(async () => designsItem()!.click());
+    expect(state.navigate).toHaveBeenCalledWith({ to: "/design", search: { project: "p2" } });
   });
 
   it("renames a double-clicked project in place, keeping the single click", async () => {

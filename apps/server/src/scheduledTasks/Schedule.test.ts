@@ -15,6 +15,29 @@ describe("scheduled task schedule calculation", () => {
     expect(parseTimeOfDay("25:00")).toBeNull();
   });
 
+  it("keeps a one-time run at its own moment, or arms a past one at once", () => {
+    const once = { type: "once", at: "2026-10-22T11:03:00Z" } as const;
+    const nextFrom = (from: string) => {
+      const next = nextScheduledRunAt(once, DateTime.makeUnsafe(from));
+      return next ? DateTime.formatIso(DateTime.toUtc(next)) : null;
+    };
+    expect(nextFrom("2026-10-21T00:00:00.000Z")).toBe("2026-10-22T11:03:00.000Z");
+    // Past: due when armed, so each arming is its own occurrence.
+    expect(nextFrom("2026-10-23T00:00:00.000Z")).toBe("2026-10-23T00:00:00.000Z");
+    expect(nextFrom("2026-10-23T00:00:05.000Z")).toBe("2026-10-23T00:00:05.000Z");
+    // Hours late is not missed: a late one fires once rather than being dropped.
+    expect(
+      isMissedFixedTimeRun(
+        once,
+        DateTime.makeUnsafe("2026-10-22T11:03:00.000Z"),
+        DateTime.makeUnsafe("2026-10-22T19:00:00.000Z"),
+      ),
+    ).toBe(false);
+    expect(isSameSchedule(once, { type: "once", at: "2026-10-22T07:03:00-04:00" })).toBe(true);
+    expect(isSameSchedule(once, { type: "once", at: "2026-10-22T11:04:00Z" })).toBe(false);
+    expect(isSameSchedule(once, { type: "fixed_time", timeOfDay: "11:03" })).toBe(false);
+  });
+
   it("calculates interval schedules from the supplied instant", () => {
     const next = nextScheduledRunAt(
       { type: "interval", everyMs: 5 * 60_000 },

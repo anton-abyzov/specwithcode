@@ -21,7 +21,9 @@ import * as DesktopLocalService from "../../backend/DesktopLocalService.ts";
 import * as DesktopObservability from "../../app/DesktopObservability.ts";
 import * as ElectronWindow from "../../electron/ElectronWindow.ts";
 import * as DesktopAppSettings from "../../settings/DesktopAppSettings.ts";
+import { LocalServiceProbeError } from "../../updates/appActivationGate.ts";
 import * as DesktopUpdates from "../../updates/DesktopUpdates.ts";
+import { installAppRelease, makeRunFollowUp } from "../../updates/runFollowUp.ts";
 import {
   type AgentStartFailure,
   cancelServiceInstallChange,
@@ -41,6 +43,7 @@ import {
 } from "../../updates/studioServiceUpdates.ts";
 import * as DesktopIpc from "../DesktopIpc.ts";
 import * as IpcChannels from "../channels.ts";
+import { installServiceUpdateRuns, makeServiceUpdateRuns } from "./serviceUpdateRuns.ts";
 
 /** A release service older than this app (never a dev or nightly build). */
 export function isStaleService(serviceVersion: string | undefined, appVersion: string): boolean {
@@ -144,6 +147,20 @@ export class ServiceUpdateCancelError extends Schema.TaggedError<ServiceUpdateCa
 ) {
   override get message(): string {
     return "The update could not be cancelled. Try again in a moment.";
+  }
+}
+
+/**
+ * The install request named an Update now run that already ended (cancelled,
+ * abandoned or failed): nothing is requested, and the window that asked
+ * releases the work it held for it.
+ */
+export class ServiceUpdateRunEndedError extends Schema.TaggedError<ServiceUpdateRunEndedError>()(
+  "ServiceUpdateRunEndedError",
+  {},
+) {
+  override get message(): string {
+    return "This update ended before its install was requested. Press Update now to start again.";
   }
 }
 
@@ -323,6 +340,60 @@ export const installServiceUpdates = Effect.fn("desktop.ipc.installServiceUpdate
       );
     });
 
+  // Update now as one durable run (updates/run.json): created once, followed
+  // by every window, owned by the agent while it installs (serviceUpdateRuns.ts).
+  const localService = yield* DesktopLocalService.DesktopLocalService;
+  const withLocalService = Effect.provideService(
+    DesktopLocalService.DesktopLocalService,
+    localService,
+  );
+
+  // The app swaps itself for a downloaded release only once this service runs
+  // it (updates/appActivationGate.ts). The version comes from the agent's
+  // state and from the service the app attached to, whichever is newer.
+  yield* updates.registerLocalServiceProbe(
+    Effect.gen(function* () {
+      const attached = Option.getOrNull(yield* localService.attached);
+      const controller = controllerForAttachedService(environment, attached);
+      if (controller.installation() === null) return null;
+      const runningVersion = DesktopLocalService.isInstalledService(attached)
+        ? (attached?.descriptor.serverVersion ?? null)
+        : null;
+      const state = yield* Effect.try({
+        try: () => controller.readState(),
+        catch: (cause) =>
+          new LocalServiceProbeError({
+            detail: cause instanceof Error ? cause.message : "the update agent state is unreadable",
+          }),
+      });
+      return { state, runningVersion };
+    }),
+  );
+
+  // The app half of a run: installed by main once the service is verified,
+  // with or without a window (updates/runFollowUp.ts).
+  const followUp = makeRunFollowUp({
+    files: controllerFor(environment).pipe(
+      withLocalService,
+      Effect.map((controller) =>
+        controller.installation() === null ? null : controller.runFiles(),
+      ),
+    ),
+    appVersion: environment.appVersion,
+    install: installAppRelease(updates),
+  });
+  // Before the first update check (15 seconds after start): a relaunch settles its run.
+  yield* followUp.reconcile.pipe(Effect.ignoreCause);
+
+  const runs = makeServiceUpdateRuns({
+    controller: controllerFor(environment).pipe(withLocalService),
+    followUp,
+    publish: publish.pipe(withLocalService),
+    kick: (reason) =>
+      startAgent(reason, true).pipe(withLocalService, Effect.forkDetach, Effect.asVoid),
+    writeConfig: (change) => syncConfig(change).pipe(withLocalService),
+  });
+
   yield* ipc.handle(
     DesktopIpc.makeIpcMethod({
       channel: IpcChannels.UPDATE_GET_PREFERENCES_CHANNEL,
@@ -388,18 +459,44 @@ export const installServiceUpdates = Effect.fn("desktop.ipc.installServiceUpdate
       const at = DateTime.formatIso(now);
       const install = parseServiceInstallOptions(raw, DateTime.toEpochMillis(now));
       const state = yield* readState;
+      // A request of an Update now run: the run is `requested` before the agent
+      // can read its id, and its deadline is the request's one clock.
+      const runId =
+        kind === "install" && typeof raw === "object" && raw !== null
+          ? (raw as { runId?: unknown }).runId
+          : undefined;
+      const run = kind === "install" ? yield* runs.request(runId ?? null, at) : null;
+      // A request naming a run that main already ended (cancelled, abandoned,
+      // failed) is refused: it never turns into a forced install nobody tracks.
+      // Only a request without a run takes the path of an older renderer.
+      if (kind === "install" && runId !== undefined && runId !== null && run === null) {
+        yield* logWarning("install request for an ended update run refused", {
+          runId: typeof runId === "string" ? runId : String(runId),
+        });
+        yield* publish;
+        return yield* new ServiceUpdateRunEndedError();
+      }
       const written = yield* syncConfig(
         kind === "check"
           ? { checkRequestedAt: at }
           : {
               installRequestedAt: at,
-              installMode: install.mode,
-              installHoldUntil: install.mode === "force" ? install.holdUntil : null,
+              installMode: run !== null ? "force" : install.mode,
+              installHoldUntil:
+                run !== null
+                  ? run.installHoldUntil
+                  : install.mode === "force"
+                    ? install.holdUntil
+                    : null,
               // The version the user was shown: the agent installs no other, and not after 10 minutes.
               installRequest: serviceInstallRequestRecord(at, install.version, state),
+              installRunId: run?.installRunId ?? null,
             },
       );
       agentFailure = written ? null : { at, message: REQUEST_NOT_WRITTEN };
+      // A run whose request is not in config.json has no owner and never will:
+      // it fails now with the reason, not at its deadline.
+      if (!written && run !== null) yield* runs.failRequest(run.installRunId, REQUEST_NOT_WRITTEN);
       if (written) {
         const reason =
           kind === "check"
@@ -420,7 +517,15 @@ export const installServiceUpdates = Effect.fn("desktop.ipc.installServiceUpdate
             Effect.catch((error) => reportAgentFailure(reason, error).pipe(Effect.as(null))),
           );
           // Nothing would handle the request: running the agent again only repeats the failure.
-          if (outcome === null) return yield* publish;
+          if (outcome === null) {
+            if (run !== null) {
+              yield* runs.failRequest(
+                run.installRunId,
+                agentFailure?.message ?? "The update agent could not be started.",
+              );
+            }
+            return yield* publish;
+          }
           // The refreshed agent is running the request: a second refresh and
           // kick would only find it busy. One that did not finish refreshing in
           // time completes in the background, so the next pass runs the new agent.
@@ -490,6 +595,9 @@ export const installServiceUpdates = Effect.fn("desktop.ipc.installServiceUpdate
           if (!(yield* syncConfig(cancelServiceInstallChange(at)))) {
             return yield* new ServiceUpdateCancelError();
           }
+          // A run nobody claimed yet ends here; a claimed one ends when its agent reads the cancel.
+          const files = (yield* controllerFor(environment)).runFiles();
+          if (files !== null) yield* runs.cancelUnclaimed(files, null, at);
           agentFailure = null;
           yield* logInfo("service update install cancelled", {});
           return yield* publish;
@@ -570,7 +678,10 @@ export const installServiceUpdates = Effect.fn("desktop.ipc.installServiceUpdate
     }),
   ).pipe(Effect.ignoreCause, Effect.forkScoped);
 
+  yield* installServiceUpdateRuns(runs, publish.pipe(withLocalService));
+
   yield* publish.pipe(
+    Effect.andThen(updates.refreshActivation),
     Effect.andThen(Effect.sleep(STATE_POLL_INTERVAL)),
     Effect.forever,
     Effect.ignoreCause,

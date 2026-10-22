@@ -89,6 +89,11 @@ function layerExecutorFor(input: {
   readonly recordHeld?: boolean;
   /** The turn start never returns, like a provider stuck opening its session. */
   readonly startNever?: boolean;
+  /** What settling a timed-out start as an open failure answers; absent when unsupported. */
+  readonly settleTimedOutStart?: (input: {
+    readonly runId: RunId;
+    readonly message: string;
+  }) => Effect.Effect<boolean>;
 }) {
   const record = (event: string) => Ref.update(input.events, (events) => [...events, event]);
   const layerDependencies = Layer.mergeAll(
@@ -121,6 +126,9 @@ function layerExecutorFor(input: {
     Layer.succeed(
       ProviderTurnStartService.ProviderTurnStartServiceV2,
       ProviderTurnStartService.ProviderTurnStartServiceV2.of({
+        ...(input.settleTimedOutStart === undefined
+          ? {}
+          : { settleTimedOutStart: input.settleTimedOutStart }),
         start: () =>
           Effect.gen(function* () {
             if (input.recordHeld === true) {
@@ -926,6 +934,47 @@ it.effect("ends the run of a provider turn start that never returns", () =>
         },
       ]);
     }).pipe(Effect.provide(layer));
+  }),
+);
+
+it.effect("fails a timed-out start as an open failure when it can be settled", () =>
+  Effect.gen(function* () {
+    const now = yield* DateTime.now;
+    const events = yield* Ref.make<ReadonlyArray<string>>([]);
+    const dispatched = yield* Ref.make<ReadonlyArray<unknown>>([]);
+    const settled = yield* Ref.make<ReadonlyArray<unknown>>([]);
+    for (const answer of [true, false]) {
+      yield* Ref.set(dispatched, []);
+      const layer = layerExecutorFor({
+        events,
+        startNever: true,
+        settleTimedOutStart: (request) =>
+          Ref.update(settled, (all) => [...all, request]).pipe(Effect.as(answer)),
+        threads: {
+          dispatch: (command) =>
+            Ref.update(dispatched, (commands) => [...commands, command]).pipe(
+              Effect.as({} as never),
+            ),
+        },
+      });
+      yield* Effect.gen(function* () {
+        const executor = yield* EffectWorker.OrchestrationEffectExecutorV2;
+        const execution = yield* executor
+          .execute(startEffect(now), { willRetry: true })
+          .pipe(Effect.forkChild);
+        yield* TestClock.adjust(EffectWorker.PROVIDER_TURN_START_TIMEOUT);
+        assert.isTrue(Exit.isSuccess(yield* Fiber.await(execution)));
+      }).pipe(Effect.provide(layer));
+      // Settled as failed: nothing interrupts the run. Otherwise it is ended as before.
+      assert.deepEqual(
+        (yield* Ref.get(dispatched)).map((command) => (command as { type: string }).type),
+        answer ? [] : ["run.interrupt"],
+      );
+    }
+    assert.deepEqual(yield* Ref.get(settled), [
+      { threadId, runId, message: EffectWorker.PROVIDER_SESSION_OPEN_TIMEOUT_MESSAGE },
+      { threadId, runId, message: EffectWorker.PROVIDER_SESSION_OPEN_TIMEOUT_MESSAGE },
+    ]);
   }),
 );
 

@@ -45,6 +45,8 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
   let checkCount = 0;
   let quitAndInstallCount = 0;
   let downloadCount = 0;
+  // Every value the updater was given for install-on-quit, in order.
+  const installOnQuitValues: boolean[] = [];
   let allowDowngrade = false;
   let fullChangelog = false;
   const feedUrls: ElectronUpdater.ElectronUpdaterFeedUrl[] = [];
@@ -76,7 +78,10 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
         feedUrls.push(options);
       }),
     setAutoDownload: () => Effect.void,
-    setAutoInstallOnAppQuit: () => Effect.void,
+    setAutoInstallOnAppQuit: (value) =>
+      Effect.sync(() => {
+        installOnQuitValues.push(value);
+      }),
     setChannel: () => Effect.void,
     setAllowPrerelease: () => Effect.void,
     allowDowngrade: Effect.sync(() => allowDowngrade),
@@ -286,6 +291,7 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
     updateRestartMarkers,
     files,
     downloadCount: () => downloadCount,
+    installOnQuit: (): boolean | undefined => installOnQuitValues.at(-1),
     feedUrls: (): ElectronUpdater.ElectronUpdaterFeedUrl[] => feedUrls,
     fullChangelog: () => fullChangelog,
     listenerCount: () =>

@@ -7,12 +7,13 @@ import * as Effect from "effect/Effect";
 import * as Result from "effect/Result";
 import {
   EnvironmentId,
-  ProjectId,
+  ThreadId,
   type MachineHandoffBundle,
   type MachineHandoffPrepareInput,
 } from "@specweave-studio/contracts";
 import * as MachineHandoff from "./MachineHandoff.ts";
 import * as MachineHandoffStore from "./MachineHandoffStore.ts";
+import { ACTIVE_COPY_WARNING } from "./folderCopyPreparation.ts";
 import type { DestinationRecord } from "./folderTransfer/destinationService.ts";
 import { validManifest } from "./handoffGitTypes.ts";
 import {
@@ -67,6 +68,31 @@ const scanned = (service: MachineHandoff.MachineHandoff["Service"]) =>
       yield* Effect.promise(() => new Promise((resolve) => setTimeout(resolve, 25)));
     }
     throw new Error("The scan did not finish");
+  });
+
+/** Exercise the same source endpoints the destination uses to finish its file copy. */
+const commitCopiedFiles = (service: MachineHandoff.MachineHandoff["Service"], token: string) =>
+  Effect.gen(function* () {
+    const request = (action: string, value: unknown) =>
+      service.serveFolderTransfer({
+        method: "POST",
+        path: `/${id}/${action}`,
+        authorization: `Bearer ${token}`,
+        body: async () => new TextEncoder().encode(JSON.stringify(value)),
+      });
+    expect(
+      (yield* request("manifest", {
+        selection: ["repository", "tracked", "untracked", "ignoredData"],
+      })).status,
+    ).toBe(202);
+    for (let attempt = 0; attempt < 200; attempt++) {
+      const status = yield* service.copySourceStatus({ operationId: id });
+      if (status.state === "ready") break;
+      if (status.state === "failed") throw new Error(status.error ?? "The manifest failed");
+      yield* Effect.promise(() => new Promise((resolve) => setTimeout(resolve, 5)));
+    }
+    expect((yield* request("commit", {})).status).toBe(200);
+    expect((yield* service.copySourceStatus({ operationId: id })).state).toBe("committed");
   });
 
 /** The destination's bundle for a folder copy that continues in its own project folder. */
@@ -125,6 +151,7 @@ it.live("offers a plain copy while chats run and never fences the coordinator", 
     expect(offer.token.length).toBeGreaterThan(20);
     const status = yield* scanned(service);
     expect(status.state).toBe("scanned");
+    expect(status.summary?.warnings).toContain(ACTIVE_COPY_WARNING);
     expect(h.projects.get(projectId)?.workspaceSettings?.coordinatorBinding).toBeUndefined();
     expect(h.state.policyUpdates).toHaveLength(0);
   }).pipe(Effect.provide(h.layer));
@@ -140,12 +167,14 @@ it.live("names the source by its machine nickname, else its host label", () =>
       });
       return Effect.gen(function* () {
         const service = yield* MachineHandoff.MachineHandoff;
-        return yield* service.copyOffer({
+        const offered = yield* service.copyOffer({
           projectId,
           operationId: id,
           mode: "copy-only",
           destinationEnvironmentId: other,
         });
+        yield* scanned(service); // The source scan must settle before its private store closes.
+        return offered;
       }).pipe(Effect.provide(h.layer));
     };
     const at = "2026-10-20T00:00:00.000Z";
@@ -166,19 +195,42 @@ it.live("names the source by its machine nickname, else its host label", () =>
   }),
 );
 
-it.live("refuses to move the coordinator while a chat in the folder is running", () => {
+it.live("offers a moving copy while work runs but defers coordinator transfer", () => {
   const h = makeHarness({ workspaceRoot: sourceFolder(), endpoints: tailnet, busy: true });
+  return Effect.gen(function* () {
+    const service = yield* MachineHandoff.MachineHandoff;
+    const offer = yield* service.copyOffer({
+      projectId,
+      operationId: id,
+      mode: "copy-and-move",
+      destinationEnvironmentId: other,
+    });
+    expect(offer.mode).toBe("copy-and-move");
+    const status = yield* scanned(service);
+    expect(status.state).toBe("scanned");
+    expect(status.summary?.warnings).toContain(ACTIVE_COPY_WARNING);
+    // Copying and scanning do not change ownership; a context handoff stays guarded.
+    expect((yield* failureOnly(service.prepare(copyPreview))).code).toBe("busy");
+    expect(h.state.policyUpdates).toHaveLength(0);
+    expect(h.projects.get(projectId)?.workspaceSettings?.coordinatorBinding).toBeUndefined();
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.live("does not treat an activity lookup failure as permission to copy", () => {
+  // An empty real database deliberately lacks the activity projections.
+  const h = makeHarness({ workspaceRoot: sourceFolder(), endpoints: tailnet, realDatabase: true });
   return Effect.gen(function* () {
     const service = yield* MachineHandoff.MachineHandoff;
     const error = yield* failureOnly(
       service.copyOffer({
         projectId,
         operationId: id,
-        mode: "copy-and-move",
+        mode: "copy-only",
         destinationEnvironmentId: other,
       }),
     );
-    expect(error.code).toBe("busy");
+    expect(error.code).toBe("invalid");
+    expect(h.state.policyUpdates).toHaveLength(0);
   }).pipe(Effect.provide(h.layer));
 });
 
@@ -278,6 +330,10 @@ it.live("continues a folder copy only where the applied copy landed", () => {
       NodeFS.writeFileSync(NodePath.join(directory, "operation.json"), JSON.stringify(value));
     write({ ...record, targetFolder: "/elsewhere" });
     expect((yield* failureOnly(service.receive(destinationPreview(bundle)))).code).toBe("conflict");
+    write({ ...record, unstable: ["README.md"] });
+    expect((yield* failureOnly(service.receive(destinationPreview(bundle)))).code).toBe("conflict");
+    write({ ...record, checks: [{ repo: ".", ok: false, problems: ["Git verification failed"] }] });
+    expect((yield* failureOnly(service.receive(destinationPreview(bundle)))).code).toBe("conflict");
     write(record);
     expect((yield* service.receive(destinationPreview(bundle))).phase).toBe("ready");
     const result = yield* service.receive({ projectId, operationId: id, bundle, mode: "start" });
@@ -287,3 +343,277 @@ it.live("continues a folder copy only where the applied copy landed", () => {
     expect(h.projects.get(projectId)?.workspaceSettings?.coordinatorBinding?.state).toBe("active");
   }).pipe(Effect.provide(h.layer));
 });
+
+it.live("abandons an applied copy's unpublished context and rejects a delayed publish", () => {
+  const h = makeHarness({ workspaceRoot: sourceFolder(), endpoints: tailnet });
+  return Effect.gen(function* () {
+    const service = yield* MachineHandoff.MachineHandoff;
+    const offer = yield* service.copyOffer({
+      projectId,
+      operationId: id,
+      mode: "copy-and-move",
+      destinationEnvironmentId: other,
+    });
+    yield* scanned(service);
+    const prepared = yield* service.prepare(copyPreview);
+    yield* commitCopiedFiles(service, offer.token);
+    const released = yield* service.copyRelease({
+      projectId,
+      operationId: id,
+      reason: "Start a fresh copy",
+    });
+    expect(released.released).toBe(false); // No ownership fence existed to release.
+    expect((yield* service.copySourceStatus({ operationId: id })).state).toBe("released");
+    expect((yield* failureOnly(service.prepare(copyPreview))).code).toBe("conflict");
+    expect(
+      (yield* failureOnly(
+        service.prepare({ ...copyPreview, publish: true, expectedDigest: prepared.bundle.digest }),
+      )).code,
+    ).toBe("conflict");
+    expect(h.state.policyUpdates).toHaveLength(0);
+    expect(h.projects.get(projectId)?.workspaceSettings?.coordinatorBinding).toBeUndefined();
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.live("never abandons published ownership even when its current binding looks active", () => {
+  const h = makeHarness({ workspaceRoot: sourceFolder(), endpoints: tailnet });
+  return Effect.gen(function* () {
+    const service = yield* MachineHandoff.MachineHandoff;
+    const offer = yield* service.copyOffer({
+      projectId,
+      operationId: id,
+      mode: "copy-and-move",
+      destinationEnvironmentId: other,
+    });
+    yield* scanned(service);
+    const prepared = yield* service.prepare(copyPreview);
+    yield* service.prepare({
+      ...copyPreview,
+      publish: true,
+      expectedDigest: prepared.bundle.digest,
+    });
+    yield* commitCopiedFiles(service, offer.token);
+    const current = h.projects.get(projectId)!;
+    h.projects.set(projectId, {
+      ...current,
+      workspaceSettings: {
+        ...current.workspaceSettings!,
+        coordinatorBinding: { ...current.workspaceSettings!.coordinatorBinding!, state: "active" },
+      },
+    });
+    expect(
+      (yield* failureOnly(
+        service.copyRelease({ projectId, operationId: id, reason: "Start fresh" }),
+      )).code,
+    ).toBe("refused");
+    expect((yield* service.copySourceStatus({ operationId: id })).state).toBe("committed");
+    expect(h.state.policyUpdates).toHaveLength(1);
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.live.each(["transferring", "transferred"] as const)(
+  "never abandons a %s binding without a publication receipt",
+  (state) => {
+    const h = makeHarness({ workspaceRoot: sourceFolder(), endpoints: tailnet });
+    return Effect.gen(function* () {
+      const service = yield* MachineHandoff.MachineHandoff;
+      const offer = yield* service.copyOffer({
+        projectId,
+        operationId: id,
+        mode: "copy-and-move",
+        destinationEnvironmentId: other,
+      });
+      yield* commitCopiedFiles(service, offer.token);
+      const current = h.projects.get(projectId)!;
+      h.projects.set(projectId, {
+        ...current,
+        workspaceSettings: {
+          ...current.workspaceSettings!,
+          coordinatorBinding: { epoch: 1, operationId: id, state },
+        },
+      });
+      expect(
+        (yield* failureOnly(
+          service.copyRelease({ projectId, operationId: id, reason: "Start fresh" }),
+        )).code,
+      ).toBe("refused");
+      expect((yield* service.copySourceStatus({ operationId: id })).state).toBe("committed");
+      expect(h.state.policyUpdates).toHaveLength(0);
+    }).pipe(Effect.provide(h.layer));
+  },
+);
+
+it.live("does not abandon an applied copy when its authoritative project is missing", () => {
+  const h = makeHarness({ workspaceRoot: sourceFolder(), endpoints: tailnet });
+  return Effect.gen(function* () {
+    const service = yield* MachineHandoff.MachineHandoff;
+    const offer = yield* service.copyOffer({
+      projectId,
+      operationId: id,
+      mode: "copy-and-move",
+      destinationEnvironmentId: other,
+    });
+    yield* commitCopiedFiles(service, offer.token);
+    h.projects.delete(projectId);
+    expect(
+      (yield* failureOnly(
+        service.copyRelease({ projectId, operationId: id, reason: "Start fresh" }),
+      )).code,
+    ).toBe("not_found");
+    expect((yield* service.copySourceStatus({ operationId: id })).state).toBe("committed");
+    expect(h.state.policyUpdates).toHaveLength(0);
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.live("serializes abandoning a copied context against publishing it", () => {
+  const h = makeHarness({ workspaceRoot: sourceFolder(), endpoints: tailnet });
+  return Effect.gen(function* () {
+    const service = yield* MachineHandoff.MachineHandoff;
+    const offer = yield* service.copyOffer({
+      projectId,
+      operationId: id,
+      mode: "copy-and-move",
+      destinationEnvironmentId: other,
+    });
+    yield* scanned(service);
+    const prepared = yield* service.prepare(copyPreview);
+    yield* commitCopiedFiles(service, offer.token);
+    const [released, published] = yield* Effect.all(
+      [
+        service
+          .copyRelease({ projectId, operationId: id, reason: "Start fresh" })
+          .pipe(Effect.result),
+        service
+          .prepare({ ...copyPreview, publish: true, expectedDigest: prepared.bundle.digest })
+          .pipe(Effect.result),
+      ],
+      { concurrency: "unbounded" },
+    );
+    expect(Number(Result.isSuccess(released)) + Number(Result.isSuccess(published))).toBe(1);
+    const source = yield* service.copySourceStatus({ operationId: id });
+    if (Result.isSuccess(released)) {
+      expect(source.state).toBe("released");
+      expect(h.state.policyUpdates).toHaveLength(0);
+    } else {
+      expect(source.state).toBe("committed");
+      expect(h.projects.get(projectId)?.workspaceSettings?.coordinatorBinding?.state).toBe(
+        "transferring",
+      );
+    }
+  }).pipe(Effect.provide(h.layer));
+});
+
+it.live.each([false, true])(
+  "preflights a registered copy with its exact logical identity (custom coordinator=%s)",
+  (customCoordinator) => {
+    const folder = sourceFolder();
+    const h = makeHarness({ endpoints: tailnet, workspaceRoot: folder });
+    return Effect.gen(function* () {
+      const service = yield* MachineHandoff.MachineHandoff;
+      const store = yield* MachineHandoffStore.MachineHandoffStore;
+      const prepared = yield* service.prepare({
+        ...preview,
+        destination: {
+          ...preview.destination,
+          executionMode: "project-folder",
+          coordinatorThreadId: threadId,
+        },
+      });
+      const bundle = folderCopyBundle(prepared.bundle);
+      const targetCoordinator = customCoordinator ? ThreadId.make("custom-coordinator") : threadId;
+      const current = h.projects.get(projectId)!;
+      h.projects.set(projectId, {
+        ...current,
+        workspaceSettings: {
+          ...current.workspaceSettings!,
+          coordinatorThreadId: targetCoordinator,
+          logicalProject: {
+            id: "existing-logical-project",
+            title: "Existing destination",
+            coordinatorId: "existing-logical-coordinator",
+            members: [
+              {
+                environmentId: EnvironmentId.make("source-env"),
+                projectId,
+                coordinatorThreadId: targetCoordinator,
+              },
+            ],
+          },
+        },
+      });
+      const record: DestinationRecord = {
+        version: 1,
+        operationId: id,
+        sourceUrl: "https://other.example.ts.net",
+        token: "unused",
+        sourceEnvironmentId: "other-env",
+        sourceProjectId: projectId,
+        sourceMachine: "Other Mac",
+        mode: "copy-and-move",
+        targetFolder: folder,
+        title: "Project",
+        selection: [],
+        decisions: {},
+        clone: [],
+        mirror: false,
+        state: "applied",
+        failedStep: null,
+        error: null,
+        progress: null,
+        disk: null,
+        checks: [],
+        warnings: [],
+        unstable: [],
+        committed: true,
+        projectId,
+        requestedProjectId: projectId,
+        createdAt: "2026-10-19T00:00:00.000Z",
+        updatedAt: "2026-10-19T00:00:00.000Z",
+      };
+      const directory = NodePath.join(store.root, "folder-copies", id);
+      NodeFS.mkdirSync(directory, { recursive: true });
+      NodeFS.writeFileSync(NodePath.join(directory, "operation.json"), JSON.stringify(record));
+
+      // Reusing only the physical project id is insufficient for an existing destination.
+      const refusal = yield* failureOnly(service.receive(destinationPreview(bundle)));
+      expect(refusal.code).toBe(customCoordinator ? "invalid" : "conflict");
+      expect(h.state.policyUpdates).toHaveLength(0);
+
+      const { digest: _digest, ...value } = bundle;
+      const corrected = {
+        ...value,
+        destination: {
+          ...bundle.destination!,
+          logicalProjectId: "existing-logical-project",
+          coordinatorThreadId: targetCoordinator,
+        },
+        logicalProject: {
+          ...bundle.logicalProject!,
+          members: bundle.logicalProject!.members.map((member) =>
+            member.environmentId === "source-env" && member.projectId === projectId
+              ? { ...member, coordinatorThreadId: targetCoordinator }
+              : member,
+          ),
+        },
+        coordinatorBinding: {
+          ...bundle.coordinatorBinding!,
+          successor: {
+            ...bundle.coordinatorBinding!.successor!,
+            coordinatorThreadId: targetCoordinator,
+          },
+        },
+      };
+      const accepted = { ...corrected, digest: MachineHandoff.machineHandoffDigest(corrected) };
+      expect((yield* service.receive(destinationPreview(accepted))).phase).toBe("ready");
+      expect(h.state.policyUpdates).toHaveLength(0); // Preview never takes ownership.
+      const result = yield* service.receive({
+        projectId,
+        operationId: id,
+        bundle: accepted,
+        mode: "start",
+      });
+      expect(result.phase).toBe("started");
+      expect(result.coordinatorThreadId).toBe(targetCoordinator);
+    }).pipe(Effect.provide(h.layer));
+  },
+);

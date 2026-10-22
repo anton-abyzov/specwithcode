@@ -32,7 +32,7 @@ import { MachineHandoffButton, MachineHandoffDialog } from "./MachineHandoffDial
 import { Tip } from "./shell/Tip";
 import { HandoffFolderPicker } from "./HandoffFolderPicker";
 import { HandoffFolderCopy, folderCopyStorageKey } from "./HandoffFolderCopy";
-import type { HandoffFolderMethod } from "../../studio/folderCopy";
+import { copyDestinationKey, type HandoffFolderMethod } from "../../studio/folderCopy";
 import { isProjectFolder } from "../../studio/projectMachineFolders";
 import { isArchivedMember } from "../../studio/projectListVisibility";
 import { useStudioFleet } from "../../studio/fleet";
@@ -600,6 +600,13 @@ export function ProjectMachineHandoff({
                 null
               }
               preferredMachine={suggestedMachine}
+              savedProject={(environmentId, folder) =>
+                projects.find(
+                  (item) =>
+                    copyDestinationKey(item.environmentId, item.workspaceRoot) ===
+                    copyDestinationKey(environmentId, folder),
+                ) ?? null
+              }
               canMove={sourceReady}
               onBusyChange={setCopyBusy}
               onOpenProject={({ environmentId, projectId, folder }) => {

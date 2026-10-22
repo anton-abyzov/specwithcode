@@ -154,6 +154,14 @@ const AssetClaimsSchema = Schema.Union([
   }),
   Schema.Struct({
     version: Schema.Literal(1),
+    kind: Schema.Literal("design-asset"),
+    /** Resolved from the design's owner at mint time; content-addressed, so it never changes. */
+    filePath: Schema.String,
+    asset: Schema.String,
+    expiresAt: Schema.Number,
+  }),
+  Schema.Struct({
+    version: Schema.Literal(1),
     kind: Schema.Literal("github-media"),
     /** Already narrowed to a GitHub media host at mint time; the signature is what keeps it there. */
     url: Schema.String,
@@ -175,6 +183,8 @@ export type ResolvedAsset =
       readonly fileName?: string;
       readonly mimeType?: string;
       readonly file?: OpenMediaFile;
+      /** Content-addressed bytes a client may cache for good. */
+      readonly immutable?: boolean;
     }
   | {
       readonly kind: "bytes";
@@ -488,6 +498,8 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
   readonly projectFaviconPath?: string;
   /** The project's clone has not landed, so its icon is reported missing without a lookup. */
   readonly projectCheckoutPending?: boolean;
+  /** A design asset's file, found by DesignService after it checked the caller may view the design. */
+  readonly designAssetFile?: string;
 }) {
   const fileSystem = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
@@ -770,6 +782,31 @@ export const issueAssetUrl = Effect.fn("AssetAccess.issueAssetUrl")(function* (i
       fileName = "native-app-icon.png";
       break;
     }
+    case "design-asset": {
+      const canonicalFile = input.designAssetFile
+        ? yield* resolveCanonicalFile(input.designAssetFile).pipe(
+            Effect.mapError(
+              (cause) =>
+                new AssetWorkspaceAssetInspectionError({ resource: input.resource, cause }),
+            ),
+          )
+        : null;
+      if (canonicalFile === null || path.basename(canonicalFile) !== input.resource.asset) {
+        return yield* new AssetWorkspaceAssetNotFoundError({ resource: input.resource });
+      }
+      claims = {
+        version: 1,
+        kind: "design-asset",
+        filePath: canonicalFile,
+        asset: input.resource.asset,
+        expiresAt,
+      };
+      fileName = input.resource.asset;
+      if (HEADER_IMAGE_EXTENSIONS.has(path.extname(canonicalFile).toLowerCase())) {
+        imageDimensions = yield* readImageDimensionsFromHeader(canonicalFile);
+      }
+      break;
+    }
     case "github-media": {
       const fetchUrl = githubMediaFetchUrl(input.resource.url);
       if (fetchUrl === null) {
@@ -922,6 +959,16 @@ export const resolveAsset = Effect.fn("AssetAccess.resolveAsset")(function* (
 
   const decodedPath = decodeRelativePath(relativePath);
   if (decodedPath === null) return null;
+  if (claims.kind === "design-asset") {
+    if (decodedPath !== claims.asset) return null;
+    // A file replaced by a link, or removed, since the URL was minted is not served.
+    const canonicalFile = yield* resolveCanonicalFile(claims.filePath).pipe(
+      Effect.orElseSucceed(() => null),
+    );
+    return canonicalFile === claims.filePath
+      ? ({ kind: "file", path: canonicalFile, immutable: true } satisfies ResolvedAsset)
+      : null;
+  }
   if (claims.kind === "media-file-exact") {
     if (decodedPath !== path.basename(claims.filePath)) return null;
     const canonicalFile = yield* resolveCanonicalFile(claims.filePath).pipe(

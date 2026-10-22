@@ -38,6 +38,8 @@ overrides:
   '@exodus/bytes>@noble/hashes': 1.8.0
   '@react-navigation/core': 7.21.13
   dbus-next>usocket: '-'
+  pptxgenjs>image-size: '-'
+  pptxgenjs>https: '-'
   '@anthropic-ai/claude-agent-sdk>@anthropic-ai/claude-agent-sdk-darwin-arm64': '-'
   '@anthropic-ai/claude-agent-sdk>@anthropic-ai/claude-agent-sdk-darwin-x64': '-'
   '@anthropic-ai/claude-agent-sdk>@anthropic-ai/claude-agent-sdk-linux-arm64': '-'
@@ -575,12 +577,24 @@ importers:
       jose:
         specifier: 'catalog:'
         version: 6.2.2
+      jsonc-parser:
+        specifier: 3.3.1
+        version: 3.3.1
       node-pty:
         specifier: ^1.2.0-beta.15
         version: 1.2.0-beta.15(patch_hash=f2fe901c61cde17986240002d05c172d5d0272d83ffaab8d0ebeb922763be414)
       playwright-core:
         specifier: 1.60.0
         version: 1.60.0
+      postcss:
+        specifier: 8.5.28
+        version: 8.5.28
+      postcss-value-parser:
+        specifier: 4.2.0
+        version: 4.2.0
+      pptxgenjs:
+        specifier: 4.0.1
+        version: 4.0.1
       proper-lockfile:
         specifier: 4.1.2
         version: 4.1.2
@@ -593,6 +607,9 @@ importers:
       stream-json:
         specifier: 3.6.0
         version: 3.6.0
+      typescript-legacy:
+        specifier: npm:typescript@6.0.3
+        version: typescript@6.0.3
       yaml:
         specifier: ^2.9.0
         version: 2.9.0
@@ -636,6 +653,9 @@ importers:
       '@types/yauzl':
         specifier: ^3.4.0
         version: 3.4.0
+      typescript:
+        specifier: 'catalog:'
+        version: 7.0.2
       vite-plus:
         specifier: 1.0.0
         version: 1.0.0(@types/node@24.12.4)(@vitest/ui@5.0.1(vitest@5.0.1))(bufferutil@4.1.0)(esbuild@0.28.2)(jiti@2.7.0)(jsdom@30.1.0(@noble/hashes@1.8.0))(msw@2.12.11(@types/node@24.12.4)(typescript@7.0.2))(terser@5.48.0)(typescript@7.0.2)(unrun@0.2.39)(utf-8-validate@6.0.6)(yaml@2.9.0)
@@ -9810,6 +9830,9 @@ packages:
   points-on-path@0.2.1:
     resolution: {integrity: sha512-25ClnWWuw7JbWZcgqY/gJ4FQWadKxGWk+3kR/7kD0tCaDtPPMj7oHu2ToLaVhfpnHrZzYby2w6tUA0eOIuUg8g==}
 
+  postcss-value-parser@4.2.0:
+    resolution: {integrity: sha512-1NNCs6uurfkVbeXG4S8JFT9t19m45ICnif8zWLd5oPSZ50QnwMfK+H3jv408d4jw/7Bttv5axS5IiHoLaVNHeQ==}
+
   postcss@8.5.28:
     resolution: {integrity: sha512-RRuzqDtt5Y9h3quz5hWhK+TPnsmVs6WwSU6LkJMeY4HstUEDuYTG8UJSdawMRzmzAtV+KEoG8N3Qg2qLy5vM/A==}
     engines: {node: ^10 || ^12 || >=14}
@@ -9834,6 +9857,9 @@ packages:
     resolution: {integrity: sha512-b9Eb8h2eVqNE8edvKdwqkrY6O7kAwmI8kcnBv1NScolYJbo59XUF0noFq+lxbC1yN20bmC0WBEbDC5H/7ASb0A==}
     engines: {node: '>=14.0.0'}
     hasBin: true
+
+  pptxgenjs@4.0.1:
+    resolution: {integrity: sha512-TeJISr8wouAuXw4C1F/mC33xbZs/FuEG6nH9FG1Zj+nuPcGMP5YRHl6X+j3HSUnS1f3at6k75ZZXPMZlA5Lj9A==}
 
   preact-render-to-string@6.6.5:
     resolution: {integrity: sha512-O6MHzYNIKYaiSX3bOw0gGZfEbOmlIDtDfWwN1JJdc/T3ihzRT6tGGSEWE088dWrEDGa1u7101q+6fzQnO9XCPA==}
@@ -20888,6 +20914,8 @@ snapshots:
       path-data-parser: 0.1.0
       points-on-curve: 0.2.0
 
+  postcss-value-parser@4.2.0: {}
+
   postcss@8.5.28:
     dependencies:
       nanoid: 3.3.19
@@ -20912,6 +20940,11 @@ snapshots:
     dependencies:
       commander: 9.5.0
     optional: true
+
+  pptxgenjs@4.0.1:
+    dependencies:
+      '@types/node': 24.12.4
+      jszip: 3.10.1
 
   preact-render-to-string@6.6.5(preact@11.0.0-beta.0):
     dependencies:

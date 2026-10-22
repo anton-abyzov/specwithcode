@@ -29,6 +29,7 @@ import * as ThreadTitleRegenerationService from "./ThreadTitleRegenerationServic
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
+import * as ServiceUpdateClosedQuestions from "../serviceUpdate/ServiceUpdateClosedQuestions.ts";
 import { continueRestartedRun, resumeQueueAfterRestart } from "./RestartContinuation.ts";
 
 export class OrchestrationEffectExecutionError extends Schema.TaggedError<OrchestrationEffectExecutionError>()(
@@ -50,6 +51,13 @@ export const PROVIDER_TURN_START_TIMEOUT = Duration.minutes(2);
 /** Shown on the run a timed-out start ends; `provider_start_timeout` names it in the logs. */
 export const PROVIDER_TURN_START_TIMEOUT_MESSAGE =
   "The provider did not start this turn within 2 minutes, so it was stopped. Send the message again to retry.";
+
+/**
+ * Shown on a timed-out start that is failed as an open failure instead (see
+ * `settleTimedOutStart`), so the limit fallback can move the thread on.
+ */
+export const PROVIDER_SESSION_OPEN_TIMEOUT_MESSAGE =
+  "The provider session did not open within 2 minutes.";
 
 export class ProviderTurnStartTimeoutError extends Schema.TaggedError<ProviderTurnStartTimeoutError>()(
   "ProviderTurnStartTimeoutError",
@@ -127,6 +135,13 @@ export const layerExecutor: Layer.Layer<
     const threads = yield* ThreadManagementService.ThreadManagementService;
     const settings = yield* ServerSettings.ServerSettingsService;
     const liveness = yield* RunLiveness.RunLiveness;
+    // Absent where the service keeps no record of what an update closed (tools, tests).
+    const closedQuestions = yield* Effect.serviceOption(
+      ServiceUpdateClosedQuestions.ServiceUpdateClosedQuestions,
+    );
+    const closedQuestionsFor = Option.isSome(closedQuestions)
+      ? (threadId: string, runId: string) => closedQuestions.value.forRun(threadId, runId)
+      : undefined;
     // Ends the run of a start that timed out the way Stop ends one that has not
     // started, so the queue moves on. When that fails (the run ended meanwhile,
     // or its state is gone) the effect fails and the worker retries the start,
@@ -134,6 +149,9 @@ export const layerExecutor: Layer.Layer<
     // The interrupt cancels this very start effect, and the worker's race then
     // interrupts this fiber after the commit but before the run's end is
     // published, which would leave the queue waiting. So it is uninterruptible.
+    // A start that never opened its session fails as an open failure
+    // instead, so the fallback retries it or, on a repeat, moves the thread
+    // on; an interrupted run would leave it idle.
     const endTimedOutStart = (timeout: ProviderTurnStartTimeoutError) =>
       Effect.logWarning("provider turn start timed out", {
         code: "provider_start_timeout",
@@ -142,12 +160,23 @@ export const layerExecutor: Layer.Layer<
       }).pipe(
         Effect.andThen(
           Effect.uninterruptible(
-            threads.dispatch({
-              type: "run.interrupt",
-              commandId: CommandId.make(`command:provider-start-timeout:${timeout.runId}`),
-              threadId: timeout.threadId,
-              runId: timeout.runId,
-              reason: PROVIDER_TURN_START_TIMEOUT_MESSAGE,
+            Effect.gen(function* () {
+              const settled =
+                providerTurnStart.settleTimedOutStart === undefined
+                  ? false
+                  : yield* providerTurnStart.settleTimedOutStart({
+                      threadId: timeout.threadId,
+                      runId: timeout.runId,
+                      message: PROVIDER_SESSION_OPEN_TIMEOUT_MESSAGE,
+                    });
+              if (settled) return;
+              yield* threads.dispatch({
+                type: "run.interrupt",
+                commandId: CommandId.make(`command:provider-start-timeout:${timeout.runId}`),
+                threadId: timeout.threadId,
+                runId: timeout.runId,
+                reason: PROVIDER_TURN_START_TIMEOUT_MESSAGE,
+              });
             }),
           ),
         ),
@@ -165,7 +194,11 @@ export const layerExecutor: Layer.Layer<
         switch (effect.request.type) {
           case "provider-runtime.continue": {
             const sourceRunId = effect.request.sourceRunId;
-            return continueRestartedRun({ threadId: effect.threadId, sourceRunId }).pipe(
+            return continueRestartedRun({
+              threadId: effect.threadId,
+              sourceRunId,
+              ...(closedQuestionsFor === undefined ? {} : { closedQuestions: closedQuestionsFor }),
+            }).pipe(
               Effect.provideService(ThreadManagementService.ThreadManagementService, threads),
               Effect.provideService(ServerSettings.ServerSettingsService, settings),
               // A continuation that will never run still owes a delegated parent a result.

@@ -30,6 +30,7 @@ import {
   Settings2Icon,
   ShieldCheckIcon,
   SparklesIcon,
+  SwatchBookIcon,
   XIcon,
 } from "lucide-react";
 import { useLocation, useNavigate } from "@tanstack/react-router";
@@ -89,6 +90,7 @@ const SETTINGS_SECTION_ICONS: Readonly<
   "/settings/privacy": ShieldCheckIcon,
   "/settings/agents": BotIcon,
   "/settings/appearance": PaletteIcon,
+  "/settings/design-systems": SwatchBookIcon,
   "/settings/projects": PanelsTopLeftIcon,
   "/settings/skills": SparklesIcon,
   "/settings/keybindings": KeyboardIcon,

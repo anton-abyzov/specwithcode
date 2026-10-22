@@ -6,6 +6,8 @@ import { isElectron } from "../../env";
 import { useMediaQuery } from "../../hooks/useMediaQuery";
 import { cn } from "../../lib/utils";
 import { useDesktopUpdateState } from "../../state/desktopUpdate";
+import { useStudioServiceUpdateState } from "../../state/serviceUpdate";
+import { liveServiceUpdateRun } from "../serviceUpdateRunView";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import {
   canCheckForUpdate,
@@ -177,7 +179,10 @@ function SidebarUpdateControl() {
 
   // A downloaded update shows its badge here too; a press hands it to the
   // Restart to update pill, which owns the running-work prompt.
-  const action = state ? resolveDesktopUpdateButtonAction(state) : "none";
+  // While an Update now run goes on (0988), nothing offers to install.
+  const runLive = liveServiceUpdateRun(useStudioServiceUpdateState()) !== null;
+  const resolved = state ? resolveDesktopUpdateButtonAction(state) : "none";
+  const action = runLive && resolved === "install" ? "none" : resolved;
   const isDownloading = state?.status === "downloading";
   const showCheckIcon = shouldShowDesktopUpdateCheckIcon({
     isAnimationLatched: isCheckAnimationLatched,
@@ -231,6 +236,19 @@ function SidebarUpdateControl() {
       if (busyNoticeToastId.current) toastManager.close(busyNoticeToastId.current);
       busyNoticeToastId.current = toastManager.add(
         stackedThreadToast({ type: "info", title: notice.title, description: notice.description }),
+      );
+      return;
+    }
+
+    if (runLive) {
+      // The run's own toast shows its progress; a check now would only race it.
+      if (busyNoticeToastId.current) toastManager.close(busyNoticeToastId.current);
+      busyNoticeToastId.current = toastManager.add(
+        stackedThreadToast({
+          type: "info",
+          title: "Update in progress",
+          description: "SpecWithCode is updating; this window follows it.",
+        }),
       );
       return;
     }
@@ -310,7 +328,7 @@ function SidebarUpdateControl() {
         );
       })
       .finally(() => setPendingAction(null));
-  }, [action, isInteractionDisabled, pendingAction, prefersReducedMotion, state]);
+  }, [action, isInteractionDisabled, pendingAction, prefersReducedMotion, runLive, state]);
 
   const handleCheckAnimationIteration = useCallback(() => {
     setIsCheckAnimationLatched(

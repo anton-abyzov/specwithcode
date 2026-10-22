@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vite-plus/test";
+import { DESIGN_FEATURES } from "~/components/design/designFeatures";
 import { EnvironmentId } from "@specweave-studio/contracts";
 
 import {
@@ -586,7 +587,12 @@ describe("settings sidebar scope", () => {
 
   it("groups every section exactly once, in label order", () => {
     const paths = SETTINGS_NAV_GROUPS.flatMap((group) => group.paths);
-    expect(paths).toEqual(Object.keys(SETTINGS_SECTION_LABELS));
+    // Design systems joins the nav when its feature flag is on.
+    expect(paths).toEqual(
+      Object.keys(SETTINGS_SECTION_LABELS).filter(
+        (path) => DESIGN_FEATURES.designSystems || path !== "/settings/design-systems",
+      ),
+    );
   });
 
   it("opens project-overridable rows on the Project page while a project is picked", () => {

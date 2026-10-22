@@ -13,13 +13,25 @@ export interface ServerUpdateWordingInput {
   readonly continueThreadsAfterServerUpdate: boolean;
 }
 
-/** The idle row: the name truncates first so the versions stay readable. */
+/**
+ * The idle row: the machine's name on one line, then its version and the
+ * version Update installs ("1.0.20 → 1.0.25"). Screen readers hear `label`,
+ * which says "to" where the row shows the arrow.
+ */
 export function serverUpdateRowText(
   input: Pick<ServerUpdateWordingInput, "machine" | "serverVersion" | "clientVersion">,
-): { readonly name: string; readonly versions: string } {
+): {
+  readonly name: string;
+  readonly serverVersion: string;
+  readonly clientVersion: string;
+  readonly label: string;
+} {
+  const name = input.machine ?? "Server";
   return {
-    name: input.machine ?? "Server",
-    versions: `${input.serverVersion} → ${input.clientVersion}`,
+    name,
+    serverVersion: input.serverVersion,
+    clientVersion: input.clientVersion,
+    label: `${name} ${input.serverVersion} to ${input.clientVersion}`,
   };
 }
 
@@ -31,14 +43,18 @@ export function serverUpdateRowText(
  */
 export function describeServerUpdate(input: ServerUpdateWordingInput): string {
   const where = input.machine ?? "the server";
+  // The threads sentence names the step the sentence before it describes.
+  const pause = input.selfUpdate === "desktop-managed" ? "relaunch" : "restart";
   return [
     `SpecWithCode on ${where} runs ${input.serverVersion}; this app runs ${input.clientVersion}.`,
     input.selfUpdate === "desktop-managed"
       ? `Update installs the newest SpecWithCode release on ${where} and relaunches the app there.`
-      : `Update installs ${input.clientVersion} on ${where} and restarts its server.`,
+      : input.machine === null
+        ? `Update installs ${input.clientVersion} on the server and restarts it.`
+        : `Update installs ${input.clientVersion} on ${where} and restarts its server.`,
     input.threadContinuation && input.continueThreadsAfterServerUpdate
-      ? "Threads running there continue after the restart."
-      : "Threads running there stop for the restart.",
+      ? `Threads running there continue after the ${pause}.`
+      : `Threads running there stop for the ${pause}.`,
     `Nothing else on ${where} changes: no settings, no other software.`,
   ].join(" ");
 }

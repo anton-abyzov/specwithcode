@@ -9,6 +9,12 @@ import type {
 import { compareSemverVersions, parseSemver } from "@specweave-studio/shared/semver";
 
 import { resolveDesktopUpdateButtonAction } from "../desktopUpdate.logic";
+import {
+  countPersonRequests,
+  describePersonRequests,
+  nameQuestionThreads,
+  personRequestBlockers,
+} from "../serviceUpdateRunView";
 import { groupRunningWork, summarizeRunningWork } from "./restartRunningWork.logic";
 
 export interface RestartToUpdateView {
@@ -205,6 +211,8 @@ export function getRestartToUpdateView(
   serviceState: StudioServiceUpdateState | null,
   options: RestartToUpdateOptions = {},
 ): RestartToUpdateView | null {
+  // An Update now run is going on: no window offers to update until it ends.
+  if (serviceState?.run && !serviceState.run.terminal) return null;
   const serviceRequestedVersion = options.serviceRequestedVersion ?? null;
   const app = appState !== null && isAppUpdateReady(appState);
   const appVersion = app ? appState.downloadedVersion : null;
@@ -293,6 +301,8 @@ export function describeInstallOutcome(
         : "A newer release replaced this download. Download it from Settings > About.";
     case "disabled":
       return "Updates are off in this build.";
+    case "service-behind":
+      return `SpecWithCode ${result.state.swapGate?.targetVersion ?? result.state.downloadedVersion ?? "the update"} installs after the SpecWithCode service on this Mac updates to it. You can keep working on the current version.`;
     default:
       return result.state.status === "downloading"
         ? `SpecWithCode is still downloading ${result.state.availableVersion ?? "the update"}${result.state.downloadPercent === null ? "" : ` (${Math.round(result.state.downloadPercent)}%)`}. Restart to update once it finishes.`
@@ -831,6 +841,44 @@ function blockerCount(
 }
 
 /**
+ * The confirm line for the questions and approvals a forced update closes
+ * (0991): how many of each, that they are asked again after the update, and
+ * in which threads. An older service sends no split, so it keeps the old line.
+ */
+function describeClosedQuestions(
+  blockers: ReadonlyArray<ServiceUpdateBlocker>,
+  total: number,
+  options: { readonly withoutSplit?: boolean } = {},
+): ReadonlyArray<string> {
+  const requests = blockers.filter((blocker) => blocker.kind === "request" && blocker.count > 0);
+  const split = requests.every(
+    (blocker) => blocker.questions !== undefined || blocker.approvals !== undefined,
+  );
+  if (!split) {
+    if (options.withoutSplit === false) return [];
+    return [
+      `${plural(total, "open question or approval", "open questions or approvals")} will be closed.`,
+    ];
+  }
+  const counts = countPersonRequests(requests);
+  const what = describePersonRequests(counts);
+  const lines: Array<string> = [];
+  if (what !== null) {
+    // Only threads with a question or approval are named: those are asked again.
+    const threads = nameQuestionThreads(personRequestBlockers(requests));
+    lines.push(
+      `${what} will be closed and asked again after the update${threads ? `, in ${threads}` : ""}.`,
+    );
+  }
+  // What the app itself waits on (a tool call) is closed and not asked again.
+  if (counts.other > 0)
+    lines.push(
+      `${plural(counts.other, "other open request", "other open requests")} will be closed.`,
+    );
+  return lines;
+}
+
+/**
  * The question asked before "Update now" stops work, one line per kind of
  * work it ends. Null when nothing runs, so the update starts without asking.
  */
@@ -858,9 +906,7 @@ export function describeServiceUpdateStop(
     requeued > 0
       ? `${plural(requeued, "queued message", "queued messages")} will wait and send after the update.`
       : null,
-    questions > 0
-      ? `${plural(questions, "open question or approval", "open questions or approvals")} will be closed.`
-      : null,
+    ...(questions > 0 ? describeClosedQuestions(check.blockers, questions) : []),
     terminals > 0 ? `${plural(terminals, "terminal", "terminals")} will close.` : null,
     steps > 0 ? `${plural(steps, "agent step", "agent steps")} will be stopped.` : null,
   ].filter((line): line is string => line !== null);
@@ -884,6 +930,10 @@ export function describeAppRestartWarning(
   const groups = groupRunningWork(check.blockers);
   if (groups.length === 0) return null;
   const version = options.version ? ` SpecWithCode ${options.version}` : " the update";
+  // Restarting now drains the service as Update now does (0991): the questions
+  // and approvals it closes are named, and said to be asked again. An older
+  // service that does not split them adds no line.
+  const questions = blockerCount(check.blockers, ["request"]);
   return [
     `Restart to install${version}?`,
     `${summarizeRunningWork(groups)}. ${
@@ -891,6 +941,9 @@ export function describeAppRestartWarning(
         ? "Restarting interrupts this work; it continues after the restart."
         : "Restarting interrupts this work."
     }`,
+    ...(questions > 0
+      ? describeClosedQuestions(check.blockers, questions, { withoutSplit: false })
+      : []),
     options.listed ? null : describeServiceUpdateBlockers(check.blockers),
     options.listed ? null : RESTART_WHEN_IDLE_NOTE,
   ]

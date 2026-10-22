@@ -398,7 +398,15 @@ const launchBrowser = Effect.fnUntraced(function* (input: {
     });
 
   /** A fresh page at `width`; each `load` navigates it and measures the settled layout. */
-  const openPage = Effect.fnUntraced(function* (width: number) {
+  const openPage = Effect.fnUntraced(function* (
+    width: number,
+    viewport: {
+      readonly height?: number;
+      readonly scale?: number;
+      /** Leaves the page background transparent in screenshots. */
+      readonly transparent?: boolean;
+    } = {},
+  ) {
     const { targetId } = yield* send(
       "Target.createTarget",
       { url: "about:blank" },
@@ -447,10 +455,23 @@ const launchBrowser = Effect.fnUntraced(function* (input: {
     );
     yield* send(
       "Emulation.setDeviceMetricsOverride",
-      { width, height: VIEWPORT_HEIGHT, deviceScaleFactor: 1, mobile: false },
+      {
+        width,
+        height: viewport.height ?? VIEWPORT_HEIGHT,
+        deviceScaleFactor: viewport.scale ?? 1,
+        mobile: false,
+      },
       Ignored,
       sessionId,
     );
+    if (viewport.transparent === true) {
+      yield* send(
+        "Emulation.setDefaultBackgroundColorOverride",
+        { color: { r: 0, g: 0, b: 0, a: 0 } },
+        Ignored,
+        sessionId,
+      );
+    }
 
     /** Loads a page from `pageBody`, so callers loading it often encode it once. */
     const load = Effect.fnUntraced(function* (body: Uint8Array, urlFragment: string) {
@@ -494,6 +515,15 @@ const launchBrowser = Effect.fnUntraced(function* (input: {
         sessionId,
       ).pipe(Effect.map(({ data }) => data));
 
+    /** The loaded page printed with its own `@page` sizes and backgrounds. */
+    const pdf = () =>
+      send(
+        "Page.printToPDF",
+        { printBackground: true, preferCSSPageSize: true, transferMode: "ReturnAsBase64" },
+        Schema.Struct({ data: Schema.String }),
+        sessionId,
+      ).pipe(Effect.map(({ data }) => data));
+
     const consoleMessages = (): ReadonlyArray<ConsoleMessage> =>
       events.omittedConsoleMessages === 0
         ? [...events.consoleMessages]
@@ -511,7 +541,7 @@ const launchBrowser = Effect.fnUntraced(function* (input: {
       Effect.ignore,
     );
 
-    return { load, screenshot, consoleMessages, close };
+    return { load, screenshot, pdf, consoleMessages, close };
   });
 
   return { openPage };
@@ -560,6 +590,99 @@ export const captureHtmlScreenshot = Effect.fn("headlessChrome.captureHtmlScreen
       Effect.fail(
         new HtmlRenderBrowserError({
           reason: `the page did not finish loading within ${CAPTURE_TIMEOUT}`,
+        }),
+      ),
+  }),
+);
+
+/** Largest edge, in device pixels, of a fixed-size capture. */
+export const MAX_FIXED_CAPTURE_EDGE = 16_384;
+
+/**
+ * Loads `html` in a `width` x `height` viewport and returns a PNG of exactly
+ * that box at `scale`, or the page printed to PDF with its own `@page` sizes.
+ * For documents with a known size, such as design frames.
+ */
+export const captureFixedHtml = Effect.fn("headlessChrome.captureFixedHtml")(
+  function* (input: {
+    readonly executable: string;
+    readonly noSandbox: boolean;
+    readonly html: string;
+    readonly width: number;
+    readonly height: number;
+    readonly scale: number;
+    readonly format: "png" | "pdf";
+  }) {
+    const path = yield* Path.Path;
+    const directory = yield* scratchDirectory;
+    const browser = yield* launchBrowser({
+      executable: input.executable,
+      noSandbox: input.noSandbox,
+      profileDirectory: path.join(directory, "profile"),
+    });
+    const page = yield* browser.openPage(input.width, {
+      height: input.height,
+      scale: input.format === "png" ? input.scale : 1,
+    });
+    yield* page.load(pageBody(input.html), "");
+    const data = input.format === "pdf" ? yield* page.pdf() : yield* page.screenshot(input.height);
+    return { data, consoleMessages: page.consoleMessages() };
+  },
+  Effect.scoped,
+  Effect.timeoutOrElse({
+    duration: "60 seconds",
+    orElse: () =>
+      Effect.fail(
+        new HtmlRenderBrowserError({
+          reason: "the page did not finish rendering within 60 seconds",
+        }),
+      ),
+  }),
+);
+
+/**
+ * PNGs of several fixed-size documents from one browser, in order, each with a
+ * transparent background so it can be placed over other content. For the
+ * parts of a design an export cannot express natively (HTML and components).
+ */
+export const captureFixedHtmlImages = Effect.fn("headlessChrome.captureFixedHtmlImages")(
+  function* (input: {
+    readonly executable: string;
+    readonly noSandbox: boolean;
+    readonly items: ReadonlyArray<{
+      readonly html: string;
+      readonly width: number;
+      readonly height: number;
+    }>;
+    readonly scale: number;
+  }) {
+    const path = yield* Path.Path;
+    const directory = yield* scratchDirectory;
+    const browser = yield* launchBrowser({
+      executable: input.executable,
+      noSandbox: input.noSandbox,
+      profileDirectory: path.join(directory, "profile"),
+    });
+    return yield* Effect.forEach(input.items, (item) =>
+      browser
+        .openPage(item.width, { height: item.height, scale: input.scale, transparent: true })
+        .pipe(
+          Effect.flatMap((page) =>
+            page.load(pageBody(item.html), "").pipe(
+              Effect.flatMap(() => page.screenshot(item.height)),
+              Effect.ensuring(page.close),
+            ),
+          ),
+        ),
+    );
+  },
+  Effect.scoped,
+  Effect.timeoutOrElse({
+    duration: "180 seconds",
+    orElse: () =>
+      Effect.fail(
+        new HtmlRenderBrowserError({
+          reason: "the images did not finish rendering within 180 seconds",
         }),
       ),
   }),

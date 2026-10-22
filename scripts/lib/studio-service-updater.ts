@@ -6,6 +6,7 @@ export const MAC_SERVICE_UPDATER_FILES = [
   "update_agent_cache.py",
   "update_request.py",
   "update_agent_recovery.py",
+  "update_agent_run.py",
   "installation_descriptor.py",
   "managed_updates.py",
   "studio_paths.py",
