@@ -28,7 +28,14 @@ import {
 import * as DateTime from "effect/DateTime";
 
 import { canTakeTurn, isGeminiSpendProvider, providerUsedPercent } from "./providerFallback.ts";
-import { billingOf, modelTier, providerLabel, type TaskClassification } from "./taskRouting.ts";
+import {
+  billingOf,
+  modelTier,
+  providerLabel,
+  tierRank,
+  TIER_LABELS,
+  type TaskClassification,
+} from "./taskRouting.ts";
 
 export const LANE_LABELS: Record<ModelLane, string> = {
   complex: "Complex and creative",
@@ -244,7 +251,8 @@ export interface ResolveLaneRoutingInput {
   readonly providers: ReadonlyArray<ServerProvider>;
   readonly nowMs: number;
   /** Exclusions and the escalation switch come from the Auto policy. */
-  readonly policy: Pick<TaskRoutingSettings, "excludedProviders" | "escalate">;
+  readonly policy: Pick<TaskRoutingSettings, "excludedProviders" | "escalate"> &
+    Partial<Pick<TaskRoutingSettings, "minimumTier">>;
   readonly switchAtPercent?: number | null | undefined;
   readonly limitedInstanceIds?: ReadonlySet<string> | undefined;
   readonly runnableInstanceIds?: ReadonlySet<string> | undefined;
@@ -281,7 +289,12 @@ export function laneEntryUnavailable(
 ): string | null {
   const provider = input.providers.find((entry) => entry.instanceId === selection.instanceId);
   if (provider === undefined) return "not on this machine";
-  if (findModel(provider, selection.model) === undefined) return "model not offered";
+  const model = findModel(provider, selection.model);
+  if (model === undefined) return "model not offered";
+  const floor = input.policy.minimumTier;
+  const tier = modelTier(model);
+  if (floor != null && (tier === null || tierRank(tier) < tierRank(floor)))
+    return `below minimum tier ${TIER_LABELS[floor]}`;
   if (input.policy.excludedProviders.includes(provider.instanceId)) return "excluded";
   if (input.runnableInstanceIds && !input.runnableInstanceIds.has(provider.instanceId))
     return "cannot run workers here";
@@ -307,6 +320,8 @@ export interface LaneRoutingResult {
   readonly decision: TaskRoutingDecision;
   /** Whether a lane entry can take the worker; false keeps the baseline. */
   readonly found: boolean;
+  /** A prohibited baseline must never be used as an implicit fallback. */
+  readonly baselineUnavailable: string | null;
 }
 
 export function resolveLaneRouting(input: ResolveLaneRoutingInput): LaneRoutingResult | null {
@@ -345,7 +360,7 @@ export function resolveLaneRouting(input: ResolveLaneRoutingInput): LaneRoutingR
     seen.add(key);
     ordered.push(selection);
   }
-  if (ordered.length === 0) return null;
+  if (ordered.length === 0 && avoided.size === 0) return null;
 
   const decidedAt = DateTime.formatIso(DateTime.makeUnsafe(input.nowMs));
   const skipped: string[] = [];
@@ -402,7 +417,10 @@ export function resolveLaneRouting(input: ResolveLaneRoutingInput): LaneRoutingR
       modelBilling: baselineDetail,
       reason: `No ${laneLabel} model can run now (${skipped.slice(0, 3).join("; ")}): kept ${laneEntryLabel(input.providers, input.baseline)}.`,
     };
-    return { decision, found: false };
+    const baselineUnavailable = avoided.has(selectionKey(input.baseline))
+      ? "avoided for tasks like this"
+      : laneEntryUnavailable(input.baseline, input);
+    return { decision, found: false, baselineUnavailable };
   }
   const provider = input.providers.find((entry) => entry.instanceId === chosen.instanceId);
   const model = findModel(provider, chosen.model);
@@ -422,13 +440,15 @@ export function resolveLaneRouting(input: ResolveLaneRoutingInput): LaneRoutingR
     ...common,
     moved,
     tier: model ? modelTier(model) : modelTier({ slug: chosen.model }),
-    selection: moved ? { instanceId: chosen.instanceId, model: model?.slug ?? chosen.model } : input.baseline,
+    selection: moved
+      ? { instanceId: chosen.instanceId, model: model?.slug ?? chosen.model }
+      : input.baseline,
     escalation: moved && input.policy.escalate ? (eligible[1] ?? null) : null,
     billing: taskRoutingBilling(detail),
     modelBilling: detail,
     reason: `${laneLabel} (${why}): ${laneEntryLabel(input.providers, chosen)}${via}${passed}.`,
   };
-  return { decision, found: true };
+  return { decision, found: true, baselineUnavailable: null };
 }
 
 // ── Recording preferences ────────────────────────────────────────────
@@ -461,8 +481,14 @@ export function withLearnedPreference(
     preference.action.kind === next.action.kind &&
     (preference.taskClass ?? null) === (next.taskClass ?? null) &&
     (preference.lane ?? null) === (next.lane ?? null) &&
-    [...preference.keywords].map((word) => word.toLowerCase()).sort().join("\u0000") ===
-      [...next.keywords].map((word) => word.toLowerCase()).sort().join("\u0000") &&
+    [...preference.keywords]
+      .map((word) => word.toLowerCase())
+      .sort()
+      .join("\u0000") ===
+      [...next.keywords]
+        .map((word) => word.toLowerCase())
+        .sort()
+        .join("\u0000") &&
     (next.action.kind !== "avoid" ||
       (preference.action.kind === "avoid" &&
         selectionKey(preference.action.model) === selectionKey(next.action.model)));
@@ -478,7 +504,9 @@ export function describePreference(
   const scope = [
     preference.keywords.length > 0 ? `"${preference.keywords.join('", "')}"` : null,
     preference.taskClass ?? null,
-    preference.action.kind !== "lane" && preference.lane ? `${LANE_LABELS[preference.lane]} tasks` : null,
+    preference.action.kind !== "lane" && preference.lane
+      ? `${LANE_LABELS[preference.lane]} tasks`
+      : null,
   ]
     .filter((part) => part !== null)
     .join(" · ");

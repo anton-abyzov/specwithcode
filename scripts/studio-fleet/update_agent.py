@@ -996,11 +996,14 @@ class Agent(object):
 
     # -- install
 
-    def take_snapshot(self, helper_dir, snapshots):
+    def take_snapshot(self, helper_dir, snapshots, request=None):
         """One snapshot by the verified helper: (path, snapshot, None), or (None, None, (status, message))."""
         newest = snapshots / ('snapshot-%s-%s.json' % (stamp(), uuid.uuid4().hex[:8]))
         output = newest.with_suffix('.log')
-        outcome = run_helper_process(self.helper_command(helper_dir, ['--identity', self.identity, '--snapshot', newest]),
+        args = ['--identity', self.identity, '--snapshot', newest]
+        if request is not None:
+            args += ['--request', request]
+        outcome = run_helper_process(self.helper_command(helper_dir, args),
                                      str(helper_dir), self.helper_env(), SNAPSHOT_TIMEOUT,
                                      log_path=output, home=self.home)
         snapshot = self.read_snapshot(newest) if outcome == 'ok' else None
@@ -1034,7 +1037,8 @@ class Agent(object):
                 attempt, retries, refused_apply, window = 0, 0, None, utcnow()
                 serving = self.config['installRequestedAt']
             attempt += 1
-            newest, snapshot, refused = self.take_snapshot(helper_dir, snapshots)
+            request = self.config['installRequestedAt'] if install_request and self.config['installMode'] == 'force' else None
+            newest, snapshot, refused = self.take_snapshot(helper_dir, snapshots, request)
             if snapshot is None:
                 if os.path.lexists(str(baseline_path)):
                     remove_path(baseline_path, self.home)

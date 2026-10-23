@@ -1,6 +1,7 @@
 /**
  * Project changes an agent may ask for but never make itself: archive,
- * restore, delete, or move to another folder. The agent's request shows an
+ * restore, delete, move to another folder, or approve one more folder for the
+ * project's agents. The agent's request shows an
  * approval card in its thread. Only the user's answer, which reaches the server
  * through the app's own connection, applies the change: the server applies it
  * and then tells the agent what happened. An agent cannot answer the card.
@@ -8,6 +9,7 @@
  */
 import {
   CommandId,
+  DEFAULT_PROJECT_ENVIRONMENT,
   NodeId,
   type OrchestrationV2Command,
   type OrchestrationV2UserInputQuestion,
@@ -21,8 +23,10 @@ import {
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -35,17 +39,30 @@ import {
   planningImpactText,
   ProjectFolderService,
 } from "./ProjectFolderChange.ts";
+import {
+  approvedFolderReaching,
+  exposesProtectedRealPath,
+  resolveProjectEnvironment,
+} from "./ProjectEnvironmentPaths.ts";
 import * as ProjectService from "./ProjectService.ts";
 import { PROJECT_ACTION_REQUEST_PREFIX } from "./projectActionRequestId.ts";
 
 export { isProjectActionRequestId } from "./projectActionRequestId.ts";
 
-export const ProjectAction = Schema.Literals(["archive", "unarchive", "delete", "change_folder"]);
+export const ProjectAction = Schema.Literals([
+  "archive",
+  "unarchive",
+  "delete",
+  "change_folder",
+  "add_folder",
+]);
 export type ProjectAction = typeof ProjectAction.Type;
 
 const QUESTION_ID = "approval";
 const APPROVE = "Approve";
 const DECLINE = "Decline";
+/** The approved-folder limit in `ProjectEnvironmentSettings`. */
+const MAX_APPROVED_FOLDERS = 16;
 
 export class ProjectActionRequestError extends Schema.TaggedError<ProjectActionRequestError>()(
   "ProjectActionRequestError",
@@ -59,6 +76,8 @@ export interface ProjectActionRequestInput {
   readonly reason: string;
   /** Required for change_folder. */
   readonly workspaceRoot?: string;
+  /** Required for add_folder: the folder the project's agents should also reach. */
+  readonly folder?: string;
 }
 
 interface RequestRow {
@@ -74,6 +93,10 @@ interface RequestRow {
 const Params = Schema.fromJsonString(
   Schema.Struct({
     workspaceRoot: Schema.optional(Schema.String),
+    /** add_folder: the folder as the agent asked for it. */
+    folder: Schema.optional(Schema.String),
+    /** add_folder: its real path when the card was shown; approval must still resolve to it. */
+    canonicalFolder: Schema.optional(Schema.String),
     title: Schema.String,
   }),
 );
@@ -107,6 +130,8 @@ export const make = Effect.gen(function* () {
   const projects = yield* ProjectService.ProjectService;
   const folders = yield* ProjectFolderService;
   const threads = yield* ThreadManagement.ThreadManagementService;
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
 
   const failure = (message: string) => new ProjectActionRequestError({ message });
 
@@ -132,25 +157,123 @@ export const make = Effect.gen(function* () {
       Effect.orElseSucceed(() => 0),
     );
 
+  /**
+   * The real path a new approved folder resolves to, with the same checks a settings save
+   * applies: an existing directory, not home, the filesystem root or a credential folder,
+   * not already reachable, and within the folder limit. Runs when the card is shown and
+   * again when the user approves it, so a symlink moved in between is caught.
+   */
+  const resolveNewFolder = Effect.fn("ProjectActionRequests.resolveNewFolder")(function* (
+    project: Project,
+    folder: string,
+  ) {
+    if (!path.isAbsolute(folder)) return yield* failure(`Pass an absolute folder, not ${folder}.`);
+    const canonical = yield* fs
+      .realPath(folder)
+      .pipe(Effect.mapError(() => failure(`${folder} does not exist on this machine.`)));
+    const stat = yield* fs
+      .stat(canonical)
+      .pipe(Effect.mapError(() => failure(`${folder} could not be read.`)));
+    if (stat.type !== "Directory") return yield* failure(`${canonical} is not a folder.`);
+    if (yield* exposesProtectedRealPath(canonical, path))
+      return yield* failure(
+        `${canonical} cannot be approved: it is the home folder, the filesystem root, or holds credentials or app data such as ~/.ssh.`,
+      );
+    const environment = project.workspaceSettings?.environment ?? DEFAULT_PROJECT_ENVIRONMENT;
+    const root = yield* fs
+      .realPath(project.workspaceRoot)
+      .pipe(Effect.orElseSucceed(() => project.workspaceRoot));
+    // Compared by filesystem identity: another spelling or mount of a reachable folder is
+    // caught, and a distinct folder on a case-sensitive volume is not refused.
+    const reachable = yield* Effect.tryPromise(() =>
+      approvedFolderReaching(canonical, [root, ...environment.additionalFolders], path),
+    ).pipe(Effect.mapError(() => failure(`${folder} could not be read.`)));
+    if (reachable !== undefined)
+      return yield* failure(
+        reachable.same
+          ? `Agents in "${project.title}" can already reach ${canonical}.`
+          : `Agents in "${project.title}" can already reach ${canonical}: it is inside ${reachable.folder}.`,
+      );
+    if (environment.additionalFolders.length >= MAX_APPROVED_FOLDERS)
+      return yield* failure(
+        `"${project.title}" already has ${MAX_APPROVED_FOLDERS} approved folders, the limit. The user can remove one in project settings first.`,
+      );
+    const resolved = yield* resolveProjectEnvironment(project.id, project.workspaceRoot, {
+      ...environment,
+      additionalFolders: [...environment.additionalFolders, folder],
+    }).pipe(
+      Effect.provideService(FileSystem.FileSystem, fs),
+      Effect.provideService(Path.Path, path),
+      Effect.mapError(() =>
+        failure(
+          `${canonical} cannot be approved for "${project.title}": the project's folders no longer check out. The user can review them in project settings.`,
+        ),
+      ),
+    );
+    const added = resolved.additionalFolders.at(-1);
+    if (added !== canonical)
+      return yield* failure(`${folder} changed while it was checked. Ask again.`);
+    return { canonical, environment };
+  });
+
   /** The card's question: what will happen, in the user's terms, and why the agent asked. */
   const describe = Effect.fn("ProjectActionRequests.describe")(function* (
     input: ProjectActionRequestInput,
     project: Project,
-  ) {
+  ): Effect.fn.Return<
+    { readonly question: string; readonly canonicalFolder?: string },
+    ProjectActionRequestError
+  > {
     const name = `"${project.title}"`;
     const why = `Reason: ${input.reason}`;
     switch (input.action) {
+      case "add_folder": {
+        if (input.folder === undefined)
+          return yield* failure(
+            "Pass folder: the absolute folder the project's agents should reach.",
+          );
+        // Approved folders widen what every agent in the project can reach; a thread asks
+        // only for its own project.
+        const caller = yield* threads
+          .getThreadShell(input.threadId)
+          .pipe(Effect.orElseSucceed(() => null));
+        if (caller?.projectId !== project.id)
+          return yield* failure(
+            "A thread can only ask to add a folder to its own project. Ask from a thread in that project, or the user adds it in project settings.",
+          );
+        const { canonical, environment } = yield* resolveNewFolder(project, input.folder);
+        const asked =
+          canonical === input.folder ? "" : ` You asked for ${input.folder}, which resolves to it.`;
+        const personal =
+          project.workspaceSettings?.kind === "personal"
+            ? " This is a personal project: the assistant can then also route work into projects inside this folder."
+            : "";
+        const first =
+          environment.additionalFolders.length === 0 && environment.repositories.length === 0
+            ? " This is the project's first extra folder: threads on providers other than Codex, Claude or full-access ACP stop working in this project."
+            : "";
+        return {
+          question: `Let agents in the project ${name} read and write ${canonical}?\n\nThreads in the project can use it from their next turn; turns already running keep their current folders.${asked}${personal}${first} Remove it any time in project settings.\n\n${why}`,
+          canonicalFolder: canonical,
+        };
+      }
       case "archive":
         if (project.workspaceSettings?.archived)
           return yield* failure(`The project ${name} is already archived.`);
-        return `Archive the project ${name}?\n\nIts threads, memory and folder are kept, and it stops taking new work until you restore it.\n\n${why}`;
+        return {
+          question: `Archive the project ${name}?\n\nIts threads, memory and folder are kept, and it stops taking new work until you restore it.\n\n${why}`,
+        };
       case "unarchive":
         if (!project.workspaceSettings?.archived)
           return yield* failure(`The project ${name} is not archived.`);
-        return `Restore the archived project ${name}?\n\nIts threads can take new work again.\n\n${why}`;
+        return {
+          question: `Restore the archived project ${name}?\n\nIts threads can take new work again.\n\n${why}`,
+        };
       case "delete": {
         const count = yield* countThreads(project.id);
-        return `Delete the project ${name} and its ${plural(count, "thread")}?\n\nThis cannot be undone. Project memory, plans and routines are removed; source folders and Git branches stay. Archiving keeps everything instead.\n\n${why}`;
+        return {
+          question: `Delete the project ${name} and its ${plural(count, "thread")}?\n\nThis cannot be undone. Project memory, plans and routines are removed; source folders and Git branches stay. Archiving keeps everything instead.\n\n${why}`,
+        };
       }
       case "change_folder": {
         if (input.workspaceRoot === undefined)
@@ -166,7 +289,9 @@ export const make = Effect.gen(function* () {
           ? `Both folders are checkouts of ${check.targetRepository}.`
           : `The new folder ${check.targetRepository === null ? "has no Git remote" : `is a checkout of ${check.targetRepository}`}, and the current one ${check.currentRepository === null ? "has none" : `is ${check.currentRepository}`}. Approving confirms it is the right folder.`;
         const planning = planningImpactText(check);
-        return `Change the folder of the project ${name} from ${check.currentRoot} to ${check.targetRoot}?\n\n${repository}${planning === null ? "" : ` ${planning}`} Its ${plural(check.threadCount, "thread")}, memory and history stay with the project and run in the new folder from their next turn.\n\n${why}`;
+        return {
+          question: `Change the folder of the project ${name} from ${check.currentRoot} to ${check.targetRoot}?\n\n${repository}${planning === null ? "" : ` ${planning}`} Its ${plural(check.threadCount, "thread")}, memory and history stay with the project and run in the new folder from their next turn.\n\n${why}`,
+        };
       }
     }
   });
@@ -175,7 +300,7 @@ export const make = Effect.gen(function* () {
     "ProjectActionRequests.request",
   )(function* (input) {
     const project = yield* readProject(input.projectId);
-    const question = yield* describe(input, project);
+    const { question, canonicalFolder } = yield* describe(input, project);
     const records = yield* threads
       .getThreadRecords(input.threadId, ["runs"])
       .pipe(Effect.mapError(() => failure("The asking thread could not be read.")));
@@ -189,7 +314,12 @@ export const make = Effect.gen(function* () {
         request_id, thread_id, project_id, action, params_json, reason, requested_by, status, created_at
       ) VALUES (
         ${requestId}, ${input.threadId}, ${project.id}, ${input.action},
-        ${encodeParams({ title: project.title, ...(input.workspaceRoot === undefined ? {} : { workspaceRoot: input.workspaceRoot }) })},
+        ${encodeParams({
+          title: project.title,
+          ...(input.workspaceRoot === undefined ? {} : { workspaceRoot: input.workspaceRoot }),
+          ...(input.folder === undefined ? {} : { folder: input.folder }),
+          ...(canonicalFolder === undefined ? {} : { canonicalFolder }),
+        })},
         ${input.reason}, ${input.threadId}, 'pending', ${now}
       )`.pipe(Effect.mapError(() => failure("The request could not be recorded.")));
     const card: OrchestrationV2UserInputQuestion = {
@@ -276,6 +406,31 @@ export const make = Effect.gen(function* () {
           approvalRequestId,
         });
         return `Deleted the project ${name} and its threads.`;
+      }
+      case "add_folder": {
+        if (params.folder === undefined || params.canonicalFolder === undefined)
+          return yield* failure("The request named no folder.");
+        const project = yield* projects.getById(projectId);
+        if (Option.isNone(project)) return yield* failure(`The project ${name} no longer exists.`);
+        // Recheck at approval: the user approved the path the card named, nothing else.
+        const { canonical, environment } = yield* resolveNewFolder(project.value, params.folder);
+        if (canonical !== params.canonicalFolder)
+          return yield* failure(
+            `${params.folder} now resolves to ${canonical}, not the ${params.canonicalFolder} the card named. Ask again.`,
+          );
+        yield* projects.update({
+          commandId,
+          projectId,
+          approvalRequestId,
+          workspaceSettings: {
+            expectedRevision: project.value.workspaceSettings?.revision ?? 0,
+            environment: {
+              ...environment,
+              additionalFolders: [...environment.additionalFolders, canonical],
+            },
+          },
+        });
+        return `Added ${canonical} to the approved folders of ${name}. Threads there can use it from their next turn.`;
       }
       case "change_folder": {
         if (params.workspaceRoot === undefined)

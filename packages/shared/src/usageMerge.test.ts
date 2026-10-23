@@ -10,7 +10,12 @@ import {
 import { describe, expect, it } from "vite-plus/test";
 import * as Schema from "effect/Schema";
 
-import { isModelCostUnknown, mergeUsage, type EnvironmentUsage } from "./usageMerge.ts";
+import {
+  costCoverage,
+  isModelCostUnknown,
+  mergeUsage,
+  type EnvironmentUsage,
+} from "./usageMerge.ts";
 
 const decodeSummary = Schema.decodeUnknownSync(UsageSummary);
 const encodeSummary = Schema.encodeSync(UsageSummary);
@@ -78,7 +83,65 @@ function environment(id: string, usageSummary: UsageSummary): EnvironmentUsage {
   return { environmentId: id as EnvironmentId, label: id, summary: usageSummary };
 }
 
+describe("costCoverage", () => {
+  it("separates no records, known, partly unpriced and fully unpriced figures", () => {
+    expect(costCoverage(undefined)).toBe("none");
+    expect(costCoverage({ records: 0, unpricedRecords: 0 })).toBe("none");
+    expect(costCoverage({ records: 4, unpricedRecords: 0 })).toBe("known");
+    expect(costCoverage({ records: 4, unpricedRecords: 1 })).toBe("partial");
+    expect(costCoverage({ records: 4, unpricedRecords: 4 })).toBe("unknown");
+  });
+});
+
 describe("mergeUsage", () => {
+  it("keeps unpriced record counts per provider, day, hour and provider period", () => {
+    const merged = mergeUsage(
+      [
+        environment(
+          "env-a",
+          summary(
+            [
+              bucket({ hourStart: "2026-08-07T10:00:00.000Z", costUsd: 4, records: 2 }),
+              bucket({
+                hourStart: "2026-08-07T10:00:00.000Z",
+                provider: "codex",
+                model: "no-rates",
+                costUsd: 0,
+                costSource: "unpriced",
+                records: 3,
+                unpricedRecords: 3,
+              }),
+            ],
+            [
+              { provider: "claude", hostId: "mac", homePath: "/a/.claude" },
+              { provider: "codex", hostId: "mac", homePath: "/a/.codex" },
+            ],
+          ),
+        ),
+      ],
+      USAGE_CONTRACT_VERSION,
+    );
+
+    const codex = merged.providers.find((entry) => entry.provider === "codex");
+    expect(codex).toMatchObject({ records: 3, unpricedRecords: 3, costUsd: 0 });
+    expect(costCoverage(codex)).toBe("unknown");
+    expect(costCoverage(merged.providers.find((entry) => entry.provider === "claude"))).toBe(
+      "known",
+    );
+    const day = merged.daily[0]!;
+    expect(day).toMatchObject({ records: 5, unpricedRecords: 3 });
+    expect(costCoverage(day)).toBe("partial");
+    expect(day.byProvider.get("codex")).toEqual({
+      costUsd: 0,
+      totalTokens: 1160,
+      records: 3,
+      unpricedRecords: 3,
+    });
+    const hour = merged.hourly[0]!;
+    expect(hour).toMatchObject({ records: 5, unpricedRecords: 3 });
+    expect(costCoverage(hour.byProvider.get("claude"))).toBe("known");
+  });
+
   it("counts a Cursor account once across servers while retaining each server's other providers", () => {
     const account = {
       provider: "cursor" as const,

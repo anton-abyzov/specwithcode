@@ -1,7 +1,11 @@
 import type { AdvertisedEndpoint } from "@specweave-studio/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { buildPhonePairingUrl, resolvePhonePairingAddress } from "./PairPhone.logic";
+import {
+  buildPhonePairingUrl,
+  phonePairingCodeState,
+  resolvePhonePairingAddress,
+} from "./PairPhone.logic";
 
 function endpoint(
   overrides: Partial<AdvertisedEndpoint> & Pick<AdvertisedEndpoint, "id" | "httpBaseUrl">,
@@ -93,5 +97,46 @@ describe("buildPhonePairingUrl", () => {
     expect(
       buildPhonePairingUrl({ httpBaseUrl: "https://m4.tail.ts.net/", hint: "tailnet" }, "abc123"),
     ).toBe("https://m4.tail.ts.net/pair#token=abc123");
+  });
+});
+
+describe("phonePairingCodeState", () => {
+  const address = { httpBaseUrl: "https://machine.example.test", hint: "anywhere" as const };
+  it("keeps a live code on its original address", () => {
+    expect(
+      phonePairingCodeState({
+        createdAddress: address,
+        currentAddress: address,
+        expiresAt: 101,
+        now: 100,
+      }),
+    ).toBe("ready");
+  });
+  it("expires at the server deadline, including after a sleeping tab wakes", () => {
+    for (const now of [101, 500]) {
+      expect(
+        phonePairingCodeState({
+          createdAddress: address,
+          currentAddress: address,
+          expiresAt: 101,
+          now,
+        }),
+      ).toBe("expired");
+    }
+  });
+  it("never repoints an existing credential to a changed or missing route", () => {
+    for (const currentAddress of [
+      null,
+      { ...address, httpBaseUrl: "https://other.example.test" },
+    ]) {
+      expect(
+        phonePairingCodeState({
+          createdAddress: address,
+          currentAddress,
+          expiresAt: 101,
+          now: 100,
+        }),
+      ).toBe("route-changed");
+    }
   });
 });

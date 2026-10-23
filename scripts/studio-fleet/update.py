@@ -59,11 +59,11 @@ from update_migration import (_column_definition, accepted_widenings, narrowed_r
                               auth_comparison, typed_auth_rows, typed_auth_rows_hash, verify_migration_heartbeat_witness,
                               heartbeat_window_start, prove_migration_preserved, assert_migration_typed_cells,
                               assert_migration_protected_schema)
-from update_compare import (rows_carried_forward, same_guarded_rows, database_allowance, assert_capture_carried,
+from update_compare import (rows_carried_forward, same_guarded_rows, database_allowance, assert_capture_carried, without_auth, same_auth,
                             auth_since, guarded_row_counts, settings_preserved)
 from update_service import (OTHER_SERVICE_PORTS, service_owns_listener, HOLD_REFUSAL, _utc, assert_held,
                             restart_old_release, native_work_counts, _name, descendant_names, gate_settle)
-from state_backup import (BACKUP_SPACE_MARGIN, assert_backup_space, assert_clone_headroom, backup_state,
+from state_backup import (BACKUP_SPACE_MARGIN, assert_backup_space, assert_clone_headroom, backup_space, backup_state,
                           clone_state, discard_unused_backup, write_private as _write_private)
 from service_launch_agent import upgraded_service_plist
 import managed_updates
@@ -282,8 +282,31 @@ def _snapshot(identity, include_auth, since=None, widen_from=None, reads=None):
             'observedAt': datetime.datetime.now(datetime.timezone.utc).isoformat()}
     return proof, auth, carried
 
-def snapshot(identity):
-    return _snapshot(identity, False)[0]
+def snapshot(identity, request=None):
+    if request is None:
+        return _snapshot(identity, False)[0]
+    # Update now already holds this service. The helper's apply takes the full baseline;
+    # the agent needs only admission, identity and idle evidence, not a duplicate row hash.
+    service = _service(identity)
+    try:
+        assert_held(service, request)
+    except (AssertionError, OSError, ValueError, TypeError):
+        # A forced CLI request need not have a service hold. Its original full
+        # snapshot remains safe; only a proven matching hold permits the shortcut.
+        return _snapshot(identity, False)[0]
+    db = live_database.connect(service['own'] / 'userdata' / 'statev2.sqlite')
+    try:
+        db.execute('BEGIN')
+        assert_idle(db)
+    finally:
+        db.close()
+    proof = _snapshot(identity, False, reads=({'nativeWorkIdle': True, 'counts': {}}, None, None, None))[0]
+    current = _service(identity)
+    assert current['runtime']['pid'] == proof['servicePid'] == service['runtime']['pid'], HOLD_REFUSAL
+    assert_held(current, request)
+    proof.pop('databaseCapture')
+    proof.update(snapshotMode='held-service', installRequestedAt=request)
+    return proof
 
 def reap(identity, request, report=None):
     """Update now's fallback when a held service never quiets: stop the processes left beneath
@@ -614,6 +637,24 @@ def job_loaded(domain, label):
     except (AssertionError, OSError, subprocess.TimeoutExpired):
         return False
 
+def held_state_backups(own):
+    """The pre-update copies a held rollback's receipt still names: after a failed state restore that
+    copy is the only database from before the migration, so space pruning keeps it."""
+    held = []
+    try:
+        receipts = sorted((own / 'updates' / 'receipts').glob('update-*.json'))
+    except OSError:
+        return held
+    for path in receipts:
+        try:
+            value = json.loads(path.read_text())
+        except (OSError, ValueError):
+            continue
+        if (isinstance(value, dict) and str(value.get('rollback') or '').startswith('held')
+                and isinstance(value.get('stateBackup'), str)):
+            held.append(value['stateBackup'])
+    return held
+
 def backup_state_clone(own, commit):
     """The pre-update copy, taken while the old service is stopped (state_backup.clone_state):
     (backup, 'clone' or 'sqlite-backup')."""
@@ -642,9 +683,18 @@ def wait_until_answering(identity, old_pid, archive_sha, source_commit, ready_by
             continue
     return None
 
-def assert_prestate(expected, actual, carried=None):
+def assert_prestate(expected, actual, carried=None, auth_baseline=None):
+    """The agent's prestate against this helper's reads, before anything is written. With
+    `auth_baseline` (the rows of this helper's own before read), auth sessions are compared with
+    that read instead of the agent's: a sign-in, a CLI session or `service prepare-update` adds a row
+    the hold does not stop, and between the agent's read and the helper's it failed the first
+    attempt of five releases. The proof across the restart starts from the helper's read and auth
+    cells, so an auth change after it still refuses here, before the restart."""
     for key in ['identity', 'uid', 'serviceLabel', 'servicePid', 'archiveSha256', 'artifactSourceCommit', 'fileHashes', 'rows', 'otherListenersOwned', 'cookieName', 'processQuiescence']:
-        if key == 'rows':
+        if key == 'rows' and auth_baseline is not None:
+            same = (same_guarded_rows(without_auth(expected[key]), without_auth(actual[key]), carried)
+                    and same_auth(auth_baseline, actual[key]))
+        elif key == 'rows':
             same = same_guarded_rows(expected[key], actual[key], carried)
         elif key == 'processQuiescence':
             # Studio's own server browser may start or exit meanwhile; every capture
@@ -665,8 +715,12 @@ def assert_prestate(expected, actual, carried=None):
     # A prestate is taken by the same updater that applies it; both carry the capture.
     assert ('databaseCapture' in expected) == ('databaseCapture' in actual), 'Complete database proof missing'
     if 'databaseCapture' in expected:
-        assert_capture_carried(expected['databaseCapture'], actual['databaseCapture'],
-                               expected['rows'], actual['rows'], carried)
+        if auth_baseline is not None:  # Auth was compared with the baseline above.
+            assert_capture_carried(expected['databaseCapture'], actual['databaseCapture'],
+                                   without_auth(expected['rows']), without_auth(actual['rows']), carried, auth_free=True)
+        else:
+            assert_capture_carried(expected['databaseCapture'], actual['databaseCapture'],
+                                   expected['rows'], actual['rows'], carried)
     assert actual['rows']['nativeWorkIdle'] is True
 
 # Bound on waiting for the restarted service (see apply). With a full rollback (bootout,
@@ -811,9 +865,20 @@ def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_b
     # is taken first, so a commit at any point after it shows; the -wal position too, so a re-read
     # can read only what committed since (read_delta). `base` is the last exact read.
     before_mark = watermark.take()
+    held_snapshot = expected.get('snapshotMode') == 'held-service'
+    assert expected.get('snapshotMode') in (None, 'held-service'), 'Unknown snapshot mode'
+    if held_snapshot:
+        assert_held(_service(identity), expected.get('installRequestedAt'))
     position = read_delta.position(own / 'userdata' / 'statev2.sqlite')
     with after_proof.keeping(own / 'userdata' / 'statev2.sqlite') as kept:  # Its lines, for the proof after the restart.
-        before, original_auth, carried = snapshot_since(identity, expected['rows'], capture_auth)
+        before, original_auth, carried = snapshot_since(identity, None if held_snapshot else expected['rows'], capture_auth)
+    if held_snapshot:
+        service = _service(identity)
+        assert service['runtime']['pid'] == before['servicePid'], HOLD_REFUSAL
+        assert_held(service, expected.get('installRequestedAt'))
+        # Only database evidence is rebased. Every identity, pointer, file and process
+        # comparison against the agent's admission still runs below.
+        expected = {**expected, 'rows': before['rows'], 'databaseCapture': before['databaseCapture']}
     # One base per log position appended rows are measured against: the agent's snapshot
     # (the prestate check) and this read itself (the checks after the gate). Measured against
     # its own rows, this read appended nothing after them, so it carries nothing (None): the
@@ -836,20 +901,37 @@ def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_b
         return position, reads
     restart_started_at = heartbeat_window_start(
         read_opened_at, datetime.datetime.now(datetime.timezone.utc).isoformat(), original_auth)
-    assert_prestate(expected, before, carried)
+    assert_prestate(expected, before, carried, auth_baseline=before['rows'])
     # Without migrations, a heartbeat proof compares existing sessions: refuse before any write.
     assert allow_project_migrations or not allow_existing_browser_heartbeat or original_auth is not None, \
         'Restart heartbeat proof requires the auth sessions table'
     lap('beforeRead')
-    # Each copy is the size of the database (2.5 GB on a long-used Mac): keep the newest one
-    # beside the copy made below, so updates never pile them up and fill the disk. Pruned
-    # first, so the space it frees counts in the free-space check that follows.
+    # A clone shares blocks with the live database only until either side writes, so an old
+    # copy grows toward the database's full size: keep the newest one beside the copy made
+    # below, so updates never pile them up and fill the disk. Pruned first, so the space it
+    # frees counts in the free-space check that follows.
     try:
-        pruned_state_backups, prune_error = prune_state_backups(home, keep_newest=1), None
+        pruned_state_backups, prune_error = prune_state_backups(home, keep=held_state_backups(own), keep_newest=1), None
     except Exception as error:  # Pruning never fails an update.
         pruned_state_backups, prune_error = [], type(error).__name__
-    # A disk too full for the copy refuses here, before staging, a pointer or a stop.
-    assert_backup_space(own, home)
+    # A disk too full for the copy refuses here, before staging, a pointer or a stop. The previous
+    # update's copy goes too before refusing when its files could cover the shortfall: this update
+    # never restores it, unless a held rollback still names it as the only pre-migration database.
+    clonefile = _clonefile()
+    needed, free = backup_space(own, home, clonefile)
+    if free < needed:
+        try:
+            dropped = prune_state_backups(home, keep=held_state_backups(own), keep_newest=0, only_if_frees=needed - free)
+        except Exception as error:
+            dropped, prune_error = [], prune_error or type(error).__name__
+        pruned_state_backups = pruned_state_backups + dropped
+        try:
+            assert_backup_space(own, home, clonefile)
+        except AssertionError as error:
+            if not dropped:
+                raise
+            raise AssertionError('%s (after removing %d older update cop%s)' % (
+                error, len(dropped), 'y' if len(dropped) == 1 else 'ies')) from None
     lap('backupSpace')
     old_bytes = {name: (own / name).read_bytes() for name in ['installation.json', 'launch.sh']}
     receipt = json.loads(old_bytes['installation.json'])
@@ -915,7 +997,7 @@ def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_b
             current, _, current_carried = snapshot_since(identity, expected['rows'])
         base['expected'] = {'position': position, 'since': expected['rows'],
                             'reads': (current['rows'], current_carried, current.get('databaseCapture'))}
-    assert_prestate(expected, current, current_carried)
+    assert_prestate(expected, current, current_carried, auth_baseline=before['rows'])
     lap('prestateCheck')
     # Written only once the prestate holds, so a refusal above leaves no folder behind.
     backup = own / 'owned-updates' / str(uuid.uuid4())
@@ -1103,7 +1185,11 @@ def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_b
         ready_by = min(restarted_at + READINESS_DEADLINE_SECONDS, started + READY_BY_SECONDS_FROM_START)
         wait_until_answering(identity, before['servicePid'], archive_sha, manifest['sourceCommit'], ready_by)
         lap('readinessCheap')
-        reads = None if allow_project_migrations else after_proof.decide(
+        # Also for a release that may migrate: the page proof refuses on any schema change (the full
+        # read with widen_from then decides), and with the schema unchanged it returns what that read
+        # would, since a capture gains `widened` only when a table widened. Data a migration rewrites
+        # is re-read as any touched table is.
+        reads = after_proof.decide(
             own / 'userdata', held, kept, base['before'], before['rows'], capture_auth, progress, lap)
         while True:
             earlier, reads = reads, None  # The page proof's read stands in once; a retry reads in full.
@@ -1430,7 +1516,7 @@ def main():
     parser.add_argument('--identity', required=True)
     parser.add_argument('--snapshot', type=pathlib.Path)
     parser.add_argument('--reap', type=pathlib.Path, help='Stop the processes left beneath the service; write the record here')
-    parser.add_argument('--request', help='With --reap: the forced install request (installRequestedAt) it serves')
+    parser.add_argument('--request', help='With --reap or --snapshot: the forced install request (installRequestedAt) it serves')
     parser.add_argument('--prestate', type=pathlib.Path)
     parser.add_argument('--archive', type=pathlib.Path)
     parser.add_argument('--sha256')
@@ -1456,7 +1542,7 @@ def main():
     elif args.snapshot:
         assert not args.snapshot.exists()
         try:
-            value = snapshot(args.identity)
+            value = snapshot(args.identity, args.request)
         except Exception as error:
             traceback.print_exc()
             print(snapshot_refusal(args.identity, error), file=sys.stderr, flush=True)

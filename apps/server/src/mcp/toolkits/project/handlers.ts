@@ -5,6 +5,7 @@ import {
   ProjectId,
   type LearnedModelPreference,
   type ModelSelection,
+  type ProjectRepository,
 } from "@specweave-studio/contracts";
 import { withLearnedPreference } from "@specweave-studio/shared/modelLanes";
 import * as Crypto from "effect/Crypto";
@@ -75,6 +76,7 @@ const requestProjectAction = Effect.fn("mcp.requestProjectAction")(function* (in
   readonly action: ProjectActionRequests.ProjectAction;
   readonly projectId?: ProjectId | undefined;
   readonly workspaceRoot?: string | undefined;
+  readonly folder?: string | undefined;
   readonly reason?: string | undefined;
 }) {
   const context = yield* readCaller();
@@ -94,6 +96,7 @@ const requestProjectAction = Effect.fn("mcp.requestProjectAction")(function* (in
       action: input.action,
       reason: input.reason ?? "No reason given.",
       ...(input.workspaceRoot === undefined ? {} : { workspaceRoot: input.workspaceRoot }),
+      ...(input.folder === undefined ? {} : { folder: input.folder }),
     })
     .pipe(
       Effect.mapError(
@@ -662,25 +665,35 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
           message:
             "Project instructions are the user's to change in project settings. Save what you learned with studio_project_memory_write instead.",
         });
-      // Approved folders and the project kind are the access evidence the personal
-      // assistant routes on; an agent widening them would grant itself projects.
-      const folders = lifecycle?.environment?.additionalFolders;
-      if (lifecycle?.kind !== undefined || folders !== undefined) {
+      // Approved folders, repositories and the project kind are the access evidence the
+      // personal assistant routes on and what worktree threads may reach; an agent widening
+      // them would grant itself projects and folders without the user's card.
+      const environment = lifecycle?.environment;
+      if (lifecycle?.kind !== undefined || environment !== undefined) {
         const current = Option.getOrUndefined(
           yield* projects.getById(input.projectId).pipe(Effect.mapError(unavailable)),
         )?.workspaceSettings;
         const same = (left: ReadonlyArray<string>, right: ReadonlyArray<string>) =>
-          left.length === right.length && left.every((folder) => right.includes(folder));
+          left.length === right.length && left.every((entry) => right.includes(entry));
+        const repositoryKeys = (repositories: ReadonlyArray<ProjectRepository>) =>
+          repositories.map((repository) =>
+            JSON.stringify([repository.id, repository.url, repository.localPath]),
+          );
         if (
           (lifecycle?.kind !== undefined && lifecycle.kind !== (current?.kind ?? "code")) ||
-          (folders !== undefined && !same(folders, current?.environment.additionalFolders ?? []))
+          (environment !== undefined &&
+            (!same(environment.additionalFolders, current?.environment.additionalFolders ?? []) ||
+              !same(
+                repositoryKeys(environment.repositories),
+                repositoryKeys(current?.environment.repositories ?? []),
+              )))
         )
           return yield* new OrchestratorMcpFailure({
             code: "invalid_request",
             message:
               lifecycle?.kind !== undefined && lifecycle.kind !== (current?.kind ?? "code")
                 ? "A project's kind is fixed when it is created; make a new project of the kind you need."
-                : "Approved folders are the user's to change in project settings; they decide what agents here can reach.",
+                : "Agents cannot change approved folders or repositories themselves; the user decides what agents here can reach. To add a folder, call studio_project_request with action add_folder and folder: the user approves it in a card. Repositories and removing a folder are the user's to change in project settings.",
           });
       }
       return yield* projects

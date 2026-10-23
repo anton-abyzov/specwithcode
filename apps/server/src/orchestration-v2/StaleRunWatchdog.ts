@@ -20,6 +20,7 @@ import * as OrphanedRuns from "./OrphanedRuns.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as RunLiveness from "./RunLiveness.ts";
+import { STALE_FINISHED_RUN_REASON } from "./systemInterruptReasons.ts";
 
 /**
  * How long a turn may stay "running" after its final answer with no provider
@@ -30,8 +31,7 @@ export const STALE_FINISHED_RUN_IDLE = Duration.minutes(30);
 
 const NONTERMINAL = new Set(["pending", "running", "waiting"]);
 
-export const STALE_FINISHED_RUN_REASON =
-  "Closed automatically: the turn had posted its final answer and its provider sent nothing for 30 minutes.";
+export { STALE_FINISHED_RUN_REASON } from "./systemInterruptReasons.ts";
 
 /**
  * The running run a provider finished but never ended: its latest item is a

@@ -655,6 +655,9 @@ export function EnvironmentProviderSettings({
   const acceptAcpRegistryUrlAuth = useAtomCommand(serverEnvironment.acceptAcpRegistryUrlAuth, {
     reportFailure: false,
   });
+  const [cliUpdateTarget, setCliUpdateTarget] = useState<ProviderSettingsUpdateCandidate | null>(
+    null,
+  );
   const [isRefreshingProviders, setIsRefreshingProviders] = useState(false);
   const [isAddInstanceDialogOpen, setIsAddInstanceDialogOpen] = useState(false);
   const [selectedInstanceId, setSelectedInstanceId] = useState<ProviderInstanceId | null>(
@@ -1248,7 +1251,7 @@ export function EnvironmentProviderSettings({
         onRunUpdate={
           !readOnly && showInlineUpdateButton && updateCandidate
             ? () => {
-                if (canRunInlineUpdate) void runProviderUpdate(updateCandidate);
+                if (canRunInlineUpdate) setCliUpdateTarget(updateCandidate);
               }
             : undefined
         }
@@ -1259,6 +1262,19 @@ export function EnvironmentProviderSettings({
 
   return (
     <>
+      {cliUpdateTarget && (
+        <ProviderUpdatesAction
+          target={{
+            environmentId,
+            instanceId: cliUpdateTarget.instanceId,
+            driver: cliUpdateTarget.driver,
+          }}
+          open
+          onOpenChange={(open) => {
+            if (!open) setCliUpdateTarget(null);
+          }}
+        />
+      )}
       <SettingsSection
         {...searchableSetting("providers")}
         variant="plain"

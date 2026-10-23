@@ -7,29 +7,21 @@ import {
 } from "@specweave-studio/contracts";
 import * as DateTime from "effect/DateTime";
 import { SmartphoneIcon } from "lucide-react";
-import { memo, useCallback, useMemo, useState } from "react";
+import { memo, useCallback, useMemo, useState, useEffect, useRef } from "react";
 
 import {
   createServerPairingCredential,
   readPrimaryEnvironmentTarget,
 } from "~/environments/primary";
 import { Button } from "../ui/button";
-import {
-  Dialog,
-  DialogDescription,
-  DialogFooter,
-  DialogHeader,
-  DialogPanel,
-  DialogPopup,
-  DialogTitle,
-} from "../ui/dialog";
-import { QRCodeSvg } from "../ui/qr-code";
 import { stackedThreadToast, toastManager } from "../ui/toast";
 import {
   buildPhonePairingUrl,
-  describePhoneNetworkHint,
+  phonePairingCodeState,
+  type PhonePairingAddress,
   resolvePhonePairingAddress,
 } from "./PairPhone.logic";
+import { PhoneSetupDialog, type PhoneSetupCode } from "./PhoneSetupDialog";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
 import { searchableSetting, type SettingsSearchItemId } from "./settingsSearch";
 
@@ -68,8 +60,7 @@ type PairPhoneSettingsProps = {
 };
 
 /**
- * A one-step way to pair the iPhone app: make a one-time link with the
- * standard client permissions and show it as a QR code right away.
+ * Prepare the phone route before minting a short-lived pairing credential.
  */
 export const PairPhoneSettings = memo(function PairPhoneSettings({
   endpoint,
@@ -89,10 +80,47 @@ export const PairPhoneSettings = memo(function PairPhoneSettings({
       }),
     [endpoint, serverEndpoints],
   );
-  const [created, setCreated] = useState<AuthPairingCredentialResult | null>(null);
+  const [open, setOpen] = useState(false);
+  const [created, setCreated] = useState<{
+    result: AuthPairingCredentialResult;
+    address: PhonePairingAddress;
+  } | null>(null);
   const [isCreating, setIsCreating] = useState(false);
-  const pairingUrl =
-    created !== null && address !== null ? buildPhonePairingUrl(address, created.credential) : null;
+  const [error, setError] = useState<string | null>(null);
+  const [now, setNow] = useState(Date.now);
+  const generation = useRef(0);
+  const creating = useRef(false);
+  useEffect(() => {
+    if (!open || created === null) return;
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [open, created]);
+  const codeState =
+    created === null
+      ? null
+      : phonePairingCodeState({
+          createdAddress: created.address,
+          currentAddress: address,
+          expiresAt: DateTime.toEpochMillis(created.result.expiresAt),
+          now,
+        });
+  const code: PhoneSetupCode | null =
+    created === null
+      ? null
+      : codeState === "ready"
+        ? {
+            status: "ready",
+            url: buildPhonePairingUrl(created.address, created.result.credential),
+            expiresAt: formatClockTime(created.result.expiresAt),
+          }
+        : { status: codeState! };
+  const changeOpen = (next: boolean) => {
+    generation.current += 1;
+    setOpen(next);
+    setCreated(null);
+    setError(null);
+    setNow(Date.now());
+  };
 
   const phoneScopes = useMemo(
     () => AuthStandardClientScopes.filter((scope) => delegatableScopes.includes(scope)),
@@ -101,48 +129,48 @@ export const PairPhoneSettings = memo(function PairPhoneSettings({
   const canPair = canCreateLinks && phoneScopes.length > 0;
 
   const handlePair = useCallback(async () => {
-    const scopes = phoneScopes;
-    if (scopes.length === 0) return;
+    if (!canPair || address === null || creating.current) return;
+    const attempt = generation.current;
+    creating.current = true;
     setIsCreating(true);
+    setError(null);
     try {
-      const result = await createServerPairingCredential({ label: PHONE_LINK_LABEL, scopes });
+      const result = await createServerPairingCredential({
+        label: PHONE_LINK_LABEL,
+        scopes: phoneScopes,
+      });
       onPairingLinkCreated(result);
-      setCreated(result);
+      if (attempt === generation.current) {
+        setNow(Date.now());
+        setCreated({ result, address });
+      }
     } catch (error) {
-      toastManager.add(
-        stackedThreadToast({
-          type: "error",
-          title: "Could not create a pairing code",
-          description: error instanceof Error ? error.message : "Try again in a moment.",
-        }),
-      );
+      if (attempt === generation.current) {
+        setError(
+          error instanceof Error ? error.message : "Could not create a pairing code. Try again.",
+        );
+      }
     } finally {
+      creating.current = false;
       setIsCreating(false);
     }
-  }, [phoneScopes, onPairingLinkCreated]);
+  }, [canPair, address, phoneScopes, onPairingLinkCreated]);
 
-  const handleCopy = useCallback(async () => {
-    if (pairingUrl === null) return;
+  const copy = async (value: string, title: string) => {
     try {
-      await navigator.clipboard.writeText(pairingUrl);
-      toastManager.add(stackedThreadToast({ type: "success", title: "Pairing link copied" }));
+      await navigator.clipboard.writeText(value);
+      toastManager.add(stackedThreadToast({ type: "success", title }));
     } catch {
-      toastManager.add(
-        stackedThreadToast({
-          type: "error",
-          title: "Could not copy the pairing link",
-          description: "Scan the code instead.",
-        }),
-      );
+      setError("Could not copy. Select the computer address or scan the code instead.");
     }
-  }, [pairingUrl]);
+  };
 
   const description = !canPair
     ? "This window cannot create pairing codes. Quit and reopen SpecWithCode so it signs in with full access to this computer."
     : address === null
       ? hasAccessControls
-        ? "Your phone needs an address to reach this computer. Turn on Tailscale HTTPS or Network access for this machine first."
-        : "Your phone needs an address to reach this computer. Set up Tailscale Serve for it with `specwithcode pair --tailscale`, or open these settings in the SpecWithCode desktop app."
+        ? "Your phone needs an address to reach this computer. Set up Tailscale HTTPS for this machine first."
+        : "Your phone needs an address to reach this computer. Set up Tailscale Serve for it with `specweave-studio pair --tailscale`, or open these settings in the SpecWithCode desktop app."
       : `Scan a code with the SpecWithCode app on your iPhone. It connects to ${address.httpBaseUrl.replace(/\/$/u, "")}.`;
 
   return (
@@ -155,72 +183,46 @@ export const PairPhoneSettings = memo(function PairPhoneSettings({
         title="Pair a phone"
         description={description}
         control={
-          canPair && address === null && hasAccessControls ? (
-            <Button size="sm" variant="outline" onClick={onShowAccessSettings}>
-              Set up access
-            </Button>
-          ) : (
-            <Button
-              size="sm"
-              variant="default"
-              disabled={!canPair || address === null || isCreating}
-              onClick={() => void handlePair()}
-            >
-              {isCreating ? "Creating…" : "Pair a phone"}
-            </Button>
-          )
+          <Button size="sm" variant="default" disabled={!canPair} onClick={() => changeOpen(true)}>
+            Pair a phone
+          </Button>
         }
       />
-      <Dialog
-        open={created !== null}
-        onOpenChange={(open) => {
-          if (!open) setCreated(null);
+      <PhoneSetupDialog
+        open={open}
+        onOpenChange={changeOpen}
+        address={address}
+        code={code}
+        canPair={canPair}
+        isCreating={isCreating}
+        error={error}
+        hasAccessControls={hasAccessControls}
+        onShowAccessSettings={() => {
+          changeOpen(false);
+          onShowAccessSettings();
         }}
-      >
-        <DialogPopup className="max-w-md">
-          <DialogHeader>
-            <DialogTitle>Scan with your iPhone</DialogTitle>
-            <DialogDescription>
-              In the SpecWithCode app, tap Pair a machine, then Scan QR code.
-              {created !== null
-                ? ` The code works once and expires at ${formatClockTime(created.expiresAt)}.`
-                : null}
-            </DialogDescription>
-          </DialogHeader>
-          <DialogPanel>
-            {pairingUrl !== null && address !== null ? (
-              <div className="flex flex-col items-center gap-3">
-                <div className="w-fit rounded-xl bg-white p-3">
-                  <QRCodeSvg
-                    value={pairingUrl}
-                    size={208}
-                    level="M"
-                    marginSize={1}
-                    title="Pairing code for the SpecWithCode iPhone app"
-                  />
-                </div>
-                <p className="text-center text-xs text-muted-foreground">
-                  {describePhoneNetworkHint(address.hint)}
-                </p>
-              </div>
-            ) : (
-              <p className="text-xs text-muted-foreground">
-                The code was created, but this computer has no address your phone can reach.
-              </p>
-            )}
-          </DialogPanel>
-          <DialogFooter>
-            {pairingUrl !== null ? (
-              <Button variant="ghost" onClick={() => void handleCopy()}>
-                Copy link
-              </Button>
-            ) : null}
-            <Button variant="default" onClick={() => setCreated(null)}>
-              Done
-            </Button>
-          </DialogFooter>
-        </DialogPopup>
-      </Dialog>
+        onGenerate={() => void handlePair()}
+        onCopyAddress={() => {
+          if (address !== null) void copy(address.httpBaseUrl, "Computer address copied");
+        }}
+        onCopyCode={() => {
+          if (
+            created !== null &&
+            canPair &&
+            phonePairingCodeState({
+              createdAddress: created.address,
+              currentAddress: address,
+              expiresAt: DateTime.toEpochMillis(created.result.expiresAt),
+              now: Date.now(),
+            }) === "ready"
+          ) {
+            void copy(
+              buildPhonePairingUrl(created.address, created.result.credential),
+              "Pairing link copied",
+            );
+          }
+        }}
+      />
     </SettingsSection>
   );
 });

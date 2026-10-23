@@ -94,13 +94,17 @@ def prune_releases(home, keep, now=None, recent_seconds=RECENT_SECONDS):
     return removed
 
 
-def prune_state_backups(home, keep=(), keep_newest=STATE_BACKUPS_KEPT, now=None, recent_seconds=RECENT_SECONDS):
+def prune_state_backups(home, keep=(), keep_newest=STATE_BACKUPS_KEPT, now=None, recent_seconds=RECENT_SECONDS,
+                        only_if_frees=None):
     """Deletes old pre-update state database copies; returns the folder names removed.
 
     Keeps the `keep_newest` newest copies, any folder in `keep`, anything written in the
     last hour (another identity's update may be using it) and any folder that holds a file
     backup_state never writes. Only plain pre-<commit>-<stamp>[-<uuid>] folders directly in
     the backups root are candidates; symlinks are never followed. Never raises.
+
+    With `only_if_frees`, removes nothing unless the candidates' files add up to at least that many
+    bytes. Their sizes are an upper bound: a clone frees only the blocks it no longer shares.
     """
     try:
         root = studio_paths.backups_root(home)
@@ -135,9 +139,19 @@ def prune_state_backups(home, keep=(), keep_newest=STATE_BACKUPS_KEPT, now=None,
         return []
     backups.sort(key=lambda entry: (entry[0], entry[1]), reverse=True)
     removed = []
-    for stamp, mtime, child, entries in backups[max(0, keep_newest):]:
-        if child.name in protected or moment - mtime < recent_seconds:
-            continue
+    candidates = [(child, entries) for stamp, mtime, child, entries in backups[max(0, keep_newest):]
+                  if child.name not in protected and moment - mtime >= recent_seconds]
+    if only_if_frees is not None:
+        total = 0
+        for child, entries in candidates:
+            for entry in entries:
+                try:
+                    total += os.lstat(str(entry)).st_size
+                except OSError:
+                    pass
+        if total < only_if_frees:
+            return []
+    for child, entries in candidates:
         try:
             for entry in entries:
                 entry.unlink()

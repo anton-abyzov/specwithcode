@@ -222,10 +222,17 @@ const makeTestRunner = (
       ranges: [],
     })),
   },
+  idleCheck: (
+    provider: string,
+  ) => Effect.Effect<void, ProviderMaintenanceRunner.ProviderMaintenanceCommandError> = () =>
+    Effect.void,
 ) =>
   Effect.service(ProviderMaintenanceRunner.ProviderMaintenanceRunner).pipe(
     Effect.provide(
       ProviderMaintenanceRunner.layer.pipe(
+        Layer.provide(
+          Layer.succeed(ProviderMaintenanceRunner.ProviderInstallerIdleCheck, idleCheck),
+        ),
         Layer.provide(
           Layer.mergeAll(
             Layer.succeed(ProviderRegistry.ProviderRegistry, registry),
@@ -1014,6 +1021,38 @@ it.effect("refuses incompatible latest versions and unapproved or unpinnable tar
         layerMockSpawner((_command, args) => {
           calls.push(args.join(" "));
           return { stdout: "installed" };
+        }),
+      ),
+    ),
+  );
+});
+
+it.effect("refuses an in-use installer without running its command", () => {
+  let calls = 0;
+  return Effect.gen(function* () {
+    const { registry } = yield* makeRegistry(baseNativeCliProvider);
+    const updater = yield* makeTestRunner(registry, undefined, () =>
+      Effect.fail(
+        new ProviderMaintenanceRunner.ProviderMaintenanceCommandError({
+          message: "CLI is in use. Retry when idle.",
+        }),
+      ),
+    );
+    const result = yield* updater.updateProvider(NATIVE_CLI_DRIVER);
+    assert.strictEqual(result.providers[0]?.updateState?.status, "failed");
+    assert.strictEqual(
+      result.providers[0]?.updateState?.message,
+      "CLI is in use. Retry when idle.",
+    );
+    assert.strictEqual(calls, 0);
+  }).pipe(
+    Effect.provide(
+      Layer.mergeAll(
+        layerNonWindowsPlatform,
+        layerLatestVersionHttpClient("3.0.0"),
+        layerMockSpawner(() => {
+          calls++;
+          return {};
         }),
       ),
     ),

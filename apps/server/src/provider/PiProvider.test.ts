@@ -76,18 +76,19 @@ describe("PiProvider", () => {
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 
-  it.effect("keeps compatible Pi selectable when optional discovery fails", () =>
+  it.effect("does not report a compatible binary as ready when RPC startup fails", () =>
     Effect.gen(function* () {
       const snapshot = yield* checkPiProviderStatus(settings).pipe(
         Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, piProbeSpawner("0.84.3")),
       );
-      assert.equal(snapshot.status, "ready");
+      assert.equal(snapshot.status, "warning");
+      assert.isTrue(snapshot.installed);
       assert.equal(snapshot.auth.status, "unknown");
       assert.deepEqual(
         snapshot.models.map((model) => model.slug),
         ["default"],
       );
-      assert.include(snapshot.message ?? "", "could not refresh its models and commands");
+      assert.include(snapshot.message ?? "", "RPC startup failed");
     }).pipe(Effect.provide(NodeServices.layer)),
   );
 

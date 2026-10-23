@@ -460,10 +460,10 @@ export const checkPiProviderStatus = Effect.fn("checkPiProviderStatus")(function
       probe: {
         installed: true,
         version,
-        status: "ready",
+        status: "warning",
         auth: { status: "unknown" },
         message:
-          "Pi is available, but SpecWithCode could not refresh its models and commands. The live session will retry startup.",
+          "Pi CLI is installed, but RPC startup failed. SpecWithCode could not verify its models and commands. Check Pi in a terminal, then refresh the provider.",
       },
     });
   }
@@ -476,10 +476,10 @@ export const checkPiProviderStatus = Effect.fn("checkPiProviderStatus")(function
       probe: {
         installed: true,
         version,
-        status: "ready",
+        status: "warning",
         auth: { status: "unknown" },
         message:
-          "Pi is available, but model and command discovery needs interactive input. The live session will handle it.",
+          "Pi CLI is installed, but RPC discovery timed out. Run Pi in a terminal to resolve startup prompts, then refresh the provider.",
       },
     });
   }

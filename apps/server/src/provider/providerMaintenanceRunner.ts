@@ -21,6 +21,7 @@ import * as Schema from "effect/Schema";
 import { HttpClient } from "effect/http";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
+import { stageCodexUpdate, assertProviderInstallerIdle } from "./stagedProviderUpdate.ts";
 import * as ModelManifest from "./ModelManifest.ts";
 import { resolveProviderCompatibility } from "./providerCompatibility.ts";
 import * as ProviderRegistry from "./ProviderRegistry.ts";
@@ -35,6 +36,19 @@ import {
 import type { ProviderMaintenanceCapabilities } from "./providerMaintenance.ts";
 import { collectUint8StreamText } from "../stream/collectUint8StreamText.ts";
 const isServerProviderUpdateError = Schema.is(ServerProviderUpdateError);
+
+export const ProviderInstallerIdleCheck = Context.Reference<
+  (
+    provider: string,
+    action: ProviderMaintenanceCommandAction,
+  ) => Effect.Effect<void, ProviderMaintenanceCommandError>
+>("ProviderInstallerIdleCheck", {
+  defaultValue: () => (provider, action) =>
+    Effect.tryPromise({
+      try: () => assertProviderInstallerIdle(provider, action.idlePaths, action.idlePackageName),
+      catch: maintenanceCommandError,
+    }),
+});
 
 const UPDATE_TIMEOUT_MS = 5 * 60_000;
 const UPDATE_OUTPUT_MAX_BYTES = 10_000;
@@ -65,10 +79,19 @@ export class ProviderMaintenanceRunner extends Context.Service<
   ProviderMaintenanceRunnerShape
 >()("specweave-studio/provider/providerMaintenanceRunner") {}
 
-class ProviderMaintenanceCommandError extends Data.TaggedError("ProviderMaintenanceCommandError")<{
+export class ProviderMaintenanceCommandError extends Data.TaggedError(
+  "ProviderMaintenanceCommandError",
+)<{
   readonly message: string;
   readonly cause?: unknown;
 }> {}
+
+function maintenanceCommandError(cause: unknown): ProviderMaintenanceCommandError {
+  return new ProviderMaintenanceCommandError({
+    message: cause instanceof Error ? cause.message : "Provider maintenance failed.",
+    cause,
+  });
+}
 
 interface VerifiedProviderRefresh {
   readonly providers: ReadonlyArray<ServerProvider>;
@@ -221,6 +244,7 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
   const providerRegistry = yield* ProviderRegistry.ProviderRegistry;
   const manifestService = yield* ModelManifest.ModelManifest;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const checkInstallerIdle = yield* ProviderInstallerIdleCheck;
   const httpClient = yield* HttpClient.HttpClient;
   const versionCache = yield* ProviderVersionCache;
   const runMaintenanceCommand = (update: ProviderMaintenanceCommandAction) =>
@@ -420,7 +444,22 @@ export const make = Effect.fn("ProviderMaintenanceRunner.make")(function* () {
                 }),
               );
             }
-            const result = yield* runMaintenanceCommand(command);
+            const result = command.stagedCodex
+              ? {
+                  stdout: yield* Effect.tryPromise({
+                    try: () => stageCodexUpdate(command.stagedCodex!, candidateVersion ?? ""),
+                    catch: maintenanceCommandError,
+                  }),
+                  stderr: "",
+                  exitCode: 0,
+                  timedOut: false,
+                  stdoutTruncated: false,
+                  stderrTruncated: false,
+                }
+              : yield* Effect.gen(function* () {
+                  yield* checkInstallerIdle(provider, command);
+                  return yield* runMaintenanceCommand(command);
+                });
             const finishedAt = yield* nowIso;
             if (result.timedOut || result.exitCode !== 0) {
               return yield* finish(
