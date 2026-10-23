@@ -4,6 +4,8 @@ import { describe, expect, it } from "vite-plus/test";
 import { ExecutionEnvironmentDescriptor } from "./environment.ts";
 import {
   formatStorageFreeSpace,
+  isPaidModelBilling,
+  providerModelBilling,
   resolveEnvironmentMachineKind,
   statfsBytes,
   ServerConfig,
@@ -138,6 +140,99 @@ describe("ServerProvider", () => {
     });
 
     expect(parsed.models[0]?.isLegacy).toBe(true);
+  });
+
+  it("decodes a model from before capability and billing fields", () => {
+    const parsed = decodeServerProvider({
+      ...baseProviderSnapshot,
+      models: [{ slug: "gpt-5.4", name: "GPT-5.4", isCustom: false, capabilities: null }],
+    });
+    const model = parsed.models[0];
+    expect(model?.billing).toBeUndefined();
+    expect(model?.toolCalls).toBeUndefined();
+    expect(model?.reasoning).toBeUndefined();
+    expect(model?.imageInput).toBeUndefined();
+    expect(model?.contextWindow).toBeUndefined();
+    expect(model?.maxOutput).toBeUndefined();
+  });
+
+  it("round-trips model capability and billing fields", () => {
+    const model = {
+      slug: "openrouter/qwen3-coder",
+      name: "Qwen3 Coder",
+      isCustom: false,
+      capabilities: null,
+      billing: "paid-router",
+      toolCalls: true,
+      reasoning: "optional",
+      imageInput: false,
+      contextWindow: 262_144,
+      maxOutput: 65_536,
+    };
+    const parsed = decodeServerProvider({ ...baseProviderSnapshot, models: [model] });
+    expect(parsed.models[0]).toEqual(model);
+    const encoded = Schema.encodeSync(ServerProvider)(parsed);
+    expect(decodeServerProvider(encoded).models[0]).toEqual(model);
+  });
+
+  it("drops a billing or reasoning kind this build does not know instead of the provider", () => {
+    const parsed = decodeServerProvider({
+      ...baseProviderSnapshot,
+      models: [
+        {
+          slug: "m",
+          name: "M",
+          isCustom: false,
+          capabilities: null,
+          billing: "metered-future",
+          reasoning: "adaptive",
+          toolCalls: false,
+        },
+      ],
+    });
+    expect(parsed.models[0]?.billing).toBeUndefined();
+    expect(parsed.models[0]?.reasoning).toBeUndefined();
+    expect(parsed.models[0]?.toolCalls).toBe(false);
+  });
+
+  it("rejects a non-positive context window", () => {
+    expect(() =>
+      decodeServerProvider({
+        ...baseProviderSnapshot,
+        models: [{ slug: "m", name: "M", isCustom: false, capabilities: null, contextWindow: 0 }],
+      }),
+    ).toThrow();
+  });
+});
+
+describe("isPaidModelBilling", () => {
+  it.each([
+    ["paid-router", true],
+    ["api", true],
+    ["subscription", false],
+    ["local", false],
+    ["unknown", false],
+    [undefined, false],
+  ] as const)("%s -> %s", (billing, paid) => {
+    expect(isPaidModelBilling(billing)).toBe(paid);
+  });
+});
+
+describe("providerModelBilling", () => {
+  const provider = decodeServerProvider({
+    ...baseProviderSnapshot,
+    models: [
+      { slug: "a", name: "A", isCustom: false, capabilities: null, billing: "local" },
+      { slug: "b", name: "B", isCustom: false, capabilities: null },
+    ],
+  });
+
+  it("reads the billing of the model with that slug", () => {
+    expect(providerModelBilling(provider, "a")).toBe("local");
+    expect(providerModelBilling(provider, "b")).toBeUndefined();
+    expect(providerModelBilling(provider, "missing")).toBeUndefined();
+    expect(providerModelBilling(provider, undefined)).toBeUndefined();
+    expect(providerModelBilling(undefined, "a")).toBeUndefined();
   });
 });
 

@@ -13,6 +13,8 @@ import {
   type OrchestrationV2ProviderThread,
   type Project,
   ProjectId,
+  type ServerProvider,
+  type ServerProviderModel,
   ProviderDriverKind,
   ProviderInstanceId,
   type ProviderSessionId,
@@ -39,6 +41,7 @@ import { HttpServer } from "effect/http";
 import { ProviderWorkspaceMissingError } from "../provider/Errors.ts";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ProjectService from "../project/ProjectService.ts";
+import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as McpProviderSession from "../mcp/McpProviderSession.ts";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
@@ -508,6 +511,7 @@ function layerTest(input: {
   readonly serverSettingsLayer?: ReturnType<typeof ServerSettings.layerTest>;
   readonly projectServiceLayer?: Layer.Layer<ProjectService.ProjectService>;
   readonly capacityLayer?: Layer.Layer<StudioCapacity.Capacity>;
+  readonly providerRegistryLayer?: Layer.Layer<ProviderRegistry.ProviderRegistry>;
   /** More provider instances served by the same fake adapter. */
   readonly extraInstanceIds?: ReadonlyArray<ProviderInstanceId>;
   /** Shares one live run registry between the manager and the test. */
@@ -581,6 +585,7 @@ function layerTest(input: {
           ...(input.serverSettingsLayer === undefined ? [] : [input.serverSettingsLayer]),
           ...(input.projectServiceLayer === undefined ? [] : [input.projectServiceLayer]),
           ...(input.capacityLayer === undefined ? [] : [input.capacityLayer]),
+          ...(input.providerRegistryLayer === undefined ? [] : [input.providerRegistryLayer]),
           layerRunLiveness,
         ),
       ),
@@ -2560,6 +2565,176 @@ it.effect(
       }).pipe(
         Effect.provide(
           layerTest({ state, idleTimeoutMs: 60_000, extraInstanceIds: [otherInstanceId] }),
+        ),
+      );
+    }),
+);
+
+/** Provider snapshots whose models report these tool-call capabilities. */
+function layerProviderModels(
+  models: ReadonlyArray<{
+    readonly instanceId: ProviderInstanceId;
+    readonly slug: string;
+    readonly toolCalls?: boolean;
+  }>,
+) {
+  const providers = Array.from(new Set(models.map((model) => model.instanceId))).map(
+    (instanceId): ServerProvider => ({
+      instanceId,
+      driver: CODEX_DRIVER,
+      enabled: true,
+      installed: true,
+      version: null,
+      status: "ready",
+      auth: { status: "authenticated" },
+      checkedAt: "2026-10-22T00:00:00.000Z",
+      models: models
+        .filter((model) => model.instanceId === instanceId)
+        .map((model): ServerProviderModel => ({
+          slug: model.slug,
+          name: model.slug,
+          isCustom: false,
+          capabilities: null,
+          ...(model.toolCalls === undefined ? {} : { toolCalls: model.toolCalls }),
+        })),
+      slashCommands: [],
+      skills: [],
+    }),
+  );
+  return Layer.mock(ProviderRegistry.ProviderRegistry)({
+    getProviders: Effect.succeed(providers),
+  });
+}
+
+it.effect("ProviderSessionManagerV2 gives no MCP to a model that cannot call tools", () =>
+  Effect.gen(function* () {
+    const state = yield* Ref.make(emptyState);
+    const mcpConfigs = yield* Ref.make<
+      ReadonlyArray<McpProviderSession.McpProviderSessionConfig | undefined>
+    >([]);
+    const toolless = { instanceId: modelSelection.instanceId, model: "local-toolless" };
+    const unreported = { instanceId: modelSelection.instanceId, model: "local-unreported" };
+    yield* Effect.gen(function* () {
+      const eventSink = yield* EventSink.EventSinkV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+      const now = yield* DateTime.now;
+      const threadId = ThreadId.make("thread-provider-session-manager-toolless");
+      const unreportedThreadId = ThreadId.make("thread-provider-session-manager-unreported");
+      yield* eventSink.write({
+        events: [
+          yield* makeThreadCreatedEvent({ idAllocator, threadId, now }),
+          yield* makeThreadCreatedEvent({ idAllocator, threadId: unreportedThreadId, now }),
+        ],
+      });
+      yield* manager.open({
+        threadId,
+        providerSessionId: yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        }),
+        modelSelection: toolless,
+        runtimePolicy,
+      });
+      yield* manager.open({
+        threadId: unreportedThreadId,
+        providerSessionId: yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId: unreportedThreadId,
+        }),
+        modelSelection: unreported,
+        runtimePolicy,
+      });
+
+      const [toollessConfig, unreportedConfig] = yield* Ref.get(mcpConfigs);
+      assert.isUndefined(toollessConfig);
+      assert.isUndefined(McpProviderSession.readMcpProviderSession(threadId));
+      // A model that does not report tool calls keeps them, as today.
+      assert.equal(unreportedConfig?.threadId, unreportedThreadId);
+    }).pipe(
+      Effect.provide(
+        layerTest({
+          state,
+          idleTimeoutMs: 60_000,
+          mcpConfigs,
+          providerRegistryLayer: layerProviderModels([
+            { ...toolless, slug: toolless.model, toolCalls: false },
+            { ...unreported, slug: unreported.model },
+          ]),
+        }),
+      ),
+    );
+  }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 sets a credential aside for a toolless model and reuses it after",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const otherInstanceId = ProviderInstanceId.make("opencode-local");
+      const toolless = { instanceId: otherInstanceId, model: "local-toolless" };
+      yield* Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const registry = yield* McpSessionRegistry.McpSessionRegistry;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make("thread-provider-session-manager-toolless-detour");
+        yield* eventSink.write({
+          events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+        });
+        const firstSessionId = idAllocator.derive.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+        });
+        yield* manager.open({
+          threadId,
+          providerSessionId: firstSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        const firstConfig = McpProviderSession.readMcpProviderSession(threadId);
+        assert.isDefined(firstConfig);
+
+        // A turn on a toolless local model sees no credential at all, not
+        // even the first provider's.
+        yield* manager.open({
+          threadId,
+          providerSessionId: idAllocator.derive.providerSession({
+            providerInstanceId: otherInstanceId,
+          }),
+          modelSelection: toolless,
+          runtimePolicy,
+        });
+        assert.isUndefined(McpProviderSession.readMcpProviderSession(threadId));
+
+        // Back on the first provider, its still-live process keeps its token.
+        yield* manager.open({
+          threadId,
+          providerSessionId: firstSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        assert.equal(
+          McpProviderSession.readMcpProviderSession(threadId)?.authorizationHeader,
+          firstConfig!.authorizationHeader,
+        );
+        const token = firstConfig!.authorizationHeader.replace(/^Bearer\s+/, "");
+        assert.equal(
+          (yield* registry.resolve(token))?.thread.providerInstanceId,
+          modelSelection.instanceId,
+        );
+      }).pipe(
+        Effect.provide(
+          layerTest({
+            state,
+            idleTimeoutMs: 60_000,
+            extraInstanceIds: [otherInstanceId],
+            providerRegistryLayer: layerProviderModels([
+              { instanceId: modelSelection.instanceId, slug: modelSelection.model },
+              { ...toolless, slug: toolless.model, toolCalls: false },
+            ]),
+          }),
         ),
       );
     }),

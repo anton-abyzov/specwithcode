@@ -183,6 +183,7 @@ public struct ServerProviderSummary: Codable, Hashable, Sendable, Identifiable {
   public var instanceId: String
   public var driver: String
   public var displayName: String?
+  public var iconUrl: String?
   public var enabled: Bool
   public var installed: Bool
   /// e.g. `ready`, `error`, `disabled`.
@@ -190,10 +191,11 @@ public struct ServerProviderSummary: Codable, Hashable, Sendable, Identifiable {
   public var message: String?
   public var models: [ServerProviderModel]
 
-  public init(instanceId: String, driver: String, displayName: String? = nil, enabled: Bool = true, installed: Bool = true, status: String = "ready", message: String? = nil, models: [ServerProviderModel] = []) {
+  public init(instanceId: String, driver: String, displayName: String? = nil, iconUrl: String? = nil, enabled: Bool = true, installed: Bool = true, status: String = "ready", message: String? = nil, models: [ServerProviderModel] = []) {
     self.instanceId = instanceId
     self.driver = driver
     self.displayName = displayName
+    self.iconUrl = iconUrl
     self.enabled = enabled
     self.installed = installed
     self.status = status
@@ -201,13 +203,14 @@ public struct ServerProviderSummary: Codable, Hashable, Sendable, Identifiable {
     self.models = models
   }
 
-  enum CodingKeys: String, CodingKey { case instanceId, driver, displayName, enabled, installed, status, message, models }
+  enum CodingKeys: String, CodingKey { case instanceId, driver, displayName, iconUrl, enabled, installed, status, message, models }
 
   public init(from decoder: Decoder) throws {
     let c = try decoder.container(keyedBy: CodingKeys.self)
     instanceId = try c.decode(String.self, forKey: .instanceId)
     driver = try c.decodeIfPresent(String.self, forKey: .driver) ?? instanceId
     displayName = try c.decodeIfPresent(String.self, forKey: .displayName)
+    iconUrl = try c.decodeIfPresent(String.self, forKey: .iconUrl)
     enabled = try c.decodeIfPresent(Bool.self, forKey: .enabled) ?? false
     installed = try c.decodeIfPresent(Bool.self, forKey: .installed) ?? false
     status = try c.decodeIfPresent(String.self, forKey: .status) ?? "unknown"

@@ -7,7 +7,9 @@ import {
   deriveThreadPlanView,
   describeThreadPlan,
   displayFolder,
+  incrementNumber,
   incrementPlanSteps,
+  isDocumentPath,
   isExternalStepLink,
   BINDING_LABELS,
 } from "./threadPlanProgress";
@@ -106,6 +108,22 @@ describe("deriveThreadPlanView", () => {
   it("is null with neither", () => {
     expect(deriveThreadPlanView({ increment: null, todoSteps: [] })).toBeNull();
   });
+
+  it("shows a card for a thread that changed code without a plan, flagged unplanned", () => {
+    const none = deriveThreadPlanView({ increment: null, todoSteps: null, unplanned: true })!;
+    expect(none).toMatchObject({ source: "none", unplanned: true, total: 0 });
+    // Its todo list still leads, and keeps the flag for the card's actions.
+    const withTodo = deriveThreadPlanView({ increment: null, todoSteps: todo, unplanned: true })!;
+    expect(withTodo).toMatchObject({ source: "todo", unplanned: true, total: 3 });
+    // A bound increment answers the question; a stale flag never shows over it.
+    const bound = deriveThreadPlanView({
+      increment: increment(),
+      todoSteps: null,
+      unplanned: true,
+    })!;
+    expect(bound.unplanned).toBeUndefined();
+    expect(deriveThreadPlanView({ increment: null, todoSteps: null })).toBeNull();
+  });
 });
 
 describe("compactThreadPlan", () => {
@@ -138,6 +156,26 @@ describe("compactThreadPlan", () => {
       next: null,
     });
     expect(compactThreadPlan(null, null)).toBeNull();
+  });
+
+  it("still names a bound increment with no tasks yet, as 0/0", () => {
+    const empty = increment({ incrementId: "0996-connect-launches", tasks: [] });
+    const compact = compactThreadPlan(empty, {
+      completed: 2,
+      total: 4,
+      current: null,
+      next: null,
+    })!;
+    expect(compact).toEqual({
+      source: "increment",
+      label: "0996-connect-launches",
+      completed: 0,
+      total: 0,
+      current: null,
+      next: null,
+    });
+    expect(describeThreadPlan(compact)).toBe("Increment 0996-connect-launches: no tasks yet.");
+    expect(incrementNumber(compact.label!)).toBe("0996");
   });
 });
 
@@ -216,7 +254,15 @@ describe("card lines and links", () => {
     expect(isExternalStepLink("/repo/.specweave/increments/x/reports/a.txt")).toBe(false);
   });
 
-  it("labels branch binding", () => {
+  it("labels branch and claim binding", () => {
     expect(BINDING_LABELS.branch).toBe("bound by its increment branch");
+    expect(BINDING_LABELS.claim).toBe("bound by SpecWeave for this thread");
+  });
+
+  it("sends files to the viewer and folders to the editor", () => {
+    expect(isDocumentPath("/repo/.specweave/increments/0996-x/spec.md")).toBe(true);
+    expect(isDocumentPath("/repo/.specweave/increments/0996-x/reports/verify.json")).toBe(true);
+    expect(isDocumentPath("/repo/.specweave/increments/0996-x/reports")).toBe(false);
+    expect(isDocumentPath("/repo/.specweave/increments/0996-x")).toBe(false);
   });
 });

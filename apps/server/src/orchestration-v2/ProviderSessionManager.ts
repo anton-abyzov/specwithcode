@@ -45,6 +45,7 @@ import * as StudioCapacity from "../studio/Capacity.ts";
 import { creditAdmissionOptions } from "./manualCreditRuntime.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as McpProviderSession from "../mcp/McpProviderSession.ts";
+import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as ServiceUpdateHold from "../serviceUpdate/ServiceUpdateHold.ts";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
@@ -361,6 +362,8 @@ export const layerWithOptions = (
       const serverSettings = yield* Effect.serviceOption(ServerSettings.ServerSettingsService);
       const projectService = yield* Effect.serviceOption(ProjectService.ProjectService);
       const capacity = yield* Effect.serviceOption(StudioCapacity.Capacity);
+      // Optional like settings: without provider snapshots every model keeps its tools.
+      const providerRegistry = yield* Effect.serviceOption(ProviderRegistry.ProviderRegistry);
       // No new agent process starts while the service is held for an update.
       const updateHold = yield* ServiceUpdateHold.optional;
       const eventSink = yield* EventSink.EventSinkV2;
@@ -478,6 +481,65 @@ export const layerWithOptions = (
       const isMcpCredentialReserved = (threadId: ThreadId, mcpCredentialId: string) =>
         (mcpCredentialReservations.get(mcpReservationKey(threadId, mcpCredentialId)) ?? 0) > 0;
       const mcpPrepareLock = yield* KeyedLock.make<ThreadId>();
+      /** Thread and instance pairs whose model reported it cannot call tools. */
+      const mcpWithheld = new Set<string>();
+      const mcpWithheldKey = (threadId: ThreadId, providerInstanceId: ProviderInstanceId) =>
+        `${threadId}\0${providerInstanceId}`;
+      /**
+       * Credentials set aside while a model without tool calls runs the
+       * thread. Switching back reuses them, so a provider process that still
+       * holds its token is not revoked by the detour.
+       */
+      const setAsideMcpSessions = new Map<
+        ThreadId,
+        Map<ProviderInstanceId, McpProviderSession.McpProviderSessionConfig>
+      >();
+      /**
+       * True when the provider reports the selected model cannot call tools.
+       * Without a model (a resume that does not name one) the last decision
+       * for this thread and instance stands.
+       */
+      const withholdsMcp = (
+        threadId: ThreadId,
+        providerInstanceId: ProviderInstanceId,
+        model: string | undefined,
+      ): Effect.Effect<boolean> =>
+        model === undefined || Option.isNone(providerRegistry)
+          ? Effect.succeed(mcpWithheld.has(mcpWithheldKey(threadId, providerInstanceId)))
+          : providerRegistry.value.getProviders.pipe(
+              Effect.map(
+                (providers) =>
+                  providers
+                    .find((provider) => provider.instanceId === providerInstanceId)
+                    ?.models.find((candidate) => candidate.slug === model)?.toolCalls === false,
+              ),
+            );
+      const withholdMcpSessions = (threadId: ThreadId, providerInstanceId: ProviderInstanceId) => {
+        mcpWithheld.add(mcpWithheldKey(threadId, providerInstanceId));
+        // Adapters read the thread's current credential without naming an
+        // instance, so every instance's slot is set aside, not only this one.
+        for (
+          let config = McpProviderSession.readMcpProviderSession(threadId);
+          config !== undefined;
+          config = McpProviderSession.readMcpProviderSession(threadId)
+        ) {
+          const setAside = setAsideMcpSessions.get(threadId) ?? new Map();
+          setAside.set(config.providerInstanceId, config);
+          setAsideMcpSessions.set(threadId, setAside);
+          McpProviderSession.clearMcpProviderSession(threadId, config.providerInstanceId);
+        }
+      };
+      const restoreMcpSession = (threadId: ThreadId, providerInstanceId: ProviderInstanceId) => {
+        mcpWithheld.delete(mcpWithheldKey(threadId, providerInstanceId));
+        const setAside = setAsideMcpSessions.get(threadId);
+        const config = setAside?.get(providerInstanceId);
+        if (setAside === undefined || config === undefined) return;
+        setAside.delete(providerInstanceId);
+        if (setAside.size === 0) setAsideMcpSessions.delete(threadId);
+        // Validated below like any live credential before it is reused.
+        if (McpProviderSession.readMcpProviderSession(threadId, providerInstanceId) === undefined)
+          McpProviderSession.setMcpProviderSession(config);
+      };
       /**
        * Resolves (or mints) the thread's MCP credential and returns it with a
        * reservation held; the caller must drop the reservation exactly once.
@@ -487,6 +549,7 @@ export const layerWithOptions = (
       const prepareMcpSession = (
         threadId: ThreadId,
         providerInstanceId: ProviderInstanceId,
+        model: string | undefined,
       ): Effect.Effect<PreparedMcpCredential> =>
         options.configureMcp === false
           ? Effect.sync((): PreparedMcpCredential => {
@@ -496,6 +559,12 @@ export const layerWithOptions = (
           : mcpPrepareLock.withLock(
               threadId,
               Effect.gen(function* () {
+                // A model that cannot call tools gets no studio-code MCP.
+                if (yield* withholdsMcp(threadId, providerInstanceId, model)) {
+                  withholdMcpSessions(threadId, providerInstanceId);
+                  return { mcpCredentialId: undefined, issued: false };
+                }
+                restoreMcpSession(threadId, providerInstanceId);
                 // Reuse a still-valid credential for this thread instead of
                 // rotating: long-lived provider processes (codex app-server)
                 // build their MCP client once per conversation and keep using
@@ -1340,6 +1409,8 @@ export const layerWithOptions = (
         readonly providerSessionId: ProviderSessionId;
         readonly threadId: ThreadId;
         readonly providerInstanceId: ProviderInstanceId;
+        /** The selected model, when the caller knows it. */
+        readonly model?: string | undefined;
       }) =>
         Effect.suspend(() => {
           let attachedTo: ProviderAdapterV2SessionRuntime | undefined;
@@ -1362,7 +1433,11 @@ export const layerWithOptions = (
               Effect.uninterruptible,
             );
             if (attached !== undefined) {
-              const prepared = yield* prepareMcpSession(input.threadId, input.providerInstanceId);
+              const prepared = yield* prepareMcpSession(
+                input.threadId,
+                input.providerInstanceId,
+                input.model,
+              );
               preparedForCleanup = prepared;
               if (prepared.mcpCredentialId !== undefined) {
                 const mcpCredentialId = prepared.mcpCredentialId;
@@ -1391,12 +1466,15 @@ export const layerWithOptions = (
               }
             } else if (
               options.configureMcp !== false &&
-              (McpProviderSession.readMcpProviderSession(
-                input.threadId,
-                input.providerInstanceId,
-              ) === undefined ||
-                McpProviderSession.readMcpProviderSession(input.threadId)?.providerInstanceId !==
-                  input.providerInstanceId) &&
+              ((yield* withholdsMcp(input.threadId, input.providerInstanceId, input.model))
+                ? // A model without tool calls still sees a credential: withhold it.
+                  McpProviderSession.readMcpProviderSession(input.threadId) !== undefined
+                : McpProviderSession.readMcpProviderSession(
+                    input.threadId,
+                    input.providerInstanceId,
+                  ) === undefined ||
+                  McpProviderSession.readMcpProviderSession(input.threadId)?.providerInstanceId !==
+                    input.providerInstanceId) &&
               (yield* Ref.get(sessions))
                 .get(sessionKey(input.providerSessionId))
                 ?.attachedThreadIds.has(input.threadId) === true
@@ -1407,7 +1485,11 @@ export const layerWithOptions = (
               // the thread's current one again (reused while it still resolves),
               // so this session's next query calls tools as itself; as the other
               // provider every change it asked for failed with parent_not_active.
-              const prepared = yield* prepareMcpSession(input.threadId, input.providerInstanceId);
+              const prepared = yield* prepareMcpSession(
+                input.threadId,
+                input.providerInstanceId,
+                input.model,
+              );
               preparedForCleanup = prepared;
               if (prepared.mcpCredentialId !== undefined) {
                 const mcpCredentialId = prepared.mcpCredentialId;
@@ -1608,6 +1690,7 @@ export const layerWithOptions = (
                 providerSessionId,
                 threadId: input.threadId,
                 providerInstanceId: runtime.instanceId,
+                model: input.modelSelection.model,
               }),
             ).pipe(
               Effect.andThen(runtime.ensureThread(input)),
@@ -1641,6 +1724,7 @@ export const layerWithOptions = (
                 providerSessionId,
                 threadId,
                 providerInstanceId: runtime.instanceId,
+                model: input.modelSelection?.model,
               }),
             ).pipe(
               Effect.andThen(
@@ -1699,6 +1783,7 @@ export const layerWithOptions = (
                 providerSessionId,
                 threadId: input.threadId,
                 providerInstanceId: runtime.instanceId,
+                model: input.modelSelection.model,
               }),
             ).pipe(
               // A start that fails or is stopped may never emit turn.terminal,
@@ -2065,6 +2150,7 @@ export const layerWithOptions = (
                   providerSessionId: input.providerSessionId,
                   threadId: input.threadId,
                   providerInstanceId: existing.runtime.instanceId,
+                  model: input.modelSelection.model,
                 });
                 yield* touchActivity(input.providerSessionId);
                 return existing.exposedRuntime;
@@ -2095,6 +2181,7 @@ export const layerWithOptions = (
               const prepared = yield* prepareMcpSession(
                 input.threadId,
                 input.modelSelection.instanceId,
+                input.modelSelection.model,
               );
               const mcpCredentialId = prepared.mcpCredentialId;
               // The reservation from prepare protects the credential (which

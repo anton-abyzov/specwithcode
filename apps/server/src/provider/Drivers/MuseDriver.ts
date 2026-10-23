@@ -178,7 +178,11 @@ export const MuseDriver: ProviderDriver<MuseSettings, MuseDriverEnv> = {
           makeRuntime: (runtime) =>
             makeMuseRuntime({
               settings,
-              environment: { ...environment, ...runtime.processEnvironment },
+              environment: {
+                ...environment,
+                ...runtime.processEnvironment,
+                ...runtime.agentEnvironment,
+              },
               cwd: runtime.cwd,
               ...(runtime.resumeSessionId ? { resumeSessionId: runtime.resumeSessionId } : {}),
               runtimeMode: runtime.runtimePolicy.runtimeMode,

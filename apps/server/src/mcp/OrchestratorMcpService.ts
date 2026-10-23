@@ -1,6 +1,7 @@
 import {
   CommandId,
   type RunId,
+  isPaidModelBilling,
   isProviderAvailable,
   MessageId,
   type ModelSelection,
@@ -11,6 +12,7 @@ import {
   type OrchestrationV2Subagent,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2TurnItem,
+  type Project,
   OrchestratorMcpFailure,
   type OrchestratorMcpCapabilitiesResult,
   type OrchestratorMcpCreateThreadsInput,
@@ -60,6 +62,7 @@ import {
   type ScheduledTask,
   type ScheduledTaskUpsertInput,
   type ServerProvider,
+  type ModelLane,
   type TaskClass,
   type TaskRoutingDecision,
   type EnvironmentId,
@@ -689,10 +692,50 @@ function threadTitle(input: {
   return detail.length > 80 ? `${detail.slice(0, 77)}...` : detail;
 }
 
-function taskPrompt(input: OrchestratorMcpDelegateTaskInput): string {
+function taskPrompt(
+  input: OrchestratorMcpDelegateTaskInput,
+  increment: LaunchIncrementOutcome = {},
+): string {
+  const task = withIncrementBrief(input.task, increment);
   return input.role === undefined || input.role === "general"
-    ? input.task
-    : `Act as the ${input.role} worker for this task.\n\n${input.task}`;
+    ? task
+    : `Act as the ${input.role} worker for this task.\n\n${task}`;
+}
+
+/**
+ * The increment a worker started by `caller` works on (project/launchIncrement.ts),
+ * resolved in the caller's checkout; a ref that does not resolve, or a
+ * coordinator's missing one under `enforce`, fails the launch.
+ */
+function launchIncrementFor(
+  project: Pick<Project, "workspaceRoot" | "workspaceSettings">,
+  caller: Pick<
+    OrchestrationV2ThreadProjection["thread"],
+    "id" | "title" | "branch" | "worktreePath"
+  >,
+  input: { readonly ref: string | undefined; readonly title: string | undefined },
+): Effect.Effect<LaunchIncrementOutcome, OrchestratorMcpFailure> {
+  return Effect.promise(() =>
+    resolveLaunchIncrement({
+      workspaceRoot: project.workspaceRoot,
+      worktreePath: caller.worktreePath ?? null,
+      ref: input.ref,
+      title: input.title,
+      caller: {
+        threadId: caller.id,
+        title: caller.title ?? null,
+        branch: caller.branch ?? null,
+        worktreePath: caller.worktreePath ?? null,
+      },
+      isCoordinator: project.workspaceSettings?.coordinatorThreadId === caller.id,
+    }),
+  ).pipe(
+    Effect.flatMap((resolved) =>
+      resolved.ok
+        ? Effect.succeed(resolved.value)
+        : Effect.fail(failure("invalid_request", resolved.message)),
+    ),
+  );
 }
 
 /** `heldQueuedMessages` for a thread whose queue holds messages; nothing otherwise. */
@@ -936,6 +979,14 @@ import {
   withEffortSelection,
 } from "@specweave-studio/shared/effortLevel";
 import { workerFollowUpText } from "../project/workerFollowUp.ts";
+import {
+  launchIncrementFields,
+  resolveLaunchIncrement,
+  withIncrementBrief,
+  type LaunchIncrementOutcome,
+} from "../project/launchIncrement.ts";
+import { writeLaunchBinding } from "../project/ThreadIncrementProgress.ts";
+import { deriveDelegatedTaskThread } from "../orchestration-v2/IdAllocator.ts";
 
 const effortField = (selection: Pick<ModelSelection, "options"> | undefined) => {
   const effort = modelSelectionEffortValue(selection);
@@ -1537,6 +1588,7 @@ const make = Effect.gen(function* () {
     readonly parent: Pick<OrchestrationV2ThreadProjection, "thread">;
     readonly requested: OrchestratorMcpTarget | undefined;
     readonly taskClass: TaskClass | undefined;
+    readonly taskLane: ModelLane | undefined;
     readonly task: TaskClassificationInput;
     readonly providers: ReadonlyArray<ServerProvider>;
     readonly baseline: ResolvedTarget;
@@ -1551,6 +1603,7 @@ const make = Effect.gen(function* () {
           isCoordinator:
             input.project.workspaceSettings?.coordinatorThreadId === input.parent.thread.id,
           taskClass: input.taskClass,
+          taskLane: input.taskLane,
         })
       )
         return unrouted;
@@ -1559,6 +1612,7 @@ const make = Effect.gen(function* () {
         baseline: input.baseline.modelSelection,
         providers: input.providers,
         task: { ...input.task, hint: input.taskClass },
+        laneHint: input.taskLane,
         runnableInstanceIds: yield* loadOrchestrationCapableInstanceIds(),
         settings: serverSettings,
       });
@@ -2273,6 +2327,7 @@ const make = Effect.gen(function* () {
                   ...(model.capabilities?.optionDescriptors === undefined
                     ? {}
                     : { options: model.capabilities.optionDescriptors }),
+                  ...(isPaidModelBilling(model.billing) ? { paid: true } : {}),
                 })) ?? [],
               canRunChildTask: constraints.length === 0,
               canRunCrossProviderChildTask: constraints.length === 0,
@@ -2310,6 +2365,7 @@ const make = Effect.gen(function* () {
           parent,
           requested: input.target,
           taskClass: input.taskClass,
+          taskLane: input.taskLane,
           task: { text: input.task, title: input.title },
           providers,
           options,
@@ -2342,6 +2398,18 @@ const make = Effect.gen(function* () {
             "Resume or restore the project before delegating work.",
           );
         }
+        // The child runs in the parent's checkout; a bad ref dispatches nothing.
+        const increment = yield* launchIncrementFor(project, parent.thread, {
+          ref: input.increment,
+          title: input.title,
+        });
+        if (increment.increment !== undefined) {
+          const seeded = increment.increment;
+          yield* Effect.promise(() =>
+            writeLaunchBinding(deriveDelegatedTaskThread({ commandId }), seeded),
+          );
+        }
+        const incrementFields = launchIncrementFields(increment);
         const result = yield* threadManagement
           .dispatch({
             type: "delegated_task.request",
@@ -2351,7 +2419,7 @@ const make = Effect.gen(function* () {
             parentThreadId: scope.thread.threadId,
             parentRunId: parentRun.id,
             parentNodeId,
-            task: promptWithRoutingNote(taskPrompt(input), routing),
+            task: promptWithRoutingNote(taskPrompt(input, increment), routing),
             ...(input.title === undefined ? {} : { title: input.title }),
             modelSelection: target.modelSelection,
             ...(routing === null ? {} : { routing }),
@@ -2383,7 +2451,7 @@ const make = Effect.gen(function* () {
         const taskId = taskEvent.event.payload.id;
 
         if (input.mode !== "wait") {
-          return yield* readTask(scope, taskId, false, true);
+          return { ...(yield* readTask(scope, taskId, false, true)), ...incrementFields };
         }
         const timeoutMs = Math.min(
           MAX_WAIT_TIMEOUT_MS,
@@ -2391,7 +2459,7 @@ const make = Effect.gen(function* () {
         );
         const waited = yield* waitForTask(scope, taskId, timeoutMs);
         if (Option.isSome(waited)) {
-          return waited.value;
+          return { ...waited.value, ...incrementFields };
         }
         // The blocking wait timed out, so it no longer owns delivery: upgrade
         // the task so a later terminal wakes the parent even mid-turn. Best
@@ -2432,7 +2500,7 @@ const make = Effect.gen(function* () {
               }),
             ),
           );
-        return yield* readTask(scope, taskId, true, true);
+        return { ...(yield* readTask(scope, taskId, true, true)), ...incrementFields };
       }),
     taskStatus: (callerScope, taskId) =>
       Effect.gen(function* () {
@@ -2598,10 +2666,18 @@ const make = Effect.gen(function* () {
         const providers = yield* loadProviders;
         const hostDefault = defaultWorkerModelSelection(providers);
         const key = yield* requestKey(input.clientRequestId);
+        // Every entry's increment resolves before any thread exists: a bad ref creates none.
+        const increments = yield* Effect.forEach(input.threads, (request) =>
+          launchIncrementFor(project, parent.thread, {
+            ref: request.increment,
+            title: request.title,
+          }),
+        );
         const created = yield* Effect.forEach(
           input.threads,
           (request, index) =>
             Effect.gen(function* () {
+              const increment = increments[index]!;
               const latest = yield* requireProject(project.id);
               if (latest.workspaceSettings?.paused || latest.workspaceSettings?.archived)
                 return yield* failure(
@@ -2618,6 +2694,7 @@ const make = Effect.gen(function* () {
                 parent,
                 requested: request.target,
                 taskClass: request.taskClass,
+                taskLane: request.taskLane,
                 task: { text: request.prompt ?? "", title: request.title },
                 providers,
                 options,
@@ -2652,6 +2729,11 @@ const make = Effect.gen(function* () {
                 title: request.title,
                 index,
               });
+              // The thread shares the parent's checkout, where the increment resolved.
+              if (increment.increment !== undefined) {
+                const seeded = increment.increment;
+                yield* Effect.promise(() => writeLaunchBinding(threadId, seeded));
+              }
               yield* threadManagement
                 .dispatch({
                   type: "thread.create",
@@ -2700,7 +2782,10 @@ const make = Effect.gen(function* () {
                       requestKey: key,
                       index,
                     }),
-                    text: promptWithRoutingNote(request.prompt, routing),
+                    text: promptWithRoutingNote(
+                      withIncrementBrief(request.prompt, increment),
+                      routing,
+                    ),
                     attachments: [],
                     modelSelection: target.modelSelection,
                     dispatchMode: { type: "start_immediately" },
@@ -2751,6 +2836,7 @@ const make = Effect.gen(function* () {
                 model: target.modelSelection.model,
                 ...effortField(target.modelSelection),
                 ...(routing === null ? {} : { routing }),
+                ...launchIncrementFields(increment),
               } satisfies OrchestratorMcpCreatedThread;
             }),
           { concurrency: 1 },

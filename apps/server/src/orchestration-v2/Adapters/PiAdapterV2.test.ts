@@ -492,6 +492,18 @@ describe("PiAdapterV2", () => {
     }).pipe(Effect.scoped, Effect.provide(layerTest)),
   );
 
+  it.effect("spawns Pi with its thread's SpecWeave variables", () =>
+    Effect.gen(function* () {
+      const fake = yield* makeFakePi;
+      yield* openRuntime(fake);
+      assert.include(fake.lastSpawn().env, {
+        SPECWEAVE_STUDIO_THREAD_ID: THREAD_ID,
+        SPECWEAVE_TOOL: "pi",
+        SPECWEAVE_MODEL: "",
+      });
+    }).pipe(Effect.scoped, Effect.provide(layerTest)),
+  );
+
   it.effect("injects the Studio MCP extension and bearer when a session exists", () =>
     Effect.gen(function* () {
       McpProviderSession.setMcpProviderSession({

@@ -1,6 +1,8 @@
 /**
  * The project's Threads pane: what is waiting on the person first, then what
- * is idle or done. Each row names who runs the thread and on which model.
+ * is idle or done. Each row names who runs the thread and on which model. In
+ * a SpecWeave project, threads that changed code without an increment carry
+ * an "Unplanned" chip, and the header can narrow the list to them.
  */
 import type { EnvironmentId, ThreadId } from "@specweave-studio/contracts";
 import type { EnvironmentThreadShell } from "@specweave-studio/client-runtime/state/shell";
@@ -65,6 +67,7 @@ import { compactThreadPlan } from "../../../studio/threadPlanProgress";
 import { useProjectThreadIncrementProgress } from "../../../studio/useThreadIncrementProgress";
 import { ProjectPaneBar, type ProjectPaneBarProps } from "./ProjectPaneBar";
 import { Tip } from "./Tip";
+import { UnplannedThreadChip, UnplannedThreadsFilter } from "./UnplannedThreads";
 import { HandoffRowAction, HandoffRowBadge } from "../../handoff/HandoffBadge";
 import { useUnreachableHosts } from "../../../studio/unreachableHosts";
 
@@ -180,15 +183,48 @@ export function ThreadsPane({
         labels.get(environmentId) ?? fallbackLabel ?? name(environmentId),
     };
   }, [environments, props.machineLabels, nickname]);
-  const groups = useMemo(
-    () => buildThreadPaneGroups(allThreads, sortBy, query, props.runningSubagents, unreachable),
-    [allThreads, query, sortBy, props.runningSubagents, unreachable],
+  const { progress: incrementProgress, unplanned } = useProjectThreadIncrementProgress(
+    props.environmentId,
+    allThreads,
   );
+  const isUnplanned = (thread: EnvironmentThreadShell) =>
+    thread.environmentId === props.environmentId && unplanned.has(thread.id);
+  const unplannedCount = allThreads.filter(isUnplanned).length;
+  const [unplannedOnly, setUnplannedOnly] = useState(false);
+  // The filter lets go by itself once every unplanned thread is linked or cleared.
+  const showUnplannedOnly = unplannedOnly && unplannedCount > 0;
+  const groups = useMemo(() => {
+    const built = buildThreadPaneGroups(
+      allThreads,
+      sortBy,
+      query,
+      props.runningSubagents,
+      unreachable,
+    );
+    return showUnplannedOnly
+      ? built.map((entry) => ({
+          ...entry,
+          threads: entry.threads.filter(
+            (thread) => thread.environmentId === props.environmentId && unplanned.has(thread.id),
+          ),
+        }))
+      : built;
+  }, [
+    allThreads,
+    query,
+    sortBy,
+    props.runningSubagents,
+    props.environmentId,
+    unreachable,
+    showUnplannedOnly,
+    unplanned,
+  ]);
   const matches = groups.reduce((sum, group) => sum + group.threads.length, 0);
   const searching = query.trim() !== "";
+  // Searching or filtering shows every match: empty groups go, folded ones open.
+  const narrowed = searching || showUnplannedOnly;
   const offerStarters =
     allThreads.length === 0 && props.starters != null && !props.remoteWorkerCount;
-  const incrementProgress = useProjectThreadIncrementProgress(props.environmentId, allThreads);
 
   return (
     <>
@@ -310,6 +346,13 @@ export function ThreadsPane({
               ? "No threads yet. Pick a first task, or ask the coordinator for one."
               : threadsSummary(allThreads, props.remoteWorkerCount, unreachable)}
           </p>
+          {unplannedCount > 0 && !offerStarters ? (
+            <UnplannedThreadsFilter
+              count={unplannedCount}
+              pressed={showUnplannedOnly}
+              onToggle={() => setUnplannedOnly((on) => !on)}
+            />
+          ) : null}
         </header>
         {props.notice}
         <div id="sws-threads-find">
@@ -345,15 +388,15 @@ export function ThreadsPane({
         ) : null}
         {offerStarters ? props.starters : null}
         {(offerStarters ? [] : groups).map(({ group, threads }) => {
-          if (searching && threads.length === 0) return null;
-          const limit = searching ? threads.length : (limits[group] ?? THREAD_GROUP_PAGE);
+          if (narrowed && threads.length === 0) return null;
+          const limit = narrowed ? threads.length : (limits[group] ?? THREAD_GROUP_PAGE);
           const rows = threads.slice(0, limit);
           const hidden = threads.length - rows.length;
           const slug = group.replace(/\s+/g, "-").toLowerCase();
           const headingId = `sws-threads-${slug}`;
           const listId = `sws-threads-${slug}-list`;
           // A search looks inside folded groups too; hiding a match would read as "not found".
-          const isFolded = !searching && folded.includes(group);
+          const isFolded = !narrowed && folded.includes(group);
           return (
             <section
               className="sws-thread-group"
@@ -369,8 +412,8 @@ export function ThreadsPane({
                   aria-controls={isFolded ? undefined : listId}
                   // A search opens every group on purpose; folding one then would change
                   // nothing on screen and still be remembered.
-                  aria-disabled={searching || undefined}
-                  onClick={searching ? undefined : () => setGroupFolded(group, !isFolded)}
+                  aria-disabled={narrowed || undefined}
+                  onClick={narrowed ? undefined : () => setGroupFolded(group, !isFolded)}
                 >
                   {isFolded ? <ChevronRightIcon aria-hidden /> : <ChevronDownIcon aria-hidden />}
                   {group}
@@ -473,6 +516,7 @@ export function ThreadsPane({
                                 }
                               />
                               {plan ? <PlanProgressChip plan={plan} /> : null}
+                              {isUnplanned(thread) ? <UnplannedThreadChip /> : null}
                               {pullRequest ? (
                                 <span className="sws-thread-pr" data-state={pullRequest.state}>
                                   <pullRequest.Icon
@@ -581,7 +625,7 @@ export function ThreadsPane({
                     , {Math.min(hidden, THREAD_GROUP_PAGE_STEP)} of {hidden} hidden {group} threads
                   </span>
                 </button>
-              ) : !searching && threads.length > THREAD_GROUP_PAGE ? (
+              ) : !narrowed && threads.length > THREAD_GROUP_PAGE ? (
                 <button
                   type="button"
                   className="sws-show-more"

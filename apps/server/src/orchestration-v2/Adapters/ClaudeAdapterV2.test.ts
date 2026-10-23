@@ -2534,6 +2534,35 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     });
   const makeWakeHarness = makeWakeHarnessWithOptions();
 
+  it.effect("starts Claude Code with its thread's SpecWeave variables over inherited ones", () =>
+    Effect.gen(function* () {
+      const harness = yield* makeWakeHarnessWithOptions({
+        environment: {
+          SPECWEAVE_STUDIO_THREAD_ID: "thread-of-the-server",
+          SPECWEAVE_TOOL: "codex",
+          SPECWEAVE_MODEL: "gpt-5",
+        },
+      });
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("specweave-environment"),
+          text: "Hello",
+          attachments: [],
+        }),
+      );
+      const options = harness.getOpenedOptions();
+      assert.include(options?.env, {
+        SPECWEAVE_STUDIO_THREAD_ID: harness.threadId,
+        SPECWEAVE_TOOL: "claude",
+        SPECWEAVE_MODEL: options?.model,
+      });
+      assert.equal(options?.model, "claude-sonnet-4-6");
+    }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+  );
+
   it.effect.each([
     { isError: false, title: "Check weather" },
     { isError: true, title: "Check weather" },

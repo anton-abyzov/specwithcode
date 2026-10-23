@@ -524,6 +524,285 @@ it.layer(layerTest)("checkOpenCodeProviderStatus", (it) => {
     }),
   );
 
+  it.effect("carries models.dev capabilities and billing onto each OpenCode model", () =>
+    Effect.gen(function* () {
+      const capabilities = (input: {
+        readonly reasoning: boolean;
+        readonly toolcall: boolean;
+        readonly image: boolean;
+      }) => ({
+        temperature: true,
+        reasoning: input.reasoning,
+        attachment: input.image,
+        toolcall: input.toolcall,
+        input: { text: true, audio: false, image: input.image, video: false, pdf: false },
+        output: { text: true, audio: false, image: false, video: false, pdf: false },
+        interleaved: false,
+      });
+      const cost = (input: number, output: number) => ({
+        input,
+        output,
+        cache: { read: 0, write: 0 },
+      });
+      runtimeMock.state.inventory = {
+        providerList: {
+          connected: ["openrouter", "ollama", "anthropic", "openai", "opencode-go"],
+          all: [
+            {
+              id: "openrouter",
+              name: "OpenRouter",
+              source: "api",
+              options: {},
+              models: {
+                "anthropic/claude-sonnet-4.5": {
+                  id: "anthropic/claude-sonnet-4.5",
+                  providerID: "openrouter",
+                  name: "Claude Sonnet 4.5 (OpenRouter)",
+                  api: {
+                    id: "anthropic/claude-sonnet-4.5",
+                    url: "https://openrouter.ai/api/v1",
+                    npm: "@openrouter/ai-sdk-provider",
+                  },
+                  capabilities: capabilities({ reasoning: true, toolcall: true, image: true }),
+                  cost: cost(3, 15),
+                  limit: { context: 1_000_000, output: 64_000 },
+                  variants: { high: {}, max: {} },
+                },
+              },
+            },
+            {
+              id: "ollama",
+              name: "Ollama (local)",
+              source: "config",
+              options: { baseURL: "http://localhost:11434/v1" },
+              models: {
+                "qwen2.5-coder:7b": {
+                  id: "qwen2.5-coder:7b",
+                  providerID: "ollama",
+                  name: "Qwen2.5 Coder 7B",
+                  api: { id: "qwen2.5-coder:7b", url: "", npm: "@ai-sdk/openai-compatible" },
+                  capabilities: capabilities({ reasoning: false, toolcall: false, image: false }),
+                  cost: cost(0, 0),
+                  limit: { context: 32_768, output: 0 },
+                },
+              },
+            },
+            {
+              id: "anthropic",
+              name: "Anthropic",
+              source: "custom",
+              options: {},
+              models: {
+                // A Claude Pro/Max sign-in zeroes every model's cost.
+                "claude-opus-4-5": {
+                  id: "claude-opus-4-5",
+                  providerID: "anthropic",
+                  name: "Claude Opus 4.5",
+                  api: { id: "claude-opus-4-5", url: "", npm: "@ai-sdk/anthropic" },
+                  capabilities: capabilities({ reasoning: true, toolcall: true, image: true }),
+                  cost: cost(0, 0),
+                  limit: { context: 200_000, output: 64_000 },
+                  variants: { high: {}, max: {} },
+                },
+              },
+            },
+            {
+              id: "openai",
+              name: "OpenAI",
+              source: "api",
+              options: {},
+              models: {
+                "gpt-5.4": {
+                  id: "gpt-5.4",
+                  providerID: "openai",
+                  name: "GPT-5.4",
+                  api: { id: "gpt-5.4", url: "", npm: "@ai-sdk/openai" },
+                  capabilities: capabilities({ reasoning: true, toolcall: true, image: true }),
+                  cost: cost(1.25, 10),
+                  limit: { context: 400_000, output: 128_000 },
+                },
+              },
+            },
+            {
+              id: "opencode-go",
+              name: "OpenCode Go",
+              source: "api",
+              options: {},
+              models: {
+                "kimi-k2.6": {
+                  id: "kimi-k2.6",
+                  providerID: "opencode-go",
+                  name: "Kimi K2.6",
+                  api: {
+                    id: "kimi-k2.6",
+                    url: "https://opencode.ai/zen/go/v1",
+                    npm: "@ai-sdk/openai-compatible",
+                  },
+                  // Attachments cover PDFs here; the explicit image flag still wins.
+                  capabilities: {
+                    ...capabilities({ reasoning: true, toolcall: true, image: false }),
+                    attachment: true,
+                  },
+                  cost: cost(0.6, 2.5),
+                  limit: { context: 262_144, output: 32_768 },
+                },
+              },
+            },
+          ],
+          default: {},
+        },
+        agents: [{ name: "build", hidden: false, mode: "primary" }],
+        skills: [],
+      };
+
+      const snapshot = yield* checkProvider(makeOpenCodeSettings());
+      const facts = (slug: string) => {
+        const model = snapshot.models.find((entry) => entry.slug === slug);
+        NodeAssert.ok(model, slug);
+        return {
+          billing: model.billing,
+          toolCalls: model.toolCalls,
+          reasoning: model.reasoning,
+          imageInput: model.imageInput,
+          contextWindow: model.contextWindow,
+          maxOutput: model.maxOutput,
+        };
+      };
+      const variantIds = (slug: string) => {
+        const descriptor = snapshot.models
+          .find((entry) => entry.slug === slug)
+          ?.capabilities?.optionDescriptors?.find((entry) => entry.id === "variant");
+        return descriptor?.type === "select" ? descriptor.options.map((option) => option.id) : [];
+      };
+
+      NodeAssert.deepEqual(facts("openrouter/anthropic/claude-sonnet-4.5"), {
+        billing: "paid-router",
+        toolCalls: true,
+        reasoning: "optional",
+        imageInput: true,
+        contextWindow: 1_000_000,
+        maxOutput: 64_000,
+      });
+      // A zero output limit is not a limit, so it is left out.
+      NodeAssert.deepEqual(facts("ollama/qwen2.5-coder:7b"), {
+        billing: "local",
+        toolCalls: false,
+        reasoning: "none",
+        imageInput: false,
+        contextWindow: 32_768,
+        maxOutput: undefined,
+      });
+      NodeAssert.equal(facts("anthropic/claude-opus-4-5").billing, "unknown");
+      NodeAssert.equal(facts("openai/gpt-5.4").billing, "api");
+      NodeAssert.equal(facts("opencode-go/kimi-k2.6").billing, "subscription");
+      NodeAssert.equal(facts("opencode-go/kimi-k2.6").imageInput, false);
+
+      // No reasoning means no invented effort ladder; unknown keeps it.
+      NodeAssert.deepEqual(variantIds("ollama/qwen2.5-coder:7b"), []);
+      NodeAssert.deepEqual(variantIds("openai/gpt-5.4"), ["low", "medium", "high", "xhigh"]);
+      NodeAssert.deepEqual(variantIds("openrouter/anthropic/claude-sonnet-4.5"), ["high", "max"]);
+    }),
+  );
+
+  it.effect("keeps the effort ladder for an OpenCode model that does not report reasoning", () =>
+    Effect.gen(function* () {
+      runtimeMock.state.inventory = {
+        providerList: {
+          connected: ["custom"],
+          all: [
+            {
+              id: "custom",
+              name: "Custom",
+              models: { coder: { id: "coder", name: "Coder" } },
+            },
+          ],
+          default: {},
+        },
+        agents: [],
+        skills: [],
+      };
+
+      const snapshot = yield* checkProvider(makeOpenCodeSettings());
+      const model = snapshot.models.find((entry) => entry.slug === "custom/coder");
+      NodeAssert.ok(model);
+      const variant = model.capabilities?.optionDescriptors?.find(
+        (entry) => entry.id === "variant",
+      );
+      NodeAssert.deepEqual(
+        variant?.type === "select" ? variant.options.map((option) => option.id) : [],
+        ["low", "medium", "high", "xhigh"],
+      );
+      NodeAssert.equal(model.billing, "unknown");
+      NodeAssert.equal(model.reasoning, undefined);
+      NodeAssert.equal(model.toolCalls, undefined);
+      NodeAssert.equal(model.imageInput, undefined);
+      NodeAssert.equal(model.contextWindow, undefined);
+    }),
+  );
+
+  it.effect("carries an OpenCode 2 model's tools, input, limits and billing", () =>
+    Effect.gen(function* () {
+      runtimeMock.state.versionStdout = "opencode v2.0.18\n";
+      const snapshot = yield* checkProvider(
+        makeOpenCodeSettings(),
+        process.cwd(),
+        undefined,
+        undefined,
+        Effect.succeed([
+          {
+            providerID: "openrouter",
+            id: "deepseek/deepseek-v4-flash",
+            name: "DeepSeek V4 Flash",
+            settings: { baseURL: "https://openrouter.ai/api/v1" },
+            capabilities: { tools: true, input: ["text"] },
+            variants: [{ id: "none" }, { id: "high" }, { id: "xhigh" }],
+            cost: [{ input: 0.14, output: 0.28 }],
+            limit: { context: 1_048_576, output: 131_072 },
+          },
+          {
+            providerID: "lmstudio",
+            id: "qwen3-coder-30b",
+            name: "Qwen3 Coder 30B",
+            settings: { baseURL: "http://127.0.0.1:1234/v1" },
+            capabilities: { tools: true, input: ["text", "image"] },
+            variants: [],
+            cost: [{ input: 0, output: 0 }],
+            limit: { context: 262_144, output: 32_768 },
+          },
+          {
+            providerID: "opencode",
+            id: "big-pickle",
+            name: "Big Pickle",
+            settings: { apiKey: "public", baseURL: "https://opencode.ai/zen/v1" },
+            capabilities: { tools: true, input: ["text"] },
+            variants: [],
+            cost: [{ input: 0, output: 0 }],
+            limit: { context: 200_000, output: 32_000 },
+          },
+        ]),
+      );
+
+      const bySlug = (slug: string) => snapshot.models.find((model) => model.slug === slug);
+      NodeAssert.deepEqual(
+        { ...bySlug("openrouter/deepseek/deepseek-v4-flash"), capabilities: null },
+        {
+          slug: "openrouter/deepseek/deepseek-v4-flash",
+          name: "DeepSeek V4 Flash",
+          isCustom: false,
+          capabilities: null,
+          billing: "paid-router",
+          toolCalls: true,
+          imageInput: false,
+          contextWindow: 1_048_576,
+          maxOutput: 131_072,
+        },
+      );
+      NodeAssert.equal(bySlug("lmstudio/qwen3-coder-30b")?.billing, "local");
+      NodeAssert.equal(bySlug("lmstudio/qwen3-coder-30b")?.imageInput, true);
+      NodeAssert.equal(bySlug("opencode/big-pickle")?.billing, "unknown");
+    }),
+  );
+
   it.effect("loads local inventory from a scoped OpenCode server", () =>
     Effect.gen(function* () {
       yield* checkProvider(makeOpenCodeSettings({ serverPassword: "secret-password" }));

@@ -133,6 +133,14 @@ export const ThreadIncrementProgressSnapshot = Schema.Struct({
   projectId: ProjectId,
   /** Only threads bound to an increment are listed. */
   threads: Schema.Array(ThreadIncrementProgress),
+  /**
+   * Listed threads that changed code with no increment, no small fix and no
+   * "No increment needed" link; provider-native subagents are left out.
+   * Absent from older servers and outside SpecWeave projects.
+   */
+  unplanned: Schema.optional(Schema.Array(ThreadId)),
+  /** Whether the project plans with SpecWeave; absent from older servers. */
+  specweave: Schema.optional(Schema.Boolean),
 });
 export type ThreadIncrementProgressSnapshot = typeof ThreadIncrementProgressSnapshot.Type;
 

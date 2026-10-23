@@ -27,6 +27,7 @@ export interface LaunchTargetInput {
   readonly workspaceStrategy?: OrchestrationV2ThreadLaunchWorkspaceStrategy | undefined;
   readonly message?: string | undefined;
   readonly attachments?: ReadonlyArray<unknown> | undefined;
+  readonly increment?: string | undefined;
 }
 
 const invalid = (message: string) =>
@@ -196,6 +197,8 @@ export const launchRemote = Effect.fn("mcp.launchRemote")(function* (input: {
     interactionMode: input.interactionMode,
     workspaceStrategy: params.workspaceStrategy,
     message: params.message,
+    // Resolved by the machine that runs the thread, against its own checkout.
+    increment: params.increment,
     reportBack: params.reportBack ?? true,
     delegation: outgoing.delegation,
   });

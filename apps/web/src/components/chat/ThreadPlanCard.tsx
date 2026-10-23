@@ -5,7 +5,10 @@
  * meta chips; open it takes the whole row and lists every step, the
  * increment's acceptance criteria and links to its spec and folder. A worker
  * thread with neither still shows one: what it is doing now, or a small
- * "No plan" chip that opens "Link increment".
+ * "No plan" chip that opens "Link increment". A thread that changed code
+ * without an increment says so and offers "Link increment" and "No increment
+ * needed". The spec and other files open in the app's viewer; the editor is
+ * the secondary way in.
  */
 import {
   CheckCircle2Icon,
@@ -13,6 +16,7 @@ import {
   CircleDashedIcon,
   CircleDotIcon,
   CircleSlashIcon,
+  CodeIcon,
   FileTextIcon,
   FolderOpenIcon,
   Link2Icon,
@@ -27,6 +31,8 @@ import { cn } from "~/lib/utils";
 import { readLocalApi } from "~/localApi";
 import {
   BINDING_LABELS,
+  incrementNumber,
+  isDocumentPath,
   isExternalStepLink,
   type ThreadPlanStep,
   type ThreadPlanView,
@@ -64,14 +70,11 @@ export function PlanStepIcon({ state, className }: { state: PlanStepState; class
   }
 }
 
+/** How the card opens a host path, or null when it cannot open that one. */
+type PathOpener = (path: string) => (() => void) | null;
+
 /** The step's text: a link when it has one the card can open, plain text otherwise. */
-function StepText({
-  step,
-  onOpenPath,
-}: {
-  step: ThreadPlanStep;
-  onOpenPath: ((path: string) => void) | null;
-}) {
+function StepText({ step, openPath }: { step: ThreadPlanStep; openPath: PathOpener | null }) {
   const { href } = step;
   if (href && isExternalStepLink(href)) {
     return (
@@ -90,13 +93,14 @@ function StepText({
       </a>
     );
   }
-  if (href && onOpenPath) {
+  const open = href ? (openPath?.(href) ?? null) : null;
+  if (open) {
     return (
       <button
         type="button"
         className="text-left underline decoration-border underline-offset-2 hover:decoration-foreground"
         data-plan-step-link="path"
-        onClick={() => onOpenPath(href)}
+        onClick={open}
       >
         {step.text}
       </button>
@@ -107,10 +111,10 @@ function StepText({
 
 function StepRow({
   step,
-  onOpenPath = null,
+  openPath = null,
 }: {
   step: ThreadPlanStep;
-  onOpenPath?: ((path: string) => void) | null;
+  openPath?: PathOpener | null;
 }) {
   const finished = step.state === "done" || step.state === "skipped";
   return (
@@ -132,7 +136,7 @@ function StepRow({
           {step.id ? (
             <span className="me-1.5 font-mono text-xs text-muted-foreground">{step.id}</span>
           ) : null}
-          <StepText step={step} onOpenPath={onOpenPath} />
+          <StepText step={step} openPath={openPath} />
           {step.commit ? (
             <span
               className="ms-1.5 font-mono text-2xs text-muted-foreground"
@@ -168,7 +172,7 @@ function StepRow({
           data-plan-substeps
         >
           {step.children.map((child) => (
-            <StepRow key={child.key} step={child} onOpenPath={onOpenPath} />
+            <StepRow key={child.key} step={child} openPath={openPath} />
           ))}
         </ul>
       ) : null}
@@ -182,6 +186,7 @@ const LINK_BUTTON =
 export const ThreadPlanCard = memo(function ThreadPlanCard({
   plan,
   onOpenPath,
+  onOpenDocument = null,
   onLinkIncrement = null,
   onUnlinkIncrement = null,
   status = null,
@@ -190,9 +195,11 @@ export const ThreadPlanCard = memo(function ThreadPlanCard({
   plan: ThreadPlanView;
   /** Opens a file or folder of the thread's host in the preferred editor; null hides the links. */
   onOpenPath: ((path: string) => void) | null;
+  /** Opens a file of the thread's host in the app's viewer: the spec and step files. */
+  onOpenDocument?: ((path: string) => void) | null;
   /** Opens the "Link increment" picker; null hides it. */
   onLinkIncrement?: (() => void) | null;
-  /** Marks the thread as having no increment; null hides it. */
+  /** Marks the thread as having no increment ("Unlink", "No increment needed"); null hides it. */
   onUnlinkIncrement?: (() => void) | null;
   /** What the thread is doing now, the headline while it has no plan. */
   status?: string | null;
@@ -205,12 +212,29 @@ export const ThreadPlanCard = memo(function ThreadPlanCard({
   const fromIncrement = plan.source === "increment" && increment !== null;
   const criteria = fromIncrement ? increment.criteria : [];
   const allDone = plan.total > 0 && plan.completed >= plan.total;
+  const unplanned = plan.unplanned === true && increment === null;
   // Nothing to say yet: a chip, not a full-width bar.
-  const empty = plan.source === "none" && status === null;
+  const empty = plan.source === "none" && status === null && !unplanned;
   const headline =
     plan.source === "none"
-      ? (status ?? "No plan")
+      ? unplanned
+        ? "Changed code without an increment"
+        : (status ?? "No plan")
       : (plan.current ?? (allDone ? "All done" : "No tasks yet"));
+  // Files open in the viewer; a folder, or a file with no viewer, in the editor.
+  const openPath: PathOpener | null =
+    onOpenDocument || onOpenPath
+      ? (path) =>
+          onOpenDocument && isDocumentPath(path)
+            ? () => onOpenDocument(path)
+            : onOpenPath
+              ? () => onOpenPath(path)
+              : null
+      : null;
+  const specPath = increment?.specPath ?? null;
+  const openSpec = specPath ? (openPath?.(specPath) ?? null) : null;
+  const editSpec = specPath && onOpenDocument && onOpenPath ? () => onOpenPath(specPath) : null;
+  const markNoIncrement = unplanned ? onUnlinkIncrement : null;
   return (
     <section
       className={cn(
@@ -220,6 +244,7 @@ export const ThreadPlanCard = memo(function ThreadPlanCard({
       aria-label={fromIncrement ? `Increment ${increment.incrementId} progress` : "Plan progress"}
       data-thread-plan-card={plan.source}
       data-plan-empty={empty || undefined}
+      data-plan-unplanned={unplanned || undefined}
     >
       <button
         type="button"
@@ -231,19 +256,25 @@ export const ThreadPlanCard = memo(function ThreadPlanCard({
         <ListTodoIcon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
         {empty ? null : (
           <span className="shrink-0 text-muted-foreground">
-            {fromIncrement ? increment.incrementId.replace(/^(\d+)-.*/u, "$1") : "Plan"}
+            {fromIncrement ? incrementNumber(increment.incrementId) : "Plan"}
           </span>
         )}
         <span
           className={cn(
             "min-w-0 truncate",
             empty ? "text-muted-foreground" : "flex-1 text-foreground/85",
+            unplanned && plan.source === "none" && "text-warning-foreground",
           )}
           data-plan-current
         >
           {plan.current ? <span className="sr-only">Now: </span> : null}
           {headline}
         </span>
+        {unplanned && plan.source !== "none" ? (
+          <span className="shrink-0 rounded-full border border-border/70 px-1.5 text-2xs text-warning-foreground">
+            No increment
+          </span>
+        ) : null}
         {plan.next && !expanded ? (
           <span className="hidden max-w-[35%] shrink truncate text-muted-foreground sm:inline">
             Next: {plan.next}
@@ -297,13 +328,19 @@ export const ThreadPlanCard = memo(function ThreadPlanCard({
               ) : null}
             </p>
           ) : null}
+          {unplanned ? (
+            <p className="mb-1.5 text-xs text-muted-foreground" data-plan-unplanned-note>
+              This thread changed code without a SpecWeave increment or a declared small fix. Link
+              the increment it works on, or mark it as not needing one.
+            </p>
+          ) : null}
           {plan.steps.length > 0 ? (
             <ul role="list" aria-label="Steps" className="space-y-0.5">
               {plan.steps.map((step) => (
-                <StepRow key={step.key} step={step} onOpenPath={onOpenPath} />
+                <StepRow key={step.key} step={step} openPath={openPath} />
               ))}
             </ul>
-          ) : (
+          ) : unplanned ? null : (
             <p className="text-xs text-muted-foreground">
               {plan.source === "none"
                 ? "No SpecWeave increment and no todo list from the agent yet. Link the increment this thread works on, or the steps appear when the agent writes its todo list."
@@ -332,17 +369,35 @@ export const ThreadPlanCard = memo(function ThreadPlanCard({
               {criteriaOpen ? <ThreadPlanCriteria criteria={criteria} /> : null}
             </div>
           ) : null}
-          {(increment && onOpenPath) || onLinkIncrement || (increment && onUnlinkIncrement) ? (
+          {openSpec ||
+          (increment && onOpenPath) ||
+          onLinkIncrement ||
+          (increment && onUnlinkIncrement) ||
+          markNoIncrement ? (
             <div className="mt-2 flex flex-wrap gap-3 text-xs" data-plan-actions>
-              {increment && onOpenPath && increment.specPath ? (
-                <button
-                  type="button"
-                  className={LINK_BUTTON}
-                  onClick={() => onOpenPath(increment.specPath!)}
-                >
-                  <FileTextIcon aria-hidden className="size-3.5" />
-                  Open spec
-                </button>
+              {openSpec ? (
+                <span className="inline-flex items-center gap-1.5">
+                  <button
+                    type="button"
+                    className={LINK_BUTTON}
+                    onClick={openSpec}
+                    data-plan-open-spec
+                  >
+                    <FileTextIcon aria-hidden className="size-3.5" />
+                    Open spec
+                  </button>
+                  {editSpec ? (
+                    <button
+                      type="button"
+                      className="inline-flex items-center gap-0.5 text-muted-foreground underline-offset-2 hover:text-foreground hover:underline"
+                      aria-label="Open spec in editor"
+                      onClick={editSpec}
+                    >
+                      <CodeIcon aria-hidden className="size-3" />
+                      editor
+                    </button>
+                  ) : null}
+                </span>
               ) : null}
               {increment && onOpenPath ? (
                 <button
@@ -364,6 +419,12 @@ export const ThreadPlanCard = memo(function ThreadPlanCard({
                 <button type="button" className={LINK_BUTTON} onClick={onUnlinkIncrement}>
                   <Link2OffIcon aria-hidden className="size-3.5" />
                   Unlink
+                </button>
+              ) : null}
+              {markNoIncrement ? (
+                <button type="button" className={LINK_BUTTON} onClick={markNoIncrement}>
+                  <CircleSlashIcon aria-hidden className="size-3.5" />
+                  No increment needed
                 </button>
               ) : null}
             </div>

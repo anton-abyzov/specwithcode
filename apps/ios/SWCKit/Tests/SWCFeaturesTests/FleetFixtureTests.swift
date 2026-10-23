@@ -144,6 +144,6 @@ struct FleetFixtureTests {
     let rows = model.threads(in: docs.ref)
     #expect(!rows.isEmpty)
     #expect(rows.allSatisfy { $0.placement.unknown?.machine == "Travel laptop" && $0.placement.unknown?.lastSeenAt != nil })
-    #expect(ThreadGroups(rows).unknown.count == rows.filter { !$0.isResolved }.count)
+    #expect(ThreadGroups(rows).idle.count == rows.filter { !$0.isResolved }.count)
   }
 }

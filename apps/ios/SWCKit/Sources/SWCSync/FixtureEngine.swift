@@ -24,6 +24,7 @@ public enum FixtureScenario: String, Sendable, CaseIterable {
   /// Rich text, thread navigation and explicitly simulated ledger states.
   case checkOutput = "check-output"
   case readability
+  case threadLists = "thread-lists"
 
   var isFleet: Bool { self == .fleet || self == .m4Blip || self == .minisBlip }
 }
@@ -139,7 +140,17 @@ public final class FixtureEngine: AppEngine {
     lastSeen = [FixtureSample.travel: now.addingTimeInterval(-26 * 3600)]
     model.aide = FixtureSample.aide
     model.projects = FixtureSample.projects
-    model.threadsByProject = Dictionary(grouping: FixtureSample.threads(now: now)) { $0.projectRef ?? FixtureSample.specweave }
+    var threads = FixtureSample.threads(now: now)
+    if scenario == .threadLists {
+      threads = Array(threads.prefix(6))
+      for i in threads.indices {
+        let days = [0, 1, 4, 12, 40, 45][i]
+        let at = Calendar.current.date(byAdding: .day, value: -days, to: now)!
+        threads[i].activityAt = at
+        threads[i].updatedAt = at
+      }
+    }
+    model.threadsByProject = Dictionary(grouping: threads) { $0.projectRef ?? FixtureSample.specweave }
     recompute()
   }
 
@@ -782,7 +793,10 @@ private enum FixtureSample {
         isUnread: unread,
         machineLabel: machine,
         machineOnline: project.environmentId != travel,
-        planProgress: plan.map { PlanProgress(completed: $0.0, total: $0.1) }
+        planProgress: plan.map { PlanProgress(completed: $0.0, total: $0.1) },
+        identity: id == "t-handoff" ? ThreadIdentity(provider: "Codex", model: "GPT-6.1 Sol", providerBrand: "openai", modelBrand: "openai")
+          : id == "t-ledger" ? ThreadIdentity(provider: "GitHub Copilot", model: "Opus 5.5", providerBrand: "copilot", modelBrand: "claude")
+          : ThreadIdentity(provider: "Claude Code", model: "Opus 5.5", providerBrand: "claude", modelBrand: "claude")
       )
     }
     return [
