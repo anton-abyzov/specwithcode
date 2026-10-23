@@ -33,19 +33,23 @@ nonisolated struct ThreadGroups: Equatable {
   var needsYou: [ThreadSummary] = []
   var working: [ThreadSummary] = []
   var idle: [ThreadSummary] = []
-  /// On a machine the phone can't reach: their state is not known.
-  var unknown: [ThreadSummary] = []
   var resolved: [ThreadSummary] = []
 
   init(_ threads: [ThreadSummary], query: String = "") {
     let needle = query.trimmingCharacters(in: .whitespacesAndNewlines)
     let order: (ThreadSummary, ThreadSummary) -> Bool = {
       if $0.isPinned != $1.isPinned { return $0.isPinned }
-      return $0.updatedAt > $1.updatedAt
+      if $0.activityAt != $1.activityAt { return $0.activityAt > $1.activityAt }
+      return ($0.ref.environmentId, $0.ref.threadId) < ($1.ref.environmentId, $1.ref.threadId)
     }
     for thread in threads.sorted(by: order) where needle.isEmpty || thread.matches(needle) {
-      if thread.isResolved { resolved.append(thread) }
-      else if thread.isUnknown { unknown.append(thread) }
+      if thread.isUnknown || !thread.machineOnline {
+        if thread.isResolved { resolved.append(thread) } else { idle.append(thread) }
+      }
+      else if thread.activity == .needsYou { needsYou.append(thread) }
+      else if thread.activity == .working { working.append(thread) }
+      else if thread.waitsOnUser { needsYou.append(thread) }
+      else if thread.isResolved { resolved.append(thread) }
       else {
         switch thread.activity {
         case .needsYou, .failed: needsYou.append(thread)
@@ -56,7 +60,7 @@ nonisolated struct ThreadGroups: Equatable {
     }
   }
 
-  var isEmpty: Bool { needsYou.isEmpty && working.isEmpty && idle.isEmpty && unknown.isEmpty && resolved.isEmpty }
+  var isEmpty: Bool { needsYou.isEmpty && working.isEmpty && idle.isEmpty && resolved.isEmpty }
 }
 
 /// Drawer search over projects and threads.
@@ -81,6 +85,7 @@ nonisolated struct SearchResults: Equatable {
 extension ThreadSummary {
   nonisolated func matches(_ needle: String) -> Bool {
     title.localizedStandardContains(needle)
+      || identity.label.localizedStandardContains(needle)
       || (preview?.localizedStandardContains(needle) ?? false)
       || (projectTitle?.localizedStandardContains(needle) ?? false)
   }

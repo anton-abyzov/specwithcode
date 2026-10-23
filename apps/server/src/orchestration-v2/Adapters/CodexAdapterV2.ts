@@ -117,7 +117,10 @@ import {
 } from "../../provider/EventNdjsonLogger.ts";
 import { ProviderEventLoggers } from "../../provider/ProviderEventLoggers.ts";
 import { codexAppServerArgs, resolveCodexLaunchArgs } from "../../provider/codexLaunchArgs.ts";
-import { withHeadlessBrowserEnvironment } from "../../provider/RuntimeInstructions.ts";
+import {
+  withHeadlessBrowserEnvironment,
+  withSpecweaveAgentEnvironment,
+} from "../../provider/RuntimeInstructions.ts";
 import {
   mergeNativeSubscriptionEnvironment,
   mergeProviderInstanceEnvironment,
@@ -1500,13 +1503,18 @@ export const layerAppServerClientFactory: Layer.Layer<
       open: (input) =>
         Effect.gen(function* () {
           const scope = yield* Scope.Scope;
-          const environment = withHeadlessBrowserEnvironment({
-            ...input.environment,
-            ...(input.settings.homePath ? { CODEX_HOME: input.settings.homePath } : {}),
-            // SpecWeave hooks read it: inside Studio they save a checkpoint
-            // instead of asking the model to hand off.
-            SPECWEAVE_STUDIO_THREAD_ID: input.threadId,
-          });
+          // SpecWeave hooks read the thread id: inside Studio they save a
+          // checkpoint instead of asking the model to hand off. One app-server
+          // serves every model the thread switches to, so the model stays "".
+          const environment = withHeadlessBrowserEnvironment(
+            withSpecweaveAgentEnvironment(
+              {
+                ...input.environment,
+                ...(input.settings.homePath ? { CODEX_HOME: input.settings.homePath } : {}),
+              },
+              { threadId: input.threadId, tool: "codex" },
+            ),
+          );
           const command = yield* makeCodexAppServerSpawnCommand({
             command: input.settings.binaryPath || "codex",
             args: codexAppServerArgs(

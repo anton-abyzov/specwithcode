@@ -1,3 +1,8 @@
+// @effect-diagnostics nodeBuiltinImport:off - A temporary SpecWeave folder for the unplanned cases.
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+
 import { assert, it } from "@effect/vitest";
 import {
   EventId,
@@ -11,6 +16,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as SqlClient from "effect/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
 import { vi } from "vite-plus/test";
 
@@ -23,6 +29,9 @@ import * as ThreadIncrementProgressService from "./ThreadIncrementProgressServic
 const progressReads = vi.hoisted(() => [] as Array<ReadonlyArray<ThreadIncrementSource>>);
 // When set, folder reads wait on it, standing in for a slow pass.
 const readGate = vi.hoisted(() => ({ wait: undefined as Promise<void> | undefined }));
+// Threads the folder read finds no increment for, and threads that declared a small fix.
+const unbound = vi.hoisted(() => new Set<string>());
+const smallFixed = vi.hoisted(() => new Set<string>());
 
 vi.mock("./ThreadIncrementProgress.ts", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./ThreadIncrementProgress.ts")>()),
@@ -32,8 +41,11 @@ vi.mock("./ThreadIncrementProgress.ts", async (importOriginal) => ({
   ) => {
     progressReads.push(sources);
     await readGate.wait;
-    return sources.map((source) => ({ threadId: source.threadId }) as ThreadIncrementProgress);
+    return sources
+      .filter((source) => source.link?.incrementId !== null && !unbound.has(source.threadId))
+      .map((source) => ({ threadId: source.threadId }) as ThreadIncrementProgress);
   },
+  threadDeclaredSmallFix: async (threadId: string) => smallFixed.has(threadId),
 }));
 
 const layerTest = Layer.mergeAll(
@@ -49,14 +61,19 @@ const modelSelection = {
 
 const addThread = Effect.fn("addThread")(function* (
   id: string,
-  options: { readonly projectId?: ProjectId; readonly deleted?: boolean } = {},
+  options: {
+    readonly projectId?: ProjectId;
+    readonly deleted?: boolean;
+    readonly providerChild?: boolean;
+    readonly parent?: string;
+  } = {},
 ) {
   const store = yield* ProjectionStore.ProjectionStoreV2;
   const now = yield* DateTime.now;
   const threadId = ThreadId.make(id);
   const payload = {
-    createdBy: "user" as const,
-    creationSource: "web" as const,
+    createdBy: options.providerChild ? ("agent" as const) : ("user" as const),
+    creationSource: options.providerChild ? ("provider" as const) : ("web" as const),
     id: threadId,
     projectId: options.projectId ?? PROJECT,
     title: `Thread ${id}`,
@@ -67,7 +84,13 @@ const addThread = Effect.fn("addThread")(function* (
     branch: `inc/${id}`,
     worktreePath: `/work/${id}`,
     activeProviderThreadId: null,
-    lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+    lineage: options.providerChild
+      ? {
+          parentThreadId: ThreadId.make(options.parent ?? "thread:parent"),
+          relationshipToParent: "subagent" as const,
+          rootThreadId: ThreadId.make(options.parent ?? "thread:parent"),
+        }
+      : { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
     forkedFrom: null,
     createdAt: now,
     updatedAt: now,
@@ -96,8 +119,28 @@ const addThread = Effect.fn("addThread")(function* (
   return threadId;
 });
 
+/** One run of the thread, with a file change unless `changed` is false. */
+const addRun = Effect.fn("addRun")(function* (
+  threadId: ThreadId,
+  options: { readonly ordinal?: number; readonly status?: string; readonly changed?: boolean } = {},
+) {
+  const sql = yield* SqlClient.SqlClient;
+  const ordinal = options.ordinal ?? 1;
+  const runId = `${threadId}:run:${ordinal}`;
+  yield* sql`INSERT INTO orchestration_v2_projection_runs (run_id, thread_id, ordinal, provider, status, requested_at, payload_json) VALUES (${runId}, ${threadId}, ${ordinal}, 'codex', ${options.status ?? "completed"}, '2026-10-22T10:00:00Z', '{}')`;
+  if (options.changed === false) return;
+  yield* sql`INSERT INTO orchestration_v2_projection_turn_items (turn_item_id, thread_id, run_id, ordinal, type, status, updated_at, payload_json) VALUES (${`${runId}:edit`}, ${threadId}, ${runId}, ${ordinal}, 'file_change', 'completed', '2026-10-22T10:00:00Z', '{}')`;
+});
+
+/** A project folder SpecWeave plans in: it has `.specweave/increments`. */
+const specweaveRoot = () => {
+  const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "plan-unplanned-"));
+  NodeFS.mkdirSync(NodePath.join(root, ".specweave", "increments"), { recursive: true });
+  return root;
+};
+
 /** The service over the real projection store, counting its thread reads. */
-const makeService = Effect.fn("makeService")(function* () {
+const makeService = Effect.fn("makeService")(function* (workspaceRoot = "/work/root") {
   const store = yield* ProjectionStore.ProjectionStoreV2;
   const calls = { shell: 0, summaries: 0 };
   const counted: ProjectionStore.ProjectionStoreV2Shape = {
@@ -116,7 +159,7 @@ const makeService = Effect.fn("makeService")(function* () {
     Effect.provideService(
       ProjectStore.ProjectStoreV2,
       ProjectStore.ProjectStoreV2.of({
-        get: () => Effect.succeedSome({ workspaceRoot: "/work/root" }),
+        get: () => Effect.succeedSome({ workspaceRoot }),
       } as never),
     ),
   );
@@ -208,6 +251,135 @@ it.layer(layerTest)("ThreadIncrementProgressService", (it) => {
       yield* TestClock.adjust("1 second");
       yield* service.read(input);
       assert.strictEqual(progressReads.length, 2);
+    }),
+  );
+
+  it.effect("lists threads that changed code with no increment, small fix or none link", () =>
+    Effect.gen(function* () {
+      const root = specweaveRoot();
+      try {
+        const bound = yield* addThread("thread:unplanned:bound");
+        const none = yield* addThread("thread:unplanned:none");
+        const smallFix = yield* addThread("thread:unplanned:small-fix");
+        const child = yield* addThread("thread:unplanned:child", { providerChild: true });
+        const unplanned = yield* addThread("thread:unplanned:edited");
+        const readOnly = yield* addThread("thread:unplanned:read-only");
+        const idle = yield* addThread("thread:unplanned:idle");
+        for (const thread of [bound, none, smallFix, child, unplanned]) yield* addRun(thread);
+        yield* addRun(readOnly, { changed: false });
+        for (const thread of [none, smallFix, child, unplanned, readOnly, idle]) {
+          unbound.add(thread);
+        }
+        smallFixed.add(smallFix);
+        const { service } = yield* makeService(root);
+        yield* service.link({ projectId: PROJECT, threadId: none, link: { type: "none" } });
+
+        const snapshot = yield* service.read({
+          projectId: PROJECT,
+          threadIds: [bound, none, smallFix, child, unplanned, readOnly, idle],
+        });
+
+        assert.strictEqual(snapshot.specweave, true);
+        assert.deepStrictEqual(
+          snapshot.threads.map((thread) => thread.threadId),
+          [bound],
+        );
+        assert.deepStrictEqual(snapshot.unplanned, [unplanned]);
+      } finally {
+        NodeFS.rmSync(root, { recursive: true, force: true });
+      }
+    }),
+  );
+
+  it.effect("keeps a settled no until the thread's next run, and never while one runs", () =>
+    Effect.gen(function* () {
+      const root = specweaveRoot();
+      try {
+        const settled = yield* addThread("thread:unplanned:later");
+        const running = yield* addThread("thread:unplanned:running");
+        yield* addRun(settled, { changed: false });
+        yield* addRun(running, { status: "running", changed: false });
+        unbound.add(settled);
+        unbound.add(running);
+        const { service } = yield* makeService(root);
+        const input = { projectId: PROJECT, threadIds: [settled, running] };
+        assert.deepStrictEqual((yield* service.read(input)).unplanned, []);
+
+        // The running turn edits a file: read again at once.
+        const sql = yield* SqlClient.SqlClient;
+        yield* sql`INSERT INTO orchestration_v2_projection_turn_items (turn_item_id, thread_id, run_id, ordinal, type, status, updated_at, payload_json) VALUES ('running:edit', ${running}, ${`${running}:run:1`}, 2, 'file_change', 'completed', '2026-10-22T10:00:00Z', '{}')`;
+        assert.deepStrictEqual((yield* service.read(input)).unplanned, [running]);
+
+        // The settled thread's next run edits a file: its new last run reads again.
+        yield* addRun(settled, { ordinal: 2 });
+        yield* TestClock.adjust("5 seconds");
+        assert.deepStrictEqual(
+          (yield* service.read(input)).unplanned,
+          [settled, running].toSorted(),
+        );
+      } finally {
+        NodeFS.rmSync(root, { recursive: true, force: true });
+      }
+    }),
+  );
+
+  it.effect("counts a provider-native subagent's edits for its parent", () =>
+    Effect.gen(function* () {
+      const root = specweaveRoot();
+      try {
+        const parent = yield* addThread("thread:unplanned:delegating");
+        const child = yield* addThread("thread:unplanned:delegate", {
+          providerChild: true,
+          parent,
+        });
+        yield* addRun(parent, { changed: false });
+        // Native subagent edits are runless items under the child's own thread id.
+        const sql = yield* SqlClient.SqlClient;
+        yield* sql`INSERT INTO orchestration_v2_projection_turn_items (turn_item_id, thread_id, run_id, ordinal, type, status, updated_at, payload_json) VALUES ('delegate:edit', ${child}, NULL, 1, 'file_change', 'completed', '2026-10-22T10:00:00Z', '{}')`;
+        unbound.add(parent);
+        unbound.add(child);
+        const { service } = yield* makeService(root);
+
+        const snapshot = yield* service.read({ projectId: PROJECT, threadIds: [parent, child] });
+
+        assert.deepStrictEqual(snapshot.unplanned, [parent]);
+      } finally {
+        NodeFS.rmSync(root, { recursive: true, force: true });
+      }
+    }),
+  );
+
+  it.effect("stops flagging a thread once its edits are rolled back", () =>
+    Effect.gen(function* () {
+      const root = specweaveRoot();
+      try {
+        const thread = yield* addThread("thread:unplanned:rolled-back");
+        yield* addRun(thread);
+        unbound.add(thread);
+        const { service } = yield* makeService(root);
+        const input = { projectId: PROJECT, threadIds: [thread] };
+        assert.deepStrictEqual((yield* service.read(input)).unplanned, [thread]);
+
+        const sql = yield* SqlClient.SqlClient;
+        yield* sql`UPDATE orchestration_v2_projection_runs SET status = 'rolled_back' WHERE thread_id = ${thread}`;
+        assert.deepStrictEqual((yield* service.read(input)).unplanned, []);
+      } finally {
+        NodeFS.rmSync(root, { recursive: true, force: true });
+      }
+    }),
+  );
+
+  it.effect("says nothing about unplanned work outside a SpecWeave project", () =>
+    Effect.gen(function* () {
+      const thread = yield* addThread("thread:unplanned:plain");
+      yield* addRun(thread);
+      unbound.add(thread);
+      const { service } = yield* makeService();
+
+      const snapshot = yield* service.read({ projectId: PROJECT, threadIds: [thread] });
+
+      assert.strictEqual(snapshot.specweave, false);
+      assert.strictEqual(snapshot.unplanned, undefined);
     }),
   );
 });

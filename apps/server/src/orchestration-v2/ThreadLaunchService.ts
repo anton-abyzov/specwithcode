@@ -53,6 +53,7 @@ import * as IdAllocator from "./IdAllocator.ts";
 import type * as Orchestrator from "./Orchestrator.ts";
 import { makeProviderFailure } from "./ProviderFailure.ts";
 import { randomUuidV4 } from "./RandomUuid.ts";
+import { seedLaunchBinding } from "../project/launchIncrement.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
 
 export type ThreadLaunchWorkspaceStrategy =
@@ -170,6 +171,11 @@ export interface ThreadLaunchInput {
   readonly interactionMode: ProviderInteractionMode;
   readonly workspaceStrategy: ThreadLaunchWorkspaceStrategy;
   readonly initialMessage?: ThreadLaunchInitialMessage;
+  /**
+   * The SpecWeave increment the launch named, resolved before launch. Its
+   * binding is seeded once the workspace is recorded, before the first turn.
+   */
+  readonly increment?: { readonly root: string; readonly incrementId: string } | undefined;
   readonly importedNativeThread?: {
     readonly ref: {
       readonly driver: ProviderDriverKind;
@@ -185,7 +191,7 @@ export interface ThreadLaunchInput {
 /** What workspace preparation reads from a launch; a retry rebuilds it from the run. */
 type PreparationInput = Pick<
   ThreadLaunchInput,
-  "commandId" | "projectId" | "workspaceStrategy" | "initialMessage"
+  "commandId" | "projectId" | "workspaceStrategy" | "initialMessage" | "increment"
 > & {
   /**
    * Set when a retry reuses the worktree its failed attempt created and
@@ -580,6 +586,17 @@ const make = Effect.gen(function* () {
           .pipe(Effect.mapError(mapError(input, "update-thread", threadId)));
       }
       workspaceRecorded = true;
+      if (input.increment !== undefined) {
+        const increment = input.increment;
+        yield* Effect.promise(() =>
+          seedLaunchBinding({
+            threadId,
+            increment,
+            workspaceRoot: project.workspaceRoot,
+            worktreePath,
+          }),
+        );
+      }
 
       // Rename temporary branches (server-invented above, or sent by clients
       // that name worktrees themselves) in the background so generation latency

@@ -10,10 +10,12 @@
  */
 import {
   type CustomModelSetting,
+  type ModelBilling,
   type PiSettings,
   type ServerProvider,
   type ServerProviderModel,
 } from "@specweave-studio/contracts";
+import { classifyBaseUrlBilling } from "@specweave-studio/shared/modelBilling";
 import { causeErrorTag } from "@specweave-studio/shared/observability";
 import { resolveSpawnCommand } from "@specweave-studio/shared/shell";
 import { compareSemverVersions } from "@specweave-studio/shared/semver";
@@ -33,6 +35,7 @@ import {
 import {
   makePiRpcConnection,
   piRecordField as recordField,
+  piRecordNumber as recordNumber,
   piRecordString as recordString,
 } from "../orchestration-v2/Adapters/PiRpc.ts";
 import {
@@ -86,21 +89,77 @@ const PI_DEFAULT_MODEL: ServerProviderModel = {
 
 interface PiDiscovery extends PiDiscoveredCommands {
   readonly models: ReadonlyArray<ServerProviderModel>;
+  readonly defaultModel: ServerProviderModel;
   readonly authenticated: boolean;
 }
 
-function piModelsFromSettings(
+/** @internal Exported for tests. */
+export function piModelsFromSettings(
   customModels: ReadonlyArray<CustomModelSetting> | undefined,
   discovered: ReadonlyArray<ServerProviderModel> = [],
+  defaultModel: ServerProviderModel = PI_DEFAULT_MODEL,
 ): ReadonlyArray<ServerProviderModel> {
   return providerModelsFromSettings(
-    [PI_DEFAULT_MODEL, ...discovered],
+    [defaultModel, ...discovered],
     customModels ?? [],
     EMPTY_PI_MODEL_CAPABILITIES,
   );
 }
 
-function parseDiscoveredModels(
+/**
+ * Providers Pi signs in to with an account rather than a key. Claude Pro/Max
+ * shares the `anthropic` id and base URL with an Anthropic API key, and the
+ * RPC does not say which one a model uses, so none of these reads as `api`.
+ */
+const PI_ACCOUNT_LOGIN_PROVIDERS: ReadonlySet<string> = new Set([
+  "anthropic",
+  "github-copilot",
+  "google-antigravity",
+  "google-gemini-cli",
+  "openai-codex",
+]);
+
+/**
+ * Who pays for a Pi model. OpenCode Go is a subscription. A keyed cloud API
+ * reads as `api` only when the model has a price and its provider has no
+ * account sign-in; anything else Pi cannot prove stays `unknown`.
+ */
+function piModelBilling(model: unknown, provider: string): ModelBilling {
+  if (provider === "opencode-go") return "subscription";
+  const billing = classifyBaseUrlBilling(recordString(model, "baseUrl"), provider);
+  if (billing !== "api") return billing;
+  const cost = recordField(model, "cost");
+  const priced = (recordNumber(cost, "input") ?? 0) > 0 || (recordNumber(cost, "output") ?? 0) > 0;
+  return priced && !PI_ACCOUNT_LOGIN_PROVIDERS.has(provider) ? "api" : "unknown";
+}
+
+function positiveInt(value: number | undefined): number | undefined {
+  return value !== undefined && Number.isInteger(value) && value > 0 ? value : undefined;
+}
+
+/** Pi's model data has no tool-call flag, so `toolCalls` stays unset. */
+function piModelFacts(
+  model: unknown,
+  provider: string,
+): Pick<
+  ServerProviderModel,
+  "billing" | "reasoning" | "imageInput" | "contextWindow" | "maxOutput"
+> {
+  const reasoning = recordField(model, "reasoning");
+  const input = recordField(model, "input");
+  const contextWindow = positiveInt(recordNumber(model, "contextWindow"));
+  const maxOutput = positiveInt(recordNumber(model, "maxTokens"));
+  return {
+    billing: piModelBilling(model, provider),
+    ...(typeof reasoning === "boolean" ? { reasoning: reasoning ? "optional" : "none" } : {}),
+    ...(Array.isArray(input) ? { imageInput: input.includes("image") } : {}),
+    ...(contextWindow === undefined ? {} : { contextWindow }),
+    ...(maxOutput === undefined ? {} : { maxOutput }),
+  };
+}
+
+/** @internal Exported for tests. */
+export function parseDiscoveredModels(
   data: unknown,
   defaultThinkingLevel: unknown,
 ): ReadonlyArray<ServerProviderModel> {
@@ -121,9 +180,38 @@ function parseDiscoveredModels(
       subProvider: provider,
       isCustom: false,
       capabilities: thinkingCapabilitiesForPiModel(model, defaultThinkingLevel),
+      ...piModelFacts(model, provider),
     });
   }
   return parsed;
+}
+
+/**
+ * The "default" entry carrying the billing and facts of the model Pi's own
+ * settings name (`get_state`'s `model`), so a default that is an OpenRouter or
+ * keyed API model reads as paid like the same model picked by slug.
+ *
+ * @internal Exported for tests.
+ */
+export function piDefaultModel(
+  stateData: unknown,
+  discovered: ReadonlyArray<ServerProviderModel>,
+): ServerProviderModel {
+  const stateModel = recordField(stateData, "model");
+  const provider = recordString(stateModel, "provider");
+  const id = recordString(stateModel, "id");
+  if (provider === undefined || id === undefined) return PI_DEFAULT_MODEL;
+  const known = discovered.find((model) => model.slug === `${provider}/${id}`);
+  const { billing, reasoning, imageInput, contextWindow, maxOutput } =
+    known ?? piModelFacts(stateModel, provider);
+  return {
+    ...PI_DEFAULT_MODEL,
+    ...(billing === undefined ? {} : { billing }),
+    ...(reasoning === undefined ? {} : { reasoning }),
+    ...(imageInput === undefined ? {} : { imageInput }),
+    ...(contextWindow === undefined ? {} : { contextWindow }),
+    ...(maxOutput === undefined ? {} : { maxOutput }),
+  };
 }
 
 const discoverPiViaRpc = (
@@ -163,6 +251,7 @@ const discoverPiViaRpc = (
     const { slashCommands, skills } = parsePiDiscoveredCommands(commandsData);
     return {
       models: discoveredModels,
+      defaultModel: piDefaultModel(stateData, discoveredModels),
       slashCommands: withPiBuiltinSlashCommands(slashCommands),
       skills,
       authenticated: discoveredModels.length > 0,
@@ -396,7 +485,11 @@ export const checkPiProviderStatus = Effect.fn("checkPiProviderStatus")(function
   }
 
   const discovery = discoveryExit.value.value;
-  const models = piModelsFromSettings(piSettings.customModels, discovery.models);
+  const models = piModelsFromSettings(
+    piSettings.customModels,
+    discovery.models,
+    discovery.defaultModel,
+  );
   return buildServerProvider({
     presentation: PI_PRESENTATION,
     enabled: piSettings.enabled,

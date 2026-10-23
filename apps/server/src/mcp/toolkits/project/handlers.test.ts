@@ -1,3 +1,5 @@
+// @effect-diagnostics nodeBuiltinImport:off - Increment fixtures and a temporary HOME on disk.
+import * as Ref from "effect/Ref";
 import { projectFixture } from "../../../project/ProjectWorkspace.testkit.ts";
 import { expect, it } from "@effect/vitest";
 import {
@@ -10,6 +12,7 @@ import {
   type Project as ProjectRecord,
   type ServerProvider,
   type TaskRoutingSettings,
+  DEFAULT_PROJECT_WORKSPACE_SETTINGS,
   DEFAULT_SERVER_SETTINGS,
   DEFAULT_TASK_ROUTING_SETTINGS,
 } from "@specweave-studio/contracts";
@@ -21,6 +24,9 @@ import * as Path from "effect/Path";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 
 import * as ThreadLaunch from "../../../orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadManagement from "../../../orchestration-v2/ThreadManagementService.ts";
@@ -114,6 +120,148 @@ it.effect("attributes a launched thread's first message to the calling thread", 
     );
     expect(launchedSender).toBe(sourceThreadId);
   }),
+);
+
+it.effect("binds a launched thread to the increment it names, and refuses a bad one", () =>
+  Effect.gen(function* () {
+    const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "launch-increment-root-"));
+    yield* Effect.addFinalizer(() =>
+      Effect.sync(() => NodeFS.rmSync(root, { recursive: true, force: true })),
+    );
+    const folder = NodePath.join(root, ".specweave/increments/0996-connect");
+    NodeFS.mkdirSync(folder, { recursive: true });
+    NodeFS.writeFileSync(NodePath.join(folder, "spec.md"), "# Connect\n");
+    NodeFS.writeFileSync(
+      NodePath.join(root, ".specweave/config.json"),
+      JSON.stringify({ planning: { requireIncrement: "enforce" } }),
+    );
+    const specPath = NodePath.join(folder, "spec.md");
+    const sourceThreadId = ThreadId.make("coordinator-thread");
+    const projectId = ProjectId.make("project");
+    const providerInstanceId = ProviderInstanceId.make("codex");
+    const modelSelection = { instanceId: providerInstanceId, model: "gpt-5" };
+    const caller = {
+      id: sourceThreadId,
+      projectId,
+      title: "Coordinator",
+      branch: null,
+      worktreePath: null,
+      providerInstanceId,
+      modelSelection,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      activeRunId: "active-run",
+      archivedAt: null,
+      deletedAt: null,
+    } as unknown as OrchestrationV2ThreadShell;
+    const launched: ThreadLaunch.ThreadLaunchInput[] = [];
+    let callerWorktree: string | null = null;
+    const layerDependencies = Layer.mergeAll(
+      NodeCrypto.layer,
+      Layer.succeed(McpInvocationContext.McpInvocationContext, {
+        environmentId: EnvironmentId.make("environment"),
+        requestNamespace: "session",
+        thread: { threadId: sourceThreadId, providerSessionId: "session", providerInstanceId },
+        client: undefined,
+        issuedAt: 0,
+        capabilities: new Set(["orchestration" as const]),
+      }),
+      Layer.mock(ThreadManagement.ThreadManagementService)({
+        getThreadShell: () => Effect.succeed({ ...caller, worktreePath: callerWorktree }),
+      }),
+      Layer.mock(ThreadLaunch.ThreadLaunchService)({
+        launch: (input) => {
+          launched.push(input);
+          return Effect.succeed({
+            threadId: input.threadId,
+            projection: { thread: { id: input.threadId, projectId, modelSelection }, runs: [] },
+            resumed: false,
+          } as unknown as ThreadLaunch.ThreadLaunchResult);
+        },
+      }),
+      Layer.mock(Project.ProjectService)({
+        getById: (id) =>
+          Effect.succeed(
+            Option.some(
+              projectFixture(id, {
+                workspaceRoot: root,
+                workspaceSettings: {
+                  ...DEFAULT_PROJECT_WORKSPACE_SETTINGS,
+                  coordinatorThreadId: sourceThreadId,
+                },
+              }),
+            ),
+          ),
+      }),
+      Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/projects" }),
+      Layer.mock(GitVcsDriver.GitVcsDriver)({}),
+      Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
+      NodeServices.layer,
+      ServerConfig.layerTest(process.cwd(), { prefix: "studio-launch-increment-" }).pipe(
+        Layer.provide(NodeServices.layer),
+      ),
+    );
+    const toolkit = yield* ProjectToolkit.pipe(
+      Effect.provide(
+        McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(
+          Layer.provide(layerDependencies),
+        ),
+      ),
+    );
+    const handle = (params: Parameters<typeof toolkit.handle<"studio_thread_launch">>[1]) =>
+      toolkit
+        .handle("studio_thread_launch", params)
+        .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(layerDependencies));
+    const base = { title: "Connect", message: "Wire it up", modelSelection } as const;
+
+    // Under enforce the coordinator names an increment; a bad one launches nothing.
+    const missing = yield* handle(base);
+    expect(missing.at(-1)?.result).toMatchObject({
+      code: "invalid_request",
+      message: expect.stringContaining("requires an increment for each worker"),
+    });
+    const bad = yield* handle({ ...base, increment: "0999" });
+    expect(bad.at(-1)?.result).toMatchObject({ code: "invalid_request" });
+    expect(launched).toHaveLength(0);
+
+    const result = yield* handle({ ...base, increment: "0996" });
+    expect(result.at(-1)?.result).toMatchObject({
+      increment: { incrementId: "0996-connect", title: "Connect", specPath },
+    });
+    expect(launched[0]?.increment).toEqual({ root, incrementId: "0996-connect" });
+    expect(launched[0]?.initialMessage?.text).toBe(
+      `Wire it up\n\nIncrement 0996-connect ([spec](${specPath})): run \`specweave pickup 0996-connect\` first.`,
+    );
+
+    // "new" seeds nothing and asks the worker to plan first.
+    yield* handle({ ...base, increment: "new" });
+    expect(launched[1]?.increment).toBeUndefined();
+    expect(launched[1]?.initialMessage?.text).toContain('`specweave create-increment "Connect"`');
+
+    // An increment only on the caller's branch resolves in its worktree for a new worktree.
+    const callerTree = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "launch-increment-tree-"));
+    yield* Effect.addFinalizer(() =>
+      Effect.sync(() => NodeFS.rmSync(callerTree, { recursive: true, force: true })),
+    );
+    NodeFS.mkdirSync(NodePath.join(callerTree, ".specweave/increments/1001-feature"), {
+      recursive: true,
+    });
+    const onBranch = { ...base, increment: "1001" } as const;
+    const newWorktree = { type: "worktree", baseRef: "feat/x" } as const;
+    const unseen = yield* handle({ ...onBranch, workspaceStrategy: newWorktree });
+    expect(unseen.at(-1)?.result).toMatchObject({ code: "invalid_request" });
+    callerWorktree = callerTree;
+    const fromBranch = yield* handle({ ...onBranch, workspaceStrategy: newWorktree });
+    expect(fromBranch.at(-1)?.result).toMatchObject({
+      increment: { incrementId: "1001-feature" },
+      warning: expect.stringContaining("only if its base branch does"),
+    });
+    expect(launched[2]?.increment).toEqual({ root: callerTree, incrementId: "1001-feature" });
+    // A thread in the project root does not look there.
+    const inRoot = yield* handle(onBranch);
+    expect(inRoot.at(-1)?.result).toMatchObject({ code: "invalid_request" });
+    expect(launched).toHaveLength(3);
+  }).pipe(Effect.scoped),
 );
 
 it.effect("launches a scratch thread into the Scratch project", () =>
@@ -813,5 +961,133 @@ it.effect("routes folder moves, archive and delete through the user's approval c
       { threadId: sourceThreadId, projectId, action: "delete", reason: "Wrong project." },
     ]);
     expect(changedDirectly).toBe(0);
+  }),
+);
+
+
+it.effect("manages learned model preferences for a project via studio_model_preference", () =>
+  Effect.gen(function* () {
+    const sourceThreadId = ThreadId.make("source-thread");
+    const projectId = ProjectId.make("project");
+    const providerInstanceId = ProviderInstanceId.make("claudeAgent");
+    const caller = {
+      id: sourceThreadId,
+      projectId,
+      providerInstanceId,
+      modelSelection: { instanceId: providerInstanceId, model: "claude-opus-5-5" },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      activeRunId: "active-run",
+      archivedAt: null,
+      deletedAt: null,
+    } as OrchestrationV2ThreadShell;
+
+    const settingsRef = yield* Ref.make({
+      ...DEFAULT_SERVER_SETTINGS,
+      projectSettingsOverrides: {},
+    });
+
+    const layerDependencies = Layer.mergeAll(
+      NodeCrypto.layer,
+      Layer.succeed(McpInvocationContext.McpInvocationContext, {
+        environmentId: EnvironmentId.make("environment"),
+        requestNamespace: "session",
+        thread: {
+          threadId: sourceThreadId,
+          providerSessionId: "session",
+          providerInstanceId,
+        },
+        client: undefined,
+        issuedAt: 0,
+        capabilities: new Set(["orchestration" as const]),
+      }),
+      Layer.mock(ThreadManagement.ThreadManagementService)({
+        getThreadShell: () => Effect.succeed(caller),
+      }),
+      Layer.mock(Project.ProjectService)({
+        getById: (id) =>
+          Effect.succeed(
+            id === projectId
+              ? Option.some({
+                  id,
+                  workspaceRoot: "/projects/test",
+                } as unknown as ProjectRecord)
+              : Option.none(),
+          ),
+      }),
+      Layer.mock(ServerSettings.ServerSettingsService)({
+        getSettings: Ref.get(settingsRef),
+        updateSettings: (patch) =>
+          Ref.updateAndGet(settingsRef, (current) => ({
+            ...current,
+            projectSettingsOverrides: {
+              ...current.projectSettingsOverrides,
+              ...(patch.projectSettingsOverrides ?? {}),
+            },
+          })),
+      }),
+      NodeServices.layer,
+      ServerConfig.layerTest(process.cwd(), { prefix: "studio-model-pref-" }).pipe(
+        Layer.provide(NodeServices.layer),
+      ),
+    );
+
+    const toolkit = yield* ProjectToolkit.pipe(
+      Effect.provide(
+        McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(
+          Layer.provide(layerDependencies),
+        ),
+      ),
+    );
+
+    // 1. Initial list is empty
+    const initial = yield* toolkit
+      .handle("studio_model_preference", { action: "list" })
+      .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(layerDependencies));
+    expect(initial.at(-1)?.result).toMatchObject({
+      action: "list",
+      projectId,
+      preferences: [],
+    });
+
+    // 2. Record a rule
+    const recorded = yield* toolkit
+      .handle("studio_model_preference", {
+        action: "record",
+        keywords: ["database", "migration"],
+        preference: {
+          kind: "prefer",
+          model: { instanceId: providerInstanceId, model: "claude-opus-5-5" },
+        },
+        note: "Use Opus for DB tasks",
+      })
+      .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(layerDependencies));
+    const recordResult = recorded.at(-1)?.result as any;
+    expect(recordResult.action).toBe("record");
+    expect(recordResult.recorded).toMatchObject({
+      keywords: ["database", "migration"],
+      action: { kind: "prefer", model: { instanceId: providerInstanceId, model: "claude-opus-5-5" } },
+      note: "Use Opus for DB tasks",
+    });
+    const ruleId = recordResult.recorded.id;
+    expect(ruleId).toMatch(/^pref-/);
+
+    // 3. List contains recorded rule
+    const afterRecord = yield* toolkit
+      .handle("studio_model_preference", { action: "list" })
+      .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(layerDependencies));
+    expect((afterRecord.at(-1)?.result as any).preferences).toHaveLength(1);
+
+    // 4. Delete the rule
+    const deleted = yield* toolkit
+      .handle("studio_model_preference", { action: "delete", id: ruleId })
+      .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(layerDependencies));
+    expect((deleted.at(-1)?.result as any).deleted).toBe(true);
+
+    // 5. List is empty again
+    const finalList = yield* toolkit
+      .handle("studio_model_preference", { action: "list" })
+      .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(layerDependencies));
+    expect((finalList.at(-1)?.result as any).preferences).toHaveLength(0);
   }),
 );

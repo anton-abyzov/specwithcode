@@ -8,6 +8,7 @@ struct DrawerView: View {
   @Environment(AppModel.self) private var model
   @Environment(AppRouter.self) private var router
   @State private var showAllProjects = false
+  @State private var showAllRecents = false
   @State private var showAutomated = false
   @State private var settingUpAide = false
 
@@ -190,19 +191,29 @@ struct DrawerView: View {
   // MARK: Recents
 
   @ViewBuilder private var recentsSection: some View {
-    let threads = Array(model.recentThreads.prefix(Self.recentCount))
-    if !threads.isEmpty {
-      // Threads of a machine that is catching up may be a little behind.
+    let grouped = RecentChatGroups(model.recentThreads)
+    let visible = Set((showAllRecents ? grouped.groups.flatMap(\.threads) : Array(grouped.groups.flatMap(\.threads).prefix(Self.recentCount))).map(\.ref))
+    if !grouped.groups.isEmpty {
       DrawerSectionLabel("Recents", detail: model.staleMachines.isEmpty ? nil : "Updating")
-      ForEach(threads) { thread in
-        let target = ChatTarget.thread(thread.ref)
-        WeaveRow(thread.title, subtitle: thread.placement.subtitle(), titleLineLimit: 1, subtitleLineLimit: 1, action: { router.open(target) }) {
-          WeaveRowSymbol(RecentThreadGlyph.symbol(for: thread), tint: RecentThreadGlyph.tint(for: thread))
-        } trailing: {
-          RecentThreadGlyph(thread: thread)
+      ForEach(grouped.groups, id: \.label) { group in
+        let rows = group.threads.filter { visible.contains($0.ref) }
+        if !rows.isEmpty {
+          SectionHeader(group.label, count: rows.count)
+            .padding(.horizontal, WeaveSpacing.s4)
+          ForEach(rows) { thread in
+            let target = ChatTarget.thread(thread.ref)
+            WeaveRow(thread.title, subtitle: thread.identity.label + "\n" + thread.placement.subtitle(), titleLineLimit: 1, subtitleLineLimit: 2, action: { router.open(target) }) {
+              ThreadIdentityMarks(identity: thread.identity)
+            } trailing: {
+              RecentThreadGlyph(thread: thread)
+            }
+            .accessibilityValue(RecentThreadGlyph.spoken(thread))
+            .drawerSelection(isSelected(target))
+          }
         }
-        .accessibilityValue(RecentThreadGlyph.spoken(thread))
-        .drawerSelection(isSelected(target))
+      }
+      if model.recentThreads.count > Self.recentCount {
+        foldButton(showAllRecents ? "Show fewer chats" : "Show all \(model.recentThreads.count) chats", open: showAllRecents) { showAllRecents.toggle() }
       }
     }
   }

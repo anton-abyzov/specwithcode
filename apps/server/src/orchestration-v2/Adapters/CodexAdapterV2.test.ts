@@ -821,7 +821,7 @@ describe("CodexAdapterV2 process spawning", () => {
     }).pipe(Effect.provideService(HostProcessPlatform, "linux")),
   );
 
-  it.effect("launches the app-server with the headless browser environment", () =>
+  it.effect("launches the app-server with the headless and SpecWeave thread environment", () =>
     Effect.gen(function* () {
       const spawnedEnvironments: Array<NodeJS.ProcessEnv | undefined> = [];
       const spawner = ChildProcessSpawner.make((command) => {
@@ -849,7 +849,14 @@ describe("CodexAdapterV2 process spawning", () => {
             cwd: "/workspace",
           }),
           settings: DEFAULT_CODEX_SETTINGS,
-          environment: { KEEP: "1", PWDEBUG: "1", PLAYWRIGHT_HTML_OPEN: "always" },
+          environment: {
+            KEEP: "1",
+            PWDEBUG: "1",
+            PLAYWRIGHT_HTML_OPEN: "always",
+            SPECWEAVE_STUDIO_THREAD_ID: "thread-of-the-server",
+            SPECWEAVE_TOOL: "claude",
+            SPECWEAVE_MODEL: "claude-opus-4-1",
+          },
         })
         .pipe(Effect.scoped, Effect.exit);
 
@@ -859,6 +866,8 @@ describe("CodexAdapterV2 process spawning", () => {
         PWDEBUG: "0",
         PLAYWRIGHT_HTML_OPEN: "never",
         SPECWEAVE_STUDIO_THREAD_ID: "thread-headless-env",
+        SPECWEAVE_TOOL: "codex",
+        SPECWEAVE_MODEL: "",
       });
     }).pipe(Effect.provideService(HostProcessPlatform, "linux")),
   );

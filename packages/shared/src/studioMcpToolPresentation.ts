@@ -419,6 +419,10 @@ const STUDIO_MCP_TOOLS: Readonly<Record<string, StudioMcpToolDefinition>> = {
     ["Route", "Routing", "Routed", "a request to a project"],
     "thread-send",
   ),
+  studio_model_preference: tool(
+    ["Manage", "Managing", "Managed", "project model preferences"],
+    "project-update",
+  ),
   studio_attachment_prepare_upload: tool(
     ["Prepare", "Preparing", "Prepared", "an attachment upload"],
     "attachment-prepare",

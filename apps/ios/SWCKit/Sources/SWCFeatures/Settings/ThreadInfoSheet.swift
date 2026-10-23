@@ -31,6 +31,8 @@ struct ThreadInfoSheet: View {
             MachineBadge(status: machine?.status.weaveStatus ?? .offline, label: machine?.displayName ?? summary?.machineLabel)
           }
           if let summary {
+            WeaveRow("Provider", trailingText: summary.identity.provider)
+            WeaveRow("Model", trailingText: summary.identity.model)
             WeaveRow("Status", trailingText: summary.isResolved ? "Resolved" : summary.activity.label)
             if let plan = summary.planProgress {
               WeaveRow("Tasks", trailingText: "\(plan.completed) of \(plan.total) done")

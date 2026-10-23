@@ -305,6 +305,16 @@ describe("RemoteWorkers", () => {
               driverKind: "grok",
               usage: "full",
             },
+            {
+              ...capabilities.providers[0],
+              providerInstanceId: "pi",
+              driverKind: "pi",
+              models: [
+                { id: "default", label: "Pi default" },
+                { id: "openrouter/anthropic/claude-sonnet-5", label: "Sonnet", paid: true },
+                { id: "lmstudio/qwen3", label: "Qwen", paid: "yes" },
+              ],
+            },
           ],
         },
       }),
@@ -316,7 +326,7 @@ describe("RemoteWorkers", () => {
         projectId: ProjectId.make("local-project"),
         probe: true,
       });
-      const [codex, claude, grok] = listed.machines[0]?.providers ?? [];
+      const [codex, claude, grok, pi] = listed.machines[0]?.providers ?? [];
       const { token: _token, ...shared } = usage;
       expect(codex).toMatchObject({ usage: shared, allowedByGrant: true });
       expect(codex?.usage).not.toHaveProperty("token");
@@ -326,6 +336,8 @@ describe("RemoteWorkers", () => {
       });
       expect(grok).not.toHaveProperty("usage");
       expect(grok).not.toHaveProperty("allowedByGrant");
+      expect(codex).not.toHaveProperty("paidModels");
+      expect(pi?.paidModels).toEqual(["openrouter/anthropic/claude-sonnet-5"]);
     }).pipe(Effect.provide(layer));
   });
 

@@ -417,6 +417,16 @@ it.effect("carries the calling thread's delegation path to the other machine", (
   });
 });
 
+it.effect("passes the increment ref on for the other machine to resolve", () => {
+  const { launch, remoteLaunches } = setup();
+  return Effect.gen(function* () {
+    yield* launch({ title: "Fix CI", message: "Fix it", machine: "M1", increment: "0996" });
+    expect(remoteLaunches[0]?.increment).toBe("0996");
+    yield* launch({ title: "Fix CI", message: "Fix it", machine: "M1" });
+    expect(remoteLaunches[1]?.increment).toBeUndefined();
+  });
+});
+
 it.effect("refuses to send work back to the machine it came from, before sending it", () => {
   // M1 started the calling thread here; it may not start work on M1 in turn.
   const { launch, remoteLaunches } = setup({

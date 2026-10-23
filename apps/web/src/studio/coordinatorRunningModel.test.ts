@@ -90,6 +90,33 @@ const display = (over: Partial<Parameters<typeof coordinatorModelDisplay>[0]>) =
   });
 
 describe("coordinatorModelDisplay", () => {
+  it.each(["preparing", "starting", "running", "waiting"] as const)(
+    "keeps %s Gemini ahead of a newer queued Claude turn",
+    (status) => {
+      const gemini = select("acpRegistry_gemini", "default");
+      const result = display({
+        picked: claude,
+        saved: claude,
+        thread: claude,
+        runs: [run(3, gemini, status), run(4, claude, "queued")],
+      });
+      expect(result.shown).toEqual(gemini);
+      expect(result.fallback).toMatchObject({ saved: claude, now: gemini, live: true });
+    },
+  );
+
+  it("ignores held queued work when displaying the persisted current model", () => {
+    const gemini = select("acpRegistry_gemini", "default");
+    expect(
+      display({
+        picked: claude,
+        saved: claude,
+        thread: gemini,
+        runs: [{ ...run(4, claude, "queued"), queueHeld: true }],
+      }),
+    ).toMatchObject({ shown: gemini, fallback: { now: gemini, live: false } });
+  });
+
   it("shows the saved model when nothing moved the coordinator", () => {
     expect(display({ runs: [run(1, codex, "completed")] })).toEqual({
       shown: codex,

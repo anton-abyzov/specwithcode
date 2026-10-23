@@ -200,6 +200,9 @@ public struct ThreadSummary: Identifiable, Hashable, Sendable {
   /// Latest status line or message preview.
   public var preview: String?
   public var updatedAt: Date
+  public var activityAt: Date
+  public var identity: ThreadIdentity
+  public var waitsOnUser: Bool
   /// When the current run started, for "2m" style elapsed labels.
   public var workStartedAt: Date?
   public var isPinned: Bool
@@ -212,7 +215,7 @@ public struct ThreadSummary: Identifiable, Hashable, Sendable {
   /// state is unknown because that machine is unreachable.
   public var placement: ThreadPlacement
 
-  public init(ref: ThreadRef, projectRef: ProjectRef? = nil, projectTitle: String? = nil, title: String, activity: ThreadActivity, preview: String? = nil, updatedAt: Date, workStartedAt: Date? = nil, isPinned: Bool = false, isResolved: Bool = false, isUnread: Bool = false, machineLabel: String, machineOnline: Bool, planProgress: PlanProgress? = nil, placement: ThreadPlacement? = nil) {
+  public init(ref: ThreadRef, projectRef: ProjectRef? = nil, projectTitle: String? = nil, title: String, activity: ThreadActivity, preview: String? = nil, updatedAt: Date, workStartedAt: Date? = nil, isPinned: Bool = false, isResolved: Bool = false, isUnread: Bool = false, machineLabel: String, machineOnline: Bool, planProgress: PlanProgress? = nil, placement: ThreadPlacement? = nil, activityAt: Date? = nil, identity: ThreadIdentity = .unknown, waitsOnUser: Bool = false) {
     self.ref = ref
     self.projectRef = projectRef
     self.projectTitle = projectTitle
@@ -220,6 +223,9 @@ public struct ThreadSummary: Identifiable, Hashable, Sendable {
     self.activity = activity
     self.preview = preview
     self.updatedAt = updatedAt
+    self.activityAt = activityAt ?? updatedAt
+    self.identity = identity
+    self.waitsOnUser = waitsOnUser
     self.workStartedAt = workStartedAt
     self.isPinned = isPinned
     self.isResolved = isResolved

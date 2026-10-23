@@ -1,4 +1,5 @@
 import {
+  type ModelBilling,
   type ModelCapabilities,
   type OpenCodeSettings,
   type ServerProviderModel,
@@ -12,6 +13,7 @@ import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
 
 import { createModelCapabilities } from "@specweave-studio/shared/model";
+import { classifyBaseUrlBilling } from "@specweave-studio/shared/modelBilling";
 import { compareSemverVersions } from "@specweave-studio/shared/semver";
 import {
   buildServerProvider,
@@ -194,9 +196,85 @@ const DEFAULT_OPENCODE_MODEL_CAPABILITIES: ModelCapabilities = createModelCapabi
   ],
 });
 
+type OpenCodeProviderInfo = ProviderListResponse["all"][number];
+type OpenCodeModelInfo = OpenCodeProviderInfo["models"][string];
+
+/** The model facts `ServerProviderModel` carries beyond its name and options. */
+type OpenCodeModelFacts = Pick<
+  ServerProviderModel,
+  "billing" | "toolCalls" | "reasoning" | "imageInput" | "contextWindow" | "maxOutput"
+>;
+
+function definedFacts(facts: {
+  readonly [K in keyof OpenCodeModelFacts]-?: OpenCodeModelFacts[K] | undefined;
+}): OpenCodeModelFacts {
+  return Object.fromEntries(
+    Object.entries(facts).filter(([, value]) => value !== undefined),
+  ) as OpenCodeModelFacts;
+}
+
+function positiveInt(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isInteger(value) && value > 0 ? value : undefined;
+}
+
+function booleanFact(value: unknown): boolean | undefined {
+  return typeof value === "boolean" ? value : undefined;
+}
+
+function stringSetting(settings: unknown, key: string): string | undefined {
+  if (typeof settings !== "object" || settings === null) return undefined;
+  const value = (settings as Record<string, unknown>)[key];
+  return typeof value === "string" && value.trim().length > 0 ? value : undefined;
+}
+
+/**
+ * Who pays for an OpenCode model. OpenCode Go is a subscription. A keyed
+ * cloud API reads as `api` only when the model has a price: OpenCode's Claude
+ * Pro/Max and ChatGPT sign-ins zero every model's cost under the same
+ * provider id, and a subscription must not be taken for a paid model.
+ */
+function openCodeModelBilling(input: {
+  readonly providerID: string;
+  readonly baseUrl: string | undefined;
+  readonly priced: boolean;
+}): ModelBilling {
+  if (input.providerID === "opencode-go") return "subscription";
+  const billing = classifyBaseUrlBilling(input.baseUrl, input.providerID);
+  return billing === "api" && !input.priced ? "unknown" : billing;
+}
+
+/** CLI inventories and older servers may omit any of these fields. */
+function openCodeModelFacts(
+  provider: OpenCodeProviderInfo,
+  model: OpenCodeModelInfo,
+): OpenCodeModelFacts {
+  const capabilities = model.capabilities as Partial<OpenCodeModelInfo["capabilities"]> | undefined;
+  const image = booleanFact(capabilities?.input?.image);
+  const attachment = booleanFact(capabilities?.attachment);
+  const reasoning = booleanFact(capabilities?.reasoning);
+  const cost = model.cost as Partial<OpenCodeModelInfo["cost"]> | undefined;
+  return definedFacts({
+    billing: openCodeModelBilling({
+      providerID: provider.id,
+      baseUrl:
+        stringSetting(provider.options, "baseURL") ??
+        stringSetting(model.options, "baseURL") ??
+        stringSetting(model.api, "url"),
+      priced: (cost?.input ?? 0) > 0 || (cost?.output ?? 0) > 0,
+    }),
+    toolCalls: booleanFact(capabilities?.toolcall),
+    reasoning: reasoning === undefined ? undefined : reasoning ? "optional" : "none",
+    // `attachment` covers any non-text input (PDF, audio), so only an
+    // explicit image flag says yes; no attachments at all says no.
+    imageInput: image ?? (attachment === false ? false : undefined),
+    contextWindow: positiveInt(model.limit?.context),
+    maxOutput: positiveInt(model.limit?.output),
+  });
+}
+
 function openCodeCapabilitiesForModel(input: {
   readonly providerID: string;
-  readonly model: ProviderListResponse["all"][number]["models"][string];
+  readonly model: OpenCodeModelInfo;
   readonly agents: ReadonlyArray<Agent>;
 }): ModelCapabilities {
   const rawVariantValues = Object.keys(input.model.variants ?? {});
@@ -205,8 +283,11 @@ function openCodeCapabilitiesForModel(input: {
   // Codex/Grok experience where reasoning is always configurable). The set
   // covers the common OpenCode variant spectrum; `inferDefaultVariant`
   // picks the provider-appropriate default (e.g. medium for openai/opencode).
+  // A model whose data says it does not reason gets no selector at all.
   const variantValues =
-    rawVariantValues.length > 0 ? rawVariantValues : ["low", "medium", "high", "xhigh"];
+    rawVariantValues.length > 0 || input.model.capabilities?.reasoning === false
+      ? rawVariantValues
+      : ["low", "medium", "high", "xhigh"];
   const defaultVariant = inferDefaultVariant(input.providerID, variantValues);
   const variantOptions = variantValues.map((value) =>
     defaultVariant === value
@@ -278,6 +359,7 @@ function flattenOpenCodeModels(
           model,
           agents: input.agents,
         }),
+        ...openCodeModelFacts(provider, model),
       });
     }
   }
@@ -378,12 +460,38 @@ export const makePendingOpenCodeProvider = (
     });
   });
 
-/** One model an OpenCode 2 server lists, as the status check reads it. */
+/**
+ * One model an OpenCode 2 server lists, as the status check reads it. A 2.x
+ * model has no reasoning flag, so only its variants describe reasoning.
+ */
 export interface OpenCode2Model {
   readonly providerID: string;
   readonly id: string;
   readonly name: string;
   readonly variants: ReadonlyArray<{ readonly id: string }>;
+  readonly capabilities?: {
+    readonly tools?: boolean;
+    readonly input?: ReadonlyArray<string>;
+  };
+  readonly settings?: { readonly [key: string]: unknown } | undefined;
+  readonly cost?: ReadonlyArray<{ readonly input: number; readonly output: number }>;
+  readonly limit?: { readonly context?: number; readonly output?: number };
+}
+
+function openCode2ModelFacts(model: OpenCode2Model): OpenCodeModelFacts {
+  const input = model.capabilities?.input;
+  return definedFacts({
+    billing: openCodeModelBilling({
+      providerID: model.providerID,
+      baseUrl: stringSetting(model.settings, "baseURL"),
+      priced: model.cost?.some((tier) => tier.input > 0 || tier.output > 0) ?? false,
+    }),
+    toolCalls: booleanFact(model.capabilities?.tools),
+    reasoning: undefined,
+    imageInput: input === undefined ? undefined : input.includes("image"),
+    contextWindow: positiveInt(model.limit?.context),
+    maxOutput: positiveInt(model.limit?.output),
+  });
 }
 
 /**
@@ -546,6 +654,7 @@ const checkOpenCode2 = Effect.fn("checkOpenCode2")(function* (
         name: model.name,
         isCustom: false,
         capabilities: openCode2ModelCapabilities(model),
+        ...openCode2ModelFacts(model),
       }))
       .toSorted((left, right) => left.name.localeCompare(right.name)),
     settings.customModels,

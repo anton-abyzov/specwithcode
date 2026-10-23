@@ -23,6 +23,42 @@ export function withHeadlessBrowserEnvironment(
   return { ...environment, ...HEADLESS_BROWSER_ENVIRONMENT };
 }
 
+/** The thread, tool and model an agent process works for. */
+export interface SpecweaveAgentIdentity {
+  readonly threadId: string;
+  /** SpecWeave's tool slug: claude, codex, pi, opencode, grok and so on. */
+  readonly tool: string;
+  readonly model?: string | undefined;
+}
+
+/**
+ * What SpecWeave reads to bind its ledger and hooks to this thread. An unknown
+ * model is "" rather than absent, so a value inherited from the server's own
+ * environment cannot name the wrong model.
+ */
+export function specweaveAgentEnvironment(identity: SpecweaveAgentIdentity): {
+  readonly SPECWEAVE_STUDIO_THREAD_ID: string;
+  readonly SPECWEAVE_TOOL: string;
+  readonly SPECWEAVE_MODEL: string;
+} {
+  return {
+    SPECWEAVE_STUDIO_THREAD_ID: identity.threadId,
+    SPECWEAVE_TOOL: identity.tool,
+    SPECWEAVE_MODEL: identity.model ?? "",
+  };
+}
+
+/**
+ * `environment` with specweaveAgentEnvironment applied last. Every spawn site
+ * that has a per-thread environment uses it; providerSpawnSites.test.ts checks.
+ */
+export function withSpecweaveAgentEnvironment(
+  environment: NodeJS.ProcessEnv | undefined,
+  identity: SpecweaveAgentIdentity,
+): NodeJS.ProcessEnv {
+  return { ...environment, ...specweaveAgentEnvironment(identity) };
+}
+
 /**
  * Child-process `env`/`extendEnv` options with the headless variables applied.
  * Without an explicit environment the child inherits the server's, so the

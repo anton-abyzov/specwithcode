@@ -28,7 +28,14 @@ import {
 } from "./scheduledTask.ts";
 import { HandoffMachineThreadOutcome } from "./handoffMode.ts";
 import { ModelSelection } from "./modelSelection.ts";
-import { TaskClass, TaskRoutingDecision } from "./taskRouting.ts";
+import {
+  LearnedModelPreference,
+  LearnedModelPreferenceAction,
+  ModelLane,
+  PreferenceKeyword,
+  TaskClass,
+  TaskRoutingDecision,
+} from "./taskRouting.ts";
 import { ProviderInteractionMode, RuntimeMode } from "./providerPolicy.ts";
 import { ThreadLinkedPullRequest } from "./threadPullRequest.ts";
 import {
@@ -245,12 +252,44 @@ export const OrchestratorMcpTaskClassHint = TaskClass.annotate({
     "Optional kind of work, used only when Auto model routing is on and no model is named: translation, transcript (speech or transcript processing; audio is transcribed by a speech-to-text tool first, never by the text model), summary, research, animation-draft, animation-final, code, review, design or general. A named model always wins.",
 });
 
+export const OrchestratorMcpIncrementRef = TrimmedNonEmptyString.check(
+  Schema.isMaxLength(120),
+).annotate({
+  description:
+    'SpecWeave increment for this work: an open increment number (NNNN) or full folder name, "new" when it must be planned first, or "none" for work that needs none. Omitted, a worker inherits the increment its caller is bound to. A ref that does not resolve, or names a closed increment, launches nothing.',
+});
+
+export const OrchestratorMcpLaunchIncrement = Schema.Struct({
+  incrementId: Schema.String,
+  title: Schema.NullOr(Schema.String),
+  specPath: Schema.String.annotate({
+    description:
+      "Absolute path of the increment's spec.md (its folder when it has none). Post it to the user as [NNNN](<specPath>).",
+  }),
+  inheritedFrom: Schema.optional(
+    ThreadId.annotate({
+      description: "Set when no increment was passed and the worker inherited its caller's.",
+    }),
+  ),
+}).annotate({ description: "The SpecWeave increment the new thread is bound to." });
+export type OrchestratorMcpLaunchIncrement = typeof OrchestratorMcpLaunchIncrement.Type;
+
+const OrchestratorMcpLaunchWarning = Schema.String.annotate({
+  description: "Something the caller should fix next time, such as a missing increment.",
+});
+
+export const OrchestratorMcpTaskLaneHint = ModelLane.annotate({
+  description:
+    "Your judgement of the task, used when no model is named and the user's model lanes are set: complex for hard, open-ended or creative work (architecture, a new design, deep debugging, research synthesis, anything where a stronger model changes the result), routine for well-specified work (small fixes, docs, releases by a documented process, translation, summaries, status checks). The worker starts on the first available model of that lane. Omit it to let the app classify the task; a named model always wins.",
+});
+
 export const OrchestratorMcpDelegateTaskInput = Schema.Struct({
   task: OrchestratorMcpPrompt.annotate({
     description: "Self-contained task for one delegated child agent/subagent.",
   }),
   target: Schema.optional(OrchestratorMcpTarget),
   taskClass: Schema.optional(OrchestratorMcpTaskClassHint),
+  taskLane: Schema.optional(OrchestratorMcpTaskLaneHint),
   title: Schema.optional(OrchestratorMcpTitle),
   role: Schema.optional(OrchestratorMcpTaskRole),
   mode: Schema.optional(
@@ -272,6 +311,7 @@ export const OrchestratorMcpDelegateTaskInput = Schema.Struct({
         "Only 'local' is accepted: delegated children always run on this machine. Start work on another machine with studio_thread_launch and machine.",
     }),
   ),
+  increment: Schema.optional(OrchestratorMcpIncrementRef),
 });
 export type OrchestratorMcpDelegateTaskInput = typeof OrchestratorMcpDelegateTaskInput.Type;
 
@@ -318,6 +358,8 @@ export const OrchestratorMcpDelegateTaskResult = Schema.Struct({
     description:
       "True only on that mode=wait call when timeoutMs elapsed. The timeout does not cancel the child. Later task_status reads return false and use status for liveness.",
   }),
+  increment: Schema.optional(OrchestratorMcpLaunchIncrement),
+  warning: Schema.optional(OrchestratorMcpLaunchWarning),
 });
 export type OrchestratorMcpDelegateTaskResult = typeof OrchestratorMcpDelegateTaskResult.Type;
 
@@ -344,8 +386,10 @@ export const OrchestratorMcpCreateThreadRequest = Schema.Struct({
   title: Schema.optional(OrchestratorMcpTitle),
   target: Schema.optional(OrchestratorMcpTarget),
   taskClass: Schema.optional(OrchestratorMcpTaskClassHint),
+  taskLane: Schema.optional(OrchestratorMcpTaskLaneHint),
   runtimeMode: Schema.optional(OrchestratorMcpRuntimeMode),
   interactionMode: Schema.optional(OrchestratorMcpInteractionMode),
+  increment: Schema.optional(OrchestratorMcpIncrementRef),
 });
 export type OrchestratorMcpCreateThreadRequest = typeof OrchestratorMcpCreateThreadRequest.Type;
 
@@ -383,6 +427,8 @@ export const OrchestratorMcpCreatedThread = Schema.Struct({
     }),
   ),
   routing: Schema.optional(TaskRoutingDecision),
+  increment: Schema.optional(OrchestratorMcpLaunchIncrement),
+  warning: Schema.optional(OrchestratorMcpLaunchWarning),
 });
 export type OrchestratorMcpCreatedThread = typeof OrchestratorMcpCreatedThread.Type;
 
@@ -857,6 +903,8 @@ export const OrchestratorMcpProviderCapability = Schema.Struct({
       label: Schema.NullOr(Schema.String),
       /** Model options a target may select (for example reasoning effort). */
       options: Schema.optional(Schema.Array(ProviderOptionDescriptor)),
+      /** True when a paid router or keyed API bills this model per token. Older machines omit it. */
+      paid: Schema.optional(Schema.Boolean),
     }),
   ),
   canRunChildTask: Schema.Boolean,
@@ -920,6 +968,8 @@ export const OrchestratorMcpMachineProvider = Schema.Struct({
   available: Schema.Boolean,
   usage: Schema.optional(OrchestratorMcpProviderUsage),
   allowedByGrant: Schema.optional(Schema.Boolean),
+  /** Models a paid router or keyed API bills per token; never a limit handoff target. */
+  paidModels: Schema.optional(Schema.Array(Schema.String)),
 });
 export type OrchestratorMcpMachineProvider = typeof OrchestratorMcpMachineProvider.Type;
 
@@ -1168,6 +1218,65 @@ export const OrchestratorMcpDeleteScheduledTaskResult = Schema.Struct({
 });
 export type OrchestratorMcpDeleteScheduledTaskResult =
   typeof OrchestratorMcpDeleteScheduledTaskResult.Type;
+
+export const OrchestratorMcpModelPreferenceAction = Schema.Literals(["record", "list", "delete"]);
+export type OrchestratorMcpModelPreferenceAction = typeof OrchestratorMcpModelPreferenceAction.Type;
+
+export const OrchestratorMcpModelPreferenceInput = Schema.Struct({
+  action: OrchestratorMcpModelPreferenceAction.annotate({
+    description:
+      "Action to perform: 'record' saves what the user said about which model to use or avoid for a kind of task, 'list' lists the project's learned rules, 'delete' removes one by id.",
+  }),
+  projectId: Schema.optional(
+    ProjectId.annotate({
+      description: "Target project. Omit for the calling thread's project.",
+    }),
+  ),
+  id: Schema.optional(
+    TrimmedNonEmptyString.check(Schema.isMaxLength(64)).annotate({
+      description: "Rule id to delete. Required when action is 'delete'.",
+    }),
+  ),
+  keywords: Schema.optional(
+    Schema.Array(PreferenceKeyword)
+      .check(Schema.isMaxLength(6))
+      .annotate({
+        description:
+          "Words or short phrases that trigger this rule, e.g. ['database', 'migration']. Up to 6.",
+      }),
+  ),
+  taskClass: Schema.optional(
+    OrchestratorMcpTaskClassHint.annotate({
+      description: "Optional task class this rule applies to.",
+    }),
+  ),
+  lane: Schema.optional(
+    OrchestratorMcpTaskLaneHint.annotate({
+      description: "Optional lane this rule is restricted to.",
+    }),
+  ),
+  preference: Schema.optional(
+    LearnedModelPreferenceAction.annotate({
+      description:
+        "What to do when the rule matches: {kind:'prefer', model:{...}} to prefer a model, {kind:'avoid', model:{...}} to skip one, or {kind:'lane', lane:'complex'|'routine'} to set the lane.",
+    }),
+  ),
+  note: Schema.optional(
+    TrimmedNonEmptyString.check(Schema.isMaxLength(300)).annotate({
+      description: "The user's words or feedback context, kept for reference.",
+    }),
+  ),
+});
+export type OrchestratorMcpModelPreferenceInput = typeof OrchestratorMcpModelPreferenceInput.Type;
+
+export const OrchestratorMcpModelPreferenceResult = Schema.Struct({
+  action: OrchestratorMcpModelPreferenceAction,
+  projectId: ProjectId,
+  preferences: Schema.Array(LearnedModelPreference),
+  recorded: Schema.optional(LearnedModelPreference),
+  deleted: Schema.optional(Schema.Boolean),
+});
+export type OrchestratorMcpModelPreferenceResult = typeof OrchestratorMcpModelPreferenceResult.Type;
 
 export class OrchestratorMcpFailure extends Schema.TaggedError<OrchestratorMcpFailure>()(
   "OrchestratorMcpFailure",

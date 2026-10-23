@@ -105,7 +105,7 @@ struct LogicTests {
       thread("needs", .needsYou, minutesAgo: 1),
       thread("idle-pinned", .idle, minutesAgo: 500, pinned: true),
       thread("idle-new", .idle, minutesAgo: 5),
-      thread("done", .working, minutesAgo: 3, resolved: true),
+      thread("done", .idle, minutesAgo: 3, resolved: true),
     ])
     #expect(groups.needsYou.map(\.ref.threadId) == ["needs", "failed"])
     #expect(groups.working.map(\.ref.threadId) == ["working"])

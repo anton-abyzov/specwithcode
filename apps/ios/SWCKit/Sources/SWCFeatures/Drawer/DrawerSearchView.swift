@@ -81,8 +81,8 @@ struct DrawerSearchView: View {
             if !results.threads.isEmpty {
               DrawerSectionLabel("Threads")
               ForEach(results.threads) { thread in
-                WeaveRow(thread.title, subtitle: [thread.projectTitle, thread.placement.subtitle()].compactMap { $0 }.joined(separator: " · "), titleLineLimit: 1, subtitleLineLimit: 1, action: { router.open(.thread(thread.ref)) }) {
-                  WeaveRowSymbol(RecentThreadGlyph.symbol(for: thread), tint: RecentThreadGlyph.tint(for: thread))
+                WeaveRow(thread.title, subtitle: [thread.identity.label, thread.projectTitle, thread.placement.subtitle()].compactMap { $0 }.joined(separator: " · "), titleLineLimit: 1, subtitleLineLimit: 2, action: { router.open(.thread(thread.ref)) }) {
+                  ThreadIdentityMarks(identity: thread.identity)
                 } trailing: {
                   RecentThreadGlyph(thread: thread)
                 }

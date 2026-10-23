@@ -71,6 +71,7 @@ import {
   type PiCompactCommand,
 } from "../../provider/PiCommands.ts";
 import { mergeProviderInstanceEnvironment } from "../../provider/ProviderInstanceEnvironment.ts";
+import { withSpecweaveAgentEnvironment } from "../../provider/RuntimeInstructions.ts";
 import * as IdAllocator from "../IdAllocator.ts";
 import * as ProviderAdapter from "../ProviderAdapter.ts";
 import {
@@ -416,7 +417,10 @@ export function makePiAdapterV2(
       }
       const launch = buildPiRpcLaunch({
         launchArgs: resolvedLaunchArgs.args,
-        environment: options.environment,
+        environment: withSpecweaveAgentEnvironment(options.environment, {
+          threadId: input.threadId,
+          tool: "pi",
+        }),
         mcpSession,
         extensionPath,
         runtimeMode: input.runtimePolicy.runtimeMode,

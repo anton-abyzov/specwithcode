@@ -41,7 +41,7 @@ spec.md + ledger.jsonl + metadata.json + reports/verify.json   (the repository, 
 projects.threadIncrementProgressRead { projectId, threadIds }  (server: ThreadIncrementProgressService)
         │  parseSpecweaveSpec + foldSpecweaveLedger (mods/SpecweaveProgress.ts mirrors the CLI's foldLedger)
         ▼
-useThreadIncrementProgress (web)  → ThreadPlanCard, PlanProgressChip
+useThreadIncrementProgress / useThreadIncrementState (web)  → ThreadPlanCard, PlanProgressChip, Threads pane
 ```
 
 - **The ledger is the only state.** The fold follows the CLI's 3.0.6 rules: claims lease for two hours, `done` needs evidence, `skip` needs a reason, and only the owner releases. SpecWithCode never writes checkboxes, board tables or any derived state back into markdown, and never appends to the ledger. Claiming and finishing stay with the agent and `specweave task`.
@@ -55,13 +55,31 @@ useThreadIncrementProgress (web)  → ThreadPlanCard, PlanProgressChip
 
 ## What the thread shows
 
-- **Plan card** at the top of the thread, collapsed to one line by default. The line shows the increment number or "Plan", the current step (the thread's own task first), the next step and `2/5`. Expanded, it lists every task or step: filled check for done, ring for current, dashed circle for open, pause for blocked, slash for skipped. The thread's own task is marked "this thread", and the agent's live todo list is nested under it. For an increment it also shows status, the last verify result, acceptance criteria and **Open spec** / **Open increment**, which open in the preferred editor.
+- **Plan card** at the top of the thread, collapsed to one line by default. The line shows the increment number or "Plan", the current step (the thread's own task first), the next step and `2/5`. Expanded, it lists every task or step: filled check for done, ring for current, dashed circle for open, pause for blocked, slash for skipped. The thread's own task is marked "this thread", and the agent's live todo list is nested under it. For an increment it also shows status, the last verify result and acceptance criteria. **Open spec** always shows when the spec exists and opens it in the app's viewer (in front of the viewer overlay when that is open); a small **editor** link beside it and **Open increment** use the preferred editor and show only when one is installed. A step that links to a file in the increment opens in the viewer too; a step that links to a folder opens in the editor. A bound increment with no tasks yet still shows, as "No tasks yet".
+- **Compact progress** in lists: `0996 · 3/5` for an increment, `3/5` for a todo list, and `0996` alone for a bound increment with no tasks yet. It is never a button, because it sits inside row buttons.
 - **Pull request pills** under the card: number, branch and state for every PR the thread linked, newest first. Each opens its PR. Two show, and the rest sit behind "Show N more".
 - **"Working in folder ~/…"** divider at the top of the timeline. Its button opens the folder in the preferred editor.
 
 The composer's live tasks drawer is unchanged. It still follows the running turn's own todo list.
 
+## Unplanned work
+
+In a SpecWeave project (one with `.specweave/increments`, or a member repository under an umbrella that has them), `projects.threadIncrementProgressRead` also returns `specweave: true` and `unplanned`: the listed threads that changed code with no plan behind them. A thread counts when one of its turns has a completed `file_change` item and none of these applies:
+
+- it is bound to an increment, by any of the bindings above;
+- it has a hand-made link, including **No increment needed** (a `none` row);
+- its SpecWeave work-session marker `~/.specweave/sessions/studio-<thread>.json` (the thread id sanitized as the CLI's `workSessionFile` does) has `kind: "small-fix"`, written by `specweave small-fix` in that thread;
+- it is a provider-native subagent (`lineage.relationshipToParent: "subagent"` with `creationSource: "provider"`); its parent owns that work.
+
+The server answers from its own projection tables through the SQL client it already uses (the file-change lookup is covered by the `thread_id, type, status, run_id` index) and caches the answer per thread by its newest run: a yes is kept, a no is kept until that run moves on and never while it still runs. A failed lookup lists no unplanned threads rather than failing the progress read. Older servers omit both fields; clients then show nothing unplanned.
+
+In the app:
+
+- The thread's plan card shows even without a plan, headed "Changed code without an increment", with **Link increment** (the picker) and **No increment needed** (the same `none` link as **Unlink**). A thread with a todo list keeps it and gets a "No increment" tag.
+- The Threads pane header says "N threads changed code without an increment"; the button filters the list to them and **Show all** clears it. Each such row carries an **Unplanned** chip.
+
 ## Checks
 
 - `node node_modules/vite-plus/bin/vp test run apps/server/src/project/ThreadIncrementProgress.test.ts apps/server/src/orchestration-v2/ProjectionStore.planProgress.test.ts apps/web/src/studio/threadPlanProgress.test.ts`
-- Headless fixture: `node node_modules/vite-plus/bin/vp build --config apps/web/tests/plan-progress/vite.config.ts`, then `node scripts/studio-verify/plan-progress.mjs /absolute/report-dir`. It uses synthetic data and headless Chromium, and writes screenshots to the report directory.
+- `node node_modules/vite-plus/bin/vp test run apps/server/src/project/ThreadIncrementProgressService.test.ts` covers the unplanned rules: bound, `none`, small fix, provider child, unplanned and a project without SpecWeave.
+- Headless fixture: `node node_modules/vite-plus/bin/vp build --config apps/web/tests/plan-progress/vite.config.ts`, then `node scripts/studio-verify/plan-progress.mjs /absolute/report-dir`. It uses synthetic data and headless Chromium, checks that **Open spec** goes to the viewer with the absolute spec path, the card without an editor, the zero-task chip, the unplanned card, the header filter and the row chip, and writes light and dark screenshots to the report directory.

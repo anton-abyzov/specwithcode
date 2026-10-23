@@ -207,9 +207,17 @@
       "types": "./src/providerFallback.ts",
       "import": "./src/providerFallback.ts"
     },
+    "./modelBilling": {
+      "types": "./src/modelBilling.ts",
+      "import": "./src/modelBilling.ts"
+    },
     "./taskRouting": {
       "types": "./src/taskRouting.ts",
       "import": "./src/taskRouting.ts"
+    },
+    "./modelLanes": {
+      "types": "./src/modelLanes.ts",
+      "import": "./src/modelLanes.ts"
     },
     "./machineFallback": {
       "types": "./src/machineFallback.ts",

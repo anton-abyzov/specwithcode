@@ -230,7 +230,7 @@ function makeAcpRegistryRuntime(options: AcpRegistryAdapterV2Options) {
     Crypto.Crypto | Scope.Scope
   > =>
     Effect.gen(function* () {
-      const { processEnvironment, modelSelection, ...runtimeInput } = input;
+      const { processEnvironment, agentEnvironment, modelSelection, ...runtimeInput } = input;
       const resolved = yield* options.resolver
         .resolve(options.settings, input.cwd, options.environment)
         .pipe(
@@ -254,11 +254,11 @@ function makeAcpRegistryRuntime(options: AcpRegistryAdapterV2Options) {
         AcpSessionRuntime.layer({
           ...runtimeInput,
           spawn:
-            processEnvironment === undefined
+            processEnvironment === undefined && agentEnvironment === undefined
               ? spawn
               : {
                   ...spawn,
-                  env: { ...spawn.env, ...processEnvironment },
+                  env: { ...spawn.env, ...processEnvironment, ...agentEnvironment },
                 },
           ...(options.settings.authMethodId ? { authMethodId: options.settings.authMethodId } : {}),
         }).pipe(
@@ -278,6 +278,24 @@ function makeAcpRegistryRuntime(options: AcpRegistryAdapterV2Options) {
     });
 }
 
+// SpecWeave's tool slugs for registry agents it knows. SPECWEAVE_TOOL beats
+// the CLI's own markers (GEMINI_CLI, COPILOT_AGENT, ...), so any other agent,
+// and a local command, gets "": the CLI reads that as unset and falls back to
+// those markers, while it still masks a value inherited from the server.
+const SPECWEAVE_TOOL_BY_ACP_AGENT: Readonly<Record<string, string>> = {
+  "claude-acp": "claude",
+  "codex-acp": "codex",
+  gemini: "gemini",
+  "github-copilot-cli": "copilot",
+  "grok-build": "grok",
+};
+
+export function specweaveToolForAcpAgent(registryAgentId: string): string {
+  return Object.hasOwn(SPECWEAVE_TOOL_BY_ACP_AGENT, registryAgentId)
+    ? SPECWEAVE_TOOL_BY_ACP_AGENT[registryAgentId]!
+    : "";
+}
+
 export function makeAcpRegistryAdapterV2(options: AcpRegistryAdapterV2Options) {
   const runtimeCoordinator = options.runtimeCoordinator;
   const registryAgentId = options.settings.source === "local" ? "" : options.settings.agentId;
@@ -286,6 +304,7 @@ export function makeAcpRegistryAdapterV2(options: AcpRegistryAdapterV2Options) {
   const isDevin = registryAgentId === "devin";
   const flavor: AcpAdapterV2Flavor = {
     driver: ACP_REGISTRY_PROVIDER,
+    specweaveTool: specweaveToolForAcpAgent(registryAgentId),
     capabilities: AcpProviderCapabilitiesV2,
     promptFailure: (cause) => acpRegistryPromptFailure(registryAgentId, cause),
     // Per-agent exceptions (Mistral Vibe, Devin): see the note above

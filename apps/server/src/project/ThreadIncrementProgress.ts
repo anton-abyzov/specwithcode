@@ -18,8 +18,10 @@
  * the thread's worktree when that checkout has its own `.specweave/increments`,
  * because the agent appends to the ledger there before anything is merged.
  *
- * Read-only and offline: no CLI, no Git, nothing written back. Task state is
- * SpecWeave's ledger fold (mods/SpecweaveProgress.ts mirrors `foldLedger`).
+ * Offline: no CLI, no Git. Reads write nothing back; the one write is the
+ * claim file a launch with an increment seeds (`writeLaunchBinding`), which a
+ * later SpecWeave ledger write replaces. Task state is SpecWeave's ledger fold
+ * (mods/SpecweaveProgress.ts mirrors `foldLedger`).
  */
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
@@ -163,6 +165,37 @@ export async function incrementRootFor(
 }
 
 /**
+ * Whether the project plans with SpecWeave: it has increments of its own, or
+ * an umbrella workspace above it does.
+ */
+export async function isSpecweaveProject(workspaceRoot: string): Promise<boolean> {
+  return (
+    (await isDirectory(NodePath.join(workspaceRoot, INCREMENTS_DIR))) ||
+    (await planningRootAbove(workspaceRoot)) !== null
+  );
+}
+
+/**
+ * Where `specweave small-fix` records a SpecWithCode thread's declared small
+ * fix: SpecWeave's work-session marker keyed `studio-<thread>`, sanitized the
+ * way its `workSessionFile` does.
+ */
+export function specweaveThreadSessionPath(threadId: string, home = NodeOS.homedir()): string {
+  return NodePath.join(
+    home,
+    ".specweave",
+    "sessions",
+    `${`studio-${threadId}`.replace(/[^\w.-]/g, "_")}.json`,
+  );
+}
+
+/** Whether the thread's last SpecWeave work-session marker is a declared small fix. */
+export async function threadDeclaredSmallFix(threadId: string, home?: string): Promise<boolean> {
+  const marker = await readJson(specweaveThreadSessionPath(threadId, home));
+  return marker?.version === 1 && marker.kind === "small-fix";
+}
+
+/**
  * Each AC's traceability: the tasks that cite it, its story, the old `met`
  * flag, and how far it is proven (see ThreadIncrementCriterionState). A task
  * counts as evidence only when the ledger accepted its `done` (`doneAt`); a
@@ -249,6 +282,23 @@ async function readJson(file: string): Promise<Record<string, unknown> | null> {
 }
 
 /**
+ * Whether a thread with these checkouts reads a binding at `root` (already
+ * resolved through links): inside one of `allowedRoots`, or exactly the
+ * umbrella workspace that plans for one of them.
+ */
+export async function bindingRootAccepted(
+  root: string,
+  allowedRoots: ReadonlyArray<string>,
+): Promise<boolean> {
+  const allowed = await Promise.all(
+    allowedRoots.map((candidate) => NodeFSP.realpath(candidate).catch(() => null)),
+  );
+  if (allowed.some((candidate) => candidate !== null && inside(candidate, root))) return true;
+  const planning = await Promise.all(allowedRoots.map(planningRootAbove));
+  return planning.includes(root);
+}
+
+/**
  * The increment SpecWeave bound this thread to by a ledger write, when its
  * root lies inside one of `allowedRoots` or is exactly the umbrella workspace
  * that plans for the thread's checkout, and the increment folder exists.
@@ -269,14 +319,7 @@ async function claimedBinding(
     return null;
   }
   const root = await NodeFSP.realpath(binding.root).catch(() => null);
-  if (root === null) return null;
-  const allowed = await Promise.all(
-    allowedRoots.map((candidate) => NodeFSP.realpath(candidate).catch(() => null)),
-  );
-  if (!allowed.some((candidate) => candidate !== null && inside(candidate, root))) {
-    const planning = await Promise.all(allowedRoots.map(planningRootAbove));
-    if (!planning.includes(root)) return null;
-  }
+  if (root === null || !(await bindingRootAccepted(root, allowedRoots))) return null;
   if (!(await isDirectory(NodePath.join(root, INCREMENTS_DIR, binding.incrementId)))) return null;
   return {
     root,
@@ -288,6 +331,18 @@ async function claimedBinding(
 const INCREMENT_BRANCH = /^inc\/(\d{4,})-/u;
 /** Newest increment ledgers searched for a `by` naming the branch. */
 const BRANCH_LEDGERS_SCANNED = 40;
+
+/**
+ * The one `NNNN-*` folder for `number`. A number shared by two folders is
+ * ambiguous: no match, never a guess between them.
+ */
+export function uniqueFolderForNumber(
+  folders: ReadonlyArray<string>,
+  number: string,
+): { readonly match: string | null; readonly ambiguous: boolean } {
+  const matches = folders.filter((folder) => folder.startsWith(`${number}-`));
+  return { match: matches.length === 1 ? matches[0]! : null, ambiguous: matches.length > 1 };
+}
 
 /** Whether a ledger `by` (`tool@host`, optionally with the branch) names `branch`. */
 export function ledgerByNamesBranch(by: string, branch: string): boolean {
@@ -313,9 +368,8 @@ export async function branchBoundIncrement(
     .toSorted((left, right) => right.localeCompare(left, undefined, { numeric: true }));
   const number = INCREMENT_BRANCH.exec(name)?.[1];
   if (number !== undefined) {
-    const matches = folders.filter((folder) => folder.startsWith(`${number}-`));
-    // A number shared by two folders is ambiguous; never guess between them.
-    if (matches.length === 1) return matches[0]!;
+    const found = uniqueFolderForNumber(folders, number);
+    if (found.match !== null) return found.match;
   }
   for (const folder of folders.slice(0, BRANCH_LEDGERS_SCANNED)) {
     const ledger = await readBounded(
@@ -605,4 +659,125 @@ export async function incrementExists(
   const root = await incrementRootFor(workspaceRoot, worktreePath);
   const folder = NodePath.join(root, INCREMENTS_DIR, incrementId);
   return inside(root, folder) && (await isDirectory(folder));
+}
+
+/** Increment statuses SpecWeave treats as closed (its require-increment guard). */
+export const CLOSED_INCREMENT_STATES: ReadonlySet<string> = new Set([
+  "completed",
+  "abandoned",
+  "cancelled",
+]);
+
+export type IncrementRefResolution =
+  | {
+      readonly kind: "found";
+      readonly root: string;
+      readonly incrementId: string;
+      readonly title: string | null;
+      readonly status: string;
+      /** Its spec.md, or the increment folder when it has none. */
+      readonly specPath: string;
+    }
+  | { readonly kind: "not_found" | "ambiguous"; readonly root: string }
+  | { readonly kind: "closed"; readonly incrementId: string; readonly status: string };
+
+/**
+ * The increment a launch names, in the checkout the thread will read
+ * (`incrementRootFor`): an `NNNN` matching exactly one folder, or a full folder
+ * name. A completed, abandoned or cancelled one comes back as `closed`.
+ */
+export async function resolveIncrementRef(
+  workspaceRoot: string,
+  worktreePath: string | null,
+  ref: string,
+): Promise<IncrementRefResolution> {
+  const root = await incrementRootFor(workspaceRoot, worktreePath);
+  const value = ref.trim();
+  let incrementId: string | null = null;
+  if (/^\d{4,}$/u.test(value)) {
+    const found = uniqueFolderForNumber(await incrementIds(root), value);
+    if (found.ambiguous) return { kind: "ambiguous", root };
+    incrementId = found.match;
+  } else if (
+    INCREMENT_FOLDER.test(value) &&
+    (await isDirectory(NodePath.join(root, INCREMENTS_DIR, value)))
+  ) {
+    incrementId = value;
+  }
+  if (incrementId === null) return { kind: "not_found", root };
+  const folder = NodePath.join(root, INCREMENTS_DIR, incrementId);
+  const meta = await incrementMeta(root, NodePath.join(folder, "metadata.json"));
+  if (CLOSED_INCREMENT_STATES.has(meta.status)) {
+    return { kind: "closed", incrementId, status: meta.status };
+  }
+  const specFile = NodePath.join(folder, "spec.md");
+  const spec = await readBounded(root, specFile, SPEC_BYTES);
+  return {
+    kind: "found",
+    root,
+    incrementId,
+    title: meta.title ?? (spec === null ? null : parseSpecweaveSpec(spec).title) ?? null,
+    status: meta.status,
+    specPath: spec === null ? folder : specFile,
+  };
+}
+
+/** The ledger event a launch's seeded binding carries; SpecWeave never writes it. */
+export const LAUNCH_BINDING_EVENT = "studio-launch";
+
+/**
+ * Seeds the thread's SpecWeave claim file (the CLI's v1 `studio-thread-binding`
+ * shape) so its plan card and SpecWeave's edit guard know the increment before
+ * its first turn. Written atomically, and only over nothing or an earlier seed:
+ * a binding SpecWeave wrote from a ledger event always wins. Never throws;
+ * false when nothing was written.
+ */
+export async function writeLaunchBinding(
+  threadId: string,
+  increment: { readonly root: string; readonly incrementId: string },
+  home = NodeOS.homedir(),
+  now = new Date(),
+): Promise<boolean> {
+  const file = specweaveStudioThreadBindingPath(threadId, home);
+  let temporary: string | null = null;
+  try {
+    const existing = await NodeFSP.readFile(file, "utf8").then(
+      (text) => text,
+      (error: NodeJS.ErrnoException) => (error.code === "ENOENT" ? null : Promise.reject(error)),
+    );
+    if (existing !== null) {
+      const parsed: unknown = JSON.parse(existing);
+      if ((parsed as { event?: unknown } | null)?.event !== LAUNCH_BINDING_EVENT) return false;
+    }
+    await NodeFSP.mkdir(NodePath.dirname(file), { recursive: true, mode: 0o700 });
+    const binding = {
+      version: 1,
+      threadId,
+      incrementId: increment.incrementId,
+      root: increment.root,
+      taskId: null,
+      event: LAUNCH_BINDING_EVENT,
+      at: now.toISOString(),
+    };
+    temporary = `${file}.${process.pid}.${now.getTime()}`;
+    await NodeFSP.writeFile(temporary, `${JSON.stringify(binding, null, 2)}\n`, { mode: 0o600 });
+    await NodeFSP.rename(temporary, file);
+    return true;
+  } catch {
+    if (temporary !== null) await NodeFSP.rm(temporary, { force: true }).catch(() => undefined);
+    return false;
+  }
+}
+
+export type RequireIncrementMode = "off" | "remind" | "enforce";
+
+/** `planning.requireIncrement` of the SpecWeave workspace that plans `workspaceRoot`; `off` without one. */
+export async function readRequireIncrementMode(
+  workspaceRoot: string,
+): Promise<RequireIncrementMode> {
+  const planning = await planningRootAbove(workspaceRoot);
+  if (planning === null) return "off";
+  const config = await readJson(NodePath.join(planning, ".specweave", "config.json"));
+  const mode = (config?.planning as { requireIncrement?: unknown } | undefined)?.requireIncrement;
+  return mode === "remind" || mode === "enforce" ? mode : "off";
 }

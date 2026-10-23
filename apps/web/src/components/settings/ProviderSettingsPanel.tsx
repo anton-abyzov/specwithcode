@@ -1,4 +1,5 @@
 import { SettingsGroup } from "./SettingsGroup";
+import { ModelLanesSettings } from "./ModelLanesSettings";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import {
   AuthSettingsWriteScope,
@@ -1366,6 +1367,10 @@ export function EnvironmentProviderSettings({
             )}
           </div>
         </SettingsGroup>
+      </SettingsSection>
+
+      <SettingsSection title="Model lanes">
+        <ModelLanesSettings />
       </SettingsSection>
 
       <UsageProviderSettings

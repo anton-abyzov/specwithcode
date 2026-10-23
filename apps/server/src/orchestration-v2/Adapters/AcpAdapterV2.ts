@@ -111,7 +111,10 @@ import {
   studioAcpPromptWithInstructions,
   type StudioAcpInstructionState,
 } from "../../provider/StudioOrchestrationInstructions.ts";
-import { buildRuntimeInstructions } from "../../provider/RuntimeInstructions.ts";
+import {
+  buildRuntimeInstructions,
+  specweaveAgentEnvironment,
+} from "../../provider/RuntimeInstructions.ts";
 import {
   agentProtectedPathsForConfig,
   makeAgentPathGuard,
@@ -162,6 +165,11 @@ export interface AcpAdapterV2RuntimeInput {
   readonly httpMcpServers?: ReadonlyArray<EffectAcpSchema.McpServer>;
   /** Scoped credentials for terminal fallback when an ACP agent drops `mcpServers`. */
   readonly processEnvironment?: NodeJS.ProcessEnv;
+  /**
+   * SpecWeave's thread, tool and model variables for this thread. Every
+   * makeRuntime applies them last to the agent's environment.
+   */
+  readonly agentEnvironment?: Readonly<Record<string, string>>;
   readonly resumeSessionId?: string;
   readonly interruptPromptOnCancel?: boolean;
   readonly clientCapabilities: EffectAcpSchema.InitializeRequest["clientCapabilities"];
@@ -240,6 +248,8 @@ export interface AcpAdapterV2Flavor {
   /** Interprets provider-specific prompt errors before they cross into orchestration. */
   readonly promptFailure?: (cause: unknown) => OrchestrationV2ProviderFailure;
   readonly driver: ProviderDriverKind;
+  /** SpecWeave's tool slug for SPECWEAVE_TOOL; the driver kind when omitted. */
+  readonly specweaveTool?: string;
   readonly capabilities: OrchestrationV2ProviderCapabilities;
   readonly clientCapabilitiesMeta?: Record<string, boolean>;
   readonly normalizeSessionUpdate?: (
@@ -770,6 +780,28 @@ function acpMcpContext(threadId: ThreadId | null, self: SelfInvocation): AcpMcpC
       ...(self.entrypoint === undefined ? {} : { STUDIO_ACP_MCP_ENTRYPOINT: self.entrypoint }),
     },
   };
+}
+
+function acpAgentEnvironment(
+  threadId: ThreadId | null,
+  flavor: Pick<AcpAdapterV2Flavor, "driver" | "specweaveTool">,
+): Readonly<Record<string, string>> | undefined {
+  return threadId === null
+    ? undefined
+    : specweaveAgentEnvironment({ threadId, tool: flavor.specweaveTool ?? flavor.driver });
+}
+
+/** Commands an agent runs through terminal/create work for the same thread. */
+function acpTerminalEnvironment(
+  threadId: ThreadId | null,
+  self: SelfInvocation,
+  flavor: Pick<AcpAdapterV2Flavor, "driver" | "specweaveTool">,
+): NodeJS.ProcessEnv | undefined {
+  const processEnvironment = acpMcpContext(threadId, self).processEnvironment;
+  const agentEnvironment = acpAgentEnvironment(threadId, flavor);
+  return processEnvironment === undefined && agentEnvironment === undefined
+    ? undefined
+    : { ...processEnvironment, ...agentEnvironment };
 }
 
 function acpMcpServers(
@@ -1609,7 +1641,7 @@ export function makeAcpAdapterV2(
           readonly sessionId: string | null;
         }
         let pendingTerminalEnvironment: PendingTerminalEnvironment | null = {
-          environment: acpMcpContext(input.threadId, self).processEnvironment,
+          environment: acpTerminalEnvironment(input.threadId, self, flavor),
           claimUnknownSession: input.initialNativeThreadId === undefined,
           sessionId: input.initialNativeThreadId ?? null,
         };
@@ -1618,14 +1650,14 @@ export function makeAcpAdapterV2(
           sessionId?: string,
         ): void => {
           pendingTerminalEnvironment = {
-            environment: acpMcpContext(threadId, self).processEnvironment,
+            environment: acpTerminalEnvironment(threadId, self, flavor),
             claimUnknownSession: false,
             sessionId: sessionId ?? null,
           };
         };
         const prepareClaimableTerminalEnvironment = (threadId: ThreadId | null): void => {
           pendingTerminalEnvironment = {
-            environment: acpMcpContext(threadId, self).processEnvironment,
+            environment: acpTerminalEnvironment(threadId, self, flavor),
             claimUnknownSession: true,
             sessionId: null,
           };
@@ -1634,7 +1666,7 @@ export function makeAcpAdapterV2(
           sessionId: string,
           threadId: ThreadId | null,
         ): void => {
-          const environment = acpMcpContext(threadId, self).processEnvironment;
+          const environment = acpTerminalEnvironment(threadId, self, flavor);
           pendingTerminalEnvironment = null;
           if (environment === undefined) {
             terminalEnvironmentBySessionId.delete(sessionId);
@@ -2169,6 +2201,7 @@ export function makeAcpAdapterV2(
             handleRuntimeTerminationAtGeneration(runtimeGeneration),
         ): AcpAdapterV2RuntimeInput => {
           const mcpContext = acpMcpContext(threadId, self);
+          const agentEnvironment = acpAgentEnvironment(threadId, flavor);
           return {
             cwd: input.runtimePolicy.cwd ?? process.cwd(),
             modelSelection: latestModelSelection,
@@ -2179,6 +2212,7 @@ export function makeAcpAdapterV2(
             ...(mcpContext.processEnvironment === undefined
               ? {}
               : { processEnvironment: mcpContext.processEnvironment }),
+            ...(agentEnvironment === undefined ? {} : { agentEnvironment }),
             ...(resumeSessionId === undefined ? {} : { resumeSessionId }),
             interruptPromptOnCancel: flavor.interruptPromptOnCancel ?? false,
             clientCapabilities: {
@@ -7965,9 +7999,9 @@ export function makeAcpAdapterV2(
                 Effect.gen(function* () {
                   yield* awaitRuntimeTeardown();
                   useProviderThreadIdentity(forkInput.sourceProviderThread);
-                  yield* restartRuntimeAfterTeardownIfRequired(
-                    forkInput.sourceProviderThread.appThreadId,
-                  );
+                  // The forked session lives in whatever process this spawns,
+                  // so its thread env and MCP bridge belong to the target.
+                  yield* restartRuntimeAfterTeardownIfRequired(forkInput.targetThreadId);
                   if (!capabilities.threads.canForkThread) {
                     return yield* new ProviderAdapter.ProviderAdapterProtocolError({
                       driver,

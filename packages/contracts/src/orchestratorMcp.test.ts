@@ -232,4 +232,46 @@ describe("orchestrator MCP contracts", () => {
     });
     expect(decoded.machines[0]?.project?.match).toBe("identity");
   });
+
+  it("takes an increment ref on launches and reports the bound increment", () => {
+    expect(decodeDelegateTaskInput({ task: "Fix it.", increment: " 0996 " }).increment).toBe(
+      "0996",
+    );
+    expect(
+      decodeCreateThreadsInput({ threads: [{ prompt: "Fix it.", increment: "new" }] }).threads[0]
+        ?.increment,
+    ).toBe("new");
+    expect(() => decodeDelegateTaskInput({ task: "Fix it.", increment: "" })).toThrow();
+    expect(() =>
+      decodeDelegateTaskInput({ task: "Fix it.", increment: "x".repeat(121) }),
+    ).toThrow();
+    const result = decodeDelegateTaskResult({
+      taskId: "node-task-1",
+      childThreadId: "thread-child-1",
+      threadLink: "[Fix](studio://thread/thread-child-1)",
+      childRunId: null,
+      childNodeId: "node-task-1",
+      status: "running",
+      workState: "working",
+      hasPendingChildRuns: false,
+      providerInstanceId: "codex",
+      model: null,
+      summary: null,
+      resultContextTransferId: null,
+      latestTerminalRunId: null,
+      latestTerminalStatus: null,
+      latestTerminalSummary: null,
+      latestTerminalResultContextTransferId: null,
+      waitTimedOut: false,
+      increment: {
+        incrementId: "0996-connect",
+        title: null,
+        specPath: "/repo/.specweave/increments/0996-connect/spec.md",
+        inheritedFrom: "thread-parent",
+      },
+      warning: "Pass increment next time.",
+    });
+    expect(result.increment?.inheritedFrom).toBe("thread-parent");
+    expect(result.warning).toBe("Pass increment next time.");
+  });
 });

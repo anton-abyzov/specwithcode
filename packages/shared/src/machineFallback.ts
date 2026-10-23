@@ -135,6 +135,10 @@ export function judgeMachineCandidate(input: {
   if (!provider.available) return verdict("unavailable", `${name} unavailable`);
   if (!provider.models.includes(selection.model))
     return verdict("model_missing", `${name} has no ${target.modelLabel ?? selection.model}`);
+  // Never eligible, whatever the unknown-usage policy says. An existing reason
+  // keeps older clients able to decode the verdict.
+  if (provider.paidModels?.includes(selection.model))
+    return verdict("unavailable", `${target.modelLabel ?? selection.model} is billed per token`);
 
   const usage = provider.usage;
   if (usage === undefined) return verdict("unknown_usage", `doesn't report ${name} usage`);

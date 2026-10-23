@@ -27,10 +27,9 @@ struct ProjectOverviewView: View {
       if groups.isEmpty {
         emptyState.plainListRow()
       } else {
-        section("Needs you", groups.needsYou)
+        section("Waiting on you", groups.needsYou)
         section("Working", groups.working)
         section("Idle", groups.idle)
-        section("Unknown", groups.unknown)
         if !groups.resolved.isEmpty {
           resolvedToggle(count: groups.resolved.count).plainListRow()
           if showResolved || searching {
@@ -103,8 +102,8 @@ struct ProjectOverviewView: View {
   }
 
   private func row(_ thread: ThreadSummary) -> some View {
-    WeaveRow(thread.title, subtitle: meta(thread), titleLineLimit: 1, subtitleLineLimit: 1, insets: WeaveRowInsets.list, action: { nav.push(.chat(.thread(thread.ref))) }) {
-      EmptyView()
+    WeaveRow(thread.title, subtitle: thread.identity.label + "\n" + meta(thread), titleLineLimit: 1, subtitleLineLimit: 2, insets: WeaveRowInsets.list, action: { nav.push(.chat(.thread(thread.ref))) }) {
+      ThreadIdentityMarks(identity: thread.identity)
     } trailing: {
       HStack(spacing: WeaveSpacing.s2) {
         if thread.isPinned {
@@ -125,7 +124,7 @@ struct ProjectOverviewView: View {
           .accessibilityHidden(true)
       }
     }
-    .accessibilityLabel(Self.spokenLabel(thread))
+    .accessibilityLabel(Self.spokenLabel(thread) + ", " + thread.identity.label)
     .accessibilityValue(Self.spoken(thread))
     .plainListRow()
     .swipeActions(edge: .leading, allowsFullSwipe: true) {

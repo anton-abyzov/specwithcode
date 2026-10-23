@@ -73,6 +73,20 @@ describe("taskRouting setting", () => {
 });
 
 describe("routing records", () => {
+  it("keeps billing readable by older clients and decodes a newer one as unknown", () => {
+    const decode = Schema.decodeUnknownSync(TaskRoutingDecision);
+    const routed = decode({ ...decision, billing: "api", modelBilling: "paid-router" });
+    expect([routed.billing, routed.modelBilling]).toEqual(["api", "paid-router"]);
+    expect(Schema.encodeSync(TaskRoutingDecision)(routed)).toMatchObject({
+      billing: "api",
+      modelBilling: "paid-router",
+    });
+    const future = decode({ ...decision, billing: "credits", modelBilling: "credits" });
+    expect(future.billing).toBe("unknown");
+    expect(future.modelBilling).toBeUndefined();
+    expect(decode(decision).modelBilling).toBeUndefined();
+  });
+
   it("decodes a decision and a delegated task with or without one", () => {
     expect(Schema.decodeUnknownSync(TaskRoutingDecision)(decision).selection.model).toBe(
       "claude-sonnet-5-5",

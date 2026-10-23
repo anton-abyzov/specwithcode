@@ -24,7 +24,7 @@ struct FleetRowTests {
 
   private func plain(_ text: String) -> String { text.replacingOccurrences(of: "\u{202F}", with: " ") }
 
-  @Test func unknownThreadsGetTheirOwnGroupBeforeResolved() {
+  @Test func unknownThreadsStayIdleWithExplicitUnknownRows() {
     let lost = ThreadPlacement(owner: "M4", unknown: .init(machine: "M4", lastSeenAt: now))
     let groups = ThreadGroups([
       row("live", activity: .working, placement: ThreadPlacement(owner: "Minis")),
@@ -34,7 +34,7 @@ struct FleetRowTests {
     ])
     #expect(groups.working.map(\.ref.threadId) == ["live"])
     #expect(groups.needsYou.isEmpty)
-    #expect(groups.unknown.map(\.ref.threadId) == ["was-working", "was-failed"])
+    #expect(groups.idle.map(\.ref.threadId) == ["was-working", "was-failed"])
     #expect(groups.resolved.map(\.ref.threadId) == ["done"])
     #expect(!ThreadGroups([row("x", placement: lost)]).isEmpty)
   }

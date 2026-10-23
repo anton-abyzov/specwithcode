@@ -18,7 +18,7 @@ import {
 
 export type CoordinatorRunSummary = Pick<
   OrchestrationV2Run,
-  "ordinal" | "providerInstanceId" | "modelSelection" | "status"
+  "ordinal" | "providerInstanceId" | "modelSelection" | "status" | "queueHeld"
 >;
 
 export interface CoordinatorModelDisplay {
@@ -79,13 +79,20 @@ export function coordinatorModelDisplay(input: {
   readonly limitedInstanceIds?: ReadonlySet<string>;
 }): CoordinatorModelDisplay {
   const latest = newestRun(input.runs);
-  // An ongoing/queued run names the provider doing (or about to do) the work.
+  // Match the shell identity: admitted work precedes queued next-message choices.
   // Once it is terminal, metadata is authoritative: Switch back changes the
   // thread selection without adding a run, so history must not undo that choice.
-  const ongoing =
-    latest !== null &&
-    ["preparing", "queued", "starting", "running", "waiting"].includes(latest.status);
-  const activeSelection = ongoing ? runSelection(latest) : null;
+  const ongoing = (input.runs ?? [])
+    .filter(
+      (run) =>
+        ["preparing", "queued", "starting", "running", "waiting"].includes(run.status) &&
+        run.queueHeld !== true,
+    )
+    .toSorted(
+      (a, b) =>
+        Number(a.status === "queued") - Number(b.status === "queued") || b.ordinal - a.ordinal,
+    )[0];
+  const activeSelection = ongoing ? runSelection(ongoing) : null;
   // Quota refresh or a newly saved preference can change the next turn, but
   // cannot change the provider/model of a turn already admitted.
   const none = { shown: activeSelection ?? input.picked, fallback: null };

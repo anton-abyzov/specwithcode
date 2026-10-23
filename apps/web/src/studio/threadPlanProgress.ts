@@ -43,12 +43,19 @@ export interface ThreadPlanView extends PlanProgressSummary {
   readonly steps: ReadonlyArray<ThreadPlanStep>;
   /** Present when the thread is bound to an increment, even one whose tasks cannot be read. */
   readonly increment: ThreadIncrementProgress | null;
+  /** In a SpecWeave project, the thread changed code with no increment, small fix or "none". */
+  readonly unplanned?: boolean;
 }
 
 export interface ThreadPlanCompact extends PlanProgressSummary {
   readonly source: Exclude<ThreadPlanSource, "none">;
   /** The increment id when the progress comes from one. */
   readonly label: string | null;
+}
+
+/** `0996` for `0996-connect-launches`: what a chip or card header has room for. */
+export function incrementNumber(incrementId: string): string {
+  return incrementId.replace(/^(\d+)-.*/u, "$1");
 }
 
 const TASK_STATE: Record<ThreadIncrementTaskStatus, PlanStepState> = {
@@ -123,13 +130,15 @@ export function todoPlanSteps(
 
 /**
  * The plan card's content, or null when the thread has neither an increment
- * nor a todo list. A worker thread (`alwaysShow`) still gets a card then, so
- * every worker shows where it stands and how to link its increment.
+ * nor a todo list. A worker thread (`alwaysShow`) and a thread that changed
+ * code without a plan (`unplanned`) still get a card then, so each shows
+ * where it stands and how to link its increment.
  */
 export function deriveThreadPlanView(input: {
   readonly increment: ThreadIncrementProgress | null;
   readonly todoSteps: ReadonlyArray<{ readonly step: string; readonly status: string }> | null;
   readonly alwaysShow?: boolean;
+  readonly unplanned?: boolean;
 }): ThreadPlanView | null {
   const { increment } = input;
   const todo = input.todoSteps === null ? [] : todoPlanSteps(input.todoSteps);
@@ -137,19 +146,25 @@ export function deriveThreadPlanView(input: {
     const steps = incrementPlanSteps(increment, todo);
     return { source: "increment", steps, increment, ...summarizeIncrementSteps(steps) };
   }
+  // A bound increment answers the question; the flag only applies without one.
+  const unplanned = increment === null && input.unplanned === true ? { unplanned: true } : {};
   if (todo.length > 0) {
-    return { source: "todo", steps: todo, increment, ...summarizePlanSteps(todo) };
+    return { source: "todo", steps: todo, increment, ...unplanned, ...summarizePlanSteps(todo) };
   }
   if (increment !== null) {
     return { source: "increment", steps: [], increment, ...summarizePlanSteps([]) };
   }
-  if (input.alwaysShow) {
-    return { source: "none", steps: [], increment: null, ...summarizePlanSteps([]) };
+  if (input.alwaysShow || input.unplanned) {
+    return { source: "none", steps: [], increment: null, ...unplanned, ...summarizePlanSteps([]) };
   }
   return null;
 }
 
-/** The compact progress lists show, or null when there is nothing to count. */
+/**
+ * The compact progress lists show, or null when there is nothing to count.
+ * A bound increment always shows, `0/0` while it has no tasks yet, so the
+ * row still names the increment the thread works on.
+ */
 export function compactThreadPlan(
   increment: ThreadIncrementProgress | null,
   todo: OrchestrationV2ThreadPlanProgress | null | undefined,
@@ -161,13 +176,23 @@ export function compactThreadPlan(
       ...summarizeIncrementSteps(incrementPlanSteps(increment)),
     };
   }
+  if (increment !== null) {
+    return {
+      source: "increment",
+      label: increment.incrementId,
+      completed: 0,
+      total: 0,
+      current: null,
+      next: null,
+    };
+  }
   if (todo && todo.total > 0) return { source: "todo", label: null, ...todo };
   return null;
 }
 
 export const BINDING_LABELS: Record<ThreadIncrementProgress["binding"], string> = {
   manual: "linked by hand",
-  claim: "bound by this thread's ledger writes",
+  claim: "bound by SpecWeave for this thread",
   branch: "bound by its increment branch",
   checkpoint: "bound by SpecWeave's checkpoint",
   name: "matched by title or branch",
@@ -177,7 +202,9 @@ export const BINDING_LABELS: Record<ThreadIncrementProgress["binding"], string> 
 export function describeThreadPlan(plan: ThreadPlanCompact): string {
   const head =
     plan.source === "increment" && plan.label !== null
-      ? `Increment ${plan.label}: ${plan.completed} of ${plan.total} tasks done.`
+      ? plan.total === 0
+        ? `Increment ${plan.label}: no tasks yet.`
+        : `Increment ${plan.label}: ${plan.completed} of ${plan.total} tasks done.`
       : `Plan: ${plan.completed} of ${plan.total} steps done.`;
   return [
     head,
@@ -188,16 +215,24 @@ export function describeThreadPlan(plan: ThreadPlanCompact): string {
     .join(" ");
 }
 
-/**
- * `~/Projects/x` for a folder under a macOS or Linux home directory; the path
- * itself otherwise. The folder lives on the thread's host, whose home the
- * client does not know, so the usual home roots stand in for it.
- */
 /** Whether a step link opens in the browser (https) rather than as a file on the host. */
 export function isExternalStepLink(href: string): boolean {
   return /^https:\/\//iu.test(href);
 }
 
+/**
+ * Whether a host path names a file the app's viewer can show, by its
+ * extension; a folder (an increment's `reports/`) goes to the editor.
+ */
+export function isDocumentPath(path: string): boolean {
+  return /\.[a-z0-9]+$/iu.test(path.slice(path.lastIndexOf("/") + 1));
+}
+
+/**
+ * `~/Projects/x` for a folder under a macOS or Linux home directory; the path
+ * itself otherwise. The folder lives on the thread's host, whose home the
+ * client does not know, so the usual home roots stand in for it.
+ */
 export function displayFolder(path: string): string {
   const home = /^(?:\/Users|\/home)\/[^/]+(?=\/|$)/u.exec(path)?.[0];
   return home === undefined ? path : `~${path.slice(home.length)}`;

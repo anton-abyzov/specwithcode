@@ -15,14 +15,20 @@ import {
   ProjectUpdatePayload,
   ProjectId,
   OrchestratorMcpFailure,
+  OrchestratorMcpIncrementRef,
+  OrchestratorMcpLaunchIncrement,
   OrchestratorMcpMachineRef,
   OrchestratorMcpDelegation,
   OrchestratorMcpMachineTarget,
   OrchestratorMcpTaskClassHint,
+  OrchestratorMcpTaskLaneHint,
   TaskRoutingDecision,
   SourceControlCloneRepositoryInput,
   SourceControlCloneRepositoryResult,
+  OrchestratorMcpModelPreferenceInput,
+  OrchestratorMcpModelPreferenceResult,
 } from "@specweave-studio/contracts";
+import * as ServerSettings from "../../../serverSettings.ts";
 import * as FileSystem from "effect/FileSystem";
 import * as ServerConfig from "../../../config.ts";
 import * as ThreadLaunchService from "../../../orchestration-v2/ThreadLaunchService.ts";
@@ -38,6 +44,7 @@ import * as ThreadManagementService from "../../../orchestration-v2/ThreadManage
 import * as SourceControlRepositoryService from "../../../sourceControl/SourceControlRepositoryService.ts";
 import * as GitVcsDriver from "../../../vcs/GitVcsDriver.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
+import { INCREMENT_LAUNCH_INSTRUCTION } from "../../../project/launchIncrement.ts";
 
 const shared = {
   success: Project,
@@ -148,7 +155,8 @@ const ProjectCloneTool = Tool.make("studio_project_clone", {
 const ThreadLaunchTool = Tool.make("studio_thread_launch", {
   ...shared,
   description:
-    'Create an ordinary TOP-LEVEL thread with an explicit workspace binding before its agent starts. Use this when the user requests independent work, a new thread, or a PR stack in its own worktree; use delegate_task for child subagents. Set workspaceStrategy to {type:"worktree",baseRef:"parent-branch",branch:"new-branch",startFromOrigin:false} for a new worktree based on local commits, or {type:"existing_worktree",worktreePath:"/absolute/path",branch:"existing-branch"} to use an existing checkout. For upstream commits, set startFromOrigin:true. When the project holds nested repositories, add repository (an id from the project\'s environment repositories, or that checkout\'s absolute path) so git runs in that repository instead of the project root; a baseRef missing there fails rather than falling back to another branch. Omitted workspaceStrategy means the project root, NOT the caller\'s worktree. Pass effort when the user names one (\"extra high\" is xhigh). Omit projectId/modelSelection/modes to inherit those settings from the calling thread (a project coordinator uses the project worker model default); a caller outside a SpecWithCode thread must pass projectId and gets the project\'s default model. Set scratch:true instead of projectId for a thread without a project: it runs in a fresh folder of its own, outside any repository. A thread in a project starts its threads in that project; scratch from there also needs projectless:true, and only when the user asked for a chat outside any project. Put the task in message. Do not ask the agent to create its own worktree via shell: that does not update the thread binding. Each call creates a new launch with no retry key; retain threadId and use studio_thread_read/studio_thread_wait to follow preparation. After errors or lost responses, inspect studio_thread_list before retrying. Attachments must be pending uploads. The new thread may not run with broader runtime or interaction modes than the caller: the calling SpecWithCode thread\'s own modes, or the permission mode an outside agent was approved with.',
+    'Create an ordinary TOP-LEVEL thread with an explicit workspace binding before its agent starts. Use this when the user requests independent work, a new thread, or a PR stack in its own worktree; use delegate_task for child subagents. Set workspaceStrategy to {type:"worktree",baseRef:"parent-branch",branch:"new-branch",startFromOrigin:false} for a new worktree based on local commits, or {type:"existing_worktree",worktreePath:"/absolute/path",branch:"existing-branch"} to use an existing checkout. For upstream commits, set startFromOrigin:true. When the project holds nested repositories, add repository (an id from the project\'s environment repositories, or that checkout\'s absolute path) so git runs in that repository instead of the project root; a baseRef missing there fails rather than falling back to another branch. Omitted workspaceStrategy means the project root, NOT the caller\'s worktree. Pass effort when the user names one (\"extra high\" is xhigh). Omit projectId/modelSelection/modes to inherit those settings from the calling thread (a project coordinator uses the project worker model default); a caller outside a SpecWithCode thread must pass projectId and gets the project\'s default model. Set scratch:true instead of projectId for a thread without a project: it runs in a fresh folder of its own, outside any repository. A thread in a project starts its threads in that project; scratch from there also needs projectless:true, and only when the user asked for a chat outside any project. Put the task in message. Do not ask the agent to create its own worktree via shell: that does not update the thread binding. Each call creates a new launch with no retry key; retain threadId and use studio_thread_read/studio_thread_wait to follow preparation. After errors or lost responses, inspect studio_thread_list before retrying. Attachments must be pending uploads. The new thread may not run with broader runtime or interaction modes than the caller: the calling SpecWithCode thread\'s own modes, or the permission mode an outside agent was approved with. ' +
+    INCREMENT_LAUNCH_INSTRUCTION,
   parameters: Schema.Struct({
     machine: Schema.optional(
       OrchestratorMcpMachineTarget.annotate({
@@ -184,6 +192,7 @@ const ThreadLaunchTool = Tool.make("studio_thread_launch", {
     title: TrimmedNonEmptyString,
     modelSelection: Schema.optional(ModelSelection),
     taskClass: Schema.optional(OrchestratorMcpTaskClassHint),
+    taskLane: Schema.optional(OrchestratorMcpTaskLaneHint),
     effort: Schema.optional(
       TrimmedNonEmptyString.annotate({
         description:
@@ -205,6 +214,7 @@ const ThreadLaunchTool = Tool.make("studio_thread_launch", {
       }),
     ),
     attachments: Schema.optional(Schema.Array(McpAttachmentInput).check(Schema.isMaxLength(8))),
+    increment: Schema.optional(OrchestratorMcpIncrementRef),
     delegation: Schema.optional(OrchestratorMcpDelegation),
   }),
   success: Schema.Struct({
@@ -225,6 +235,12 @@ const ThreadLaunchTool = Tool.make("studio_thread_launch", {
       TaskRoutingDecision.annotate({
         description:
           "Set when Auto model routing chose the model: task class, reason and the baseline it left.",
+      }),
+    ),
+    increment: Schema.optional(OrchestratorMcpLaunchIncrement),
+    warning: Schema.optional(
+      Schema.String.annotate({
+        description: "Something to fix next time, such as a missing increment.",
       }),
     ),
     runId: Schema.NullOr(RunId),
@@ -354,6 +370,21 @@ const ProjectRouteTool = Tool.make("studio_project_route", {
   .annotate(Tool.Destructive, true)
   .annotate(Tool.OpenWorld, false);
 
+const ModelPreferenceTool = Tool.make("studio_model_preference", {
+  description:
+    "Manage what this project learned about which model suits which work. action='record' saves a rule from the user's feedback (prefer a model, avoid a model, or route tasks matching keywords/class to a lane). action='list' returns the project's learned rules. action='delete' removes a rule by id. Rules apply to tasks that match their keywords or class, trying prefer rules first and skipping avoid rules.",
+  parameters: OrchestratorMcpModelPreferenceInput,
+  success: OrchestratorMcpModelPreferenceResult,
+  failure: OrchestratorMcpFailure,
+  failureMode: "return" as const,
+  dependencies: [
+    ...shared.dependencies,
+    ServerSettings.ServerSettingsService,
+  ],
+})
+  .annotate(Tool.Destructive, true)
+  .annotate(Tool.OpenWorld, false);
+
 export const ProjectToolkit = Toolkit.make(
   ThreadLaunchTool,
   ProjectListTool,
@@ -365,4 +396,5 @@ export const ProjectToolkit = Toolkit.make(
   ProjectCloneTool,
   RouteTargetsTool,
   ProjectRouteTool,
+  ModelPreferenceTool,
 );

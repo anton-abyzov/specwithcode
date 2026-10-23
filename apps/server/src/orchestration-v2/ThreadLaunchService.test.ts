@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off - Increment fixtures and a temporary HOME on disk.
 import { fixtureProjectDatabase } from "../project/ProjectWorkspace.testkit.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
 import * as WorktreeSetupTracker from "../project/WorktreeSetupTracker.ts";
@@ -38,6 +39,10 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
+import { specweaveStudioThreadBindingPath } from "../project/ThreadIncrementProgress.ts";
 import * as Schema from "effect/Schema";
 import * as TestClock from "effect/testing/TestClock";
 
@@ -522,6 +527,79 @@ it.effect("provisions independent launches concurrently instead of behind a glob
       yield* Deferred.succeed(allowSetup, undefined);
     }).pipe(Effect.provide(harness.layer));
   }),
+);
+
+it.effect("seeds the increment binding once the workspace is recorded, before setup", () =>
+  Effect.gen(function* () {
+    // Bindings go to a temporary home, never the real ~/.specweave: os.homedir()
+    // reads HOME, or USERPROFILE on Windows.
+    const home = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "launch-binding-home-"));
+    // The new worktree carries the increment from its base branch.
+    const worktree = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "launch-binding-tree-"));
+    NodeFS.mkdirSync(NodePath.join(worktree, ".specweave/increments/0996-connect"), {
+      recursive: true,
+    });
+    const savedHome = process.env.HOME;
+    const savedProfile = process.env.USERPROFILE;
+    process.env.HOME = home;
+    process.env.USERPROFILE = home;
+    yield* Effect.addFinalizer(() =>
+      Effect.sync(() => {
+        if (savedHome === undefined) delete process.env.HOME;
+        else process.env.HOME = savedHome;
+        if (savedProfile === undefined) delete process.env.USERPROFILE;
+        else process.env.USERPROFILE = savedProfile;
+        NodeFS.rmSync(home, { recursive: true, force: true });
+        NodeFS.rmSync(worktree, { recursive: true, force: true });
+      }),
+    );
+    const bindingFile = specweaveStudioThreadBindingPath("thread:launch:increment", home);
+    const seenAtSetup = yield* Deferred.make<string | null>();
+    const allowSetup = yield* Deferred.make<void>();
+    const harness = makeHarness({
+      createWorktree: (input) =>
+        Effect.succeed({
+          worktree: { path: worktree, refName: input.newRefName, headSha: "abc" },
+        } as never),
+      runSetup: () =>
+        Effect.sync(() =>
+          NodeFS.existsSync(bindingFile) ? NodeFS.readFileSync(bindingFile, "utf8") : null,
+        ).pipe(
+          Effect.flatMap((seen) => Deferred.succeed(seenAtSetup, seen)),
+          Effect.andThen(Deferred.await(allowSetup)),
+          Effect.as({
+            status: "started" as const,
+            async: false,
+            scriptId: "setup",
+            scriptName: "Setup",
+            scriptCommand: "vp install",
+            terminalId: "setup",
+            cwd: "/repo",
+          }),
+        ),
+    });
+    yield* Effect.gen(function* () {
+      const launches = yield* ThreadLaunch.ThreadLaunchService;
+      yield* launches.launch({
+        ...launchInput({
+          command: "command:launch:increment",
+          thread: "thread:launch:increment",
+          message: "Work the increment",
+          workspace: { type: "worktree", baseRef: "main" },
+        }),
+        increment: { root: "/umbrella", incrementId: "0996-connect" },
+      });
+      // Re-rooted to the worktree: "/umbrella" is no root this thread's plan card reads.
+      const seen = JSON.parse((yield* Deferred.await(seenAtSetup)) ?? "null");
+      assert.deepInclude(seen, {
+        threadId: "thread:launch:increment",
+        incrementId: "0996-connect",
+        root: worktree,
+        event: "studio-launch",
+      });
+      yield* Deferred.succeed(allowSetup, undefined);
+    }).pipe(Effect.provide(harness.layer));
+  }).pipe(Effect.scoped),
 );
 
 it.effect("enqueues provider work only after setup has been initiated", () =>

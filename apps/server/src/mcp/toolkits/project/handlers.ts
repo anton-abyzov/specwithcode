@@ -3,8 +3,13 @@ import {
   ThreadId,
   OrchestratorMcpFailure,
   ProjectId,
+  type LearnedModelPreference,
   type ModelSelection,
 } from "@specweave-studio/contracts";
+import { withLearnedPreference } from "@specweave-studio/shared/modelLanes";
+import * as Crypto from "effect/Crypto";
+import * as DateTime from "effect/DateTime";
+import * as ServerSettings from "../../../serverSettings.ts";
 import { formatStudioThreadLink } from "@specweave-studio/shared/studioThreadLinks";
 import {
   isPersonalAssistantProject,
@@ -26,6 +31,11 @@ import * as Project from "../../../project/ProjectService.ts";
 import * as ProviderAdapterRegistry from "../../../orchestration-v2/ProviderAdapterRegistry.ts";
 import * as ProviderRegistry from "../../../provider/ProviderRegistry.ts";
 import { workerLaunchWithRoom } from "../../../project/WorkerLaunchRoom.ts";
+import {
+  launchIncrementFields,
+  resolveLaunchIncrement,
+  withIncrementBrief,
+} from "../../../project/launchIncrement.ts";
 import {
   autoRoutingApplies,
   promptWithRoutingNote,
@@ -328,6 +338,43 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
         }
         const isCoordinator =
           caller !== undefined && project?.workspaceSettings?.coordinatorThreadId === caller.id;
+        // Resolved where the thread starts as far as it is known now: an existing
+        // worktree, else the project. A new worktree is not made yet, so a ref
+        // the project lacks is looked up in the caller's own worktree, as
+        // delegate_task and create_threads do. A bad ref launches nothing.
+        const strategy = input.workspaceStrategy;
+        const incrementResolution =
+          project === undefined
+            ? ({ ok: true, value: {} } as const)
+            : yield* Effect.promise(() =>
+                resolveLaunchIncrement({
+                  workspaceRoot: project.workspaceRoot,
+                  worktreePath:
+                    strategy?.type === "existing_worktree" ? strategy.worktreePath : null,
+                  fallbackWorktreePath:
+                    strategy?.type === "worktree" && caller?.projectId === project.id
+                      ? (caller.worktreePath ?? null)
+                      : null,
+                  ref: input.increment,
+                  title: input.title,
+                  caller:
+                    caller === undefined || caller.projectId !== project.id
+                      ? null
+                      : {
+                          threadId: caller.id,
+                          title: caller.title,
+                          branch: caller.branch,
+                          worktreePath: caller.worktreePath,
+                        },
+                  isCoordinator,
+                }),
+              );
+        if (!incrementResolution.ok)
+          return yield* new OrchestratorMcpFailure({
+            code: "invalid_request",
+            message: incrementResolution.message,
+          });
+        const increment = incrementResolution.value;
         // A coordinator's thread starts on the project's worker model, moved
         // off a provider with no room (see workerLaunchWithRoom).
         const workerSelection =
@@ -361,6 +408,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
             pinned: input.modelSelection !== undefined,
             isCoordinator,
             taskClass: input.taskClass,
+            taskLane: input.taskLane,
           });
         const providers = routes
           ? yield* (yield* ProviderRegistry.ProviderRegistry).getProviders
@@ -391,6 +439,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
                     sizeBytes: attachment.sizeBytes,
                   })),
                 },
+                laneHint: input.taskLane,
                 ...(runnableInstanceIds === undefined ? {} : { runnableInstanceIds }),
               })
             : null;
@@ -423,13 +472,24 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
           runtimeMode,
           interactionMode,
           workspaceStrategy: input.workspaceStrategy ?? { type: "root" },
+          ...(increment.increment === undefined
+            ? {}
+            : {
+                increment: {
+                  root: increment.increment.root,
+                  incrementId: increment.increment.incrementId,
+                },
+              }),
           ...(input.message === undefined && attachments.length === 0
             ? {}
             : {
                 initialMessage: {
                   messageId,
                   ...(caller === undefined ? {} : { senderThreadId: caller.id }),
-                  text: promptWithRoutingNote(input.message ?? "", routing ?? null),
+                  text: promptWithRoutingNote(
+                    withIncrementBrief(input.message ?? "", increment),
+                    routing ?? null,
+                  ),
                   attachments,
                 },
               }),
@@ -457,6 +517,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
           modelSelection: thread.modelSelection,
           ...(effortValue === undefined ? {} : { effort: effortValue }),
           ...(routing === undefined ? {} : { routing }),
+          ...launchIncrementFields(increment),
           runId: run?.id ?? null,
           status: run?.status ?? null,
           // Tells a coordinator on another machine that this one applied its grant's checks.
@@ -643,6 +704,93 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
             }),
         ),
       );
+    }),
+  ),
+  studio_model_preference: McpToolAccess.actsAsCaller((input) =>
+    Effect.gen(function* () {
+      const context = yield* readCaller();
+      const projectId = yield* resolveProjectId(context, input.projectId);
+      const settingsService = yield* ServerSettings.ServerSettingsService;
+      const settings = yield* settingsService.getSettings.pipe(Effect.mapError(unavailable));
+      const projectOverrides = settings.projectSettingsOverrides[projectId] ?? {};
+      const preferences = projectOverrides.learnedModelPreferences ?? [];
+      if (input.action === "list") {
+        return {
+          action: "list" as const,
+          projectId,
+          preferences,
+        };
+      }
+      if (input.action === "delete") {
+        if (!input.id) {
+          return yield* new OrchestratorMcpFailure({
+            code: "invalid_request",
+            message: "Pass id: the rule id to delete.",
+          });
+        }
+        const updated = preferences.filter((pref) => pref.id !== input.id);
+        const deleted = updated.length !== preferences.length;
+        if (deleted) {
+          yield* settingsService
+            .updateSettings({
+              projectSettingsOverrides: {
+                [projectId]: {
+                  ...projectOverrides,
+                  learnedModelPreferences: updated,
+                },
+              },
+            })
+            .pipe(Effect.mapError(unavailable));
+        }
+        return {
+          action: "delete" as const,
+          projectId,
+          preferences: updated,
+          deleted,
+        };
+      }
+      if (input.action === "record") {
+        if (!input.preference) {
+          return yield* new OrchestratorMcpFailure({
+            code: "invalid_request",
+            message:
+              "Pass preference: {kind: 'prefer', model}, {kind: 'avoid', model}, or {kind: 'lane', lane}.",
+          });
+        }
+        const crypto = yield* Crypto.Crypto;
+        const id = `pref-${(yield* crypto.randomUUIDv4.pipe(Effect.orDie)).slice(0, 12)}`;
+        const now = yield* DateTime.now;
+        const recorded: LearnedModelPreference = {
+          id,
+          keywords: (input.keywords ?? []).map((k) => k.toLowerCase().trim()),
+          ...(input.taskClass !== undefined ? { taskClass: input.taskClass } : {}),
+          ...(input.lane !== undefined ? { lane: input.lane } : {}),
+          action: input.preference,
+          ...(input.note !== undefined ? { note: input.note } : {}),
+          createdAt: DateTime.formatIso(now),
+        };
+        const updated = withLearnedPreference(preferences, recorded);
+        yield* settingsService
+          .updateSettings({
+            projectSettingsOverrides: {
+              [projectId]: {
+                ...projectOverrides,
+                learnedModelPreferences: updated,
+              },
+            },
+          })
+          .pipe(Effect.mapError(unavailable));
+        return {
+          action: "record" as const,
+          projectId,
+          preferences: updated,
+          recorded,
+        };
+      }
+      return yield* new OrchestratorMcpFailure({
+        code: "invalid_request",
+        message: `Unknown action: ${(input as { action: string }).action}`,
+      });
     }),
   ),
 });

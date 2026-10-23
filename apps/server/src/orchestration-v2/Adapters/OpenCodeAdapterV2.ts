@@ -66,7 +66,10 @@ import {
 } from "../../provider/NativeProtocolLogging.ts";
 import { mergeProviderInstanceEnvironment } from "../../provider/ProviderInstanceEnvironment.ts";
 import { studioOrchestrationSystemPrompt } from "../../provider/StudioOrchestrationInstructions.ts";
-import { buildRuntimeInstructions } from "../../provider/RuntimeInstructions.ts";
+import {
+  buildRuntimeInstructions,
+  withSpecweaveAgentEnvironment,
+} from "../../provider/RuntimeInstructions.ts";
 import * as OpenCodeRuntime from "../../provider/opencodeRuntime.ts";
 import * as IdAllocator from "../IdAllocator.ts";
 import { makeProviderFailure } from "../ProviderFailure.ts";
@@ -962,7 +965,10 @@ export function makeOpenCodeAdapterV2(
           binaryPath: options.settings.binaryPath,
           directory: cwd,
           serverUrl: options.settings.serverUrl,
-          environment: options.environment,
+          environment: withSpecweaveAgentEnvironment(options.environment, {
+            threadId: input.threadId,
+            tool: "opencode",
+          }),
         });
         const client = runtime.createOpenCodeSdkClient({
           baseUrl: connection.url,

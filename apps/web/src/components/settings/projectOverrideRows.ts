@@ -54,6 +54,8 @@ export const PROJECT_OVERRIDE_LABELS: Readonly<
     page: "Providers",
   },
   taskRouting: { label: "Auto model routing", page: "Providers" },
+  modelLanes: { label: "Model lanes", page: "Providers" },
+  learnedModelPreferences: { label: "Learned model preferences", page: "Providers" },
 };
 
 const VALUE_LABELS: Readonly<Record<string, string>> = {

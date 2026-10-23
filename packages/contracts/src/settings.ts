@@ -28,7 +28,7 @@ import {
   ProviderOptionSelections,
 } from "./model.ts";
 import { ModelSelection } from "./modelSelection.ts";
-import { TaskRoutingSettings } from "./taskRouting.ts";
+import { LearnedModelPreferences, ModelLanes, TaskRoutingSettings } from "./taskRouting.ts";
 import { ProjectScript } from "./project.ts";
 import { DEFAULT_RUNTIME_MODE, RuntimeMode } from "./providerPolicy.ts";
 import { BrowserProfile, BrowserProfileId, DEFAULT_BROWSER_PROFILE_ID } from "./browserProfile.ts";
@@ -1449,6 +1449,8 @@ export const PROJECT_SCOPED_SERVER_SETTING_KEYS = [
   "providerLimitTargetOrder",
   "providerLimitUnknownUsageEligible",
   "taskRouting",
+  "modelLanes",
+  "learnedModelPreferences",
 ] as const;
 export type ProjectScopedServerSettingKey = (typeof PROJECT_SCOPED_SERVER_SETTING_KEYS)[number];
 
@@ -1499,6 +1501,8 @@ export const ProjectSettingsOverrides = Schema.Struct({
   providerLimitTargetOrder: Schema.optionalKey(ProviderLimitTargetOrder),
   providerLimitUnknownUsageEligible: Schema.optionalKey(Schema.Boolean),
   taskRouting: Schema.optionalKey(TaskRoutingSettings),
+  modelLanes: Schema.optionalKey(ModelLanes),
+  learnedModelPreferences: Schema.optionalKey(LearnedModelPreferences),
 } satisfies Record<ProjectScopedServerSettingKey, unknown>);
 export type ProjectSettingsOverrides = typeof ProjectSettingsOverrides.Type;
 
@@ -1736,6 +1740,16 @@ export const ServerSettings = Schema.Struct({
    * (see `@specweave-studio/shared/taskRouting`). Off until a person turns it on.
    */
   taskRouting: TaskRoutingSettings.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+  /**
+   * Ordered models for complex/creative work and for routine work. A worker
+   * whose model nobody named starts on the first entry of its lane that can
+   * run now (see `@specweave-studio/shared/modelLanes`). Empty lists change nothing.
+   */
+  modelLanes: ModelLanes.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
+  /** What a project learned from its user about which model suits which work. */
+  learnedModelPreferences: LearnedModelPreferences.pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
   sidebarAutoSettleOnMerge: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   backgroundActivity: BackgroundActivitySettings,
   // Legacy flat fields retained for old settings files and old clients. New
@@ -2153,6 +2167,10 @@ export const ServerSettingsPatch = Schema.Struct({
   providerLimitUnknownUsageEligible: Schema.optionalKey(Schema.Boolean),
   /** Replaces the whole policy; the panel always sends every field. */
   taskRouting: Schema.optionalKey(TaskRoutingSettings),
+  /** Replaces both lists. */
+  modelLanes: Schema.optionalKey(ModelLanes),
+  /** Replaces the whole list. */
+  learnedModelPreferences: Schema.optionalKey(LearnedModelPreferences),
   backgroundActivity: Schema.optionalKey(
     Schema.Struct({
       schemaVersion: Schema.optionalKey(Schema.Literal(1)),

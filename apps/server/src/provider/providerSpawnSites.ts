@@ -107,6 +107,66 @@ export const PROVIDER_ADAPTER_PROCESS_CHAINS: Readonly<
   },
 };
 
+/**
+ * Where each adapter gives its per-thread process SpecWeave's thread, tool and
+ * model variables (see withSpecweaveAgentEnvironment in RuntimeInstructions.ts).
+ * `site` must contain `marker`. A null site is a listed exception: the
+ * provider has no process of its own per thread.
+ */
+export const SPECWEAVE_AGENT_ENVIRONMENT_ADAPTERS: Readonly<
+  Record<
+    string,
+    | { readonly site: string; readonly marker: string }
+    | { readonly site: null; readonly note: string }
+  >
+> = {
+  "orchestration-v2/Adapters/AcpAdapterV2.ts": {
+    site: "orchestration-v2/Adapters/AcpAdapterV2.ts",
+    marker: "specweaveAgentEnvironment(",
+  },
+  "orchestration-v2/Adapters/AcpRegistryAdapterV2.ts": {
+    site: "orchestration-v2/Adapters/AcpRegistryAdapterV2.ts",
+    marker: "...agentEnvironment",
+  },
+  "orchestration-v2/Adapters/AntigravityAdapterV2.ts": {
+    site: "provider/Drivers/AntigravityDriver.ts",
+    marker: "...input.agentEnvironment",
+  },
+  "orchestration-v2/Adapters/ClaudeAdapterV2.ts": {
+    site: "orchestration-v2/Adapters/ClaudeAdapterV2.ts",
+    marker: "withSpecweaveAgentEnvironment(",
+  },
+  "orchestration-v2/Adapters/CodexAdapterV2.ts": {
+    site: "orchestration-v2/Adapters/CodexAdapterV2.ts",
+    marker: "withSpecweaveAgentEnvironment(",
+  },
+  "orchestration-v2/Adapters/CursorAdapterV2.ts": {
+    site: null,
+    note: "the Cursor SDK runs inside the server process, which serves every thread",
+  },
+  "orchestration-v2/Adapters/GrokAdapterV2.ts": {
+    site: "orchestration-v2/Adapters/GrokAdapterV2.ts",
+    marker: "...input.agentEnvironment",
+  },
+  "orchestration-v2/Adapters/OpenCodeAdapterV2.ts": {
+    site: "orchestration-v2/Adapters/OpenCodeAdapterV2.ts",
+    marker: "withSpecweaveAgentEnvironment(",
+  },
+  "orchestration-v2/Adapters/OpenCode2AdapterV2.ts": {
+    site: null,
+    note: "one OpenCode 2 server per provider instance serves every thread",
+  },
+  "orchestration-v2/Adapters/PiAdapterV2.ts": {
+    site: "orchestration-v2/Adapters/PiAdapterV2.ts",
+    marker: "withSpecweaveAgentEnvironment(",
+  },
+  // Muse builds its ACP adapter in the driver rather than an *AdapterV2.ts file.
+  "provider/Drivers/MuseDriver.ts": {
+    site: "provider/Drivers/MuseDriver.ts",
+    marker: "...runtime.agentEnvironment",
+  },
+};
+
 /** Directories scanned for spawns that are not classified above. */
 export const PROVIDER_SPAWN_SCAN_DIRECTORIES = [
   "cli",

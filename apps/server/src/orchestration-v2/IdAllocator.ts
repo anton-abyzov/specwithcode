@@ -194,6 +194,11 @@ const encodePart = (part: string | number): string => encodeURIComponent(String(
 const joinId = (prefix: string, ...parts: ReadonlyArray<string | number>): string =>
   [prefix, ...parts.map(encodePart)].join(":");
 
+/** The child thread a `delegated_task.request` command creates; known before it is dispatched. */
+export function deriveDelegatedTaskThread(input: { readonly commandId: CommandId }): ThreadId {
+  return ThreadId.make(joinId("thread", "delegated-task", input.commandId));
+}
+
 export function deriveThreadFromProviderThread(input: {
   readonly driver: ProviderDriverKind;
   readonly providerInstanceId?: ProviderInstanceId;
@@ -392,8 +397,7 @@ export const layer: Layer.Layer<IdAllocatorV2> = Layer.succeed(
           joinId("provider-session", "provider-instance", input.providerInstanceId, "shared"),
         ),
       delegatedTaskNode: (input) => NodeId.make(joinId("node", "delegated-task", input.commandId)),
-      delegatedTaskThread: (input) =>
-        ThreadId.make(joinId("thread", "delegated-task", input.commandId)),
+      delegatedTaskThread: deriveDelegatedTaskThread,
       delegatedTaskMessage: (input) =>
         MessageId.make(joinId("message", "delegated-task", input.commandId)),
       delegatedTaskTurnItem: (input) =>

@@ -85,6 +85,17 @@ const judge = (
   });
 
 describe("judgeMachineCandidate", () => {
+  it("never hands off to a model billed per token, even with the unknown-usage policy on", () => {
+    const paid = machine({}, null, { paidModels: ["claude-opus-5-5"] });
+    expect(judge(paid, true)).toMatchObject({
+      eligible: false,
+      reason: "unavailable",
+      text: "Minis: Claude Opus 5.5 is billed per token",
+    });
+    expect(judge(machine({}, {}, { paidModels: ["claude-opus-5-5"] }), true).eligible).toBe(false);
+    expect(judge(machine({}, null, { paidModels: ["other"] }), true).eligible).toBe(true);
+  });
+
   it("accepts a machine on another account with room", () => {
     const verdict = judge(machine());
     expect(verdict).toMatchObject({
