@@ -1,3 +1,12 @@
+vi.mock("../../../hooks/useSettings", () => ({
+  useEnvironmentSettings: () => ({ projectSettingsOverrides: {} }),
+}));
+vi.mock("../../../state/environments", () => ({
+  useEnvironments: () => ({ environments: [{ environmentId: "env-1" }] }),
+}));
+vi.mock("../../../state/use-atom-command", () => ({
+  useAtomCommand: () => vi.fn(),
+}));
 import { ProviderInstanceId, type TaskRoutingDecision } from "@specweave-studio/contracts";
 import type { ReactNode } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
@@ -75,5 +84,37 @@ describe("RoutingDecisionChip", () => {
     expect(html).not.toContain("One retry on");
     expect(html).toContain("Billed per token (API)");
     expect(html).toContain("<li>Transcribe the audio</li>");
+  });
+
+  it("names OpenRouter billing from the detailed value", () => {
+    const html = renderToStaticMarkup(
+      <RoutingDecisionChip
+        routing={{ ...decision, billing: "api", modelBilling: "paid-router" }}
+        entries={undefined}
+      />,
+    );
+    expect(html).toContain("Billed per token (OpenRouter)");
+  });
+
+  it("renders model lane, skipped models, and learned preference in popover", () => {
+    const laneDecision: TaskRoutingDecision = {
+      ...decision,
+      lane: "complex",
+      skipped: ["Copilot managed · Opus 5.5: at its usage limit"],
+      preferenceId: "pref-custom-123",
+    };
+    expect(routingChipText(laneDecision)).toBe("Lanes · Complex · Translation");
+    const html = renderToStaticMarkup(
+      <RoutingDecisionChip routing={laneDecision} entries={undefined} projectId={"proj-1" as any} />,
+    );
+    expect(html).toContain("Model lane routing");
+    expect(html).toContain("Model lane");
+    expect(html).toContain("Complex and creative");
+    expect(html).toContain("Skipped in lane");
+    expect(html).toContain("Copilot managed · Opus 5.5: at its usage limit");
+    expect(html).toContain("Applied rule pref-custom-123");
+    expect(html).toContain("Teach this project:");
+    expect(html).toContain("Prefer this model");
+    expect(html).toContain("Avoid this model");
   });
 });

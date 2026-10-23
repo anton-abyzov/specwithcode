@@ -153,6 +153,7 @@ import {
   wasBootstrapThreadNotCreated,
 } from "@specweave-studio/client-runtime/errors";
 import { readPastedComposerContext } from "./composerInlineTokenPaste";
+import { imageInputBlockReason, modelRejectsImages } from "./composerImageInput";
 import { isPasteAsTextShortcut } from "@specweave-studio/client-runtime/text-paste";
 import {
   effectiveSnoozed,
@@ -723,11 +724,11 @@ import {
 } from "./chat/BackgroundWorkStrip";
 import { useAssetUrls } from "../assets/assetUrls";
 import { useOpenLink } from "../browser/useOpenLink";
-import { viewerOverlayInFront } from "~/lib/openInFront";
+import { openFileInFront, viewerOverlayInFront } from "~/lib/openInFront";
 import { useOpenChangeRequestLink } from "~/lib/openPullRequestLink";
 import { useOpenInPreferredEditor } from "../editorPreferences";
 import { deriveThreadPlanView, displayFolder } from "../studio/threadPlanProgress";
-import { useThreadIncrementProgress } from "../studio/useThreadIncrementProgress";
+import { useThreadIncrementState } from "../studio/useThreadIncrementProgress";
 import { ThreadPlanCard } from "./chat/ThreadPlanCard";
 import { ThreadBlockerNote } from "./chat/ThreadBlockerNote";
 import { ThreadHeaderLine, ThreadProgressDock } from "./chat/ThreadProgressDock";
@@ -4746,24 +4747,29 @@ function useChatViewState(props: ChatViewProps) {
   });
   // The plan card: the thread's SpecWeave increment when it is bound to one,
   // else the agent's own todo list. See docs/studio/plan-progress.md.
-  const threadIncrementProgress = useThreadIncrementProgress({
+  const threadIncrementState = useThreadIncrementState({
     environmentId: activeThreadShell?.environmentId ?? null,
     projectId: activeThreadShell?.projectId ?? null,
     threadIds: activeThreadShell ? [activeThreadShell.id] : [],
     activityKey: activeThreadShell?.updatedAt ?? null,
   });
-  const threadPlanView = useMemo(
-    () =>
-      deriveThreadPlanView({
-        increment: activeThreadShell
-          ? (threadIncrementProgress.get(activeThreadShell.id) ?? null)
-          : null,
-        todoSteps: activePlan?.steps ?? null,
-        // Every worker thread shows its card, even before it has a plan.
-        alwaysShow: !transcriptOnly && isCoordinatorNamedThread(activeThreadShell),
-      }),
-    [activePlan, activeThreadShell, threadIncrementProgress, transcriptOnly],
-  );
+  const threadPlanView = useMemo(() => {
+    const unplanned = Boolean(
+      activeThreadShell &&
+      !transcriptOnly &&
+      threadIncrementState.unplanned.has(activeThreadShell.id),
+    );
+    return deriveThreadPlanView({
+      increment: activeThreadShell
+        ? (threadIncrementState.progress.get(activeThreadShell.id) ?? null)
+        : null,
+      todoSteps: activePlan?.steps ?? null,
+      // Every worker thread shows its card, even before it has a plan, and so
+      // does a thread that changed code without one.
+      alwaysShow: !transcriptOnly && (isCoordinatorNamedThread(activeThreadShell) || unplanned),
+      unplanned,
+    });
+  }, [activePlan, activeThreadShell, threadIncrementState, transcriptOnly]);
   const threadPlanStatus = activeThreadShell?.activeWork?.label
     ? `Now: ${activeThreadShell.activeWork.label}`
     : null;
@@ -11903,16 +11909,33 @@ export default function ChatView(props: ChatViewProps) {
     const annotationImageAlreadyAttached =
       directAnnotation?.image !== undefined &&
       sendContextImages.some((image) => image.id === directAnnotation.image?.id);
+    const textOnlyModel =
+      multipleModelSelections === null &&
+      modelRejectsImages(ctxSelectedModel, ctxSelectedProviderModels);
     // A full composer (e.g. 8 files) cannot take the annotation screenshot;
-    // over the cap the server rejects the whole turn.
+    // over the cap the server rejects the whole turn. A text-only model gets
+    // the annotation without its crop.
     const annotationImageAppended =
       directAnnotation?.image !== undefined &&
       !annotationImageAlreadyAttached &&
+      !textOnlyModel &&
       sendContextImages.length + composerFiles.length < PROVIDER_SEND_TURN_MAX_ATTACHMENTS;
     const composerImages =
       directAnnotation?.image && annotationImageAppended
         ? [...sendContextImages, directAnnotation.image]
         : sendContextImages;
+    // Only images the user can see in the composer block the send.
+    const imageBlockReason = textOnlyModel
+      ? imageInputBlockReason({
+          model: ctxSelectedModel,
+          models: ctxSelectedProviderModels,
+          imageCount: sendContextImages.length,
+        })
+      : null;
+    if (imageBlockReason !== null) {
+      setThreadError(activeThread.id, imageBlockReason);
+      return;
+    }
     const composerPreviewAnnotations =
       directAnnotation &&
       !sendContextPreviewAnnotations.some(
@@ -14537,6 +14560,15 @@ export default function ChatView(props: ChatViewProps) {
                         plan={threadPlanView}
                         onOpenPath={
                           availableEditors.length > 0 ? (path) => void openThreadPath(path) : null
+                        }
+                        onOpenDocument={(path) =>
+                          // An absolute host path: the viewer ignores cwd for it.
+                          openFileInFront({
+                            threadRef: scopeThreadRef(activeThread.environmentId, activeThread.id),
+                            cwd: "",
+                            path,
+                            line: undefined,
+                          })
                         }
                         onLinkIncrement={threadIncrementActions?.link ?? null}
                         onUnlinkIncrement={threadIncrementActions?.unlink ?? null}

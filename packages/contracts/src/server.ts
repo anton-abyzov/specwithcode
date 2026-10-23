@@ -9,6 +9,7 @@ import {
 import { ServerAuthDescriptor } from "./auth.ts";
 import {
   ForwardCompatibleArray,
+  ForwardCompatibleOptional,
   IsoDateTime,
   NonNegativeInt,
   PositiveInt,
@@ -78,6 +79,27 @@ export const ServerProviderAuth = Schema.Struct({
 });
 export type ServerProviderAuth = typeof ServerProviderAuth.Type;
 
+/**
+ * Who pays for one model's turns: a flat-rate seat, the user's own machine, a
+ * per-token router (OpenRouter), a keyed cloud API, or not provable.
+ */
+export const ModelBilling = Schema.Literals([
+  "subscription",
+  "local",
+  "paid-router",
+  "api",
+  "unknown",
+]);
+export type ModelBilling = typeof ModelBilling.Type;
+
+/** Billing kinds where every turn costs money, so nothing may pick the model by itself. */
+export function isPaidModelBilling(billing: ModelBilling | undefined): boolean {
+  return billing === "paid-router" || billing === "api";
+}
+
+export const ModelReasoning = Schema.Literals(["none", "optional", "mandatory"]);
+export type ModelReasoning = typeof ModelReasoning.Type;
+
 export const ServerProviderModel = Schema.Struct({
   slug: TrimmedNonEmptyString,
   name: TrimmedNonEmptyString,
@@ -89,8 +111,28 @@ export const ServerProviderModel = Schema.Struct({
   isDefault: Schema.optional(Schema.Boolean),
   isLegacy: Schema.optional(Schema.Boolean),
   capabilities: Schema.NullOr(ModelCapabilities),
+  /**
+   * What the provider's own model data proves; absent means not reported.
+   * The literal sets may grow, so a value this build does not know decodes
+   * as absent instead of dropping the provider.
+   */
+  billing: ForwardCompatibleOptional(ModelBilling),
+  toolCalls: Schema.optional(Schema.Boolean),
+  reasoning: ForwardCompatibleOptional(ModelReasoning),
+  imageInput: Schema.optional(Schema.Boolean),
+  contextWindow: Schema.optional(PositiveInt),
+  maxOutput: Schema.optional(PositiveInt),
 });
 export type ServerProviderModel = typeof ServerProviderModel.Type;
+
+/** The billing a provider reports for one of its models, matched by slug. */
+export function providerModelBilling(
+  provider: { readonly models: ReadonlyArray<ServerProviderModel> } | undefined,
+  slug: string | undefined,
+): ModelBilling | undefined {
+  if (slug === undefined) return undefined;
+  return provider?.models.find((model) => model.slug === slug)?.billing;
+}
 
 export const ServerProviderSlashCommandInput = Schema.Struct({
   hint: TrimmedNonEmptyString,

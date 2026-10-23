@@ -20,7 +20,8 @@ import {
   type ServerProvider,
   type ServerProviderModel,
   type TaskClass,
-  type TaskRoutingBilling,
+  type TaskRoutingModelBilling,
+  taskRoutingBilling,
   type TaskRoutingChunkPlan,
   type TaskRoutingConfidence,
   type TaskRoutingDecision,
@@ -416,16 +417,32 @@ function isCopilotProvider(provider: ServerProvider): boolean {
 /** Drivers whose auth type names the plan (max, pro, team); their API-key sign-ins are caught above. */
 const PLAN_NAMED_DRIVERS = new Set(["claudeAgent", "codex"]);
 
+/** A decision's `billing` older clients decode, plus the detail newer ones read. */
+function decisionBilling(detail: TaskRoutingModelBilling) {
+  return { billing: taskRoutingBilling(detail), modelBilling: detail };
+}
+
 /**
- * How a provider's turns are paid for. A sign-in this does not recognise is
- * unknown, and Auto treats unknown like per-token: it never assumes a turn
- * is free of charge.
+ * How a provider's turns on `model` are paid for. A model served through a
+ * paid router is `paid-router`, one on a keyed API `api`; one on the user's
+ * own machine is `local` unless the sign-in itself bills per token. A sign-in this does not
+ * recognise is unknown, and Auto treats unknown like per-token: it never
+ * assumes a turn is free of charge.
  */
-export function billingOf(provider: ServerProvider | undefined): TaskRoutingBilling {
+export function billingOf(
+  provider: ServerProvider | undefined,
+  model?: Pick<ServerProviderModel, "billing"> | undefined,
+): TaskRoutingModelBilling {
   if (provider === undefined) return "unknown";
+  if (model?.billing === "paid-router") return "paid-router";
   const type = provider.auth.type;
-  if (isPerTokenProvider(provider) || (type !== undefined && PER_TOKEN_AUTH.test(type)))
+  if (
+    model?.billing === "api" ||
+    isPerTokenProvider(provider) ||
+    (type !== undefined && PER_TOKEN_AUTH.test(type))
+  )
     return "api";
+  if (model?.billing === "local") return "local";
   if (type !== undefined && SUBSCRIPTION_AUTH.has(type)) return "subscription";
   if (PLAN_NAMED_DRIVERS.has(provider.driver) && type !== "status-check-failed")
     return "subscription";
@@ -498,7 +515,7 @@ export function resolveTaskRouting(input: ResolveTaskRoutingInput): TaskRoutingD
       selection: baseline,
       baseline,
       escalation: null,
-      billing: billingOf(baselineProvider),
+      ...decisionBilling(billingOf(baselineProvider, baselineModel)),
       reason,
       signals: [...classification.signals],
       ...(pipeline === undefined ? {} : { pipeline: [...pipeline] }),
@@ -561,13 +578,16 @@ export function resolveTaskRouting(input: ResolveTaskRoutingInput): TaskRoutingD
         skipped.push(`${label}: Gemini spend is off`);
         continue;
       }
-      const billing = billingOf(provider);
-      const perToken = billing !== "subscription";
-      if (perToken && (paidCap === null || tierRank(tier) > tierRank(paidCap))) {
-        skipped.push(`${label}: ${billing === "api" ? "billed per token" : "billing unknown"}`);
-        continue;
-      }
       for (const model of models) {
+        // Billing is per model: OpenRouter and a local server can share one instance.
+        const billing = billingOf(provider, model);
+        const perToken = billing !== "subscription" && billing !== "local";
+        if (perToken && (paidCap === null || tierRank(tier) > tierRank(paidCap))) {
+          skipped.push(
+            `${label}: ${billing === "unknown" ? "billing unknown" : "billed per token"}`,
+          );
+          continue;
+        }
         if (limited.has(provider.instanceId)) {
           skipped.push(`${label}: at its usage limit`);
           break;
@@ -614,7 +634,7 @@ export function resolveTaskRouting(input: ResolveTaskRoutingInput): TaskRoutingD
       selection,
       baseline,
       escalation: policy.escalate ? baseline : null,
-      billing: billingOf(best.provider),
+      ...decisionBilling(billingOf(best.provider, best.model)),
       reason: `${classLabel} fits ${TIER_LABELS[tier]}: ${best.model.name}${where} instead of ${baselineName}.`,
       signals: [...classification.signals],
       ...(pipeline === undefined ? {} : { pipeline: [...pipeline] }),

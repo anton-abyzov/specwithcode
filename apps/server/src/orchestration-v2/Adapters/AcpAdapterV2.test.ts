@@ -777,6 +777,13 @@ describe("AcpAdapterV2", () => {
       assert.deepEqual(mcpServer.args, ["acp-mcp-bridge"]);
       assert.equal(runtimeInput?.processEnvironment?.STUDIO_ACP_MCP_NODE, process.execPath);
       assert.equal(runtimeInput?.processEnvironment?.STUDIO_ACP_MCP_ENTRYPOINT, undefined);
+      // Kept apart from processEnvironment so every flavor can apply it last.
+      assert.deepEqual(runtimeInput?.agentEnvironment, {
+        SPECWEAVE_STUDIO_THREAD_ID: threadId,
+        SPECWEAVE_TOOL: ACP_TEST_DRIVER,
+        SPECWEAVE_MODEL: "",
+      });
+      assert.notProperty(runtimeInput?.processEnvironment ?? {}, "SPECWEAVE_STUDIO_THREAD_ID");
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 
@@ -1940,6 +1947,66 @@ describe("AcpAdapterV2", () => {
       );
       assert.equal(runtimeOrdinalSeen, 2);
       assert.lengthOf(runtimeInputs, 2);
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.live("respawns a terminated ACP runtime for the fork target, not the source", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const path = yield* Path.Path;
+      const mockAgentPath = yield* path.fromFileUrl(
+        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+      );
+      const runtimeInputs: AcpAdapterV2RuntimeInput[] = [];
+      const baseMakeRuntime = makeMockRuntime({ childProcessSpawner, mockAgentPath });
+      const instanceId = ProviderInstanceId.make("acp-test-fork-after-termination");
+      const adapter = makeAcpAdapterV2({
+        crypto: yield* Crypto.Crypto,
+        instanceId,
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          makeRuntime: (runtimeInput) =>
+            Effect.sync(() => {
+              runtimeInputs.push(runtimeInput);
+            }).pipe(Effect.andThen(baseMakeRuntime(runtimeInput))),
+        },
+        fileSystem: yield* FileSystem.FileSystem,
+        idAllocator: yield* IdAllocator.IdAllocatorV2,
+        serverConfig: yield* ServerConfig.ServerConfig,
+        selfInvocation: yield* resolveSelfInvocation(),
+      });
+      const sourceThreadId = ThreadId.make("thread-acp-fork-after-termination-source");
+      const targetThreadId = ThreadId.make("thread-acp-fork-after-termination-target");
+      const runtimePolicy = ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const modelSelection = { instanceId, model: "default" } as const;
+      const runtime = yield* adapter.openSession({
+        threadId: sourceThreadId,
+        providerSessionId: ProviderSessionId.make("provider-session-acp-fork-after-termination"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const sourceProviderThread = yield* runtime.ensureThread({
+        threadId: sourceThreadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      yield* runtimeInputs[0]!.onTermination!(
+        new EffectAcpErrors.AcpTransportError({
+          detail: "Injected unexpected writer termination",
+          cause: "test",
+        }),
+      );
+
+      const forked = yield* runtime.forkThread({ sourceProviderThread, targetThreadId });
+
+      assert.equal(forked.appThreadId, targetThreadId);
+      assert.lengthOf(runtimeInputs, 2);
+      assert.equal(runtimeInputs[1]?.agentEnvironment?.SPECWEAVE_STUDIO_THREAD_ID, targetThreadId);
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 

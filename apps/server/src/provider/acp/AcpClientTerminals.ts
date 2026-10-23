@@ -152,12 +152,17 @@ function acpTerminalCommand(input: {
   readonly shellCommands?: boolean | undefined;
   readonly defaultCwd: string;
   readonly environment?: NodeJS.ProcessEnv | undefined;
+  /** Adds `environment` to the server's own instead of replacing it. */
+  readonly extendEnvironment?: boolean | undefined;
   readonly forceKillAfter?: Duration.Input | undefined;
 }) {
   return ChildProcess.make(input.request.command, input.request.args ?? [], {
     cwd: input.request.cwd ?? input.defaultCwd,
     // Agents run browser checks here too, so the headless variables win.
-    ...headlessChildProcessEnvironment({ env: input.environment }),
+    ...headlessChildProcessEnvironment({
+      env: input.environment,
+      extendEnv: input.extendEnvironment,
+    }),
     shell: input.shellCommands === true && (input.request.args?.length ?? 0) === 0,
     forceKillAfter: input.forceKillAfter ?? "5 seconds",
   });
@@ -255,6 +260,9 @@ export const makeAcpClientTerminals = (
                     shellCommands: options.shellCommands,
                     defaultCwd: options.defaultCwd,
                     environment,
+                    // Without a base environment the session and request
+                    // variables only add to the inherited one.
+                    extendEnvironment: options.environment === undefined,
                     forceKillAfter: options.forceKillAfter,
                   }),
                 )

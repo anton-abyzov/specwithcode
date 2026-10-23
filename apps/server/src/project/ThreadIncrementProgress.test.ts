@@ -8,9 +8,15 @@ import { afterEach, describe, expect, it } from "vite-plus/test";
 import { specweaveStudioCheckpointPath } from "../orchestration-v2/SpecweaveCheckpoint.ts";
 import {
   criteriaWithState,
+  isSpecweaveProject,
   listProjectIncrements,
+  readRequireIncrementMode,
   readThreadIncrementProgress,
+  resolveIncrementRef,
   specweaveStudioThreadBindingPath,
+  specweaveThreadSessionPath,
+  threadDeclaredSmallFix,
+  writeLaunchBinding,
 } from "./ThreadIncrementProgress.ts";
 
 const roots: string[] = [];
@@ -419,5 +425,181 @@ describe("criteriaWithState traceability", () => {
     expect(
       criteriaWithState(criteria.slice(2, 4), [], { readable: false }).map((c) => c.state),
     ).toEqual(["declared", "unknown"]);
+  });
+});
+
+describe("launch increments", () => {
+  async function setStatus(root: string, id: string, status: string) {
+    await NodeFSP.writeFile(
+      NodePath.join(root, ".specweave/increments", id, "metadata.json"),
+      JSON.stringify({ status, title: "Plan card" }),
+    );
+  }
+
+  it("resolves an increment by number or folder, and refuses ambiguous, closed and missing ones", async () => {
+    const root = await temp("studio-launch-root-");
+    const folder = await increment(root, "0930-studio-plan-card", LEDGER);
+    await increment(root, "0931-twin-a", "");
+    await increment(root, "0931-twin-b", "");
+    await increment(root, "0932-done", "");
+    await setStatus(root, "0932-done", "completed");
+    const found = {
+      kind: "found",
+      root,
+      incrementId: "0930-studio-plan-card",
+      title: "Plan card",
+      status: "active",
+      specPath: NodePath.join(folder, "spec.md"),
+    };
+    expect(await resolveIncrementRef(root, null, "0930")).toEqual(found);
+    expect(await resolveIncrementRef(root, null, "0930-studio-plan-card")).toEqual(found);
+    expect(await resolveIncrementRef(root, null, "0931")).toEqual({ kind: "ambiguous", root });
+    expect(await resolveIncrementRef(root, null, "0931-twin-b")).toMatchObject({
+      kind: "found",
+      incrementId: "0931-twin-b",
+    });
+    expect(await resolveIncrementRef(root, null, "0932")).toEqual({
+      kind: "closed",
+      incrementId: "0932-done",
+      status: "completed",
+    });
+    expect(await resolveIncrementRef(root, null, "0999")).toEqual({ kind: "not_found", root });
+    expect(await resolveIncrementRef(root, null, "../0930-studio-plan-card")).toEqual({
+      kind: "not_found",
+      root,
+    });
+  });
+
+  it("resolves in the worktree when it has its own increments", async () => {
+    const root = await temp("studio-launch-root-");
+    const worktree = await temp("studio-launch-worktree-");
+    await increment(root, "0930-studio-plan-card", "");
+    await increment(worktree, "0930-studio-plan-card", "");
+    expect(await resolveIncrementRef(root, worktree, "0930")).toMatchObject({
+      kind: "found",
+      root: worktree,
+    });
+  });
+
+  it("seeds a binding that reads back as a claim, and a later CLI write wins", async () => {
+    const root = await temp("studio-launch-root-");
+    const home = await temp("studio-launch-home-");
+    await increment(root, "0930-studio-plan-card", LEDGER);
+    await increment(root, "0931-other", "");
+    const source = { threadId: "t:1", title: "x", branch: null, worktreePath: null, home };
+    expect(
+      await writeLaunchBinding("t:1", { root, incrementId: "0930-studio-plan-card" }, home),
+    ).toBe(true);
+    const file = specweaveStudioThreadBindingPath("t:1", home);
+    expect(NodePath.basename(file)).toBe("t_1.json");
+    expect(JSON.parse(await NodeFSP.readFile(file, "utf8"))).toMatchObject({
+      version: 1,
+      threadId: "t:1",
+      incrementId: "0930-studio-plan-card",
+      root,
+      taskId: null,
+      event: "studio-launch",
+    });
+    expect((await NodeFSP.stat(file)).mode & 0o777).toBe(0o600);
+    expect((await NodeFSP.stat(NodePath.dirname(file))).mode & 0o777).toBe(0o700);
+    const [seeded] = await readThreadIncrementProgress(root, [source], NOW);
+    expect(seeded).toMatchObject({
+      incrementId: "0930-studio-plan-card",
+      binding: "claim",
+      boundTaskId: null,
+    });
+    // A retried launch writes the same seed again.
+    expect(
+      await writeLaunchBinding("t:1", { root, incrementId: "0930-studio-plan-card" }, home),
+    ).toBe(true);
+    // The worker's first ledger write replaces the seed with the CLI's own binding.
+    await NodeFSP.writeFile(
+      file,
+      JSON.stringify({
+        version: 1,
+        threadId: "t:1",
+        incrementId: "0931-other",
+        root,
+        taskId: "T-01",
+        event: "claim",
+        at: "2026-10-15T11:30:00Z",
+      }),
+    );
+    const [claimed] = await readThreadIncrementProgress(root, [source], NOW);
+    expect(claimed).toMatchObject({ incrementId: "0931-other", binding: "claim" });
+  });
+
+  it("never overwrites a binding SpecWeave wrote, or one it cannot read", async () => {
+    const root = await temp("studio-launch-root-");
+    const home = await temp("studio-launch-home-");
+    await increment(root, "0930-studio-plan-card", "");
+    const file = specweaveStudioThreadBindingPath("t1", home);
+    await NodeFSP.mkdir(NodePath.dirname(file), { recursive: true });
+    const claim = JSON.stringify({
+      version: 1,
+      threadId: "t1",
+      incrementId: "0931-other",
+      root,
+      taskId: "T-01",
+      event: "claim",
+      at: "2026-10-15T11:30:00Z",
+    });
+    await NodeFSP.writeFile(file, claim);
+    expect(
+      await writeLaunchBinding("t1", { root, incrementId: "0930-studio-plan-card" }, home),
+    ).toBe(false);
+    expect(await NodeFSP.readFile(file, "utf8")).toBe(claim);
+    await NodeFSP.writeFile(file, "{not json");
+    expect(
+      await writeLaunchBinding("t1", { root, incrementId: "0930-studio-plan-card" }, home),
+    ).toBe(false);
+    expect(await NodeFSP.readdir(NodePath.dirname(file))).toEqual(["t1.json"]);
+  });
+
+  it("reads planning.requireIncrement from the workspace that plans the project", async () => {
+    const umbrella = await temp("studio-launch-umbrella-");
+    await increment(umbrella, "0930-studio-plan-card", "");
+    const member = NodePath.join(umbrella, "repositories/owner/member");
+    await NodeFSP.mkdir(member, { recursive: true });
+    const config = NodePath.join(umbrella, ".specweave/config.json");
+    await NodeFSP.writeFile(config, JSON.stringify({ planning: { requireIncrement: "enforce" } }));
+    expect(await readRequireIncrementMode(member)).toBe("enforce");
+    await NodeFSP.writeFile(config, JSON.stringify({ planning: { requireIncrement: "remind" } }));
+    expect(await readRequireIncrementMode(umbrella)).toBe("remind");
+    await NodeFSP.writeFile(config, JSON.stringify({ planning: { requireIncrement: "loud" } }));
+    expect(await readRequireIncrementMode(umbrella)).toBe("off");
+    expect(await readRequireIncrementMode(await temp("studio-launch-plain-"))).toBe("off");
+  });
+});
+
+describe("unplanned-work inputs", () => {
+  it("knows a SpecWeave project by its increments or an umbrella above it", async () => {
+    const plain = await temp("plan-plain-");
+    expect(await isSpecweaveProject(plain)).toBe(false);
+    const own = await temp("plan-own-");
+    await NodeFSP.mkdir(NodePath.join(own, ".specweave/increments"), { recursive: true });
+    expect(await isSpecweaveProject(own)).toBe(true);
+    const umbrella = await temp("plan-umbrella-");
+    await NodeFSP.mkdir(NodePath.join(umbrella, ".specweave/increments"), { recursive: true });
+    await NodeFSP.writeFile(NodePath.join(umbrella, ".specweave/config.json"), "{}");
+    const member = NodePath.join(umbrella, "repositories/app");
+    await NodeFSP.mkdir(member, { recursive: true });
+    expect(await isSpecweaveProject(member)).toBe(true);
+  });
+
+  it("reads a thread's small fix from SpecWeave's studio-<thread> session marker", async () => {
+    const home = await temp("plan-home-");
+    const threadId = "thread:small/fix";
+    const file = specweaveThreadSessionPath(threadId, home);
+    // The CLI's workSessionFile sanitizes the whole `studio-<thread>` key.
+    expect(NodePath.basename(file)).toBe("studio-thread_small_fix.json");
+    expect(await threadDeclaredSmallFix(threadId, home)).toBe(false);
+    await NodeFSP.mkdir(NodePath.dirname(file), { recursive: true });
+    const marker = { version: 1, sessionId: "studio-thread:small/fix", incrementId: null };
+    await NodeFSP.writeFile(file, JSON.stringify({ ...marker, kind: "small-fix" }));
+    expect(await threadDeclaredSmallFix(threadId, home)).toBe(true);
+    // Touching an increment later replaces the marker; that thread is bound instead.
+    await NodeFSP.writeFile(file, JSON.stringify({ ...marker, kind: "increment" }));
+    expect(await threadDeclaredSmallFix(threadId, home)).toBe(false);
   });
 });

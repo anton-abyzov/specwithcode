@@ -12,6 +12,7 @@ public struct ThreadShell: Codable, Hashable, Sendable, Identifiable {
   public var title: String
   public var providerInstanceId: String
   public var modelSelection: ModelSelection
+  public var modelIdentity: ThreadModelIdentity?
   public var runtimeMode: RuntimeMode
   public var interactionMode: InteractionMode
   public var branch: String?
@@ -83,7 +84,7 @@ public struct ThreadShell: Codable, Hashable, Sendable, Identifiable {
   public var movedTo: ThreadMoveLink?
 
   enum CodingKeys: String, CodingKey {
-    case createdBy, creationSource, id, projectId, title, providerInstanceId, modelSelection, runtimeMode, interactionMode
+    case createdBy, creationSource, id, projectId, title, providerInstanceId, modelSelection, modelIdentity, runtimeMode, interactionMode
     case branch, worktreePath, linkedPullRequest, pullRequests, branchPullRequest, lineage, forkedFrom
     case activeProviderThreadId, historyOrigin, latestRunId, latestRunRequestedAt, latestRunStartedAt, latestRunCompletedAt
     case activeRunId, activityRunStartedAt, activityRunStatus, activeWork, status, lastError, lastErrorClass, usageLimitResetAt
@@ -104,6 +105,7 @@ public struct ThreadShell: Codable, Hashable, Sendable, Identifiable {
     title = try c.decodeIfPresent(String.self, forKey: .title) ?? ""
     providerInstanceId = try c.decode(String.self, forKey: .providerInstanceId)
     modelSelection = try c.decode(ModelSelection.self, forKey: .modelSelection)
+    modelIdentity = try c.decodeIfPresent(ThreadModelIdentity.self, forKey: .modelIdentity)
     runtimeMode = try c.decode(RuntimeMode.self, forKey: .runtimeMode)
     interactionMode = try c.decodeIfPresent(InteractionMode.self, forKey: .interactionMode) ?? .default
     branch = try c.decodeIfPresent(String.self, forKey: .branch)
@@ -476,4 +478,11 @@ public struct RollbackFailure: Codable, Hashable, Sendable {
     self.requestId = requestId
     self.message = message
   }
+}
+
+/// Optional on older servers; current identity is authoritative when available.
+public struct ThreadModelIdentity: Codable, Hashable, Sendable {
+  public var current: ModelSelection
+  public var preferred: ModelSelection?
+  public var kind: String?
 }

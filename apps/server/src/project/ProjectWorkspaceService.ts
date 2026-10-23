@@ -54,6 +54,7 @@ import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ProjectKnowledge from "./knowledge/ProjectKnowledge.ts";
 import { knowledgeSections } from "./knowledge/knowledgeSections.ts";
 import { fenceText } from "./promptFence.ts";
+import { planningRootAbove } from "./ThreadIncrementProgress.ts";
 
 export class ProjectWorkspaceService extends Context.Service<
   ProjectWorkspaceService,
@@ -124,6 +125,8 @@ export function projectContextText(input: {
   files: readonly string[];
   /** The owner's other machines from studio-fleet.json; without them no machine lines are added. */
   fleet?: ReadonlyArray<{ readonly id: string; readonly label: string }> | undefined;
+  /** The project plans its work in SpecWeave (a `.specweave` with increments at or above its root). */
+  specweave?: boolean | undefined;
 }): string {
   const { settings } = input;
   const coordinator = settings.coordinatorThreadId === input.threadId;
@@ -134,6 +137,11 @@ export function projectContextText(input: {
         "Before creating work, call studio_thread_list for this project and read related earlier threads. Send a follow-up to the worker already owning that area; never duplicate an active assignment. Revive an idle worker only while its context is recent and relevant; otherwise start a fresh worker with a complete brief, which costs less than re-reading a long old conversation.",
         "Give each worker the user's own words for the task, plus only what it cannot find itself: relevant memory, decisions already made, and the default you chose where the request was ambiguous. Do not add deliverables the user did not ask for.",
         'Start every worker with delegate_task in mode async: its completion comes back to this conversation on its own, so end your turn instead of polling or using mode wait. Delegated workers share this checkout, so give parallel workers separate files and have them leave branches and commits to you unless the user asked for them. Only when the user asks for separate branches or worktrees, use studio_thread_launch with workspaceStrategy {type:"worktree"}; those threads do not report back, so tell the user and check them with studio_thread_read when asked. Use studio_thread_send for existing ordinary threads; retain sender provenance and a stable clientRequestId per delivery.',
+        ...(input.specweave === true
+          ? [
+              'This project plans its work in SpecWeave: start each worker with increment (an open NNNN, "new" when the work needs planning, or "none"), and post the spec each launch returns as [NNNN](<specPath>).',
+            ]
+          : []),
         "When the user names an effort for a worker (\"extra high\" is xhigh), pass it as target.effort (delegate_task) or effort (studio_thread_launch), even when you name no model; the app picks the nearest level the model offers. When the user names a provider or model for a worker, pass it as target (delegate_task) or modelSelection (studio_thread_launch). Otherwise leave target out of delegate_task: the project's worker model, or this host's default model when none is saved, is used. Do not look up models just to start a worker. studio_thread_launch has no host fallback, so when the project has no worker model, pass modelSelection there.",
         "For requests that need a worker, route them at once, the way a person hands work to a colleague: after the studio_thread_list check, your next call starts the worker. Do not research, read files or plan here first; the worker does that. Keep the brief to the user's own words plus a few lines only you know, so the worker starts within seconds.",
         "Give every worker a title of a few words naming its task (delegate_task and studio_thread_launch both take title); never open a title with a path or repository line.",
@@ -423,6 +431,9 @@ const make = Effect.gen(function* () {
         files: [],
         index: "",
         fleet: settings.coordinatorThreadId === threadId ? yield* fleetMachines : undefined,
+        specweave:
+          settings.coordinatorThreadId === threadId &&
+          (yield* Effect.promise(() => planningRootAbove(project.workspaceRoot))) !== null,
       }).split("\nGoal:\n")[0]!;
       const shared = projectContextSnapshot([
         ["role", role],

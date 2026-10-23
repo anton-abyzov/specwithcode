@@ -1,13 +1,17 @@
 // Synthetic data only: no server, account, provider or store.
-import type { ThreadIncrementProgress, ThreadPullRequestLink } from "@specweave-studio/contracts";
+import type { ThreadIncrementProgress } from "@specweave-studio/contracts";
 import { summarizeTodoPlanPayload } from "@specweave-studio/shared/planProgress";
 import { FolderOpenIcon } from "lucide-react";
+import { useState } from "react";
 import { createRoot } from "react-dom/client";
 
 import { ThreadPlanCard } from "../../src/components/chat/ThreadPlanCard";
-import { ThreadPullRequestPills } from "../../src/components/chat/ThreadPullRequestPills";
 import { TimelineSystemDivider } from "../../src/components/chat/TimelineSystemDivider";
 import { PlanProgressChip } from "../../src/components/studio/PlanProgressChip";
+import {
+  UnplannedThreadChip,
+  UnplannedThreadsFilter,
+} from "../../src/components/studio/shell/UnplannedThreads";
 import {
   compactThreadPlan,
   deriveThreadPlanView,
@@ -16,6 +20,12 @@ import {
 import { applyThemePalette } from "../../src/themePalette";
 import "../../src/components/studio/shell/shell.css";
 import "./fixture.css";
+
+// What each card action opened, for the verify script: ["viewer" | "editor", path].
+const opened: Array<[string, string]> = [];
+(window as unknown as { planOpened: typeof opened }).planOpened = opened;
+const openInViewer = (path: string) => opened.push(["viewer", path]);
+const openInEditor = (path: string) => opened.push(["editor", path]);
 
 const dark = new URLSearchParams(location.search).get("theme") === "dark";
 document.documentElement.classList.toggle("dark", dark);
@@ -85,38 +95,29 @@ const todoSteps = [
   { step: "awesome-claude-code form needs a human", status: "pending" },
 ];
 
-const pr = (number: number, branch: string, state: "open" | "merged", day: number) =>
-  ({
-    host: "github.com",
-    repository: "anton-abyzov/specweave",
-    number,
-    url: `https://github.com/anton-abyzov/specweave/pull/${number}`,
-    source: "agent",
-    linkedAt: `2026-10-${String(day).padStart(2, "0")}T10:00:00Z`,
-    snapshot: {
-      state,
-      title: branch,
-      headBranch: branch,
-      baseBranch: "develop",
-      isDraft: false,
-      updatedAt: null,
-      syncedAt: "2026-10-15T10:00:00Z",
-    },
-    stack: null,
-  }) as unknown as ThreadPullRequestLink;
-
-const pullRequests = [
-  pr(1961, "seo/specweave-3-metadata", "merged", 14),
-  pr(70, "seo/canonicals-and-skills-hub", "merged", 13),
-  pr(1958, "seo/guide-pages", "merged", 12),
-  pr(1962, "feat/studio-plan-progress", "open", 15),
-  pr(1950, "docs/bing-import", "merged", 10),
-];
+// Bound by the launch, before the worker has planned any task.
+const emptyIncrement: ThreadIncrementProgress = {
+  ...increment,
+  threadId: "thread-2" as never,
+  incrementId: "0996-connect-launches",
+  binding: "manual",
+  boundTaskId: null,
+  title: "Connect launches to increments",
+  status: "planned",
+  incrementPath: "/Users/dev/Projects/specweave/.specweave/increments/0996-connect-launches",
+  specPath: "/Users/dev/Projects/specweave/.specweave/increments/0996-connect-launches/spec.md",
+  tasks: [],
+  criteria: [],
+  verify: null,
+};
 
 const incrementView = deriveThreadPlanView({ increment, todoSteps })!;
 const todoView = deriveThreadPlanView({ increment: null, todoSteps })!;
+const emptyView = deriveThreadPlanView({ increment: emptyIncrement, todoSteps: null })!;
+const unplannedView = deriveThreadPlanView({ increment: null, todoSteps: null, unplanned: true })!;
 const rows = [
   { title: "Studio plan and progress card", plan: compactThreadPlan(increment, null) },
+  { title: "Connect launches to increments", plan: compactThreadPlan(emptyIncrement, null) },
   {
     title: "SEO and promotion strategy",
     plan: compactThreadPlan(
@@ -133,6 +134,7 @@ const rows = [
 ];
 
 function Fixture() {
+  const [unplannedOnly, setUnplannedOnly] = useState(false);
   return (
     <main className="mx-auto min-h-screen max-w-3xl space-y-8 p-6">
       <section data-testid="increment-card" className="space-y-1.5">
@@ -141,12 +143,12 @@ function Fixture() {
         </h2>
         <ThreadPlanCard
           plan={incrementView}
-          onOpenPath={() => undefined}
+          onOpenPath={openInEditor}
+          onOpenDocument={openInViewer}
           onLinkIncrement={() => undefined}
           onUnlinkIncrement={() => undefined}
           defaultExpanded
         />
-        <ThreadPullRequestPills pullRequests={pullRequests} onOpen={() => undefined} />
         <TimelineSystemDivider
           label="Working in folder"
           detail={displayFolder("/Users/dev/Projects/github/specweave-umb")}
@@ -159,8 +161,41 @@ function Fixture() {
         <h2 className="text-sm font-semibold text-muted-foreground">Agent todo list, collapsed</h2>
         <ThreadPlanCard plan={todoView} onOpenPath={null} onLinkIncrement={() => undefined} />
       </section>
+      <section data-testid="no-editor-card" className="space-y-1.5">
+        <h2 className="text-sm font-semibold text-muted-foreground">
+          Increment with no tasks yet, no editor installed
+        </h2>
+        <ThreadPlanCard
+          plan={emptyView}
+          onOpenPath={null}
+          onOpenDocument={openInViewer}
+          onLinkIncrement={() => undefined}
+          onUnlinkIncrement={() => undefined}
+          defaultExpanded
+        />
+      </section>
+      <section data-testid="unplanned-card" className="space-y-1.5">
+        <h2 className="text-sm font-semibold text-muted-foreground">
+          Thread that changed code without an increment
+        </h2>
+        <ThreadPlanCard
+          plan={unplannedView}
+          onOpenPath={null}
+          onOpenDocument={openInViewer}
+          onLinkIncrement={() => undefined}
+          onUnlinkIncrement={() => undefined}
+          defaultExpanded
+        />
+      </section>
       <section data-testid="rows" className="space-y-2">
         <h2 className="text-sm font-semibold text-muted-foreground">Thread list rows</h2>
+        <div className="sws-threads-head">
+          <UnplannedThreadsFilter
+            count={2}
+            pressed={unplannedOnly}
+            onToggle={() => setUnplannedOnly((on) => !on)}
+          />
+        </div>
         {rows.map((row) => (
           <div key={row.title} className="sws-thread-text rounded-lg border p-3">
             <strong>{row.title}</strong>
@@ -171,6 +206,14 @@ function Fixture() {
             </span>
           </div>
         ))}
+        <div className="sws-thread-text rounded-lg border p-3">
+          <strong>Hotfix the login redirect</strong>
+          <span className="sws-thread-meta">
+            <span>Idle</span>
+            <span>GPT-5.4</span>
+            <UnplannedThreadChip />
+          </span>
+        </div>
       </section>
     </main>
   );

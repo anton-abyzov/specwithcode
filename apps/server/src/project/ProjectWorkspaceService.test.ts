@@ -485,6 +485,28 @@ it("asks workers for short reports and the coordinator to relay only their outco
   assert.include(worker, "the user reads it in this thread");
   assert.notInclude(coordinator, "not a replay of your steps");
 });
+it("asks a coordinator for an increment per worker only in a SpecWeave project", () => {
+  const settings = {
+    ...DEFAULT_PROJECT_WORKSPACE_SETTINGS,
+    coordinatorThreadId: ThreadId.make("c"),
+  };
+  const text = (specweave: boolean | undefined, threadId = "c") =>
+    Workspace.projectContextText({
+      projectId: "p",
+      threadId,
+      settings,
+      files: [],
+      index: "",
+      specweave,
+    });
+  const line = "This project plans its work in SpecWeave: start each worker with increment";
+  assert.include(text(true), line);
+  assert.include(text(true), "[NNNN](<specPath>)");
+  assert.notInclude(text(false), line);
+  assert.notInclude(text(undefined), line);
+  // Workers get no coordinator line.
+  assert.notInclude(text(true, "w"), line);
+});
 it("tells a coordinator how to run workers on another machine and where this project's go", () => {
   const settings = {
     ...DEFAULT_PROJECT_WORKSPACE_SETTINGS,

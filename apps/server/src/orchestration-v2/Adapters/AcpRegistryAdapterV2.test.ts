@@ -38,6 +38,7 @@ import {
   AcpRegistryAdapterV2Driver,
   makeAcpRegistryAdapterV2,
   acpRegistryPromptFailure,
+  specweaveToolForAcpAgent,
   type AcpRegistryAdapterV2Options,
 } from "./AcpRegistryAdapterV2.ts";
 
@@ -539,6 +540,91 @@ describe("AcpRegistryAdapterV2", () => {
       });
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
+
+  it.effect("starts the agent with its thread's SpecWeave variables over inherited ones", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const path = yield* Path.Path;
+      const serverConfig = yield* ServerConfig.ServerConfig;
+      const mockAgentPath = yield* path.fromFileUrl(
+        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+      );
+      const resolver = yield* AcpRegistrySupport.makeAcpRegistryCatalog({
+        cacheDir: serverConfig.providerStatusCacheDir,
+        toolsDir: serverConfig.baseDir + "/tools",
+        registryUrl,
+      });
+      const spawnedEnvironments: Array<NodeJS.ProcessEnv | undefined> = [];
+      const recordingSpawner = ChildProcessSpawner.make((command) => {
+        spawnedEnvironments.push(
+          (command as unknown as { readonly options: { readonly env?: NodeJS.ProcessEnv } }).options
+            .env,
+        );
+        return childProcessSpawner.spawn(command);
+      });
+      const instanceId = ProviderInstanceId.make("acp-registry-specweave-env");
+      const adapter = makeAcpRegistryAdapterV2({
+        crypto: yield* Crypto.Crypto,
+        selfInvocation: yield* resolveSelfInvocation(),
+        instanceId,
+        settings: yield* decodeAcpRegistryAdapterSettings({
+          agentId: "fixture-agent",
+          commandPath: process.execPath,
+          authMethodId: "test",
+        }),
+        environment: {
+          STUDIO_ACP_SESSION_LIFECYCLE: "1",
+          SPECWEAVE_STUDIO_THREAD_ID: "thread-of-the-server",
+          SPECWEAVE_TOOL: "claude",
+          SPECWEAVE_MODEL: "claude-opus-4-1",
+        },
+        childProcessSpawner: recordingSpawner,
+        fileSystem: yield* FileSystem.FileSystem,
+        idAllocator: yield* IdAllocator.IdAllocatorV2,
+        resolver: {
+          resolve: (configuredSettings, cwd, environment) =>
+            resolver.resolve(configuredSettings, cwd, environment).pipe(
+              Effect.map((resolved) => ({
+                ...resolved,
+                spawn: { ...resolved.spawn, args: [mockAgentPath] },
+              })),
+            ),
+        },
+        serverConfig,
+      });
+      yield* adapter.openSession({
+        threadId: ThreadId.make("thread-acp-registry-specweave-env"),
+        providerSessionId: ProviderSessionId.make("provider-session-acp-registry-specweave-env"),
+        modelSelection: { instanceId, model: "default" },
+        runtimePolicy: ProviderAdapterV2RuntimePolicy.make({
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          cwd: process.cwd(),
+        }),
+      });
+
+      assert.lengthOf(spawnedEnvironments, 1);
+      assert.include(spawnedEnvironments[0], {
+        SPECWEAVE_STUDIO_THREAD_ID: "thread-acp-registry-specweave-env",
+        // An agent SpecWeave has no slug for masks the inherited "claude" with
+        // "", so the CLI falls back to the agent's own markers.
+        SPECWEAVE_TOOL: "",
+        SPECWEAVE_MODEL: "",
+      });
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it("maps known registry agents to SpecWeave tool slugs and leaves the rest to markers", () => {
+    assert.equal(specweaveToolForAcpAgent("github-copilot-cli"), "copilot");
+    assert.equal(specweaveToolForAcpAgent("gemini"), "gemini");
+    assert.equal(specweaveToolForAcpAgent("grok-build"), "grok");
+    assert.equal(specweaveToolForAcpAgent("codex-acp"), "codex");
+    assert.equal(specweaveToolForAcpAgent("claude-acp"), "claude");
+    // A local command has no registry id; an unknown agent keeps its markers.
+    assert.equal(specweaveToolForAcpAgent(""), "");
+    assert.equal(specweaveToolForAcpAgent("mistral-vibe"), "");
+    assert.equal(specweaveToolForAcpAgent("toString"), "");
+  });
 
   describe("session setup failures", () => {
     const instanceId = ProviderInstanceId.make("acpRegistry_copilot");

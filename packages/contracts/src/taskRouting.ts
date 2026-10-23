@@ -6,9 +6,11 @@
  * @module taskRouting
  */
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
+import * as SchemaTransformation from "effect/SchemaTransformation";
 
-import { IsoDateTime, TrimmedNonEmptyString } from "./baseSchemas.ts";
+import { ForwardCompatibleOptional, IsoDateTime, TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { ModelSelection } from "./modelSelection.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
 
@@ -97,12 +99,119 @@ export const DEFAULT_TASK_ROUTING_SETTINGS: TaskRoutingSettings = {
   escalate: true,
 };
 
+// ── Model lanes ──────────────────────────────────────────────────────
+
+/**
+ * The two kinds of work the lanes split tasks into: `complex` (hard,
+ * open-ended or creative work that wants the strongest model) and `routine`
+ * (everything else). Each lane is an ordered list of models; a worker starts
+ * on the first one that can run now.
+ */
+export const MODEL_LANES = ["complex", "routine"] as const;
+export const ModelLane = Schema.Literals(MODEL_LANES);
+export type ModelLane = typeof ModelLane.Type;
+
+/** At most this many models per lane. */
+export const MAX_LANE_MODELS = 8;
+
+export const ModelLaneList = Schema.Array(ModelSelection).check(
+  Schema.isMaxLength(MAX_LANE_MODELS),
+);
+export type ModelLaneList = typeof ModelLaneList.Type;
+
+/**
+ * The ordered model lists per lane. An empty list leaves that lane's tasks
+ * on today's model choice (and Auto tiers, when on).
+ */
+export const ModelLanes = Schema.Struct({
+  complex: ModelLaneList.pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  routine: ModelLaneList.pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+});
+export type ModelLanes = typeof ModelLanes.Type;
+
+export const DEFAULT_MODEL_LANES: ModelLanes = { complex: [], routine: [] };
+
+export const PreferenceKeyword = TrimmedNonEmptyString.check(Schema.isMaxLength(40));
+export type PreferenceKeyword = typeof PreferenceKeyword.Type;
+
+/**
+ * What a learned preference does to a matching task: try a model first,
+ * never pick a model, or put the task in a lane.
+ */
+export const LearnedModelPreferenceAction = Schema.Union([
+  Schema.Struct({ kind: Schema.Literal("prefer"), model: ModelSelection }),
+  Schema.Struct({ kind: Schema.Literal("avoid"), model: ModelSelection }),
+  Schema.Struct({ kind: Schema.Literal("lane"), lane: ModelLane }),
+]);
+export type LearnedModelPreferenceAction = typeof LearnedModelPreferenceAction.Type;
+
+/**
+ * One thing a project learned from its user about which model suits which
+ * work ("translations go to Sonnet", "never use Astra for design"). A rule
+ * matches a task when any keyword appears in it, or its class matches when
+ * it names one; a rule with neither matches the lane it names only.
+ */
+export const LearnedModelPreference = Schema.Struct({
+  id: TrimmedNonEmptyString.check(Schema.isMaxLength(64)),
+  keywords: Schema.Array(PreferenceKeyword)
+    .check(Schema.isMaxLength(6))
+    .pipe(Schema.withDecodingDefault(Effect.succeed([]))),
+  taskClass: Schema.optionalKey(TaskClass),
+  /** Limits a prefer/avoid rule to one lane's tasks. */
+  lane: Schema.optionalKey(ModelLane),
+  action: LearnedModelPreferenceAction,
+  /** The user's words, kept so the rule can be read back. */
+  note: Schema.optionalKey(TrimmedNonEmptyString.check(Schema.isMaxLength(300))),
+  createdAt: IsoDateTime,
+});
+export type LearnedModelPreference = typeof LearnedModelPreference.Type;
+
+export const MAX_LEARNED_MODEL_PREFERENCES = 40;
+
+export const LearnedModelPreferences = Schema.Array(LearnedModelPreference).check(
+  Schema.isMaxLength(MAX_LEARNED_MODEL_PREFERENCES),
+);
+export type LearnedModelPreferences = typeof LearnedModelPreferences.Type;
+
 /** How sure the router is of the class: a caller's hint, a clear match, or not sure. */
 export const TaskRoutingConfidence = Schema.Literals(["hint", "high", "uncertain"]);
 export type TaskRoutingConfidence = typeof TaskRoutingConfidence.Type;
 
+/** How a routed turn is paid for. Older clients decode only these three. */
 export const TaskRoutingBilling = Schema.Literals(["subscription", "api", "unknown"]);
 export type TaskRoutingBilling = typeof TaskRoutingBilling.Type;
+
+/**
+ * The detail behind `billing`: `local` runs on the user's machine and
+ * `paid-router` bills per token through OpenRouter.
+ */
+export const TaskRoutingModelBilling = Schema.Literals([
+  "subscription",
+  "local",
+  "paid-router",
+  "api",
+  "unknown",
+]);
+export type TaskRoutingModelBilling = typeof TaskRoutingModelBilling.Type;
+
+/** The `billing` older clients can decode for a detailed value. */
+export function taskRoutingBilling(detail: TaskRoutingModelBilling): TaskRoutingBilling {
+  if (detail === "paid-router") return "api";
+  return detail === "local" ? "unknown" : detail;
+}
+
+const decodeTaskRoutingBilling = Schema.decodeUnknownOption(TaskRoutingBilling);
+
+/** `billing`, where a value a newer build writes decodes as `unknown`. */
+const ForwardCompatibleTaskRoutingBilling = Schema.Unknown.pipe(
+  Schema.decodeTo(
+    TaskRoutingBilling,
+    SchemaTransformation.transform<TaskRoutingBilling, unknown>({
+      decode: (raw) => Option.getOrElse(decodeTaskRoutingBilling(raw), () => "unknown" as const),
+      encode: (value) => value,
+    }),
+  ),
+);
 
 const RoutingText = TrimmedNonEmptyString.check(Schema.isMaxLength(600));
 
@@ -127,12 +236,20 @@ export const TaskRoutingDecision = Schema.Struct({
   selection: ModelSelection,
   baseline: ModelSelection,
   escalation: Schema.NullOr(ModelSelection),
-  billing: TaskRoutingBilling,
+  billing: ForwardCompatibleTaskRoutingBilling,
+  /** Older builds omit it; read it before `billing` when present. */
+  modelBilling: ForwardCompatibleOptional(TaskRoutingModelBilling),
   reason: RoutingText,
   signals: Schema.Array(RoutingText).check(Schema.isMaxLength(12)),
   /** Ordered steps when the input needs more than one model call, e.g. ASR before text. */
   pipeline: Schema.optionalKey(Schema.Array(RoutingText).check(Schema.isMaxLength(6))),
   chunking: Schema.optionalKey(TaskRoutingChunkPlan),
+  /** The lane that chose the model, when the lanes decided. */
+  lane: Schema.optionalKey(ModelLane),
+  /** Lane entries passed over and why ("Copilot managed · Opus 5.5: at its usage limit"). */
+  skipped: Schema.optionalKey(Schema.Array(RoutingText).check(Schema.isMaxLength(8))),
+  /** The learned preference that applied, by id. */
+  preferenceId: Schema.optionalKey(TrimmedNonEmptyString.check(Schema.isMaxLength(64))),
   decidedAt: IsoDateTime,
 });
 export type TaskRoutingDecision = typeof TaskRoutingDecision.Type;

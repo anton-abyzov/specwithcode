@@ -78,7 +78,7 @@ export function SubagentPeek(props: {
               instanceId={instanceId}
               model={model}
             />
-            <RoutingDecisionChip routing={thread.routing} entries={providerEntries} />
+            <RoutingDecisionChip routing={thread.routing} entries={providerEntries} projectId={thread.projectId} environmentId={thread.environmentId} />
             {entry?.startedAt && status ? (
               <AgentElapsed
                 agent={{ status, startedAt: entry.startedAt, completedAt: entry.completedAt }}

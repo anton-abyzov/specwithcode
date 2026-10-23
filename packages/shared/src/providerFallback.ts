@@ -6,6 +6,7 @@
  */
 import {
   type ChatAttachment,
+  isPaidModelBilling,
   isProviderAvailable,
   type ModelSelection,
   type OrchestrationV2ProviderThread,
@@ -13,6 +14,7 @@ import {
   type OrchestrationV2TurnItem,
   type ProviderInstanceId,
   type ProviderLimitAction,
+  providerModelBilling,
   type ServerProvider,
   type ThreadId,
 } from "@specweave-studio/contracts";
@@ -138,6 +140,15 @@ export function isPerTokenProvider(provider: ServerProvider | undefined): boolea
   );
 }
 
+/**
+ * `isPerTokenProvider`, or `model` is served through a paid router or keyed
+ * API (OpenRouter on Pi). The same check as `isPaidModel` in modelBilling.ts,
+ * which cannot be imported here without a cycle.
+ */
+function isPaidModelOn(provider: ServerProvider | undefined, model: string | undefined): boolean {
+  return isPerTokenProvider(provider) || isPaidModelBilling(providerModelBilling(provider, model));
+}
+
 /** Suggestions need a recent successful observation, not merely an installed CLI. */
 export const FALLBACK_USAGE_MAX_AGE_MS = 5 * 60_000;
 export function hasUsableFallbackCapacity(
@@ -254,7 +265,7 @@ function roomOn(
     readonly limited?: ReadonlySet<string> | undefined;
   },
 ): "verified" | "unreported" | null {
-  if (input.limited?.has(provider.instanceId) || isPerTokenProvider(provider)) return null;
+  if (input.limited?.has(provider.instanceId) || isPaidModelOn(provider, model)) return null;
   if (reportsNoUsage(provider)) return canTakeTurn(provider) ? "unreported" : null;
   if (!hasUsableFallbackCapacity(provider, input.nowMs, model)) return null;
   const used = providerUsedPercent(provider, input.nowMs, model);
@@ -515,7 +526,7 @@ export function describeFallbackOrder(input: {
       return entry("missing");
     if (!fitsContext(input.contextFit, selection)) return entry("too-small");
     if (input.limitedInstanceIds?.has(provider.instanceId)) return entry("limited");
-    if (isPerTokenProvider(provider)) return entry("per-token");
+    if (isPaidModelOn(provider, selection.model)) return entry("per-token");
     if (!canTakeTurn(provider)) {
       if (provider.auth.status === "unauthenticated") return entry("signed-out");
       if (usageDeniesTurn(provider)) return entry("full");
@@ -586,8 +597,12 @@ export function resolveProviderFallback(input: {
     // Gemini and Vertex bill a Cloud project even when a read shows room
     // or the project default names them. Other API keys that report usage
     // can still be that default; one that reports none needs the API-credit
-    // rule, never a guess.
-    if (isGeminiSpendProvider(provider)) return false;
+    // rule, never a guess. A model billed per token by its router or API never is.
+    if (
+      isGeminiSpendProvider(provider) ||
+      isPaidModelBilling(providerModelBilling(provider, model))
+    )
+      return false;
     if (reportsNoUsage(provider)) return canTakeTurn(provider) && !isPerTokenProvider(provider);
     if (!hasUsableFallbackCapacity(provider, input.nowMs, model)) return false;
     const used = providerUsedPercent(provider, input.nowMs, model);
@@ -660,7 +675,7 @@ export function resolveProviderFallback(input: {
       provider !== undefined &&
       !input.limitedInstanceIds?.has(provider.instanceId) &&
       canTakeTurn(provider) &&
-      !isPerTokenProvider(provider) &&
+      !isPaidModelOn(provider, proven.model) &&
       (used === null || used < (input.belowPercent ?? 100))
     )
       return { instanceId: proven.instanceId, model: proven.model };
@@ -684,7 +699,7 @@ export function resolveProviderFallback(input: {
     .filter(
       (provider) =>
         usable(provider, candidateModel(provider)) &&
-        !isPerTokenProvider(provider) &&
+        !isPaidModelOn(provider, candidateModel(provider)) &&
         !excluded(provider.instanceId, candidateModel(provider)),
     )
     .map((provider, order) => ({ provider, order, rank: rank(provider) }))
@@ -794,7 +809,7 @@ export function resolveWorkerLaunchSelection(input: {
     if (
       provider !== undefined &&
       canTakeTurn(provider) &&
-      !isPerTokenProvider(provider) &&
+      !isPaidModelOn(provider, coordinator.model) &&
       !full(provider, coordinator.model)
     )
       return {
@@ -1057,9 +1072,11 @@ export function resolveCoordinatorTurnSelection(input: {
   if (thread !== null && thread.instanceId !== input.saved.instanceId) {
     const current = input.providers.find((provider) => provider.instanceId === thread.instanceId);
     // Gemini/Vertex never continue as an automatic fallback, including one
-    // selected before this guard. API-credit consent applies to other providers.
+    // selected before this guard, nor does a model a paid router or API bills.
+    // API-credit consent applies to other providers.
     const paid =
       isGeminiSpendProvider(current) ||
+      isPaidModelBilling(providerModelBilling(current, thread.model)) ||
       (isPerTokenProvider(current) && input.rule.providerLimitUseApiCredits !== true);
     if (current !== undefined && !paid && canTakeTurn(current) && !full(current, thread.model))
       return { selection: thread, reason: "staying-on-fallback" };

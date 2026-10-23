@@ -374,7 +374,7 @@ export const ChatHeader = memo(function ChatHeader({
           )}
         </WorkspaceBreadcrumbItem>
       </WorkspaceBreadcrumb>
-      <RoutingDecisionChip routing={activeThreadShell?.routing} entries={providerEntries} />
+      <RoutingDecisionChip routing={activeThreadShell?.routing} entries={providerEntries} projectId={activeThreadShell?.projectId} environmentId={activeThreadRef.environmentId} />
       <ThreadArtifactsMenu
         threadRef={activeThreadRef}
         cwd={artifactsCwd ?? activeProjectCwd ?? undefined}

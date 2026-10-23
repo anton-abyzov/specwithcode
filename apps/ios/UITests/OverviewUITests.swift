@@ -10,7 +10,7 @@ final class OverviewUITests: SWCUITestCase {
     tap(hittableButton("Threads"))
     waitFor(text(startingWith: "Threads"), "The overview header is missing")
     XCTAssertTrue(text(startingWith: "Threads").label.contains("SpecWeave"))
-    waitFor(text(startingWith: "Needs you"))
+    waitFor(text(startingWith: "Waiting on you"))
     waitFor(text(startingWith: "Working"))
     waitFor(text(startingWith: "Idle"))
     attachScreenshot("Overview")
@@ -19,11 +19,11 @@ final class OverviewUITests: SWCUITestCase {
     let capsule = button(startingWith: "Fix ledger merge conflicts")
     waitForHittable(button("Thread actions"), "The thread did not open")
     XCTAssertTrue(capsule.label.contains("SpecWeave"), "Thread capsule should name the project: \(capsule.label)")
-    waitForGone(text(startingWith: "Needs you"))
+    waitForGone(text(startingWith: "Waiting on you"))
     attachScreenshot("Thread from overview")
 
     tap(hittableButton("Back"))
-    waitFor(text(startingWith: "Needs you"), "Back should return to the overview")
+    waitFor(text(startingWith: "Waiting on you"), "Back should return to the overview")
     waitForHittable(button(startingWith: "Fix ledger merge conflicts"))
     XCTAssertFalse(button("Thread actions").exists)
 

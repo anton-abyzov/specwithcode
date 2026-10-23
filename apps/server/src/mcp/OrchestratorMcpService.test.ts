@@ -1,3 +1,4 @@
+// @effect-diagnostics nodeBuiltinImport:off - Increment fixtures and a temporary HOME on disk.
 import * as Option from "effect/Option";
 import { projectFixture } from "../project/ProjectWorkspace.testkit.ts";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -41,6 +42,15 @@ import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import type { McpInvocationScope } from "./McpInvocationContext.ts";
 import { idleThreadProjection, liveThreadShell } from "./McpToolAccess.testkit.ts";
+import { deriveDelegatedTaskThread } from "../orchestration-v2/IdAllocator.ts";
+import {
+  ENFORCED_INCREMENT_MESSAGE,
+  REMINDED_INCREMENT_MESSAGE,
+} from "../project/launchIncrement.ts";
+import { specweaveStudioThreadBindingPath } from "../project/ThreadIncrementProgress.ts";
+import * as NodeFS from "node:fs";
+import * as NodeOS from "node:os";
+import * as NodePath from "node:path";
 import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
 
 describe("OrchestratorMcpService", () => {
@@ -136,7 +146,9 @@ describe("OrchestratorMcpService", () => {
         Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
           list: () => Effect.succeed([]),
         }),
-        Layer.mock(ProjectService.ProjectService)({ getById: (id) => Effect.succeed(Option.some(projectFixture(id))) }),
+        Layer.mock(ProjectService.ProjectService)({
+          getById: (id) => Effect.succeed(Option.some(projectFixture(id))),
+        }),
         Layer.mock(SecretRequests.SecretRequests)({}),
         Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
       );
@@ -233,7 +245,9 @@ describe("OrchestratorMcpService", () => {
         Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
           list: () => Effect.succeed([]),
         }),
-        Layer.mock(ProjectService.ProjectService)({ getById: (id) => Effect.succeed(Option.some(projectFixture(id))) }),
+        Layer.mock(ProjectService.ProjectService)({
+          getById: (id) => Effect.succeed(Option.some(projectFixture(id))),
+        }),
         Layer.mock(SecretRequests.SecretRequests)({}),
         Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
       );
@@ -317,7 +331,9 @@ describe("OrchestratorMcpService", () => {
         Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
           list: () => Effect.succeed([]),
         }),
-        Layer.mock(ProjectService.ProjectService)({ getById: (id) => Effect.succeed(Option.some(projectFixture(id))) }),
+        Layer.mock(ProjectService.ProjectService)({
+          getById: (id) => Effect.succeed(Option.some(projectFixture(id))),
+        }),
         Layer.mock(SecretRequests.SecretRequests)({}),
         Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
       );
@@ -393,7 +409,9 @@ describe("OrchestratorMcpService", () => {
         Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
           list: () => Effect.succeed([]),
         }),
-        Layer.mock(ProjectService.ProjectService)({ getById: (id) => Effect.succeed(Option.some(projectFixture(id))) }),
+        Layer.mock(ProjectService.ProjectService)({
+          getById: (id) => Effect.succeed(Option.some(projectFixture(id))),
+        }),
         Layer.mock(SecretRequests.SecretRequests)({}),
         Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
       );
@@ -477,7 +495,9 @@ describe("OrchestratorMcpService", () => {
         Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
           list: () => Effect.succeed([]),
         }),
-        Layer.mock(ProjectService.ProjectService)({ getById: (id) => Effect.succeed(Option.some(projectFixture(id))) }),
+        Layer.mock(ProjectService.ProjectService)({
+          getById: (id) => Effect.succeed(Option.some(projectFixture(id))),
+        }),
         Layer.mock(SecretRequests.SecretRequests)({}),
         Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
       );
@@ -563,7 +583,9 @@ describe("OrchestratorMcpService", () => {
         Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
           list: () => Effect.succeed([]),
         }),
-        Layer.mock(ProjectService.ProjectService)({ getById: (id) => Effect.succeed(Option.some(projectFixture(id))) }),
+        Layer.mock(ProjectService.ProjectService)({
+          getById: (id) => Effect.succeed(Option.some(projectFixture(id))),
+        }),
         Layer.mock(SecretRequests.SecretRequests)({}),
         Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
       );
@@ -703,7 +725,9 @@ describe("OrchestratorMcpService", () => {
         Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
           list: () => Effect.succeed([]),
         }),
-        Layer.mock(ProjectService.ProjectService)({ getById: (id) => Effect.succeed(Option.some(projectFixture(id))) }),
+        Layer.mock(ProjectService.ProjectService)({
+          getById: (id) => Effect.succeed(Option.some(projectFixture(id))),
+        }),
         Layer.mock(SecretRequests.SecretRequests)({}),
         Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
       );
@@ -938,7 +962,9 @@ describe("OrchestratorMcpService provider resolution", () => {
             antigravityInstanceId,
             disabledAntigravityInstanceId,
           ]),
-          Layer.mock(ProjectService.ProjectService)({ getById: (id) => Effect.succeed(Option.some(projectFixture(id))) }),
+          Layer.mock(ProjectService.ProjectService)({
+            getById: (id) => Effect.succeed(Option.some(projectFixture(id))),
+          }),
           Layer.mock(SecretRequests.SecretRequests)({}),
           Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
         );
@@ -1087,7 +1113,25 @@ describe("OrchestratorMcpService provider resolution", () => {
             ]),
           }),
           adapterRegistryLayer([codexInstanceId, antigravityInstanceId]),
-          Layer.mock(ProjectService.ProjectService)({ getById: (id) => Effect.sync(() => Option.some(projectFixture(id, { defaultModelSelection: { instanceId: antigravityInstanceId, model: "ant-model" }, workspaceSettings: { ...DEFAULT_PROJECT_WORKSPACE_SETTINGS, coordinatorThreadId: parentThreadId, paused, archived } }))) }),
+          Layer.mock(ProjectService.ProjectService)({
+            getById: (id) =>
+              Effect.sync(() =>
+                Option.some(
+                  projectFixture(id, {
+                    defaultModelSelection: {
+                      instanceId: antigravityInstanceId,
+                      model: "ant-model",
+                    },
+                    workspaceSettings: {
+                      ...DEFAULT_PROJECT_WORKSPACE_SETTINGS,
+                      coordinatorThreadId: parentThreadId,
+                      paused,
+                      archived,
+                    },
+                  }),
+                ),
+              ),
+          }),
           Layer.mock(SecretRequests.SecretRequests)({}),
           Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
         );
@@ -1096,7 +1140,9 @@ describe("OrchestratorMcpService provider resolution", () => {
           const service = yield* OrchestratorMcpService.OrchestratorMcpService;
           const result = yield* service.delegateTask(scope, {
             task: "Summarize the diff.",
-            ...(selection === "explicit" ? { target: { providerInstanceId: antigravityInstanceId, model: "ant-model" } } : {}),
+            ...(selection === "explicit"
+              ? { target: { providerInstanceId: antigravityInstanceId, model: "ant-model" } }
+              : {}),
             mode: "async",
             clientRequestId: "delegate-antigravity-1",
           });
@@ -1112,8 +1158,11 @@ describe("OrchestratorMcpService provider resolution", () => {
           assert.equal(request.modelSelection.instanceId, antigravityInstanceId);
           assert.equal(request.modelSelection.model, "ant-model");
           for (const state of ["paused", "archived"]) {
-            paused = state === "paused"; archived = state === "archived";
-            const denied = yield* service.delegateTask(scope, { task: "New task", mode: "async", clientRequestId: state }).pipe(Effect.flip);
+            paused = state === "paused";
+            archived = state === "archived";
+            const denied = yield* service
+              .delegateTask(scope, { task: "New task", mode: "async", clientRequestId: state })
+              .pipe(Effect.flip);
             assert.equal(denied.code, "invalid_request");
             assert.lengthOf(yield* Ref.get(dispatched), 1);
           }
@@ -1301,7 +1350,9 @@ describe("OrchestratorMcpService provider resolution", () => {
           ]),
         }),
         adapterRegistryLayer([codexInstanceId, antigravityInstanceId]),
-        Layer.mock(ProjectService.ProjectService)({ getById: (id) => Effect.succeed(Option.some(projectFixture(id))) }),
+        Layer.mock(ProjectService.ProjectService)({
+          getById: (id) => Effect.succeed(Option.some(projectFixture(id))),
+        }),
         Layer.mock(SecretRequests.SecretRequests)({}),
         Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
       );
@@ -1349,7 +1400,9 @@ describe("OrchestratorMcpService provider resolution", () => {
           forkShadow,
         ]),
         adapterRegistryLayer([codexInstanceId]),
-        Layer.mock(ProjectService.ProjectService)({ getById: (id) => Effect.succeed(Option.some(projectFixture(id))) }),
+        Layer.mock(ProjectService.ProjectService)({
+          getById: (id) => Effect.succeed(Option.some(projectFixture(id))),
+        }),
         Layer.mock(SecretRequests.SecretRequests)({}),
         Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
       );
@@ -1457,7 +1510,9 @@ describe("OrchestratorMcpService provider resolution", () => {
         }),
         adapterRegistryLayer([codexInstanceId, claudeInstanceId]),
         Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
-        Layer.mock(ProjectService.ProjectService)({ getById: (id) => Effect.succeed(Option.some(projectFixture(id))) }),
+        Layer.mock(ProjectService.ProjectService)({
+          getById: (id) => Effect.succeed(Option.some(projectFixture(id))),
+        }),
         Layer.mock(SecretRequests.SecretRequests)({}),
       );
 
@@ -1614,7 +1669,9 @@ describe("OrchestratorMcpService provider resolution", () => {
               }),
             ]),
             adapterRegistryLayer([codexInstanceId, codexAltInstanceId]),
-            Layer.mock(ProjectService.ProjectService)({ getById: (id) => Effect.succeed(Option.some(projectFixture(id))) }),
+            Layer.mock(ProjectService.ProjectService)({
+              getById: (id) => Effect.succeed(Option.some(projectFixture(id))),
+            }),
             Layer.mock(SecretRequests.SecretRequests)({}),
             Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
           );
@@ -1695,6 +1752,260 @@ describe("OrchestratorMcpService provider resolution", () => {
       }),
   );
 
+  it.effect("binds delegated workers and created threads to SpecWeave increments", () =>
+    Effect.gen(function* () {
+      // Bindings go to a temporary home, never the real ~/.specweave: os.homedir()
+      // reads HOME, or USERPROFILE on Windows.
+      const home = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "mcp-increment-home-"));
+      const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "mcp-increment-root-"));
+      const savedHome = process.env.HOME;
+      const savedProfile = process.env.USERPROFILE;
+      process.env.HOME = home;
+      process.env.USERPROFILE = home;
+      yield* Effect.addFinalizer(() =>
+        Effect.sync(() => {
+          if (savedHome === undefined) delete process.env.HOME;
+          else process.env.HOME = savedHome;
+          if (savedProfile === undefined) delete process.env.USERPROFILE;
+          else process.env.USERPROFILE = savedProfile;
+          NodeFS.rmSync(home, { recursive: true, force: true });
+          NodeFS.rmSync(root, { recursive: true, force: true });
+        }),
+      );
+      const folder = NodePath.join(root, ".specweave/increments/0996-connect");
+      NodeFS.mkdirSync(folder, { recursive: true });
+      NodeFS.writeFileSync(NodePath.join(folder, "spec.md"), "# Connect launches\n");
+      NodeFS.writeFileSync(
+        NodePath.join(folder, "metadata.json"),
+        JSON.stringify({ status: "active", title: "Connect launches" }),
+      );
+      const specPath = NodePath.join(folder, "spec.md");
+      const setMode = (mode: string) =>
+        NodeFS.writeFileSync(
+          NodePath.join(root, ".specweave/config.json"),
+          JSON.stringify({ planning: { requireIncrement: mode } }),
+        );
+      setMode("enforce");
+      const bindingOf = (threadId: string) => {
+        try {
+          return JSON.parse(
+            NodeFS.readFileSync(specweaveStudioThreadBindingPath(threadId, home), "utf8"),
+          ) as { incrementId: string; event: string; root: string };
+        } catch {
+          return null;
+        }
+      };
+      let coordinator = true;
+      let delegated = false;
+      const task = {
+        id: taskId,
+        threadId: parentThreadId,
+        runId: parentRunId,
+        parentNodeId,
+        origin: "app_owned",
+        createdBy: "agent",
+        driver: ProviderDriverKind.make("codex"),
+        providerInstanceId: codexInstanceId,
+        providerThreadId: null,
+        childThreadId,
+        nativeTaskRef: null,
+        prompt: "Fix it.",
+        title: null,
+        model: "gpt-5.4",
+        status: "running",
+        result: null,
+        startedAt: null,
+        completedAt: null,
+      };
+      const dispatched = yield* Ref.make<ReadonlyArray<Record<string, unknown>>>([]);
+      // The binding each dispatch found already written, keyed by the thread it starts.
+      const seenAtDispatch = new Map<string, ReturnType<typeof bindingOf>>();
+      const layerDependencies = Layer.mergeAll(
+        NodeServices.layer,
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
+          getThreadRecords: (threadId) =>
+            Effect.succeed(
+              threadId === parentThreadId
+                ? parentProjection(delegated ? [task] : [])
+                : ({
+                    ...childProjection,
+                    thread: { id: threadId, title: "Created" },
+                  } as unknown as OrchestrationV2ThreadProjection),
+            ),
+          dispatch: (command) =>
+            Effect.sync(() => {
+              const record = command as unknown as Record<string, unknown>;
+              const started =
+                record.type === "delegated_task.request"
+                  ? deriveDelegatedTaskThread({ commandId: command.commandId })
+                  : record.type === "thread.create"
+                    ? String(record.threadId)
+                    : null;
+              if (started !== null) seenAtDispatch.set(started, bindingOf(started));
+              if (record.type === "delegated_task.request") delegated = true;
+              return record;
+            }).pipe(
+              Effect.flatMap((record) => Ref.update(dispatched, (all) => [...all, record])),
+              Effect.as({
+                sequence: 1,
+                storedEvents: [
+                  {
+                    sequence: 1,
+                    commandId: null,
+                    event: { type: "subagent.updated", payload: task },
+                  },
+                ],
+              } as never),
+            ),
+        }),
+        providerRegistryLayer([
+          providerSnapshot({
+            instanceId: codexInstanceId,
+            driver: ProviderDriverKind.make("codex"),
+            model: "gpt-5.4",
+          }),
+        ]),
+        adapterRegistryLayer([codexInstanceId]),
+        Layer.mock(ProjectService.ProjectService)({
+          getById: (id) =>
+            Effect.sync(() =>
+              Option.some(
+                projectFixture(id, {
+                  workspaceRoot: root,
+                  defaultModelSelection: { instanceId: codexInstanceId, model: "gpt-5.4" },
+                  workspaceSettings: {
+                    ...DEFAULT_PROJECT_WORKSPACE_SETTINGS,
+                    coordinatorThreadId: coordinator ? parentThreadId : null,
+                  },
+                }),
+              ),
+            ),
+        }),
+        Layer.mock(SecretRequests.SecretRequests)({}),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+      );
+      const delegations = () =>
+        Ref.get(dispatched).pipe(
+          Effect.map((all) => all.filter((command) => command.type === "delegated_task.request")),
+        );
+
+      yield* Effect.gen(function* () {
+        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+        const delegate = (clientRequestId: string, increment?: string) =>
+          service.delegateTask(scope, {
+            task: "Fix it.",
+            mode: "async",
+            clientRequestId,
+            ...(increment === undefined ? {} : { increment }),
+          });
+
+        // Under enforce a coordinator must name the increment.
+        const refused = yield* delegate("missing").pipe(Effect.flip);
+        assert.equal(refused.code, "invalid_request");
+        assert.equal(refused.message, ENFORCED_INCREMENT_MESSAGE);
+        // A ref that does not resolve dispatches nothing.
+        const bad = yield* delegate("bad", "0999").pipe(Effect.flip);
+        assert.equal(bad.code, "invalid_request");
+        assert.include(bad.message, 'Increment "0999" was not found');
+        assert.lengthOf(yield* delegations(), 0);
+
+        const result = yield* delegate("explicit", "0996");
+        assert.deepEqual(result.increment, {
+          incrementId: "0996-connect",
+          title: "Connect launches",
+          specPath,
+        });
+        const [request] = yield* delegations();
+        const child = deriveDelegatedTaskThread({ commandId: request!.commandId as CommandId });
+        // Seeded before the dispatch that starts the child's first turn.
+        assert.deepInclude(seenAtDispatch.get(child), {
+          incrementId: "0996-connect",
+          event: "studio-launch",
+          root,
+        });
+        assert.isTrue(
+          String(request!.task).endsWith(
+            `Increment 0996-connect ([spec](${specPath})): run \`specweave pickup 0996-connect\` first.`,
+          ),
+        );
+        // A retry with the same clientRequestId writes the same file.
+        yield* delegate("explicit", "0996");
+        const retried = yield* delegations();
+        assert.equal(
+          deriveDelegatedTaskThread({ commandId: retried[1]!.commandId as CommandId }),
+          child,
+        );
+        assert.deepInclude(bindingOf(child), { incrementId: "0996-connect" });
+
+        // "none" binds nothing and only adds the small-fix line.
+        yield* delegate("none", "none");
+        const none = (yield* delegations()).at(-1)!;
+        assert.isNull(
+          seenAtDispatch.get(
+            deriveDelegatedTaskThread({ commandId: none.commandId as CommandId }),
+          )!,
+        );
+        assert.include(String(none.task), "specweave small-fix");
+
+        // Under remind the coordinator's launch goes ahead with a warning.
+        setMode("remind");
+        assert.equal((yield* delegate("reminded")).warning, REMINDED_INCREMENT_MESSAGE);
+
+        // The coordinator never passes its own binding on; a worker does.
+        NodeFS.mkdirSync(NodePath.dirname(specweaveStudioThreadBindingPath(parentThreadId, home)), {
+          recursive: true,
+        });
+        NodeFS.writeFileSync(
+          specweaveStudioThreadBindingPath(parentThreadId, home),
+          JSON.stringify({
+            version: 1,
+            threadId: parentThreadId,
+            incrementId: "0996-connect",
+            root,
+            taskId: "T-01",
+            event: "claim",
+            at: "2026-10-22T10:00:00Z",
+          }),
+        );
+        setMode("off");
+        assert.isUndefined((yield* delegate("coordinator-own")).increment);
+        coordinator = false;
+        const inherited = yield* delegate("inherited");
+        assert.equal(inherited.increment?.incrementId, "0996-connect");
+        assert.equal(inherited.increment?.inheritedFrom, parentThreadId);
+
+        // create_threads resolves every entry before creating any thread.
+        const before = (yield* Ref.get(dispatched)).length;
+        const batch = yield* service
+          .createThreads(scope, {
+            threads: [
+              { prompt: "One", increment: "0996" },
+              { prompt: "Two", increment: "0999" },
+            ],
+            clientRequestId: "batch-bad",
+          })
+          .pipe(Effect.flip);
+        assert.equal(batch.code, "invalid_request");
+        assert.lengthOf(yield* Ref.get(dispatched), before);
+        const created = yield* service.createThreads(scope, {
+          threads: [{ prompt: "One", increment: "0996" }],
+          clientRequestId: "batch-good",
+        });
+        const createdThread = created.threads[0]!;
+        assert.equal(createdThread.increment?.specPath, specPath);
+        assert.deepInclude(seenAtDispatch.get(createdThread.threadId), {
+          incrementId: "0996-connect",
+          event: "studio-launch",
+        });
+        const message = (yield* Ref.get(dispatched)).find(
+          (command) =>
+            command.type === "message.dispatch" && command.threadId === createdThread.threadId,
+        );
+        assert.include(String(message?.text), "specweave pickup 0996-connect");
+      }).pipe(Effect.provide(OrchestratorMcpService.layer.pipe(Layer.provide(layerDependencies))));
+    }).pipe(Effect.scoped),
+  );
+
   describe("scheduled tasks at modes above the caller's", () => {
     const projectId = ProjectId.make("project:scheduled");
     const boundThreadId = ThreadId.make("thread:scheduled-bound");
@@ -1755,7 +2066,9 @@ describe("OrchestratorMcpService provider resolution", () => {
             Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
               list: () => Effect.succeed([]),
             }),
-            Layer.mock(ProjectService.ProjectService)({ getById: (id) => Effect.succeed(Option.some(projectFixture(id))) }),
+            Layer.mock(ProjectService.ProjectService)({
+              getById: (id) => Effect.succeed(Option.some(projectFixture(id))),
+            }),
             Layer.mock(SecretRequests.SecretRequests)({}),
             Layer.mock(ScheduledTaskService.ScheduledTaskService)({
               list: () => Effect.succeed({ tasks }),
@@ -1825,7 +2138,9 @@ describe("OrchestratorMcpService provider resolution", () => {
                   Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
                     list: () => Effect.succeed([]),
                   }),
-                  Layer.mock(ProjectService.ProjectService)({ getById: (id) => Effect.succeed(Option.some(projectFixture(id))) }),
+                  Layer.mock(ProjectService.ProjectService)({
+                    getById: (id) => Effect.succeed(Option.some(projectFixture(id))),
+                  }),
                   Layer.mock(SecretRequests.SecretRequests)({}),
                   Layer.mock(ScheduledTaskService.ScheduledTaskService)({
                     list: () => Effect.succeed({ tasks: [task({})] }),
@@ -1914,7 +2229,9 @@ describe("OrchestratorMcpService provider resolution", () => {
                   Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
                     list: () => Effect.succeed([]),
                   }),
-                  Layer.mock(ProjectService.ProjectService)({ getById: (id) => Effect.succeed(Option.some(projectFixture(id))) }),
+                  Layer.mock(ProjectService.ProjectService)({
+                    getById: (id) => Effect.succeed(Option.some(projectFixture(id))),
+                  }),
                   Layer.mock(SecretRequests.SecretRequests)({}),
                   Layer.mock(ScheduledTaskService.ScheduledTaskService)({
                     list: () => Effect.succeed({ tasks: [bound] }),

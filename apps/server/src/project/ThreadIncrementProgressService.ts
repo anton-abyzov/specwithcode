@@ -6,9 +6,16 @@
  * `projects.incrementsList` and `projects.threadIncrementLink` back the plan
  * card's "Link increment" picker. A link made by hand lives in Studio's own
  * database (`thread_increment_links`), never in the repository.
+ *
+ * In a SpecWeave project the read also lists the unplanned threads: those
+ * whose turns changed files while they have no increment, no hand-made link
+ * (a "none" link is "No increment needed") and no declared `specweave
+ * small-fix`. Provider-native subagents are left out; their parent owns them,
+ * so a child's edits count for its parent.
  */
 import {
   ProjectWorkspaceError,
+  ThreadId,
   type ProjectIncrementsListInput,
   type ProjectIncrementsListResult,
   type ThreadIncrementLinkInput,
@@ -31,8 +38,10 @@ import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import {
   incrementExists,
+  isSpecweaveProject,
   queryProjectIncrements,
   readThreadIncrementProgress,
+  threadDeclaredSmallFix,
   type ThreadIncrementSource,
 } from "./ThreadIncrementProgress.ts";
 
@@ -61,6 +70,9 @@ interface LinkRow {
   readonly threadId: string;
   readonly incrementId: string | null;
 }
+
+/** Run states after which a thread's file changes no longer grow until its next run. */
+const SETTLED_RUN = new Set(["completed", "interrupted", "failed", "cancelled", "rolled_back"]);
 
 const toTarget = (row: LinkRow | undefined): ThreadIncrementLinkTarget | undefined =>
   row === undefined
@@ -185,6 +197,118 @@ export const make = Effect.gen(function* () {
       return yield* Effect.promise(() => result);
     });
 
+  // Whether a thread changed files, keyed by its newest run (its last turn) and
+  // that run's status, so a rollback reads again. A no is kept only once that
+  // run settled and the thread has no provider-native subagent, whose edits are
+  // stored under the child's own thread id and can outlive the parent's run.
+  const codeChanges = new Map<string, { readonly runKey: string; readonly changed: boolean }>();
+  const threadsThatChangedCode = (threadIds: ReadonlyArray<string>) =>
+    Effect.gen(function* () {
+      if (threadIds.length === 0) return new Set<string>();
+      const nativeChildren = new Set(
+        (yield* sql<{ readonly threadId: string }>`
+          SELECT thread_id AS "threadId" FROM orchestration_v2_projection_threads
+          WHERE ${sql.in("thread_id", threadIds)}
+            AND json_extract(payload_json, '$.lineage.relationshipToParent') = 'subagent'
+            AND json_extract(payload_json, '$.creationSource') = 'provider'
+        `).map((row) => row.threadId),
+      );
+      const owned = threadIds.filter((threadId) => !nativeChildren.has(threadId));
+      if (owned.length === 0) return new Set<string>();
+      const lastRuns = new Map(
+        (yield* sql<{
+          readonly threadId: string;
+          readonly runId: string;
+          readonly status: string;
+        }>`
+          SELECT run.thread_id AS "threadId", run.run_id AS "runId", run.status AS status
+          FROM orchestration_v2_projection_runs run
+          WHERE run.thread_id IN ${sql.in(owned)}
+            AND run.ordinal = (
+              SELECT MAX(latest.ordinal) FROM orchestration_v2_projection_runs latest
+              WHERE latest.thread_id = run.thread_id
+            )
+        `).map((row) => [row.threadId, row]),
+      );
+      const runKeyOf = (run: { readonly runId: string; readonly status: string }) =>
+        `${run.runId}\u0000${run.status}`;
+      const changed = new Set<string>();
+      const unknown: string[] = [];
+      for (const threadId of owned) {
+        const run = lastRuns.get(threadId);
+        // No run yet, no turn: nothing changed.
+        if (run === undefined) continue;
+        const cached = codeChanges.get(threadId);
+        if (cached?.runKey !== runKeyOf(run)) unknown.push(threadId);
+        else if (cached.changed) changed.add(threadId);
+      }
+      if (unknown.length > 0) {
+        // Edits of a rolled-back run were reverted; runless items have no run to undo.
+        const found = new Set(
+          (yield* sql<{ readonly threadId: string }>`
+            SELECT DISTINCT item.thread_id AS "threadId"
+            FROM orchestration_v2_projection_turn_items item
+            LEFT JOIN orchestration_v2_projection_runs run ON run.run_id = item.run_id
+            WHERE item.type = 'file_change' AND item.status = 'completed'
+              AND (run.status IS NULL OR run.status <> 'rolled_back')
+              AND item.thread_id IN ${sql.in(unknown)}
+          `).map((row) => row.threadId),
+        );
+        const withChildren = new Set<string>();
+        for (const row of yield* sql<{
+          readonly parentThreadId: string;
+          readonly changed: number;
+        }>`
+          SELECT json_extract(child.payload_json, '$.lineage.parentThreadId') AS "parentThreadId",
+            EXISTS (
+              SELECT 1 FROM orchestration_v2_projection_turn_items item
+              WHERE item.thread_id = child.thread_id
+                AND item.type = 'file_change' AND item.status = 'completed'
+            ) AS changed
+          FROM orchestration_v2_projection_threads child
+          WHERE json_extract(child.payload_json, '$.lineage.relationshipToParent') = 'subagent'
+            AND json_extract(child.payload_json, '$.creationSource') = 'provider'
+            AND json_extract(child.payload_json, '$.lineage.parentThreadId') IN ${sql.in(unknown)}
+        `) {
+          withChildren.add(row.parentThreadId);
+          if (row.changed) found.add(row.parentThreadId);
+        }
+        for (const threadId of unknown) {
+          const run = lastRuns.get(threadId)!;
+          const didChange = found.has(threadId);
+          if (didChange) changed.add(threadId);
+          // A running turn or a native subagent can still change files, so only a settled no is kept.
+          if (didChange || (SETTLED_RUN.has(run.status) && !withChildren.has(threadId))) {
+            codeChanges.set(threadId, { runKey: runKeyOf(run), changed: didChange });
+          } else {
+            codeChanges.delete(threadId);
+          }
+        }
+      }
+      return changed;
+    });
+
+  /**
+   * The threads among `candidates` (no increment, no hand-made link) that
+   * changed code without declaring a small fix. Best effort: a failed read
+   * lists none rather than failing the progress read.
+   */
+  const unplannedOf = (candidates: ReadonlyArray<string>) =>
+    Effect.gen(function* () {
+      const changed = yield* threadsThatChangedCode(candidates);
+      const declared = yield* Effect.promise(() =>
+        Promise.all(
+          [...changed].map(async (threadId) =>
+            (await threadDeclaredSmallFix(threadId)) ? null : threadId,
+          ),
+        ),
+      );
+      return declared
+        .filter((threadId): threadId is string => threadId !== null)
+        .toSorted()
+        .map((threadId) => ThreadId.make(threadId));
+    }).pipe(Effect.orElseSucceed(() => [] as ThreadId[]));
+
   const read = (input: ThreadIncrementProgressInput) =>
     Effect.gen(function* () {
       const project = yield* projectOf(input.projectId);
@@ -206,10 +330,17 @@ export const make = Effect.gen(function* () {
           ...(link === undefined ? {} : { link: { incrementId: link.incrementId } }),
         });
       }
-      return {
-        projectId: input.projectId,
-        threads: sources.length === 0 ? [] : yield* readProgress(project.workspaceRoot, sources),
-      };
+      const threadsRead =
+        sources.length === 0 ? [] : yield* readProgress(project.workspaceRoot, sources);
+      const specweave = yield* Effect.promise(() => isSpecweaveProject(project.workspaceRoot));
+      if (!specweave) return { projectId: input.projectId, threads: threadsRead, specweave };
+      const bound = new Set<string>(threadsRead.map((entry) => entry.threadId));
+      const unplanned = yield* unplannedOf(
+        sources
+          .filter((source) => source.link === undefined && !bound.has(source.threadId))
+          .map((source) => source.threadId),
+      );
+      return { projectId: input.projectId, threads: threadsRead, specweave, unplanned };
     }).pipe(asWorkspaceError(input.projectId));
 
   const listIncrements = (input: ProjectIncrementsListInput) =>

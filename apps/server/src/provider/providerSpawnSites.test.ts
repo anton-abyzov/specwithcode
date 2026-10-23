@@ -12,6 +12,7 @@ import {
   PROVIDER_ADAPTER_PROCESS_CHAINS,
   PROVIDER_PROCESS_SPAWN_SITES,
   PROVIDER_SPAWN_SCAN_DIRECTORIES,
+  SPECWEAVE_AGENT_ENVIRONMENT_ADAPTERS,
 } from "./providerSpawnSites.ts";
 
 const sourceRoot = NodePath.resolve(NodePath.dirname(NodeURL.fileURLToPath(import.meta.url)), "..");
@@ -80,5 +81,37 @@ describe("provider spawn sites", () => {
       }
       expect(PROVIDER_PROCESS_SPAWN_SITES).toHaveProperty([steps.at(-1)!]);
     }
+  });
+
+  it("give every per-thread agent process SpecWeave's thread environment", () => {
+    // A new adapter fails here until it applies the variables or is listed
+    // as an exception with the reason it has no process of its own.
+    const adapters = listSources("orchestration-v2/Adapters").filter((path) =>
+      path.endsWith("AdapterV2.ts"),
+    );
+    expect(Object.keys(SPECWEAVE_AGENT_ENVIRONMENT_ADAPTERS).toSorted()).toEqual(
+      [...adapters, "provider/Drivers/MuseDriver.ts"].toSorted(),
+    );
+    const missing = Object.entries(SPECWEAVE_AGENT_ENVIRONMENT_ADAPTERS).flatMap(
+      ([adapter, entry]) =>
+        entry.site === null || read(entry.site).includes(entry.marker) ? [] : [adapter],
+    );
+    expect(missing).toEqual([]);
+    const exceptions = Object.entries(SPECWEAVE_AGENT_ENVIRONMENT_ADAPTERS)
+      .filter(([, entry]) => entry.site === null)
+      .map(([adapter]) => adapter);
+    expect(exceptions.toSorted()).toEqual([
+      "orchestration-v2/Adapters/CursorAdapterV2.ts",
+      "orchestration-v2/Adapters/OpenCode2AdapterV2.ts",
+    ]);
+  });
+
+  it("set SpecWeave's thread variables only through the helper", () => {
+    const handSet = PROVIDER_SPAWN_SCAN_DIRECTORIES.flatMap(listSources).filter(
+      (path) =>
+        path !== "provider/RuntimeInstructions.ts" &&
+        /\bSPECWEAVE_(?:STUDIO_THREAD_ID|TOOL|MODEL)\s*:/.test(read(path)),
+    );
+    expect(handSet).toEqual([]);
   });
 });

@@ -38,6 +38,8 @@ export interface AntigravityAcpRuntimeInput extends Omit<
 > {
   /** Device CLI environment supplied for this provider session. */
   readonly agentDeviceEnvironment?: Readonly<Record<string, string>>;
+  /** SpecWeave's thread variables (AcpAdapterV2RuntimeInput.agentEnvironment). */
+  readonly agentEnvironment?: Readonly<Record<string, string>>;
   readonly childProcessSpawner: ChildProcessSpawner.ChildProcessSpawner["Service"];
   readonly onAuthorizationUrl?: (url: string) => Effect.Effect<void, EffectAcpErrors.AcpError>;
   /**

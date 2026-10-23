@@ -87,6 +87,11 @@ describe("AcpClientTerminals", () => {
           environmentForSession: () => ({ PATH: process.env.PATH, PLAYWRIGHT_HTML_OPEN: "always" }),
           env: [{ name: "PWDEBUG", value: "1" }],
         },
+        // Session variables without a base environment add to the server's.
+        {
+          environmentForSession: () => ({ SPECWEAVE_STUDIO_THREAD_ID: "thread" }),
+          env: undefined,
+        },
       ];
       for (const { environmentForSession, env } of cases) {
         const terminals = yield* makeAcpClientTerminals({

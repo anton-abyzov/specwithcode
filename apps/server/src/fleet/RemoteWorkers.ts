@@ -84,6 +84,8 @@ export interface RemoteLaunchInput {
   readonly interactionMode: ProviderInteractionMode;
   readonly workspaceStrategy: OrchestrationV2ThreadLaunchWorkspaceStrategy | undefined;
   readonly message: string | undefined;
+  /** The SpecWeave increment ref, passed on unresolved. */
+  readonly increment?: string | undefined;
   readonly reportBack: boolean;
   /** The machines this launch came through, ending with this one. */
   readonly delegation: OrchestratorMcpDelegation;
@@ -401,18 +403,21 @@ const readProviders = (capabilities: unknown): ReadonlyArray<OrchestratorMcpMach
       )
         return [];
       const usage = readProviderUsage(provider.usage);
+      const models = (Array.isArray(provider.models) ? provider.models : []).filter(isRecord);
+      const paidModels = models.flatMap((model) =>
+        typeof model.id === "string" && model.paid === true ? [model.id] : [],
+      );
       return [
         {
           providerInstanceId: provider.providerInstanceId,
           driverKind: provider.driverKind,
-          models: (Array.isArray(provider.models) ? provider.models : [])
-            .filter(isRecord)
-            .flatMap((model) => (typeof model.id === "string" ? [model.id] : [])),
+          models: models.flatMap((model) => (typeof model.id === "string" ? [model.id] : [])),
           available: Array.isArray(provider.constraints) && provider.constraints.length === 0,
           ...(usage === undefined ? {} : { usage }),
           ...(typeof provider.allowedByGrant === "boolean"
             ? { allowedByGrant: provider.allowedByGrant }
             : {}),
+          ...(paidModels.length === 0 ? {} : { paidModels }),
         } as unknown as OrchestratorMcpMachineProvider,
       ];
     });
@@ -853,6 +858,7 @@ const make = Effect.gen(function* () {
               ? {}
               : { workspaceStrategy: input.workspaceStrategy }),
             ...(input.message === undefined ? {} : { message: input.message }),
+            ...(input.increment === undefined ? {} : { increment: input.increment }),
             delegation: input.delegation,
           },
           timeoutMs: LAUNCH_TIMEOUT_MS,

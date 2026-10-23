@@ -1,5 +1,6 @@
 import {
   DEFAULT_SERVER_SETTINGS,
+  type ModelLane,
   type ModelSelection,
   type OrchestratorMcpTarget,
   type Project,
@@ -9,6 +10,7 @@ import {
 } from "@specweave-studio/contracts";
 import { withDefaultModelOptions } from "@specweave-studio/shared/coordinatorDefault";
 import { modelSelectionEffortValue } from "@specweave-studio/shared/effortLevel";
+import { resolveLaneRouting } from "@specweave-studio/shared/modelLanes";
 import { resolveProjectSettings } from "@specweave-studio/shared/projectSettings";
 import {
   classifyTask,
@@ -40,21 +42,31 @@ export function autoRoutingApplies(input: {
   readonly pinned: boolean;
   readonly isCoordinator: boolean;
   readonly taskClass: TaskClass | undefined;
+  readonly taskLane?: ModelLane | undefined;
 }): boolean {
-  return !input.pinned && (input.isCoordinator || input.taskClass !== undefined);
+  return (
+    !input.pinned &&
+    (input.isCoordinator || input.taskClass !== undefined || input.taskLane !== undefined)
+  );
 }
 
 /**
- * The Auto routing decision for one worker, or null when Auto is off for the
- * project. `baseline` is the model the app would use without Auto. Reads the
- * project's resolved policy, the switch threshold and provider order; makes
- * no model call. The decision is logged whether or not it moved the worker.
+ * The routing decision for one worker, or null when neither the model lanes
+ * nor Auto have anything to say for the project. `baseline` is the model the
+ * app would use otherwise. The lanes go first: a worker starts on the first
+ * entry of its lane (complex or routine) that can run now. When the lane is
+ * empty, or none of its entries can run, Auto tiers decide if Auto is on.
+ * Reads the project's resolved settings, the switch threshold and provider
+ * order; makes no model call. The decision is logged whether or not it moved
+ * the worker.
  */
 export const routeWorkerTask = Effect.fn("project.routeWorkerTask")(function* (input: {
   readonly project: Project;
   readonly baseline: ModelSelection;
   readonly providers: ReadonlyArray<ServerProvider>;
   readonly task: TaskClassificationInput;
+  /** The caller's judgement of the work: complex or routine. */
+  readonly laneHint?: ModelLane | undefined;
   readonly runnableInstanceIds?: ReadonlySet<string>;
   /** The settings service a long-lived caller captured; else the current context's. */
   readonly settings?: Option.Option<ServerSettings.ServerSettingsService["Service"]>;
@@ -67,15 +79,43 @@ export const routeWorkerTask = Effect.fn("project.routeWorkerTask")(function* (i
     ? yield* settings.value.getSettings.pipe(Effect.orElseSucceed(() => DEFAULT_SERVER_SETTINGS))
     : DEFAULT_SERVER_SETTINGS;
   const rule = resolveProjectSettings(preferences, input.project.id, input.project).settings;
-  if (rule.taskRouting.mode !== "auto") return null;
+  const lanesSet =
+    rule.modelLanes.complex.length > 0 ||
+    rule.modelLanes.routine.length > 0 ||
+    rule.learnedModelPreferences.some((preference) => preference.action.kind === "prefer");
+  if (rule.taskRouting.mode !== "auto" && !lanesSet) return null;
   const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
   const limited = new Set<string>(simulatedUsageLimitInstances(yield* ProviderFallbackEnv));
   // A provider that reports no usage but stopped a thread on its limit
   // (Copilot's monthly quota) reads as ready: no new worker starts there.
   for (const instanceId of yield* usageLimitHeldInstances(nowMs)) limited.add(instanceId);
-  const decision = resolveTaskRouting({
+  const classification = classifyTask(input.task);
+  const lane = lanesSet
+    ? resolveLaneRouting({
+        lanes: rule.modelLanes,
+        preferences: rule.learnedModelPreferences,
+        task: input.task,
+        classification,
+        laneHint: input.laneHint,
+        baseline: input.baseline,
+        providers: input.providers,
+        nowMs,
+        policy: rule.taskRouting,
+        switchAtPercent: rule.providerLimitSwitchAtPercent,
+        limitedInstanceIds: limited,
+        ...(input.runnableInstanceIds === undefined
+          ? {}
+          : { runnableInstanceIds: input.runnableInstanceIds }),
+      })
+    : null;
+  if (lane !== null && (lane.found || rule.taskRouting.mode !== "auto")) {
+    yield* logDecision(input.project, lane.decision);
+    return lane.decision;
+  }
+  if (rule.taskRouting.mode !== "auto") return null;
+  const tiered = resolveTaskRouting({
     policy: rule.taskRouting,
-    classification: classifyTask(input.task),
+    classification,
     baseline: input.baseline,
     providers: input.providers,
     nowMs,
@@ -86,17 +126,32 @@ export const routeWorkerTask = Effect.fn("project.routeWorkerTask")(function* (i
       ? {}
       : { runnableInstanceIds: input.runnableInstanceIds }),
   });
-  yield* Effect.logInfo("project.task-routing.decided", {
-    projectId: input.project.id,
+  // A lane whose entries all failed explains itself next to the tier decision.
+  const decision: TaskRoutingDecision =
+    lane === null
+      ? tiered
+      : {
+          ...tiered,
+          ...(lane.decision.lane === undefined ? {} : { lane: lane.decision.lane }),
+          ...(lane.decision.skipped === undefined ? {} : { skipped: lane.decision.skipped }),
+          reason: `${lane.decision.reason.replace(/: kept .*$/, "")}. ${tiered.reason}`.slice(0, 600),
+        };
+  yield* logDecision(input.project, decision);
+  return decision;
+});
+
+const logDecision = (project: Project, decision: TaskRoutingDecision) =>
+  Effect.logInfo("project.task-routing.decided", {
+    projectId: project.id,
+    lane: decision.lane ?? null,
     taskClass: decision.taskClass,
     confidence: decision.confidence,
     moved: decision.moved,
     selected: `${decision.selection.instanceId}/${decision.selection.model}`,
     baseline: `${decision.baseline.instanceId}/${decision.baseline.model}`,
+    skipped: decision.skipped ?? [],
     reason: decision.reason,
   });
-  return decision;
-});
 
 /**
  * The target a routed worker is resolved with: the routed model, the effort

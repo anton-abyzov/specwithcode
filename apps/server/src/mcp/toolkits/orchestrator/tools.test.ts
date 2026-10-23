@@ -8,6 +8,8 @@ import {
   ScheduleTaskTool,
   ThreadUpdateTool,
 } from "./tools.ts";
+import { INCREMENT_LAUNCH_INSTRUCTION } from "../../../project/launchIncrement.ts";
+import { ProjectToolkit } from "../project/tools.ts";
 
 describe("orchestrator MCP tool guidance", () => {
   it("asks for a short structured report and a relay instead of a pasted one", () => {
@@ -25,6 +27,16 @@ describe("orchestrator MCP tool guidance", () => {
     );
     // Detailed may include steps, so the fixed tool text must not forbid them.
     assert.notInclude(DelegateTaskTool.description ?? "", "not a replay of steps");
+  });
+
+  it("asks for an increment on every launch tool in a SpecWeave project", () => {
+    for (const description of [
+      DelegateTaskTool.description,
+      CreateThreadsTool.description,
+      ProjectToolkit.tools.studio_thread_launch.description,
+    ]) {
+      assert.include(description ?? "", INCREMENT_LAUNCH_INSTRUCTION);
+    }
   });
 
   it("directs subagent requests to delegation instead of ordinary threads", () => {

@@ -48,7 +48,8 @@ try {
       route.request().url().startsWith(origin) ? route.continue() : route.abort(),
     );
     await page.goto(`${origin}/?theme=${theme}`);
-    const card = page.locator('[data-thread-plan-card="increment"]');
+    const card = page.getByTestId("increment-card").locator('[data-thread-plan-card="increment"]');
+    const opened = () => page.evaluate(() => window.planOpened.at(-1));
     await card.waitFor();
     assert.equal((await card.locator("[data-plan-count]").textContent())?.trim(), "2/5");
     assert.match(
@@ -67,35 +68,75 @@ try {
     assert.equal(await card.locator("[data-plan-substeps] > li").count(), 5);
     assert.match(
       (await card.locator("[data-plan-binding]").textContent()) ?? "",
-      /bound by this thread's ledger writes/,
+      /bound by SpecWeave for this thread/,
     );
-    await card.getByRole("button", { name: /Acceptance criteria 1\/4/ }).click();
-    await card.getByRole("button", { name: "Open spec" }).waitFor();
+    await card.getByRole("button", { name: /^Acceptance criteria/ }).click();
+    // "Open spec" opens the app's viewer; the editor is the secondary link.
+    const specPath =
+      "/Users/dev/Projects/specweave/.specweave/increments/0930-studio-plan-progress/spec.md";
+    await card.getByRole("button", { name: "Open spec", exact: true }).click();
+    assert.deepEqual(await opened(), ["viewer", specPath]);
+    await card.getByRole("button", { name: "Open spec in editor" }).click();
+    assert.deepEqual(await opened(), ["editor", specPath]);
+    await card.getByRole("button", { name: "Open increment" }).click();
+    assert.equal((await opened())[0], "editor");
     await card.getByRole("button", { name: "Change increment" }).waitFor();
     await card.getByRole("button", { name: "Unlink" }).waitFor();
 
-    const pills = page.locator("[data-thread-pull-request-pills]");
-    assert.equal(await pills.getByRole("listitem").count(), 2);
-    assert.equal(
-      await pills.getByRole("listitem").first().getAttribute("href"),
-      "https://github.com/anton-abyzov/specweave/pull/1962",
-    );
-    await pills.getByRole("button", { name: "Show 3 more" }).waitFor();
     await page.getByRole("button", { name: "Open folder" }).waitFor();
     assert.match(await page.locator("main").textContent(), /~\/Projects\/github\/specweave-umb/);
 
     const todo = page.locator('[data-thread-plan-card="todo"]');
     assert.equal((await todo.locator("[data-plan-count]").textContent())?.trim(), "3/5");
     assert.equal(await todo.getAttribute("data-thread-plan-card"), "todo");
+    // Without an editor the spec still opens in the viewer; a bound increment
+    // with no tasks says so instead of hiding.
+    const noEditor = page.getByTestId("no-editor-card");
+    assert.equal(
+      (await noEditor.locator("[data-plan-current]").textContent())?.trim(),
+      "No tasks yet",
+    );
+    assert.equal(await noEditor.locator("[data-plan-count]").count(), 0);
+    assert.equal(await noEditor.getByRole("button", { name: "Open increment" }).count(), 0);
+    assert.equal(await noEditor.getByRole("button", { name: "Open spec in editor" }).count(), 0);
+    await noEditor.getByRole("button", { name: "Open spec", exact: true }).click();
+    assert.deepEqual(await opened(), [
+      "viewer",
+      "/Users/dev/Projects/specweave/.specweave/increments/0996-connect-launches/spec.md",
+    ]);
+
+    const unplanned = page.locator("[data-plan-unplanned]");
+    assert.equal(await unplanned.count(), 1);
+    assert.equal(
+      (await unplanned.locator("[data-plan-current]").textContent())?.trim(),
+      "Changed code without an increment",
+    );
+    await unplanned.getByRole("button", { name: "Link increment" }).waitFor();
+    await unplanned.getByRole("button", { name: "No increment needed" }).waitFor();
+    assert.equal(await unplanned.getByRole("button", { name: "Unlink" }).count(), 0);
+
     const chips = page.locator("[data-plan-progress]");
     assert.deepEqual(
       await chips.evaluateAll((nodes) => nodes.map((node) => node.dataset.planProgress)),
-      ["2/5", "3/5"],
+      ["2/5", "0/0", "3/5"],
     );
+    assert.deepEqual(
+      await chips.evaluateAll((nodes) =>
+        nodes.map((node) => node.querySelector("[aria-hidden]:not(svg)")?.textContent),
+      ),
+      ["0930 · 2/5", "0996", "3/5"],
+    );
+    const filter = page.locator("[data-unplanned-filter]");
+    assert.equal(
+      (await filter.textContent())?.trim(),
+      "2 threads changed code without an increment",
+    );
+    assert.equal(await page.locator("[data-thread-unplanned]").count(), 1);
     await page.screenshot({ path: join(output, `plan-progress-${theme}.png`), fullPage: true });
 
-    await pills.getByRole("button", { name: "Show 3 more" }).click();
-    assert.equal(await pills.getByRole("listitem").count(), 5);
+    await filter.click();
+    assert.equal(await filter.getAttribute("aria-pressed"), "true");
+    assert.match((await filter.textContent()) ?? "", /Show all/);
     await todo.getByRole("button", { expanded: false }).click();
     await todo.getByRole("button", { name: "Link increment" }).waitFor();
     assert.equal(await todo.getByRole("button", { name: "Unlink" }).count(), 0);

@@ -37,11 +37,20 @@ describe("SpecWithCode orchestration provider instructions", () => {
     assert.notInclude(STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS, "everyMs");
     assert.notInclude(STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS, "workspaceStrategy");
     assert.notInclude(STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS, "<browser_automation>");
-    // About 350 tokens; it was about 1,900. The computer-use line routes
+    // About 475 tokens; it was about 1,900. The computer-use line routes
     // native-app requests that tool names alone did not; the machines line
     // separates launching on a machine, moving a running thread and continuing
-    // another machine's handoff-ready thread.
-    assert.isAtMost(STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS.length, 1_680);
+    // another machine's handoff-ready thread. The increment line (about 55
+    // tokens) asks SpecWeave projects to bind each launched worker.
+    assert.isAtMost(STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS.length, 1_910);
+  });
+
+  it("asks for an increment on launches in a SpecWeave project and a link to its spec", () => {
+    assert.include(
+      STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS,
+      'In a SpecWeave project, for feature work pass `increment` (NNNN, "new" or "none")',
+    );
+    assert.include(STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS, "`[NNNN](<specPath>)`");
   });
 
   it("separates launching on a machine from moving an existing thread", () => {

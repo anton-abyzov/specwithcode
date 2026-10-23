@@ -239,16 +239,19 @@ import SWCWire
     #expect(ProjectPinning.normalizePath("C:\\") == "c:\\")
   }
 
-  @Test func recentKeepsThirtyWithPinnedFirst() throws {
+  @Test func recentKeepsThirtyByStableActivityRatherThanPinnedOrStreamTime() throws {
     var threads = try (0..<35).map { index in
       try TestData.thread(id: "t\(index)", updatedAt: String(format: "2026-10-18T06:%02d:00.000Z", index))
+    }
+    for index in threads.indices {
+      threads[index].latestUserMessageAt = threads[index].updatedAt
     }
     threads[0].pinnedAt = Date()
     let output = ShellSummaries.build([machine("env", threads: threads, projects: [try TestData.project()])])
     #expect(output.recentThreads.count == 30)
-    #expect(output.recentThreads.first?.ref.threadId == "t0")
-    #expect(output.recentThreads[1].ref.threadId == "t34")
-    #expect(output.recentThreads.last?.ref.threadId == "t6")
+    #expect(output.recentThreads.first?.ref.threadId == "t34")
+    #expect(output.recentThreads[1].ref.threadId == "t33")
+    #expect(output.recentThreads.last?.ref.threadId == "t5")
   }
 
   @Test func projectCountsWorkAndUnread() throws {

@@ -29,6 +29,16 @@ export const incrementLinkRevisionAtom = Atom.make(0).pipe(
   Atom.withLabel("plan-progress:link-revision"),
 );
 const EMPTY = new Map<string, ThreadIncrementProgress>();
+const NO_THREADS: ReadonlySet<string> = new Set();
+
+/** What one progress query says about its threads. */
+export interface ThreadIncrementState {
+  /** The increment each bound thread works on, by thread id. */
+  readonly progress: ReadonlyMap<string, ThreadIncrementProgress>;
+  /** Threads that changed code with no increment, small fix or "No increment needed". */
+  readonly unplanned: ReadonlySet<string>;
+}
+const EMPTY_STATE: ThreadIncrementState = { progress: EMPTY, unplanned: NO_THREADS };
 
 /**
  * When to refresh one progress query. A busy thread moves many times a
@@ -90,13 +100,22 @@ export function makeProgressRefreshGate(options: {
   };
 }
 
-export function useThreadIncrementProgress(input: {
+interface ThreadIncrementQueryInput {
   readonly environmentId: EnvironmentId | null;
   readonly projectId: ProjectId | null;
   readonly threadIds: ReadonlyArray<ThreadId>;
   /** Changes when any of the threads moves, such as their newest updatedAt. */
   readonly activityKey?: string | null;
-}): ReadonlyMap<string, ThreadIncrementProgress> {
+}
+
+export function useThreadIncrementProgress(
+  input: ThreadIncrementQueryInput,
+): ReadonlyMap<string, ThreadIncrementProgress> {
+  return useThreadIncrementState(input).progress;
+}
+
+/** The progress of the threads, and which of them changed code without a plan. */
+export function useThreadIncrementState(input: ThreadIncrementQueryInput): ThreadIncrementState {
   const canRead = useEnvironmentScope(input.environmentId, AuthFilesystemReadScope);
   const threadIds = useMemo(
     () => [...new Set(input.threadIds)].toSorted().slice(0, THREAD_INCREMENT_PROGRESS_MAX_THREADS),
@@ -144,9 +163,14 @@ export function useThreadIncrementProgress(input: {
   }, [gate, activityKey, linkRevision]);
 
   return useMemo(() => {
-    const threads = query.data?.threads;
-    if (!threads || threads.length === 0) return EMPTY;
-    return new Map(threads.map((entry) => [entry.threadId, entry]));
+    const threads = query.data?.threads ?? [];
+    const unplanned = query.data?.unplanned ?? [];
+    if (threads.length === 0 && unplanned.length === 0) return EMPTY_STATE;
+    return {
+      progress:
+        threads.length === 0 ? EMPTY : new Map(threads.map((entry) => [entry.threadId, entry])),
+      unplanned: unplanned.length === 0 ? NO_THREADS : new Set<string>(unplanned),
+    };
   }, [query.data]);
 }
 
@@ -163,7 +187,7 @@ export function useProjectThreadIncrementProgress(
     readonly updatedAt: string;
     readonly archivedAt: string | null;
   }>,
-): ReadonlyMap<string, ThreadIncrementProgress> {
+): ThreadIncrementState {
   const local = useMemo(
     () =>
       threads
@@ -172,7 +196,7 @@ export function useProjectThreadIncrementProgress(
         .slice(0, THREAD_INCREMENT_PROGRESS_MAX_THREADS),
     [environmentId, threads],
   );
-  return useThreadIncrementProgress({
+  return useThreadIncrementState({
     environmentId,
     projectId: local[0]?.projectId ?? null,
     threadIds: local.map((thread) => thread.id),

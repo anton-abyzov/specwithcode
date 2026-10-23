@@ -15,7 +15,10 @@ import {
   type ServerProvider,
   type TaskRoutingDecision,
   type TaskRoutingSettings,
+  type ModelLanes,
+  type LearnedModelPreference,
 } from "@specweave-studio/contracts";
+import { ProviderFallbackEnv } from "../orchestration-v2/ProviderFallbackWorker.ts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -153,6 +156,9 @@ interface Harness {
   /** The calling thread coordinates the project. */
   readonly coordinator?: boolean;
   readonly parentModel?: typeof opus;
+  readonly modelLanes?: ModelLanes;
+  readonly learnedModelPreferences?: ReadonlyArray<LearnedModelPreference>;
+  readonly env?: Readonly<Record<string, string | undefined>>;
 }
 
 type Dispatched = {
@@ -176,6 +182,10 @@ const run = <A, E>(
     const settings = {
       ...DEFAULT_SERVER_SETTINGS,
       taskRouting: { ...DEFAULT_TASK_ROUTING_SETTINGS, ...harness.policy },
+      ...(harness.modelLanes !== undefined ? { modelLanes: harness.modelLanes } : {}),
+      ...(harness.learnedModelPreferences !== undefined
+        ? { learnedModelPreferences: harness.learnedModelPreferences }
+        : {}),
     };
     const layer = Layer.mergeAll(
       NodeServices.layer,
@@ -254,11 +264,15 @@ const run = <A, E>(
       }),
       Layer.mock(SecretRequests.SecretRequests)({}),
       Layer.mock(ScheduledTaskService.ScheduledTaskService)({}),
+      Layer.succeed(ProviderFallbackEnv, harness.env ?? {}),
     );
     return yield* Effect.gen(function* () {
       const service = yield* OrchestratorMcpService.OrchestratorMcpService;
       return yield* use(service, dispatched);
-    }).pipe(Effect.provide(OrchestratorMcpService.layer.pipe(Layer.provide(layer))));
+    }).pipe(
+      Effect.provide(OrchestratorMcpService.layer.pipe(Layer.provide(layer))),
+      Effect.provideService(ProviderFallbackEnv, harness.env ?? {}),
+    );
   });
 
 const delegated = (dispatched: Ref.Ref<ReadonlyArray<Dispatched>>) =>
@@ -418,6 +432,135 @@ describe("OrchestratorMcpService task routing", () => {
         assert.include(request.task, "speech-to-text (ASR)");
         assert.include(request.task, "the text model never reads audio");
       }),
+    ),
+  );
+
+
+  it.effect("routes complex work to the first model in the complex lane", () =>
+    run(
+      {
+        modelLanes: {
+          complex: [{ instanceId: claude, model: "claude-opus-5-5" }],
+          routine: [{ instanceId: claude, model: "claude-haiku-5-5" }],
+        },
+      },
+      (service, dispatched) =>
+        Effect.gen(function* () {
+          yield* service.delegateTask(scope, {
+            task: "Design an end-to-end distributed consensus architecture and evaluate trade-offs.",
+            mode: "async",
+            clientRequestId: "route-complex-lane",
+          });
+          const request = yield* delegated(dispatched);
+          assert.equal(request.modelSelection?.model, "claude-opus-5-5");
+          assert.equal(request.routing?.lane, "complex");
+        }),
+    ),
+  );
+
+  it.effect("routes routine work to the first model in the routine lane", () =>
+    run(
+      {
+        modelLanes: {
+          complex: [{ instanceId: claude, model: "claude-opus-5-5" }],
+          routine: [{ instanceId: claude, model: "claude-haiku-5-5" }],
+        },
+      },
+      (service, dispatched) =>
+        Effect.gen(function* () {
+          yield* service.delegateTask(scope, {
+            task: "Fix a typo in README.md and update changelog.",
+            mode: "async",
+            clientRequestId: "route-routine-lane",
+          });
+          const request = yield* delegated(dispatched);
+          assert.equal(request.modelSelection?.model, "claude-haiku-5-5");
+          assert.equal(request.routing?.lane, "routine");
+        }),
+    ),
+  );
+
+  it.effect("respects caller explicit taskLane hint", () =>
+    run(
+      {
+        modelLanes: {
+          complex: [{ instanceId: claude, model: "claude-opus-5-5" }],
+          routine: [{ instanceId: claude, model: "claude-haiku-5-5" }],
+        },
+      },
+      (service, dispatched) =>
+        Effect.gen(function* () {
+          yield* service.delegateTask(scope, {
+            task: "Brief one-line update.",
+            taskLane: "complex",
+            mode: "async",
+            clientRequestId: "route-hinted-lane",
+          });
+          const request = yield* delegated(dispatched);
+          assert.equal(request.modelSelection?.model, "claude-opus-5-5");
+          assert.equal(request.routing?.lane, "complex");
+          assert.equal(request.routing?.confidence, "hint");
+        }),
+    ),
+  );
+
+  it.effect("skips an exhausted provider in the lane and advances to the next available model", () =>
+    run(
+      {
+        modelLanes: {
+          complex: [],
+          routine: [
+            { instanceId: copilot, model: "claude-opus-5.5" },
+            { instanceId: claude, model: "claude-haiku-5-5" },
+          ],
+        },
+        env: { STUDIO_SIMULATE_USAGE_LIMIT: "copilot-0889" },
+      },
+      (service, dispatched) =>
+        Effect.gen(function* () {
+          yield* service.delegateTask(scope, {
+            task: "Fix a typo in README.md and update changelog.",
+            mode: "async",
+            clientRequestId: "route-skip-exhausted",
+          });
+          const request = yield* delegated(dispatched);
+          assert.equal(request.modelSelection?.model, "claude-haiku-5-5");
+          assert.equal(request.routing?.lane, "routine");
+          assert.isTrue(request.routing?.skipped && request.routing.skipped.length > 0);
+        }),
+    ),
+  );
+
+  it.effect("applies learned model preferences over default lane selection", () =>
+    run(
+      {
+        modelLanes: {
+          complex: [{ instanceId: claude, model: "claude-opus-5-5" }],
+          routine: [{ instanceId: claude, model: "claude-haiku-5-5" }],
+        },
+        learnedModelPreferences: [
+          {
+            id: "pref-custom-1",
+            keywords: ["docs", "readme"],
+            action: {
+              kind: "prefer",
+              model: { instanceId: claude, model: "claude-sonnet-5-5" },
+            },
+            createdAt: "2026-10-22T00:00:00.000Z",
+          },
+        ],
+      },
+      (service, dispatched) =>
+        Effect.gen(function* () {
+          yield* service.delegateTask(scope, {
+            task: "Update the project readme docs with setup instructions.",
+            mode: "async",
+            clientRequestId: "route-learned-pref",
+          });
+          const request = yield* delegated(dispatched);
+          assert.equal(request.modelSelection?.model, "claude-sonnet-5-5");
+          assert.equal(request.routing?.preferenceId, "pref-custom-1");
+        }),
     ),
   );
 

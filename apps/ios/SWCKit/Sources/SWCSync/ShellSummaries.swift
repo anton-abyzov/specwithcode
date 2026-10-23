@@ -19,8 +19,9 @@ public enum ShellSummaries {
     public var nickname: String?
     /// When the phone last had the machine connected.
     public var lastSeenAt: Date?
+    public var providers: [ServerProviderSummary]
 
-    public init(environmentId: String, label: String, online: Bool, snapshot: ShellSnapshot?, projectOrder: SidebarProjectOrder? = nil, scratchWorkspaceRoot: String? = nil, nickname: String? = nil, lastSeenAt: Date? = nil) {
+    public init(environmentId: String, label: String, online: Bool, snapshot: ShellSnapshot?, projectOrder: SidebarProjectOrder? = nil, scratchWorkspaceRoot: String? = nil, nickname: String? = nil, lastSeenAt: Date? = nil, providers: [ServerProviderSummary] = []) {
       self.environmentId = environmentId
       self.label = label
       self.online = online
@@ -29,6 +30,7 @@ public enum ShellSummaries {
       self.scratchWorkspaceRoot = scratchWorkspaceRoot
       self.nickname = nickname
       self.lastSeenAt = lastSeenAt
+      self.providers = providers
     }
 
     public var displayName: String {
@@ -76,7 +78,7 @@ public enum ShellSummaries {
       for thread in snapshot.threads where isTopLevel(thread, coordinatorIds: coordinatorIds) {
         // A handed-off copy is listed through its continuation when that is known.
         if let next = thread.movedTo, next.isHandoff, listed.contains("\(next.environmentId ?? machine.environmentId)/\(next.threadId)") { continue }
-        var summary = threadSummary(thread, environmentId: machine.environmentId, projectTitle: titles[thread.projectId], machineLabel: name, machineOnline: machine.online)
+        var summary = threadSummary(thread, environmentId: machine.environmentId, projectTitle: titles[thread.projectId], machineLabel: name, machineOnline: machine.online, providers: machine.providers)
         summary.placement = placement(thread, on: machine, directory: directory)
         byProject[thread.projectId, default: []].append(summary)
         all.append(summary)
@@ -123,7 +125,10 @@ public enum ShellSummaries {
       if order != .orderedSame { return order == .orderedAscending }
       return (a.ref.environmentId, a.ref.projectId) < (b.ref.environmentId, b.ref.projectId)
     }
-    let recent = Array(sortThreads(all).prefix(recentLimit))
+    let recent = Array(all.sorted {
+      if $0.activityAt != $1.activityAt { return $0.activityAt > $1.activityAt }
+      return ($0.ref.environmentId, $0.ref.threadId) < ($1.ref.environmentId, $1.ref.threadId)
+    }.prefix(recentLimit))
     return Output(aide: aide ?? archivedAide, projects: projects, threadsByProject: threadsByProject, recentThreads: recent)
   }
 
@@ -234,7 +239,7 @@ public enum ShellSummaries {
   // MARK: - Threads
 
   public static func activity(_ thread: ThreadShell) -> ThreadActivity {
-    if thread.pendingRuntimeRequest != nil { return .needsYou }
+    if thread.pendingRuntimeRequest != nil || thread.hasActionableProposedPlan { return .needsYou }
     if thread.status.isWorking || thread.activityRunStatus?.isWorking == true { return .working }
     if thread.status == .failed { return .failed }
     return .idle
@@ -256,7 +261,7 @@ public enum ShellSummaries {
     return nil
   }
 
-  public static func threadSummary(_ thread: ThreadShell, environmentId: String, projectTitle: String?, machineLabel: String, machineOnline: Bool) -> ThreadSummary {
+  public static func threadSummary(_ thread: ThreadShell, environmentId: String, projectTitle: String?, machineLabel: String, machineOnline: Bool, providers: [ServerProviderSummary] = []) -> ThreadSummary {
     let activity = activity(thread)
     let working = activity == .working || activity == .needsYou
     let title = thread.title.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -274,7 +279,10 @@ public enum ShellSummaries {
       isUnread: thread.isUnread,
       machineLabel: machineLabel,
       machineOnline: machineOnline,
-      planProgress: thread.planProgress.flatMap { $0.total > 0 ? PlanProgress(completed: $0.completed, total: $0.total) : nil }
+      planProgress: thread.planProgress.flatMap { $0.total > 0 ? PlanProgress(completed: $0.completed, total: $0.total) : nil },
+      activityAt: [thread.createdAt, thread.latestRunRequestedAt, thread.latestUserMessageAt].compactMap { $0 }.max(),
+      identity: ThreadIdentity(selection: thread.modelIdentity?.current ?? thread.modelSelection, providers: providers),
+      waitsOnUser: (thread.heldQueuedCount ?? 0) > 0 || (!thread.isSettled && thread.reportedBlocker?.isEmpty == false)
     )
   }
 

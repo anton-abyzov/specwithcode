@@ -440,6 +440,55 @@ describe("resolveTaskRouting", () => {
     ).toMatchObject({ moved: false, selection: opus });
   });
 
+  it("reports local and paid-router models; paid-router follows the paid-API rule", () => {
+    const pi = (billing?: ServerProviderModel["billing"]) =>
+      provider(
+        "pi",
+        "pi",
+        [
+          model("gemini-3.8-flash", "Gemini 3.8 Flash", {
+            capabilities: null,
+            ...(billing === undefined ? {} : { billing }),
+          }),
+        ],
+        { auth: { status: "authenticated", type: "pi" } },
+        null,
+      );
+    const billing = (entry: ServerProvider) => billingOf(entry, entry.models[0]);
+    expect(billing(pi("local"))).toBe("local");
+    expect(billing(pi("paid-router"))).toBe("paid-router");
+    expect(billing(pi())).toBe("unknown");
+    expect(billing(pi("api"))).toBe("api");
+    // A sign-in billed per token stays paid whatever the model says.
+    expect(billing({ ...pi("local"), auth: { status: "authenticated", type: "api-key" } })).toBe(
+      "api",
+    );
+    const flash = { instanceId: ProviderInstanceId.make("pi"), model: "gemini-3.8-flash" };
+    const policy = {
+      ...auto,
+      excludedProviders: ["claudeAgent", "copilot-0889", "acpRegistry_copilot"].map((id) =>
+        ProviderInstanceId.make(id),
+      ),
+    };
+    const routed = (entry: ServerProvider, paidApi: TaskRoutingSettings["paidApi"]) =>
+      route("Translate the emails", { providers: [claude, entry], policy: { ...policy, paidApi } });
+    expect(routed(pi("paid-router"), "never")).toMatchObject({ moved: false, selection: opus });
+    expect(routed(pi("paid-router"), "never").reason).toContain("pi: billed per token");
+    expect(routed(pi("paid-router"), "standard")).toMatchObject({
+      moved: true,
+      selection: flash,
+      billing: "api",
+      modelBilling: "paid-router",
+    });
+    expect(routed(pi("local"), "never")).toMatchObject({
+      moved: true,
+      selection: flash,
+      billing: "unknown",
+      modelBilling: "local",
+    });
+    expect(routed(pi(), "never")).toMatchObject({ moved: false, selection: opus });
+  });
+
   it("keeps a baseline whose tier is unknown", () => {
     const sol = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-6.1-sol" };
     expect(route("Translate the emails", { baseline: sol })).toMatchObject({
