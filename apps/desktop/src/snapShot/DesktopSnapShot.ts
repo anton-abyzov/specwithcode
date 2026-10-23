@@ -445,7 +445,6 @@ async function captureSource({
       ({ source, png } = await captureMacWindowSnapshot(
         active,
         imageTempPath,
-        snapShotThumbnailSize(active),
       ));
       imageTempReady = true;
     } else if (mode === "direct") {

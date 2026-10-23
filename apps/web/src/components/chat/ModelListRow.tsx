@@ -16,10 +16,13 @@ import { modelPickerModelKey } from "./modelPickerKeys";
 import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
 import { ModelRowAvailability } from "./ModelUsage";
 import type { AvailabilityText } from "../../studio/modelAvailability";
+import type { ServerProviderModel } from "@specweave-studio/contracts";
+import { describeModelFacts } from "./HarnessDescription";
 
 export const ModelListRow = memo(function ModelListRow(props: {
   index: number;
   model: ModelEsque;
+  runtimeModel?: ServerProviderModel | undefined;
   /** Instance the model belongs to — the routing key used in combobox values. */
   instanceId: ProviderInstanceId;
   /** Driver kind of the instance — used for the provider icon glyph. */
@@ -132,6 +135,14 @@ export const ModelListRow = memo(function ModelListRow(props: {
             ) : null}
           </div>
         )}
+        {props.runtimeModel ? (
+          <p
+            className="mt-1 truncate text-2xs leading-snug text-muted-foreground"
+            title={describeModelFacts(props.runtimeModel)}
+          >
+            {describeModelFacts(props.runtimeModel)}
+          </p>
+        ) : null}
       </div>
 
       <div className="flex shrink-0 items-center gap-1.5">

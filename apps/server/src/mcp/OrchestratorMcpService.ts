@@ -505,7 +505,7 @@ function pageIncludesTerminalTaskResult(input: {
   >;
   readonly maxChars: number;
 }): boolean {
-  const transfer = input.parent.contextTransfers.find(
+  const transfer = input.parent.contextTransfers.findLast(
     (transfer) =>
       transfer.type === "subagent_result" &&
       transfer.sourceThreadId === input.target.thread.id &&
@@ -1623,7 +1623,12 @@ const make = Effect.gen(function* () {
         target: routedTarget(decision, input.requested),
         providers: input.providers,
       }).pipe(Effect.option);
-      if (Option.isNone(moved))
+      if (Option.isNone(moved)) {
+        if (decision.lane !== undefined)
+          return yield* failure(
+            "model_unavailable",
+            `Could not start the selected ${decision.lane} model ${decision.selection.model}. The lane's baseline was not substituted; choose compatible options or update the model lane.`,
+          );
         return {
           target: input.baseline,
           routing: {
@@ -1634,6 +1639,7 @@ const make = Effect.gen(function* () {
             reason: `Could not start on ${decision.selection.model}: kept ${decision.baseline.model}.`,
           },
         };
+      }
       const modelSelection = routedSelection(decision, moved.value.modelSelection, input.providers);
       return {
         target: { ...moved.value, modelSelection },
@@ -1652,6 +1658,9 @@ const make = Effect.gen(function* () {
     waitTimedOut = false,
     acknowledgeTerminal = false,
     acknowledgementOperation = "task-status-acknowledge",
+    observedResultTransferId?:
+      | OrchestrationV2ThreadProjection["contextTransfers"][number]["id"]
+      | null,
   ): Effect.Effect<OrchestratorMcpDelegateTaskResult, OrchestratorMcpFailure> =>
     Effect.gen(function* () {
       yield* requireCapability(scope);
@@ -1741,7 +1750,7 @@ const make = Effect.gen(function* () {
               ? resultTransfers.find((transfer) => transfer.sourcePoint.runId === undefined)
               : undefined) ??
             null);
-      const resultTransfer = resultTransfers[0] ?? null;
+      const resultTransfer = resultTransfers.at(-1) ?? null;
       const terminalStatus = terminalRun === undefined ? null : taskStatusForRun(terminalRun);
       const response = {
         taskId: task.id,
@@ -1791,6 +1800,10 @@ const make = Effect.gen(function* () {
             }),
             parentThreadId: scope.thread.threadId,
             taskId,
+            expectedResultContextTransferId:
+              observedResultTransferId !== undefined
+                ? observedResultTransferId
+                : (resultTransfer?.id ?? null),
             observedByRunId:
               observingRun?.providerInstanceId === scope.thread.providerInstanceId
                 ? observingRun.id
@@ -2895,7 +2908,7 @@ const make = Effect.gen(function* () {
           task !== undefined &&
           (input.textOffset ?? 0) === 0
         ) {
-          const transfer = parent.contextTransfers.find(
+          const transfer = parent.contextTransfers.findLast(
             (transfer) =>
               transfer.type === "subagent_result" &&
               transfer.sourceThreadId === target.thread.id &&
@@ -2926,6 +2939,7 @@ const make = Effect.gen(function* () {
               false,
               true,
               "thread-read-acknowledge",
+              transfer?.id ?? null,
             );
           }
         }

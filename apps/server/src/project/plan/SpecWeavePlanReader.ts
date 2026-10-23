@@ -1,4 +1,3 @@
-import * as NodeOs from "node:os";
 import { sha256 } from "../../nodeCrypto.ts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -12,7 +11,7 @@ import {
   type ProjectExternalPlan,
   type ProjectPlanAuthority,
 } from "../../../../../packages/contracts/src/projectPlan.ts";
-import { exposesProtectedLocation } from "../ProjectEnvironmentPaths.ts";
+import { exposesProtectedRealPath } from "../ProjectEnvironmentPaths.ts";
 
 const META_EVENTS = new Set(["note", "session", "handoff", "pickup"]);
 const LedgerEntry = Schema.Struct({
@@ -148,7 +147,7 @@ export const readSpecWeavePlan = (input: {
     const approved = yield* Effect.forEach(grants, (grant) =>
       Effect.gen(function* () {
         const canonical = yield* fs.realPath(grant);
-        if (canonical !== grant || exposesProtectedLocation(canonical, NodeOs.homedir(), path))
+        if (canonical !== grant || (yield* exposesProtectedRealPath(canonical, path)))
           return yield* invalid();
         return canonical;
       }),

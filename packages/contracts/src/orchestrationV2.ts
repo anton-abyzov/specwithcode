@@ -3234,6 +3234,8 @@ export const OrchestrationV2Command = Schema.Union([
     parentThreadId: ThreadId,
     taskId: NodeId,
     observedByRunId: Schema.NullOr(RunId),
+    /** The result actually read; a delayed observation cannot consume a newer result. */
+    expectedResultContextTransferId: Schema.optional(Schema.NullOr(ContextTransferId)),
   }),
   Schema.Struct({
     type: Schema.Literal("delegated_task.completion-delivery.dispose"),

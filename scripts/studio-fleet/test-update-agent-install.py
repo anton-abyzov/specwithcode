@@ -42,6 +42,19 @@ class InstallNow(AgentCase):
         self.on_sleep = lambda: seen.append(self.state()['message'])
         return seen
 
+    def test_only_forced_snapshots_pass_their_request_to_the_verified_helper(self):
+        self.fake.add_release()
+        self.request()
+        self.assertEqual(self.run_agent(), 0)
+        argv = self.snapshot_calls()[0]['argv']
+        self.assertEqual(argv[argv.index('--request') + 1], self.REQUESTED)
+
+    def test_automatic_and_normal_snapshots_do_not_request_the_held_shortcut(self):
+        self.fake.add_release()
+        self.request(mode='normal')
+        self.assertEqual(self.run_agent(), 0)
+        self.assertNotIn('--request', self.snapshot_calls()[0]['argv'])
+
     def test_refused_twice_then_idle_installs_in_the_same_pass(self):
         self.fake.add_release()
         self.request()

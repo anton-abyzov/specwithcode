@@ -227,8 +227,9 @@ export const make = Effect.gen(function* () {
         return Effect.gen(function* () {
           yield* fileSystem.writeFile(tempPath, value);
           yield* fileSystem.chmod(tempPath, 0o600);
+          // Rename preserves the private inode's mode. A concurrent sign-out
+          // can delete it immediately afterward, so do not touch the final path.
           yield* fileSystem.rename(tempPath, secretPath);
-          yield* fileSystem.chmod(secretPath, 0o600);
         }).pipe(
           Effect.catch((cause) =>
             fileSystem.remove(tempPath).pipe(

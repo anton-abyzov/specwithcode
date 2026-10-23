@@ -6,6 +6,7 @@ import {
 import type { EnvironmentId } from "@specweave-studio/contracts";
 import { useSyncExternalStore } from "react";
 
+import { toastManager } from "~/components/ui/toast";
 import { readPreviewStreamAccess } from "~/state/previewStream";
 
 interface WebKitVideo {
@@ -19,8 +20,18 @@ interface ActivePictureInPicture {
 }
 
 // Owns its stream outside React so the floating window survives panel unmounts.
+export const SERVER_PICTURE_IN_PICTURE_STARTUP_TIMEOUT_MS = 10_000;
+
 let active: ActivePictureInPicture | null = null;
 const listeners = new Set<() => void>();
+// Native entry is not cancellable. Serialize entry and exit so a late OS reply
+// from a closed preview cannot displace the replacement's floating window.
+let nativePresentationChange: Promise<unknown> = Promise.resolve();
+const changeNativePresentation = <T>(run: () => Promise<T>): Promise<T> => {
+  const change = nativePresentationChange.then(run);
+  nativePresentationChange = change.catch(() => undefined);
+  return change;
+};
 
 const emit = () => {
   for (const listener of listeners) listener();
@@ -91,16 +102,33 @@ export async function openServerPictureInPicture(input: {
   let stopped = false;
   let refusals = 0;
   let retryTimer: ReturnType<typeof setTimeout> | null = null;
+  let cancelStartup = () => {};
+  let removeMetadataListeners = () => {};
+  const interrupted = new Promise<void>((resolve) => {
+    cancelStartup = resolve;
+  });
+  const leaveOwnedPresentation = async () => {
+    // An old startup can finish after a replacement. Never close that replacement.
+    if (document.pictureInPictureElement === video) {
+      await document.exitPictureInPicture().catch(() => undefined);
+    } else if (video.webkitPresentationMode === "picture-in-picture") {
+      video.webkitSetPresentationMode?.("inline");
+    }
+  };
   const onLeave = () => {
     if (active === current) closeServerPictureInPicture();
+  };
+  const failLivePreview = (description: string) => {
+    if (stopped) return;
+    onLeave();
+    toastManager.add({ type: "error", title: "Live preview disconnected", description });
   };
   const connect = async (refresh: boolean) => {
     const access = await readPreviewStreamAccess(input.environmentId, refresh);
     if (stopped) return;
-    if (!access) {
-      closeServerPictureInPicture();
-      return;
-    }
+    if (!access)
+      throw new Error("Live preview access is unavailable. Reopen the preview and try again.");
+    client?.stop();
     client = createPreviewStreamClient(
       {
         access,
@@ -120,12 +148,25 @@ export async function openServerPictureInPicture(input: {
         onUnauthorized: () => {
           if (stopped) return;
           if (refusals >= 5) {
-            onLeave();
+            failLivePreview("The preview could not renew access. Reopen the preview to reconnect.");
             return;
           }
-          retryTimer = setTimeout(() => void connect(true), 1_000 * 2 ** refusals++);
+          if (retryTimer !== null) clearTimeout(retryTimer);
+          retryTimer = setTimeout(
+            () => {
+              retryTimer = null;
+              void connect(true).catch(() =>
+                failLivePreview(
+                  "The preview could not renew access. Reopen the preview to reconnect.",
+                ),
+              );
+            },
+            1_000 * 2 ** refusals++,
+          );
         },
         onGone: onLeave,
+        onHostSetup: () =>
+          failLivePreview("The browser host needs setup. Open the preview panel for setup steps."),
       },
     );
   };
@@ -136,17 +177,16 @@ export async function openServerPictureInPicture(input: {
   const current: ActivePictureInPicture = {
     key: serverPictureInPictureKey(input.threadId, input.tabId),
     stop: () => {
+      void changeNativePresentation(leaveOwnedPresentation).catch(() => undefined);
+      if (stopped) return;
       stopped = true;
+      cancelStartup();
+      removeMetadataListeners();
       if (retryTimer !== null) clearTimeout(retryTimer);
       client?.stop();
       painter.stop();
       video.removeEventListener("leavepictureinpicture", onLeave);
       video.removeEventListener("webkitpresentationmodechanged", onPresentationMode);
-      if (document.pictureInPictureElement === video) {
-        void document.exitPictureInPicture().catch(() => undefined);
-      } else if (video.webkitPresentationMode === "picture-in-picture") {
-        video.webkitSetPresentationMode?.("inline");
-      }
       for (const track of stream.getTracks()) track.stop();
       video.srcObject = null;
       video.remove();
@@ -155,23 +195,61 @@ export async function openServerPictureInPicture(input: {
   active = current;
   emit();
 
+  let timeout: ReturnType<typeof setTimeout> | null = null;
+  const timedOut = new Promise<never>((_, reject) => {
+    timeout = setTimeout(
+      () =>
+        reject(
+          new Error(
+            "The live preview did not become ready within 10 seconds. Try opening it again.",
+          ),
+        ),
+      SERVER_PICTURE_IN_PICTURE_STARTUP_TIMEOUT_MS,
+    );
+  });
+  const wait = <T>(operation: Promise<T>) => Promise.race([operation, interrupted, timedOut]);
   try {
-    await video.play();
+    await wait(video.play());
+    if (stopped) return;
     if (video.readyState < HTMLMediaElement.HAVE_METADATA) {
-      await new Promise((resolve) =>
-        video.addEventListener("loadedmetadata", resolve, { once: true }),
+      await wait(
+        new Promise<void>((resolve, reject) => {
+          const loaded = () => resolve();
+          const failed = () =>
+            reject(new Error("The live preview video could not be loaded. Try opening it again."));
+          removeMetadataListeners = () => {
+            video.removeEventListener("loadedmetadata", loaded);
+            video.removeEventListener("error", failed);
+          };
+          video.addEventListener("loadedmetadata", loaded, { once: true });
+          video.addEventListener("error", failed, { once: true });
+        }),
       );
     }
+    if (stopped) return;
     if (document.pictureInPictureEnabled && typeof video.requestPictureInPicture === "function") {
       video.addEventListener("leavepictureinpicture", onLeave);
-      await video.requestPictureInPicture();
-    } else {
+      await wait(
+        changeNativePresentation(async () => {
+          if (stopped) return;
+          await video.requestPictureInPicture();
+          if (stopped) await leaveOwnedPresentation();
+        }),
+      );
+    } else if (typeof video.webkitSetPresentationMode === "function") {
       video.addEventListener("webkitpresentationmodechanged", onPresentationMode);
-      video.webkitSetPresentationMode?.("picture-in-picture");
+      video.webkitSetPresentationMode("picture-in-picture");
+    } else {
+      throw new Error("This browser does not support a floating live preview.");
     }
+    if (stopped) return;
+    await wait(connect(false));
   } catch (error) {
+    if (stopped) return;
     onLeave();
     throw error;
+  } finally {
+    if (timeout !== null) clearTimeout(timeout);
+    removeMetadataListeners();
   }
-  if (active === current) void connect(false);
 }

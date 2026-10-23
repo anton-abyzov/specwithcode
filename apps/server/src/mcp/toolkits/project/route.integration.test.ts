@@ -642,7 +642,7 @@ it.effect("reports an interaction-mode escalation as one", () => {
   );
 });
 
-it.effect("never lets an agent widen the folders or change the kind routing trusts", () => {
+it.effect("never lets an agent widen the folders, repositories or kind routing trusts", () => {
   const w = world();
   return run(
     w,
@@ -655,7 +655,28 @@ it.effect("never lets an agent widen the folders or change the kind routing trus
           environment: { additionalFolders: [w.root], repositories: [] },
         },
       });
-      expect(String(widened.message)).toContain("Approved folders are the user's to change");
+      expect(String(widened.message)).toContain(
+        "Agents cannot change approved folders or repositories themselves",
+      );
+      expect(String(widened.message)).toContain(
+        "call studio_project_request with action add_folder and folder",
+      );
+      // Appending a repository widens what worktree threads reach, so it needs the user too,
+      // even when the approved folders are sent back unchanged.
+      const aideFolders = w.projects.get("aide")!.workspaceSettings!.environment.additionalFolders;
+      const repository = yield* w.call("studio_project_update", {
+        projectId: "aide",
+        workspaceSettings: {
+          expectedRevision: 0,
+          environment: {
+            additionalFolders: aideFolders,
+            repositories: [{ id: "x", url: "https://github.com/a/b", localPath: null }],
+          },
+        },
+      });
+      expect(repository).toMatchObject({ code: "invalid_request" });
+      expect(String(repository.message)).toContain("approved folders or repositories");
+      expect(w.projects.get("aide")!.workspaceSettings!.environment.repositories).toHaveLength(0);
       const promoted = yield* w.call("studio_project_update", {
         projectId: "specweave",
         workspaceSettings: { expectedRevision: 0, kind: "personal" },

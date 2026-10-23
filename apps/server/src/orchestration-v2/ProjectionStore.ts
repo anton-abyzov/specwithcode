@@ -594,7 +594,9 @@ function needsRecovery(
           (transfer) =>
             transfer.type === "subagent_result" &&
             transfer.sourceThreadId === projection.thread.id &&
-            transfer.targetThreadId === parentThreadId,
+            transfer.targetThreadId === parentThreadId &&
+            (transfer.sourcePoint.runId === undefined ||
+              transfer.sourcePoint.runId === projection.runs.at(-1)?.id),
         )
       );
     }
@@ -3808,6 +3810,12 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                     WHERE source_thread_id = child.thread_id
                       AND target_thread_id = json_extract(child.payload_json, '$.lineage.parentThreadId')
                       AND type = 'subagent_result'
+                      AND (json_extract(payload_json, '$.sourcePoint.runId') IS NULL
+                        OR json_extract(payload_json, '$.sourcePoint.runId') = (
+                          SELECT run_id FROM orchestration_v2_projection_runs
+                          WHERE thread_id = child.thread_id
+                          ORDER BY ordinal DESC LIMIT 1
+                        ))
                   )
                   ELSE 0 END
               `;

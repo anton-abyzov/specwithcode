@@ -14,6 +14,19 @@ export interface PhonePairingAddress {
   readonly hint: PhoneNetworkHint;
 }
 
+/** A QR must never silently move to another route or outlive its credential. */
+export function phonePairingCodeState(input: {
+  readonly createdAddress: PhonePairingAddress;
+  readonly currentAddress: PhonePairingAddress | null;
+  readonly expiresAt: number;
+  readonly now: number;
+}): "ready" | "expired" | "route-changed" {
+  if (input.currentAddress?.httpBaseUrl !== input.createdAddress.httpBaseUrl) {
+    return "route-changed";
+  }
+  return input.expiresAt <= input.now ? "expired" : "ready";
+}
+
 function hintFor(endpoint: AdvertisedEndpoint | null, httpBaseUrl: string): PhoneNetworkHint {
   if (endpoint !== null) {
     if (isTailscaleHttpsEndpoint(endpoint) || endpoint.reachability === "private-network") {
@@ -87,6 +100,6 @@ export function describePhoneNetworkHint(hint: PhoneNetworkHint): string {
     case "same-network":
       return "Your iPhone needs to be on the same Wi-Fi as this computer.";
     case "anywhere":
-      return "Your iPhone can reach this address from any network.";
+      return "Your iPhone must be able to open this address. Keep this computer awake and online.";
   }
 }

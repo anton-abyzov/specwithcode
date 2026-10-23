@@ -275,6 +275,18 @@ it.effect("recovers terminal subagent results until their cross-thread transfer 
     assert.isDefined(archivedChild);
     assert.deepEqual(yield* projections.getRecoveryThreadIds("subagent-results"), [archivedChild]);
     assert.deepEqual(yield* projections.getUnreadableThreadIds(), []);
+    // Legacy transfers without a source run stay final. Concrete prior results
+    // must not hide a newer continuation that finished before the service booted.
+    yield* sql`
+      UPDATE orchestration_v2_projection_context_transfers
+      SET payload_json = json_set(payload_json, '$.sourcePoint.runId', ${`run:${completed}:1`})
+      WHERE context_transfer_id = ${transferId}
+    `;
+    yield* createRun(completed, "completed", { ordinal: 2 });
+    assert.deepEqual(
+      new Set(yield* projections.getRecoveryThreadIds("subagent-results")),
+      new Set([completed, archivedChild]),
+    );
     yield* sql`
       UPDATE orchestration_v2_projection_context_transfers SET payload_json = '{}'
       WHERE context_transfer_id = ${transferId}

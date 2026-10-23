@@ -23,6 +23,7 @@ import {
   speedCostSegments,
   tokenTypeSegments,
 } from "./usageBreakdown";
+import { costText, type UsagePinnedPeriod } from "./usageFilters";
 import { PROVIDER_PRESENTATION } from "./usageProviders";
 
 export interface UsageChartWindow {
@@ -43,6 +44,7 @@ export function UsageModelDialog({
   environments,
   metric,
   chartWindow,
+  pinnedPeriod = null,
   onSetPrice,
   onClose,
 }: {
@@ -50,6 +52,7 @@ export function UsageModelDialog({
   readonly environments: readonly EnvironmentUsageStatus[];
   readonly metric: UsageChartMetric;
   readonly chartWindow: UsageChartWindow;
+  readonly pinnedPeriod?: UsagePinnedPeriod | null;
   readonly onSetPrice: () => void;
   readonly onClose: () => void;
 }) {
@@ -57,19 +60,27 @@ export function UsageModelDialog({
     () =>
       mergeAnsweredUsage(
         environments,
-        (bucket) => bucket.provider === model.provider && bucket.model === model.model,
+        (bucket) =>
+          bucket.provider === model.provider &&
+          bucket.model === model.model &&
+          (pinnedPeriod === null ||
+            (pinnedPeriod.kind === "day"
+              ? bucket.day === pinnedPeriod.day
+              : bucket.hourStart === pinnedPeriod.hourStart)),
       ),
-    [environments, model.provider, model.model],
+    [environments, model.provider, model.model, pinnedPeriod],
   );
   const providers = useMemo(() => [model.provider], [model.provider]);
   const presentation = PROVIDER_PRESENTATION[model.provider];
   const costUnknown = isModelCostUnknown(model);
+  const partialCost = model.unpricedRecords > 0;
+  const formatCost = (value: number) => `${partialCost ? "≥ " : ""}${formatUsd(value)}`;
   const hitRate = cacheHitRate(model);
   const perMillion = costPerMillionTokens(model);
   const stats = [
-    { label: "Cost", value: costUnknown ? "Unpriced" : formatUsd(model.costUsd) },
+    { label: "API estimate", value: costText(model).text },
     { label: "Tokens", value: formatTokens(model.totalTokens) },
-    perMillion === null ? null : { label: "Per 1M tokens", value: formatUsd(perMillion) },
+    perMillion === null ? null : { label: "Per 1M priced tokens", value: formatUsd(perMillion) },
     hitRate === null ? null : { label: "Cache hit", value: formatPercent(hitRate) },
   ].filter((stat) => stat !== null);
 
@@ -92,7 +103,8 @@ export function UsageModelDialog({
           </div>
           <DialogDescription>
             {presentation.label}
-            {costUnknown ? "" : ` · ${formatPercent(model.costShare)} of cost`}
+            {costUnknown ? "" : ` · ${formatPercent(model.costShare)} of priced cost`}
+            {" · API-equivalent estimate, not billed spend"}
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>
@@ -109,9 +121,9 @@ export function UsageModelDialog({
             {/* Unpriced cost is unknown, not zero, so its trend shows tokens. */}
             <UsageProviderChart
               providers={providers}
-              days={chartWindow.days}
+              days={pinnedPeriod?.kind === "day" ? [pinnedPeriod.day] : chartWindow.days}
               daily={usage.daily}
-              hours={chartWindow.hours}
+              hours={pinnedPeriod?.kind === "hour" ? [pinnedPeriod.hourStart] : chartWindow.hours}
               hourly={usage.hourly}
               metric={costUnknown ? "tokens" : metric}
               referenceTime={chartWindow.referenceTime}
@@ -122,9 +134,9 @@ export function UsageModelDialog({
             <div className="grid gap-x-10 gap-y-8 sm:grid-cols-2">
               {costUnknown ? null : (
                 <UsageShareBar
-                  label="Cost by type"
+                  label="API-equivalent cost by type"
                   segments={costTypeSegments(usage.categoryCost)}
-                  format={formatUsd}
+                  format={formatCost}
                 />
               )}
               <UsageShareBar
@@ -134,10 +146,12 @@ export function UsageModelDialog({
               />
               {usage.speedCost.fast + usage.speedCost.ultrafast > 0 ? (
                 <UsageShareBar
-                  label="Cost by speed"
+                  label="API-equivalent cost by speed"
                   segments={speedCostSegments(usage.speedCost)}
-                  format={formatUsd}
-                  aside={<SpeedPremium premiumUsd={usage.speedCost.premium} />}
+                  format={formatCost}
+                  aside={
+                    <SpeedPremium premiumUsd={usage.speedCost.premium} partial={partialCost} />
+                  }
                 />
               ) : null}
             </div>
@@ -157,10 +171,20 @@ export function UsageModelDialog({
 }
 
 /** What the faster speeds cost above standard rates, beside the speed bar. */
-export function SpeedPremium({ premiumUsd }: { readonly premiumUsd: number }) {
+export function SpeedPremium({
+  premiumUsd,
+  partial = false,
+}: {
+  readonly premiumUsd: number;
+  readonly partial?: boolean;
+}) {
   return (
     <span className="text-xs text-muted-foreground">
-      Premium <span className="text-foreground tabular-nums">{formatUsd(premiumUsd)}</span>
+      Premium{" "}
+      <span className="text-foreground tabular-nums">
+        {partial ? "≥ " : ""}
+        {formatUsd(premiumUsd)}
+      </span>
     </span>
   );
 }

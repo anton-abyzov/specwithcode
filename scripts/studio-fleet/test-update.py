@@ -127,8 +127,8 @@ class StateBackupRetention(unittest.TestCase):
    self.assertTrue((target/'statev2.sqlite').is_file())
  def test_an_update_prunes_state_backups_before_copying_the_database(self):
   source=pathlib.Path(update.__file__).read_text()
-  self.assertIn("prune_state_backups(home, keep_newest=1)",source)
-  self.assertLess(source.index("prune_state_backups(home, keep_newest=1)"),source.index("state_backup, progress['stateBackupMethod'] = backup_state_clone(own, before['artifactSourceCommit'])"))
+  self.assertIn("prune_state_backups(home, keep=held_state_backups(own), keep_newest=1)",source)
+  self.assertLess(source.index("prune_state_backups(home, keep=held_state_backups(own), keep_newest=1)"),source.index("state_backup, progress['stateBackupMethod'] = backup_state_clone(own, before['artifactSourceCommit'])"))
  def test_a_copy_cut_short_is_removed(self):
   with tempfile.TemporaryDirectory() as tmp:
    home=pathlib.Path(tmp).resolve();own=home/'.specwithcode/m4';(own/'userdata').mkdir(parents=True)
@@ -952,6 +952,14 @@ class StoppedCopy(unittest.TestCase):
   with patch.object(update,'_clonefile',return_value=full),self.assertRaises(OSError) as caught:update.backup_state_clone(self.own,'abc')
   self.assertEqual(caught.exception.errno,errno.ENOSPC)
   self.assertEqual(list(studio_paths.backups_root(self.home).iterdir()),[])
+ def test_clone_fallback_checks_full_space_before_copying(self):
+  import ctypes,errno
+  def unsupported(*args):ctypes.set_errno(errno.ENOTSUP);return -1
+  with patch.object(update,'_clonefile',return_value=unsupported), \
+       patch.object(state_backup,'assert_backup_space',side_effect=AssertionError('full copy cannot fit')) as space, \
+       patch.object(state_backup,'backup_state') as copy:
+   with self.assertRaisesRegex(AssertionError,'full copy cannot fit'):update.backup_state_clone(self.own,'abc')
+  space.assert_called_once_with(self.own,self.home);copy.assert_not_called()
  def test_headroom_is_a_tenth_of_the_database_and_at_least_one_gib(self):
   (self.state/'statev2.sqlite').stat()
   # The fold writes every page of the log into the clone: the -wal counts in full.
@@ -963,6 +971,24 @@ class StoppedCopy(unittest.TestCase):
      patch.object(update.shutil,'disk_usage',return_value=DISK(1<<44,0,free)):
     if ok:update.assert_clone_headroom(self.own,self.home)
     else:self.assertRaises(AssertionError,update.assert_clone_headroom,self.own,self.home)
+ def test_the_preflight_sizes_a_clone_by_its_headroom_and_only_a_copy_by_the_database(self):
+  sizes={'statev2.sqlite':11<<30,'statev2.sqlite-wal':20<<20}
+  with patch.object(state_backup,'_database_bytes',side_effect=lambda own,names=tuple(sizes):sum(sizes[name] for name in names)):
+   self.assertEqual(state_backup.backup_space_needed(self.own,self.home,None),(state_backup.BACKUP_SPACE_MARGIN+(11<<30)+(20<<20),'copy'))
+   def unsupported(source,target,flags):return -1
+   self.assertEqual(state_backup.backup_space_needed(self.own,self.home,unsupported)[1],'copy')
+   if update._clonefile() is not None:
+    self.assertEqual(state_backup.backup_space_needed(self.own,self.home,update._clonefile()),
+                     (state_backup.BACKUP_SPACE_MARGIN+(11<<30)//10+(20<<20),'clone'))
+  self.assertEqual(list(self.home.rglob('.clone-probe-*')),[])
+ def test_another_volume_is_never_counted_as_a_clone(self):
+  real=os.stat
+  def elsewhere(path,*args,**kwargs):
+   info=real(path,*args,**kwargs)
+   if str(path)==str(self.state):return os.stat_result((info.st_mode,info.st_ino,info.st_dev+1)+tuple(info)[3:])
+   return info
+  def clones(source,target,flags):raise AssertionError('probed another volume')
+  with patch.object(state_backup.os,'stat',side_effect=elsewhere):self.assertFalse(state_backup.can_clone(self.own,self.home,clones))
 # Reads a snapshot, a preflight refusal or a verified receipt with an installed update agent, in its
 # own process (its modules share names with this folder's), the way that agent reads them.
 AGENT_DRIVER="""
@@ -1023,6 +1049,24 @@ class OldAgentContract(unittest.TestCase):
     patch.object(update,'read_processes',return_value={}),patch.object(update,'capture_quiescence',return_value={'root':{'pid':100,'uid':501}}):
    value=update.snapshot('m4')
   self.assertEqual(set(value),SNAPSHOT_KEYS)
+  # A forced admission uses the same metadata checks, with a real hold and idle read,
+  # but no complete row scan. Ordinary snapshots above retain their exact contract.
+  now=datetime.datetime.now(datetime.timezone.utc)
+  request=now.isoformat();service['runtime']['startedAt']=(now-datetime.timedelta(minutes=5)).isoformat()
+  updates=case.own/'updates'
+  (updates/'hold.json').write_text(json.dumps({'schemaVersion':1,'pid':100,'startedAt':(now-datetime.timedelta(seconds=1)).isoformat(),'expiresAt':(now+datetime.timedelta(minutes=5)).isoformat()}))
+  (updates/'config.json').write_text(json.dumps({'installMode':'force','installRequestedAt':request}))
+  with patch.object(update,'_service',return_value=service),patch.object(update,'assert_database_attached'), \
+    patch.object(update,'assert_database_locked'),patch.object(update,'listeners',return_value=[]), \
+    patch.object(update,'read_processes',return_value={}),patch.object(update,'capture_quiescence',return_value={'root':{'pid':100,'uid':501}}), \
+    patch.object(update,'_read_state',side_effect=AssertionError('Unexpected full row scan')):
+   light=update.snapshot('m4',request)
+   self.assertEqual(light['snapshotMode'],'held-service')
+   self.assertNotIn('databaseCapture',light)
+   self.assertEqual(light['rows'],{'nativeWorkIdle':True,'counts':{}})
+   with self.assertRaisesRegex(AssertionError,'Unexpected full row scan'):update.snapshot('m4',(now-datetime.timedelta(seconds=2)).isoformat())
+   mutate_state(state,"INSERT INTO orchestration_v2_projection_runtime_requests VALUES ('pending')")
+   with self.assertRaisesRegex(AssertionError,'Native work is not idle'):update.snapshot('m4',request)
   path=case.own/'updates/snapshot-contract.json';path.write_text(json.dumps(value,indent=2)+'\n')
   for agent in self.agents():
    with self.subTest(agent=str(agent)):self.assertTrue(self.read_with(agent,case.home,'snapshot',path))
@@ -1095,6 +1139,36 @@ class AuthHeartbeatPrestate(unittest.TestCase):
  def prestate(self, rows):
   value={**{key:key for key in ['identity','uid','serviceLabel','servicePid','archiveSha256','artifactSourceCommit','fileHashes','otherListeners','cookieName','processQuiescence']},'otherListenersOwned':False}
   value['rows']=rows;return value
+ def test_auth_changes_before_the_helpers_baseline_are_accepted_but_later_changes_refuse(self):
+  changes = ["INSERT INTO auth_sessions VALUES ('s2','owner','operate','browser-session-cookie','2026-10-11T03:57:00Z','2026-11-11T00:00:00Z',NULL,NULL)",
+             "UPDATE auth_sessions SET scopes='admin'", "DELETE FROM auth_sessions"]
+  for change in changes:
+   with self.subTest(change=change), tempfile.TemporaryDirectory() as tmp:
+    state=pathlib.Path(tmp);agent=self.snapshot(state);baseline=self.snapshot(state,change)
+    with self.assertRaises(AssertionError):update.assert_prestate(self.prestate(agent),self.prestate(baseline))
+    update.assert_prestate(self.prestate(agent),self.prestate(baseline),auth_baseline=baseline)
+    later=self.snapshot(state,"INSERT INTO auth_sessions VALUES ('late','owner','operate','browser-session-cookie','2026-10-11T04:00:00Z','2026-11-11T00:00:00Z',NULL,NULL)")
+    with self.assertRaisesRegex(AssertionError,'Guarded prestate changed: rows'):
+     update.assert_prestate(self.prestate(agent),self.prestate(later),auth_baseline=baseline)
+ def test_fresh_auth_baseline_does_not_allow_a_non_auth_change(self):
+  with tempfile.TemporaryDirectory() as tmp:
+   state=pathlib.Path(tmp);agent=self.snapshot(state)
+   baseline=self.snapshot(state,"INSERT INTO projection_projects VALUES ('new-project')")
+   with self.assertRaisesRegex(AssertionError,'Guarded prestate changed: rows'):
+    update.assert_prestate(self.prestate(agent),self.prestate(baseline),auth_baseline=baseline)
+ def test_fresh_auth_baseline_does_not_bypass_the_complete_database_capture(self):
+  from update_read import _read_state
+  with tempfile.TemporaryDirectory() as tmp:
+   state=pathlib.Path(tmp);db=self.fixture(state);db.execute('CREATE TABLE unguarded(value TEXT)');db.commit();db.close()
+   def capture():
+    rows,auth,carried,proof=_read_state(state,False,include_database=True)
+    return {**self.prestate(rows),'databaseCapture':proof}
+   agent=capture();db=sqlite3.connect(state/'statev2.sqlite')
+   db.execute("UPDATE auth_sessions SET scopes='admin'");db.commit();db.close();baseline=capture()
+   update.assert_prestate(agent,baseline,auth_baseline=baseline['rows'])
+   db=sqlite3.connect(state/'statev2.sqlite');db.execute("INSERT INTO unguarded VALUES ('changed')");db.commit();db.close()
+   with self.assertRaisesRegex(AssertionError,'Complete database prestate changed'):
+    update.assert_prestate(agent,capture(),auth_baseline=baseline['rows'])
  def test_a_connection_heartbeat_does_not_break_the_prestate(self):
   with tempfile.TemporaryDirectory() as tmp:
    state=pathlib.Path(tmp);before=self.snapshot(state)

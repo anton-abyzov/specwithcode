@@ -220,8 +220,38 @@ it.layer(NodeServices.layer)("ServerSecretStore.layer", (it) => {
       assert.isTrue(
         chmodCalls.some((call) => call.mode === 0o700 && /[\\/]secrets$/.test(call.path)),
       );
-      assert.isAtLeast(chmodCalls.filter((call) => call.mode === 0o600).length, 2);
+      const privateFiles = chmodCalls.filter((call) => call.mode === 0o600);
+      assert.lengthOf(privateFiles, 1);
+      assert.match(privateFiles[0]!.path, /\.tmp$/);
     }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("finishes a private atomic write when its destination is immediately deleted", () =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const { secretsDir } = yield* ServerConfig.ServerConfig;
+      let renamedPath = "";
+      let permissions = 0;
+      const secretStore = yield* ServerSecretStore.make.pipe(
+        Effect.provideService(FileSystem.FileSystem, {
+          ...fileSystem,
+          rename: (from, to) =>
+            Effect.gen(function* () {
+              yield* fileSystem.rename(from, to);
+              renamedPath = to;
+              permissions = (yield* fileSystem.stat(to)).mode & 0o777;
+              // A sign-out can delete the new inode before set returns.
+              yield* fileSystem.remove(to);
+            }),
+        }),
+      );
+
+      yield* secretStore.set("disposal", Uint8Array.from([1, 2, 3]));
+
+      assert.equal(permissions, 0o600);
+      assert.isFalse(yield* fileSystem.exists(renamedPath));
+      assert.deepEqual(yield* fileSystem.readDirectory(secretsDir), []);
+    }).pipe(Effect.provide(layerServerConfig())),
   );
 
   it.effect("propagates read failures other than missing-file errors", () =>

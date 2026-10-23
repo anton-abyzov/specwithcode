@@ -6,6 +6,7 @@ import { assert, describe, it } from "@effect/vitest";
 import {
   DEFAULT_PROJECT_WORKSPACE_SETTINGS,
   CommandId,
+  ContextTransferId,
   EnvironmentId,
   NodeId,
   type OrchestrationV2ThreadShell,
@@ -66,7 +67,22 @@ describe("OrchestratorMcpService", () => {
       const parentProjection = {
         thread: { id: parentThreadId },
         runs: [],
-        contextTransfers: [],
+        contextTransfers: [
+          {
+            id: ContextTransferId.make("transfer:old-failure"),
+            type: "subagent_result",
+            sourceThreadId: childThreadId,
+            targetThreadId: parentThreadId,
+            sourcePoint: { runId: RunId.make("run:old-failure") },
+          },
+          {
+            id: ContextTransferId.make("transfer:recovered"),
+            type: "subagent_result",
+            sourceThreadId: childThreadId,
+            targetThreadId: parentThreadId,
+            sourcePoint: { runId: childRunId },
+          },
+        ],
         subagents: [
           {
             id: taskId,
@@ -129,8 +145,11 @@ describe("OrchestratorMcpService", () => {
                     }
                   : childProjection,
             ),
-          dispatch: (command) =>
-            Ref.update(acknowledgementCommandIds, (commandIds) => [
+          dispatch: (command) => {
+            if (command.type === "delegated_task.completion-delivery.acknowledge") {
+              assert.equal(command.expectedResultContextTransferId, "transfer:recovered");
+            }
+            return Ref.update(acknowledgementCommandIds, (commandIds) => [
               ...commandIds,
               String(command.commandId),
             ]).pipe(
@@ -140,7 +159,8 @@ describe("OrchestratorMcpService", () => {
                   ? Effect.fail(new Error("simulated acknowledgement failure") as never)
                   : Effect.succeed({} as never),
               ),
-            ),
+            );
+          },
         }),
         Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed([]) }),
         Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
@@ -179,6 +199,7 @@ describe("OrchestratorMcpService", () => {
         const result = yield* service.taskStatus(scope, taskId);
         assert.equal(result.status, "completed");
         assert.equal(result.summary, "terminal result");
+        assert.equal(result.resultContextTransferId, "transfer:recovered");
         // The coordinator copies this link verbatim; decoding its ID once gives the stored ID.
         assert.equal(
           result.threadLink,

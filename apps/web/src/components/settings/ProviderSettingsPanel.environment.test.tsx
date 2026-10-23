@@ -319,7 +319,7 @@ describe("EnvironmentProviderSettings routing", () => {
     expect(settingsState.mutationEnvironmentIds).toEqual([environmentId]);
   });
 
-  it("routes refresh and provider update commands to the selected environment", async () => {
+  it("routes refresh and opens the explicit update plan for the selected environment", async () => {
     atoms.providers = [provider()];
     const panel = renderPanel();
     const refreshButton = visitElements(panel, isRefreshButton);
@@ -341,9 +341,15 @@ describe("EnvironmentProviderSettings routing", () => {
     (providerCard?.props.onRunUpdate as (() => void) | undefined)?.();
     await flushPromises();
 
-    expect(commands.updateProvider).toHaveBeenCalledWith({
+    expect(commands.updateProvider).not.toHaveBeenCalled();
+    const planned = visitElements(
+      renderPanel(),
+      (element) => element.props.open === true && element.props.target !== undefined,
+    );
+    expect(planned?.props.target).toEqual({
       environmentId,
-      input: { provider: ProviderDriverKind.make("codex"), instanceId: codexId },
+      driver: ProviderDriverKind.make("codex"),
+      instanceId: codexId,
     });
   });
 

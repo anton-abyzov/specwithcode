@@ -156,6 +156,7 @@ interface Harness {
   /** The calling thread coordinates the project. */
   readonly coordinator?: boolean;
   readonly parentModel?: typeof opus;
+  readonly providers?: ReadonlyArray<ServerProvider>;
   readonly modelLanes?: ModelLanes;
   readonly learnedModelPreferences?: ReadonlyArray<LearnedModelPreference>;
   readonly env?: Readonly<Record<string, string | undefined>>;
@@ -235,8 +236,8 @@ const run = <A, E>(
           }),
       }),
       Layer.mock(ProviderRegistry.ProviderRegistry)({
-        getProviders: Effect.succeed(providers),
-        refreshInstance: () => Effect.succeed(providers),
+        getProviders: Effect.succeed(harness.providers ?? providers),
+        refreshInstance: () => Effect.succeed(harness.providers ?? providers),
       }),
       Layer.succeed(
         ProviderAdapterRegistry.ProviderAdapterRegistryV2,
@@ -435,7 +436,6 @@ describe("OrchestratorMcpService task routing", () => {
     ),
   );
 
-
   it.effect("routes complex work to the first model in the complex lane", () =>
     run(
       {
@@ -504,31 +504,33 @@ describe("OrchestratorMcpService task routing", () => {
     ),
   );
 
-  it.effect("skips an exhausted provider in the lane and advances to the next available model", () =>
-    run(
-      {
-        modelLanes: {
-          complex: [],
-          routine: [
-            { instanceId: copilot, model: "claude-opus-5.5" },
-            { instanceId: claude, model: "claude-haiku-5-5" },
-          ],
+  it.effect(
+    "skips an exhausted provider in the lane and advances to the next available model",
+    () =>
+      run(
+        {
+          modelLanes: {
+            complex: [],
+            routine: [
+              { instanceId: copilot, model: "claude-opus-5.5" },
+              { instanceId: claude, model: "claude-haiku-5-5" },
+            ],
+          },
+          env: { STUDIO_SIMULATE_USAGE_LIMIT: "copilot-0889" },
         },
-        env: { STUDIO_SIMULATE_USAGE_LIMIT: "copilot-0889" },
-      },
-      (service, dispatched) =>
-        Effect.gen(function* () {
-          yield* service.delegateTask(scope, {
-            task: "Fix a typo in README.md and update changelog.",
-            mode: "async",
-            clientRequestId: "route-skip-exhausted",
-          });
-          const request = yield* delegated(dispatched);
-          assert.equal(request.modelSelection?.model, "claude-haiku-5-5");
-          assert.equal(request.routing?.lane, "routine");
-          assert.isTrue(request.routing?.skipped && request.routing.skipped.length > 0);
-        }),
-    ),
+        (service, dispatched) =>
+          Effect.gen(function* () {
+            yield* service.delegateTask(scope, {
+              task: "Fix a typo in README.md and update changelog.",
+              mode: "async",
+              clientRequestId: "route-skip-exhausted",
+            });
+            const request = yield* delegated(dispatched);
+            assert.equal(request.modelSelection?.model, "claude-haiku-5-5");
+            assert.equal(request.routing?.lane, "routine");
+            assert.isTrue(request.routing?.skipped && request.routing.skipped.length > 0);
+          }),
+      ),
   );
 
   it.effect("applies learned model preferences over default lane selection", () =>
@@ -563,6 +565,112 @@ describe("OrchestratorMcpService task routing", () => {
         }),
     ),
   );
+
+  it.effect("does not restore an avoided baseline when routed target options fail", () =>
+    run(
+      {
+        modelLanes: { complex: [], routine: [{ instanceId: claude, model: "claude-sonnet-5-5" }] },
+        learnedModelPreferences: [
+          {
+            id: "avoid-opus",
+            keywords: ["changelog"],
+            action: { kind: "avoid", model: opus },
+            createdAt: "2026-10-22T00:00:00.000Z",
+          },
+        ],
+        providers: providers.map((entry) => ({
+          ...entry,
+          models: entry.models.map((model) =>
+            model.slug === "claude-sonnet-5-5"
+              ? {
+                  ...model,
+                  capabilities: {
+                    optionDescriptors: [{ ...effort, options: [{ id: "low", label: "Low" }] }],
+                  },
+                }
+              : model,
+          ),
+        })),
+      },
+      (service, dispatched) =>
+        Effect.gen(function* () {
+          const error = yield* service
+            .delegateTask(scope, {
+              task: "Update the changelog",
+              target: { options: [{ id: "effort", value: "high" }] },
+              mode: "async",
+              clientRequestId: "options-lane",
+            })
+            .pipe(Effect.flip);
+          assert.equal(error.code, "model_unavailable");
+          assert.include(error.message, "baseline was not substituted");
+          assert.equal(
+            (yield* Ref.get(dispatched)).filter(
+              (command) => command.type === "delegated_task.request",
+            ).length,
+            0,
+          );
+        }),
+    ),
+  );
+
+  it.effect("keeps frontier minimumTier authoritative over a routine lane", () =>
+    run(
+      {
+        policy: { minimumTier: "frontier" },
+        modelLanes: {
+          complex: [],
+          routine: [{ instanceId: claude, model: "claude-sonnet-5-5" }, opus],
+        },
+      },
+      (service, dispatched) =>
+        Effect.gen(function* () {
+          yield* service.delegateTask(scope, {
+            task: "Update the changelog",
+            mode: "async",
+            clientRequestId: "floor-lane",
+          });
+          assert.equal((yield* delegated(dispatched)).modelSelection?.model, "claude-opus-5-5");
+        }),
+    ),
+  );
+
+  for (const mode of ["off", "auto"] as const) {
+    it.effect(`refuses an avoided baseline before dispatch with Auto ${mode}`, () =>
+      run(
+        {
+          policy: { mode },
+          modelLanes: { complex: [], routine: [opus] },
+          learnedModelPreferences: [
+            {
+              id: "avoid-opus",
+              keywords: ["changelog"],
+              action: { kind: "avoid", model: opus },
+              createdAt: "2026-10-22T00:00:00.000Z",
+            },
+          ],
+        },
+        (service, dispatched) =>
+          Effect.gen(function* () {
+            const error = yield* service
+              .delegateTask(scope, {
+                task: "Update the changelog",
+                mode: "async",
+                clientRequestId: `avoid-${mode}`,
+              })
+              .pipe(Effect.flip);
+            assert.equal(error.code, "model_unavailable");
+            assert.include(error.message, "avoided for tasks like this");
+            assert.equal(
+              (yield* Ref.get(dispatched)).filter(
+                (command) => command.type === "delegated_task.request",
+              ).length,
+              0,
+            );
+          }),
+      ),
+    );
+  }
 
   it.effect("routes create_threads per thread and keeps the decision on the thread", () =>
     run({ policy: { mode: "auto" } }, (service, dispatched) =>

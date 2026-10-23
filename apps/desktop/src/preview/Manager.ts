@@ -62,6 +62,7 @@ import * as DesktopEnvironment from "../app/DesktopEnvironment.ts";
 import * as DesktopRendererHistory from "../telemetry/DesktopRendererHistory.ts";
 import { MENU_ACTION_CHANNEL, PREVIEW_PICTURE_IN_PICTURE_FRAME_CHANNEL } from "../ipc/channels.ts";
 import * as DesktopBrowserHost from "./DesktopBrowserHost.ts";
+import { annotationCaptureRect } from "./AnnotationCapture.ts";
 import * as BrowserSession from "./BrowserSession.ts";
 import {
   ANNOTATION_CAPTURED_CHANNEL,
@@ -304,12 +305,7 @@ const captureAnnotationScreenshot = (
     try: (_signal) =>
       wc.capturePage(
         cropRect
-          ? {
-              x: cropRect.x,
-              y: cropRect.y,
-              width: cropRect.width,
-              height: cropRect.height,
-            }
+          ? annotationCaptureRect(cropRect, wc.getZoomFactor())
           : undefined,
       ),
     catch: (cause) =>

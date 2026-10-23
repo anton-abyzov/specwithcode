@@ -66,7 +66,10 @@ describe("actionable project rejection messages", () => {
     ["project_settings_conflict", "Reload before saving"],
     ["project_confirmation_required", "Type the project name exactly"],
     ["project_active_work", "Finish or stop active project work"],
-    ["project_environment_active", "Stop active project work before changing folder access"],
+    [
+      "project_environment_active",
+      "Stop active project work before removing or changing folder access. Adding a folder works while threads run.",
+    ],
     ["project_environment_invalid", "approved folders"],
   ] as const)("retains a safe message for %s", (reason, message) => {
     const failure = new EnvironmentRequestInvalidError({

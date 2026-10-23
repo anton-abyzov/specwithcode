@@ -94,7 +94,7 @@ const ProjectCreateTool = Tool.make("studio_project_create", {
 const ProjectUpdateTool = Tool.make("studio_project_update", {
   ...shared,
   description:
-    "Update a registered project's settings. Omitted fields are preserved. Uses the same project service as the app. Project instructions, pause, auto-resume and the worker machine are the user's to change. To move a project to another folder, or to archive, restore or delete it, use studio_project_request: the user approves those.",
+    "Update a registered project's settings. Omitted fields are preserved. Uses the same project service as the app. Project instructions, pause, auto-resume and the worker machine are the user's to change. To move a project to another folder, add an approved folder (action add_folder), or archive, restore or delete it, use studio_project_request: the user approves those.",
   parameters: Schema.Struct({ projectId: ProjectId, ...ProjectUpdatePayload.fields }),
 }).annotate(Tool.Destructive, true);
 const ProjectRequestResult = Schema.Struct({
@@ -106,7 +106,7 @@ const requestDependencies = [...shared.dependencies, ProjectActionRequests.Proje
 const ProjectRequestTool = Tool.make("studio_project_request", {
   ...shared,
   description:
-    "Ask the user to archive, restore (unarchive), delete or move a project to another folder. SpecWithCode shows an approval card in your thread; only the user can answer it, and SpecWithCode makes the change itself when they approve. End your turn after calling: the decision and its outcome arrive as the user's answer to the card. For change_folder pass workspaceRoot, an existing folder; the card says whether it is a checkout of the same repository, and the change is refused while the project has other running work. Deleting removes the project's threads, memory, plans and routines but never its folders or Git branches.",
+    "Ask the user to archive, restore (unarchive), delete or move a project to another folder, or to let the project's agents reach one more folder (add_folder). SpecWithCode shows an approval card in your thread; only the user can answer it, and SpecWithCode makes the change itself when they approve. End your turn after calling: the decision and its outcome arrive as the user's answer to the card. For change_folder pass workspaceRoot, an existing folder; the card says whether it is a checkout of the same repository, and the change is refused while the project has other running work. For add_folder pass folder, an existing absolute folder, for the calling thread's own project; the card names its real path, and it works while other threads run. Home, the filesystem root and credential folders such as ~/.ssh are refused. Deleting removes the project's threads, memory, plans and routines but never its folders or Git branches.",
   parameters: Schema.Struct({
     action: ProjectActionRequests.ProjectAction,
     projectId: Schema.optional(
@@ -115,6 +115,12 @@ const ProjectRequestTool = Tool.make("studio_project_request", {
     workspaceRoot: Schema.optional(
       TrimmedNonEmptyString.annotate({
         description: "For change_folder: the absolute folder the project should use.",
+      }),
+    ),
+    folder: Schema.optional(
+      TrimmedNonEmptyString.annotate({
+        description:
+          "For add_folder: the absolute folder agents in the calling thread's project should also read and write.",
       }),
     ),
     reason: TrimmedNonEmptyString.annotate({
@@ -377,10 +383,7 @@ const ModelPreferenceTool = Tool.make("studio_model_preference", {
   success: OrchestratorMcpModelPreferenceResult,
   failure: OrchestratorMcpFailure,
   failureMode: "return" as const,
-  dependencies: [
-    ...shared.dependencies,
-    ServerSettings.ServerSettingsService,
-  ],
+  dependencies: [...shared.dependencies, ServerSettings.ServerSettingsService],
 })
   .annotate(Tool.Destructive, true)
   .annotate(Tool.OpenWorld, false);

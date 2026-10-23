@@ -7,7 +7,9 @@ import * as Path from "effect/Path";
 import type { ProviderMaintenanceResolutionContext } from "./providerMaintenance.ts";
 
 const field = (value: unknown, key: string): unknown =>
-  value !== null && typeof value === "object" && key in value ? (value as Record<string, unknown>)[key] : undefined;
+  value !== null && typeof value === "object" && key in value
+    ? (value as Record<string, unknown>)[key]
+    : undefined;
 const parseManifest = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Unknown));
 
 /**
@@ -15,33 +17,113 @@ const parseManifest = Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Un
  * global installer. Even an unverifiable nominal wrapper must stay manual;
  * unrelated installations retain their ordinary maintenance resolution.
  */
-export const independentProviderMaintenance = Effect.fn("independentProviderMaintenance")(function* (input: {
-  readonly provider: string;
-  readonly packageName: string;
-  readonly context: ProviderMaintenanceResolutionContext;
-  readonly homeDirectory?: string;
-  readonly architecture?: string;
-}) {
-  const name = input.provider === "codex" && input.packageName === "@openai/codex" ? "codex"
-    : input.provider === "claudeAgent" && input.packageName === "@anthropic-ai/claude-code" ? "claude" : null;
-  if (!name) return null;
-  const path = yield* Path.Path;
-  const fs = yield* FileSystem.FileSystem;
-  const home = path.resolve(input.homeDirectory ?? NodeOS.homedir());
-  const prefix = path.join(home, ".local/share/specweave/providers");
-  const wrapper = path.join(prefix, "bin", name);
-  if (![input.context.resolvedCommandPath, input.context.realCommandPath].some((value) => path.resolve(value) === wrapper)) return null;
+export const independentProviderMaintenance = Effect.fn("independentProviderMaintenance")(
+  function* (input: {
+    readonly provider: string;
+    readonly packageName: string;
+    readonly context: ProviderMaintenanceResolutionContext;
+    readonly homeDirectory?: string;
+    readonly architecture?: string;
+  }) {
+    const name =
+      input.provider === "codex" && input.packageName === "@openai/codex"
+        ? "codex"
+        : input.provider === "claudeAgent" && input.packageName === "@anthropic-ai/claude-code"
+          ? "claude"
+          : null;
+    if (!name) return null;
+    const path = yield* Path.Path;
+    const fs = yield* FileSystem.FileSystem;
+    const home = path.resolve(input.homeDirectory ?? NodeOS.homedir());
+    const prefix = path.join(home, ".local/share/specweave/providers");
+    const wrapper = path.join(prefix, "bin", name);
+    if (
+      ![input.context.resolvedCommandPath, input.context.realCommandPath].some(
+        (value) => path.resolve(value) === wrapper,
+      )
+    )
+      return null;
 
-  const inspect = Effect.gen(function* () {
-    const architecture = input.architecture ?? NodeOS.arch();
-    if (name === "claude" && (input.context.platform !== "darwin" || architecture !== "arm64")) return "unverified" as const;
-    const packageDirectory = path.join(prefix, "node_modules", input.packageName);
-    const nativePackage = path.join(prefix, "node_modules", "@anthropic-ai/claude-code-darwin-arm64");
-    const entrypoint = name === "codex" ? path.join(packageDirectory, "bin/codex.js") : path.join(nativePackage, "claude");
-    // Check every ancestor, including the home and package scopes. A symlink
-    // must not turn this private-prefix classification into another owner.
-    const realOwned = (value: string) => Effect.gen(function* () {
-      if (value !== home && !value.startsWith(`${home}${path.sep}`)) return false;
+    if (name === "codex") {
+      const staged = yield* Effect.gen(function* () {
+        if (input.context.platform === "win32") return null;
+        const text = yield* fs.readFileString(wrapper);
+        if (text.length > 16 * 1024) return null;
+        const match =
+          /^#!\/bin\/sh\nset -eu\nexec ([^\s"'`$\\;|&<>()]+) ([^\s"'`$\\;|&<>()]+) "\$@"\n$/.exec(
+            text,
+          );
+        if (!match) return null;
+        const [, node, entrypoint] = match;
+        if (!node || !entrypoint || !path.isAbsolute(node) || path.basename(node) !== "node")
+          return null;
+        const releases = path.join(home, ".local/share/specweave/provider-releases");
+        const relative = path.relative(releases, entrypoint);
+        if (
+          !/^[^/]+\/node_modules\/@openai\/codex\/bin\/codex\.js$/.test(relative) ||
+          relative.startsWith("..")
+        )
+          return null;
+        const stage = path.join(releases, relative.split("/")[0]!);
+        const npm = path.join(path.dirname(node), "../lib/node_modules/npm/bin/npm-cli.js");
+        const npmPath = path.resolve(npm);
+        for (const target of [
+          wrapper,
+          node,
+          npmPath,
+          entrypoint,
+          path.join(stage, "package.json"),
+          path.join(stage, "node_modules/@openai/codex/package.json"),
+        ]) {
+          if (!target.startsWith(`${home}${path.sep}`) || (yield* fs.realPath(target)) !== target)
+            return null;
+        }
+        const boundedJson = (target: string) =>
+          Effect.gen(function* () {
+            if (Number((yield* fs.stat(target)).size) > 16 * 1024) return null;
+            return yield* parseManifest(yield* fs.readFileString(target));
+          });
+        const pkg = yield* boundedJson(path.join(stage, "node_modules/@openai/codex/package.json"));
+        const owner = yield* boundedJson(path.join(stage, "package.json"));
+        const npmPkg = yield* boundedJson(path.resolve(path.dirname(npmPath), "../package.json"));
+        const version = field(pkg, "version");
+        if (
+          field(pkg, "name") !== "@openai/codex" ||
+          typeof version !== "string" ||
+          !/^\d+\.\d+\.\d+$/.test(version) ||
+          field(field(owner, "dependencies"), "@openai/codex") !== version ||
+          field(npmPkg, "name") !== "npm"
+        )
+          return null;
+        return {
+          wrapperPath: wrapper,
+          expectedWrapper: text,
+          releasesDirectory: releases,
+          nodePath: node,
+          npmCliPath: npmPath,
+        };
+      }).pipe(Effect.orElseSucceed(() => null));
+      if (staged) return staged;
+    }
+    const inspect = Effect.gen(function* () {
+      const architecture = input.architecture ?? NodeOS.arch();
+      if (name === "claude" && (input.context.platform !== "darwin" || architecture !== "arm64"))
+        return "unverified" as const;
+      const packageDirectory = path.join(prefix, "node_modules", input.packageName);
+      const nativePackage = path.join(
+        prefix,
+        "node_modules",
+        "@anthropic-ai/claude-code-darwin-arm64",
+      );
+      const entrypoint =
+        name === "codex"
+          ? path.join(packageDirectory, "bin/codex.js")
+          : path.join(nativePackage, "claude");
+      // Check every ancestor, including the home and package scopes. A symlink
+      // must not turn this private-prefix classification into another owner.
+      const realOwned = (value: string) =>
+        Effect.gen(function* () {
+          if (value !== home && !value.startsWith(`${home}${path.sep}`)) return false;
           let current = home;
           if ((yield* fs.realPath(current)) !== current) return false;
           for (const part of path.relative(home, value).split(path.sep)) {
@@ -90,10 +172,14 @@ export const independentProviderMaintenance = Effect.fn("independentProviderMain
         if (
           !path.isAbsolute(node) ||
           path.basename(node) !== "node" ||
-          /[\s"'`$\\;|&<>()]/.test(node)
-        || !(yield* realOwned(node)) || (yield* fs.stat(node)).type !== "File") return "unverified" as const;
-    } else {
-      if (lines[2] !== `exec ${entrypoint} "$@"` ||
+          /[\s"'`$\\;|&<>()]/.test(node) ||
+          !(yield* realOwned(node)) ||
+          (yield* fs.stat(node)).type !== "File"
+        )
+          return "unverified" as const;
+      } else {
+        if (
+          lines[2] !== `exec ${entrypoint} "$@"` ||
           !(yield* realOwned(path.join(nativePackage, "package.json")))
         )
           return "unverified" as const;

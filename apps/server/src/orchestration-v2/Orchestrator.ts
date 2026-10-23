@@ -170,6 +170,7 @@ import {
 import { planThreadDeletion } from "./ThreadDeletion.ts";
 import * as HandoffTurnGate from "../handoff/HandoffTurnGate.ts";
 import * as ServiceUpdateHold from "../serviceUpdate/ServiceUpdateHold.ts";
+import { SYSTEM_INTERRUPT_REASONS } from "./systemInterruptReasons.ts";
 
 export class OrchestratorDispatchError extends Schema.TaggedError<OrchestratorDispatchError>()(
   "OrchestratorDispatchError",
@@ -2285,7 +2286,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const projection = yield* projectionStore
         .getThreadRecords(
           command.parentThreadId,
-          ["subagents", "runs", "messages", "nodes", "attempts", "turnItems"],
+          ["subagents", "runs", "messages", "nodes", "attempts", "turnItems", "contextTransfers"],
           { turnItemTypes: [], messageRoles: ["user"] },
         )
         .pipe(
@@ -2317,7 +2318,17 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       // valid observations can race after their read preflight. Re-emit the
       // existing task row so the second dispatch is a successful idempotent
       // no-op rather than "already acknowledged/disposed" or empty-events.
+      const observedResultIsStale =
+        command.type === "delegated_task.completion-delivery.acknowledge" &&
+        command.expectedResultContextTransferId !== undefined &&
+        (projection.contextTransfers.findLast(
+          (transfer) =>
+            transfer.type === "subagent_result" &&
+            transfer.sourceThreadId === task.childThreadId &&
+            transfer.targetThreadId === command.parentThreadId,
+        )?.id ?? null) !== command.expectedResultContextTransferId;
       if (
+        observedResultIsStale ||
         task.completionDelivery?.state === state ||
         (command.type === "delegated_task.completion-delivery.acknowledge" &&
           task.completionDelivery?.state === "disposed")
@@ -10679,15 +10690,61 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       if (task === undefined) {
         return;
       }
-      const existingResultTransfer = parentProjection.contextTransfers.find(
+      const resultTransfers = parentProjection.contextTransfers.filter(
         (transfer) =>
           transfer.type === "subagent_result" &&
           transfer.sourceThreadId === childThreadId &&
           transfer.targetThreadId === parentThreadId,
       );
-      if (existingResultTransfer !== undefined) {
+      // A limit failure can reach the parent before fallback starts. Its result
+      // must not suppress the later recovery, but replay and a successful result
+      // remain final. Compare source runs rather than transfer arrival order.
+      // A Stop on the delivered run or any run after it keeps that earlier
+      // result too, including a Stop that reached the child while it waited
+      // for fallback or a reset: Stop never wakes the parent again (see
+      // holdStoppedThread). A service update resumes on its own, an agent's
+      // interrupt (a handoff, studio_thread_interrupt) expects the child to go
+      // on, and the server's own interrupts (watchdog, start timeout) are no Stop.
+      const stoppedRunIds = new Set(
+        resultTransfers.length === 0
+          ? []
+          : (yield* projectionStore.getThreadRecords(childThreadId, ["turnItems"], {
+              turnItemTypes: ["run_interrupt_request"],
+            })).turnItems.flatMap((item) =>
+              item.type === "run_interrupt_request" &&
+              item.cause !== "service_update" &&
+              item.cause !== "agent" &&
+              !(item.cause === undefined && SYSTEM_INTERRUPT_REASONS.has(item.message))
+                ? [item.runId]
+                : [],
+            ),
+      );
+      const recoveryStopped = resultTransfers.some((transfer) => {
+        const delivered = childControls.runs.find((run) => run.id === transfer.sourcePoint.runId);
+        return childControls.runs.some(
+          (run) =>
+            stoppedRunIds.has(run.id) &&
+            (run.id === delivered?.id ||
+              (delivered !== undefined &&
+                runRanAfter(run, delivered) &&
+                !runRanAfter(run, childRun))),
+        );
+      });
+      if (
+        recoveryStopped ||
+        resultTransfers.some((transfer) => {
+          const previous = childControls.runs.find((run) => run.id === transfer.sourcePoint.runId);
+          return (
+            previous === undefined ||
+            previous.status === "completed" ||
+            !runRanAfter(childRun, previous)
+          );
+        }) ||
+        (resultTransfers.length > 0 && task.completionDelivery?.state === "disposed")
+      ) {
         return;
       }
+      const recoveredResult = resultTransfers.length > 0;
 
       const now = yield* DateTime.now;
       const result = subagentResultForRun(childProjection, childRun);
@@ -10706,6 +10763,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         result: result.text,
         completedAt: now,
         updatedAt: now,
+        ...(recoveredResult
+          ? { completionDelivery: { state: "pending" as const, observedByRunId: null } }
+          : {}),
       };
       const completionPlan = yield* planDelegatedCompletionDelivery({
         parentProjection,

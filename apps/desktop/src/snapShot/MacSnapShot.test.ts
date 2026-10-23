@@ -101,3 +101,30 @@ it("rejects a successful command that did not produce a PNG", async () => {
     captureMacWindowSnapshot(active, "/tmp/window.png", { width: 100, height: 80 }),
   ).rejects.toThrow("macOS returned an invalid snapshot.");
 });
+
+// Window bounds are points, while screencapture returns physical Retina pixels.
+it("preserves a Retina PNG independently of window point dimensions", async () => {
+  const png = Buffer.concat([
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+    Buffer.from("retina"),
+  ]);
+  const resize = vi.fn();
+  readFileMock.mockResolvedValue(png);
+  createFromBufferMock.mockReturnValue({
+    getSize: () => ({ width: 3_024, height: 1_964 }),
+    isEmpty: () => false,
+    resize,
+  });
+  const capture = await captureMacWindowSnapshot(
+    {
+      id: 42,
+      title: "Editor",
+      owner: { name: "Code" },
+      bounds: { x: 0, y: 0, width: 1_512, height: 982 },
+    } as Parameters<typeof captureMacWindowSnapshot>[0],
+    "/tmp/window.png",
+  );
+  assert.strictEqual(capture.png, png);
+  expect(resize).not.toHaveBeenCalled();
+  expect(writeFileMock).not.toHaveBeenCalled();
+});

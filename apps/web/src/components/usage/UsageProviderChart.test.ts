@@ -1,6 +1,14 @@
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vite-plus/test";
 
-import { buildPeriodColumns, niceScale } from "./UsageProviderChart";
+import {
+  UsageProviderChart,
+  buildPeriodColumns,
+  niceScale,
+  sampleIndex,
+  sampledPaths,
+} from "./UsageProviderChart";
 import { providersWithUsage } from "./usageProviders";
 
 describe("niceScale", () => {
@@ -50,9 +58,11 @@ describe("buildPeriodColumns", () => {
         day: "2026-08-01",
         costUsd: 30,
         totalTokens: 300,
+        records: 1,
+        unpricedRecords: 0,
         byProvider: new Map([
-          ["codex" as const, { costUsd: 10, totalTokens: 100 }],
-          ["claude" as const, { costUsd: 20, totalTokens: 200 }],
+          ["codex" as const, { costUsd: 10, totalTokens: 100, records: 1, unpricedRecords: 0 }],
+          ["claude" as const, { costUsd: 20, totalTokens: 200, records: 1, unpricedRecords: 0 }],
         ]),
       },
     ],
@@ -63,7 +73,11 @@ describe("buildPeriodColumns", () => {
         day: "2026-08-03",
         costUsd: 5,
         totalTokens: 50,
-        byProvider: new Map([["claude" as const, { costUsd: 5, totalTokens: 50 }]]),
+        records: 1,
+        unpricedRecords: 0,
+        byProvider: new Map([
+          ["claude" as const, { costUsd: 5, totalTokens: 50, records: 1, unpricedRecords: 0 }],
+        ]),
       },
     ],
   ]);
@@ -124,7 +138,11 @@ describe("hourly chart columns", () => {
           hourStart: "2026-08-11T09:37:00.000Z",
           costUsd: 4,
           totalTokens: 40,
-          byProvider: new Map([["codex" as const, { costUsd: 4, totalTokens: 40 }]]),
+          records: 1,
+          unpricedRecords: 0,
+          byProvider: new Map([
+            ["codex" as const, { costUsd: 4, totalTokens: 40, records: 1, unpricedRecords: 0 }],
+          ]),
         },
       ],
     ]);
@@ -137,4 +155,101 @@ describe("hourly chart columns", () => {
       ).map((column) => column.total),
     ).toEqual([0, 4, 0]);
   });
+});
+
+describe("exact samples and pointer access", () => {
+  it("connects only the exact samples with straight segments", () => {
+    const result = sampledPaths(
+      [
+        { x: 0, y: 100 },
+        { x: 10, y: 0 },
+        { x: 20, y: 80 },
+      ],
+      100,
+    );
+    expect(result.line).toBe("M0.00,100.00 L10.00,0.00 L20.00,80.00");
+    expect(result.line).not.toMatch(/[CQ]/);
+  });
+  it("breaks unpriced intervals instead of inventing a zero or interpolated cost", () => {
+    const result = sampledPaths([{ x: 0, y: 50 }, null, { x: 20, y: 30 }], 100);
+    expect(result.line).toBe("M0.00,50.00 M20.00,30.00");
+    expect(result.area.match(/Z/g)).toHaveLength(2);
+  });
+  it("maps a tap directly to the nearest shared date without a preceding hover", () => {
+    expect(sampleIndex(150, 100, 100, 7)).toBe(3);
+    expect(sampleIndex(0, 100, 100, 7)).toBe(0);
+    expect(sampleIndex(500, 100, 100, 7)).toBe(6);
+    expect(sampleIndex(120, 100, 100, 1)).toBe(0);
+    expect(sampleIndex(120, 100, 0, 7)).toBeNull();
+  });
+});
+
+it("keeps an isolated priced sample visible in the 90-day chart", () => {
+  const days = Array.from({ length: 90 }, (_, index) =>
+    new Date(Date.UTC(2026, 0, index + 1)).toISOString().slice(0, 10),
+  );
+  const daily = days.map((day, index) => ({
+    day,
+    costUsd: index === 45 ? 10 : 0,
+    totalTokens: 100,
+    records: 1,
+    unpricedRecords: index === 45 ? 0 : 1,
+    byProvider: new Map([
+      [
+        "claude" as const,
+        {
+          costUsd: index === 45 ? 10 : 0,
+          totalTokens: 100,
+          records: 1,
+          unpricedRecords: index === 45 ? 0 : 1,
+        },
+      ],
+    ]),
+  }));
+  const markup = renderToStaticMarkup(
+    createElement(UsageProviderChart, {
+      providers: ["claude"],
+      days,
+      daily,
+      hours: [],
+      hourly: [],
+      metric: "cost",
+      referenceTime: undefined,
+      resolution: "day",
+      timeZone: "UTC",
+    }),
+  );
+  expect(markup.match(/<circle/g)).toHaveLength(1);
+  const position = markup.match(/<circle[^>]*cy="([^"]+)"/);
+  expect(Number(position?.[1])).toBeLessThan(260);
+});
+
+it("centers a single pinned-day sample instead of clipping it at the left edge", () => {
+  const day = "2026-10-22";
+  const daily = [
+    {
+      day,
+      costUsd: 10,
+      totalTokens: 100,
+      records: 1,
+      unpricedRecords: 0,
+      byProvider: new Map([
+        ["claude" as const, { costUsd: 10, totalTokens: 100, records: 1, unpricedRecords: 0 }],
+      ]),
+    },
+  ];
+  const markup = renderToStaticMarkup(
+    createElement(UsageProviderChart, {
+      providers: ["claude"],
+      days: [day],
+      daily,
+      hours: [],
+      hourly: [],
+      metric: "cost",
+      referenceTime: undefined,
+      resolution: "day",
+      timeZone: "UTC",
+    }),
+  );
+  expect(markup).toMatch(/<circle[^>]*cx="480"/);
 });

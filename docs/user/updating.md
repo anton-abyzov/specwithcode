@@ -97,3 +97,15 @@ download updates in the background and apply them when you next leave the app.
 It saves drafts and queued messages before restarting. If you keep the app open
 for a long time, it may ask to install immediately; choosing **Later** leaves the
 update queued for the next suitable moment.
+
+## Provider CLIs
+
+Open **Settings > Providers** and use the update action beside a CLI version. Only that instance on the selected machine starts checked. **Select eligible connected machines** includes other machines explicitly; review their current and target versions and installer actions, then press **Update selected**. The header's **Update CLIs…** opens the same flow for all outdated CLIs.
+
+Each destination checks its existing provider-management permission again. Offline machines, unknown ownership, incompatible releases and missing permission show a reason instead of being updated. No permission is granted by this action. A CLI update does not change model entitlement.
+
+A verified staged Codex fleet wrapper uses its owning Node/npm to install a fresh exact version beside the old release. The app verifies the package and executable before switching the wrapper, preserving its configured path and old files for running sessions. Unknown or edited wrappers remain manual. Homebrew, native and package-manager installs retain their own installer; the app never substitutes a global npm install for them.
+
+Other installers refuse while their configured CLI is in use. Retry after those sessions finish. A host process check also detects configured renamed executables and Node package entrypoints; a new external session can still start after that check. On Windows, inability to establish idle state remains manual. Nothing kills sessions or restarts the app or service.
+
+Results appear per machine. At most two updates run concurrently. **Cancel queued** skips items that have not started; an installer already running finishes normally. Keep the page open until the batch finishes. This batch is not a saved job across app closure or service restart. Retry failed items by selecting them again.

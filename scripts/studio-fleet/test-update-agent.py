@@ -44,7 +44,7 @@ control = json.loads(control_path.read_text()) if control_path.exists() else {}
 with open(str(home / 'fake-calls.jsonl'), 'a') as log:
     log.write(json.dumps({'argv': sys.argv[1:], 'cwd': os.getcwd(), 'env': sorted(os.environ)}) + '\n')
 parser = argparse.ArgumentParser()
-for flag in ['--identity', '--snapshot', '--prestate', '--archive', '--sha256', '--output']:
+for flag in ['--identity', '--snapshot', '--prestate', '--archive', '--sha256', '--output', '--request']:
     parser.add_argument(flag)
 parser.add_argument('--allow-project-migrations', action='store_true')
 parser.add_argument('--allow-existing-browser-heartbeat', action='store_true')

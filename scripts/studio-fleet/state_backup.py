@@ -14,6 +14,11 @@ A clone shares the database's blocks until either side writes, so it needs only 
 new release and the fold write: `assert_clone_headroom` asks for max(1 GiB, 10 % of the database
 plus the whole -wal) on the backups volume, measured before the service is stopped. The fold
 writes every page in the log into the cloned database, so the log counts in full.
+
+The preflight (`assert_backup_space`) sizes the copy by how it will be made: where the backups
+folder can clone the database (same APFS volume, clonefile present and a probe clone works) it asks
+for that headroom plus the margin, and only a volume that cannot clone asks for a full copy. It
+used to ask for a full copy everywhere, so an 11 GB database refused an update that needed 3 GB.
 """
 import contextlib
 import ctypes
@@ -24,6 +29,7 @@ import pathlib
 import re
 import shutil
 import sqlite3
+import tempfile
 import uuid
 
 import live_database
@@ -121,6 +127,9 @@ def clone_state(own, commit, clonefile):
         return target, 'clone'
     except CloneUnavailable:
         discard_unused_backup(target)
+        # Clone support can change after admission. A full copy needs its own
+        # space check before writing, even if the earlier probe could clone.
+        assert_backup_space(own, pathlib.Path.home().resolve())
         return backup_state(own, commit), 'sqlite-backup'
     except BaseException:
         discard_unused_backup(target)
@@ -160,10 +169,15 @@ def discard_unused_backup(backup):
         folder.rmdir()
 
 
-def _free(home):
+def _backup_volume(home):
     root = studio_paths.backups_root(home)
     while not root.exists() and root != root.parent:
         root = root.parent  # The first update makes the backups folder; measure its disk.
+    return root
+
+
+def _free(home):
+    root = _backup_volume(home)
     return root, shutil.disk_usage(str(root)).free
 
 
@@ -177,21 +191,61 @@ def _database_bytes(own, names=('statev2.sqlite', 'statev2.sqlite-wal')):
     return total
 
 
-def assert_backup_space(own, home):
-    """Refuses an update whose pre-update copy of the database cannot fit. The copy is
-    about the database and its write-ahead log; the margin covers the release staged
-    beside it and leaves the Mac room to run. Sizes come from stat alone: the live
-    database is never opened here."""
-    needed = BACKUP_SPACE_MARGIN + _database_bytes(own)
-    free = _free(home)[1]
+def clone_headroom(own):
+    """Bytes a clone of the stopped database needs: see the module docstring."""
+    return max(CLONE_HEADROOM_MIN, int(_database_bytes(own, ('statev2.sqlite',)) * CLONE_HEADROOM_SHARE)
+               + _database_bytes(own, ('statev2.sqlite-wal',)))
+
+
+def can_clone(own, home, clonefile):
+    """True when clone_state will clone rather than copy: clonefile exists, the database and the
+    backups folder are on one volume, and a probe file there clones. The probe is this process's
+    own empty file, removed with its clone; the live database is never opened."""
+    if clonefile is None:
+        return False
+    root = _backup_volume(home)
+    try:
+        if os.stat(str(own / 'userdata')).st_dev != os.stat(str(root)).st_dev:
+            return False  # Another volume: clonefile fails with EXDEV.
+        fd, probe = tempfile.mkstemp(prefix='.clone-probe-', dir=str(root))
+    except OSError:
+        return False
+    os.close(fd)
+    clone = probe + '-clone'
+    try:
+        return clonefile(os.fsencode(probe), os.fsencode(clone), 0) == 0
+    finally:
+        for path in (probe, clone):
+            with contextlib.suppress(FileNotFoundError):
+                os.unlink(path)
+
+
+def backup_space_needed(own, home, clonefile):
+    """(bytes, 'clone' or 'copy'): what the pre-update copy and the staged release need free.
+    Sizes come from stat alone."""
+    if can_clone(own, home, clonefile):
+        return BACKUP_SPACE_MARGIN + clone_headroom(own), 'clone'
+    return BACKUP_SPACE_MARGIN + _database_bytes(own), 'copy'
+
+
+def assert_backup_space(own, home, clonefile=None):
+    """Refuses an update whose pre-update copy of the database cannot fit. A clone needs
+    clone_headroom; a copy needs about the database and its write-ahead log. The margin covers
+    the release staged beside it and leaves the Mac room to run. The live database is never
+    opened here."""
+    needed, free = backup_space(own, home, clonefile)
     assert free >= needed, 'Not enough free disk space for the pre-update backup: needs %.1f GB, %.1f GB free' % (
         needed / 1e9, free / 1e9)
+
+
+def backup_space(own, home, clonefile):
+    """(bytes needed, bytes free) for assert_backup_space."""
+    return backup_space_needed(own, home, clonefile)[0], _free(home)[1]
 
 
 def assert_clone_headroom(own, home):
     """Refuses, before the service is stopped, when the backups volume lacks the room a clone
     and the new release's first writes need. Stat only."""
-    needed = max(CLONE_HEADROOM_MIN, int(_database_bytes(own, ('statev2.sqlite',)) * CLONE_HEADROOM_SHARE)
-                 + _database_bytes(own, ('statev2.sqlite-wal',)))
+    needed = clone_headroom(own)
     free = _free(home)[1]
     assert free >= needed, NO_CLONE_HEADROOM % (needed / 1e9, free / 1e9)

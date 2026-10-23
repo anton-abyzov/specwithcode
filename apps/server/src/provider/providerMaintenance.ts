@@ -58,6 +58,7 @@ const CommandLookupEnvConfig = Config.all({
 const readCommandLookupEnv = CommandLookupEnvConfig.pipe(Effect.orElseSucceed(() => ({})));
 
 export interface ProviderMaintenanceCapabilities {
+  readonly manualUpdateReason?: string;
   readonly provider: ProviderDriverKind;
   readonly packageName: string | null;
   readonly update: ProviderMaintenanceCommandAction | null;
@@ -71,6 +72,9 @@ export interface ProviderMaintenanceCapabilities {
 }
 
 export interface ProviderMaintenanceCommandAction {
+  readonly idlePaths?: ReadonlyArray<string>;
+  readonly idlePackageName?: string;
+  readonly stagedCodex?: import("./stagedProviderUpdate.ts").StagedCodexUpdate;
   readonly command: string;
   readonly executable: string;
   readonly args: ReadonlyArray<string>;
@@ -413,21 +417,52 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
   if (!context) {
     return manual;
   }
-  if (
-    (yield* independentProviderMaintenance({
+  const independent = yield* independentProviderMaintenance({
+    provider: definition.provider,
+    packageName: definition.npmPackageName,
+    context,
+  });
+  if (independent !== null) {
+    if (typeof independent !== "object")
+      return {
+        ...manual,
+        manualUpdateReason:
+          "This pinned fleet wrapper could not be verified for safe staging. Restore its reviewed wrapper and owning Node/npm toolchain, or update it through the fleet provisioning workflow. Refresh Providers afterward.",
+      };
+    return {
       provider: definition.provider,
       packageName: definition.npmPackageName,
-      context,
-    })) !== null
-  ) {
-    return manual;
+      update: {
+        command:
+          "Install Codex beside the current release with its owning npm, verify, then switch new sessions",
+        executable: independent.nodePath,
+        args: [],
+        lockKey: `staged-codex:${independent.wrapperPath}`,
+        stagedCodex: independent,
+      },
+    };
   }
   const commandPaths = [context.resolvedCommandPath, context.realCommandPath];
+  const ownedCapabilities = (
+    input: Parameters<typeof makeProviderMaintenanceCapabilities>[0],
+  ): ProviderMaintenanceCapabilities => {
+    const capabilities = makeProviderMaintenanceCapabilities(input);
+    return capabilities.update
+      ? {
+          ...capabilities,
+          update: {
+            ...capabilities.update,
+            idlePaths: commandPaths,
+            idlePackageName: definition.npmPackageName,
+          },
+        }
+      : capabilities;
+  };
   const packageName = definition.npmPackageName;
 
   const nativeUpdate = definition.nativeUpdate;
   const native = nativeUpdate
-    ? makeProviderMaintenanceCapabilities({
+    ? ownedCapabilities({
         provider: definition.provider,
         packageName,
         updateExecutable: context.resolvedCommandPath,
@@ -448,7 +483,7 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
     ? manual
     : native;
   if (commandPaths.some(isVitePlusGlobalCommandPath)) {
-    return makeProviderMaintenanceCapabilities({
+    return ownedCapabilities({
       provider: definition.provider,
       packageName,
       updateExecutable: "vp",
@@ -457,7 +492,7 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
     });
   }
   if (commandPaths.some(isBunGlobalCommandPath)) {
-    return makeProviderMaintenanceCapabilities({
+    return ownedCapabilities({
       provider: definition.provider,
       packageName,
       updateExecutable: "bun",
@@ -466,7 +501,7 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
     });
   }
   if (commandPaths.some(isPnpmGlobalCommandPath)) {
-    return makeProviderMaintenanceCapabilities({
+    return ownedCapabilities({
       provider: definition.provider,
       packageName,
       updateExecutable: "pnpm",
@@ -476,7 +511,7 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
   }
 
   if (commandPaths.some(isYarnGlobalCommandPath)) {
-    return makeProviderMaintenanceCapabilities({
+    return ownedCapabilities({
       provider: definition.provider,
       packageName,
       updateExecutable: "yarn",
@@ -485,7 +520,7 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
     });
   }
   if (yield* isVoltaPackageInstall(context, packageName)) {
-    return makeProviderMaintenanceCapabilities({
+    return ownedCapabilities({
       provider: definition.provider,
       packageName,
       updateExecutable: "volta",
@@ -504,7 +539,7 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
     // (claude copies its native binary over a placeholder stub) is left broken
     // while the update reports success. Allow this one package's scripts.
     // Older npm warns about the unknown config and continues.
-    return makeProviderMaintenanceCapabilities({
+    return ownedCapabilities({
       provider: definition.provider,
       packageName,
       updateExecutable: "npm",
@@ -560,7 +595,7 @@ export const resolvePackageManagedProviderMaintenance = Effect.fn(
     // Homebrew lags npm by hours on every release, so compare against what
     // `brew upgrade` can actually deliver.
     const info = yield* runHomebrew(brewPath, ["info", "--json=v2", homebrew.name], context.env);
-    return makeProviderMaintenanceCapabilities({
+    return ownedCapabilities({
       provider: definition.provider,
       packageName,
       updateExecutable: brewPath,
@@ -773,7 +808,8 @@ export function createProviderVersionAdvisory(input: {
     checkedAt: input.checkedAt ?? null,
     message:
       advisory.status === "behind_latest" && capabilities.update === null
-        ? "Update the configured executable with its owning installer, then refresh Providers. This installation cannot be updated from SpecWithCode."
+        ? (capabilities.manualUpdateReason ??
+          "Update the configured executable with its owning installer, then refresh Providers. This installation cannot be updated from SpecWithCode.")
         : advisory.message,
   };
 }

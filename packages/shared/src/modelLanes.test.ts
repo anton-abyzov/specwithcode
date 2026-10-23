@@ -1,6 +1,5 @@
 import * as DateTime from "effect/DateTime";
 import {
-
   type LearnedModelPreference,
   type ModelLanes,
   ProviderDriverKind,
@@ -108,7 +107,7 @@ const sonnet = sel("claudeAgent", "claude-sonnet-5-5");
 const astra = sel("codex", "gpt-6-astra");
 
 const lanes: ModelLanes = { complex: [sol, fable], routine: [copilotOpus, opus, astra] };
-const policy = { excludedProviders: [], escalate: true };
+const policy = { excludedProviders: [], escalate: true, minimumTier: null };
 
 function route(
   text: string,
@@ -116,14 +115,14 @@ function route(
 ): TaskRoutingDecision | null {
   return (
     resolveLaneRouting({
-    lanes,
-    preferences: [],
-    task: { text },
-    classification: classifyTask({ text }),
-    baseline: astra,
-    providers,
-    nowMs: now,
-    policy,
+      lanes,
+      preferences: [],
+      task: { text },
+      classification: classifyTask({ text }),
+      baseline: astra,
+      providers,
+      nowMs: now,
+      policy,
       switchAtPercent: 95,
       ...over,
     })?.decision ?? null
@@ -144,9 +143,9 @@ describe("classifyLaneByRules", () => {
       classifyLaneByRules({ text: "Redesign the sync architecture to remove the race condition" })
         .lane,
     ).toBe("complex");
-    expect(classifyLaneByRules({ text: "Brainstorm creative names for the launch campaign" }).lane).toBe(
-      "complex",
-    );
+    expect(
+      classifyLaneByRules({ text: "Brainstorm creative names for the launch campaign" }).lane,
+    ).toBe("complex");
     expect(
       classifyLaneByRules({
         text: "Think on how to organize it best, implement, deploy, and test.",
@@ -206,9 +205,7 @@ describe("preferenceMatch", () => {
 
   it("needs the class and the lane when the rule names them", () => {
     const rule = preference({ taskClass: "translation", lane: "routine" });
-    expect(
-      preferenceMatch(rule, { text: "x" }, { taskClass: "translation" }, "routine"),
-    ).toBe(1);
+    expect(preferenceMatch(rule, { text: "x" }, { taskClass: "translation" }, "routine")).toBe(1);
     expect(preferenceMatch(rule, { text: "x" }, { taskClass: "code" }, "routine")).toBeNull();
     expect(
       preferenceMatch(rule, { text: "x" }, { taskClass: "translation" }, "complex"),
@@ -236,6 +233,44 @@ describe("resolveLaneRouting", () => {
     expect(routine).toMatchObject({ lane: "routine", moved: true, selection: copilotOpus });
   });
 
+  it("enforces the tier floor for lane entries and learned preferences", () => {
+    const decision = route("Update the changelog", {
+      lanes: { complex: [], routine: [sonnet, opus] },
+      preferences: [preference({ action: { kind: "prefer", model: sonnet } })],
+      policy: { ...policy, minimumTier: "frontier" },
+    });
+    expect(decision?.selection).toEqual(opus);
+    expect(decision?.skipped?.[0]).toContain("below minimum tier Frontier");
+  });
+
+  it("rejects an unknown model tier when a floor is set", () => {
+    const custom = sel("claudeAgent", "custom-model");
+    const decision = route("Update the changelog", {
+      lanes: { complex: [], routine: [custom, opus] },
+      providers: [{ ...claude, models: [...claude.models, model("custom-model", "Custom model")] }],
+      policy: { ...policy, minimumTier: "standard" },
+    });
+    expect(decision?.selection).toEqual(opus);
+    expect(decision?.skipped?.[0]).toContain("below minimum tier");
+  });
+
+  it("marks an avoided baseline as prohibited when the lane is exhausted", () => {
+    const result = resolveLaneRouting({
+      lanes: { complex: [], routine: [opus] },
+      preferences: [
+        preference({ keywords: ["changelog"], action: { kind: "avoid", model: opus } }),
+      ],
+      task: { text: "Update the changelog" },
+      classification: classifyTask({ text: "Update the changelog" }),
+      baseline: opus,
+      providers,
+      nowMs: now,
+      policy,
+    });
+    expect(result?.found).toBe(false);
+    expect(result?.baselineUnavailable).toBe("avoided for tasks like this");
+  });
+
   it("skips an exhausted provider and records why", () => {
     const decision = route("Update the changelog", {
       limitedInstanceIds: new Set(["acpRegistry_copilot"]),
@@ -248,7 +283,13 @@ describe("resolveLaneRouting", () => {
   it("skips a provider over the switch threshold and one that is signed out", () => {
     const decision = route("Design a new architecture from scratch", {
       providers: [
-        { ...codex, usageLimits: { ...codex.usageLimits!, windows: [{ ...codex.usageLimits!.windows[0]!, usedPercent: 97 }] } },
+        {
+          ...codex,
+          usageLimits: {
+            ...codex.usageLimits!,
+            windows: [{ ...codex.usageLimits!.windows[0]!, usedPercent: 97 }],
+          },
+        },
         { ...claude, auth: { status: "unauthenticated" } },
         copilot,
       ],
@@ -274,9 +315,9 @@ describe("resolveLaneRouting", () => {
       route("Fix the typo", { policy: { excludedProviders: [copilot.instanceId], escalate: true } })
         ?.selection,
     ).toEqual(opus);
-    expect(
-      route("Fix the typo", { runnableInstanceIds: new Set(["codex"]) })?.selection,
-    ).toEqual(astra);
+    expect(route("Fix the typo", { runnableInstanceIds: new Set(["codex"]) })?.selection).toEqual(
+      astra,
+    );
   });
 
   it("returns null when the lane is empty and nothing is learned", () => {
@@ -319,7 +360,10 @@ describe("resolveLaneRouting", () => {
   });
 
   it("allows a per-token entry the user listed and labels its billing", () => {
-    const apiClaude = { ...claude, auth: { status: "authenticated" as const, apiKeyBilling: true } };
+    const apiClaude = {
+      ...claude,
+      auth: { status: "authenticated" as const, apiKeyBilling: true },
+    };
     const decision = route("Update the changelog", {
       providers: [apiClaude, codex],
       lanes: { complex: [], routine: [opus] },
@@ -339,16 +383,16 @@ describe("preference helpers", () => {
 
   it("replaces a rule with the same match and keeps the newest within the limit", () => {
     const first = preference({ id: "a", keywords: ["video"] });
-    const second = preference({ id: "b", keywords: ["Video"], action: { kind: "prefer", model: sol } });
+    const second = preference({
+      id: "b",
+      keywords: ["Video"],
+      action: { kind: "prefer", model: sol },
+    });
     expect(withLearnedPreference([first], second, 40).map((rule) => rule.id)).toEqual(["b"]);
     const many = Array.from({ length: 3 }, (_, index) =>
       preference({ id: `r${index}`, keywords: [`k${index}`] }),
     );
-    expect(withLearnedPreference(many, first, 3).map((rule) => rule.id)).toEqual([
-      "r1",
-      "r2",
-      "a",
-    ]);
+    expect(withLearnedPreference(many, first, 3).map((rule) => rule.id)).toEqual(["r1", "r2", "a"]);
   });
 
   it("describes a rule in words", () => {
@@ -357,4 +401,3 @@ describe("preference helpers", () => {
     );
   });
 });
-

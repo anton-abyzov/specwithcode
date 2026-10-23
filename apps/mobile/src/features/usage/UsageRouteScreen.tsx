@@ -147,6 +147,8 @@ export function UsageRouteScreen() {
             day: hour.hourStart,
             costUsd: hour.costUsd,
             totalTokens: hour.totalTokens,
+            records: hour.records,
+            unpricedRecords: hour.unpricedRecords,
             byProvider: hour.byProvider,
           }))
         : merged.daily,

@@ -1,5 +1,6 @@
 import {
   DEFAULT_SERVER_SETTINGS,
+  OrchestratorMcpFailure,
   type ModelLane,
   type ModelSelection,
   type OrchestratorMcpTarget,
@@ -82,7 +83,7 @@ export const routeWorkerTask = Effect.fn("project.routeWorkerTask")(function* (i
   const lanesSet =
     rule.modelLanes.complex.length > 0 ||
     rule.modelLanes.routine.length > 0 ||
-    rule.learnedModelPreferences.some((preference) => preference.action.kind === "prefer");
+    rule.learnedModelPreferences.length > 0;
   if (rule.taskRouting.mode !== "auto" && !lanesSet) return null;
   const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
   const limited = new Set<string>(simulatedUsageLimitInstances(yield* ProviderFallbackEnv));
@@ -108,7 +109,12 @@ export const routeWorkerTask = Effect.fn("project.routeWorkerTask")(function* (i
           : { runnableInstanceIds: input.runnableInstanceIds }),
       })
     : null;
-  if (lane !== null && (lane.found || rule.taskRouting.mode !== "auto")) {
+  if (lane !== null) {
+    if (!lane.found && lane.baselineUnavailable !== null)
+      return yield* new OrchestratorMcpFailure({
+        code: "model_unavailable",
+        message: `No permitted ${lane.decision.lane} model can run now. Baseline ${input.baseline.model}: ${lane.baselineUnavailable}. Update the model lane or learned preference before retrying.`,
+      });
     yield* logDecision(input.project, lane.decision);
     return lane.decision;
   }
@@ -126,18 +132,8 @@ export const routeWorkerTask = Effect.fn("project.routeWorkerTask")(function* (i
       ? {}
       : { runnableInstanceIds: input.runnableInstanceIds }),
   });
-  // A lane whose entries all failed explains itself next to the tier decision.
-  const decision: TaskRoutingDecision =
-    lane === null
-      ? tiered
-      : {
-          ...tiered,
-          ...(lane.decision.lane === undefined ? {} : { lane: lane.decision.lane }),
-          ...(lane.decision.skipped === undefined ? {} : { skipped: lane.decision.skipped }),
-          reason: `${lane.decision.reason.replace(/: kept .*$/, "")}. ${tiered.reason}`.slice(0, 600),
-        };
-  yield* logDecision(input.project, decision);
-  return decision;
+  yield* logDecision(input.project, tiered);
+  return tiered;
 });
 
 const logDecision = (project: Project, decision: TaskRoutingDecision) =>
