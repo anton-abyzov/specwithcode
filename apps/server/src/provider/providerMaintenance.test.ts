@@ -325,6 +325,8 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
           provider: driver("packageTool"),
           packageName: "@example/package-tool",
           update: {
+            idlePaths: [link, NodeFS.realpathSync(link)],
+            idlePackageName: "@example/package-tool",
             command: `npm install -g --prefix ${tempDir} --allow-scripts=@example/package-tool @example/package-tool@latest`,
             executable: "npm",
             args: [
@@ -525,6 +527,8 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
         provider: driver("nativePackageTool"),
         packageName: "@example/native-package-tool",
         update: {
+          idlePaths: [nativePath, NodeFS.realpathSync(nativePath)],
+          idlePackageName: "@example/native-package-tool",
           command: `${nativePath} update`,
           executable: nativePath,
           args: ["update"],
@@ -757,6 +761,8 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
                 ? ["upgrade", "--cask", fixture.name]
                 : ["upgrade", fixture.name],
             lockKey: "homebrew",
+            idlePaths: [link, NodeFS.realpathSync(link)],
+            idlePackageName: "@example/package-tool",
           },
         });
       }),

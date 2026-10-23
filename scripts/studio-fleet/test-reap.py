@@ -512,7 +512,7 @@ class UpdateReapMode(unittest.TestCase):
 # until a reap ran (the leftover processes were what kept the service busy). With cancelAt, the
 # person cancels while that snapshot runs.
 REAP_HELPER = agent_tests.FAKE_HELPER
-for old, new in (("for flag in ['--identity', '--snapshot',", "for flag in ['--identity', '--snapshot', '--reap', '--request',"),
+for old, new in (("for flag in ['--identity', '--snapshot',", "for flag in ['--identity', '--snapshot', '--reap',"),
                  ("if args.snapshot:\n",
                   "if args.snapshot and control.get('cancelAt') == snapshots:\n"
                   "    settings = json.loads(pathlib.Path(control['configPath']).read_text())\n"

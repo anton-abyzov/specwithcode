@@ -135,3 +135,16 @@ older tag: the history was rewritten on 2026-10-13, so releases up to 1.0.8 repo
 that no longer exist in the repository.
 
 A release without a plan shows "needs a manual upgrade" in Settings and is never installed on its own.
+
+
+### Migration-capable plans and the post-restart page proof
+
+A plan allowing project migrations still attempts the page proof. A schema change makes the proof refuse, so the full read with the migration baseline runs. With no schema change, the proof supplies the same rows and typed capture to the existing migration-preservation checks. Allowing a migration does not imply that one occurred.
+
+The helper compares pre-update auth sessions with its own first consistent read, rather than the agent's earlier snapshot. A sign-in or `service prepare-update` between those reads is part of the helper's baseline. Later auth changes must still pass the invariant check before the restart and the existing typed auth proof across it. Other rows and the complete database capture remain checked against the agent's snapshot.
+
+
+Backup admission uses the clone-aware sizing and recovery-aware retention from PR #623, including its 2 GiB staging margin. A clone that later falls back to SQLite checks the full-copy requirement again before copying. Existing recovery guards remain in force.
+
+
+For a forced Update now request, the agent passes `--request` when snapshotting. A helper that supports held snapshots validates the exact live hold and idle state, then captures metadata without hashing all rows. Apply validates the hold again and establishes its own full consistent database baseline, while still comparing identity, pointers, settings and processes against admission. Checks before and across the restart use that complete baseline. If no matching live hold exists, the helper uses the full snapshot, so forced CLI requests still work. A tagged admission whose hold expires or is cancelled before apply refuses. Older helpers ignore `--request` during snapshot and retain the full read. Automatic quiet-period updates retain full snapshots.

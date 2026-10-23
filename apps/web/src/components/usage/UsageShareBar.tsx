@@ -35,16 +35,18 @@ export function UsageShareBar({
         {aside}
       </div>
       <div
-        role="img"
+        role="group"
         aria-label={`${label}: ${visible.map((segment) => `${segment.label} ${format(segment.value)}`).join(", ")}`}
-        className="flex h-2 gap-0.5"
+        className="flex h-3 gap-0.5"
       >
         {visible.map((segment) => (
           <Tooltip key={segment.label}>
             <TooltipTrigger
               render={
-                <div
-                  className="h-full min-w-1 rounded-xs first:rounded-l-full last:rounded-r-full"
+                <button
+                  type="button"
+                  aria-label={`${segment.label}: ${format(segment.value)}, ${formatPercent(segment.value / total)} of shown total`}
+                  className="h-full min-w-1 rounded-xs outline-none first:rounded-l-full last:rounded-r-full focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2 focus-visible:ring-offset-background"
                   style={{ flex: `${segment.value} 1 0`, backgroundColor: segment.color }}
                 />
               }

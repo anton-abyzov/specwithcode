@@ -47,7 +47,7 @@ export const ORPHANED_RUN_MESSAGES: Record<OrphanedRunKind, string> = {
   session_ended:
     "The provider session ended before this turn finished, so it was closed. Send a message to continue.",
   unobserved:
-    "Studio stopped receiving updates from the provider for this turn, so it was closed. Send a message to continue.",
+    "SpecWithCode stopped receiving updates from the provider for this turn, so it was closed. Send a message to continue.",
 };
 
 export interface OrphanedRunLiveState {

@@ -36,7 +36,9 @@ function runMacSnapShot(windowId: number, outputPath: string): Promise<void> {
 export async function captureMacWindowSnapshot(
   active: ActiveWindow,
   outputPath: string,
-  maxSize: Electron.Size,
+  // Pixel safety bound, independent of the window bounds (macOS points).
+  // Keep Retina text intact; provider byte limits are applied at delivery.
+  maxSize: Electron.Size = { width: 8_000, height: 8_000 },
 ): Promise<{ readonly source: MacSnapShotSource; readonly png: Buffer }> {
   await runMacSnapShot(active.id, outputPath);
   const capturedPng = await NodeFSP.readFile(outputPath);
@@ -46,20 +48,7 @@ export async function captureMacWindowSnapshot(
   ) {
     throw new Error("macOS returned an invalid snapshot.");
   }
-  const image = Electron.nativeImage.createFromBuffer(capturedPng);
-  if (image.isEmpty()) throw new Error("macOS returned an invalid snapshot.");
-  const size = image.getSize();
-  const scale = Math.min(maxSize.width / size.width, maxSize.height / size.height, 1);
-  const png =
-    scale < 1
-      ? image
-          .resize({
-            width: Math.max(1, Math.round(size.width * scale)),
-            height: Math.max(1, Math.round(size.height * scale)),
-            quality: "best",
-          })
-          .toPNG()
-      : capturedPng;
+  const png = fitMacSnapShot(capturedPng, maxSize);
   if (png !== capturedPng) await NodeFSP.writeFile(outputPath, png);
   return {
     source: {
@@ -67,4 +56,24 @@ export async function captureMacWindowSnapshot(
     },
     png,
   };
+}
+
+/** Bound physical image pixels, never the window's point dimensions. */
+export function fitMacSnapShot(
+  capturedPng: Buffer,
+  maxSize: Electron.Size = { width: 8_000, height: 8_000 },
+): Buffer {
+  const image = Electron.nativeImage.createFromBuffer(capturedPng);
+  if (image.isEmpty()) throw new Error("macOS returned an invalid snapshot.");
+  const size = image.getSize();
+  const scale = Math.min(maxSize.width / size.width, maxSize.height / size.height, 1);
+  return scale < 1
+    ? image
+        .resize({
+          width: Math.max(1, Math.round(size.width * scale)),
+          height: Math.max(1, Math.round(size.height * scale)),
+          quality: "best",
+        })
+        .toPNG()
+    : capturedPng;
 }

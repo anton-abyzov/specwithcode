@@ -2,7 +2,7 @@
 """update.apply under test-update.py's ApplyRecovery harness, split from test-update.py: rollback
 and recovery, guarded comparisons before and after the restart, heartbeats, migrations, waiting
 threads and receipts. Pure temporary metadata, never production services."""
-import contextlib,copy,datetime,importlib.util,json,os,pathlib,shlex,sqlite3,time,unittest
+import contextlib,copy,datetime,importlib.util,json,os,pathlib,shlex,shutil,sqlite3,time,unittest
 from unittest.mock import patch
 import auth_heartbeat
 import install_progress
@@ -15,6 +15,59 @@ updater_base=importlib.util.module_from_spec(spec);spec.loader.exec_module(updat
 update,DISK,RESTART,REAL_ROWS_SNAPSHOT=updater_base.update,updater_base.DISK,updater_base.RESTART,updater_base.REAL_ROWS_SNAPSHOT
 mutate_state,waiting_check=updater_base.mutate_state,updater_base.waiting_check
 class ApplyRecoveryTests(updater_base.ApplyRecovery):
+ def test_migration_capable_plans_try_the_page_proof_and_fall_back_when_it_refuses(self):
+  self.use_waiting_state()
+  with patch.object(update.after_proof,'decide',return_value=None) as proof:
+   self.execute(allow_project_migrations=True)
+  proof.assert_called_once()
+  self.assertEqual(json.loads(self.output.read_text())['phase'],'verified')
+ def test_migration_capable_plans_consume_a_successful_page_proof(self):
+  self.use_waiting_state()
+  original=update._snapshot
+  def decide(*args):
+   return update._read_state(self.own/'userdata',True, self.before['rows'],True)
+  def snapshot(*args,**kwargs):
+   if kwargs.get('reads') is not None:
+    rows,auth,carried,capture=kwargs['reads']
+    return {**self.snapshot('m4'),'rows':rows,'databaseCapture':capture},auth,carried
+   return original(*args,**kwargs)
+  with patch.object(update.after_proof,'decide',side_effect=decide) as proof, patch.object(update,'_snapshot',side_effect=snapshot) as read:
+   self.execute(allow_project_migrations=True)
+  proof.assert_called_once()
+  self.assertTrue(any(call.kwargs.get('reads') is not None for call in read.call_args_list))
+  self.assertEqual(json.loads(self.output.read_text())['phase'],'verified')
+ def use_held_admission(self):
+  self.use_captured_waiting_state()
+  now=datetime.datetime.now(datetime.timezone.utc);request=now.isoformat()
+  updates=self.own/'updates';updates.mkdir(exist_ok=True)
+  (updates/'hold.json').write_text(json.dumps({'schemaVersion':1,'pid':100,'startedAt':(now-datetime.timedelta(seconds=1)).isoformat(),'expiresAt':(now+datetime.timedelta(minutes=5)).isoformat()}))
+  (updates/'config.json').write_text(json.dumps({'installMode':'force','installRequestedAt':request}))
+  self.before.update(snapshotMode='held-service',installRequestedAt=request,rows={'nativeWorkIdle':True,'counts':{}})
+  self.before.pop('databaseCapture')
+  return {'own':self.own,'home':self.home,'runtime':{'pid':100,'startedAt':(now-datetime.timedelta(minutes=5)).isoformat()}}
+ def test_a_held_admission_takes_its_complete_baseline_in_the_helper(self):
+  service=self.use_held_admission()
+  with patch.object(update,'_service',return_value=service):self.execute()
+  receipt=json.loads(self.output.read_text())
+  self.assertEqual(receipt['phase'],'verified')
+  self.assertIsInstance(receipt['before']['databaseCapture'],dict)
+  self.assertIn('orchestration_events',receipt['before']['rows']['hashes'])
+ def test_a_cancelled_held_admission_refuses_before_staging_or_restart(self):
+  service=self.use_held_admission();(self.own/'updates/config.json').write_text('{}')
+  with patch.object(update,'_service',return_value=service),self.assertRaisesRegex(AssertionError,update.HOLD_REFUSAL):self.execute()
+  self.assertEqual(self.stage_timeouts,[]);self.assertEqual(self.restart_calls,[])
+ def test_held_admission_keeps_metadata_guards(self):
+  service=self.use_held_admission();original=self.snapshot
+  def changed(identity):
+   value=original(identity);value['fileHashes']['settings']='tampered';return value
+  with patch.object(self,'snapshot',side_effect=changed),patch.object(update,'_service',return_value=service),self.assertRaisesRegex(AssertionError,'fileHashes'):
+   self.execute()
+  self.assertEqual(self.restart_calls,[])
+ def test_held_admission_keeps_restart_data_guards(self):
+  service=self.use_held_admission()
+  self.on_restart=lambda:mutate_state(self.own/'userdata',"DELETE FROM orchestration_events")
+  with patch.object(update,'_service',return_value=service),self.assertRaises(AssertionError):self.execute()
+  self.assertTrue(self.restart_calls)
  def test_server_browser_stopped_before_restart_is_named_in_the_receipt(self):
   self.scenario='server-browser'
   self.execute();result=json.loads(self.output.read_text())
@@ -119,9 +172,11 @@ class ApplyRecoveryTests(updater_base.ApplyRecovery):
   def usage(path):
    measured.append(path);return DISK(1<<40,(1<<40)-update.BACKUP_SPACE_MARGIN-3999,update.BACKUP_SPACE_MARGIN+3999)
   def never_opened(path):raise AssertionError('The live database was opened')
-  with patch.object(update.shutil,'disk_usage',side_effect=usage),patch.object(update.live_database,'connect',side_effect=never_opened),patch.object(update.sqlite3,'connect',side_effect=never_opened):
+  # A volume that cannot clone needs a full copy of the database and its log.
+  with patch.object(update,'_clonefile',return_value=None),patch.object(update.shutil,'disk_usage',side_effect=usage),patch.object(update.live_database,'connect',side_effect=never_opened),patch.object(update.sqlite3,'connect',side_effect=never_opened):
    with self.assertRaisesRegex(AssertionError,r'^Not enough free disk space for the pre-update backup: needs 2\.1 GB, 2\.1 GB free$') as caught:self.execute()
-  self.assertEqual(measured,[str(self.home/'.specwithcode')])  # backups/ is made by the first copy.
+  # backups/ is made by the first copy; measured again after older copies are dropped.
+  self.assertEqual(measured,[str(self.home/'.specwithcode')]*2)
   self.assertEqual((self.stage_timeouts,self.restart_calls,self.backups,self.quiescence_checks,self.launchd,self.stops),([],[],[],[],[],[]))
   self.assertEqual({p:p.read_bytes() for p in self.original},self.original)
   self.assertFalse(self.output.exists());self.assertFalse((self.own/'owned-updates').exists());self.assertFalse((self.own/'updates'/update.INSTALL_GATE_FILE).exists())
@@ -130,6 +185,49 @@ class ApplyRecoveryTests(updater_base.ApplyRecovery):
   self.assertEqual((failure['phase'],failure['pointers']),('preflight','unchanged'))
   self.assertEqual(failure['error'],'AssertionError: '+str(caught.exception))
   self.assertEqual(update.refusal_line('m4',caught.exception),'REFUSAL environment '+str(caught.exception))
+ def test_a_volume_that_clones_needs_only_the_clone_headroom_not_a_full_copy(self):
+  # An 11 GB database used to refuse with "needs 13.4 GB": the clone shares its blocks.
+  sizes={'statev2.sqlite':11<<30,'statev2.sqlite-wal':20<<20}
+  needed=update.BACKUP_SPACE_MARGIN+(11<<30)//10+(20<<20);measured=[]
+  def usage(path):
+   measured.append(path);return DISK(1<<40,0,needed if len(measured)==1 else 1<<40)
+  def clones(source,target,flags):pathlib.Path(os.fsdecode(target)).write_bytes(b'');return 0
+  with patch.object(update,'_clonefile',return_value=clones),patch.object(state_backup,'_database_bytes',side_effect=lambda own,names=tuple(sizes):sum(sizes[name] for name in names)),\
+    patch.object(update.shutil,'disk_usage',side_effect=usage):self.execute()
+  self.assertEqual(json.loads(self.output.read_text())['phase'],'verified')
+  self.assertEqual(len(measured),2)  # The preflight once, then the clone headroom: no second prune.
+  self.assertEqual(list(self.home.rglob('.clone-probe-*')),[])
+  def short(path):return DISK(1<<40,0,needed-1)
+  with patch.object(update,'_clonefile',return_value=clones),patch.object(state_backup,'_database_bytes',side_effect=lambda own,names=tuple(sizes):sum(sizes[name] for name in names)),\
+    patch.object(update.shutil,'disk_usage',side_effect=short):
+   with self.assertRaisesRegex(AssertionError,r'^Not enough free disk space for the pre-update backup: needs 3\.3 GB, 3\.3 GB free$'):update.assert_backup_space(self.own,self.home,clones)
+  self.assertLess(needed,4e9)
+ def old_copies(self,count,size):
+  root=studio_paths.backups_root(self.home);old=[]
+  for day in range(1,count+1):
+   folder=root/('pre-abc123def456-2026100%dT000000Z-%s'%(day,'0'*32));folder.mkdir(parents=True)
+   with open(folder/'statev2.sqlite','wb') as handle:handle.truncate(size)  # Sparse: its size, not its blocks.
+   os.utime(folder,(time.time()-86400,)*2);old.append(folder)
+  return root,old
+ def test_a_short_disk_drops_the_previous_update_copy_before_refusing(self):
+  root,old=self.old_copies(2,3<<30)
+  def usage(path):
+   return DISK(1<<40,0,(1<<40) if not list(root.iterdir()) else 1<<20)  # Full until every old copy is gone.
+  with patch.object(update.shutil,'disk_usage',side_effect=usage):self.execute()
+  result=json.loads(self.output.read_text())
+  self.assertEqual(result['phase'],'verified')
+  self.assertEqual(sorted(result['prunedStateBackups']),sorted(folder.name for folder in old))
+ def test_copies_too_small_to_cover_the_shortfall_or_held_by_a_rollback_stay(self):
+  root,old=self.old_copies(2,1<<20)
+  with patch.object(update.shutil,'disk_usage',return_value=DISK(1<<40,0,1<<20)):
+   with self.assertRaisesRegex(AssertionError,r'free$'):self.execute()
+  self.assertEqual(list(root.iterdir()),[old[1]])  # Only the usual prune ran: 1 MiB cannot cover the shortfall.
+  shutil.rmtree(root);root,old=self.old_copies(2,3<<30)
+  receipts=self.own/'updates'/'receipts';receipts.mkdir(parents=True,exist_ok=True)
+  (receipts/'update-1.0.1-20261001T000000Z.json').write_text(json.dumps({'rollback':'held-new-release-state-restore-failed','stateBackup':str(old[0]/'statev2.sqlite')}))
+  with patch.object(update.shutil,'disk_usage',return_value=DISK(1<<40,0,1<<20)):
+   with self.assertRaisesRegex(AssertionError,r'free \(after removing 1 older update copy\)$'):self.execute()
+  self.assertEqual(list(root.iterdir()),[old[0]])
  def test_old_state_copies_are_pruned_before_free_space_is_measured(self):
   root=studio_paths.backups_root(self.home);old=[]
   for day in (1,2,3):

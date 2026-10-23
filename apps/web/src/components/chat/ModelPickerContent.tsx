@@ -11,6 +11,7 @@ import { memo, useMemo, useState, useCallback, useEffect, useLayoutEffect, useRe
 import { ChevronRightIcon } from "lucide-react";
 import { ModelListRow } from "./ModelListRow";
 import { ModelPickerSidebar } from "./ModelPickerSidebar";
+import { HarnessDescription } from "./HarnessDescription";
 import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
 import type { ProviderQuickSetup } from "~/hooks/useProviderQuickSetup";
 import { getProviderStatusMessage, hasProviderSetup } from "./ProviderStatusBanner";
@@ -1079,6 +1080,9 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
               onTouchStart={(e) => e.stopPropagation()}
             />
 
+            {selectedEntry && !isSearching && alternativesFor === null ? (
+              <HarnessDescription entry={selectedEntry} />
+            ) : null}
             {usage && selectedEntry && !isSearching && alternativesFor === null ? (
               <ModelPickerUsageBand entry={selectedEntry} usage={usage} />
             ) : null}
@@ -1147,6 +1151,9 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                         key={modelKey}
                         index={index}
                         model={model}
+                        runtimeModel={entryByInstanceId
+                          .get(model.instanceId)
+                          ?.models.find((item) => item.slug === model.slug)}
                         instanceId={model.instanceId}
                         driverKind={model.driverKind}
                         providerDisplayName={model.instanceDisplayName}

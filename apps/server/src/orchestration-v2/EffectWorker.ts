@@ -31,6 +31,7 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
 import * as ServiceUpdateClosedQuestions from "../serviceUpdate/ServiceUpdateClosedQuestions.ts";
 import { continueRestartedRun, resumeQueueAfterRestart } from "./RestartContinuation.ts";
+import { PROVIDER_TURN_START_TIMEOUT_MESSAGE } from "./systemInterruptReasons.ts";
 
 export class OrchestrationEffectExecutionError extends Schema.TaggedError<OrchestrationEffectExecutionError>()(
   "OrchestrationEffectExecutionError",
@@ -49,8 +50,7 @@ export class OrchestrationEffectExecutionError extends Schema.TaggedError<Orches
 export const PROVIDER_TURN_START_TIMEOUT = Duration.minutes(2);
 
 /** Shown on the run a timed-out start ends; `provider_start_timeout` names it in the logs. */
-export const PROVIDER_TURN_START_TIMEOUT_MESSAGE =
-  "The provider did not start this turn within 2 minutes, so it was stopped. Send the message again to retry.";
+export { PROVIDER_TURN_START_TIMEOUT_MESSAGE } from "./systemInterruptReasons.ts";
 
 /**
  * Shown on a timed-out start that is failed as an open failure instead (see

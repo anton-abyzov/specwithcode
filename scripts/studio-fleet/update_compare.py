@@ -88,7 +88,30 @@ def auth_since(state, expected_rows):
     finally:
         db.close()
 
-def database_allowance(expected, actual, carried, *, auth_heartbeat=True):
+def without_auth(rows):
+    """`rows` without auth_sessions (its count, hash and invariant hash), for the prestate checks
+    before any write (update.assert_prestate). Anything else is returned as it is."""
+    if not (isinstance(rows, dict) and isinstance(rows.get('counts'), dict) and isinstance(rows.get('hashes'), dict)):
+        return rows
+    rest = {key: value for key, value in rows.items() if key != AUTH_INVARIANT_KEY}
+    rest['counts'] = {table: value for table, value in rows['counts'].items() if table != 'auth_sessions'}
+    rest['hashes'] = {table: value for table, value in rows['hashes'].items() if table != 'auth_sessions'}
+    return rest
+
+def same_auth(expected, actual):
+    """auth_sessions in two reads are the same but for heartbeats and reported app versions (equal
+    invariant hashes and counts), or byte-exact when either read lacks the invariant hash."""
+    if not all(isinstance(rows, dict) and isinstance(rows.get('counts'), dict) and isinstance(rows.get('hashes'), dict)
+               for rows in (expected, actual)):
+        return expected == actual
+    if expected['counts'].get('auth_sessions') != actual['counts'].get('auth_sessions'):
+        return False
+    if isinstance(expected.get(AUTH_INVARIANT_KEY), str) and isinstance(actual.get(AUTH_INVARIANT_KEY), str):
+        return expected[AUTH_INVARIANT_KEY] == actual[AUTH_INVARIANT_KEY]
+    return (AUTH_INVARIANT_KEY in expected) == (AUTH_INVARIANT_KEY in actual) \
+        and expected['hashes'].get('auth_sessions') == actual['hashes'].get('auth_sessions')
+
+def database_allowance(expected, actual, carried, *, auth_heartbeat=True, auth_free=False):
     """Tables of a complete capture that the guarded row comparison has already proven.
 
     Call only after same_guarded_rows(expected, actual, carried, auth_heartbeat=...) passed.
@@ -98,6 +121,8 @@ def database_allowance(expected, actual, carried, *, auth_heartbeat=True):
     tables may grow when their earlier rows are typed-identical (`logPrefixes`). Every
     other table and the schema must stay exactly equal."""
     tables, prefixes = set(), {}
+    if auth_free:  # The caller left auth_sessions out of the row comparison (without_auth).
+        tables.add('auth_sessions')
     if (auth_heartbeat and isinstance(expected, dict) and isinstance(actual, dict)
             and isinstance(expected.get(AUTH_INVARIANT_KEY), str)
             and expected.get(AUTH_INVARIANT_KEY) == actual.get(AUTH_INVARIANT_KEY)):
@@ -112,10 +137,10 @@ def database_allowance(expected, actual, carried, *, auth_heartbeat=True):
     return {'tables': sorted(tables), 'logPrefixes': prefixes}
 
 def assert_capture_carried(expected, actual, expected_rows, actual_rows, carried, *, auth_heartbeat=True,
-                           message='Complete database prestate changed'):
+                           message='Complete database prestate changed', auth_free=False):
     """Complete database continuity with the same allowance as the guarded rows."""
     assert isinstance(expected, dict) and isinstance(actual, dict), 'Complete database proof missing'
-    allowance = database_allowance(expected_rows, actual_rows, carried, auth_heartbeat=auth_heartbeat)
+    allowance = database_allowance(expected_rows, actual_rows, carried, auth_heartbeat=auth_heartbeat, auth_free=auth_free)
     try:
         continuity.assert_database_continuity(expected['summary'], actual['summary'],
                                               carried_tables=allowance['tables'],

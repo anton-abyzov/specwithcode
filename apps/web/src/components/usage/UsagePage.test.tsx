@@ -15,7 +15,10 @@ vi.mock("@tanstack/react-router", () => ({
   useNavigate: () => testState.navigate,
   useCanGoBack: () => testState.canGoBack,
 }));
-vi.mock("../../state/usage", () => ({ useUsage: testState.useUsage }));
+vi.mock("../../state/usage", async (original) => ({
+  ...(await original<typeof import("../../state/usage")>()),
+  useUsage: testState.useUsage,
+}));
 vi.mock("../ui/scroll-area", () => ({ ScrollArea: "div" }));
 vi.mock("../ui/select", () => ({
   Select: "div",
@@ -40,6 +43,7 @@ vi.mock("./usageProviders", async (importOriginal) => {
   return {
     ...actual,
     PROVIDER_PRESENTATION: {
+      ...actual.PROVIDER_PRESENTATION,
       codex: { color: "white", label: "Codex", mark: "span" },
       claude: { color: "orange", label: "Claude Code", mark: "span" },
     },
@@ -139,6 +143,35 @@ describe("UsagePage Escape navigation", () => {
     expect(trigger.getAttribute("aria-expanded")).toBe("false");
     expect(back).not.toHaveBeenCalled();
 
+    document.body.dispatchEvent(escape());
+    expect(back).toHaveBeenCalledOnce();
+  });
+
+  it("clears the model search on Escape instead of leaving the page", async () => {
+    window.localStorage.setItem(
+      "studio:usage-page-preferences:v1",
+      JSON.stringify({ metric: "cost", windowDays: 30 }),
+    );
+    await act(() => renderer.unmount());
+    renderer = createRoot(container);
+    await act(() => renderer.render(<UsagePage />));
+    window.localStorage.removeItem("studio:usage-page-preferences:v1");
+    const search = container.querySelector<HTMLInputElement>('input[aria-label="Search models"]')!;
+    const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+    await act(() => {
+      search.focus();
+      setValue.call(search, "opus");
+      search.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+    expect(search.value).toBe("opus");
+
+    await act(() => {
+      search.dispatchEvent(escape());
+    });
+    expect(search.value).toBe("");
+    expect(back).not.toHaveBeenCalled();
+
+    // An empty search lets Escape navigate as before.
     document.body.dispatchEvent(escape());
     expect(back).toHaveBeenCalledOnce();
   });

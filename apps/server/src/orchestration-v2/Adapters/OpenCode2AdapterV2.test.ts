@@ -2756,6 +2756,7 @@ describe("OpenCode2 adapter", () => {
           reply("mcp.remove", null),
         ]);
         const terminal = yield* terminalOf(runtime).pipe(Effect.forkScoped);
+        assert.isTrue(runtime.providerSession.capabilities.tools.supportsMcpTools);
         yield* runtime.startTurn(turnInput(thread));
         assert.equal((yield* Fiber.join(terminal))?.status, "completed");
         yield* runtime.unloadThread!({ providerThread: thread });

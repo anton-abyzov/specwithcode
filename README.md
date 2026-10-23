@@ -25,6 +25,8 @@ SpecWithCode is not a cloud service: work runs on the machine you choose and sto
 
 **Settings → Connections** includes a read-only [MCP connections library](docs/connections-library.md) for Codex and Claude Code on each machine. Project **Environment** adds project declarations and overrides alongside SpecWithCode-managed tool grants. Configuration is shown separately from unverified authentication and session availability.
 
+The model picker distinguishes the coding harness from the model and its billing source. See the [harness integration guide](docs/providers/harnesses.md) for OpenCode, Pi, native adapters and verification limits.
+
 ## Install
 
 1. Download [SpecWithCode-arm64.dmg](https://github.com/anton-abyzov/specwithcode/releases/latest/download/SpecWithCode-arm64.dmg), the latest release (all versions are on [Releases](https://github.com/anton-abyzov/specwithcode/releases)). It runs on Apple silicon Macs with macOS 13 or later. Windows and Intel Macs are not built yet.
@@ -34,6 +36,8 @@ SpecWithCode is not a cloud service: work runs on the machine you choose and sto
 The app updates itself from this repository's releases. Turn that off in **Settings → About**, or set `SPECWITHCODE_DISABLE_AUTO_UPDATE=true` (the older `STUDIO_DISABLE_AUTO_UPDATE` is still accepted).
 
 More: [install](docs/user/install.md), [first run](docs/user/welcome-wizard.md), [providers](docs/user/providers-claude.md), [remote access](docs/user/remote-access.md), [your own VPS](docs/user/linux-worker.md), [updating](docs/user/updating.md).
+
+In **Settings > Providers**, a CLI's update action opens a machine selection plan. Choose only this CLI here, or explicitly include eligible connected machines. The app uses each configured executable's owning installer and reports each outcome; see [provider updates](docs/user/updating.md#provider-clis).
 
 To connect Copilot, Grok or Gemini, use **Add or manage providers** in the model picker. [Provider setup](docs/studio/copilot-and-grok.md) explains installation, sign-in and model discovery; a connected usage source only reports quota.
 

@@ -6,6 +6,7 @@ import {
   CommandId,
   type ModelSelection,
   type Project,
+  type ProjectEnvironmentSettings,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -1251,14 +1252,18 @@ it.effect(
     }).pipe(Effect.provide(NodeServices.layer)),
 );
 
-it.effect("requires idle work for folder changes but preserves unrelated settings edits", () =>
+it.effect("adds folders while work runs but requires idle work to remove or change them", () =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
     const root = yield* fs
       .makeTempDirectoryScoped({ prefix: "project-environment-active-" })
       .pipe(Effect.flatMap((folder) => fs.realPath(folder)));
     const extra = `${root}/extra`;
+    const second = `${root}/second`;
     yield* fs.makeDirectory(extra);
+    yield* fs.makeDirectory(second);
+    const elsewhere = `${root}/elsewhere`;
+    yield* fs.makeDirectory(elsewhere);
     const projections = yield* ProjectionStore.ProjectionStoreV2;
     const snapshot = yield* projections.getShellSnapshot();
     const projectId = ProjectId.make("active-environment");
@@ -1285,41 +1290,115 @@ it.effect("requires idle work for folder changes but preserves unrelated setting
       title: "Active",
       workspaceRoot: root,
     });
-    const patch = {
-      expectedRevision: 0,
-      environment: { additionalFolders: [extra], repositories: [] },
+    const repository = {
+      id: "widgets",
+      url: "https://github.com/acme/widgets",
+      localPath: `${extra}/widgets`,
     };
-    for (const state of [false, true]) {
-      pending = state;
-      const denied = yield* service
-        .update({
-          projectId,
-          commandId: CommandId.make(`active-env-${state}`),
-          workspaceSettings: patch,
-        })
-        .pipe(Effect.flip);
-      assert.equal(denied._tag, "ProjectRequestDeniedError");
-      assert.equal(
-        denied._tag === "ProjectRequestDeniedError" && denied.reason,
-        "environment_active",
-      );
-    }
+    let revision = 0;
+    const save = (id: string, environment: ProjectEnvironmentSettings) =>
+      service.update({
+        projectId,
+        commandId: CommandId.make(id),
+        workspaceSettings: { expectedRevision: revision, environment },
+      });
+    const expectDenied = (id: string, environment: ProjectEnvironmentSettings) =>
+      Effect.gen(function* () {
+        const denied = yield* save(id, environment).pipe(Effect.flip);
+        assert.equal(denied._tag, "ProjectRequestDeniedError");
+        assert.equal(
+          denied._tag === "ProjectRequestDeniedError" && denied.reason,
+          "environment_active",
+        );
+      });
+    // Additive: a running turn keeps its starting folders; the new one applies next turn.
+    const added = yield* save("active-env-add", { additionalFolders: [extra], repositories: [] });
+    revision = added.workspaceSettings?.revision ?? 0;
+    pending = true;
+    const addedSecond = yield* save("active-env-add-pending", {
+      additionalFolders: [second, extra],
+      repositories: [],
+    });
+    revision = addedSecond.workspaceSettings?.revision ?? 0;
+    pending = false;
+    const registered = yield* save("active-env-repo", {
+      additionalFolders: [second, extra],
+      repositories: [repository],
+    });
+    revision = registered.workspaceSettings?.revision ?? 0;
+    assert.deepEqual(registered.workspaceSettings?.environment, {
+      additionalFolders: [second, extra],
+      repositories: [repository],
+    });
+    // Removals and path changes can pull a folder from under the running turn.
+    yield* expectDenied("active-env-remove", {
+      additionalFolders: [extra],
+      repositories: [repository],
+    });
+    yield* expectDenied("active-env-repo-path", {
+      additionalFolders: [second, extra],
+      repositories: [{ ...repository, localPath: `${extra}/moved` }],
+    });
+    yield* expectDenied("active-env-repo-drop", {
+      additionalFolders: [second, extra],
+      repositories: [],
+    });
+    pending = true;
+    yield* expectDenied("active-env-remove-pending", {
+      additionalFolders: [second],
+      repositories: [repository],
+    });
+    pending = false;
     const deniedRoot = yield* service
-      .update({ projectId, commandId: CommandId.make("active-root-change"), workspaceRoot: extra })
+      .update({
+        projectId,
+        commandId: CommandId.make("active-root-change"),
+        workspaceRoot: elsewhere,
+      })
       .pipe(Effect.flip);
     assert.equal(deniedRoot._tag, "ProjectRequestDeniedError");
+    assert.equal(
+      deniedRoot._tag === "ProjectRequestDeniedError" && deniedRoot.reason,
+      "environment_active",
+    );
     const saved = yield* service.update({
       projectId,
       commandId: CommandId.make("active-goal"),
-      workspaceSettings: { expectedRevision: 0, goal: "Still editable" },
+      workspaceSettings: { expectedRevision: revision, goal: "Still editable" },
     });
     assert.equal(saved.workspaceSettings?.goal, "Still editable");
     assert.deepEqual(saved.workspaceSettings?.environment, {
-      additionalFolders: [],
-      repositories: [],
+      additionalFolders: [second, extra],
+      repositories: [repository],
     });
   }).pipe(Effect.provide(layerProjectServiceDependencies), Effect.provide(NodeServices.layer)),
 );
+
+it("isAdditiveEnvironmentChange accepts only kept approvals plus new ones", () => {
+  const repo = { id: "app", url: "https://github.com/acme/app", localPath: "/work/app" };
+  const prior: ProjectEnvironmentSettings = {
+    additionalFolders: ["/work/a", "/work/b"],
+    repositories: [repo],
+  };
+  const additive = ProjectService.isAdditiveEnvironmentChange;
+  assert.isTrue(additive(prior, prior));
+  assert.isTrue(additive(prior, { ...prior, additionalFolders: ["/work/b", "/work/a"] }));
+  assert.isTrue(
+    additive(prior, {
+      additionalFolders: ["/work/a", "/work/b", "/work/c"],
+      repositories: [repo, { id: "lib", url: "https://github.com/acme/lib", localPath: null }],
+    }),
+  );
+  assert.isTrue(additive({ additionalFolders: [], repositories: [] }, prior));
+  assert.isFalse(additive(prior, { ...prior, additionalFolders: ["/work/a"] }));
+  assert.isFalse(additive(prior, { ...prior, additionalFolders: ["/work/a", "/work/B"] }));
+  assert.isFalse(additive(prior, { ...prior, repositories: [] }));
+  assert.isFalse(
+    additive(prior, { ...prior, repositories: [{ ...repo, url: "https://github.com/acme/fork" }] }),
+  );
+  assert.isFalse(additive(prior, { ...prior, repositories: [{ ...repo, localPath: null }] }));
+  assert.isFalse(additive(prior, { ...prior, repositories: [{ ...repo, id: "renamed" }] }));
+});
 
 it.effect("an explicit environment save canonicalizes a legacy symlink primary folder", () =>
   Effect.gen(function* () {

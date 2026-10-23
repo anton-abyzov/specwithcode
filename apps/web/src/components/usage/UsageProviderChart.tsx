@@ -1,8 +1,13 @@
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
+import { cn } from "../../lib/utils";
 import type { UsageProviderKind } from "@specweave-studio/contracts";
-import { useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { useId, useCallback, useLayoutEffect, useMemo, useRef, useState } from "react";
 
-import type { DailyTotals, HourlyTotals } from "@specweave-studio/shared/usageMerge";
+import {
+  costCoverage,
+  type DailyTotals,
+  type HourlyTotals,
+} from "@specweave-studio/shared/usageMerge";
 import {
   formatDayShort,
   formatHourShort,
@@ -10,6 +15,7 @@ import {
   formatTokens,
   formatUsd,
 } from "@specweave-studio/shared/usageFormat";
+import { costText } from "./usageFilters";
 import { PROVIDER_ORDER, PROVIDER_PRESENTATION } from "./usageProviders";
 
 const VIEW_WIDTH = 960;
@@ -29,6 +35,10 @@ interface UsageProviderChartProps {
   readonly referenceTime: string | undefined;
   readonly resolution: "day" | "hour";
   readonly timeZone: string;
+  /** The pinned day or hour start, marked on the plot. */
+  readonly selectedPeriod?: string | null;
+  /** Click or Enter pins a period (null unpins); Escape unpins. */
+  readonly onSelectPeriod?: (period: string | null) => void;
 }
 
 /** One day's per-provider values, shared by the paths and the hover readout. */
@@ -70,82 +80,44 @@ export function buildPeriodColumns(
   });
 }
 
-/** Shape-preserving cubic tangents that cannot overshoot spiky usage data. */
-function monotoneTangents(points: readonly Point[]): readonly number[] {
-  const count = points.length;
-  if (count < 2) return [0];
-
-  const slopes: number[] = [];
-  for (let index = 0; index < count - 1; index += 1) {
-    const dx = (points[index + 1]?.x ?? 0) - (points[index]?.x ?? 0);
-    const dy = (points[index + 1]?.y ?? 0) - (points[index]?.y ?? 0);
-    slopes.push(dx === 0 ? 0 : dy / dx);
+/** Straight sample segments; null breaks unpriced history instead of drawing zero. */
+export function sampledPaths(
+  points: readonly (Point | null)[],
+  floor: number,
+): { line: string; area: string } {
+  const runs: Point[][] = [];
+  let run: Point[] = [];
+  for (const point of points) {
+    if (point === null) {
+      if (run.length) runs.push(run);
+      run = [];
+    } else run.push(point);
   }
-
-  const tangents: number[] = Array.from({ length: count }, () => 0);
-  tangents[0] = slopes[0] ?? 0;
-  tangents[count - 1] = slopes[count - 2] ?? 0;
-  for (let index = 1; index < count - 1; index += 1) {
-    const previous = slopes[index - 1] ?? 0;
-    const next = slopes[index] ?? 0;
-    tangents[index] = previous * next <= 0 ? 0 : (previous + next) / 2;
-  }
-
-  for (let index = 0; index < count - 1; index += 1) {
-    const slope = slopes[index] ?? 0;
-    if (slope === 0) {
-      tangents[index] = 0;
-      tangents[index + 1] = 0;
-      continue;
-    }
-    const a = (tangents[index] ?? 0) / slope;
-    const b = (tangents[index + 1] ?? 0) / slope;
-    const magnitude = a * a + b * b;
-    if (magnitude > 9) {
-      const scale = 3 / Math.sqrt(magnitude);
-      tangents[index] = scale * a * slope;
-      tangents[index + 1] = scale * b * slope;
-    }
-  }
-
-  return tangents;
+  if (run.length) runs.push(run);
+  const path = (run: readonly Point[]) =>
+    run
+      .map(
+        (point, index) => `${index === 0 ? "M" : "L"}${point.x.toFixed(2)},${point.y.toFixed(2)}`,
+      )
+      .join(" ");
+  return {
+    line: runs.map(path).join(" "),
+    area: runs
+      .map(
+        (run) =>
+          `${path(run)} L${run.at(-1)!.x.toFixed(2)},${floor} L${run[0]!.x.toFixed(2)},${floor} Z`,
+      )
+      .join(" "),
+  };
 }
-
-interface CurveSegment {
-  readonly from: Point;
-  readonly c1: Point;
-  readonly c2: Point;
-  readonly to: Point;
-}
-
-function smoothCurve(points: readonly Point[]): readonly CurveSegment[] {
-  if (points.length < 2) return [];
-  const tangents = monotoneTangents(points);
-  const segments: CurveSegment[] = [];
-
-  for (let index = 0; index < points.length - 1; index += 1) {
-    const from = points[index];
-    const to = points[index + 1];
-    if (from === undefined || to === undefined) continue;
-    const dx = to.x - from.x;
-    segments.push({
-      from,
-      c1: { x: from.x + dx / 3, y: from.y + ((tangents[index] ?? 0) * dx) / 3 },
-      c2: { x: to.x - dx / 3, y: to.y - ((tangents[index + 1] ?? 0) * dx) / 3 },
-      to,
-    });
-  }
-  return segments;
-}
-
-function curvePath(segments: readonly CurveSegment[]): string {
-  const first = segments[0];
-  if (first === undefined) return "";
-  let path = `M${first.from.x.toFixed(2)},${first.from.y.toFixed(2)}`;
-  for (const segment of segments) {
-    path += ` C${segment.c1.x.toFixed(2)},${segment.c1.y.toFixed(2)} ${segment.c2.x.toFixed(2)},${segment.c2.y.toFixed(2)} ${segment.to.x.toFixed(2)},${segment.to.y.toFixed(2)}`;
-  }
-  return path;
+export function sampleIndex(
+  clientX: number,
+  left: number,
+  width: number,
+  count: number,
+): number | null {
+  if (width <= 0 || count <= 0) return null;
+  return Math.round(Math.min(1, Math.max(0, (clientX - left) / width)) * (count - 1));
 }
 
 /**
@@ -180,7 +152,10 @@ export function UsageProviderChart({
   referenceTime,
   resolution,
   timeZone,
+  selectedPeriod = null,
+  onSelectPeriod,
 }: UsageProviderChartProps) {
+  const hatchId = useId();
   const periods = resolution === "hour" ? hours : days;
   const byPeriod = useMemo(
     () =>
@@ -222,19 +197,22 @@ export function UsageProviderChart({
 
     const built = providers.map((provider) => {
       const providerIndex = PROVIDER_ORDER.indexOf(provider);
-      const line = curvePath(
-        smoothCurve(
-          columns.map((column, periodIndex) => ({
-            x: periodIndex * step,
-            y: toY(column.bands[providerIndex]?.value ?? 0),
-          })),
-        ),
-      );
+      const points = columns.map((column, periodIndex) => {
+        const entry = byPeriod.get(periods[periodIndex]!)?.byProvider.get(provider);
+        return metric === "cost" && costCoverage(entry) === "unknown"
+          ? null
+          : {
+              x: periods.length === 1 ? VIEW_WIDTH / 2 : periodIndex * step,
+              y: toY(column.bands[providerIndex]?.value ?? 0),
+            };
+      });
+      const { line, area } = sampledPaths(points, VIEW_HEIGHT);
       return {
         provider,
         total: columns.reduce((sum, column) => sum + (column.bands[providerIndex]?.value ?? 0), 0),
-        area: line === "" ? "" : `${line} L${VIEW_WIDTH},${VIEW_HEIGHT} L0,${VIEW_HEIGHT} Z`,
+        area,
         line,
+        points: points.filter((point): point is Point => point !== null),
       };
     });
 
@@ -276,7 +254,14 @@ export function UsageProviderChart({
   }, []);
 
   useLayoutEffect(() => {
-    if (hoverIndex === null) return;
+    if (hoverIndex === null && selectedPeriod === null) return;
+    if (hoverPositionRef.current === null && plotRef.current !== null) {
+      const index = Math.max(0, periods.indexOf(selectedPeriod ?? ""));
+      hoverPositionRef.current = {
+        x: (index / Math.max(1, periods.length - 1)) * plotRef.current.clientWidth,
+        y: plotRef.current.clientHeight / 3,
+      };
+    }
     positionTooltip();
 
     const plot = plotRef.current;
@@ -287,7 +272,7 @@ export function UsageProviderChart({
     observer.observe(plot);
     observer.observe(tooltip);
     return () => observer.disconnect();
-  }, [hoverIndex, positionTooltip]);
+  }, [hoverIndex, selectedPeriod, periods, positionTooltip]);
 
   const handleMove = useCallback(
     (event: React.MouseEvent<HTMLDivElement>) => {
@@ -306,8 +291,56 @@ export function UsageProviderChart({
     [periods.length, positionTooltip],
   );
 
-  const hoveredPeriod = hoverIndex === null ? undefined : periods[hoverIndex];
-  const hoveredColumn = hoverIndex === null ? undefined : series[hoverIndex];
+  const showKeyboardIndex = useCallback(
+    (index: number) => {
+      const plot = plotRef.current;
+      if (plot === null || periods.length === 0) return;
+      const clamped = Math.min(periods.length - 1, Math.max(0, index));
+      const fraction = periods.length === 1 ? 0.5 : clamped / (periods.length - 1);
+      hoverPositionRef.current = { x: fraction * plot.clientWidth, y: plot.clientHeight / 3 };
+      positionTooltip();
+      setHoverIndex(clamped);
+    },
+    [periods.length, positionTooltip],
+  );
+  const sampleX = (index: number) => (periods.length === 1 ? VIEW_WIDTH / 2 : index * stepX);
+  const selectedIndex = selectedPeriod === null ? -1 : periods.indexOf(selectedPeriod);
+  const togglePeriod = (index: number | null) => {
+    if (onSelectPeriod === undefined || index === null) return;
+    const period = periods[index];
+    if (period === undefined) return;
+    onSelectPeriod(period === selectedPeriod ? null : period);
+  };
+  const handleKeyDown = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    if (periods.length === 0) return;
+    const current = hoverIndex ?? (selectedIndex >= 0 ? selectedIndex : periods.length - 1);
+    if (event.key === "ArrowLeft" || event.key === "ArrowRight") {
+      event.preventDefault();
+      showKeyboardIndex(current + (event.key === "ArrowLeft" ? -1 : 1));
+    } else if (event.key === "Home" || event.key === "End") {
+      event.preventDefault();
+      showKeyboardIndex(event.key === "Home" ? 0 : periods.length - 1);
+    } else if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      togglePeriod(current);
+    } else if (event.key === "Escape" && selectedPeriod !== null) {
+      event.preventDefault();
+      event.stopPropagation();
+      onSelectPeriod?.(null);
+    }
+  };
+
+  const readoutIndex = hoverIndex ?? (selectedIndex >= 0 ? selectedIndex : null);
+  const hoveredPeriod = readoutIndex === null ? undefined : periods[readoutIndex];
+  const hoveredEntry = hoveredPeriod === undefined ? undefined : byPeriod.get(hoveredPeriod);
+  const readout = (
+    value: number,
+    entry: { costUsd: number; records: number; unpricedRecords: number } | undefined,
+  ) =>
+    metric === "cost"
+      ? costText(entry)
+      : { text: format(value), label: format(value), tone: "value" as const };
+  const hoveredColumn = readoutIndex === null ? undefined : series[readoutIndex];
   const formatPeriod = (period: string) =>
     resolution === "hour" ? formatHourShort(period, timeZone) : formatDayShort(period);
   const formatTooltipPeriod = (period: string) =>
@@ -333,12 +366,30 @@ export function UsageProviderChart({
 
         <div
           ref={plotRef}
-          className="relative h-56 flex-1"
-          onMouseMove={handleMove}
-          onMouseLeave={() => {
+          className={cn(
+            "relative h-56 touch-pan-y flex-1 rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-ring/60 focus-visible:ring-offset-4 focus-visible:ring-offset-background",
+            onSelectPeriod !== undefined && "cursor-pointer",
+          )}
+          onPointerMove={handleMove}
+          onPointerLeave={() => {
             hoverPositionRef.current = null;
             setHoverIndex(null);
           }}
+          onClick={(event) => {
+            const bounds = event.currentTarget.getBoundingClientRect();
+            const index = sampleIndex(event.clientX, bounds.left, bounds.width, periods.length);
+            if (index !== null) showKeyboardIndex(index);
+            togglePeriod(index);
+          }}
+          onKeyDown={onSelectPeriod === undefined ? undefined : handleKeyDown}
+          onBlur={() => setHoverIndex(null)}
+          tabIndex={onSelectPeriod === undefined ? undefined : 0}
+          role={onSelectPeriod === undefined ? undefined : "group"}
+          aria-label={
+            onSelectPeriod === undefined
+              ? undefined
+              : `${resolution === "hour" ? "Hours" : "Days"}: arrow keys move, Enter pins${selectedPeriod === null ? "" : ", Escape unpins"}`
+          }
         >
           <svg
             className="h-full w-full"
@@ -347,6 +398,32 @@ export function UsageProviderChart({
             role="img"
             aria-label={`${resolution === "hour" ? "Hourly" : "Daily"} ${metric === "tokens" ? "processed tokens" : "cost"} by provider`}
           >
+            <defs>
+              <pattern id={hatchId} width="8" height="8" patternUnits="userSpaceOnUse">
+                <path
+                  d="M-2,2 L2,-2 M0,8 L8,0 M6,10 L10,6"
+                  stroke="currentColor"
+                  strokeOpacity="0.12"
+                  strokeWidth="1"
+                />
+              </pattern>
+            </defs>
+            {metric === "cost"
+              ? periods.map((period, index) => {
+                  const entry = byPeriod.get(period);
+                  if (!entry || entry.unpricedRecords === 0) return null;
+                  return (
+                    <rect
+                      key={period}
+                      x={Math.max(0, index * stepX - stepX / 2)}
+                      y={0}
+                      width={periods.length === 1 ? VIEW_WIDTH : stepX}
+                      height={VIEW_HEIGHT}
+                      fill={`url(#${hatchId})`}
+                    />
+                  );
+                })
+              : null}
             {ticks.map((tick) => {
               const y = toY(tick);
               return (
@@ -373,21 +450,55 @@ export function UsageProviderChart({
                 fillOpacity={0.12}
               />
             ))}
-            {paths.map(({ provider, line }) => (
-              <path
-                key={provider}
-                d={line}
-                fill="none"
-                stroke={PROVIDER_PRESENTATION[provider].color}
-                strokeWidth={2}
-                vectorEffect="non-scaling-stroke"
-              />
+            {paths.map(({ provider, line, points }) => (
+              <g key={provider}>
+                <path
+                  d={line}
+                  fill="none"
+                  stroke={PROVIDER_PRESENTATION[provider].color}
+                  strokeWidth={2}
+                  vectorEffect="non-scaling-stroke"
+                />
+                {points.map((point) => (
+                  <circle
+                    key={point.x}
+                    cx={point.x}
+                    cy={point.y}
+                    r={periods.length > 31 ? 1.25 : 1.7}
+                    fill={PROVIDER_PRESENTATION[provider].color}
+                  />
+                ))}
+              </g>
             ))}
 
-            {hoverIndex === null ? null : (
+            {selectedIndex < 0 ? null : (
+              <g data-testid="usage-chart-pinned">
+                <rect
+                  x={Math.max(0, sampleX(selectedIndex) - Math.max(stepX / 2, 4))}
+                  width={Math.max(stepX, 8)}
+                  y={PLOT_TOP}
+                  height={VIEW_HEIGHT - PLOT_TOP}
+                  fill="currentColor"
+                  className="text-foreground"
+                  fillOpacity={0.06}
+                />
+                <line
+                  x1={sampleX(selectedIndex)}
+                  x2={sampleX(selectedIndex)}
+                  y1={PLOT_TOP}
+                  y2={VIEW_HEIGHT}
+                  stroke="currentColor"
+                  strokeWidth={1.5}
+                  className="text-foreground"
+                  vectorEffect="non-scaling-stroke"
+                />
+              </g>
+            )}
+
+            {hoverIndex === null || hoverIndex === selectedIndex ? null : (
               <line
-                x1={hoverIndex * stepX}
-                x2={hoverIndex * stepX}
+                x1={sampleX(hoverIndex)}
+                x2={sampleX(hoverIndex)}
                 y1={PLOT_TOP}
                 y2={VIEW_HEIGHT}
                 stroke="currentColor"
@@ -401,6 +512,8 @@ export function UsageProviderChart({
           {hoveredPeriod === undefined ? null : (
             <div
               ref={tooltipRef}
+              role="status"
+              aria-live="polite"
               className="surface-glass pointer-events-none absolute z-10 min-w-36 max-w-full rounded-xl border border-border/50 px-2.5 py-2 text-xs shadow-lg"
               style={{
                 left: "var(--usage-tooltip-left, 0px)",
@@ -410,6 +523,10 @@ export function UsageProviderChart({
               <div className="mb-1 text-muted-foreground">{formatTooltipPeriod(hoveredPeriod)}</div>
               {providers.map((provider) => {
                 const { label, driverKind } = PROVIDER_PRESENTATION[provider];
+                const value = readout(
+                  hoveredColumn?.bands.find((band) => band.provider === provider)?.value ?? 0,
+                  hoveredEntry?.byProvider.get(provider),
+                );
                 return (
                   <div key={provider} className="flex items-center justify-between gap-3">
                     <span className="flex items-center gap-1.5 text-muted-foreground">
@@ -420,10 +537,14 @@ export function UsageProviderChart({
                       />
                       {label}
                     </span>
-                    <span className="text-foreground tabular-nums">
-                      {format(
-                        hoveredColumn?.bands.find((band) => band.provider === provider)?.value ?? 0,
+                    <span
+                      className={cn(
+                        "tabular-nums",
+                        value.tone === "muted" ? "text-muted-foreground" : "text-foreground",
                       )}
+                      aria-label={value.label}
+                    >
+                      {value.text}
                     </span>
                   </div>
                 );
@@ -431,27 +552,48 @@ export function UsageProviderChart({
               <div className="mt-1 flex items-center justify-between gap-3 border-t border-border pt-1">
                 <span className="text-muted-foreground">Total</span>
                 <span className="text-foreground tabular-nums">
-                  {format(hoveredColumn?.total ?? 0)}
+                  {readout(hoveredColumn?.total ?? 0, hoveredEntry).text}
                 </span>
               </div>
+              {onSelectPeriod === undefined ? null : (
+                <div className="mt-1 text-2xs text-muted-foreground">
+                  {hoveredPeriod === selectedPeriod ? "Click to unpin" : "Click to pin this period"}
+                </div>
+              )}
             </div>
           )}
         </div>
       </div>
 
-      <div className="flex justify-between pl-16 text-3xs text-muted-foreground uppercase">
-        <span>{periods[0] === undefined ? "" : formatPeriod(periods[0])}</span>
-        <span>
-          {periods[Math.floor(periods.length / 2)] === undefined
-            ? ""
-            : formatPeriod(periods[Math.floor(periods.length / 2)] ?? "")}
-        </span>
-        <span>
-          {periods[periods.length - 1] === undefined
-            ? ""
-            : formatPeriod(periods[periods.length - 1] ?? "")}
-        </span>
-      </div>
+      {periods.length === 1 ? (
+        <div className="pl-16 text-center text-3xs text-muted-foreground">
+          {formatPeriod(periods[0]!)}
+        </div>
+      ) : (
+        <div className="flex justify-between pl-16 text-3xs text-muted-foreground uppercase">
+          <span>{periods[0] === undefined ? "" : formatPeriod(periods[0])}</span>
+          <span>
+            {periods[Math.floor(periods.length / 2)] === undefined
+              ? ""
+              : formatPeriod(periods[Math.floor(periods.length / 2)] ?? "")}
+          </span>
+          <span>
+            {periods[periods.length - 1] === undefined
+              ? ""
+              : formatPeriod(periods[periods.length - 1] ?? "")}
+          </span>
+        </div>
+      )}
+      {onSelectPeriod ? (
+        <p className="mt-1 text-2xs text-muted-foreground">
+          Click or tap to pin. Arrow keys move; Enter pins, Escape clears.
+        </p>
+      ) : null}
+      {metric === "cost" && [...byPeriod.values()].some((entry) => entry.unpricedRecords > 0) ? (
+        <p className="mt-1 text-2xs text-muted-foreground">
+          Hatched periods include unpriced usage, excluded from monetary heights.
+        </p>
+      ) : null}
     </div>
   );
 }
