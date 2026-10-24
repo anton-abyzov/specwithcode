@@ -177,52 +177,56 @@ describe("ssh tunnel scripts", () => {
     assert.include(SshTunnel.buildRemoteLaunchScript(NODE_SCRIPT), "STUDIO_ARCHIVE_MODE=0");
   });
 
-  it.effect("installs a release's commit-suffixed Node bundle and runs it through a launcher", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const root = yield* fs.makeTempDirectoryScoped({ prefix: "studio-ssh-bundle-" });
-      const { execFileSync } = yield* Effect.promise(() => import("node:child_process"));
-      const { createHash } = yield* Effect.promise(() => import("node:crypto"));
-      const uname = (flag: string) => execFileSync("uname", [flag], { encoding: "utf8" }).trim();
-      const platform = uname("-s") === "Darwin" ? "darwin" : "linux";
-      const arch = /^(arm64|aarch64)$/.test(uname("-m")) ? "arm64" : "x64";
-      const version = "1.2.3";
-      const bundle = `${root}/bundle`;
-      const release = `${root}/release/v${version}`;
-      yield* fs.makeDirectory(bundle, { recursive: true });
-      yield* fs.makeDirectory(release, { recursive: true });
-      yield* fs.writeFileString(
-        `${bundle}/bin.mjs`,
-        "console.log(`${process.env.STUDIO_CLI_NAME} v1.2.3 ${process.argv.slice(2).join(' ')}`);\n",
-      );
-      const archive = `studio-${version}-${platform}-${arch}-043e9db88a6e.tar.gz`;
-      execFileSync("tar", ["-czf", `${release}/${archive}`, "-C", bundle, "."]);
-      const sum = createHash("sha256")
-        .update(new Uint8Array(yield* fs.readFile(`${release}/${archive}`)))
-        .digest("hex");
-      yield* fs.writeFileString(
-        `${release}/SHA256SUMS`,
-        `${"0".repeat(64)}  studio-${version}-043e9db88a6e.tar.gz\n${sum}  ${archive}\n`,
-      );
-      const home = `${root}/home`;
-      yield* fs.makeDirectory(home);
-      const script = SshTunnel.buildRemoteStudioRunnerScript({
-        archiveVersion: version,
-        releaseBaseUrl: `file://${root}/release`,
-      });
-      const run = () =>
-        execFileSync("sh", ["-c", script, "runner", "--version"], {
-          encoding: "utf8",
-          env: { HOME: home, PATH: `${process.execPath.replace(/\/node$/, "")}:/usr/bin:/bin` },
+  // The runner is POSIX shell for a remote Linux or macOS host; a Windows
+  // machine never runs it locally.
+  it.effect.skipIf(process.platform === "win32")(
+    "installs a release's commit-suffixed Node bundle and runs it through a launcher",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "studio-ssh-bundle-" });
+        const { execFileSync } = yield* Effect.promise(() => import("node:child_process"));
+        const { createHash } = yield* Effect.promise(() => import("node:crypto"));
+        const uname = (flag: string) => execFileSync("uname", [flag], { encoding: "utf8" }).trim();
+        const platform = uname("-s") === "Darwin" ? "darwin" : "linux";
+        const arch = /^(arm64|aarch64)$/.test(uname("-m")) ? "arm64" : "x64";
+        const version = "1.2.3";
+        const bundle = `${root}/bundle`;
+        const release = `${root}/release/v${version}`;
+        yield* fs.makeDirectory(bundle, { recursive: true });
+        yield* fs.makeDirectory(release, { recursive: true });
+        yield* fs.writeFileString(
+          `${bundle}/bin.mjs`,
+          "console.log(`${process.env.STUDIO_CLI_NAME} v1.2.3 ${process.argv.slice(2).join(' ')}`);\n",
+        );
+        const archive = `studio-${version}-${platform}-${arch}-043e9db88a6e.tar.gz`;
+        execFileSync("tar", ["-czf", `${release}/${archive}`, "-C", bundle, "."]);
+        const sum = createHash("sha256")
+          .update(new Uint8Array(yield* fs.readFile(`${release}/${archive}`)))
+          .digest("hex");
+        yield* fs.writeFileString(
+          `${release}/SHA256SUMS`,
+          `${"0".repeat(64)}  studio-${version}-043e9db88a6e.tar.gz\n${sum}  ${archive}\n`,
+        );
+        const home = `${root}/home`;
+        yield* fs.makeDirectory(home);
+        const script = SshTunnel.buildRemoteStudioRunnerScript({
+          archiveVersion: version,
+          releaseBaseUrl: `file://${root}/release`,
         });
-      assert.equal(run().trim(), "specweave-studio v1.2.3 --version");
-      const runtime = `${home}/.specwithcode/runtime/versions/${version}`;
-      assert.equal(yield* fs.readFileString(`${runtime}/.install-complete`), `${version}\n`);
-      assert.include(yield* fs.readFileString(`${runtime}/specweave-studio`), process.execPath);
-      // The second launch reuses the pinned runtime without downloading again.
-      yield* fs.remove(`${root}/release`, { recursive: true });
-      assert.equal(run().trim(), "specweave-studio v1.2.3 --version");
-    }).pipe(Effect.provide(NodeServices.layer)),
+        const run = () =>
+          execFileSync("sh", ["-c", script, "runner", "--version"], {
+            encoding: "utf8",
+            env: { HOME: home, PATH: `${process.execPath.replace(/\/node$/, "")}:/usr/bin:/bin` },
+          });
+        assert.equal(run().trim(), "specweave-studio v1.2.3 --version");
+        const runtime = `${home}/.specwithcode/runtime/versions/${version}`;
+        assert.equal(yield* fs.readFileString(`${runtime}/.install-complete`), `${version}\n`);
+        assert.include(yield* fs.readFileString(`${runtime}/specweave-studio`), process.execPath);
+        // The second launch reuses the pinned runtime without downloading again.
+        yield* fs.remove(`${root}/release`, { recursive: true });
+        assert.equal(run().trim(), "specweave-studio v1.2.3 --version");
+      }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it("rejects archive versions that are not a single exact version segment", () => {

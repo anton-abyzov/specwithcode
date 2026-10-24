@@ -1261,7 +1261,14 @@ const make = Effect.gen(function* () {
     ),
   );
 
+  // None when the file vanished between the check and the read, or when the
+  // path is a dangling link: Windows reports one as existing.
   const readRawConfig = fs.readFileString(settingsPath).pipe(
+    Effect.asSome,
+    Effect.catchTags({
+      PlatformError: (error) =>
+        error.reason._tag === "NotFound" ? Effect.succeedNone : Effect.fail(error),
+    }),
     Effect.mapError(
       (cause) =>
         new ServerSettingsError({
@@ -1395,8 +1402,9 @@ const make = Effect.gen(function* () {
     // the fold below only writes when it started from the file's real contents.
     let settingsFileTrusted = true;
 
-    if (yield* readConfigExists) {
-      const raw = yield* readRawConfig;
+    const rawConfig = (yield* readConfigExists) ? yield* readRawConfig : Option.none<string>();
+    if (Option.isSome(rawConfig)) {
+      const raw = rawConfig.value;
       const decoded = decodeServerSettingsJsonExit(raw);
       const persistedSettings = decodePersistedOptionalProviderSettingsJsonExit(raw);
       if (persistedSettings._tag === "Success") {

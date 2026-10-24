@@ -15,6 +15,9 @@ import {
   writeDevelopmentLauncherScript,
 } from "./electron-launcher.mjs";
 
+// oxlint-disable-next-line studio/no-global-process-runtime -- Launcher tests run outside Effect and depend on the actual host.
+const hostPlatform = process.platform;
+
 describe("electron development launcher", () => {
   it("uses captured values only as fallbacks for a live runner environment", () => {
     const environmentScript = makeDevelopmentEnvironmentScript({
@@ -127,19 +130,23 @@ describe("electron development launcher", () => {
     ]);
   });
 
-  it("restores execute permissions on an unchanged launcher", () => {
-    const directory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "studio-launcher-"));
-    const launcherPath = NodePath.join(directory, "launcher");
-    try {
-      writeDevelopmentLauncherScript(launcherPath, "/runtime/Electron");
-      NodeFS.chmodSync(launcherPath, 0o644);
+  // The launcher is a macOS shell script; Windows has no execute mode bits.
+  it.skipIf(hostPlatform === "win32")(
+    "restores execute permissions on an unchanged launcher",
+    () => {
+      const directory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "studio-launcher-"));
+      const launcherPath = NodePath.join(directory, "launcher");
+      try {
+        writeDevelopmentLauncherScript(launcherPath, "/runtime/Electron");
+        NodeFS.chmodSync(launcherPath, 0o644);
 
-      assert.isFalse(writeDevelopmentLauncherScript(launcherPath, "/runtime/Electron"));
-      assert.equal(NodeFS.statSync(launcherPath).mode & 0o777, 0o755);
-    } finally {
-      NodeFS.rmSync(directory, { recursive: true, force: true });
-    }
-  });
+        assert.isFalse(writeDevelopmentLauncherScript(launcherPath, "/runtime/Electron"));
+        assert.equal(NodeFS.statSync(launcherPath).mode & 0o777, 0o755);
+      } finally {
+        NodeFS.rmSync(directory, { recursive: true, force: true });
+      }
+    },
+  );
 
   it("derives launcher icons from canonical development and production assets", () => {
     const development = resolveMacLauncherIconPaths("/runtime", true);

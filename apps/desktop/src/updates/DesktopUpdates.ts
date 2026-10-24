@@ -1,6 +1,5 @@
 import {
   DESKTOP_UPDATE_RESTART_MARKER_FILE,
-  DesktopUpdateChannelSchema,
   type DesktopRuntimeInfo,
   type DesktopUpdateActionResult,
   type DesktopUpdateRefusalReason,
@@ -8,12 +7,12 @@ import {
   type DesktopUpdateCheckResult,
   type DesktopUpdateState,
 } from "@specweave-studio/contracts";
-import * as Electron from "electron";
 // @effect-diagnostics nodeBuiltinImport:off -- Update feed names are compared by SHA-256 digest.
 import * as NodeCrypto from "node:crypto";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
@@ -38,8 +37,31 @@ import * as IpcChannels from "../ipc/channels.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import { type LocalServiceProbe, makeAppActivationControl } from "./appActivationControl.ts";
 import { APP_INSTALL_APPLY_MS } from "./appFollowUp.ts";
+import {
+  describeUpdaterCause,
+  DesktopUpdateActionInProgressError,
+  DesktopUpdateChannelPersistenceError,
+  type DesktopUpdateConfigureError,
+  DesktopUpdateEventHandlingError,
+  DesktopUpdatePollerError,
+  DesktopUpdaterReportedError,
+  type DesktopUpdateSetChannelError,
+  DesktopUpdateUnexpectedActionError,
+} from "./desktopUpdateErrors.ts";
+import {
+  isNewerRelease,
+  newestRelease,
+  readPendingAppDownload,
+  removeInstalledAppDownload,
+  updaterCacheDir,
+} from "./pendingAppUpdate.ts";
 import { normalizeDesktopUpdateReleaseNotes } from "./releaseNotes.ts";
 import { resolveDefaultDesktopUpdateChannel } from "./updateChannels.ts";
+import {
+  describeUpdateNotice,
+  type DesktopUpdateNotice,
+  DesktopUpdateNotifier,
+} from "./updateNotices.ts";
 import { updateTokenResolver } from "./updateToken.ts";
 import {
   createInitialDesktopUpdateState,
@@ -71,6 +93,11 @@ const SQUIRREL_STAGE_WAIT_POLLS = 240;
 const SQUIRREL_STAGE_POLL = Duration.millis(500);
 const INSTALL_NOT_STAGED = "macOS did not prepare the update. Try restarting to update again.";
 const INSTALL_DID_NOT_QUIT = "SpecWithCode did not restart to install the update.";
+// A quitAndInstall that really quits starts the app's quit at once (Electron
+// emits before-quit-for-update, then before-quit). No quit begun by then, it
+// did nothing, as when Squirrel.Mac lost its staged bundle.
+const INSTALL_QUIT_START_POLLS = 50;
+const INSTALL_QUIT_START_POLL = Duration.millis(100); // 5 s in all
 // A new release shows in the sidebar within this long. Ten minutes keeps a
 // machine at six feed requests an hour, far below GitHub's limits, and also
 // bounds re-checks on wake, unlock and window focus.
@@ -89,63 +116,12 @@ export interface DesktopUpdateStaleCheckOptions {
   readonly retryMinAgeMs?: number;
 }
 
-/** A system notification about a release of the app. */
-export interface DesktopUpdateNotice {
-  readonly kind: "available" | "downloaded";
-  readonly version: string;
-  readonly title: string;
-  readonly body: string;
-}
-
-/** Posts `notice`; `onClick` runs when the person clicks it. */
-export type DesktopUpdateNoticePoster = (notice: DesktopUpdateNotice, onClick: () => void) => void;
-
-// A notification Electron garbage-collects no longer reports its click, so
-// each one stays referenced until it is clicked or closed.
-const shownUpdateNotifications = new Set<Electron.Notification>();
-
-const postNativeUpdateNotice: DesktopUpdateNoticePoster = (notice, onClick) => {
-  if (typeof Electron.Notification?.isSupported !== "function") return;
-  if (!Electron.Notification.isSupported()) return;
-  const notification = new Electron.Notification({ title: notice.title, body: notice.body });
-  shownUpdateNotifications.add(notification);
-  notification.on("click", () => {
-    shownUpdateNotifications.delete(notification);
-    onClick();
-  });
-  notification.on("close", () => shownUpdateNotifications.delete(notification));
-  notification.on("failed", () => shownUpdateNotifications.delete(notification));
-  notification.show();
-};
-
-/** How update notices reach the system; tests replace it. */
-export const DesktopUpdateNotifier = Context.Reference<DesktopUpdateNoticePoster>(
-  "@specweave-studio/desktop/updates/DesktopUpdateNotifier",
-  { defaultValue: () => postNativeUpdateNotice },
-);
-
-export function describeUpdateNotice(
-  kind: DesktopUpdateNotice["kind"],
-  version: string,
-  downloadsAutomatically: boolean,
-): DesktopUpdateNotice {
-  if (kind === "downloaded") {
-    return {
-      kind,
-      version,
-      title: `SpecWithCode ${version} is ready to install`,
-      body: "Restart the app to update. Click to open Settings.",
-    };
-  }
-  return {
-    kind,
-    version,
-    title: `SpecWithCode ${version} is available`,
-    body: downloadsAutomatically
-      ? "It is downloading in the background. Click to open Settings."
-      : "Click to open Settings and download it.",
-  };
-}
+export {
+  describeUpdateNotice,
+  type DesktopUpdateNotice,
+  type DesktopUpdateNoticePoster,
+  DesktopUpdateNotifier,
+} from "./updateNotices.ts";
 
 type UpdateAction = "check" | "download" | "install" | "install-recovery" | "channel";
 
@@ -176,85 +152,7 @@ const encodeAnnouncedNotices = Schema.encodeEffect(AnnouncedNotices);
 
 const currentIsoTimestamp = DateTime.now.pipe(Effect.map(DateTime.formatIso));
 
-export class DesktopUpdateActionInProgressError extends Schema.TaggedError<DesktopUpdateActionInProgressError>()(
-  "DesktopUpdateActionInProgressError",
-  {
-    action: Schema.Literals(["check", "download", "install", "channel"]),
-    requestedChannel: DesktopUpdateChannelSchema,
-  },
-) {
-  override get message(): string {
-    return `Cannot change the desktop update channel to ${this.requestedChannel} while an update ${this.action} action is in progress.`;
-  }
-}
-
-export class DesktopUpdateChannelPersistenceError extends Schema.TaggedError<DesktopUpdateChannelPersistenceError>()(
-  "DesktopUpdateChannelPersistenceError",
-  {
-    channel: DesktopUpdateChannelSchema,
-    cause: Schema.instanceOf(DesktopAppSettings.DesktopSettingsWriteError),
-  },
-) {
-  override get message(): string {
-    return `Failed to persist the ${this.channel} desktop update channel.`;
-  }
-}
-
-export class DesktopUpdatePollerError extends Schema.TaggedError<DesktopUpdatePollerError>()(
-  "DesktopUpdatePollerError",
-  {
-    poller: Schema.Literals(["startup", "poll", "stale"]),
-    cause: Schema.Defect(),
-  },
-) {
-  override get message(): string {
-    return `Desktop update ${this.poller} poller failed.`;
-  }
-}
-
-export class DesktopUpdateEventHandlingError extends Schema.TaggedError<DesktopUpdateEventHandlingError>()(
-  "DesktopUpdateEventHandlingError",
-  {
-    event: Schema.Literals(["update-available", "download-progress", "update-downloaded"]),
-    cause: Schema.Defect(),
-  },
-) {
-  override get message(): string {
-    return `Failed to handle desktop update ${this.event} event.`;
-  }
-}
-
-export class DesktopUpdaterReportedError extends Schema.TaggedError<DesktopUpdaterReportedError>()(
-  "DesktopUpdaterReportedError",
-  {
-    operation: Schema.Literals(["check", "download", "install", "channel", "background"]),
-    cause: Schema.Defect(),
-  },
-) {
-  override get message(): string {
-    return `Desktop updater ${this.operation} operation reported an error.`;
-  }
-}
-
-export class DesktopUpdateUnexpectedActionError extends Schema.TaggedError<DesktopUpdateUnexpectedActionError>()(
-  "DesktopUpdateUnexpectedActionError",
-  {
-    action: Schema.Literals(["download", "install"]),
-    cause: Schema.Defect(),
-  },
-) {
-  override get message(): string {
-    return `Desktop update ${this.action} action failed unexpectedly.`;
-  }
-}
-
-export type DesktopUpdateConfigureError = never;
-
-export const DesktopUpdateSetChannelError = Schema.Union([
-  DesktopUpdateActionInProgressError,
-  DesktopUpdateChannelPersistenceError,
-]);
-export type DesktopUpdateSetChannelError = typeof DesktopUpdateSetChannelError.Type;
+export * from "./desktopUpdateErrors.ts";
 
 export class DesktopUpdates extends Context.Service<
   DesktopUpdates,
@@ -306,26 +204,16 @@ export class DesktopUpdates extends Context.Service<
     readonly registerLocalServiceProbe: (probe: LocalServiceProbe) => Effect.Effect<void>;
     /** Reads the local service again and applies the swap gate. */
     readonly refreshActivation: Effect.Effect<void>;
+    /**
+     * The app release an Update now run installs after the service when its
+     * window named none: what this launch's checks found, else a download an
+     * earlier launch left in electron-updater's cache; never one the app
+     * already runs. Asked before the first check, that check runs now instead
+     * of after the startup delay.
+     */
+    readonly appTargetForRun: Effect.Effect<string | null>;
   }
 >()("@specweave-studio/desktop/updates/DesktopUpdates") {}
-
-/**
- * The underlying error's own words, so a failed download says why. Keeps the
- * first line, adds a nested cause (e.g. ECONNRESET under "fetch failed") and
- * drops URL query strings, which can carry signed download parameters.
- */
-export function describeUpdaterCause(cause: unknown): string | null {
-  const firstLine = (error: unknown) =>
-    error instanceof Error ? (error.message.split("\n")[0] ?? "").trim() : "";
-  const own = firstLine(cause);
-  if (own.length === 0) return null;
-  const nested = cause instanceof Error ? firstLine(cause.cause) : "";
-  const text = (nested.length > 0 && nested !== own ? `${own} (${nested})` : own).replace(
-    /\?[^\s"')]*/g,
-    "",
-  );
-  return text.length > 300 ? `${text.slice(0, 299)}…` : text;
-}
 
 const {
   logInfo: logUpdaterInfo,
@@ -503,6 +391,8 @@ export const make = Effect.gen(function* () {
     Effect.flatMap((now) => Ref.set(lastSuccessfulCheckAtRef, DateTime.toEpochMillis(now))),
   );
   const lastCheckAttemptAtRef = yield* Ref.make<number | null>(null);
+  // Ends the startup delay early: a run asked for the app's release first.
+  const startupCheckNow = yield* Deferred.make<void>();
   const markCheckAttempted = DateTime.now.pipe(
     Effect.flatMap((now) => Ref.set(lastCheckAttemptAtRef, DateTime.toEpochMillis(now))),
   );
@@ -562,6 +452,12 @@ export const make = Effect.gen(function* () {
             Effect.orElseSucceed(() => false),
           )
       : false;
+
+  // MacUpdater's differential download is what copies each download to
+  // <cache>/update.zip (MacUpdater.doDownloadUpdate's done), a second 150 MB
+  // kept for good; on macOS every download is a full one instead.
+  const disableDifferentialDownload =
+    environment.platform === "darwin" || isArm64HostRunningIntelBuild(environment.runtimeInfo);
 
   const hasUpdateFeedConfig = Ref.get(appUpdateYmlConfigRef).pipe(
     Effect.map((appUpdateYmlConfig) => Option.isSome(appUpdateYmlConfig) || config.mockUpdates),
@@ -737,9 +633,7 @@ export const make = Effect.gen(function* () {
       // Squirrel stages the download for install-on-quit if the flag is set
       // when it finishes: set it now, for this version.
       yield* Effect.suspend(() => activation.applyActivation);
-      yield* electronUpdater.setDisableDifferentialDownload(
-        isArm64HostRunningIntelBuild(environment.runtimeInfo),
-      );
+      yield* electronUpdater.setDisableDifferentialDownload(disableDifferentialDownload);
       yield* logUpdaterInfo("downloading update");
       const finished = yield* electronUpdater.downloadUpdate.pipe(
         Effect.timeoutOption(DOWNLOAD_STALL_LIMIT),
@@ -862,9 +756,10 @@ export const make = Effect.gen(function* () {
     tryStartDownload: tryStartUpdateAction("download"),
     finishDownload: finishUpdateAction("download"),
     downloadUpdate: electronUpdater
-      .setDisableDifferentialDownload(isArm64HostRunningIntelBuild(environment.runtimeInfo))
+      .setDisableDifferentialDownload(disableDifferentialDownload)
       .pipe(Effect.andThen(electronUpdater.downloadUpdate)),
     downloadStallLimit: DOWNLOAD_STALL_LIMIT,
+    installReady: electronUpdater.installReady,
   });
   const applyInstallPreference = activation.applyActivation;
 
@@ -925,7 +820,7 @@ export const make = Effect.gen(function* () {
       yield* logUpdaterInfo("staging the downloaded update before installing it");
       yield* electronUpdater.setAutoInstallOnAppQuit(true);
       const finished = yield* electronUpdater
-        .setDisableDifferentialDownload(isArm64HostRunningIntelBuild(environment.runtimeInfo))
+        .setDisableDifferentialDownload(disableDifferentialDownload)
         .pipe(
           Effect.andThen(electronUpdater.downloadUpdate),
           Effect.timeoutOption(DOWNLOAD_STALL_LIMIT),
@@ -958,6 +853,10 @@ export const make = Effect.gen(function* () {
     if (!ownsRecovery) return;
 
     yield* Ref.set(desktopState.quitting, false);
+    // A quit the updater began and that never ended is over too: the Dock can
+    // bring a window back, and a later quit is the app's own, in order.
+    yield* Ref.set(desktopState.shutdownBegun, false);
+    yield* Ref.set(desktopState.updaterQuitAllowed, false);
     yield* removeUpdateRestartMarker;
     yield* Effect.gen(function* () {
       const instances = yield* pool.list;
@@ -989,6 +888,14 @@ export const make = Effect.gen(function* () {
     ),
     Effect.withSpan("desktop.updates.recoverStalledInstall"),
   );
+
+  const awaitQuitStart = Effect.gen(function* () {
+    for (let poll = 0; poll < INSTALL_QUIT_START_POLLS; poll++) {
+      if (yield* Ref.get(desktopState.shutdownBegun)) return true;
+      yield* Effect.sleep(INSTALL_QUIT_START_POLL);
+    }
+    return yield* Ref.get(desktopState.shutdownBegun);
+  });
 
   const installDownloadedUpdate = (expectedVersion?: string, serviceLacksRelease = false) =>
     Effect.scoped(
@@ -1054,6 +961,9 @@ export const make = Effect.gen(function* () {
 
         // Taken at admission, so an older install's watch never acts on this one.
         const attempt = ++installAttempt;
+        const recoverOwnStalledInstall = Effect.suspend(() =>
+          attempt === installAttempt ? recoverStalledInstall : Effect.void,
+        );
 
         if (!(yield* electronUpdater.installReady)) {
           stagingForInstall = true;
@@ -1076,7 +986,7 @@ export const make = Effect.gen(function* () {
 
         yield* Ref.set(desktopState.quitting, true);
 
-        return yield* Effect.gen(function* () {
+        const result = yield* Effect.gen(function* () {
           yield* writeUpdateRestartMarker;
           // Stop every backend in the pool, not just the primary. With
           // parallel WSL + Windows backends, leaving the WSL instance up
@@ -1096,18 +1006,15 @@ export const make = Effect.gen(function* () {
             isForceRunAfter: true,
           });
           // An accepted install quits within seconds. Still running after
-          // APP_INSTALL_APPLY_MS, the app gets its updater and backends back.
+          // APP_INSTALL_APPLY_MS, the app gets its updater and backends back,
+          // also for an install made before the background scope exists.
+          const backstop = Effect.sleep(Duration.millis(APP_INSTALL_APPLY_MS)).pipe(
+            Effect.andThen(recoverOwnStalledInstall),
+          );
           const scope = yield* Ref.get(backgroundScopeRef);
-          if (Option.isSome(scope)) {
-            yield* Effect.sleep(Duration.millis(APP_INSTALL_APPLY_MS)).pipe(
-              Effect.andThen(
-                Effect.suspend(() =>
-                  attempt === installAttempt ? recoverStalledInstall : Effect.void,
-                ),
-              ),
-              Effect.forkIn(scope.value),
-            );
-          }
+          yield* Option.isSome(scope)
+            ? Effect.forkIn(backstop, scope.value)
+            : Effect.forkDetach(backstop);
           return { accepted: true, completed: false, failed: false };
         }).pipe(
           Effect.catchTags({
@@ -1140,6 +1047,11 @@ export const make = Effect.gen(function* () {
             }),
           ),
         );
+        // Outside the reset on interrupt above: an interrupt here may be the
+        // quit itself, and the backstop still recovers an install that stays.
+        if (result.failed || (yield* awaitQuitStart)) return result;
+        yield* recoverOwnStalledInstall;
+        return { accepted: true, completed: false, failed: true };
       }),
     ).pipe(Effect.withSpan("desktop.updates.installDownloadedUpdate"));
 
@@ -1171,11 +1083,64 @@ export const make = Effect.gen(function* () {
     };
   });
 
+  const join = (...parts: ReadonlyArray<string>) => environment.path.join(...parts);
+  // electron-updater's cache folder, named by app-update.yml.
+  const updaterCache = Ref.get(appUpdateYmlConfigRef).pipe(
+    Effect.map((appUpdateYml) =>
+      updaterCacheDir({
+        platform: environment.platform,
+        homeDirectory: environment.homeDirectory,
+        localAppData: Option.getOrUndefined(config.localAppDataDirectory),
+        xdgCacheHome: Option.getOrUndefined(config.xdgCacheHome),
+        updaterCacheDirName: Option.getOrUndefined(appUpdateYml)?.updaterCacheDirName,
+        join,
+      }),
+    ),
+  );
+
+  const appTargetForRun = Effect.gen(function* () {
+    if (!(yield* Ref.get(updaterConfiguredRef))) return null;
+    const running = environment.appVersion;
+    const state = yield* Ref.get(updateStateRef);
+    const found = newestRelease([state.availableVersion, state.downloadedVersion], running);
+    // The feed answered this launch: nothing newer, whatever the cache holds.
+    if (found !== null || (yield* Ref.get(lastSuccessfulCheckAtRef)) !== null) return found;
+    // Not yet: its answer soon replaces a cached release that left the feed.
+    yield* Deferred.succeed(startupCheckNow, undefined);
+    const cacheDir = yield* updaterCache;
+    const pendingDir = cacheDir === null ? null : join(cacheDir, "pending");
+    const cached = yield* readPendingAppDownload(fileSystem, join, pendingDir);
+    if (
+      cached === null ||
+      !isNewerRelease(cached.version, running) ||
+      resolveDefaultDesktopUpdateChannel(cached.version) !== state.channel
+    ) {
+      return null;
+    }
+    yield* logUpdaterInfo("update run names the app release downloaded earlier", {
+      version: cached.version,
+    });
+    return cached.version;
+  }).pipe(Effect.withSpan("desktop.updates.appTargetForRun"));
+
+  // The app runs the release electron-updater downloaded: drop that download.
+  // Runs before the startup check, so no download of this launch is going.
+  const removeInstalledDownload = Effect.gen(function* () {
+    if (Option.isSome(yield* activeUpdateAction)) return;
+    const cacheDir = yield* updaterCache;
+    yield* removeInstalledAppDownload(fileSystem, join, cacheDir, environment.appVersion);
+  });
+
   const startUpdatePollers: Effect.Effect<void, never, Scope.Scope> = Effect.gen(function* () {
     // Counts as an attempt so the first window focus at launch leaves the
     // check to the startup pass instead of skipping its delay.
     yield* markCheckAttempted;
-    yield* Effect.sleep(AUTO_UPDATE_STARTUP_DELAY).pipe(
+    yield* removeInstalledDownload.pipe(
+      Effect.andThen(
+        Effect.sleep(AUTO_UPDATE_STARTUP_DELAY).pipe(
+          Effect.raceFirst(Deferred.await(startupCheckNow)),
+        ),
+      ),
       Effect.andThen(Effect.when(checkThenDownload("startup"), automaticChecksEnabled)),
       Effect.catchCause((cause) => {
         if (Cause.hasInterruptsOnly(cause)) {
@@ -1447,9 +1412,7 @@ export const make = Effect.gen(function* () {
       yield* electronUpdater.setAutoDownload(false);
       yield* activation.applyActivation;
       yield* applyAutoUpdaterChannel(settings.updateChannel);
-      yield* electronUpdater.setDisableDifferentialDownload(
-        isArm64HostRunningIntelBuild(environment.runtimeInfo),
-      );
+      yield* electronUpdater.setDisableDifferentialDownload(disableDifferentialDownload);
 
       if (isArm64HostRunningIntelBuild(environment.runtimeInfo)) {
         yield* logUpdaterInfo(
@@ -1553,6 +1516,7 @@ export const make = Effect.gen(function* () {
     applyPreferences: applyInstallPreference,
     registerLocalServiceProbe: activation.registerProbe,
     refreshActivation: activation.applyActivation,
+    appTargetForRun,
   });
 });
 

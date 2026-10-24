@@ -67,6 +67,11 @@ function layerResolver(
   );
 }
 
+// Resolves only `npm`, so runner availability does not depend on the CI host's
+// own toolchain or its PATH syntax. Nothing is spawned through this path.
+const resolveOnlyNpm = (command: string) =>
+  command === "npm" ? "/fake-toolchain/bin/npm" : undefined;
+
 const makeFakeNpmToolchain = Effect.fn("AcpRegistrySupport.test.makeFakeNpmToolchain")(function* (
   rootDirectory: string,
 ) {
@@ -138,6 +143,13 @@ const makeFakeUvToolchain = Effect.fn("AcpRegistrySupport.test.makeFakeUvToolcha
     uvPath,
   };
 });
+
+// Linux registry installs: these cases pin HostProcessPlatform to "linux" and
+// exercise its POSIX contract on the real filesystem (':'-delimited PATH
+// lookup, executable mode bits in the managed cache, #!/bin/sh npm and uv
+// fixtures, GNU tar paths). A Windows host has none of these; the win32-pinned
+// cases cover the Windows install layout instead.
+const itOnLinuxHost = it.effect.skipIf(process.platform === "win32");
 
 describe("AcpRegistrySupport", () => {
   it("preserves the registry failure when translating it for clients", () => {
@@ -212,7 +224,7 @@ describe("AcpRegistrySupport", () => {
     ).toBeUndefined();
   });
 
-  it.effect("resolves a local command on the selected environment without the registry", () => {
+  itOnLinuxHost("resolves a local command on the selected environment without the registry", () => {
     const requests: Array<string> = [];
     return Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -342,7 +354,10 @@ describe("AcpRegistrySupport", () => {
       const nonExecutable = `${cacheDir}/non-executable`;
       yield* fileSystem.writeFileString(nonExecutable, "#!/bin/sh\n");
       yield* fileSystem.chmod(nonExecutable, 0o644);
-      for (const commandPath of ["dsh", `${cacheDir}/missing`, cacheDir, nonExecutable]) {
+      // POSIX executable mode bits: Windows has none, so a 0o644 file still runs there.
+      const unavailable = ["dsh", `${cacheDir}/missing`, cacheDir];
+      if (process.platform !== "win32") unavailable.push(nonExecutable);
+      for (const commandPath of unavailable) {
         const localSettings = decodeAcpRegistrySettings({ source: "local", commandPath });
         expect(yield* resolver.inspect(localSettings, environment)).toEqual({
           status: "missing_runner",
@@ -417,7 +432,7 @@ describe("AcpRegistrySupport", () => {
     );
   });
 
-  it.effect("installs into Studio home a package and launches its exposed command", () => {
+  itOnLinuxHost("installs into Studio home a package and launches its exposed command", () => {
     const agent = makeAgent({
       npx: { package: "@example/acp@V1.2.3", args: ["--stdio"] },
     });
@@ -455,7 +470,7 @@ describe("AcpRegistrySupport", () => {
     );
   });
 
-  it.effect(
+  itOnLinuxHost(
     "contains Grok install side effects and launches its owned native binary with the original auth environment",
     () => {
       const agent = {
@@ -524,7 +539,7 @@ describe("AcpRegistrySupport", () => {
     },
   );
 
-  it.effect("uses its managed prefix despite a system-owned npm prefix", () => {
+  itOnLinuxHost("uses its managed prefix despite a system-owned npm prefix", () => {
     const agent = makeAgent({ npx: { package: "@example/acp@1.2.3" } });
     return Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -564,7 +579,7 @@ describe("AcpRegistrySupport", () => {
     );
   });
 
-  it.effect("installs into Studio home a uv tool and launches its exposed command", () => {
+  itOnLinuxHost("installs into Studio home a uv tool and launches its exposed command", () => {
     const agent = makeAgent({
       uvx: { package: "fast-agent-acp==V0.10.1", args: ["--acp"] },
     });
@@ -600,7 +615,7 @@ describe("AcpRegistrySupport", () => {
     );
   });
 
-  it.effect("honors an exact Windows PATH override when launching a global package", () => {
+  itOnLinuxHost("honors an exact Windows PATH override when launching a global package", () => {
     const agent = makeAgent({
       uvx: { package: "fast-agent-acp==0.10.1", args: ["--acp"] },
     });
@@ -653,7 +668,7 @@ describe("AcpRegistrySupport", () => {
     );
   });
 
-  it.effect("installs and reuses a registry binary in the managed cache", () => {
+  itOnLinuxHost("installs and reuses a registry binary in the managed cache", () => {
     const binaryBytes = new TextEncoder().encode("#!/bin/sh\necho example\n");
     const agent = makeAgent({
       binary: {
@@ -711,7 +726,7 @@ describe("AcpRegistrySupport", () => {
     );
   });
 
-  it.effect(
+  itOnLinuxHost(
     "prepares the registry version despite an older PATH binary and permits explicit overrides",
     () => {
       const binaryBytes = new TextEncoder().encode("#!/bin/sh\necho managed\n");
@@ -796,7 +811,7 @@ describe("AcpRegistrySupport", () => {
     },
   );
 
-  it.effect("installs a tar archive containing a root directory entry", () => {
+  itOnLinuxHost("installs a tar archive containing a root directory entry", () => {
     const downloadUrl = "https://registry.test/agent.tar.gz";
     const agent = makeAgent({
       binary: { "linux-x86_64": { archive: downloadUrl, cmd: "./agent" } },
@@ -887,7 +902,7 @@ describe("AcpRegistrySupport", () => {
         cacheDir,
         toolsDir: `${cacheDir}/tools`,
         registryUrl,
-      });
+      }).pipe(Effect.provideService(SpawnExecutableResolution, resolveOnlyNpm));
       const result = yield* resolver.search({ query: "codex" });
 
       expect(result.agents.map((agent) => agent.id)).toEqual(["codex-acp", "other-agent"]);
@@ -1148,7 +1163,7 @@ describe("AcpRegistrySupport", () => {
     );
   });
 
-  it.effect("installs into Studio home package recipes during preparation", () => {
+  itOnLinuxHost("installs into Studio home package recipes during preparation", () => {
     const agent = makeAgent({ npx: { package: "@example/acp@1.2.3", args: ["--stdio"] } });
     const requests: string[] = [];
 
@@ -1189,7 +1204,7 @@ describe("AcpRegistrySupport", () => {
     );
   });
 
-  it.effect("falls back to a valid cached registry index when refresh fails", () => {
+  itOnLinuxHost("falls back to a valid cached registry index when refresh fails", () => {
     const agent = makeAgent({
       npx: {
         package: "@example/acp@1.2.3",
@@ -1281,7 +1296,7 @@ describe("AcpRegistrySupport", () => {
         cacheDir,
         toolsDir: `${cacheDir}/tools`,
         registryUrl,
-      });
+      }).pipe(Effect.provideService(SpawnExecutableResolution, resolveOnlyNpm));
       const inspection = yield* resolver.inspect(settings());
 
       expect(inspection).toMatchObject({ status: "ready", agentId: agent.id });
@@ -1326,7 +1341,7 @@ describe("AcpRegistrySupport", () => {
     );
   });
 
-  it.effect("uses the effective provider environment for inspection and resolution", () => {
+  itOnLinuxHost("uses the effective provider environment for inspection and resolution", () => {
     const agent = makeAgent({ npx: { package: "@example/acp@1.2.3" } });
     return Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -1366,7 +1381,7 @@ describe("AcpRegistrySupport", () => {
     );
   });
 
-  it.effect("requires a regular executable file in the managed binary cache", () => {
+  itOnLinuxHost("requires a regular executable file in the managed binary cache", () => {
     const agent = makeAgent({
       binary: {
         "linux-x86_64": {
@@ -1515,7 +1530,7 @@ describe("AcpRegistrySupport", () => {
     ),
   );
 
-  it.effect("keeps a binary prepared by another client while an uninstall is waiting", () => {
+  itOnLinuxHost("keeps a binary prepared by another client while an uninstall is waiting", () => {
     const agent = makeAgent({
       binary: {
         "linux-x86_64": {
@@ -1607,7 +1622,7 @@ describe("AcpRegistrySupport", () => {
     });
   });
 
-  it.effect("reserves a prepared binary until a configured instance inspects it", () => {
+  itOnLinuxHost("reserves a prepared binary until a configured instance inspects it", () => {
     const agent = makeAgent({
       binary: {
         "linux-x86_64": {
@@ -1655,7 +1670,7 @@ describe("AcpRegistrySupport", () => {
     );
   });
 
-  it.effect("expires an abandoned prepared-binary reservation", () => {
+  itOnLinuxHost("expires an abandoned prepared-binary reservation", () => {
     const agent = makeAgent({
       binary: {
         "linux-x86_64": {

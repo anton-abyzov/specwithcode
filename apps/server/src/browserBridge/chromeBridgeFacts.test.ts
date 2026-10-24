@@ -7,6 +7,7 @@ import {
   claudeChromeFacts,
   liveExtensionConnections,
   providerWiring,
+  specWithCodeBrowserPaired,
 } from "./chromeBridgeFacts.ts";
 
 let home: string;
@@ -80,5 +81,22 @@ describe("Chrome facts", () => {
       { provider: "copilot", route: "not_set_up" },
       { provider: "gemini", route: "shared_bridge" },
     ]);
+  });
+
+  it("says Claude threads use SpecWithCode Browser once a profile is paired", async () => {
+    await put(".claude.json", JSON.stringify({ claudeInChromeDefaultEnabled: true }));
+    const claude = claudeChromeFacts(paths().claudeFile);
+    const claudeRoute = (useSpecWithCode: boolean) =>
+      providerWiring(paths(), claude, useSpecWithCode).find((w) => w.provider === "claude")?.route;
+    expect(claudeRoute(false)).toBe("built_in");
+    expect(claudeRoute(true)).toBe("specwithcode_browser");
+    expect(specWithCodeBrowserPaired(home)).toBe(false);
+    await put("browser-extension/pairing.json", JSON.stringify({ token: "t".repeat(43) }));
+    expect(specWithCodeBrowserPaired(home)).toBe(false);
+    await put(
+      "browser-extension/pairing.json",
+      JSON.stringify({ token: "t".repeat(43), connectedAt: "2026-10-23T12:00:00.000Z" }),
+    );
+    expect(specWithCodeBrowserPaired(home)).toBe(true);
   });
 });

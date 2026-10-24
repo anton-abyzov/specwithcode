@@ -249,6 +249,19 @@ export const layer: Layer.Layer<
               }),
             )
             .pipe(Effect.catchCause(() => Effect.succeed(false))),
+        runInterruptCause: () =>
+          projectionStore
+            .getThreadRecords(input.threadId, ["turnItems"], {
+              turnItemRunIds: [input.runId],
+              turnItemTypes: ["run_interrupt_request"],
+            })
+            .pipe(
+              Effect.map((records) =>
+                RunExecutionService.runInterruptRequestCause(records.turnItems, input.runId),
+              ),
+              // An unreadable cause only loses the label, never the interrupt.
+              Effect.catchCause(() => Effect.succeed(null)),
+            ),
       };
     };
 
@@ -1483,6 +1496,7 @@ export const layer: Layer.Layer<
         shouldStartProviderTurn: runControls.shouldStartProviderTurn,
         shouldFinalizeRun: runControls.shouldFinalizeRun,
         hasUnpairedRunInterruptRequest: runControls.hasUnpairedRunInterruptRequest,
+        runInterruptCause: runControls.runInterruptCause,
         message: {
           messageId: message.id,
           text: userText,

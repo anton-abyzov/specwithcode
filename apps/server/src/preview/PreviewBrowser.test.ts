@@ -134,7 +134,10 @@ it.layer(NodeServices.layer)("PreviewBrowser", (it) => {
       const abandoned = path.join(installRoot, ".install-abandoned");
       yield* fs.makeDirectory(active);
       yield* fs.makeDirectory(abandoned);
-      const twoHoursAgo = DateTime.toDate(DateTime.subtract(yield* DateTime.now, { hours: 2 }));
+      // Start the test clock at the real time: Windows cannot stamp a file before 1970.
+      const realNow = yield* TestClock.withLive(DateTime.now);
+      yield* TestClock.setTime(DateTime.toEpochMillis(realNow));
+      const twoHoursAgo = DateTime.toDate(DateTime.subtract(realNow, { hours: 2 }));
       yield* fs.utimes(abandoned, twoHoursAgo, twoHoursAgo);
       expect(yield* browser.installed).toEqual(Option.none());
 

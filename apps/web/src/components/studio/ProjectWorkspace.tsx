@@ -1,7 +1,8 @@
+import { useRememberProjectDestination } from "../../studio/projectReturnNavigation";
 import type { EnvironmentProject } from "@specweave-studio/client-runtime/state/shell";
 import { projectExecutionScopes } from "../../studio/projectDomain";
 import { ProjectHandoffRecovery } from "./ProjectHandoffRecovery";
-import { Activity, type ReactElement, useEffect, useState } from "react";
+import { useEffect, useState } from "react";
 import { Link } from "@tanstack/react-router";
 import { type ThreadId } from "@specweave-studio/contracts";
 import { useSettingsProjectGroups } from "../settings/useSettingsProjectGroups";
@@ -31,10 +32,8 @@ import { Button } from "../ui/button";
 import { isElectron } from "../../env";
 
 import { ProjectWorkspaceSurface } from "./ProjectWorkspaceSurface";
+import { KeptProjectPages } from "./KeptProjectPages";
 
-/** Recently visited project pages stay mounted, hidden, so switching back only shows them. */
-export const KEPT_PROJECT_PAGES = 3;
-type KeptPage = { key: string; page: ReactElement };
 export function findProjectGroup<
   G extends {
     projectKey: string;
@@ -65,6 +64,7 @@ export function ProjectWorkspace({
   onSelectCheckout,
   selectedThreadId = null,
   selectedThreadEnvironmentId = null,
+  restoringThread = false,
   onSelectThread,
   onProjectKeyMoved,
 }: {
@@ -75,6 +75,7 @@ export function ProjectWorkspace({
   /** The thread open in the right panel; the route keeps it in the URL. */
   selectedThreadId?: ThreadId | null;
   selectedThreadEnvironmentId?: string | null;
+  restoringThread?: boolean;
   onSelectThread?: SelectProjectThread;
   /** The project's group key changed since the link was made; the route replaces the URL. */
   onProjectKeyMoved?: (projectKey: string) => void;
@@ -152,7 +153,6 @@ export function ProjectWorkspace({
   // panel closes, and until the URL catches up the new checkout does not see it,
   // or it would send the person to that machine's full page.
   const [leftThread, setLeftThread] = useState<ThreadId | null>(null);
-  const [kept, setKept] = useState<readonly KeptPage[]>([]);
   if (leftThread !== null && selected !== leftThread) setLeftThread(null);
   const paneSelected = selected === leftThread ? null : selected;
   const currentMachine = member ? coordinatorMachineKey(member) : null;
@@ -176,6 +176,18 @@ export function ProjectWorkspace({
   const project = member
     ? projects.find((p) => p.environmentId === member.environmentId && p.id === member.id)
     : null;
+  // This outer component is the active page, outside the kept/hidden surfaces.
+  // Resolve checkout identity even when a direct URL omitted it.
+  useRememberProjectDestination(project && machinesLoaded && onSelectThread ? projectKey : null, {
+    ...(selected
+      ? {
+          thread: selected,
+          threadEnvironment: selectedThreadEnvironmentId ?? project?.environmentId ?? "",
+        }
+      : {}),
+    ...(currentMachine ? { checkout: currentMachine } : {}),
+    restoreThread: restoringThread,
+  });
   // A project window starts on this route before its hosts have answered, so
   // the project is not missing yet, only not loaded. The saved host list can
   // arrive before this computer's own host is registered, which is too early
@@ -285,31 +297,16 @@ export function ProjectWorkspace({
       }))}
       savedMachineMissing={savedMachineMissing}
       onCheckout={machinesLoaded ? chooseMachine : null}
+      restoringThread={restoringThread}
       selected={paneSelected}
       setSelected={setSelected}
     />
   );
-  // A page left for another project stays mounted under a hidden Activity: its
-  // effects and subscriptions stop, its DOM and state stay, so coming back shows
-  // it without rendering its conversation again. The conversation puts its
-  // reader back itself (useConversationFollow).
-  if (kept[0]?.key !== pageKey)
-    setKept(
-      [{ key: pageKey, page }, ...kept.filter((entry) => entry.key !== pageKey)].slice(
-        0,
-        KEPT_PROJECT_PAGES,
-      ),
-    );
-  const hidden = kept.filter(
-    (entry) =>
-      entry.key !== pageKey && projects.some((p) => `${p.environmentId}:${p.id}` === entry.key),
+  return (
+    <KeptProjectPages
+      pageKey={pageKey}
+      page={page}
+      isLive={(key) => projects.some((p) => `${p.environmentId}:${p.id}` === key)}
+    />
   );
-  // One keyed list, so a page keeps its instance as it moves between shown and
-  // hidden. The shown page comes first, so lookups by ID such as the composer's
-  // `#project-prompt` find it before a hidden page's copy.
-  return [{ key: pageKey, page }, ...hidden].map((entry) => (
-    <Activity key={entry.key} mode={entry.key === pageKey ? "visible" : "hidden"}>
-      {entry.page}
-    </Activity>
-  ));
 }

@@ -9,6 +9,12 @@ import {
   type ServerProvider,
 } from "@specweave-studio/contracts";
 import {
+  describeFallbackOrder,
+  type FallbackOrderUnavailable,
+} from "@specweave-studio/shared/providerFallback";
+import {
+  canSelectManualFallback,
+  fallbackUnavailableReason,
   formatResetIn,
   limitFallbackPairingBannerItem,
   limitPairingRoom,
@@ -435,13 +441,14 @@ it("knows a stood-in model has room only from a fresh usage reading", () => {
     hasRoom: false,
     roomUnknown: "stale",
   });
+  // An expired window or a failed probe leaves no current reading at all.
   expect(room(provider({ usedPercent: 100, resetsAt: "2026-10-22T14:00:00.000Z" }))).toEqual({
     hasRoom: false,
-    roomUnknown: "stale",
+    roomUnknown: "unread",
   });
   expect(room(provider({ usedPercent: 0, unavailable: true }))).toEqual({
     hasRoom: false,
-    roomUnknown: "stale",
+    roomUnknown: "unread",
   });
   expect(room(provider(null, "error"))).toEqual({ hasRoom: false });
   expect(room(undefined)).toEqual({ hasRoom: false });
@@ -462,6 +469,29 @@ it("knows a stood-in model has room only from a fresh usage reading", () => {
       instanceId: ProviderInstanceId.make("claudeAgent"),
     }),
   ).toEqual({ hasRoom: false });
+  // A fresh reading at 100% outweighs the coordinator: the server's fallback reads it the same way.
+  expect(
+    limitPairingRoom(provider({ usedPercent: 100 }), nowMs, "claude-opus-5-5", {
+      instanceId: ProviderInstanceId.make("claudeAgent"),
+    }),
+  ).toEqual({ hasRoom: false });
+});
+it("never says an out-of-date reading showed room when there is no reading", () => {
+  const item = (roomUnknown: "stale" | "unread") =>
+    limitFallbackPairingBannerItem({
+      id: "pairing",
+      current: "Codex",
+      original: "Claude",
+      resetAt: null,
+      hasRoom: false,
+      roomUnknown,
+      onBack: vi.fn(),
+      onDismiss: vi.fn(),
+    }).description;
+  expect(item("stale")).toContain("last usage reading showed room");
+  expect(item("unread")).toBe(
+    "Claude stopped at its limit and has no current usage reading, so its room is unknown.",
+  );
 });
 it("lays its buttons out below the title instead of in a column beside it", () => {
   const item = usageLimitRecoveryBannerItem({ ...props, onChange: vi.fn() });
@@ -555,7 +585,159 @@ it("offers to add an API key when there is none, and says when credits ran out",
   expect(renderer!.root.findByType("dialog" as never).props["data-driver"]).toBe("grok");
 });
 
-it("lists the rest of the fallback order, choosable or with the reason it is out", async () => {
+const manualFallbackProvider: ServerProvider = {
+  instanceId: ProviderInstanceId.make("claudeAgent"),
+  driver: ProviderDriverKind.make("claudeAgent"),
+  enabled: true,
+  installed: true,
+  version: null,
+  status: "ready",
+  auth: { status: "authenticated" },
+  checkedAt: "2026-10-22T12:00:00.000Z",
+  models: [],
+  slashCommands: [],
+  skills: [],
+};
+
+it.each<[FallbackOrderUnavailable | null, boolean]>([
+  [null, true],
+  ["unverified", true],
+  ["limited", true],
+  ["full", true],
+  ["per-token", true],
+  ["current", false],
+  ["missing", false],
+  ["signed-out", false],
+  ["not-ready", false],
+])("manual fallback availability %s is selectable: %s", (unavailable, selectable) => {
+  expect(canSelectManualFallback({ provider: manualFallbackProvider, unavailable })).toBe(
+    selectable,
+  );
+});
+
+it.each<Partial<ServerProvider>>([
+  { enabled: false },
+  { installed: false },
+  { availability: "unavailable" },
+  { auth: { status: "unauthenticated" } },
+  { status: "disabled" },
+  { status: "error" },
+])("cannot select an unusable fallback even when its reason is a limit: %j", (override) => {
+  for (const unavailable of ["limited", "per-token", "not-ready"] as const) {
+    expect(
+      canSelectManualFallback({
+        provider: { ...manualFallbackProvider, status: "warning", ...override },
+        unavailable,
+      }),
+    ).toBe(false);
+  }
+});
+
+it("requires a provider snapshot and permits a runnable warning", () => {
+  expect(canSelectManualFallback({ provider: undefined, unavailable: null })).toBe(false);
+  expect(
+    canSelectManualFallback({
+      provider: { ...manualFallbackProvider, status: "warning" },
+      unavailable: "limited",
+    }),
+  ).toBe(true);
+});
+
+it("allows a warning provider classified not-ready by the real fallback order", async () => {
+  const model = "claude-opus-5-5";
+  const provider: ServerProvider = {
+    ...manualFallbackProvider,
+    status: "warning",
+    models: [{ slug: model, name: "Opus 5.5", isCustom: false, capabilities: null }],
+    usageLimits: {
+      checkedAt: manualFallbackProvider.checkedAt,
+      windows: [
+        { id: "weekly", kind: "weekly", label: "Weekly", usedPercent: 100, resetsAt: future },
+      ],
+    },
+  };
+  const [entry] = describeFallbackOrder({
+    providers: [provider],
+    currentInstanceId: ProviderInstanceId.make("stopped-provider"),
+    rule: {
+      providerLimitFallbackModelSelection: { instanceId: provider.instanceId, model },
+    },
+    nowMs: Date.parse(provider.checkedAt),
+  });
+  expect(entry?.unavailable).toBe("not-ready");
+  expect(canSelectManualFallback(entry!)).toBe(true);
+  const warning = fallbackUnavailableReason(
+    entry!.unavailable,
+    entry!.resetAt,
+    canSelectManualFallback(entry!),
+  );
+  expect(warning).toBe("provider warning");
+  const onContinue = vi.fn().mockResolvedValue(undefined);
+  const item = usageLimitRecoveryBannerItem({
+    ...props,
+    onChange: vi.fn(),
+    fallbackChoices: [
+      {
+        label: "Claude Code",
+        model: "Opus 5.5",
+        ...(warning ? { unavailable: warning } : {}),
+        ...(canSelectManualFallback(entry!) ? { onContinue } : {}),
+      },
+    ],
+  });
+  await act(() => {
+    renderer = create(<>{item.actions}</>);
+  });
+  const row = renderer!.root.findByType("menuitem" as never);
+  expect(row.props.disabled).toBe(false);
+  expect(rendered(row)).toContain("provider warning");
+  expect(rendered(row)).not.toContain("not set up");
+  expect(onContinue).not.toHaveBeenCalled();
+  await act(async () => row.props.onClick());
+  expect(onContinue).toHaveBeenCalledOnce();
+});
+
+it.each<FallbackOrderUnavailable>(["limited", "full", "unverified", "per-token"])(
+  "deliberately continues on a %s model and keeps its warning visible",
+  async (unavailable) => {
+    const events: string[] = [];
+    const onContinue = vi.fn(async () => {
+      events.push("continue");
+    });
+    const onChange = vi.fn(async () => {
+      events.push("disarm");
+    });
+    const entry = { provider: manualFallbackProvider, unavailable };
+    const reason = fallbackUnavailableReason(unavailable, null);
+    const item = usageLimitRecoveryBannerItem({
+      ...props,
+      recovery: { ...recovery, autoResume: true },
+      onChange,
+      fallbackChoices: [
+        {
+          label: "Claude Code",
+          model: "Opus 5.5",
+          ...(reason ? { unavailable: reason } : {}),
+          ...(canSelectManualFallback(entry) ? { onContinue } : {}),
+        },
+      ],
+    });
+    await act(() => {
+      renderer = create(<>{item.actions}</>);
+    });
+    const row = renderer!.root.findByType("menuitem" as never);
+    expect(row.props.disabled).toBe(false);
+    expect(rendered(row)).toContain(reason);
+    expect(onContinue).not.toHaveBeenCalled();
+    expect(onChange).not.toHaveBeenCalled();
+    await act(async () => row.props.onClick());
+    expect(onContinue).toHaveBeenCalledOnce();
+    expect(onChange).toHaveBeenCalledWith({ runId, resetAt: future, autoResume: false });
+    expect(events).toEqual(["disarm", "continue"]);
+  },
+);
+
+it("lists the rest of the fallback order and disables missing models", async () => {
   const onContinue = vi.fn().mockResolvedValue(undefined);
   const onSol = vi.fn().mockResolvedValue(undefined);
   const item = usageLimitRecoveryBannerItem({
@@ -564,7 +746,11 @@ it("lists the rest of the fallback order, choosable or with the reason it is out
     fallback: { label: "Codex", model: "GPT-6 Astra", automatic: false, onContinue },
     fallbackChoices: [
       { label: "Codex", model: "GPT-6.1 Sol", onContinue: onSol },
-      { label: "Claude", model: "Opus 5.5", unavailable: "full until 11:19 PM" },
+      {
+        label: "Claude",
+        model: "Opus 5.5",
+        unavailable: "not on this machine",
+      },
     ],
   });
   await act(() => {
@@ -575,9 +761,12 @@ it("lists the rest of the fallback order, choosable or with the reason it is out
   const items = renderer!.root.findAllByType("menuitem" as never);
   expect(items.map((node) => rendered(node))).toEqual([
     "Codex · GPT-6.1 Sol",
-    "Claude · Opus 5.5 full until 11:19 PM",
+    "Claude · Opus 5.5 not on this machine",
   ]);
   expect(items[1]!.props.disabled).toBe(true);
+  await act(async () => items[1]!.props.onClick());
+  expect(onSol).not.toHaveBeenCalled();
+  expect(onContinue).not.toHaveBeenCalled();
   await act(async () => items[0]!.props.onClick());
   expect(onSol).toHaveBeenCalledOnce();
   expect(onContinue).not.toHaveBeenCalled();

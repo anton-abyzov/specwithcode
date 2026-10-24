@@ -9,6 +9,7 @@ import * as Path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { afterEach, describe, expect, it } from "vite-plus/test";
+import { HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
 
 import {
   assertReplaceable,
@@ -98,6 +99,9 @@ const electronBinary = (() => {
   }
 })();
 
+// The swap script and `/bin/rm` cleanup are macOS updater steps; Windows has no `/bin/sh`.
+const itPosix = it.skipIf(HostProcessPlatform.defaultValue() === "win32");
+
 describe("macSwapInstall", () => {
   it("finds the app bundle from the running executable", () => {
     expect(
@@ -136,7 +140,7 @@ describe("macSwapInstall", () => {
     );
   });
 
-  it("swaps the new bundle in and removes the old one", () => {
+  itPosix("swaps the new bundle in and removes the old one", () => {
     const dir = makeScratch();
     const current = Path.join(dir, "Studio.app");
     const staged = Path.join(dir, "pending", "Studio.app");
@@ -152,7 +156,7 @@ describe("macSwapInstall", () => {
     expect(FS.existsSync(`${current}.studio-update-old`)).toBe(false);
   });
 
-  it("puts the old bundle back when the new one cannot be moved in", () => {
+  itPosix("puts the old bundle back when the new one cannot be moved in", () => {
     const dir = makeScratch();
     const current = Path.join(dir, "Studio.app");
     FS.mkdirSync(current, { recursive: true });
@@ -164,7 +168,7 @@ describe("macSwapInstall", () => {
     expect(FS.existsSync(`${current}.studio-update-old`)).toBe(false);
   });
 
-  it("installs the new bundle under its new name and leaves no old copy behind", () => {
+  itPosix("installs the new bundle under its new name and leaves no old copy behind", () => {
     const dir = makeScratch();
     const current = Path.join(dir, "SpecWeave Studio (Alpha).app");
     const staged = Path.join(dir, "pending", "SpecWithCode.app");
@@ -185,7 +189,7 @@ describe("macSwapInstall", () => {
     ]);
   });
 
-  it("replaces the bundle in place when the new name is already taken", () => {
+  itPosix("replaces the bundle in place when the new name is already taken", () => {
     const dir = makeScratch();
     const current = Path.join(dir, "SpecWeave Studio (Alpha).app");
     const staged = Path.join(dir, "pending", "SpecWithCode.app");
@@ -204,7 +208,7 @@ describe("macSwapInstall", () => {
     expect(FS.existsSync(`${current}.studio-update-old`)).toBe(false);
   });
 
-  it("deletes a folder holding an app bundle", async () => {
+  itPosix("deletes a folder holding an app bundle", async () => {
     const dir = makeScratch();
     const resources = Path.join(dir, "staged", "Studio.app", "Contents", "Resources");
     FS.mkdirSync(resources, { recursive: true });

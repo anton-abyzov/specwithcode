@@ -229,7 +229,7 @@ export function providerFailureFallbackMessage(
  * next to the request, so the thread needs a model with a larger window.
  */
 export const CONTEXT_HANDOFF_TOO_LARGE_MESSAGE =
-  "The conversation is too large to hand over to this model's context window. SpecWithCode moves it to a model with room when one is set up; otherwise choose a larger-context model. Your message was not truncated.";
+  "The conversation is too large to hand over to this model's context window. When the project switches providers automatically, SpecWithCode sends your message again whole on a model with room; otherwise choose a larger-context model. Your message was not truncated.";
 
 /** Builds before 1.0.73 stored this wording, which promised a compaction that did not always run. */
 const LEGACY_CONTEXT_HANDOFF_BUDGET_PREFIX =

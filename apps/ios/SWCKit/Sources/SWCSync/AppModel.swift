@@ -170,9 +170,14 @@ public struct ProjectMember: Identifiable, Hashable, Sendable {
   public var lastSeenAt: Date?
   /// This copy's coordinator is the project's active coordinator.
   public var isCoordinator: Bool
+  /// Linked to the project's other copies (one logical project), so a thread
+  /// can move here. A copy that is only the same folder is listed in the
+  /// same row but is not linked.
+  public var isLinked: Bool
 
-  public init(ref: ProjectRef, machineLabel: String, machineOnline: Bool, lastSeenAt: Date? = nil, isCoordinator: Bool = false) {
+  public init(ref: ProjectRef, machineLabel: String, machineOnline: Bool, lastSeenAt: Date? = nil, isCoordinator: Bool = false, isLinked: Bool = true) {
     self.ref = ref
+    self.isLinked = isLinked
     self.machineLabel = machineLabel
     self.machineOnline = machineOnline
     self.lastSeenAt = lastSeenAt

@@ -46,6 +46,7 @@ import {
   parsePairToken,
   parseServerRuntimeState,
   parseStudioInstallation,
+  parseWindowsCommandLine,
   resolveServiceCliCommand,
   type RunningServerRuntimeState,
   type ServiceCliCommand,
@@ -216,8 +217,39 @@ const probeDescriptor = (origin: string) =>
     Effect.orElseSucceed(() => Option.none<ExecutionEnvironmentDescriptor>()),
   );
 
+// Win32_Process exposes the image path and the raw command line; the pid is a
+// number, so nothing user-controlled reaches the PowerShell command.
+const windowsProcessQuery = (pid: number) =>
+  `$p = Get-CimInstance Win32_Process -Filter 'ProcessId=${pid}'; if ($p) { [Console]::Out.Write((@{ executable = $p.ExecutablePath; commandLine = $p.CommandLine } | ConvertTo-Json -Compress)) }`;
+
+const readWindowsCommandLine = (pid: number): { argv?: string[]; executable?: string } => {
+  if (!Number.isSafeInteger(pid) || pid <= 0) return {};
+  try {
+    const raw = NodeChildProcess.execFileSync(
+      "powershell.exe",
+      ["-NoProfile", "-NonInteractive", "-Command", windowsProcessQuery(pid)],
+      { encoding: "utf8", timeout: 10_000, windowsHide: true },
+    ).trim();
+    if (raw.length === 0) return {};
+    const parsed = JSON.parse(raw) as { executable?: unknown; commandLine?: unknown };
+    const argv =
+      typeof parsed.commandLine === "string" ? parseWindowsCommandLine(parsed.commandLine) : [];
+    const executable =
+      typeof parsed.executable === "string" && parsed.executable.length > 0
+        ? parsed.executable
+        : undefined;
+    return {
+      ...(argv.length > 0 ? { argv } : {}),
+      ...(executable === undefined ? {} : { executable }),
+    };
+  } catch {
+    return {};
+  }
+};
+
 const readCommandLine = (pid: number, platform: NodeJS.Platform) =>
-  Effect.sync((): { argv?: string[]; joinedArgs?: string } => {
+  Effect.sync((): { argv?: string[]; joinedArgs?: string; executable?: string } => {
+    if (platform === "win32") return readWindowsCommandLine(pid);
     if (platform === "linux") {
       try {
         const raw = NodeFS.readFileSync(`/proc/${pid}/cmdline`, "utf8");
@@ -254,6 +286,7 @@ const runPair = (command: ServiceCliCommand, pairArgs: ReadonlyArray<string>) =>
           {
             timeout: PAIR_TIMEOUT_MS,
             maxBuffer: 1024 * 1024,
+            windowsHide: true,
             env: {
               ...process.env,
               // Electron's own binary runs scripts only in Node mode.

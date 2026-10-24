@@ -12,6 +12,7 @@ import * as Deferred from "effect/Deferred";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
@@ -35,9 +36,11 @@ const setup = Effect.gen(function* () {
   const root = yield* fs
     .makeTempDirectoryScoped({ prefix: "studio-environment-" })
     .pipe(Effect.flatMap((folder) => fs.realPath(folder)));
-  const home = `${root}/home`;
-  const main = `${root}/main`;
-  const external = `${root}/external`;
+  // Native separators: approvals are compared with the canonical folders.
+  const path = yield* Path.Path;
+  const home = path.join(root, "home");
+  const main = path.join(root, "main");
+  const external = path.join(root, "external");
   yield* fs.makeDirectory(home);
   yield* fs.makeDirectory(main);
   yield* fs.makeDirectory(external);

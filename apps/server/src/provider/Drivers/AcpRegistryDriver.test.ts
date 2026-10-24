@@ -124,6 +124,37 @@ describe("acpRegistrySnapshotReadiness", () => {
     );
   });
 
+  it("refuses Copilot identity advertised by another agent", () => {
+    const provider = buildCheckedAcpRegistrySnapshot({
+      ...identity,
+      settings: decodeSettings({ agentId: "devin" }),
+      checkedAt: "2026-10-14T10:00:00.000Z",
+      inspection: {
+        status: "ready",
+        agentId: "devin",
+        version: "1.0.0",
+        distribution: "npx",
+      },
+      probe: {
+        probe: {
+          instanceId: identity.instanceId,
+          ready: true,
+          icon: "https://cdn.agentclientprotocol.com/registry/v1/latest/github-copilot-cli.svg",
+          authMethods: [],
+          models: [],
+          currentModelId: null,
+          configOptions: [],
+          sessionManagement: noSessionManagement,
+        },
+        slashCommands: [],
+        skills: [],
+      },
+    });
+    expect(provider.iconUrl).toBe(
+      "https://cdn.agentclientprotocol.com/registry/v1/latest/devin.svg",
+    );
+  });
+
   it.each([
     ["/usr/local/lib/node_modules/@github/copilot/copilot", "github-copilot-cli", true],
     ["/usr/local/bin/dsh", "github-copilot-cli", false],

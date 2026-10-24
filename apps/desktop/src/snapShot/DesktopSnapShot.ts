@@ -1,5 +1,6 @@
 // @effect-diagnostics globalTimers:off -- Capture timeouts and Electron overlay animation timers run at native callback boundaries outside Effect fibers.
 
+import { isDesktopOffscreenTest } from "../electron/DesktopOffscreen.ts";
 import {
   DEFAULT_CLIENT_SETTINGS,
   DesktopPendingSnapShot,
@@ -442,10 +443,7 @@ async function captureSource({
       if (!active) {
         throw new DesktopSnapShotError({ operation: "window-unavailable", captureId });
       }
-      ({ source, png } = await captureMacWindowSnapshot(
-        active,
-        imageTempPath,
-      ));
+      ({ source, png } = await captureMacWindowSnapshot(active, imageTempPath));
       imageTempReady = true;
     } else if (mode === "direct") {
       if (!active) {
@@ -604,6 +602,8 @@ export class SnapShotFlash {
     durationMs: number,
   ): Promise<void> {
     this.dispose();
+    // BaseWindow has no offscreen renderer; omit this native-only decoration.
+    if (isDesktopOffscreenTest()) return;
     const window = createSnapShotFlashWindow(bounds);
     this.flashWindow = window;
     if (window.isDestroyed()) return;

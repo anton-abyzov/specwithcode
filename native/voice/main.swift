@@ -252,6 +252,14 @@ func handle(_ request: Request) async {
     case "prepare":
       if #available(macOS 26.0, *) {
         try await prepareAnalyzer(localeId: request.locale ?? Locale.current.identifier)
+      } else {
+        let status = await requestSpeechAuthorization()
+        guard status == .authorized else { throw HelperError(message: "speech-not-authorized") }
+        guard let recognizer = SFSpeechRecognizer(locale: Locale(identifier: request.locale ?? Locale.current.identifier)),
+          recognizer.isAvailable else { throw HelperError(message: "unsupported-locale") }
+        guard recognizer.supportsOnDeviceRecognition else {
+          throw HelperError(message: "local-recognition-unavailable")
+        }
       }
       reply(["id": request.id, "ok": true])
     case "transcribe":

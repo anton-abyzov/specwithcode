@@ -662,12 +662,13 @@ it.effect("keeps Personal storage managed even when a parent is supplied", () =>
   withScratch(() =>
     Effect.gen(function* () {
       const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
+      const path = yield* Path.Path;
       const result = yield* folders.createNamedProject({
         name: "Personal",
         kind: "personal",
         parentPath: "/nonexistent-parent",
       });
-      assert.isTrue(result.workspaceRoot.startsWith(folders.namedProjectsRoot + "/"));
+      assert.isTrue(result.workspaceRoot.startsWith(folders.namedProjectsRoot + path.sep));
     }),
   ),
 );

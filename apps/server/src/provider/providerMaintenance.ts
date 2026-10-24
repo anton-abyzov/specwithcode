@@ -301,7 +301,8 @@ export function npmGlobalPrefixFromCommandPath(
   if (miseTool && miseTool !== "node") {
     return null;
   }
-  return packageIndex === 0 ? "/" : slashPath.slice(0, packageIndex);
+  // Separators map one to one, so slicing the original keeps the host's own flavour.
+  return packageIndex === 0 ? "/" : realCommandPath.slice(0, packageIndex);
 }
 
 // `<prefix>/Cellar/<name>/<version>/…` or `<prefix>/Caskroom/<name>/<version>/…`.

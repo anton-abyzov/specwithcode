@@ -24,10 +24,10 @@ const result: ComputerUseActionResult = {
 };
 
 /** Connects a host and returns its events as a queue the test reads from. */
-const connectHost = (broker: ComputerUseBroker.ComputerUseBroker["Service"]) =>
+const connectHost = (broker: ComputerUseBroker.ComputerUseBroker["Service"], platform = "macos") =>
   Effect.gen(function* () {
     const events = yield* Queue.unbounded<ComputerUseHostEvent>();
-    const fiber = yield* broker.host({ label: "test desktop", platform: "macos" }).pipe(
+    const fiber = yield* broker.host({ label: "test desktop", platform }).pipe(
       Stream.runForEach((event) => Queue.offer(events, event)),
       Effect.forkChild,
     );
@@ -45,6 +45,47 @@ it.effect("tells the agent to open the desktop app when no host is connected", (
     if (Exit.isFailure(exit)) {
       expect(JSON.stringify(exit.cause)).toContain("desktop app is not open");
     }
+  }),
+);
+
+it.effect.each([
+  { platform: "windows", name: "Windows" },
+  { platform: "linux", name: "Linux" },
+])(
+  "tells the agent computer use is macOS only when the app is open on $name",
+  ({ platform, name }) =>
+    Effect.gen(function* () {
+      const broker = yield* ComputerUseBroker.make;
+      const host = yield* connectHost(broker, platform);
+      expect(yield* broker.hasHost).toBe(false);
+      const exit = yield* broker.invoke({ kind: "screenshot" }).pipe(Effect.exit);
+      expect(Exit.isFailure(exit)).toBe(true);
+      if (Exit.isFailure(exit)) {
+        const cause = JSON.stringify(exit.cause);
+        expect(cause).toContain(`not available on ${name}`);
+        expect(cause).toContain("macOS only");
+        expect(cause).not.toContain("desktop app is not open");
+      }
+      // The unsupported host never receives the request.
+      expect(yield* Queue.size(host.events)).toBe(0);
+      yield* Fiber.interrupt(host.fiber);
+    }),
+);
+
+it.effect("prefers a macOS host over a newer host that cannot run actions", () =>
+  Effect.gen(function* () {
+    const broker = yield* ComputerUseBroker.make;
+    const mac = yield* connectHost(broker);
+    const windows = yield* connectHost(broker, "windows");
+    expect(yield* broker.hasHost).toBe(true);
+    const pending = yield* broker.invoke({ kind: "screenshot" }).pipe(Effect.forkChild);
+    const request = yield* Queue.take(mac.events);
+    if (request.type !== "request") throw new Error("expected a request");
+    yield* broker.respond({ hostId: mac.hostId, requestId: request.request.requestId, result });
+    expect(yield* Fiber.join(pending)).toEqual(result);
+    expect(yield* Queue.size(windows.events)).toBe(0);
+    yield* Fiber.interrupt(windows.fiber);
+    yield* Fiber.interrupt(mac.fiber);
   }),
 );
 

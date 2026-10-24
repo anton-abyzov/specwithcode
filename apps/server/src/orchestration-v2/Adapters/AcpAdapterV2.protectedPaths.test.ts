@@ -161,6 +161,8 @@ describe("AcpAdapterV2 client file system credential stores", () => {
         assert.isFalse(yield* fileSystem.exists(planted));
         assert.isTrue(Exit.isFailure(yield* writeExit(fleetFile)), "overwrite of the fleet file");
         assert.equal(yield* fileSystem.readFileString(fleetFile), '{"version":1,"machines":[]}');
-      }).pipe(Effect.provide(layerSession), Effect.scoped),
+        // The session's agent runs inside the temporary data home, and Windows
+        // cannot remove a folder a live process uses: close the session first.
+      }).pipe(Effect.scoped, Effect.provide(layerSession)),
   );
 });

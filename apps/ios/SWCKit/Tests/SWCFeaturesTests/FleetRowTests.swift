@@ -63,3 +63,42 @@ struct FleetRowTests {
     #expect(seen.hasPrefix("Coordinator · Offline · last seen "))
   }
 }
+
+@MainActor
+@Suite("Orchestrator switcher choices")
+struct OrchestratorSwitcherChoiceTests {
+  @Test func listsEachMachineOnce() {
+    let current = ProjectRef(environmentId: "m4", projectId: "notes-dup")
+    let members = [
+      ProjectMember(ref: ProjectRef(environmentId: "m4", projectId: "notes"), machineLabel: "M4", machineOnline: true),
+      ProjectMember(ref: current, machineLabel: "M4", machineOnline: true),
+      ProjectMember(ref: ProjectRef(environmentId: "m1", projectId: "notes"), machineLabel: "M1", machineOnline: true),
+      ProjectMember(ref: ProjectRef(environmentId: "m1", projectId: "notes-2"), machineLabel: "M1", machineOnline: true),
+    ]
+    let choices = OrchestratorSwitcher.choices(members, current: current)
+    #expect(choices.map(\.ref.projectId) == ["notes-dup", "notes"])
+    #expect(choices.map(\.ref.environmentId) == ["m4", "m1"])
+  }
+
+  @Test func anotherMachineIsRepresentedByItsLinkedCopy() {
+    let current = ProjectRef(environmentId: "m4", projectId: "app")
+    let members = [
+      ProjectMember(ref: current, machineLabel: "M4", machineOnline: true, isLinked: true),
+      ProjectMember(ref: ProjectRef(environmentId: "m1", projectId: "stray"), machineLabel: "M1", machineOnline: true, isLinked: false),
+      ProjectMember(ref: ProjectRef(environmentId: "m1", projectId: "app"), machineLabel: "M1", machineOnline: true, isLinked: true),
+      ProjectMember(ref: ProjectRef(environmentId: "m3", projectId: "stray"), machineLabel: "M3", machineOnline: true, isLinked: false),
+      ProjectMember(ref: ProjectRef(environmentId: "m3", projectId: "app"), machineLabel: "M3", machineOnline: true, isCoordinator: true, isLinked: true),
+    ]
+    let choices = OrchestratorSwitcher.choices(members, current: current)
+    #expect(choices.map(\.ref) == [current, ProjectRef(environmentId: "m1", projectId: "app"), ProjectRef(environmentId: "m3", projectId: "app")])
+  }
+
+  @Test func sameFolderTwiceOnOneMachineHasNoSwitcher() {
+    let current = ProjectRef(environmentId: "m4", projectId: "notes")
+    let members = [
+      ProjectMember(ref: current, machineLabel: "M4", machineOnline: true),
+      ProjectMember(ref: ProjectRef(environmentId: "m4", projectId: "notes-dup"), machineLabel: "M4", machineOnline: true),
+    ]
+    #expect(OrchestratorSwitcher.choices(members, current: current).count == 1)
+  }
+}

@@ -1860,6 +1860,51 @@ it.effect("ProviderSessionManagerV2 closes event subscriptions normally on serve
   }),
 );
 
+for (const endStreams of [true, false]) {
+  it.effect(
+    `ProviderSessionManagerV2 ${endStreams ? "ends" : "fails"} a busy session's event stream on a release${endStreams ? " that ends streams" : ""}`,
+    () =>
+      Effect.gen(function* () {
+        const state = yield* Ref.make(emptyState);
+        const effect = Effect.gen(function* () {
+          const eventSink = yield* EventSink.EventSinkV2;
+          const idAllocator = yield* IdAllocator.IdAllocatorV2;
+          const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+          const now = yield* DateTime.now;
+          const threadId = ThreadId.make(
+            `thread-provider-session-manager-end-streams-${endStreams}`,
+          );
+          const providerSessionId = yield* idAllocator.allocate.providerSession({
+            providerInstanceId: modelSelection.instanceId,
+            threadId,
+          });
+          yield* eventSink.write({
+            events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+          });
+          const runtime = yield* manager.open({
+            threadId,
+            providerSessionId,
+            modelSelection,
+            runtimePolicy,
+          });
+          const subscription = yield* runtime.subscribeEvents!;
+          // A service update's drain releases busy sessions after its last stop round.
+          yield* manager.releaseIdle({
+            detail: "Closed to install the SpecWithCode update.",
+            includeBusy: true,
+            keepMcpCredentials: true,
+            ...(endStreams ? { endStreams: true } : {}),
+          });
+          const exit = yield* subscription.events.pipe(Stream.runCollect, Effect.exit);
+          // Ended, the turn is left for the drain to stop for the update; failed,
+          // it was recorded as a provider failure that nothing continues.
+          assert.equal(Exit.isSuccess(exit), endStreams);
+        });
+        yield* effect.pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 60_000 })));
+      }),
+  );
+}
+
 it.effect("ProviderSessionManagerV2 drains subscribers when the provider stops", () =>
   Effect.gen(function* () {
     const state = yield* Ref.make(emptyState);

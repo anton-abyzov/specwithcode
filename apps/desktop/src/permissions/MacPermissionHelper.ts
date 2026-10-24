@@ -1,5 +1,6 @@
 // @effect-diagnostics globalTimers:off -- Poll TCC only while the native permission helper is open.
 import * as Electron from "electron";
+import { createDesktopBrowserWindow } from "../electron/DesktopOffscreen.ts";
 import { MAC_PERMISSION_HELPER_CHANNEL } from "../ipc/channels.ts";
 
 import {
@@ -97,7 +98,7 @@ export class MacPermissionHelper {
       .find((image) => !image.isEmpty());
     if (!appIcon) throw new Error("The packaged SpecWithCode icon is missing.");
     const icon = appIcon.resize({ width: 64, height: 64 });
-    const window = new Electron.BrowserWindow({
+    const window = createDesktopBrowserWindow({
       width: 560,
       height: 140,
       show: false,

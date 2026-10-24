@@ -1416,6 +1416,40 @@ export const OrchestrationV2RunInterruptCause = Schema.Literals([
 ]);
 export type OrchestrationV2RunInterruptCause = typeof OrchestrationV2RunInterruptCause.Type;
 
+/**
+ * What an interrupted run's result says stopped it, from its Stop request's
+ * cause: `null` when no request was recorded (the provider ended the turn).
+ */
+export function runInterruptResultMessage(cause: OrchestrationV2RunInterruptCause | null): string {
+  switch (cause) {
+    case "user":
+      return "Stopped by the user";
+    case "agent":
+      return "Stopped by an agent";
+    case "service_update":
+      return "Stopped for the SpecWithCode update";
+    case "delegated_cancel":
+      return "Cancelled by its coordinator";
+    case null:
+      return "Run interrupted";
+  }
+}
+
+/**
+ * Before results recorded their cause, every one said this, whoever stopped
+ * the run (updates included), so it is shown as no attribution at all.
+ */
+const LEGACY_RUN_INTERRUPT_RESULT_MESSAGE = "Run interrupted by user";
+
+/** The detail an interrupted run's result shows, or null when it says nothing reliable. */
+export function runInterruptResultDetail(item: {
+  readonly message: string;
+  readonly cause?: OrchestrationV2RunInterruptCause | undefined;
+}): string | null {
+  if (item.cause === undefined && item.message === LEGACY_RUN_INTERRUPT_RESULT_MESSAGE) return null;
+  return item.message === "" ? null : item.message;
+}
+
 const OrchestrationV2TurnItemBaseFields = {
   toolNonExecutionKind: Schema.optional(Schema.String),
   toolSurface: Schema.optional(ToolActivitySurface),
@@ -1590,6 +1624,8 @@ export const OrchestrationV2TurnItem = Schema.Union([
     ...OrchestrationV2TurnItemBaseFields,
     type: Schema.Literal("run_interrupt_result"),
     message: Schema.String,
+    /** Its request's cause; absent on older items, whose message is not reliable. */
+    cause: Schema.optional(OrchestrationV2RunInterruptCause),
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemBaseFields,

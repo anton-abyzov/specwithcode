@@ -2,6 +2,7 @@ import * as Effect from "effect/Effect";
 import type * as Fiber from "effect/Fiber";
 
 import * as Electron from "electron";
+import { createDesktopBrowserWindow } from "../electron/DesktopOffscreen.ts";
 
 const MIN_DURATION_MS = 280;
 const MAX_DURATION_MS = 680;
@@ -104,7 +105,7 @@ function createWindow(
   bounds: Electron.Rectangle,
   alwaysOnTopLevel: SnapShotTransitionOptions["alwaysOnTopLevel"],
 ): Electron.BrowserWindow {
-  const window = new Electron.BrowserWindow({
+  const window = createDesktopBrowserWindow({
     ...bounds,
     alwaysOnTop: true,
     backgroundColor: "#00000000",

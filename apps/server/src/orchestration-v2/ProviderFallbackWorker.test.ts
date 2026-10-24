@@ -1827,6 +1827,7 @@ describe("a stopped worker and its coordinator", () => {
   const { usageLimits: _none, ...copilotBase } = provider(copilotId, "acpRegistry", now);
   const copilot: ServerProvider = {
     ...copilotBase,
+    iconUrl: "https://cdn.agentclientprotocol.com/registry/v1/latest/github-copilot-cli.svg",
     models: [
       { slug: "claude-opus-5.5", name: "Claude Opus 5.5", isCustom: true, capabilities: null },
     ],

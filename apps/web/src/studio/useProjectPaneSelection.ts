@@ -35,6 +35,7 @@ export function useProjectPaneSelection(input: {
   readonly scope: ProjectPaneScope;
   readonly selected: ThreadId | null;
   readonly selectedEnvironmentId?: string | null;
+  readonly restoringThread?: boolean;
   readonly setSelected: SelectProjectThread;
   readonly setOverviewOpen: (open: boolean) => void;
   /** Where to hand the keyboard back when the opened thread is left. */
@@ -173,7 +174,13 @@ export function useProjectPaneSelection(input: {
     });
     latest.current.onPeekSubagent?.(subagentHostId, peekedSubagentId);
   }, [peekedSubagentId, setSelected, subagentHostEnvironment, subagentHostId]);
-  const correction = paneSelectionCorrection(decision, threadsLoaded);
+  const correction = input.restoringThread
+    ? !threadsLoaded
+      ? { kind: "none" as const }
+      : decision?.kind === "pane" && !decision.thread.archivedAt
+        ? { kind: "none" as const }
+        : { kind: "close" as const }
+    : paneSelectionCorrection(decision, threadsLoaded);
   const correctionEnvironment = correction.kind === "elsewhere" ? correction.environmentId : null;
   useEffect(() => {
     if (selected === null || correction.kind === "none") return;

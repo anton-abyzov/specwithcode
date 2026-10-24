@@ -51,6 +51,7 @@ import {
 } from "../../../studio/shellModel";
 import {
   Menu,
+  MenuCheckboxItem,
   MenuGroup,
   MenuGroupLabel,
   MenuItem,
@@ -58,6 +59,7 @@ import {
   MenuRadioGroup,
   MenuRadioItem,
   MenuRadioItemIndicator,
+  MenuSeparator,
   MenuTrigger,
 } from "../../ui/menu";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../../ui/tooltip";
@@ -68,6 +70,7 @@ import { useProjectThreadIncrementProgress } from "../../../studio/useThreadIncr
 import { ProjectPaneBar, type ProjectPaneBarProps } from "./ProjectPaneBar";
 import { Tip } from "./Tip";
 import { UnplannedThreadChip, UnplannedThreadsFilter } from "./UnplannedThreads";
+import { useUnplannedNoticeShown } from "../../../studio/unplannedNotice";
 import { HandoffRowAction, HandoffRowBadge } from "../../handoff/HandoffBadge";
 import { useUnreachableHosts } from "../../../studio/unreachableHosts";
 
@@ -189,7 +192,13 @@ export function ThreadsPane({
   );
   const isUnplanned = (thread: EnvironmentThreadShell) =>
     thread.environmentId === props.environmentId && unplanned.has(thread.id);
-  const unplannedCount = allThreads.filter(isUnplanned).length;
+  // Increments are recommended, not required: the notice, its filter and the
+  // row chips go away for good once the person hides them for this project.
+  const [unplannedNoticeShown, setUnplannedNoticeShown] = useUnplannedNoticeShown(
+    props.environmentId,
+    allThreads.find((thread) => thread.environmentId === props.environmentId)?.projectId,
+  );
+  const unplannedCount = unplannedNoticeShown ? allThreads.filter(isUnplanned).length : 0;
   const [unplannedOnly, setUnplannedOnly] = useState(false);
   // The filter lets go by itself once every unplanned thread is linked or cleared.
   const showUnplannedOnly = unplannedOnly && unplannedCount > 0;
@@ -328,6 +337,17 @@ export function ThreadsPane({
                     ))}
                   </MenuRadioGroup>
                 </MenuGroup>
+                <MenuSeparator />
+                <MenuGroup>
+                  <MenuCheckboxItem
+                    variant="switch"
+                    checked={unplannedNoticeShown}
+                    onCheckedChange={(checked) => setUnplannedNoticeShown(checked)}
+                    data-unplanned-notice-toggle
+                  >
+                    Note threads without an increment
+                  </MenuCheckboxItem>
+                </MenuGroup>
               </MenuPopup>
             </Menu>
           </>
@@ -351,6 +371,10 @@ export function ThreadsPane({
               count={unplannedCount}
               pressed={showUnplannedOnly}
               onToggle={() => setUnplannedOnly((on) => !on)}
+              onHide={() => {
+                setUnplannedOnly(false);
+                setUnplannedNoticeShown(false);
+              }}
             />
           ) : null}
         </header>
@@ -516,7 +540,9 @@ export function ThreadsPane({
                                 }
                               />
                               {plan ? <PlanProgressChip plan={plan} /> : null}
-                              {isUnplanned(thread) ? <UnplannedThreadChip /> : null}
+                              {unplannedNoticeShown && isUnplanned(thread) ? (
+                                <UnplannedThreadChip />
+                              ) : null}
                               {pullRequest ? (
                                 <span className="sws-thread-pr" data-state={pullRequest.state}>
                                   <pullRequest.Icon

@@ -4,9 +4,12 @@ import { Dialog as SheetPrimitive } from "@base-ui/react/dialog";
 import { XIcon } from "lucide-react";
 import type { CSSProperties } from "react";
 import { cn } from "~/lib/utils";
+import { usePagePopup } from "./pagePopups";
 import { Button } from "~/components/ui/button";
 
-const Sheet = SheetPrimitive.Root;
+function Sheet<Payload>(props: SheetPrimitive.Root.Props<Payload>) {
+  return <SheetPrimitive.Root {...usePagePopup(props)} />;
+}
 
 const SheetPortal = SheetPrimitive.Portal;
 

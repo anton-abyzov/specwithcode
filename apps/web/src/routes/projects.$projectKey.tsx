@@ -18,14 +18,16 @@ export const Route = createFileRoute("/projects/$projectKey")({
 });
 function ProjectWorkspaceRoute() {
   const { projectKey } = Route.useParams();
-  const { thread, checkout, threadEnvironment } = Route.useSearch();
+  const search = Route.useSearch();
+  const { thread, checkout, threadEnvironment, restoreThread } = search;
   const navigate = Route.useNavigate();
   const selectThread = useCallback<SelectProjectThread>(
     (next, options) => {
       if (
         (next ?? undefined) === thread &&
         (options?.environmentId ?? undefined) === threadEnvironment &&
-        options?.hash === undefined
+        options?.hash === undefined &&
+        !restoreThread
       )
         return;
       // Name the project outright: a late caller must not build a link from another page.
@@ -40,7 +42,7 @@ function ProjectWorkspaceRoute() {
           : { hash: options.hash, state: { ...options.state }, resetScroll: false }),
       });
     },
-    [navigate, projectKey, thread, checkout, threadEnvironment],
+    [navigate, projectKey, thread, checkout, threadEnvironment, restoreThread],
   );
   // A link made before the repository was known names the machine and path.
   const moveProjectKey = useCallback(
@@ -48,10 +50,13 @@ function ProjectWorkspaceRoute() {
       void navigate({
         to: "/projects/$projectKey",
         params: { projectKey: next },
-        search: projectWorkspaceSearch(thread ?? null, checkout, threadEnvironment),
+        search: {
+          ...projectWorkspaceSearch(thread ?? null, checkout, threadEnvironment),
+          ...(restoreThread ? { restoreThread: true } : {}),
+        },
         replace: true,
       }),
-    [navigate, thread, checkout, threadEnvironment],
+    [navigate, thread, checkout, threadEnvironment, restoreThread],
   );
   const selectCheckout = useCallback(
     (key: string) => {
@@ -68,6 +73,7 @@ function ProjectWorkspaceRoute() {
       projectKey={projectKey}
       checkoutKey={checkout ?? null}
       onSelectCheckout={selectCheckout}
+      restoringThread={restoreThread ?? false}
       selectedThreadId={thread ?? null}
       selectedThreadEnvironmentId={threadEnvironment ?? null}
       onSelectThread={selectThread}

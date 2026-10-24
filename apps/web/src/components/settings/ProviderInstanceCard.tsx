@@ -53,9 +53,14 @@ import { ProviderModelsSection } from "./ProviderModelsSection";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { ProviderAccentColorPicker } from "./ProviderAccentColorPicker";
 import { RedactedSensitiveText } from "./RedactedSensitiveText";
-import { SettingsRow, SettingsSection } from "./settingsLayout";
+import {
+  SettingsRow,
+  SettingsSection,
+  SettingsDisclosure,
+  SettingsReachLabel,
+  type SettingsReach,
+} from "./settingsLayout";
 import { AcpSessionManagementSection } from "./AcpSessionManagementSection";
-import { FoldedSettingsSection } from "./FoldedSettingsSection";
 import { readCodexSetupMode } from "./CodexSetupSection.logic";
 import {
   getProviderVersionAdvisoryPresentation,
@@ -500,6 +505,7 @@ interface ProviderInstanceCardProps {
   readonly headerAction?: ReactNode | undefined;
   readonly setup?: ReactNode;
   readonly runtime?: ReactNode;
+  readonly environmentLabel?: string;
   readonly hiddenModels: ReadonlyArray<string>;
   readonly favoriteModels: ReadonlyArray<string>;
   readonly modelOrder: ReadonlyArray<string>;
@@ -557,6 +563,7 @@ export function ProviderInstanceCard({
   headerAction,
   setup,
   runtime,
+  environmentLabel,
   hiddenModels,
   favoriteModels,
   modelOrder,
@@ -570,6 +577,10 @@ export function ProviderInstanceCard({
   environmentId,
   acpProjects = EMPTY_ACP_PROJECTS,
 }: ProviderInstanceCardProps) {
+  const machineReach: SettingsReach = {
+    kind: "machine",
+    ...(environmentLabel ? { name: environmentLabel } : {}),
+  };
   const enabled = resolveProviderInstanceEnabled(instance);
   const compatibility = enabled ? liveProvider?.compatibilityAdvisory : undefined;
   // A locally disabled provider reads "Disabled" with a muted dot even if its
@@ -935,8 +946,8 @@ export function ProviderInstanceCard({
           />
           {titleIconNode}
           <span className="min-w-0 flex-1">
-            <span className="flex min-w-0 items-center gap-2">
-              <span className="truncate text-sm font-medium text-foreground">{displayName}</span>
+            <span className="flex min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5">
+              <span className="break-words text-sm font-medium text-foreground">{displayName}</span>
               {versionLabel ? (
                 <code className="max-w-24 shrink-0 truncate text-xs text-muted-foreground">
                   {versionLabel}
@@ -1026,7 +1037,12 @@ export function ProviderInstanceCard({
 
   return (
     <>
-      <SettingsSection title={displayName} icon={titleIconNode} headerAction={editorHeaderAction}>
+      <SettingsSection
+        title={displayName}
+        reach={machineReach}
+        icon={titleIconNode}
+        headerAction={editorHeaderAction}
+      >
         <SettingsRow
           title="Display name"
           status={
@@ -1095,8 +1111,29 @@ export function ProviderInstanceCard({
         />
       </SettingsSection>
 
-      {setup || environmentFields.length > 0 ? (
-        <SettingsSection title="Setup">
+      {setup || driverOption?.setupDescription || environmentFields.length > 0 ? (
+        <SettingsSection title="Setup" reach={machineReach}>
+          {driverOption?.setupDescription ? (
+            <div className="px-4 py-3 text-xs leading-relaxed text-muted-foreground">
+              <p>{driverOption.setupDescription}</p>
+              {instance.driver === "cursor" && !enabled ? (
+                <p className="mt-2">
+                  Cursor is turned off on this machine, so account model discovery is not running.
+                  Enable it and complete setup to check available models.
+                </p>
+              ) : null}
+              {driverOption.setupDocsUrl ? (
+                <a
+                  className="mt-2 inline-block text-primary underline underline-offset-4"
+                  href={driverOption.setupDocsUrl}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                >
+                  SDK access and billing
+                </a>
+              ) : null}
+            </div>
+          ) : null}
           {setup}
           <div
             inert={readOnly}
@@ -1121,43 +1158,41 @@ export function ProviderInstanceCard({
         </SettingsSection>
       ) : null}
 
-      {instance.driver === "codex" && readCodexSetupMode(instance.config) === "managed" ? (
+      {!driverOption || deriveProviderSettingsFields(driverOption).length > 0 || runtime ? (
+        <SettingsDisclosure
+          key={`${instanceId}-runtime`}
+          id={`provider-instance-${instanceId}-runtime`}
+          title="Runtime"
+          reach={machineReach}
+        >
+          <div
+            inert={readOnly}
+            aria-disabled={readOnly || undefined}
+            className={readOnly ? "opacity-50 select-none" : undefined}
+          >
+            {instance.driver === "codex" && readCodexSetupMode(instance.config) === "managed"
+              ? (runtime ?? runtimeFields)
+              : runtimeFields}
+          </div>
+        </SettingsDisclosure>
+      ) : null}
+      <SettingsDisclosure
+        key={`${instanceId}-environment`}
+        id={`provider-instance-${instanceId}-environment`}
+        title="Environment variables"
+        reach={machineReach}
+      >
         <div
           inert={readOnly}
           aria-disabled={readOnly || undefined}
           className={readOnly ? "opacity-50 select-none" : undefined}
         >
-          <FoldedSettingsSection
-            key={instanceId}
-            id={`provider-instance-${instanceId}-runtime`}
-            title="Runtime"
-            headerPlacement="outside"
-          >
-            {runtime ?? runtimeFields}
-          </FoldedSettingsSection>
+          <ProviderEnvironmentSection
+            environment={genericEnvironment}
+            onChange={updateGenericEnvironment}
+          />
         </div>
-      ) : !driverOption || deriveProviderSettingsFields(driverOption).length > 0 ? (
-        <SettingsSection
-          title="Runtime"
-          inert={readOnly}
-          aria-disabled={readOnly || undefined}
-          className={readOnly ? "opacity-50 select-none" : undefined}
-        >
-          {runtimeFields}
-        </SettingsSection>
-      ) : null}
-
-      <SettingsSection
-        title="Environment"
-        inert={readOnly}
-        aria-disabled={readOnly || undefined}
-        className={readOnly ? "opacity-50 select-none" : undefined}
-      >
-        <ProviderEnvironmentSection
-          environment={genericEnvironment}
-          onChange={updateGenericEnvironment}
-        />
-      </SettingsSection>
+      </SettingsDisclosure>
       {environmentId !== undefined && liveProvider?.driver === "acpRegistry" ? (
         <AcpSessionManagementSection
           environmentId={environmentId}
@@ -1172,8 +1207,11 @@ export function ProviderInstanceCard({
         <SettingsSection title="Models">
           <div className="px-3 py-3 sm:px-4">
             <p className="mb-3 text-xs text-muted-foreground">
-              Favorites, visibility, and ordering are saved on this device. Custom models are saved
-              on the selected environment.
+              <SettingsReachLabel reach={{ kind: "device" }} />: favorites, visibility and order.
+              These preferences follow the provider instance ID, including matching default slots on
+              other machines.
+              <br />
+              Custom models: <SettingsReachLabel reach={machineReach} />.
             </p>
             <ProviderModelsSection
               canManageCustomModels={!readOnly}

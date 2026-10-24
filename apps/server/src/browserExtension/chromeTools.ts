@@ -31,6 +31,28 @@ interface ChromeTab {
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /** Agents may only load web pages, never chrome://, file:// or javascript: URLs. */
+/**
+ * Says which profile went away and when, so an agent waits for the extension's own reconnect
+ * instead of reaching for a different, unnamed browser.
+ */
+export function noProfileHint(
+  last: { readonly label: string; readonly at: number; readonly reason: string } | null,
+  now: number,
+): string {
+  if (!last)
+    return "No Chrome profile is connected. Ask the user to install the SpecWithCode Browser extension and pair it in Settings › Chrome.";
+  const minutes = Math.max(0, Math.round((now - last.at) / 60_000));
+  const gone = `No Chrome profile is connected. "${last.label}" disconnected ${minutes} min ago (${new Date(last.at).toISOString()}): ${last.reason.replace(/\.$/, "")}.`;
+  const next = last.reason.startsWith("pairing code reset")
+    ? " The pairing code was reset: ask the user to paste the new code from Settings › Chrome into that profile's SpecWithCode Browser popup."
+    : " Its extension reconnects on its own; try again in a minute. If it is still missing, ask the user to click the SpecWithCode Browser icon in that Chrome profile (it shows OFF or !) and press Reconnect.";
+  return (
+    gone +
+    next +
+    " Another browser tool reaches a different browser that may be signed in to other accounts: ask the user before using one instead."
+  );
+}
+
 export function checkUrl(url: string): string {
   let parsed: URL;
   try {
@@ -193,7 +215,7 @@ export class ChromeTools {
       profiles,
       hint:
         profiles.length === 0
-          ? "No Chrome profile is connected. Ask the user to install the SpecWithCode Browser extension and pair it in Settings › Chrome."
+          ? noProfileHint(this.hub.lastDisconnected(), Date.now())
           : profiles.length === 1
             ? `One profile is connected; the other chrome_* tools use it when profile is omitted.${shared}`
             : `Pass profile with one of these names to the other chrome_* tools.${shared}`,

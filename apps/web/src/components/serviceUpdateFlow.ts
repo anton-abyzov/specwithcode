@@ -1,6 +1,7 @@
-import type {
-  StudioServiceInstallOptions,
-  StudioServiceUpdateState,
+import {
+  DESKTOP_INSTALL_APPLY_MS,
+  type StudioServiceInstallOptions,
+  type StudioServiceUpdateState,
 } from "@specweave-studio/contracts";
 import { useCallback, useEffect, useSyncExternalStore } from "react";
 
@@ -126,9 +127,10 @@ export const SERVICE_UPDATE_HOLD_MS = 15 * 60_000;
 const MAX_REQUEST_RENEWALS = 3;
 // The toast's clock moves once a second while an update runs.
 const CLOCK_TICK_MS = 1_000;
-// The app quits once its install is accepted. Still here a little after the
-// sidebar's own 60 s check, the update ends so the button can be pressed again.
-const APP_RESTART_TIMEOUT_MS = 75_000;
+// The app quits once its install is accepted. Still here when the desktop
+// takes the install back, the update ends so the button can be pressed again.
+// The sidebar's own check, armed before this one, says so first.
+const APP_RESTART_TIMEOUT_MS = DESKTOP_INSTALL_APPLY_MS;
 // A reloaded window that got no answer from the service looks again this often,
 // this many times, while the agent may still be acting on a request.
 const ADOPT_RETRY_MS = 5_000;

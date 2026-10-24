@@ -24,6 +24,7 @@ import * as Stream from "effect/Stream";
 import * as ServerConfig from "../../config.ts";
 import {
   claudeAgentSecretDenyForConfig,
+  claudeRulePath,
   type ClaudeAgentSecretDeny,
 } from "../../provider/AgentProtectedPaths.ts";
 import * as IdAllocator from "../IdAllocator.ts";
@@ -71,10 +72,10 @@ function assertDenied(
   }
   const deny = settings.permissions?.deny ?? [];
   for (const rule of [
-    `Read(/${expected.secretsDir}/**)`,
-    `Edit(/${expected.secretsDir}/**)`,
-    `Read(/${expected.fleetFile})`,
-    `Edit(/${expected.fleetFile})`,
+    `Read(${claudeRulePath(expected.secretsDir)}/**)`,
+    `Edit(${claudeRulePath(expected.secretsDir)}/**)`,
+    `Read(${claudeRulePath(expected.fleetFile)})`,
+    `Edit(${claudeRulePath(expected.fleetFile)})`,
     `Bash(*${expected.secretsDir}/*)`,
     `Bash(*${expected.secretsDir})`,
     `Bash(*${expected.fleetFile}*)`,

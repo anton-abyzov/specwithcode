@@ -155,7 +155,8 @@ const make = Effect.gen(function* () {
       "Some"
     )
       return yield* blocked(stage, "unsafe-path");
-    const top = yield* text(absolute, ["rev-parse", "--show-toplevel"], stage);
+    // Git prints forward slashes on Windows; compare in native form.
+    const top = path.resolve(yield* text(absolute, ["rev-parse", "--show-toplevel"], stage));
     if (top !== absolute) return yield* blocked(stage, "missing-repository");
     return absolute;
   });
@@ -252,7 +253,19 @@ const make = Effect.gen(function* () {
       if (entry.startsWith("120000 ")) {
         const relative = entry.slice(entry.indexOf("\t") + 1);
         if (!safeRelativePath(relative)) return yield* blocked(stage, "unsafe-path");
-        const link = yield* io(fs.readLink(path.join(cwd, relative)), stage);
+        // Git without symlink support (core.symlinks=false, the Windows default)
+        // checks a link out as a plain file holding its target; the indexed blob
+        // is the target either way, so check that one too.
+        const oid = entry.slice("120000 ".length, entry.indexOf(" ", "120000 ".length));
+        const link = yield* fs
+          .readLink(path.join(cwd, relative))
+          .pipe(
+            Effect.catch(() =>
+              git(cwd, ["cat-file", "blob", oid], stage).pipe(
+                Effect.map((result) => result.stdout),
+              ),
+            ),
+          );
         if (path.isAbsolute(link)) return yield* blocked(stage, "unsafe-path");
         const target = path.resolve(cwd, path.dirname(relative), link);
         if (!target.startsWith(cwd + path.sep)) return yield* blocked(stage, "unsafe-path");

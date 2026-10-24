@@ -17,9 +17,7 @@ export function SettingsGroup({
       {...props}
       className={cn(
         "relative overflow-visible text-foreground",
-        variant === "grouped"
-          ? "rounded-xl border border-border/60 bg-card/40 shadow-xs/5"
-          : "space-y-1",
+        variant === "grouped" ? "rounded-xl border border-border/60 bg-card/60" : "space-y-1",
         variant === "grouped" &&
           divided &&
           "[&>*+*]:border-t [&>*+*]:border-border/50 [&>[data-slot=settings-row]]:rounded-none",

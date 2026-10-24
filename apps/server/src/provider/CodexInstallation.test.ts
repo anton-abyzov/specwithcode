@@ -11,6 +11,7 @@ import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
 import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import * as Option from "effect/Option";
 import * as Exit from "effect/Exit";
 import * as Scope from "effect/Scope";
@@ -18,16 +19,60 @@ import * as Stream from "effect/Stream";
 import { HttpClient, HttpClientResponse } from "effect/http";
 import * as CodexInstallation from "./CodexInstallation.ts";
 
-const archive = Buffer.from(
+// The harness runs as the host so real files, PATH lookup and `tar` behave as
+// they do in production: a Windows host gets the Windows package layout and a
+// `.CMD` stand-in for the local CLI.
+const windowsHost = HostProcessPlatform.defaultValue() === "win32";
+const executableName = windowsHost ? "codex.exe" : "codex";
+const exe = windowsHost ? ".exe" : "";
+const posixArchive = Buffer.from(
   "H4sIAAAAAAAC/+3W0W6DIBQGYB/FcD0sKNSkD7J7aom6tmAQtzXL3n3QZM3qdWVt+n8XoCckJp78wLY3q8bu9Ge2HBbUUp7nYD4H8s9zrNdSsCxnWQLT6JULn8ye09K9h/u2/c0/jSM9xqGzo0+bf3Gdf15WQiD/Kdy61/CA+z8dlO9Wrv2387+c5Z9VZY38p7BY0+Gh8t/sVauLt9Ga9Pnnop7ln1e4/6fxRQ7qZCf/qt3YW0M2OX/JyfvljbCCy3XBSaiGH9VqH4tKuaZbC6qG4aDpTrmP3sQV2nh3Gmxvzqsud0vyjaABAAAAAAAAAAAAAAAk8gOq19rvACgAAA==",
   "base64",
 );
+const windowsArchive = Buffer.from(
+  "H4sIAAAAAAAC/+3XwW6DIADGcR/FcC4WVGyzB9m1QUus2woGaGuz7N0HLlsaL71ML36/AyoxMZH8Ddad3jbmqIZMDSqZBwt2QozHYHoMxMN5mOesyFmSsmQBF+elDY9P1mlc+wTWqv7tn8aRnuNwMs7/5+fgef/lpP+C5yX6X0Jca1SwXj/t99KftradaQ/wvP980j/nbIf+l2BbNID+e9m8y1Zlb87o5fvnYrr/50WB/hfxST7k3Vz8q7KuM5q8pHyTkuvfFWEZF1XGSZgNL6pVPk4O++pQlbRv6K3TR3Nz9OyuTbxHaW/vven0eF/9+HdJvpAbAAAAAAAAAAAAAADA7L4BHTa57wAoAAA=",
+  "base64",
+);
+const archive = windowsHost ? windowsArchive : posixArchive;
 const asset = {
   version: "0.156.1",
-  target: "aarch64-apple-darwin",
+  target: windowsHost ? "x86_64-pc-windows-msvc" : "aarch64-apple-darwin",
   url: "https://github.com/openai/codex/releases/download/test/package.tar.gz",
   archiveBytes: archive.length,
 };
+/** A local Codex CLI stand-in that logs its arguments to `probeLog` when given. */
+const writeLocalCli = Effect.fn("test.writeLocalCli")(function* (
+  file: string,
+  local: { version: string; appServerFails?: boolean; versionFails?: boolean },
+  probeLog?: string,
+) {
+  const fs = yield* FileSystem.FileSystem;
+  if (windowsHost) {
+    yield* fs.writeFileString(
+      file,
+      [
+        "@echo off",
+        // The spawner quotes each argument, so log them unquoted like `$*`.
+        ...(probeLog
+          ? [`if "%~2"=="" (>>"${probeLog}" echo %~1) else (>>"${probeLog}" echo %~1 %~2)`]
+          : []),
+        `if "%~1"=="--version" ${local.versionFails ? "exit /b 1" : `(echo codex-cli ${local.version}& exit /b 0)`}`,
+        `if "%~1"=="app-server" exit /b ${local.appServerFails ? "1" : "0"}`,
+        "",
+      ].join("\r\n"),
+    );
+    return;
+  }
+  yield* fs.writeFileString(
+    file,
+    probeLog
+      ? `#!/bin/sh\nprintf '%s\\n' "$*" >> '${probeLog}'\ncase "$1" in\n--version) ${local.versionFails ? "exit 1" : `printf '%s\\n' 'codex-cli ${local.version}'`};;\napp-server) exit ${local.appServerFails ? "1" : "0"};;\nesac\n`
+      : `#!/bin/sh\nprintf 'codex-cli ${local.version}\\n'\n`,
+    { mode: 0o755 },
+  );
+});
+const readProbes = (fs: FileSystem.FileSystem, probeLog: string) =>
+  fs.readFileString(probeLog).pipe(Effect.map((text) => text.trim().split(/\r?\n/u)));
 const makeHarness = Effect.fn("test.makeCodexInstallation")(function* (
   input: {
     options?: Partial<CodexInstallation.CodexInstallationOptions>;
@@ -38,18 +83,15 @@ const makeHarness = Effect.fn("test.makeCodexInstallation")(function* (
   } = {},
 ) {
   const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
   const baseDir =
     input.baseDir ?? (yield* fs.makeTempDirectoryScoped({ prefix: "studio-codex-install-test-" }));
-  const localDirectory = `${baseDir}/local`;
-  const localBinaryPath = `${localDirectory}/codex`;
-  const probeLog = `${baseDir}/local-probes.txt`;
+  const localDirectory = path.join(baseDir, "local");
+  const localBinaryPath = path.join(localDirectory, windowsHost ? "codex.CMD" : "codex");
+  const probeLog = path.join(baseDir, "local-probes.txt");
   if (input.local) {
     yield* fs.makeDirectory(localDirectory, { recursive: true });
-    yield* fs.writeFileString(
-      localBinaryPath,
-      `#!/bin/sh\nprintf '%s\\n' "$*" >> '${probeLog}'\ncase "$1" in\n--version) ${input.local.versionFails ? "exit 1" : `printf '%s\\n' 'codex-cli ${input.local.version}'`};;\napp-server) exit ${input.local.appServerFails ? "1" : "0"};;\nesac\n`,
-      { mode: 0o755 },
-    );
+    yield* writeLocalCli(localBinaryPath, input.local, probeLog);
   }
   let downloads = 0;
   const crypto = yield* Crypto.Crypto;
@@ -66,8 +108,8 @@ const makeHarness = Effect.fn("test.makeCodexInstallation")(function* (
       forceRefresh: Effect.succeed(ModelManifest.BUNDLED_MODEL_MANIFEST),
       refreshInBackground: Effect.void,
     }),
-    Effect.provideService(HostProcessPlatform, "darwin"),
-    Effect.provideService(HostProcessArchitecture, "arm64"),
+    Effect.provideService(HostProcessPlatform, windowsHost ? "win32" : "darwin"),
+    Effect.provideService(HostProcessArchitecture, windowsHost ? "x64" : "arm64"),
     Effect.provideService(HostProcessEnvironment, { PATH: input.local ? localDirectory : "" }),
     Effect.provideService(
       HttpClient.HttpClient,
@@ -85,7 +127,15 @@ const makeHarness = Effect.fn("test.makeCodexInstallation")(function* (
       ),
     ),
   );
-  return { installation, fs, baseDir, localBinaryPath, probeLog, downloads: () => downloads };
+  return {
+    installation,
+    fs,
+    path,
+    baseDir,
+    localBinaryPath,
+    probeLog,
+    downloads: () => downloads,
+  };
 });
 const terminalState = (installation: CodexInstallation.CodexInstallation["Service"]) =>
   installation.changes.pipe(
@@ -115,10 +165,7 @@ it.effect.each(["0.156.0", "0.156.1", "0.156.2", "0.157.0"])(
       yield* h.installation.acquire().pipe(Effect.scoped);
       expect(h.downloads()).toBe(0);
       expect(yield* h.fs.exists(h.installation.managedDirectory)).toBe(false);
-      expect((yield* h.fs.readFileString(h.probeLog)).trim().split("\n")).toEqual([
-        "--version",
-        "app-server --help",
-      ]);
+      expect(yield* readProbes(h.fs, h.probeLog)).toEqual(["--version", "app-server --help"]);
       yield* h.installation.remove();
       expect(yield* h.fs.exists(h.localBinaryPath)).toBe(true);
       expect((yield* h.installation.state).source).toBe("local");
@@ -164,9 +211,7 @@ it.effect("rechecks compatibility after the local executable is replaced", () =>
     const h = yield* makeHarness({ local: { version: "0.156.1" } });
     expect((yield* h.installation.resolve()).source).toBe("local");
     yield* h.fs.remove(h.localBinaryPath);
-    yield* h.fs.writeFileString(h.localBinaryPath, "#!/bin/sh\nprintf 'codex-cli 0.128.9\\n'\n", {
-      mode: 0o755,
-    });
+    yield* writeLocalCli(h.localBinaryPath, { version: "0.128.9" });
     yield* h.installation.start;
     expect((yield* terminalState(h.installation)).phase).toBe("succeeded");
     expect((yield* h.installation.resolve()).source).toBe("managed");
@@ -199,10 +244,7 @@ it.effect("rechecks a cached local executable when the shared manifest policy ch
     expect((yield* terminalState(h.installation)).phase).toBe("succeeded");
     expect((yield* h.installation.resolve()).source).toBe("managed");
     expect(h.downloads()).toBe(1);
-    expect((yield* h.fs.readFileString(h.probeLog)).trim().split("\n")).toEqual([
-      "--version",
-      "app-server --help",
-    ]);
+    expect(yield* readProbes(h.fs, h.probeLog)).toEqual(["--version", "app-server --help"]);
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
@@ -220,38 +262,46 @@ it.effect("uses bundled Codex compatibility when the remote manifest omits its p
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
-it.effect("preserves the invoked name of version-manager launcher symlinks", () =>
-  Effect.gen(function* () {
-    const h = yield* makeHarness({ local: { version: "0.156.1" } });
-    const launcher = `${h.baseDir}/launcher`;
-    yield* h.fs.writeFileString(
-      launcher,
-      '#!/bin/sh\ncase "$0" in */codex) ;; *) exit 1;; esac\ncase "$1" in --version) printf "codex-cli 0.156.1\\n";; app-server) exit 0;; esac\n',
-      { mode: 0o755 },
-    );
-    yield* h.fs.remove(h.localBinaryPath);
-    yield* h.fs.symlink(launcher, h.localBinaryPath);
-    expect(yield* h.installation.start).toMatchObject({ source: "local", phase: "succeeded" });
-    expect((yield* h.installation.resolve()).executablePath).toBe(h.localBinaryPath);
-    expect(h.downloads()).toBe(0);
-  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+// Version-manager shims (asdf, mise) dispatch on the `$0` of a symlinked sh
+// launcher, a POSIX-only install shape.
+it.effect.skipIf(windowsHost)(
+  "preserves the invoked name of version-manager launcher symlinks",
+  () =>
+    Effect.gen(function* () {
+      const h = yield* makeHarness({ local: { version: "0.156.1" } });
+      const launcher = `${h.baseDir}/launcher`;
+      yield* h.fs.writeFileString(
+        launcher,
+        '#!/bin/sh\ncase "$0" in */codex) ;; *) exit 1;; esac\ncase "$1" in --version) printf "codex-cli 0.156.1\\n";; app-server) exit 0;; esac\n',
+        { mode: 0o755 },
+      );
+      yield* h.fs.remove(h.localBinaryPath);
+      yield* h.fs.symlink(launcher, h.localBinaryPath);
+      expect(yield* h.installation.start).toMatchObject({ source: "local", phase: "succeeded" });
+      expect((yield* h.installation.resolve()).executablePath).toBe(h.localBinaryPath);
+      expect(h.downloads()).toBe(0);
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 
 it.effect(
   "installs the complete verified package in tools/codex/version and survives a restart",
   () =>
     Effect.gen(function* () {
-      const { installation, fs, baseDir } = yield* makeHarness();
+      const { installation, fs, path, baseDir } = yield* makeHarness();
       yield* installation.start;
       expect((yield* terminalState(installation)).phase).toBe("succeeded");
       const executable = yield* installation.resolve();
-      expect(executable.executablePath).toBe(`${baseDir}/tools/codex/0.156.1/bin/codex`);
-      expect(
-        yield* fs.readFileString(`${executable.managedVersionDirectory}/bin/codex-code-mode-host`),
-      ).toBe("host");
-      expect(yield* fs.readFileString(`${executable.managedVersionDirectory}/codex-path/rg`)).toBe(
-        "rg",
+      expect(executable.executablePath).toBe(
+        path.join(baseDir, "tools", "codex", "0.156.1", "bin", executableName),
       );
+      expect(
+        yield* fs.readFileString(
+          `${executable.managedVersionDirectory}/bin/codex-code-mode-host${exe}`,
+        ),
+      ).toBe("host");
+      expect(
+        yield* fs.readFileString(`${executable.managedVersionDirectory}/codex-path/rg${exe}`),
+      ).toBe("rg");
       const restarted = yield* makeHarness({ baseDir });
       expect((yield* restarted.installation.resolve()).version).toBe("0.156.1");
     }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),

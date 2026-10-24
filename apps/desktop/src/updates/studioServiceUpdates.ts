@@ -850,6 +850,32 @@ export const repairServiceAgent = (controller: Pick<ServiceUpdateController, "re
     Effect.catch((error: ServiceAgentError) => Effect.succeed(error.message as string | null)),
   );
 
+/**
+ * On Linux the background service is a systemd user unit (`studio.service`,
+ * written by `specweave-studio service install`) with no update agent beside
+ * it: the launchd agent and its helpers are macOS only. Its own CLI updates it
+ * and restarts the unit, so Settings says that instead of a macOS failure.
+ */
+export const LINUX_SERVICE_UPDATES_MESSAGE =
+  "Updating the background service from the app is not available on Linux yet. Run `specweave-studio update` in a terminal: it installs the new version and restarts the systemd user service.";
+export const LINUX_SERVICE_REPAIR_MESSAGE =
+  "Repair is not available on Linux: the background service runs as the systemd user unit studio.service and has no update agent. Run `systemctl --user restart studio.service` to restart it, or `specweave-studio update` to update it.";
+
+/** What Settings shows for an attached Linux service the app cannot update. */
+export function linuxServiceUpdateState(installedVersion: string | null): StudioServiceUpdateState {
+  return {
+    status: "manual-required",
+    identity: null,
+    installedVersion,
+    availableVersion: null,
+    downloadedVersion: null,
+    checkedAt: null,
+    quietSince: null,
+    message: LINUX_SERVICE_UPDATES_MESSAGE,
+    lastInstall: null,
+  };
+}
+
 export function makeServiceUpdateController(input: {
   readonly homeDirectory: string;
   readonly platform: NodeJS.Platform;
@@ -857,7 +883,12 @@ export function makeServiceUpdateController(input: {
   readonly uid?: () => number;
   /** Null means no service is attached. Omission is retained for legacy isolated callers. */
   readonly attachedStudioHome?: string | null;
+  /** The attached service's version, shown where no agent reports one (Linux). */
+  readonly attachedServiceVersion?: string | null;
 }): ServiceUpdateController {
+  // An installed Linux service has no agent: nothing is written or started for it.
+  const linuxServiceAttached =
+    input.platform === "linux" && typeof input.attachedStudioHome === "string";
   const uid = input.uid ?? (() => process.getuid?.() ?? -1);
   const installation = () => {
     if (input.platform !== "darwin" || input.attachedStudioHome === null) return null;
@@ -873,6 +904,8 @@ export function makeServiceUpdateController(input: {
   return {
     installation,
     readState: () => {
+      if (linuxServiceAttached)
+        return linuxServiceUpdateState(input.attachedServiceVersion ?? null);
       const target = installation();
       return toServiceUpdateState({
         installation: target,
@@ -936,6 +969,9 @@ export function makeServiceUpdateController(input: {
       });
     },
     repairAgent: async () => {
+      if (linuxServiceAttached) {
+        throw new ServiceAgentError({ step: "repair", message: LINUX_SERVICE_REPAIR_MESSAGE });
+      }
       const target = installation();
       const script = input.agentScriptPath();
       if (target === null || script === null) {

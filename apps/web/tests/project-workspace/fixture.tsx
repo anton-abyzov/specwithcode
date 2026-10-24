@@ -3,6 +3,14 @@ import React, { useCallback, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
 import { ConnectionsFixture } from "./connections-fixture";
 import { ProjectWorkspace } from "../../src/components/studio/ProjectWorkspace";
+import {
+  projectReturnSearch,
+  useRememberProjectDestination,
+} from "../../src/studio/projectReturnNavigation";
+import {
+  parseProjectWorkspaceSearch,
+  projectWorkspaceSearch,
+} from "../../src/studio/projectPaneThreads";
 import { ViewerOverlayHost } from "../../src/components/ViewerOverlayHost";
 import { useProjectDeletionConfirmation } from "../../src/components/studio/useProjectDeletionConfirmation";
 function LegacyDeletionFixture() {
@@ -44,6 +52,72 @@ function RoutedProjectWorkspace() {
   }, []);
   return <ProjectWorkspace projectKey="atlas" selectedThreadId={thread} onSelectThread={select} />;
 }
+/* Exercises the same route recording and sidebar destination functions with real workspace pages. */
+function ReturnSelectionFixture() {
+  const read = () => ({
+    projectKey: new URLSearchParams(location.search).get("project") ?? "atlas",
+    search: parseProjectWorkspaceSearch({
+      ...Object.fromEntries(new URLSearchParams(location.search)),
+      restoreThread: new URLSearchParams(location.search).get("restoreThread") === "true",
+    }),
+  });
+  const [route, setRoute] = useState(read);
+  const go = (projectKey, search, replace = false) => {
+    const url = new URL(location.href);
+    for (const key of ["thread", "threadEnvironment", "checkout", "restoreThread"])
+      url.searchParams.delete(key);
+    url.searchParams.set("project", projectKey);
+    for (const [key, value] of Object.entries(search)) url.searchParams.set(key, String(value));
+    history[replace ? "replaceState" : "pushState"](null, "", url);
+    setRoute({ projectKey, search });
+  };
+  useEffect(() => {
+    const pop = () => setRoute(read());
+    window.addEventListener("popstate", pop);
+    return () => window.removeEventListener("popstate", pop);
+  }, []);
+  return (
+    <div style={{ display: "flex", height: "100vh" }}>
+      <nav aria-label="Projects" className="flex flex-col gap-2 border-r p-3 text-sm">
+        {["atlas", "beacon"].map((key) => (
+          <button
+            key={key}
+            onClick={() =>
+              go(
+                key,
+                new URLSearchParams(location.search).has("baseline")
+                  ? {}
+                  : projectReturnSearch(
+                      key,
+                      key === "atlas" ? "host:project" : "host:project-beacon",
+                    ),
+              )
+            }
+          >
+            {key}
+          </button>
+        ))}
+        <button onClick={() => go(route.projectKey, {})}>Explicit overview</button>
+        <button onClick={() => go("atlas", { thread: "review" })}>Direct worker link</button>
+      </nav>
+      <div style={{ minWidth: 0, flex: 1, display: "flex" }}>
+        <ProjectWorkspace
+          projectKey={route.projectKey}
+          selectedThreadId={route.search.thread ?? null}
+          selectedThreadEnvironmentId={route.search.threadEnvironment ?? null}
+          restoringThread={route.search.restoreThread}
+          onSelectThread={(thread, options) =>
+            go(
+              route.projectKey,
+              projectWorkspaceSearch(thread, route.search.checkout, options?.environmentId),
+              options?.replace,
+            )
+          }
+        />
+      </div>
+    </div>
+  );
+}
 function RecoveryNavigationFixture() {
   const [inside, setInside] = useState(true);
   return (
@@ -60,6 +134,11 @@ function RecoveryNavigationFixture() {
    for another stays mounted under its hidden Activity and is shown again. */
 function SwitchFixture() {
   const [projectKey, setProjectKey] = useState("atlas");
+  // A switch with no press in the sidebar, as a shortcut or a link elsewhere makes.
+  useEffect(() => {
+    window.__fixtureSwitchProject = (title: string) =>
+      setProjectKey(title === "Beacon" ? "beacon" : "atlas");
+  }, []);
   return (
     <div style={{ display: "flex", height: "100vh" }}>
       <nav aria-label="Projects" className="flex flex-col gap-2 border-r p-3 text-sm">
@@ -183,6 +262,8 @@ createRoot(document.getElementById("root")!).render(
     <RecoveryNavigationFixture />
   ) : search.has("legacy-delete") ? (
     <LegacyDeletionFixture />
+  ) : search.has("returnSelection") ? (
+    <ReturnSelectionFixture />
   ) : search.has("switch") ? (
     <SwitchFixture />
   ) : search.has("routed") ? (

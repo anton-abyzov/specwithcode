@@ -330,18 +330,26 @@ describe("isContextRecoveryCandidate", () => {
     ])
       expect(isContextRecoveryCandidate(shell(failed, overrides) as never, now)).toBe(false);
     // Someone waits for a delegated subagent's answer too.
+    const subagent = {
+      lineage: {
+        parentThreadId: ThreadId.make("p"),
+        relationshipToParent: "subagent",
+        rootThreadId: ThreadId.make("p"),
+      },
+    };
     expect(
       isContextRecoveryCandidate(
-        shell(failed, {
-          lineage: {
-            parentThreadId: ThreadId.make("p"),
-            relationshipToParent: "subagent",
-            rootThreadId: ThreadId.make("p"),
-          },
-        }) as never,
+        shell(failed, { ...subagent, creationSource: "mcp" }) as never,
         now,
       ),
     ).toBe(true);
+    // One the provider spawned on its own takes no messages: a /compact would be refused.
+    expect(
+      isContextRecoveryCandidate(
+        shell(failed, { ...subagent, creationSource: "provider" }) as never,
+        now,
+      ),
+    ).toBe(false);
     expect(
       isContextRecoveryCandidate(shell(failed) as never, failedAt + CONTEXT_RECOVERY_MAX_AGE_MS),
     ).toBe(false);

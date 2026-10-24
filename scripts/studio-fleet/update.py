@@ -36,7 +36,7 @@ from auth_heartbeat import (bind_auth, encoded, prove_restart_heartbeat,
                             utc_timestamp, verify_restart_witness)
 from quiescence import (VANISHED_READS, capture_quiescence, assert_quiescence, quiescence_core, read_processes,
                         reap_descendants, idle_providers, idle_provider_trees)
-from release_retention import prune_releases, prune_state_backups
+from release_retention import prune_releases, prune_state_backups, prune_update_leftovers
 import after_proof
 import database_continuity as continuity
 import database_restart
@@ -1029,7 +1029,7 @@ def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_b
                 'readinessDeadlineSeconds': READINESS_DEADLINE_SECONDS,
                 'readyBySecondsFromStart': READY_BY_SECONDS_FROM_START,
                 'expectedNewHashes': {name: digest(value) for name, value in new_bytes.items()},
-                'prunedStateBackups': pruned_state_backups}
+                'prunedStateBackups': pruned_state_backups, 'agentTimings': install_progress.agent_timings()}
     if prune_error:
         progress['stateBackupPruneError'] = prune_error
     progress['timings'] = timings  # The phases done when each receipt below is written.
@@ -1300,7 +1300,7 @@ def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_b
             # Names only: which protected tables gained which empty columns.
             result['migrationAddedColumns'] = {table: [column[1] for column in widening['added']]
                                                for table, widening in sorted(widenings.items())}
-        result.update({key: progress[key] for key in ('serviceLaunchAgent', 'serverBrowserStop', 'cliAliasKeptAside', 'afterProof')
+        result.update({key: progress[key] for key in ('serviceLaunchAgent', 'serverBrowserStop', 'cliAliasKeptAside', 'afterProof', 'agentTimings')
                        if key in progress})
         if after_carried is not None:
             # Counts only: how many log rows the services appended after the prestate.
@@ -1316,6 +1316,8 @@ def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_b
         except Exception as error:  # Pruning never fails a verified update.
             result['prunedReleases'] = []
             result['pruneError'] = type(error).__name__
+        # Stage folders a killed helper left, older bundles, and finished updates' receipts and owned-updates folders.
+        result['prunedLeftovers'] = prune_update_leftovers(home, own, manifest['version'], keep=[output, backup])
         # The new release's update agent replaces an older one, as the desktop installs its own: a Mac
         # whose desktop app is old or never opened kept its first agent otherwise. Never fails the update.
         result['updateAgent'] = update_request.refresh_agent(home, identity, new_release)

@@ -72,6 +72,7 @@ const claudeReady = withWindow(provider(claudeId, "claudeAgent", now), "claude-o
 const { usageLimits: _none, ...copilotBase } = provider(copilotId, "acpRegistry", now);
 const copilot: ServerProvider = {
   ...copilotBase,
+  iconUrl: "https://cdn.agentclientprotocol.com/registry/v1/latest/github-copilot-cli.svg",
   models: [{ slug: model, name: "GPT-6.1 Sol", isCustom: true, capabilities: null }],
 };
 

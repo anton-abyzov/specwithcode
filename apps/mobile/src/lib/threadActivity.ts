@@ -48,7 +48,7 @@ import type {
   RunAttemptId,
   ScheduledTaskId,
 } from "@specweave-studio/contracts";
-import { RunId, ThreadId } from "@specweave-studio/contracts";
+import { RunId, ThreadId, runInterruptResultDetail } from "@specweave-studio/contracts";
 import {
   classifyToolActivity,
   collectToolFilePaths,
@@ -658,8 +658,9 @@ function itemPreview(item: OrchestrationV2TurnItem): string | null {
       return item.files.length === 1
         ? (item.files[0]?.path ?? null)
         : `${item.files.length} changed files`;
-    case "run_interrupt_request":
     case "run_interrupt_result":
+      return runInterruptResultDetail(item);
+    case "run_interrupt_request":
     case "system_notice":
       return item.message || null;
     case "error":

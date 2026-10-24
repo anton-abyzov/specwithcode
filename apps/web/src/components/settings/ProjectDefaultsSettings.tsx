@@ -668,7 +668,7 @@ export function ProjectDefaultsSettings({
               mixed={mixedComputer}
               id={searchableSetting("agent-computer-access").id}
               title="Agent computer access"
-              description="Let agents on this machine, in every project and with every provider, see and control its desktop through the SpecWithCode app, for System Settings and other native apps. macOS needs Screen Recording and Accessibility for SpecWithCode; allow them below. Applies when an agent session next starts."
+              description="Let agents on this machine, in every project and with every provider, see and control its desktop through the SpecWithCode app, for System Settings and other native apps. Available on macOS only for now; Windows and Linux are not supported yet. macOS needs Screen Recording and Accessibility for SpecWithCode; allow them below. Applies when an agent session next starts."
               resetAction={
                 settings.enableAgentComputerAccess !==
                 DEFAULT_SERVER_SETTINGS.enableAgentComputerAccess ? (

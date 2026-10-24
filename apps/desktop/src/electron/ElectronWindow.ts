@@ -13,6 +13,7 @@ import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 
 import * as Electron from "electron";
+import { createDesktopBrowserWindow, isDesktopOffscreenTest } from "./DesktopOffscreen.ts";
 
 import {
   activateWindowsForeground,
@@ -272,7 +273,7 @@ export const make = Effect.gen(function* () {
 
       return Effect.try({
         try: () => {
-          const window = new Electron.BrowserWindow(options);
+          const window = createDesktopBrowserWindow(options);
           createdWindows.add(window);
           return window;
         },
@@ -309,7 +310,7 @@ export const make = Effect.gen(function* () {
       ),
     prepareReveal: (window) =>
       Effect.promise(async () => {
-        if (platform !== "win32" || window.isDestroyed()) {
+        if (isDesktopOffscreenTest() || platform !== "win32" || window.isDestroyed()) {
           return false;
         }
         captureRevealWindows.add(window.id);
@@ -320,7 +321,7 @@ export const make = Effect.gen(function* () {
     reveal: (window) =>
       Effect.tryPromise({
         try: async () => {
-          if (window.isDestroyed()) {
+          if (isDesktopOffscreenTest() || window.isDestroyed()) {
             return;
           }
 

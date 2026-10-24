@@ -6,6 +6,11 @@
  * here). Single layer-scoped browser session partition.
  */
 import {
+  createDesktopBrowserWindow,
+  desktopBrowserWindowOptions,
+  isDesktopOffscreenTest,
+} from "../electron/DesktopOffscreen.ts";
+import {
   DesktopPreviewRecordingInputSchema,
   DESKTOP_PREVIEW_RECORDING_CAPTURE_TRIGGER,
 } from "@specweave-studio/contracts";
@@ -28,7 +33,7 @@ import { HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
 import { matchesKeybindingShortcut } from "@specweave-studio/shared/keybindings";
 import { normalizePreviewUrl } from "@specweave-studio/shared/preview";
 import {
-  BrowserWindow,
+  type BrowserWindow,
   ClipboardItem,
   type Session,
   clipboard,
@@ -303,11 +308,7 @@ const captureAnnotationScreenshot = (
     // what lets the timeout below fire. Drop the parameter and a stalled
     // capture strands the pick session again.
     try: (_signal) =>
-      wc.capturePage(
-        cropRect
-          ? annotationCaptureRect(cropRect, wc.getZoomFactor())
-          : undefined,
-      ),
+      wc.capturePage(cropRect ? annotationCaptureRect(cropRect, wc.getZoomFactor()) : undefined),
     catch: (cause) =>
       new PreviewOperationError({
         operation: "captureAnnotationScreenshot",
@@ -1610,7 +1611,10 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         wc.ipc.on(MOUSE_NAVIGATE_CHANNEL, mouseNavigate);
         wc.setWindowOpenHandler((details) => {
           if (previewWindowOpenAction(details) === "popup") {
-            return { action: "allow", overrideBrowserWindowOptions: POPUP_WINDOW_OPTIONS };
+            return {
+              action: "allow",
+              overrideBrowserWindowOptions: desktopBrowserWindowOptions(POPUP_WINDOW_OPTIONS),
+            };
           }
           runFork(
             attemptPromise({ operation: "openPreviewWindow", tabId, webContentsId: wc.id }, () =>
@@ -2171,6 +2175,8 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     withWebContents("hardReload", tabId, (wc) => wc.reloadIgnoringCache());
 
   const openDevTools = Effect.fn("PreviewManager.openDevTools")(function* (tabId: string) {
+    // Guest WebContents can open native DevTools outside a BrowserWindow.
+    if (isDesktopOffscreenTest()) return;
     const wc = yield* requireWebContents(tabId);
     if (wc.isDevToolsOpened()) {
       yield* attempt({ operation: "openDevTools.focus", tabId, webContentsId: wc.id }, () =>
@@ -2903,7 +2909,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
             webContentsId: wc.id,
           },
           () =>
-            new BrowserWindow({
+            createDesktopBrowserWindow({
               width: PICTURE_IN_PICTURE_INITIAL_WIDTH,
               height: PICTURE_IN_PICTURE_INITIAL_HEIGHT,
               minWidth: PICTURE_IN_PICTURE_MIN_WIDTH,

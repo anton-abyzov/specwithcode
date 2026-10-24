@@ -39,7 +39,7 @@ class ProgressFile(unittest.TestCase):
             progress.lap('beforeRead', {'beforeRead': 12})
             value = self.read()
         self.assertEqual(set(value), {'schemaVersion', 'version', 'receipt', 'phase', 'step', 'steps', 'phaseStartedAt',
-                                      'heartbeatAt', 'expectedMs', 'timings', 'serviceRestartedAt', 'result'})
+                                      'heartbeatAt', 'expectedMs', 'timings', 'agentTimings', 'serviceRestartedAt', 'result'})
         self.assertEqual((value['schemaVersion'], value['version'], value['phase'], value['step'], value['steps']),
                          (1, '0.2.0', 'backupSpace', 2, len(install_progress.PHASES)))
         self.assertEqual(value['timings'], {'beforeRead': 12})

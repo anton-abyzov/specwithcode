@@ -134,7 +134,9 @@ describe("adding machines to the fleet file", () => {
       environmentId: "environment-m1",
       change: "added",
     });
-    expect((await NodeFSP.stat(join(baseDir, "studio-fleet.json"))).mode & 0o777).toBe(0o600);
+    // Windows has no POSIX mode bits; the profile folder's ACL keeps the file private.
+    if (process.platform !== "win32")
+      expect((await NodeFSP.stat(join(baseDir, "studio-fleet.json"))).mode & 0o777).toBe(0o600);
     const config = await readFleetConfig(baseDir);
     expect(config?.machines.map((m) => [m.id, m.url, m.managementToken])).toEqual([
       ["mac-m1", "https://m1.fixture.ts.net", "synthetic-new-management-token"],

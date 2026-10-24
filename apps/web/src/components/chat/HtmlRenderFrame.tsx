@@ -1,38 +1,79 @@
-import type { EnvironmentId } from "@specweave-studio/contracts";
+import type { EnvironmentId, ScopedThreadRef } from "@specweave-studio/contracts";
 import {
   HTML_RENDER_COLUMN_WIDTH,
   htmlRenderFileName,
   htmlRenderFrameHeight,
   type HtmlRenderReference,
 } from "@specweave-studio/shared/htmlRender";
-import { Maximize2Icon } from "lucide-react";
+import { ArrowUpRightIcon, FileTextIcon } from "lucide-react";
+import { createPortal } from "react-dom";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import { useAssetUrlRefresh, useAssetUrlState } from "~/assets/assetUrls";
-import type { ChatFileAttachment } from "~/types";
+import { useViewerOverlay, useViewerOverlayStore } from "~/viewerOverlayStore";
 
 import { HtmlRenderDocument } from "../files/BrowserDocumentFrame";
 import { Button } from "../ui/button";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 // A frame may load its URL a little after mounting.
 const MIN_URL_LIFE_MS = 5 * 60_000;
 
-/**
- * An agent's HTML render inline in the thread: the page itself on the thread's
- * own background, at the server's measured height for this width until the
- * page reports its own. Loading and failure hold the same box so nothing below
- * it moves.
- */
+/** A bounded preview that moves the same live document into the focused reader. */
 export function HtmlRenderFrame(props: {
   readonly environmentId: EnvironmentId;
   readonly htmlRender: HtmlRenderReference;
-  readonly onOpen: (attachment: ChatFileAttachment) => void;
+  readonly threadRef?: ScopedThreadRef | null;
 }) {
   const { attachmentId, title } = props.htmlRender;
   // The frame takes the page's measured height at its own width, read before
   // first paint so the reserved box is already the right size.
   const boxRef = useRef<HTMLDivElement>(null);
+  const inlineRef = useRef<HTMLDivElement>(null);
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const readerRef = useRef<HTMLDivElement>(null);
+  const readerScroll = useRef(0);
+  const [expanded, setExpanded] = useState(false);
+  // A stable portal target avoids remounting the iframe (and resetting tabs/forms).
+  const [mount] = useState(() => document.createElement("div"));
+  const moveTo = (target: HTMLElement) => {
+    if (mount.parentElement === target) return;
+    if (mount.isConnected && "moveBefore" in target) {
+      (
+        target as HTMLElement & { moveBefore: (node: Node, before: Node | null) => void }
+      ).moveBefore(mount, null);
+    } else target.appendChild(mount);
+  };
+  const close = () => {
+    readerScroll.current = readerRef.current?.scrollTop ?? 0;
+    // Move back before the overlay host is removed from the document.
+    if (inlineRef.current) moveTo(inlineRef.current);
+    setExpanded(false);
+    requestAnimationFrame(() => triggerRef.current?.focus({ preventScroll: true }));
+  };
+  const slots = useViewerOverlay({
+    open: expanded,
+    title: props.htmlRender.title,
+    kind: "Report",
+    badge: null,
+    threadRef: props.threadRef,
+    onClose: close,
+  });
+  useLayoutEffect(() => {
+    const target = expanded ? slots?.content : inlineRef.current;
+    if (!target) return;
+    moveTo(target);
+    if (expanded && readerRef.current) readerRef.current.scrollTop = readerScroll.current;
+  }, [expanded, mount, slots?.content]);
+  useEffect(
+    () => () => {
+      mount.remove();
+    },
+    [mount],
+  );
+  const open = () => {
+    useViewerOverlayStore.getState().setThreadCollapsed(true);
+    setExpanded(true);
+  };
   const [width, setWidth] = useState(HTML_RENDER_COLUMN_WIDTH);
   useLayoutEffect(() => {
     const box = boxRef.current;
@@ -43,7 +84,7 @@ export function HtmlRenderFrame(props: {
     });
     observer.observe(box);
     return () => observer.disconnect();
-  }, []);
+  }, [mount]);
   // Client fonts can wrap a page taller than the server measured it; a frame
   // left short would scroll inside the thread and take the reader's scroll.
   const [contentHeight, setContentHeight] = useState<number>();
@@ -91,49 +132,59 @@ export function HtmlRenderFrame(props: {
     );
   }, [cacheFailed, cachedExpiresAt, cachedUrl, refresh, src]);
 
+  const previewHeight = Math.min(height, 360);
+  const documentHeight = expanded ? Math.min(50_000, contentHeight ?? height) : height;
   return (
-    <div ref={boxRef} className="group/html-render relative" style={{ height }}>
-      {src !== null ? (
-        <>
-          <HtmlRenderDocument
-            src={src}
-            title={title}
-            className="block size-full"
-            onContentHeight={setContentHeight}
-          />
-          <div className="absolute end-2 top-2 opacity-0 transition-opacity duration-150 focus-within:opacity-100 group-hover/html-render:opacity-100 pointer-coarse:opacity-100">
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <Button
-                    aria-label="Open in panel"
-                    size="icon-xs"
-                    variant="glass"
-                    onClick={() =>
-                      props.onOpen({
-                        type: "file",
-                        id: attachmentId,
-                        name: fileName,
-                        mimeType: "text/html",
-                        // Unknown here; the preview leaves it out.
-                        sizeBytes: 0,
-                        htmlRender: true,
-                      })
-                    }
-                  />
-                }
-              >
-                <Maximize2Icon className="size-3.5" />
-              </TooltipTrigger>
-              <TooltipPopup side="left">Open in panel</TooltipPopup>
-            </Tooltip>
+    <section className="html-report-card" aria-label={title}>
+      <header className="html-report-card-head">
+        <FileTextIcon aria-hidden className="size-4 shrink-0 text-muted-foreground" />
+        <div className="min-w-0 flex-1">
+          <h3 className="html-report-card-title">{title}</h3>
+          <p className="html-report-card-kind">Interactive report</p>
+        </div>
+        <Button ref={triggerRef} variant="ghost" size="sm" onClick={open} disabled={src === null}>
+          Open report <ArrowUpRightIcon aria-hidden className="size-4" />
+        </Button>
+      </header>
+      <div className="html-report-preview" style={{ height: previewHeight }}>
+        <div ref={inlineRef} />
+        {expanded ? <p className="html-report-placeholder">Open in reader</p> : null}
+        {!expanded && src !== null ? (
+          <div className="html-report-preview-fade" aria-hidden />
+        ) : null}
+        {src === null ? (
+          <p className="html-report-placeholder" role="status">
+            {failed ? `Unable to load ${title}` : "Loading report…"}
+          </p>
+        ) : null}
+      </div>
+      <p className="html-report-card-foot">
+        Open the report to explore its diagrams, details and evidence.
+      </p>
+      {createPortal(
+        <div
+          ref={readerRef}
+          className={expanded ? "html-report-reader" : "html-report-preview-page"}
+        >
+          <div
+            ref={boxRef}
+            className="html-report-document"
+            inert={!expanded}
+            style={{ height: documentHeight }}
+          >
+            {src !== null ? (
+              <HtmlRenderDocument
+                src={src}
+                title={title}
+                className="block size-full"
+                onContentHeight={setContentHeight}
+                onEscape={expanded ? close : undefined}
+              />
+            ) : null}
           </div>
-        </>
-      ) : failed ? (
-        <p className="flex size-full items-center justify-center text-muted-foreground text-xs">
-          Unable to load {title}
-        </p>
-      ) : null}
-    </div>
+        </div>,
+        mount,
+      )}
+    </section>
   );
 }

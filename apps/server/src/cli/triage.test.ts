@@ -5,6 +5,7 @@ import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 
 import { parseJson } from "../json.ts";
+import { claudeRulePath } from "../provider/AgentProtectedPaths.ts";
 import { runInteractiveSession, triageAgentSettingsArgs } from "./triage.ts";
 
 it.effect("starts triage Claude with the credential-store deny settings, Codex without", () =>
@@ -28,8 +29,12 @@ it.effect("starts triage Claude with the credential-store deny settings, Codex w
       permissions: { deny: ReadonlyArray<string> };
       sandbox: { filesystem: { denyRead: ReadonlyArray<string> } };
     };
-    assert.include(settings.permissions.deny, `Read(/${config.secretsDir}/**)`);
-    assert.include(settings.permissions.deny, `Read(/${path.join(baseDir, "studio-fleet.json")})`);
+    // Claude rules spell paths POSIX-style, //c/Users/... on Windows.
+    assert.include(settings.permissions.deny, `Read(${claudeRulePath(config.secretsDir)}/**)`);
+    assert.include(
+      settings.permissions.deny,
+      `Read(${claudeRulePath(path.join(baseDir, "studio-fleet.json"))})`,
+    );
     assert.include(settings.sandbox.filesystem.denyRead, config.secretsDir);
 
     assert.deepEqual(

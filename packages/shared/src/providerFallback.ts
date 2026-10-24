@@ -6,6 +6,7 @@
  */
 import {
   type ChatAttachment,
+  isGitHubCopilotIcon,
   isPaidModelBilling,
   isProviderAvailable,
   type ModelSelection,
@@ -251,6 +252,22 @@ export function reportsNoUsage(provider: ServerProvider): boolean {
 }
 
 /**
+ * An ACP agent other than verified GitHub Copilot. Without usage telemetry
+ * the app cannot establish its billing. Missing branding is not evidence
+ * of free capacity. So
+ * nothing moves a thread there on its own; only a fallback order, project
+ * default or provider order that names it does. Identified by the registry
+ * icon the server derives from the agent id, never the editable name.
+ */
+export function isUnknownBillingAgent(provider: ServerProvider | undefined): boolean {
+  return (
+    provider?.driver === "acpRegistry" &&
+    reportsNoUsage(provider) &&
+    !isGitHubCopilotIcon(null, provider.iconUrl)
+  );
+}
+
+/**
  * Whether a thread may start or continue on `provider` with `model`:
  * verified room below `belowPercent`, or a provider that reports no usage
  * and can take a turn. Null when it has neither, is in `limited`, or is
@@ -263,9 +280,12 @@ function roomOn(
     readonly nowMs: number;
     readonly belowPercent?: number | null | undefined;
     readonly limited?: ReadonlySet<string> | undefined;
+    /** The person named this provider, so an unknown-billing agent may take the thread. */
+    readonly named?: boolean;
   },
 ): "verified" | "unreported" | null {
   if (input.limited?.has(provider.instanceId) || isPaidModelOn(provider, model)) return null;
+  if (input.named !== true && isUnknownBillingAgent(provider)) return null;
   if (reportsNoUsage(provider)) return canTakeTurn(provider) ? "unreported" : null;
   if (!hasUsableFallbackCapacity(provider, input.nowMs, model)) return null;
   const used = providerUsedPercent(provider, input.nowMs, model);
@@ -315,6 +335,7 @@ export function resolveSameModelElsewhere(input: {
       nowMs: input.nowMs,
       belowPercent: input.belowPercent,
       limited: input.limitedInstanceIds,
+      named: order.includes(provider.instanceId),
     });
     if (room === null) return [];
     const rank = [
@@ -676,6 +697,7 @@ export function resolveProviderFallback(input: {
       !input.limitedInstanceIds?.has(provider.instanceId) &&
       canTakeTurn(provider) &&
       !isPaidModelOn(provider, proven.model) &&
+      !isUnknownBillingAgent(provider) &&
       (used === null || used < (input.belowPercent ?? 100))
     )
       return { instanceId: proven.instanceId, model: proven.model };
@@ -700,6 +722,7 @@ export function resolveProviderFallback(input: {
       (provider) =>
         usable(provider, candidateModel(provider)) &&
         !isPaidModelOn(provider, candidateModel(provider)) &&
+        !isUnknownBillingAgent(provider) &&
         !excluded(provider.instanceId, candidateModel(provider)),
     )
     .map((provider, order) => ({ provider, order, rank: rank(provider) }))
@@ -810,6 +833,7 @@ export function resolveWorkerLaunchSelection(input: {
       provider !== undefined &&
       canTakeTurn(provider) &&
       !isPaidModelOn(provider, coordinator.model) &&
+      !isUnknownBillingAgent(provider) &&
       !full(provider, coordinator.model)
     )
       return {

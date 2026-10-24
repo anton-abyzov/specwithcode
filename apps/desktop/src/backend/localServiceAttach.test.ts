@@ -12,6 +12,7 @@ import {
   parsePairToken,
   parseServerRuntimeState,
   parseStudioInstallation,
+  parseWindowsCommandLine,
   resolveServiceCliCommand,
 } from "./localServiceAttach.ts";
 
@@ -230,6 +231,55 @@ describe("resolveServiceCliCommand", () => {
       resolveServiceCliCommand({ argv: ["/opt/node22/bin/node", "-e", "1"], exists }),
     ).toBeNull();
     expect(resolveServiceCliCommand({ exists })).toBeNull();
+  });
+});
+
+describe("parseWindowsCommandLine", () => {
+  it("groups quoted paths and keeps backslashes literal", () => {
+    expect(
+      parseWindowsCommandLine(
+        '"C:\\Program Files\\nodejs\\node.exe" "C:\\Users\\a\\My Tools\\bin.mjs" serve  --port 8319',
+      ),
+    ).toEqual([
+      "C:\\Program Files\\nodejs\\node.exe",
+      "C:\\Users\\a\\My Tools\\bin.mjs",
+      "serve",
+      "--port",
+      "8319",
+    ]);
+  });
+
+  it("applies the backslash-before-quote and doubled-quote rules", () => {
+    expect(parseWindowsCommandLine('a\\\\"b c" d\\"e "f""g" ""')).toEqual([
+      "a\\b c",
+      'd"e',
+      'f"g',
+      "",
+    ]);
+  });
+});
+
+describe("resolveServiceCliCommand on Windows", () => {
+  const files = new Set([
+    "C:\\Program Files\\nodejs\\node.exe",
+    "C:\\Users\\a\\AppData\\Roaming\\npm\\node_modules\\specweave-studio\\dist\\bin.mjs",
+  ]);
+  const exists = (path: string) => files.has(path);
+
+  it("runs the script through the server's Node even when its name is upper case", () => {
+    const script =
+      "C:\\Users\\a\\AppData\\Roaming\\npm\\node_modules\\specweave-studio\\dist\\bin.mjs";
+    expect(
+      resolveServiceCliCommand({
+        argv: parseWindowsCommandLine(`NODE.EXE "${script}" serve`),
+        executable: "C:\\Program Files\\nodejs\\node.exe",
+        exists,
+      }),
+    ).toEqual({
+      command: "C:\\Program Files\\nodejs\\node.exe",
+      args: [script],
+      viaRuntime: true,
+    });
   });
 });
 

@@ -387,9 +387,12 @@ const stopEarlierBackgroundWork = ({
             after.turnItems.find((candidate) => candidate.type === "assistant_message")?.status,
             interrupted ? "interrupted" : "running",
           );
-          assert.equal(
-            after.turnItems.filter((candidate) => candidate.type === "run_interrupt_result").length,
-            interrupted ? 1 : 0,
+          assert.deepEqual(
+            after.turnItems.flatMap((candidate) =>
+              candidate.type === "run_interrupt_result" ? [candidate.message] : [],
+            ),
+            // The Stop request was recorded by an earlier command than the settle.
+            interrupted ? ["Stopped by the user"] : [],
           );
           assert.isEmpty(after.runs.filter((candidate) => candidate.status === "waiting"));
           return;

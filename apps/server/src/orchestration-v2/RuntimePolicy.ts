@@ -157,6 +157,7 @@ export const layerFromProjectStore: Layer.Layer<
           ),
           claudeWorkflowMode: projectOverrides?.claudeWorkflowMode ?? settings.claudeWorkflowMode,
           responseStyle: projectOverrides?.responseStyle ?? settings.responseStyle,
+          preferSpecWithCodeBrowser: settings.preferSpecWithCodeBrowser,
         });
       }),
     });

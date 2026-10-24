@@ -1,4 +1,5 @@
 import {
+  AuthAccessWriteScope,
   AssetWorkspaceAssetNotFoundError,
   AssetWorkspaceContextResolutionError,
   WS_METHODS,
@@ -23,7 +24,8 @@ import { DesignWsHandlers } from "../project/ProjectWorkspaceRpc.ts";
  * Sessions of the owner on this machine: the desktop app, the startup link
  * the server prints, the local CLI and development tokens. Every other
  * session (a paired phone or browser, a device sign-in, a linked machine, an
- * MCP client) is a member and gets the design's `members` access.
+ * MCP client) is a member and gets the design's `members` access, unless it
+ * holds `access:write` (see `designCallerForSession`).
  */
 const OWNER_SESSION_SUBJECTS: ReadonlySet<string> = new Set([
   "desktop-bootstrap",
@@ -33,11 +35,22 @@ const OWNER_SESSION_SUBJECTS: ReadonlySet<string> = new Set([
   "reusable-dev-token-child",
 ]);
 
+/**
+ * The design caller for a connection. A session that holds `access:write`
+ * already manages who may connect here (pairing links, sessions), so it is the
+ * owner too: that is how the desktop app signs in to a service it did not
+ * start (it pairs through the service's CLI, subject `one-time-token`, with
+ * the administrative scopes), and without it the app could not bind a design
+ * to the thread it had just started.
+ */
 export const designCallerForSession = (
-  session: Pick<AuthenticatedSession, "subject">,
+  session: Pick<AuthenticatedSession, "subject" | "scopes">,
 ): DesignCaller => ({
   actor: { kind: "user" },
-  audience: OWNER_SESSION_SUBJECTS.has(session.subject) ? "owner" : "members",
+  audience:
+    OWNER_SESSION_SUBJECTS.has(session.subject) || session.scopes.includes(AuthAccessWriteScope)
+      ? "owner"
+      : "members",
 });
 
 /**
@@ -45,7 +58,7 @@ export const designCallerForSession = (
  * `WsDesignRpcGroup`). Needs the server's one `DesignSystemProposals`, since
  * deleting a system discards the open proposals that would update it.
  */
-export const layerRpcHandlers = (session: Pick<AuthenticatedSession, "subject">) =>
+export const layerRpcHandlers = (session: Pick<AuthenticatedSession, "subject" | "scopes">) =>
   WsDesignRpcGroup.middleware(RpcInstrumentation).toLayer(
     Effect.gen(function* () {
       const designs = yield* DesignService;
@@ -117,7 +130,7 @@ export const makeWsLayers = Effect.gen(function* () {
   );
   const designs = Context.get(context, DesignService);
   return {
-    layerRpcHandlers: (session: Pick<AuthenticatedSession, "subject">) =>
+    layerRpcHandlers: (session: Pick<AuthenticatedSession, "subject" | "scopes">) =>
       Layer.merge(
         layerRpcHandlers(session),
         DesignSystemRpc.layerRpcHandlers(designCallerForSession(session)).pipe(
@@ -128,7 +141,7 @@ export const makeWsLayers = Effect.gen(function* () {
         Layer.provide(Layer.succeed(DesignService, designs)),
       ),
     issueAssetUrl: (
-      session: Pick<AuthenticatedSession, "subject">,
+      session: Pick<AuthenticatedSession, "subject" | "scopes">,
       resource: Extract<AssetResource, { readonly _tag: "design-asset" }>,
     ) => issueDesignAssetUrl(designs, designCallerForSession(session), resource),
   };

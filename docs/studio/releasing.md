@@ -74,7 +74,7 @@ make, and refuses to start a second run of a version without `--resume`.
 | publish-private | checks the draft's `SHA256SUMS`, publishes the private release, checks the tag is the candidate                        | once                    |
 | publish-public  | `publish.mjs --tag --push`, checks the draft's `SHA256SUMS`, then the public release                                   | once                    |
 | fleet-m4        | `fleet_rollout.py --only m4`: drains and holds M4 as Update now does, then a forced 15-minute request                  | once                    |
-| desktop         | record grants, rollback zip, swap the app in `/Applications`, check its signature, grants and version, open it         | once                    |
+| desktop         | record grants, rollback copy, swap the app in `/Applications`, check its signature, grants and version, open it        | once                    |
 | fleet-workers   | `fleet_rollout.py --only workers`: M1 and M3 together, polled the same way                                             | once                    |
 | merge           | the `release/<version>` pull request into `main`                                                                       | once                    |
 
@@ -92,7 +92,7 @@ From 1.0.41 the app manages the M4 service: opened against an older M4 it writes
 normal-mode install request, which can replace fleet-m4's forced one, so it never opens before M4
 runs the release. And M1 or M3 failing no longer leaves the Mac without its app (1.0.39 and 1.0.41
 ended that way). When the old app's own updater already swapped the release in as it quit, the
-stage keeps that app and makes no rollback zip of it, which would hold the new version and prune
+stage keeps that app and makes no rollback copy of it, which would hold the new version and prune
 the previous one. It first waits up to 60 seconds for that update to finish: an unsigned build's
 swap (`SpecWithCode.app.studio-update-old` gone) or a signed build's Squirrel.Mac install (the
 `ShipIt` running from the app's own `Squirrel.framework` gone). It keeps the app only when
@@ -277,6 +277,19 @@ version-free DMG, which only serves the public `releases/latest/download` link (
 lists it). Updaters download the zip that `latest-mac.yml` names and never read the version-free
 DMG.
 
+Windows and Linux come from **Release Windows and Linux**
+(`.github/workflows/release-windows-linux.yml`), not from `release.sh`. Given a version, it builds
+the commit tagged `v<version>` on GitHub's `windows-2025` and `ubuntu-24.04`: the unsigned NSIS
+installer with its blockmap and `latest.yml`, the AppImage and `.deb` with `latest-linux.yml`, and
+`studio-<version>-win32-x64.zip`, the CLI archive `scripts/install.ps1` installs. It checks that
+each package's `app-update.yml` polls `anton-abyzov/specwithcode` and that every file the feeds
+name matches its hash, then adds the files and `SHA256SUMS-windows-linux` to both releases once
+they are published. It never uploads or replaces a name `release.sh` uses and checks afterwards
+that `latest-mac.yml` and `SHA256SUMS` are unchanged. It runs as a dry run (assets kept as a
+workflow artifact) unless `dry_run` is off, and on its own after each release when the repository
+variable `RELEASE_WINDOWS_LINUX_ON_PUBLISH` is `true`. Until it has run, Windows and Linux installs
+of the new release see no `latest.yml` or `latest-linux.yml` and report a failed update check.
+
 Release DMGs are built with `--signed`: Developer ID Application, team `NMCB2JZ7QG`, hardened
 runtime, notarized and stapled. The environment is in
 [desktop app](./desktop-app.md#signing-and-notarization). macOS ties the `studio Safe Storage`
@@ -310,32 +323,40 @@ SpecWithCode, Launch Services registers it, and because every copy has the bundl
 `com.specweave.studio`, `open -b` or a notification click can start an old copy that then pairs
 with the running service.
 
-Keep a rollback copy as a zip with `scripts/studio-fleet/desktop_backup.py` (the desktop stage
-does this):
+Keep a rollback copy with `scripts/studio-fleet/desktop_backup.py`. The desktop stage of
+`scripts/release/release.sh` runs both commands before it replaces the installed app; nothing in
+the app or its updater does.
 
 ```sh
 python3 -B scripts/studio-fleet/desktop_backup.py snapshot "/Applications/SpecWithCode.app"
 python3 -B scripts/studio-fleet/desktop_backup.py prune --keep 1
 ```
 
-It writes `~/.specweave-studio/backups/desktop.noindex/<version>-<time>.zip` (the `.noindex`
-folder is not indexed) and keeps the most recently made one by default; the copy it just wrote is
-never pruned. `--keep` goes before or after the command.
+`snapshot` clones the bundle with `cp -c` into
+`~/.specwithcode/backups/desktop.noindex/<version>-<time>.noindex`. On APFS that takes well under a
+second and uses no new disk space until the installed app changes. The folder holds the bundle's
+`Contents` under a name without `.app`, so Launch Services does not take it for an app, and the
+`.noindex` folders keep Spotlight out. Where APFS cannot clone it there (another volume or file
+system), it writes `<version>-<time>.zip` with `ditto` instead. `prune` keeps the most recently
+made copy of either kind by default; the copy `snapshot` just wrote is never pruned. `--keep` goes
+before or after the command.
 
-To restore, quit the app and move the installed bundle to the Trash first, then extract:
+To restore, quit the app and move the installed bundle to the Trash first, then restore either
+kind of copy:
 
 ```sh
 osascript -e 'tell application "Finder" to delete POSIX file "/Applications/SpecWithCode.app"'
-ditto -x -k <zip> /Applications
+python3 -B scripts/studio-fleet/desktop_backup.py restore <copy>
 ```
 
-`ditto -x` merges into an existing bundle, so extracting over the current app leaves a mix of
-both versions with a broken signature. The restored bundle keeps the name it was zipped under: a
-0.2.x copy comes back as `SpecWeave Studio (Alpha).app`, and the next 1.x update renames it again.
-Leave no `SpecWithCode.app` beside it, or that copy's next launch moves the older one to the Trash.
+`restore` refuses while that app still exists, because extracting over the current app leaves a
+mix of both versions with a broken signature. A zip comes back under the name it was zipped
+under: a 0.2.x copy comes back as `SpecWeave Studio (Alpha).app`, and the next 1.x update renames
+it again. A clone comes back under its `CFBundleName`. Leave no `SpecWithCode.app` beside an older
+copy, or that copy's next launch moves the older one to the Trash.
 
-To clean up copies that earlier release sessions left behind, run `migrate` once. It zips every
-loose `.app` under `~/.specweave-studio/backups/` (top level and `desktop-*` folders) and any
+To clean up copies that earlier release sessions left behind, run `migrate` once. It clones or zips
+every loose `.app` under `~/.specwithcode/backups/` (top level and `desktop-*` folders) and any
 `--extra` path, deletes the loose copy, removes it from Launch Services and prunes:
 
 ```sh
@@ -344,7 +365,7 @@ python3 -B scripts/studio-fleet/desktop_backup.py migrate \
 ```
 
 It only handles bundles with the id `com.specweave.studio`, and never touches an app directly in
-`/Applications` or `~/Applications`, or one that is running. A copy it zipped but could not delete
+`/Applications` or `~/Applications`, or one that is running. A copy it archived but could not delete
 is listed under `failed` with its archive; the rest still run.
 The service updater's `pre-*` database backups are separate and stay where they are.
 

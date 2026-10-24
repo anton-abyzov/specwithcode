@@ -338,6 +338,39 @@ describe("ClaudeAdapterV2 runtime query policy", () => {
     assert.isTrue(Object.hasOwn(optedOut.extraArgs ?? {}, "no-chrome"));
   });
 
+  it("starts without Claude in Chrome while SpecWithCode Browser is paired and preferred", () => {
+    const base = {
+      modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+      nativeThreadId: "chrome-thread",
+      resume: false,
+      cwd: "/workspace",
+      claudeInChromeDefault: true,
+    };
+    const hidden = ClaudeAdapterV2.makeClaudeQueryOptions({ ...base, hideClaudeInChrome: true });
+    assert.isFalse(Object.hasOwn(hidden.extraArgs ?? {}, "chrome"));
+    assert.isTrue(Object.hasOwn(hidden.extraArgs ?? {}, "no-chrome"));
+    assert.isNull(hidden.extraArgs?.["no-chrome"]);
+    // Claude in Chrome off by default: still pinned off, so auto-enable cannot add it.
+    const hiddenDefaultOff = ClaudeAdapterV2.makeClaudeQueryOptions({
+      ...base,
+      claudeInChromeDefault: false,
+      hideClaudeInChrome: true,
+    });
+    assert.isTrue(Object.hasOwn(hiddenDefaultOff.extraArgs ?? {}, "no-chrome"));
+    // Not paired, or the switch is off: unchanged from before.
+    const kept = ClaudeAdapterV2.makeClaudeQueryOptions({ ...base, hideClaudeInChrome: false });
+    assert.isTrue(Object.hasOwn(kept.extraArgs ?? {}, "chrome"));
+    assert.isFalse(Object.hasOwn(kept.extraArgs ?? {}, "no-chrome"));
+    // An explicit --chrome launch arg still wins.
+    const explicit = ClaudeAdapterV2.makeClaudeQueryOptions({
+      ...base,
+      hideClaudeInChrome: true,
+      settings: { ...DEFAULT_CLAUDE_SETTINGS, launchArgs: "--chrome" },
+    });
+    assert.isTrue(Object.hasOwn(explicit.extraArgs ?? {}, "chrome"));
+    assert.isFalse(Object.hasOwn(explicit.extraArgs ?? {}, "no-chrome"));
+  });
+
   it("preserves an explicit omitted thinking display", () => {
     const options = ClaudeAdapterV2.makeClaudeQueryOptions({
       modelSelection: CLAUDE_TEST_MODEL_SELECTION,
@@ -2392,6 +2425,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     readonly close?: (sdkMessages: Queue.Queue<SDKMessage>) => Effect.Effect<void>;
     readonly interrupt?: Effect.Effect<void>;
     readonly environment?: NodeJS.ProcessEnv;
+    readonly browserExtensionPairingFile?: string;
   }) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -2424,6 +2458,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
         settings: options?.settings ?? DEFAULT_CLAUDE_SETTINGS,
         environment: options?.environment ?? {},
         attachmentsDir,
+        ...(options?.browserExtensionPairingFile === undefined
+          ? {}
+          : { browserExtensionPairingFile: options.browserExtensionPairingFile }),
         fileSystem,
         path: yield* Path.Path,
         crypto: yield* Crypto.Crypto,
@@ -2533,6 +2570,76 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       };
     });
   const makeWakeHarness = makeWakeHarnessWithOptions();
+
+  it.effect.each([
+    { name: "paired and preferred", paired: true, prefer: undefined, browser: true, hidden: true },
+    { name: "paired, switch off", paired: true, prefer: false, browser: true, hidden: false },
+    {
+      name: "code shown but never connected",
+      paired: false,
+      prefer: true,
+      browser: true,
+      hidden: false,
+    },
+    { name: "no pairing file", paired: null, prefer: true, browser: true, hidden: false },
+    // Without SpecWithCode's chrome_* tools the thread keeps Claude in Chrome.
+    {
+      name: "paired, browser access off",
+      paired: true,
+      prefer: true,
+      browser: false,
+      hidden: false,
+    },
+    { name: "paired, no studio MCP", paired: true, prefer: true, browser: null, hidden: false },
+  ] as const)("hides Claude in Chrome only when SpecWithCode Browser is paired ($name)", (c) =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const stateDir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "studio-pairing-" });
+      const pairingFile = path.join(stateDir, "pairing.json");
+      if (c.paired !== null)
+        yield* fileSystem.writeFileString(
+          pairingFile,
+          JSON.stringify({
+            token: "t".repeat(43),
+            ...(c.paired ? { connectedAt: "2026-10-23T12:00:00.000Z" } : {}),
+          }),
+        );
+      const harness = yield* makeWakeHarnessWithOptions({
+        browserExtensionPairingFile: pairingFile,
+      });
+      if (c.browser !== null) {
+        McpProviderSession.setMcpProviderSession({
+          environmentId: EnvironmentId.make(`environment-${harness.threadId}`),
+          threadId: harness.threadId,
+          providerSessionId: `mcp-session-${harness.threadId}`,
+          providerInstanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
+          endpoint: "http://127.0.0.1:43123/mcp",
+          authorizationHeader: "Bearer secret-claude-token",
+          browserToolsAvailable: c.browser,
+        });
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => McpProviderSession.clearMcpProviderSession(harness.threadId)),
+        );
+      }
+      yield* harness.runtime.startTurn(
+        makeClaudeTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("chrome-routing"),
+          text: "Hello",
+          attachments: [],
+          runtimePolicy: ProviderAdapterV2RuntimePolicy.make({
+            ...CLAUDE_TEST_RUNTIME_POLICY,
+            ...(c.prefer === undefined ? {} : { preferSpecWithCodeBrowser: c.prefer }),
+          }),
+        }),
+      );
+      const extraArgs = harness.getOpenedOptions()?.extraArgs ?? {};
+      assert.equal(Object.hasOwn(extraArgs, "no-chrome"), c.hidden);
+    }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+  );
 
   it.effect("starts Claude Code with its thread's SpecWeave variables over inherited ones", () =>
     Effect.gen(function* () {
@@ -3244,7 +3351,10 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       if (terminal.status !== "failed") return;
       assert.include(terminal.failure.message, "run `claude auth login`");
       assert.include(terminal.failure.message, configDir);
-      assert.include(terminal.failure.message, cwd);
+      // The message names the resolved, JSON-quoted folder; on Windows that
+      // carries a drive letter and escaped backslashes.
+      const path = yield* Path.Path;
+      assert.include(terminal.failure.message, JSON.stringify(path.resolve(cwd)));
       assert.notInclude(terminal.failure.message, "repeated API errors");
     }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
   );

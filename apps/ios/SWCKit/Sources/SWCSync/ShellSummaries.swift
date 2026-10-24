@@ -63,8 +63,7 @@ public enum ShellSummaries {
     var aide: ProjectSummary?
     var archivedAide: ProjectSummary?
     var projects: [ProjectSummary] = []
-    var linked: [String: [LinkedCopy]] = [:]
-    var linkedOrder: [String] = []
+    var copies: [LinkedCopy] = []
     var threadsByProject: [ProjectRef: [ThreadSummary]] = [:]
     var all: [ThreadSummary] = []
 
@@ -102,21 +101,19 @@ public enum ShellSummaries {
           continue
         } else {
           summary.isPinned = ProjectPinning.isPinned(project, environmentId: machine.environmentId, orders: orders)
-          if let logical = project.workspaceSettings?.logicalProject {
-            if linked[logical.id] == nil { linkedOrder.append(logical.id) }
-            linked[logical.id, default: []].append(LinkedCopy(project: project, summary: summary, threads: threads, lastSeenAt: machine.lastSeenAt))
-          } else {
-            projects.append(summary)
-          }
+          copies.append(LinkedCopy(project: project, summary: summary, threads: threads, lastSeenAt: machine.lastSeenAt))
         }
       }
     }
 
-    for id in linkedOrder {
-      guard let copies = linked[id] else { continue }
-      let merged = merge(copies)
+    for group in sameProjectGroups(copies) {
+      if group.count == 1, group[0].project.workspaceSettings?.logicalProject == nil {
+        projects.append(group[0].summary)
+        continue
+      }
+      let merged = merge(group)
       projects.append(merged.summary)
-      for member in copies { threadsByProject[member.summary.ref] = merged.threads }
+      for member in group { threadsByProject[member.summary.ref] = merged.threads }
     }
 
     projects.sort { a, b in
@@ -175,6 +172,59 @@ public enum ShellSummaries {
     return placement
   }
 
+  // MARK: - One row per project
+
+  /// The keys that show two project records are the same project: an explicit
+  /// logical project, or the exact same folder on the same machine.
+  /// Separate checkouts or worktrees of the same repository never merge
+  /// solely because remotes match. Names never decide.
+  static func sameProjectKeys(_ project: ProjectShell, environmentId: String) -> [String] {
+    var keys: [String] = []
+    if let logical = project.workspaceSettings?.logicalProject { keys.append("logical:\(logical.id)") }
+    let root = ProjectPinning.normalizePath(project.workspaceRoot)
+    if !root.isEmpty { keys.append("folder:\(environmentId):\(root)") }
+    return keys
+  }
+
+  /// Groups records of the same project, from one machine or several, so the
+  /// phone lists each project once. A check's copies group apart from the
+  /// person's own, so they stay under Automated. Only the display merges:
+  /// every record, its threads and its coordinator stay as they are.
+  static func sameProjectGroups(_ copies: [LinkedCopy]) -> [[LinkedCopy]] {
+    var parent = Array(copies.indices)
+    func find(_ index: Int) -> Int {
+      var index = index
+      while parent[index] != index {
+        parent[index] = parent[parent[index]]
+        index = parent[index]
+      }
+      return index
+    }
+    var owner: [String: Int] = [:]
+    for (index, copy) in copies.enumerated() {
+      let side = copy.summary.isAutomated ? "automated" : "user"
+      for key in sameProjectKeys(copy.project, environmentId: copy.summary.ref.environmentId) {
+        // Linked copies are one project whoever made them; a shared
+        // folder merges only copies on the same side.
+        let scoped = key.hasPrefix("logical:") ? key : "\(side)|\(key)"
+        if let first = owner[scoped] {
+          let a = find(first), b = find(index)
+          if a != b { parent[max(a, b)] = min(a, b) }
+        } else {
+          owner[scoped] = index
+        }
+      }
+    }
+    var groups: [Int: [LinkedCopy]] = [:]
+    var order: [Int] = []
+    for index in copies.indices {
+      let root = find(index)
+      if groups[root] == nil { order.append(root) }
+      groups[root, default: []].append(copies[index])
+    }
+    return order.compactMap { groups[$0] }
+  }
+
   // MARK: - Projects linked across machines
 
   struct LinkedCopy {
@@ -184,14 +234,26 @@ public enum ShellSummaries {
     var lastSeenAt: Date?
   }
 
-  /// One row for a project linked across machines. The row opens the member
-  /// whose coordinator is active, chosen as the web's `logicalCoordinator`
-  /// does; it never fails over to another machine on its own.
+  /// One row for a project linked across machines or registered twice. The row
+  /// opens the member whose coordinator is active, chosen as the web's
+  /// `logicalCoordinator` does; without one, the online linked copy with the
+  /// most recent thread.
   static func merge(_ copies: [LinkedCopy]) -> (summary: ProjectSummary, threads: [ThreadSummary]) {
-    let coordinator = activeCoordinator(copies)
-    let primary = coordinator ?? copies.first { $0.summary.machineOnline } ?? copies[0]
+    // The row's linked project: the one most of its copies share. Copies of the same
+    // folder that were never linked sit in the row without being linked to it.
+    let logicalIds = copies.compactMap { $0.project.workspaceSettings?.logicalProject?.id }
+    let counts = Dictionary(logicalIds.map { ($0, 1) }, uniquingKeysWith: +)
+    let logicalId = logicalIds.first { counts[$0] == counts.values.max() }
+    let linkedCopies = copies.filter { $0.project.workspaceSettings?.logicalProject?.id == logicalId && logicalId != nil }
+    let coordinator = activeCoordinator(linkedCopies)
+    // Without an active coordinator, the reachable linked copy worked in most
+    // recently; an unlinked same-folder copy leads only a row with no linked copies.
+    let latest = { (copy: LinkedCopy) in copy.threads.map(\.updatedAt).max() ?? .distantPast }
+    let online = (linkedCopies.isEmpty ? copies : linkedCopies).filter { $0.summary.machineOnline }
+    let busiest = online.max { latest($0) < latest($1) }
+    let primary = coordinator ?? busiest ?? linkedCopies.first ?? copies[0]
     let members = ([primary] + copies.filter { $0.summary.ref != primary.summary.ref }).map { copy in
-      ProjectMember(ref: copy.summary.ref, machineLabel: copy.summary.machineLabel, machineOnline: copy.summary.machineOnline, lastSeenAt: copy.lastSeenAt, isCoordinator: copy.summary.ref == coordinator?.summary.ref)
+      ProjectMember(ref: copy.summary.ref, machineLabel: copy.summary.machineLabel, machineOnline: copy.summary.machineOnline, lastSeenAt: copy.lastSeenAt, isCoordinator: copy.summary.ref == coordinator?.summary.ref, isLinked: logicalId != nil && copy.project.workspaceSettings?.logicalProject?.id == logicalId)
     }
     let threads = sortThreads(copies.flatMap(\.threads))
     var summary = primary.summary

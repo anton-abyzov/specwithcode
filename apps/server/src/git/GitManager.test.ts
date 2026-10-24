@@ -73,6 +73,7 @@ import * as GitManager from "./GitManager.ts";
 
 const encodeCliJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 const decodeForgejoPullRequest = Schema.decodeEffect(ForgejoPullRequestSchema);
+const GIT_ACTION_TIMEOUT_MS = process.platform === "win32" ? 60_000 : 20_000;
 
 interface FakeGhScenario {
   prListSequence?: string[];
@@ -2193,7 +2194,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
           "pr list --head statemachine --state all --limit 100 --json number,title,url,baseRefName,headRefName,state,isDraft,mergedAt,closedAt,updatedAt,isCrossRepository,headRepository,headRepositoryOwner",
         );
       }),
-    20_000,
+    GIT_ACTION_TIMEOUT_MS,
   );
 
   it.effect(
@@ -2258,7 +2259,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
           "pr list --head main --state all --limit 100 --json number,title,url,baseRefName,headRefName,state,isDraft,mergedAt,closedAt,updatedAt,isCrossRepository,headRepository,headRepositoryOwner",
         );
       }),
-    20_000,
+    GIT_ACTION_TIMEOUT_MS,
   );
 
   it.effect(
@@ -2345,7 +2346,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
           ),
         ).toBe(false);
       }),
-    20_000,
+    GIT_ACTION_TIMEOUT_MS,
   );
 
   it.effect("status returns merged PR state when latest PR was merged", () =>
@@ -3867,62 +3868,59 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
     }),
   );
 
-  it.effect(
-    "returns existing cross-repo PR metadata found under the bare branch name",
-    () =>
-      Effect.gen(function* () {
-        const repoDir = yield* makeTempDir("studio-git-manager-");
-        yield* initRepo(repoDir);
-        yield* runGit(repoDir, ["checkout", "-b", "statemachine"]);
-        const forkDir = yield* createBareRemote();
-        yield* runGit(repoDir, ["remote", "add", "fork-seed", forkDir]);
-        yield* runGit(repoDir, ["push", "-u", "fork-seed", "statemachine"]);
-        yield* configureVisibleRemoteUrlWithLocalRewrite(
-          repoDir,
-          "fork-seed",
-          "git@github.com:octocat/studio.git",
-          forkDir,
-        );
+  it.effect("returns existing cross-repo PR metadata found under the bare branch name", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("studio-git-manager-");
+      yield* initRepo(repoDir);
+      yield* runGit(repoDir, ["checkout", "-b", "statemachine"]);
+      const forkDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "fork-seed", forkDir]);
+      yield* runGit(repoDir, ["push", "-u", "fork-seed", "statemachine"]);
+      yield* configureVisibleRemoteUrlWithLocalRewrite(
+        repoDir,
+        "fork-seed",
+        "git@github.com:octocat/studio.git",
+        forkDir,
+      );
 
-        const { manager, ghCalls } = yield* makeManager({
-          ghScenario: {
-            prListSequence: [
-              JSON.stringify([
-                {
-                  number: 142,
-                  title: "Existing fork PR",
-                  url: "https://github.com/acme/studio/pull/142",
-                  baseRefName: "main",
-                  headRefName: "statemachine",
-                  state: "OPEN",
-                  isCrossRepository: true,
-                  headRepository: {
-                    nameWithOwner: "octocat/studio",
-                  },
-                  headRepositoryOwner: {
-                    login: "octocat",
-                  },
+      const { manager, ghCalls } = yield* makeManager({
+        ghScenario: {
+          prListSequence: [
+            JSON.stringify([
+              {
+                number: 142,
+                title: "Existing fork PR",
+                url: "https://github.com/acme/studio/pull/142",
+                baseRefName: "main",
+                headRefName: "statemachine",
+                state: "OPEN",
+                isCrossRepository: true,
+                headRepository: {
+                  nameWithOwner: "octocat/studio",
                 },
-              ]),
-            ],
-          },
-        });
+                headRepositoryOwner: {
+                  login: "octocat",
+                },
+              },
+            ]),
+          ],
+        },
+      });
 
-        const result = yield* runStackedAction(manager, {
-          cwd: repoDir,
-          action: "commit_push_pr",
-        });
+      const result = yield* runStackedAction(manager, {
+        cwd: repoDir,
+        action: "commit_push_pr",
+      });
 
-        expect(result.pr.status).toBe("opened_existing");
-        expect(result.pr.number).toBe(142);
-        expect(
-          ghCalls.some((call) =>
-            call.includes("pr list --head statemachine --state open --limit 100"),
-          ),
-        ).toBe(true);
-        expect(ghCalls.some((call) => call.startsWith("pr create "))).toBe(false);
-      }),
-    12_000,
+      expect(result.pr.status).toBe("opened_existing");
+      expect(result.pr.number).toBe(142);
+      expect(
+        ghCalls.some((call) =>
+          call.includes("pr list --head statemachine --state open --limit 100"),
+        ),
+      ).toBe(true);
+      expect(ghCalls.some((call) => call.startsWith("pr create "))).toBe(false);
+    }),
   );
 
   it.effect(
@@ -3996,134 +3994,126 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
           false,
         );
       }),
-    20_000,
+    GIT_ACTION_TIMEOUT_MS,
   );
 
-  it.effect(
-    "picks the fork PR among same-named branches from other repositories",
-    () =>
-      Effect.gen(function* () {
-        const repoDir = yield* makeTempDir("studio-git-manager-");
-        yield* initRepo(repoDir);
-        yield* runGit(repoDir, ["checkout", "-b", "statemachine"]);
-        const forkDir = yield* createBareRemote();
-        yield* runGit(repoDir, ["remote", "add", "fork-seed", forkDir]);
-        yield* runGit(repoDir, ["push", "-u", "fork-seed", "statemachine"]);
-        yield* runGit(repoDir, ["checkout", "-b", "studio/pr-142/statemachine"]);
-        yield* runGit(repoDir, ["branch", "--set-upstream-to", "fork-seed/statemachine"]);
-        yield* configureVisibleRemoteUrlWithLocalRewrite(
-          repoDir,
-          "fork-seed",
-          "git@github.com:octocat/studio.git",
-          forkDir,
-        );
+  it.effect("picks the fork PR among same-named branches from other repositories", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("studio-git-manager-");
+      yield* initRepo(repoDir);
+      yield* runGit(repoDir, ["checkout", "-b", "statemachine"]);
+      const forkDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "fork-seed", forkDir]);
+      yield* runGit(repoDir, ["push", "-u", "fork-seed", "statemachine"]);
+      yield* runGit(repoDir, ["checkout", "-b", "studio/pr-142/statemachine"]);
+      yield* runGit(repoDir, ["branch", "--set-upstream-to", "fork-seed/statemachine"]);
+      yield* configureVisibleRemoteUrlWithLocalRewrite(
+        repoDir,
+        "fork-seed",
+        "git@github.com:octocat/studio.git",
+        forkDir,
+      );
 
-        const { manager, ghCalls } = yield* makeManager({
-          ghScenario: {
-            prListByHeadSelector: {
-              "studio/pr-142/statemachine": JSON.stringify([]),
-              statemachine: JSON.stringify([
-                {
-                  number: 41,
-                  title: "Unrelated same-repo PR",
-                  url: "https://github.com/acme/studio/pull/41",
-                  baseRefName: "main",
-                  headRefName: "statemachine",
+      const { manager, ghCalls } = yield* makeManager({
+        ghScenario: {
+          prListByHeadSelector: {
+            "studio/pr-142/statemachine": JSON.stringify([]),
+            statemachine: JSON.stringify([
+              {
+                number: 41,
+                title: "Unrelated same-repo PR",
+                url: "https://github.com/acme/studio/pull/41",
+                baseRefName: "main",
+                headRefName: "statemachine",
+              },
+              {
+                number: 142,
+                title: "Existing fork PR",
+                url: "https://github.com/acme/studio/pull/142",
+                baseRefName: "main",
+                headRefName: "statemachine",
+                state: "OPEN",
+                isCrossRepository: true,
+                headRepository: {
+                  nameWithOwner: "octocat/studio",
                 },
-                {
-                  number: 142,
-                  title: "Existing fork PR",
-                  url: "https://github.com/acme/studio/pull/142",
-                  baseRefName: "main",
-                  headRefName: "statemachine",
-                  state: "OPEN",
-                  isCrossRepository: true,
-                  headRepository: {
-                    nameWithOwner: "octocat/studio",
-                  },
-                  headRepositoryOwner: {
-                    login: "octocat",
-                  },
+                headRepositoryOwner: {
+                  login: "octocat",
                 },
-              ]),
-            },
+              },
+            ]),
           },
-        });
+        },
+      });
 
-        const result = yield* runStackedAction(manager, {
-          cwd: repoDir,
-          action: "commit_push_pr",
-        });
+      const result = yield* runStackedAction(manager, {
+        cwd: repoDir,
+        action: "commit_push_pr",
+      });
 
-        expect(result.pr.status).toBe("opened_existing");
-        expect(result.pr.number).toBe(142);
-        expect(
-          ghCalls.some((call) => /--head [^ ]*:/u.test(call) && call.startsWith("pr list")),
-        ).toBe(false);
-        expect(ghCalls.some((call) => call.startsWith("pr create "))).toBe(false);
-      }),
-    12_000,
+      expect(result.pr.status).toBe("opened_existing");
+      expect(result.pr.number).toBe(142);
+      expect(
+        ghCalls.some((call) => /--head [^ ]*:/u.test(call) && call.startsWith("pr list")),
+      ).toBe(false);
+      expect(ghCalls.some((call) => call.startsWith("pr create "))).toBe(false);
+    }),
   );
 
-  it.effect(
-    "stops probing head selectors after finding an existing PR",
-    () =>
-      Effect.gen(function* () {
-        const repoDir = yield* makeTempDir("studio-git-manager-");
-        yield* initRepo(repoDir);
-        yield* runGit(repoDir, ["checkout", "-b", "statemachine"]);
-        const forkDir = yield* createBareRemote();
-        yield* runGit(repoDir, ["remote", "add", "fork-seed", forkDir]);
-        yield* runGit(repoDir, ["push", "-u", "fork-seed", "statemachine"]);
-        yield* runGit(repoDir, ["checkout", "-b", "studio/pr-142/statemachine"]);
-        yield* runGit(repoDir, ["branch", "--set-upstream-to", "fork-seed/statemachine"]);
-        yield* configureVisibleRemoteUrlWithLocalRewrite(
-          repoDir,
-          "fork-seed",
-          "git@github.com:octocat/studio.git",
-          forkDir,
-        );
+  it.effect("stops probing head selectors after finding an existing PR", () =>
+    Effect.gen(function* () {
+      const repoDir = yield* makeTempDir("studio-git-manager-");
+      yield* initRepo(repoDir);
+      yield* runGit(repoDir, ["checkout", "-b", "statemachine"]);
+      const forkDir = yield* createBareRemote();
+      yield* runGit(repoDir, ["remote", "add", "fork-seed", forkDir]);
+      yield* runGit(repoDir, ["push", "-u", "fork-seed", "statemachine"]);
+      yield* runGit(repoDir, ["checkout", "-b", "studio/pr-142/statemachine"]);
+      yield* runGit(repoDir, ["branch", "--set-upstream-to", "fork-seed/statemachine"]);
+      yield* configureVisibleRemoteUrlWithLocalRewrite(
+        repoDir,
+        "fork-seed",
+        "git@github.com:octocat/studio.git",
+        forkDir,
+      );
 
-        const { manager, ghCalls } = yield* makeManager({
-          ghScenario: {
-            prListByHeadSelector: {
-              statemachine: JSON.stringify([
-                {
-                  number: 142,
-                  title: "Existing fork PR",
-                  url: "https://github.com/acme/studio/pull/142",
-                  baseRefName: "main",
-                  headRefName: "statemachine",
-                  state: "OPEN",
-                  isCrossRepository: true,
-                  headRepository: {
-                    nameWithOwner: "octocat/studio",
-                  },
-                  headRepositoryOwner: {
-                    login: "octocat",
-                  },
+      const { manager, ghCalls } = yield* makeManager({
+        ghScenario: {
+          prListByHeadSelector: {
+            statemachine: JSON.stringify([
+              {
+                number: 142,
+                title: "Existing fork PR",
+                url: "https://github.com/acme/studio/pull/142",
+                baseRefName: "main",
+                headRefName: "statemachine",
+                state: "OPEN",
+                isCrossRepository: true,
+                headRepository: {
+                  nameWithOwner: "octocat/studio",
                 },
-              ]),
-              "studio/pr-142/statemachine": JSON.stringify([]),
-            },
+                headRepositoryOwner: {
+                  login: "octocat",
+                },
+              },
+            ]),
+            "studio/pr-142/statemachine": JSON.stringify([]),
           },
-        });
+        },
+      });
 
-        const result = yield* runStackedAction(manager, {
-          cwd: repoDir,
-          action: "commit_push_pr",
-        });
+      const result = yield* runStackedAction(manager, {
+        cwd: repoDir,
+        action: "commit_push_pr",
+      });
 
-        expect(result.pr.status).toBe("opened_existing");
-        expect(result.pr.number).toBe(142);
+      expect(result.pr.status).toBe("opened_existing");
+      expect(result.pr.number).toBe(142);
 
-        const openLookupCalls = ghCalls.filter((call) => call.includes("--state open --limit 100"));
-        expect(openLookupCalls).toHaveLength(1);
-        expect(openLookupCalls[0]).toContain(
-          "pr list --head statemachine --state open --limit 100",
-        );
-      }),
-    12_000,
+      const openLookupCalls = ghCalls.filter((call) => call.includes("--state open --limit 100"));
+      expect(openLookupCalls).toHaveLength(1);
+      expect(openLookupCalls[0]).toContain("pr list --head statemachine --state open --limit 100");
+    }),
   );
 
   it.effect(
@@ -4162,7 +4152,7 @@ it.layer(layerGitManagerTest)("GitManager", (it) => {
         expect(result.pr.number).toBe(142);
         expect(ghCalls.some((call) => call.startsWith("pr create "))).toBe(true);
       }),
-    20_000,
+    GIT_ACTION_TIMEOUT_MS,
   );
 
   it.effect("matches mounted Forgejo heads without confusing forks sharing a branch", () =>

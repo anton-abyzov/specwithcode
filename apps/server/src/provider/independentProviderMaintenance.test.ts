@@ -75,20 +75,32 @@ afterEach(() => {
   for (const home of homes.splice(0)) NodeFS.rmSync(home, { recursive: true, force: true });
 });
 
+// The private wrappers are `#!/bin/sh` scripts, a POSIX-only install. The codex
+// one execs an absolute node path, which can only be verified without a `\`.
+const posixWrapperOnly = process.platform === "win32";
 describe("independent private provider ownership", () => {
-  it.each(["codex", "claudeAgent"])(
+  it.skipIf(posixWrapperOnly).each(["codex"])(
     "recognizes the exact pinned %s wrapper without executing it",
     async (provider) => {
       expect(await inspect(fixture(provider))).toBe("verified");
     },
   );
-  it("keeps a symlink alias to the owned wrapper in the same manual boundary", async () => {
-    const value = fixture(),
-      alias = NodePath.join(value.home, "alias-codex");
-    NodeFS.symlinkSync(value.wrapper, alias);
-    value.context.resolvedCommandPath = alias;
-    expect(await inspect(value)).toBe("verified");
-  });
+  it.each(["claudeAgent"])(
+    "recognizes the exact pinned %s wrapper without executing it",
+    async (provider) => {
+      expect(await inspect(fixture(provider))).toBe("verified");
+    },
+  );
+  it.skipIf(posixWrapperOnly)(
+    "keeps a symlink alias to the owned wrapper in the same manual boundary",
+    async () => {
+      const value = fixture(),
+        alias = NodePath.join(value.home, "alias-codex");
+      NodeFS.symlinkSync(value.wrapper, alias);
+      value.context.resolvedCommandPath = alias;
+      expect(await inspect(value)).toBe("verified");
+    },
+  );
   it("does not claim unrelated custom, native or global installations", async () => {
     const value = fixture();
     for (const path of [
@@ -153,7 +165,8 @@ describe("independent private provider ownership", () => {
   });
 });
 
-describe("staged fleet Codex ownership", () => {
+// Staged fleet releases install the same `#!/bin/sh` wrapper; Windows has none.
+describe.skipIf(posixWrapperOnly)("staged fleet Codex ownership", () => {
   function stagedFixture() {
     const value = fixture();
     const release = NodePath.join(

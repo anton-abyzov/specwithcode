@@ -325,8 +325,11 @@ describe("FleetWorkerGrants", () => {
       expect(credential.accessToken).toBe("mcp-token-auto-1");
       const config = yield* ServerConfig.ServerConfig;
       const file = NodePath.join(config.secretsDir, "fleet-worker-grant-m1.bin");
-      expect(NodeFS.statSync(file).mode & 0o777).toBe(0o600);
-      expect(NodeFS.statSync(config.secretsDir).mode & 0o777).toBe(0o700);
+      // Windows has no POSIX mode bits; the profile folder's ACL keeps the file private.
+      if (process.platform !== "win32") {
+        expect(NodeFS.statSync(file).mode & 0o777).toBe(0o600);
+        expect(NodeFS.statSync(config.secretsDir).mode & 0o777).toBe(0o700);
+      }
       expect(NodeFS.readFileSync(file, "utf8")).toContain('"environmentId":"env-m1"');
       expect(JSON.stringify(workers)).not.toContain("mcp-token");
       expect(logs.join("\n")).not.toContain("mcp-token");

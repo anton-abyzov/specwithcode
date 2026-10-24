@@ -218,7 +218,11 @@ const fixture = (command: string, options: { noScript?: boolean; writeFailure?: 
     };
   });
 
-it.effect(
+// These run the POSIX `( ... ); printf sentinel` completion wrapper through a real
+// /bin/sh, which only non-Windows hosts use; Windows hosts wrap for PowerShell.
+const posixShellIt = it.effect.skipIf(process.platform === "win32");
+
+posixShellIt(
   "runs a persisted setup script in its worktree with isolated project environment and real exit status",
   () =>
     Effect.gen(function* () {
@@ -242,7 +246,7 @@ it.effect(
     }).pipe(Effect.provide(layer)),
 );
 
-it.effect(
+posixShellIt(
   "returns nonzero shell status without closing the failed terminal and caps forwarded output",
   () =>
     Effect.gen(function* () {
@@ -264,7 +268,7 @@ it.effect(
     }).pipe(Effect.provide(layer)),
 );
 
-it.effect(
+posixShellIt(
   "reports unknown completion when the real shell terminates before printing its sentinel",
   () =>
     Effect.gen(function* () {
@@ -282,7 +286,7 @@ it.effect(
     }).pipe(Effect.provide(layer)),
 );
 
-it.effect(
+posixShellIt(
   "looks up the persisted project by workspace when ID is missing and executes unobserved setup",
   () =>
     Effect.gen(function* () {

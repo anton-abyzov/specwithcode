@@ -86,6 +86,23 @@ describe("extractTerminalLinks", () => {
     ]);
   });
 
+  it.each([
+    "src\\main.ts:12:3",
+    ".\\src\\main.ts:12",
+    "..\\src\\main.ts",
+    "~\\project\\main.ts",
+    "\\\\server\\share\\main.ts:12",
+    "C:\\Users\\dev\\项目\\main.ts:12",
+    "项目/组件/main.ts:12",
+    "проект\\исходники\\main.ts:12",
+    "cafe\u0301/components/main.ts:12",
+  ])("finds the whole Windows or Unicode path %s", (path) => {
+    const line = `error at ${path}: cannot compile`;
+    expect(extractTerminalLinks(line)).toEqual([
+      { kind: "path", text: path, start: 9, end: 9 + path.length },
+    ]);
+  });
+
   it("trims trailing punctuation from Windows forward-slash paths", () => {
     const line = "(C:/tmp/x.ts).";
     expect(extractTerminalLinks(line)).toEqual([
@@ -171,6 +188,32 @@ describe("collectWrappedTerminalLinkLine", () => {
 });
 
 describe("resolvePathLinkTarget", () => {
+  it.each([
+    ["src\\main.ts:12:3", "C:\\Users\\dev\\project\\src\\main.ts:12:3"],
+    [".\\src\\main.ts:12", "C:\\Users\\dev\\project\\src\\main.ts:12"],
+    ["..\\shared\\main.ts", "C:\\Users\\dev\\shared\\main.ts"],
+  ])("resolves Windows relative path %s", (path, expected) => {
+    expect(resolvePathLinkTarget(path, "C:\\Users\\dev\\project")).toBe(expected);
+  });
+
+  it.each(["c:\\users\\dev\\project", "c:/users/dev/project"])(
+    "expands both home path separators from %s without case-sensitive matching",
+    (cwd) => {
+      expect(resolvePathLinkTarget("~/src/main.ts:12", cwd)).toBe(
+        "c:\\users\\dev\\src\\main.ts:12",
+      );
+      expect(resolvePathLinkTarget("~\\src\\main.ts:12", cwd)).toBe(
+        "c:\\users\\dev\\src\\main.ts:12",
+      );
+    },
+  );
+
+  it("resolves relative paths with a forward-slash Windows cwd", () => {
+    expect(resolvePathLinkTarget("src/main.ts:12", "C:/Users/dev/project")).toBe(
+      "C:\\Users\\dev\\project\\src\\main.ts:12",
+    );
+  });
+
   it("resolves relative paths against cwd", () => {
     expect(
       resolvePathLinkTarget("src/components/ThreadTerminalDrawer.tsx:42:7", "/Users/dev/project"),

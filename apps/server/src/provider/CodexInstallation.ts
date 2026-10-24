@@ -5,6 +5,7 @@ import {
   HostProcessEnvironment,
   HostProcessPlatform,
 } from "@specweave-studio/shared/hostProcess";
+import { cliArchiveTarCommand } from "@specweave-studio/shared/cliRelease";
 import { resolveCommandPath, resolveSpawnCommand } from "@specweave-studio/shared/shell";
 import * as Clock from "effect/Clock";
 import * as Cause from "effect/Cause";
@@ -179,6 +180,9 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
   const managedDirectory = path.join(options.baseDir, "tools", "codex");
   const activePath = path.join(managedDirectory, "active.json");
   const executableName = platform === "win32" ? "codex.exe" : "codex";
+  // A Git-for-Windows GNU tar earlier on PATH reads `D:\...` as a remote host,
+  // so Windows extracts with the System32 bsdtar by absolute path.
+  const tarCommand = cliArchiveTarCommand(platform, environment);
   const gate = yield* Semaphore.make(1);
   let leases = 0;
   let running: { readonly operationId: string; readonly fiber: Fiber.Fiber<void> } | undefined;
@@ -515,8 +519,8 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
             message: "Extracting Codex.",
           }) satisfies ProviderInstallState,
       );
-      const entries = (yield* runCommand("tar", ["-tzf", archivePath])).trim().split("\n");
-      const types = (yield* runCommand("tar", ["-tvzf", archivePath])).trim().split("\n");
+      const entries = (yield* runCommand(tarCommand, ["-tzf", archivePath])).trim().split("\n");
+      const types = (yield* runCommand(tarCommand, ["-tvzf", archivePath])).trim().split("\n");
       if (
         entries.length > 10000 ||
         entries.length !== types.length ||
@@ -532,7 +536,7 @@ export const makeCodexInstallation = Effect.fn("makeCodexInstallation")(function
         })
       )
         return yield* installationError("extract", "The Codex archive contains unsafe entries.");
-      yield* runCommand("tar", ["-xzf", archivePath, "-C", runtime]);
+      yield* runCommand(tarCommand, ["-xzf", archivePath, "-C", runtime]);
       yield* SubscriptionRef.update(
         state,
         (current) =>

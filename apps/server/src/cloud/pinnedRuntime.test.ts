@@ -5,6 +5,8 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Fiber from "effect/Fiber";
 import * as Path from "effect/Path";
+import * as PlatformError from "effect/PlatformError";
+import * as TestClock from "effect/testing/TestClock";
 import { HttpClient, HttpClientResponse } from "effect/http";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
@@ -65,7 +67,103 @@ const extractingRunner = (fs: FileSystem.FileSystem, path: Path.Path, commands: 
       }),
   });
 
+const renameDenied = (path: string) =>
+  PlatformError.systemError({
+    _tag: "Unknown",
+    module: "FileSystem",
+    method: "rename",
+    pathOrDescriptor: path,
+    cause: Object.assign(new Error("EPERM, rename"), { code: "EPERM" }),
+  });
+
+// Fails the first `denials` publishing renames the way a scanner holding a
+// freshly extracted file makes Windows refuse them.
+const renameRefusedFirst = (fs: FileSystem.FileSystem, denials: number) => {
+  const state = { attempts: 0 };
+  const locked: FileSystem.FileSystem = {
+    ...fs,
+    rename: (from, to) =>
+      Effect.suspend(() => {
+        state.attempts += 1;
+        return state.attempts <= denials ? Effect.fail(renameDenied(to)) : fs.rename(from, to);
+      }),
+  };
+  return { locked, state };
+};
+
+const writingRunner = (fs: FileSystem.FileSystem, path: Path.Path, entry: string) =>
+  ProcessRunner.ProcessRunner.of({
+    run: (input) =>
+      Effect.gen(function* () {
+        const stagingDir = input.args[input.args.indexOf("-C") + 1]!;
+        yield* fs.writeFileString(path.join(stagingDir, entry), "runtime\n").pipe(Effect.orDie);
+        return {
+          stdout: "",
+          stderr: "",
+          code: ChildProcessSpawner.ExitCode(0),
+          timedOut: false,
+          stdoutTruncated: false,
+          stderrTruncated: false,
+          stdoutInvalidUtf8: false,
+          stderrInvalidUtf8: false,
+        };
+      }),
+  });
+
 it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
+  // Real time: the retry spaces its attempts with the clock.
+  it.effect("retries publishing a Windows runtime while a scanner holds the extracted files", () =>
+    TestClock.withLive(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "studio-pinned-win-retry-" });
+        const hex = yield* archiveHex(archiveBytes);
+        const { locked, state } = renameRefusedFirst(fs, 2);
+        const paths = yield* ensurePinnedRuntimeInstalled({
+          baseDir,
+          version,
+          fs: locked,
+          path,
+          platform: "win32",
+          arch: "x64",
+          httpClient: releaseHttpClient(`${hex}  studio-${version}-win32-x64.zip\n`),
+          releaseBaseUrl: "https://releases.example/download",
+          runner: writingRunner(fs, path, "specweave-studio.exe"),
+          validate: () => Effect.void,
+        });
+        assert.equal(state.attempts, 3);
+        assert.equal(yield* fs.readFileString(paths.sentinelPath), `${version}\n`);
+      }),
+    ),
+  );
+
+  // Real time: the retry spaces its attempts with the clock.
+  it.effect("does not retry a refused publish outside Windows", () =>
+    TestClock.withLive(
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "studio-pinned-no-retry-" });
+        const { locked, state } = renameRefusedFirst(fs, 1);
+        const result = yield* ensurePinnedRuntimeInstalled({
+          baseDir,
+          version,
+          fs: locked,
+          path,
+          platform: "linux",
+          arch: "x64",
+          httpClient: releaseHttpClient(yield* validChecksums),
+          releaseBaseUrl: "https://releases.example/download",
+          runner: writingRunner(fs, path, "specweave-studio"),
+          validate: () => Effect.void,
+        }).pipe(Effect.flip);
+        assert.equal(state.attempts, 1);
+        assert.include(result.message, "publishing the pinned runtime");
+      }),
+    ),
+  );
+
   it.effect("installs the verified release archive as the runtime executable", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
@@ -101,91 +199,97 @@ it.layer(NodeServices.layer)("ensurePinnedRuntimeInstalled", (it) => {
     }),
   );
 
-  it.effect("installs the release's Node bundle with a launcher that runs its bin.mjs", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "studio-pinned-bundle-" });
-      const bundleName = `studio-${version}-linux-x64-043e9db88a6e.tar.gz`;
-      const hex = yield* archiveHex(archiveBytes);
-      const requests: string[] = [];
-      const tarArgs: string[][] = [];
-      const runner = ProcessRunner.ProcessRunner.of({
-        run: (input) =>
-          Effect.gen(function* () {
-            tarArgs.push([...input.args]);
-            const stagingDir = input.args[input.args.indexOf("-C") + 1]!;
-            yield* fs
-              .writeFileString(
-                path.join(stagingDir, "bin.mjs"),
-                "console.log(`${process.env.STUDIO_CLI_NAME} v1.2.3 ${process.argv.slice(2).join(' ')}`);\n",
-              )
-              .pipe(Effect.orDie);
-            return {
-              stdout: "",
-              stderr: "",
-              code: ChildProcessSpawner.ExitCode(0),
-              timedOut: false,
-              stdoutTruncated: false,
-              stderrTruncated: false,
-              stdoutInvalidUtf8: false,
-              stderrInvalidUtf8: false,
-            };
-          }),
-      });
-      let launched = "";
-      const paths = yield* ensurePinnedRuntimeInstalled({
-        baseDir,
-        version,
-        fs,
-        path,
-        platform: "linux",
-        arch: "x64",
-        httpClient: releaseHttpClient(
-          `${hex}  studio-${version}-${"0".repeat(12)}.tar.gz\n${hex}  ${bundleName}\n`,
-          requests,
-        ),
-        releaseBaseUrl: "https://releases.example/download",
-        runner,
-        validate: (staging) =>
-          Effect.promise(async () => {
-            const { execFileSync } = await import("node:child_process");
-            launched = execFileSync(staging.entryPath, ["--version"], { encoding: "utf8" });
-          }),
-      });
-      assert.deepEqual(requests, [
-        `https://releases.example/download/v${version}/SHA256SUMS`,
-        `https://releases.example/download/v${version}/${bundleName}`,
-      ]);
-      // The bundle has its files at the archive root: nothing to strip.
-      assert.isFalse(tarArgs[0]!.includes("--strip-components=1"));
-      assert.equal(launched.trim(), "specweave-studio v1.2.3 --version");
-      assert.equal(yield* fs.readFileString(paths.sentinelPath), `${version}\n`);
-      assert.include(yield* fs.readFileString(paths.entryPath), "specwithcode-install launcher");
-    }),
+  // The Node bundle ships only for Linux and runs through a POSIX shell launcher.
+  it.effect.skipIf(process.platform === "win32")(
+    "installs the release's Node bundle with a launcher that runs its bin.mjs",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const baseDir = yield* fs.makeTempDirectoryScoped({ prefix: "studio-pinned-bundle-" });
+        const bundleName = `studio-${version}-linux-x64-043e9db88a6e.tar.gz`;
+        const hex = yield* archiveHex(archiveBytes);
+        const requests: string[] = [];
+        const tarArgs: string[][] = [];
+        const runner = ProcessRunner.ProcessRunner.of({
+          run: (input) =>
+            Effect.gen(function* () {
+              tarArgs.push([...input.args]);
+              const stagingDir = input.args[input.args.indexOf("-C") + 1]!;
+              yield* fs
+                .writeFileString(
+                  path.join(stagingDir, "bin.mjs"),
+                  "console.log(`${process.env.STUDIO_CLI_NAME} v1.2.3 ${process.argv.slice(2).join(' ')}`);\n",
+                )
+                .pipe(Effect.orDie);
+              return {
+                stdout: "",
+                stderr: "",
+                code: ChildProcessSpawner.ExitCode(0),
+                timedOut: false,
+                stdoutTruncated: false,
+                stderrTruncated: false,
+                stdoutInvalidUtf8: false,
+                stderrInvalidUtf8: false,
+              };
+            }),
+        });
+        let launched = "";
+        const paths = yield* ensurePinnedRuntimeInstalled({
+          baseDir,
+          version,
+          fs,
+          path,
+          platform: "linux",
+          arch: "x64",
+          httpClient: releaseHttpClient(
+            `${hex}  studio-${version}-${"0".repeat(12)}.tar.gz\n${hex}  ${bundleName}\n`,
+            requests,
+          ),
+          releaseBaseUrl: "https://releases.example/download",
+          runner,
+          validate: (staging) =>
+            Effect.promise(async () => {
+              const { execFileSync } = await import("node:child_process");
+              launched = execFileSync(staging.entryPath, ["--version"], { encoding: "utf8" });
+            }),
+        });
+        assert.deepEqual(requests, [
+          `https://releases.example/download/v${version}/SHA256SUMS`,
+          `https://releases.example/download/v${version}/${bundleName}`,
+        ]);
+        // The bundle has its files at the archive root: nothing to strip.
+        assert.isFalse(tarArgs[0]!.includes("--strip-components=1"));
+        assert.equal(launched.trim(), "specweave-studio v1.2.3 --version");
+        assert.equal(yield* fs.readFileString(paths.sentinelPath), `${version}\n`);
+        assert.include(yield* fs.readFileString(paths.entryPath), "specwithcode-install launcher");
+      }),
   );
 
-  it.effect("names the command a symlinked launcher was run as", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const dir = yield* fs.makeTempDirectoryScoped({ prefix: "studio-bundle-launcher-" });
-      yield* fs.writeFileString(
-        path.join(dir, "bin.mjs"),
-        "console.log(process.env.STUDIO_CLI_NAME);\n",
-      );
-      const entry = path.join(dir, "specweave-studio");
-      yield* fs.writeFileString(entry, nodeBundleLauncherScript(process.execPath, false));
-      yield* fs.chmod(entry, 0o755);
-      const link = path.join(dir, "specwithcode");
-      yield* fs.symlink(entry, link);
-      const output = yield* Effect.promise(async () => {
-        const { execFileSync } = await import("node:child_process");
-        return execFileSync(link, [], { encoding: "utf8", cwd: "/" });
-      });
-      assert.equal(output.trim(), "specwithcode");
-      assert.include(nodeBundleLauncherScript("/opt/it's/node", false), `'/opt/it'\\''s/node'`);
-    }),
+  // The Node bundle ships only for Linux and runs through a POSIX shell launcher.
+  it.effect.skipIf(process.platform === "win32")(
+    "names the command a symlinked launcher was run as",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const dir = yield* fs.makeTempDirectoryScoped({ prefix: "studio-bundle-launcher-" });
+        yield* fs.writeFileString(
+          path.join(dir, "bin.mjs"),
+          "console.log(process.env.STUDIO_CLI_NAME);\n",
+        );
+        const entry = path.join(dir, "specweave-studio");
+        yield* fs.writeFileString(entry, nodeBundleLauncherScript(process.execPath, false));
+        yield* fs.chmod(entry, 0o755);
+        const link = path.join(dir, "specwithcode");
+        yield* fs.symlink(entry, link);
+        const output = yield* Effect.promise(async () => {
+          const { execFileSync } = await import("node:child_process");
+          return execFileSync(link, [], { encoding: "utf8", cwd: "/" });
+        });
+        assert.equal(output.trim(), "specwithcode");
+        assert.include(nodeBundleLauncherScript("/opt/it's/node", false), `'/opt/it'\\''s/node'`);
+      }),
   );
 
   it.effect.each([true, false])(

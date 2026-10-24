@@ -1,9 +1,11 @@
+import { timingText } from "./status.js";
+
 const PHASE_TEXT = {
   not_paired: "Not paired",
   connecting: "Connecting…",
   connected: "Connected: agents can use this profile",
-  disconnected: "Not connected",
-  rejected: "Pairing code not accepted",
+  disconnected: "Not connected: agents cannot use this profile",
+  rejected: "Not connected: pairing code not accepted",
   paused: "Paused",
 };
 
@@ -16,9 +18,12 @@ function send(message) {
 async function refresh() {
   const response = await send({ type: "status" });
   const state = response?.state ?? { phase: "not_paired" };
-  $("status").textContent = PHASE_TEXT[state.phase] ?? state.phase;
-  $("status").dataset.phase = state.phase;
+  // During a retry the badge still says OFF, and so does the popup.
+  const shown = state.shownPhase ?? state.phase;
+  $("status").textContent = PHASE_TEXT[shown] ?? shown;
+  $("status").dataset.phase = shown;
   $("detail").textContent = state.message ?? "";
+  $("timing").textContent = timingText(state);
   const paired = state.phase !== "not_paired";
   $("paired").hidden = !paired;
   $("label-value").textContent = state.label || "Chrome";

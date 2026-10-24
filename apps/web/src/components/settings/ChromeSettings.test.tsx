@@ -219,6 +219,19 @@ describe("MachineChromeCard", () => {
     expect(text()).toContain("--claude-in-chrome-mcp");
   });
 
+  it("says Claude threads skip Claude in Chrome while SpecWithCode Browser is paired", async () => {
+    state.query = {
+      ...state.query,
+      data: {
+        ...status,
+        providers: [{ provider: "claude", route: "specwithcode_browser" }],
+      },
+    };
+    await render();
+    expect(text()).toContain("Off in threads: SpecWithCode Browser is paired");
+    expect(text()).not.toContain("Built in");
+  });
+
   it("tests the connection and shows the round trip result", async () => {
     state.command.mockResolvedValue({
       _tag: "Success",

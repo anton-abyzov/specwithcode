@@ -13,6 +13,8 @@
  *
  * @module project/AgentSessionScanner
  */
+// @effect-diagnostics-next-line nodeBuiltinImport:off - Effect FileSystem drops inodes past 2^53, which NTFS file ids usually are.
+import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 
 import {
@@ -608,24 +610,43 @@ function extractCwd(line: string): string | null {
   return null;
 }
 
-function transcriptIdentity(filePath: string, stats: FileSystem.File.Info) {
+/**
+ * Effect reports no inode when it exceeds 2^53, and NTFS file ids (sequence
+ * number above a 48-bit record index) usually do. Without one, a file
+ * replaced at the same path matches on size, mtime and the creation time NTFS
+ * tunnels to it, and directories fall back to case-folded paths, so fold the
+ * exact id into a safe integer instead.
+ */
+const exactInode = (filePath: string, stats: FileSystem.File.Info) =>
+  Option.isSome(stats.ino)
+    ? Effect.succeed<number | null>(stats.ino.value)
+    : Effect.promise(() =>
+        NodeFSP.stat(filePath, { bigint: true }).then(
+          ({ ino }) => (ino === 0n ? null : Number(BigInt.asUintN(53, ino ^ (ino >> 53n)))),
+          () => null,
+        ),
+      );
+
+const transcriptIdentity = Effect.fnUntraced(function* (
+  filePath: string,
+  stats: FileSystem.File.Info,
+) {
   return {
     filePath,
     size: Number(stats.size),
     mtimeMs: Option.match(stats.mtime, { onNone: () => null, onSome: (date) => date.getTime() }),
     device: stats.dev,
-    inode: Option.getOrNull(stats.ino),
+    inode: yield* exactInode(filePath, stats),
     birthtimeMs: Option.match(stats.birthtime, {
       onNone: () => null,
       onSome: (date) => date.getTime(),
     }),
   };
-}
+});
 
-function sameTranscriptIdentity(
-  left: ReturnType<typeof transcriptIdentity>,
-  right: ReturnType<typeof transcriptIdentity>,
-): boolean {
+type TranscriptIdentity = Effect.Success<ReturnType<typeof transcriptIdentity>>;
+
+function sameTranscriptIdentity(left: TranscriptIdentity, right: TranscriptIdentity): boolean {
   return (
     left.filePath === right.filePath &&
     left.size === right.size &&
@@ -669,13 +690,9 @@ export const make = Effect.gen(function* () {
   ) {
     const resolved = path.resolve(target);
     const stats = knownStats === undefined ? yield* statOption(resolved) : Option.some(knownStats);
-    if (
-      Option.isSome(stats) &&
-      Option.isSome(stats.value.ino) &&
-      Number.isSafeInteger(stats.value.ino.value) &&
-      stats.value.ino.value > 0
-    ) {
-      return `inode:${stats.value.dev}:${stats.value.ino.value}`;
+    const inode = Option.isSome(stats) ? yield* exactInode(resolved, stats.value) : null;
+    if (Option.isSome(stats) && inode !== null && Number.isSafeInteger(inode) && inode > 0) {
+      return `inode:${stats.value.dev}:${inode}`;
     }
     const realPath = yield* fileSystem
       .realPath(resolved)
@@ -814,7 +831,7 @@ export const make = Effect.gen(function* () {
    */
   const readTranscript = Effect.fn("AgentSessionScanner.readTranscript")(function* (
     filePath: string,
-    expected: ReturnType<typeof transcriptIdentity>,
+    expected: TranscriptIdentity,
     recordLimit: number,
     source: AgentSessionSource,
   ) {
@@ -824,7 +841,12 @@ export const make = Effect.gen(function* () {
       fileSystem.open(filePath, { flag: "r" }).pipe(
         Effect.flatMap((file) =>
           Effect.gen(function* () {
-            if (!sameTranscriptIdentity(expected, transcriptIdentity(filePath, yield* file.stat))) {
+            if (
+              !sameTranscriptIdentity(
+                expected,
+                yield* transcriptIdentity(filePath, yield* file.stat),
+              )
+            ) {
               return null;
             }
             const records: Array<DecodedTranscriptRecord> = [];
@@ -886,7 +908,10 @@ export const make = Effect.gen(function* () {
             }
 
             if (recordStarted && !(yield* Effect.try(finishRecord))) return null;
-            return sameTranscriptIdentity(expected, transcriptIdentity(filePath, yield* file.stat))
+            return sameTranscriptIdentity(
+              expected,
+              yield* transcriptIdentity(filePath, yield* file.stat),
+            )
               ? { records, recordCount }
               : null;
           }),
@@ -1402,7 +1427,7 @@ export const make = Effect.gen(function* () {
           if (Option.isNone(stats) || stats.value.type !== "File") {
             return Option.some<AgentSessionRecentThread>({ _tag: "Skipped" });
           }
-          const identity = transcriptIdentity(transcript.filePath, stats.value);
+          const identity = yield* transcriptIdentity(transcript.filePath, stats.value);
           const completedSource = completed?.find(
             (source) =>
               source.provider === candidate.source && sameTranscriptIdentity(source, identity),

@@ -78,7 +78,9 @@ export function handoffRef(threadId: string): string {
 async function repositoryRoot(cwd: string): Promise<string> {
   const result = await runGit(cwd, ["rev-parse", "--show-toplevel"], { allowFailure: true });
   if (result.code !== 0) throw new CheckpointError("not_a_repository", "Not a Git repository.");
-  return result.stdout.trim();
+  // Git prints the top level with forward slashes on Windows; resolve gives
+  // the platform's native form so callers can compare it with their paths.
+  return NodePath.resolve(result.stdout.trim());
 }
 
 /**

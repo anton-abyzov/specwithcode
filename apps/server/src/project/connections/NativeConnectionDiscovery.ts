@@ -97,32 +97,34 @@ export function otherToolFiles(
   platform: NodeJS.Platform,
   environment: Readonly<Record<string, string | undefined>>,
 ): ReadonlyArray<OtherToolFile> {
+  // Join with the separators of the platform the files live on.
+  const path = platform === "win32" ? NodePath.win32 : NodePath.posix;
   const desktopRoot =
     platform === "darwin"
-      ? NodePath.join(home, "Library", "Application Support")
+      ? path.join(home, "Library", "Application Support")
       : platform === "win32"
-        ? environment.APPDATA?.trim() || NodePath.join(home, "AppData", "Roaming")
-        : environment.XDG_CONFIG_HOME?.trim() || NodePath.join(home, ".config");
-  const xdg = environment.XDG_CONFIG_HOME?.trim() || NodePath.join(home, ".config");
+        ? environment.APPDATA?.trim() || path.join(home, "AppData", "Roaming")
+        : environment.XDG_CONFIG_HOME?.trim() || path.join(home, ".config");
+  const xdg = environment.XDG_CONFIG_HOME?.trim() || path.join(home, ".config");
   return [
     {
       tool: "claude-desktop",
-      path: NodePath.join(desktopRoot, "Claude", "claude_desktop_config.json"),
+      path: path.join(desktopRoot, "Claude", "claude_desktop_config.json"),
     },
     {
       tool: "gemini",
-      path: NodePath.join(environment.GEMINI_CLI_HOME?.trim() || home, ".gemini", "settings.json"),
+      path: path.join(environment.GEMINI_CLI_HOME?.trim() || home, ".gemini", "settings.json"),
     },
     {
       tool: "copilot",
-      path: NodePath.join(
-        environment.COPILOT_HOME?.trim() || NodePath.join(home, ".copilot"),
+      path: path.join(
+        environment.COPILOT_HOME?.trim() || path.join(home, ".copilot"),
         "mcp-config.json",
       ),
     },
-    { tool: "cursor", path: NodePath.join(home, ".cursor", "mcp.json") },
-    { tool: "opencode", path: NodePath.join(xdg, "opencode", "opencode.json") },
-    { tool: "windsurf", path: NodePath.join(home, ".codeium", "windsurf", "mcp_config.json") },
+    { tool: "cursor", path: path.join(home, ".cursor", "mcp.json") },
+    { tool: "opencode", path: path.join(xdg, "opencode", "opencode.json") },
+    { tool: "windsurf", path: path.join(home, ".codeium", "windsurf", "mcp_config.json") },
   ];
 }
 

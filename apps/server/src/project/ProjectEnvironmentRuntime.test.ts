@@ -14,6 +14,7 @@ import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
 import * as FileSystem from "effect/FileSystem";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import type {
   ProviderAdapterV2SessionRuntime,
   ProviderAdapterV2TurnInput,
@@ -38,11 +39,12 @@ it.layer(NodeServices.layer)("project folder runtime boundary", (it) => {
     () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
         const root = yield* fs
           .makeTempDirectoryScoped({ prefix: "environment-acp-boundary-" })
           .pipe(Effect.flatMap((folder) => fs.realPath(folder)));
-        const main = `${root}/main`;
-        const extra = `${root}/extra`;
+        const main = path.join(root, "main");
+        const extra = path.join(root, "extra");
         yield* fs.makeDirectory(main);
         yield* fs.makeDirectory(extra);
         const project = {
@@ -83,11 +85,12 @@ it.layer(NodeServices.layer)("project folder runtime boundary", (it) => {
     () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
         const root = yield* fs
           .makeTempDirectoryScoped({ prefix: "environment-runtime-" })
           .pipe(Effect.flatMap((folder) => fs.realPath(folder)));
-        const main = `${root}/main`;
-        const extra = `${root}/extra`;
+        const main = path.join(root, "main");
+        const extra = path.join(root, "extra");
         yield* fs.makeDirectory(main);
         yield* fs.makeDirectory(extra);
         const wrap = yield* makeEnvironmentRuntime;
@@ -144,12 +147,13 @@ it.layer(NodeServices.layer)("project folder runtime boundary", (it) => {
     () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
         const root = yield* fs
           .makeTempDirectoryScoped({ prefix: "aide-acp-folders-" })
           .pipe(Effect.flatMap((folder) => fs.realPath(folder)));
-        const main = `${root}/aide`,
-          first = `${root}/specweave`,
-          second = `${root}/easychamp`;
+        const main = path.join(root, "aide"),
+          first = path.join(root, "specweave"),
+          second = path.join(root, "easychamp");
         yield* fs.makeDirectory(main);
         yield* fs.makeDirectory(first);
         yield* fs.makeDirectory(second);
@@ -223,11 +227,12 @@ it.layer(NodeServices.layer)("project folder runtime boundary", (it) => {
     () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
         const root = yield* fs
           .makeTempDirectoryScoped({ prefix: "environment-boundary-" })
           .pipe(Effect.flatMap((folder) => fs.realPath(folder)));
-        const main = `${root}/main`;
-        const extra = `${root}/extra`;
+        const main = path.join(root, "main");
+        const extra = path.join(root, "extra");
         yield* fs.makeDirectory(main);
         yield* fs.makeDirectory(extra);
         const wrap = yield* makeEnvironmentRuntime;
@@ -276,11 +281,12 @@ it.layer(NodeServices.layer)("project folder runtime boundary", (it) => {
     () =>
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
         const root = yield* fs
           .makeTempDirectoryScoped({ prefix: "environment-worktree-" })
           .pipe(Effect.flatMap((folder) => fs.realPath(folder)));
-        const main = `${root}/umbrella`;
-        const worktree = `${root}/worktree`;
+        const main = path.join(root, "umbrella");
+        const worktree = path.join(root, "worktree");
         yield* fs.makeDirectory(main);
         yield* fs.makeDirectory(worktree);
         const wrap = yield* makeEnvironmentRuntime;
@@ -332,11 +338,12 @@ it.layer(NodeServices.layer)("project folder runtime boundary", (it) => {
   it.effect("rejects a replaced primary folder before passing any grant to an adapter", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
       const root = yield* fs
         .makeTempDirectoryScoped({ prefix: "environment-main-identity-" })
         .pipe(Effect.flatMap((folder) => fs.realPath(folder)));
-      const main = `${root}/main`;
-      const outside = `${root}/outside`;
+      const main = path.join(root, "main");
+      const outside = path.join(root, "outside");
       yield* fs.makeDirectory(main);
       yield* fs.makeDirectory(outside);
       const project = {
@@ -352,7 +359,7 @@ it.layer(NodeServices.layer)("project folder runtime boundary", (it) => {
           },
         },
       } as unknown as Project;
-      yield* fs.rename(main, `${root}/retained-main`);
+      yield* fs.rename(main, path.join(root, "retained-main"));
       yield* fs.symlink(outside, main);
       let calls = 0;
       const wrap = yield* makeEnvironmentRuntime;

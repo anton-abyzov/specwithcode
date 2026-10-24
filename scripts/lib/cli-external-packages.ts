@@ -54,8 +54,12 @@ export const CLI_RUNTIME_EXTERNAL_PREFIXES = [
   "typescript-legacy",
 ] as const;
 
-// These are Cursor's disk-backed dependency closure. Match package boundaries
-// so "zod" does not also externalize unrelated packages such as zod-to-json-schema.
+// These are Cursor's disk-backed dependency closure: pure JS that must be staged
+// on disk because @cursor/sdk, loaded from disk, requires them from there. They
+// are not bundle exclusions. Bundled code (the MCP SDK's `zod/v3`, `zod/v4`,
+// `zod/v4-mini`, the Claude Agent SDK) inlines its own copy, which the
+// single-executable needs: it cannot resolve a file-backed ESM import. Match
+// package boundaries so "zod" does not also cover zod-to-json-schema.
 const CURSOR_RUNTIME_DEPENDENCIES = [
   "@bufbuild/protobuf",
   "@connectrpc/connect",
@@ -86,7 +90,7 @@ export function isRuntimeExternalCliDependency(id: string): boolean {
  * dependency) stayed external.
  */
 export function isExternalCliDependency(id: string): boolean {
-  return isRuntimeExternalCliDependency(id);
+  return CLI_RUNTIME_EXTERNAL_PREFIXES.some((prefix) => id.startsWith(prefix));
 }
 
 /** True when the CLI bundle should inline `id` rather than leave it external. */

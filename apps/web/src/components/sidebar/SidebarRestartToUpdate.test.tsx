@@ -1,11 +1,12 @@
-import type {
-  DesktopUpdateActionResult,
-  DesktopUpdateState,
-  ServerPrepareServiceUpdateInput,
-  ServerPrepareServiceUpdateResult,
-  ServiceUpdateBlocker,
-  StudioServiceInstallOptions,
-  StudioServiceUpdateState,
+import {
+  DESKTOP_INSTALL_APPLY_MS,
+  type DesktopUpdateActionResult,
+  type DesktopUpdateState,
+  type ServerPrepareServiceUpdateInput,
+  type ServerPrepareServiceUpdateResult,
+  type ServiceUpdateBlocker,
+  type StudioServiceInstallOptions,
+  type StudioServiceUpdateState,
 } from "@specweave-studio/contracts";
 import type { ReactElement, ReactNode } from "react";
 import { act, create, type ReactTestRenderer } from "react-test-renderer";
@@ -495,11 +496,17 @@ describe("SidebarRestartToUpdate", () => {
     expect(calls.at(-1)).toBe("installUpdate:0.2.5");
   });
 
-  it("says so when the app is still open a minute after an accepted install", async () => {
+  it("says so when the app is still open when the desktop takes an accepted install back", async () => {
     render();
     await click();
     await act(async () => {
-      vi.advanceTimersByTime(60_000);
+      vi.advanceTimersByTime(DESKTOP_INSTALL_APPLY_MS - 1);
+    });
+    expect(state.addToast).not.toHaveBeenCalledWith(
+      expect.objectContaining({ title: "SpecWithCode did not restart" }),
+    );
+    await act(async () => {
+      vi.advanceTimersByTime(1);
     });
     expect(label()).toBe("Restart to update");
     expect(state.addToast).toHaveBeenCalledWith(

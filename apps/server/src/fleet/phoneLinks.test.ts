@@ -575,7 +575,8 @@ describe("the link file and machine removal", () => {
       now: NOW,
     });
     const path = join(stateDir, "phone-links.json");
-    expect((await NodeFSP.stat(path)).mode & 0o777).toBe(0o600);
+    // POSIX permission bits: Windows keeps the file private through its profile ACL.
+    if (process.platform !== "win32") expect((await NodeFSP.stat(path)).mode & 0o777).toBe(0o600);
     const text = await NodeFSP.readFile(path, "utf8");
     expect(text).not.toContain("management");
     expect(text).not.toContain("CODE-");

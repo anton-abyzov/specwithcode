@@ -211,8 +211,11 @@ export const replayServer = (
   options?: {
     readonly external?: boolean;
     readonly replayGate?: ProviderReplayGate;
-    /** Counts the connections currently lent out, as the server owner's borrowers. */
-    readonly borrowers?: { current: number };
+    /**
+     * Counts the connections currently lent out, as the server owner's
+     * borrowers, and in `total` every borrow made.
+     */
+    readonly borrowers?: { current: number; total?: number };
   },
 ) =>
   Effect.gen(function* () {
@@ -243,6 +246,7 @@ export const replayServer = (
           : Effect.acquireUseRelease(
               Effect.sync(() => {
                 borrowers.current += 1;
+                if (borrowers.total !== undefined) borrowers.total += 1;
               }),
               () => use(connection),
               () =>
@@ -259,8 +263,11 @@ const makeReplayAdapter = (
   options?: {
     readonly external?: boolean;
     readonly replayGate?: ProviderReplayGate;
-    /** Counts the connections currently lent out, as the server owner's borrowers. */
-    readonly borrowers?: { current: number };
+    /**
+     * Counts the connections currently lent out, as the server owner's
+     * borrowers, and in `total` every borrow made.
+     */
+    readonly borrowers?: { current: number; total?: number };
   },
 ) =>
   Effect.gen(function* () {
@@ -300,7 +307,10 @@ function layerRegistry(
  */
 export const openCode2ReplayRuntime = (
   entries: ReadonlyArray<ProviderReplayEntry>,
-  options?: { readonly external?: boolean; readonly borrowers?: { current: number } },
+  options?: {
+    readonly external?: boolean;
+    readonly borrowers?: { current: number; total?: number };
+  },
 ) =>
   Effect.gen(function* () {
     const adapter = yield* makeReplayAdapter(

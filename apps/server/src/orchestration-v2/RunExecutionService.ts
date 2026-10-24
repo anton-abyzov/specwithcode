@@ -15,6 +15,7 @@ import {
   type OrchestrationV2ProviderTurn,
   type OrchestrationV2Run,
   type OrchestrationV2RunAttempt,
+  type OrchestrationV2RunInterruptCause,
   type OrchestrationV2Subagent,
   type OrchestrationV2TurnItem,
   type ProviderSessionId,
@@ -23,6 +24,7 @@ import {
   type RunAttemptId,
   type ThreadId,
   type TurnItemId,
+  runInterruptResultMessage,
 } from "@specweave-studio/contracts";
 import * as Context from "effect/Context";
 import * as Cause from "effect/Cause";
@@ -373,6 +375,8 @@ export interface RunExecutionServiceV2StartRootRunInput {
   readonly shouldStartProviderTurn?: () => Effect.Effect<boolean, ProjectionStoreV2Error>;
   readonly shouldFinalizeRun?: () => Effect.Effect<boolean, ProjectionStoreV2Error>;
   readonly hasUnpairedRunInterruptRequest?: () => Effect.Effect<boolean, never>;
+  /** Who asked to stop the run: its Stop request's cause, or null with none. */
+  readonly runInterruptCause?: () => Effect.Effect<OrchestrationV2RunInterruptCause | null, never>;
   readonly message: ProviderAdapterV2TurnMessage;
   readonly modelSelection: ModelSelection;
   readonly runtimePolicy: ProviderAdapterV2RuntimePolicy;
@@ -419,6 +423,10 @@ export const layer: Layer.Layer<
       readonly attempt: OrchestrationV2RunAttempt;
       readonly shouldFinalizeRun?: () => Effect.Effect<boolean, ProjectionStoreV2Error>;
       readonly hasUnpairedRunInterruptRequest?: () => Effect.Effect<boolean, never>;
+      readonly runInterruptCause?: () => Effect.Effect<
+        OrchestrationV2RunInterruptCause | null,
+        never
+      >;
       readonly openRunOwnedSubagents?: OpenRunOwnedSubagentProjection;
       readonly terminal: ProviderTerminalEvent;
       readonly failureItemPersisted: boolean;
@@ -437,6 +445,8 @@ export const layer: Layer.Layer<
         };
         const shouldFinalizeRun =
           input.shouldFinalizeRun === undefined ? true : yield* input.shouldFinalizeRun();
+        const interruptCause = () =>
+          input.runInterruptCause === undefined ? Effect.succeed(null) : input.runInterruptCause();
         if (!shouldFinalizeRun) {
           // Superseded attempt (steer / selection restart). Emit
           // run_interrupt_result only when hard Stop left an unpaired request
@@ -464,6 +474,7 @@ export const layer: Layer.Layer<
                       rootNode: input.rootNode,
                       providerThread: input.providerThread,
                       completedAt,
+                      cause: yield* interruptCause(),
                     }),
                   },
                 ],
@@ -574,6 +585,7 @@ export const layer: Layer.Layer<
                       rootNode: input.rootNode,
                       providerThread: input.providerThread,
                       completedAt,
+                      cause: yield* interruptCause(),
                     }),
                   },
                 ]
@@ -848,6 +860,9 @@ export const layer: Layer.Layer<
                   : {
                       hasUnpairedRunInterruptRequest: input.hasUnpairedRunInterruptRequest,
                     }),
+                ...(input.runInterruptCause === undefined
+                  ? {}
+                  : { runInterruptCause: input.runInterruptCause }),
                 openRunOwnedSubagents: openSubagents,
                 terminal,
                 failureItemPersisted,
@@ -1362,12 +1377,41 @@ export const layer: Layer.Layer<
   }),
 );
 
+/**
+ * Who asked to stop `runId`, from its latest Stop request: a request with no
+ * cause predates causes and was the user's; no request at all is null.
+ */
+export function runInterruptRequestCause(
+  turnItems: ReadonlyArray<OrchestrationV2TurnItem>,
+  runId: OrchestrationV2Run["id"],
+): OrchestrationV2RunInterruptCause | null {
+  const request = turnItems.findLast(
+    (item): item is Extract<OrchestrationV2TurnItem, { type: "run_interrupt_request" }> =>
+      item.type === "run_interrupt_request" && item.runId === runId,
+  );
+  return request === undefined ? null : (request.cause ?? "user");
+}
+
+/** The run's latest Stop request when a person asked for it (older requests have no cause). */
+export function userInterruptRequest(
+  turnItems: ReadonlyArray<OrchestrationV2TurnItem>,
+  runId: OrchestrationV2Run["id"],
+): Extract<OrchestrationV2TurnItem, { type: "run_interrupt_request" }> | undefined {
+  const request = turnItems.findLast(
+    (item): item is Extract<OrchestrationV2TurnItem, { type: "run_interrupt_request" }> =>
+      item.type === "run_interrupt_request" && item.runId === runId,
+  );
+  return request !== undefined && (request.cause ?? "user") === "user" ? request : undefined;
+}
+
 export function makeInterruptResultTurnItem(input: {
   readonly idAllocator: IdAllocator.IdAllocatorV2Shape;
   readonly run: OrchestrationV2Run;
   readonly rootNode: OrchestrationV2ExecutionNode;
   readonly providerThread: OrchestrationV2ProviderThread;
   readonly completedAt: DateTime.Utc;
+  /** The run's Stop request cause, or null when none was recorded. */
+  readonly cause: OrchestrationV2RunInterruptCause | null;
 }): OrchestrationV2TurnItem {
   return {
     id: input.idAllocator.derive.runSignalTurnItem({
@@ -1391,6 +1435,7 @@ export function makeInterruptResultTurnItem(input: {
     completedAt: input.completedAt,
     updatedAt: input.completedAt,
     type: "run_interrupt_result",
-    message: "Run interrupted by user",
+    message: runInterruptResultMessage(input.cause),
+    ...(input.cause === null ? {} : { cause: input.cause }),
   };
 }

@@ -34,6 +34,7 @@ import { useLatestRef } from "../hooks/useLatestRef";
 import { THREAD_LIFECYCLE_LABELS } from "@specweave-studio/shared/threadLifecycleLabels";
 import { ChatCanvas } from "./chat/ChatCanvas";
 import {
+  canSelectManualFallback,
   fallbackUnavailableReason,
   limitFallbackPairingBannerItem,
   limitPairingRoom,
@@ -729,6 +730,7 @@ import { useOpenChangeRequestLink } from "~/lib/openPullRequestLink";
 import { useOpenInPreferredEditor } from "../editorPreferences";
 import { deriveThreadPlanView, displayFolder } from "../studio/threadPlanProgress";
 import { useThreadIncrementState } from "../studio/useThreadIncrementProgress";
+import { useUnplannedNoticeShown } from "../studio/unplannedNotice";
 import { ThreadPlanCard } from "./chat/ThreadPlanCard";
 import { ThreadBlockerNote } from "./chat/ThreadBlockerNote";
 import { ThreadHeaderLine, ThreadProgressDock } from "./chat/ThreadProgressDock";
@@ -4753,10 +4755,17 @@ function useChatViewState(props: ChatViewProps) {
     threadIds: activeThreadShell ? [activeThreadShell.id] : [],
     activityKey: activeThreadShell?.updatedAt ?? null,
   });
+  // Hidden for the project in the Threads pane: no unplanned headline, and the
+  // card no longer opens itself for those threads.
+  const [unplannedNoticeShown] = useUnplannedNoticeShown(
+    activeThreadShell?.environmentId,
+    activeThreadShell?.projectId,
+  );
   const threadPlanView = useMemo(() => {
     const unplanned = Boolean(
       activeThreadShell &&
       !transcriptOnly &&
+      unplannedNoticeShown &&
       threadIncrementState.unplanned.has(activeThreadShell.id),
     );
     return deriveThreadPlanView({
@@ -4769,7 +4778,7 @@ function useChatViewState(props: ChatViewProps) {
       alwaysShow: !transcriptOnly && (isCoordinatorNamedThread(activeThreadShell) || unplanned),
       unplanned,
     });
-  }, [activePlan, activeThreadShell, threadIncrementState, transcriptOnly]);
+  }, [activePlan, activeThreadShell, threadIncrementState, transcriptOnly, unplannedNoticeShown]);
   const threadPlanStatus = activeThreadShell?.activeWork?.label
     ? `Now: ${activeThreadShell.activeWork.label}`
     : null;
@@ -10097,8 +10106,8 @@ export default function ChatView(props: ChatViewProps) {
       const model =
         entry.provider?.models.find((candidate) => candidate.slug === entry.selection.model)
           ?.name ?? entry.selection.model;
-      const reason = fallbackUnavailableReason(entry.unavailable, entry.resetAt);
-      const choosable = entry.unavailable === null || entry.unavailable === "unverified";
+      const choosable = canSelectManualFallback(entry);
+      const reason = fallbackUnavailableReason(entry.unavailable, entry.resetAt, choosable);
       return [
         {
           label,

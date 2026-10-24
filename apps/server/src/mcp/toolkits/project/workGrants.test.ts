@@ -520,6 +520,33 @@ describe("a personal assistant here, seen by another machine's work", () => {
     capabilities: new Set(["orchestration" as const]),
   };
 
+  it.live("refuses personal creation by remote work before returning private state", () => {
+    const world = setup({ prefix: "studio-work-grant-personal-create-", legacy: [M4] });
+    return Effect.gen(function* () {
+      const started = yield* world.launch(world.clientScope(M4), {
+        title: "Remote work",
+        projectId: linkedProject,
+        message: "go",
+        delegation: { path: [M4], hops: 1 },
+      });
+      expect(started).toMatchObject({ projectId: linkedProject });
+      const workerThread = ThreadId.make(String(started.threadId));
+      world.addThread(workerThread, linkedProject, codex);
+      for (const scope of [world.clientScope(M4), world.threadScope(workerThread)]) {
+        for (const params of [
+          { title: "Second Aide", kind: "personal" },
+          { title: "Second Aide", kind: "personal", workspaceRoot: "/fictional/assistant" },
+        ]) {
+          const refused = yield* world.call("studio_project_create", scope, params);
+          expect(refused).toMatchObject({ code: "outside_grant_scope" });
+          expect(String(refused.message)).toContain(PERSONAL_ASSISTANT_PRIVATE_MESSAGE);
+          expect(refused).not.toHaveProperty("workspaceRoot");
+          expect(refused).not.toHaveProperty("workspaceSettings");
+        }
+      }
+    }).pipe(Effect.provide(world.layer));
+  });
+
   it.live("hides it from a grant covering every project and refuses reading it", () => {
     // A grant from before scopes covers every project here.
     const world = setup({ prefix: "studio-work-grant-personal-project-", legacy: [M4] });

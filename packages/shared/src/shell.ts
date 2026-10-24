@@ -12,6 +12,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 
 import { HostProcessEnvironment, HostProcessPlatform } from "./hostProcess.ts";
+import { npmShimExecutable } from "./windowsNpmShim.ts";
 import * as Context from "effect/Context";
 const SHELL_ENV_NAME_PATTERN = /^[A-Z0-9_]+$/;
 const WINDOWS_PATH_DELIMITER = ";";
@@ -44,6 +45,10 @@ function canExecuteFile(filePath: string): boolean {
 export interface CommandAvailabilityOptions {
   readonly env?: NodeJS.ProcessEnv;
   readonly extendEnv?: boolean;
+}
+
+export interface SpawnCommandOptions extends CommandAvailabilityOptions {
+  readonly bypassNpmShim?: boolean;
 }
 
 export type CommandAvailabilityChecker = (
@@ -706,7 +711,7 @@ export const resolveCommandPath = Effect.fn("shell.resolveCommandPath")(function
 export const resolveSpawnCommand = Effect.fnUntraced(function* (
   command: string,
   args: ReadonlyArray<string>,
-  options: CommandAvailabilityOptions = {},
+  options: SpawnCommandOptions = {},
 ): Effect.fn.Return<ResolvedSpawnCommand> {
   const platform = yield* HostProcessPlatform;
   if (platform !== "win32") {
@@ -718,7 +723,7 @@ export const resolveSpawnCommand = Effect.fnUntraced(function* (
     options.env === undefined
       ? hostEnvironment
       : options.extendEnv
-        ? { ...hostEnvironment, ...options.env }
+        ? mergeWindowsEnv(hostEnvironment, options.env)
         : options.env;
   const resolveExecutable = yield* SpawnExecutableResolution;
   // The scan is synchronous and runs before every child process, so it shares
@@ -750,6 +755,13 @@ export const resolveSpawnCommand = Effect.fnUntraced(function* (
   const extension = NodePath.win32.extname(resolvedCommand).toLowerCase();
   if (extension !== ".cmd" && extension !== ".bat") {
     return { command: resolvedCommand, args: [...args], shell: false };
+  }
+
+  if (options.bypassNpmShim) {
+    const executable = npmShimExecutable(resolvedCommand);
+    if (executable !== undefined) {
+      return { command: executable, args: [...args], shell: false };
+    }
   }
 
   return {
@@ -796,13 +808,24 @@ function readWindowsEnvironmentSafely(
   }
 }
 
+/** Keep one PATH spelling in copied Windows environment records. */
+export function setWindowsPath(env: NodeJS.ProcessEnv, value: string): void {
+  for (const key of Object.keys(env)) {
+    if (key.toUpperCase() === "PATH") delete env[key];
+  }
+  env.PATH = value;
+}
+
 function mergeWindowsEnv(
   currentEnv: NodeJS.ProcessEnv,
-  patch: Partial<Record<string, string>>,
+  patch: NodeJS.ProcessEnv,
 ): NodeJS.ProcessEnv {
   const nextEnv: NodeJS.ProcessEnv = { ...currentEnv };
   for (const [key, value] of Object.entries(patch)) {
-    if (value !== undefined) {
+    if (value === undefined) continue;
+    if (key.toUpperCase() === "PATH") {
+      setWindowsPath(nextEnv, value);
+    } else {
       nextEnv[key] = value;
     }
   }

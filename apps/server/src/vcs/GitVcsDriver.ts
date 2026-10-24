@@ -1197,19 +1197,21 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
           args: ["restore", "--source", commitOid, "--worktree", "--staged", "--", "."],
         });
       }
+      const recreateWorkspace = (command: string) =>
+        fileSystem.makeDirectory(input.cwd, { recursive: true }).pipe(
+          Effect.mapError(
+            (cause) =>
+              new VcsProcessExitError({
+                operation,
+                command,
+                cwd: input.cwd,
+                exitCode: 0,
+                detail: `Could not recreate the checkpoint workspace: ${cause.message}`,
+              }),
+          ),
+        );
       // Restoring away the last tracked file can remove a nested workspace directory.
-      yield* fileSystem.makeDirectory(input.cwd, { recursive: true }).pipe(
-        Effect.mapError(
-          (cause) =>
-            new VcsProcessExitError({
-              operation,
-              command: "git restore",
-              cwd: input.cwd,
-              exitCode: 0,
-              detail: `Could not recreate the checkpoint workspace: ${cause.message}`,
-            }),
-        ),
-      );
+      yield* recreateWorkspace("git restore");
       const cleaned = yield* execute({
         operation,
         cwd: input.cwd,
@@ -1234,6 +1236,8 @@ export const makeVcsDriverShape = Effect.fn("makeGitVcsDriverShape")(function* (
             detail: cleaned.stderr.trim() || "Could not clean the checkpoint workspace.",
           });
       }
+      // Git for Windows removes an emptied nested workspace directory itself.
+      yield* recreateWorkspace("git clean");
 
       const headExists = yield* hasHeadCommit(input.cwd);
       if (headExists) {

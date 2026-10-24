@@ -12,6 +12,7 @@ import {
   SERVICE_LAUNCHER_PROTOCOL,
   SERVICE_RESTART_PENDING_FILE,
   SERVICE_STOP_MARKER_FILE,
+  type ServiceState,
 } from "./cloud/serviceProtocol.ts";
 
 it("accepts only exact semantic versions", () => {
@@ -78,7 +79,18 @@ it("rejects contradictory service state", () => {
 
 // A pinned runtime is an executable at <versionDir>/specweave-studio. The tests stand one up
 // as a Node shebang script so the launcher spawns it the way it spawns the
-// real single-executable, IPC channel included.
+// real single-executable, IPC channel included. Windows has no shebangs, so
+// there the script sits at specweave-studio.exe and Node runs it.
+const windows = process.platform === "win32";
+const runtimeName = windows ? "specweave-studio.exe" : "specweave-studio";
+const newLauncher = (root: string, state: ServiceState) =>
+  windows
+    ? new Launcher(root, state, (entryPath) => ({
+        command: process.execPath,
+        args: [entryPath, "serve"],
+      }))
+    : new Launcher(root, state);
+
 const writeFakeRuntime = (
   fs: FileSystem.FileSystem,
   path: Path.Path,
@@ -86,7 +98,7 @@ const writeFakeRuntime = (
   childSource: string,
 ) =>
   Effect.gen(function* () {
-    const entryPath = path.join(versionDir, "specweave-studio");
+    const entryPath = path.join(versionDir, runtimeName);
     yield* fs.makeDirectory(versionDir, { recursive: true });
     yield* fs.writeFileString(entryPath, `#!${process.execPath}\n${childSource}`);
     yield* fs.chmod(entryPath, 0o755);
@@ -118,7 +130,9 @@ it.layer(NodeServices.layer)("service state persistence", (it) => {
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const root = yield* fs.makeTempDirectoryScoped({ prefix: "studio-service-launcher-restart-" });
+      const root = yield* fs.makeTempDirectoryScoped({
+        prefix: "studio-service-launcher-restart-",
+      });
       const statePath = path.join(root, "runtime", "service-state.json");
       const restartPending = path.join(root, "runtime", SERVICE_RESTART_PENDING_FILE);
       yield* writeFakeRuntime(
@@ -135,7 +149,7 @@ it.layer(NodeServices.layer)("service state persistence", (it) => {
       );
       const run = () =>
         Effect.gen(function* () {
-          const launcher = new Launcher(
+          const launcher = newLauncher(
             root,
             yield* Effect.promise(() => readServiceState(statePath)),
           );
@@ -177,7 +191,7 @@ it.layer(NodeServices.layer)("service state persistence", (it) => {
         }),
       );
 
-      const launcher = new Launcher(root, yield* Effect.promise(() => readServiceState(statePath)));
+      const launcher = newLauncher(root, yield* Effect.promise(() => readServiceState(statePath)));
       const running = launcher.run();
       const stopping = launcher.stop("SIGTERM");
       // An explicit stop leaves the marker that tells a child shutting down
@@ -228,7 +242,7 @@ if (context.update?.status === "pending") {
         }),
       );
 
-      const launcher = new Launcher(root, yield* Effect.promise(() => readServiceState(statePath)));
+      const launcher = newLauncher(root, yield* Effect.promise(() => readServiceState(statePath)));
       yield* Effect.promise(() =>
         launcher.run().then(
           () => Promise.reject(new Error("launcher unexpectedly completed")),
@@ -246,7 +260,9 @@ if (context.update?.status === "pending") {
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const root = yield* fs.makeTempDirectoryScoped({ prefix: "studio-service-launcher-rollback-" });
+      const root = yield* fs.makeTempDirectoryScoped({
+        prefix: "studio-service-launcher-rollback-",
+      });
       const statePath = path.join(root, "runtime", "service-state.json");
       const databasePath = path.join(root, "userdata", "state.sqlite");
       yield* fs.makeDirectory(path.dirname(databasePath), { recursive: true });
@@ -278,7 +294,7 @@ if (context.update?.status === "pending") {
         }),
       );
 
-      const launcher = new Launcher(root, yield* Effect.promise(() => readServiceState(statePath)));
+      const launcher = newLauncher(root, yield* Effect.promise(() => readServiceState(statePath)));
       yield* Effect.promise(() =>
         launcher.run().then(
           () => Promise.reject(new Error("launcher unexpectedly completed")),
@@ -307,8 +323,9 @@ if (context.update?.status === "pending") {
       yield* fs.makeDirectory(path.dirname(databasePath), { recursive: true });
       yield* fs.writeFileString(databasePath, original);
       const encodedDatabasePath = JSON.stringify(databasePath);
+      // CommonJS: on Windows Node runs this from a .exe name, which ESM refuses.
       const childSource = `
-import { writeFileSync } from "node:fs";
+const { writeFileSync } = require("node:fs");
 const context = JSON.parse(process.env.STUDIO_SERVICE_LAUNCHER_CONTEXT);
 if (context.update?.status === "pending") {
   writeFileSync(context.update.dbPath, "database after migration");
@@ -337,7 +354,7 @@ if (context.update?.status === "pending") {
         }),
       );
 
-      const launcher = new Launcher(root, yield* Effect.promise(() => readServiceState(statePath)));
+      const launcher = newLauncher(root, yield* Effect.promise(() => readServiceState(statePath)));
       yield* Effect.promise(() =>
         launcher.run().then(
           () => Promise.reject(new Error("launcher unexpectedly completed")),

@@ -199,3 +199,44 @@ describe("extensionVersion.generated.ts", () => {
     expect(generated).toBe(generatedModule(manifest.version));
   });
 });
+
+describe("status text", () => {
+  it("never leaves color as the only signal", async () => {
+    const { badgeFor, titleFor, timingText } = await import("../src/status.js");
+    const texts = [
+      "connected",
+      "disconnected",
+      "rejected",
+      "paused",
+      "connecting",
+      "not_paired",
+    ].map((phase) => badgeFor(phase).text);
+    expect(texts).toEqual(["ON", "OFF", "!", "II", "…", "OFF"]);
+    expect(badgeFor("disconnected").color).not.toBe(badgeFor("not_paired").color);
+    expect(
+      titleFor({ phase: "disconnected", disconnectedAt: Date.UTC(2026, 9, 23, 6, 13) }),
+    ).toMatch(/NOT connected since .+ Agents cannot use this profile/);
+    expect(titleFor({ phase: "paused" })).toMatch(/paused/);
+    const now = Date.UTC(2026, 9, 23, 13, 0);
+    expect(
+      timingText({
+        phase: "disconnected",
+        disconnectedAt: now - 60_000,
+        nextRetryAt: now + 12_400,
+        now,
+      }),
+    ).toMatch(/^Not connected since .+\. Next try in 13 s\.$/);
+    expect(
+      timingText({ phase: "rejected", lastConnectedAt: now - 1, nextRetryAt: now + 300_000, now }),
+    ).toMatch(/^Last connected at .+\. Next try at .+\.$/);
+    expect(timingText({ phase: "connected", lastConnectedAt: now, now })).toBe("");
+  });
+
+  it("the popup reads the worker's state and loads without errors", async () => {
+    const html = NodeFS.readFileSync(NodePath.join(root, "src/popup.html"), "utf8");
+    expect(html).toContain('id="timing"');
+    const popup = NodeFS.readFileSync(NodePath.join(root, "src/popup.js"), "utf8");
+    expect(popup).toMatch(/function send\(/);
+    expect(popup).toContain('from "./status.js"');
+  });
+});

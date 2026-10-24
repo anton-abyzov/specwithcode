@@ -1610,6 +1610,7 @@ export const make = (
     const superviseProviderProcess = yield* (yield* ProviderProcessSupervisor).reserve.pipe(
       Effect.provideService(Scope.Scope, runtimeScope),
     );
+    const hostPlatform = yield* HostProcessPlatform;
     const child = yield* spawner
       .spawn(
         ChildProcess.make(containedSpawnCommand.command, containedSpawnCommand.args, {
@@ -1618,9 +1619,12 @@ export const make = (
             env: spawnEnvironment,
             extendEnv: options.spawn.extendEnv ?? true,
           }),
+          // Windows has no process groups: ownership there is a taskkill /T
+          // tree kill, and `detached` would only give the agent (and the
+          // cmd.exe wrapping a .cmd shim) a console of its own.
           ...(options.ownDetachedProcessGroup === undefined
             ? {}
-            : { detached: options.ownDetachedProcessGroup }),
+            : { detached: options.ownDetachedProcessGroup && hostPlatform !== "win32" }),
           shell: containedSpawnCommand.shell,
         }),
       )
@@ -1765,14 +1769,28 @@ export const make = (
       }
       yield* signalOwnedProcessGroup("SIGKILL");
     }).pipe(withWallClock);
+    // Set once an explicit Windows tree kill succeeded: the PID is then free
+    // for reuse, so the scope finalizer must not taskkill /T it a second time.
+    let windowsProcessTreeTerminated = false;
     const terminateProcessGroup = yield* Effect.cached(
-      Effect.uninterruptible(terminateOwnedProcessGroupImpl),
+      Effect.uninterruptible(
+        terminateOwnedProcessGroupImpl.pipe(
+          Effect.tap(() =>
+            Effect.sync(() => {
+              if (options.processGroupPlatform === "win32") windowsProcessTreeTerminated = true;
+            }),
+          ),
+        ),
+      ),
     );
     if (options.ownDetachedProcessGroup === true) {
-      const hostPlatform = yield* HostProcessPlatform;
       const forceTerminateOwnedProcessGroup =
         hostPlatform === "win32"
-          ? terminateWindowsProcessTreeWithTaskkill(spawner, Number(child.pid))
+          ? Effect.suspend(() =>
+              windowsProcessTreeTerminated
+                ? Effect.void
+                : terminateWindowsProcessTreeWithTaskkill(spawner, Number(child.pid)),
+            )
           : linuxCgroupLease !== undefined
             ? terminateLinuxCgroupLease(linuxCgroupLease)
             : options.ownDescendantProcessGroups === true

@@ -25,6 +25,7 @@ import * as ElectronShell from "../electron/ElectronShell.ts";
 import * as ExternalBrowsers from "../preview/ExternalBrowsers.ts";
 import * as ElectronTheme from "../electron/ElectronTheme.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
+import { isDesktopOffscreenTest } from "../electron/DesktopOffscreen.ts";
 import {
   MENU_ACTION_CHANNEL,
   QUIT_SHORTCUT_CHANNEL,
@@ -956,7 +957,7 @@ export const make = Effect.gen(function* () {
       revealedWindows.add(window);
       // Boot is done; hand the window back to normal hidden-window throttling
       // (see the backgroundThrottling comment on the create options above).
-      if (!window.isDestroyed()) {
+      if (!isDesktopOffscreenTest() && !window.isDestroyed()) {
         window.webContents.setBackgroundThrottling(true);
       }
       // Reveal the real window, then close the connecting splash (if any) so the
@@ -972,7 +973,7 @@ export const make = Effect.gen(function* () {
     });
 
     loadApplication();
-    if (environment.isDevelopment && spec.role === "main") {
+    if (!isDesktopOffscreenTest() && environment.isDevelopment && spec.role === "main") {
       window.webContents.openDevTools({ mode: "detach" });
     }
 

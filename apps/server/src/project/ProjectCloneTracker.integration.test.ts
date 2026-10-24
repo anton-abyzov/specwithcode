@@ -9,6 +9,7 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 import * as ServerConfig from "../config.ts";
@@ -37,8 +38,9 @@ const fixture = Effect.gen(function* () {
   const root = yield* fs
     .makeTempDirectoryScoped({ prefix: "clone-boundary-" })
     .pipe(Effect.flatMap(fs.realPath));
-  const source = `${root}/source`;
-  const destination = `${root}/checkout`;
+  const path = yield* Path.Path;
+  const source = path.join(root, "source");
+  const destination = path.join(root, "checkout");
   const seed = (at: string) =>
     Effect.gen(function* () {
       yield* fs.makeDirectory(at, { recursive: true });
@@ -137,6 +139,7 @@ const fixture = Effect.gen(function* () {
     });
   return {
     fs,
+    path,
     root,
     source,
     destination,
@@ -195,9 +198,13 @@ it.effect(
 it.effect("retains git's failure then retries once the local source becomes available", () =>
   Effect.gen(function* () {
     const f = yield* fixture;
-    const delayedSource = `${f.root}/later-source`;
+    const delayedSource = f.path.join(f.root, "later-source");
     yield* f.tracker.start({ ...f.input, remoteUrl: delayedSource }, f.hooks);
-    expect((yield* f.wait("failed")).error).toContain("does not exist");
+    // Git only reports a missing local source by name when the path has no colon;
+    // a Windows drive path goes through the transport and fails there instead.
+    expect((yield* f.wait("failed")).error).toContain(
+      process.platform === "win32" ? "does not appear to be a git repository" : "does not exist",
+    );
     expect(
       (yield* Effect.flip(
         Tracker.rejectCommandsDuringClone(f.tracker, { type: "thread.create", projectId: pid }),

@@ -71,7 +71,11 @@ describe("one open per read", () => {
       await NodeFSP.rm(real);
       await NodeFSP.symlink(NodePath.join(root, ".env"), real);
     };
-    await expect(readInsideRoot(root, "theme.css")).rejects.toMatchObject({ reason: "missing" });
+    // POSIX refuses at open (O_NOFOLLOW). Windows has no O_NOFOLLOW: the open
+    // follows the link and the re-check after open refuses it before any read.
+    await expect(readInsideRoot(root, "theme.css")).rejects.toMatchObject({
+      reason: process.platform === "win32" ? "excluded" : "missing",
+    });
   });
 
   it("refuses a parent folder swapped for a link outside the root after it was resolved", async () => {

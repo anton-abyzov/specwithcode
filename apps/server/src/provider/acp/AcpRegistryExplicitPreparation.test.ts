@@ -42,142 +42,150 @@ describe("featured ACP explicit preparation", () => {
     ["grok-build", "@xai-official/grok", "grok"],
     ["gemini", "@google/gemini-cli", "gemini"],
   ] as const) {
-    it.effect(`${id}: explicit install, repair and version changes preserve host ownership`, () => {
-      let version = "1.0.0";
-      const http = HttpClient.make((request) =>
-        Effect.succeed(
-          HttpClientResponse.fromWeb(
-            request,
-            Response.json({
-              version: "1.0.0",
-              agents: [
-                {
-                  id,
-                  name: id,
-                  version,
-                  description: "test agent",
-                  distribution: { npx: { package: `${packageName}@${version}`, args: ["--acp"] } },
-                },
-              ],
-            }),
+    // Linux registry install: pins HostProcessPlatform to "linux" with a
+    // ':'-delimited PATH and a #!/usr/bin/env node npm shim, neither of which a
+    // Windows host can run.
+    it.effect.skipIf(process.platform === "win32")(
+      `${id}: explicit install, repair and version changes preserve host ownership`,
+      () => {
+        let version = "1.0.0";
+        const http = HttpClient.make((request) =>
+          Effect.succeed(
+            HttpClientResponse.fromWeb(
+              request,
+              Response.json({
+                version: "1.0.0",
+                agents: [
+                  {
+                    id,
+                    name: id,
+                    version,
+                    description: "test agent",
+                    distribution: {
+                      npx: { package: `${packageName}@${version}`, args: ["--acp"] },
+                    },
+                  },
+                ],
+              }),
+            ),
           ),
-        ),
-      );
-      return Effect.gen(function* () {
-        const fs = yield* FileSystem.FileSystem;
-        const path = yield* Path.Path;
-        const root = yield* fs.makeTempDirectoryScoped({ prefix: "studio-explicit-acp-" });
-        const bin = path.join(root, "bin");
-        const foreignBin = path.join(root, "foreign-bin");
-        const log = path.join(root, "npm.log");
-        yield* fs.makeDirectory(bin);
-        yield* fs.makeDirectory(foreignBin);
-        // A separately installed CLI must not satisfy a missing managed executable.
-        yield* fs.writeFileString(path.join(foreignBin, executableName), "#!/bin/sh\nexit 48\n");
-        yield* fs.chmod(path.join(foreignBin, executableName), 0o755);
-        yield* fs.writeFileString(log, "");
-        yield* fs.writeFileString(path.join(bin, "npm"), npmSource);
-        yield* fs.chmod(path.join(bin, "npm"), 0o755);
-        const env = {
-          PATH: `${bin}:${foreignBin}:${process.env.PATH}`,
-          FAKE_NPM_LOG: log,
-          HOME: root,
-        };
-        const catalog = yield* makeAcpRegistryCatalog({
-          cacheDir: path.join(root, "cache"),
-          toolsDir: path.join(root, "tools"),
-          registryUrl: "https://registry.test/registry.json",
-        }).pipe(Effect.provideService(HostProcessEnvironment, env));
-        const settings = decodeSettings({ agentId: id });
-        yield* catalog.search({ query: id });
-        expect(yield* catalog.inspect(settings, env)).toMatchObject({ status: "unprepared" });
-        const missing = yield* catalog.resolve(settings, root, env).pipe(Effect.flip);
-        expect(missing.detail).toContain("Install / update agent");
-        expect(yield* fs.readFileString(log)).toBe("");
+        );
+        return Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const root = yield* fs.makeTempDirectoryScoped({ prefix: "studio-explicit-acp-" });
+          const bin = path.join(root, "bin");
+          const foreignBin = path.join(root, "foreign-bin");
+          const log = path.join(root, "npm.log");
+          yield* fs.makeDirectory(bin);
+          yield* fs.makeDirectory(foreignBin);
+          // A separately installed CLI must not satisfy a missing managed executable.
+          yield* fs.writeFileString(path.join(foreignBin, executableName), "#!/bin/sh\nexit 48\n");
+          yield* fs.chmod(path.join(foreignBin, executableName), 0o755);
+          yield* fs.writeFileString(log, "");
+          yield* fs.writeFileString(path.join(bin, "npm"), npmSource);
+          yield* fs.chmod(path.join(bin, "npm"), 0o755);
+          const env = {
+            PATH: `${bin}:${foreignBin}:${process.env.PATH}`,
+            FAKE_NPM_LOG: log,
+            HOME: root,
+          };
+          const catalog = yield* makeAcpRegistryCatalog({
+            cacheDir: path.join(root, "cache"),
+            toolsDir: path.join(root, "tools"),
+            registryUrl: "https://registry.test/registry.json",
+          }).pipe(Effect.provideService(HostProcessEnvironment, env));
+          const settings = decodeSettings({ agentId: id });
+          yield* catalog.search({ query: id });
+          expect(yield* catalog.inspect(settings, env)).toMatchObject({ status: "unprepared" });
+          const missing = yield* catalog.resolve(settings, root, env).pipe(Effect.flip);
+          expect(missing.detail).toContain("Install / update agent");
+          expect(yield* fs.readFileString(log)).toBe("");
 
-        yield* catalog.prepare({ agentId: id });
-        expect(yield* catalog.inspect(settings, env)).toMatchObject({ status: "ready", version });
-        const resolved = yield* catalog.resolve(settings, root, env);
-        expect(resolved.spawn.command).toContain(path.join(root, "tools", id, version));
-        expect(path.basename(resolved.spawn.command)).toBe(executableName);
-        expect(resolved.spawn.env?.HOME).toBe(root);
-        let preparedLog = yield* fs.readFileString(log);
-        expect(preparedLog.match(/^install --global /gmu)).toHaveLength(1);
+          yield* catalog.prepare({ agentId: id });
+          expect(yield* catalog.inspect(settings, env)).toMatchObject({ status: "ready", version });
+          const resolved = yield* catalog.resolve(settings, root, env);
+          expect(resolved.spawn.command).toContain(path.join(root, "tools", id, version));
+          expect(path.basename(resolved.spawn.command)).toBe(executableName);
+          expect(resolved.spawn.env?.HOME).toBe(root);
+          let preparedLog = yield* fs.readFileString(log);
+          expect(preparedLog.match(/^install --global /gmu)).toHaveLength(1);
 
-        // Provider PATH customizations must not invalidate the host-owned install receipt.
-        const alternateBin = path.join(root, "instance-bin");
-        yield* fs.makeDirectory(alternateBin);
-        yield* fs.writeFileString(path.join(alternateBin, "npm"), "#!/bin/sh\nexit 47\n");
-        yield* fs.chmod(path.join(alternateBin, "npm"), 0o755);
-        const instanceEnv = {
-          ...env,
-          PATH: `${alternateBin}:${env.PATH}`,
-          PROVIDER_MARKER: "retained",
-        };
-        expect(yield* catalog.inspect(settings, instanceEnv)).toMatchObject({ status: "ready" });
-        const instance = yield* catalog.resolve(settings, root, instanceEnv);
-        expect(instance.spawn.env?.PROVIDER_MARKER).toBe("retained");
-        expect(instance.spawn.env?.PATH).toContain(alternateBin);
-        expect(yield* fs.readFileString(log)).toBe(preparedLog);
+          // Provider PATH customizations must not invalidate the host-owned install receipt.
+          const alternateBin = path.join(root, "instance-bin");
+          yield* fs.makeDirectory(alternateBin);
+          yield* fs.writeFileString(path.join(alternateBin, "npm"), "#!/bin/sh\nexit 47\n");
+          yield* fs.chmod(path.join(alternateBin, "npm"), 0o755);
+          const instanceEnv = {
+            ...env,
+            PATH: `${alternateBin}:${env.PATH}`,
+            PROVIDER_MARKER: "retained",
+          };
+          expect(yield* catalog.inspect(settings, instanceEnv)).toMatchObject({ status: "ready" });
+          const instance = yield* catalog.resolve(settings, root, instanceEnv);
+          expect(instance.spawn.env?.PROVIDER_MARKER).toBe("retained");
+          expect(instance.spawn.env?.PATH).toContain(alternateBin);
+          expect(yield* fs.readFileString(log)).toBe(preparedLog);
 
-        // A retained receipt cannot hide a missing executable or trigger automatic repair.
-        yield* fs.remove(resolved.spawn.command);
-        expect(yield* catalog.inspect(settings, env)).toMatchObject({ status: "unprepared" });
-        const broken = yield* catalog.resolve(settings, root, env).pipe(Effect.flip);
-        expect(broken.detail).toContain("Install / update agent");
-        expect(yield* fs.readFileString(log)).toBe(preparedLog);
-        yield* catalog.prepare({ agentId: id });
-        expect(yield* catalog.inspect(settings, instanceEnv)).toMatchObject({ status: "ready" });
-        const repaired = yield* catalog.resolve(settings, root, instanceEnv);
-        expect(yield* fs.exists(repaired.spawn.command)).toBe(true);
-        expect(path.basename(repaired.spawn.command)).toBe(executableName);
-        preparedLog = yield* fs.readFileString(log);
-        expect(preparedLog.match(/^install --global /gmu)).toHaveLength(2);
+          // A retained receipt cannot hide a missing executable or trigger automatic repair.
+          yield* fs.remove(resolved.spawn.command);
+          expect(yield* catalog.inspect(settings, env)).toMatchObject({ status: "unprepared" });
+          const broken = yield* catalog.resolve(settings, root, env).pipe(Effect.flip);
+          expect(broken.detail).toContain("Install / update agent");
+          expect(yield* fs.readFileString(log)).toBe(preparedLog);
+          yield* catalog.prepare({ agentId: id });
+          expect(yield* catalog.inspect(settings, instanceEnv)).toMatchObject({ status: "ready" });
+          const repaired = yield* catalog.resolve(settings, root, instanceEnv);
+          expect(yield* fs.exists(repaired.spawn.command)).toBe(true);
+          expect(path.basename(repaired.spawn.command)).toBe(executableName);
+          preparedLog = yield* fs.readFileString(log);
+          expect(preparedLog.match(/^install --global /gmu)).toHaveLength(2);
 
-        // A registry bump keeps launching the prepared version until the user updates it.
-        version = "1.0.1";
-        yield* catalog.search({ query: id });
-        expect(yield* catalog.inspect(settings, env)).toMatchObject({
-          status: "ready",
-          version: "1.0.0",
-          availableVersion: "1.0.1",
-        });
-        const retained = yield* catalog.resolve(settings, root, env);
-        expect(retained.spawn.command).toContain(path.join(root, "tools", id, "1.0.0"));
-        expect(path.basename(retained.spawn.command)).toBe(executableName);
-        expect(yield* fs.readFileString(log)).toBe(preparedLog);
-        yield* catalog.prepare({ agentId: id });
-        expect(yield* catalog.inspect(settings, env)).toMatchObject({ status: "ready", version });
-        expect(yield* catalog.inspect(settings, env)).not.toHaveProperty("availableVersion");
-        const updated = yield* catalog.resolve(settings, root, env);
-        expect(updated.spawn.command).toContain(path.join(root, "tools", id, version));
-        expect((yield* fs.readFileString(log)).match(/^install --global /gmu)).toHaveLength(3);
+          // A registry bump keeps launching the prepared version until the user updates it.
+          version = "1.0.1";
+          yield* catalog.search({ query: id });
+          expect(yield* catalog.inspect(settings, env)).toMatchObject({
+            status: "ready",
+            version: "1.0.0",
+            availableVersion: "1.0.1",
+          });
+          const retained = yield* catalog.resolve(settings, root, env);
+          expect(retained.spawn.command).toContain(path.join(root, "tools", id, "1.0.0"));
+          expect(path.basename(retained.spawn.command)).toBe(executableName);
+          expect(yield* fs.readFileString(log)).toBe(preparedLog);
+          yield* catalog.prepare({ agentId: id });
+          expect(yield* catalog.inspect(settings, env)).toMatchObject({ status: "ready", version });
+          expect(yield* catalog.inspect(settings, env)).not.toHaveProperty("availableVersion");
+          const updated = yield* catalog.resolve(settings, root, env);
+          expect(updated.spawn.command).toContain(path.join(root, "tools", id, version));
+          expect((yield* fs.readFileString(log)).match(/^install --global /gmu)).toHaveLength(3);
 
-        // A retained earlier version still has to pass the executable checks.
-        preparedLog = yield* fs.readFileString(log);
-        version = "1.0.2";
-        yield* catalog.search({ query: id });
-        yield* fs.remove(updated.spawn.command);
-        expect(yield* catalog.inspect(settings, env)).toMatchObject({
-          status: "unprepared",
-          version,
-        });
-        const drift = yield* catalog.resolve(settings, root, env).pipe(Effect.flip);
-        expect(drift.detail).toContain("1.0.2 is not prepared");
-        expect(yield* fs.readFileString(log)).toBe(preparedLog);
-      }).pipe(
-        Effect.scoped,
-        Effect.provide(
-          Layer.mergeAll(
-            NodeServices.layer,
-            ServerSettings.layerTest(),
-            Layer.succeed(HostProcessPlatform, "linux"),
-            Layer.succeed(HostProcessArchitecture, "x64"),
-            Layer.succeed(HttpClient.HttpClient, http),
+          // A retained earlier version still has to pass the executable checks.
+          preparedLog = yield* fs.readFileString(log);
+          version = "1.0.2";
+          yield* catalog.search({ query: id });
+          yield* fs.remove(updated.spawn.command);
+          expect(yield* catalog.inspect(settings, env)).toMatchObject({
+            status: "unprepared",
+            version,
+          });
+          const drift = yield* catalog.resolve(settings, root, env).pipe(Effect.flip);
+          expect(drift.detail).toContain("1.0.2 is not prepared");
+          expect(yield* fs.readFileString(log)).toBe(preparedLog);
+        }).pipe(
+          Effect.scoped,
+          Effect.provide(
+            Layer.mergeAll(
+              NodeServices.layer,
+              ServerSettings.layerTest(),
+              Layer.succeed(HostProcessPlatform, "linux"),
+              Layer.succeed(HostProcessArchitecture, "x64"),
+              Layer.succeed(HttpClient.HttpClient, http),
+            ),
           ),
-        ),
-      );
-    });
+        );
+      },
+    );
   }
 
   it("limits the compatibility policy to the matching official package and registry identity", () => {

@@ -54,6 +54,8 @@ function runsPendingVersion(state: StudioServiceUpdateState): boolean {
 
 export function resolveServiceUpdateAction(state: StudioServiceUpdateState): ServiceUpdateAction {
   if (state.status === "not-managed" || state.status === "installing") return "none";
+  // No agent identity: a service the app cannot update (Linux), so nothing to check.
+  if (state.status === "manual-required" && state.identity === null) return "none";
   if (runsPendingVersion(state)) return "check";
   if (
     state.status === "available" ||

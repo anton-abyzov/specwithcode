@@ -14,15 +14,19 @@ rewriting state.json drops the key, so the desktop falls back to today's path on
 
 Every write replaces the whole file, bumps `rev` and never overwrites a terminal record. Also
 holds the pass lock and the service log rotation, moved here from update_agent.py (file-size
-cap). Stdlib only and Python 3.9 compatible, like the agent it is installed beside.
+cap), and the pass's own phase timings (Timings): `agentTimings` in run.json, and in the apply
+helper's environment (TIMINGS_ENV), which install-progress.json and the update receipt copy.
+Stdlib only and Python 3.9 compatible, like the agent it is installed beside.
 """
 import datetime
 import errno
 import fcntl
+import json
 import os
 import stat
 import sys
 import threading
+import time
 import uuid
 
 RUN_SUPPORT = 1
@@ -40,6 +44,8 @@ RUN_ID_LIMIT = 64
 # (52 MB seen); past the limit the newest SERVICE_LOG_KEPT bytes move to <name>.1.
 SERVICE_LOG_LIMIT = 16 << 20
 SERVICE_LOG_KEPT = 8 << 20
+# Read by install_progress.agent_timings in the helper the agent runs for an apply.
+TIMINGS_ENV = 'STUDIO_UPDATE_AGENT_TIMINGS'
 
 
 def _ua(agent):
@@ -139,6 +145,49 @@ class Run(object):
             record['message'] = message
             self.renew(record)
         self.write(change)
+
+
+class Timings(object):
+    """Whole milliseconds per phase of one install pass, the shape of update.py's `timings`: a lap
+    books the time since the last one to the phase that ended, and `total` is the pass so far. The
+    1.0.71 install spent 214 s in the agent before its helper started, and nothing showed where.
+    Phases, in order: beforeInstall (the check, download and verification), verifyHelpers, snapshot
+    and retryWait (every snapshot attempt, and the waits and reaps between them), apply (the
+    helper). `requestWait` is how long the install request waited for this pass, not in `total`."""
+
+    def __init__(self, clock=time.monotonic):
+        self.clock = clock
+        self.started = self.last = clock()
+        self.values = {}
+
+    def lap(self, phase):
+        moment = self.clock()
+        self.values[phase] = self.values.get(phase, 0) + int(round((moment - self.last) * 1000))
+        self.values['total'] = int(round((moment - self.started) * 1000))
+        self.last = moment
+
+
+def lap(agent, phase, install_request=False):
+    """Ends `phase` of this pass and mirrors the timings into its run. The first lap of an install
+    request also records how long that request waited for this pass. Never raises."""
+    ua = _ua(agent)
+    timings = getattr(agent, 'timings', None)
+    if timings is None:
+        timings = agent.timings = Timings()
+    requested = ua.parse_time(agent.config.get('installRequestedAt')) if install_request else None
+    if requested is not None and 'requestWait' not in timings.values:
+        waited = (ua.utcnow() - requested).total_seconds() - (timings.clock() - timings.started)
+        timings.values['requestWait'] = max(0, int(round(waited * 1000)))
+    timings.lap(phase)
+    run = getattr(agent, 'run', None)
+    if run is not None:
+        run.write(lambda record: record.update(agentTimings=dict(timings.values)))
+
+
+def apply_env(agent):
+    """The helper environment for an apply: helper_env plus this pass's timings so far."""
+    timings = getattr(agent, 'timings', None)
+    return dict(agent.helper_env(), **{TIMINGS_ENV: json.dumps(timings.values if timings else {}, sort_keys=True)})
 
 
 def claim(agent):

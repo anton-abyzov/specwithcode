@@ -104,6 +104,19 @@ export function isProviderInstancePickerReady(entry: ProviderInstanceEntry): boo
   return entry.enabled && entry.isAvailable && entry.status === "ready";
 }
 
+/** Whether the user may deliberately select an installed provider. */
+export function isProviderInstancePickerSelectable(entry: ProviderInstanceEntry): boolean {
+  // A probe warning (including quota telemetry) is advisory for a deliberate
+  // selection. Installation, sign-in and explicit availability still gate it.
+  return (
+    entry.enabled &&
+    entry.installed &&
+    entry.isAvailable &&
+    entry.snapshot.auth.status !== "unauthenticated" &&
+    (entry.status === "ready" || entry.status === "warning")
+  );
+}
+
 /** Picker rails contain configured, enabled instances only. */
 export function isProviderInstancePickerVisible(entry: ProviderInstanceEntry): boolean {
   return entry.enabled;

@@ -27,6 +27,7 @@ import {
   type EnvironmentId,
   type NodeId,
   type ScopedThreadRef,
+  runInterruptResultDetail,
 } from "@specweave-studio/contracts";
 import type { TimestampFormat } from "@specweave-studio/contracts/settings";
 import {
@@ -100,7 +101,7 @@ export function V2LifecycleRow(props: {
     return (
       <TimelineSystemDivider
         label="Run interrupted"
-        detail={item.message}
+        detail={runInterruptResultDetail(item)}
         tone="danger"
         icon={XIcon}
       />

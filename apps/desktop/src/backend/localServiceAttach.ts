@@ -144,7 +144,7 @@ export interface ServiceCliCommand {
 
 const SCRIPT_ENTRY = /\.(?:mjs|cjs|js)$/;
 const MAX_WORDS_PER_PATH = 8;
-const NODE_LIKE = /(?:^|[\\/])(?:node|node\.exe|electron|electron\.exe|Electron)$/;
+const NODE_LIKE = /(?:^|[\\/])(?:node|node\.exe|electron|electron\.exe)$/i;
 
 /**
  * Turns a running server's command line into a command that runs the same
@@ -154,7 +154,8 @@ const NODE_LIKE = /(?:^|[\\/])(?:node|node\.exe|electron|electron\.exe|Electron)
  * `argv` is the process argument vector when the platform exposes it
  * NUL-separated (Linux `/proc/<pid>/cmdline`). On macOS only the joined
  * `ps` string exists, so `joinedArgs` is split on spaces and paths that
- * contain spaces are rebuilt with `exists`.
+ * contain spaces are rebuilt with `exists`. On Windows `argv` comes from
+ * `parseWindowsCommandLine` and `executable` from `Win32_Process.ExecutablePath`.
  */
 export function resolveServiceCliCommand(input: {
   readonly argv?: ReadonlyArray<string>;
@@ -203,6 +204,63 @@ function rebuildArgv(
     argv.push(words.slice(index, index + taken).join(" "));
     index += taken;
   }
+  return argv;
+}
+
+/**
+ * Splits a Windows command line (`Win32_Process.CommandLine`) into argv with
+ * the `CommandLineToArgvW` rules: whitespace separates words, double quotes
+ * group them, and backslashes are literal unless they precede a quote.
+ */
+export function parseWindowsCommandLine(commandLine: string): string[] {
+  const argv: string[] = [];
+  let current = "";
+  let inWord = false;
+  let quoted = false;
+  let index = 0;
+  while (index < commandLine.length) {
+    const char = commandLine[index]!;
+    if (char === "\\") {
+      let slashes = 0;
+      while (commandLine[index] === "\\") {
+        slashes += 1;
+        index += 1;
+      }
+      if (commandLine[index] === '"') {
+        current += "\\".repeat(Math.floor(slashes / 2));
+        if (slashes % 2 === 1) {
+          current += '"';
+          index += 1;
+        }
+      } else {
+        current += "\\".repeat(slashes);
+      }
+      inWord = true;
+      continue;
+    }
+    if (char === '"') {
+      if (quoted && commandLine[index + 1] === '"') {
+        current += '"';
+        index += 2;
+        continue;
+      }
+      quoted = !quoted;
+      inWord = true;
+      index += 1;
+      continue;
+    }
+    if (!quoted && (char === " " || char === "\t")) {
+      if (inWord) argv.push(current);
+      current = "";
+      inWord = false;
+      index += 1;
+      continue;
+    }
+    current += char;
+    inWord = true;
+    index += 1;
+  }
+  if (inWord) argv.push(current);
   return argv;
 }
 

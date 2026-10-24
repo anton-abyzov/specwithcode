@@ -140,4 +140,13 @@ describe("originUrlFromConfig", () => {
     ).toBe("git@github.com:team/repo.git");
     expect(originUrlFromConfig("[core]\n")).toBeNull();
   });
+
+  it("decodes escapes and quotes the way Git writes them", () => {
+    expect(originUrlFromConfig('[remote "origin"]\n\turl = C:\\\\repos\\\\app.git\n')).toBe(
+      "C:\\repos\\app.git",
+    );
+    expect(originUrlFromConfig('[remote "origin"]\n\turl = "/srv/a b;c.git" # mirror\n')).toBe(
+      "/srv/a b;c.git",
+    );
+  });
 });

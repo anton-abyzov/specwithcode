@@ -672,7 +672,8 @@ async function readPackageNoticeText(packageRoot: string): Promise<string | null
     });
     await Promise.all(
       directoryEntries.map(async (entry) => {
-        const relativePath = NodePath.join(directory, entry.name);
+        // Package-relative names label each notice, so they read the same on every OS.
+        const relativePath = NodePath.posix.join(directory, entry.name);
         if (entry.isFile() && isNoticeTextFile(entry.name)) {
           noticeFiles.push(relativePath);
           return;

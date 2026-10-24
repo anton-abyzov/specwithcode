@@ -808,25 +808,38 @@ it.layer(NodeServices.layer)("gatherProjectSkills versions and catalogs", (it) =
 });
 
 it.layer(NodeServices.layer)("runVskillDoctor", (it) => {
-  const withFakeVskill = (script: string) =>
+  const isWindows = process.platform === "win32";
+  // Windows finds the fake through PATHEXT, so it is a batch file there.
+  const withFakeVskill = (script: { readonly posix: string; readonly windows: string }) =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
       const bin = yield* fs.makeTempDirectoryScoped({ prefix: "studio-fake-vskill-" });
-      const executable = path.join(bin, "vskill");
-      yield* fs.writeFileString(executable, `#!/bin/sh\n${script}\n`);
+      const executable = path.join(bin, isWindows ? "vskill.cmd" : "vskill");
+      yield* fs.writeFileString(
+        executable,
+        isWindows ? `@echo off\r\n${script.windows}\r\n` : `#!/bin/sh\n${script.posix}\n`,
+      );
       yield* fs.chmod(executable, 0o755);
       return yield* runVskillDoctor({
         cwd: bin,
-        environment: { ...process.env, PATH: `${bin}:/usr/bin:/bin` },
+        environment: {
+          ...process.env,
+          PATH: isWindows
+            ? [bin, process.env.SystemRoot ? path.join(process.env.SystemRoot, "System32") : ""]
+                .filter(Boolean)
+                .join(";")
+            : `${bin}:/usr/bin:/bin`,
+        },
       });
     });
 
   it.effect("parses a doctor report", () =>
     Effect.gen(function* () {
-      const result = yield* withFakeVskill(
-        `echo '{"problems":[{"name":"deploy","message":"Broken link."}]}'; exit 1`,
-      );
+      const result = yield* withFakeVskill({
+        posix: `echo '{"problems":[{"name":"deploy","message":"Broken link."}]}'; exit 1`,
+        windows: `echo {"problems":[{"name":"deploy","message":"Broken link."}]}\r\nexit /b 1`,
+      });
       assert.strictEqual(result.state, "ok");
       assert.deepEqual(
         result.state === "ok" ? result.findings.map((entry) => [entry.skill, entry.message]) : null,
@@ -837,7 +850,10 @@ it.layer(NodeServices.layer)("runVskillDoctor", (it) => {
 
   it.effect("treats a vskill without doctor as unavailable", () =>
     Effect.gen(function* () {
-      const result = yield* withFakeVskill(`echo "error: unknown command 'doctor'" >&2; exit 1`);
+      const result = yield* withFakeVskill({
+        posix: `echo "error: unknown command 'doctor'" >&2; exit 1`,
+        windows: `echo error: unknown command 'doctor' 1>&2\r\nexit /b 1`,
+      });
       assert.strictEqual(result.state, "unavailable");
     }),
   );

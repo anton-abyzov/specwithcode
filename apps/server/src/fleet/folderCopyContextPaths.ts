@@ -3,11 +3,16 @@ import * as NodePath from "node:path";
 import type { MachineHandoffBundle } from "@specweave-studio/contracts";
 
 /** Historical text stays byte-for-byte; structured paths get an explicit local counterpart. */
-export function copiedContextPaths(bundle: MachineHandoffBundle, destinationProjectRoot: string) {
+export function copiedContextPaths(
+  bundle: MachineHandoffBundle,
+  destinationProjectRoot: string,
+  platform: NodeJS.Platform = process.platform,
+) {
+  const destinationPath = platform === "win32" ? NodePath.win32 : NodePath.posix;
   const scope = bundle.manifest.copyScope;
   if (!scope) return null;
   const depth = scope.projectRelativePath === "." ? 0 : scope.projectRelativePath.split("/").length;
-  const destinationCopyRoot = NodePath.resolve(
+  const destinationCopyRoot = destinationPath.resolve(
     destinationProjectRoot,
     ...Array<string>(depth).fill(".."),
   );
@@ -46,7 +51,7 @@ export function copiedContextPaths(bundle: MachineHandoffBundle, destinationProj
         destinationWorktreePath: mapped
           ? sourceWorktreePath === null
             ? destinationProjectRoot
-            : NodePath.join(destinationCopyRoot, ...relative!.split(sourcePath.sep))
+            : destinationPath.join(destinationCopyRoot, ...relative!.split(sourcePath.sep))
           : null,
         copied: mapped,
       };

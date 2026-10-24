@@ -59,7 +59,10 @@ describe("specweave-studio fleet", () => {
       );
       assert.include(output, "Removed Mac M1");
       assert.deepEqual(JSON.parse(NodeFS.readFileSync(file, "utf8")).machines, []);
-      assert.strictEqual(NodeFS.statSync(file).mode & 0o777, 0o600);
+      // Windows has no POSIX mode bits; the profile folder's ACL keeps the file private.
+      if (process.platform !== "win32") {
+        assert.strictEqual(NodeFS.statSync(file).mode & 0o777, 0o600);
+      }
     }),
   );
 

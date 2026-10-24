@@ -23,6 +23,8 @@ const state = vi.hoisted(() => ({
   useQuery: vi.fn(),
   command: vi.fn(),
   confirm: vi.fn(async () => true),
+  preferSpecWithCodeBrowser: true,
+  canWriteSettings: true,
 }));
 vi.mock("../../studio/projectWorkspace", () => ({
   projectWorkspace: {
@@ -39,7 +41,20 @@ vi.mock("../../state/use-atom-command", () => ({
 }));
 vi.mock("../../state/session", () => ({
   useEnvironmentScope: (_id: unknown, scope: { _tag?: string } | string) =>
-    String(scope).includes("terminal") ? state.operate : state.permitted,
+    String(scope).includes("terminal")
+      ? state.operate
+      : String(scope) === "settings:write"
+        ? state.canWriteSettings
+        : state.permitted,
+}));
+vi.mock("../../hooks/useSettings", () => ({
+  useEnvironmentSettings: (
+    _id: unknown,
+    select: (settings: { preferSpecWithCodeBrowser: boolean }) => unknown,
+  ) => select({ preferSpecWithCodeBrowser: state.preferSpecWithCodeBrowser }),
+}));
+vi.mock("../../state/server", () => ({
+  serverEnvironment: { updateSettings: "updateSettings" },
 }));
 vi.mock("../../state/entities", () => ({
   useThreadShell: ({ threadId }: { threadId: string }) =>
@@ -128,6 +143,8 @@ beforeEach(() => {
   state.connected = true;
   state.query = { data: status, error: null, isPending: false, refresh: vi.fn() };
   state.confirm.mockResolvedValue(true);
+  state.preferSpecWithCodeBrowser = true;
+  state.canWriteSettings = true;
 });
 afterEach(async () => {
   await act(() => renderer?.unmount());
@@ -156,6 +173,31 @@ const render = () =>
   });
 
 describe("BrowserExtensionCard", () => {
+  it("turns the SpecWithCode Browser preference for Claude threads on and off", async () => {
+    await render();
+    const toggle = () =>
+      renderer.root.find(
+        (node) =>
+          typeof node.type !== "string" &&
+          node.props["aria-label"] === "Use SpecWithCode Browser in Claude threads" &&
+          node.props.onCheckedChange !== undefined,
+      );
+    expect(text()).toContain("Claude threads there start without");
+    expect(toggle().props.checked).toBe(true);
+    expect(toggle().props.disabled).toBe(false);
+    await act(() => toggle().props.onCheckedChange(false));
+    expect(state.command).toHaveBeenCalledWith("updateSettings", {
+      environmentId: m4,
+      input: { patch: { preferSpecWithCodeBrowser: false } },
+    });
+    // Shown off when off, and read-only without settings access.
+    state.preferSpecWithCodeBrowser = false;
+    state.canWriteSettings = false;
+    await render();
+    expect(toggle().props.checked).toBe(false);
+    expect(toggle().props.disabled).toBe(true);
+  });
+
   it("does not query an offline machine", async () => {
     state.connected = false;
     await render();

@@ -1,10 +1,11 @@
-import type {
-  DesktopUpdateActionResult,
-  DesktopUpdateState,
-  ServerPrepareServiceUpdateInput,
-  ServerPrepareServiceUpdateResult,
-  StudioServiceInstallOptions,
-  StudioServiceUpdateState,
+import {
+  DESKTOP_INSTALL_APPLY_MS,
+  type DesktopUpdateActionResult,
+  type DesktopUpdateState,
+  type ServerPrepareServiceUpdateInput,
+  type ServerPrepareServiceUpdateResult,
+  type StudioServiceInstallOptions,
+  type StudioServiceUpdateState,
 } from "@specweave-studio/contracts";
 import type { ReactElement, ReactNode } from "react";
 import { act, create, type ReactTestRenderer } from "react-test-renderer";
@@ -485,12 +486,11 @@ describe("SidebarRestartToUpdate", () => {
     await advance(2_000);
     expect(calls.at(-1)).toBe("installUpdate:0.2.5");
     expect(label()).toBe("Restarting…");
-    await advance(60_000);
+    await advance(DESKTOP_INSTALL_APPLY_MS);
     expect(state.addToast).toHaveBeenCalledWith(
       expect.objectContaining({ title: "SpecWithCode did not restart" }),
     );
-    // A little later the update ends: the button works again and nothing is followed.
-    await advance(15_000);
+    // The update ends with it: the button works again and nothing is followed.
     expect(state.closeToast).toHaveBeenCalledWith("toast-1");
     state.service = agent;
     rerender();

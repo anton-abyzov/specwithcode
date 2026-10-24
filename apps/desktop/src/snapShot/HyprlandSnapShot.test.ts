@@ -12,6 +12,8 @@ vi.mock("electron", () => ({
     createFromBuffer: () => ({ isEmpty: () => false, getSize: () => ({ width: 2, height: 1 }) }),
   },
 }));
+import { HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
+
 import {
   HyprlandCaptureSetup,
   captureHyprlandWindow,
@@ -83,14 +85,18 @@ it("discovery neither installs a helper nor requests a screenshot", async () => 
   expect(execute).not.toHaveBeenCalled();
   await expect(NodeFSP.stat(paths.dataHome)).rejects.toMatchObject({ code: "ENOENT" });
 });
-it("installs offline at a stable executable path and probes only capabilities", async () => {
-  await setup.perform("install-hyprland-helper");
-  expect((await NodeFSP.stat(hyprlandCaptureExecutable(paths))).mode & 0o777).toBe(0o755);
-  expect(await setup.state()).toMatchObject({ status: "ready", feedbackAvailable: true });
-  expect(execute.mock.calls.map(([file, args]) => [file, args])).toEqual([
-    [hyprlandCaptureExecutable(paths), ["check"]],
-  ]);
-});
+// The Hyprland capture helper is a Linux executable; Windows has no execute mode bits.
+it.skipIf(HostProcessPlatform.defaultValue() === "win32")(
+  "installs offline at a stable executable path and probes only capabilities",
+  async () => {
+    await setup.perform("install-hyprland-helper");
+    expect((await NodeFSP.stat(hyprlandCaptureExecutable(paths))).mode & 0o777).toBe(0o755);
+    expect(await setup.state()).toMatchObject({ status: "ready", feedbackAvailable: true });
+    expect(execute.mock.calls.map(([file, args]) => [file, args])).toEqual([
+      [hyprlandCaptureExecutable(paths), ["check"]],
+    ]);
+  },
+);
 it("updates explicitly and removes only its helper", async () => {
   await setup.perform("install-hyprland-helper");
   const unrelated = NodePath.join(paths.dataHome, "keep.txt");

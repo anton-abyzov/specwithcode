@@ -1,3 +1,5 @@
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Effect's ChildProcess has no fork with an IPC channel, which node-pty's console-list helper replies over.
+import * as NodeChildProcess from "node:child_process";
 import * as NodeModule from "node:module";
 import * as NodeNet from "node:net";
 
@@ -9,6 +11,7 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import { HostProcessArchitecture, HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
 
+import { installConsoleProcessListLookup } from "./nodePtyConsoleList.ts";
 import * as PtyAdapter from "./PtyAdapter.ts";
 
 export class NodePtyModuleLoadError extends Schema.TaggedError<NodePtyModuleLoadError>()(
@@ -40,6 +43,25 @@ export const NodePtyModuleLoaderRef = Context.Reference<NodePtyModuleLoader>(
   "server/terminal/NodePtyModuleLoader",
   { defaultValue: () => loadNodePty },
 );
+
+/**
+ * Forks node-pty's console-list helper the way its own Windows agent does,
+ * hidden and without the host's watch-mode IPC or exec arguments.
+ */
+const forkConsoleListHelper = (innerPid: number) => {
+  const script = requireForNodePty
+    .resolve("node-pty/lib/windowsPtyAgent.js")
+    .replace(/windowsPtyAgent\.js$/, "conpty_console_list_agent");
+  const env = { ...globalThis.process.env };
+  delete env["WATCH_REPORT_DEPENDENCIES"];
+  // fork passes its options on to spawn, which honors windowsHide; ForkOptions omits it.
+  const options: NodeChildProcess.ForkOptions & { readonly windowsHide: boolean } = {
+    env,
+    execArgv: [],
+    windowsHide: true,
+  };
+  return NodeChildProcess.fork(script, [String(innerPid)], options);
+};
 
 let didEnsureSpawnHelperExecutable = false;
 
@@ -278,6 +300,9 @@ export const make = Effect.fn("NodePtyAdapter.make")(function* () {
             env,
             name: "xterm-256color",
           });
+          if (platform === "win32") {
+            installConsoleProcessListLookup(nativeProcess, forkConsoleListHelper);
+          }
           return { nativeProcess, process: new NodePtyProcess(nativeProcess, platform) };
         },
         catch: (cause) =>

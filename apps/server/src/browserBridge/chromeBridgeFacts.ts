@@ -13,6 +13,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import type { BrowserBridgeProviderWiring } from "@specweave-studio/contracts";
 import { parse } from "smol-toml";
+import { BROWSER_EXTENSION_DIR, isPaired, PAIRING_FILE } from "../browserExtension/pairingState.ts";
 import { BROWSER_MCP_FLAG } from "./chromeBridgeProbe.ts";
 
 type ObjectValue = Record<string, unknown>;
@@ -164,9 +165,22 @@ const runsBrowserMcp = (servers: unknown) =>
       server.args.includes(BROWSER_MCP_FLAG),
   );
 
+/** A Chrome profile has connected to SpecWithCode Browser with the current pairing code. */
+export function specWithCodeBrowserPaired(stateDir: string): boolean {
+  try {
+    return isPaired(
+      NodeFS.readFileSync(NodePath.join(stateDir, BROWSER_EXTENSION_DIR, PAIRING_FILE), "utf8"),
+    );
+  } catch {
+    return false;
+  }
+}
+
 export function providerWiring(
   paths: ChromeBridgePaths,
   claude: ClaudeChromeFacts,
+  /** SpecWithCode starts Claude threads with --no-chrome (paired, preferred, browser access on). */
+  claudeThreadsUseSpecWithCodeBrowser = false,
 ): BrowserBridgeProviderWiring[] {
   const codexConfig = readToml(NodePath.join(paths.codexHome, "config.toml"));
   const codexPlugins = isObject(codexConfig?.plugins) ? codexConfig.plugins : {};
@@ -182,9 +196,11 @@ export function providerWiring(
       provider: "claude",
       route: !claude.installed
         ? "not_installed"
-        : claude.enabledByDefault
-          ? "built_in"
-          : "turned_off",
+        : claudeThreadsUseSpecWithCodeBrowser
+          ? "specwithcode_browser"
+          : claude.enabledByDefault
+            ? "built_in"
+            : "turned_off",
     },
     {
       provider: "codex",

@@ -263,7 +263,6 @@ export const ThreadPlanCard = memo(function ThreadPlanCard({
           className={cn(
             "min-w-0 truncate",
             empty ? "text-muted-foreground" : "flex-1 text-foreground/85",
-            unplanned && plan.source === "none" && "text-warning-foreground",
           )}
           data-plan-current
         >
@@ -271,7 +270,7 @@ export const ThreadPlanCard = memo(function ThreadPlanCard({
           {headline}
         </span>
         {unplanned && plan.source !== "none" ? (
-          <span className="shrink-0 rounded-full border border-border/70 px-1.5 text-2xs text-warning-foreground">
+          <span className="shrink-0 rounded-full border border-border/70 px-1.5 text-2xs text-muted-foreground">
             No increment
           </span>
         ) : null}
@@ -330,8 +329,8 @@ export const ThreadPlanCard = memo(function ThreadPlanCard({
           ) : null}
           {unplanned ? (
             <p className="mb-1.5 text-xs text-muted-foreground" data-plan-unplanned-note>
-              This thread changed code without a SpecWeave increment or a declared small fix. Link
-              the increment it works on, or mark it as not needing one.
+              This thread changed code without a SpecWeave increment. Increments are recommended,
+              not required: link the one it works on, or mark it as not needing one.
             </p>
           ) : null}
           {plan.steps.length > 0 ? (

@@ -53,7 +53,12 @@ export interface AppActivationControlDeps {
   /** Sets the differential-download flag for this host, then downloads. */
   readonly downloadUpdate: Effect.Effect<void, ElectronUpdaterDownloadUpdateError>;
   readonly downloadStallLimit: Duration.Duration;
+  /** True once Squirrel.Mac staged the latest download; always true off macOS. */
+  readonly installReady: Effect.Effect<boolean>;
 }
+
+// "busy": another action held the updater, so a later pass tries again.
+type RestageOutcome = "handed" | "not-handed" | "busy";
 
 // The version the gate decides for: the download on disk, else the one being fetched.
 const activationTarget = (state: DesktopUpdateState) =>
@@ -61,8 +66,12 @@ const activationTarget = (state: DesktopUpdateState) =>
 
 export function makeAppActivationControl(deps: AppActivationControlDeps) {
   let probe: LocalServiceProbe | null = null;
-  // A restage (a second, cached download) runs only once per opened gate.
+  // A restage (a second, cached download) runs once per opened gate. It is
+  // owed from the opening until it runs: a pass that finds the updater
+  // checking or held by another action leaves it to the next pass (the
+  // 20-second activation poll) instead of dropping it.
   let lastGate: "open" | "closed" | null = null;
+  let restageOwed = false;
   // Set in the tick that forks a restage, so an install made in that same
   // tick (the update run's follow-up) waits for it instead of racing it.
   // Holds whether the restage handed the download to Squirrel.
@@ -91,15 +100,17 @@ export function makeAppActivationControl(deps: AppActivationControlDeps) {
   // "downloaded"; the regular download path skips that state.
   const restageDownloadedUpdate = Effect.gen(function* () {
     const checked = yield* deps.checkForUpdates("service caught up");
-    if (!checked) return false;
+    if (!checked) return "busy" as const;
     const state = yield* deps.getState;
     if (state.status === "available") {
       // A newer release appeared: the normal download stages it with the flag set.
       yield* deps.startAutomaticDownload;
-      return false;
+      return "not-handed" as const;
     }
-    if (state.status !== "downloaded" || state.downloadedVersion === null) return false;
-    if (!(yield* deps.tryStartDownload)) return false;
+    if (state.status !== "downloaded" || state.downloadedVersion === null) {
+      return "not-handed" as const;
+    }
+    if (!(yield* deps.tryStartDownload)) return "busy" as const;
     return yield* Effect.gen(function* () {
       yield* logInfo("staging downloaded update for install on quit", {
         version: state.downloadedVersion,
@@ -109,14 +120,14 @@ export function makeAppActivationControl(deps: AppActivationControlDeps) {
       );
       if (Option.isNone(finished)) {
         yield* logWarning("Staging the downloaded update stopped responding.");
-        return false;
+        return "not-handed" as const;
       }
-      return true;
+      return "handed" as const;
     }).pipe(
       Effect.catchTags({
         ElectronUpdaterDownloadUpdateError: (error) =>
           logError(error.message, { errorTag: error._tag, channel: error.channel }).pipe(
-            Effect.as(false),
+            Effect.as("not-handed" as const),
           ),
       }),
       Effect.ensuring(deps.finishDownload),
@@ -125,7 +136,9 @@ export function makeAppActivationControl(deps: AppActivationControlDeps) {
     Effect.catchCause((cause) =>
       Cause.hasInterruptsOnly(cause)
         ? Effect.failCause(cause)
-        : logWarning("Could not stage the downloaded update.").pipe(Effect.as(false)),
+        : logWarning("Could not stage the downloaded update.").pipe(
+            Effect.as<RestageOutcome>("not-handed"),
+          ),
     ),
     Effect.withSpan("desktop.updates.restageDownloadedUpdate"),
   );
@@ -152,21 +165,26 @@ export function makeAppActivationControl(deps: AppActivationControlDeps) {
       });
     }
     lastGate = swapGate.gate;
-    if (opened && installOnQuit && after.status === "downloaded") {
+    restageOwed = swapGate.gate === "open" && (opened || restageOwed);
+    if (restageOwed && installOnQuit && after.status === "downloaded" && restaging === null) {
       const scope = yield* deps.backgroundScope;
-      if (Option.isSome(scope) && restaging === null) {
-        const done = yield* Deferred.make<boolean>();
-        restaging = done;
-        yield* restageDownloadedUpdate.pipe(
-          Effect.onExit((exit) =>
-            Effect.suspend(() => {
-              if (restaging === done) restaging = null;
-              return Deferred.succeed(done, Exit.isSuccess(exit) && exit.value);
-            }),
-          ),
-          Effect.forkIn(scope.value),
-        );
-      }
+      if (Option.isNone(scope)) return;
+      restageOwed = false;
+      // Downloaded with the gate open, Squirrel already holds it.
+      if (yield* deps.installReady) return;
+      const done = yield* Deferred.make<boolean>();
+      restaging = done;
+      yield* restageDownloadedUpdate.pipe(
+        Effect.onExit((exit) =>
+          Effect.suspend(() => {
+            if (restaging === done) restaging = null;
+            const outcome = Exit.isSuccess(exit) ? exit.value : "not-handed";
+            if (outcome === "busy") restageOwed = true;
+            return Deferred.succeed(done, outcome === "handed");
+          }),
+        ),
+        Effect.forkIn(scope.value),
+      );
     }
   }).pipe(
     Effect.catchCause((cause) =>

@@ -175,6 +175,7 @@ export const controllerForAttachedService = (
     // installation receipt does.
     attachedStudioHome:
       service !== null && DesktopLocalService.isInstalledService(service) ? service.baseDir : null,
+    attachedServiceVersion: service?.descriptor?.serverVersion ?? null,
     agentScriptPath: () => {
       const candidates = [
         ...environment.resolveResourcePathCandidates("studio-updater/update_agent.py"),
@@ -388,6 +389,7 @@ export const installServiceUpdates = Effect.fn("desktop.ipc.installServiceUpdate
   const runs = makeServiceUpdateRuns({
     controller: controllerFor(environment).pipe(withLocalService),
     followUp,
+    appTarget: updates.appTargetForRun,
     publish: publish.pipe(withLocalService),
     kick: (reason) =>
       startAgent(reason, true).pipe(withLocalService, Effect.forkDetach, Effect.asVoid),

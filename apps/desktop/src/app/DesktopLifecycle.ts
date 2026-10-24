@@ -8,11 +8,14 @@ import * as Scope from "effect/Scope";
 import * as Option from "effect/Option";
 import type * as Electron from "electron";
 
+import * as DesktopLocalService from "../backend/DesktopLocalService.ts";
+import * as DesktopAssets from "./DesktopAssets.ts";
 import * as DesktopEnvironment from "./DesktopEnvironment.ts";
 import { makeComponentLogger } from "./DesktopObservability.ts";
 import * as DesktopShutdown from "./DesktopShutdown.ts";
 import * as ElectronApp from "../electron/ElectronApp.ts";
 import * as ElectronTheme from "../electron/ElectronTheme.ts";
+import * as ElectronTray from "../electron/ElectronTray.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as DesktopState from "./DesktopState.ts";
 import * as DesktopWindow from "../window/DesktopWindow.ts";
@@ -29,6 +32,15 @@ export class DesktopLifecycleRelaunchError extends Schema.TaggedError<DesktopLif
   }
 }
 
+export class DesktopLifecycleTrayError extends Schema.TaggedError<DesktopLifecycleTrayError>()(
+  "DesktopLifecycleTrayError",
+  { cause: Schema.Defect() },
+) {
+  override get message(): string {
+    return "Could not create the tray icon.";
+  }
+}
+
 export type DesktopLifecycleRuntimeServices =
   | DesktopEnvironment.DesktopEnvironment
   | DesktopShutdown.DesktopShutdown
@@ -39,10 +51,12 @@ export type DesktopLifecycleRuntimeServices =
 
 type DesktopLifecycleRegistrationServices =
   | DesktopLifecycleRuntimeServices
+  | DesktopAssets.DesktopAssets
+  | DesktopLocalService.DesktopLocalService
   | ElectronWindow.ElectronWindow;
 
 /**
- * @effect-expect-leaking DesktopEnvironment | DesktopShutdown | DesktopState | DesktopWindow | ElectronApp | ElectronTheme | ElectronWindow
+ * @effect-expect-leaking DesktopAssets | DesktopEnvironment | DesktopLocalService | DesktopShutdown | DesktopState | DesktopWindow | ElectronApp | ElectronTheme | ElectronWindow
  */
 export class DesktopLifecycle extends Context.Service<
   DesktopLifecycle,
@@ -108,6 +122,7 @@ function handleBeforeQuit(
       Effect.gen(function* () {
         const state = yield* DesktopState.DesktopState;
         yield* Ref.set(state.quitting, true);
+        yield* Ref.set(state.shutdownBegun, true);
         yield* logLifecycleInfo("before-quit received");
       }).pipe(Effect.withSpan("desktop.lifecycle.beforeQuit")),
     );
@@ -120,6 +135,7 @@ function handleBeforeQuit(
       const state = yield* DesktopState.DesktopState;
       const electronWindow = yield* ElectronWindow.ElectronWindow;
       yield* Ref.set(state.quitting, true);
+      yield* Ref.set(state.shutdownBegun, true);
       yield* logLifecycleInfo("before-quit received");
       yield* requestDesktopShutdownAndWait(
         electronWindow.destroyAll.pipe(
@@ -153,6 +169,7 @@ function quitFromSignal(
       const state = yield* DesktopState.DesktopState;
       const wasQuitting = yield* Ref.getAndSet(state.quitting, true);
       if (wasQuitting) return;
+      yield* Ref.set(state.shutdownBegun, true);
       yield* logLifecycleInfo("process signal received", { signal });
       yield* requestDesktopShutdownAndWait();
       yield* electronApp.quit;
@@ -170,6 +187,7 @@ export const make = DesktopLifecycle.of({
     yield* Effect.gen(function* () {
       yield* Effect.yieldNow;
       yield* Ref.set(state.quitting, true);
+      yield* Ref.set(state.shutdownBegun, true);
       yield* requestDesktopShutdownAndWait();
       if (environment.isDevelopment) {
         yield* electronApp.exit(75);
@@ -195,10 +213,60 @@ export const make = DesktopLifecycle.of({
     const electronApp = yield* ElectronApp.ElectronApp;
     const electronTheme = yield* ElectronTheme.ElectronTheme;
     const environment = yield* DesktopEnvironment.DesktopEnvironment;
+    const assets = yield* DesktopAssets.DesktopAssets;
+    const localService = yield* DesktopLocalService.DesktopLocalService;
+    const createTray = yield* ElectronTray.ElectronTray;
+    const desktopState = yield* DesktopState.DesktopState;
     const context = yield* Effect.context<DesktopLifecycleRegistrationServices>();
     const runEffect = Effect.runPromiseWith(context);
+    let tray: ElectronTray.ElectronTrayHandle | undefined;
+    yield* Effect.addFinalizer(() =>
+      Effect.sync(() => {
+        tray?.destroy();
+        tray = undefined;
+      }),
+    );
+    // The way back into an app that has no window, and the explicit Quit.
+    const showBackgroundTray = Effect.gen(function* () {
+      if (tray !== undefined) return;
+      const iconPaths = yield* assets.iconPaths;
+      const iconPath =
+        environment.platform === "win32"
+          ? Option.orElse(iconPaths.ico, () => iconPaths.png)
+          : iconPaths.png;
+      // Without an icon there is no tray; launching the app again still
+      // reopens its window through the single-instance handoff.
+      if (Option.isNone(iconPath)) return;
+      const name = yield* electronApp.name;
+      tray = yield* Effect.try({
+        try: () =>
+          createTray({
+            iconPath: iconPath.value,
+            tooltip: `${name} is running in the background`,
+            openLabel: `Open ${name}`,
+            quitLabel: `Quit ${name}`,
+            onOpen: () => {
+              void runEffect(
+                desktopWindow.activate.pipe(
+                  Effect.catchCause((cause) =>
+                    logLifecycleError("failed to open a window from the tray", { cause }),
+                  ),
+                  Effect.withSpan("desktop.lifecycle.trayOpen"),
+                ),
+              );
+            },
+            onQuit: () => {
+              void runEffect(electronApp.quit.pipe(Effect.withSpan("desktop.lifecycle.trayQuit")));
+            },
+          }),
+        catch: (cause) => new DesktopLifecycleTrayError({ cause }),
+      }).pipe(
+        Effect.catch((error) =>
+          logLifecycleError(error.message, { error }).pipe(Effect.as(undefined)),
+        ),
+      );
+    });
     let quitAllowed = false;
-    let updaterQuitAllowed = false;
     yield* electronTheme.onUpdated(() => {
       void runEffect(
         desktopWindow.syncAppearance.pipe(Effect.withSpan("desktop.lifecycle.themeUpdated")),
@@ -208,13 +276,14 @@ export const make = DesktopLifecycle.of({
       // Electron's updater owns the remaining quit/install/relaunch sequence.
       // Cancelling the following app "before-quit" event breaks that sequence,
       // most visibly on macOS where the native updater performs the relaunch.
-      updaterQuitAllowed = true;
       // This event is synchronous and the updater's quit proceeds as soon as
       // the listener returns, so a forked destroyAll would race the quit
       // and windows could still be open when the process exits (visible on
       // macOS). Destroy them inline.
       Effect.runSyncWith(context)(
-        electronWindow.destroyAll.pipe(
+        Ref.set(desktopState.updaterQuitAllowed, true).pipe(
+          Effect.andThen(Ref.set(desktopState.shutdownBegun, true)),
+          Effect.andThen(electronWindow.destroyAll),
           Effect.andThen(logLifecycleInfo("allowing updater-controlled quit")),
           Effect.catchCause((cause) =>
             logLifecycleError("failed to destroy windows before updater quit", { cause }),
@@ -227,7 +296,7 @@ export const make = DesktopLifecycle.of({
       handleBeforeQuit(
         event,
         runEffect,
-        () => quitAllowed || updaterQuitAllowed,
+        () => quitAllowed || Ref.getUnsafe(desktopState.updaterQuitAllowed),
         () => {
           quitAllowed = true;
         },
@@ -237,7 +306,9 @@ export const make = DesktopLifecycle.of({
       void runEffect(
         Effect.gen(function* () {
           const state = yield* DesktopState.DesktopState;
-          if (yield* Ref.get(state.quitting)) return;
+          // `quitting` alone also covers an install that has not quit the
+          // app; a Dock click then still brings a window back.
+          if (yield* Ref.get(state.shutdownBegun)) return;
           // A Dock click while a project window is in use must not pull the
           // main window over it. The main window is still recreated when it
           // was closed, and revealed when it is the only window left.
@@ -262,9 +333,17 @@ export const make = DesktopLifecycle.of({
         Effect.gen(function* () {
           const app = yield* ElectronApp.ElectronApp;
           const state = yield* DesktopState.DesktopState;
-          if (environment.platform !== "darwin" && !(yield* Ref.get(state.quitting))) {
+          if (environment.platform === "darwin" || (yield* Ref.get(state.quitting))) return;
+          // On macOS the app outlives its last window, and so do the backend
+          // it started and the threads running there. Do the same here while
+          // this app owns the backend, with a tray icon to reopen or quit.
+          // An attached service runs on without the app, so the app quits.
+          if (!(yield* localService.ownsBundledService)) {
             yield* app.quit;
+            return;
           }
+          yield* logLifecycleInfo("keeping the app-owned backend running in the background");
+          yield* showBackgroundTray;
         }).pipe(Effect.withSpan("desktop.lifecycle.windowAllClosed")),
       );
     });

@@ -5,46 +5,144 @@ import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
 import * as Path from "effect/Path";
 
-import { isDirectAnthropicApiKeyEnvironment, mergeProviderInstanceEnvironment, mergeNativeSubscriptionEnvironment, hasExplicitProviderApiEnvironment } from "./ProviderInstanceEnvironment.ts";
+import {
+  isDirectAnthropicApiKeyEnvironment,
+  mergeProviderInstanceEnvironment,
+  mergeNativeSubscriptionEnvironment,
+  hasExplicitProviderApiEnvironment,
+} from "./ProviderInstanceEnvironment.ts";
 
 describe("mergeProviderInstanceEnvironment", () => {
+  it("applies Windows PATH overrides once regardless of key casing", () => {
+    const base = { PATH: "C:\\Old", Path: "C:\\Other", CUSTOM: "kept" };
+    for (const name of ["PATH", "Path", "pAtH"]) {
+      expect(
+        mergeProviderInstanceEnvironment(
+          [{ name, value: "C:\\Tools", sensitive: false }],
+          base,
+          "win32",
+        ),
+      ).toEqual({ PATH: "C:\\Tools", CUSTOM: "kept" });
+    }
+    expect(base).toEqual({ PATH: "C:\\Old", Path: "C:\\Other", CUSTOM: "kept" });
+    expect(
+      mergeProviderInstanceEnvironment(
+        [{ name: "Path", value: "", sensitive: false }],
+        base,
+        "win32",
+      ),
+    ).toEqual({ PATH: "", CUSTOM: "kept" });
+  });
+
+  it("keeps case-sensitive environment names on POSIX", () => {
+    expect(
+      mergeProviderInstanceEnvironment(
+        [{ name: "Path", value: "/tools", sensitive: false }],
+        { PATH: "/bin" },
+        "linux",
+      ),
+    ).toEqual({ PATH: "/bin", Path: "/tools" });
+  });
+
   it("retains inherited API configuration for generic OpenCode/Pi/ACP and terminal environments", () => {
-    const base = { PATH: "/bin", OPENAI_API_KEY: "synthetic-key", ANTHROPIC_BASE_URL: "http://example.invalid", CLAUDE_CODE_USE_BEDROCK: "1" };
+    const base = {
+      PATH: "/bin",
+      OPENAI_API_KEY: "synthetic-key",
+      ANTHROPIC_BASE_URL: "http://example.invalid",
+      CLAUDE_CODE_USE_BEDROCK: "1",
+    };
     expect(mergeProviderInstanceEnvironment(undefined, base)).toEqual(base);
     expect(mergeProviderInstanceEnvironment([], base)).toEqual(base);
-    expect(mergeProviderInstanceEnvironment([{ name: "CUSTOM", value: "x", sensitive: false }], base)).toEqual({ ...base, CUSTOM: "x" });
+    expect(
+      mergeProviderInstanceEnvironment([{ name: "CUSTOM", value: "x", sensitive: false }], base),
+    ).toEqual({ ...base, CUSTOM: "x" });
   });
   it("neutralizes native subscription overrides even when a subprocess extends its parent environment", () => {
-    const base = { PATH: "/bin", HOME: "/home/native", CODEX_HOME: "/home/native/.codex", OPENAI_API_KEY: "synthetic", ANTHROPIC_AUTH_TOKEN: "synthetic", ANTHROPIC_BASE_URL: "http://example.invalid", CLAUDE_CODE_OAUTH_TOKEN: "synthetic", CLAUDE_CODE_USE_BEDROCK: "1", CLAUDE_CODE_USE_VERTEX: "1", CLAUDE_CODE_USE_FOUNDRY: "1" };
+    const base = {
+      PATH: "/bin",
+      HOME: "/home/native",
+      CODEX_HOME: "/home/native/.codex",
+      OPENAI_API_KEY: "synthetic",
+      ANTHROPIC_AUTH_TOKEN: "synthetic",
+      ANTHROPIC_BASE_URL: "http://example.invalid",
+      CLAUDE_CODE_OAUTH_TOKEN: "synthetic",
+      CLAUDE_CODE_USE_BEDROCK: "1",
+      CLAUDE_CODE_USE_VERTEX: "1",
+      CLAUDE_CODE_USE_FOUNDRY: "1",
+    };
     const env = mergeNativeSubscriptionEnvironment(undefined, base);
     const effectiveChildEnv = { ...base, ...env }; // extendEnv:true semantics
-    expect(effectiveChildEnv).toMatchObject({ PATH: "/bin", HOME: "/home/native", CODEX_HOME: "/home/native/.codex", OPENAI_API_KEY: "", ANTHROPIC_AUTH_TOKEN: "", ANTHROPIC_BASE_URL: "", CLAUDE_CODE_OAUTH_TOKEN: "", CLAUDE_CODE_USE_BEDROCK: "", CLAUDE_CODE_USE_VERTEX: "", CLAUDE_CODE_USE_FOUNDRY: "" });
+    expect(effectiveChildEnv).toMatchObject({
+      PATH: "/bin",
+      HOME: "/home/native",
+      CODEX_HOME: "/home/native/.codex",
+      OPENAI_API_KEY: "",
+      ANTHROPIC_AUTH_TOKEN: "",
+      ANTHROPIC_BASE_URL: "",
+      CLAUDE_CODE_OAUTH_TOKEN: "",
+      CLAUDE_CODE_USE_BEDROCK: "",
+      CLAUDE_CODE_USE_VERTEX: "",
+      CLAUDE_CODE_USE_FOUNDRY: "",
+    });
     expect(base.OPENAI_API_KEY).toBe("synthetic");
     expect(mergeNativeSubscriptionEnvironment([], base)).toEqual(env);
   });
   it("retains deliberate API instances and blocks copied OAuth in subscription mode", () => {
     const api = [{ name: "ANTHROPIC_API_KEY", value: "synthetic-explicit", sensitive: true }];
     expect(hasExplicitProviderApiEnvironment(api)).toBe(true);
-    expect(hasExplicitProviderApiEnvironment([{ name: "CLAUDE_CODE_OAUTH_TOKEN", value: "synthetic", sensitive: true }])).toBe(false);
-    expect(mergeNativeSubscriptionEnvironment(api, { ANTHROPIC_BASE_URL: "http://explicit.invalid" })).toEqual({ ANTHROPIC_API_KEY: "synthetic-explicit", ANTHROPIC_BASE_URL: "http://explicit.invalid" });
-    expect(mergeNativeSubscriptionEnvironment([{ name: "CLAUDE_CODE_OAUTH_TOKEN", value: "synthetic", sensitive: true }], {})).toMatchObject({ CLAUDE_CODE_OAUTH_TOKEN: "" });
+    expect(
+      hasExplicitProviderApiEnvironment([
+        { name: "CLAUDE_CODE_OAUTH_TOKEN", value: "synthetic", sensitive: true },
+      ]),
+    ).toBe(false);
+    expect(
+      mergeNativeSubscriptionEnvironment(api, { ANTHROPIC_BASE_URL: "http://explicit.invalid" }),
+    ).toEqual({
+      ANTHROPIC_API_KEY: "synthetic-explicit",
+      ANTHROPIC_BASE_URL: "http://explicit.invalid",
+    });
+    expect(
+      mergeNativeSubscriptionEnvironment(
+        [{ name: "CLAUDE_CODE_OAUTH_TOKEN", value: "synthetic", sensitive: true }],
+        {},
+      ),
+    ).toMatchObject({ CLAUDE_CODE_OAUTH_TOKEN: "" });
   });
   it("bills an instance to its API key only when the key goes straight to Anthropic", () => {
     const key = [{ name: "ANTHROPIC_API_KEY", value: "synthetic-explicit", sensitive: true }];
     const launch = (environment: typeof key, base: NodeJS.ProcessEnv = {}) =>
-      isDirectAnthropicApiKeyEnvironment(mergeNativeSubscriptionEnvironment(environment, base, "claudeAgent"));
+      isDirectAnthropicApiKeyEnvironment(
+        mergeNativeSubscriptionEnvironment(environment, base, "claudeAgent"),
+      );
     expect(launch(key, { PATH: "/bin" })).toBe(true);
     // A subscription instance never inherits the parent's key.
     expect(launch([], { ANTHROPIC_API_KEY: "synthetic-ambient" })).toBe(false);
     expect(launch(key, { ANTHROPIC_BASE_URL: "http://router.invalid" })).toBe(false);
-    expect(launch([...key, { name: "ANTHROPIC_AUTH_TOKEN", value: "synthetic", sensitive: true }])).toBe(false);
-    expect(launch([...key, { name: "CLAUDE_CODE_USE_BEDROCK", value: "1", sensitive: false }])).toBe(false);
-    expect(launch([{ name: "ANTHROPIC_API_KEY", value: " ", sensitive: true }, { name: "ANTHROPIC_BASE_URL", value: "http://router.invalid", sensitive: false }])).toBe(false);
+    expect(
+      launch([...key, { name: "ANTHROPIC_AUTH_TOKEN", value: "synthetic", sensitive: true }]),
+    ).toBe(false);
+    expect(
+      launch([...key, { name: "CLAUDE_CODE_USE_BEDROCK", value: "1", sensitive: false }]),
+    ).toBe(false);
+    expect(
+      launch([
+        { name: "ANTHROPIC_API_KEY", value: " ", sensitive: true },
+        { name: "ANTHROPIC_BASE_URL", value: "http://router.invalid", sensitive: false },
+      ]),
+    ).toBe(false);
   });
   it("does not treat another provider's explicit key as subscription API opt-in", () => {
-    const environment = [{ name: "ANTHROPIC_API_KEY", value: "synthetic-explicit", sensitive: true }];
+    const environment = [
+      { name: "ANTHROPIC_API_KEY", value: "synthetic-explicit", sensitive: true },
+    ];
     expect(hasExplicitProviderApiEnvironment(environment, "codex")).toBe(false);
-    expect(mergeNativeSubscriptionEnvironment(environment, { OPENAI_API_KEY: "synthetic-ambient" }, "codex").OPENAI_API_KEY).toBe("");
+    expect(
+      mergeNativeSubscriptionEnvironment(
+        environment,
+        { OPENAI_API_KEY: "synthetic-ambient" },
+        "codex",
+      ).OPENAI_API_KEY,
+    ).toBe("");
     expect(hasExplicitProviderApiEnvironment(environment, "claudeAgent")).toBe(true);
   });
   it.effect.each([

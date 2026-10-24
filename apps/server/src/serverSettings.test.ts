@@ -3649,34 +3649,37 @@ it.layer(NodeServices.layer)("server settings", (it) => {
     }).pipe(Effect.provide(layerServerSettingsWithSecrets())),
   );
 
-  it.effect("replaces an unreadable tombstone file when an instance is removed", () =>
-    Effect.gen(function* () {
-      const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
-      const { stateDir } = yield* ServerConfig.ServerConfig;
-      const fileSystem = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const tombstones = path.join(stateDir, SIGN_IN_TOMBSTONES_FILE);
-      const cursorId = ProviderInstanceId.make("cursor_replaced");
-      const cursor = { driver: ProviderDriverKind.make("cursor"), config: {} };
-      yield* serverSettings.updateProviderInstance({
-        operation: "create",
-        instanceId: cursorId,
-        instance: cursor,
-      });
-      const cursorStore = yield* ProviderCredentialStore.make("cursor", cursorId);
-      yield* cursorStore.set(new TextEncoder().encode("{}"));
-      yield* fileSystem.makeDirectory(stateDir, { recursive: true });
-      yield* fileSystem.writeFileString(tombstones, "{}");
-      yield* fileSystem.chmod(tombstones, 0o000);
+  // chmod 0o000 only sets the read-only flag on Windows; the file stays readable.
+  it.effect.skipIf(process.platform === "win32")(
+    "replaces an unreadable tombstone file when an instance is removed",
+    () =>
+      Effect.gen(function* () {
+        const serverSettings = yield* ServerSettingsModule.ServerSettingsService;
+        const { stateDir } = yield* ServerConfig.ServerConfig;
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const tombstones = path.join(stateDir, SIGN_IN_TOMBSTONES_FILE);
+        const cursorId = ProviderInstanceId.make("cursor_replaced");
+        const cursor = { driver: ProviderDriverKind.make("cursor"), config: {} };
+        yield* serverSettings.updateProviderInstance({
+          operation: "create",
+          instanceId: cursorId,
+          instance: cursor,
+        });
+        const cursorStore = yield* ProviderCredentialStore.make("cursor", cursorId);
+        yield* cursorStore.set(new TextEncoder().encode("{}"));
+        yield* fileSystem.makeDirectory(stateDir, { recursive: true });
+        yield* fileSystem.writeFileString(tombstones, "{}");
+        yield* fileSystem.chmod(tombstones, 0o000);
 
-      yield* serverSettings.updateProviderInstance({ operation: "remove", instanceId: cursorId });
-      assert.isUndefined((yield* serverSettings.getSettings).providerInstances[cursorId]);
-      assert.isTrue(Option.isNone(yield* cursorStore.get));
-      // Replaced by a readable file holding this remove, so cleanup goes on as usual.
-      assert.include(yield* fileSystem.readFileString(tombstones), "cursor_replaced");
-      yield* serverSettings.clearRemovedInstanceSignIns!([]);
-      assert.isFalse(yield* fileSystem.exists(tombstones));
-    }).pipe(Effect.provide(layerServerSettingsWithSecrets())),
+        yield* serverSettings.updateProviderInstance({ operation: "remove", instanceId: cursorId });
+        assert.isUndefined((yield* serverSettings.getSettings).providerInstances[cursorId]);
+        assert.isTrue(Option.isNone(yield* cursorStore.get));
+        // Replaced by a readable file holding this remove, so cleanup goes on as usual.
+        assert.include(yield* fileSystem.readFileString(tombstones), "cursor_replaced");
+        yield* serverSettings.clearRemovedInstanceSignIns!([]);
+        assert.isFalse(yield* fileSystem.exists(tombstones));
+      }).pipe(Effect.provide(layerServerSettingsWithSecrets())),
   );
 
   it.effect("withholds every string a driver or field this build does not know", () =>

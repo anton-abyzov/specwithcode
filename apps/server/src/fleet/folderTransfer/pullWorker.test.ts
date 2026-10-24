@@ -149,7 +149,9 @@ describe("pull into staging", () => {
       for (const sha of entry.chunks!)
         if (!stillNeeded.has(sha)) expect(resent.has(sha)).toBe(false);
     for (const entry of files) expect(same(entry)).toBe(true);
-    expect(NodeFS.statSync(stagedPath(staging, "scripts/run.sh")).mode & 0o777).toBe(0o755);
+    // Windows has no POSIX mode bits to check.
+    if (process.platform !== "win32")
+      expect(NodeFS.statSync(stagedPath(staging, "scripts/run.sh")).mode & 0o777).toBe(0o755);
   });
 
   it("reuses a local copy instead of the network", async () => {

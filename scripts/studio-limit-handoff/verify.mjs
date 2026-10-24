@@ -2,9 +2,9 @@
 // 0968: two isolated real servers prove which paired machine a limited thread may move to,
 // and that it moves there through 0967's handoff, once, under faults. M4 is the source,
 // Minis the target. Usage is simulated per provider instance with
-// STUDIO_SIMULATE_PROVIDER_USAGE and M4's `source` stops on a simulated limit
-// (STUDIO_SIMULATE_USAGE_LIMIT). Every provider is the model-free echo agent, so no real
-// provider turn runs and no live data is read. Faults are injected in the network between
+// STUDIO_SIMULATE_PROVIDER_USAGE. M4's model-free `source` actually starts a turn, writes
+// partial work and returns a structured ACP limit error after we observe it running.
+// No paid provider runs and no live data is read. Faults are injected in the network between
 // the two (a TLS proxy) and by stopping or killing a server.
 import * as NodeAssert from "node:assert/strict";
 import * as NodeChildProcess from "node:child_process";
@@ -38,10 +38,16 @@ const receipt = {
     encoding: "utf8",
   }).trim(),
   evidenceKind: "two-real-isolated-servers-with-simulated-usage",
+  fixtureSha256: Object.fromEntries(
+    [NodeURL.fileURLToPath(import.meta.url), agent].map((file) => [
+      NodePath.relative(root, file),
+      NodeCrypto.createHash("sha256").update(NodeFS.readFileSync(file)).digest("hex"),
+    ]),
+  ),
   builtEntrypointSha256: NodeCrypto.createHash("sha256")
     .update(NodeFS.readFileSync(entrypoint))
     .digest("hex"),
-  providerTurns: 0,
+  paidProviderTurns: 0,
   /** Prompts each model-free echo agent instance received, by machine and instance. */
   stubAgentTurns: {},
   checks: [],
@@ -348,9 +354,15 @@ const agentInstance = (name) => ({
   displayName: `Agent ${name}`,
   enabled: true,
   config: {
-    source: "local",
+    source: name === "source" ? "registry" : "local",
+    ...(name === "source" ? { agentId: "mistral-vibe" } : {}),
     commandPath: process.execPath,
-    commandArgs: [agent, "--echo", NodePath.join(scratch, `agent-${name}.json`)],
+    commandArgs: [
+      agent,
+      "--echo",
+      NodePath.join(scratch, `agent-${name}.json`),
+      name === "own" ? "--hold-resume-fixture" : "--fixture-sessions",
+    ],
     customModels: ["link-launch"],
   },
 });
@@ -371,6 +383,42 @@ async function makeHost(label, instances, settings, env) {
   const bin = NodePath.join(dir, "bin");
   NodeFS.mkdirSync(NodePath.join(data, "userdata"), { recursive: true });
   NodeFS.mkdirSync(bin);
+  if (instances.includes("source")) {
+    // The release classifies Mistral's structured -31001 ACP error as a usage limit.
+    // Use that existing path with a cached fixture entry and our Node executable only.
+    // No registry lookup, package installation or actual Mistral process is needed.
+    const registry = NodePath.join(data, "caches/acp-registry");
+    NodeFS.mkdirSync(registry, { recursive: true });
+    NodeFS.writeFileSync(
+      NodePath.join(registry, "registry.json"),
+      JSON.stringify({
+        version: "1",
+        agents: [
+          {
+            id: "mistral-vibe",
+            name: "Model-free limit fixture",
+            version: "1.0.0",
+            description: "Isolated ACP structured-limit fixture; no model calls.",
+            distribution: {
+              binary: {
+                [`${process.platform === "win32" ? "windows" : process.platform}-${process.arch === "arm64" ? "aarch64" : "x86_64"}`]:
+                  {
+                    archive: "https://fixture.invalid/never-downloaded",
+                    cmd: "never-run",
+                    args: [
+                      agent,
+                      "--echo",
+                      NodePath.join(scratch, "agent-source.json"),
+                      "--limit-fixture",
+                    ],
+                  },
+              },
+            },
+          },
+        ],
+      }),
+    );
+  }
   // The server names its machine from macOS's ComputerName; this one answers with the label.
   NodeFS.writeFileSync(
     NodePath.join(bin, "scutil"),
@@ -708,6 +756,9 @@ try {
     m4Instances,
     {
       providerLimitSwitchAtPercent: 95,
+      providerLimitAction: "switch",
+      providerLimitFallbackModels: [{ instanceId: "local", model: "link-launch" }],
+      providerLimitWaitUnderMinutes: 0,
       providerLimitTargetOrder: "other-machine-first",
       providerLimitMachineTargets: [
         target("twin"),
@@ -720,8 +771,6 @@ try {
     {
       // `local` reports no usage, like an ACP agent: it takes a turn as long as it is ready.
       STUDIO_SIMULATE_PROVIDER_USAGE: "source=97@pool-m4,hot=96@pool-m4",
-      // Turns on M4's provider stop on a usage limit before any provider process starts.
-      STUDIO_SIMULATE_USAGE_LIMIT: "source",
       NODE_EXTRA_CA_CERTS: NodePath.join(tls, "cert.pem"),
       NODE_OPTIONS: `--import=${NodeURL.pathToFileURL(NodePath.join(tls, "resolve.mjs")).href}`,
     },
@@ -881,6 +930,73 @@ try {
       creationSource: "web",
       dispatchMode: { type: "start_immediately" },
     });
+  const partialText = (name) => `Partial fixture work: ${name}. Wrote notes/${name}.md.`;
+  const partialFile = (name) => `Partial work from ${name}.\n`;
+  const limitTurn = async (threadId, name) => {
+    await send(threadId, `Continue the fixture work.\nLIMIT-WORK ${name}`);
+    const running = await until(`${name} to produce partial work while running`, async () => {
+      const view = await projection(m4, threadId);
+      return view.runs.some((run) => run.status === "running") &&
+        view.messages.some(
+          (message) => message.role === "assistant" && message.text.includes(partialText(name)),
+        )
+        ? view
+        : null;
+    });
+    const prompt = agentTurns("source").find((turn) => turn.text.includes(`LIMIT-WORK ${name}`));
+    NodeAssert.ok(prompt?.cwd, `${name}: the source agent actually received the turn`);
+    NodeAssert.equal(
+      NodeFS.readFileSync(NodePath.join(prompt.cwd, "notes", `${name}.md`), "utf8"),
+      partialFile(name),
+    );
+    const run = running.runs.find((run) => run.status === "running");
+    receipt.runningTurns ??= {};
+    receipt.runningTurns[name] = {
+      threadId,
+      runId: run.id,
+      status: run.status,
+      partialOutput: partialText(name),
+      cwd: prompt.cwd,
+    };
+    NodeFS.writeFileSync(NodePath.join(scratch, `agent-source.json.${name}.release`), "release\n");
+    const failed = await until(`${name} to fail on a structured usage limit`, async () => {
+      const view = await projection(m4, threadId);
+      return view.runs.find((entry) => entry.id === run.id)?.status === "failed" ? view : null;
+    });
+    const failure = failed.turnItems.find(
+      (item) => item.type === "error" && item.runId === run.id,
+    )?.failure;
+    NodeAssert.equal(failure?.class, "usage_limit", `${name}: real ACP error classification`);
+    NodeAssert.equal(failure.code, "-31001");
+    NodeAssert.equal(failure.message, "Usage limit reached after partial fixture work.");
+    receipt.runningTurns[name].failure = failure;
+    check(
+      `${name}: source turn was running with agent-written partial output and file before its structured usage-limit error`,
+    );
+  };
+  const assertPartialCheckpoint = (threadId, name, view) => {
+    const record = recordOf(m4, threadId);
+    const incoming = handoffDoc(minis)?.incomingDetails?.[`${m4.environmentId}/${threadId}`];
+    NodeAssert.ok(
+      incoming?.transcript.some(
+        (message) => message.role === "assistant" && message.text.includes(partialText(name)),
+      ),
+      `${name}: checkpoint transcript carries the partial output`,
+    );
+    NodeAssert.equal(
+      NodeFS.readFileSync(NodePath.join(view.thread.worktreePath, "notes", `${name}.md`), "utf8"),
+      partialFile(name),
+    );
+    NodeAssert.ok(
+      record?.checkpoint?.ref && record.checkpoint.commit,
+      `${name}: a portable Git checkpoint exists`,
+    );
+    receipt.runningTurns[name].checkpoint = record.checkpoint;
+    receipt.runningTurns[name].continuedThreadId = view.thread.id;
+    check(
+      `${name}: portable checkpoint carries the running turn's partial transcript and uncommitted file`,
+    );
+  };
   const workThread = await thread(work, "Limited worker");
   const easychampThread = await thread(easychamp, "EasyChamp worker");
   const soloThread = await thread(solo, "Solo worker");
@@ -1003,13 +1119,8 @@ try {
   const sources = {};
   const continuationOf = (threadId) => incomingOf(minis, threadId)?.continuedThreadId ?? null;
 
-  // 1. A real move on the usage limit. The turn had written a file it never committed: the
-  //    checkpoint carries it to Minis, while `.env.local` stays Minis's own.
-  NodeFS.mkdirSync(NodePath.join(m4Folders["Limit fixture"], "notes"), { recursive: true });
-  NodeFS.writeFileSync(
-    NodePath.join(m4Folders["Limit fixture"], "notes/limited.md"),
-    "Half-done work from the limited turn.\n",
-  );
+  // 1. A running model-free turn writes partial work, then reaches its usage limit.
+  //    Its checkpoint carries the file and output; `.env.local` stays Minis's own.
   sources.limited = { threadId: workThread, resumed: true };
   // 2. Threshold premove: an idle thread at 96% whose turn just finished moves, unresumed.
   const idleThread = await thread(work, "Idle at threshold", "hot");
@@ -1017,9 +1128,9 @@ try {
   // 3. No machine qualifies (Solo fixture isn't linked on Minis): M4's own fallback runs.
   sources.fallback = { threadId: soloThread, local: true };
   await Promise.all([
-    send(workThread, "Continue the fixture work."),
+    limitTurn(workThread, "limited"),
     send(idleThread, "Summarize the fixture."),
-    send(soloThread, "Continue the solo work."),
+    limitTurn(soloThread, "solo"),
   ]);
   const moved = await until(
     "the limited and the idle thread to continue on Minis",
@@ -1059,10 +1170,7 @@ try {
   NodeAssert.match(seed, /handed off from M4 after its usage limit was reached/);
   const worktree = continued.thread.worktreePath;
   NodeAssert.ok(worktree, "The continuation runs in its own worktree");
-  NodeAssert.equal(
-    NodeFS.readFileSync(NodePath.join(worktree, "notes/limited.md"), "utf8"),
-    "Half-done work from the limited turn.\n",
-  );
+  assertPartialCheckpoint(workThread, "limited", continued);
   NodeAssert.equal(
     NodeFS.readFileSync(NodePath.join(worktree, ".env.local"), "utf8"),
     "FIXTURE_TOKEN=Minis-only\n",
@@ -1131,7 +1239,7 @@ try {
   const sourceDown = await thread(work, "Source goes offline");
   sources.sourceDown = { threadId: sourceDown, resumed: true };
   const stalled = armFault("stall-takeover");
-  await send(sourceDown, "Keep going with the fixture.");
+  await limitTurn(sourceDown, "source-down");
   const answer = await Promise.race([
     stalled,
     sleep(240_000).then(() => {
@@ -1169,15 +1277,16 @@ try {
     return settledRuns(view).length > 0 ? view : null;
   });
   NodeAssert.equal(downThere.runs.length, 1);
+  assertPartialCheckpoint(sourceDown, "source-down", downThere);
   check(
     "Limit hit, then M4 died before Minis's takeover answer: Minis continued once; restarted M4 stayed handing-off, ran nothing, and its heartbeat fenced the thread",
   );
 
   // 6. The target goes offline during the resume: the takeover never reaches Minis.
   const targetDown = await thread(work, "Target goes offline");
-  sources.targetDown = { threadId: targetDown, held: true };
+  sources.targetDown = { threadId: targetDown, resumed: true };
   const dropped = armFault("drop-takeover");
-  await send(targetDown, "Finish the fixture.");
+  await limitTurn(targetDown, "target-down");
   await Promise.race([
     dropped,
     sleep(240_000).then(() => {
@@ -1193,7 +1302,14 @@ try {
     },
     60_000,
   );
-  receipt.targetOffline = { lease: inDoubt.lease, lastError: inDoubt.lastError };
+  NodeAssert.ok(inDoubt.pendingTakeover, "The exact takeover request is persisted for retry");
+  receipt.targetOffline = {
+    faultPoint:
+      "Target unavailable before takeover request delivery; pending resume retried after reconnect",
+    lease: inDoubt.lease,
+    lastError: inDoubt.lastError,
+    pendingTakeoverEpoch: inDoubt.pendingTakeover.request.epoch,
+  };
   // Two more sweeps with Minis gone: nothing runs here, no fallback is sent.
   await sleep(65_000);
   const heldView = await projection(m4, targetDown);
@@ -1202,25 +1318,133 @@ try {
   const waiting = (await candidates(targetDown)).waiting;
   NodeAssert.ok(waiting, "The thread says why it waits");
   receipt.targetOffline.waiting = waiting;
+  NodeAssert.equal(continuationOf(targetDown), null, "Minis received no takeover while offline");
   await boot(minis);
-  // Minis is back; its heartbeat answers that it never continued the thread.
+  // #550 re-sends the persisted takeover at its original epoch after Minis reconnects.
+  const recovered = await until(
+    "one continuation after Minis reconnects",
+    async () => {
+      const continuation = continuationOf(targetDown);
+      if (!continuation || recordOf(m4, targetDown)?.continuedOn?.threadId !== continuation)
+        return null;
+      const view = await projection(minis, continuation);
+      return settledRuns(view).length === 1 ? view : null;
+    },
+    180_000,
+  );
+  NodeAssert.equal(recovered.runs.length, 1, "The reconnect starts exactly one target turn");
+  NodeAssert.equal(recovered.runs[0].providerInstanceId, "own");
+  const recoveredRecord = recordOf(m4, targetDown);
+  NodeAssert.equal(
+    recoveredRecord.pendingTakeover,
+    null,
+    "Acknowledgement clears the pending request",
+  );
+  const recoveredIncoming = handoffDoc(minis).incomingDetails[`${m4.environmentId}/${targetDown}`];
+  NodeAssert.equal(recoveredIncoming.takeoverEpoch, inDoubt.pendingTakeover.request.epoch);
+  assertPartialCheckpoint(targetDown, "target-down", recovered);
+  // Two further sweeps establish that retry/heartbeat convergence cannot start another turn.
   await sleep(65_000);
-  NodeAssert.equal(continuationOf(targetDown), null, "Minis never received the takeover");
-  NodeAssert.equal((await projection(m4, targetDown)).runs.length, 1);
-  const stillHeld = recordOf(m4, targetDown);
+  NodeAssert.equal(
+    (await projection(m4, targetDown)).runs.length,
+    1,
+    "The source never reruns after reconnect",
+  );
+  NodeAssert.equal(
+    (await projection(minis, recovered.thread.id)).runs.length,
+    1,
+    "The target never resumes twice",
+  );
   receipt.targetOffline.afterTargetBack = {
-    lease: stillHeld?.lease ?? null,
-    continuedOn: stillHeld?.continuedOn ?? null,
+    lease: recoveredRecord.lease,
+    continuedOn: recoveredRecord.continuedOn,
+    targetRuns: recovered.runs.length,
+    sourceRuns: 1,
+    takeoverEpoch: recoveredIncoming.takeoverEpoch,
   };
-  NodeAssert.equal(stillHeld?.continuedOn ?? null, null);
   check(
-    `Target offline during the takeover: M4 holds the thread in doubt ("${waiting}"), runs nothing and sends no fallback, also after Minis is back`,
+    `Target offline during takeover: M4 holds ("${waiting}") without fallback; after reconnect Minis resumes exactly once at the original epoch and M4 never reruns`,
   );
 
-  // AC-10 in the app, on the held thread: every target with its reason, and Settings.
+  // 7. A distinct fault after the target provider actually starts its resumed turn.
+  const resumeDown = await thread(work, "Target stops during running resume");
+  sources.resumeDown = { threadId: resumeDown, resumed: true, restarted: true };
+  NodeFS.writeFileSync(NodePath.join(scratch, "agent-own.json.hold-next"), "hold\n");
+  await limitTurn(resumeDown, "resume-down");
+  const resuming = await until(
+    "the target continuation to be running before stopping Minis",
+    async () => {
+      const continuation = continuationOf(resumeDown);
+      if (!continuation || recordOf(m4, resumeDown)?.continuedOn?.threadId !== continuation)
+        return null;
+      const view = await projection(minis, continuation);
+      return view.runs.some((run) => run.status === "running") &&
+        view.messages.some((message) =>
+          message.text.includes("Target continuation is running before the offline fault."),
+        )
+        ? view
+        : null;
+    },
+  );
+  assertPartialCheckpoint(resumeDown, "resume-down", resuming);
+  const beforeOfflineTurns = agentTurns("own").length;
+  receipt.targetRunningOffline = {
+    faultPoint:
+      "Target provider emitted output and was running its resumed turn before its server stopped",
+    continuation: resuming.thread.id,
+    runId: resuming.runs[0].id,
+    statusBeforeOffline: resuming.runs[0].status,
+  };
+  await stop(minis);
+  NodeAssert.equal((await projection(m4, resumeDown)).runs.length, 1);
+  await boot(minis);
+  await sleep(65_000);
+  const afterResumeRestart = await projection(minis, resuming.thread.id);
+  NodeAssert.equal(continuationOf(resumeDown), resuming.thread.id);
+  NodeAssert.equal(
+    afterResumeRestart.runs.length,
+    2,
+    "One interrupted target run and one restart continuation",
+  );
+  NodeAssert.equal(afterResumeRestart.runs[0].id, resuming.runs[0].id);
+  NodeAssert.equal(afterResumeRestart.runs[0].status, "cancelled");
+  const restartRun = afterResumeRestart.runs[1];
+  NodeAssert.equal(restartRun.restartContinuationOfRunId, resuming.runs[0].id);
+  NodeAssert.equal(restartRun.status, "completed");
+  NodeAssert.equal(restartRun.providerInstanceId, "own");
+  NodeAssert.equal(
+    afterResumeRestart.messages.filter(
+      (message) => message.id === `message:restart-continuation:${resuming.runs[0].id}`,
+    ).length,
+    1,
+  );
+  NodeAssert.equal(
+    agentTurns("own").length,
+    beforeOfflineTurns + 1,
+    "Exactly one prompt continues the interrupted target after restart",
+  );
+  NodeAssert.equal(
+    (await projection(m4, resumeDown)).runs.length,
+    1,
+    "The source stays fenced while the target restarts",
+  );
+  receipt.targetRunningOffline.statusAfterRestart = restartRun.status;
+  receipt.targetRunningOffline.restartRunId = restartRun.id;
+  receipt.targetRunningOffline.restartContinuationOfRunId = restartRun.restartContinuationOfRunId;
+  receipt.targetRunningOffline.targetRuns = afterResumeRestart.runs.length;
+  check(
+    "Target went offline during an observed running resume: same handoff thread, one cancelled target run with exactly one completed restart continuation, no source rerun",
+  );
+
+  // A separate thread held by explicit policy keeps candidate reasons visible after recovery.
+  await rpc(m4, "server.updateSettings", { patch: { providerLimitAction: "wait" } });
+  const waitingThread = await thread(work, "Waiting under explicit policy");
+  sources.waiting = { threadId: waitingThread };
+  await limitTurn(waitingThread, "waiting");
+  // AC-10 in the app: every target with its reason, and the ordered list in Settings.
   receipt.screenshots = [];
   if (webBuilt()) {
-    await captureCandidates(m4, targetDown);
+    await captureCandidates(m4, waitingThread);
     const browser = await launchBrowser();
     try {
       await shotThread(browser, m4, workThread, "notice-source", "Continued on Minis");
@@ -1258,7 +1482,15 @@ try {
     const continuation = continuationOf(source.threadId);
     const there = continuation === null ? null : await projection(minis, continuation);
     const stopped = here.runs[0];
-    const continuations = here.runs.length - 1 + (there === null ? 0 : there.runs.length);
+    const restarts =
+      there?.runs.filter((run) => run.restartContinuationOfRunId !== undefined) ?? [];
+    NodeAssert.equal(
+      restarts.length,
+      source.restarted ? 1 : 0,
+      `${name}: each restart has one continuation`,
+    );
+    // The target-running fault adds a second interrupted run, with its own successor.
+    const continuations = here.runs.length - 1 + (there?.runs.length ?? 0) - restarts.length;
     ledger[name] = {
       sourceRun: stopped.id,
       sourceRunStatus: stopped.status,
@@ -1266,6 +1498,10 @@ try {
       continuation,
       runsThere: there?.runs.length ?? null,
       continuations,
+      restartContinuations: restarts.map((run) => ({
+        runId: run.id,
+        sourceRunId: run.restartContinuationOfRunId,
+      })),
     };
     NodeAssert.ok(continuations <= 1, `${name}: ${JSON.stringify(ledger[name])}`);
   }
@@ -1275,15 +1511,17 @@ try {
   NodeAssert.equal(ledger.fallback.continuations, 1);
   NodeAssert.equal(ledger.idle.runsThere, 0);
   NodeAssert.equal(ledger.stopped.continuations, 0);
-  NodeAssert.equal(ledger.targetDown.continuations, 0);
+  NodeAssert.equal(ledger.targetDown.continuations, 1);
+  NodeAssert.equal(ledger.resumeDown.continuations, 1);
+  NodeAssert.equal(ledger.waiting.continuations, 0);
   for (const name of [...minisInstances, ...m4Instances])
     receipt.stubAgentTurns[name] = agentTurns(name).length;
   NodeAssert.deepEqual(receipt.stubAgentTurns, {
     twin: 0,
-    own: 2,
+    own: 5,
     busy: 0,
     mystery: 0,
-    source: 0,
+    source: 6,
     hot: 2,
     local: 1,
   });

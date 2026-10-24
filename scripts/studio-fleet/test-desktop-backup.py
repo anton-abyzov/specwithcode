@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Desktop rollback copies end up zipped under a .noindex folder, in temporary homes only."""
+"""Desktop rollback copies end up cloned or zipped under a .noindex folder, in temporary homes only."""
 import io
 import json
 import pathlib
@@ -34,10 +34,30 @@ class DesktopBackupTests(unittest.TestCase):
         patcher = patch.object(desktop_backup, 'unregister', self.unregistered.append)
         patcher.start()
         self.addCleanup(patcher.stop)
+        # The zip path unless a test clones: temporary folders may sit on APFS or not.
+        self.real_clone_supported = desktop_backup.clone_supported
+        self.cloning = False
+        cloning = patch.object(desktop_backup, 'clone_supported',
+                               lambda app, root: self.cloning and self.real_clone_supported(app, root))
+        cloning.start()
+        self.addCleanup(cloning.stop)
         self.addCleanup(self.tmp.cleanup)
+
+    def use_clones(self):
+        root = pathlib.Path(self.tmp.name) / 'probe'
+        make_app(root / 'Probe.app', '0.0.0')
+        if not self.real_clone_supported(root / 'Probe.app', root):
+            self.skipTest('the temporary folder is not on APFS')
+        self.cloning = True
 
     def loose_apps(self):
         return sorted(str(path) for path in self.backups.rglob('*.app'))
+
+    def assert_restored(self, bundle, version):
+        self.assertEqual(desktop_backup.bundle_version(bundle), version)
+        self.assertEqual((bundle / 'Contents' / 'MacOS' / 'SpecWithCode').read_text(), 'binary ' + version)
+        self.assertTrue((bundle / 'Contents' / 'Frameworks' / 'Current').is_symlink())
+        self.assertEqual(desktop_backup.bundle_id(bundle), 'com.specweave.studio')
 
     def test_snapshot_zips_under_noindex_and_restores_with_symlinks(self):
         app = make_app(pathlib.Path(self.tmp.name) / 'SpecWithCode.app', '1.0.0')
@@ -49,10 +69,121 @@ class DesktopBackupTests(unittest.TestCase):
         self.assertEqual(archive.parent.stat().st_mode & 0o777, 0o700)
         self.assertEqual(self.loose_apps(), [])
         restored = pathlib.Path(self.tmp.name) / 'restored'
-        subprocess.run(['/usr/bin/ditto', '-x', '-k', str(archive), str(restored)], check=True)
-        bundle = restored / 'SpecWithCode.app'
-        self.assertEqual(desktop_backup.bundle_version(bundle), '1.0.0')
-        self.assertTrue((bundle / 'Contents' / 'Frameworks' / 'Current').is_symlink())
+        restored.mkdir()
+        bundle = desktop_backup.restore(archive, restored)
+        self.assertEqual(bundle, restored / 'SpecWithCode.app')
+        self.assert_restored(bundle, '1.0.0')
+
+    def test_snapshot_clones_into_a_folder_launch_services_ignores(self):
+        self.use_clones()
+        app = make_app(pathlib.Path(self.tmp.name) / 'SpecWithCode.app', '1.0.0')
+        with patch.object(desktop_backup.subprocess, 'run', wraps=subprocess.run) as run:
+            archive = desktop_backup.snapshot(app, self.home, now=0)
+        self.assertEqual(run.call_args_list[0].args[0][:3], ['/bin/cp', '-c', '-p'])
+        self.assertNotIn('/usr/bin/ditto', [call.args[0][0] for call in run.call_args_list])
+        self.assertEqual(archive, self.backups / 'desktop.noindex' / '1.0.0-19700101T000000Z.noindex')
+        self.assertTrue(archive.is_dir())
+        self.assertEqual(archive.stat().st_mode & 0o777, 0o700)
+        # No .app anywhere at the top: the bundle itself sits under the .noindex name.
+        self.assertEqual(self.loose_apps(), [])
+        self.assertEqual(sorted(path.name for path in archive.iterdir()), ['Contents'])
+        self.assertEqual(desktop_backup.bundle_version(archive), '1.0.0')
+        self.assertEqual([path.name for path in archive.parent.iterdir()], [archive.name])
+
+        restored = pathlib.Path(self.tmp.name) / 'restored'
+        restored.mkdir()
+        bundle = desktop_backup.restore(archive, restored)
+        self.assertEqual(bundle, restored / 'SpecWithCode.app')
+        self.assert_restored(bundle, '1.0.0')
+        self.assertEqual(bundle.stat().st_mode & 0o777, 0o755)
+        self.assertEqual(sorted(path.name for path in restored.iterdir()), ['SpecWithCode.app'])
+        # The copy stays for another restore, which refuses to mix into an existing app.
+        self.assertTrue(archive.is_dir())
+        with self.assertRaises(ValueError):
+            desktop_backup.restore(archive, restored)
+
+    def test_snapshot_zips_when_the_clone_fails(self):
+        self.use_clones()
+        app = make_app(pathlib.Path(self.tmp.name) / 'SpecWithCode.app', '1.0.0')
+        real_run = subprocess.run
+
+        def run(argv, *args, **kwargs):
+            if argv[0] == '/bin/cp':
+                # A copy cut short leaves part of the bundle behind.
+                (pathlib.Path(argv[-1]) / 'Contents').mkdir(parents=True)
+                raise subprocess.CalledProcessError(1, argv)
+            return real_run(argv, *args, **kwargs)
+
+        with patch.object(desktop_backup.subprocess, 'run', run):
+            archive = desktop_backup.snapshot(app, self.home, now=0)
+        self.assertEqual(archive.name, '1.0.0-19700101T000000Z.zip')
+        self.assertEqual([path.name for path in archive.parent.iterdir()], [archive.name])
+
+    def test_snapshot_zips_where_apfs_cannot_clone(self):
+        self.cloning = False
+        app = make_app(pathlib.Path(self.tmp.name) / 'SpecWithCode.app', '1.0.0')
+        with patch.object(desktop_backup.subprocess, 'run', wraps=subprocess.run) as run:
+            archive = desktop_backup.snapshot(app, self.home, now=0)
+        self.assertEqual(archive.suffix, '.zip')
+        self.assertEqual([call.args[0][0] for call in run.call_args_list], ['/usr/bin/ditto'])
+
+    def test_clone_support_is_probed_with_one_file(self):
+        app = make_app(pathlib.Path(self.tmp.name) / 'SpecWithCode.app', '1.0.0')
+        root = desktop_backup.archive_root(self.home)
+        root.mkdir(parents=True)
+        result = self.real_clone_supported(app, root)
+        self.assertIsInstance(result, bool)
+        self.assertEqual(list(root.iterdir()), [])
+        # Another volume or file system: clonefile(2) fails, so the zip is used.
+        self.assertFalse(self.real_clone_supported(app, root / 'missing'))
+
+    def test_restore_refuses_what_is_not_a_rollback_copy(self):
+        app = make_app(pathlib.Path(self.tmp.name) / 'SpecWithCode.app', '1.0.0')
+        with self.assertRaises(ValueError):
+            desktop_backup.restore(app, pathlib.Path(self.tmp.name))
+
+    def test_prune_handles_clones_and_zips_together(self):
+        root = desktop_backup.archive_root(self.home)
+        root.mkdir(parents=True)
+        (root / '1.0.68-20261020T000000Z.zip').write_text('zip')
+        (root / '1.0.71-20261021T000000Z.zip').write_text('zip')
+        make_app(root / '1.0.72-20261022T000000Z.noindex', '1.0.72')
+        newest = make_app(root / '1.0.74-20261023T000000Z.noindex', '1.0.74')
+        # A clone cut short and a stray file are not copies.
+        (root / '1.0.75-20261023T010000Z.noindex.partial').mkdir()
+        (root / '1.0.73-20261022T120000Z.zip.partial').write_text('partial')
+        removed = desktop_backup.prune(self.home, keep=1)
+        self.assertEqual(sorted(path.name for path in removed),
+                         ['1.0.68-20261020T000000Z.zip', '1.0.71-20261021T000000Z.zip',
+                          '1.0.72-20261022T000000Z.noindex'])
+        self.assertEqual(sorted(path.name for path in root.iterdir()),
+                         ['1.0.73-20261022T120000Z.zip.partial', newest.name,
+                          '1.0.75-20261023T010000Z.noindex.partial'])
+        # The newest copy may be a zip too.
+        (root / '1.0.75-20261024T000000Z.zip').write_text('zip')
+        self.assertEqual([path.name for path in desktop_backup.prune(self.home, keep=1)], [newest.name])
+
+    def test_snapshot_command_clones_and_prunes_the_older_zip(self):
+        self.use_clones()
+        root = desktop_backup.archive_root(self.home)
+        root.mkdir(parents=True)
+        older = root / '1.0.71-20261021T000000Z.zip'
+        older.write_text('zip')
+        app = make_app(pathlib.Path(self.tmp.name) / 'SpecWithCode.app', '1.0.74')
+        output = io.StringIO()
+        with redirect_stdout(output):
+            desktop_backup.main(['--home', str(self.home), 'snapshot', str(app)])
+        result = json.loads(output.getvalue())
+        self.assertTrue(result['archive'].endswith('.noindex'))
+        self.assertEqual(result['pruned'], [str(older)])
+        restored = pathlib.Path(self.tmp.name) / 'restored'
+        restored.mkdir()
+        with redirect_stdout(io.StringIO()) as restore_output:
+            desktop_backup.main(['--home', str(self.home), 'restore', result['archive'],
+                                 '--to', str(restored)])
+        self.assertEqual(json.loads(restore_output.getvalue()),
+                         {'restored': str(restored / 'SpecWithCode.app')})
+        self.assert_restored(restored / 'SpecWithCode.app', '1.0.74')
 
     def test_prune_keeps_the_most_recently_made_copy(self):
         root = desktop_backup.archive_root(self.home)

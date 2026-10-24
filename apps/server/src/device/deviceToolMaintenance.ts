@@ -37,7 +37,8 @@ async function withToolMaintenance(root, operation) {
       catch (error) {
         if (!['EEXIST', 'ENOTEMPTY', 'EPERM', 'EACCES'].includes(error.code)) throw error;
         let files = [];
-        try { files = maintenanceFs.readdirSync(lock); } catch (error) { if (error.code !== 'ENOENT') throw error; }
+        // Windows reports EPERM for a directory another process is deleting.
+        try { files = maintenanceFs.readdirSync(lock); } catch (error) { if (!['ENOENT', 'EPERM'].includes(error.code)) throw error; }
         if (files.length === 1) {
           const previousFile = maintenancePath.join(lock, files[0]);
           let previous;

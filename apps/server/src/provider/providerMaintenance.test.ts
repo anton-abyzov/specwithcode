@@ -43,6 +43,9 @@ const driver = (value: string) => ProviderDriverKind.make(value);
 // These write `#!/bin/sh` stubs and evaluate them with darwin/linux path
 // semantics; a Windows temp path cannot be split on `:`.
 const windowsHost = HostProcessPlatform.defaultValue() === "win32";
+// Windows only runs a path whose extension is in PATHEXT, so the visible
+// command links carry one there; the real path still decides ownership.
+const commandSuffix = windowsHost ? ".cmd" : "";
 const makeTempDir = (name: string) =>
   Crypto.Crypto.pipe(
     Effect.flatMap((crypto) => crypto.randomUUIDv4),
@@ -94,7 +97,7 @@ function writeExecutable(path: string) {
 function linkIntoPackage(tempDir: string, name: string, packageSegments: ReadonlyArray<string>) {
   const target = NodePath.join(tempDir, ...packageSegments, "bin", `${name}.js`);
   writeExecutable(target);
-  const link = NodePath.join(tempDir, "bin", name);
+  const link = NodePath.join(tempDir, "bin", `${name}${commandSuffix}`);
   NodeFS.mkdirSync(NodePath.dirname(link), { recursive: true });
   NodeFS.symlinkSync(target, link);
   return link;
@@ -587,7 +590,7 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
           "package-tool.js",
         );
         writeExecutable(target);
-        const link = NodePath.join(tempDir, "bin", "package-tool");
+        const link = NodePath.join(tempDir, "bin", `package-tool${commandSuffix}`);
         NodeFS.mkdirSync(NodePath.dirname(link), { recursive: true });
         NodeFS.symlinkSync(target, link);
 
@@ -766,7 +769,8 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
           },
         });
       }),
-    { skip: !symlinksSupported },
+    // Homebrew is macOS/Linux only, and its PATH splits on `:`.
+    { skip: !symlinksSupported || windowsHost },
   );
 
   it.effect.skipIf(windowsHost)(
@@ -902,7 +906,7 @@ it.layer(NodeServices.layer)("providerMaintenance", (it) => {
         const voltaHome = NodePath.join(yield* makeTempDir("studio-volta-capabilities"), ".volta");
         const shim = NodePath.join(voltaHome, "bin", "volta-shim");
         writeExecutable(shim);
-        const link = NodePath.join(voltaHome, "bin", "package-tool");
+        const link = NodePath.join(voltaHome, "bin", `package-tool${commandSuffix}`);
         NodeFS.symlinkSync(shim, link);
         const resolve = resolveProviderMaintenanceCapabilitiesEffect(packageToolUpdate, {
           binaryPath: link,

@@ -164,12 +164,14 @@ describe("acpPermissionDisposition", () => {
         "deny",
         "a missing leaf below an escaping directory symlink must not be auto-approved",
       );
+      // POSIX resolves the symlink before `..`, so the path escapes; Windows
+      // collapses `..` lexically first, so the same path stays in the workspace.
       assert.equal(
         acpPermissionDisposition(
           realPolicy,
           permissionRequest("edit", [{ path: "linked-directory/../escaped-file.ts" }]),
         ),
-        "deny",
+        process.platform === "win32" ? "allow" : "deny",
         "physical symlink traversal must be resolved before parent segments",
       );
     }).pipe(Effect.provide(NodeServices.layer)),

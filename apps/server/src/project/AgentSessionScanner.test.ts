@@ -511,16 +511,25 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
           mtimeMs: Date.parse("2026-01-01T00:00:00.000Z"),
         });
 
+        const backings = new Map([
+          [upperWorkspace, { path: backingUpper, inode: 1 }],
+          [lowerWorkspace, { path: backingLower, inode: 2 }],
+        ]);
         const simulatedFileSystem = FileSystem.FileSystem.of({
           ...fileSystem,
-          stat: (filePath) =>
-            fileSystem.stat(
-              filePath === upperWorkspace
-                ? backingUpper
-                : filePath === lowerWorkspace
-                  ? backingLower
-                  : filePath,
-            ),
+          stat: (filePath) => {
+            const backing = backings.get(filePath);
+            if (backing === undefined) return fileSystem.stat(filePath);
+            // The aliases do not exist, so the scanner cannot read an exact NTFS
+            // file id for them; give each its own inode when the host reports none.
+            return fileSystem
+              .stat(backing.path)
+              .pipe(
+                Effect.map((info) =>
+                  Option.isSome(info.ino) ? info : { ...info, ino: Option.some(backing.inode) },
+                ),
+              );
+          },
         });
         const result = yield* runScan({ claudeHomePath, codexHomePath }).pipe(
           Effect.provideService(FileSystem.FileSystem, simulatedFileSystem),
@@ -760,11 +769,22 @@ it.layer(NodeServices.layer)("AgentSessionScanner", (it) => {
         const path = yield* Path.Path;
         const claudeHomePath = yield* makeTempDir("studio-claude-home-");
         const codexHomePath = yield* makeTempDir("studio-codex-home-");
-        const workspace = yield* makeTempDir("studio-workspace-");
+        const fileSystem = yield* FileSystem.FileSystem;
+        const tempWorkspace = yield* makeTempDir("studio-workspace-");
+        // On Windows the temp folder can sit on another drive than the working
+        // directory, where no relative path reaches it; use a folder beside it then.
+        const workspace = path.isAbsolute(path.relative(path.resolve(), tempWorkspace))
+          ? yield* fileSystem.makeTempDirectoryScoped({
+              directory: path.resolve(),
+              prefix: ".studio-workspace-",
+            })
+          : tempWorkspace;
+        const relativeWorkspace = path.relative(path.resolve(), workspace);
+        expect(path.isAbsolute(relativeWorkspace)).toBe(false);
 
         yield* writeTranscript({
           filePath: path.join(claudeHomePath, "projects", "-relative", "session.jsonl"),
-          contents: claudeSessionLine(path.relative(path.resolve(), workspace)),
+          contents: claudeSessionLine(relativeWorkspace),
           mtimeMs: Date.parse("2026-01-01T00:00:00.000Z"),
         });
 

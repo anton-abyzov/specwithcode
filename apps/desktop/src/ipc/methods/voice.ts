@@ -26,6 +26,7 @@ import {
   readLegacyVoicePreferences,
   removeLegacyVoicePreferences,
 } from "../../voice/legacyVoicePreferences.ts";
+import { prepareVoiceCall } from "../../voice/voiceReadiness.ts";
 import { VoiceHelper, VoiceHelperError } from "../../voice/VoiceHelper.ts";
 import { allowMediaPermission, MICROPHONE_SETTINGS_URL } from "../../voice/voicePermission.ts";
 import * as DesktopIpc from "../DesktopIpc.ts";
@@ -271,7 +272,13 @@ export const installVoice = Effect.fn("desktop.ipc.installVoice")(function* () {
           if (microphoneAccess() === "not-determined") {
             await Electron.systemPreferences.askForMediaAccess("microphone").catch(() => false);
           }
-          return status();
+          return prepareVoiceCall(status(), async () => {
+            const voice = await getHelper();
+            await voice.request(
+              { op: "prepare", locale: defaultLocale() },
+              { timeoutMs: VOICE_PREPARE_TIMEOUT_MS },
+            );
+          });
         }),
     }),
   );
@@ -303,16 +310,6 @@ export const installVoice = Effect.fn("desktop.ipc.installVoice")(function* () {
             });
           }
           activeCalls.add(senderId);
-          // Load the speech model while the caller starts talking.
-          void getHelper()
-            .then((voice) =>
-              // A first use may download the speech model; that can take minutes.
-              voice.request(
-                { op: "prepare", locale: defaultLocale() },
-                { timeoutMs: VOICE_PREPARE_TIMEOUT_MS },
-              ),
-            )
-            .catch(() => undefined);
         }),
     }),
   );

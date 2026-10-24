@@ -158,7 +158,8 @@ it.effect("claims question uploads and passes readable paths through the V2 requ
     expect(NodeFS.readFileSync(path!)).toEqual(Buffer.from([1, 2, 3]));
     expect(command.answers?.q).toEqual([
       "Selected option",
-      `Attached image "screen.png": "${path}"`,
+      // The path is a JSON string, so Windows backslashes arrive escaped.
+      `Attached image "screen.png": ${JSON.stringify(path)}`,
     ]);
   }).pipe(Effect.provide(layerIntakeTest)),
 );

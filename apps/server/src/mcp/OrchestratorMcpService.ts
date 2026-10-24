@@ -68,6 +68,7 @@ import {
   type EnvironmentId,
   ThreadId,
   threadExecutionSummary,
+  runInterruptResultDetail,
 } from "@specweave-studio/contracts";
 import {
   heldQueuedRunCount,
@@ -895,8 +896,9 @@ function turnItemText(item: OrchestrationV2TurnItem): string | null {
       return item.prompt ?? item.requestKind;
     case "checkpoint":
       return jsonText(item.files);
-    case "run_interrupt_request":
     case "run_interrupt_result":
+      return runInterruptResultDetail(item);
+    case "run_interrupt_request":
     case "system_notice":
       return item.message;
     case "error":

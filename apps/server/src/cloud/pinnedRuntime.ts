@@ -6,6 +6,7 @@ import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
+import * as Schedule from "effect/Schedule";
 import * as Semaphore from "effect/Semaphore";
 import { HttpClient, HttpClientRequest, HttpClientResponse } from "effect/http";
 
@@ -18,7 +19,12 @@ import {
   parseChecksums,
 } from "@specweave-studio/shared/cliRelease";
 
+import { isWindowsRenameLock } from "../atomicWrite.ts";
 import * as ProcessRunner from "../processRunner.ts";
+
+// About 10 seconds for a scan of a freshly extracted runtime to finish.
+const WINDOWS_PUBLISH_RETRIES = 50;
+const WINDOWS_PUBLISH_RETRY_DELAY = "200 millis";
 
 /**
  * A pinned runtime is an exact specweave-studio release archive unpacked into
@@ -466,6 +472,15 @@ const installPinnedRuntime = Effect.fn("cloud.pinned_runtime.ensure_installed")(
         ),
       );
     const published = yield* fs.rename(stagingDir, paths.versionDir).pipe(
+      // A scanner or the indexer briefly holds files in a just-extracted tree,
+      // and Windows refuses the directory rename until it lets go.
+      input.platform === "win32"
+        ? Effect.retry({
+            while: isWindowsRenameLock,
+            schedule: Schedule.spaced(WINDOWS_PUBLISH_RETRY_DELAY),
+            times: WINDOWS_PUBLISH_RETRIES,
+          })
+        : (effect) => effect,
       Effect.as(true),
       Effect.catch((cause) =>
         Effect.all([

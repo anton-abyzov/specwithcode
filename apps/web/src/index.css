@@ -2138,3 +2138,85 @@ video.artifact-viewer-media {
     }
   }
 }
+
+/* Reports are previewed in the conversation and read in the existing focus viewer. */
+.html-report-card {
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--background);
+}
+.html-report-card-head {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 14px 18px;
+  border-bottom: 1px solid var(--border);
+  background: var(--card);
+}
+.html-report-card-title {
+  font-size: 14px;
+  font-weight: 600;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+.html-report-card-kind,
+.html-report-card-foot {
+  color: var(--muted-foreground);
+  font-size: 12px;
+  line-height: 1.5;
+}
+.html-report-card-foot {
+  padding: 10px 18px;
+  border-top: 1px solid var(--border);
+}
+.html-report-preview {
+  position: relative;
+  overflow: hidden;
+}
+.html-report-preview-page {
+  padding: 22px;
+  pointer-events: none;
+}
+.html-report-preview-fade {
+  position: absolute;
+  inset: auto 0 0;
+  height: 64px;
+  background: linear-gradient(transparent, var(--background));
+  pointer-events: none;
+}
+.html-report-placeholder {
+  position: absolute;
+  inset: 0;
+  padding: 36px 22px;
+  color: var(--muted-foreground);
+  font-size: 14px;
+}
+.html-report-reader {
+  height: 100%;
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: clamp(24px, 4vw, 64px) clamp(20px, 5vw, 72px) max(64px, 15vh);
+}
+.html-report-document {
+  width: 100%;
+  max-width: 920px;
+  margin-inline: auto;
+}
+.viewer-overlay-content > div:has(> .html-report-reader) {
+  height: 100%;
+  min-height: 0;
+}
+@media (max-width: 480px) {
+  .html-report-card-head {
+    padding: 12px;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .html-report-card-head > div {
+    flex-basis: calc(100% - 32px);
+  }
+  .html-report-preview-page {
+    padding: 16px;
+  }
+}

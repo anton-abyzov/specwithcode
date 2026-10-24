@@ -1,0 +1,7 @@
+@import "../../src/index.css";
+@source "../../src";
+@source ".";
+body {
+  margin: 0;
+  color: var(--foreground);
+}

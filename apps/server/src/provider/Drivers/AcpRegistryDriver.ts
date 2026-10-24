@@ -1,6 +1,7 @@
 import {
   AcpRegistrySettings,
   gitHubCopilotIconUrlForInstanceConfig,
+  isGitHubCopilotIcon,
   officialAcpRegistryIconUrlForAgentId,
   ProviderDriverKind,
   resolveOfficialAcpRegistryIconUrl,
@@ -257,11 +258,14 @@ function baseSnapshot(
     readonly probeError?: AcpRegistryOperationError;
   },
 ): ServerProvider {
+  // Copilot branding carries subscription identity in automatic routing.
+  // An agent's self-reported icon must not grant that identity.
+  const probeIcon = resolveOfficialAcpRegistryIconUrl(input.probe?.probe.icon);
   const iconUrl =
     gitHubCopilotIconUrlForInstanceConfig(input.settings) ??
     (input.settings.source === "local"
       ? null
-      : (resolveOfficialAcpRegistryIconUrl(input.probe?.probe.icon) ??
+      : ((isGitHubCopilotIcon(null, probeIcon) ? null : probeIcon) ??
         officialAcpRegistryIconUrlForAgentId(input.settings.agentId)));
   return {
     instanceId: input.instanceId,

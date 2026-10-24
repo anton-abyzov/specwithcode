@@ -28,7 +28,7 @@ const schema = [
   `CREATE TABLE orchestration_v2_projection_threads (thread_id TEXT, title TEXT, project_id TEXT)`,
   `CREATE TABLE projection_projects (project_id TEXT, title TEXT)`,
   `CREATE TABLE orchestration_v2_projection_provider_threads (provider_thread_id TEXT, provider_session_id TEXT)`,
-  `CREATE TABLE orchestration_v2_projection_provider_turns (provider_thread_id TEXT, provider_turn_id TEXT, ordinal INTEGER)`,
+  `CREATE TABLE orchestration_v2_projection_provider_turns (provider_thread_id TEXT, provider_turn_id TEXT, ordinal INTEGER, run_attempt_id TEXT)`,
   `CREATE TABLE orchestration_v2_events (sequence INTEGER PRIMARY KEY AUTOINCREMENT, thread_id TEXT, occurred_at TEXT)`,
 ];
 
@@ -172,7 +172,7 @@ const waitingWorker = (requestMinutes: number, activityMinutes: number, kind = "
     yield* sql`INSERT INTO orchestration_v2_projection_runs (run_id, thread_id, status, provider_thread_id)
       VALUES ('r1', 't1', 'running', 'pt1')`;
     yield* sql`INSERT INTO orchestration_v2_projection_provider_threads VALUES ('pt1', 's1')`;
-    yield* sql`INSERT INTO orchestration_v2_projection_provider_turns VALUES ('pt1', 'turn1', 1)`;
+    yield* sql`INSERT INTO orchestration_v2_projection_provider_turns VALUES ('pt1', 'turn1', 1, NULL)`;
     yield* sql`INSERT INTO orchestration_v2_projection_provider_sessions VALUES ('t1', 'running')`;
     yield* sql`INSERT INTO orchestration_v2_projection_runtime_requests VALUES
       ('req1', 't1', 'pending', ${kind}, ${yield* minutesAgo(requestMinutes)})`;

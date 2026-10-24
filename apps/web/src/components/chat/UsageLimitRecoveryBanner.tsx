@@ -15,6 +15,7 @@ import {
   hasUsableFallbackCapacity,
   providerUsedPercent,
   reportsNoUsage,
+  type FallbackOrderEntry,
   type FallbackOrderUnavailable,
 } from "@specweave-studio/shared/providerFallback";
 import { ChevronDownIcon, GaugeIcon } from "lucide-react";
@@ -70,15 +71,42 @@ type RecoveryProps = {
 export interface FallbackChoice {
   readonly label: string;
   readonly model: string;
-  /** Absent when the entry cannot take the thread now; `unavailable` says why. */
+  /** Absent only when the entry cannot be selected; `unavailable` can be a warning. */
   readonly onContinue?: () => Promise<void>;
   readonly unavailable?: string;
+}
+
+/** Manual choices may retry a limit or explicitly choose per-token billing. */
+export function canSelectManualFallback(
+  entry: Pick<FallbackOrderEntry, "provider" | "unavailable">,
+): boolean {
+  const { provider, unavailable } = entry;
+  if (
+    provider === undefined ||
+    !provider.enabled ||
+    !provider.installed ||
+    provider.availability === "unavailable" ||
+    provider.auth.status === "unauthenticated" ||
+    provider.status === "error" ||
+    provider.status === "disabled"
+  ) {
+    return false;
+  }
+  return (
+    unavailable === null ||
+    unavailable === "unverified" ||
+    unavailable === "limited" ||
+    unavailable === "full" ||
+    unavailable === "per-token" ||
+    (unavailable === "not-ready" && provider.status === "warning")
+  );
 }
 
 /** Why an entry of the fallback order cannot take the thread now, in a few words. */
 export function fallbackUnavailableReason(
   unavailable: FallbackOrderUnavailable | null,
   resetAt: number | null,
+  manuallySelectable = false,
 ): string | undefined {
   switch (unavailable) {
     case null:
@@ -101,7 +129,7 @@ export function fallbackUnavailableReason(
     case "unverified":
       return "usage not read yet";
     case "not-ready":
-      return "not set up on this machine";
+      return manuallySelectable ? "provider warning" : "not set up on this machine";
   }
 }
 
@@ -452,8 +480,11 @@ export function usageApproachingBannerItem(props: {
   };
 }
 
-/** Why the room of a stood-in model is unknown: it reports no usage, or its reading is out of date. */
-export type LimitPairingRoomUnknown = "unreported" | "stale";
+/**
+ * Why the room of a stood-in model is unknown: it reports no usage, its
+ * reading is out of date, or it has no reading yet.
+ */
+export type LimitPairingRoomUnknown = "unreported" | "stale" | "unread";
 
 /**
  * Whether the model a fallback stood in for can take the thread back. Room
@@ -469,13 +500,15 @@ export function limitPairingRoom(
   proven?: { readonly instanceId: string } | null,
 ): { readonly hasRoom: boolean; readonly roomUnknown?: LimitPairingRoomUnknown } {
   if (provider === undefined || !canTakeTurn(provider)) return { hasRoom: false };
-  if (proven?.instanceId === provider.instanceId) return { hasRoom: true };
+  const used = providerUsedPercent(provider, nowMs, model);
+  // The coordinator working there proves room only while no reading says it is full,
+  // as the server's fallback reads it (resolveProviderFallback).
+  if (proven?.instanceId === provider.instanceId && (used === null || used < 100))
+    return { hasRoom: true };
   if (reportsNoUsage(provider)) return { hasRoom: false, roomUnknown: "unreported" };
   if (hasUsableFallbackCapacity(provider, nowMs, model)) return { hasRoom: true };
-  const used = providerUsedPercent(provider, nowMs, model);
-  return used !== null && used >= 100
-    ? { hasRoom: false }
-    : { hasRoom: false, roomUnknown: "stale" };
+  if (used === null) return { hasRoom: false, roomUnknown: "unread" };
+  return used >= 100 ? { hasRoom: false } : { hasRoom: false, roomUnknown: "stale" };
 }
 
 /**
@@ -508,9 +541,11 @@ export function limitFallbackPairingBannerItem(props: {
         ? `${props.original} stopped at its limit and reports no usage, so its room is unknown.`
         : props.roomUnknown === "stale"
           ? `${props.original} stopped at its limit. Its last usage reading showed room but is out of date; switching back re-checks it.`
-          : props.resetAt === null
-            ? `${props.original} stopped at its limit and is still limited.`
-            : `${props.original} stopped at its limit and resets at ${new Date(props.resetAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}.`,
+          : props.roomUnknown === "unread"
+            ? `${props.original} stopped at its limit and has no current usage reading, so its room is unknown.`
+            : props.resetAt === null
+              ? `${props.original} stopped at its limit and is still limited.`
+              : `${props.original} stopped at its limit and resets at ${new Date(props.resetAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}.`,
     actions: (
       <Button
         size="xs"

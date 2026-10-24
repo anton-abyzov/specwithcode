@@ -45,7 +45,7 @@ export function foldedPathKey(relative: string): string {
  * tells the preview whether it points outside.
  */
 export function symlinkTargetInside(linkPath: string, target: string): string | null {
-  if (target.startsWith("/")) return null;
+  if (target.startsWith("/") || /^[A-Za-z]:/.test(target)) return null;
   const parts = linkPath.split("/").slice(0, -1);
   for (const part of target.split("/")) {
     if (part === "" || part === ".") continue;
@@ -55,6 +55,14 @@ export function symlinkTargetInside(linkPath: string, target: string): string | 
     } else parts.push(part);
   }
   return parts.join("/");
+}
+
+/**
+ * A link target as the copy carries it: Windows reports targets with `\`, the
+ * copy always uses `/`, which Windows also accepts when the link is created.
+ */
+export function linkTargetOnWire(raw: string, platform: NodeJS.Platform = process.platform) {
+  return platform === "win32" ? raw.replaceAll("\\", "/") : raw;
 }
 
 /** Human-readable byte counts for previews, refusals and logs. */

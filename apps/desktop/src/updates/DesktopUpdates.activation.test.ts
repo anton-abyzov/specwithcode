@@ -1,5 +1,7 @@
 import { assert, describe, it } from "@effect/vitest";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as TestClock from "effect/testing/TestClock";
 
@@ -127,6 +129,7 @@ describe("DesktopUpdates app activation", () => {
       let emit: (event: string, info: unknown) => void = () => {};
       const installOnQuitAtDownload: Array<boolean | undefined> = [];
       const harness = makeHarness({
+        squirrel: true,
         checkForUpdates: Effect.sync(() => emit("update-available", { version: "1.2.4" })),
         downloadUpdate: Effect.sync(() => {
           installOnQuitAtDownload.push(harness.installOnQuit());
@@ -186,6 +189,103 @@ describe("DesktopUpdates app activation", () => {
           yield* flushCallbacks;
           const result = yield* updates.installPrepared("1.2.4");
           assert.isTrue(result.accepted);
+        }),
+      ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+    }),
+  );
+
+  // Like electron-updater on a Mac: a check re-announces the release on disk,
+  // a download of it ends with update-downloaded, and Squirrel stages only a
+  // download that finishes with install-on-quit set.
+  const macUpdater = (blockCheck: Effect.Effect<void> = Effect.void) => {
+    const installOnQuitAtDownload: Array<boolean | undefined> = [];
+    const harness = makeHarness({
+      squirrel: true,
+      checkForUpdates: blockCheck.pipe(
+        Effect.andThen(Effect.sync(() => harness.emit("update-available", { version: "1.2.4" }))),
+      ),
+      downloadUpdate: Effect.sync(() => {
+        installOnQuitAtDownload.push(harness.installOnQuit());
+        harness.emit("update-downloaded", { version: "1.2.4" });
+      }),
+    });
+    return { harness, installOnQuitAtDownload };
+  };
+  const settle = Effect.gen(function* () {
+    for (let i = 0; i < 20; i += 1) yield* flushCallbacks;
+  });
+
+  it.effect("stages the download on a later pass when the gate opened during a check", () =>
+    Effect.gen(function* () {
+      const checkHeld = yield* Deferred.make<void>();
+      let holdNextCheck = false;
+      const { harness, installOnQuitAtDownload } = macUpdater(
+        Effect.suspend(() => (holdNextCheck ? Deferred.await(checkHeld) : Effect.void)),
+      );
+      const service = serviceOn("1.2.3", "error");
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const updates = yield* DesktopUpdates.DesktopUpdates;
+          yield* updates.configure;
+          yield* updates.registerLocalServiceProbe(service.probe);
+          harness.emit("update-available", { version: "1.2.4" });
+          yield* flushCallbacks;
+          yield* updates.download;
+          yield* settle;
+          assert.deepEqual(installOnQuitAtDownload, [false]);
+
+          // A focus check holds the updater when the service catches up.
+          holdNextCheck = true;
+          const check = yield* updates.check("focus").pipe(Effect.forkScoped);
+          yield* settle;
+          assert.equal((yield* updates.getState).status, "checking");
+          service.set("1.2.4");
+          yield* updates.refreshActivation;
+          yield* settle;
+          assert.equal(harness.downloadCount(), 1);
+
+          // The next activation pass, after the check, still stages it.
+          holdNextCheck = false;
+          yield* Deferred.succeed(checkHeld, undefined);
+          yield* Fiber.join(check);
+          yield* updates.refreshActivation;
+          yield* settle;
+          assert.deepEqual(installOnQuitAtDownload, [false, true]);
+          assert.isTrue((yield* updates.installPrepared("1.2.4")).accepted);
+          // Squirrel held it, so the install fetched nothing again.
+          assert.equal(harness.downloadCount(), 2);
+          assert.equal(harness.quits(), 1);
+        }),
+      ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+    }),
+  );
+
+  it.effect("does not stage again a download Squirrel already holds", () =>
+    Effect.gen(function* () {
+      const { harness, installOnQuitAtDownload } = macUpdater();
+      const service = serviceOn("1.2.4");
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const updates = yield* DesktopUpdates.DesktopUpdates;
+          yield* updates.configure;
+          yield* updates.registerLocalServiceProbe(service.probe);
+          harness.emit("update-available", { version: "1.2.4" });
+          yield* flushCallbacks;
+          // Downloaded with the gate open: Squirrel stages it at once.
+          yield* updates.download;
+          yield* settle;
+          assert.deepEqual(installOnQuitAtDownload, [true]);
+
+          // The service falls behind, then catches up again.
+          service.set("1.2.3", "error");
+          yield* updates.refreshActivation;
+          yield* settle;
+          assert.isFalse(harness.installOnQuit());
+          service.set("1.2.4");
+          yield* updates.refreshActivation;
+          yield* settle;
+          assert.isTrue(harness.installOnQuit());
+          assert.equal(harness.downloadCount(), 1);
         }),
       ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
     }),

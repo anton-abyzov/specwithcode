@@ -1,4 +1,6 @@
 import * as DateTime from "effect/DateTime";
+// @effect-diagnostics-next-line nodeBuiltinImport:off -- Fixture paths use the host's path flavour, as the service does.
+import * as NodePath from "node:path";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -9,9 +11,9 @@ import {
 } from "./serviceInstallMarker.ts";
 
 const NOW = Date.parse("2026-10-12T12:00:00.000Z");
-const HOME = "/home/m4";
-const MARKER = "/home/m4/updates/install-in-progress.json";
-const RECEIPT = "/home/m4/updates/receipts/update-1.0.7-20261012.json";
+const HOME = NodePath.resolve("/home/m4");
+const MARKER = NodePath.join(HOME, "updates", "install-in-progress.json");
+const RECEIPT = NodePath.join(HOME, "updates", "receipts", "update-1.0.7-20261012.json");
 const iso = (ms: number) => DateTime.formatIso(DateTime.makeUnsafe(ms));
 
 const io = (

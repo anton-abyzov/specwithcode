@@ -155,7 +155,11 @@ type RecoveryThread = Pick<
   Partial<
     Pick<
       OrchestrationV2ThreadShell,
-      "archivedAt" | "activityRunStatus" | "heldQueuedCount" | "pendingBackgroundTasks"
+      | "archivedAt"
+      | "activityRunStatus"
+      | "heldQueuedCount"
+      | "pendingBackgroundTasks"
+      | "creationSource"
     >
   >;
 
@@ -165,7 +169,8 @@ type RecoveryThread = Pick<
  * the thread (an approval or live question, see isBlockingRuntimeRequest; a
  * shell summary without the request's detail counts as one) and settled
  * threads are left alone. A delegated subagent is recovered too: someone is
- * waiting for its answer, and the per-thread cap keeps it from repeating.
+ * waiting for its answer, and the per-thread cap keeps it from repeating. A
+ * subagent the provider spawned on its own is not: it takes no messages.
  * A held queue is read from the runs
  * (`queueAllowsRecovery`): the failure itself holds it.
  */
@@ -177,6 +182,8 @@ export function isContextRecoveryCandidate(thread: RecoveryThread, nowMs: number
     isBlockingRuntimeRequest(thread, thread.latestRunId) ||
     (thread.activityRunStatus ?? null) !== null ||
     thread.settledOverride === "settled" ||
+    // A subagent the provider spawned takes no messages (isProviderNativeSubagentThread).
+    (thread.lineage.relationshipToParent === "subagent" && thread.creationSource === "provider") ||
     (thread.status !== "failed" && thread.status !== "completed") ||
     (thread.status === "failed" && thread.lastErrorClass === "usage_limit")
   )

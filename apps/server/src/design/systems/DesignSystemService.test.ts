@@ -291,10 +291,12 @@ describe("DesignSystemService", () => {
     expect(linked.system.derivedFrom).toEqual(lineage);
 
     // Weave goes before the user confirms: the written system keeps only the label.
+    // Keys hold native paths, so Windows separates them with backslashes.
     const weaveKey = [...files.systems.keys()].find((key) =>
-      key.endsWith(".specweave/design|weave"),
-    )!;
-    files.systems.delete(weaveKey);
+      key.replaceAll("\\", "/").endsWith(".specweave/design|weave"),
+    );
+    expect(weaveKey).toBeDefined();
+    files.systems.delete(weaveKey!);
     const written = await run((service) =>
       service.confirm(userCaller, {
         proposalId: linked.id,

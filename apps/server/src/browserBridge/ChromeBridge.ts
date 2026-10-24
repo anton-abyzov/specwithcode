@@ -12,6 +12,7 @@ import * as Effect from "effect/Effect";
 import * as Path from "effect/Path";
 import * as Semaphore from "effect/Semaphore";
 
+import * as ServerConfig from "../config.ts";
 import { RpcInstrumentation } from "../observability/RpcInstrumentation.ts";
 import { makeClaudeEnvironment, resolveClaudeHomePath } from "../provider/Drivers/ClaudeHome.ts";
 import * as ServerSettings from "../serverSettings.ts";
@@ -24,6 +25,7 @@ import {
   liveExtensionConnections,
   nativeHostInstalled,
   providerWiring,
+  specWithCodeBrowserPaired,
 } from "./chromeBridgeFacts.ts";
 import {
   BROWSER_MCP_FLAG,
@@ -80,6 +82,13 @@ const runCheck = (calls: ReadonlyArray<BrowserMcpToolCall>, timeoutMs: number) =
 
 const status = Effect.gen(function* () {
   const { configDir } = yield* claudeLaunch;
+  const settings = yield* (yield* ServerSettings.ServerSettingsService).getSettings;
+  const { stateDir } = yield* ServerConfig.ServerConfig;
+  // Matches ClaudeAdapterV2: threads then start with --no-chrome.
+  const claudeThreadsUseSpecWithCodeBrowser =
+    settings.preferSpecWithCodeBrowser &&
+    settings.enableAgentBrowserAccess &&
+    specWithCodeBrowserPaired(stateDir);
   const paths = defaultChromeBridgePaths(configDir);
   const claude = claudeChromeFacts(paths.claudeFile);
   const running = yield* Effect.promise(() => chromeRunning());
@@ -93,7 +102,7 @@ const status = Effect.gen(function* () {
     },
     claudeAccount: claude.account,
     chromeProfiles: chromeProfileNames(paths.home),
-    providers: providerWiring(paths, claude),
+    providers: providerWiring(paths, claude, claudeThreadsUseSpecWithCodeBrowser),
     lastCheck,
   } satisfies BrowserBridgeStatus;
 });
@@ -104,10 +113,16 @@ const orUnavailable = <A, E>(effect: Effect.Effect<A, E, never>, fallback: A) =>
 
 export const layerRpcHandlers = WsBrowserBridgeRpcGroup.middleware(RpcInstrumentation).toLayer(
   Effect.gen(function* () {
-    const context = yield* Effect.context<ServerSettings.ServerSettingsService | Path.Path>();
+    const context = yield* Effect.context<
+      ServerSettings.ServerSettingsService | ServerConfig.ServerConfig | Path.Path
+    >();
     const platform = yield* HostProcessPlatform;
     const run = <A, E>(
-      effect: Effect.Effect<A, E, ServerSettings.ServerSettingsService | Path.Path>,
+      effect: Effect.Effect<
+        A,
+        E,
+        ServerSettings.ServerSettingsService | ServerConfig.ServerConfig | Path.Path
+      >,
     ) => effect.pipe(Effect.provideContext(context));
     const failedCheck = (message: string): BrowserBridgeCheck => ({
       state: "error",

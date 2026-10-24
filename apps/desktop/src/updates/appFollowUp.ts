@@ -1,3 +1,4 @@
+import { DESKTOP_INSTALL_APPLY_MS } from "@specweave-studio/contracts";
 import { compareSemverVersions, parseSemver } from "@specweave-studio/shared/semver";
 
 import {
@@ -17,7 +18,7 @@ import {
  */
 
 /** An accepted install quits the app within seconds; still running after this, it did not apply. */
-export const APP_INSTALL_APPLY_MS = 75_000;
+export const APP_INSTALL_APPLY_MS = DESKTOP_INSTALL_APPLY_MS;
 /** A refused install (updater busy, the gate not open yet) is asked again this often. */
 export const APP_INSTALL_RETRY_MS = 30_000;
 /** Refused this many times in a row, the follow-up fails with the last reason. */

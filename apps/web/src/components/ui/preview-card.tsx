@@ -1,8 +1,11 @@
 import { PreviewCard as PreviewCardPrimitive } from "@base-ui/react/preview-card";
 
 import { cn } from "~/lib/utils";
+import { usePagePopup } from "./pagePopups";
 
-const PreviewCard = PreviewCardPrimitive.Root;
+function PreviewCard<Payload>(props: PreviewCardPrimitive.Root.Props<Payload>) {
+  return <PreviewCardPrimitive.Root {...usePagePopup(props)} />;
+}
 
 function PreviewCardTrigger(props: PreviewCardPrimitive.Trigger.Props) {
   return <PreviewCardPrimitive.Trigger data-slot="preview-card-trigger" {...props} />;

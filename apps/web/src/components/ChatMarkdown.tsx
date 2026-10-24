@@ -180,6 +180,7 @@ import { useTheme } from "../hooks/useTheme";
 import { getClientSettings, useClientSettings } from "../hooks/useSettings";
 import { remarkDisplayDates } from "../markdown-display-dates";
 import { remarkBareDomainLinks } from "../markdown-bare-domains";
+import { remarkPreserveWindowsPathText } from "../markdown-windows-paths";
 import { MarkdownTable } from "./MarkdownTable";
 import { chatMarkdownClipboardPayload } from "../markdown-clipboard";
 import { exactCopyText, exactPathText } from "../exactClipboardText";
@@ -613,6 +614,7 @@ const CHAT_MARKDOWN_REMARK_PLUGINS = [
   CHAT_REMARK_GFM,
   remarkBareDomainLinks,
   remarkKeepWindowsPathDestinations,
+  remarkPreserveWindowsPathText,
   remarkGithubAlerts,
   remarkNormalizeListItemIndentation,
   remarkCodexDirectives,
@@ -624,6 +626,7 @@ const CHAT_MARKDOWN_REMARK_PLUGINS_WITH_BREAKS = [
   CHAT_REMARK_GFM,
   remarkBareDomainLinks,
   remarkKeepWindowsPathDestinations,
+  remarkPreserveWindowsPathText,
   remarkGithubAlerts,
   remarkNormalizeListItemIndentation,
   remarkCodexDirectives,

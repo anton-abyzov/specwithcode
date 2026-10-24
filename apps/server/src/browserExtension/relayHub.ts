@@ -18,6 +18,8 @@ export const RELAY_PROTOCOL_VERSION = 1;
 export const CLOSE_REJECTED = 4401;
 export const CLOSE_REPLACED = 4409;
 export const CLOSE_BAD_HELLO = 4400;
+/** The close reason the extension sends when the user clicks Unpair in its popup. */
+export const CLOSE_REASON_UNPAIRED = "unpaired";
 
 const HELLO_TIMEOUT_MS = 10_000;
 const DEFAULT_CALL_TIMEOUT_MS = 30_000;
@@ -123,8 +125,8 @@ interface Connection {
 export interface RelaySession {
   /** Feed one text frame from the extension. */
   readonly receive: (text: string) => void;
-  /** The socket closed. */
-  readonly closed: () => void;
+  /** The socket closed, with the reason from the extension's close frame when it sent one. */
+  readonly closed: (closeReason?: string) => void;
 }
 
 export interface BrowserRelayHubOptions {
@@ -135,6 +137,8 @@ export interface BrowserRelayHubOptions {
   readonly now?: () => number;
   /** Lets the hub answer CDP events (dialogs) without a caller waiting. */
   readonly onProfilesChanged?: () => void;
+  /** The last connected profile was unpaired in its popup: nothing holds the code any more. */
+  readonly onUnpaired?: () => void;
 }
 
 /** "Chrome 141" from a user agent; Edge and Brave report their own names. */
@@ -178,6 +182,8 @@ export class BrowserRelayHub {
   private readonly threadNames = new Map<string, RemoteThreadName>();
   private readonly now: () => number;
   private profileSeq = 0;
+  /** The last profile that went away, so "none connected" can say which, when and why. */
+  private lastGone: { label: string; at: number; reason: string } | null = null;
   private readonly waiters = new Set<() => void>();
 
   constructor(options: BrowserRelayHubOptions) {
@@ -202,7 +208,12 @@ export class BrowserRelayHub {
     this.connections.add(connection);
     return {
       receive: (text) => this.receive(connection, text),
-      closed: () => this.dropConnection(connection, "The extension disconnected."),
+      closed: (closeReason) => {
+        const wasProfile = connection.profile !== null && !connection.closed;
+        this.dropConnection(connection, "The extension disconnected.");
+        if (wasProfile && closeReason === CLOSE_REASON_UNPAIRED && this.profiles().length === 0)
+          this.options.onUnpaired?.();
+      },
     };
   }
 
@@ -251,7 +262,12 @@ export class BrowserRelayHub {
       };
       this.send(connection, {
         method: "welcome",
-        params: { protocol: RELAY_PROTOCOL_VERSION, machine: this.options.machineName() },
+        // heartbeat: this service answers ping with pong, so the extension can spot a dead socket.
+        params: {
+          protocol: RELAY_PROTOCOL_VERSION,
+          machine: this.options.machineName(),
+          heartbeat: true,
+        },
       });
       this.changed();
       return;
@@ -266,6 +282,10 @@ export class BrowserRelayHub {
     try {
       message = JSON.parse(text);
     } catch {
+      return;
+    }
+    if (message.method === "ping") {
+      this.send(connection, { method: "pong" });
       return;
     }
     if (typeof message.id === "number") {
@@ -350,7 +370,10 @@ export class BrowserRelayHub {
     }
     connection.pending.clear();
     this.connections.delete(connection);
-    if (connection.profile) this.changed();
+    if (connection.profile) {
+      this.lastGone = { label: connection.profile.label, at: this.now(), reason };
+      this.changed();
+    }
   }
 
   /** This computer's name, as the extension's popup shows it. */
@@ -372,6 +395,15 @@ export class BrowserRelayHub {
     for (const connection of this.connections)
       if (connection.profile?.id === profileId) return connection;
     throw new BrowserRelayError("not_connected", "That Chrome profile disconnected.");
+  }
+
+  /** The last profile that disconnected, or null when none has since this service started. */
+  lastDisconnected(): {
+    readonly label: string;
+    readonly at: number;
+    readonly reason: string;
+  } | null {
+    return this.lastGone;
   }
 
   /** Paired profiles, oldest first. */

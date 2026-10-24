@@ -13,7 +13,10 @@ import {
   type ProviderInteractionMode,
   type RuntimeMode,
 } from "@specweave-studio/contracts";
-import { resolveCoordinatorModelSelection } from "@specweave-studio/shared/coordinatorDefault";
+import {
+  coordinatorSelectionProblem,
+  resolveCoordinatorModelSelection,
+} from "@specweave-studio/shared/coordinatorDefault";
 import { resolveProjectSettings } from "@specweave-studio/shared/projectSettings";
 import {
   limitStopWaitsForReset,
@@ -159,6 +162,8 @@ const make = Effect.gen(function* () {
             }),
           });
           if (!modelSelection) return yield* fail(input.projectId, "model_required");
+          const problem = coordinatorSelectionProblem(modelSelection, providers);
+          if (problem) return yield* fail(input.projectId, problem);
           if (
             !isProjectModelSelectionCompatible({
               project,
@@ -331,6 +336,10 @@ const make = Effect.gen(function* () {
       // Read/usage recovery can retain the saved choice. Validate after that
       // recovery so it never turns an incompatible primary into a send.
       const effectiveSelection = selection ?? shell?.modelSelection;
+      if (effectiveSelection) {
+        const problem = coordinatorSelectionProblem(effectiveSelection, providers);
+        if (problem) return yield* fail(projectId, problem);
+      }
       if (
         effectiveSelection &&
         !isProjectModelSelectionCompatible({ ...compatibility, selection: effectiveSelection })

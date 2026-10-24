@@ -254,9 +254,16 @@ describe("DesktopUpdates Squirrel staging", () => {
           assert.isTrue((yield* updates.install).accepted);
           assert.isTrue(yield* Ref.get(desktopState.quitting));
 
+          // The updater's quit began, so only the backstop takes it back.
+          assert.isTrue(yield* Ref.get(desktopState.shutdownBegun));
+          yield* TestClock.adjust(Duration.seconds(5));
+          yield* settle;
+          assert.isTrue(yield* updates.isInstallActive);
+
           yield* TestClock.adjust(Duration.millis(APP_INSTALL_APPLY_MS));
           yield* settle;
           assert.isFalse(yield* Ref.get(desktopState.quitting));
+          assert.isFalse(yield* Ref.get(desktopState.shutdownBegun));
           assert.isFalse(yield* updates.isActionActive);
           assert.deepEqual(harness.installSteps, ["quitAndInstall", "startBackend"]);
           assert.equal((yield* updates.getState).errorContext, "install");
@@ -264,6 +271,97 @@ describe("DesktopUpdates Squirrel staging", () => {
           const checks = harness.checkCount();
           assert.isTrue((yield* updates.check("after stalled install")).checked);
           assert.equal(harness.checkCount(), checks + 1);
+        }),
+      ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+    }),
+  );
+
+  // The M4 no-quit of October 22, 2026: quitAndInstall returned, nothing quit,
+  // and `quitting` refused every check for 4.5 hours.
+  it.effect("an install whose quitAndInstall never quits is taken back within 5 seconds", () =>
+    Effect.gen(function* () {
+      const harness = makeHarness({
+        quitAndInstallDoesNothing: true,
+        checkForUpdates: Effect.sync(() => harness.emit("update-not-available")),
+      });
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const desktopState = yield* DesktopState.DesktopState;
+          const updates = yield* DesktopUpdates.DesktopUpdates;
+          yield* updates.configure;
+          harness.emit("update-downloaded", { version: "1.2.4" });
+          yield* flushCallbacks;
+
+          const install = yield* updates.installPrepared("1.2.4").pipe(Effect.forkScoped);
+          yield* settle;
+          assert.isTrue(yield* Ref.get(desktopState.quitting));
+          yield* TestClock.adjust(Duration.millis(4_900));
+          yield* settle;
+          assert.isTrue(yield* Ref.get(desktopState.quitting));
+
+          yield* TestClock.adjust(Duration.millis(100));
+          const result = yield* Fiber.join(install);
+          assert.isTrue(result.accepted);
+          assert.isTrue(result.failed);
+          assert.equal(result.state.errorContext, "install");
+          assert.equal(result.state.message, "SpecWithCode did not restart to install the update.");
+          assert.isFalse(yield* Ref.get(desktopState.quitting));
+          assert.isFalse(yield* updates.isActionActive);
+          yield* settle;
+          assert.deepEqual(harness.installSteps, ["quitAndInstall", "startBackend"]);
+
+          const checks = harness.checkCount();
+          assert.isTrue((yield* updates.check("after an install that did not quit")).checked);
+          assert.equal(harness.checkCount(), checks + 1);
+
+          // "Restart now" is admitted again, and the first install's backstop
+          // (75 s after it, 70 s from here) leaves it alone.
+          harness.emit("update-downloaded", { version: "1.2.4" });
+          yield* flushCallbacks;
+          const again = yield* updates.installPrepared("1.2.4").pipe(Effect.forkScoped);
+          yield* settle;
+          assert.isTrue(yield* updates.isInstallActive);
+          yield* Ref.set(desktopState.shutdownBegun, true);
+          yield* TestClock.adjust(Duration.millis(100));
+          const second = yield* Fiber.join(again);
+          assert.isTrue(second.accepted);
+          assert.isFalse(second.failed);
+          yield* TestClock.adjust(Duration.millis(APP_INSTALL_APPLY_MS - 5_000));
+          yield* settle;
+          assert.isTrue(yield* updates.isInstallActive);
+          assert.isTrue(yield* Ref.get(desktopState.quitting));
+          assert.equal(harness.quitAndInstalls(), 2);
+        }),
+      ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+    }),
+  );
+
+  it.effect("an install whose quit begins within 5 seconds is not taken back", () =>
+    Effect.gen(function* () {
+      const harness = makeHarness({ quitAndInstallDoesNothing: true });
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const desktopState = yield* DesktopState.DesktopState;
+          const updates = yield* DesktopUpdates.DesktopUpdates;
+          yield* updates.configure;
+          harness.emit("update-downloaded", { version: "1.2.4" });
+          yield* flushCallbacks;
+
+          const install = yield* updates.installPrepared("1.2.4").pipe(Effect.forkScoped);
+          yield* settle;
+          yield* TestClock.adjust(Duration.seconds(2));
+          // Electron's before-quit-for-update, as the lifecycle records it.
+          yield* Ref.set(desktopState.shutdownBegun, true);
+          yield* TestClock.adjust(Duration.millis(100));
+          const result = yield* Fiber.join(install);
+          assert.isTrue(result.accepted);
+          assert.isFalse(result.failed);
+
+          yield* TestClock.adjust(Duration.seconds(10));
+          yield* settle;
+          assert.isTrue(yield* Ref.get(desktopState.quitting));
+          assert.isTrue(yield* updates.isInstallActive);
+          assert.deepEqual(harness.installSteps, ["quitAndInstall"]);
         }),
       ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
     }),
@@ -306,6 +404,82 @@ describe("DesktopUpdates Squirrel staging", () => {
           yield* Deferred.succeed(releaseStop, undefined);
           assert.isTrue((yield* Fiber.join(second)).accepted);
           assert.equal(harness.quitAndInstalls(), 2);
+        }),
+      ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+    }),
+  );
+
+  it.effect("a newer download made while the gate was closed is restaged over the staged one", () =>
+    Effect.gen(function* () {
+      let feed = "1.2.4";
+      const service = serviceOn("1.2.4");
+      const harness = makeHarness({
+        squirrel: true,
+        checkForUpdates: Effect.sync(() => harness.emit("update-available", { version: feed })),
+        downloadUpdate: Effect.sync(() => harness.emit("update-downloaded", { version: feed })),
+      });
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const updates = yield* DesktopUpdates.DesktopUpdates;
+          yield* updates.configure;
+          yield* updates.registerLocalServiceProbe(service.probe);
+          harness.emit("update-available", { version: "1.2.4" });
+          yield* flushCallbacks;
+          yield* updates.download;
+          yield* settle;
+          // Downloaded with the gate open: Squirrel staged 1.2.4.
+          assert.isTrue(harness.installOnQuit());
+
+          feed = "1.2.5";
+          harness.emit("update-available", { version: "1.2.5" });
+          yield* flushCallbacks;
+          yield* updates.download;
+          yield* settle;
+          assert.isFalse(harness.installOnQuit());
+          assert.equal((yield* updates.getState).downloadedVersion, "1.2.5");
+
+          // Squirrel still holds 1.2.4, so the opening gate stages 1.2.5.
+          service.set("1.2.5");
+          yield* updates.refreshActivation;
+          yield* settle;
+          assert.equal(harness.downloadCount(), 3);
+          assert.isTrue(harness.installOnQuit());
+
+          const result = yield* updates.installPrepared("1.2.5");
+          assert.isTrue(result.accepted);
+          assert.isFalse(result.failed);
+          assert.equal(harness.downloadCount(), 3);
+          assert.equal(harness.quits(), 1);
+        }),
+      ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+    }),
+  );
+
+  it.effect("a refused install whose quit began gives later quits back to the app", () =>
+    Effect.gen(function* () {
+      const harness = makeHarness({ quitAndInstallDoesNothing: true });
+      yield* Effect.scoped(
+        Effect.gen(function* () {
+          const desktopState = yield* DesktopState.DesktopState;
+          const updates = yield* DesktopUpdates.DesktopUpdates;
+          yield* updates.configure;
+          harness.emit("update-downloaded", { version: "1.2.4" });
+          yield* flushCallbacks;
+
+          const install = yield* updates.installPrepared("1.2.4").pipe(Effect.forkScoped);
+          yield* settle;
+          // Electron's before-quit-for-update, as the lifecycle records it.
+          yield* Ref.set(desktopState.updaterQuitAllowed, true);
+          yield* Ref.set(desktopState.shutdownBegun, true);
+          yield* TestClock.adjust(Duration.millis(100));
+          assert.isTrue((yield* Fiber.join(install)).accepted);
+
+          // Squirrel.Mac: "No update available, can't quit and install".
+          harness.emit("error", new Error("No update available, can't quit and install"));
+          yield* settle;
+          assert.isFalse(yield* updates.isInstallActive);
+          assert.isFalse(yield* Ref.get(desktopState.shutdownBegun));
+          assert.isFalse(yield* Ref.get(desktopState.updaterQuitAllowed));
         }),
       ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
     }),

@@ -13,7 +13,7 @@ import {
   type FileClass,
 } from "./classify.ts";
 import { FolderGitError, gitList, runGit } from "./git.ts";
-import { isSafeRelativePath } from "./paths.ts";
+import { isSafeRelativePath, linkTargetOnWire } from "./paths.ts";
 
 /** Fixed chunk size: large files move and resume in 8 MiB pieces. */
 export const CHUNK_SIZE = 8 * 1024 * 1024;
@@ -104,6 +104,9 @@ interface RepoContext {
 const relativeOf = (root: string, absolute: string) =>
   absolute === root ? "." : NodePath.relative(root, absolute).split(NodePath.sep).join("/");
 
+/** Git prints absolute paths with forward slashes on Windows; compare them in native form. */
+const fromGit = (path: string) => NodePath.resolve(path.trim());
+
 const insideRepo = (repo: string, relative: string) =>
   repo === "."
     ? relative
@@ -128,12 +131,12 @@ async function readRepository(
   let kind: RepositoryInfo["kind"] = gitEntry.isDirectory() ? "main" : "gitfile";
   let mainRepository: string | null = null;
   if (kind === "gitfile") {
-    const common = (
-      await runGit(absolute, ["rev-parse", "--path-format=absolute", "--git-common-dir"])
-    ).stdout.trim();
-    const gitDir = (
-      await runGit(absolute, ["rev-parse", "--path-format=absolute", "--git-dir"])
-    ).stdout.trim();
+    const common = fromGit(
+      (await runGit(absolute, ["rev-parse", "--path-format=absolute", "--git-common-dir"])).stdout,
+    );
+    const gitDir = fromGit(
+      (await runGit(absolute, ["rev-parse", "--path-format=absolute", "--git-dir"])).stdout,
+    );
     if (common !== gitDir) {
       kind = "linked";
       const mainTop = NodePath.dirname(common);
@@ -199,7 +202,7 @@ async function readRepository(
     for (const block of listing.split("\n\n")) {
       const line = block.split("\n").find((item) => item.startsWith("worktree "));
       if (!line) continue;
-      const location = line.slice("worktree ".length);
+      const location = fromGit(line.slice("worktree ".length));
       if (location === absolute || location === (await NodeFSP.realpath(absolute))) continue;
       const inside = location === realRoot || location.startsWith(`${realRoot}${NodePath.sep}`);
       worktrees.push({
@@ -397,7 +400,7 @@ export async function scanFolder(
           type: "symlink",
           size: 0,
           class: fileClass,
-          target: await NodeFSP.readlink(location),
+          target: linkTargetOnWire(await NodeFSP.readlink(location)),
         });
       } else if (stat.isFile()) {
         push({ ...base, type: "file", size: stat.size, class: fileClass });

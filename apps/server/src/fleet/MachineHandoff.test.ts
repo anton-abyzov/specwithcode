@@ -558,8 +558,11 @@ describe("MachineHandoff", () => {
       const fs = yield* FileSystem.FileSystem;
       yield* service.prepare(preview);
       const record = `${store.root}/source-${id}`;
-      expect(Number((yield* fs.stat(record)).mode) & 0o777).toBe(0o600);
-      expect(Number((yield* fs.stat(store.root)).mode) & 0o777).toBe(0o700);
+      // Windows has no POSIX mode bits to check.
+      if (process.platform !== "win32") {
+        expect(Number((yield* fs.stat(record)).mode) & 0o777).toBe(0o600);
+        expect(Number((yield* fs.stat(store.root)).mode) & 0o777).toBe(0o700);
+      }
       yield* fs.writeFileString(record, "invalid json");
       expect((yield* failureOnly(service.prepare(preview))).code).toBe("storage_failed");
     }).pipe(Effect.provide(h.layer));

@@ -44,6 +44,15 @@ describe("shouldBundleCliDependency", () => {
     }
   });
 
+  // The single-executable cannot resolve a file-backed `import`, and the MCP
+  // SDK imports zod/v3, zod/v4 and zod/v4-mini. Cursor still gets zod on disk.
+  it("bundles Cursor's pure-JS closure while still staging it on disk", () => {
+    for (const id of ["zod", "zod/v3", "zod/v4", "zod/v4-mini", "undici"]) {
+      assert.strictEqual(shouldBundleCliDependency(id), true, id);
+      assert.strictEqual(isRuntimeExternalCliDependency(id), true, id);
+    }
+  });
+
   it("never bundles node: builtins", () => {
     assert.strictEqual(shouldBundleCliDependency("node:fs"), false);
   });

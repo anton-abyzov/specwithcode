@@ -536,6 +536,24 @@ effectIt.layer(NodeServices.layer)("resolveCommandPath", (it) => {
 });
 
 effectIt.layer(NodeServices.layer)("resolveSpawnCommand", (it) => {
+  it.effect("uses the overridden Windows PATH spelling when extending the host", () =>
+    Effect.gen(function* () {
+      let received: NodeJS.ProcessEnv | undefined;
+      yield* resolveSpawnCommand("tool", [], {
+        env: { Path: "C:\\New" },
+        extendEnv: true,
+      }).pipe(
+        Effect.provideService(HostProcessPlatform, "win32"),
+        Effect.provideService(HostProcessEnvironment, { PATH: "C:\\Old", Path: "C:\\Stale" }),
+        Effect.provideService(CommandResolutionCache, new Map()),
+        Effect.provideService(SpawnExecutableResolution, (_command, _platform, env) => {
+          received = env;
+          return "C:\\New\\tool.exe";
+        }),
+      );
+      expect(received).toEqual({ PATH: "C:\\New" });
+    }),
+  );
   it.effect("runs Windows executables directly without a shell", () =>
     Effect.gen(function* () {
       const command = yield* resolveSpawnCommand("node.exe", ["script.js", "hello & goodbye"], {

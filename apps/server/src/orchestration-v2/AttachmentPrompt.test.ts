@@ -11,6 +11,11 @@ import {
   providerMessageTextWithAttachmentPaths,
 } from "./AttachmentPrompt.ts";
 
+// Attachment paths are absolute host paths, so Windows uses a drive letter.
+const isWindows = process.platform === "win32";
+const attachmentsDir = isWindows ? "C:\\attachments" : "/attachments";
+const saved = (file: string) => `${attachmentsDir}${isWindows ? "\\" : "/"}${file}`;
+
 const document = ChatFileAttachment.make({
   id: ChatAttachmentId.make("file-document"),
   type: "file",
@@ -32,10 +37,10 @@ describe("provider attachment prompts", () => {
       providerMessageTextWithAttachmentPaths({
         text: "Review these.",
         attachments: [document, image],
-        attachmentsDir: "/attachments",
+        attachmentsDir,
       }),
-      'Review these.\n\n[Attached file "spec.pdf" is saved at: /attachments/file-document.pdf]\n' +
-        '\n[Attached image "diagram.png" is saved at: /attachments/file-image.png]',
+      `Review these.\n\n[Attached file "spec.pdf" is saved at: ${saved("file-document.pdf")}]\n` +
+        `\n[Attached image "diagram.png" is saved at: ${saved("file-image.png")}]`,
     );
   });
 
@@ -53,7 +58,7 @@ describe("provider attachment prompts", () => {
     const text = providerMessageTextWithAttachmentPaths({
       text: "Fix this.",
       attachments: [captured],
-      attachmentsDir: "/attachments",
+      attachmentsDir,
     });
 
     assert.include(
@@ -103,7 +108,7 @@ describe("provider attachment prompts", () => {
     const text = providerMessageTextWithAttachmentPaths({
       text: "Describe this.",
       attachments: [captured],
-      attachmentsDir: "/attachments",
+      attachmentsDir,
     });
 
     assert.include(
@@ -133,13 +138,13 @@ describe("provider attachment prompts", () => {
     const text = providerMessageTextWithAttachmentPaths({
       text: "Fix this.",
       attachments,
-      attachmentsDir: "/attachments",
+      attachmentsDir,
     });
 
     assert.isAtMost(text.length, PROVIDER_SEND_TURN_MAX_INPUT_CHARS);
     assert.isAbove((text.match(/Z/g) ?? []).length, 0);
     for (let index = 0; index < attachments.length; index += 1) {
-      assert.include(text, `/attachments/window-${index}.png`);
+      assert.include(text, saved(`window-${index}.png`));
     }
   });
 

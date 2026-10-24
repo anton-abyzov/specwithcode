@@ -48,7 +48,10 @@ import type {
 } from "@specweave-studio/client-runtime/state/shell";
 import { scopedThreadKey, scopeThreadRef } from "@specweave-studio/client-runtime/environment";
 import { squashAtomCommandFailure } from "@specweave-studio/client-runtime/state/runtime";
-import { resolveCoordinatorModelSelection } from "@specweave-studio/shared/coordinatorDefault";
+import {
+  coordinatorSelectionProblem,
+  resolveCoordinatorModelSelection,
+} from "@specweave-studio/shared/coordinatorDefault";
 import { modelSelectionsEqual } from "@specweave-studio/shared/model";
 import { resolveProjectSettings } from "@specweave-studio/shared/projectSettings";
 import { formatDuration } from "@specweave-studio/shared/usageLimits";
@@ -199,6 +202,7 @@ export function ProjectWorkspaceSurface({
   onCheckout,
   selected,
   selectedEnvironmentId = null,
+  restoringThread = false,
   ownershipProblem = null,
   setSelected,
 }: {
@@ -216,6 +220,7 @@ export function ProjectWorkspaceSurface({
   onCheckout: ((key: string) => void) | null;
   selected: ThreadId | null;
   selectedEnvironmentId?: string | null;
+  restoringThread?: boolean;
   ownershipProblem?: string | null;
   setSelected: SelectProjectThread;
 }) {
@@ -384,6 +389,7 @@ export function ProjectWorkspaceSurface({
     scope: paneScope,
     selected,
     selectedEnvironmentId,
+    restoringThread,
     setSelected,
     setOverviewOpen,
     lastOpened,
@@ -901,7 +907,19 @@ export function ProjectWorkspaceSurface({
     [coordinatorLoaded, coordinatorMessages, coordinatorRuns, failedRunId, failedMessage],
   );
   const askByVoice = useCoordinatorVoiceAsk(voiceSnapshot, (text) => routingSend(text));
-  const voiceCall = useVoiceCall(askByVoice);
+  const voiceModelProblem = model
+    ? coordinatorSelectionProblem(model, hostProviders ?? [])
+    : "provider_unavailable";
+  const voiceCall = useVoiceCall(
+    askByVoice,
+    blocked ??
+      modelCompatibility ??
+      (voiceModelProblem === "coordinator_tools_required"
+        ? "Choose a coordinator model with tool support."
+        : voiceModelProblem
+          ? "Connect a provider in Settings > Providers and choose a coordinator model first."
+          : null),
+  );
   const hostCapabilities = environment?.serverConfig?.environment.capabilities;
   const uploadsSupported = hostCapabilities?.attachmentUploads === true;
   // Coordinator turns carry files the way thread turns do: the agent gets each one's path.

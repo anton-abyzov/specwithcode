@@ -75,6 +75,11 @@ export function canonicalOrigin(value: string): string | null {
   // eslint-disable-next-line no-control-regex -- Reject line breaks and control bytes before parsing Git output.
   if (!value || value.length > 2048 || /[\u0000-\u0020\u007f]/.test(value)) return null;
   if (value.startsWith("/")) return `file://${value.replace(/\/$/, "")}`;
+  // A Windows local remote such as C:\repos\app.git, written the way its
+  // file:///C:/repos/app.git URL form canonicalizes.
+  const drive = /^([a-zA-Z]):[\\/]/.exec(value);
+  if (drive)
+    return `file:///${drive[1]!.toUpperCase()}${value.slice(1).replaceAll("\\", "/").replace(/\/$/, "")}`;
   const scp = /^(?:[a-zA-Z0-9._-]+@)?([a-zA-Z0-9.-]+):([^/].*)$/.exec(value);
   if (scp && !value.includes("://")) {
     const [, host, repository] = scp;
@@ -84,7 +89,9 @@ export function canonicalOrigin(value: string): string | null {
   try {
     const url = new URL(value);
     if (url.protocol === "file:" && !url.host && !url.search && !url.hash) {
-      return `file://${decodeURIComponent(url.pathname).replace(/\/$/, "")}`;
+      return `file://${decodeURIComponent(url.pathname)
+        .replace(/^\/([a-z]):/, (_, letter: string) => `/${letter.toUpperCase()}:`)
+        .replace(/\/$/, "")}`;
     }
     if (
       !["https:", "ssh:", "git:"].includes(url.protocol) ||

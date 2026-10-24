@@ -6,6 +6,7 @@ import * as Path from "node:path";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import { describe, expect, it } from "vite-plus/test";
+import { HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
 
 import {
   agentSupportsRuns,
@@ -14,6 +15,8 @@ import {
   findManagedServiceInstallations,
   hasPendingForcedInstall,
   launchdFailureReason,
+  LINUX_SERVICE_REPAIR_MESSAGE,
+  LINUX_SERVICE_UPDATES_MESSAGE,
   makeServiceUpdateController,
   parseServiceInstallOptions,
   refreshThenRunAgent,
@@ -48,6 +51,12 @@ const PREFERENCES = {
   checkAutomatically: true,
   downloadAutomatically: true,
   installAutomatically: true,
+};
+
+// Windows has no POSIX mode bits; the profile ACL keeps the file private there.
+const expectPrivateFile = (path: string) => {
+  if (HostProcessPlatform.defaultValue() !== "win32")
+    expect(NodeFS.statSync(path).mode & 0o777).toBe(0o600);
 };
 
 describe("studioServiceUpdates", () => {
@@ -498,7 +507,7 @@ describe("studioServiceUpdates", () => {
         installHoldUntil: "2026-10-12T20:15:00.000Z",
       });
       const configPath = Path.join(studioHome, "updates", "config.json");
-      expect(NodeFS.statSync(configPath).mode & 0o777).toBe(0o600);
+      expectPrivateFile(configPath);
       expect(JSON.parse(NodeFS.readFileSync(configPath, "utf8"))).toMatchObject({
         installRequestedAt: "2026-10-12T20:00:00.000Z",
         installMode: "force",
@@ -512,7 +521,7 @@ describe("studioServiceUpdates", () => {
         ...cancelServiceInstallChange("2026-10-12T20:01:00.000Z"),
       });
       expect(controller.pendingForcedInstall(Date.parse("2026-10-12T20:05:00.000Z"))).toBe(false);
-      expect(NodeFS.statSync(configPath).mode & 0o777).toBe(0o600);
+      expectPrivateFile(configPath);
       expect(JSON.parse(NodeFS.readFileSync(configPath, "utf8"))).toMatchObject({
         installRequestedAt: null,
         installMode: "normal",
@@ -949,62 +958,114 @@ describe("studioServiceUpdates", () => {
       ).resolves.toBe("The update agent could not be repaired: Operation not permitted (exit 1)");
     });
 
-    it("maps the helper's exits to typed failures and runs Repair only through the agent", async () => {
-      const home = NodeFS.mkdtempSync(Path.join(NodeOS.tmpdir(), "service-agent-"));
-      try {
-        const studioHome = Path.join(home, ".specweave-studio", "m4");
-        NodeFS.mkdirSync(studioHome, { recursive: true });
-        NodeFS.writeFileSync(
-          Path.join(studioHome, "installation.json"),
-          installationJson("m4", { studioHome, stateDir: Path.join(studioHome, "userdata") }),
-        );
-        // A stand-in for update_agent.py: records its arguments, never runs launchctl.
-        const script = Path.join(home, "fake_agent.py");
-        const record = Path.join(home, "argv.json");
-        NodeFS.writeFileSync(
-          script,
-          [
-            "import json, os, sys",
-            `open(${JSON.stringify(record)}, 'w').write(json.dumps(sys.argv[1:]))`,
-            `mode = open(${JSON.stringify(Path.join(home, "mode"))}).read().strip()`,
-            "if mode == 'disabled':",
-            "    print(json.dumps({'result': 'disabled', 'label': 'x', 'message': 'Update agent is turned off in launchd'}))",
-            "    sys.exit(3)",
-            "if mode == 'broken':",
-            "    print('update-agent m4: error: launchctl could not load the update agent: Bootstrap failed: 5', file=sys.stderr)",
-            "    sys.exit(1)",
-            "print(json.dumps({'result': 'repaired'}))",
-          ].join("\n"),
-        );
-        const controller = makeServiceUpdateController({
-          homeDirectory: home,
-          platform: "darwin",
-          agentScriptPath: () => script,
-        });
-        const mode = (value: string) => NodeFS.writeFileSync(Path.join(home, "mode"), value);
-        const argv = () => JSON.parse(NodeFS.readFileSync(record, "utf8")) as string[];
+    // The update agent is a launchd job run by /usr/bin/python3, which exists only on macOS.
+    it.skipIf(HostProcessPlatform.defaultValue() === "win32")(
+      "maps the helper's exits to typed failures and runs Repair only through the agent",
+      async () => {
+        const home = NodeFS.mkdtempSync(Path.join(NodeOS.tmpdir(), "service-agent-"));
+        try {
+          const studioHome = Path.join(home, ".specweave-studio", "m4");
+          NodeFS.mkdirSync(studioHome, { recursive: true });
+          NodeFS.writeFileSync(
+            Path.join(studioHome, "installation.json"),
+            installationJson("m4", { studioHome, stateDir: Path.join(studioHome, "userdata") }),
+          );
+          // A stand-in for update_agent.py: records its arguments, never runs launchctl.
+          const script = Path.join(home, "fake_agent.py");
+          const record = Path.join(home, "argv.json");
+          NodeFS.writeFileSync(
+            script,
+            [
+              "import json, os, sys",
+              `open(${JSON.stringify(record)}, 'w').write(json.dumps(sys.argv[1:]))`,
+              `mode = open(${JSON.stringify(Path.join(home, "mode"))}).read().strip()`,
+              "if mode == 'disabled':",
+              "    print(json.dumps({'result': 'disabled', 'label': 'x', 'message': 'Update agent is turned off in launchd'}))",
+              "    sys.exit(3)",
+              "if mode == 'broken':",
+              "    print('update-agent m4: error: launchctl could not load the update agent: Bootstrap failed: 5', file=sys.stderr)",
+              "    sys.exit(1)",
+              "print(json.dumps({'result': 'repaired'}))",
+            ].join("\n"),
+          );
+          const controller = makeServiceUpdateController({
+            homeDirectory: home,
+            platform: "darwin",
+            agentScriptPath: () => script,
+          });
+          const mode = (value: string) => NodeFS.writeFileSync(Path.join(home, "mode"), value);
+          const argv = () => JSON.parse(NodeFS.readFileSync(record, "utf8")) as string[];
 
-        mode("disabled");
-        await expect(controller.ensureAgent()).rejects.toMatchObject({
-          step: "disabled",
-          message: SERVICE_AGENT_DISABLED_MESSAGE,
-        });
-        expect(argv()).toEqual(["--identity", "m4", "--install-launch-agent"]);
+          mode("disabled");
+          await expect(controller.ensureAgent()).rejects.toMatchObject({
+            step: "disabled",
+            message: SERVICE_AGENT_DISABLED_MESSAGE,
+          });
+          expect(argv()).toEqual(["--identity", "m4", "--install-launch-agent"]);
 
-        mode("broken");
-        await expect(controller.ensureAgent()).rejects.toMatchObject({
-          step: "refresh",
-          message:
-            "The update agent could not be installed: update-agent m4: error: launchctl could not load the update agent: Bootstrap failed: 5 (exit 1)",
-        });
-        await expect(controller.repairAgent()).rejects.toMatchObject({ step: "repair" });
+          mode("broken");
+          await expect(controller.ensureAgent()).rejects.toMatchObject({
+            step: "refresh",
+            message:
+              "The update agent could not be installed: update-agent m4: error: launchctl could not load the update agent: Bootstrap failed: 5 (exit 1)",
+          });
+          await expect(controller.repairAgent()).rejects.toMatchObject({ step: "repair" });
 
-        mode("ok");
-        await expect(controller.repairAgent()).resolves.toBeUndefined();
-        expect(argv()).toEqual(["--identity", "m4", "--repair-launch-agent"]);
-      } finally {
-        NodeFS.rmSync(home, { recursive: true, force: true });
-      }
+          mode("ok");
+          await expect(controller.repairAgent()).resolves.toBeUndefined();
+          expect(argv()).toEqual(["--identity", "m4", "--repair-launch-agent"]);
+        } finally {
+          NodeFS.rmSync(home, { recursive: true, force: true });
+        }
+      },
+    );
+  });
+
+  describe("on Linux", () => {
+    const linuxController = (attachedStudioHome: string | null) =>
+      makeServiceUpdateController({
+        homeDirectory: "/home/a",
+        platform: "linux",
+        agentScriptPath: () => "/opt/SpecWithCode/resources/studio-updater/update_agent.py",
+        attachedStudioHome,
+        attachedServiceVersion: "1.0.62",
+      });
+
+    it("says the attached systemd service is updated from its CLI, not the app", () => {
+      const controller = linuxController("/home/a/.specwithcode");
+      expect(controller.installation()).toBeNull();
+      expect(controller.readState()).toMatchObject({
+        status: "manual-required",
+        identity: null,
+        installedVersion: "1.0.62",
+        message: LINUX_SERVICE_UPDATES_MESSAGE,
+      });
+      expect(LINUX_SERVICE_UPDATES_MESSAGE).toContain("specweave-studio update");
+      expect(LINUX_SERVICE_UPDATES_MESSAGE).not.toMatch(/launchctl|launchd|Mac/);
+      expect(controller.pendingForcedInstall(Date.parse("2026-10-20T12:00:00.000Z"))).toBe(false);
+    });
+
+    it("starts nothing and writes nothing for the attached service", async () => {
+      const controller = linuxController("/home/a/.specwithcode");
+      await expect(controller.ensureAgent()).resolves.toBeUndefined();
+      await expect(controller.runAgentNow()).resolves.toBeUndefined();
+      expect(() =>
+        controller.writeConfig({ preferences: PREFERENCES, channel: "latest" }),
+      ).not.toThrow();
+    });
+
+    it("explains that Repair has no agent to repair, with the systemctl command", async () => {
+      await expect(linuxController("/home/a/.specwithcode").repairAgent()).rejects.toMatchObject({
+        _tag: "ServiceAgentError",
+        step: "repair",
+        message: LINUX_SERVICE_REPAIR_MESSAGE,
+      });
+      expect(LINUX_SERVICE_REPAIR_MESSAGE).toContain("systemctl --user restart studio.service");
+      expect(LINUX_SERVICE_REPAIR_MESSAGE).not.toMatch(/launchctl|this Mac/);
+    });
+
+    it("stays not managed without an attached installed service", () => {
+      expect(linuxController(null).readState().status).toBe("not-managed");
     });
   });
 });

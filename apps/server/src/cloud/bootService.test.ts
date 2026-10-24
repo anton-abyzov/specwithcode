@@ -133,6 +133,57 @@ it("escapes XML in host paths", () => {
   expect(plist).toContain("<string>/Users/dev/Tools &amp; &lt;Scripts&gt;:/usr/bin</string>");
 });
 
+/** The script behind `powershell.exe -EncodedCommand`, so tests read what runs. */
+function decodePowerShell(args: ReadonlyArray<string>): string {
+  const encoded = args[args.indexOf("-EncodedCommand") + 1] ?? "";
+  const binary = atob(encoded);
+  let script = "";
+  for (let index = 0; index < binary.length; index += 2) {
+    script += String.fromCharCode(binary.charCodeAt(index) | (binary.charCodeAt(index + 1) << 8));
+  }
+  return script;
+}
+
+const windowsPlan = {
+  program: [
+    "C:\\Users\\dev\\.specweave-studio\\runtime\\versions\\1.2.3\\specweave-studio.exe",
+    "__service-launcher",
+  ],
+  baseDir: "C:\\Users\\dev\\100% & <Studio>",
+  logPath: "C:\\Users\\dev\\.specweave-studio\\userdata\\logs\\boot-service.log",
+  unitPath: "C:\\Users\\dev\\AppData\\Local\\SpecWithCode\\studio-service.xml",
+};
+
+it("keeps the Windows task alive for the signed-in user without elevation or a window", () => {
+  const task = BootService.renderBootServiceTask(windowsPlan, {
+    userId: "WORKSTATION\\dev",
+    scriptPath: "C:\\Users\\dev\\AppData\\Local\\SpecWithCode\\studio-service.cmd",
+    homeDir: "C:\\Users\\dev",
+  });
+
+  expect(task).toContain("<LogonType>InteractiveToken</LogonType>");
+  expect(task).toContain("<RunLevel>LeastPrivilege</RunLevel>");
+  expect(task).toContain("<MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>");
+  expect(task).toContain("<Interval>PT1M</Interval>");
+  expect(task).toContain("<ExecutionTimeLimit>PT0S</ExecutionTimeLimit>");
+  expect(task).toContain("<RestartOnFailure>");
+  expect(task).toContain("<Command>conhost.exe</Command>");
+  expect(task).toContain("<Arguments>--headless cmd.exe /d /c ");
+  expect(task).not.toContain("STUDIO_HOME");
+});
+
+it("escapes the Windows launcher script and reads the Studio home back", () => {
+  const script = BootService.renderBootServiceTaskScript(windowsPlan);
+
+  expect(script).toContain('set "STUDIO_HOME=C:\\Users\\dev\\100%% & <Studio>"\r\n');
+  expect(script.split("\r\n")[1]).toBe("chcp 65001 >nul");
+  expect(BootService.bootServiceBaseDirOf(script)).toBe(windowsPlan.baseDir);
+});
+
+/** How the unit quotes a path: a Windows temp folder has backslashes, a POSIX one none. */
+const systemdQuoted = (value: string) =>
+  /[\s"'\\]/.test(value) ? `"${value.replaceAll("\\", "\\\\").replaceAll('"', '\\"')}"` : value;
+
 const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
   platform: NodeJS.Platform = "linux",
   installerPath = macInstallerPath,
@@ -158,17 +209,22 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
     linger: string;
     enabled: boolean;
     active: boolean;
+    taskState: string | undefined;
   } = {
     failCommand: undefined,
     linger: "yes",
     enabled: true,
     active: true,
+    taskState: "Running",
   };
   const runner = ProcessRunner.ProcessRunner.of({
     run: Effect.fn("test.run_boot_service_command")(function* (
       input: ProcessRunner.ProcessRunInput,
     ) {
-      const command = `${input.command} ${input.args.join(" ")}`;
+      const command =
+        input.command === "powershell.exe"
+          ? `powershell.exe ${decodePowerShell(input.args)}`
+          : `${input.command} ${input.args.join(" ")}`;
       commands.push(command);
       timeouts.set(command, input.timeout);
       envs.set(command, input.env);
@@ -180,16 +236,18 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
       if (
         control.stateAfterStop !== undefined &&
         (command === "systemctl --user stop studio.service" ||
-          command.startsWith("launchctl bootout --wait "))
+          command.startsWith("launchctl bootout --wait ") ||
+          command.includes("taskkill.exe"))
       ) {
         yield* fs.writeFileString(statePath, control.stateAfterStop).pipe(Effect.orDie);
       }
       return {
-        stdout:
-          input.args[0] === "--version"
+        stdout: command.includes("Get-ScheduledTask")
+          ? `${control.taskState ?? ""}\r\n`
+          : input.args[0] === "--version"
             ? // The runtime under test reports the version of the directory it
               // was launched from, like the real executable.
-              `specweave-studio v${/versions\/([^/]+)\//.exec(input.command)?.[1] ?? "1.2.3"}\n`
+              `specweave-studio v${/versions[\\/]([^\\/]+)[\\/]/.exec(input.command)?.[1] ?? "1.2.3"}\n`
             : input.command === "loginctl" && input.args[0] === "show-user"
               ? `${control.linger}\n`
               : input.args[1] === "is-enabled"
@@ -199,7 +257,11 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
                 : "",
         stderr: "",
         code: ChildProcessSpawner.ExitCode(
-          failed || (input.args[1] === "is-active" && !control.active) ? 1 : 0,
+          failed ||
+            (input.args[1] === "is-active" && !control.active) ||
+            (command.includes("Get-ScheduledTask") && control.taskState === undefined)
+            ? 1
+            : 0,
         ),
         timedOut: false,
         stdoutTruncated: false,
@@ -242,7 +304,9 @@ const makeHarness = Effect.fn("test.make_boot_service_harness")(function* (
           ConfigProvider.layer(
             ConfigProvider.fromEnv({
               env: {
-                HOME: home,
+                ...(platform === "win32"
+                  ? { USERPROFILE: home, USERNAME: "dev", USERDOMAIN: "WORKSTATION" }
+                  : { HOME: home }),
                 ...extraEnv,
                 ...(environmentPath === undefined || environmentPath === ""
                   ? {}
@@ -383,7 +447,7 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
       });
       expect(plan.program).toEqual([runtime.entryPath, "__service-launcher"]);
       expect(yield* fs.readFileString(plan.unitPath)).toContain(
-        `ExecStart=${runtime.entryPath} __service-launcher`,
+        `ExecStart=${systemdQuoted(runtime.entryPath)} __service-launcher`,
       );
       expect(yield* service.status).toMatchObject({
         current: true,
@@ -412,7 +476,7 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
     }),
   );
 
-  it.effect.each(["linux", "darwin"] as const)(
+  it.effect.each(["linux", "darwin", "win32"] as const)(
     "reports the installed version across launcher protocols on %s",
     (platform) =>
       Effect.gen(function* () {
@@ -451,7 +515,7 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
     }),
   );
 
-  it.effect.each(["linux", "darwin"] as const)(
+  it.effect.each(["linux", "darwin", "win32"] as const)(
     "preserves a newer version that finishes updating during stop on %s",
     (platform) =>
       Effect.gen(function* () {
@@ -473,16 +537,27 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
         expect(
           commands.filter(
             (command) =>
-              command.startsWith(platform === "linux" ? "systemctl " : "launchctl ") &&
-              !command.includes("show-environment"),
+              command.startsWith(
+                platform === "linux"
+                  ? "systemctl "
+                  : platform === "win32"
+                    ? "schtasks.exe "
+                    : "launchctl ",
+              ) && !command.includes("show-environment"),
           ),
         ).toEqual(
           platform === "linux"
             ? ["systemctl --user stop studio.service", "systemctl --user restart studio.service"]
-            : [
-                "launchctl bootout --wait gui/501/com.specweave.studio.service",
-                `launchctl bootstrap gui/501 ${plan.unitPath}`,
-              ],
+            : platform === "win32"
+              ? [
+                  "schtasks.exe /Change /TN SpecWithCode Service - dev /DISABLE",
+                  "schtasks.exe /Change /TN SpecWithCode Service - dev /ENABLE",
+                  "schtasks.exe /Run /TN SpecWithCode Service - dev",
+                ]
+              : [
+                  "launchctl bootout --wait gui/501/com.specweave.studio.service",
+                  `launchctl bootstrap gui/501 ${plan.unitPath}`,
+                ],
         );
       }),
   );
@@ -531,7 +606,16 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
         protocol: SERVICE_LAUNCHER_PROTOCOL,
         activeVersion: "1.2.4",
       });
-      expect(yield* fs.readFileString(plan.unitPath)).toContain("versions/1.2.4/specweave-studio");
+      const path = yield* Path.Path;
+      const newerRuntime = pinnedRuntimePaths(
+        path,
+        path.dirname(path.dirname(statePath)),
+        "1.2.4",
+        "linux",
+      );
+      expect(yield* fs.readFileString(plan.unitPath)).toContain(
+        `ExecStart=${systemdQuoted(newerRuntime.entryPath)} __service-launcher`,
+      );
       expect(
         commands.filter(
           (command) => command.startsWith("systemctl ") && !command.includes("show-environment"),
@@ -709,9 +793,140 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
     }),
   );
 
-  it.effect("fails closed on Windows", () =>
+  it.effect("installs, reports current state, and uninstalls on Windows", () =>
     Effect.gen(function* () {
-      const { service } = yield* makeHarness("win32");
+      const { service, fs, statePath, commands, timeouts, runtime, control } =
+        yield* makeHarness("win32");
+      const path = yield* Path.Path;
+      const plan = yield* service.install();
+      const directory = path.dirname(plan.unitPath);
+      const scriptPath = path.join(directory, "studio-service.cmd");
+      const taskName = "SpecWithCode Service - dev";
+
+      expect(
+        plan.unitPath.endsWith(path.join("AppData", "Local", "SpecWithCode", "studio-service.xml")),
+      ).toBe(true);
+      const task = yield* fs.readFileString(plan.unitPath);
+      expect(task).toContain("<UserId>WORKSTATION\\dev</UserId>");
+      expect(task).toContain(`--headless cmd.exe /d /c "${scriptPath}"`);
+      const script = yield* fs.readFileString(scriptPath);
+      expect(script).toContain(
+        `"${runtime.entryPath}" "__service-launcher" >>"${plan.logPath}" 2>&1`,
+      );
+      expect(BootService.bootServiceBaseDirOf(script)).toBe(plan.baseDir);
+      expect(parseServiceState(yield* fs.readFileString(statePath))).toMatchObject({
+        activeVersion: "1.2.3",
+      });
+      // Nothing was installed before, so nothing is stopped first.
+      expect(commands.filter((command) => !command.includes("--version"))).toEqual([
+        `powershell.exe $ErrorActionPreference = 'Stop'\n$xml = [System.IO.File]::ReadAllText('${plan.unitPath}')\nRegister-ScheduledTask -TaskName '${taskName}' -Xml $xml -Force | Out-Null`,
+        `schtasks.exe /Run /TN ${taskName}`,
+      ]);
+
+      expect(yield* service.status).toMatchObject({
+        current: true,
+        installedVersion: "1.2.3",
+        installedBaseDir: plan.baseDir,
+        problems: [],
+      });
+      control.taskState = "Ready";
+      expect(yield* service.status).toMatchObject({
+        current: false,
+        problems: ["service-stopped"],
+      });
+      control.taskState = "Disabled";
+      expect((yield* service.status).problems).toEqual(["service-disabled", "service-stopped"]);
+      control.taskState = undefined;
+      expect((yield* service.status).problems).toEqual(["service-disabled", "service-stopped"]);
+      control.taskState = "Running";
+
+      // A changed launcher script is a repair, like a changed unit.
+      yield* fs.writeFileString(scriptPath, "@echo off\r\n");
+      expect((yield* service.status).current).toBe(false);
+      yield* service.install();
+      expect((yield* service.status).current).toBe(true);
+
+      commands.length = 0;
+      expect(yield* service.uninstall).toBe(true);
+      expect(yield* fs.exists(scriptPath)).toBe(false);
+      expect((yield* service.status).installed).toBe(false);
+      expect(commands[0]).toBe(`schtasks.exe /Delete /TN ${taskName} /F`);
+      expect(commands[1]).toContain("taskkill.exe /F /T /PID");
+      expect(commands.some((command) => command.startsWith("systemctl "))).toBe(false);
+      expect(timeouts.get(commands[1]!)).toEqual(Duration.seconds(120));
+    }),
+  );
+
+  it.effect("stops the whole launcher tree before replacing the Windows task", () =>
+    Effect.gen(function* () {
+      const { service, commands } = yield* makeHarness("win32");
+      const path = yield* Path.Path;
+      const plan = yield* service.install();
+      commands.length = 0;
+
+      expect(yield* service.restart).toBe(true);
+      const taskName = "SpecWithCode Service - dev";
+      expect(commands[0]).toBe(`schtasks.exe /Change /TN ${taskName} /DISABLE`);
+      // Only launchers that run from this home's pinned runtimes are ended.
+      const versionsDir = path.join(plan.baseDir, "runtime", "versions");
+      expect(commands[1]).toContain(`$root = '${versionsDir}\\'`);
+      expect(commands[1]).toContain("-like '*__service-launcher*'");
+      expect(commands[1]).toContain("taskkill.exe /F /T /PID $_.ProcessId");
+      expect(commands[1]).toContain(`schtasks.exe /End /TN '${taskName}'`);
+      expect(commands[2]).toContain("Register-ScheduledTask");
+      expect(commands[3]).toBe(`schtasks.exe /Run /TN ${taskName}`);
+    }),
+  );
+
+  it.effect("re-enables and starts the Windows task when repair fails", () =>
+    Effect.gen(function* () {
+      const { service, commands, control } = yield* makeHarness("win32");
+      const plan = yield* service.install();
+      const taskName = "SpecWithCode Service - dev";
+      control.failCommand = `powershell.exe $ErrorActionPreference = 'Stop'\n$xml = [System.IO.File]::ReadAllText('${plan.unitPath}')\nRegister-ScheduledTask -TaskName '${taskName}' -Xml $xml -Force | Out-Null`;
+      commands.length = 0;
+
+      const error = yield* service.install().pipe(Effect.flip);
+
+      expect(error._tag).toBe("BootServiceCommandError");
+      expect(commands.filter((command) => command.startsWith("schtasks.exe "))).toEqual([
+        `schtasks.exe /Change /TN ${taskName} /DISABLE`,
+        `schtasks.exe /Change /TN ${taskName} /ENABLE`,
+        `schtasks.exe /Run /TN ${taskName}`,
+      ]);
+    }),
+  );
+
+  it.effect("is unsupported on Windows without a user name", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const home = yield* fs.makeTempDirectoryScoped({ prefix: "studio-boot-service-test-" });
+      const service = yield* BootService.make({
+        baseDir: `${home}/.specweave-studio`,
+        logsDir: `${home}/.specweave-studio/userdata/logs`,
+        cliVersion: "1.2.3",
+        host: { execPath: "C:/specweave-studio.exe" },
+        npmPackage: null,
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            Layer.succeed(
+              ProcessRunner.ProcessRunner,
+              ProcessRunner.ProcessRunner.of({
+                run: () => Effect.die("no command expected"),
+              }),
+            ),
+            Layer.succeed(HostProcessPlatform, "win32"),
+            Layer.succeed(HostProcessUserId, undefined),
+            Layer.succeed(HostProcessExecutablePath, "C:/specweave-studio.exe"),
+            Layer.succeed(
+              HttpClient.HttpClient,
+              HttpClient.make(() => Effect.die("no download")),
+            ),
+            ConfigProvider.layer(ConfigProvider.fromEnv({ env: { USERPROFILE: home } })),
+          ),
+        ),
+      );
       expect((yield* service.status).supported).toBe(false);
       expect((yield* service.install().pipe(Effect.flip))._tag).toBe("BootServiceUnsupportedError");
     }),
@@ -867,7 +1082,8 @@ it.layer(NodeServices.layer)("boot service install", (it) => {
 });
 
 it.layer(NodeServices.layer)("boot service install from the npm package", (it) => {
-  it.effect(
+  // Runs the generated POSIX shell launcher for real; Windows never pins the npm package.
+  it.effect.skipIf(process.platform === "win32")(
     "pins the installed npm package on macOS and downloads nothing (specwithcode@1.0.43 regression)",
     () =>
       Effect.gen(function* () {
@@ -1001,6 +1217,56 @@ it.layer(NodeServices.layer)("boot service install from the npm package", (it) =
       expect(error.message).toContain("downloading the specweave-studio release checksums");
       expect(requests).toEqual([
         "https://github.com/anton-abyzov/specwithcode/releases/download/v1.2.4/SHA256SUMS",
+      ]);
+    }),
+  );
+  it.effect("pins the release executable on Windows, never the npm package's shell launcher", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const home = yield* fs.makeTempDirectoryScoped({ prefix: "studio-boot-service-npm-win-" });
+      const npmDir = path.join(home, "npm");
+      yield* fs.makeDirectory(npmDir, { recursive: true });
+      yield* fs.writeFileString(path.join(npmDir, "bin.mjs"), "");
+      const requests: string[] = [];
+      const service = yield* BootService.make({
+        baseDir: path.join(home, ".specwithcode"),
+        logsDir: path.join(home, ".specwithcode", "userdata", "logs"),
+        cliVersion: "1.2.3",
+        npmPackage: { dir: npmDir, version: "1.2.3" },
+      }).pipe(
+        Effect.provideService(
+          ProcessRunner.ProcessRunner,
+          ProcessRunner.ProcessRunner.of({ run: () => Effect.die("no command expected") }),
+        ),
+        Effect.provide(
+          Layer.mergeAll(
+            Layer.succeed(HostProcessPlatform, "win32"),
+            Layer.succeed(HostProcessArchitecture, "x64"),
+            Layer.succeed(HostProcessUserId, undefined),
+            Layer.succeed(
+              HttpClient.HttpClient,
+              HttpClient.make((request) => {
+                requests.push(request.url);
+                return Effect.succeed(
+                  HttpClientResponse.fromWeb(request, new Response("", { status: 404 })),
+                );
+              }),
+            ),
+            ConfigProvider.layer(
+              ConfigProvider.fromEnv({
+                env: { USERPROFILE: home, USERNAME: "dev", USERDOMAIN: "WORKSTATION" },
+              }),
+            ),
+          ),
+        ),
+      );
+
+      const error = yield* service.install().pipe(Effect.flip);
+
+      expect(error.message).toContain("downloading the specweave-studio release checksums");
+      expect(requests).toEqual([
+        "https://github.com/anton-abyzov/specwithcode/releases/download/v1.2.3/SHA256SUMS",
       ]);
     }),
   );

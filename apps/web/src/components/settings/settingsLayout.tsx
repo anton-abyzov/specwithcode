@@ -82,6 +82,13 @@ function SettingsSearchTargetProvider({
 }
 
 function scrollAndFocusSettingsTarget(target: HTMLElement, highlight = true): void {
+  // Native disclosures keep search destinations mounted. Reveal their ancestors
+  // before measuring, scrolling or focusing the destination.
+  let ancestor: HTMLElement | null = target;
+  while (ancestor) {
+    if (ancestor.tagName === "DETAILS") (ancestor as HTMLDetailsElement).open = true;
+    ancestor = ancestor.parentElement;
+  }
   const prefersReducedMotion = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
   const markedScrollTarget =
     typeof target.querySelector === "function"
@@ -172,10 +179,69 @@ export function useRelativeTimeTick(intervalMs = 1_000) {
   return nowMs;
 }
 
+export type SettingsReach =
+  | { readonly kind: "device" }
+  | { readonly kind: "machine"; readonly name?: string }
+  | { readonly kind: "all" }
+  | { readonly kind: "project" };
+
+export function SettingsReachLabel({ reach }: { readonly reach: SettingsReach }) {
+  if (reach.kind === "machine" && !reach.name?.trim()) return null;
+  const label =
+    reach.kind === "device"
+      ? "This device"
+      : reach.kind === "all"
+        ? "All connected machines"
+        : reach.kind === "project"
+          ? "This project"
+          : `This machine: ${reach.name}`;
+  return (
+    <span
+      data-slot="settings-reach"
+      className="text-xs font-normal leading-5 text-muted-foreground"
+    >
+      {label}
+    </span>
+  );
+}
+
+/** Keeps fields mounted so settings-search can reveal and focus any descendant. */
+export function SettingsDisclosure({
+  title,
+  reach,
+  children,
+  ...props
+}: Omit<ComponentPropsWithoutRef<"details">, "title"> & {
+  title: string;
+  reach?: SettingsReach;
+  children: ReactNode;
+}) {
+  const targetRef = useSettingsSearchTarget<HTMLDetailsElement>(props.id);
+  return (
+    <details
+      {...props}
+      ref={targetRef}
+      tabIndex={props.id ? -1 : undefined}
+      className={cn("group rounded-xl border border-border/60", props.className)}
+    >
+      <summary className="cursor-pointer rounded-xl px-4 py-3 text-sm font-medium focus-visible:outline-2 focus-visible:outline-ring">
+        <span className="ml-2">{title}</span>
+        {reach ? (
+          <span className="ml-3 inline-block align-middle">
+            <SettingsReachLabel reach={reach} />
+          </span>
+        ) : null}
+      </summary>
+      <div className="border-t border-border/50">{children}</div>
+    </details>
+  );
+}
+
 /** Muted section headings have no descriptions; explanatory copy belongs to individual settings. */
 export function SettingsSection({
   title,
   hideTitle = false,
+  reach,
   icon,
   headerAction,
   variant = "grouped",
@@ -185,6 +251,7 @@ export function SettingsSection({
 }: ComponentPropsWithoutRef<"section"> & {
   title: string;
   hideTitle?: boolean;
+  reach?: SettingsReach;
   icon?: ReactNode;
   headerAction?: ReactNode;
   variant?: "grouped" | "plain";
@@ -207,10 +274,11 @@ export function SettingsSection({
           className="flex min-h-7 items-start justify-between gap-4 px-3 sm:px-4"
         >
           <div className="min-w-0">
-            <h2 className="flex min-h-7 items-center gap-2 text-sm font-normal text-foreground/70">
+            <h2 className="flex min-h-7 items-center gap-2 text-sm font-semibold text-foreground">
               {icon}
               {title}
             </h2>
+            {reach ? <SettingsReachLabel reach={reach} /> : null}
           </div>
           <div className="flex min-h-7 min-w-7 items-center justify-end">{headerAction}</div>
         </div>
@@ -264,6 +332,7 @@ export function SettingsRow({
   description,
   status,
   resetAction,
+  reach,
   onResetOverride,
   control,
   serverScoped = false,
@@ -277,6 +346,7 @@ export function SettingsRow({
   description?: ReactNode;
   status?: ReactNode;
   resetAction?: ReactNode;
+  reach?: SettingsReach;
   /** Replaces the default override clear for rows with side effects beyond the settings key. */
   onResetOverride?: () => void;
   control?: ReactNode;
@@ -467,16 +537,19 @@ export function SettingsRow({
     >
       <div className="flex flex-col gap-3 @min-[32rem]/settings-row:grid @min-[32rem]/settings-row:grid-cols-[minmax(0,1fr)_minmax(10rem,40%)] @min-[32rem]/settings-row:items-center @min-[32rem]/settings-row:gap-8">
         <div className="min-w-0 flex-1 space-y-1">
-          <div className="flex min-h-5 min-w-0 items-center gap-1.5">
+          <div className="flex min-h-5 min-w-0 flex-wrap items-center gap-x-2 gap-y-0.5">
             <h3 className="min-w-0 text-sm font-medium text-foreground">{title}</h3>
             {renderedInheritance ? (
               <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center">
                 {renderedInheritance}
               </span>
             ) : null}
-            <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center">
-              {renderedReset}
-            </span>
+            {reach ? <SettingsReachLabel reach={reach} /> : null}
+            {renderedReset ? (
+              <span className="inline-flex h-5 w-5 shrink-0 items-center justify-center">
+                {renderedReset}
+              </span>
+            ) : null}
           </div>
           {description ? (
             <div className="max-w-xl text-xs leading-normal text-muted-foreground">

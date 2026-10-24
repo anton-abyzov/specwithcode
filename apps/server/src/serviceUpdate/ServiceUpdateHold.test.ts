@@ -459,14 +459,19 @@ it.live("outlasts its time limit while the agent installs, up to the ceiling", (
     const dir = yield* fs.makeTempDirectoryScoped({ prefix: "service-update-hold-busy-" });
     const statePath = path.join(dir, "state.json");
     // The ceiling sits well past the 250 ms check so a loaded host cannot reach it first.
-    const hold = yield* holdAt(statePath, { pollMs: 10, maxMs: 2_000 });
-    yield* hold.acquire({ ttlMs: 100 });
+    // Each poll extends the hold by four polls; 25 ms polls leave 100 ms for a slow
+    // Windows file write between them, where 10 ms polls let the hold lapse. On loaded
+    // Windows runners 50 ms polls leave 200 ms and a 250 ms initial ttl so it does not lapse.
+    const pollMs = process.platform === "win32" ? 50 : 25;
+    const ttlMs = process.platform === "win32" ? 250 : 100;
+    const hold = yield* holdAt(statePath, { pollMs, maxMs: 2_000 });
+    yield* hold.acquire({ ttlMs });
     yield* Effect.sleep(Duration.millis(5));
     const requested = yield* isoIn(0);
     yield* writeJson(path.join(dir, "config.json"), {
       installRequestedAt: requested,
       installMode: "force",
-      installHoldUntil: yield* isoIn(100),
+      installHoldUntil: yield* isoIn(ttlMs),
     });
     // The agent writes `installing` once and nothing more until the install ends.
     yield* writeJson(statePath, {
@@ -521,7 +526,10 @@ it.live(
         startedAt: iso(first.startedAtMs),
         expiresAt: iso(first.expiresAtMs),
       });
-      assert.equal(((yield* fs.stat(markerPath)).mode & 0o777).toString(8), "600");
+      // POSIX permission bits; Windows has no owner-only file mode.
+      if (process.platform !== "win32") {
+        assert.equal(((yield* fs.stat(markerPath)).mode & 0o777).toString(8), "600");
+      }
 
       // While the agent works on this hold's request, the extended end is recorded too.
       yield* Effect.sleep(Duration.millis(5));

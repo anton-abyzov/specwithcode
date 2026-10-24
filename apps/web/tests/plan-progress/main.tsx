@@ -9,6 +9,13 @@ import { ThreadPlanCard } from "../../src/components/chat/ThreadPlanCard";
 import { TimelineSystemDivider } from "../../src/components/chat/TimelineSystemDivider";
 import { PlanProgressChip } from "../../src/components/studio/PlanProgressChip";
 import {
+  Menu,
+  MenuCheckboxItem,
+  MenuGroup,
+  MenuPopup,
+  MenuTrigger,
+} from "../../src/components/ui/menu";
+import {
   UnplannedThreadChip,
   UnplannedThreadsFilter,
 } from "../../src/components/studio/shell/UnplannedThreads";
@@ -18,6 +25,7 @@ import {
   displayFolder,
 } from "../../src/studio/threadPlanProgress";
 import { applyThemePalette } from "../../src/themePalette";
+import { useUnplannedNoticeShown } from "../../src/studio/unplannedNotice";
 import "../../src/components/studio/shell/shell.css";
 import "./fixture.css";
 
@@ -135,6 +143,8 @@ const rows = [
 
 function Fixture() {
   const [unplannedOnly, setUnplannedOnly] = useState(false);
+  // The real per-project setting, saved in this page's localStorage.
+  const [noticeShown, setNoticeShown] = useUnplannedNoticeShown("env-fixture", "project-fixture");
   return (
     <main className="mx-auto min-h-screen max-w-3xl space-y-8 p-6">
       <section data-testid="increment-card" className="space-y-1.5">
@@ -190,11 +200,34 @@ function Fixture() {
       <section data-testid="rows" className="space-y-2">
         <h2 className="text-sm font-semibold text-muted-foreground">Thread list rows</h2>
         <div className="sws-threads-head">
-          <UnplannedThreadsFilter
-            count={2}
-            pressed={unplannedOnly}
-            onToggle={() => setUnplannedOnly((on) => !on)}
-          />
+          <Menu>
+            <MenuTrigger render={<button type="button" className="rounded border px-2 text-xs" />}>
+              Sort threads
+            </MenuTrigger>
+            <MenuPopup align="start" side="bottom" className="min-w-52">
+              <MenuGroup>
+                <MenuCheckboxItem
+                  variant="switch"
+                  checked={noticeShown}
+                  onCheckedChange={(checked) => setNoticeShown(checked)}
+                  data-unplanned-notice-toggle
+                >
+                  Note threads without an increment
+                </MenuCheckboxItem>
+              </MenuGroup>
+            </MenuPopup>
+          </Menu>
+          {noticeShown ? (
+            <UnplannedThreadsFilter
+              count={2}
+              pressed={unplannedOnly}
+              onToggle={() => setUnplannedOnly((on) => !on)}
+              onHide={() => {
+                setUnplannedOnly(false);
+                setNoticeShown(false);
+              }}
+            />
+          ) : null}
         </div>
         {rows.map((row) => (
           <div key={row.title} className="sws-thread-text rounded-lg border p-3">
@@ -211,7 +244,7 @@ function Fixture() {
           <span className="sws-thread-meta">
             <span>Idle</span>
             <span>GPT-5.4</span>
-            <UnplannedThreadChip />
+            {noticeShown ? <UnplannedThreadChip /> : null}
           </span>
         </div>
       </section>

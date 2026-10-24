@@ -36,11 +36,15 @@ describe("liveDatabaseReadOnlyUri", () => {
         /^file:\/\/.*statev2\.sqlite\?mode=ro&readonly_shm=1$/,
       );
     });
-    const directory = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "studio live db #?"));
+    // Windows file names cannot contain "?", so "%" stands in for it there.
+    const windows = process.platform === "win32";
+    const directory = NodeFS.mkdtempSync(
+      NodePath.join(NodeOS.tmpdir(), `studio live db #${windows ? "%" : "?"}`),
+    );
     try {
       const uri = liveDatabaseReadOnlyUri(NodePath.join(directory, "statev2.sqlite"));
       assert.match(uri, /\?mode=ro$/);
-      assert.include(uri, "studio%20live%20db%20%23%3F");
+      assert.include(uri, `studio%20live%20db%20%23${windows ? "%25" : "%3F"}`);
     } finally {
       NodeFS.rmSync(directory, { recursive: true, force: true });
     }

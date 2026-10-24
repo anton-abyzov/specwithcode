@@ -1,6 +1,6 @@
 # Running SpecWithCode in the background
 
-On Linux and macOS, SpecWithCode can run as a service for your user so you do not need
+On Linux, macOS and Windows, SpecWithCode can run as a service for your user so you do not need
 to keep a terminal open.
 
 ## Manage the service
@@ -57,16 +57,20 @@ Mac logged in and awake for unattended remote access. Installing over SSH while
 nobody is logged in at the Mac's screen can fail at the final start step; the
 service is still installed and will start at the next login.
 
-Windows background services are not supported.
+Windows runs the service as a scheduled task for your user, so setup needs no
+administrator. It starts when you sign in and stops when you sign out, like macOS.
+No console window opens. If the service stops, Task Scheduler starts it again
+within a minute. The task is named `SpecWithCode Service - <your user name>`, and
+its definition is kept in `%USERPROFILE%\AppData\Local\SpecWithCode`.
 
 SpecWithCode Connect can offer service installation during setup, but the two are managed
 separately. Signing out of SpecWithCode Connect does not stop or uninstall the service.
 
 ## Troubleshooting
 
-Start with `specwithcode service status` on the host. It prints the log path and, on Linux,
-checks whether the installed service is running, enabled, and allowed to survive
-logout.
+Start with `specwithcode service status` on the host. It prints the log path and, on Linux
+and Windows, checks whether the installed service is running and enabled. On Linux it also
+checks that the service is allowed to survive logout.
 
 If it stops when your SSH session closes, check for `linger-disabled`. An
 administrator can enable lingering with:
@@ -90,7 +94,7 @@ that session open.
 | --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
 | `linger-unavailable`                    | Run `loginctl show-user "$(id -un)" --property=Linger` and check that systemd-logind is available.                             |
 | `user-manager-unavailable`              | Run `systemctl --user status` in a login session for the service user; check your distribution's systemd user-session support. |
-| `service-disabled` or `service-stopped` | Read the log and `systemctl --user status studio.service`, then use the repair command printed by SpecWithCode.                |
+| `service-disabled` or `service-stopped` | Read the log (on Linux also `systemctl --user status studio.service`), then use the repair command printed by SpecWithCode.    |
 | `restart-pending`                       | A newer version is installed but the service still runs the previous one. Run `specwithcode service restart`.                  |
 
 On macOS, check **System Settings → General → Login Items** if the service no

@@ -57,8 +57,13 @@ const runtimePaths = (baseDir: string, version: string) => {
   };
 };
 
-const runtimeSpawnArguments = (paths: ReturnType<typeof runtimePaths>) => ({
-  command: paths.entryPath,
+export interface RuntimeSpawnArguments {
+  readonly command: string;
+  readonly args: ReadonlyArray<string>;
+}
+
+const runtimeSpawnArguments = (entryPath: string): RuntimeSpawnArguments => ({
+  command: entryPath,
   args: ["serve"],
 });
 
@@ -288,9 +293,15 @@ export class Launcher {
   #stopping = false;
   #done = false;
   readonly #completion = Promise.withResolvers<void>();
+  readonly #spawnArguments: (entryPath: string) => RuntimeSpawnArguments;
 
-  constructor(baseDir: string, state: ServiceState) {
+  constructor(
+    baseDir: string,
+    state: ServiceState,
+    spawnArguments: (entryPath: string) => RuntimeSpawnArguments = runtimeSpawnArguments,
+  ) {
     this.#baseDir = baseDir;
+    this.#spawnArguments = spawnArguments;
     this.#statePath = NodePath.join(baseDir, "runtime", SERVICE_STATE_FILE);
     this.#state = state;
   }
@@ -425,8 +436,8 @@ export class Launcher {
       childVersion: version,
       ...(update === undefined ? {} : { update }),
     };
-    const spawnArguments = runtimeSpawnArguments(paths);
-    const child = NodeChildProcess.spawn(spawnArguments.command, spawnArguments.args, {
+    const spawnArguments = this.#spawnArguments(paths.entryPath);
+    const child = NodeChildProcess.spawn(spawnArguments.command, [...spawnArguments.args], {
       env: { ...process.env, [SERVICE_LAUNCHER_CONTEXT_ENV]: JSON.stringify(context) },
       stdio: ["inherit", "inherit", "inherit", "ipc"],
     });

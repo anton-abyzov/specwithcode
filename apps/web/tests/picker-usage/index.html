@@ -5,6 +5,9 @@
   </head>
   <body>
     <div id="root"></div>
+    <script>
+      if (new URLSearchParams(location.search).has("desktop")) window.desktopBridge = {};
+    </script>
     <script type="module" src="/main.tsx"></script>
   </body>
 </html>

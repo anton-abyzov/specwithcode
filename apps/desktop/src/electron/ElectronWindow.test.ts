@@ -6,7 +6,7 @@ import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import type * as Electron from "electron";
-import { beforeEach, vi } from "vite-plus/test";
+import { afterEach, beforeEach, vi } from "vite-plus/test";
 
 const {
   activateWindowsForegroundMock,
@@ -112,7 +112,9 @@ function makeWindowsRevealWindow() {
 }
 
 describe("ElectronWindow", () => {
+  afterEach(() => vi.unstubAllEnvs());
   beforeEach(() => {
+    vi.stubEnv("STUDIO_DESKTOP_TEST_OFFSCREEN", undefined);
     activateWindowsForegroundMock.mockReset().mockResolvedValue(undefined);
     appFocusMock.mockReset();
     browserWindowMock.mockReset();
@@ -132,6 +134,33 @@ describe("ElectronWindow", () => {
     windowsForegroundPrepareMock.mockReset().mockResolvedValue(false);
     windowsForegroundCloseMock.mockReset();
   });
+
+  for (const platform of ["win32", "darwin", "linux"] as const) {
+    it.effect(`does not activate native windows in offscreen mode on ${platform}`, () =>
+      Effect.gen(function* () {
+        vi.stubEnv("STUDIO_DESKTOP_TEST_OFFSCREEN", "1");
+        const electronWindow = yield* ElectronWindow.ElectronWindow;
+        const window = makeWindowsRevealWindow();
+        window.isMinimized.mockReturnValue(true);
+        window.isVisible.mockReturnValue(false);
+        assert.isFalse(
+          yield* electronWindow.prepareReveal(window as unknown as Electron.BrowserWindow),
+        );
+        yield* electronWindow.reveal(window as unknown as Electron.BrowserWindow);
+        for (const operation of [
+          window.restore,
+          window.show,
+          window.focus,
+          window.moveTop,
+          appFocusMock,
+          startWindowsForegroundFocusThreadMock,
+          activateWindowsForegroundMock,
+        ]) {
+          assert.lengthOf(operation.mock.calls, 0);
+        }
+      }).pipe(Effect.provide(layerTestFor(platform))),
+    );
+  }
 
   it.effect("preserves schema-safe creation context and the Electron cause", () =>
     Effect.gen(function* () {
@@ -190,7 +219,10 @@ describe("ElectronWindow", () => {
       assert.isFalse("icon" in error.options);
       assert.isFalse("spellcheck" in error.options.webPreferences);
       assert.strictEqual(error.cause, cause);
-      assert.equal(error.message, 'Failed to create Electron BrowserWindow "SpecWithCode" (1100x780).');
+      assert.equal(
+        error.message,
+        'Failed to create Electron BrowserWindow "SpecWithCode" (1100x780).',
+      );
       assert.notInclude(error.message, cause.message);
       assert.deepEqual(browserWindowMock.mock.calls, [[options]]);
     }).pipe(Effect.provide(layerTest)),

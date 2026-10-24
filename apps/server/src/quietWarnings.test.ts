@@ -1,6 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeChildProcess from "node:child_process";
-import * as NodeURL from "node:url";
 import { describe, expect, it } from "@effect/vitest";
 
 import { isSqliteExperimentalWarning } from "./quietWarnings.ts";
@@ -21,7 +20,8 @@ describe("quietSqliteExperimentalWarning", () => {
 
   // The photo from a MacBook Air: bare `specwithcode` printed the notice before anything else.
   it("keeps the notice off stderr when node:sqlite loads, and lets other warnings through", () => {
-    const module = NodeURL.fileURLToPath(new URL("./quietWarnings.ts", import.meta.url));
+    // A file URL, not a path: Windows ESM rejects a drive-letter path ("d:") as a URL scheme.
+    const module = new URL("./quietWarnings.ts", import.meta.url).href;
     const script = [
       `const { quietSqliteExperimentalWarning } = await import(${JSON.stringify(module)});`,
       "quietSqliteExperimentalWarning();",

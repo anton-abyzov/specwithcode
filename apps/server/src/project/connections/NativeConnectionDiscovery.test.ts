@@ -77,7 +77,7 @@ describe("native connection configuration discovery", () => {
       const command = `touch ${NodePath.join(root, "must-not-exist")}`;
       yield* put(
         "custom-codex/config.toml",
-        `[mcp_servers.posthog]\nurl = "https://example.invalid/mcp?token=private-url-token"\n[mcp_servers.posthog.http_headers]\nAuthorization = "Bearer private-header-token"\n[mcp_servers.local]\ncommand = "${command}"\nargs = ["private-arg-token"]\n[mcp_servers.local.env]\nSECRET = "private-env-token"\n`,
+        `[mcp_servers.posthog]\nurl = "https://example.invalid/mcp?token=private-url-token"\n[mcp_servers.posthog.http_headers]\nAuthorization = "Bearer private-header-token"\n[mcp_servers.local]\ncommand = ${JSON.stringify(command)}\nargs = ["private-arg-token"]\n[mcp_servers.local.env]\nSECRET = "private-env-token"\n`,
       );
       yield* put("custom-claude/.claude.json", {
         mcpServers: {

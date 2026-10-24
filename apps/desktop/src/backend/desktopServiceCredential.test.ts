@@ -10,6 +10,7 @@ import { vi } from "vite-plus/test";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Result from "effect/Result";
+import { HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
 
 import * as ElectronSafeStorage from "../electron/ElectronSafeStorage.ts";
 import {
@@ -118,7 +119,10 @@ describe("resolveDesktopServiceBearer", () => {
       assert.deepStrictEqual(minted, ["bearer-1"]);
       const file = NodeFS.readFileSync(filePath, "utf8");
       assert.notInclude(file, "bearer-1");
-      assert.strictEqual((NodeFS.statSync(filePath).mode & 0o777).toString(8), "600");
+      // Windows has no POSIX mode bits; the profile ACL keeps the store private there.
+      if (HostProcessPlatform.defaultValue() !== "win32") {
+        assert.strictEqual((NodeFS.statSync(filePath).mode & 0o777).toString(8), "600");
+      }
     }),
   );
 
@@ -267,7 +271,10 @@ describe("credential file writes", () => {
       NodeFS.writeFileSync(leftover, "stale", { mode: 0o644 });
       yield* launch({ filePath, accepted: new Set(), minted: [] });
       assert.isFalse(NodeFS.existsSync(leftover));
-      assert.strictEqual((NodeFS.statSync(filePath).mode & 0o777).toString(8), "600");
+      // Windows has no POSIX mode bits; the profile ACL keeps the store private there.
+      if (HostProcessPlatform.defaultValue() !== "win32") {
+        assert.strictEqual((NodeFS.statSync(filePath).mode & 0o777).toString(8), "600");
+      }
     }),
   );
 });

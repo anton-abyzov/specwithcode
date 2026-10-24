@@ -46,8 +46,8 @@ export const ModelListRow = memo(function ModelListRow(props: {
   unavailable?: boolean;
   jumpLabel?: string | null;
   disabledReason?: string | null;
-  /** The row is disabled by a spent usage limit: its reason stays readable on the row. */
-  usageBlocked?: boolean;
+  /** A usage warning stays readable without blocking deliberate selection. */
+  warningReason?: string | null;
   /** Usage for this model, shown after the provider name. */
   availability?: AvailabilityText | null;
   onToggleFavorite: () => void;
@@ -61,26 +61,18 @@ export const ModelListRow = memo(function ModelListRow(props: {
       hideIndicator
       index={props.index}
       value={modelPickerModelKey(props.instanceId, props.model.slug)}
-      // A usage-blocked row stays fully legible: the picker refuses the pick
-      // instead of the combobox fading the reason along with the row.
-      disabled={Boolean(props.disabledReason) && !props.usageBlocked}
-      aria-disabled={props.usageBlocked ? true : undefined}
+      disabled={Boolean(props.disabledReason)}
       className={cn(
         "group relative w-full !min-w-0 max-w-full",
-        props.usageBlocked ? "cursor-not-allowed" : "cursor-pointer",
+        "cursor-pointer",
         props.disabledReason &&
           "data-disabled:pointer-events-auto data-disabled:cursor-not-allowed",
       )}
-      data-model-usage-blocked={props.usageBlocked ? "true" : undefined}
+      data-model-usage-warning={props.warningReason ? "true" : undefined}
     >
       <div className="min-w-0 flex-1 text-left">
         <div className="flex min-w-0 items-center gap-2">
-          <div
-            className={cn(
-              "min-w-0 truncate text-xs font-medium leading-snug",
-              props.usageBlocked && "text-muted-foreground",
-            )}
-          >
+          <div className="min-w-0 truncate text-xs font-medium leading-snug">
             {props.useTriggerLabel
               ? getTriggerDisplayModelLabel(props.model)
               : getDisplayModelName(
@@ -128,7 +120,7 @@ export const ModelListRow = memo(function ModelListRow(props: {
                 <span className="flex min-w-0 text-xs leading-snug">
                   <ModelRowAvailability text={props.availability} />
                 </span>
-                {props.usageBlocked ? (
+                {props.warningReason ? (
                   <span className="sr-only">{props.availability.long}</span>
                 ) : null}
               </>
@@ -165,7 +157,7 @@ export const ModelListRow = memo(function ModelListRow(props: {
                   event.stopPropagation();
                 }}
                 // A usage limit is temporary; favorites stay editable through it.
-                disabled={Boolean(props.disabledReason) && !props.usageBlocked}
+                disabled={Boolean(props.disabledReason)}
                 aria-label={props.isFavorite ? "Remove from favorites" : "Add to favorites"}
               >
                 <StarIcon
@@ -185,7 +177,8 @@ export const ModelListRow = memo(function ModelListRow(props: {
     </ComboboxItem>
   );
 
-  if (!props.disabledReason) {
+  const reason = props.disabledReason ?? props.warningReason;
+  if (!reason) {
     return row;
   }
 
@@ -193,7 +186,7 @@ export const ModelListRow = memo(function ModelListRow(props: {
     <Tooltip>
       <TooltipTrigger render={row} />
       <TooltipPopup side="left" align="center">
-        {props.disabledReason}
+        {reason}
       </TooltipPopup>
     </Tooltip>
   );

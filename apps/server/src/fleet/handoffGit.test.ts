@@ -748,7 +748,14 @@ describe("HandoffGit real repositories", () => {
       const manifest = yield* inspect(f.source);
       yield* publish(f.source, manifest);
       const output = yield* materialize(f, manifest);
-      write(NodePath.join(output.workspaceRoot, "linked-file"), "owned isolated edit\n");
+      const linked = NodePath.join(output.workspaceRoot, "linked-file");
+      // Git for Windows checks links out as plain files holding the target
+      // unless core.symlinks is on; there is no link to write through.
+      if (process.platform === "win32" && !NodeFS.lstatSync(linked).isSymbolicLink()) {
+        expect(NodeFS.readFileSync(linked, "utf8")).toBe("root.ts");
+        return;
+      }
+      write(linked, "owned isolated edit\n");
       expect(NodeFS.readFileSync(NodePath.join(f.destination, "root.ts"), "utf8")).toContain(
         "value = 1",
       );
@@ -799,6 +806,10 @@ describe("handoff identity and immutable ref", () => {
     );
     expect(canonicalOrigin("https://user:secret@github.com/team/project.git")).toBeNull();
     expect(canonicalOrigin("ext::arbitrary command")).toBeNull();
+    // Windows local remotes match their file URL form.
+    expect(canonicalOrigin("C:\\repos\\app.git\\")).toBe("file:///C:/repos/app.git");
+    expect(canonicalOrigin("c:/repos/app.git")).toBe("file:///C:/repos/app.git");
+    expect(canonicalOrigin("file:///c:/repos/app.git")).toBe("file:///C:/repos/app.git");
     expect(handoffRef(operationId, "a".repeat(40))).toBe(
       `refs/heads/codex/handoff/${operationId}/${"a".repeat(40)}`,
     );

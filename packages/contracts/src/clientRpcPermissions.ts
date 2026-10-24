@@ -17,6 +17,7 @@ import { PROVISION_RPC_METHODS } from "./provision.ts";
 
 /** Incremental client enforcement; the server still authorizes every request. */
 export const CLIENT_GUARDED_RPC_SCOPES = {
+  [WS_METHODS.voiceSynthesize]: AuthOrchestrationOperateScope,
   [WS_METHODS.projectsEnvironmentImport]: AuthOrchestrationOperateScope,
   [WS_METHODS.nativeConnectionsRead]: AuthFilesystemReadScope,
   [WS_METHODS.browserBridgeStatus]: AuthFilesystemReadScope,

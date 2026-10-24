@@ -1,4 +1,5 @@
 import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import * as ProjectAdmission from "./ProjectAdmission.ts";
 import { assert, it } from "@effect/vitest";
 import * as NodeServices from "@effect/platform-node/NodeServices";
@@ -1186,11 +1187,12 @@ it.effect(
   () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
       const root = yield* fs
         .makeTempDirectoryScoped({ prefix: "project-environment-cas-" })
         .pipe(Effect.flatMap((folder) => fs.realPath(folder)));
-      const main = `${root}/main`;
-      const extra = `${root}/extra`;
+      const main = path.join(root, "main");
+      const extra = path.join(root, "extra");
       yield* fs.makeDirectory(main);
       yield* fs.makeDirectory(extra);
       yield* Effect.gen(function* () {
@@ -1209,7 +1211,7 @@ it.effect(
             {
               id: "second",
               url: "git@github.com:synthetic/second.git",
-              localPath: `${extra}/second`,
+              localPath: path.join(extra, "second"),
             },
           ],
         };
@@ -1255,14 +1257,15 @@ it.effect(
 it.effect("adds folders while work runs but requires idle work to remove or change them", () =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
     const root = yield* fs
       .makeTempDirectoryScoped({ prefix: "project-environment-active-" })
       .pipe(Effect.flatMap((folder) => fs.realPath(folder)));
-    const extra = `${root}/extra`;
-    const second = `${root}/second`;
+    const extra = path.join(root, "extra");
+    const second = path.join(root, "second");
     yield* fs.makeDirectory(extra);
     yield* fs.makeDirectory(second);
-    const elsewhere = `${root}/elsewhere`;
+    const elsewhere = path.join(root, "elsewhere");
     yield* fs.makeDirectory(elsewhere);
     const projections = yield* ProjectionStore.ProjectionStoreV2;
     const snapshot = yield* projections.getShellSnapshot();
@@ -1293,7 +1296,7 @@ it.effect("adds folders while work runs but requires idle work to remove or chan
     const repository = {
       id: "widgets",
       url: "https://github.com/acme/widgets",
-      localPath: `${extra}/widgets`,
+      localPath: path.join(extra, "widgets"),
     };
     let revision = 0;
     const save = (id: string, environment: ProjectEnvironmentSettings) =>
@@ -1403,11 +1406,12 @@ it("isAdditiveEnvironmentChange accepts only kept approvals plus new ones", () =
 it.effect("an explicit environment save canonicalizes a legacy symlink primary folder", () =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
     const root = yield* fs
       .makeTempDirectoryScoped({ prefix: "project-environment-alias-" })
       .pipe(Effect.flatMap((folder) => fs.realPath(folder)));
-    const main = `${root}/real`;
-    const alias = `${root}/alias`;
+    const main = path.join(root, "real");
+    const alias = path.join(root, "alias");
     yield* fs.makeDirectory(main);
     yield* fs.symlink(main, alias);
     yield* Effect.gen(function* () {
@@ -1442,11 +1446,12 @@ it.effect("an explicit environment save canonicalizes a legacy symlink primary f
 it.effect("rejects implicit root reapproval in goal saves, including an unchanged root field", () =>
   Effect.gen(function* () {
     const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
     const root = yield* fs
       .makeTempDirectoryScoped({ prefix: "project-root-reapproval-" })
       .pipe(Effect.flatMap((folder) => fs.realPath(folder)));
-    const main = `${root}/main`;
-    const outside = `${root}/outside`;
+    const main = path.join(root, "main");
+    const outside = path.join(root, "outside");
     yield* fs.makeDirectory(main);
     yield* fs.makeDirectory(outside);
     yield* Effect.gen(function* () {
@@ -1467,7 +1472,7 @@ it.effect("rejects implicit root reapproval in goal saves, including an unchange
         commandId: CommandId.make("reapproval-approve"),
         workspaceSettings: { expectedRevision: 0, environment },
       });
-      yield* fs.rename(main, `${root}/retained`);
+      yield* fs.rename(main, path.join(root, "retained"));
       yield* fs.symlink(outside, main);
       for (const repeatRoot of [false, true]) {
         const denied = yield* service

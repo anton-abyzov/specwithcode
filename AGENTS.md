@@ -81,3 +81,7 @@ Live workflow/browser runners live in scripts/studio-verify/. Run them only in a
 ## Provider update fixture
 
 Build the isolated provider-update dialog with `node node_modules/vite-plus/bin/vp build --config apps/web/tests/provider-updates/vite.config.ts` (Node24). Serve `.artifacts/provider-updates/site` on an owned loopback port and verify it with the headless collaborative preview. The fixture calls mock update RPCs only. Staged installer tests live in `apps/server/src/provider/stagedProviderUpdate.test.ts`; never run a live installer test as part of the ordinary suite.
+
+## Report reader fixture
+
+Run `node node_modules/vite-plus/bin/vp dev --config apps/web/tests/report-experience/vite.config.ts` in a private worktree. Port 5843 serves the real report frame, theme bridge and viewer with fixture-only asset/settings inputs. Check `?theme=light`, `?theme=dark`, `&long=1`, `&owns-escape=1`, and `&hidden-menu=1` through headless preview automation. Optional `&historical=1` reads an explicitly staged HTML file at `.artifacts/report-experience/ps23.html`; never stage live state or credentials. Save captures to files. This fixture does not prove installed acceptance.

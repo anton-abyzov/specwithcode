@@ -1,8 +1,10 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as Clock from "effect/Clock";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
+import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
@@ -64,11 +66,21 @@ const makeCheckpointWorkspaceEffect = Effect.fn("makeCheckpointWorkspace")(funct
   return cwd;
 });
 
+// Windows refuses to remove a folder while a child still runs in it (a
+// just-interrupted Git child, or a provider process whose release finishes
+// after the scenario), so removal retries briefly there. The retry waits on
+// wall time: under it.effect's TestClock the spacing would never elapse.
+const wallClock = Clock.Clock.defaultValue();
 const removeCheckpointWorkspaceEffect = Effect.fn("removeCheckpointWorkspace")(function* (
   cwd: string,
 ) {
   const fs = yield* FileSystem.FileSystem;
-  yield* fs.remove(cwd, { recursive: true });
+  yield* fs
+    .remove(cwd, { recursive: true, force: true })
+    .pipe(
+      Effect.retry({ times: 20, schedule: Schedule.spaced("100 millis") }),
+      Effect.provideService(Clock.Clock, wallClock),
+    );
 });
 
 export const checkpointWorkspace = (fixtureName: string, files?: ReplayWorkspaceFiles) =>

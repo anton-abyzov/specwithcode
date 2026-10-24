@@ -1148,7 +1148,8 @@ describe("OpenCode 2 through the orchestrator", () => {
         const cwd = yield* checkpointWorkspace(name);
         const thread = threadCommands({ name, worktreePath: cwd });
         // The spike's recording: plan agent, then build agent and a new model on
-        // one session. Its `<work>` is this test's workspace.
+        // one session. Its `<work>` is this test's workspace, escaped because it
+        // sits inside JSON strings (Windows paths carry backslashes).
         const recorded = yield* Effect.gen(function* () {
           const fs = yield* FileSystem.FileSystem;
           const path = yield* Path.Path;
@@ -1160,7 +1161,9 @@ describe("OpenCode 2 through the orchestrator", () => {
               ),
             ),
           );
-          return yield* decodeProviderReplayNdjson(text.replaceAll("<work>", cwd));
+          return yield* decodeProviderReplayNdjson(
+            text.replaceAll("<work>", JSON.stringify(cwd).slice(1, -1)),
+          );
         }).pipe(Effect.provide(NodeServices.layer));
         const projection = yield* runScenario({
           name,

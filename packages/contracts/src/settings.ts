@@ -1666,6 +1666,13 @@ export const ServerSettings = Schema.Struct({
    */
   enableAgentComputerAccess: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   /**
+   * While a Chrome profile is paired with this machine through the
+   * SpecWithCode Browser extension, Claude threads start without Claude
+   * Code's built-in Claude in Chrome, so agents use the named profile instead
+   * of asking the user to pick an unnamed browser. Off keeps Claude in Chrome.
+   */
+  preferSpecWithCodeBrowser: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  /**
    * Whether this server may install and run Studio's device helper processes.
    * Kept separate from agent access so enabling the user's Device panel does
    * not also grant providers control of simulators and emulators.
@@ -2147,6 +2154,7 @@ export const ServerSettingsPatch = Schema.Struct({
   ),
   enableAgentDeviceAccess: Schema.optionalKey(Schema.Boolean),
   enableAgentComputerAccess: Schema.optionalKey(Schema.Boolean),
+  preferSpecWithCodeBrowser: Schema.optionalKey(Schema.Boolean),
   enableDeviceSupport: Schema.optionalKey(Schema.Boolean),
   deviceOnboardingCompleted: Schema.optionalKey(Schema.Boolean),
   deviceHosts: Schema.optionalKey(SshDeviceHostConfigs),

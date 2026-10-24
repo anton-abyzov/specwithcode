@@ -161,6 +161,8 @@ export function paneSelectionCorrection(
 
 /** `?thread=<id>` on /projects/$projectKey names the thread open in the right panel. */
 export interface ProjectWorkspaceSearch {
+  /** Sidebar return, validated before showing a remembered worker. */
+  readonly restoreThread?: boolean;
   readonly thread?: ThreadId;
   readonly threadEnvironment?: string;
   /** Exact checkout for a link; never changes the saved coordinator machine. */
@@ -183,6 +185,7 @@ export function parseProjectWorkspaceSearch(raw: Record<string, unknown>): Proje
   const checkout = valid(raw.checkout, 1024);
   const threadEnvironment = valid(raw.threadEnvironment, 512);
   return {
+    ...(thread && raw.restoreThread === true ? { restoreThread: true } : {}),
     ...(thread
       ? { thread: ThreadId.make(thread), ...(threadEnvironment ? { threadEnvironment } : {}) }
       : {}),

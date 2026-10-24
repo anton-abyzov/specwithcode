@@ -5,7 +5,7 @@ The 1.0.65 install on M4 ran 13.5 minutes behind one static "Installing" line. W
 release, update.py now keeps this file current: the phase it is in, step i of n, when that phase
 began, a heartbeat at least every HEARTBEAT_SECONDS, the phase timings so far, how long the last
 install took (expectedMs, the total of the newest earlier verified install), when the service was
-restarted, and, once it ends, the result: `verified`, `refused` (the old service never stopped:
+restarted, the update agent's own timings before this apply (agentTimings), and, once it ends, the result: `verified`, `refused` (the old service never stopped:
 any pointer moved was put back), `rolled-back` (the old release runs again after a restart: the
 new one failed its checks, or the stop, copy or start failed), `held` (the rollback stopped on a
 check) or `failed`. While a failed apply puts things back, `phase` is `rollback`. A helper killed
@@ -33,6 +33,22 @@ PHASES = ('beforeRead', 'backupSpace', 'verifyAndStage', 'prestateCheck', 'swapP
 # Not one of PHASES' steps: entered from whichever phase failed, until the failure receipt is final.
 ROLLBACK = 'rollback'
 RESULTS = {'verified', 'refused', 'rolled-back', 'held', 'failed'}
+# The agent's phase timings before the apply (update_agent_run.Timings, its TIMINGS_ENV).
+AGENT_TIMINGS_ENV = 'STUDIO_UPDATE_AGENT_TIMINGS'
+
+
+def agent_timings(environ=None):
+    """The update agent's whole-millisecond phase timings for this apply; {} from an agent that
+    passes none, or passes anything but a small object of names to whole milliseconds."""
+    text = (os.environ if environ is None else environ).get(AGENT_TIMINGS_ENV, '')
+    try:
+        value = json.loads(text) if 0 < len(text) <= 4096 else {}
+    except ValueError:
+        return {}
+    if not isinstance(value, dict) or len(value) > 32 or not all(
+            isinstance(name, str) and len(name) <= 64 and type(ms) is int and ms >= 0 for name, ms in value.items()):
+        return {}
+    return value
 
 
 def now():
@@ -106,7 +122,7 @@ class ProgressWriter:
                        'receipt': str(receipt) if receipt is not None else None,
                        'phase': PHASES[0], 'step': 1, 'steps': len(PHASES), 'phaseStartedAt': now(),
                        'heartbeatAt': now(), 'expectedMs': expected_ms(receipt.parent, receipt) if receipt else None,
-                       'timings': {}, 'serviceRestartedAt': None, 'result': None}
+                       'timings': {}, 'agentTimings': agent_timings(), 'serviceRestartedAt': None, 'result': None}
         self.thread = None
 
     def start(self):

@@ -400,6 +400,7 @@ it.effect("starts a project from just a title when workspaceRoot is omitted", ()
       deletedAt: null,
     } as OrchestrationV2ThreadShell;
     const named: Array<string> = [];
+    const kinds: Array<"code" | "personal" | undefined> = [];
     const registered: Array<string> = [];
     const createdProject = {
       id: createdProjectId,
@@ -445,6 +446,7 @@ it.effect("starts a project from just a title when workspaceRoot is omitted", ()
         createNamedProject: (input) =>
           Effect.sync(() => {
             named.push(input.name);
+            kinds.push(input.kind);
             return {
               projectId: createdProjectId,
               workspaceRoot: createdProject.workspaceRoot,
@@ -478,6 +480,12 @@ it.effect("starts a project from just a title when workspaceRoot is omitted", ()
       commitError: "Git has no name or email on this machine.",
     });
     expect(named).toEqual(["Pinball Stats"]);
+    expect(kinds).toEqual([undefined]);
+
+    // A personal one keeps its kind, so this machine's assistant is returned, not a code project.
+    yield* handle({ title: "Second Aide", kind: "personal" });
+    expect(kinds).toEqual([undefined, "personal"]);
+    named.pop();
 
     // A path still registers that folder, and never makes a named project.
     yield* handle({ title: "Existing", workspaceRoot: "/work/existing" });

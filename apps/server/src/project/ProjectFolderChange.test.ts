@@ -310,8 +310,9 @@ it.layer(NodeServices.layer)("ProjectFolderService", (it) => {
     Effect.scoped(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
         const { scenario, parent, stub } = yield* makeScenario;
-        const moved = `${scenario.root}/moved-checkout`;
+        const moved = path.join(scenario.root, "moved-checkout");
         yield* fs.makeDirectory(moved);
         scenario.repositories.set(stub, "github.com/easychamp/easychamp");
         scenario.repositories.set(moved, "github.com/easychamp/easychamp");
@@ -328,14 +329,18 @@ it.layer(NodeServices.layer)("ProjectFolderService", (it) => {
     Effect.scoped(
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
         const { scenario, parent, stub } = yield* makeScenario;
-        yield* fs.makeDirectory(`${stub}/.worktrees/fix`, { recursive: true });
-        yield* fs.makeDirectory(`${parent}/.worktrees/fix`, { recursive: true });
-        yield* fs.makeDirectory(`${stub}/.worktrees/stale`, { recursive: true });
+        const boundOld = path.join(stub, ".worktrees", "fix");
+        const boundNew = path.join(parent, ".worktrees", "fix");
+        const stale = path.join(stub, ".worktrees", "stale");
+        yield* fs.makeDirectory(boundOld, { recursive: true });
+        yield* fs.makeDirectory(boundNew, { recursive: true });
+        yield* fs.makeDirectory(stale, { recursive: true });
         scenario.threads.push(
-          shell("bound", { worktreePath: `${stub}/.worktrees/fix` }),
-          shell("unmatched", { worktreePath: `${stub}/.worktrees/stale` }),
-          shell("elsewhere", { worktreePath: `${scenario.root}/other` }),
+          shell("bound", { worktreePath: boundOld }),
+          shell("unmatched", { worktreePath: stale }),
+          shell("elsewhere", { worktreePath: path.join(scenario.root, "other") }),
         );
         const changed = yield* withFolders(scenario, (folders) =>
           folders.change({
@@ -351,8 +356,8 @@ it.layer(NodeServices.layer)("ProjectFolderService", (it) => {
             type: "thread.metadata.update",
             commandId: CommandId.make(`${commandId}:worktree:bound`),
             threadId: ThreadId.make("bound"),
-            worktreePath: `${parent}/.worktrees/fix`,
-            expectedWorktreePath: `${stub}/.worktrees/fix`,
+            worktreePath: boundNew,
+            expectedWorktreePath: boundOld,
           },
         ]);
       }),
@@ -505,7 +510,7 @@ it.layer(NodeServices.layer)("ProjectFolderService", (it) => {
         const { scenario, parent, stub } = yield* makeScenario;
         yield* fs.writeFileString(`${parent}/.specweave/config.json`, "{}");
         yield* fs.makeDirectory(`${parent}/.specweave/increments/0001-start`, { recursive: true });
-        const elsewhere = `${scenario.root}/elsewhere`;
+        const elsewhere = (yield* Path.Path).join(scenario.root, "elsewhere");
         yield* fs.makeDirectory(`${elsewhere}/.git`, { recursive: true });
         scenario.repositories.set(elsewhere, "github.com/easychamp/easychamp");
         scenario.repositories.set(stub, "github.com/easychamp/easychamp");
@@ -543,7 +548,7 @@ it.layer(NodeServices.layer)("ProjectFolderService", (it) => {
       Effect.gen(function* () {
         const fs = yield* FileSystem.FileSystem;
         const { scenario, stub } = yield* makeScenario;
-        const plain = `${scenario.root}/plain`;
+        const plain = (yield* Path.Path).join(scenario.root, "plain");
         yield* fs.makeDirectory(plain);
         scenario.repositories.set(plain, "github.com/easychamp/easychamp");
         scenario.repositories.set(stub, "github.com/easychamp/easychamp");

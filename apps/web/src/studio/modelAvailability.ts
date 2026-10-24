@@ -4,11 +4,12 @@
  * publishes (the same windows Usage → Limits draws) and never asks a provider
  * for anything.
  *
- * Only a confirmed read disables a choice: a fresh snapshot with a spent
+ * Only a confirmed read warns of a limit: a fresh snapshot with a spent
  * window that applies to the model, or the native admission denial the server
  * itself refuses turns on. Anything we cannot vouch for (no read yet, an old
  * read, a failed probe, a provider that never reports, an offline machine)
- * stays selectable and says so, so missing telemetry never locks the picker.
+ * stays selectable and says so. Even a confirmed limit is advisory when the
+ * user deliberately selects a model; the server decides whether a turn runs.
  *
  * @module modelAvailability
  */
@@ -230,7 +231,7 @@ export function modelAvailability(input: ModelAvailabilityInput): ModelAvailabil
   };
 }
 
-/** Only a confirmed read blocks choosing the model. */
+/** Only a confirmed read indicates a turn may be blocked by usage. */
 export function isAvailabilityBlocking(availability: ModelAvailability): boolean {
   return (
     (availability.kind === "exhausted" && !availability.providerAllows) ||
@@ -401,7 +402,7 @@ export function availabilityText(
   }
 }
 
-/** The reason a confirmed-blocked model can't be chosen, or null when it can. */
+/** Usage refusal text. Model pickers display it as an advisory warning. */
 export function availabilityDisabledReason(
   availability: ModelAvailability,
   input: Parameters<typeof availabilityText>[1],

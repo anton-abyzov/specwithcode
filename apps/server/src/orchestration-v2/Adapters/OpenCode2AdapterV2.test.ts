@@ -2515,7 +2515,7 @@ describe("OpenCode2 adapter", () => {
     Effect.gen(function* () {
       // A spawned server stops after it has no borrowers for a while, so a
       // session must not keep holding the connection it reconnected with.
-      const borrowers = { current: 0 };
+      const borrowers = { current: 0, total: 0 };
       yield* Effect.gen(function* () {
         yield* openCode2ReplayRuntime(
           [
@@ -2526,8 +2526,11 @@ describe("OpenCode2 adapter", () => {
           ],
           { borrowers },
         );
-        // Reconnected: the dropped connection is returned and the new one is held.
+        // Waits for the reconnect's borrow rather than a fixed time, which a
+        // loaded runner can overrun, then lets its event arrive.
+        while (borrowers.total < 2) yield* Effect.sleep("20 millis");
         yield* Effect.sleep("200 millis");
+        // Reconnected: the dropped connection is returned and the new one is held.
         assert.equal(borrowers.current, 1);
       }).pipe(Effect.scoped);
       assert.equal(borrowers.current, 0);

@@ -10,6 +10,10 @@ It is built on [SpecWeave](https://github.com/anton-abyzov/specweave), the open-
 
 Built for teams of 2–10 people. Free, MIT licensed, no account. You bring your own provider subscriptions or API keys; SpecWithCode supplies no inference, resells no tokens and charges no seat fee to run agents on your team's machines. What is free today stays free; teams can pay for hosted private skills and support ([pricing](https://spec-weave.com/pricing)).
 
+Automatic fallback requires an explicit configured choice before selecting ACP agents whose billing is unknown. See [automatic provider fallback](docs/studio/getting-started.md#automatic-provider-fallback).
+
+HTML reports open from a compact preview into a focused reader. The conversation stays available through Show thread. See the [report experience](docs/reports/report-experience.md) for behavior and compatibility limits.
+
 ## What it does
 
 | Instead of                              | In SpecWithCode                                                                                                                                                                                                           |

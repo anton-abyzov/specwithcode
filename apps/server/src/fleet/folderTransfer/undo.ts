@@ -6,6 +6,7 @@ import { moveEntry, type JournalEntry } from "./apply.ts";
 import { exists, JsonLog, lstatOrNull } from "./durable.ts";
 import { runGit } from "./git.ts";
 import { hashFile } from "./manifest.ts";
+import { linkTargetOnWire } from "./paths.ts";
 
 export interface UndoItem {
   readonly path: string;
@@ -49,7 +50,8 @@ async function matchesWrite(
   const stat = await lstatOrNull(absolute);
   if (!stat) return "missing" as const;
   if (entry.linkTarget !== null)
-    return stat.isSymbolicLink() && (await NodeFSP.readlink(absolute)) === entry.linkTarget
+    return stat.isSymbolicLink() &&
+      linkTargetOnWire(await NodeFSP.readlink(absolute)) === entry.linkTarget
       ? "same"
       : "edited";
   const sha256 = expected.get(entry.path) ?? entry.sha256;

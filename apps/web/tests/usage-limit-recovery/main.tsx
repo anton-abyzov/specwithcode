@@ -9,10 +9,13 @@ import {
   type OrchestrationV2LimitRecovery,
   type ServerProvider,
 } from "@specweave-studio/contracts";
+import { describeFallbackOrder } from "@specweave-studio/shared/providerFallback";
 import { ComposerBanner } from "../../src/components/chat/ComposerBanner";
 import { ComposerBannerStack } from "../../src/components/chat/ComposerBannerStack";
 import { ComposerSurface } from "../../src/components/chat/ComposerSurface";
 import {
+  canSelectManualFallback,
+  fallbackUnavailableReason,
   limitFallbackPairingBannerItem,
   usageLimitRecoveryBannerItem,
 } from "../../src/components/chat/UsageLimitRecoveryBanner";
@@ -96,6 +99,51 @@ const fallbackOrder: ReadonlyArray<ModelSelection> = [
   { instanceId: ProviderInstanceId.make("codex"), model: "gpt-6.1-sol" },
   { instanceId: ProviderInstanceId.make("claudeAgent"), model: "claude-opus-5-5" },
 ] as ReadonlyArray<ModelSelection>;
+const manualChoiceProviders: ReadonlyArray<ServerProvider> = [
+  {
+    ...orderProviders[0]!,
+    status: "ready",
+    usageLimits: undefined,
+  },
+  {
+    ...orderProviders[1]!,
+    displayName: "Claude Code",
+    driver: "claudeAgent" as ServerProvider["driver"],
+  },
+  {
+    ...orderProvider("claude-api", "Claude API", [["claude-opus-5-5", "Claude Opus 5.5"]]),
+    driver: "claudeAgent" as ServerProvider["driver"],
+    status: "ready",
+    auth: { status: "authenticated", type: "apiKey" },
+    usageLimits: undefined,
+  },
+  {
+    ...orderProvider("claude-warning", "Claude Code (warning)", [
+      ["claude-opus-5-5", "Claude Opus 5.5"],
+    ]),
+    driver: "claudeAgent" as ServerProvider["driver"],
+    usageLimits: {
+      checkedAt: at,
+      windows: [{ id: "weekly", label: "Weekly", usedPercent: 100, resetsAt: resetAt }],
+    },
+  },
+];
+const manualChoices = describeFallbackOrder({
+  providers: manualChoiceProviders,
+  currentInstanceId: ProviderInstanceId.make("stopped-provider"),
+  rule: {
+    providerLimitFallbackModelSelection: null,
+    providerLimitFallbackModels: [
+      { instanceId: ProviderInstanceId.make("codex"), model: "gpt-6.1-sol" },
+      { instanceId: ProviderInstanceId.make("claudeAgent"), model: "claude-opus-5-5" },
+      { instanceId: ProviderInstanceId.make("claude-api"), model: "claude-opus-5-5" },
+      { instanceId: ProviderInstanceId.make("claude-warning"), model: "claude-opus-5-5" },
+      { instanceId: ProviderInstanceId.make("missing-provider"), model: "default" },
+    ],
+  },
+  limitedInstanceIds: new Set(["claudeAgent"]),
+  nowMs: Date.now(),
+});
 function Fixture() {
   const [choice, setChoice] = useState<OrchestrationV2LimitRecovery | null>(
     params.has("unarmed") ? null : recovery,
@@ -136,16 +184,30 @@ function Fixture() {
     },
     ...(params.has("choices")
       ? {
-          fallbackChoices: [
-            {
-              label: "Codex",
-              model: "GPT-6.1 Sol",
-              onContinue: async () => {
-                document.body.dataset.choice = "Codex · GPT-6.1 Sol";
-              },
-            },
-            { label: "Copilot", model: "Claude Opus 5.5", unavailable: "full until 11:19 PM" },
-          ],
+          fallbackChoices: manualChoices.map((entry) => {
+            const label = entry.provider?.displayName ?? "Missing provider";
+            const model =
+              entry.provider?.models.find((model) => model.slug === entry.selection.model)?.name ??
+              entry.selection.model;
+            const choosable = canSelectManualFallback(entry);
+            const unavailable = fallbackUnavailableReason(
+              entry.unavailable,
+              entry.resetAt,
+              choosable,
+            );
+            return {
+              label,
+              model,
+              ...(unavailable ? { unavailable } : {}),
+              ...(choosable
+                ? {
+                    onContinue: async () => {
+                      document.body.dataset.choice = `${label} · ${model}`;
+                    },
+                  }
+                : {}),
+            };
+          }),
         }
       : {}),
     onChange: async (change) => {

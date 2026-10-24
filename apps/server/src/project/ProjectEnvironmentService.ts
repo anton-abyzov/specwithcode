@@ -103,7 +103,10 @@ export const make = Effect.gen(function* () {
     )
       return "missing" as const;
     const match = yield* Effect.gen(function* () {
-      const top = yield* git(projectId, repo.localPath, ["rev-parse", "--show-toplevel"]);
+      // Git prints C:/ paths on Windows; resolve both sides to the native form.
+      const top = yield* fs.realPath(
+        yield* git(projectId, repo.localPath, ["rev-parse", "--show-toplevel"]),
+      );
       const canonical = yield* fs.realPath(repo.localPath);
       if (top !== canonical) return false;
       const remote = yield* git(projectId, repo.localPath, [

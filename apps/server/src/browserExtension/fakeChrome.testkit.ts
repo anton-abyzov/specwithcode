@@ -5,7 +5,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import { makeBrowserExtension } from "./BrowserExtension.ts";
-import type { RelaySocket } from "./relayHub.ts";
+import type { RelaySession, RelaySocket } from "./relayHub.ts";
 
 export const PNG_1x1 =
   "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==";
@@ -13,7 +13,9 @@ export const PNG_1x1 =
 export interface FakeChrome {
   readonly calls: Array<{ method: string; params: unknown[] }>;
   readonly closed: Array<{ code: number; reason: string }>;
-  readonly session: { receive: (text: string) => void; closed: () => void };
+  /** Messages from the service without an id: welcome, pong, reconnect. */
+  readonly notifications: Array<{ method: string; params?: unknown }>;
+  readonly session: RelaySession;
   /** CDP method -> error the next call to it fails with, once. */
   readonly failNext: Map<string, string>;
 }
@@ -28,6 +30,7 @@ export function connectFake(
 ): FakeChrome {
   const calls: FakeChrome["calls"] = [];
   const closed: FakeChrome["closed"] = [];
+  const notifications: FakeChrome["notifications"] = [];
   const failNext: FakeChrome["failNext"] = new Map();
   let nextTab = 100;
   const tabs = new Map<number, { id: number; url: string; title: string; active: boolean }>([
@@ -38,7 +41,10 @@ export function connectFake(
   const socket: RelaySocket = {
     send(text) {
       const message = JSON.parse(text);
-      if (typeof message.id !== "number") return;
+      if (typeof message.id !== "number") {
+        notifications.push(message);
+        return;
+      }
       const params = message.params as unknown[];
       calls.push({ method: message.method, params });
       switch (message.method) {
@@ -124,7 +130,7 @@ export function connectFake(
       },
     }),
   );
-  return { calls, closed, session, failNext };
+  return { calls, closed, notifications, session, failNext };
 }
 
 export function setup() {

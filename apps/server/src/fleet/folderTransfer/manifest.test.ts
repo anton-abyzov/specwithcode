@@ -66,7 +66,10 @@ describe("scanFolder", () => {
       target: "../../skills/appstore",
       class: "tracked",
     });
-    expect(entry("outside-link")).toMatchObject({ type: "symlink", target: "/tmp" });
+    // Windows stores the absolute "/tmp" link against the current drive.
+    const outsideTarget =
+      process.platform === "win32" ? NodePath.resolve("/tmp").replaceAll("\\", "/") : "/tmp";
+    expect(entry("outside-link")).toMatchObject({ type: "symlink", target: outsideTarget });
     expect(scan.entries.some((item) => item.path.startsWith(".cursor/skills/appstore/"))).toBe(
       false,
     );
@@ -74,10 +77,12 @@ describe("scanFolder", () => {
       "skills/appstore",
     );
     expect(symlinkTargetInside("outside-link", "/tmp")).toBeNull();
+    expect(symlinkTargetInside("outside-link", "D:/tmp")).toBeNull();
     expect(symlinkTargetInside("a", "../x")).toBeNull();
   });
 
-  it("keeps file modes", () => {
+  // POSIX permission bits: Windows has no executable bit to keep.
+  it.skipIf(process.platform === "win32")("keeps file modes", () => {
     expect(entry("scripts/run.sh")?.mode).toBe(0o755);
   });
 
@@ -133,7 +138,7 @@ describe("hashing and the manifest file", () => {
       },
       entries: selected,
     });
-    expect(NodeFS.statSync(file).mode & 0o777).toBe(0o600);
+    if (process.platform !== "win32") expect(NodeFS.statSync(file).mode & 0o777).toBe(0o600);
     const read = await readManifestFile(file);
     expect(read.entries).toHaveLength(selected.length);
     expect(read.header.repositories).toHaveLength(4);

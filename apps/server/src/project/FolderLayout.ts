@@ -41,7 +41,7 @@ export interface FolderLayout {
   readonly kind: FolderLayoutKind;
   /** The folder itself is a Git checkout (a `.git` folder or file). */
   readonly rootIsRepository: boolean;
-  /** Checkouts below it, relative paths, at most LISTED_REPOSITORIES. */
+  /** Checkouts below it, POSIX-relative paths, at most LISTED_REPOSITORIES. */
   readonly repositories: ReadonlyArray<string>;
   readonly repositoryCount: number;
   /** The folder budget stopped the walk before it saw everything. */
@@ -92,7 +92,11 @@ export async function readFolderLayout(folder: string): Promise<FolderLayout | n
         // A checkout reached directly wins over a symlink to it, as in the CLI.
         const seen = found.get(real);
         if (seen === undefined || (seen.link && !link))
-          found.set(real, { path: NodePath.relative(root, child), link });
+          // Shown and stored, so always POSIX-relative, as in the CLI.
+          found.set(real, {
+            path: NodePath.relative(root, child).split(NodePath.sep).join("/"),
+            link,
+          });
         continue;
       }
       if (next.depth + 1 < NESTED_DEPTH) queue.push({ path: child, depth: next.depth + 1, link });
@@ -104,7 +108,7 @@ export async function readFolderLayout(folder: string): Promise<FolderLayout | n
       ? rootIsRepository
         ? "single"
         : "plain"
-      : repositories.every((repository) => repository.split(NodePath.sep)[0] === "repositories")
+      : repositories.every((repository) => repository.split("/")[0] === "repositories")
         ? "umbrella"
         : "nested";
   return {

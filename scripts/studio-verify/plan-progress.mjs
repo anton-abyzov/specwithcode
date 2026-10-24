@@ -144,6 +144,53 @@ try {
       path: join(output, `plan-progress-${theme}-expanded.png`),
       fullPage: true,
     });
+
+    // Increments are recommended, not required: the notice reads as
+    // information, can be hidden for good, and comes back from the menu.
+    const notice = page.locator("[data-unplanned-notice]");
+    await filter.click();
+    await page.mouse.move(0, 0);
+    assert.equal(await filter.getAttribute("aria-pressed"), "false");
+    const color = await filter.evaluate((node) => getComputedStyle(node).color);
+    const muted = await page.evaluate(() => {
+      const probe = document.createElement("span");
+      probe.style.color = "var(--muted-foreground)";
+      document.body.append(probe);
+      const value = getComputedStyle(probe).color;
+      probe.remove();
+      return value;
+    });
+    assert.equal(color, muted, "the notice uses the muted text color, not a warning color");
+    assert.equal(
+      (await page.locator("[data-thread-unplanned]").textContent())?.trim(),
+      "No increment",
+    );
+    await page.locator("[data-unplanned-hide]").click();
+    assert.equal(await notice.count(), 0);
+    assert.equal(await page.locator("[data-thread-unplanned]").count(), 0);
+    await page.reload();
+    await page.locator('[data-thread-plan-card="increment"]').first().waitFor();
+    assert.equal(await notice.count(), 0, "hiding persists across a reload");
+    assert.equal(await page.locator("[data-thread-unplanned]").count(), 0);
+    await page.screenshot({
+      path: join(output, `plan-progress-${theme}-hidden.png`),
+      fullPage: true,
+    });
+    await page.getByRole("button", { name: "Sort threads" }).click();
+    const toggle = page.locator("[data-unplanned-notice-toggle]");
+    assert.equal(await toggle.getAttribute("aria-checked"), "false");
+    await page.screenshot({ path: join(output, `plan-progress-${theme}-menu.png`) });
+    await toggle.click();
+    await notice.waitFor();
+    assert.equal(await page.locator("[data-thread-unplanned]").count(), 1);
+    await page.keyboard.press("Escape");
+    await page.reload();
+    await notice.waitFor({ timeout: 5000 });
+    assert.equal(
+      await page.locator("[data-thread-unplanned]").count(),
+      1,
+      "showing again persists too",
+    );
     await page.close();
   }
   assert.deepEqual(errors, []);

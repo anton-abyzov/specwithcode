@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as PlatformError from "effect/PlatformError";
 import { ChildProcessSpawner } from "effect/process";
 import { VcsProcessExitError, VcsProcessSpawnError } from "@specweave-studio/contracts";
@@ -274,7 +275,11 @@ describe("AzureDevOpsCli.layer", () => {
   it.effect("creates pull requests using the body file as the Azure description", () =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
-      const bodyFile = `/tmp/studio-azure-devops-cli-.md`;
+      const path = yield* Path.Path;
+      const bodyDirectory = yield* fileSystem.makeTempDirectory({
+        prefix: "studio-azure-devops-cli-",
+      });
+      const bodyFile = path.join(bodyDirectory, "body.md");
       yield* fileSystem.writeFileString(bodyFile, "Generated body");
       mockRun.mockReturnValueOnce(Effect.succeed(processOutput("{}")));
 
@@ -295,6 +300,7 @@ describe("AzureDevOpsCli.layer", () => {
         }),
       );
       expect(mockRun.mock.calls[0]?.[0].args).not.toContain("--output");
+      yield* fileSystem.remove(bodyDirectory, { recursive: true });
     }).pipe(Effect.provide(layer)),
   );
 

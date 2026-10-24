@@ -14,6 +14,10 @@ import {
   type BundleIdentity,
 } from "./macSwapInstall.ts";
 
+// App bundle paths are macOS paths on every host, so tests of the planning
+// logic give the same answer on Windows.
+const BundlePath = NodePath.posix;
+
 /**
  * Moves an install that still carries an earlier release's bundle name onto
  * the current one, for example `/Applications/SpecWeave Studio (Alpha).app`
@@ -41,7 +45,7 @@ export const LEGACY_BUNDLE_SUCCESSORS: Readonly<Record<string, string>> = {
 
 /** The bundle name this build expects: its executable is named after the product. */
 export function expectedBundleName(execPath: string): string {
-  return `${NodePath.basename(execPath)}.app`;
+  return `${BundlePath.basename(execPath)}.app`;
 }
 
 /**
@@ -50,9 +54,9 @@ export function expectedBundleName(execPath: string): string {
  * at the running bundle's own path.
  */
 export function resolveSwapTarget(currentBundle: string, stagedBundle: string): string {
-  const stagedName = NodePath.basename(stagedBundle);
-  return LEGACY_BUNDLE_SUCCESSORS[NodePath.basename(currentBundle)] === stagedName
-    ? NodePath.join(NodePath.dirname(currentBundle), stagedName)
+  const stagedName = BundlePath.basename(stagedBundle);
+  return LEGACY_BUNDLE_SUCCESSORS[BundlePath.basename(currentBundle)] === stagedName
+    ? BundlePath.join(BundlePath.dirname(currentBundle), stagedName)
     : currentBundle;
 }
 
@@ -78,17 +82,17 @@ export function planBundleRename(input: {
   if (!input.isPackaged) return { kind: "skip", reason: "development" };
   const current = resolveRunningAppBundle(input.execPath);
   if (current === null) return { kind: "skip", reason: "no-bundle" };
-  const name = NodePath.basename(current);
+  const name = BundlePath.basename(current);
   const expected = expectedBundleName(input.execPath);
   if (name === expected) return { kind: "skip", reason: "already-named" };
   if (LEGACY_BUNDLE_SUCCESSORS[name] !== expected) return { kind: "skip", reason: "custom-name" };
   if (current.includes("/AppTranslocation/") || current.startsWith("/Volumes/")) {
     return { kind: "skip", reason: "read-only-location" };
   }
-  if (!input.writable(NodePath.dirname(current)) || !input.writable(current)) {
+  if (!input.writable(BundlePath.dirname(current)) || !input.writable(current)) {
     return { kind: "skip", reason: "not-writable" };
   }
-  const target = NodePath.join(NodePath.dirname(current), expected);
+  const target = BundlePath.join(BundlePath.dirname(current), expected);
   if (input.exists(target)) return { kind: "skip", reason: "target-exists" };
   // A rename that failed once relaunches this same bundle; trying again on
   // every launch would loop.
@@ -239,13 +243,13 @@ export function selectLegacySiblingsToRemove(input: {
   readonly own: BundleIdentity;
   readonly siblings: ReadonlyArray<LegacySibling>;
 }): string[] {
-  const ownName = NodePath.basename(input.current);
+  const ownName = BundlePath.basename(input.current);
   if (input.own.bundleId === null || input.own.version === null) return [];
   const ownVersion = input.own.version;
   return input.siblings
     .filter((sibling) => {
-      if (NodePath.dirname(sibling.path) !== NodePath.dirname(input.current)) return false;
-      if (LEGACY_BUNDLE_SUCCESSORS[NodePath.basename(sibling.path)] !== ownName) return false;
+      if (BundlePath.dirname(sibling.path) !== BundlePath.dirname(input.current)) return false;
+      if (LEGACY_BUNDLE_SUCCESSORS[BundlePath.basename(sibling.path)] !== ownName) return false;
       if (sibling.running) return false;
       if (sibling.identity.bundleId !== input.own.bundleId) return false;
       if (sibling.identity.version === null) return false;
@@ -285,10 +289,10 @@ export async function trashLegacySiblings(input: {
   if (input.platform !== "darwin" || !input.isPackaged) return [];
   const current = resolveRunningAppBundle(input.execPath);
   if (current === null) return [];
-  const ownName = NodePath.basename(current);
+  const ownName = BundlePath.basename(current);
   const candidates = Object.entries(LEGACY_BUNDLE_SUCCESSORS)
     .filter(([, successor]) => successor === ownName)
-    .map(([legacy]) => NodePath.join(NodePath.dirname(current), legacy))
+    .map(([legacy]) => BundlePath.join(BundlePath.dirname(current), legacy))
     .filter((path) => NodeFS.existsSync(path));
   if (candidates.length === 0) return [];
   const [own, processes] = await Promise.all([readBundleIdentity(current), runningExecutables()]);

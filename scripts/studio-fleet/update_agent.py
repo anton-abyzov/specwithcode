@@ -1025,7 +1025,9 @@ class Agent(object):
 
     def quiet_then_install(self, verified, install_request):
         version = verified['version']
+        runs.lap(self, 'beforeInstall', install_request)
         helper_dir = self.verify_helpers(verified)
+        runs.lap(self, 'verifyHelpers')
         snapshots = ensure_dir(self.updates / 'snapshots', self.home)
         baseline_path = snapshots / 'baseline.json'
         started = window = utcnow()  # The pass (a reap's budget) and the current retry window.
@@ -1039,6 +1041,7 @@ class Agent(object):
             attempt += 1
             request = self.config['installRequestedAt'] if install_request and self.config['installMode'] == 'force' else None
             newest, snapshot, refused = self.take_snapshot(helper_dir, snapshots, request)
+            runs.lap(self, 'snapshot')
             if snapshot is None:
                 if os.path.lexists(str(baseline_path)):
                     remove_path(baseline_path, self.home)
@@ -1059,6 +1062,7 @@ class Agent(object):
                 if (ended := recovery.withdrawn(self, version)):  # Written while the snapshot ran: no reap.
                     return self.finish(*ended)
                 time.sleep(reaper.before_retry(self, helper_dir, refused, started, window))
+                runs.lap(self, 'retryWait')
                 if (ended := recovery.withdrawn(self, version)):
                     return self.finish(*ended)
                 continue
@@ -1132,9 +1136,10 @@ class Agent(object):
         args = ['--identity', self.identity, '--prestate', kept, '--archive', runtime,
                 '--sha256', verified['runtime']['sha256'], '--output', receipt] + list(verified['args'])
         pass_fds = (self.lock_fd,) if self.lock_fd is not None else ()
-        outcome = run_helper_process(self.helper_command(helper_dir, args), str(helper_dir), self.helper_env(),
+        outcome = run_helper_process(self.helper_command(helper_dir, args), str(helper_dir), runs.apply_env(self),
                                      APPLY_TIMEOUT, pass_fds=pass_fds, wait_detached=True,
                                      log_path=helper_log_path(receipt))
+        runs.lap(self, 'apply')
         if may_retry and outcome == 'failed' and recovery.refused_before_restart(self, receipt, version):
             self.state['handledInstallRequestAt'] = handled  # Still pending until an attempt completes.
             return remove_path(self.marker_path, self.home) or receipt
@@ -1395,7 +1400,7 @@ def run_once(home, identity, test_mode, out):
             try:
                 agent.config = load_config(updates, home)
                 agent.inst = load_installation(home, identity)
-                agent.run = runs.claim(agent)
+                agent.run, agent.timings = runs.claim(agent), runs.Timings()  # A pass's own clock.
                 code = agent.run_pass()
             except AgentError as error:
                 agent.state['automaticRetry'] = None
