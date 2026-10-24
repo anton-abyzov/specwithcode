@@ -51,10 +51,21 @@ export const DesktopUpdateRefusalReasonSchema = Schema.Literals([
 ]);
 export type DesktopUpdateRefusalReason = typeof DesktopUpdateRefusalReasonSchema.Type;
 
+/**
+ * An accepted install whose quit has begun exits the app within seconds.
+ * Still running after this long, the desktop takes the install back (backends
+ * restarted, "Restart now" offered) and the window stops waiting for the
+ * restart, both at the same moment.
+ */
+export const DESKTOP_INSTALL_APPLY_MS = 75_000;
+
 export interface DesktopUpdateActionResult {
   accepted: boolean;
   completed: boolean;
-  /** Install only: the accepted install failed and the app stayed open. */
+  /**
+   * Install only: the accepted install failed and the app stayed open, also
+   * when the updater was asked to quit and the quit never began.
+   */
   failed?: boolean;
   /** Install only: why the request was refused. */
   reason?: DesktopUpdateRefusalReason;

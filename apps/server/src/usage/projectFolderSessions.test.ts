@@ -36,14 +36,20 @@ describe("folder matching", () => {
   });
 
   it("encodes Claude Code session folders and gates children and look-alikes", () => {
+    // Windows resolves a rooted path onto the current drive, and Claude Code
+    // writes `C:\Users\a\app` as `C--Users-a-app`.
+    const drive = process.platform === "win32" ? `${NodePath.resolve("/")[0]}-` : "";
+    if (process.platform === "win32") {
+      expect(encodeClaudeProjectDir("C:\\Users\\a\\app")).toBe("C--Users-a-app");
+    }
     expect(encodeClaudeProjectDir("/Users/a/Projects/acme-app")).toBe(
-      "-Users-a-Projects-acme-app",
+      `${drive}-Users-a-Projects-acme-app`,
     );
     const roots = ["/Users/a/Projects/acme-app"];
-    expect(claudeDirMayMatch("-Users-a-Projects-acme-app", roots)).toBe(true);
-    expect(claudeDirMayMatch("-Users-a-Projects-acme-app-web-ui", roots)).toBe(true);
-    expect(claudeDirMayMatch("-Users-a-Projects-acme-app2", roots)).toBe(false);
-    expect(claudeDirMayMatch("-Users-a-Projects-other", roots)).toBe(false);
+    expect(claudeDirMayMatch(`${drive}-Users-a-Projects-acme-app`, roots)).toBe(true);
+    expect(claudeDirMayMatch(`${drive}-Users-a-Projects-acme-app-web-ui`, roots)).toBe(true);
+    expect(claudeDirMayMatch(`${drive}-Users-a-Projects-acme-app2`, roots)).toBe(false);
+    expect(claudeDirMayMatch(`${drive}-Users-a-Projects-other`, roots)).toBe(false);
   });
 
   it("decodes Grok's url-encoded session folder", () => {

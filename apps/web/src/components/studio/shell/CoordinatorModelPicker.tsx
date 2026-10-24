@@ -20,7 +20,7 @@ import { getCustomModelOptionsByInstance } from "../../../modelSelection";
 import {
   applyProviderInstanceSettings,
   deriveProviderInstanceEntries,
-  isProviderInstancePickerReady,
+  isProviderInstancePickerSelectable,
   sortProviderInstanceEntries,
 } from "../../../providerInstances";
 import { useEnvironment } from "../../../state/environments";
@@ -185,7 +185,7 @@ export function CoordinatorModelPicker(props: {
     );
     if (compatibility) return compatibility;
     return entry &&
-      isProviderInstancePickerReady(entry) &&
+      isProviderInstancePickerSelectable(entry) &&
       options.get(id)?.some((option) => option.slug === model && !option.isUnavailable)
       ? null
       : "Unavailable on this host";
@@ -211,7 +211,7 @@ export function CoordinatorModelPicker(props: {
       // The list only fills for a provider that is ready; without one, settings explain why.
       const first = available.find(
         (entry) =>
-          isProviderInstancePickerReady(entry) &&
+          isProviderInstancePickerSelectable(entry) &&
           !coordinatorFolderCompatibility(
             props.requiresFolderGrants === true,
             entry.driverKind,

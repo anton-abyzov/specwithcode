@@ -104,7 +104,8 @@ describe("writeSecretFile", () => {
     const result = await write("svc/config/.env", "A=1\n");
     expect(result).toMatchObject({ state: "written", writtenAs: "svc/config/.env", size: 4 });
     const stat = NodeFS.statSync(NodePath.join(base, "svc/config/.env"));
-    expect(stat.mode & 0o777).toBe(0o600);
+    // Windows has no POSIX mode bits to check.
+    if (process.platform !== "win32") expect(stat.mode & 0o777).toBe(0o600);
     expect(NodeFS.readdirSync(NodePath.join(base, "svc/config"))).toEqual([".env"]);
   });
 

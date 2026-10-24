@@ -58,8 +58,9 @@ older copy to the Trash. The bundle id, signature, user data folder (`studio-v2`
 item do not depend on the file name, so settings, connections, encrypted secrets and macOS
 permissions carry over. A Dock tile pinned to the old path has to be pinned again.
 
-Rollback copies of the desktop app are zips under `~/.specweave-studio/backups/desktop.noindex`,
-made by `scripts/studio-fleet/desktop_backup.py`. A loose `.app` copy would show up in Spotlight
+Rollback copies of the desktop app are APFS clones (zips on other volumes) under
+`~/.specwithcode/backups/desktop.noindex`, made by `scripts/studio-fleet/desktop_backup.py`, each
+under a name without `.app`. A loose `.app` copy would show up in Spotlight
 as another SpecWithCode and could be launched by bundle id. See [releasing](./releasing.md).
 
 ## One name in user-facing text

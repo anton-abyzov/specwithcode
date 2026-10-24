@@ -61,6 +61,7 @@ class FakePtyProcess implements PtyAdapter.PtyProcess {
   private readonly exitListeners = new Set<(event: PtyAdapter.PtyExitEvent) => void>();
   killed = false;
   exitOnSubscribe: PtyAdapter.PtyExitEvent | undefined;
+  onKill: ((signal?: string) => void) | undefined;
 
   constructor(pid: number) {
     this.pid = pid;
@@ -83,6 +84,7 @@ class FakePtyProcess implements PtyAdapter.PtyProcess {
   kill(signal?: string): void {
     this.killed = true;
     this.killSignals.push(signal);
+    this.onKill?.(signal);
   }
 
   onData(callback: (data: string) => void): () => void {
@@ -104,6 +106,10 @@ class FakePtyProcess implements PtyAdapter.PtyProcess {
     for (const listener of this.dataListeners) {
       listener(data);
     }
+  }
+
+  get exitListenerCount(): number {
+    return this.exitListeners.size;
   }
 
   emitExit(event: PtyAdapter.PtyExitEvent): void {
@@ -491,11 +497,15 @@ it.layer(
 
   it.effect("runs one command through the shell and reruns it after it exits", () =>
     Effect.gen(function* () {
-      const { manager, ptyAdapter, getEvents } = yield* createManager();
+      // A POSIX shell on every host; shellCandidateArgs covers the Windows flags.
+      const { manager, ptyAdapter, getEvents } = yield* createManager(5, {
+        shellResolver: () => "/bin/sh",
+      }).pipe(Effect.provide(layerWithHostPlatform("linux")));
       const input = openInput({ terminalId: "run-abc-4", command: "ls -la" });
+      const runFlag = "-c";
 
       yield* manager.open(input);
-      expect(ptyAdapter.spawnInputs[0]?.args?.slice(-2)).toEqual(["-c", "ls -la"]);
+      expect(ptyAdapter.spawnInputs[0]?.args?.slice(-2)).toEqual([runFlag, "ls -la"]);
       const process = ptyAdapter.processes[0];
       if (!process) return expect(process).toBeDefined();
 
@@ -510,12 +520,12 @@ it.layer(
       const rerun = yield* manager.open(input);
       expect(rerun.status).toBe("running");
       expect(ptyAdapter.spawnInputs).toHaveLength(2);
-      expect(ptyAdapter.spawnInputs[1]?.args?.slice(-2)).toEqual(["-c", "ls -la"]);
+      expect(ptyAdapter.spawnInputs[1]?.args?.slice(-2)).toEqual([runFlag, "ls -la"]);
 
       // The same terminal id with a different command starts that command instead.
       yield* manager.open({ ...input, command: "pwd" });
       expect(ptyAdapter.spawnInputs).toHaveLength(3);
-      expect(ptyAdapter.spawnInputs[2]?.args?.slice(-2)).toEqual(["-c", "pwd"]);
+      expect(ptyAdapter.spawnInputs[2]?.args?.slice(-2)).toEqual([runFlag, "pwd"]);
     }),
   );
 
@@ -1804,6 +1814,52 @@ it.layer(
 
       assert.equal(process.killSignals[0], "SIGTERM");
       expect(process.killSignals).toContain("SIGKILL");
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("skips SIGKILL when the process exits during the grace period", () =>
+    Effect.gen(function* () {
+      const { manager, ptyAdapter } = yield* createManager(5, { processKillGraceMs: 10_000 });
+      yield* manager.open(openInput());
+      const process = ptyAdapter.processes[0];
+      if (!process) return expect(process).toBeDefined();
+      const sigterm = yield* Deferred.make<void>();
+      process.onKill = (signal) => {
+        if (signal === "SIGTERM") Deferred.doneUnsafe(sigterm, Effect.void);
+      };
+
+      yield* manager.close({ threadId: "thread-1" });
+      yield* Deferred.await(sigterm);
+      process.emitExit({ exitCode: 0, signal: 15 });
+      yield* TestClock.adjust("10 seconds");
+
+      assert.deepEqual(process.killSignals, ["SIGTERM"]);
+      assert.equal(process.exitListenerCount, 0);
+    }).pipe(Effect.provide(TestClock.layer())),
+  );
+
+  it.effect("releases the exit listener when kill escalation is interrupted", () =>
+    Effect.gen(function* () {
+      const scope = yield* Scope.make("sequential");
+      const { manager, ptyAdapter } = yield* createManager(5, {
+        processKillGraceMs: 10_000,
+      }).pipe(Effect.provideService(Scope.Scope, scope));
+      yield* manager.open(openInput());
+      const process = ptyAdapter.processes[0];
+      if (!process) return expect(process).toBeDefined();
+      const sigterm = yield* Deferred.make<void>();
+      process.onKill = (signal) => {
+        if (signal === "SIGTERM") Deferred.doneUnsafe(sigterm, Effect.void);
+      };
+
+      yield* manager.close({ threadId: "thread-1" });
+      yield* Deferred.await(sigterm);
+      assert.isAbove(process.exitListenerCount, 0);
+
+      yield* Scope.close(scope, Exit.void);
+
+      assert.equal(process.exitListenerCount, 0);
+      assert.deepEqual(process.killSignals, ["SIGTERM"]);
     }).pipe(Effect.provide(TestClock.layer())),
   );
 

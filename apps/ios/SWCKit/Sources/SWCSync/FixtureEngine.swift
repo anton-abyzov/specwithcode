@@ -25,6 +25,10 @@ public enum FixtureScenario: String, Sendable, CaseIterable {
   case checkOutput = "check-output"
   case readability
   case threadLists = "thread-lists"
+  /// Duplicate project registrations on the same machine (e.g. trailing slash
+  /// or re-registered folder), built from shells as the live engine does;
+  /// the drawer shows each unique project once.
+  case duplicates
 
   var isFleet: Bool { self == .fleet || self == .m4Blip || self == .minisBlip }
 }
@@ -133,6 +137,14 @@ public final class FixtureEngine: AppEngine {
       runsOn = FixtureFleet.runsOn
       recompute()
       runBlip()
+      return
+    }
+    if scenario == .duplicates {
+      let output = FixtureDuplicates.output(now: now)
+      model.machines = FixtureDuplicates.machines
+      model.projects = output.projects
+      model.threadsByProject = output.threadsByProject
+      recompute()
       return
     }
     model.machines = FixtureSample.machines

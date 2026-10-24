@@ -262,14 +262,27 @@ export function summarizeBlockers(rows: ReadonlyArray<BlockerRow>): Array<Servic
   );
 }
 
-interface ActiveRun {
+export interface ActiveRun {
   readonly runId: string;
   readonly status: string;
   readonly threadId: string;
   readonly providerThreadId: string | null;
   readonly providerSessionId: string | null;
   readonly providerTurnId: string | null;
+  /** Its provider reported the turn; false while its start is still in flight. */
+  readonly turnStarted: boolean;
 }
+
+/**
+ * A turn whose start has not reached its provider yet. Closing its session now
+ * fails the start, and a failed run is never continued, so the drain lets it
+ * start first; once started, closing it ends its stream and the restart
+ * continues it.
+ */
+export const isStartInFlight = (run: Pick<ActiveRun, "status" | "turnStarted">) =>
+  run.status === "preparing" ||
+  run.status === "starting" ||
+  (run.status === "running" && !run.turnStarted);
 
 export class ServiceUpdatePreparation extends Context.Service<
   ServiceUpdatePreparation,
@@ -389,11 +402,15 @@ export const makePartsWithTimings = (timings: ServiceUpdatePreparationTimings) =
       readonly provider_thread_id: string | null;
       readonly provider_session_id: string | null;
       readonly provider_turn_id: string | null;
+      readonly turn_started: number;
     }>`
       SELECT r.run_id, r.status, r.thread_id, r.provider_thread_id, pt.provider_session_id,
              (SELECT t.provider_turn_id FROM orchestration_v2_projection_provider_turns t
                WHERE t.provider_thread_id = r.provider_thread_id
-               ORDER BY t.ordinal DESC LIMIT 1) AS provider_turn_id
+               ORDER BY t.ordinal DESC LIMIT 1) AS provider_turn_id,
+             EXISTS (SELECT 1 FROM orchestration_v2_projection_provider_turns t
+               WHERE t.run_attempt_id = json_extract(r.payload_json, '$.activeAttemptId'))
+               AS turn_started
         FROM orchestration_v2_projection_runs r
         LEFT JOIN orchestration_v2_projection_provider_threads pt
           ON pt.provider_thread_id = r.provider_thread_id
@@ -407,6 +424,7 @@ export const makePartsWithTimings = (timings: ServiceUpdatePreparationTimings) =
           providerThreadId: row.provider_thread_id,
           providerSessionId: row.provider_session_id,
           providerTurnId: row.provider_turn_id,
+          turnStarted: Number(row.turn_started) === 1,
         })),
       ),
     );
@@ -739,10 +757,20 @@ export const makePartsWithTimings = (timings: ServiceUpdatePreparationTimings) =
         // Closing an agent process cancels what its turn asked: recorded first.
         yield* record;
         // Agent processes, including any still busy after Stop, also block the helper.
+        // A turn started after the last stop round (a delegated task's wake-up) is
+        // cut here: its stream ends rather than fails, so finalizeStuckRuns below
+        // marks it stopped for the update and the restart continues it. A turn
+        // still starting would fail its start instead, so starts finish first.
+        yield* awaitRunsSettled(yield* within(deadline, timings.settleMs), isStartInFlight, record);
         yield* boundedBy(
           deadline,
           providerSessions
-            .releaseIdle({ detail: RELEASE_DETAIL, includeBusy: true, keepMcpCredentials: true })
+            .releaseIdle({
+              detail: RELEASE_DETAIL,
+              includeBusy: true,
+              keepMcpCredentials: true,
+              endStreams: true,
+            })
             .pipe(logged("release-sessions-failed", {})),
         );
         // Closing a busy session can end its turn through the provider's own events.

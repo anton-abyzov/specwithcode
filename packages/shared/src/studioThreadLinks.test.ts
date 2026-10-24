@@ -5,6 +5,7 @@ import {
   formatStudioThreadLink,
   parseStudioThreadHref,
   parseStudioThreadTarget,
+  threadIdNearMisses,
 } from "./studioThreadLinks.ts";
 
 const DELEGATED = "thread:delegated-task:command%3Amcp%3Aa1%3Adelegate-task%3Areview%2520round)2";
@@ -75,5 +76,42 @@ describe("links to a thread on another machine", () => {
       "https://example.com/a/b",
     ])
       expect(parseStudioThreadTarget(href)).toBeNull();
+  });
+});
+
+describe("thread IDs an agent probably meant", () => {
+  const AUDIT =
+    "thread:delegated-task:command%3Amcp%3Ad25698a7-ed07-4574-a0b9-f1d8a6122b58%3Adelegate-task%3Aeasychamp-full-handoff-audit-20261022";
+
+  it("restores the thread: prefix read as a label in prose", () => {
+    expect(threadIdNearMisses(AUDIT.slice("thread:".length))[0]).toBe(AUDIT);
+  });
+
+  it("re-encodes a decoded delegated-task ID, with or without its prefix", () => {
+    const decoded = decodeURIComponent(AUDIT);
+    expect(threadIdNearMisses(decoded)[0]).toBe(AUDIT);
+    expect(threadIdNearMisses(decoded.slice("thread:".length))[0]).toBe(AUDIT);
+  });
+
+  it("re-encodes a command ID that itself carries an escape", () => {
+    // DELEGATED's command ID holds `%20` encoded once more; fully decoded, it must not decode again.
+    expect(threadIdNearMisses(decodeURIComponent(DELEGATED))).toContain(DELEGATED);
+  });
+
+  it("drops the sentence's closing punctuation, quoting and inner spaces", () => {
+    expect(threadIdNearMisses(`"${AUDIT} ".`)).toContain(AUDIT);
+    expect(threadIdNearMisses(`${AUDIT}.`)).toContain(AUDIT);
+    expect(threadIdNearMisses(`\`${AUDIT}\``)).toContain(AUDIT);
+  });
+
+  it("never offers the ID it was given or touches coordinator IDs", () => {
+    expect(threadIdNearMisses(AUDIT)).not.toContain(AUDIT);
+    expect(threadIdNearMisses("project-coordinator:p1")).toEqual([]);
+  });
+
+  it("cannot rebuild a delegated task's thread from its command ID alone", () => {
+    expect(threadIdNearMisses("mcp:d25698a7-ed07-4574-a0b9-f1d8a6122b58")).toEqual([
+      "thread:mcp:d25698a7-ed07-4574-a0b9-f1d8a6122b58",
+    ]);
   });
 });

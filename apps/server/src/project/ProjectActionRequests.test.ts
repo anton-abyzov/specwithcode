@@ -514,6 +514,7 @@ it.effect("a declined add_folder changes nothing", () => {
 it.effect("add_folder refuses protected, reachable, unknown and over-limit folders", () => {
   const world = newWorld();
   const previousHome = process.env.HOME;
+  const previousProfile = process.env.USERPROFILE;
   const refused = (folder: string | undefined, target = projectId) =>
     request({
       projectId: target,
@@ -530,8 +531,10 @@ it.effect("add_folder refuses protected, reachable, unknown and over-limit folde
     const ssh = yield* dir("home/.ssh");
     const approved = yield* dir("approved");
     const fresh = yield* dir("fresh");
-    // The protected-location check reads the home folder from HOME.
+    // The protected-location check reads the home folder from os.homedir(): HOME, or
+    // USERPROFILE on Windows.
     process.env.HOME = home;
+    process.env.USERPROFILE = home;
     setApprovedFolders(world, [approved]);
     expect(yield* refused(home)).toContain("it is the home folder");
     expect(yield* refused(ssh)).toContain("such as ~/.ssh");
@@ -563,6 +566,8 @@ it.effect("add_folder refuses protected, reachable, unknown and over-limit folde
       Effect.sync(() => {
         if (previousHome === undefined) delete process.env.HOME;
         else process.env.HOME = previousHome;
+        if (previousProfile === undefined) delete process.env.USERPROFILE;
+        else process.env.USERPROFILE = previousProfile;
       }),
     ),
     Effect.scoped,

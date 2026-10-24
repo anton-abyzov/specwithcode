@@ -3,7 +3,7 @@ import * as Schema from "effect/Schema";
 // @effect-diagnostics-next-line nodeBuiltinImport:off - O_NOFOLLOW is required; Effect FileSystem does not expose numeric open flags.
 import { constants } from "node:fs";
 // @effect-diagnostics-next-line nodeBuiltinImport:off - stat and read must use the same atomically no-follow-opened descriptor.
-import { open } from "node:fs/promises";
+import { lstat, open } from "node:fs/promises";
 import { join } from "./nodePath.ts";
 import {
   AuthAccessWriteScope,
@@ -169,14 +169,19 @@ export const FLEET_CONFIG_FILE = "studio-fleet.json";
  * Never follows a symlink or reads group/world-readable management credentials.
  */
 export async function readFleetConfigSource(baseDir: string): Promise<unknown> {
+  const path = join(baseDir, FLEET_CONFIG_FILE);
+  // Windows has no O_NOFOLLOW and no POSIX mode bits: refuse a link up front,
+  // and leave privacy to the profile folder's ACL.
+  const windows = process.platform === "win32";
   let file;
   try {
-    file = await open(join(baseDir, FLEET_CONFIG_FILE), constants.O_RDONLY | constants.O_NOFOLLOW);
+    if (windows && (await lstat(path)).isSymbolicLink()) throw new FleetError("config");
+    file = await open(path, constants.O_RDONLY | (constants.O_NOFOLLOW ?? 0));
     const stat = await file.stat();
     if (
       !stat.isFile() ||
       stat.size > 65536 ||
-      (stat.mode & 0o077) !== 0 ||
+      (!windows && (stat.mode & 0o077) !== 0) ||
       (process.getuid && stat.uid !== process.getuid())
     )
       throw new FleetError("config");

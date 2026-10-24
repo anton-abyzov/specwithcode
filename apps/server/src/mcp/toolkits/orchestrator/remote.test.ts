@@ -27,6 +27,15 @@ const localOnly = new OrchestratorMcpFailure({ code: "invalid_request", message:
 const providerInstanceId = ProviderInstanceId.make("codex");
 const M1 = { id: "m1", label: "M1", environmentId: EnvironmentId.make("env-m1") };
 
+const AUDIT = ThreadId.make(
+  "thread:delegated-task:command%3Amcp%3Ad25698a7-ed07-4574-a0b9-f1d8a6122b58%3Adelegate-task%3Aeasychamp-full-handoff-audit-20261022",
+);
+const missing = (threadId: string) =>
+  new OrchestratorMcpFailure({
+    code: "thread_not_found",
+    message: `Thread ${threadId} was not found.`,
+  });
+
 const remoteThread = {
   threadId: "b-thread",
   projectId: "remote-project",
@@ -188,14 +197,16 @@ const setup = (
         Effect.succeed(
           id === callerId
             ? caller
-            : id === "hot"
-              ? ({
-                  ...caller,
-                  id: ThreadId.make("hot"),
-                  runtimeMode: "full-access",
-                  activeRunId: null,
-                } as OrchestrationV2ThreadShell)
-              : null,
+            : id === AUDIT
+              ? ({ ...caller, id: AUDIT, activeRunId: "audit-run" } as OrchestrationV2ThreadShell)
+              : id === "hot"
+                ? ({
+                    ...caller,
+                    id: ThreadId.make("hot"),
+                    runtimeMode: "full-access",
+                    activeRunId: null,
+                  } as OrchestrationV2ThreadShell)
+                : null,
         ),
     }),
     Layer.mock(OrchestratorMcpService.OrchestratorMcpService)({
@@ -208,7 +219,12 @@ const setup = (
       sendToThread: (_scope, input) =>
         Effect.suspend(() => {
           local.push(`send:${input.threadId}`);
-          return Effect.fail(localOnly);
+          // Only the caller's own and "hot" exist; the real service reports any other as missing.
+          return Effect.fail(
+            input.threadId === callerId || input.threadId === "hot"
+              ? localOnly
+              : missing(input.threadId),
+          );
         }),
       delegateTask: (_scope, input) =>
         Effect.suspend(() => {
@@ -364,3 +380,29 @@ it.effect("checks the thread a link names before sending to it here", () => {
     expect(local).toEqual([]);
   });
 });
+
+it.effect(
+  "names the thread an agent meant when it drops the thread: prefix or decodes the ID",
+  () => {
+    const { call, local } = setup({ realResolve: true });
+    return Effect.gen(function* () {
+      // The three forms the DCFC dues worker tried on October 23, 2026.
+      const tried = [
+        AUDIT.slice("thread:".length),
+        decodeURIComponent(AUDIT).slice("thread:".length),
+        "mcp:d25698a7-ed07-4574-a0b9-f1d8a6122b58",
+      ];
+      const answers = [];
+      for (const threadId of tried)
+        answers.push(yield* call("studio_thread_send", { threadId, message: "Hold renewed" }));
+      expect(answers[0]).toMatchObject({ code: "thread_not_found" });
+      expect(String(answers[0]!.message)).toContain(`Did you mean ${AUDIT}?`);
+      expect(String(answers[1]!.message)).toContain(`Did you mean ${AUDIT}?`);
+      // A bare command ID cannot be rebuilt into the thread's ID: point to the search tools.
+      expect(String(answers[2]!.message)).not.toContain("Did you mean");
+      expect(String(answers[2]!.message)).toContain("studio_thread_search");
+      // Nothing is sent to a guessed thread: each call acted only on the ID it was given.
+      expect(local).toEqual(tried.map((threadId) => `send:${threadId}`));
+    });
+  },
+);

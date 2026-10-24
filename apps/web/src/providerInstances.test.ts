@@ -10,6 +10,7 @@ import {
   deriveProviderInstanceEntries,
   getDefaultProviderInstanceModel,
   isProviderInstancePickerReady,
+  isProviderInstancePickerSelectable,
   isProviderInstancePickerVisible,
   resolveDefaultProviderModelSelection,
   resolveProviderCatalogAvailability,
@@ -77,6 +78,32 @@ describe("isProviderInstancePickerReady", () => {
     ]);
 
     expect(entry && isProviderInstancePickerReady(entry)).toBe(true);
+  });
+});
+
+describe("isProviderInstancePickerSelectable", () => {
+  const snapshot = provider({
+    provider: ProviderDriverKind.make("claudeAgent"),
+    instanceId: "claudeAgent",
+    status: "warning",
+  });
+
+  it("allows a deliberate selection despite a probe warning", () => {
+    const [entry] = deriveProviderInstanceEntries([snapshot]);
+    expect(isProviderInstancePickerSelectable(entry!)).toBe(true);
+    expect(isProviderInstancePickerReady(entry!)).toBe(false);
+  });
+
+  it.each([
+    { enabled: false },
+    { installed: false },
+    { availability: "unavailable" as const },
+    { auth: { status: "unauthenticated" as const } },
+    { status: "disabled" as const },
+    { status: "error" as const },
+  ])("keeps a hard provider restriction: %j", (restriction) => {
+    const [entry] = deriveProviderInstanceEntries([{ ...snapshot, ...restriction }]);
+    expect(isProviderInstancePickerSelectable(entry!)).toBe(false);
   });
 });
 

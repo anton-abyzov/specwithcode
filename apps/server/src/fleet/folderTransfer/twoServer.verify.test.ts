@@ -260,7 +260,9 @@ describe("folder copy between two isolated sides", () => {
     expect(
       NodeFS.lstatSync(NodePath.join(folder, ".cursor/skills/appstore")).isSymbolicLink(),
     ).toBe(true);
-    expect(NodeFS.statSync(NodePath.join(folder, "scripts/run.sh")).mode & 0o777).toBe(0o755);
+    // Windows has no POSIX mode bits to check.
+    if (process.platform !== "win32")
+      expect(NodeFS.statSync(NodePath.join(folder, "scripts/run.sh")).mode & 0o777).toBe(0o755);
     expect(NodeFS.statSync(NodePath.join(folder, "work/big.bin")).size).toBe(fixture.bigFileBytes);
     expect(NodeFS.existsSync(NodePath.join(folder, ".env"))).toBe(false);
     expect(NodeFS.existsSync(NodePath.join(folder, "node_modules"))).toBe(false);
@@ -451,7 +453,8 @@ describe("folder copy between two isolated sides", () => {
       expect(applied.error).toBeNull();
       const received = NodePath.join(folder, ".env.local");
       expect(NodeFS.readFileSync(received, "utf8")).toBe(`API_TOKEN=${canary}\n`);
-      expect(NodeFS.statSync(received).mode & 0o777).toBe(0o600);
+      // Windows has no POSIX mode bits to check.
+      if (process.platform !== "win32") expect(NodeFS.statSync(received).mode & 0o777).toBe(0o600);
       // The unticked secret stays on the source.
       expect(NodeFS.existsSync(NodePath.join(folder, ".env"))).toBe(false);
       const status = JSON.stringify([

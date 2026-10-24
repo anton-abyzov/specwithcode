@@ -195,6 +195,19 @@ it.layer(layerTest)("RuntimePolicyV2", (it) => {
     }),
   );
 
+  it.effect("carries the SpecWithCode Browser preference, on by default", () =>
+    Effect.gen(function* () {
+      const policy = yield* RuntimePolicy.RuntimePolicyV2;
+      const settings = yield* ServerSettings.ServerSettingsService;
+      const now = yield* DateTime.now;
+      const thread = makeThread({ now, worktreePath: null });
+      assert.isTrue((yield* policy.resolve({ thread, modelSelection })).preferSpecWithCodeBrowser);
+      yield* settings.updateSettings({ preferSpecWithCodeBrowser: false });
+      assert.isFalse((yield* policy.resolve({ thread, modelSelection })).preferSpecWithCodeBrowser);
+      yield* settings.updateSettings({ preferSpecWithCodeBrowser: true });
+    }),
+  );
+
   it.effect("prefers a provisioned worktree over the project root", () =>
     Effect.gen(function* () {
       const policy = yield* RuntimePolicy.RuntimePolicyV2;

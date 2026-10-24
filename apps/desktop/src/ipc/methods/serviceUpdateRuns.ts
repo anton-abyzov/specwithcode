@@ -94,6 +94,13 @@ export interface ServiceUpdateRunsDeps {
   /** Writes the agent's config.json with this change; false when it could not. */
   readonly writeConfig: (change: ServiceAgentConfigChange) => Effect.Effect<boolean>;
   readonly followUp?: RunFollowUp;
+  /**
+   * The app release a new run installs after the service when its window
+   * named none (DesktopUpdates.appTargetForRun): a window that has not yet
+   * heard of the app's update would otherwise leave the app to a later quit.
+   * Kept only when it is the run's own release.
+   */
+  readonly appTarget?: Effect.Effect<string | null>;
   /** A fresh run id; random UUIDs outside tests. */
   readonly newRunId?: () => string;
 }
@@ -162,7 +169,7 @@ export function makeServiceUpdateRuns(deps: ServiceUpdateRunsDeps) {
       return ended;
     });
 
-  const begin = (targetVersion: string, appTargetVersion: string | null) =>
+  const begin = (targetVersion: string, windowAppTarget: string | null) =>
     creating.withPermits(1)(
       Effect.gen(function* () {
         const controller = yield* deps.controller;
@@ -173,6 +180,19 @@ export function makeServiceUpdateRuns(deps: ServiceUpdateRunsDeps) {
         const current = yield* view(files);
         if (current !== null && !current.terminal) return result(true, false, current);
         if (!controller.runSupported()) return result(false, false, null);
+        const desktopAppTarget =
+          windowAppTarget !== null || deps.appTarget === undefined ? null : yield* deps.appTarget;
+        // Only the run's own release: a newer app would wait for a service the
+        // agent does not install, and an older cached one may be gone from the
+        // feed. Either way the app half would fail; the app updates on its own.
+        const appTargetVersion =
+          windowAppTarget ?? (desktopAppTarget === targetVersion ? desktopAppTarget : null);
+        if (desktopAppTarget !== null && appTargetVersion === null) {
+          yield* logInfo("update run leaves the app release to the app", {
+            targetVersion,
+            appRelease: desktopAppTarget,
+          });
+        }
         const nowMs = yield* nowMillis;
         const progress = parseInstallProgress(files.read(INSTALL_PROGRESS_FILE));
         const made = createRun(files, {
@@ -189,6 +209,7 @@ export function makeServiceUpdateRuns(deps: ServiceUpdateRunsDeps) {
             runId: made.run.runId,
             targetVersion,
             appTargetVersion,
+            appTargetFrom: windowAppTarget !== null ? "window" : "desktop",
             deadlineAt: made.run.deadlineAt,
           });
         }

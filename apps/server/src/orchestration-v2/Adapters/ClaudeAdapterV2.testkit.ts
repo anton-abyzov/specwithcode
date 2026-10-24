@@ -362,8 +362,9 @@ function isAgentSecretDenyRule(rule: string, paths: ReadonlyArray<string>): bool
     ) {
       return true;
     }
+    // Home spellings are POSIX shell paths, written with `/` even on Windows.
     const home = /^Bash\(\*(?:~|\$HOME|\$\{HOME\})\/(.+?)(?:\/\*|\\\*|\*)?\)$/u.exec(rule);
-    return home !== null && (entry.endsWith(`/${home[1]!}`) || entry.endsWith(`\\${home[1]!}`));
+    return home !== null && entry.replaceAll("\\", "/").endsWith(`/${home[1]!}`);
   });
 }
 

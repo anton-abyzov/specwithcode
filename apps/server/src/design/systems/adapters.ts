@@ -43,7 +43,11 @@ export interface OwnerRootSource {
 }
 
 /** A project's design root is `<checkout>/.specweave/design`; the Playground has no checkout. */
-export const rootsFrom = (source: OwnerRootSource) => {
+export const rootsFrom = (
+  source: OwnerRootSource,
+  platform: NodeJS.Platform = process.platform,
+) => {
+  const path = platform === "win32" ? NodePath.win32 : NodePath.posix;
   const describe = ({ owner, root }: FoundRoot) => {
     const relative = owner.kind === "project" ? PROJECT_DESIGN_DIR : source.playgroundDir;
     const depth = relative.split("/").length;
@@ -52,7 +56,7 @@ export const rootsFrom = (source: OwnerRootSource) => {
       designRoot: root,
       projectRoot:
         owner.kind === "project"
-          ? NodePath.resolve(root, ...Array.from({ length: depth }, () => ".."))
+          ? path.resolve(root, ...Array.from({ length: depth }, () => ".."))
           : null,
       refPrefix: `${relative}/${Store.DESIGN_SYSTEMS_DIR}/`,
     };

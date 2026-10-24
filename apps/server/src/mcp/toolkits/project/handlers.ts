@@ -572,6 +572,13 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
   studio_project_create: McpToolAccess.writesEnvironment(({ workspaceRoot, ...input }) =>
     Effect.gen(function* () {
       const projects = yield* Project.ProjectService;
+      // A named personal create can return private existing state. Refuse remote
+      // work before either create path reaches a service or changes the machine.
+      if (input.kind === "personal" && (yield* workGrantOf(yield* readCaller())) !== undefined)
+        return yield* new OrchestratorMcpFailure({
+          code: "outside_grant_scope",
+          message: PERSONAL_ASSISTANT_PRIVATE_MESSAGE,
+        });
       if (workspaceRoot === undefined) {
         // Project creation records no model default (only an update does), so
         // reject what this mode would otherwise drop silently.
@@ -594,7 +601,11 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
           });
         const folders = yield* ManagedProjectFolders.ManagedProjectFolders;
         const created = yield* folders
-          .createNamedProject({ name: input.title })
+          .createNamedProject({
+            name: input.title,
+            // A personal one comes back as this machine's assistant when one exists.
+            ...(input.kind === undefined ? {} : { kind: input.kind }),
+          })
           .pipe(
             Effect.mapError(
               (error) =>

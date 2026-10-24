@@ -50,6 +50,11 @@ const makeBrowser = () => {
   };
 };
 
+// The pool joins profile folders with the host's separator.
+const profileDir = (name: string) =>
+  ["", "test", "profiles", name].join(process.platform === "win32" ? "\\" : "/");
+const workTeamProfile = profileDir("work%2Fteam");
+
 const options = () => ({
   profilesDir: "/test/profiles",
   executable: vi.fn(async () => "/test/chromium"),
@@ -100,10 +105,10 @@ describe("ServerBrowserContexts", () => {
     expect(await pool.contextFor("work/team")).toBe(persistent);
     expect(await pool.contextFor("work/team", "agent")).not.toBe(persistent);
     expect(launches.persistent).toHaveBeenCalledExactlyOnceWith(
-      "/test/profiles/work%2Fteam",
+      workTeamProfile,
       expect.objectContaining({ chromiumSandbox: true, executablePath: "/test/chromium" }),
     );
-    expect(launches.mkdir).toHaveBeenCalledWith("/test/profiles/work%2Fteam", { recursive: true });
+    expect(launches.mkdir).toHaveBeenCalledWith(workTeamProfile, { recursive: true });
     await pool.close();
     expect(human.close).toHaveBeenCalledTimes(1);
   });
@@ -122,7 +127,7 @@ describe("ServerBrowserContexts", () => {
     });
     await pool.clearProfile("work/team");
     expect(onContextClose).toHaveBeenCalledExactlyOnceWith(persistent);
-    expect(launches.rm).toHaveBeenCalledExactlyOnceWith("/test/profiles/work%2Fteam", {
+    expect(launches.rm).toHaveBeenCalledExactlyOnceWith(workTeamProfile, {
       recursive: true,
       force: true,
     });
@@ -131,7 +136,7 @@ describe("ServerBrowserContexts", () => {
     launches.persistent.mockResolvedValue(makeContext() as unknown as BrowserContext);
     expect(await pool.contextFor("work/team")).not.toBe(persistent);
     await pool.clearProfile("never-opened");
-    expect(launches.rm).toHaveBeenLastCalledWith("/test/profiles/never-opened", {
+    expect(launches.rm).toHaveBeenLastCalledWith(profileDir("never-opened"), {
       recursive: true,
       force: true,
     });

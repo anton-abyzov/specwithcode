@@ -60,6 +60,11 @@ export const ProviderAdapterV2RuntimePolicy = Schema.Struct({
   claudeWorkflowMode: Schema.optional(ClaudeWorkflowMode),
   /** Absent means concise, the default response style. */
   responseStyle: Schema.optional(ResponseStyle),
+  /**
+   * Prefer the paired SpecWithCode Browser over a provider's own built-in
+   * Chrome tools (Claude in Chrome). Absent means the default, on.
+   */
+  preferSpecWithCodeBrowser: Schema.optional(Schema.Boolean),
 });
 export type ProviderAdapterV2RuntimePolicy = typeof ProviderAdapterV2RuntimePolicy.Type;
 

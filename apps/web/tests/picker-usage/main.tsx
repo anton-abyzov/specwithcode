@@ -100,6 +100,13 @@ const provider = (
 });
 
 const claudeLimits = (scenario: string): ServerProviderUsageLimits | undefined => {
+  if (["warning", "locked", "signed-out", "not-installed"].includes(scenario))
+    return limits(claudeWindows.account!);
+  if (scenario === "denied")
+    return limits(claudeWindows.room!, 2 * MIN, {
+      ordinaryUsageAllowed: false,
+      nativeDenialObservedAt: iso(NOW - MIN),
+    });
   if (scenario === "loading") return undefined;
   if (scenario === "stale") return limits(claudeWindows.stale!, 2 * HOUR + 10 * MIN);
   if (scenario === "unknown")
@@ -148,6 +155,13 @@ const scenarioProviders = (scenario: string): ServerProvider[] => [
       { slug: "claude-sonnet-5-5", name: "Claude Sonnet 5.5", badge: "new" },
     ],
     claudeLimits(scenario),
+    scenario === "warning"
+      ? { status: "warning", message: "Usage probe warning" }
+      : scenario === "signed-out"
+        ? { status: "warning", auth: { status: "unauthenticated" } }
+        : scenario === "not-installed"
+          ? { status: "warning", installed: false }
+          : {},
   ),
   // Claude models through GitHub Copilot: another account, no usage reported.
   provider(
@@ -228,6 +242,12 @@ function Composer(props: {
           usageValueHiddenClassName="@max-[520px]/composer-surface:hidden"
           onOpenProviderSetup={() => {}}
           onManageProviders={() => {}}
+          getModelDisabledReason={
+            props.scenario === "locked"
+              ? (instanceId) =>
+                  instanceId === "claudeAgent" ? "This thread cannot switch to this model." : null
+              : undefined
+          }
           onInstanceModelChange={(instanceId, model) => setSelection({ instanceId, model })}
         />
         <span className="ms-auto text-xs text-muted-foreground">Full access</span>
@@ -263,13 +283,18 @@ function Fixture() {
     );
   }
   const running = scenario === "running";
-  const initial = running
-    ? { instanceId: "codex", model: "gpt-6.1-sol" }
-    : scenario.startsWith("grok-")
-      ? { instanceId: "grok", model: "grok-4.7" }
-      : scenario === "unprepared"
-        ? { instanceId: "github-copilot-cm", model: "claude-opus-5.5" }
-        : OPUS;
+  const initial = params.has("selected-claude")
+    ? OPUS
+    : running ||
+        ["warning", "account", "model", "denied", "locked", "signed-out", "not-installed"].includes(
+          scenario,
+        )
+      ? { instanceId: "codex", model: "gpt-6.1-sol" }
+      : scenario.startsWith("grok-")
+        ? { instanceId: "grok", model: "grok-4.7" }
+        : scenario === "unprepared"
+          ? { instanceId: "github-copilot-cm", model: "claude-opus-5.5" }
+          : OPUS;
   return (
     <main className="mx-auto flex min-h-screen max-w-3xl flex-col justify-end gap-3 p-4 pb-6">
       <p className="text-sm text-muted-foreground">

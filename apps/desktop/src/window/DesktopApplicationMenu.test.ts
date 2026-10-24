@@ -73,6 +73,7 @@ const layerDesktopUpdates = Layer.succeed(DesktopUpdates.DesktopUpdates, {
   applyPreferences: Effect.void,
   registerLocalServiceProbe: () => Effect.void,
   refreshActivation: Effect.void,
+  appTargetForRun: Effect.succeed(null),
 } satisfies DesktopUpdates.DesktopUpdates["Service"]);
 
 const layerDesktopWindow = (selectedAction: Deferred.Deferred<string>) =>

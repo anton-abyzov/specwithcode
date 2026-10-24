@@ -4,6 +4,7 @@ import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { TestClock } from "effect/testing";
@@ -23,7 +24,8 @@ const encodeJson = Schema.encodeSync(Schema.fromJsonString(Schema.Unknown));
 /** The recorded `simple` turn's events, as a newer server would send them. */
 const newerServerStream = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
-  const recorded = (yield* fs.readFileString(RECORDING.pathname))
+  const path = yield* Path.Path;
+  const recorded = (yield* fs.readFileString(yield* path.fromFileUrl(RECORDING)))
     .split("\n")
     .filter((line) => line.length > 0)
     .map((line) => decodeEntry(line))

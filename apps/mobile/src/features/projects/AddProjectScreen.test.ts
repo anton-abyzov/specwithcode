@@ -2,7 +2,11 @@ import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
-import { AuthOrchestrationOperateScope, AuthSourceControlWriteScope } from "@specweave-studio/contracts";
+import {
+  AuthOrchestrationOperateScope,
+  AuthSourceControlWriteScope,
+} from "@specweave-studio/contracts";
+import { HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 import { isValidElement, type ReactNode } from "react";
@@ -12,6 +16,7 @@ const state = vi.hoisted(() => ({
   scopes: new Set<string>(),
   otherScopes: new Set<string>(),
   baseDirectory: "",
+  os: "linux",
   projects: [] as string[],
   createRequests: [] as { environmentId: string; workspaceRoot: string }[],
 }));
@@ -66,14 +71,14 @@ vi.mock("../../state/entities", () => ({
       [
         "environment",
         {
-          environment: { platform: { os: "linux" }, capabilities: {} },
+          environment: { platform: { os: state.os }, capabilities: {} },
           settings: { addProjectBaseDirectory: state.baseDirectory },
         },
       ],
       [
         "other-environment",
         {
-          environment: { platform: { os: "linux" }, capabilities: {} },
+          environment: { platform: { os: state.os }, capabilities: {} },
           settings: { addProjectBaseDirectory: state.baseDirectory },
         },
       ],
@@ -170,6 +175,9 @@ describe("clone project permissions", () => {
     state.baseDirectory = await NodeFSP.mkdtemp(
       NodePath.join(NodeOS.tmpdir(), "studio-clone-permissions-"),
     );
+    // The clone writes real folders under the host's temp directory, so the
+    // fake machine follows the host's path rules.
+    state.os = HostProcessPlatform.defaultValue() === "win32" ? "windows" : "linux";
     state.scopes = new Set([AuthSourceControlWriteScope]);
     state.otherScopes = new Set();
     state.projects = [];

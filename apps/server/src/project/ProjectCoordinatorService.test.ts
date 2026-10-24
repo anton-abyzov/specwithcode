@@ -46,7 +46,7 @@ const id = ProjectId.make("project:coordinator");
 const commandId = CommandId.make("request:one");
 const model = { instanceId: ProviderInstanceId.make("claude"), model: "sonnet" };
 const fixture = (afterCoordinatorLaunch: Effect.Effect<void> = Effect.void) => {
-  let providers: ReadonlyArray<ServerProvider> = [];
+  let providers: ReadonlyArray<ServerProvider> = [provider("claude", "claudeAgent")];
   let serverSettings = DEFAULT_SERVER_SETTINGS;
   let project: Project = {
     id,
@@ -560,6 +560,7 @@ it.effect("leaves a saved coordinator model alone when it binds the thread", () 
   Effect.gen(function* () {
     const f = fixture();
     const saved = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-6-astra" };
+    f.setProviders([provider("codex", "codex")]);
     f.setProject({
       workspaceSettings: {
         ...DEFAULT_PROJECT_WORKSPACE_SETTINGS,
@@ -935,5 +936,71 @@ it.effect("keeps a coordinator off a no-usage provider held on its limit", () =>
         set: () => Effect.void,
       }),
     );
+  }),
+);
+
+it.effect.each(["missing", "disabled", "signed-out", "unknown", "no-tools"] as const)(
+  "refuses a %s coordinator before binding or sending, with setup guidance",
+  (scenario) =>
+    Effect.gen(function* () {
+      const f = fixture();
+      const p = provider("claude", "claudeAgent");
+      f.setProviders(
+        scenario === "missing"
+          ? []
+          : [
+              {
+                ...p,
+                ...(scenario === "disabled" ? { enabled: false } : {}),
+                ...(scenario === "signed-out"
+                  ? { auth: { status: "unauthenticated" as const } }
+                  : {}),
+                ...(scenario === "unknown" ? { auth: { status: "unknown" as const } } : {}),
+                models: [
+                  {
+                    slug: "sonnet",
+                    name: "Sonnet",
+                    isCustom: false,
+                    capabilities: null,
+                    toolCalls: scenario !== "no-tools",
+                  },
+                ],
+              },
+            ],
+      );
+      yield* Effect.gen(function* () {
+        const service = yield* Coordinator.ProjectCoordinatorService;
+        const result = yield* Effect.result(
+          service.send({ projectId: id, commandId, prompt: "Hello" }),
+        );
+        expect(result._tag).toBe("Failure");
+        if (result._tag === "Failure") {
+          expect(result.failure.code).toBe(
+            scenario === "no-tools" ? "coordinator_tools_required" : "provider_unavailable",
+          );
+          expect(result.failure.message).toContain(
+            scenario === "no-tools" ? "tool support" : "Settings > Providers",
+          );
+        }
+        expect(f.updates).toEqual([]);
+        expect(f.launches).toEqual([]);
+        expect(f.sends).toEqual([]);
+      }).pipe(Effect.provide(Coordinator.layer.pipe(Layer.provideMerge(f.dependencies))));
+    }),
+);
+
+it.effect("checks an existing coordinator again when its provider is signed out", () =>
+  Effect.gen(function* () {
+    const f = fixture();
+    yield* Effect.gen(function* () {
+      const service = yield* Coordinator.ProjectCoordinatorService;
+      yield* service.start({ projectId: id, commandId });
+      f.setProviders([]);
+      const result = yield* Effect.result(
+        service.send({ projectId: id, commandId, prompt: "Hello" }),
+      );
+      expect(result._tag).toBe("Failure");
+      expect(f.sends).toEqual([]);
+    }).pipe(Effect.provide(Coordinator.layer.pipe(Layer.provideMerge(f.dependencies))));
   }),
 );

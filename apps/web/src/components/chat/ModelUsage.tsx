@@ -42,8 +42,8 @@ export interface ModelPickerUsage extends ModelPickerUsageConfig {
   readonly nowMs: number;
   availability(instanceId: ProviderInstanceId, model: string | null): ModelAvailability;
   text(instanceId: ProviderInstanceId, availability: ModelAvailability): AvailabilityText;
-  /** The reason a usage-blocked model can't be chosen, or null. */
-  blockedReason(instanceId: ProviderInstanceId, model: string): string | null;
+  /** Advisory usage warning; deliberate model selection remains available. */
+  warningReason(instanceId: ProviderInstanceId, model: string): string | null;
   formatAt(ms: number): string;
 }
 
@@ -92,7 +92,7 @@ export function useModelPickerUsage(
       }),
     [byId, formatAt, nowMs],
   );
-  const blockedReason = useCallback(
+  const warningReason = useCallback(
     (instanceId: ProviderInstanceId, model: string) => {
       const state = availability(instanceId, model);
       return isAvailabilityBlocking(state) ? text(instanceId, state).long : null;
@@ -100,8 +100,8 @@ export function useModelPickerUsage(
     [availability, text],
   );
   return useMemo(
-    () => (config ? { ...config, nowMs, availability, text, blockedReason, formatAt } : undefined),
-    [availability, blockedReason, config, formatAt, nowMs, text],
+    () => (config ? { ...config, nowMs, availability, text, warningReason, formatAt } : undefined),
+    [availability, warningReason, config, formatAt, nowMs, text],
   );
 }
 

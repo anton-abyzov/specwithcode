@@ -12,7 +12,7 @@ struct OrchestratorSwitcher: View {
   @Environment(AppRouter.self) private var router
 
   var body: some View {
-    let members = model.project(current)?.members ?? []
+    let members = Self.choices(model.project(current)?.members ?? [], current: current)
     if members.count > 1 {
       let viewing = members.first { $0.ref == current }
       Menu {
@@ -52,6 +52,29 @@ struct OrchestratorSwitcher: View {
       .accessibilityHint("Shows another machine's orchestrator for this project")
       .accessibilityIdentifier("orchestrator.switcher")
     }
+  }
+
+  /// One entry per machine: same-folder copies on one machine would otherwise
+  /// list that machine twice. Each machine is represented by the viewed copy,
+  /// else its coordinator copy, else a linked copy, else its first copy.
+  static func choices(_ members: [ProjectMember], current: ProjectRef) -> [ProjectMember] {
+    func rank(_ member: ProjectMember) -> Int {
+      if member.ref == current { return 0 }
+      if member.isCoordinator { return 1 }
+      return member.isLinked ? 2 : 3
+    }
+    var best: [String: ProjectMember] = [:]
+    var order: [String] = []
+    for member in members {
+      let machine = member.ref.environmentId
+      if let kept = best[machine] {
+        if rank(member) < rank(kept) { best[machine] = member }
+      } else {
+        best[machine] = member
+        order.append(machine)
+      }
+    }
+    return order.compactMap { best[$0] }
   }
 
   static func title(_ member: ProjectMember) -> String { member.machineLabel }

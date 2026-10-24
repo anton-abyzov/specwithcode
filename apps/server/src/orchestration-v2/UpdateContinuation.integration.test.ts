@@ -29,6 +29,7 @@ import * as ProjectService from "../project/ProjectService.ts";
 import type { ProviderInstance } from "../provider/ProviderDriver.ts";
 import * as ProviderInstanceRegistry from "../provider/ProviderInstanceRegistry.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as Cleanup from "../serviceUpdate/ServiceUpdateCleanup.ts";
 import * as ClosedQuestions from "../serviceUpdate/ServiceUpdateClosedQuestions.ts";
 import * as ReopenQuestions from "../serviceUpdate/ServiceUpdateReopenQuestions.ts";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
@@ -87,7 +88,7 @@ const providerInstance = {
   textGeneration: {} as ProviderInstance["textGeneration"],
 } satisfies ProviderInstance;
 
-const layerTest = Layer.mergeAll(
+const layerBase = Layer.mergeAll(
   RuntimeLayer.layer,
   RuntimeLayer.layerEventSink,
   ProjectStore.layer,
@@ -97,7 +98,7 @@ const layerTest = Layer.mergeAll(
 ).pipe(
   Layer.provideMerge(ServerSettings.layerTest()),
   Layer.provide(McpSessionRegistryTestkit.layer),
-  Layer.provide(SqlitePersistence.layerMemory),
+  Layer.provideMerge(SqlitePersistence.layerMemory),
   Layer.provide(
     CheckpointStore.layer.pipe(
       Layer.provide(
@@ -130,6 +131,10 @@ const layerTest = Layer.mergeAll(
     Layer.mock(ProjectService.ProjectService)({ getById: () => Effect.succeed(Option.none()) }),
   ),
   Layer.provide(layerPlatformTest),
+);
+const layerTest = Cleanup.layer.pipe(
+  Layer.provide(IdAllocator.layer),
+  Layer.provideMerge(layerBase),
 );
 
 /** A thread whose first turn is running on a live provider session, then is interrupted. */
@@ -222,14 +227,8 @@ const queueMessage = (name: string, threadId: ThreadId, text: string) =>
     return run!.id;
   });
 
-/** Marks a pending run as running on a provider turn, then interrupts it with `cause`. */
-const interruptRun = (
-  name: string,
-  threadId: ThreadId,
-  runId: RunId,
-  cause: "service_update" | "user",
-  holdQueue?: true,
-) =>
+/** Marks a pending run as running on a provider turn. */
+const markRunning = (name: string, threadId: ThreadId, runId: RunId) =>
   Effect.gen(function* () {
     const orchestrator = yield* Orchestrator.OrchestratorV2;
     const eventSink = yield* EventSink.EventSinkV2;
@@ -269,6 +268,25 @@ const interruptRun = (
         },
       ],
     });
+    return providerTurn;
+  });
+
+/** Marks a pending run as running on a provider turn, then interrupts it with `cause`. */
+const interruptRun = (
+  name: string,
+  threadId: ThreadId,
+  runId: RunId,
+  cause: "service_update" | "user",
+  holdQueue?: true,
+) =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const eventSink = yield* EventSink.EventSinkV2;
+    const providerTurn = yield* markRunning(name, threadId, runId);
+    const run = (yield* orchestrator.getThreadProjection(threadId)).runs.find(
+      (candidate) => candidate.id === runId,
+    )!;
+    const now = yield* DateTime.now;
     yield* orchestrator.dispatch({
       type: "run.interrupt",
       commandId: CommandId.make(`${name}:interrupt`),
@@ -377,6 +395,86 @@ it.layer(layerTest)("update continuation through real projections", (it) => {
         ],
       );
       assert.notEqual(after.runs[2]!.status, "interrupted");
+    }),
+  );
+
+  // October 23, 2026: a delegated task's wake-up started after the drain's last
+  // stop round, and the drain's release of busy sessions failed it ("The
+  // provider event stream closed unexpectedly"), so nothing continued it. The
+  // release now ends the stream; the turn is left running, the drain marks it
+  // stopped for the update and the restart continues it. A Stop the user asked
+  // for on a turn the provider never ended stays theirs.
+  it.effect("continues a turn the update's session release cut, never a user's Stop", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(recentTime);
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const cleanup = yield* Cleanup.ServiceUpdateCleanup;
+      const cutThread = yield* startedThread("release-cut");
+      const cutRun = (yield* orchestrator.getThreadProjection(cutThread)).runs[0]!.id;
+      yield* markRunning("release-cut", cutThread, cutRun);
+      const stoppedThread = yield* startedThread("release-user-stop");
+      const stoppedRun = (yield* orchestrator.getThreadProjection(stoppedThread)).runs[0]!.id;
+      yield* markRunning("release-user-stop", stoppedThread, stoppedRun);
+      yield* orchestrator.dispatch({
+        type: "run.interrupt",
+        commandId: CommandId.make("release-user-stop:interrupt"),
+        threadId: stoppedThread,
+        runId: stoppedRun,
+        reason: "Stopped by the user",
+        cause: "user",
+      });
+      assert.equal(
+        (yield* orchestrator.getThreadProjection(stoppedThread)).runs[0]!.status,
+        "running",
+      );
+      // The drain's stop round interrupts every running turn, the user's too.
+      for (const [threadId, runId] of [
+        [cutThread, cutRun],
+        [stoppedThread, stoppedRun],
+      ] as const) {
+        yield* orchestrator.dispatch({
+          type: "run.interrupt",
+          commandId: CommandId.make(`release-round:${runId}`),
+          threadId,
+          runId,
+          reason: "SpecWithCode is updating",
+          cause: "service_update",
+        });
+      }
+
+      yield* cleanup.finalizeStuckRuns({
+        nonce: "release-cut",
+        reason: "SpecWithCode is updating",
+      });
+      const causes = (projection: {
+        readonly turnItems: ReadonlyArray<{ readonly type: string; readonly cause?: unknown }>;
+      }) =>
+        projection.turnItems
+          .filter((item) => item.type === "run_interrupt_request")
+          .map((item) => item.cause);
+      const cut = yield* orchestrator.getThreadProjection(cutThread);
+      assert.deepEqual(
+        cut.runs.map((run) => run.status),
+        ["interrupted"],
+      );
+      assert.deepEqual(causes(cut), ["service_update"]);
+      const stopped = yield* orchestrator.getThreadProjection(stoppedThread);
+      assert.deepEqual(
+        stopped.runs.map((run) => run.status),
+        ["interrupted"],
+      );
+      assert.deepEqual(causes(stopped), ["user"]);
+
+      yield* continueAll;
+      yield* continueRestartedRun({ threadId: cutThread, sourceRunId: cutRun });
+      yield* continueRestartedRun({ threadId: stoppedThread, sourceRunId: stoppedRun });
+      const continued = yield* orchestrator.getThreadProjection(cutThread);
+      assert.lengthOf(continued.runs, 2);
+      assert.equal(continued.runs[1]!.restartContinuationOfRunId, cutRun);
+      assert.deepEqual(
+        (yield* orchestrator.getThreadProjection(stoppedThread)).runs.map((run) => run.status),
+        ["interrupted"],
+      );
     }),
   );
 

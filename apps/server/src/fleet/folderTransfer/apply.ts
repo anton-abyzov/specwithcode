@@ -6,7 +6,7 @@ import * as NodePath from "node:path";
 import { exists, JsonLog, lstatOrNull } from "./durable.ts";
 import { runGit } from "./git.ts";
 import { hashFile, type RepositoryInfo } from "./manifest.ts";
-import { isSafeRelativePath } from "./paths.ts";
+import { isSafeRelativePath, linkTargetOnWire } from "./paths.ts";
 import { stagedPath } from "./pullWorker.ts";
 import type { FileAction, GitStep, Plan } from "./reconcile.ts";
 
@@ -293,7 +293,7 @@ export async function applyPlan(input: ApplyInput): Promise<ApplyResult> {
         if (
           linkTarget !== null &&
           present.isSymbolicLink() &&
-          (await NodeFSP.readlink(location)) === linkTarget
+          linkTargetOnWire(await NodeFSP.readlink(location)) === linkTarget
         ) {
           await journal.append({ t: "write-done", path: target }, true);
           continue;
@@ -611,7 +611,18 @@ async function repairWorktree(
     );
     return;
   }
-  if (match[1] !== adminDir) await NodeFSP.writeFile(gitFile, `gitdir: ${adminDir}\n`);
+  // Git writes the pointer with `/` on Windows; compare in native form.
+  if (NodePath.resolve(match[1]!) !== adminDir) {
+    // Rewrite in place: Windows refuses to recreate a hidden file, and Git
+    // hides `.git` there.
+    const handle = await NodeFSP.open(gitFile, "r+");
+    try {
+      await handle.truncate(0);
+      await handle.write(`gitdir: ${adminDir}\n`, 0);
+    } finally {
+      await handle.close();
+    }
+  }
   await runGit(main, ["worktree", "repair", location], { allowFailure: true });
   // Both pointers now name this machine's paths; record them so Undo does not mistake them for edits.
   for (const file of [gitFile, NodePath.join(adminDir, "gitdir")]) {

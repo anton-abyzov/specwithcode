@@ -32,6 +32,12 @@ import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { RpcInstrumentation } from "../observability/RpcInstrumentation.ts";
 import { EXTENSION_VERSION } from "./extensionVersion.generated.ts";
 import { BrowserRelayHub, type RelaySocket } from "./relayHub.ts";
+import {
+  BROWSER_EXTENSION_DIR,
+  PAIRING_FILE,
+  type PairingState,
+  parsePairingState,
+} from "./pairingState.ts";
 
 export const BROWSER_RELAY_PATH = "/api/browser-relay";
 export const PAIRING_PREFIX = "swc-chrome:1:";
@@ -73,30 +79,64 @@ export function relayRequestAllowed(input: {
 interface PairingStore {
   readonly read: () => string;
   readonly reset: () => string;
+  /** Records that a Chrome profile presented the current code, once per code. */
+  readonly markConnected: () => void;
+  /** Forgets that record, so Claude threads keep Claude in Chrome until a profile pairs again. */
+  readonly markUnpaired: () => void;
 }
 
 /** The token lives in the state folder, readable only by this user. */
 function filePairingStore(dir: string): PairingStore {
-  const file = NodePath.join(dir, "pairing.json");
-  let cached: string | null = null;
-  const write = (token: string) => {
+  const file = NodePath.join(dir, PAIRING_FILE);
+  let cached: PairingState | null = null;
+  const write = (state: PairingState & { readonly token: string }) => {
     NodeFS.mkdirSync(dir, { recursive: true, mode: 0o700 });
-    NodeFS.writeFileSync(file, JSON.stringify({ token }), { mode: 0o600 });
-    cached = token;
-    return token;
+    NodeFS.writeFileSync(
+      file,
+      JSON.stringify(
+        state.connectedAt === null
+          ? { token: state.token }
+          : { token: state.token, connectedAt: state.connectedAt },
+      ),
+      { mode: 0o600 },
+    );
+    cached = state;
+    return state;
+  };
+  const load = (): PairingState & { readonly token: string } => {
+    if (cached?.token) return { token: cached.token, connectedAt: cached.connectedAt };
+    try {
+      const state = parsePairingState(NodeFS.readFileSync(file, "utf8"));
+      if (state.token !== null) {
+        cached = state;
+        return { token: state.token, connectedAt: state.connectedAt };
+      }
+    } catch {
+      // First use, or an unreadable file: start over with a new code.
+    }
+    return write({ token: newPairingToken(), connectedAt: null });
   };
   return {
-    read: () => {
-      if (cached !== null) return cached;
+    read: () => load().token,
+    reset: () => write({ token: newPairingToken(), connectedAt: null }).token,
+    markConnected: () => {
+      const state = load();
+      if (state.connectedAt !== null) return;
       try {
-        const token = JSON.parse(NodeFS.readFileSync(file, "utf8"))?.token;
-        if (typeof token === "string" && token.length >= 32) return (cached = token);
+        write({ token: state.token, connectedAt: new Date().toISOString() });
       } catch {
-        // First use, or an unreadable file: start over with a new code.
+        // The relay keeps working; Claude threads just keep Claude in Chrome.
       }
-      return write(newPairingToken());
     },
-    reset: () => write(newPairingToken()),
+    markUnpaired: () => {
+      const state = load();
+      if (state.connectedAt === null) return;
+      try {
+        write({ token: state.token, connectedAt: null });
+      } catch {
+        // Claude threads keep starting without Claude in Chrome until the code is reset.
+      }
+    },
   };
 }
 
@@ -199,7 +239,7 @@ export function makeBrowserExtension(options: {
   readonly port: number;
   readonly machineName?: string;
 }): BrowserExtensionShape {
-  const dir = NodePath.join(options.stateDir, "browser-extension");
+  const dir = NodePath.join(options.stateDir, BROWSER_EXTENSION_DIR);
   const store = filePairingStore(dir);
   // A forgotten machine loses access like a declined one: let go of its tabs.
   const peerStore = filePeerStore(dir, (record) => {
@@ -213,8 +253,13 @@ export function makeBrowserExtension(options: {
   const machine = options.machineName ?? NodeOS.hostname().replace(/\.local$/, "");
   const relayUrl = `ws://127.0.0.1:${options.port}${BROWSER_RELAY_PATH}`;
   const hub = new BrowserRelayHub({
-    verifyToken: (token) => tokensEqual(store.read(), token),
+    verifyToken: (token) => {
+      const ok = tokensEqual(store.read(), token);
+      if (ok) store.markConnected();
+      return ok;
+    },
     machineName: () => machine,
+    onUnpaired: () => store.markUnpaired(),
   });
 
   const check = async (): Promise<BrowserExtensionCheck> => {
@@ -359,6 +404,8 @@ const relayHandler = (extension: BrowserExtensionShape) =>
           },
         };
         const session = extension.hub.open(relaySocket);
+        // The extension says why it closed ("unpaired" from its popup) in the close frame.
+        let closeReason: string | undefined;
         const decoder = new TextDecoder();
         const send = Effect.forever(
           Queue.take(outgoing).pipe(
@@ -380,9 +427,15 @@ const relayHandler = (extension: BrowserExtensionShape) =>
                 session.receive(typeof chunk === "string" ? chunk : decoder.decode(chunk));
             }),
           ),
+        ).pipe(
+          Effect.tapError((error) =>
+            Effect.sync(() => {
+              if (error.reason._tag === "SocketCloseError") closeReason = error.reason.closeReason;
+            }),
+          ),
         );
         return yield* Effect.raceFirst(send, receive).pipe(
-          Effect.ensuring(Effect.sync(() => session.closed())),
+          Effect.ensuring(Effect.sync(() => session.closed(closeReason))),
         );
       }),
     ).pipe(Effect.orElseSucceed(() => HttpServerResponse.empty()));

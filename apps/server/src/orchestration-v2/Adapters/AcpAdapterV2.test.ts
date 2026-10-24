@@ -12828,6 +12828,8 @@ describe("AcpAdapterV2", () => {
       });
       const modelSelection = { instanceId, model: "default" } as const;
       const sessionScope = yield* Scope.make();
+      // Reap the agent and its declared processes even when an assertion fails early.
+      yield* Effect.addFinalizer(() => Scope.close(sessionScope, Exit.void));
       const runtime = yield* adapter
         .openSession({
           threadId,

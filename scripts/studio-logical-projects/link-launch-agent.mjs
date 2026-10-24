@@ -17,14 +17,33 @@
  * Every echo prompt is also appended to `<result.json>.jsonl`, so a verifier
  * can count the turns each instance ran. A prompt containing `HOLD-TURN`
  * stays running until the client cancels it (`session/cancel`).
+ * `--echo <result.json> --limit-fixture` additionally requires a prompt line
+ * `LIMIT-WORK <name>`. It writes partial work, emits an assistant update, and
+ * waits for `<result.json>.<name>.release` before returning a structured limit
+ * error. Only the isolated limit verifier enables this model-free fault.
+ * `--hold-resume-fixture` holds the next prompt when `<result.json>.hold-next`
+ * exists, consuming the marker before holding so a restart cannot re-arm it.
  *
  * Only the first prompt launches. Later prompts (the worker's report back to
  * this thread) are recorded in `<result.json>.later` and launch nothing.
  */
-import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
+import {
+  appendFileSync,
+  existsSync,
+  mkdirSync,
+  readFileSync,
+  unlinkSync,
+  writeFileSync,
+} from "node:fs";
+import { join } from "node:path";
 import { createInterface } from "node:readline";
+import { randomUUID } from "node:crypto";
 
 const echo = process.argv[2] === "--echo";
+const limitFixture = echo && process.argv[4] === "--limit-fixture";
+const holdResumeFixture = echo && process.argv[4] === "--hold-resume-fixture";
+const fixtureSessions =
+  limitFixture || holdResumeFixture || (echo && process.argv[4] === "--fixture-sessions");
 const [argumentsFile, resultFile] = echo ? [null, process.argv[3]] : process.argv.slice(2);
 const sessions = new Map();
 const cwds = new Map();
@@ -40,6 +59,14 @@ const update = (sessionId, text) =>
     params: {
       sessionId,
       update: { sessionUpdate: "agent_message_chunk", content: { type: "text", text } },
+    },
+  });
+const completedAction = (sessionId, toolCallId, title, kind) =>
+  send({
+    method: "session/update",
+    params: {
+      sessionId,
+      update: { sessionUpdate: "tool_call", toolCallId, title, kind, status: "completed" },
     },
   });
 
@@ -138,6 +165,32 @@ async function prompt(id, params) {
         "\n",
     );
     update(params.sessionId, `Echo worker ran in ${cwd}`);
+    if (holdResumeFixture && existsSync(`${resultFile}.hold-next`)) {
+      unlinkSync(`${resultFile}.hold-next`);
+      update(params.sessionId, "Target continuation is running before the offline fault.");
+      completedAction(params.sessionId, "hold-resume", "Consumed the target hold marker", "read");
+      return void held.set(params.sessionId, id);
+    }
+    if (limitFixture) {
+      const name = text.match(/^LIMIT-WORK ([a-z][a-z0-9-]*)$/m)?.[1];
+      if (!name || !cwd) throw new Error("The limit fixture requires LIMIT-WORK and a cwd");
+      mkdirSync(join(cwd, "notes"), { recursive: true });
+      writeFileSync(join(cwd, "notes", `${name}.md`), `Partial work from ${name}.\n`);
+      update(params.sessionId, `Partial fixture work: ${name}. Wrote notes/${name}.md.`);
+      completedAction(params.sessionId, `write-${name}`, `Wrote notes/${name}.md`, "edit");
+      held.set(params.sessionId, id);
+      while (held.get(params.sessionId) === id) {
+        if (existsSync(`${resultFile}.${name}.release`)) {
+          held.delete(params.sessionId);
+          return send({
+            id,
+            error: { code: -31001, message: "Usage limit reached after partial fixture work." },
+          });
+        }
+        await new Promise((done) => setTimeout(done, 50));
+      }
+      return;
+    }
     if (text.includes("HOLD-TURN")) return void held.set(params.sessionId, id);
     return send({ id, result: { stopReason: "end_turn" } });
   }
@@ -190,16 +243,31 @@ createInterface({ input: process.stdin }).on("line", (line) => {
         id: message.id,
         result: {
           protocolVersion: 1,
-          agentCapabilities: { loadSession: false, mcpCapabilities: { http: true, sse: false } },
+          agentCapabilities: {
+            loadSession: holdResumeFixture,
+            mcpCapabilities: { http: true, sse: false },
+          },
           authMethods: [],
           agentInfo: { name: "link-launch-agent", version: "1" },
         },
       });
     case "session/new": {
-      const sessionId = `link-launch-${sessions.size + 1}`;
+      const sessionId = `link-launch-${fixtureSessions ? randomUUID() : sessions.size + 1}`;
       sessions.set(sessionId, mcpEndpoint(message.params?.mcpServers));
       cwds.set(sessionId, message.params?.cwd ?? null);
       return send({ id: message.id, result: { sessionId, models } });
+    }
+    case "session/load": {
+      if (!holdResumeFixture)
+        return send({
+          id: message.id,
+          error: { code: -32601, message: "Session loading is not enabled for this fixture" },
+        });
+      const { sessionId, cwd, mcpServers } = message.params;
+      sessions.set(sessionId, mcpEndpoint(mcpServers));
+      cwds.set(sessionId, cwd);
+      appendFileSync(`${resultFile}.loads.jsonl`, JSON.stringify({ sessionId, cwd }) + "\n");
+      return send({ id: message.id, result: { models } });
     }
     case "session/prompt":
       return void prompt(message.id, message.params);

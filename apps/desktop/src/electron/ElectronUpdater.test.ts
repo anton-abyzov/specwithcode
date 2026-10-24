@@ -1,8 +1,12 @@
 import { assert, describe, it } from "@effect/vitest";
+import { HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
 import * as Effect from "effect/Effect";
+import * as Layer from "effect/Layer";
 import { beforeEach, vi } from "vite-plus/test";
 
-const { autoUpdaterMock } = vi.hoisted(() => ({
+const { autoUpdaterMock, nativeUpdaterMock } = vi.hoisted(() => ({
+  // Electron's own autoUpdater (Squirrel.Mac), which MacUpdater feeds.
+  nativeUpdaterMock: { on: vi.fn() },
   autoUpdaterMock: {
     allowDowngrade: false,
     allowPrerelease: false,
@@ -17,8 +21,11 @@ const { autoUpdaterMock } = vi.hoisted(() => ({
     quitAndInstall: vi.fn(),
     removeListener: vi.fn(),
     setFeedURL: vi.fn(),
-    squirrelDownloadedUpdate: undefined as boolean | undefined,
   },
+}));
+
+vi.mock("electron", () => ({
+  autoUpdater: nativeUpdaterMock,
 }));
 
 vi.mock("electron-updater", () => ({
@@ -44,8 +51,17 @@ describe("ElectronUpdater", () => {
     autoUpdaterMock.quitAndInstall.mockClear();
     autoUpdaterMock.removeListener.mockClear();
     autoUpdaterMock.setFeedURL.mockClear();
-    autoUpdaterMock.squirrelDownloadedUpdate = undefined;
+    nativeUpdaterMock.on.mockClear();
   });
+
+  // Calls every listener `mock` was given for `eventName`.
+  const emitOn = (mock: { on: ReturnType<typeof vi.fn> }, eventName: string, payload?: unknown) => {
+    for (const [name, listener] of mock.on.mock.calls) {
+      if (name === eventName) (listener as (payload?: unknown) => void)(payload);
+    }
+  };
+  const layerOn = (platform: NodeJS.Platform) =>
+    ElectronUpdater.layer.pipe(Layer.provide(Layer.succeed(HostProcessPlatform, platform)));
 
   it.effect("scopes updater event listeners", () =>
     Effect.gen(function* () {
@@ -112,23 +128,39 @@ describe("ElectronUpdater", () => {
     }).pipe(Effect.provide(ElectronUpdater.layer)),
   );
 
-  it.effect("is not ready to install while Squirrel.Mac has not staged the download", () =>
+  it.effect.each(["win32", "linux"] as const)("is always ready to install on %s", (platform) =>
     Effect.gen(function* () {
       const updater = yield* ElectronUpdater.ElectronUpdater;
-      // Windows and Linux updaters have no Squirrel state.
+      // NSIS, AppImage and dpkg install from the download itself.
       assert.isTrue(yield* updater.installReady);
+      yield* updater.downloadUpdate;
+      assert.isTrue(yield* updater.installReady);
+      assert.equal(nativeUpdaterMock.on.mock.calls.length, 0);
+    }).pipe(Effect.provide(layerOn(platform))),
+  );
 
-      autoUpdaterMock.squirrelDownloadedUpdate = false;
-      autoUpdaterMock.autoInstallOnAppQuit = true;
+  it.effect("is ready on macOS only once Squirrel staged the latest download", () =>
+    Effect.gen(function* () {
+      const updater = yield* ElectronUpdater.ElectronUpdater;
       assert.isFalse(yield* updater.installReady);
 
-      autoUpdaterMock.autoInstallOnAppQuit = false;
+      yield* updater.downloadUpdate;
+      emitOn(autoUpdaterMock, "update-downloaded", { version: "1.2.4" });
+      // Downloaded with install-on-quit off: Squirrel holds nothing yet.
       assert.isFalse(yield* updater.installReady);
-
-      autoUpdaterMock.autoInstallOnAppQuit = true;
-      autoUpdaterMock.squirrelDownloadedUpdate = true;
+      emitOn(nativeUpdaterMock, "update-downloaded");
       assert.isTrue(yield* updater.installReady);
-    }).pipe(Effect.provide(ElectronUpdater.layer)),
+
+      // A newer download: the bundle Squirrel holds is the older release,
+      // although MacUpdater's own flag stays true for good.
+      yield* updater.downloadUpdate;
+      emitOn(autoUpdaterMock, "update-downloaded", { version: "1.2.5" });
+      assert.isFalse(yield* updater.installReady);
+      emitOn(nativeUpdaterMock, "update-downloaded");
+      assert.isTrue(yield* updater.installReady);
+      // Listeners are added once, not per download.
+      assert.equal(nativeUpdaterMock.on.mock.calls.length, 1);
+    }).pipe(Effect.provide(layerOn("darwin"))),
   );
 
   it.effect("preserves quit-and-install flags and the execution-time channel", () =>

@@ -9195,6 +9195,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         });
       }
       if (providerThread !== undefined) {
+        // An earlier command recorded the Stop, or this one just did.
+        const pendingItems = (yield* Ref.get(input.events)).flatMap((event) =>
+          event.type === "turn-item.updated" ? [event.payload] : [],
+        );
+        const recordedRequests = yield* readInterruptRequests(input.command, run.id);
         yield* emitEvent({
           ...base,
           type: "turn-item.updated",
@@ -9204,6 +9209,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             rootNode,
             providerThread,
             completedAt: input.now,
+            cause: RunExecutionService.runInterruptRequestCause(
+              [...recordedRequests, ...input.projection.turnItems, ...pendingItems],
+              run.id,
+            ),
           }),
         });
       }
@@ -9418,6 +9427,23 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       }
     });
 
+  /** The run's recorded Stop requests; the command projections leave them out. */
+  const readInterruptRequests = (
+    command: { readonly commandId: CommandId; readonly threadId: ThreadId },
+    runId: RunId,
+  ) =>
+    projectionStore
+      .getThreadRecords(command.threadId, ["turnItems"], {
+        turnItemRunIds: [runId],
+        turnItemTypes: ["run_interrupt_request"],
+      })
+      .pipe(
+        Effect.map((records) => records.turnItems),
+        Effect.mapError(
+          (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
+        ),
+      );
+
   const dispatchBackgroundWorkSettle = (
     command: Extract<
       OrchestrationV2InternalCommand,
@@ -9507,11 +9533,22 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     });
 
   const dispatchRunInterrupt = (
-    command: Extract<OrchestrationV2Command, { readonly type: "run.interrupt" }>,
+    requested: Extract<OrchestrationV2Command, { readonly type: "run.interrupt" }>,
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
     effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
   ) =>
     Effect.gen(function* () {
+      // A person's Stop on a turn its provider has not ended yet stays theirs: an
+      // update or agent interrupting it again must not turn it into one the
+      // restart continues.
+      const userStop = RunExecutionService.userInterruptRequest(
+        yield* readInterruptRequests(requested, requested.runId),
+        requested.runId,
+      );
+      const command =
+        userStop === undefined || (requested.cause ?? "user") === "user"
+          ? requested
+          : { ...requested, reason: userStop.message, cause: "user" as const };
       const projection = yield* loadProjectionForCommand(
         command,
         [

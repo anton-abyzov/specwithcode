@@ -37,6 +37,8 @@ export interface ProviderClientDefinition {
    * built-in default or custom — advertises the same marker.
    */
   readonly badgeLabel?: string;
+  readonly setupDescription?: string;
+  readonly setupDocsUrl?: string;
 }
 
 export interface ProviderEnvironmentFieldDefinition {
@@ -62,6 +64,9 @@ const PROVIDER_CLIENT_DEFINITIONS: readonly ProviderClientDefinition[] = [
     value: ProviderDriverKind.make("cursor"),
     label: "Cursor",
     settingsSchema: CursorSettings,
+    setupDescription:
+      "Uses Cursor’s Agent SDK with a local agent loop and hosted inference. Sign in with your Cursor account or use an API key. SDK access may require a paid Cursor plan; models and usage depend on your account.",
+    setupDocsUrl: "https://cursor.com/docs/sdk/typescript",
     environmentFields: [
       {
         name: "CURSOR_API_KEY",

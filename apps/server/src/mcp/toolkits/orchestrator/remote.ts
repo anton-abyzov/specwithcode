@@ -18,11 +18,13 @@ import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 
 import * as RemoteWorkers from "../../../fleet/RemoteWorkers.ts";
+import type * as ThreadManagement from "../../../orchestration-v2/ThreadManagementService.ts";
 import type { RemoteTool } from "../../../fleet/RemoteStudioMcpClient.ts";
 import { isTerminalThreadStatus } from "../../../fleet/remoteWorkerMatching.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import { resolveInteractionMode, resolveRuntimeMode } from "../../OrchestratorMcpService.ts";
 import { loadCaller, readCaller } from "../../threadAccess.ts";
+import { explainThreadNotFound } from "../../threadNotFoundHint.ts";
 
 const MAX_WAIT_MS = 60 * 60 * 1_000;
 const DEFAULT_WAIT_MS = 10 * 60 * 1_000;
@@ -138,7 +140,11 @@ export const routeThread = <I extends Target, A, B, RL, RR>(
     machine: OrchestratorMcpMachineRef,
     input: Omit<I, "machine">,
   ) => Effect.Effect<B, OrchestratorMcpFailure, RR>,
-): Effect.Effect<A | B, OrchestratorMcpFailure, RL | RR> =>
+): Effect.Effect<
+  A | B,
+  OrchestratorMcpFailure,
+  RL | RR | McpInvocationContext.McpInvocationContext | ThreadManagement.ThreadManagementService
+> =>
   Effect.gen(function* () {
     const workers = yield* RemoteWorkers.RemoteWorkers;
     const resolved = yield* workers.resolveThread({
@@ -147,7 +153,12 @@ export const routeThread = <I extends Target, A, B, RL, RR>(
     });
     const rest = { ...withoutMachine(input), threadId: resolved.threadId } as Omit<I, "machine">;
     return resolved.target.kind === "local"
-      ? yield* local(rest)
+      ? yield* local(rest).pipe(
+          Effect.catchIf(
+            (error) => error.code === "thread_not_found",
+            (error) => Effect.flip(explainThreadNotFound(rest.threadId, error)),
+          ),
+        )
       : yield* remote(resolved.target.machine, rest);
   });
 

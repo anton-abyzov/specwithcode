@@ -364,7 +364,12 @@ it.layer(NodeServices.layer)("Antigravity installation", (it) => {
           profiles.add(profile);
           const helper = command.args[0] === "-e";
           // The runtime unpacks straight into the disposable profile.
-          if (!helper) expect(command.options.env?.TMPDIR).toBe(profile);
+          // Windows names the temp directory TEMP (and TMP) instead of TMPDIR.
+          if (!helper) {
+            expect(
+              hostPlatform === "win32" ? command.options.env?.TEMP : command.options.env?.TMPDIR,
+            ).toBe(profile);
+          }
           const output = yield* Queue.unbounded<Uint8Array>();
           const exited = yield* Deferred.make<ChildProcessSpawner.ExitCode>();
           const terminate = Deferred.succeed(exited, ChildProcessSpawner.ExitCode(0)).pipe(

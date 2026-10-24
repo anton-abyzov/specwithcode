@@ -1,4 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off globalDate:off globalTimers:off -- drives the plain relay hub with a fake extension.
+import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -7,9 +9,21 @@ import {
   relayRequestAllowed,
   tokensEqual,
 } from "./BrowserExtension.ts";
-import { ChromeTools, checkUrl } from "./chromeTools.ts";
+import { ChromeTools, checkUrl, noProfileHint } from "./chromeTools.ts";
 import { connectFake, setup } from "./fakeChrome.testkit.ts";
-import { BrowserRelayError, CLOSE_REJECTED, CLOSE_REPLACED, TAB_IDLE_MS } from "./relayHub.ts";
+import {
+  BrowserRelayError,
+  CLOSE_REASON_UNPAIRED,
+  CLOSE_REJECTED,
+  CLOSE_REPLACED,
+  TAB_IDLE_MS,
+} from "./relayHub.ts";
+import {
+  BROWSER_EXTENSION_DIR,
+  isPaired,
+  PAIRING_FILE,
+  parsePairingState,
+} from "./pairingState.ts";
 
 describe("pairing", () => {
   it("encodes a loopback relay URL, a long token and the machine name", () => {
@@ -23,6 +37,20 @@ describe("pairing", () => {
     expect(encodePairingCode("ws://127.0.0.1:1/x", "t", "m")).toMatch(/^swc-chrome:1:/);
   });
 
+  it("advertises a heartbeat and answers ping with pong", () => {
+    const { extension, token } = setup();
+    const fake = connectFake(extension, token);
+    expect(fake.notifications[0]).toMatchObject({
+      method: "welcome",
+      params: { machine: "mac", heartbeat: true },
+    });
+    fake.session.receive(JSON.stringify({ method: "ping" }));
+    expect(fake.notifications.at(-1)).toEqual({ method: "pong" });
+    // A ping before the hello is not a hello.
+    const early = connectFake(extension, "x".repeat(43));
+    expect(early.notifications).toEqual([]);
+  });
+
   it("rejects a wrong token and drops every profile on reset", () => {
     const { extension, token } = setup();
     const wrong = connectFake(extension, "x".repeat(43));
@@ -32,6 +60,51 @@ describe("pairing", () => {
     extension.pairing(true);
     expect(right.closed.at(-1)?.code).toBe(CLOSE_REJECTED);
     expect(extension.hub.profiles()).toHaveLength(0);
+  });
+
+  it("records a pairing once a profile connects, and forgets it on reset", () => {
+    const { extension, token, stateDir } = setup();
+    const file = NodePath.join(stateDir, BROWSER_EXTENSION_DIR, PAIRING_FILE);
+    const read = () => NodeFS.readFileSync(file, "utf8");
+    // A shown code alone is not a pairing; a wrong code does not pair either.
+    expect(isPaired(read())).toBe(false);
+    connectFake(extension, "x".repeat(43));
+    expect(isPaired(read())).toBe(false);
+    connectFake(extension, token);
+    expect(isPaired(read())).toBe(true);
+    const first = parsePairingState(read());
+    expect(first.token).toBe(token);
+    // Reconnects keep the first connection time; a restart keeps the pairing.
+    connectFake(extension, token);
+    expect(parsePairingState(read()).connectedAt).toBe(first.connectedAt);
+    const again = makeBrowserExtension({ stateDir, port: 8319, machineName: "mac" });
+    expect(again.pairing(false).pairingCode).toBe(extension.pairing(false).pairingCode);
+    expect(isPaired(read())).toBe(true);
+    extension.pairing(true);
+    expect(isPaired(read())).toBe(false);
+    expect(isPaired(null)).toBe(false);
+    expect(isPaired("not json")).toBe(false);
+  });
+
+  it("forgets the pairing when the last connected profile is unpaired in its popup", () => {
+    const { extension, token, stateDir } = setup();
+    const file = NodePath.join(stateDir, BROWSER_EXTENSION_DIR, PAIRING_FILE);
+    const read = () => NodeFS.readFileSync(file, "utf8");
+    const work = connectFake(extension, token, "Work", undefined, "work-instance");
+    const home = connectFake(extension, token, "Home", undefined, "home-instance");
+    // Chrome quitting or a dropped socket is not an unpair: the extension comes back.
+    work.session.closed();
+    expect(isPaired(read())).toBe(true);
+    const again = connectFake(extension, token, "Work", undefined, "work-instance");
+    // Another profile still holds the code.
+    again.session.closed(CLOSE_REASON_UNPAIRED);
+    expect(isPaired(read())).toBe(true);
+    home.session.closed(CLOSE_REASON_UNPAIRED);
+    expect(isPaired(read())).toBe(false);
+    expect(parsePairingState(read()).token).toBe(token);
+    // Pairing again records it again.
+    connectFake(extension, token, "Home", undefined, "home-instance");
+    expect(isPaired(read())).toBe(true);
   });
 
   it("compares tokens in constant time and refuses empty ones", () => {
@@ -60,6 +133,26 @@ describe("ChromeTools", () => {
     await expect(tools.open("t1", { url: "https://example.com" })).rejects.toMatchObject({
       code: "not_connected",
     });
+  });
+
+  it("says which profile went away, when and why, once one has connected", () => {
+    const { extension, token } = setup();
+    const tools = new ChromeTools(extension.hub);
+    expect(tools.profiles("t1").hint).toMatch(/install the SpecWithCode Browser extension/);
+    const fake = connectFake(extension, token, "m4-specwithcode");
+    fake.session.closed();
+    const { profiles, hint } = tools.profiles("t1");
+    expect(profiles).toEqual([]);
+    expect(hint).toMatch(/"m4-specwithcode" disconnected 0 min ago \(\d{4}-\d\d-\d\dT/);
+    expect(hint).toContain("The extension disconnected.");
+    expect(hint).toContain("reconnects on its own");
+    expect(hint).toContain("ask the user before using one instead");
+    connectFake(extension, token, "m4-specwithcode");
+    extension.pairing(true);
+    expect(tools.profiles("t1").hint).toContain("The pairing code was reset");
+    expect(noProfileHint({ label: "Work", at: 0, reason: "x" }, 5 * 60_000)).toContain(
+      '"Work" disconnected 5 min ago (1970-01-01T00:00:00.000Z): x.',
+    );
   });
 
   it("opens, reads, clicks, types, screenshots and closes in one profile", async () => {

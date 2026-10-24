@@ -86,11 +86,11 @@ try {
     assert.ok(box && box.x >= 0 && box.x + box.width <= width + 0.5, "picker leaves the viewport");
   };
   const rail = (name) => page.locator(`[data-model-picker-sidebar] button[aria-label^="${name}"]`);
-  const blocked = () => page.locator("[data-model-usage-blocked=true]").count();
+  const warned = () => page.locator("[data-model-usage-warning=true]").count();
   const pickerText = () => page.locator("[data-model-picker-content]").innerText();
   const selection = () => page.getByTestId("selection").first().textContent();
 
-  const EXPECT_BLOCKED = { account: 3, model: 1 };
+  const EXPECT_WARNED = { account: 3, model: 1, warning: 3, denied: 3 };
   const CASES = [
     "room",
     "account",
@@ -101,6 +101,8 @@ try {
     "unknown",
     "offline",
     "running",
+    "warning",
+    "denied",
   ];
   for (const width of [390, 1280]) {
     for (const theme of ["light", "dark"]) {
@@ -110,18 +112,18 @@ try {
         await page.screenshot({
           path: join(output, `${scenario}-favorites-${width}-${theme}.png`),
         });
-        const favoritesBlocked = await blocked();
+        const favoritesBlocked = await warned();
         await rail("Claude").first().click();
         await page.locator("[data-model-picker-usage-band]").waitFor();
         await settle();
         await contained(width);
         await page.screenshot({ path: join(output, `${scenario}-claude-${width}-${theme}.png`) });
-        const claudeBlocked = await blocked();
+        const claudeBlocked = await warned();
         const text = await pickerText();
         assert.equal(
           claudeBlocked,
-          EXPECT_BLOCKED[scenario] ?? 0,
-          `${scenario}: Claude rows blocked`,
+          EXPECT_WARNED[scenario] ?? 0,
+          `${scenario}: Claude rows warned`,
         );
         if (scenario === "account") {
           assert.match(text, /Weekly limit reached · resets in 2d 5h/);
@@ -155,7 +157,11 @@ try {
         await rail("GitHub Copilot").first().click();
         const copilotState = scenario === "offline" ? "offline" : "unreported";
         await page.locator(`[data-model-picker-usage-band=${copilotState}]`).waitFor();
-        assert.equal(await blocked(), 0, `${scenario}: Copilot rows stay selectable`);
+        assert.equal(
+          await warned(),
+          0,
+          `${scenario}: Copilot rows stay selectable without inherited warnings`,
+        );
         if (copilotState === "unreported") {
           assert.match(await pickerText(), /GitHub Copilot does not report usage limits/);
         }
@@ -164,8 +170,19 @@ try {
             path: join(output, `${scenario}-copilot-${width}-${theme}.png`),
           });
         }
+        if (EXPECT_WARNED[scenario]) {
+          await rail("Claude").first().click();
+          const row = page
+            .locator("[data-model-usage-warning=true]")
+            .filter({ hasText: "Claude Fable 5.1" })
+            .first();
+          assert.notEqual(await row.getAttribute("aria-disabled"), "true");
+          await row.click();
+          assert.equal(await selection(), "claudeAgent:claude-fable-5-1");
+          assert.equal(await page.locator("[data-model-picker-content]").count(), 0);
+        }
         checks.push(
-          `${scenario} ${width}px ${theme}: ${claudeBlocked} Claude rows blocked (${favoritesBlocked} in favorites), Copilot open, no overflow`,
+          `${scenario} ${width}px ${theme}: ${claudeBlocked} Claude rows warned (${favoritesBlocked} in favorites), Copilot open, no overflow`,
         );
       }
 
@@ -185,7 +202,7 @@ try {
         assert.equal(await trigger.locator('[data-provider-logo="grok"]').count(), 1);
         await rail("Grok").click();
         assert.equal(await rail("Grok").locator('[data-provider-logo="grok"]').count(), 1);
-        assert.equal(await blocked(), 0, "missing Grok usage never blocks selection");
+        assert.equal(await warned(), 0, "missing Grok usage never blocks selection");
         await contained(width);
         await page.screenshot({ path: join(output, `${scenario}-${width}-${theme}.png`) });
         await rail("Codex").click();
@@ -217,32 +234,38 @@ try {
         `unprepared ${width}px ${theme}: ready models offered, manual switch to Codex works`,
       );
 
-      // Blocked rows keep their shortcut and refuse it; other shortcuts still work.
-      // Model shortcuts exist in the desktop app only, so this page poses as it.
+      // Warning rows accept both desktop shortcuts and pointer selection.
       await page.addInitScript(() => {
         window.desktopBridge = {};
       });
       await open("account", theme, width);
       const labels = await page.locator("[data-model-picker-content] kbd").allTextContents();
       assert.deepEqual(labels.slice(0, 5), ["⌘1", "⌘2", "⌘3", "⌘4", "⌘5"]);
-      const reasonOpacity = await page
-        .locator("[data-model-usage-blocked=true]")
-        .first()
-        .evaluate((row) => getComputedStyle(row).opacity);
-      assert.equal(reasonOpacity, "1", "a blocked row's reason is not faded");
       await page.keyboard.press("Meta+4");
-      assert.equal(await selection(), "claudeAgent:claude-opus-5-5");
-      assert.equal(
-        await page.locator("[data-model-picker-content]").count(),
-        1,
-        "picker stays open",
-      );
-      await page.locator("[data-model-usage-blocked=true]").first().click({ force: true });
-      assert.equal(await selection(), "claudeAgent:claude-opus-5-5");
+      assert.equal(await selection(), "claudeAgent:claude-fable-5-1");
+      assert.equal(await page.locator("[data-model-picker-content]").count(), 0);
+      await open("account", theme, width);
+      const warningRow = page
+        .locator("[data-model-usage-warning=true]")
+        .filter({ hasText: "Claude Sonnet 5.5" })
+        .first();
+      await warningRow.click();
+      assert.equal(await selection(), "claudeAgent:claude-sonnet-5-5");
+      await open("account", theme, width);
       await page.keyboard.press("Meta+1");
       await page.getByTestId("selection").filter({ hasText: "codex:gpt-6.1-sol" }).waitFor();
       checks.push(
-        `${width}px ${theme}: ⌘4 and a click on a spent model change nothing; ⌘1 still picks`,
+        `${width}px ${theme}: spent models accept shortcut and click, close picker and persist the exact selection`,
+      );
+
+      await open("locked", theme, width);
+      await rail("Claude").first().click();
+      const locked = page.getByRole("option").filter({ hasText: "Claude Fable 5.1" }).first();
+      assert.equal(await locked.getAttribute("aria-disabled"), "true");
+      await locked.click({ force: true });
+      assert.equal(await selection(), "codex:gpt-6.1-sol");
+      checks.push(
+        `${width}px ${theme}: genuine thread compatibility restriction still blocks selection`,
       );
       await page.close();
       page = await context.newPage();
@@ -250,7 +273,7 @@ try {
 
       // The trigger names the state for screen readers, not only with a ring.
       await page.setViewportSize({ width, height: 860 });
-      await page.goto(`${origin}/?case=account&theme=${theme}`);
+      await page.goto(`${origin}/?case=account&selected-claude=1&theme=${theme}`);
       const label = await page
         .locator("[data-chat-provider-model-picker]")
         .getAttribute("aria-label");

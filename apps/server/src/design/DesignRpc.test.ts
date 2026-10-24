@@ -1,8 +1,11 @@
 import { expect, it } from "@effect/vitest";
 import {
+  AuthAdministrativeScopes,
   AuthFilesystemReadScope,
   AuthFilesystemWriteScope,
+  AuthStandardClientScopes,
   DESIGN_SYSTEM_SCHEMA,
+  ThreadId,
   WS_METHODS,
   WsDesignRpcGroup,
   type AuthEnvironmentScope,
@@ -19,6 +22,7 @@ import { DesignService } from "./DesignService.ts";
 import {
   layerDesignService,
   makeDesignFixture,
+  HERE,
   owner,
   PROJECT_A,
   PROJECT_B,
@@ -36,7 +40,10 @@ const clientFor = (
 ) =>
   RpcTest.makeClient(WsDesignRpcGroup).pipe(
     Effect.provide(
-      Layer.mergeAll(DesignRpc.layerRpcHandlers({ subject }), Authorization.layer(scopes)).pipe(
+      Layer.mergeAll(
+        DesignRpc.layerRpcHandlers({ subject, scopes }),
+        Authorization.layer(scopes),
+      ).pipe(
         Layer.provide(rpcInstrumentationLayer),
         Layer.provide(Layer.succeed(DesignSystemProposals, proposals)),
       ),
@@ -51,13 +58,54 @@ const withFixture = <A, E, R>(run: Effect.Effect<A, E, R>) =>
   );
 
 it("treats the desktop app, startup link and CLI as the owner and every paired session as a member", () => {
+  const scopes = AuthStandardClientScopes;
   for (const subject of ["desktop-bootstrap", "administrative-bootstrap", "cli-issued-session"]) {
-    expect(DesignRpc.designCallerForSession({ subject }).audience).toBe("owner");
+    expect(DesignRpc.designCallerForSession({ subject, scopes }).audience).toBe("owner");
   }
   for (const subject of ["one-time-token", "device-approval", "mcp-client", "cloud-connect", "x"]) {
-    expect(DesignRpc.designCallerForSession({ subject }).audience).toBe("members");
+    expect(DesignRpc.designCallerForSession({ subject, scopes }).audience).toBe("members");
   }
 });
+
+it("treats a session that manages access as the owner, as the app paired with a running service", () => {
+  // The desktop app signs in to a service it did not start through the
+  // service's CLI: subject `one-time-token`, administrative scopes.
+  expect(
+    DesignRpc.designCallerForSession({
+      subject: "one-time-token",
+      scopes: AuthAdministrativeScopes,
+    }).audience,
+  ).toBe("owner");
+});
+
+it.effect("lets the app paired with a running service bind a design to its new thread", () =>
+  withFixture(
+    Effect.gen(function* () {
+      const app = yield* clientFor("one-time-token", AuthAdministrativeScopes);
+      const phone = yield* clientFor("one-time-token", AuthStandardClientScopes);
+      const created = yield* app[WS_METHODS.designCreate]({
+        owner: projectA,
+        kind: "design",
+        title: "EasyChamp_SWC_Design",
+      });
+      const address = { owner: projectA, designId: created.document.id };
+      const thread = { environmentId: HERE, threadId: ThreadId.make("design-thread") };
+      expect(
+        yield* phone[WS_METHODS.designApply]({
+          ...address,
+          expectedRevision: 0,
+          operations: [{ op: "set_thread", thread }],
+        }).pipe(Effect.flip),
+      ).toMatchObject({ _tag: "DesignError", code: "forbidden" });
+      const bound = yield* app[WS_METHODS.designApply]({
+        ...address,
+        expectedRevision: 0,
+        operations: [{ op: "set_thread", thread }],
+      });
+      expect(bound.document.thread).toMatchObject(thread);
+    }),
+  ),
+);
 
 it.effect("enforces design access for a paired device over RPC (AC-14)", () =>
   withFixture(

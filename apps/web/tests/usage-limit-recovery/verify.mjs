@@ -225,21 +225,60 @@ try {
       .waitFor();
     await page.getByRole("button", { name: "Other fallback models" }).click();
     const sol = page.getByRole("menuitem", { name: /Codex · GPT-6\.1 Sol/ });
-    const full = page.getByRole("menuitem", { name: /Copilot · Claude Opus 5\.5/ });
+    const limited = page.getByRole("menuitem", { name: /Claude Code · Claude Opus 5\.5/ });
+    const paid = page.getByRole("menuitem", { name: /Claude API · Claude Opus 5\.5/ });
+    const warning = page.getByRole("menuitem", {
+      name: /Claude Code \(warning\) · Claude Opus 5\.5/,
+    });
+    const missing = page.getByRole("menuitem", { name: /Missing provider · default/ });
     await sol.waitFor();
-    assert.match(await full.innerText(), /full until 11:19 PM/);
-    assert.equal(await full.getAttribute("aria-disabled"), "true");
+    assert.match(await limited.innerText(), /at its limit/);
+    assert.notEqual(await limited.getAttribute("aria-disabled"), "true");
+    assert.match(await paid.innerText(), /billed per token/);
+    assert.notEqual(await paid.getAttribute("aria-disabled"), "true");
+    assert.match(await warning.innerText(), /provider warning/);
+    assert.doesNotMatch(await warning.innerText(), /not set up/);
+    assert.notEqual(await warning.getAttribute("aria-disabled"), "true");
+    assert.equal(await missing.getAttribute("aria-disabled"), "true");
+    assert.equal(await page.locator("body").getAttribute("data-choice"), null);
+    await missing.dispatchEvent("click");
+    assert.equal(await page.locator("body").getAttribute("data-choice"), null);
     await page.screenshot({
       path: path.join(output, `fallback-menu-${width}.png`),
       fullPage: true,
     });
+    await limited.click();
+    assert.equal(
+      await page.locator("body").getAttribute("data-choice"),
+      "Claude Code · Claude Opus 5.5",
+    );
+    await page.getByRole("button", { name: "Other fallback models" }).click();
+    await paid.click();
+    assert.equal(
+      await page.locator("body").getAttribute("data-choice"),
+      "Claude API · Claude Opus 5.5",
+    );
+    await page.getByRole("button", { name: "Other fallback models" }).click();
+    await warning.click();
+    assert.equal(
+      await page.locator("body").getAttribute("data-choice"),
+      "Claude Code (warning) · Claude Opus 5.5",
+    );
+    await page.getByRole("button", { name: "Other fallback models" }).click();
     await sol.click();
     assert.equal(await page.locator("body").getAttribute("data-choice"), "Codex · GPT-6.1 Sol");
     assert.equal(
       await page.evaluate(() => document.documentElement.scrollWidth > innerWidth),
       false,
     );
-    receipt.push({ width, fallbackMenu: "passed" });
+    receipt.push({
+      width,
+      fallbackMenu: "passed",
+      limitedManualSelection: "passed",
+      explicitPerTokenSelection: "passed",
+      warningManualSelection: "passed",
+      missingModelDisabled: "passed",
+    });
   }
   for (const width of [375, 1440]) {
     for (const state of ["full", "room"]) {

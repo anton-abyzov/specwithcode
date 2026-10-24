@@ -118,7 +118,7 @@ const PRODUCT_SOURCES = ["apps/web/src", "apps/mobile/src", "apps/desktop/src", 
     }
   })
   .map((path) => ({
-    path: NodePath.relative(repoRoot, path),
+    path: NodePath.relative(repoRoot, path).split(NodePath.sep).join("/"),
     text: NodeFS.readFileSync(path, "utf8"),
   }));
 

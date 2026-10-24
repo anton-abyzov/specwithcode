@@ -122,3 +122,42 @@ export function parseStudioThreadTarget(href: string): StudioThreadTarget | null
   const candidates = threadCandidates(rest.slice(slash + 1));
   return candidates === null ? null : { environmentId, candidates };
 }
+
+const DELEGATED_TASK_THREAD_PREFIX = "thread:delegated-task:";
+
+/**
+ * Thread IDs an agent probably meant when the ID it passed does not exist,
+ * most likely first. Agents copying an ID out of prose drop its leading
+ * `thread:` (read as a label in "owner thread:<id>"), decode the `%3A` a
+ * delegated task's ID carries, or keep the sentence's closing punctuation.
+ * Callers suggest a candidate that exists; they never act on one silently.
+ */
+export function threadIdNearMisses(threadId: string): readonly string[] {
+  const given = threadId.trim();
+  const bases = [given, given.replace(/^[`'"]+|[`'".,;:)]+$/g, "").trim()];
+  const candidates: string[] = [];
+  const add = (candidate: string) => {
+    if (candidate.length === 0 || candidate.length > MAX_SEGMENT_LENGTH) return;
+    if (candidate !== threadId && !candidates.includes(candidate)) candidates.push(candidate);
+  };
+  for (const base of bases) {
+    const prefixed =
+      base.startsWith("thread:") || base.startsWith("project-coordinator:")
+        ? base
+        : `thread:${base}`;
+    if (prefixed.startsWith(DELEGATED_TASK_THREAD_PREFIX)) {
+      // The stored ID encodes the command ID once: re-encode the form passed,
+      // decoded first in case it was encoded already.
+      const commandId = prefixed.slice(DELEGATED_TASK_THREAD_PREFIX.length);
+      try {
+        add(`${DELEGATED_TASK_THREAD_PREFIX}${encodeURIComponent(decodeURIComponent(commandId))}`);
+      } catch {
+        /* A malformed escape: only the forms below. */
+      }
+      add(`${DELEGATED_TASK_THREAD_PREFIX}${encodeURIComponent(commandId)}`);
+    }
+    add(prefixed);
+    add(base);
+  }
+  return candidates;
+}

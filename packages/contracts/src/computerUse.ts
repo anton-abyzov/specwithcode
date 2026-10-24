@@ -23,6 +23,32 @@ export const COMPUTER_USE_MAX_SCREENSHOT_EDGE = 1568;
  */
 export const COMPUTER_USE_PERMISSION_WAIT_MS = 120_000;
 
+/** Host platforms whose desktop app can perform computer-use actions. */
+export const COMPUTER_USE_SUPPORTED_HOST_PLATFORMS: ReadonlyArray<string> = ["macos"];
+
+export const isComputerUseSupportedHostPlatform = (platform: string): boolean =>
+  COMPUTER_USE_SUPPORTED_HOST_PLATFORMS.includes(platform);
+
+const HOST_PLATFORM_NAMES: Readonly<Record<string, string>> = {
+  macos: "macOS",
+  windows: "Windows",
+  linux: "Linux",
+};
+
+/** The host platform name a desktop app reports for Node's `process.platform`. */
+export const computerUseHostPlatformFor = (nodePlatform: string | undefined): string =>
+  nodePlatform === "darwin"
+    ? "macos"
+    : nodePlatform === "win32"
+      ? "windows"
+      : nodePlatform === "linux"
+        ? "linux"
+        : (nodePlatform ?? "").trim() || "unknown";
+
+/** What agents and users are told on an operating system without computer use yet. */
+export const computerUseUnsupportedPlatformReason = (platform: string): string =>
+  `Computer use is not available on ${HOST_PLATFORM_NAMES[platform] ?? "this operating system"} yet: SpecWithCode supports it on macOS only.`;
+
 const Coordinate = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))
   .check(Schema.isLessThanOrEqualTo(100_000))
   .annotate({ description: "Pixels from the top-left corner of the latest computer_screenshot." });

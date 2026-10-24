@@ -1006,6 +1006,23 @@ describe("shouldUseMarkdownFileBrowserPrimaryAction", () => {
 describe("ChatMarkdown Windows file links", () => {
   const environmentId = EnvironmentId.make("env-windows");
 
+  it.each([true, false])(
+    "preserves drive-path separators in prose with parseRawHtml=%s",
+    (parseRawHtml) => {
+      const text = String.raw`Read C:\Users\shawn\.claude\settings.json and D:\project\_cache\result.json.`;
+      const html = renderToStaticMarkup(
+        <ChatMarkdown
+          cwd="C:/Users/shawn/project"
+          environmentId={environmentId}
+          text={text}
+          lineBreaks={!parseRawHtml}
+          parseRawHtml={parseRawHtml}
+        />,
+      );
+      expect(html).toContain(text);
+    },
+  );
+
   it.each([true, false])("preserves drive paths with parseRawHtml=%s", (parseRawHtml) => {
     const html = renderToStaticMarkup(
       <ChatMarkdown

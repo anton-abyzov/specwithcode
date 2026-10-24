@@ -99,6 +99,7 @@ export function HtmlRenderDocument(props: {
   readonly className?: string;
   /** Receives the page's content height whenever it changes, so an inline frame can fit it. */
   readonly onContentHeight?: (height: number) => void;
+  readonly onEscape?: (() => void) | undefined;
 }) {
   const theme = useHtmlRenderTheme();
   const frameRef = useRef<HTMLIFrameElement>(null);
@@ -132,7 +133,21 @@ export function HtmlRenderDocument(props: {
     window.addEventListener("message", openLink);
     return () => window.removeEventListener("message", openLink);
   }, []);
-  const { onContentHeight } = props;
+  const { onContentHeight, onEscape } = props;
+  useEffect(() => {
+    if (!onEscape) return;
+    const escape = (event: MessageEvent) => {
+      if (
+        event.source !== frameRef.current?.contentWindow ||
+        document.activeElement !== frameRef.current
+      )
+        return;
+      if (event.data?.jsonrpc === "2.0" && event.data?.method === "ui/notifications/report-escape")
+        onEscape();
+    };
+    window.addEventListener("message", escape);
+    return () => window.removeEventListener("message", escape);
+  }, [onEscape]);
   // A page posts its height once per change, so listen from the commit that
   // inserts the frame; a passive effect could run after a fast page's first post.
   useLayoutEffect(() => {

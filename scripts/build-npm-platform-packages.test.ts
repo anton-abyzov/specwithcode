@@ -8,6 +8,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
+import { windowsSystemTar } from "./build-cli-archive.ts";
 import {
   buildNpmPlatformPackages,
   NpmPackagesArchivesMissingError,
@@ -77,9 +78,9 @@ const makeFakeArchives = Effect.fn("test.makeFakeArchives")(function* () {
       `#!/bin/sh\necho "stub ${key} $*"\necho "name=\${STUDIO_CLI_NAME-unset}" >&2\nexit 7\n`,
     );
     yield* fs.chmod(path.join(contentDir, "specweave-studio"), 0o755);
-    const exit = yield* run("tar", ["-czf", path.join(archivesDir, `${stem}.tar.gz`), stem], {
-      cwd: stage,
-    });
+    // A relative archive path keeps GNU tar on Windows from reading `C:` as a remote host.
+    const archive = path.relative(stage, path.join(archivesDir, `${stem}.tar.gz`));
+    const exit = yield* run("tar", ["-czf", archive, stem], { cwd: stage });
     assert.equal(exit.exitCode, 0, exit.stderr);
   }
   yield* fs.writeFileString(path.join(archivesDir, "SHA256SUMS"), "");
@@ -159,10 +160,14 @@ it.layer(NodeServices.layer)("build-npm-platform-packages", (it) => {
         "# @specweave-studio/studio-linux-x64",
       );
       assert.isTrue(yield* fs.exists(path.join(linuxDir, "node_modules/node-pty")));
-      assert.equal(
-        Number((yield* fs.stat(path.join(linuxDir, "specweave-studio"))).mode) & 0o111,
-        0o111,
-      );
+      // POSIX execute bits: NTFS has none, so stat never reports them on
+      // Windows. The release packs these tarballs on Linux (release.yml).
+      if (process.platform !== "win32") {
+        assert.equal(
+          Number((yield* fs.stat(path.join(linuxDir, "specweave-studio"))).mode) & 0o111,
+          0o111,
+        );
+      }
 
       const darwinManifest = yield* decodeManifest(
         yield* fs.readFileString(
@@ -201,19 +206,32 @@ it.layer(NodeServices.layer)("build-npm-platform-packages", (it) => {
       // The tarball is what gets published: it must carry node_modules (which
       // `npm publish <dir>` would strip) under npm's `package/` root, with the
       // executable bit intact.
+      // A GNU tar earlier on the Windows PATH (Git's) reads `D:` as a remote
+      // host, so list with the system bsdtar there, as the build itself does.
       const listing = yield* run(
-        "tar",
+        process.platform === "win32" ? windowsSystemTar() : "tar",
         ["-tzvf", path.join(fixture.outputDir, "@specweave-studio/studio-linux-x64.tgz")],
         { cwd: fixture.outputDir },
       );
       assert.equal(listing.exitCode, 0, listing.stderr);
-      const lines = listing.stdout.split("\n");
-      assert.isTrue(lines.some((line) => line.endsWith(" package/node_modules/node-pty/")));
-      assert.isTrue(lines.some((line) => line.endsWith(" package/package.json")));
+      // Windows' bsdtar ends listing lines with CRLF.
+      const lines = listing.stdout.split(/\r?\n/);
       assert.isTrue(
-        lines.some((line) => /^-rwxr-xr-x .* package\/specweave-studio$/.test(line)),
+        lines.some((line) => line.endsWith(" package/node_modules/node-pty/")),
         listing.stdout,
       );
+      assert.isTrue(
+        lines.some((line) => line.endsWith(" package/package.json")),
+        listing.stdout,
+      );
+      // POSIX execute bits: packed on Windows the tarball takes NTFS modes,
+      // which have none. The release packs these tarballs on Linux (release.yml).
+      if (process.platform !== "win32") {
+        assert.isTrue(
+          lines.some((line) => /^-rwxr-xr-x .* package\/specweave-studio$/.test(line)),
+          listing.stdout,
+        );
+      }
 
       // NODE_PATH stands in for node_modules: require.resolve finds the
       // platform package there exactly as it would after `npm install`.

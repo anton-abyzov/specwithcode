@@ -1,5 +1,5 @@
 import { useNavigate } from "@tanstack/react-router";
-import type { ServiceUpdateBlocker } from "@specweave-studio/contracts";
+import { DESKTOP_INSTALL_APPLY_MS, type ServiceUpdateBlocker } from "@specweave-studio/contracts";
 import { RotateCwIcon, SparklesIcon } from "lucide-react";
 import { useCallback, useEffect, useRef, useState } from "react";
 
@@ -67,8 +67,10 @@ import {
 } from "./SidebarRestartToUpdate.logic";
 
 // An accepted install quits the app; if it is still open after this long,
-// say so instead of spinning forever.
-const RESTART_WATCHDOG_MS = 60_000;
+// say so instead of spinning forever. The desktop takes the install back at
+// the same moment, so both give up together. An install that never began to
+// quit answers `failed` within seconds instead.
+const RESTART_WATCHDOG_MS = DESKTOP_INSTALL_APPLY_MS;
 // While an update waits for running work to finish, check this often.
 const IDLE_CHECK_MS = 15_000;
 

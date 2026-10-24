@@ -144,6 +144,7 @@ const ROUTE_LABELS: Record<BrowserBridgeProviderWiring["route"], { label: string
   built_in: { label: "Built in", tone: "success" },
   shared_bridge: { label: "Shares Claude's browser", tone: "success" },
   own_extension: { label: "Own Codex extension", tone: "info" },
+  specwithcode_browser: { label: "Off in threads: SpecWithCode Browser is paired", tone: "info" },
   turned_off: { label: "Turned off", tone: "warning" },
   not_set_up: { label: "Not set up", tone: "warning" },
   not_installed: { label: "Not installed", tone: "info" },

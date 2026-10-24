@@ -14,9 +14,11 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import { ProjectId } from "@specweave-studio/contracts";
 import { execFileSync } from "node:child_process";
+import { pathToFileURL } from "node:url";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 
 import * as ServerConfig from "../config.ts";
 import * as ProjectCloneTracker from "../project/ProjectCloneTracker.ts";
@@ -58,6 +60,7 @@ const machine = (root: string) =>
 
 const fixture = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
   const base = yield* fs
     .makeTempDirectoryScoped({ prefix: "swc-add-to-machine-" })
     .pipe(Effect.flatMap(fs.realPath));
@@ -102,10 +105,12 @@ const fixture = Effect.gen(function* () {
   const m4max = yield* machine(`${base}/m4max`);
   const mini = yield* machine(`${base}/mini`);
   // The project as it lives on the source machine: a checkout of the origin.
-  const sourceProject = `${m4max.config.cwd}/projects/app`;
+  const sourceProject = path.join(m4max.config.cwd, "projects", "app");
   yield* fs.makeDirectory(`${m4max.config.cwd}/projects`, { recursive: true });
   yield* Effect.sync(() => git(base, "clone", "-q", app, sourceProject));
-  return { fs, base, git, app, other, m4max, mini, sourceProject };
+  /** The origin key a local bare repository canonicalizes to: its file URL. */
+  const originKey = (bare: string) => decodeURIComponent(pathToFileURL(bare).href);
+  return { fs, path, base, git, app, other, m4max, mini, sourceProject, originKey };
 });
 
 describe("add a project to another machine, server side", () => {
@@ -122,7 +127,7 @@ describe("add a project to another machine, server side", () => {
       expect(source).toEqual({
         path: f.sourceProject,
         state: "repository",
-        originKey: `file://${f.app}`,
+        originKey: f.originKey(f.app),
         sameRepository: true,
         checkedOut: true,
       });
@@ -145,11 +150,11 @@ describe("add a project to another machine, server side", () => {
   it.effect("the destination classifies what is already at the chosen folder", () =>
     Effect.gen(function* () {
       const f = yield* fixture;
-      const projects = `${f.mini.config.cwd}/projects`;
+      const projects = f.path.join(f.mini.config.cwd, "projects");
       yield* f.fs.makeDirectory(projects, { recursive: true });
-      const sameClone = `${projects}/app-existing`;
-      const otherClone = `${projects}/other`;
-      const plain = `${projects}/notes`;
+      const sameClone = f.path.join(projects, "app-existing");
+      const otherClone = f.path.join(projects, "other");
+      const plain = f.path.join(projects, "notes");
       yield* Effect.sync(() => {
         f.git(f.base, "clone", "-q", f.app, sameClone);
         f.git(f.base, "clone", "-q", f.other, otherClone);
@@ -165,7 +170,7 @@ describe("add a project to another machine, server side", () => {
       expect(yield* f.mini.inspectDestination({ path: sameClone, remoteUrl: f.app })).toMatchObject(
         {
           state: "repository",
-          originKey: `file://${f.app}`,
+          originKey: f.originKey(f.app),
           sameRepository: true,
           checkedOut: true,
         },
@@ -174,7 +179,7 @@ describe("add a project to another machine, server side", () => {
         yield* f.mini.inspectDestination({ path: otherClone, remoteUrl: f.app }),
       ).toMatchObject({
         state: "repository",
-        originKey: `file://${f.other}`,
+        originKey: f.originKey(f.other),
         sameRepository: false,
       });
       expect(yield* f.mini.inspectDestination({ path: plain, remoteUrl: f.app })).toMatchObject({
@@ -189,7 +194,7 @@ describe("add a project to another machine, server side", () => {
     Effect.gen(function* () {
       const f = yield* fixture;
       const projectId = ProjectId.make("add-to-machine-app");
-      const destination = `${f.mini.config.cwd}/projects/app`;
+      const destination = f.path.join(f.mini.config.cwd, "projects", "app");
       const created: Array<string> = [];
       const cloned: Array<string> = [];
       const hooks: ProjectCloneTracker.ProjectCloneHooks = {

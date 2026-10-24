@@ -409,6 +409,7 @@ vi.mock("../../state/filesystem", () => ({
 }));
 vi.mock("../../state/server", () => ({
   primaryServerKeybindingsAtom: {},
+  primaryServerConfigAtom: {},
   serverEnvironment: { updateSettings: {} },
 }));
 vi.mock("../../state/projects", () => ({ projectEnvironment: { update: {} } }));

@@ -38,10 +38,12 @@ import {
   ThreadMetadataMcpUpdateResult,
   TurnItemId,
 } from "@specweave-studio/contracts";
+import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as PubSub from "effect/PubSub";
@@ -136,8 +138,9 @@ const delegatedTaskStatusTranscriptFile = new URL(
 const readDelegatedTaskStatusTranscript = Effect.fn("readDelegatedTaskStatusTranscript")(
   function* () {
     const fs = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
     const text = yield* fs.readFileString(
-      decodeURIComponent(delegatedTaskStatusTranscriptFile.pathname),
+      yield* path.fromFileUrl(delegatedTaskStatusTranscriptFile),
     );
     return yield* decodeProviderReplayNdjson(text);
   },
@@ -411,18 +414,24 @@ function makeDeterministicAdapter(input: {
   };
 }
 
+const PROJECTION_WAIT_MS = process.platform === "win32" ? 90_000 : 30_000;
+
 function waitForProjection(
   orchestrator: Orchestrator.OrchestratorV2Shape,
   threadId: ThreadId,
   predicate: (projection: OrchestrationV2ThreadProjection) => boolean,
 ) {
   return Effect.gen(function* () {
-    for (let attempt = 0; attempt < 1_000; attempt += 1) {
+    // A wall-clock budget, not an attempt count: in a full Windows shard each
+    // projection read and reactor step is slow, and 1,000 short polls (about
+    // five seconds) ran out before the fan-out deliveries settled.
+    const deadline = (yield* Clock.currentTimeMillis) + PROJECTION_WAIT_MS;
+    while ((yield* Clock.currentTimeMillis) < deadline) {
       const projection = yield* orchestrator.getThreadProjection(threadId);
       if (predicate(projection)) {
         return projection;
       }
-      yield* Effect.sleep("5 millis");
+      yield* Effect.sleep("15 millis");
     }
     return yield* Effect.die(
       new Error(`Timed out waiting for orchestration projection ${threadId}.`),
@@ -584,7 +593,8 @@ describe("orchestrator MCP toolkit", () => {
           // instead of asserting counts immediately.
           const waitForContinuationOffers = (count: number) =>
             Effect.gen(function* () {
-              for (let attempt = 0; attempt < 1_000; attempt += 1) {
+              const deadline = (yield* Clock.currentTimeMillis) + PROJECTION_WAIT_MS;
+              while ((yield* Clock.currentTimeMillis) < deadline) {
                 const current = yield* Ref.get(continuationOffers);
                 if (current.length >= count) {
                   return current;
@@ -3948,6 +3958,9 @@ describe("orchestrator MCP toolkit", () => {
           }).pipe(Effect.provide(layerTest));
         }),
       ),
+    // The longest case in the suite: about 100s in a loaded Windows shard,
+    // against the package's 120s default.
+    240_000,
   );
 
   it.live("reports running and queued child follow-ups from a Codex replay transcript", () =>
@@ -4279,5 +4292,6 @@ describe("orchestrator MCP toolkit", () => {
         }).pipe(Effect.provide(layerTest));
       }),
     ),
+    300_000,
   );
 });

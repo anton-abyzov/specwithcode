@@ -80,7 +80,7 @@ it("points an older service at a repair, never at npx", () => {
 it("explains where the service is supported", () => {
   assert.include(
     formatServiceStatus({ ...status, supported: false, installed: false }, "0.0.29"),
-    "Supported on: Linux with systemd, macOS with launchd",
+    "Supported on: Linux with systemd, macOS with launchd, Windows with Task Scheduler",
   );
 });
 
@@ -90,7 +90,10 @@ it("reports a newer installed service and tells the CLI to catch up to it", () =
     "0.0.31",
   );
 
-  assert.include(output, "specweave-studio@0.0.32-nightly.1 (newer than this specweave-studio@0.0.31 CLI)");
+  assert.include(
+    output,
+    "specweave-studio@0.0.32-nightly.1 (newer than this specweave-studio@0.0.31 CLI)",
+  );
   assert.include(output, "Run `specweave-studio update 0.0.32-nightly.1` to match it");
   assert.notInclude(output, "npx");
 });

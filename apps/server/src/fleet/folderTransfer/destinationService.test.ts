@@ -174,7 +174,10 @@ describe("DestinationCopies", () => {
     const second = new DestinationCopies(state, fast);
     await second.resume();
     const resumed = await settle(second, operationId, ["applied", "failed"]);
-    expect(resumed.state).toBe("applied");
+    expect({ state: resumed.state, error: resumed.error }).toEqual({
+      state: "applied",
+      error: null,
+    });
     expect(resumed.checks.filter((check) => !check.ok)).toEqual([]);
 
     write(NodePath.join(target, "README.md"), "edited after apply\n");
@@ -280,7 +283,8 @@ describe("Apply backups", () => {
     ]);
     const env = NodePath.join(target, ".env");
     expect(NodeFS.readFileSync(env, "utf8")).toBe("API_TOKEN=fixture-not-a-secret\n");
-    expect(NodeFS.statSync(env).mode & 0o777).toBe(0o600);
+    // Windows has no POSIX mode bits to check.
+    if (process.platform !== "win32") expect(NodeFS.statSync(env).mode & 0o777).toBe(0o600);
     const sent = await transfers.sentSecrets.list("env-destination");
     expect(sent.filter((entry) => entry.operationId === operationId)).toEqual([
       expect.objectContaining({ path: ".env", destinationLabel: "M3", size: offered[0]!.size }),

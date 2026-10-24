@@ -194,10 +194,11 @@ import {
   SquareIcon,
 } from "lucide-react";
 import { ChevronDown, ChevronRight } from "lucide";
-import type {
-  ComposerContextId,
-  ComposerContextRecord,
-  KnownComposerContextRecord,
+import {
+  type ComposerContextId,
+  type ComposerContextRecord,
+  type KnownComposerContextRecord,
+  runInterruptResultDetail,
 } from "@specweave-studio/contracts";
 import { Button, InlineButton } from "../ui/button";
 import { MorphIcon } from "~/components/MorphIcon";
@@ -3168,7 +3169,7 @@ function HtmlRenderTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "htm
         key={row.htmlRender.attachmentId}
         environmentId={ctx.activeThreadEnvironmentId}
         htmlRender={row.htmlRender}
-        onOpen={ctx.onFileOpen}
+        threadRef={ctx.threadRef}
       />
     </div>
   );
@@ -3206,7 +3207,7 @@ function v2EventPresentation(item: OrchestrationV2TurnItem): {
     case "run_interrupt_result":
       return {
         label: "Run interrupted",
-        detail: item.message,
+        detail: runInterruptResultDetail(item),
         tone: "danger",
         icon: XIcon,
       };

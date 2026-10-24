@@ -47,11 +47,11 @@ function snapshot(root: string): Record<string, string> {
   const walk = (directory: string) => {
     for (const name of NodeFS.readdirSync(directory)) {
       const absolute = NodePath.join(directory, name);
-      const relative = NodePath.relative(root, absolute);
+      const relative = NodePath.relative(root, absolute).split(NodePath.sep).join("/");
       const stat = NodeFS.lstatSync(absolute);
       if (name === ".git") {
         const top = NodePath.dirname(absolute);
-        result[`${NodePath.relative(root, top) || "."}:refs`] =
+        result[`${NodePath.relative(root, top).split(NodePath.sep).join("/") || "."}:refs`] =
           git(top, "for-each-ref", "--format=%(refname) %(objectname)") +
           git(top, "rev-parse", "HEAD");
         continue;
@@ -163,14 +163,27 @@ describe("Apply into a new empty folder", () => {
     expect(
       git(NodePath.join(target, "repositories/svc-a-wt-feature"), "status", "--porcelain"),
     ).toBe("M src/a.ts");
-    expect(
-      git(NodePath.join(target, "repositories/svc-a"), "worktree", "list", "--porcelain"),
-    ).toContain(NodePath.join(target, "repositories/svc-a-wt-feature"));
+    // Git prints worktree paths with `/` on Windows; compare them in native form.
+    const worktrees = git(
+      NodePath.join(target, "repositories/svc-a"),
+      "worktree",
+      "list",
+      "--porcelain",
+    )
+      .split("\n")
+      .filter((line) => line.startsWith("worktree "))
+      .map((line) => NodePath.resolve(line.slice("worktree ".length)));
+    expect(worktrees).toContain(NodePath.join(target, "repositories/svc-a-wt-feature"));
     expect(
       NodeFS.lstatSync(NodePath.join(target, ".cursor/skills/appstore")).isSymbolicLink(),
     ).toBe(true);
-    expect(NodeFS.readlinkSync(NodePath.join(target, "outside-link"))).toBe("/tmp");
-    expect(NodeFS.statSync(NodePath.join(target, "scripts/run.sh")).mode & 0o777).toBe(0o755);
+    // Windows stores the absolute "/tmp" link against the current drive.
+    expect(NodeFS.readlinkSync(NodePath.join(target, "outside-link"))).toBe(
+      process.platform === "win32" ? NodePath.resolve("/tmp") : "/tmp",
+    );
+    // POSIX permission bits: Windows has no executable bit to carry.
+    if (process.platform !== "win32")
+      expect(NodeFS.statSync(NodePath.join(target, "scripts/run.sh")).mode & 0o777).toBe(0o755);
     expect(NodeFS.existsSync(NodePath.join(target, ".env"))).toBe(false);
     expect(NodeFS.existsSync(NodePath.join(target, "work/big.bin"))).toBe(true);
     // The source folder is unchanged by the copy.

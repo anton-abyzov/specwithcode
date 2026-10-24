@@ -132,6 +132,11 @@ import {
 } from "../../provider/ClaudeWorkflowPolicy.ts";
 import { STUDIO_CODE_ORCHESTRATION_INSTRUCTIONS } from "../../provider/StudioOrchestrationInstructions.ts";
 import {
+  BROWSER_EXTENSION_DIR,
+  isPaired,
+  PAIRING_FILE,
+} from "../../browserExtension/pairingState.ts";
+import {
   claudeAgentSecretDenyForConfig,
   withClaudeAgentSecretDenySettings,
   type ClaudeAgentSecretDeny,
@@ -941,6 +946,12 @@ export function makeClaudeQueryOptions(input: {
   readonly subagentPromptFileContents?: string | undefined;
   /** The user's Claude Code default for Claude in Chrome. */
   readonly claudeInChromeDefault?: boolean;
+  /**
+   * A Chrome profile is paired with SpecWithCode Browser here and the user
+   * prefers it: start without Claude in Chrome, whose unnamed browsers make
+   * agents ask the user to pick one.
+   */
+  readonly hideClaudeInChrome?: boolean;
   readonly environment?: NodeJS.ProcessEnv;
   readonly mcpServers?: ClaudeQueryOptions["mcpServers"];
   readonly tools?: ClaudeAgentSdkQueryTools;
@@ -970,13 +981,12 @@ export function makeClaudeQueryOptions(input: {
   if (requestThinkingSummaries && extraArgs["thinking-display"] === undefined) {
     extraArgs["thinking-display"] = "summarized";
   }
-  // Launch args win; otherwise follow the user's Claude Code default.
-  if (
-    input.claudeInChromeDefault === true &&
-    !Object.hasOwn(extraArgs, "chrome") &&
-    !Object.hasOwn(extraArgs, "no-chrome")
-  ) {
-    extraArgs.chrome = null;
+  // Launch args win; then a paired SpecWithCode Browser; then the user's
+  // Claude Code default. `--no-chrome` is checked before CLAUDE_CODE_ENABLE_CFC
+  // and the "Enabled by default" setting, so it also stops auto-enable.
+  if (!Object.hasOwn(extraArgs, "chrome") && !Object.hasOwn(extraArgs, "no-chrome")) {
+    if (input.hideClaudeInChrome === true) extraArgs["no-chrome"] = null;
+    else if (input.claudeInChromeDefault === true) extraArgs.chrome = null;
   }
   const threadIdentity: ClaudeAgentSdkThreadIdentity = input.resume
     ? { resume: input.nativeThreadId }
@@ -3309,6 +3319,12 @@ export interface ClaudeAdapterV2Options {
   readonly settings: ClaudeSettings;
   readonly environment: NodeJS.ProcessEnv;
   readonly attachmentsDir: string;
+  /**
+   * SpecWithCode Browser's pairing file. While it records a paired Chrome
+   * profile, threads start without Claude in Chrome unless the user turned
+   * Settings › Chrome's preference off. Absent keeps Claude in Chrome.
+   */
+  readonly browserExtensionPairingFile?: string;
   /** Deny rules keeping every turn out of the server's credential stores. */
   readonly agentSecretDeny?: ClaudeAgentSecretDeny;
   readonly fileSystem: FileSystem.FileSystem;
@@ -7469,6 +7485,18 @@ export function makeClaudeAdapterV2(
               ? {}
               : { allowedTools: queryPolicy.allowedTools }),
           });
+          // Only a thread that gets SpecWithCode's chrome_* tools (studio MCP attached, agent
+          // browser access on) loses Claude in Chrome; otherwise it would have no browser.
+          const pairingFile = adapterOptions.browserExtensionPairingFile;
+          const hideClaudeInChrome =
+            pairingFile !== undefined &&
+            turnInput.runtimePolicy.preferSpecWithCodeBrowser !== false &&
+            mcpOverrides.mcpServers !== undefined &&
+            McpProviderSession.readMcpProviderSession(turnInput.threadId, adapterOptions.instanceId)
+              ?.browserToolsAvailable === true &&
+            isPaired(
+              yield* fileSystem.readFileString(pairingFile).pipe(Effect.orElseSucceed(() => null)),
+            );
           const queryPolicyKey = stringifyJson([
             claudeEffectiveQueryPolicyKey(queryPolicy, mcpOverrides, {
               ...turnInput.runtimePolicy,
@@ -7476,6 +7504,7 @@ export function makeClaudeAdapterV2(
             }),
             turnInput.projectAdditionalDirectories ?? [],
             claudeInChromeDefault,
+            hideClaudeInChrome,
           ]);
           const queryCoreKey = stringifyJson([
             claudeEffectiveQueryPolicyKey(queryPolicy, mcpOverrides),
@@ -7598,6 +7627,7 @@ export function makeClaudeAdapterV2(
             responseStyle: turnInput.runtimePolicy.responseStyle,
             subagentPromptFileContents,
             claudeInChromeDefault,
+            hideClaudeInChrome,
             attachmentsDir,
             ...(adapterOptions.agentSecretDeny === undefined
               ? {}
@@ -8505,6 +8535,11 @@ export const createClaudeAdapterV2 = Effect.fn("ClaudeAdapterV2Driver.create")(
       settings: { ...config, enabled, binaryPath },
       environment: claudeEnvironment,
       attachmentsDir: serverConfig.attachmentsDir,
+      browserExtensionPairingFile: path.join(
+        serverConfig.stateDir,
+        BROWSER_EXTENSION_DIR,
+        PAIRING_FILE,
+      ),
       agentSecretDeny,
       fileSystem,
       path,
@@ -8561,6 +8596,11 @@ const makeDefaultClaudeAdapterV2 = Effect.fn("ClaudeAdapterV2.layer")(function* 
     settings: DEFAULT_CLAUDE_SETTINGS,
     environment: hostEnvironment,
     attachmentsDir: serverConfig.attachmentsDir,
+    browserExtensionPairingFile: path.join(
+      serverConfig.stateDir,
+      BROWSER_EXTENSION_DIR,
+      PAIRING_FILE,
+    ),
     agentSecretDeny,
     fileSystem,
     path,

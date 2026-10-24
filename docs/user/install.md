@@ -14,9 +14,48 @@ Download [SpecWithCode-arm64.dmg](https://github.com/anton-abyzov/specwithcode/r
 the latest release, and drag SpecWithCode to Applications. It runs on Apple
 silicon Macs with macOS 13 or later. Releases are signed with an Apple Developer ID and notarized,
 so the app opens without a security override. The desktop app starts the local service for you.
-Windows, Linux and Intel Mac builds are not published yet.
+There is no Intel Mac build.
 
-To use this Mac as a worker for a main machine you already have, see
+### Windows
+
+Download `SpecWithCode-<version>-x64.exe` from the
+[latest release](https://github.com/anton-abyzov/specwithcode/releases/latest) and run it. It
+installs for your user only, so it needs no administrator, into
+`%LOCALAPPDATA%\Programs\studio`, and adds Start menu and desktop shortcuts. It runs on
+64-bit Windows 10 and 11. For a silent install, run it with `/S`.
+
+The installer is not code-signed yet, so Microsoft Defender SmartScreen shows **Windows protected
+your PC** the first time. Choose **More info**, then **Run anyway**. Releases list each file's
+SHA-256 in `SHA256SUMS-windows-linux`; check a download with
+`Get-FileHash .\SpecWithCode-<version>-x64.exe` before you run it.
+
+### Linux
+
+Download one of these from the [latest release](https://github.com/anton-abyzov/specwithcode/releases/latest)
+(x64, glibc):
+
+- `SpecWithCode-<version>-amd64.deb` for Debian and Ubuntu:
+  `sudo apt install ./SpecWithCode-<version>-amd64.deb`. The app goes to `/opt/SpecWithCode`
+  with a menu entry; the package is named `studio`, so remove it with `sudo apt remove studio`.
+- `SpecWithCode-<version>-x86_64.AppImage` for other distributions: `chmod +x` it and run it.
+  AppImages need FUSE 2 (`libfuse2`, or `libfuse2t64` on Ubuntu 24.04).
+
+### What differs on Windows and Linux
+
+Threads, the project coordinator, providers, pairing other devices, adding machines, the
+terminal and source control work as on macOS. These do not:
+
+- [Computer use](./computer-use.md) controls a Mac's screen and is macOS only. Windows and Linux
+  apps say so instead of offering it.
+- Updates: the Windows app, the AppImage and the `.deb` install update themselves from the
+  release, as on macOS; the `.deb` update asks for your password. A background service installed
+  from the command line on Linux is updated with `specwithcode update`, not from the app.
+- The background service is a scheduled task for your user on Windows and a systemd user service
+  on Linux ([Running in the background](./background-service.md)). The tray keeps it running when
+  you close the window.
+- Windows has no `install.sh` one-liner; use the desktop app, or [npm](#npm) for the command line.
+
+To use this computer as a worker for a main machine you already have, see
 [Add a machine](./add-a-machine.md). From 1.0.44 the first screen offers **Join my existing
 machines**; on 1.0.43, [one Terminal command](./add-a-machine.md#desktop-app-1043) makes the line.
 
@@ -37,7 +76,7 @@ in `~/.local/bin` and tells you if that folder is not on your `PATH`. Your proje
 settings are not touched, and it leaves a Mac alone that already runs the desktop app or a managed
 service. Run the same line again to move to a newer release. Add `-s -- --dry-run` after `bash`
 to see what it would do, or `-s -- --no-service` to skip the service. Releases up to 1.0.43 do not
-carry `install.sh`; for those use [npm](#npm) or the desktop app. There is no Windows or Intel Mac build.
+carry `install.sh`; for those use [npm](#npm) or the desktop app. On Windows, use the desktop app or npm.
 
 ### Join your existing machines from the terminal
 
@@ -83,13 +122,13 @@ Once `specwithcode` is on your `PATH` (from the installer, npm, or built from so
 app does not add it), these commands cover the basics.
 The same tool is also installed under its original name, `specweave-studio`, so older scripts keep working.
 
-| Task                                             | Command                                                             |
-| ------------------------------------------------ | ------------------------------------------------------------------- |
-| Start the server and open the web app            | `specwithcode`                                                      |
-| Start the server without a browser               | `specwithcode serve`                                                |
-| Keep it running in the background (macOS, Linux) | `specwithcode service install` ([details](./background-service.md)) |
-| Move to a newer release                          | Run the installer again, or see [Updating](./updating.md)           |
-| Remove it again                                  | `specwithcode uninstall`                                            |
+| Task                                                      | Command                                                             |
+| --------------------------------------------------------- | ------------------------------------------------------------------- |
+| Start the server and open the web app                     | `specwithcode`                                                      |
+| Start the server without a browser                        | `specwithcode serve`                                                |
+| Keep it running in the background (macOS, Windows, Linux) | `specwithcode service install` ([details](./background-service.md)) |
+| Move to a newer release                                   | Run the installer again, or see [Updating](./updating.md)           |
+| Remove it again                                           | `specwithcode uninstall`                                            |
 
 Run `specwithcode help` or `specwithcode --help` for the full reference. To start in a new working
 directory, use an explicit path such as `specwithcode ./my-project`. A bare directory name
@@ -127,14 +166,13 @@ way to run a server there.
 ## Linux server
 
 Releases ship a server archive for Linux x64 and arm64 (`studio-<version>-linux-<arch>-<commit>.tar.gz`).
-It runs on Node.js 22.20 or later 22.x and needs no compiler. There is no Linux desktop app;
-control the server from the Mac desktop app, the web app or a phone. [Linux worker](./linux-worker.md)
+It runs on Node.js 22.20 or later 22.x and needs no compiler. For a server-only install,
+control it from the desktop app on another computer, the web app or a phone. [Linux worker](./linux-worker.md)
 walks through install, Tailscale, the user service and pairing it with your Mac as a fleet worker.
 
 ## Windows Subsystem for Linux
 
-Windows builds are not published yet; this applies to a Windows desktop app built from source.
-Choose a WSL distro in **Settings → Connections** to run agents and projects
+In the Windows desktop app, choose a WSL distro in **Settings → Connections** to run agents and projects
 there. Install the provider CLIs inside that distro. SpecWithCode installs its own
 server runtime there automatically; the first launch after an app update can
 take longer.
@@ -218,5 +256,5 @@ For provider-specific setup and accounts, see [Codex](./providers-codex.md),
 - [Remote access](./remote-access.md): connect from another device.
 - [Add a machine](./add-a-machine.md): let your main machine start work on your other computers.
 - [Linux worker](./linux-worker.md): run workers on a Linux machine or VPS.
-- [Running in the background](./background-service.md): keep a Linux or macOS host available.
+- [Running in the background](./background-service.md): keep a Windows, Linux or macOS host available.
 - [Updating SpecWithCode](./updating.md): update the app and connected servers.

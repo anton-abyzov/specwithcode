@@ -125,6 +125,15 @@ export function contextOverflowStop(
     failure,
     cause: "context" as const,
     contextFit,
+    ...(request === undefined
+      ? {}
+      : {
+          request: {
+            text: request.text,
+            attachments: request.attachments,
+            ...(request.context === undefined ? {} : { context: request.context }),
+          },
+        }),
   };
   const continued =
     fallbackMove(thread.id, run.userMessageId) ?? fallbackMove(thread.id, answered.userMessageId);

@@ -31,6 +31,7 @@ import {
   shouldSwitchBeforeTurn,
   usageAtThreshold,
   usageResetAt,
+  isUnknownBillingAgent,
 } from "./providerFallback.ts";
 
 const now = Date.parse("2026-10-09T12:00:00.000Z");
@@ -51,6 +52,9 @@ function provider(
     status: "ready",
     auth: { status: "authenticated" },
     checkedAt: DateTime.formatIso(DateTime.makeUnsafe(now)),
+    ...(driver === "acpRegistry" && /^copilot(?:-|$)/.test(id)
+      ? { iconUrl: "https://cdn.agentclientprotocol.com/registry/v1/latest/github-copilot-cli.svg" }
+      : {}),
     version: null,
     models: [
       { slug: `${driver}-small`, name: "Small", isCustom: false, capabilities: null },
@@ -1605,4 +1609,128 @@ describe("the user's fallback order", () => {
       }),
     ).toEqual({ instanceId: copilot.instanceId, model: "claude-opus-5.5" });
   });
+});
+
+describe("agents whose billing is unknown", () => {
+  const opus = (slug: string) => [
+    { slug, name: "Claude Opus 5.5", isCustom: false, isDefault: true, capabilities: null },
+  ];
+  const registryIcon = (agent: string) =>
+    `https://cdn.agentclientprotocol.com/registry/v1/latest/${agent}.svg`;
+  const spentClaude = provider("claudeAgent", "claudeAgent", 100, { models: opus("claude-opus-5-5") });
+  const copilot = provider("acpRegistry_copilot", "acpRegistry", null, {
+    iconUrl: registryIcon("github-copilot-cli"),
+    models: opus("claude-opus-5.5"),
+  });
+  const devin = provider("acpRegistry_devin", "acpRegistry", null, {
+    displayName: "Devin",
+    iconUrl: registryIcon("devin"),
+    models: opus("claude-opus-5-5-medium"),
+  });
+  const switchRule = { ...rule, providerLimitFallbackModels: [] };
+  const fallback = (over: Partial<Parameters<typeof resolveProviderFallback>[0]> = {}) =>
+    resolveProviderFallback({
+      providers: [spentClaude, copilot, devin],
+      currentInstanceId: spentClaude.instanceId,
+      currentModel: "claude-opus-5-5",
+      rule: switchRule,
+      nowMs: now,
+      belowPercent: 100,
+      anyReady: true,
+      ...over,
+    });
+
+  it("names Devin and other registry agents, never verified Copilot; missing branding fails closed", () => {
+    expect(isUnknownBillingAgent(devin)).toBe(true);
+    expect(isUnknownBillingAgent(copilot)).toBe(false);
+    expect(isUnknownBillingAgent(provider("custom", "acpRegistry", null))).toBe(true);
+    expect(isUnknownBillingAgent(spentClaude)).toBe(false);
+  });
+
+  it("keeps Copilot as the same-model fallback", () => {
+    expect(fallback()).toEqual({ instanceId: copilot.instanceId, model: "claude-opus-5.5" });
+  });
+
+  it("does not move a thread onto Devin when Copilot is limited too", () => {
+    const limited = new Set([copilot.instanceId]);
+    expect(fallback({ limitedInstanceIds: limited })).toBeNull();
+    expect(
+      fallback({
+        limitedInstanceIds: limited,
+        proven: { instanceId: devin.instanceId, model: "claude-opus-5-5-medium" },
+      }),
+    ).toBeNull();
+  });
+
+  it("uses Devin when the person named it", () => {
+    const limited = new Set([copilot.instanceId]);
+    const named = { instanceId: devin.instanceId, model: "claude-opus-5-5-medium" };
+    expect(
+      fallback({ limitedInstanceIds: limited, rule: { ...switchRule, providerLimitFallbackModels: [named] } }),
+    ).toEqual(named);
+    expect(
+      fallback({
+        limitedInstanceIds: limited,
+        rule: { ...switchRule, defaultModelProviders: [devin.instanceId] },
+      }),
+    ).toEqual(named);
+  });
+  it("rejects missing or misleading branding in implicit routes", () => {
+    for (const candidate of [
+      { ...devin, iconUrl: undefined },
+      { ...devin, displayName: "GitHub Copilot" },
+    ]) {
+      expect(fallback({ providers: [spentClaude, candidate] })).toBeNull();
+      expect(fallback({ providers: [spentClaude, candidate], currentModel: undefined })).toBeNull();
+    }
+  });
+
+  it("preserves a configured project default", () => {
+    const named = { instanceId: devin.instanceId, model: "claude-opus-5-5-medium" };
+    expect(fallback({
+      providers: [spentClaude, devin],
+      rule: { ...switchRule, defaultModelSelection: named },
+    })).toEqual(named);
+  });
+
+  it("does not inherit an unknown-billing coordinator after the preferred plan is spent", () => {
+    const preferred = { instanceId: spentClaude.instanceId, model: "claude-opus-5-5" };
+    const result = resolveWorkerLaunchSelection({
+      preferred,
+      coordinator: { instanceId: devin.instanceId, model: "claude-opus-5-5-medium" },
+      providers: [spentClaude, devin],
+      rule: { ...switchRule, providerLimitAction: "switch", providerLimitSwitchAtPercent: 100, providerLimitWaitUnderMinutes: 0 },
+      nowMs: now,
+    });
+    expect(result).toEqual({ selection: preferred, reason: "no-room" });
+  });
+
+  it.each([undefined, "subscription", "local"] as const)(
+    "never automatically selects an explicitly disabled provider with %s billing",
+    (billing) => {
+      const disabled = { ...devin, enabled: false,
+        models: devin.models.map((model) => ({ ...model, ...(billing ? { billing } : {}) })),
+      };
+      const named = { instanceId: disabled.instanceId, model: "claude-opus-5-5-medium" };
+      for (const overrides of [
+        {},
+        { proven: named },
+        { rule: { ...switchRule, providerLimitFallbackModels: [named] } },
+        { rule: { ...switchRule, defaultModelSelection: named } },
+        { rule: { ...switchRule, defaultModelProviders: [disabled.instanceId] } },
+      ]) {
+        expect(fallback({ providers: [spentClaude, disabled], ...overrides })).toBeNull();
+      }
+      expect(resolveWorkerLaunchSelection({
+        preferred: { instanceId: spentClaude.instanceId, model: "claude-opus-5-5" },
+        coordinator: named,
+        providers: [spentClaude, disabled],
+        rule: { ...switchRule, providerLimitAction: "switch", providerLimitSwitchAtPercent: 100,
+          providerLimitWaitUnderMinutes: 0, providerLimitFallbackModels: [named],
+          defaultModelProviders: [disabled.instanceId] },
+        nowMs: now,
+      }).reason).toBe("no-room");
+    },
+  );
+
 });

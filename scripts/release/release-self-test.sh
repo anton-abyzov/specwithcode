@@ -1006,7 +1006,7 @@ server_wait_live_ok() {
 check 'server-wait waits for a suite still running with a three-field server.pid' server_wait_live_ok
 
 # An old app's own updater swapped the release in when it quit: the desktop stage keeps it, and
-# no snapshot zips the new version or prunes the previous version's rollback zip.
+# no snapshot copies the new version or prunes the previous version's rollback copy.
 use_machine "$F" 1.5.7
 stub_set RELEASE_STUB_OUTPUT=app-version-before=1.5.7
 desktop_kept_ok() {

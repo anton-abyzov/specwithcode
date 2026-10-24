@@ -77,6 +77,11 @@ const layerRegistry = Layer.succeed(
                     cmd: "fixture-agent",
                     args: [],
                   },
+                  "windows-x86_64": {
+                    archive: "https://registry.test/unused",
+                    cmd: "fixture-agent.exe",
+                    args: [],
+                  },
                 },
               },
             },

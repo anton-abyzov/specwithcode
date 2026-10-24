@@ -57,6 +57,17 @@ describe("UpdatePreferencesSection.logic", () => {
     ).toBe("install");
   });
 
+  it("offers no button for a service the app cannot update", () => {
+    const linux = state({
+      status: "manual-required",
+      identity: null,
+      message: "Updating the background service from the app is not available on Linux yet.",
+    });
+    expect(resolveServiceUpdateAction(linux)).toBe("none");
+    expect(describeServiceUpdate(linux)).toContain("not available on Linux");
+    expect(resolveServiceUpdateAction(state({ status: "manual-required" }))).toBe("check");
+  });
+
   it("offers install beside a refusal Update now gets past, with a newer release on disk", () => {
     // The real case: the service lost its database log, with 1.0.63 on disk.
     const failed = state({

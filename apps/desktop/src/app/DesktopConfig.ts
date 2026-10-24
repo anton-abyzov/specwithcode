@@ -37,6 +37,9 @@ export const DesktopConfig = Config.all({
   appDataDirectory: trimmedString("APPDATA"),
   xdgConfigHome: trimmedString("XDG_CONFIG_HOME"),
   xdgDataHome: trimmedString("XDG_DATA_HOME"),
+  // Where electron-updater keeps its downloads on Windows and Linux.
+  localAppDataDirectory: trimmedString("LOCALAPPDATA"),
+  xdgCacheHome: trimmedString("XDG_CACHE_HOME"),
   studioHome: trimmedString("STUDIO_HOME"),
   devServerUrl: Config.URL("VITE_DEV_SERVER_URL").pipe(Config.option),
   appUserModelIdOverride: trimmedString("STUDIO_DESKTOP_APP_USER_MODEL_ID"),

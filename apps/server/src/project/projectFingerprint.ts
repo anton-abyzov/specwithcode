@@ -43,9 +43,34 @@ export function originUrlFromConfig(config: string): string | null {
     }
     if (!inOrigin) continue;
     const match = /^url\s*=\s*(.+)$/u.exec(line);
-    if (match) return match[1]!.trim().replace(/^"(.*)"$/u, "$1");
+    if (match) return gitConfigValue(match[1]!);
   }
   return null;
+}
+
+/**
+ * Decodes a Git config value the way Git reads it: quotes group, `\\`, `\"`,
+ * `\n`, `\t` and `\b` are escapes, and `#` or `;` outside quotes starts a
+ * comment. Git writes a Windows remote such as `C:\repos\app.git` with its
+ * backslashes escaped.
+ */
+function gitConfigValue(raw: string): string {
+  let value = "";
+  let quoted = false;
+  for (let index = 0; index < raw.length; index += 1) {
+    const char = raw[index]!;
+    if (char === "\\") {
+      const next = raw[index + 1];
+      index += 1;
+      if (next === "n") value += "\n";
+      else if (next === "t") value += "\t";
+      else if (next === "b") value = value.slice(0, -1);
+      else if (next !== undefined) value += next;
+    } else if (char === '"') quoted = !quoted;
+    else if (!quoted && (char === "#" || char === ";")) break;
+    else value += char;
+  }
+  return value.trim();
 }
 
 interface GitLocation {

@@ -44,7 +44,7 @@ import { getVirtualizedScrollFadeClassName } from "../ui/scroll-area";
 import { TooltipProvider } from "../ui/tooltip";
 import { Button, InlineButton } from "../ui/button";
 import {
-  isProviderInstancePickerReady,
+  isProviderInstancePickerSelectable,
   isProviderInstancePickerVisible,
   type ProviderInstanceEntry,
 } from "../../providerInstances";
@@ -100,7 +100,7 @@ export function shouldIncludeModelPickerOption(input: {
   if (input.entry.driverKind === "antigravity" && input.option.slug === ANTIGRAVITY_DEFAULT_MODEL) {
     return false;
   }
-  if (isProviderInstancePickerReady(input.entry)) return true;
+  if (isProviderInstancePickerSelectable(input.entry) && !input.option.isUnavailable) return true;
   return (
     input.entry.enabled &&
     (input.entry.driverKind === "opencode" || input.entry.driverKind === "antigravity") &&
@@ -119,7 +119,7 @@ export function shouldOfferModelPickerSetup(
     entry.enabled &&
     entry.status !== "disabled" &&
     (oneClickInstall || hasProviderSetup(entry.snapshot)) &&
-    (!isProviderInstancePickerReady(entry) ||
+    (!isProviderInstancePickerSelectable(entry) ||
       !entry.installed ||
       entry.snapshot.auth.status === "unauthenticated" ||
       !options.some((option) => !option.isUnavailable))
@@ -139,7 +139,7 @@ export function adjacentModelPickerProvider(input: {
       .filter(
         (entry) =>
           !input.disabledInstanceIds?.has(entry.instanceId) &&
-          (isProviderInstancePickerReady(entry) ||
+          (isProviderInstancePickerSelectable(entry) ||
             input.selectableUnavailableInstanceIds?.has(entry.instanceId)),
       )
       .map((entry) => entry.instanceId),
@@ -252,15 +252,6 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     () => new Set(selectedModelKeys ?? (activeModelKey ? [activeModelKey] : [])),
     [selectedModelKeys, activeModelKey],
   );
-  // A spent model already in a multi-selection can still be taken out of it.
-  const usageBlockedReasonFor = useCallback(
-    (instanceId: ProviderInstanceId, modelSlug: string) =>
-      selectedModelKeys !== undefined &&
-      selectedModelKeySet.has(modelPickerModelKey(instanceId, modelSlug))
-        ? null
-        : (usage?.blockedReason(instanceId, modelSlug) ?? null),
-    [selectedModelKeySet, selectedModelKeys, usage],
-  );
   const activeInstanceHasSelectableUnavailableModel =
     activeEntry !== undefined &&
     (modelOptionsByInstance.get(props.activeInstanceId) ?? []).some((option) =>
@@ -271,7 +262,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
         activeModel: activeModelSlug,
       }),
     ) &&
-    !isProviderInstancePickerReady(activeEntry);
+    !isProviderInstancePickerSelectable(activeEntry);
   const activeInstanceNeedsSetup =
     props.onOpenProviderSetup !== undefined &&
     activeEntry !== undefined &&
@@ -479,7 +470,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   const alternativesFor = useMemo(() => {
     if (isSearching || selectedInstanceId === "favorites") return null;
     const entry = entryByInstanceId.get(selectedInstanceId);
-    if (!entry || (isProviderInstancePickerReady(entry) && entry.installed)) return null;
+    if (!entry || (isProviderInstancePickerSelectable(entry) && entry.installed)) return null;
     const ownSelectable = flatModels.some(
       (model) => model.instanceId === selectedInstanceId && !model.isUnavailable,
     );
@@ -583,7 +574,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
           const entry = entryByInstanceId.get(m.instanceId);
           return (
             entry !== undefined &&
-            isProviderInstancePickerReady(entry) &&
+            isProviderInstancePickerSelectable(entry) &&
             entry.installed &&
             !m.isUnavailable &&
             (props.lockedProvider === null || matchesLockedProvider(m))
@@ -673,24 +664,25 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
 
   const handleModelSelect = useCallback(
     (modelSlug: string, instanceId: ProviderInstanceId, additive = false) => {
-      if (
-        getModelDisabledReason?.(instanceId, modelSlug) ||
-        usageBlockedReasonFor(instanceId, modelSlug)
-      ) {
+      if (getModelDisabledReason?.(instanceId, modelSlug)) {
         return;
       }
       const options = modelOptionsByInstance.get(instanceId);
-      if (!options) {
+      if (!options || options.some((option) => option.slug === modelSlug && option.isUnavailable)) {
         return;
       }
       const entry = entryByInstanceId.get(instanceId);
-      if (!entry) {
+      if (!entry || !isProviderInstancePickerSelectable(entry)) {
         return;
       }
       // `resolveSelectableModel` uses the driver kind for normalization
       // (slug casing etc.). Custom instances share their driver's
       // normalization rules, so pass the driver kind here.
-      const resolvedModel = resolveSelectableModel(entry.driverKind, modelSlug, options);
+      const resolvedModel = resolveSelectableModel(
+        entry.driverKind,
+        modelSlug,
+        options.filter((option) => !option.isUnavailable),
+      );
       if (resolvedModel) {
         if (additive && onToggleModel) {
           onToggleModel(instanceId, resolvedModel);
@@ -705,7 +697,6 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
       modelOptionsByInstance,
       onInstanceModelChange,
       onToggleModel,
-      usageBlockedReasonFor,
     ],
   );
 
@@ -730,7 +721,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
     >();
     let selectableModelIndex = 0;
     for (const model of visibleModels) {
-      if (getModelDisabledReason?.(model.instanceId, model.slug)) {
+      if (model.isUnavailable || getModelDisabledReason?.(model.instanceId, model.slug)) {
         continue;
       }
       const jumpCommand = modelPickerJumpCommandForIndex(selectableModelIndex);
@@ -1143,9 +1134,9 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                       return null;
                     }
                     const usageState = usage?.availability(model.instanceId, model.slug);
-                    const usageBlockedReason = usageBlockedReasonFor(model.instanceId, model.slug);
-                    const disabledReason =
-                      getModelDisabledReason?.(model.instanceId, model.slug) ?? usageBlockedReason;
+                    const disabledReason = model.isUnavailable
+                      ? "This model is unavailable on this account."
+                      : (getModelDisabledReason?.(model.instanceId, model.slug) ?? null);
                     return (
                       <ModelListRow
                         key={modelKey}
@@ -1176,9 +1167,7 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
                         unavailable={model.isUnavailable === true}
                         jumpLabel={modelJumpLabelByKey.get(modelKey) ?? null}
                         disabledReason={disabledReason}
-                        usageBlocked={
-                          disabledReason !== null && disabledReason === usageBlockedReason
-                        }
+                        warningReason={usage?.warningReason(model.instanceId, model.slug) ?? null}
                         availability={
                           usage &&
                           usageState &&

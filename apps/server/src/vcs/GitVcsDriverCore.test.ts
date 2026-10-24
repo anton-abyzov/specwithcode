@@ -101,6 +101,9 @@ const writeTextFile = (
     yield* fileSystem.writeFileString(filePath, contents);
   });
 
+// Git runs GIT_SSH_COMMAND through sh, which eats unquoted Windows backslashes.
+const sshCommandFor = (scriptPath: string) => `'${scriptPath.replaceAll("\\", "/")}'`;
+
 const makeReviewDiffFileContentsInput = (
   cwd: string,
   overrides: Partial<Omit<ReviewDiffFileContentsInput, "cwd">> = {},
@@ -1192,7 +1195,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
               operation: "GitVcsDriver.test.sshRefusal",
               cwd,
               args: ["fetch", "origin"],
-              env: { LC_ALL: "C", GIT_SSH_COMMAND: fakeSsh },
+              env: { LC_ALL: "C", GIT_SSH_COMMAND: sshCommandFor(fakeSsh) },
             })
             .pipe(Effect.flip);
 
@@ -1224,7 +1227,7 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
             operation: "GitVcsDriver.test.osPermission",
             cwd,
             args: ["fetch", "origin"],
-            env: { LC_ALL: "C", GIT_SSH_COMMAND: fakeSsh },
+            env: { LC_ALL: "C", GIT_SSH_COMMAND: sshCommandFor(fakeSsh) },
           })
           .pipe(Effect.flip);
 
@@ -1609,12 +1612,16 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
       }),
     );
 
-    it.effect("keeps untracked filenames with pathspec magic in the review", () =>
+    it.effect.each([
+      // Windows filenames cannot contain ':', so long-form magic exists only elsewhere.
+      ...(HostProcessPlatform.defaultValue() === "win32" ? [] : [":(exclude)after.ts"]),
+      "[o]rdinary.ts",
+    ])("keeps untracked filename %s with pathspec magic in the review", (magicName) =>
       Effect.gen(function* () {
         const cwd = yield* makeTmpDir();
         yield* initRepoWithCommit(cwd);
         const driver = yield* GitVcsDriver.GitVcsDriver;
-        yield* writeTextFile(cwd, ":(exclude)after.ts", "literal pathspec contents\n");
+        yield* writeTextFile(cwd, magicName, "literal pathspec contents\n");
         yield* writeTextFile(cwd, "ordinary.ts", "ordinary contents\n");
         const indexBefore = yield* git(cwd, ["ls-files", "--stage"]);
 
@@ -1626,14 +1633,14 @@ it.layer(layerTest)("GitVcsDriver core integration", (it) => {
         const scoped = yield* driver.getReviewDiffPreview({
           cwd,
           file: {
-            path: ":(exclude)after.ts",
+            path: magicName,
             previousPath: null,
             sourceKind: "working-tree",
           },
         });
         const scopedSource = scoped.sources.find((source) => source.kind === "working-tree")!;
         assert.deepStrictEqual(scopedSource.files, [
-          { path: ":(exclude)after.ts", previousPath: null, additions: 1, deletions: 0 },
+          { path: magicName, previousPath: null, additions: 1, deletions: 0 },
         ]);
         assert.include(scopedSource.diff, "+literal pathspec contents");
         assert.notInclude(scopedSource.diff, "ordinary.ts");

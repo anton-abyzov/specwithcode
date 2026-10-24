@@ -500,8 +500,11 @@ describe("launch increments", () => {
       taskId: null,
       event: "studio-launch",
     });
-    expect((await NodeFSP.stat(file)).mode & 0o777).toBe(0o600);
-    expect((await NodeFSP.stat(NodePath.dirname(file))).mode & 0o777).toBe(0o700);
+    // Windows has no POSIX mode bits; stat reports 0o666 whatever was requested.
+    if (process.platform !== "win32") {
+      expect((await NodeFSP.stat(file)).mode & 0o777).toBe(0o600);
+      expect((await NodeFSP.stat(NodePath.dirname(file))).mode & 0o777).toBe(0o700);
+    }
     const [seeded] = await readThreadIncrementProgress(root, [source], NOW);
     expect(seeded).toMatchObject({
       incrementId: "0930-studio-plan-card",

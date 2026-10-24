@@ -3,6 +3,7 @@ import {
   MessageId,
   ORCHESTRATION_V2_PROVIDER_UNAVAILABLE_FAILURE_CODE,
   type ModelSelection,
+  type OrchestrationV2ConversationMessage,
   type OrchestrationV2ProviderFailure,
   type OrchestrationV2Run,
   type OrchestrationV2ServerCommand,
@@ -120,6 +121,12 @@ export interface UnopenableStop extends OpenFailure {
   readonly cause?: "open" | "context";
   /** For a context stop: what the target must hold (`ContextFitRequirement`). */
   readonly contextFit?: ContextFitRequirement;
+  /**
+   * For a context stop: the request that overflowed, sent again whole on the
+   * target. History handed over is capped, so "Continue where you left off"
+   * would leave a large request out of what the target sees.
+   */
+  readonly request?: Pick<OrchestrationV2ConversationMessage, "text" | "attachments" | "context">;
 }
 
 type StopThread = Pick<
@@ -337,11 +344,29 @@ export function unopenableFallbackCommand(
     messageId: MessageId.make(id),
     threadId: thread.id,
     modelSelection: target,
-    text: PROVIDER_FALLBACK_CONTINUE_TEXT,
-    attachments: [],
+    ...contextStopRequest(stop),
     dispatchMode: { type: "start_immediately" },
     createdBy: "user",
     creationSource: "server",
+  };
+}
+
+/**
+ * What a move sends: a context stop resends the request that overflowed, as
+ * the context recovery's retry does, since the history the target gets is
+ * capped and may leave that request out; any other stop continues.
+ */
+function contextStopRequest(stop: UnopenableStop) {
+  const request = stop.cause === "context" ? stop.request : undefined;
+  if (
+    request === undefined ||
+    (request.text.trim().length === 0 && request.attachments.length === 0)
+  )
+    return { text: PROVIDER_FALLBACK_CONTINUE_TEXT, attachments: [] };
+  return {
+    text: request.text,
+    attachments: request.attachments,
+    ...(request.context === undefined ? {} : { context: request.context }),
   };
 }
 

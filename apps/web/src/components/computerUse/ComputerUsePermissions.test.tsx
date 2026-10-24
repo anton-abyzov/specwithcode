@@ -19,8 +19,12 @@ const local = EnvironmentId.make("m4");
 const remote = EnvironmentId.make("m1");
 
 vi.mock("@effect/atom-react", () => ({ useAtomValue: () => local }));
+let serverOs: string | undefined;
 vi.mock("../../state/environments", () => ({
-  useEnvironment: (id: string | null) => ({ label: id === "m1" ? "M1" : "M4 Max" }),
+  useEnvironment: (id: string | null) => ({
+    label: id === "m1" ? "M1" : "M4 Max",
+    serverConfig: serverOs === undefined ? null : { environment: { platform: { os: serverOs } } },
+  }),
 }));
 
 let status: ComputerUsePermissions;
@@ -31,6 +35,7 @@ const resetComputerUsePermission = vi.fn(async () => status);
 beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   status = { screenRecording: false, accessibility: false };
+  serverOs = undefined;
   Object.assign(window, {
     desktopBridge: {
       getComputerUsePermissions: async () => status,
@@ -199,5 +204,32 @@ it("tracks which thread waits for a permission until its action settles", async 
   expect(seen).toBe("screen-recording");
   await act(() => endComputerUsePermissionWait("t1", second));
   expect(seen).toBe(null);
+  await act(() => renderer.unmount());
+});
+
+it.each([
+  ["windows", "Windows"],
+  ["linux", "Linux"],
+])("says computer use is macOS only when the machine runs %s", async (os, name) => {
+  serverOs = os;
+  Object.assign(window, { desktopBridge: { getClientPlatform: () => "win32" } });
+  let renderer!: ReactTestRenderer;
+  await act(() => {
+    renderer = create(<ComputerUsePermissionSetup environmentId={local} />);
+  });
+  expect(text(renderer)).toContain(`not available on ${name} yet`);
+  expect(text(renderer)).toContain("macOS only");
+  expect(text(renderer)).not.toContain("Open the SpecWithCode app");
+  expect(buttons(renderer, "Allow")).toHaveLength(0);
+  await act(() => renderer.unmount());
+});
+
+it("uses the desktop app's own platform before the server config arrives", async () => {
+  Object.assign(window, { desktopBridge: { getClientPlatform: () => "linux" } });
+  let renderer!: ReactTestRenderer;
+  await act(() => {
+    renderer = create(<ComputerUsePermissionSetup environmentId={local} />);
+  });
+  expect(text(renderer)).toContain("not available on Linux yet");
   await act(() => renderer.unmount());
 });

@@ -141,3 +141,48 @@ describe("allowMediaPermission", () => {
     expect(allowMediaPermission({ ...base, mediaTypes: undefined, callActive: false })).toBe(true);
   });
 });
+
+describe("call readiness before microphone capture", () => {
+  it("keeps unsupported devices and ungranted permissions out of preparation", async () => {
+    const { prepareVoiceCall } = await import("./voiceReadiness.ts");
+    let preparations = 0;
+    for (const microphone of ["denied", "restricted", "unknown", "not-determined"] as const) {
+      const status = { supported: true, microphone, reason: null };
+      expect(
+        await prepareVoiceCall(status, async () => {
+          preparations++;
+        }),
+      ).toEqual(status);
+    }
+    expect(preparations).toBe(0);
+  });
+
+  it("waits for first-use assets, then permits the free native path", async () => {
+    const { prepareVoiceCall } = await import("./voiceReadiness.ts");
+    let ready = false;
+    const status = { supported: true, microphone: "granted" as const, reason: null };
+    const result = await prepareVoiceCall(status, async () => {
+      ready = true;
+    });
+    expect(ready).toBe(true);
+    expect(result).toEqual(status);
+  });
+
+  it("exposes missing helper, unsupported language and asset failures without a cloud fallback", async () => {
+    const { prepareVoiceCall } = await import("./voiceReadiness.ts");
+    for (const reason of [
+      "On-device speech is not available in this build.",
+      "Speech recognition does not support this language on this Mac.",
+      "On-device speech took too long.",
+    ]) {
+      expect(
+        await prepareVoiceCall(
+          { supported: true, microphone: "granted", reason: null },
+          async () => {
+            throw new Error(reason);
+          },
+        ),
+      ).toEqual({ supported: false, microphone: "granted", reason });
+    }
+  });
+});

@@ -298,3 +298,54 @@ describe("withDefaultModelOptions", () => {
     expect(withDefaultModelOptions(other, [claudeWithOptions], "coordinator")).toBe(other);
   });
 });
+
+describe("clean-profile coordinator prerequisites", () => {
+  it.each(["apiKey", "api_key", "bedrock"])("does not auto-spend through %s", (type) => {
+    const paid = { ...codex, auth: { status: "authenticated" as const, type } };
+    expect(defaultCoordinatorModelSelection([paid])).toBeNull();
+    expect(defaultWorkerModelSelection([paid])).toBeNull();
+  });
+
+  it("requires known sign-in while preserving local models without cloud auth", () => {
+    expect(
+      defaultCoordinatorModelSelection([{ ...codex, auth: { status: "unknown" } }]),
+    ).toBeNull();
+    const base = provider("pi", "pi", ["local/model"], { auth: { status: "unknown" } });
+    const local: ServerProvider = {
+      ...base,
+      models: base.models.map((m) => ({ ...m, billing: "local", toolCalls: true })),
+    };
+    expect(defaultCoordinatorModelSelection([local])?.model).toBe("local/model");
+  });
+
+  it("skips paid and tool-less defaults within a mixed supplier catalog", () => {
+    const base = provider("pi", "pi", ["router/paid", "local/text", "local/tools"]);
+    const mixed: ServerProvider = {
+      ...base,
+      models: base.models.map((m, i) => ({
+        ...m,
+        billing: i === 0 ? "paid-router" : "local",
+        toolCalls: i !== 1,
+      })),
+    };
+    expect(defaultCoordinatorModelSelection([mixed])?.model).toBe("local/tools");
+    expect(defaultWorkerModelSelection([mixed])?.model).toBe("local/tools");
+    expect(
+      defaultCoordinatorModelSelection([{ ...mixed, models: mixed.models.slice(0, 2) }]),
+    ).toBeNull();
+  });
+
+  it("does not infer free billing for an unclassified supplier model", () => {
+    expect(
+      defaultCoordinatorModelSelection([provider("opencode", "opencode", ["default"])]),
+    ).toBeNull();
+  });
+
+  it("never auto-picks Gemini/Vertex even without an API auth label", () => {
+    expect(
+      defaultCoordinatorModelSelection([
+        { ...codex, instanceId: ProviderInstanceId.make("gemini-vertex") },
+      ]),
+    ).toBeNull();
+  });
+});

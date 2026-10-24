@@ -28,7 +28,7 @@ const schema = [
   `CREATE TABLE orchestration_v2_projection_threads (thread_id TEXT, title TEXT, project_id TEXT)`,
   `CREATE TABLE projection_projects (project_id TEXT, title TEXT)`,
   `CREATE TABLE orchestration_v2_projection_provider_threads (provider_thread_id TEXT, provider_session_id TEXT)`,
-  `CREATE TABLE orchestration_v2_projection_provider_turns (provider_thread_id TEXT, provider_turn_id TEXT, ordinal INTEGER)`,
+  `CREATE TABLE orchestration_v2_projection_provider_turns (provider_thread_id TEXT, provider_turn_id TEXT, ordinal INTEGER, run_attempt_id TEXT)`,
 ];
 
 const fast: Preparation.ServiceUpdatePreparationTimings = {
@@ -50,6 +50,7 @@ interface Fixture {
   releasedIdle: number;
   /** Whether each forced release kept MCP credentials for the restarted server. */
   readonly releasedIdleKeptMcp: Array<boolean>;
+  readonly releasedIdleEndedStreams: Array<boolean>;
   readonly releasedKeptMcp: Array<boolean>;
   /** What an interrupt does in the fixture: end the run (a provider that answers), or nothing (hung). */
   stopEndsRun: boolean;
@@ -138,6 +139,7 @@ const run = <E>(
               Effect.sync(() => {
                 fixture.releasedIdle += 1;
                 fixture.releasedIdleKeptMcp.push(input.keepMcpCredentials === true);
+                fixture.releasedIdleEndedStreams.push(input.endStreams === true);
               }),
             ),
           ),
@@ -228,10 +230,27 @@ const newFixture = (stopEndsRun: boolean, extra: Partial<Fixture> = {}): Fixture
   released: [],
   releasedIdle: 0,
   releasedIdleKeptMcp: [],
+  releasedIdleEndedStreams: [],
   releasedKeptMcp: [],
   cleanupCalls: [],
   stopEndsRun,
   ...extra,
+});
+
+// October 23, 2026: closing a session whose turn start was still in flight
+// failed the start, and a failed run is never continued after the update.
+describe("isStartInFlight", () => {
+  it("waits for a turn its provider has not reported yet, not for one it has", () => {
+    expect(
+      [
+        { status: "preparing", turnStarted: false },
+        { status: "starting", turnStarted: false },
+        { status: "running", turnStarted: false },
+        { status: "running", turnStarted: true },
+        { status: "waiting", turnStarted: false },
+      ].map(Preparation.isStartInFlight),
+    ).toEqual([true, true, true, false, false]);
+  });
 });
 
 describe("summarizeBlockers", () => {
@@ -321,6 +340,9 @@ it.live(
         assert.equal(fixture.releasedIdle, 1);
         // Agents' MCP credentials outlive the update restart.
         assert.deepEqual(fixture.releasedIdleKeptMcp, [true]);
+        // A turn the release cuts ends rather than fails, so it is stopped for the
+        // update and continued after the restart instead of shown as failed.
+        assert.deepEqual(fixture.releasedIdleEndedStreams, [true]);
       }),
     );
   },
@@ -372,7 +394,7 @@ it.live("ends a turn whose provider never answers the interrupt", () => {
       const sql = yield* SqlClient.SqlClient;
       yield* sql`INSERT INTO orchestration_v2_projection_runs (run_id, thread_id, status, provider_thread_id) VALUES ('r1', 't1', 'running', 'pt1')`;
       yield* sql`INSERT INTO orchestration_v2_projection_provider_threads VALUES ('pt1', 'session-1')`;
-      yield* sql`INSERT INTO orchestration_v2_projection_provider_turns VALUES ('pt1', 'turn-1', 1), ('pt1', 'turn-2', 2)`;
+      yield* sql`INSERT INTO orchestration_v2_projection_provider_turns VALUES ('pt1', 'turn-1', 1, NULL), ('pt1', 'turn-2', 2, NULL)`;
       const preparation = yield* Preparation.ServiceUpdatePreparation;
       const result = yield* preparation.prepare({ stopWork: true });
       assert.isTrue(result.idle);

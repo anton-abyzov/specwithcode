@@ -154,6 +154,7 @@ it("serializes competing maintenance processes after reclaiming a stale lock", a
     await expect(NodeFSP.stat(lock)).rejects.toThrow();
     expect(await NodeFSP.readdir(root)).toEqual([]);
   } finally {
-    await NodeFSP.rm(root, { recursive: true, force: true });
+    // Windows can briefly hold handles on files the helper processes just removed.
+    await NodeFSP.rm(root, { recursive: true, force: true, maxRetries: 10 });
   }
 });

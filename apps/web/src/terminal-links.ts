@@ -33,7 +33,7 @@ export interface WrappedTerminalLinkLine {
 
 const URL_PATTERN = /https?:\/\/[^\s"'`<>]+/giu;
 const FILE_PATH_PATTERN =
-  /(?:~\/|\.{1,2}\/|\/|[A-Za-z]:[\\/]|\\\\)[^\s"'`<>]+|[A-Za-z0-9._-]+(?:\/[A-Za-z0-9._-]+)+(?::\d+){0,2}/g;
+  /(?:~[\\/]|\.{1,2}[\\/]|\/|[A-Za-z]:[\\/]|\\\\)[^\s"'`<>]+|[\p{L}\p{M}\p{N}._-]+(?:[\\/][\p{L}\p{M}\p{N}._-]+)+(?::\d+){0,2}/gu;
 const TRAILING_PUNCTUATION_PATTERN = /[.,;!?]+$/;
 // Paths also drop a trailing colon: compilers end `file:line:col:` with one.
 const TRAILING_PATH_PUNCTUATION_PATTERN = /[.,;:!?]+$/;
@@ -113,7 +113,10 @@ function isWindowsPathStyle(value: string): boolean {
 function joinPath(base: string, next: string, separator: "/" | "\\"): string {
   const cleanBase = base.replace(/[\\/]+$/, "");
   if (separator === "\\") {
-    return collapseDotSegments(`${cleanBase}\\${next.replaceAll("/", "\\")}`, "\\");
+    return collapseDotSegments(
+      `${cleanBase.replaceAll("/", "\\")}\\${next.replaceAll("/", "\\")}`,
+      "\\",
+    );
   }
   return collapseDotSegments(`${cleanBase}/${next.replace(/^\/+/, "")}`, "/");
 }
@@ -147,7 +150,7 @@ function inferHomeFromCwd(cwd: string): string | undefined {
     return `/home/${posixHome[1]}`;
   }
 
-  const windowsUser = cwd.match(/^([A-Za-z]:\\Users\\[^\\]+)/);
+  const windowsUser = cwd.match(/^([A-Za-z]:[\\/]Users[\\/][^\\/]+)/i);
   if (windowsUser?.[1]) {
     return windowsUser[1];
   }
@@ -227,7 +230,7 @@ export function resolvePathLinkTarget(rawPath: string, cwd: string): string {
   const { path } = position;
 
   let resolvedPath = path;
-  if (path.startsWith("~/")) {
+  if (path.startsWith("~/") || path.startsWith("~\\")) {
     const home = inferHomeFromCwd(cwd);
     if (home) {
       const separator: "/" | "\\" = isWindowsPathStyle(home) ? "\\" : "/";

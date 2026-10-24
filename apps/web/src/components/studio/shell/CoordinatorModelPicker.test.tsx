@@ -47,7 +47,7 @@ vi.mock("../../../modelSelection", () => ({
 }));
 vi.mock("../../../providerInstances", () => ({
   deriveProviderInstanceEntries: () => state.entries,
-  isProviderInstancePickerReady: (entry: {
+  isProviderInstancePickerSelectable: (entry: {
     enabled: boolean;
     isAvailable: boolean;
     status: string;

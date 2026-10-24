@@ -5,6 +5,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Path from "effect/Path";
 
+import { nodePath as NodePath } from "../nodePath.ts";
 import {
   codexSessionDayHints,
   findClaudeSessionFile,
@@ -29,10 +30,11 @@ const home = Effect.gen(function* () {
 });
 
 it("names the local day a UUIDv7 Codex thread was created, then its neighbours", () => {
+  // Native relative paths: findCodexSessionFile joins them onto the sessions folder.
   assert.deepEqual(codexSessionDayHints(CODEX_ID, newYork), [
-    "2026/10/20",
-    "2026/10/19",
-    "2026/10/21",
+    NodePath.join("2026", "10", "20"),
+    NodePath.join("2026", "10", "19"),
+    NodePath.join("2026", "10", "21"),
   ]);
   assert.deepEqual(codexSessionDayHints("0b878647-0b05-4925-8073-e844050d7cf4", newYork), []);
   assert.deepEqual(codexSessionDayHints("not-a-uuid", newYork), []);

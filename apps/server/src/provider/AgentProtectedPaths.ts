@@ -295,7 +295,10 @@ function shellSpellings(path: AgentPathOps, absolutePath: string, homeDir: strin
   if (homeDir !== undefined && homeDir.length > 0) {
     const relative = path.relative(homeDir, absolutePath);
     if (relative.length > 0 && !relative.startsWith("..") && !path.isAbsolute(relative)) {
-      spellings.push(`~/${relative}`, `$HOME/${relative}`, `\${HOME}/${relative}`);
+      // `~` and `$HOME` are POSIX shell spellings (Git Bash on Windows), so
+      // the rest of the path is written with `/` there too.
+      const shellRelative = relative.replaceAll("\\", "/");
+      spellings.push(`~/${shellRelative}`, `$HOME/${shellRelative}`, `\${HOME}/${shellRelative}`);
     }
   }
   return spellings;

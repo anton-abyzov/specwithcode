@@ -139,6 +139,21 @@ describe("legacy update controller attachment binding", () => {
         "m4",
       );
     }));
+  it("reports a Linux service as updated from its CLI, with the attached version", () =>
+    withInstallations((_home, environment, attached) => {
+      const linux = { ...environment, platform: "linux" } as DesktopEnvironment["Service"];
+      const service = {
+        ...attached("m4"),
+        descriptor: { serverVersion: "1.0.62" },
+      } as AttachedLocalService;
+      const controller = controllerForAttachedService(linux, service);
+      expect(controller.installation()).toBeNull();
+      expect(controller.readState()).toMatchObject({
+        status: "manual-required",
+        installedVersion: "1.0.62",
+      });
+      expect(controllerForAttachedService(linux, null).readState().status).toBe("not-managed");
+    }));
   it("fails closed for ambiguous unscoped callers", () =>
     withInstallations((home) => {
       expect(

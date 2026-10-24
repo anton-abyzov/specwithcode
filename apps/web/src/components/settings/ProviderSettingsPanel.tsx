@@ -1,3 +1,4 @@
+import { settingsScopeEnvironmentLabel } from "./settingsScopeAxis";
 import { SettingsGroup } from "./SettingsGroup";
 import { ModelLanesSettings } from "./ModelLanesSettings";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
@@ -229,8 +230,14 @@ export function ProviderReadinessSummary({
                   : "Choose this agent and a model in the chat model picker.";
   const stages = [
     [
-      "Installation",
-      provider ? (provider.installed ? "Installed" : "Not installed") : "Not checked",
+      provider?.driver === "cursor" ? "Integration" : "Installation",
+      provider?.driver === "cursor"
+        ? "Built-in SDK"
+        : provider
+          ? provider.installed
+            ? "Installed"
+            : "Not installed"
+          : "Not checked",
     ],
     [
       "Sign-in",
@@ -586,6 +593,7 @@ function AccessGatedProviderSettings({
   readonly deviceTabs?: ReactNode;
   readonly targetInstanceId?: ProviderInstanceId | undefined;
 }) {
+  const { environments } = useEnvironments();
   const access = classifyProviderEnvironmentAccess({
     connectionPhase: environment.connection.phase,
     hasServerConfig: environment.serverConfig !== null,
@@ -603,7 +611,7 @@ function AccessGatedProviderSettings({
   return (
     <EnvironmentProviderSettings
       environmentId={environment.environmentId}
-      environmentLabel={environment.label}
+      environmentLabel={settingsScopeEnvironmentLabel(environment, environments)}
       readOnly={access.kind === "read-only"}
       deviceTabs={deviceTabs}
       targetInstanceId={targetInstanceId}
@@ -1078,6 +1086,7 @@ export function EnvironmentProviderSettings({
 
     return (
       <ProviderInstanceCard
+        environmentLabel={environmentLabel}
         key={row.instanceId}
         environmentId={environmentId}
         acpProjects={projects}
@@ -1277,6 +1286,7 @@ export function EnvironmentProviderSettings({
       )}
       <SettingsSection
         {...searchableSetting("providers")}
+        reach={{ kind: "machine", name: environmentLabel }}
         variant="plain"
         headerAction={
           <div className="flex min-w-0 items-center gap-2">
@@ -1345,7 +1355,7 @@ export function EnvironmentProviderSettings({
           divided={false}
           className={cn(
             providerCardHeightClassName,
-            "overflow-hidden @min-[48rem]/providers:grid @min-[48rem]/providers:grid-cols-[17rem_minmax(0,1fr)]",
+            "overflow-hidden @min-[48rem]/providers:grid @min-[48rem]/providers:grid-cols-[minmax(17rem,30%)_minmax(0,1fr)]",
           )}
         >
           <div className="border-b border-border/60 bg-muted/10 @min-[48rem]/providers:flex @min-[48rem]/providers:min-h-0 @min-[48rem]/providers:flex-col @min-[48rem]/providers:border-r @min-[48rem]/providers:border-b-0">
@@ -1385,7 +1395,7 @@ export function EnvironmentProviderSettings({
         </SettingsGroup>
       </SettingsSection>
 
-      <SettingsSection title="Model lanes">
+      <SettingsSection title="Model lanes" reach={{ kind: "machine", name: environmentLabel }}>
         <ModelLanesSettings />
       </SettingsSection>
 
@@ -1398,7 +1408,7 @@ export function EnvironmentProviderSettings({
         readOnly={readOnly}
       />
 
-      <SettingsSection title="Advanced">
+      <SettingsSection title="Advanced" reach={{ kind: "machine", name: environmentLabel }}>
         <SettingsRow
           id={searchableSetting("provider-health-check-interval").id}
           title={

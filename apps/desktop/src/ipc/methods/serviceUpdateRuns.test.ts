@@ -47,6 +47,8 @@ function setup(
   options: {
     readonly supported?: boolean;
     readonly followUp?: RunFollowUp;
+    /** What the desktop's updater knows of the app's release (appTargetForRun). */
+    readonly appTarget?: Effect.Effect<string | null>;
     readonly files?: ReturnType<typeof memoryRunFiles>;
     readonly installedVersion?: string;
     /** config.json cannot be written: the change is refused. */
@@ -83,6 +85,7 @@ function setup(
     kick: (reason) => Effect.sync(() => void kicks.push(reason)),
     writeConfig: (change) => Effect.sync(() => writeConfig(change)),
     ...(options.followUp ? { followUp: options.followUp } : {}),
+    ...(options.appTarget ? { appTarget: options.appTarget } : {}),
     newRunId: () => `run-${(next += 1)}`,
   });
   /** The install request of a run, as serviceUpdates writes it: run.json, then config.json. */
@@ -124,6 +127,56 @@ describe("serviceUpdateRun begin", () => {
       expect(yield* runs.handle(begin)).toEqual({ supported: false, created: false, run: null });
       expect(files.files.size).toBe(0);
       expect(configs).toEqual([]);
+    }),
+  );
+
+  it.effect("names the desktop's app release when the window named none", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(T0);
+      let asked = 0;
+      const appTarget = Effect.sync(() => {
+        asked += 1;
+        return "1.0.70";
+      });
+      const { runs, files } = setup({ appTarget });
+      const made = yield* runs.handle({ ...begin, appTargetVersion: null });
+      expect(made.created).toBe(true);
+      expect(readRun(files)?.appTargetVersion).toBe("1.0.70");
+      expect(asked).toBe(1);
+    }),
+  );
+
+  // Newer: the app would wait for a service release the agent does not
+  // install. Older: a download an earlier launch left, gone from the feed.
+  it.effect.each(["1.0.71", "1.0.69"])(
+    "leaves out a desktop app release %s that is not the run's release",
+    (desktopRelease) =>
+      Effect.gen(function* () {
+        yield* TestClock.setTime(T0);
+        const { runs, files } = setup({ appTarget: Effect.succeed(desktopRelease) });
+        const made = yield* runs.handle({ ...begin, appTargetVersion: null });
+        expect(made.created).toBe(true);
+        expect(readRun(files)?.targetVersion).toBe("1.0.70");
+        expect(readRun(files)?.appTargetVersion).toBeNull();
+      }),
+  );
+
+  it.effect("keeps the window's app release, and leaves none when the desktop knows none", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(T0);
+      let asked = 0;
+      const known = setup({
+        appTarget: Effect.sync(() => {
+          asked += 1;
+          return "1.0.71";
+        }),
+      });
+      yield* known.runs.handle(begin);
+      expect(readRun(known.files)?.appTargetVersion).toBe("1.0.70");
+      expect(asked).toBe(0);
+      const unknown = setup({ appTarget: Effect.succeed(null) });
+      yield* unknown.runs.handle({ ...begin, appTargetVersion: null });
+      expect(readRun(unknown.files)?.appTargetVersion).toBeNull();
     }),
   );
 

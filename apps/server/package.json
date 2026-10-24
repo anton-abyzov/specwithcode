@@ -1,6 +1,6 @@
 {
   "name": "specweave-studio",
-  "version": "1.0.75",
+  "version": "1.0.76",
   "license": "MIT",
   "repository": {
     "type": "git",
@@ -46,7 +46,7 @@
     "effect": "catalog:",
     "jose": "catalog:",
     "jsonc-parser": "3.3.1",
-    "node-pty": "^1.2.0-beta.15",
+    "node-pty": "1.2.0-beta.15",
     "playwright-core": "1.60.0",
     "postcss": "8.5.28",
     "postcss-value-parser": "4.2.0",

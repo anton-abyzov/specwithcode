@@ -5,9 +5,12 @@ import { CheckIcon, ChevronRightIcon } from "lucide-react";
 import type * as React from "react";
 
 import { cn } from "~/lib/utils";
+import { usePagePopup } from "./pagePopups";
 import { buttonVariants } from "./button";
 
-const Menu = MenuPrimitive.Root;
+function Menu<Payload>(props: MenuPrimitive.Root.Props<Payload>) {
+  return <MenuPrimitive.Root {...usePagePopup(props)} />;
+}
 
 function MenuTrigger({ className, children, ...props }: MenuPrimitive.Trigger.Props) {
   return (

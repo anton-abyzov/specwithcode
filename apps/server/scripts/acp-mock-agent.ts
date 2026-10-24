@@ -1384,6 +1384,22 @@ const program = Effect.gen(function* () {
               { detached: true, stdio: "ignore" },
             );
             detachedLauncher.unref();
+          } else if (process.platform === "win32") {
+            // Git Bash reports MSYS PIDs, not Windows ones, so on Windows the
+            // root and its long-running child are Node processes.
+            const windowsCommand = [
+              'const { spawn } = require("node:child_process");',
+              "const child = spawn(process.execPath, ['-e', 'setInterval(() => {}, 1000)'], { stdio: 'ignore' });",
+              'require("node:fs").writeFileSync(process.argv[1], `${process.pid} ${child.pid}\\n`);',
+              "child.once('exit', () => process.exit());",
+            ].join(" ");
+            NodeChildProcess.spawn(
+              process.execPath,
+              ["-e", windowsCommand, runningCommandPidPath],
+              {
+                stdio: "ignore",
+              },
+            );
           } else {
             NodeChildProcess.spawn("bash", ["-c", command, "bash", runningCommandPidPath], {
               stdio: "ignore",

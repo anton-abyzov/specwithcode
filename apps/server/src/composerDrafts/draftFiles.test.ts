@@ -126,8 +126,9 @@ describe("composer draft files", () => {
       child.on("exit", (code) => reject(new Error(`child exited ${code}: ${stderr}`)));
     });
     const exited = new Promise((resolve) => child.on("exit", (_code, signal) => resolve(signal)));
-    // Stop exactly the process this test started.
-    process.kill(child.pid!, "SIGKILL");
+    // Stop exactly the process this test started. Killing through the handle makes
+    // Windows report the signal too; process.kill(pid) there only yields exit code 1.
+    child.kill("SIGKILL");
     expect(await exited).toBe("SIGKILL");
 
     const draft = await readDraftWithData(dir, "thread:killed");

@@ -41,11 +41,17 @@ vi.mock("./ModelListRow", () => ({
   ModelListRow: ({
     model,
     disabledReason,
+    warningReason,
   }: {
     model: { name: string };
     disabledReason?: string | null;
+    warningReason?: string | null;
   }) => (
-    <div data-model-row data-disabled-reason={disabledReason ?? undefined}>
+    <div
+      data-model-row
+      data-disabled-reason={disabledReason ?? undefined}
+      data-warning-reason={warningReason ?? undefined}
+    >
       {model.name}
     </div>
   ),
@@ -314,7 +320,7 @@ describe("model picker usage limits", () => {
       long: "The weekly limit is used up.",
       tone: "full",
     }),
-    blockedReason: () => "The weekly limit is used up.",
+    warningReason: () => "The weekly limit is used up.",
     formatAt: () => "6:00 PM",
   };
   const options = new Map([
@@ -331,9 +337,12 @@ describe("model picker usage limits", () => {
       .find((node) => node.textContent === name)
       ?.getAttribute("data-disabled-reason") ?? null;
 
-  it("disables a spent model and names why", async () => {
+  it("keeps a spent model selectable and names its warning", async () => {
     await mount({ model: "alpha", modelOptionsByInstance: options, usage: spent });
-    expect(rowReason("Beta")).toBe("The weekly limit is used up.");
+    expect(rowReason("Beta")).toBeNull();
+    expect(
+      container.querySelector("[data-warning-reason]")?.getAttribute("data-warning-reason"),
+    ).toBe("The weekly limit is used up.");
   });
 
   it("lets a spent model already in a multi-selection be taken out", async () => {
@@ -345,6 +354,9 @@ describe("model picker usage limits", () => {
       onToggleModel: vi.fn(),
     });
     expect(rowReason("Alpha")).toBeNull();
-    expect(rowReason("Beta")).toBe("The weekly limit is used up.");
+    expect(rowReason("Beta")).toBeNull();
+    expect(
+      container.querySelector("[data-warning-reason]")?.getAttribute("data-warning-reason"),
+    ).toBe("The weekly limit is used up.");
   });
 });

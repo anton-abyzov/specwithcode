@@ -3,7 +3,7 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodeNet from "node:net";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
-import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
+import { afterEach, beforeEach, expect, it as test, vi } from "vite-plus/test";
 
 vi.mock("electron", () => ({
   nativeImage: {
@@ -13,8 +13,13 @@ vi.mock("electron", () => ({
     }),
   },
 }));
+import { HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
+
 import { captureNiriWindow, checkNiriCaptureSupport, niriSocketPath } from "./NiriSnapShot.ts";
 import { captureLinuxWindow, getLinuxCaptureSupport } from "./LinuxSnapShot.ts";
+
+// Niri is a Linux compositor reached over a Unix socket; Windows has neither.
+const it = test.skipIf(HostProcessPlatform.defaultValue() === "win32");
 
 const png = Buffer.from([137, 80, 78, 71, 13, 10, 26, 10, 0]);
 const window = {
@@ -148,7 +153,9 @@ it("waits for the restored Studio window to map instead of polling", async () =>
     await original(request, socket);
     if (request === "EventStream")
       send(socket, {
-        WindowOpenedOrChanged: { window: { ...window, id: 4, pid: process.pid, title: "SpecWithCode" } },
+        WindowOpenedOrChanged: {
+          window: { ...window, id: 4, pid: process.pid, title: "SpecWithCode" },
+        },
       });
   };
   await snapshot.feedback!.activate("SpecWithCode");
@@ -169,7 +176,9 @@ it("cancels pending activation when capture feedback is closed", async () => {
     await original(request, socket);
     if (request === "EventStream") started.resolve();
   };
-  const activation = expect(snapshot.feedback!.activate("SpecWithCode")).rejects.toThrow("cancelled");
+  const activation = expect(snapshot.feedback!.activate("SpecWithCode")).rejects.toThrow(
+    "cancelled",
+  );
   await started.promise;
   snapshot.feedback!.close();
   await activation;
@@ -197,7 +206,9 @@ it("rejects compositor errors and cleans up its temporary image", async () => {
       send(socket, { Err: "window disappeared" });
     } else await original(request, socket);
   };
-  await expect(captureLinuxWindow("com.specweave.SpecWeaveStudio")).rejects.toThrow("window disappeared");
+  await expect(captureLinuxWindow("com.specweave.SpecWeaveStudio")).rejects.toThrow(
+    "window disappeared",
+  );
   expect(await NodeFSP.stat(NodePath.dirname(capturePath!)).catch(() => undefined)).toBeUndefined();
 });
 

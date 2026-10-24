@@ -69,7 +69,7 @@ export function formatServiceStatus(
   cliVersion: string,
 ): string {
   if (!status.supported) {
-    return "SpecWithCode service\n  Status: unavailable on this machine\n  Supported on: Linux with systemd, macOS with launchd";
+    return "SpecWithCode service\n  Status: unavailable on this machine\n  Supported on: Linux with systemd, macOS with launchd, Windows with Task Scheduler";
   }
   if (!status.installed) {
     return "SpecWithCode service\n  Status: not installed\n  Next: Run `specweave-studio service install`.";
@@ -242,8 +242,9 @@ export const offerServiceDuringOnboarding = Effect.gen(function* () {
     // This CLI cannot verify the newer service. Keep the manual fallback available.
     return false;
   }
-  // A LaunchAgent starts at login and dies at logout; there is no
-  // enable-linger equivalent on macOS. Do not promise more than that.
+  // A LaunchAgent, like the per-user Windows task, starts at login and dies
+  // at logout; neither has an enable-linger equivalent without an
+  // administrator. Do not promise more than that.
   const platform = yield* HostProcessPlatform;
   const wanted = yield* Prompt.run(
     Prompt.Confirm({
@@ -252,8 +253,11 @@ export const offerServiceDuringOnboarding = Effect.gen(function* () {
         : platform === "darwin"
           ? "Run SpecWithCode in the background whenever you log in to this Mac? " +
             "It stays reachable through SpecWithCode Connect while you are logged in."
-          : "Run SpecWithCode in the background whenever this machine boots? " +
-            "It stays reachable through SpecWithCode Connect even after you log out.",
+          : platform === "win32"
+            ? "Run SpecWithCode in the background whenever you sign in to Windows? " +
+              "It stays reachable through SpecWithCode Connect while you are signed in."
+            : "Run SpecWithCode in the background whenever this machine boots? " +
+              "It stays reachable through SpecWithCode Connect even after you log out.",
       initial: true,
     }),
   );

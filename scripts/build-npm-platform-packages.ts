@@ -268,21 +268,22 @@ const runCommand = Effect.fn("runCommand")(function* (
 });
 
 /**
- * Extracts an archive and returns its single top-level directory. `.tar.gz`
- * goes through tar everywhere; `.zip` through the bsdtar Windows ships or,
- * elsewhere, `unzip`, since GNU tar cannot read zip.
+ * Extracts an archive and returns its single top-level directory. Windows
+ * reads both formats with the bsdtar it ships (a GNU tar earlier on PATH
+ * takes `C:` for a remote host); elsewhere `.tar.gz` goes through tar and
+ * `.zip` through `unzip`, since GNU tar cannot read zip.
  */
 const extractArchive = Effect.fn("extractArchive")(function* (archive: string, into: string) {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const platform = yield* HostProcessPlatform;
-  if (!archive.endsWith(".zip")) {
-    yield* runCommand(ChildProcess.make("tar", ["-xf", archive, "-C", into]), "tar -xf");
-  } else if (platform === "win32") {
+  if (platform === "win32") {
     yield* runCommand(
       ChildProcess.make(windowsSystemTar(), ["-xf", archive, "-C", into]),
-      "tar.exe -xf (zip)",
+      "tar.exe -xf",
     );
+  } else if (!archive.endsWith(".zip")) {
+    yield* runCommand(ChildProcess.make("tar", ["-xf", archive, "-C", into]), "tar -xf");
   } else {
     if (!(yield* isCommandAvailable("unzip"))) {
       return yield* new NpmPackagesToolMissingError({

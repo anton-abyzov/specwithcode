@@ -248,7 +248,8 @@ it.layer(NodeServices.layer)("ServerSecretStore.layer", (it) => {
 
       yield* secretStore.set("disposal", Uint8Array.from([1, 2, 3]));
 
-      assert.equal(permissions, 0o600);
+      // Windows has no POSIX mode bits; the secrets folder's ACL keeps the file private.
+      if (process.platform !== "win32") assert.equal(permissions, 0o600);
       assert.isFalse(yield* fileSystem.exists(renamedPath));
       assert.deepEqual(yield* fileSystem.readDirectory(secretsDir), []);
     }).pipe(Effect.provide(layerServerConfig())),

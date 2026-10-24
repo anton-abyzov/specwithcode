@@ -98,7 +98,8 @@ export async function sanitizeCardLink(
   if (raw === null) return {};
   const value = raw.trim();
   if (COMMIT_SHA.test(value)) return { commit: value };
-  if (/^[a-z][a-z0-9+.-]*:/iu.test(value)) {
+  // A one-letter "scheme" is a Windows drive letter, so that path is checked like any other.
+  if (/^[a-z][a-z0-9+.-]+:/iu.test(value)) {
     if (!/^https:\/\//iu.test(value)) return {};
     try {
       const url = new URL(value);

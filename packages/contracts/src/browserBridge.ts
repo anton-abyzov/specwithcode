@@ -60,6 +60,8 @@ export const BrowserBridgeProviderWiring = Schema.Struct({
     "shared_bridge",
     /** The provider's own Chrome extension (Codex). */
     "own_extension",
+    /** Claude Code threads start without it: SpecWithCode Browser is paired and preferred. */
+    "specwithcode_browser",
     "turned_off",
     "not_set_up",
     "not_installed",

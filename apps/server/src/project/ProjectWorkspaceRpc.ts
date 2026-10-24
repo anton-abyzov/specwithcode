@@ -112,11 +112,11 @@ export class DesignWsHandlers extends Context.Service<
   DesignWsHandlers,
   {
     readonly layerRpcHandlers: (
-      session: Pick<AuthenticatedSession, "subject">,
+      session: Pick<AuthenticatedSession, "subject" | "scopes">,
     ) => Layer.Layer<DesignRpcHandlers>;
     /** A signed URL for one of a design's images, after the caller's design.get checks. */
     readonly issueAssetUrl: (
-      session: Pick<AuthenticatedSession, "subject">,
+      session: Pick<AuthenticatedSession, "subject" | "scopes">,
       resource: Extract<AssetResource, { readonly _tag: "design-asset" }>,
     ) => Effect.Effect<AssetCreateUrlResult, AssetAccessError>;
   }

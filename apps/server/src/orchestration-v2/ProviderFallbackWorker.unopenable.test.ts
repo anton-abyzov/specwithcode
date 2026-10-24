@@ -91,6 +91,7 @@ function copilotCheckedAt(at: number): ServerProvider {
   const { usageLimits: _none, ...base } = provider(copilotId, "acpRegistry", at);
   return {
     ...base,
+    iconUrl: "https://cdn.agentclientprotocol.com/registry/v1/latest/github-copilot-cli.svg",
     models: [{ slug: opus, name: "Claude Opus 5.5", isCustom: false, capabilities: null }],
   };
 }

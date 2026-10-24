@@ -10,6 +10,7 @@ import * as Effect from "effect/Effect";
 import * as Crypto from "effect/Crypto";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import { resolveSelfInvocation } from "@specweave-studio/shared/nodeRuntime";
 import * as Runtime from "./AcpSessionRuntime.ts";
 import {
@@ -45,11 +46,16 @@ describe("ACP permission lifecycle", () => {
           capabilities: AcpProviderCapabilitiesV2,
           makeRuntime: (input) =>
             Effect.gen(function* () {
+              const path = yield* Path.Path;
               const native = yield* Runtime.make({
                 ...input,
                 spawn: {
                   command: process.execPath,
-                  args: [new URL("../../../scripts/acp-mock-agent.ts", import.meta.url).pathname],
+                  args: [
+                    yield* path
+                      .fromFileUrl(new URL("../../../scripts/acp-mock-agent.ts", import.meta.url))
+                      .pipe(Effect.orDie),
+                  ],
                   cwd: input.cwd,
                   env: { STUDIO_ACP_SESSION_LIFECYCLE: "1" },
                 },

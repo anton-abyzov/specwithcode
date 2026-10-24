@@ -3,6 +3,7 @@ import * as DateTime from "effect/DateTime";
 import * as Schema from "effect/Schema";
 
 import {
+  runInterruptResultDetail,
   CheckpointId,
   CheckpointRef,
   CheckpointScopeId,
@@ -1508,5 +1509,21 @@ describe("OrchestrationV2ThreadProjectMoveLink", () => {
     expect(decoded._tag === "Success" ? decoded.value.note : null).toBe(note);
     expect(decode({ ...link, note: "x".repeat(301) })._tag).toBe("Failure");
     expect(decode({ ...link, note: "  " })._tag).toBe("Failure");
+  });
+});
+
+describe("runInterruptResultDetail", () => {
+  it("drops the old result text that named the user whoever stopped the run", () => {
+    expect(runInterruptResultDetail({ message: "Run interrupted by user" })).toBeNull();
+    expect(
+      runInterruptResultDetail({
+        message: "Stopped for the SpecWithCode update",
+        cause: "service_update",
+      }),
+    ).toBe("Stopped for the SpecWithCode update");
+    expect(runInterruptResultDetail({ message: "Stopped by the user", cause: "user" })).toBe(
+      "Stopped by the user",
+    );
+    expect(runInterruptResultDetail({ message: "" })).toBeNull();
   });
 });

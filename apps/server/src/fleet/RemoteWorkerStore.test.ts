@@ -48,7 +48,8 @@ describe("RemoteWorkerStore", () => {
       );
       const config = yield* ServerConfig.ServerConfig;
       const file = NodePath.join(config.stateDir, "remote-workers.json");
-      expect(NodeFS.statSync(file).mode & 0o777).toBe(0o600);
+      // Windows has no POSIX mode bits to check.
+      if (process.platform !== "win32") expect(NodeFS.statSync(file).mode & 0o777).toBe(0o600);
       expect(NodeFS.readdirSync(config.stateDir).filter((name) => name.endsWith(".tmp"))).toEqual(
         [],
       );

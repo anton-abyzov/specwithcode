@@ -191,8 +191,11 @@ describe("native connection apply", () => {
         args: ["serve"],
         env: {},
       });
-      const mode = (yield* Effect.promise(() => NodeFSP.stat(codexFile()))).mode & 0o777;
-      expect(mode).toBe(0o600);
+      // POSIX file modes; Windows has no owner-only mode bits to check.
+      if (process.platform !== "win32") {
+        const mode = (yield* Effect.promise(() => NodeFSP.stat(codexFile()))).mode & 0o777;
+        expect(mode).toBe(0o600);
+      }
       const again = yield* Effect.flip(
         service((discovery) => discovery.apply({ action: "copy", connectionId: docs.id })),
       );
@@ -250,7 +253,7 @@ describe("managing declarations across tools", () => {
       expect(result.change?.preview).toBe(true);
       expect(result.change?.id).toBeUndefined();
       expect(result.change?.files.map((f) => f.path)).toEqual([
-        "~/.claude.json",
+        NodePath.join("~", ".claude.json"),
         NodePath.join("~", "cursor", "mcp.json"),
         NodePath.join("~", "windsurf", "mcp_config.json"),
       ]);
@@ -314,10 +317,13 @@ describe("managing declarations across tools", () => {
       expect(kept).toMatchObject({ state: "disabled", parked: true, shadowed: false });
       expect(kept.id).toMatch(/^parked:claude:/);
       expect(JSON.stringify(off.change)).not.toContain("sk-secret");
-      const mode = (yield* Effect.promise(() =>
-        NodeFSP.stat(NodePath.join(root, "state", "connections", "parked.json")),
-      )).mode;
-      expect(mode & 0o077).toBe(0);
+      // POSIX file modes; Windows has no owner-only mode bits to check.
+      if (process.platform !== "win32") {
+        const mode = (yield* Effect.promise(() =>
+          NodeFSP.stat(NodePath.join(root, "state", "connections", "parked.json")),
+        )).mode;
+        expect(mode & 0o077).toBe(0);
+      }
       yield* managed((d) => d.apply({ action: "enable", connectionId: kept.id }));
       const claude = yield* readJson(".claude.json");
       expect(claude.mcpServers.notes).toEqual(original);

@@ -102,7 +102,8 @@ describe("a completed copy before coordinator context transfer", () => {
         if (change === "edit") NodeFS.writeFileSync(file, "later edit\n");
         if (change === "new-file") NodeFS.writeFileSync(NodePath.join(folder, "new.txt"), "new\n");
         if (change === "delete") NodeFS.unlinkSync(file);
-        if (change === "mode") NodeFS.chmodSync(file, 0o700);
+        // Windows has no execute bits; chmod there only toggles read-only, a mode it still records.
+        if (change === "mode") NodeFS.chmodSync(file, process.platform === "win32" ? 0o444 : 0o700);
         if (change === "symlink") {
           NodeFS.unlinkSync(file);
           NodeFS.symlinkSync("new.txt", file);
@@ -270,23 +271,28 @@ describe("terminal source snapshot cleanup", () => {
     expect((await sources.release(loaded, "again")).state).toBe("released");
   });
 
-  it("acknowledges a committed copy even if cleanup fails and retries housekeeping on status read", async () => {
-    const { sources, loaded, state } = await snapshot(true, false);
-    const overlay = NodePath.join(state, "folder-sources", operationId, "portable-git");
-    NodeFS.chmodSync(overlay, 0o500);
-    try {
-      expect((await sources.commit(loaded)).state).toBe("committed");
-      expect(loaded.record.snapshotCleanupPending).toBe(true);
-    } finally {
-      NodeFS.chmodSync(overlay, 0o700);
-    }
-    const retried = await new SourceTransfers(state).read(operationId);
-    expect(retried?.snapshotCleanupPending).toBe(false);
-    expect(retried?.warnings).not.toContain(
-      "Temporary Git snapshot cleanup is pending; the copy result is unchanged.",
-    );
-    expect(
-      NodeFS.existsSync(NodePath.join(state, "folder-sources", operationId, "portable-git")),
-    ).toBe(false);
-  });
+  // The cleanup fault is a read-only POSIX directory (mode 0o500); Windows ignores directory
+  // permission bits, so the removal succeeds there and no fault is injected.
+  it.skipIf(process.platform === "win32")(
+    "acknowledges a committed copy even if cleanup fails and retries housekeeping on status read",
+    async () => {
+      const { sources, loaded, state } = await snapshot(true, false);
+      const overlay = NodePath.join(state, "folder-sources", operationId, "portable-git");
+      NodeFS.chmodSync(overlay, 0o500);
+      try {
+        expect((await sources.commit(loaded)).state).toBe("committed");
+        expect(loaded.record.snapshotCleanupPending).toBe(true);
+      } finally {
+        NodeFS.chmodSync(overlay, 0o700);
+      }
+      const retried = await new SourceTransfers(state).read(operationId);
+      expect(retried?.snapshotCleanupPending).toBe(false);
+      expect(retried?.warnings).not.toContain(
+        "Temporary Git snapshot cleanup is pending; the copy result is unchanged.",
+      );
+      expect(
+        NodeFS.existsSync(NodePath.join(state, "folder-sources", operationId, "portable-git")),
+      ).toBe(false);
+    },
+  );
 });

@@ -136,7 +136,12 @@ if (-not $version) {
     default { Fail "STUDIO_CHANNEL must be stable, nightly, or preview" }
   }
   $releases = Invoke-RestMethod -Uri "https://api.github.com/repos/$repo/releases?per_page=100" -Headers @{ "User-Agent" = "studio-install" }
-  $tag = ($releases | Where-Object { -not $_.draft -and $_.tag_name -match $tagPattern } | Select-Object -First 1).tag_name
+  # The Windows archive is attached a while after the macOS release is published
+  # (.github/workflows/release-windows-linux.yml), so take the newest release that has it.
+  $tag = ($releases | Where-Object {
+      -not $_.draft -and $_.tag_name -match $tagPattern -and
+      (@($_.assets | ForEach-Object { $_.name }) -contains "studio-$($_.tag_name.Substring(1))-win32-$arch.zip")
+    } | Select-Object -First 1).tag_name
   if (-not $tag) { Fail "could not find a $channel release; set STUDIO_VERSION" }
   $version = $tag.Substring(1)
 }
@@ -163,22 +168,34 @@ if ((Test-Path $marker) -and ((Get-Content $marker -Raw).Trim() -eq $version)) {
     if ($interactive) { [Console]::Error.Write("`r$esc[2K") }
     [Console]::Error.WriteLine("  ${muted}Installing$reset SpecWithCode $bold$version$reset`n")
     Step "Downloading..."
-    try {
-      Fetch "$baseUrl/v$version/SHA256SUMS" (Join-Path $staging "SHA256SUMS")
-    } catch {
-      $status = $_.Exception.Response.StatusCode.value__
-      if ($status -eq 404) {
-        Fail "specweave-studio $version has no release archive for win32-$arch; releases before the self-contained CLI can only be installed with 'npm install -g specweave-studio@$version'"
+    # SHA256SUMS-windows-linux lists the Windows and Linux desktop assets and this archive; the
+    # release's own SHA256SUMS belongs to the macOS release and lists it only in older releases.
+    $sumsFiles = @("SHA256SUMS-windows-linux", "SHA256SUMS")
+    $expected = $null
+    $sumsFound = $false
+    foreach ($sumsName in $sumsFiles) {
+      try {
+        Fetch "$baseUrl/v$version/$sumsName" (Join-Path $staging $sumsName)
+      } catch {
+        $status = $_.Exception.Response.StatusCode.value__
+        if ($status -eq 404) { continue }
+        throw
       }
-      throw
+      $sumsFound = $true
+      $line = (Get-Content (Join-Path $staging $sumsName) | Where-Object { $_ -match "\s\*?$([regex]::Escape($archive))$" } | Select-Object -First 1)
+      if ($line) {
+        $expected = ($line -split "\s+")[0].ToLowerInvariant()
+        break
+      }
     }
+    if (-not $sumsFound) {
+      Fail "specweave-studio $version has no release archive for win32-$arch; releases before the self-contained CLI can only be installed with 'npm install -g specweave-studio@$version'"
+    }
+    if (-not $expected) { Fail "$archive is not listed in $($sumsFiles -join ' or ')" }
     Fetch "$baseUrl/v$version/$archive" (Join-Path $staging $archive) -progress
 
     Step "Verifying the download..."
 
-    $expected = (Get-Content (Join-Path $staging "SHA256SUMS") | Where-Object { $_ -match "\s\*?$([regex]::Escape($archive))$" } | Select-Object -First 1)
-    if (-not $expected) { Fail "$archive is not listed in SHA256SUMS" }
-    $expected = ($expected -split "\s+")[0].ToLowerInvariant()
     $actual = (Get-FileHash -Algorithm SHA256 (Join-Path $staging $archive)).Hash.ToLowerInvariant()
     if ($actual -ne $expected) { Fail "checksum mismatch for $archive" }
 
@@ -191,7 +208,8 @@ if ((Test-Path $marker) -and ((Get-Content $marker -Raw).Trim() -eq $version)) {
     } finally { $global:ProgressPreference = $savedProgress }
     # The archive wraps everything in one directory named after its stem.
     Get-ChildItem (Join-Path $staging $stem) | Move-Item -Destination $staging
-    Remove-Item (Join-Path $staging $stem), (Join-Path $staging $archive), (Join-Path $staging "SHA256SUMS") -Recurse -Force
+    Remove-Item (Join-Path $staging $stem), (Join-Path $staging $archive) -Recurse -Force
+    foreach ($sumsName in $sumsFiles) { Remove-Item (Join-Path $staging $sumsName) -Force -ErrorAction SilentlyContinue }
 
     & (Join-Path $staging "specweave-studio.exe") --version | Out-Null
     if ($LASTEXITCODE -ne 0) { Fail "the downloaded executable does not run" }

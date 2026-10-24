@@ -53,6 +53,57 @@ const InstallManifest = Schema.Struct({
 });
 const decodeInstallManifest = Schema.decodeUnknownEffect(Schema.fromJsonString(InstallManifest));
 
+const WINDOWS_NPM_GLOBAL_ENTRY =
+  /^(.*?)[\\/]node_modules[\\/]specweave-studio[\\/](?:dist[\\/]bin\.mjs|bin[\\/]specweave-studio\.js|node_modules[\\/]@specweave-studio[\\/]studio-[^\\/]+[\\/]specweave-studio\.exe)$/i;
+
+const comparableWindowsPath = (value: string) => value.replaceAll("\\", "/").toLowerCase();
+
+/**
+ * npm on Windows installs globals to `<prefix>\node_modules\specweave-studio`
+ * and writes a `<prefix>\specweave-studio.cmd` shim (no `lib`, no `bin`
+ * symlink). The shim naming this package's own bin script proves the prefix
+ * owns the running package.
+ */
+const resolveWindowsNpmGlobal = Effect.fn("cli.invocation.resolve_windows_npm_global")(function* (
+  entry: string,
+  executable: boolean,
+) {
+  const runner = detectCliRunner(entry);
+  if (runner !== null) {
+    return { kind: runner === "pnpm dlx" ? "pnpm-dlx" : runner } satisfies ServerInstallation;
+  }
+  const fs = yield* FileSystem.FileSystem;
+  const path = yield* Path.Path;
+  const prefix = WINDOWS_NPM_GLOBAL_ENTRY.exec(entry)?.[1];
+  if (!prefix || /[\\/]node_modules[\\/]/i.test(prefix)) return null;
+  const packageRoot = path.join(prefix, "node_modules", "specweave-studio");
+  const manifest = yield* fs
+    .readFileString(path.join(packageRoot, "package.json"))
+    .pipe(Effect.flatMap(decodeInstallManifest));
+  const binScript = manifest.bin?.["specweave-studio"];
+  if (manifest.name !== "specweave-studio" || binScript === undefined) return null;
+  const bin = yield* fs.realPath(path.join(packageRoot, binScript));
+  if (executable) {
+    const nativeManifest = yield* fs
+      .readFileString(path.join(path.dirname(entry), "package.json"))
+      .pipe(Effect.flatMap(decodeInstallManifest));
+    if (
+      binScript !== "./bin/specweave-studio.js" ||
+      manifest.optionalDependencies?.[nativeManifest.name] !== nativeManifest.version ||
+      nativeManifest.version !== manifest.version
+    )
+      return null;
+  } else if (comparableWindowsPath(bin) !== comparableWindowsPath(entry)) {
+    return null;
+  }
+  const shim = yield* fs.readFileString(path.join(prefix, "specweave-studio.cmd"));
+  const shimTarget = comparableWindowsPath(
+    `node_modules/specweave-studio/${binScript.replace(/^\.\//, "")}`,
+  );
+  if (!comparableWindowsPath(shim).includes(shimTarget)) return null;
+  return { kind: "npm-global", prefix } satisfies ServerInstallation;
+});
+
 /** Prove the running package and its global bin belong together before suggesting an update. */
 export const resolveServerInstallation = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
@@ -62,6 +113,7 @@ export const resolveServerInstallation = Effect.gen(function* () {
   const executablePath = yield* HostProcessExecutablePath;
   const platform = yield* HostProcessPlatform;
   const entry = yield* fs.realPath(executable ? executablePath : (args[1] ?? ""));
+  if (platform === "win32") return yield* resolveWindowsNpmGlobal(entry, executable);
   const match =
     /^(.*)\/lib\/node_modules\/specweave-studio\/(?:dist\/bin\.mjs|bin\/specweave-studio\.js|node_modules\/@specweave-studio\/studio-[^/]+\/specweave-studio)$/.exec(
       entry,
@@ -73,8 +125,6 @@ export const resolveServerInstallation = Effect.gen(function* () {
       : ({ kind: runner === "pnpm dlx" ? "pnpm-dlx" : runner } satisfies ServerInstallation);
   }
   // A global prefix can contain runner-like names; prove its ownership first.
-  // Windows shims and other package managers need their own ownership proof.
-  if (platform === "win32") return null;
   const prefix = match[1] || "/";
   if (
     prefix.includes("/node_modules/") ||

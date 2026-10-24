@@ -6,6 +6,9 @@ on. Ask in any thread for something like "make my mouse a little faster" or
 screen and clicks through it, the way you would. It works in any native app,
 not only System Settings.
 
+Computer use is macOS only. On Windows and Linux the tools answer that it is
+not available on that system.
+
 Agents reach the desktop through the `computer_*` tools on the `studio-code`
 MCP server: `computer_screenshot` to see the screen, then `computer_open`,
 `computer_click`, `computer_type`, `computer_key`, `computer_scroll`,

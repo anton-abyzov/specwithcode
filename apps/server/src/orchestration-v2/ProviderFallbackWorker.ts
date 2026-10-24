@@ -1122,7 +1122,11 @@ export const makeSweep = Effect.gen(function* () {
         thread.status !== "failed" ||
         thread.latestRunId === null ||
         thread.activeRunId !== null ||
-        thread.lastErrorClass === "usage_limit"
+        thread.lastErrorClass === "usage_limit" ||
+        // A subagent the provider spawned takes no messages, so no retry or
+        // move can reach it (isProviderNativeSubagentThread).
+        (thread.lineage?.relationshipToParent === "subagent" &&
+          thread.creationSource === "provider")
       )
         continue;
       const key = `${thread.id}:${thread.latestRunId}`;

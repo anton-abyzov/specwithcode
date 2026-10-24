@@ -116,7 +116,7 @@ extension LiveEngine {
       return HandoffOptions(badge: "handing-off", destinations: [], notices: ["Handoff completion is unconfirmed. No automatic retry is safe. Refresh only reads status.", pending])
     }
     // Only explicitly linked project members are offered for a live move.
-    let members = Set(project?.members.map { $0.ref.environmentId } ?? [])
+    let members = Set(project?.members.filter(\.isLinked).map { $0.ref.environmentId } ?? [])
     if sourceOnline, let shell, shell.activeRunId == nil {
       notices.append("No turn is running on the source. A handoff can move this conversation; the server checks whether it should resume or wait for your next message.")
     }

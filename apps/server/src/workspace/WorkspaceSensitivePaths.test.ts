@@ -1230,6 +1230,11 @@ describe("makeSensitivePathGuard", () => {
     expect(mac.isDenied("/home/owner/.z\u017fhenv", "write")).toBe(true);
     expect(mac.isDenied("/home/owner/.Z\u017fHENV", "write")).toBe(true);
     expect(linux.isDenied("/home/owner/.\u017fsh/id_rsa")).toBe(false);
+  });
+
+  // The macOS data-volume firmlink is a POSIX path; a Windows host resolves it onto a drive.
+  it.skipIf(process.platform === "win32")("sees through the macOS data-volume firmlink", () => {
+    const mac = WorkspaceSensitivePaths.makeSensitivePathGuard(roots, "darwin");
     expect(mac.isDenied("/System/Volumes/Data/home/owner/.ssh/id_rsa")).toBe(true);
     expect(mac.isDenied("/System/Volumes/Data/srv/app/userdata/settings.json")).toBe(true);
   });
@@ -1439,7 +1444,8 @@ describe("makeSensitivePathGuard", () => {
     ).toBe(true);
   });
 
-  it("refuses every path under /.vol on macOS", () => {
+  // macOS volfs (`/.vol`) is a POSIX path; a Windows host resolves it onto a drive.
+  it.skipIf(process.platform === "win32")("refuses every path under /.vol on macOS", () => {
     const mac = WorkspaceSensitivePaths.makeSensitivePathGuard(roots, "darwin");
     const linux = WorkspaceSensitivePaths.makeSensitivePathGuard(roots, "linux");
     for (const access of ["read", "write"] as const) {

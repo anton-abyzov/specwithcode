@@ -18,12 +18,18 @@ import {
 
 it("formats package runner commands from their cache entry paths", () => {
   for (const [entryPath, expected] of [
-    ["/home/dev/.npm/_npx/abc123/node_modules/specweave-studio/dist/bin.mjs", "npx specweave-studio serve"],
+    [
+      "/home/dev/.npm/_npx/abc123/node_modules/specweave-studio/dist/bin.mjs",
+      "npx specweave-studio serve",
+    ],
     [
       "C:\\Users\\dev\\AppData\\Local\\npm-cache\\_npx\\abc\\node_modules\\specweave-studio\\dist\\bin.mjs",
       "npx specweave-studio serve",
     ],
-    ["/home/dev/.cache/pnpm/dlx/abc/node_modules/specweave-studio/dist/bin.mjs", "pnpm dlx specweave-studio serve"],
+    [
+      "/home/dev/.cache/pnpm/dlx/abc/node_modules/specweave-studio/dist/bin.mjs",
+      "pnpm dlx specweave-studio serve",
+    ],
     [
       "/home/dev/.local/share/pnpm/.pnpm/dlx/abc/node_modules/specweave-studio/dist/bin.mjs",
       "pnpm dlx specweave-studio serve",
@@ -32,8 +38,14 @@ it("formats package runner commands from their cache entry paths", () => {
       "C:\\Users\\dev\\AppData\\Local\\pnpm-cache\\dlx\\abc\\node_modules\\specweave-studio\\dist\\bin.mjs",
       "pnpm dlx specweave-studio serve",
     ],
-    ["/home/dev/.bun/install/cache/specweave-studio@0.0.31/dist/bin.mjs", "bunx specweave-studio serve"],
-    ["/tmp/bunx-1000-specweave-studio@latest/node_modules/specweave-studio/dist/bin.mjs", "bunx specweave-studio serve"],
+    [
+      "/home/dev/.bun/install/cache/specweave-studio@0.0.31/dist/bin.mjs",
+      "bunx specweave-studio serve",
+    ],
+    [
+      "/tmp/bunx-1000-specweave-studio@latest/node_modules/specweave-studio/dist/bin.mjs",
+      "bunx specweave-studio serve",
+    ],
     [
       "C:\\Users\\dev\\AppData\\Local\\Temp\\bunx-0-specweave-studio@latest\\node_modules\\specweave-studio\\dist\\bin.mjs",
       "bunx specweave-studio serve",
@@ -87,7 +99,8 @@ it("formats serve suggestions to match the launching command", () => {
   assert.equal(
     formatCliCommand({
       subcommand: "serve",
-      entryPath: "/tmp/bunx-1000-specweave-studio@latest/node_modules/specweave-studio/dist/bin.mjs",
+      entryPath:
+        "/tmp/bunx-1000-specweave-studio@latest/node_modules/specweave-studio/dist/bin.mjs",
       version: "0.0.31",
     }),
     "bunx specweave-studio serve",
@@ -150,75 +163,159 @@ it.layer(NodeServices.layer)("manual server installation ownership", (it) => {
     }),
   );
 
-  it.effect("requires the npm prefix's bin to point to the running package", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      // The resolver reports the prefix of the real entry path, and macOS temp
-      // directories sit behind the `/var` -> `/private/var` symlink.
-      const root = yield* fs.realPath(yield* fs.makeTempDirectoryScoped());
-      const prefix = path.join(root, "bunx-tools");
-      const packageRoot = path.join(prefix, "lib/node_modules/specweave-studio");
-      const entry = path.join(packageRoot, "dist/bin.mjs");
-      const globalBin = path.join(prefix, "bin/specweave-studio");
-      yield* fs.makeDirectory(path.dirname(entry), { recursive: true });
-      yield* fs.makeDirectory(path.dirname(globalBin), { recursive: true });
-      yield* fs.writeFileString(entry, "");
-      yield* fs.writeFileString(
-        path.join(packageRoot, "package.json"),
-        '{"name":"specweave-studio","version":"0.0.45","bin":{"specweave-studio":"./dist/bin.mjs"}}',
-      );
-      const resolve = resolveServerInstallation.pipe(
-        Effect.provideService(HostProcessArguments, ["node", entry]),
-        Effect.provideService(HostProcessIsExecutable, false),
-        Effect.provideService(HostProcessPlatform, "linux"),
-      );
-      expect(yield* resolve).toBeNull();
-      yield* fs.symlink(entry, globalBin);
-      expect(yield* resolve).toEqual({ kind: "npm-global", prefix });
-      yield* fs.remove(globalBin);
-      yield* fs.writeFileString(globalBin, "an unrelated specweave-studio command");
-      expect(yield* resolve).toBeNull();
-      expect(yield* resolve.pipe(Effect.provideService(HostProcessPlatform, "win32"))).toBeNull();
-    }),
+  // The POSIX npm layout (lib/node_modules plus a bin symlink) does not exist
+  // on Windows; the .cmd shim layout is covered below.
+  it.effect.skipIf(process.platform === "win32")(
+    "requires the npm prefix's bin to point to the running package",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        // The resolver reports the prefix of the real entry path, and macOS temp
+        // directories sit behind the `/var` -> `/private/var` symlink.
+        const root = yield* fs.realPath(yield* fs.makeTempDirectoryScoped());
+        const prefix = path.join(root, "bunx-tools");
+        const packageRoot = path.join(prefix, "lib/node_modules/specweave-studio");
+        const entry = path.join(packageRoot, "dist/bin.mjs");
+        const globalBin = path.join(prefix, "bin/specweave-studio");
+        yield* fs.makeDirectory(path.dirname(entry), { recursive: true });
+        yield* fs.makeDirectory(path.dirname(globalBin), { recursive: true });
+        yield* fs.writeFileString(entry, "");
+        yield* fs.writeFileString(
+          path.join(packageRoot, "package.json"),
+          '{"name":"specweave-studio","version":"0.0.45","bin":{"specweave-studio":"./dist/bin.mjs"}}',
+        );
+        const resolve = resolveServerInstallation.pipe(
+          Effect.provideService(HostProcessArguments, ["node", entry]),
+          Effect.provideService(HostProcessIsExecutable, false),
+          Effect.provideService(HostProcessPlatform, "linux"),
+        );
+        expect(yield* resolve).toBeNull();
+        yield* fs.symlink(entry, globalBin);
+        expect(yield* resolve).toEqual({ kind: "npm-global", prefix });
+        yield* fs.remove(globalBin);
+        yield* fs.writeFileString(globalBin, "an unrelated specweave-studio command");
+        expect(yield* resolve).toBeNull();
+        expect(yield* resolve.pipe(Effect.provideService(HostProcessPlatform, "win32"))).toBeNull();
+      }),
   );
 
-  it.effect("proves the native executable belongs to the npm launcher", () =>
+  // The POSIX npm layout (lib/node_modules plus a bin symlink) does not exist
+  // on Windows; the .cmd shim layout is covered below.
+  it.effect.skipIf(process.platform === "win32")(
+    "proves the native executable belongs to the npm launcher",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        // The resolver reports the prefix of the real entry path, and macOS temp
+        // directories sit behind the `/var` -> `/private/var` symlink.
+        const root = yield* fs.realPath(yield* fs.makeTempDirectoryScoped());
+        const prefix = path.join(root, "bunx-tools");
+        const packageRoot = path.join(prefix, "lib/node_modules/specweave-studio");
+        const launcher = path.join(packageRoot, "bin/specweave-studio.js");
+        const entry = path.join(
+          packageRoot,
+          "node_modules/@specweave-studio/studio-linux-x64/specweave-studio",
+        );
+        yield* fs.makeDirectory(path.dirname(launcher), { recursive: true });
+        yield* fs.makeDirectory(path.dirname(entry), { recursive: true });
+        yield* fs.makeDirectory(path.join(prefix, "bin"));
+        yield* fs.writeFileString(launcher, "");
+        yield* fs.writeFileString(entry, "");
+        yield* fs.writeFileString(
+          path.join(packageRoot, "package.json"),
+          '{"name":"specweave-studio","version":"0.0.45","bin":{"specweave-studio":"./bin/specweave-studio.js"},"optionalDependencies":{"@specweave-studio/studio-linux-x64":"0.0.45"}}',
+        );
+        yield* fs.symlink(launcher, path.join(prefix, "bin/specweave-studio"));
+        const resolve = resolveServerInstallation.pipe(
+          Effect.provideService(HostProcessExecutablePath, entry),
+          Effect.provideService(HostProcessIsExecutable, true),
+          Effect.provideService(HostProcessPlatform, "linux"),
+        );
+        for (const [version, expected] of [
+          ["0.0.44", null],
+          ["0.0.45", { kind: "npm-global", prefix }],
+        ]) {
+          yield* fs.writeFileString(
+            path.join(path.dirname(entry), "package.json"),
+            `{"name":"@specweave-studio/studio-linux-x64","version":"${version}"}`,
+          );
+          expect(yield* resolve).toEqual(expected);
+        }
+      }),
+  );
+
+  it.effect("proves a Windows npm global install through its .cmd shim", () =>
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      // The resolver reports the prefix of the real entry path, and macOS temp
-      // directories sit behind the `/var` -> `/private/var` symlink.
       const root = yield* fs.realPath(yield* fs.makeTempDirectoryScoped());
-      const prefix = path.join(root, "bunx-tools");
-      const packageRoot = path.join(prefix, "lib/node_modules/specweave-studio");
-      const launcher = path.join(packageRoot, "bin/specweave-studio.js");
-      const entry = path.join(packageRoot, "node_modules/@specweave-studio/studio-linux-x64/specweave-studio");
+      // npm on Windows: <prefix>\node_modules\<pkg> and <prefix>\<bin>.cmd.
+      const prefix = path.join(root, "AppData", "Roaming", "npm");
+      const packageRoot = path.join(prefix, "node_modules", "specweave-studio");
+      const launcher = path.join(packageRoot, "bin", "specweave-studio.js");
+      const entry = path.join(
+        packageRoot,
+        "node_modules",
+        "@specweave-studio",
+        "studio-win32-x64",
+        "specweave-studio.exe",
+      );
       yield* fs.makeDirectory(path.dirname(launcher), { recursive: true });
       yield* fs.makeDirectory(path.dirname(entry), { recursive: true });
-      yield* fs.makeDirectory(path.join(prefix, "bin"));
       yield* fs.writeFileString(launcher, "");
       yield* fs.writeFileString(entry, "");
       yield* fs.writeFileString(
         path.join(packageRoot, "package.json"),
-        '{"name":"specweave-studio","version":"0.0.45","bin":{"specweave-studio":"./bin/specweave-studio.js"},"optionalDependencies":{"@specweave-studio/studio-linux-x64":"0.0.45"}}',
+        '{"name":"specweave-studio","version":"0.0.45","bin":{"specweave-studio":"./bin/specweave-studio.js"},"optionalDependencies":{"@specweave-studio/studio-win32-x64":"0.0.45"}}',
       );
-      yield* fs.symlink(launcher, path.join(prefix, "bin/specweave-studio"));
-      const resolve = resolveServerInstallation.pipe(
-        Effect.provideService(HostProcessExecutablePath, entry),
-        Effect.provideService(HostProcessIsExecutable, true),
-        Effect.provideService(HostProcessPlatform, "linux"),
+      yield* fs.writeFileString(
+        path.join(path.dirname(entry), "package.json"),
+        '{"name":"@specweave-studio/studio-win32-x64","version":"0.0.45"}',
       );
-      for (const [version, expected] of [
-        ["0.0.44", null],
-        ["0.0.45", { kind: "npm-global", prefix }],
-      ]) {
-        yield* fs.writeFileString(
-          path.join(path.dirname(entry), "package.json"),
-          `{"name":"@specweave-studio/studio-linux-x64","version":"${version}"}`,
+      const shim = path.join(prefix, "specweave-studio.cmd");
+      const resolveFor = (input: { entry: string; executable: boolean }) =>
+        resolveServerInstallation.pipe(
+          Effect.provideService(HostProcessArguments, ["node.exe", input.entry]),
+          Effect.provideService(HostProcessExecutablePath, input.entry),
+          Effect.provideService(HostProcessIsExecutable, input.executable),
+          Effect.provideService(HostProcessPlatform, "win32"),
         );
-        expect(yield* resolve).toEqual(expected);
-      }
+      const native = resolveFor({ entry, executable: true });
+      const script = resolveFor({ entry: launcher, executable: false });
+      // No shim: nothing proves this prefix's PATH entry runs the package.
+      expect(yield* native).toBeNull();
+      yield* fs.writeFileString(
+        shim,
+        '@ECHO off\r\nSET dp0=%~dp0\r\n"%_prog%"  "%dp0%\\node_modules\\specweave-studio\\bin\\specweave-studio.js" %*\r\n',
+      );
+      expect(yield* native).toEqual({ kind: "npm-global", prefix });
+      expect(yield* script).toEqual({ kind: "npm-global", prefix });
+      // A shim for some other package does not prove ownership.
+      yield* fs.writeFileString(shim, '@ECHO off\r\n"%dp0%\\node_modules\\other\\cli.js" %*\r\n');
+      expect(yield* native).toBeNull();
+    }),
+  );
+
+  it.effect("keeps runner caches recognized on Windows", () =>
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const root = yield* fs.makeTempDirectoryScoped();
+      const entry = path.join(
+        root,
+        "npm-cache/_npx/abc/node_modules/specweave-studio/dist/bin.mjs",
+      );
+      yield* fs.makeDirectory(path.dirname(entry), { recursive: true });
+      yield* fs.writeFileString(entry, "");
+      expect(
+        yield* resolveServerInstallation.pipe(
+          Effect.provideService(HostProcessArguments, ["node.exe", entry]),
+          Effect.provideService(HostProcessIsExecutable, false),
+          Effect.provideService(HostProcessPlatform, "win32"),
+        ),
+      ).toEqual({ kind: "npx" });
     }),
   );
 

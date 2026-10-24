@@ -7,6 +7,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 
 import { afterEach, describe, expect, it } from "vite-plus/test";
+import { HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
 
 import {
   expectedBundleName,
@@ -168,48 +169,56 @@ describe("planBundleRename", () => {
 });
 
 describe("startBundleRenameIfNeeded", () => {
-  it("records the attempt before it starts the script and skips the second launch", () => {
-    const dir = makeScratch();
-    const started: Array<{ current: string; target: string; pid: number }> = [];
-    const input = {
-      platform: "darwin" as const,
-      isPackaged: true,
-      execPath: NodePath.join(
-        dir,
-        "SpecWeave Studio (Alpha).app",
-        "Contents",
-        "MacOS",
-        "SpecWithCode",
-      ),
-      appVersion: "1.0.0",
-      pid: 4242,
-      workDir: NodePath.join(dir, "userData"),
-      env: {},
-      start: (value: { current: string; target: string; pid: number }) => {
-        started.push({ current: value.current, target: value.target, pid: value.pid });
-      },
-    };
-    NodeFS.mkdirSync(NodePath.dirname(input.execPath), { recursive: true });
-
-    expect(startBundleRenameIfNeeded(input).kind).toBe("rename");
-    expect(started).toEqual([
-      {
-        current: NodePath.join(dir, "SpecWeave Studio (Alpha).app"),
-        target: NodePath.join(dir, "SpecWithCode.app"),
+  // This moves a real macOS bundle on disk, and macOS bundle paths are POSIX.
+  it.skipIf(HostProcessPlatform.defaultValue() === "win32")(
+    "records the attempt before it starts the script and skips the second launch",
+    () => {
+      const dir = makeScratch();
+      const started: Array<{ current: string; target: string; pid: number }> = [];
+      const input = {
+        platform: "darwin" as const,
+        isPackaged: true,
+        execPath: NodePath.join(
+          dir,
+          "SpecWeave Studio (Alpha).app",
+          "Contents",
+          "MacOS",
+          "SpecWithCode",
+        ),
+        appVersion: "1.0.0",
         pid: 4242,
-      },
-    ]);
-    expect(
-      JSON.parse(NodeFS.readFileSync(NodePath.join(input.workDir, "bundle-rename.json"), "utf8")),
-    ).toEqual({ version: "1.0.0", from: NodePath.join(dir, "SpecWeave Studio (Alpha).app") });
+        workDir: NodePath.join(dir, "userData"),
+        env: {},
+        start: (value: { current: string; target: string; pid: number }) => {
+          started.push({ current: value.current, target: value.target, pid: value.pid });
+        },
+      };
+      NodeFS.mkdirSync(NodePath.dirname(input.execPath), { recursive: true });
 
-    // The rename failed and the same bundle came back: no second attempt.
-    expect(startBundleRenameIfNeeded(input)).toEqual({ kind: "skip", reason: "already-attempted" });
-    expect(started).toHaveLength(1);
-  });
+      expect(startBundleRenameIfNeeded(input).kind).toBe("rename");
+      expect(started).toEqual([
+        {
+          current: NodePath.join(dir, "SpecWeave Studio (Alpha).app"),
+          target: NodePath.join(dir, "SpecWithCode.app"),
+          pid: 4242,
+        },
+      ]);
+      expect(
+        JSON.parse(NodeFS.readFileSync(NodePath.join(input.workDir, "bundle-rename.json"), "utf8")),
+      ).toEqual({ version: "1.0.0", from: NodePath.join(dir, "SpecWeave Studio (Alpha).app") });
+
+      // The rename failed and the same bundle came back: no second attempt.
+      expect(startBundleRenameIfNeeded(input)).toEqual({
+        kind: "skip",
+        reason: "already-attempted",
+      });
+      expect(started).toHaveLength(1);
+    },
+  );
 });
 
-describe("RENAME_SCRIPT", () => {
+// Renaming the app bundle exists only on macOS.
+describe.skipIf(HostProcessPlatform.defaultValue() === "win32")("RENAME_SCRIPT", () => {
   it("renames the bundle, updates Launch Services and opens it under the new name", () => {
     const dir = makeScratch();
     const current = NodePath.join(dir, "SpecWeave Studio (Alpha).app");

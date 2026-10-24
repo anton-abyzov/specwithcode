@@ -2,6 +2,7 @@ import { Tooltip as TooltipPrimitive } from "@base-ui/react/tooltip";
 import { createContext, use, useEffect, useRef, type ComponentProps, type RefObject } from "react";
 
 import { cn } from "~/lib/utils";
+import { usePagePopup } from "./pagePopups";
 
 const TooltipProvider = TooltipPrimitive.Provider;
 
@@ -34,7 +35,8 @@ function TooltipScrollDismissArea({ onScrollCapture, ...props }: ComponentProps<
   );
 }
 
-function Tooltip<Payload>(props: TooltipPrimitive.Root.Props<Payload>) {
+function Tooltip<Payload>(rootProps: TooltipPrimitive.Root.Props<Payload>) {
+  const props = usePagePopup(rootProps);
   const hovered = use(TooltipScrollContext);
   const localActionsRef = useRef<TooltipPrimitive.Root.Actions | null>(null);
   const actionsRef = props.actionsRef ?? localActionsRef;

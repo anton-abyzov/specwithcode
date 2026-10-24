@@ -44,8 +44,9 @@ it.effect("managed home defaults to the global Codex home and honors configured 
       ProviderInstanceId.make("codex-work"),
       decodeSettings({ homePath: "/custom/shared", shadowHomePath: "/custom/shadow" }),
     );
-    assert.equal(configured.sharedHomePath, "/custom/shared");
-    assert.equal(configured.effectiveHomePath, "/custom/shadow");
+    // Configured paths resolve to absolute host paths (a drive letter on Windows).
+    assert.equal(configured.sharedHomePath, path.resolve("/custom/shared"));
+    assert.equal(configured.effectiveHomePath, path.resolve("/custom/shadow"));
   }).pipe(Effect.provide(NodeServices.layer)),
 );
 it.effect.each(
@@ -137,7 +138,7 @@ it.effect.each(
             assert.equal(runtime.homeLayout.mode, "direct");
           } else {
             assert.include(effective.config.homePath, instanceId);
-            assert.include(effective.config.homePath, "userdata/providers/codex");
+            assert.include(effective.config.homePath, path.join("userdata", "providers", "codex"));
             assert.equal(runtime.homeLayout.mode, "authOverlay");
             assert.equal(
               yield* fs.readLink(path.join(effective.config.homePath, "sessions")),

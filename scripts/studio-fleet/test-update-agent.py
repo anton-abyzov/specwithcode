@@ -42,7 +42,8 @@ home = pathlib.Path(os.environ['HOME'])
 control_path = home / 'fake-control.json'
 control = json.loads(control_path.read_text()) if control_path.exists() else {}
 with open(str(home / 'fake-calls.jsonl'), 'a') as log:
-    log.write(json.dumps({'argv': sys.argv[1:], 'cwd': os.getcwd(), 'env': sorted(os.environ)}) + '\n')
+    log.write(json.dumps({'argv': sys.argv[1:], 'cwd': os.getcwd(), 'env': sorted(os.environ),
+                         'agentTimings': os.environ.get('STUDIO_UPDATE_AGENT_TIMINGS')}) + '\n')
 parser = argparse.ArgumentParser()
 for flag in ['--identity', '--snapshot', '--prestate', '--archive', '--sha256', '--output', '--request']:
     parser.add_argument(flag)

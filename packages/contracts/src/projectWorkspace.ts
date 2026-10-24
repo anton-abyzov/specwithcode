@@ -183,6 +183,8 @@ export class ProjectWorkspaceError extends Schema.TaggedError<ProjectWorkspaceEr
       "paused",
       "archived",
       "model_required",
+      "provider_unavailable",
+      "coordinator_tools_required",
       "unsupported_provider",
       "busy",
       "transferred",
@@ -212,7 +214,12 @@ export class ProjectWorkspaceError extends Schema.TaggedError<ProjectWorkspaceEr
         "The selected worker is no longer available in this project. Choose a current project thread before sending.",
       paused: "This project is paused. Resume it before starting work.",
       archived: "This project is archived. Restore it before starting work.",
-      model_required: "Choose a coordinator model or a default project model first.",
+      model_required:
+        "Connect a provider in Settings > Providers, then choose a coordinator model or a default project model.",
+      provider_unavailable:
+        "The coordinator provider is unavailable. Enable it, install its CLI and sign in under Settings > Providers, or choose another coordinator model.",
+      coordinator_tools_required:
+        "This model cannot call tools to coordinate work. Choose a coordinator model with tool support.",
       unsupported_provider:
         "This provider cannot use additional project folders under the current permissions. Use Codex or Claude, or an ACP provider already running with Full access and no restrictive sandbox or approval override.",
       busy: "Finish or stop active project work before deleting the project.",

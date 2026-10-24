@@ -16,6 +16,7 @@ import {
 import {
   WS_METHODS,
   type DesktopBridge,
+  type DesktopVoiceStatus,
   type EnvironmentId,
   type VoiceSettings as VoiceSettingsValue,
 } from "@specweave-studio/contracts";
@@ -25,6 +26,8 @@ import {
   squashAtomCommandFailure,
 } from "@specweave-studio/client-runtime/state/runtime";
 
+import { useAtomValue } from "@effect/atom-react";
+import { primaryServerConfigAtom } from "../../state/server";
 import { isElectron } from "../../env";
 import { connectionAtomRuntime } from "../../connection/runtime";
 import {
@@ -200,15 +203,52 @@ const PHASE_LABEL: Record<VoiceCallState["phase"], string> = {
 
 export type VoiceCall = ReturnType<typeof useVoiceCall>;
 
-export function useVoiceCall(ask: (text: string, signal: AbortSignal) => Promise<string | null>) {
+export function useVoiceCall(
+  ask: (text: string, signal: AbortSignal) => Promise<string | null>,
+  coordinatorProblem: string | null = null,
+) {
   const bridge = voiceBridge();
   const allowed = useClientSettings((settings) => settings.voiceCallsAllowed);
   const environmentId = usePrimaryEnvironmentId();
   const voice = usePrimarySettings((settings) => settings.voice);
+  const settingsLoaded = useAtomValue(primaryServerConfigAtom) !== null;
   // Read at speaking time, so a call picks up the voice saved just before it.
   const voiceRef = useRef({ environmentId, voice });
   const updateSettings = useUpdateClientSettings();
   const [state, setState] = useState<VoiceCallState>(IDLE);
+  const [hostStatus, setHostStatus] = useState<DesktopVoiceStatus | null>(null);
+  useEffect(() => {
+    let alive = true;
+    if (bridge)
+      void bridge
+        .getVoiceStatus()
+        .then((status) => {
+          if (alive) setHostStatus(status);
+        })
+        .catch(() => {
+          if (alive)
+            setHostStatus({
+              supported: false,
+              microphone: "unknown",
+              reason: "Could not check voice support. Reopen the app and try again.",
+            });
+        });
+    return () => {
+      alive = false;
+    };
+  }, [bridge]);
+  const unavailableReason =
+    coordinatorProblem ??
+    (!settingsLoaded
+      ? "Voice settings are still loading…"
+      : !hostStatus
+        ? "Checking voice support…"
+        : !hostStatus.supported
+          ? (hostStatus.reason ?? "Voice calls are unavailable on this device.")
+          : voice.provider === "elevenlabs" &&
+              (!voice.elevenLabsApiKey.trim() || !/^[a-zA-Z0-9_-]+$/.test(voice.elevenLabsVoiceId))
+            ? "Add your ElevenLabs API key and voice ID in Voice settings, or select the free macOS voice."
+            : null);
   const [consentOpen, setConsentOpen] = useState(false);
   const [microphoneBlocked, setMicrophoneBlocked] = useState(false);
   const levelTarget = useRef<HTMLElement | null>(null);
@@ -242,17 +282,17 @@ export function useVoiceCall(ask: (text: string, signal: AbortSignal) => Promise
 
   const connect = useCallback(async () => {
     if (!bridge || controller.current) return;
+    if (unavailableReason) {
+      setState({ ...IDLE, phase: "error", error: unavailableReason });
+      return;
+    }
     const id = ++attempt.current;
     const cancelled = () => attempt.current !== id;
     setMicrophoneBlocked(false);
     setState({ ...IDLE, phase: "connecting" });
     const status = await bridge.requestVoiceAccess().catch(() => null);
     if (cancelled()) return;
-    if (
-      !status?.supported ||
-      status.microphone === "denied" ||
-      status.microphone === "restricted"
-    ) {
+    if (!status?.supported || status.microphone !== "granted") {
       setMicrophoneBlocked(status?.supported === true);
       setState({
         ...IDLE,
@@ -296,7 +336,7 @@ export function useVoiceCall(ask: (text: string, signal: AbortSignal) => Promise
     });
     controller.current = call;
     await call.start();
-  }, [bridge]);
+  }, [bridge, unavailableReason]);
 
   const start = useCallback(() => {
     if (!bridge) return;
@@ -327,6 +367,7 @@ export function useVoiceCall(ask: (text: string, signal: AbortSignal) => Promise
   const active = state.phase !== "idle" && state.phase !== "ended" && state.phase !== "error";
   return {
     available: bridge !== null,
+    unavailableReason,
     active,
     state,
     consentOpen,
@@ -348,13 +389,19 @@ export function VoiceCallButton({ call, disabled }: { call: VoiceCall; disabled:
   if (!call.available) return null;
   return (
     <>
-      <Tip label={call.active ? "End the voice call" : "Call the coordinator and talk"}>
+      <Tip
+        label={
+          call.active
+            ? "End the voice call"
+            : (call.unavailableReason ?? "Call the coordinator and talk")
+        }
+      >
         <button
           type="button"
           className={`sws-icon-button sws-voice-call-button${call.active ? " sws-icon-button-on" : ""}`}
           aria-label={call.active ? "End voice call" : "Start voice call"}
           aria-pressed={call.active}
-          disabled={disabled && !call.active}
+          disabled={(disabled || call.unavailableReason !== null) && !call.active}
           onClick={call.active ? call.end : call.start}
         >
           {call.active ? <PhoneOffIcon aria-hidden /> : <PhoneIcon aria-hidden />}
@@ -377,8 +424,10 @@ export function VoiceCallButton({ call, disabled }: { call: VoiceCall; disabled:
             <AlertDialogDescription>
               What you say is turned into text on this Mac and sent as your message, so it shows in
               the conversation like anything you type. Microphone audio stays on this Mac. When
-              ElevenLabs is configured, reply text is sent to ElevenLabs to generate the selected
-              voice; otherwise replies use macOS speech. macOS will ask once for microphone access.
+              ElevenLabs is selected, reply text is sent to ElevenLabs and uses your paid ElevenLabs
+              credits. Otherwise replies use free macOS speech. Your selected AI provider still
+              handles coordinator messages under its own subscription or billing settings. macOS
+              will ask once for microphone access.
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>

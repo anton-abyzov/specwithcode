@@ -11,6 +11,7 @@ import type * as Electron from "electron";
 import { ManagedUpdateError, type ManagedUpdateStatus } from "@specweave-studio/contracts";
 
 vi.mock("electron", () => ({}));
+import { HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
 
 import * as DesktopEnvironment from "../../app/DesktopEnvironment.ts";
 import * as DesktopLocalService from "../../backend/DesktopLocalService.ts";
@@ -150,118 +151,126 @@ function fixture() {
 }
 
 describe("native managed update consent", () => {
-  it("uses only the attached receipt's secure runtime helper without installing a scheduler", () => {
-    const root = FS.realpathSync(
-      FS.mkdtempSync(Path.join(OS.userInfo().homedir, ".managed-runtime-helper-test-")),
-    );
-    const home = Path.join(root, "home");
-    const owner = { uid: process.getuid!(), user: "fixture-owner", homeDirectory: home };
-    const ownerSpy = vi
-      .spyOn(ManagedInstallations, "managedInstallationOwner")
-      .mockReturnValue(owner);
-    const processSpy = vi.spyOn(ChildProcess, "execFileSync").mockImplementation((command) => {
-      if (command === "/bin/launchctl")
-        return `state = running\npid = 7\npath = ${Path.join(home, "Library/LaunchAgents/com.specweave.studio.work-mac.plist")}\n`;
-      if (command === "/bin/ps") return `${owner.uid}\n`;
-      throw new Error("unexpected process probe");
-    });
-    try {
-      const studioHome = Path.join(home, ".specweave-studio/work-mac");
-      const release = Path.join(home, ".local/share/specweave-studio/releases", "a".repeat(20));
-      const runtimeHelper = Path.join(release, "studio-updater/managed_updates.py");
-      const bundleRoot = Path.join(root, "Applications");
-      const bundledHelper = Path.join(
-        bundleRoot,
-        "Fixture.app/Contents/Resources/studio-updater/managed_updates.py",
+  // Managed updates are a macOS launchd feature; the fixture needs POSIX uids.
+  it.skipIf(HostProcessPlatform.defaultValue() === "win32")(
+    "uses only the attached receipt's secure runtime helper without installing a scheduler",
+    () => {
+      const root = FS.realpathSync(
+        FS.mkdtempSync(Path.join(OS.userInfo().homedir, ".managed-runtime-helper-test-")),
       );
-      for (const helper of [runtimeHelper, bundledHelper]) {
-        FS.mkdirSync(Path.dirname(helper), { recursive: true, mode: 0o700 });
-        for (const name of new Set([...MAC_SERVICE_UPDATER_FILES, "managed_updates.py"]))
-          FS.writeFileSync(Path.join(Path.dirname(helper), name), "# inert", { mode: 0o600 });
+      const home = Path.join(root, "home");
+      const owner = { uid: process.getuid!(), user: "fixture-owner", homeDirectory: home };
+      const ownerSpy = vi
+        .spyOn(ManagedInstallations, "managedInstallationOwner")
+        .mockReturnValue(owner);
+      const processSpy = vi.spyOn(ChildProcess, "execFileSync").mockImplementation((command) => {
+        if (command === "/bin/launchctl")
+          return `state = running\npid = 7\npath = ${Path.join(home, "Library/LaunchAgents/com.specweave.studio.work-mac.plist")}\n`;
+        if (command === "/bin/ps") return `${owner.uid}\n`;
+        throw new Error("unexpected process probe");
+      });
+      try {
+        const studioHome = Path.join(home, ".specweave-studio/work-mac");
+        const release = Path.join(home, ".local/share/specweave-studio/releases", "a".repeat(20));
+        const runtimeHelper = Path.join(release, "studio-updater/managed_updates.py");
+        const bundleRoot = Path.join(root, "Applications");
+        const bundledHelper = Path.join(
+          bundleRoot,
+          "Fixture.app/Contents/Resources/studio-updater/managed_updates.py",
+        );
+        for (const helper of [runtimeHelper, bundledHelper]) {
+          FS.mkdirSync(Path.dirname(helper), { recursive: true, mode: 0o700 });
+          for (const name of new Set([...MAC_SERVICE_UPDATER_FILES, "managed_updates.py"]))
+            FS.writeFileSync(Path.join(Path.dirname(helper), name), "# inert", { mode: 0o600 });
+        }
+        FS.chmodSync(bundleRoot, 0o775);
+        FS.mkdirSync(studioHome, { recursive: true, mode: 0o700 });
+        const receipt = {
+          schemaVersion: 1,
+          identity: "work-mac",
+          uid: owner.uid,
+          user: owner.user,
+          studioHome,
+          stateDir: Path.join(studioHome, "userdata"),
+          cliWrapper: Path.join(home, ".local/bin/specweave-studio-work-mac"),
+          host: "127.0.0.1",
+          port: 8320,
+          version: "1.0.18",
+          webSessionPolicy: "worker-relay",
+          archiveSha256: "a".repeat(64),
+          release,
+          service: {
+            installed: true,
+            label: "com.specweave.studio.work-mac",
+            domain: `gui/${owner.uid}`,
+          },
+        };
+        const receiptPath = Path.join(studioHome, "installation.json");
+        FS.writeFileSync(receiptPath, JSON.stringify(receipt));
+        FS.mkdirSync(receipt.stateDir, { recursive: true, mode: 0o700 });
+        const runtimePath = Path.join(receipt.stateDir, "server-runtime.json");
+        const environmentPath = Path.join(receipt.stateDir, "environment-id");
+        FS.writeFileSync(
+          runtimePath,
+          JSON.stringify({ pid: 7, port: 8320, origin: "http://127.0.0.1:8320" }),
+          { mode: 0o600 },
+        );
+        FS.writeFileSync(environmentPath, "environment-7", { mode: 0o600 });
+        const plist = Path.join(home, "Library/LaunchAgents/com.specweave.studio.work-mac.plist");
+        FS.mkdirSync(Path.dirname(plist), { recursive: true, mode: 0o700 });
+        FS.writeFileSync(plist, "synthetic LaunchAgent", { mode: 0o600 });
+        const environment = {
+          homeDirectory: home,
+          isDevelopment: false,
+          path: Path,
+          resolveResourcePathCandidates: () => [bundledHelper],
+        } as unknown as DesktopEnvironment.DesktopEnvironment["Service"];
+        const attached = {
+          baseDir: studioHome,
+          runtime: { pid: 7, port: 8320, origin: "http://127.0.0.1:8320", serviceManaged: false },
+          descriptor: { environmentId: "environment-7", platform: { os: "darwin", arch: "arm64" } },
+          httpBaseUrl: new URL("http://127.0.0.1:8320"),
+        } as DesktopLocalService.AttachedLocalService;
+        const target = {
+          ...input,
+          action: "enroll" as const,
+          environmentId: "environment-7" as never,
+        };
+        const resolve = () =>
+          resolveManagedUpdateConsentInstallation(environment, attached, target);
+        expect(resolve().helper).toBe(runtimeHelper);
+        expect(resolve().installation.release).toBe(release);
+        const runtimeBefore = FS.readFileSync(runtimePath, "utf8");
+        FS.writeFileSync(
+          runtimePath,
+          JSON.stringify({ pid: 8, port: 8320, origin: "http://127.0.0.1:8320" }),
+        );
+        expect(resolve).toThrow(ManagedUpdateError);
+        FS.writeFileSync(runtimePath, runtimeBefore);
+        expect(resolve().helper).toBe(runtimeHelper);
+        expect(FS.existsSync(Path.join(home, ".local/share/specweave-studio/updater"))).toBe(false);
+        expect(FS.existsSync(Path.join(studioHome, "updates"))).toBe(false);
+        expect(FS.readFileSync(receiptPath, "utf8")).toBe(JSON.stringify(receipt));
+        FS.chmodSync(release, 0o777);
+        expect(resolve).toThrow(ManagedUpdateError);
+        FS.chmodSync(release, 0o700);
+        FS.renameSync(release, `${release}.saved`);
+        FS.symlinkSync(`${release}.saved`, release);
+        expect(resolve).toThrow(ManagedUpdateError);
+        FS.unlinkSync(release);
+        FS.renameSync(`${release}.saved`, release);
+        FS.writeFileSync(
+          receiptPath,
+          JSON.stringify({ ...receipt, release: Path.dirname(release) }),
+        );
+        expect(resolve).toThrow(ManagedUpdateError);
+      } finally {
+        processSpy.mockRestore();
+        ownerSpy.mockRestore();
+        FS.rmSync(root, { recursive: true, force: true });
       }
-      FS.chmodSync(bundleRoot, 0o775);
-      FS.mkdirSync(studioHome, { recursive: true, mode: 0o700 });
-      const receipt = {
-        schemaVersion: 1,
-        identity: "work-mac",
-        uid: owner.uid,
-        user: owner.user,
-        studioHome,
-        stateDir: Path.join(studioHome, "userdata"),
-        cliWrapper: Path.join(home, ".local/bin/specweave-studio-work-mac"),
-        host: "127.0.0.1",
-        port: 8320,
-        version: "1.0.18",
-        webSessionPolicy: "worker-relay",
-        archiveSha256: "a".repeat(64),
-        release,
-        service: {
-          installed: true,
-          label: "com.specweave.studio.work-mac",
-          domain: `gui/${owner.uid}`,
-        },
-      };
-      const receiptPath = Path.join(studioHome, "installation.json");
-      FS.writeFileSync(receiptPath, JSON.stringify(receipt));
-      FS.mkdirSync(receipt.stateDir, { recursive: true, mode: 0o700 });
-      const runtimePath = Path.join(receipt.stateDir, "server-runtime.json");
-      const environmentPath = Path.join(receipt.stateDir, "environment-id");
-      FS.writeFileSync(
-        runtimePath,
-        JSON.stringify({ pid: 7, port: 8320, origin: "http://127.0.0.1:8320" }),
-        { mode: 0o600 },
-      );
-      FS.writeFileSync(environmentPath, "environment-7", { mode: 0o600 });
-      const plist = Path.join(home, "Library/LaunchAgents/com.specweave.studio.work-mac.plist");
-      FS.mkdirSync(Path.dirname(plist), { recursive: true, mode: 0o700 });
-      FS.writeFileSync(plist, "synthetic LaunchAgent", { mode: 0o600 });
-      const environment = {
-        homeDirectory: home,
-        isDevelopment: false,
-        path: Path,
-        resolveResourcePathCandidates: () => [bundledHelper],
-      } as unknown as DesktopEnvironment.DesktopEnvironment["Service"];
-      const attached = {
-        baseDir: studioHome,
-        runtime: { pid: 7, port: 8320, origin: "http://127.0.0.1:8320", serviceManaged: false },
-        descriptor: { environmentId: "environment-7", platform: { os: "darwin", arch: "arm64" } },
-        httpBaseUrl: new URL("http://127.0.0.1:8320"),
-      } as DesktopLocalService.AttachedLocalService;
-      const target = {
-        ...input,
-        action: "enroll" as const,
-        environmentId: "environment-7" as never,
-      };
-      const resolve = () => resolveManagedUpdateConsentInstallation(environment, attached, target);
-      expect(resolve().helper).toBe(runtimeHelper);
-      expect(resolve().installation.release).toBe(release);
-      const runtimeBefore = FS.readFileSync(runtimePath, "utf8");
-      FS.writeFileSync(
-        runtimePath,
-        JSON.stringify({ pid: 8, port: 8320, origin: "http://127.0.0.1:8320" }),
-      );
-      expect(resolve).toThrow(ManagedUpdateError);
-      FS.writeFileSync(runtimePath, runtimeBefore);
-      expect(resolve().helper).toBe(runtimeHelper);
-      expect(FS.existsSync(Path.join(home, ".local/share/specweave-studio/updater"))).toBe(false);
-      expect(FS.existsSync(Path.join(studioHome, "updates"))).toBe(false);
-      expect(FS.readFileSync(receiptPath, "utf8")).toBe(JSON.stringify(receipt));
-      FS.chmodSync(release, 0o777);
-      expect(resolve).toThrow(ManagedUpdateError);
-      FS.chmodSync(release, 0o700);
-      FS.renameSync(release, `${release}.saved`);
-      FS.symlinkSync(`${release}.saved`, release);
-      expect(resolve).toThrow(ManagedUpdateError);
-      FS.unlinkSync(release);
-      FS.renameSync(`${release}.saved`, release);
-      FS.writeFileSync(receiptPath, JSON.stringify({ ...receipt, release: Path.dirname(release) }));
-      expect(resolve).toThrow(ManagedUpdateError);
-    } finally {
-      processSpy.mockRestore();
-      ownerSpy.mockRestore();
-      FS.rmSync(root, { recursive: true, force: true });
-    }
-  });
+    },
+  );
   it("uses the exact target, revision and main-process controller after a native confirmation", async () => {
     const f = fixture();
     expect(

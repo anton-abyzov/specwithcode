@@ -12,20 +12,57 @@ import {
   type ServerProviderModel,
 } from "@specweave-studio/contracts";
 
-import { canTakeTurn, isClaudeApiKeyProvider } from "./providerFallback.ts";
+import { canTakeTurn, isClaudeApiKeyProvider, isPerTokenProvider } from "./providerFallback.ts";
 
 /** Opus 5.5 under any of the spellings a catalog uses for it. */
 const PREFERRED_MODEL = /opus[\s._-]*5[\s._-]*5(?!\d)/i;
 
 function selectable(model: ServerProviderModel): boolean {
-  return !model.isCustom && model.isLegacy !== true;
+  return (
+    !model.isCustom &&
+    model.isLegacy !== true &&
+    model.toolCalls !== false &&
+    model.billing !== "api" &&
+    model.billing !== "paid-router"
+  );
+}
+
+/** Mixed supplier catalogs cannot imply free billing from an absent API key. */
+function automaticModels(provider: ServerProvider): ServerProvider {
+  return {
+    ...provider,
+    models: provider.models.filter(
+      (model) =>
+        selectable(model) &&
+        (provider.auth.status === "authenticated" || model.billing === "local") &&
+        (!(provider.driver === "opencode" || provider.driver === "pi") ||
+          model.billing === "local" ||
+          model.billing === "subscription"),
+    ),
+  };
+}
+
+/** Explicit choices may be paid, but must still support coordinator tools. */
+export function coordinatorSelectionProblem(
+  selection: ModelSelection,
+  providers: ReadonlyArray<ServerProvider>,
+): "provider_unavailable" | "coordinator_tools_required" | null {
+  const provider = providers.find((candidate) => candidate.instanceId === selection.instanceId);
+  if (!provider || !usable(provider)) return "provider_unavailable";
+  const model = provider.models.find(
+    (candidate) =>
+      candidate.slug === selection.model || candidate.aliases?.includes(selection.model),
+  );
+  if (provider.auth.status !== "authenticated" && model?.billing !== "local")
+    return "provider_unavailable";
+  if (model?.toolCalls === false) return "coordinator_tools_required";
+  return null;
 }
 
 function builtInDefault(provider: ServerProvider): string | undefined {
   return (
     provider.models.find((model) => model.isDefault && selectable(model))?.slug ??
-    provider.models.find(selectable)?.slug ??
-    provider.models[0]?.slug
+    provider.models.find(selectable)?.slug
   );
 }
 
@@ -36,14 +73,15 @@ function preferredModel(provider: ServerProvider): string | undefined {
   )?.slug;
 }
 
-/** Enabled, installed and not known to be broken; sign-in may still be settling. */
+/** Installed with a known sign-in, or a catalog-proven local model. */
 function usable(provider: ServerProvider): boolean {
   return (
     provider.enabled &&
     provider.installed &&
     isProviderAvailable(provider) &&
     provider.status !== "error" &&
-    provider.auth.status !== "unauthenticated"
+    (provider.auth.status === "authenticated" ||
+      provider.models.some((model) => model.billing === "local"))
   );
 }
 
@@ -57,7 +95,9 @@ function usable(provider: ServerProvider): boolean {
 export function defaultCoordinatorModelSelection(
   providers: ReadonlyArray<ServerProvider>,
 ): ModelSelection | null {
-  const free = providers.filter((provider) => !isClaudeApiKeyProvider(provider));
+  const free = providers
+    .filter((provider) => !isPerTokenProvider(provider) && usable(provider))
+    .map(automaticModels);
   const ready = free.filter(canTakeTurn);
   const claude = ready.filter((provider) => provider.driver === "claudeAgent");
   for (const provider of claude) {
@@ -75,7 +115,7 @@ export function defaultCoordinatorModelSelection(
 
 /** Any driver signed in with an API key bills each turn to that key. */
 function billedPerToken(provider: ServerProvider): boolean {
-  return isClaudeApiKeyProvider(provider) || /api[\s_-]?key/i.test(provider.auth.type ?? "");
+  return isPerTokenProvider(provider);
 }
 
 /**

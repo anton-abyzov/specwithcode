@@ -7,35 +7,37 @@ import * as PlatformError from "effect/PlatformError";
 
 import { resolveUserDataPath } from "./DesktopUserData.ts";
 
-it.effect("identifies a failed source read and preserves its cause", () => {
-  const sourceState = "/profiles/studio/Local State";
-  const cause = PlatformError.systemError({
-    _tag: "PermissionDenied",
-    module: "FileSystem",
-    method: "readFileString",
-    pathOrDescriptor: sourceState,
-  });
-  return Effect.gen(function* () {
+it.effect("identifies a failed source read and preserves its cause", () =>
+  Effect.gen(function* () {
+    const path = yield* Path.Path;
+    // Built with the host join so the noop file system sees the path the product asks for.
+    const sourceState = path.join("/profiles", "studio", "Local State");
+    const cause = PlatformError.systemError({
+      _tag: "PermissionDenied",
+      module: "FileSystem",
+      method: "readFileString",
+      pathOrDescriptor: sourceState,
+    });
     const error = yield* resolveUserDataPath({
       appDataDirectory: "/profiles",
       isDevelopment: false,
       platform: "win32",
-    }).pipe(Effect.flip);
+    }).pipe(
+      Effect.flip,
+      Effect.provideService(
+        FileSystem.FileSystem,
+        FileSystem.makeNoop({
+          exists: (candidate) => Effect.succeed(candidate === sourceState),
+          readFileString: () => Effect.fail(cause),
+        }),
+      ),
+    );
     assert.equal(error.operation, "read");
     assert.equal(error.resourcePath, sourceState);
     assert.equal(error.category, "PermissionDenied");
     assert.strictEqual(error.cause, cause);
-  }).pipe(
-    Effect.provideService(
-      FileSystem.FileSystem,
-      FileSystem.makeNoop({
-        exists: (path) => Effect.succeed(path === sourceState),
-        readFileString: () => Effect.fail(cause),
-      }),
-    ),
-    Effect.provide(NodeServices.layer),
-  );
-});
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
 
 it.effect.each(["studio", "SpecWeave Studio (Alpha)"])(
   "preserves Windows credential keys from %s without copying browser databases",
@@ -47,7 +49,9 @@ it.effect.each(["studio", "SpecWeave Studio (Alpha)"])(
       const source = path.join(directory, sourceName);
       const destination = path.join(directory, "studio-v2");
       const state = '{"os_crypt":{"encrypted_key":"test-encrypted-key"}}';
-      yield* fs.makeDirectory(path.join(directory, "SpecWeave Studio (Alpha)"), { recursive: true });
+      yield* fs.makeDirectory(path.join(directory, "SpecWeave Studio (Alpha)"), {
+        recursive: true,
+      });
       yield* fs.makeDirectory(path.join(source, "IndexedDB"), { recursive: true });
       yield* fs.writeFileString(path.join(source, "Local State"), state);
       yield* fs.writeFileString(path.join(source, "IndexedDB", "LOCK"), "V1 owns this database");

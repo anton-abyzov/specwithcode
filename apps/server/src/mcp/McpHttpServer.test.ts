@@ -62,7 +62,9 @@ const layerTest = McpHttpServer.layerPreviewToolkit.pipe(
   Layer.provideMerge(McpServer.McpServer.layer),
   Layer.provideMerge(McpToolAccessTestkit.liveThreadsLayer),
   Layer.provideMerge(PreviewAutomationBroker.layer),
-  Layer.provideMerge(ServerConfig.layerTest(process.cwd(), { prefix: "studio-mcp-http-server-test-" })),
+  Layer.provideMerge(
+    ServerConfig.layerTest(process.cwd(), { prefix: "studio-mcp-http-server-test-" }),
+  ),
   Layer.provideMerge(NodeServices.layer),
 );
 const layerPullRequestsTest = McpHttpServer.layerPullRequestsToolkit.pipe(
@@ -430,7 +432,10 @@ it.effect("saves the snapshot PNG on request and reports its path", () =>
       );
       expect(Buffer.from(yield* fileSystem.readFile(screenshotPath!)).toString()).toBe("png");
       const [, text] = snapshot.content;
-      expect(text?.type === "text" ? text.text : "").toContain(screenshotPath);
+      // The text is JSON, so Windows backslashes arrive escaped.
+      expect(text?.type === "text" ? text.text : "").toContain(
+        JSON.stringify(screenshotPath).slice(1, -1),
+      );
 
       const unsaved = yield* callSnapshot({});
       expect(unsaved.structuredContent).not.toHaveProperty("screenshotPath");

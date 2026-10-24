@@ -3,6 +3,7 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Path from "effect/Path";
 import { ProjectId, type ProjectEnvironmentSettings } from "@specweave-studio/contracts";
 import * as ProcessRunner from "../processRunner.ts";
 import { previewWorkspaceImport } from "./ProjectEnvironmentImport.ts";
@@ -10,12 +11,14 @@ import { previewWorkspaceImport } from "./ProjectEnvironmentImport.ts";
 const layer = ProcessRunner.layer.pipe(Layer.provideMerge(NodeServices.layer));
 const setup = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
+  // Native separators: approvals are compared with the canonical folders.
+  const path = yield* Path.Path;
   const runner = yield* ProcessRunner.ProcessRunner;
   const root = yield* fs
     .makeTempDirectoryScoped({ prefix: "studio-import-" })
     .pipe(Effect.flatMap((p) => fs.realPath(p)));
-  const main = `${root}/workspace`;
-  yield* fs.makeDirectory(`${main}/.specweave`, { recursive: true });
+  const main = path.join(root, "workspace");
+  yield* fs.makeDirectory(path.join(main, ".specweave"), { recursive: true });
   const git = (cwd: string, args: string[]) =>
     runner
       .run({
@@ -32,15 +35,18 @@ const setup = Effect.gen(function* () {
       .pipe(Effect.tap((result) => Effect.sync(() => assert.equal(result.code, 0))));
   const repo = (name: string, url = `https://github.com/team/${name}`) =>
     Effect.gen(function* () {
-      const folder = `${main}/${name}`;
+      const folder = path.join(main, name);
       yield* fs.makeDirectory(folder);
       yield* git(folder, ["init"]);
       yield* git(folder, ["remote", "add", "origin", url]);
-      yield* fs.writeFileString(`${folder}/untracked.txt`, "retained bytes\n");
+      yield* fs.writeFileString(path.join(folder, "untracked.txt"), "retained bytes\n");
       return folder;
     });
   const config = (repos: unknown[]) =>
-    fs.writeFileString(`${main}/.specweave/config.json`, JSON.stringify({ workspace: { repos } }));
+    fs.writeFileString(
+      path.join(main, ".specweave", "config.json"),
+      JSON.stringify({ workspace: { repos } }),
+    );
   const preview = (
     environment: ProjectEnvironmentSettings = { additionalFolders: [], repositories: [] },
     selectedRoot = main,
@@ -52,7 +58,7 @@ const setup = Effect.gen(function* () {
       revision: 7,
       environment,
     });
-  return { fs, root, main, git, repo, config, preview };
+  return { fs, path, root, main, git, repo, config, preview };
 });
 it.layer(layer, { excludeTestServices: true })("workspace import preview", (it) => {
   it.effect("matches CLI identities for uppercase suffixes, GitHub casing and SSH ports", () =>
@@ -82,9 +88,9 @@ it.layer(layer, { excludeTestServices: true })("workspace import preview", (it) 
           { id: "selected", path: "selected", identity: "github.com/team/selected" },
         ]);
         const injected = {
-          GIT_DIR: `${foreign}/.git`,
+          GIT_DIR: x.path.join(foreign, ".git"),
           GIT_WORK_TREE: selected,
-          GIT_COMMON_DIR: `${foreign}/.git`,
+          GIT_COMMON_DIR: x.path.join(foreign, ".git"),
           GIT_CONFIG_COUNT: "1",
           GIT_CONFIG_KEY_0: "remote.origin.url",
           GIT_CONFIG_VALUE_0: "https://github.com/foreign/spoofed",
@@ -142,8 +148,11 @@ it.layer(layer, { excludeTestServices: true })("workspace import preview", (it) 
           [a, b, c],
         );
         assert.equal((yield* x.git(a, ["status", "--porcelain=v1"])).stdout, before);
-        assert.equal(yield* x.fs.readFileString(`${a}/untracked.txt`), "retained bytes\n");
-        assert.isFalse(yield* x.fs.exists(`${a}/.specweave`));
+        assert.equal(
+          yield* x.fs.readFileString(x.path.join(a, "untracked.txt")),
+          "retained bytes\n",
+        );
+        assert.isFalse(yield* x.fs.exists(x.path.join(a, ".specweave")));
         const repeated = yield* x.preview(preview.environment);
         assert.deepEqual(
           repeated.repositories.map((r) => r.status),
@@ -155,7 +164,7 @@ it.layer(layer, { excludeTestServices: true })("workspace import preview", (it) 
     Effect.gen(function* () {
       const x = yield* setup;
       const original = yield* x.repo("outside");
-      const outside = `${x.root}/outside`;
+      const outside = x.path.join(x.root, "outside");
       yield* x.fs.rename(original, outside);
       yield* x.config([{ id: "outside", path: "../outside" }]);
       const rejected = yield* x.preview();
@@ -174,27 +183,33 @@ it.layer(layer, { excludeTestServices: true })("workspace import preview", (it) 
       Effect.gen(function* () {
         const x = yield* setup;
         yield* x.config([]);
-        const outside = `${x.root}/outside`;
+        const outside = x.path.join(x.root, "outside");
         yield* x.fs.makeDirectory(outside);
         assert.equal(
           (yield* x.preview(undefined, outside).pipe(Effect.flip)).code,
           "path_not_approved",
         );
-        const alias = `${x.root}/alias`;
+        const alias = x.path.join(x.root, "alias");
         yield* x.fs.symlink(outside, alias);
         assert.equal(
           (yield* x.preview({ additionalFolders: [alias], repositories: [] }).pipe(Effect.flip))
             .code,
           "path_not_approved",
         );
-        yield* x.fs.writeFileString(`${outside}/config.json`, '{"workspace":{"repos":[]}}');
-        yield* x.fs.remove(`${x.main}/.specweave/config.json`);
-        yield* x.fs.symlink(`${outside}/config.json`, `${x.main}/.specweave/config.json`);
+        yield* x.fs.writeFileString(
+          x.path.join(outside, "config.json"),
+          '{"workspace":{"repos":[]}}',
+        );
+        yield* x.fs.remove(x.path.join(x.main, ".specweave", "config.json"));
+        yield* x.fs.symlink(
+          x.path.join(outside, "config.json"),
+          x.path.join(x.main, ".specweave", "config.json"),
+        );
         assert.equal((yield* x.preview().pipe(Effect.flip)).code, "path_not_approved");
-        yield* x.fs.remove(`${x.main}/.specweave/config.json`);
+        yield* x.fs.remove(x.path.join(x.main, ".specweave", "config.json"));
         assert.equal((yield* x.preview().pipe(Effect.flip)).code, "invalid");
         yield* x.fs.writeFileString(
-          `${x.main}/.specweave/config.json`,
+          x.path.join(x.main, ".specweave", "config.json"),
           '{"workspace":{"repos":"wrong"}}',
         );
         assert.equal((yield* x.preview().pipe(Effect.flip)).code, "invalid");
@@ -206,7 +221,7 @@ it.layer(layer, { excludeTestServices: true })("workspace import preview", (it) 
       Effect.gen(function* () {
         const x = yield* setup;
         const a = yield* x.repo("a");
-        yield* x.fs.makeDirectory(`${a}/sub`);
+        yield* x.fs.makeDirectory(x.path.join(a, "sub"));
         yield* x.config([
           { id: "a", path: "a", identity: "github.com/other/a" },
           { id: "sub", path: "a/sub" },
@@ -247,7 +262,7 @@ it.layer(layer, { excludeTestServices: true })("workspace import preview", (it) 
       const repositories = Array.from({ length: 32 }, (_, i) => ({
         id: `existing-${i}`,
         url: `https://github.com/team/existing-${i}`,
-        localPath: `${x.main}/unused-${i}`,
+        localPath: x.path.join(x.main, `unused-${i}`),
       }));
       const preview = yield* x.preview({ additionalFolders: [], repositories });
       assert.isFalse(preview.canApply);

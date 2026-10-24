@@ -116,25 +116,28 @@ describe("AcpClientTerminals", () => {
     }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
-  it.effect("runs Devin shell source with arguments, pipes, and session fallback variables", () =>
-    Effect.gen(function* () {
-      const terminals = yield* makeAcpClientTerminals({
-        spawner: yield* ChildProcessSpawner.ChildProcessSpawner,
-        defaultCwd: process.cwd(),
-        shellCommands: true,
-        environmentForSession: () => ({ STUDIO_ACP_MCP_NODE: "mailbox-probe" }),
-      });
-      yield* Effect.addFinalizer(() => terminals.disposeAll);
-      // Same command-only shape as the failed production commands and live capture.
-      const terminal = yield* terminals.create({
-        sessionId: "devin",
-        command: 'printf "%s\\n" "$STUDIO_ACP_MCP_NODE" | tr a-z A-Z',
-      });
-      const exit = yield* terminals.waitForExit({ sessionId: "devin", ...terminal });
-      const output = yield* terminals.output({ sessionId: "devin", ...terminal });
-      expect(exit.exitCode).toBe(0);
-      expect(output.output.trim()).toBe("MAILBOX-PROBE");
-    }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
+  // POSIX sh source (`$VAR` expansion, printf, tr): Windows runs shell commands through cmd.exe.
+  it.effect.skipIf(process.platform === "win32")(
+    "runs Devin shell source with arguments, pipes, and session fallback variables",
+    () =>
+      Effect.gen(function* () {
+        const terminals = yield* makeAcpClientTerminals({
+          spawner: yield* ChildProcessSpawner.ChildProcessSpawner,
+          defaultCwd: process.cwd(),
+          shellCommands: true,
+          environmentForSession: () => ({ STUDIO_ACP_MCP_NODE: "mailbox-probe" }),
+        });
+        yield* Effect.addFinalizer(() => terminals.disposeAll);
+        // Same command-only shape as the failed production commands and live capture.
+        const terminal = yield* terminals.create({
+          sessionId: "devin",
+          command: 'printf "%s\\n" "$STUDIO_ACP_MCP_NODE" | tr a-z A-Z',
+        });
+        const exit = yield* terminals.waitForExit({ sessionId: "devin", ...terminal });
+        const output = yield* terminals.output({ sessionId: "devin", ...terminal });
+        expect(exit.exitCode).toBe(0);
+        expect(output.output.trim()).toBe("MAILBOX-PROBE");
+      }).pipe(Effect.provide(NodeServices.layer), Effect.scoped),
   );
 
   it.effect("truncates buffered output from the beginning at the byte limit", () =>
@@ -173,7 +176,8 @@ describe("AcpClientTerminals", () => {
           terminalId: created.terminalId,
         });
         expect(exit.exitCode === 0 ? null : exit.exitCode).not.toBe(0);
-        expect(exit.signal).toBe("SIGTERM");
+        // Windows has no signals: the kill is a taskkill /F, reported as an exit code.
+        expect(exit.signal).toBe(process.platform === "win32" ? null : "SIGTERM");
 
         yield* terminals.release({ sessionId: "session", terminalId: created.terminalId });
         const rejected = yield* Effect.flip(

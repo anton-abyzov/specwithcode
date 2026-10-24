@@ -1509,15 +1509,15 @@ stage_desktop() {
   fi
   if [ "$current" = "$VERSION" ] && t desktop-signed -- codesign --verify --deep --strict "$APP"; then
     # Its own updater already installed this release: a snapshot now would zip the new version and
-    # prune the previous version's rollback zip.
+    # prune the previous version's rollback copy.
     say "desktop: $APP is already $VERSION (the app's own updater swapped it in); keeping it"
   else
     if [ "$current" = "$VERSION" ] || { [ "$MODE" != dry ] && [ -z "$current" ] && [ -d "$APP" ]; }; then
       # Not a whole app: an install cut short, such as an earlier attempt's ditto, either after it
       # wrote Info.plist (it reports this release but fails its signature check) or before (it has
       # no readable version). Moved aside, never deleted, under a name Launch Services does not
-      # take for an app; not snapshotted, which would zip it and prune the previous version's
-      # rollback zip, and its grants not recorded, which would replace the record that earlier
+      # take for an app; not snapshotted, which would copy it and prune the previous version's
+      # rollback copy, and its grants not recorded, which would replace the record that earlier
       # attempt took of the previous app before its swap.
       aside="$APP.partial-$(date -u +%Y%m%dT%H%M%SZ)"
       if [ -n "$current" ]; then
@@ -1541,7 +1541,7 @@ stage_desktop() {
   x desktop-signature -C "$BUILD" -- node scripts/studio-projects/mac-signature.mjs "$APP"
   if [ "$probed" -eq 1 ] || { [ "$MODE" = real ] && [ -f "$grants" ]; }; then
     x desktop-grants -C "$BUILD" -- node scripts/studio-projects/mac-upgrade-grant.mjs after "$APP" "$grants" ||
-      die "the new desktop app lost the computer-use grants the previous one had; the previous app is in the desktop_backup.py rollback zip"
+      die "the new desktop app lost the computer-use grants the previous one had; the previous app is in the desktop_backup.py rollback copy"
   fi
   version="$(q app-version -- /usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$APP/Contents/Info.plist")"
   [ "$version" = "$VERSION" ] || die "$APP reports $version after the swap, not $VERSION"

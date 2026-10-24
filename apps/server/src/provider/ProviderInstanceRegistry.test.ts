@@ -177,13 +177,25 @@ const makeTildeProviderFixtures = Effect.fn(
   );
   yield* fileSystem.chmod(codexPath, 0o755);
 
-  yield* fileSystem.copyFile(
-    yield* path.fromFileUrl(
-      new URL("./testing/ProviderInstanceRegistryLive.fixture.mjs", import.meta.url),
-    ),
-    claudePath,
+  const claudeFixture = yield* path.fromFileUrl(
+    new URL("./testing/ProviderInstanceRegistryLive.fixture.mjs", import.meta.url),
   );
-  yield* fileSystem.chmod(claudePath, 0o755);
+  if (HostProcessPlatform.defaultValue() === "win32") {
+    // Windows cannot run a shebang script, so lay the fixture out like an npm
+    // global install: a `claude.cmd` shim beside the package entry the Claude
+    // SDK follows it to.
+    const packageDir = path.join(fixtureDir, "node_modules", "@anthropic-ai", "claude-code");
+    yield* fileSystem.makeDirectory(packageDir, { recursive: true });
+    yield* fileSystem.writeFileString(path.join(packageDir, "package.json"), '{"type":"module"}');
+    yield* fileSystem.copyFile(claudeFixture, path.join(packageDir, "cli.js"));
+    yield* fileSystem.writeFileString(
+      `${claudePath}.cmd`,
+      `@"${process.execPath}" "%~dp0node_modules\\@anthropic-ai\\claude-code\\cli.js" %*\r\n`,
+    );
+  } else {
+    yield* fileSystem.copyFile(claudeFixture, claudePath);
+    yield* fileSystem.chmod(claudePath, 0o755);
+  }
   yield* fileSystem.makeDirectory(claudeHomePath);
 
   const asTildePath = (filePath: string) => `~/${path.relative(homePath, filePath)}`;
@@ -498,8 +510,14 @@ describe("ProviderInstanceRegistry — multi-instance codex slice", () => {
       const outcome = yield* instance!.consumeResetCredit!().pipe(Effect.result);
       return { outcome, after: yield* instance!.snapshot.getSnapshot };
     }).pipe(
-      // macOS logins live in the Keychain, where resets are never read.
-      Effect.provideService(HostProcessPlatform, "linux"),
+      // macOS logins live in the Keychain, where resets are never read. Other
+      // hosts keep their own platform so the fixture CLI still spawns there.
+      Effect.provideService(
+        HostProcessPlatform,
+        HostProcessPlatform.defaultValue() === "darwin"
+          ? "linux"
+          : HostProcessPlatform.defaultValue(),
+      ),
       Effect.provide(layerTest),
     );
 

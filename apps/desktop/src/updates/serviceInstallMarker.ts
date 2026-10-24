@@ -78,7 +78,7 @@ function helperStillRuns(studioHome: string, receipt: unknown, io: ServiceInstal
   if (typeof receipt !== "string" || !NodePath.isAbsolute(receipt)) return false;
   // Only a receipt the agent keeps for this home, never a path pointing elsewhere.
   const resolved = NodePath.resolve(receipt);
-  if (NodePath.dirname(resolved) !== NodePath.join(studioHome, SERVICE_INSTALL_RECEIPTS)) {
+  if (NodePath.dirname(resolved) !== NodePath.resolve(studioHome, SERVICE_INSTALL_RECEIPTS)) {
     return false;
   }
   const file = io.readFile(resolved);

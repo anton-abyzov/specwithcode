@@ -120,6 +120,16 @@ describe("ClientSettings rich text composer", () => {
   });
 });
 
+describe("ServerSettings SpecWithCode Browser preference", () => {
+  it("prefers SpecWithCode Browser unless the user turned it off", () => {
+    expect(DEFAULT_SERVER_SETTINGS.preferSpecWithCodeBrowser).toBe(true);
+    expect(decodeServerSettings({}).preferSpecWithCodeBrowser).toBe(true);
+    const off = { preferSpecWithCodeBrowser: false };
+    expect(encodeServerSettings(decodeServerSettings(off))).toMatchObject(off);
+    expect(decodeServerSettingsPatch(off)).toEqual(off);
+  });
+});
+
 describe("ServerSettings default permissions", () => {
   it("requires approval when a runtime default was not configured", () => {
     expect(decodeServerSettings({}).defaultRuntimeMode).toBe("approval-required");

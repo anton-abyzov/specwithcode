@@ -236,13 +236,15 @@ it.effect("keeps honoring a credential after a server restart", () =>
     // Only hashes are persisted, owner-only.
     const persisted = Option.getOrThrow(yield* store.get("mcp-credentials"));
     expect(new TextDecoder().decode(persisted)).not.toContain(token);
+    // Windows has no POSIX mode bits; the profile folder's ACL keeps these files private.
+    const posixModes = process.platform !== "win32";
     const statePath = store.pathOf!("mcp-credentials");
-    expect((yield* fileSystem.stat(statePath)).mode & 0o777).toBe(0o600);
+    if (posixModes) expect((yield* fileSystem.stat(statePath)).mode & 0o777).toBe(0o600);
 
     // The thread's credential file carries the current endpoint and token.
     const credentialFile = issued.config.credentialFile;
     expect(credentialFile).toBeDefined();
-    expect((yield* fileSystem.stat(credentialFile!)).mode & 0o777).toBe(0o600);
+    if (posixModes) expect((yield* fileSystem.stat(credentialFile!)).mode & 0o777).toBe(0o600);
     expect(JSON.parse(yield* fileSystem.readFileString(credentialFile!))).toEqual({
       endpoint: issued.config.endpoint,
       authorization: issued.config.authorizationHeader,
@@ -816,7 +818,15 @@ it.effect("stores a revocation once the store recovers, without other traffic", 
       Effect.map((stored) =>
         Option.exists(stored, (bytes) => new TextDecoder().decode(bytes).includes(threadId)),
       ),
-      Effect.tap(() => Effect.yieldNow),
+      // Real time between reads: the write is real file I/O, which a slow
+      // disk (Windows runners) can take longer than a burst of yields. The
+      // forked retry can also reach its backoff sleep after the adjust above,
+      // so keep moving the test clock until it has run.
+      Effect.tap(() =>
+        TestClock.adjust("1 second").pipe(
+          Effect.andThen(TestClock.withLive(Effect.sleep("10 millis"))),
+        ),
+      ),
       Effect.repeat({ while: (stale) => stale, times: 1_000 }),
     );
 

@@ -14,6 +14,7 @@ import {
   type OrchestrationV2ProviderThread,
   type OrchestrationV2Run,
   type OrchestrationV2RunAttempt,
+  type OrchestrationV2RunInterruptCause,
   type OrchestrationV2Subagent,
   type OrchestrationV2TurnItem,
   ProviderDriverKind,
@@ -3379,6 +3380,44 @@ it.effect("emits run_interrupt_result when hard-stop finalizes the active attemp
   }),
 );
 
+// October 23, 2026: the flyers thread showed "Run interrupted by user" on turns
+// the service update stopped, because every result said so whoever asked.
+it.effect.each([
+  ["service_update", "Stopped for the SpecWithCode update"],
+  ["user", "Stopped by the user"],
+  ["delegated_cancel", "Cancelled by its coordinator"],
+  [null, "Run interrupted"],
+] as const)("labels an interrupted run's result by who stopped it (%s)", ([cause, message]) =>
+  Effect.gen(function* () {
+    const { written } = yield* captureRootRunTermination({
+      key: `interrupt-label:${cause}`,
+      shouldFinalizeRun: () => Effect.succeed(true),
+      runInterruptCause: () => Effect.succeed(cause),
+    });
+    assert.deepEqual(
+      written.map((item) =>
+        item.type === "run_interrupt_result" ? [item.message, item.cause ?? null] : item.type,
+      ),
+      [[message, cause]],
+    );
+  }),
+);
+
+it.effect("labels a superseded attempt's Stop result by its cause", () =>
+  Effect.gen(function* () {
+    const { written } = yield* captureRootRunTermination({
+      key: "interrupt-label-superseded",
+      shouldFinalizeRun: () => Effect.succeed(false),
+      hasUnpairedRunInterruptRequest: () => Effect.succeed(true),
+      runInterruptCause: () => Effect.succeed("service_update"),
+    });
+    assert.deepEqual(
+      written.map((item) => (item.type === "run_interrupt_result" ? item.message : item.type)),
+      ["Stopped for the SpecWithCode update"],
+    );
+  }),
+);
+
 it.effect.each(["completed", "interrupted", "cancelled", "failed"] as const)(
   "refreshes pull requests after the current root run %s",
   (status) =>
@@ -3456,6 +3495,21 @@ it.effect("refreshes pull requests after a provider stream exits with an error",
     );
     const error = written.find((item) => item.type === "error");
     assert.include(error?.failure.message ?? "", "provider event stream closed unexpectedly");
+  }),
+);
+
+// A service update's drain ends a busy session's stream rather than failing it:
+// the run is left for the drain to stop for the update, which the restart
+// continues. A failed run is never continued.
+it.effect("leaves a run whose provider stream ended without a terminal unsettled", () =>
+  Effect.gen(function* () {
+    const { written, observed } = yield* captureRootRunTermination({
+      key: "stream-ended-by-update-release",
+      shouldFinalizeRun: () => Effect.succeed(true),
+      events: () => Stream.empty,
+    });
+    assert.deepEqual(written, []);
+    assert.deepEqual(observed, []);
   }),
 );
 
@@ -3621,6 +3675,7 @@ function captureRootRunTermination(input: {
   readonly shouldFinalizeRun: () => Effect.Effect<boolean, ProjectionStore.ProjectionStoreV2Error>;
   readonly rejectTerminalWrite?: boolean;
   readonly hasUnpairedRunInterruptRequest?: () => Effect.Effect<boolean, never>;
+  readonly runInterruptCause?: () => Effect.Effect<OrchestrationV2RunInterruptCause | null, never>;
   readonly shouldStartProviderTurn?: () => Effect.Effect<
     boolean,
     ProjectionStore.ProjectionStoreV2Error
@@ -3780,6 +3835,9 @@ function captureRootRunTermination(input: {
           : {
               hasUnpairedRunInterruptRequest: input.hasUnpairedRunInterruptRequest,
             }),
+        ...(input.runInterruptCause === undefined
+          ? {}
+          : { runInterruptCause: input.runInterruptCause }),
         message: {
           messageId: MessageId.make(`message:${input.key}`),
           text: "interrupt projection",

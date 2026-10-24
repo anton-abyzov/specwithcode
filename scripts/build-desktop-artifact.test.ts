@@ -135,8 +135,10 @@ const makeLinuxCliArchiveFixture = Effect.fn("test.makeLinuxCliArchiveFixture")(
     yield* fs.writeFileString(memberPath, member);
   }
   const archivePath = path.join(input.root, `${input.stem}.tar.gz`);
+  // Relative paths keep GNU tar on Windows from reading `C:` as a remote host.
   const tar = yield* spawner.spawn(
-    ChildProcess.make("tar", ["-czf", archivePath, "-C", contentRoot, "."], {
+    ChildProcess.make("tar", ["-czf", `${input.stem}.tar.gz`, "-C", "content", "."], {
+      cwd: input.root,
       stdin: "ignore",
       stdout: "ignore",
       stderr: "pipe",
@@ -1352,13 +1354,16 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
               stageResourcesDir,
               arch,
               verbose: false,
-            }).pipe(Effect.provide(spawner));
+              // Linux helpers are built on a Linux host, where cargo is spawned by name.
+            }).pipe(Effect.provide(spawner), Effect.provideService(HostProcessPlatform, "linux"));
             const installed = path.join(
               stageResourcesDir,
               `${backend}-capture/studio-${backend}-snap-shot`,
             );
             assert.equal(yield* fs.readFileString(installed), `helper-${arch}`);
-            assert.equal((yield* fs.stat(installed)).mode & 0o777, 0o755);
+            // Windows files carry no execute bits to check.
+            if (HostProcessPlatform.defaultValue() !== "win32")
+              assert.equal((yield* fs.stat(installed)).mode & 0o777, 0o755);
             if (backend === "hyprland")
               assert.equal(
                 yield* fs.readFileString(
@@ -2658,16 +2663,18 @@ it("ignores trailing separators", () => {
 });
 
 it("puts the workspace bin and cargo on PATH for direct script runs", () => {
-  const present = new Set(["/repo/node_modules/.bin", "/home/u/.cargo/bin"]);
+  const workspaceBin = NodePath.join("/repo", "node_modules", ".bin");
+  const cargoBin = NodePath.join("/home/u", ".cargo", "bin");
+  const present = new Set([workspaceBin, cargoBin]);
   const exists = (path: string) => present.has(path);
   const sep = NodePath.delimiter;
   assert.strictEqual(
     withBuildToolsOnPath(`/usr/bin${sep}/bin`, "/repo", "/home/u", exists),
-    ["/repo/node_modules/.bin", "/home/u/.cargo/bin", "/usr/bin", "/bin"].join(sep),
+    [workspaceBin, cargoBin, "/usr/bin", "/bin"].join(sep),
   );
   assert.strictEqual(
-    withBuildToolsOnPath(`/repo/node_modules/.bin${sep}/bin`, "/repo", undefined, exists),
-    `/repo/node_modules/.bin${sep}/bin`,
+    withBuildToolsOnPath(`${workspaceBin}${sep}/bin`, "/repo", undefined, exists),
+    `${workspaceBin}${sep}/bin`,
   );
   assert.strictEqual(withBuildToolsOnPath(undefined, "/missing", "/nohome", exists), "");
 });

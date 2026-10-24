@@ -7,6 +7,8 @@ import {
   type ComputerUseHostInput,
   type ComputerUseRespondInput,
   ComputerUseToolError,
+  computerUseUnsupportedPlatformReason,
+  isComputerUseSupportedHostPlatform,
   WS_METHODS,
   WsComputerUseRpcGroup,
 } from "@specweave-studio/contracts";
@@ -26,8 +28,10 @@ import { RpcInstrumentation } from "../observability/RpcInstrumentation.ts";
  * The desktop app subscribes to `computerUse.host` and performs each request
  * natively, so the operating system attributes screen capture and input to
  * the app the user granted permissions to, not to this background service.
- * The newest host wins; one action runs at a time because there is only one
- * pointer and one keyboard.
+ * The newest host on a supported platform wins; one action runs at a time
+ * because there is only one pointer and one keyboard. A desktop app on a
+ * platform without computer use still connects, so agents learn the real
+ * reason instead of being told the app is closed.
  */
 export class ComputerUseBroker extends Context.Service<
   ComputerUseBroker,
@@ -38,7 +42,7 @@ export class ComputerUseBroker extends Context.Service<
       action: ComputerUseAction,
       options?: { readonly threadId?: string },
     ) => Effect.Effect<ComputerUseActionResult, ComputerUseToolError>;
-    /** Whether a desktop app is connected to answer actions. */
+    /** Whether a desktop app that can perform actions is connected. */
     readonly hasHost: Effect.Effect<boolean>;
   }
 >()("specweave-studio/computerUse/ComputerUseBroker") {}
@@ -62,6 +66,7 @@ const ACTION_TIMEOUT_MS: Record<ComputerUseAction["kind"], number> = {
 interface Host {
   readonly id: string;
   readonly label: string;
+  readonly platform: string;
   readonly queue: Queue.Queue<ComputerUseHostEvent>;
 }
 
@@ -91,8 +96,12 @@ export const make = Effect.gen(function* () {
       Effect.gen(function* () {
         const queue = yield* Queue.unbounded<ComputerUseHostEvent>();
         const id = `computer-host-${++sequence}`;
-        hosts.push({ id, label: input.label, queue });
-        yield* Effect.logInfo("Computer use host connected", { hostId: id, label: input.label });
+        hosts.push({ id, label: input.label, platform: input.platform, queue });
+        yield* Effect.logInfo("Computer use host connected", {
+          hostId: id,
+          label: input.label,
+          platform: input.platform,
+        });
         yield* Queue.offer(queue, { type: "connected", hostId: id });
         const release = Effect.suspend(() => {
           const index = hosts.findIndex((entry) => entry.id === id);
@@ -131,9 +140,17 @@ export const make = Effect.gen(function* () {
   const invoke = (action: ComputerUseAction, options?: { readonly threadId?: string }) =>
     turn.withPermits(1)(
       Effect.gen(function* () {
-        const target = hosts.at(-1);
+        const target = hosts.findLast((entry) =>
+          isComputerUseSupportedHostPlatform(entry.platform),
+        );
         if (target === undefined) {
-          return yield* new ComputerUseToolError({ reason: NO_HOST_REASON });
+          const unsupported = hosts.at(-1);
+          return yield* new ComputerUseToolError({
+            reason:
+              unsupported === undefined
+                ? NO_HOST_REASON
+                : `${computerUseUnsupportedPlatformReason(unsupported.platform)} The desktop app is open on this machine, but it cannot take screenshots or control the mouse and keyboard here.`,
+          });
         }
         const requestId = `computer-${++sequence}`;
         const deferred = yield* Deferred.make<ComputerUseActionResult, ComputerUseToolError>();
@@ -166,7 +183,9 @@ export const make = Effect.gen(function* () {
     host,
     respond,
     invoke,
-    hasHost: Effect.sync(() => hosts.length > 0),
+    hasHost: Effect.sync(() =>
+      hosts.some((entry) => isComputerUseSupportedHostPlatform(entry.platform)),
+    ),
   });
 });
 

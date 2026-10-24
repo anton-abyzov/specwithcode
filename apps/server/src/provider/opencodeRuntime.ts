@@ -599,8 +599,10 @@ const makeOpenCodeRuntime = Effect.gen(function* () {
   const netService = yield* NetService.NetService;
   const hostPlatform = yield* HostProcessPlatform;
   const serverLedger = yield* OpenCodeServerLedger.OpenCodeServerLedger;
+  // npm's Windows native shim otherwise puts cmd.exe between the app and
+  // OpenCode, letting the executable escape libuv's kill-on-close job.
   const resolveCommand = (command: string, args: ReadonlyArray<string>, env?: NodeJS.ProcessEnv) =>
-    resolveSpawnCommand(command, args, env ? { env } : {});
+    resolveSpawnCommand(command, args, { ...(env ? { env } : {}), bypassNpmShim: true });
 
   const runOpenCodeCommand: OpenCodeRuntimeShape["runOpenCodeCommand"] = (input) =>
     Effect.gen(function* () {

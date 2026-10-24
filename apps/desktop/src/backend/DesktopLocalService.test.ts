@@ -109,6 +109,7 @@ const layerFor = (
     readonly crypto: ElectronSafeStorage.ElectronSafeStorage["Service"];
   },
   readFreeDiskBytes?: DesktopLocalService.FreeDiskBytesReader,
+  platform: NodeJS.Platform = "darwin",
 ) =>
   DesktopLocalService.layer.pipe(
     Layer.provide(
@@ -120,7 +121,7 @@ const layerFor = (
       DesktopEnvironment.layer({
         dirname: "/repo/apps/desktop/src",
         homeDirectory: home,
-        platform: "darwin",
+        platform,
         processArch: "arm64",
         appVersion: "0.1.4",
         appPath: "/repo",
@@ -476,6 +477,106 @@ describe("DesktopLocalService.bearerToken", () => {
       );
     }).pipe(
       Effect.provide(layerFor(home, {}, { httpClient, crypto: { ...crypto, encryptString } })),
+      Effect.ensuring(Effect.sync(() => NodeFS.rmSync(home, { recursive: true, force: true }))),
+    );
+  });
+});
+
+describe("DesktopLocalService pairing on Windows", () => {
+  beforeEach(() => {
+    execFileSyncMock.mockReset();
+    execFileMock
+      .mockReset()
+      .mockImplementation(
+        (
+          _command: string,
+          _args: ReadonlyArray<string>,
+          _options: unknown,
+          callback: (error: Error | null, stdout: string) => void,
+        ) => callback(null, "Token: synthetic-pairing-token"),
+      );
+  });
+
+  const crypto: ElectronSafeStorage.ElectronSafeStorage["Service"] = {
+    isEncryptionAvailable: Effect.succeed(true),
+    encryptString: (token) => Effect.succeed(Buffer.from(`encrypted:${token}`)),
+    decryptString: (encrypted) =>
+      Effect.succeed(Buffer.from(encrypted).toString().slice("encrypted:".length)),
+    selectedStorageBackend: Effect.succeedNone,
+  };
+  const httpClient = HttpClient.make((request) => {
+    assert.strictEqual(new URL(request.url).pathname, "/oauth/token");
+    return Effect.succeed(
+      HttpClientResponse.fromWeb(
+        request,
+        Response.json({
+          access_token: "windows-bearer",
+          issued_token_type: "urn:ietf:params:oauth:token-type:access_token",
+          token_type: "Bearer",
+          expires_in: 3600,
+          scope: "orchestration:read",
+        }),
+      ),
+    );
+  });
+  const attachOlderService = (home: string) =>
+    Effect.gen(function* () {
+      const service = yield* DesktopLocalService.DesktopLocalService;
+      yield* service.attach({
+        baseDir: NodePath.join(home, ".specweave-studio", "m4"),
+        runtime: { pid: 4242, port: 8319, origin: "http://service.test", serviceManaged: true },
+        descriptor: {
+          ...DESCRIPTOR,
+          serverVersion: "0.0.1-older",
+        } as DesktopLocalService.AttachedLocalService["descriptor"],
+        httpBaseUrl: new URL("http://service.test"),
+      });
+      return service;
+    });
+
+  it.effect("pairs through the CLI-run server's own Node and script", () => {
+    const home = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "studio-win-pair-"));
+    const node = NodePath.join(home, "node.exe");
+    const script = NodePath.join(home, "My Tools", "bin.mjs");
+    NodeFS.writeFileSync(node, "");
+    NodeFS.mkdirSync(NodePath.dirname(script), { recursive: true });
+    NodeFS.writeFileSync(script, "");
+    execFileSyncMock.mockReturnValue(
+      JSON.stringify({ executable: node, commandLine: `"${node}" "${script}" serve --port 8319` }),
+    );
+    return Effect.gen(function* () {
+      const service = yield* attachOlderService(home);
+      assert.strictEqual(yield* service.bearerToken, "windows-bearer");
+      const [command, args, options] = execFileSyncMock.mock.calls[0]!;
+      assert.strictEqual(command, "powershell.exe");
+      assert.includeMembers(args, ["-NoProfile", "-NonInteractive", "-Command"]);
+      assert.include(args.at(-1), "ProcessId=4242");
+      assert.include(options, { windowsHide: true });
+      const [pairCommand, pairArgs, pairOptions] = execFileMock.mock.calls[0]!;
+      assert.strictEqual(pairCommand, node);
+      assert.strictEqual(pairArgs[0], script);
+      assert.strictEqual(pairArgs[1], "pair");
+      assert.include(pairOptions, { windowsHide: true });
+    }).pipe(
+      Effect.provide(layerFor(home, {}, { httpClient, crypto }, undefined, "win32")),
+      Effect.ensuring(Effect.sync(() => NodeFS.rmSync(home, { recursive: true, force: true }))),
+    );
+  });
+
+  it.effect("refuses to pair an older service whose command line cannot be read", () => {
+    const home = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "studio-win-pair-"));
+    execFileSyncMock.mockImplementation(() => {
+      throw new Error("powershell.exe not found");
+    });
+    return Effect.gen(function* () {
+      const service = yield* attachOlderService(home);
+      const result = yield* service.bearerToken.pipe(Effect.result);
+      assert.isTrue(Result.isFailure(result));
+      if (Result.isFailure(result))
+        assert.strictEqual(result.failure._tag, "DesktopLocalServicePairingError");
+      assert.lengthOf(execFileMock.mock.calls, 0);
+    }).pipe(
+      Effect.provide(layerFor(home, {}, { httpClient, crypto }, undefined, "win32")),
       Effect.ensuring(Effect.sync(() => NodeFS.rmSync(home, { recursive: true, force: true }))),
     );
   });

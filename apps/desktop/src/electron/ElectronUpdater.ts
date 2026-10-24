@@ -1,9 +1,11 @@
+import { HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
 import * as Scope from "effect/Scope";
 
+import { autoUpdater as nativeUpdater } from "electron";
 import { autoUpdater } from "electron-updater";
 
 type AutoUpdater = typeof autoUpdater;
@@ -70,8 +72,8 @@ export class ElectronUpdater extends Context.Service<
     readonly checkForUpdates: Effect.Effect<void, ElectronUpdaterCheckForUpdatesError>;
     readonly downloadUpdate: Effect.Effect<void, ElectronUpdaterDownloadUpdateError>;
     /**
-     * False while Squirrel.Mac has not staged the download (it stages one
-     * only when the download finishes with install-on-quit set). Then
+     * False while Squirrel.Mac has not staged the latest download (it stages
+     * one only when the download finishes with install-on-quit set). Then
      * quitAndInstall does not quit: it leaves a listener that quits whenever
      * a later staging finishes, or only waits when the flag is set.
      */
@@ -87,100 +89,128 @@ export class ElectronUpdater extends Context.Service<
   }
 >()("@specweave-studio/desktop/electron/ElectronUpdater") {}
 
+interface DownloadedUpdateInfo {
+  readonly version?: unknown;
+}
+
 /** @public Service construction is part of the canonical Effect module API. */
-export const make = ElectronUpdater.of({
-  setFeedURL: (options) =>
-    Effect.suspend(() => {
-      autoUpdater.setFeedURL(options);
-      return Effect.void;
-    }),
-  setAutoDownload: (value) =>
-    Effect.suspend(() => {
-      autoUpdater.autoDownload = value;
-      return Effect.void;
-    }),
-  setAutoInstallOnAppQuit: (value) =>
-    Effect.suspend(() => {
-      autoUpdater.autoInstallOnAppQuit = value;
-      return Effect.void;
-    }),
-  setChannel: (channel) =>
-    Effect.suspend(() => {
-      autoUpdater.channel = channel;
-      return Effect.void;
-    }),
-  setAllowPrerelease: (value) =>
-    Effect.suspend(() => {
-      autoUpdater.allowPrerelease = value;
-      return Effect.void;
-    }),
-  allowDowngrade: Effect.sync(() => autoUpdater.allowDowngrade),
-  setAllowDowngrade: (value) =>
-    Effect.suspend(() => {
-      autoUpdater.allowDowngrade = value;
-      return Effect.void;
-    }),
-  setFullChangelog: (value) =>
-    Effect.suspend(() => {
-      autoUpdater.fullChangelog = value;
-      return Effect.void;
-    }),
-  setDisableDifferentialDownload: (value) =>
-    Effect.suspend(() => {
-      autoUpdater.disableDifferentialDownload = value;
-      return Effect.void;
-    }),
-  checkForUpdates: Effect.suspend(() => {
-    const channel = autoUpdater.channel;
-    return Effect.tryPromise({
-      try: () => autoUpdater.checkForUpdates(),
-      catch: (cause) => new ElectronUpdaterCheckForUpdatesError({ channel, cause }),
-    }).pipe(Effect.asVoid);
-  }),
-  downloadUpdate: Effect.suspend(() => {
-    const channel = autoUpdater.channel;
-    return Effect.tryPromise({
-      try: () => autoUpdater.downloadUpdate(),
-      catch: (cause) => new ElectronUpdaterDownloadUpdateError({ channel, cause }),
-    }).pipe(Effect.asVoid);
-  }),
-  // MacUpdater (electron-updater 6.8.9) keeps squirrelDownloadedUpdate; other
-  // platforms have no such field and install from the download itself.
-  installReady: Effect.sync(() => {
-    const staged = (autoUpdater as unknown as { squirrelDownloadedUpdate?: unknown })
-      .squirrelDownloadedUpdate;
-    return typeof staged !== "boolean" || staged;
-  }),
-  quitAndInstall: ({ isSilent, isForceRunAfter }) =>
-    Effect.suspend(() => {
-      const channel = autoUpdater.channel;
-      return Effect.try({
-        try: () => autoUpdater.quitAndInstall(isSilent, isForceRunAfter),
-        catch: (cause) =>
-          new ElectronUpdaterQuitAndInstallError({
-            channel,
-            isSilent,
-            isForceRunAfter,
-            cause,
-          }),
-      });
-    }),
-  on: (eventName, listener) => {
-    const eventTarget = autoUpdater as unknown as {
-      on: (eventName: string, listener: (...args: Array<unknown>) => void) => void;
-      removeListener: (eventName: string, listener: (...args: Array<unknown>) => void) => void;
-    };
-    const untypedListener = listener as unknown as (...args: Array<unknown>) => void;
-    return Effect.acquireRelease(
-      Effect.sync(() => {
-        eventTarget.on(eventName, untypedListener);
-      }),
-      () =>
-        Effect.sync(() => {
-          eventTarget.removeListener(eventName, untypedListener);
-        }),
-    ).pipe(Effect.asVoid);
-  },
+export const make = Effect.gen(function* () {
+  const platform = yield* HostProcessPlatform;
+  // Squirrel.Mac's staging, from public events instead of MacUpdater's
+  // private squirrelDownloadedUpdate (set once, never reset, so it stays true
+  // for an older bundle): electron-updater's update-downloaded names the
+  // version it hands Squirrel, Electron's own update-downloaded says Squirrel
+  // staged what it was handed. Other platforms install from the download.
+  let downloadedVersion: string | null = null;
+  let stagedVersion: string | null = null;
+  let tracking = false;
+  const trackStaging = () => {
+    if (tracking || platform !== "darwin") return;
+    tracking = true;
+    autoUpdater.on("update-downloaded", (info: DownloadedUpdateInfo) => {
+      downloadedVersion = typeof info?.version === "string" ? info.version : null;
+    });
+    nativeUpdater.on("update-downloaded", () => {
+      stagedVersion = downloadedVersion;
+    });
+  };
+  return makeService(
+    trackStaging,
+    () =>
+      platform !== "darwin" || (downloadedVersion !== null && stagedVersion === downloadedVersion),
+  );
 });
 
-export const layer = Layer.succeed(ElectronUpdater, make);
+const makeService = (trackStaging: () => void, installReady: () => boolean) =>
+  ElectronUpdater.of({
+    setFeedURL: (options) =>
+      Effect.suspend(() => {
+        autoUpdater.setFeedURL(options);
+        return Effect.void;
+      }),
+    setAutoDownload: (value) =>
+      Effect.suspend(() => {
+        autoUpdater.autoDownload = value;
+        return Effect.void;
+      }),
+    setAutoInstallOnAppQuit: (value) =>
+      Effect.suspend(() => {
+        autoUpdater.autoInstallOnAppQuit = value;
+        return Effect.void;
+      }),
+    setChannel: (channel) =>
+      Effect.suspend(() => {
+        autoUpdater.channel = channel;
+        return Effect.void;
+      }),
+    setAllowPrerelease: (value) =>
+      Effect.suspend(() => {
+        autoUpdater.allowPrerelease = value;
+        return Effect.void;
+      }),
+    allowDowngrade: Effect.sync(() => autoUpdater.allowDowngrade),
+    setAllowDowngrade: (value) =>
+      Effect.suspend(() => {
+        autoUpdater.allowDowngrade = value;
+        return Effect.void;
+      }),
+    setFullChangelog: (value) =>
+      Effect.suspend(() => {
+        autoUpdater.fullChangelog = value;
+        return Effect.void;
+      }),
+    setDisableDifferentialDownload: (value) =>
+      Effect.suspend(() => {
+        autoUpdater.disableDifferentialDownload = value;
+        return Effect.void;
+      }),
+    checkForUpdates: Effect.suspend(() => {
+      const channel = autoUpdater.channel;
+      return Effect.tryPromise({
+        try: () => autoUpdater.checkForUpdates(),
+        catch: (cause) => new ElectronUpdaterCheckForUpdatesError({ channel, cause }),
+      }).pipe(Effect.asVoid);
+    }),
+    downloadUpdate: Effect.suspend(() => {
+      // Every handover to Squirrel follows a download, so tracking starts here.
+      trackStaging();
+      const channel = autoUpdater.channel;
+      return Effect.tryPromise({
+        try: () => autoUpdater.downloadUpdate(),
+        catch: (cause) => new ElectronUpdaterDownloadUpdateError({ channel, cause }),
+      }).pipe(Effect.asVoid);
+    }),
+    installReady: Effect.sync(installReady),
+    quitAndInstall: ({ isSilent, isForceRunAfter }) =>
+      Effect.suspend(() => {
+        const channel = autoUpdater.channel;
+        return Effect.try({
+          try: () => autoUpdater.quitAndInstall(isSilent, isForceRunAfter),
+          catch: (cause) =>
+            new ElectronUpdaterQuitAndInstallError({
+              channel,
+              isSilent,
+              isForceRunAfter,
+              cause,
+            }),
+        });
+      }),
+    on: (eventName, listener) => {
+      const eventTarget = autoUpdater as unknown as {
+        on: (eventName: string, listener: (...args: Array<unknown>) => void) => void;
+        removeListener: (eventName: string, listener: (...args: Array<unknown>) => void) => void;
+      };
+      const untypedListener = listener as unknown as (...args: Array<unknown>) => void;
+      return Effect.acquireRelease(
+        Effect.sync(() => {
+          eventTarget.on(eventName, untypedListener);
+        }),
+        () =>
+          Effect.sync(() => {
+            eventTarget.removeListener(eventName, untypedListener);
+          }),
+      ).pipe(Effect.asVoid);
+    },
+  });
+
+export const layer = Layer.effect(ElectronUpdater, make);

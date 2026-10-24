@@ -216,9 +216,12 @@ it.effect("records each request once, durably, until it is reopened", () =>
           ["q2", undefined],
         ],
       );
-      const fs = yield* FileSystem.FileSystem;
-      const info = yield* fs.stat(recordPath);
-      assert.equal(Number(info.mode) & 0o777, 0o600);
+      // POSIX permission bits; Windows has no owner-only file mode.
+      if (process.platform !== "win32") {
+        const fs = yield* FileSystem.FileSystem;
+        const info = yield* fs.stat(recordPath);
+        assert.equal(Number(info.mode) & 0o777, 0o600);
+      }
     }),
   ),
 );

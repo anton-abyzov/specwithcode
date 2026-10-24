@@ -206,12 +206,16 @@ export interface ProviderSessionManagerV2Shape {
    * too, after the caller has stopped their turns. Used before a service update,
    * whose helper refuses while any agent process still runs under the service.
    * With `keepMcpCredentials`, MCP credentials survive as on server shutdown,
-   * so the restarted server honors them.
+   * so the restarted server honors them. With `endStreams`, event streams end
+   * instead of failing, so a turn the release cuts is not recorded as a
+   * provider failure; the caller settles it (a service update marks it stopped
+   * for the update, which continues it after the restart).
    */
   readonly releaseIdle: (input: {
     readonly detail: string;
     readonly includeBusy?: boolean;
     readonly keepMcpCredentials?: boolean;
+    readonly endStreams?: boolean;
   }) => Effect.Effect<number, ProviderSessionManagerV2Error>;
   readonly detach: (input: {
     readonly providerSessionId: ProviderSessionId;
@@ -2050,6 +2054,7 @@ export const layerWithOptions = (
                   reason: "manual_shutdown",
                   detail: input.detail,
                   ...(input.keepMcpCredentials === true ? { keepMcpCredentials: true } : {}),
+                  ...(input.endStreams === true ? { gracefulSubscribers: true } : {}),
                   ...(input.includeBusy === true
                     ? {}
                     : { onlyIfIdleGeneration: entry.idleGeneration }),

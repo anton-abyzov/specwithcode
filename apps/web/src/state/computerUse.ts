@@ -4,7 +4,9 @@ import {
   type ComputerUseAction,
   type ComputerUseActionResult,
   type ComputerUseHostInput,
+  computerUseHostPlatformFor,
   computerUsePermissionFor,
+  computerUseUnsupportedPlatformReason,
   WS_METHODS,
 } from "@specweave-studio/contracts";
 import * as Effect from "effect/Effect";
@@ -26,7 +28,11 @@ async function runWithPermissionCard(
 ): Promise<ComputerUseActionResult> {
   const bridge = window.desktopBridge;
   if (bridge?.runComputerUseAction === undefined) {
-    throw new Error("This desktop app cannot control the computer.");
+    throw new Error(
+      computerUseUnsupportedPlatformReason(
+        computerUseHostPlatformFor(bridge?.getClientPlatform?.()),
+      ),
+    );
   }
   const required = computerUsePermissionFor(action.kind);
   let token: symbol | undefined;

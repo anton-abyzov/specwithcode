@@ -276,6 +276,9 @@ describe("contextOverflowStop", () => {
       type: "message.dispatch",
       commandId: "provider-fallback:t1:r45",
       modelSelection: { instanceId: claudeId, model: opus },
+      // The request that overflowed goes again whole, not "Continue where you left off".
+      text: "Why do payments show all zeros? Complete the job!",
+      attachments: [],
     });
     // A request too large for the 32k agent keeps the move off it even when home is out.
     const bigRequest = {
@@ -288,9 +291,40 @@ describe("contextOverflowStop", () => {
     });
     expect(homeless).toBeNull();
   });
+
+  it("sends a request larger than the capped handoff whole on the target", () => {
+    // 100 KB of pasted logs: the handoff keeps at most 16k tokens of history,
+    // so the target would never see it behind "Continue where you left off".
+    const logs = `Here are the logs:\n${"x".repeat(100_000)}`;
+    const attachment = { type: "image", id: "img-1", name: "zeros.png" } as never;
+    const stop = contextOverflowStop(shell, {
+      ...input,
+      messages: [{ id: "m45", text: logs, attachments: [attachment] }] as never,
+    })!;
+    expect(stop.request).toMatchObject({ text: logs, attachments: [attachment] });
+    const step = providerLimitStep(shell, input.providers, settings, failedAt + 30_000, {
+      resetAttempted: false,
+      unopenable: stop,
+    });
+    expect(step?.type === "switch" ? step.command : null).toMatchObject({
+      modelSelection: { instanceId: claudeId, model: opus },
+      text: logs,
+      attachments: [attachment],
+    });
+    // A stop for a provider that could not open still continues: its history is not in question.
+    const { cause: _cause, request: _request, ...openStop } = stop;
+    const open = providerLimitStep(shell, input.providers, settings, failedAt + 30_000, {
+      resetAttempted: false,
+      unopenable: openStop,
+    });
+    expect(open?.type === "switch" ? open.command : null).toMatchObject({
+      text: "Continue where you left off.",
+      attachments: [],
+    });
+  });
 });
 
-function harness(providers: ServerProvider[]) {
+function harness(providers: ServerProvider[], thread: object = shell) {
   const state = {
     providers,
     refreshed: [] as string[],
@@ -315,8 +349,8 @@ function harness(providers: ServerProvider[]) {
       getInstance: () => Effect.succeed(undefined),
     }),
     Layer.mock(ProjectionStore.ProjectionStoreV2)({
-      getShellSnapshot: () => Effect.succeed({ threads: [shell] } as never),
-      getThreadShell: () => Effect.succeed(shell as never),
+      getShellSnapshot: () => Effect.succeed({ threads: [thread] } as never),
+      getThreadShell: () => Effect.succeed(thread as never),
       getThreadRecords: () =>
         Effect.succeed({
           runs: [r44, r45],
@@ -358,7 +392,19 @@ describe("a handoff that does not fit, in the sweep", () => {
         type: "message.dispatch",
         commandId: "provider-fallback:t1:r45",
         modelSelection: { instanceId: claudeId, model: opus },
+        text: "Why do payments show all zeros? Complete the job!",
       });
+    }),
+  );
+
+  itEffect.effect("leaves a subagent the provider spawned alone: it takes no messages", () =>
+    Effect.gen(function* () {
+      const { state, sweep } = yield* harness([claudeRead(failedAt), codexFull, copilot], {
+        ...shell,
+        creationSource: "provider",
+      });
+      yield* sweep();
+      expect(state.dispatched).toHaveLength(0);
     }),
   );
 });

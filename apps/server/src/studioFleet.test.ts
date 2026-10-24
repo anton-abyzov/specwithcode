@@ -85,8 +85,11 @@ describe("private fleet boundary", () => {
     const file = join(dir, "studio-fleet.json");
     await writeFile(file, JSON.stringify(source()), { mode: 0o600 });
     expect((await readFleetConfig(dir))?.machines).toHaveLength(1);
-    await chmod(file, 0o644);
-    await expect(readFleetConfig(dir)).rejects.toThrow("securely");
+    // Windows has no POSIX mode bits; the profile folder's ACL keeps the file private.
+    if (process.platform !== "win32") {
+      await chmod(file, 0o644);
+      await expect(readFleetConfig(dir)).rejects.toThrow("securely");
+    }
     await rm(file);
     await writeFile(join(dir, "secret.json"), JSON.stringify(source()), { mode: 0o600 });
     await symlink(join(dir, "secret.json"), file);

@@ -207,11 +207,12 @@ const withChromeHome = Effect.fnUntraced(function* () {
 describe("listInstalledExternalBrowsers", () => {
   it.effect("finds installed browsers and their declared profiles", () =>
     Effect.gen(function* () {
+      const path = yield* Path.Path;
       const { applications, context } = yield* withChromeHome();
       const browsers = yield* listInstalledExternalBrowsers(context, {}, [applications]);
       assert.lengthOf(browsers, 1);
       assert.strictEqual(browsers[0]?.id, "chrome");
-      assert.strictEqual(browsers[0]?.launchPath, `${applications}/Google Chrome.app`);
+      assert.strictEqual(browsers[0]?.launchPath, path.join(applications, "Google Chrome.app"));
       assert.deepStrictEqual(browsers[0]?.profiles, [
         { directory: "Default", name: "Personal" },
         { directory: "Profile 2", name: "Work", account: "ads@work.example" },

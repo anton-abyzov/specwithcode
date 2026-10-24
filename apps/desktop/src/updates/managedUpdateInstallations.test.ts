@@ -4,6 +4,8 @@ import * as ChildProcess from "node:child_process";
 import * as OS from "node:os";
 import * as Path from "node:path";
 import { ManagedUpdateError } from "@specweave-studio/contracts";
+import { HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
+
 import { MAC_SERVICE_UPDATER_FILES } from "../../../../scripts/lib/studio-service-updater.ts";
 import { describe, expect, it, vi } from "vite-plus/test";
 import type { AttachedLocalService } from "../backend/DesktopLocalService.ts";
@@ -96,12 +98,15 @@ const token = (changes: object = {}) =>
     }),
   ).toString("base64url")}.fixture`;
 
+// These read real receipts whose trust depends on POSIX uids and mode bits, which Windows files do not have.
+const itPosixOwner = it.skipIf(HostProcessPlatform.defaultValue() === "win32");
+
 describe("managed update installation candidates", () => {
   it("supports a generic installation under UID502 with spaces and a receipt-bound port", () => {
     expect(parse(receipt())).toEqual({
       installationId: "work-mac",
-      studioHome: `${owner.homeDirectory}/.specwithcode/work-mac`,
-      stateDir: `${owner.homeDirectory}/.specwithcode/work-mac/userdata`,
+      studioHome: Path.join(owner.homeDirectory, ".specwithcode", "work-mac"),
+      stateDir: Path.join(owner.homeDirectory, ".specwithcode", "work-mac", "userdata"),
       release: receipt().release,
       port: 8320,
       version: "1.0.17",
@@ -196,53 +201,58 @@ describe("managed update installation candidates", () => {
       }),
     ).toThrow(ManagedUpdateError);
   });
-  it("discovers owned receipts without following foreign directory or helper symlinks", () => {
-    const home = FS.realpathSync(
-      FS.mkdtempSync(Path.join(OS.userInfo().homedir, ".managed-installations-test-")),
-    );
-    try {
-      const actual = { ...owner, uid: process.getuid!(), homeDirectory: home };
-      for (const id of ["alpha", "beta", "stage"]) {
-        const record = receipt(id, actual);
-        FS.mkdirSync(record.studioHome, { recursive: true });
-        FS.writeFileSync(Path.join(record.studioHome, "installation.json"), JSON.stringify(record));
-      }
-      FS.symlinkSync(
-        Path.join(home, ".specwithcode/alpha"),
-        Path.join(home, ".specwithcode/alias"),
+  itPosixOwner(
+    "discovers owned receipts without following foreign directory or helper symlinks",
+    () => {
+      const home = FS.realpathSync(
+        FS.mkdtempSync(Path.join(OS.userInfo().homedir, ".managed-installations-test-")),
       );
-      expect(findManagedUpdateInstallations(actual).map((value) => value.installationId)).toEqual([
-        "alpha",
-        "beta",
-      ]);
-      expect(
-        isOwnedManagedPath(Path.join(home, ".specwithcode/alias/installation.json"), actual),
-      ).toBe(false);
-      const helper = Path.join(home, "managed_updates.py");
-      for (const name of MAC_SERVICE_UPDATER_FILES)
-        FS.writeFileSync(Path.join(home, name), "# inert", { mode: 0o600 });
-      FS.writeFileSync(helper, "# inert", { mode: 0o600 });
-      FS.symlinkSync(helper, `${helper}.link`);
-      expect(selectManagedUpdateHelper([`${helper}.link`, helper], actual)).toBe(helper);
-      for (const name of MAC_SERVICE_UPDATER_FILES) {
-        const sibling = Path.join(home, name);
-        const parked = `${sibling}.saved`;
-        FS.renameSync(sibling, parked);
+      try {
+        const actual = { ...owner, uid: process.getuid!(), homeDirectory: home };
+        for (const id of ["alpha", "beta", "stage"]) {
+          const record = receipt(id, actual);
+          FS.mkdirSync(record.studioHome, { recursive: true });
+          FS.writeFileSync(
+            Path.join(record.studioHome, "installation.json"),
+            JSON.stringify(record),
+          );
+        }
+        FS.symlinkSync(
+          Path.join(home, ".specwithcode/alpha"),
+          Path.join(home, ".specwithcode/alias"),
+        );
+        expect(findManagedUpdateInstallations(actual).map((value) => value.installationId)).toEqual(
+          ["alpha", "beta"],
+        );
+        expect(
+          isOwnedManagedPath(Path.join(home, ".specwithcode/alias/installation.json"), actual),
+        ).toBe(false);
+        const helper = Path.join(home, "managed_updates.py");
+        for (const name of MAC_SERVICE_UPDATER_FILES)
+          FS.writeFileSync(Path.join(home, name), "# inert", { mode: 0o600 });
+        FS.writeFileSync(helper, "# inert", { mode: 0o600 });
+        FS.symlinkSync(helper, `${helper}.link`);
+        expect(selectManagedUpdateHelper([`${helper}.link`, helper], actual)).toBe(helper);
+        for (const name of MAC_SERVICE_UPDATER_FILES) {
+          const sibling = Path.join(home, name);
+          const parked = `${sibling}.saved`;
+          FS.renameSync(sibling, parked);
+          expect(selectManagedUpdateHelper([helper], actual)).toBeNull();
+          FS.symlinkSync(parked, sibling);
+          expect(selectManagedUpdateHelper([helper], actual)).toBeNull();
+          FS.unlinkSync(sibling);
+          FS.renameSync(parked, sibling);
+          FS.chmodSync(sibling, 0o666);
+          expect(selectManagedUpdateHelper([helper], actual)).toBeNull();
+          FS.chmodSync(sibling, 0o600);
+        }
+        FS.chmodSync(helper, 0o666);
         expect(selectManagedUpdateHelper([helper], actual)).toBeNull();
-        FS.symlinkSync(parked, sibling);
-        expect(selectManagedUpdateHelper([helper], actual)).toBeNull();
-        FS.unlinkSync(sibling);
-        FS.renameSync(parked, sibling);
-        FS.chmodSync(sibling, 0o666);
-        expect(selectManagedUpdateHelper([helper], actual)).toBeNull();
-        FS.chmodSync(sibling, 0o600);
+      } finally {
+        FS.rmSync(home, { recursive: true, force: true });
       }
-      FS.chmodSync(helper, 0o666);
-      expect(selectManagedUpdateHelper([helper], actual)).toBeNull();
-    } finally {
-      FS.rmSync(home, { recursive: true, force: true });
-    }
-  });
+    },
+  );
   it("accepts a release under the branded install directory", () => {
     const record = {
       ...receipt(),
@@ -253,219 +263,229 @@ describe("managed update installation candidates", () => {
       parse({ ...record, release: Path.join(owner.homeDirectory, "elsewhere", "a".repeat(20)) }),
     ).toBeNull();
   });
-  it("discovers an unmigrated legacy service beside a fresh branded profile, branded first", () => {
-    const home = FS.realpathSync(
-      FS.mkdtempSync(Path.join(OS.userInfo().homedir, ".managed-installations-legacy-test-")),
-    );
-    try {
-      const actual = { ...owner, uid: process.getuid!(), homeDirectory: home };
-      FS.mkdirSync(Path.join(home, ".specwithcode/userdata"), { recursive: true });
-      const write = (root: string, id: string) => {
-        const studioHome = Path.join(home, root, id);
-        FS.mkdirSync(studioHome, { recursive: true });
-        FS.writeFileSync(
-          Path.join(studioHome, "installation.json"),
-          JSON.stringify({
-            ...receipt(id, actual),
-            studioHome,
-            stateDir: Path.join(studioHome, "userdata"),
-          }),
-        );
-      };
-      write(".specweave-studio", "gamma");
-      write(".specwithcode", "beta");
-      write(".specweave-studio", "beta");
-      expect(
-        findManagedUpdateInstallations(actual).map((value) => [
-          value.installationId,
-          value.studioHome,
-        ]),
-      ).toEqual([
-        ["beta", Path.join(home, ".specwithcode/beta")],
-        ["gamma", Path.join(home, ".specweave-studio/gamma")],
-      ]);
-    } finally {
-      FS.rmSync(home, { recursive: true, force: true });
-    }
-  });
-  it("rejects writable ancestors for installed and bundled helpers, including the home", () => {
-    const root = FS.realpathSync(
-      FS.mkdtempSync(Path.join(OS.userInfo().homedir, ".managed-helper-trust-test-")),
-    );
-    try {
-      const home = Path.join(root, "home");
-      FS.mkdirSync(home, { mode: 0o700 });
-      const actual = { ...owner, uid: process.getuid!(), homeDirectory: home };
-      for (const directory of [
-        Path.join(home, ".local/share/specweave-studio/updater"),
-        Path.join(root, "Applications/Fixture.app/Contents/Resources/studio-updater"),
-      ]) {
-        FS.mkdirSync(directory, { recursive: true, mode: 0o700 });
-        const helper = Path.join(directory, "managed_updates.py");
-        for (const name of new Set([...MAC_SERVICE_UPDATER_FILES, "managed_updates.py"]))
-          FS.writeFileSync(Path.join(directory, name), "# inert", { mode: 0o600 });
-        expect(selectManagedUpdateHelper([helper], actual)).toBe(helper);
-        for (
-          let ancestor = directory;
-          ancestor !== Path.dirname(root);
-          ancestor = Path.dirname(ancestor)
-        ) {
-          const originalMode = FS.statSync(ancestor).mode & 0o777;
-          try {
-            for (const mode of [0o702, 0o720, 0o777]) {
-              FS.chmodSync(ancestor, mode);
-              expect(
-                selectManagedUpdateHelper([helper], actual),
-                `${ancestor}: ${mode.toString(8)}`,
-              ).toBeNull();
-            }
-          } finally {
-            FS.chmodSync(ancestor, originalMode);
-          }
-        }
-        const alias = `${directory}-alias`;
-        FS.symlinkSync(directory, alias);
+  itPosixOwner(
+    "discovers an unmigrated legacy service beside a fresh branded profile, branded first",
+    () => {
+      const home = FS.realpathSync(
+        FS.mkdtempSync(Path.join(OS.userInfo().homedir, ".managed-installations-legacy-test-")),
+      );
+      try {
+        const actual = { ...owner, uid: process.getuid!(), homeDirectory: home };
+        FS.mkdirSync(Path.join(home, ".specwithcode/userdata"), { recursive: true });
+        const write = (root: string, id: string) => {
+          const studioHome = Path.join(home, root, id);
+          FS.mkdirSync(studioHome, { recursive: true });
+          FS.writeFileSync(
+            Path.join(studioHome, "installation.json"),
+            JSON.stringify({
+              ...receipt(id, actual),
+              studioHome,
+              stateDir: Path.join(studioHome, "userdata"),
+            }),
+          );
+        };
+        write(".specweave-studio", "gamma");
+        write(".specwithcode", "beta");
+        write(".specweave-studio", "beta");
         expect(
-          selectManagedUpdateHelper([Path.join(alias, "managed_updates.py")], actual),
-        ).toBeNull();
-        expect(
-          selectManagedUpdateHelper(
-            [`${directory}/../${Path.basename(directory)}/managed_updates.py`],
-            actual,
-          ),
-        ).toBeNull();
+          findManagedUpdateInstallations(actual).map((value) => [
+            value.installationId,
+            value.studioHome,
+          ]),
+        ).toEqual([
+          ["beta", Path.join(home, ".specwithcode/beta")],
+          ["gamma", Path.join(home, ".specweave-studio/gamma")],
+        ]);
+      } finally {
+        FS.rmSync(home, { recursive: true, force: true });
       }
-    } finally {
-      FS.rmSync(root, { recursive: true, force: true });
-    }
-  });
+    },
+  );
+  itPosixOwner(
+    "rejects writable ancestors for installed and bundled helpers, including the home",
+    () => {
+      const root = FS.realpathSync(
+        FS.mkdtempSync(Path.join(OS.userInfo().homedir, ".managed-helper-trust-test-")),
+      );
+      try {
+        const home = Path.join(root, "home");
+        FS.mkdirSync(home, { mode: 0o700 });
+        const actual = { ...owner, uid: process.getuid!(), homeDirectory: home };
+        for (const directory of [
+          Path.join(home, ".local/share/specweave-studio/updater"),
+          Path.join(root, "Applications/Fixture.app/Contents/Resources/studio-updater"),
+        ]) {
+          FS.mkdirSync(directory, { recursive: true, mode: 0o700 });
+          const helper = Path.join(directory, "managed_updates.py");
+          for (const name of new Set([...MAC_SERVICE_UPDATER_FILES, "managed_updates.py"]))
+            FS.writeFileSync(Path.join(directory, name), "# inert", { mode: 0o600 });
+          expect(selectManagedUpdateHelper([helper], actual)).toBe(helper);
+          for (
+            let ancestor = directory;
+            ancestor !== Path.dirname(root);
+            ancestor = Path.dirname(ancestor)
+          ) {
+            const originalMode = FS.statSync(ancestor).mode & 0o777;
+            try {
+              for (const mode of [0o702, 0o720, 0o777]) {
+                FS.chmodSync(ancestor, mode);
+                expect(
+                  selectManagedUpdateHelper([helper], actual),
+                  `${ancestor}: ${mode.toString(8)}`,
+                ).toBeNull();
+              }
+            } finally {
+              FS.chmodSync(ancestor, originalMode);
+            }
+          }
+          const alias = `${directory}-alias`;
+          FS.symlinkSync(directory, alias);
+          expect(
+            selectManagedUpdateHelper([Path.join(alias, "managed_updates.py")], actual),
+          ).toBeNull();
+          expect(
+            selectManagedUpdateHelper(
+              [`${directory}/../${Path.basename(directory)}/managed_updates.py`],
+              actual,
+            ),
+          ).toBeNull();
+        }
+      } finally {
+        FS.rmSync(root, { recursive: true, force: true });
+      }
+    },
+  );
 });
 
-describe("current fleet launchd binding", () => {
-  function liveFixture() {
-    const home = FS.realpathSync(
-      FS.mkdtempSync(Path.join(OS.userInfo().homedir, ".managed-live-test-")),
-    );
-    const actual = { ...owner, uid: process.getuid!(), homeDirectory: home };
-    const installation = parse(receipt("work-mac", actual), "work-mac", actual)!;
-    const attached = {
-      ...service(),
-      baseDir: installation.studioHome,
-      runtime: { ...service().runtime, serviceManaged: false },
-    };
-    const runtimePath = Path.join(installation.stateDir, "server-runtime.json");
-    const environmentPath = Path.join(installation.stateDir, "environment-id");
-    const plist = Path.join(home, "Library/LaunchAgents/com.specweave.studio.work-mac.plist");
-    FS.mkdirSync(installation.stateDir, { recursive: true, mode: 0o700 });
-    FS.mkdirSync(Path.dirname(plist), { recursive: true, mode: 0o700 });
-    const runtime = { pid: 77, port: 8320, origin: "http://127.0.0.1:8320" };
-    FS.writeFileSync(runtimePath, JSON.stringify(runtime), { mode: 0o600 });
-    FS.writeFileSync(environmentPath, "environment-7\n", { mode: 0o600 });
-    FS.writeFileSync(plist, "synthetic owned LaunchAgent", { mode: 0o600 });
-    const job = `state = running\npid = 77\npath = ${plist}\n`;
-    const run = vi.spyOn(ChildProcess, "execFileSync").mockImplementation((command, args) => {
-      if (
-        command === "/bin/launchctl" &&
-        JSON.stringify(args) ===
-          JSON.stringify(["print", `gui/${actual.uid}/com.specweave.studio.work-mac`])
-      )
-        return job;
-      if (
-        command === "/bin/ps" &&
-        JSON.stringify(args) === JSON.stringify(["-p", "77", "-o", "uid="])
-      )
-        return `${actual.uid}\n`;
-      throw new Error("unexpected process probe");
-    });
-    return {
-      home,
-      actual,
-      installation,
-      attached,
-      runtimePath,
-      environmentPath,
-      plist,
-      runtime,
-      job,
-      run,
-      verify: () => validateAttachedManagedRuntime(installation, attached, actual),
-      close: () => {
-        run.mockRestore();
-        FS.rmSync(home, { recursive: true, force: true });
-      },
-    };
-  }
-  it("accepts an owned live fleet job when the runtime omits the internal launcher flag", () => {
-    const f = liveFixture();
-    try {
-      expect(f.verify).not.toThrow();
-      expect(f.run).toHaveBeenCalledTimes(2);
-    } finally {
-      f.close();
+// Managed installations are macOS launchd services owned by a POSIX uid.
+describe.skipIf(HostProcessPlatform.defaultValue() === "win32")(
+  "current fleet launchd binding",
+  () => {
+    function liveFixture() {
+      const home = FS.realpathSync(
+        FS.mkdtempSync(Path.join(OS.userInfo().homedir, ".managed-live-test-")),
+      );
+      const actual = { ...owner, uid: process.getuid!(), homeDirectory: home };
+      const installation = parse(receipt("work-mac", actual), "work-mac", actual)!;
+      const attached = {
+        ...service(),
+        baseDir: installation.studioHome,
+        runtime: { ...service().runtime, serviceManaged: false },
+      };
+      const runtimePath = Path.join(installation.stateDir, "server-runtime.json");
+      const environmentPath = Path.join(installation.stateDir, "environment-id");
+      const plist = Path.join(home, "Library/LaunchAgents/com.specweave.studio.work-mac.plist");
+      FS.mkdirSync(installation.stateDir, { recursive: true, mode: 0o700 });
+      FS.mkdirSync(Path.dirname(plist), { recursive: true, mode: 0o700 });
+      const runtime = { pid: 77, port: 8320, origin: "http://127.0.0.1:8320" };
+      FS.writeFileSync(runtimePath, JSON.stringify(runtime), { mode: 0o600 });
+      FS.writeFileSync(environmentPath, "environment-7\n", { mode: 0o600 });
+      FS.writeFileSync(plist, "synthetic owned LaunchAgent", { mode: 0o600 });
+      const job = `state = running\npid = 77\npath = ${plist}\n`;
+      const run = vi.spyOn(ChildProcess, "execFileSync").mockImplementation((command, args) => {
+        if (
+          command === "/bin/launchctl" &&
+          JSON.stringify(args) ===
+            JSON.stringify(["print", `gui/${actual.uid}/com.specweave.studio.work-mac`])
+        )
+          return job;
+        if (
+          command === "/bin/ps" &&
+          JSON.stringify(args) === JSON.stringify(["-p", "77", "-o", "uid="])
+        )
+          return `${actual.uid}\n`;
+        throw new Error("unexpected process probe");
+      });
+      return {
+        home,
+        actual,
+        installation,
+        attached,
+        runtimePath,
+        environmentPath,
+        plist,
+        runtime,
+        job,
+        run,
+        verify: () => validateAttachedManagedRuntime(installation, attached, actual),
+        close: () => {
+          run.mockRestore();
+          FS.rmSync(home, { recursive: true, force: true });
+        },
+      };
     }
-  });
-  it.each([
-    { pid: 78 },
-    { port: 8321 },
-    { origin: "http://localhost:8320" },
-    { origin: "http://127.0.0.1:8320/path" },
-    { pid: "77" },
-  ])("rejects a changed current runtime %j before process probes", (change) => {
-    const f = liveFixture();
-    try {
-      FS.writeFileSync(f.runtimePath, JSON.stringify({ ...f.runtime, ...change }));
-      expect(f.verify).toThrow(ManagedUpdateError);
-      expect(f.run).not.toHaveBeenCalled();
-    } finally {
-      f.close();
-    }
-  });
-  it.each(["missing", "symlink", "writable", "oversize", "invalid", "environment"])(
-    "rejects unsafe or changed metadata: %s",
-    (change) => {
+    it("accepts an owned live fleet job when the runtime omits the internal launcher flag", () => {
       const f = liveFixture();
       try {
-        if (change === "missing") FS.unlinkSync(f.runtimePath);
-        if (change === "symlink") {
-          FS.renameSync(f.runtimePath, `${f.runtimePath}.saved`);
-          FS.symlinkSync(`${f.runtimePath}.saved`, f.runtimePath);
-        }
-        if (change === "writable") FS.chmodSync(f.runtimePath, 0o666);
-        if (change === "oversize") FS.writeFileSync(f.runtimePath, "x".repeat(65537));
-        if (change === "invalid") FS.writeFileSync(f.runtimePath, "{");
-        if (change === "environment") FS.writeFileSync(f.environmentPath, "another-environment");
+        expect(f.verify).not.toThrow();
+        expect(f.run).toHaveBeenCalledTimes(2);
+      } finally {
+        f.close();
+      }
+    });
+    it.each([
+      { pid: 78 },
+      { port: 8321 },
+      { origin: "http://localhost:8320" },
+      { origin: "http://127.0.0.1:8320/path" },
+      { pid: "77" },
+    ])("rejects a changed current runtime %j before process probes", (change) => {
+      const f = liveFixture();
+      try {
+        FS.writeFileSync(f.runtimePath, JSON.stringify({ ...f.runtime, ...change }));
         expect(f.verify).toThrow(ManagedUpdateError);
         expect(f.run).not.toHaveBeenCalled();
       } finally {
         f.close();
       }
-    },
-  );
-  it.each(["pid", "stopped", "path", "uid", "error", "race"])(
-    "rejects an unbound running service: %s",
-    (change) => {
-      const f = liveFixture();
-      try {
-        f.run.mockImplementation((command) => {
-          if (change === "error") throw new Error("private diagnostic");
-          if (command === "/bin/launchctl")
-            return change === "pid"
-              ? f.job.replace("pid = 77", "pid = 88")
-              : change === "stopped"
-                ? f.job.replace("running", "waiting")
-                : change === "path"
-                  ? f.job.replace(f.plist, "/tmp/foreign.plist")
-                  : f.job;
-          if (change === "race") FS.writeFileSync(f.environmentPath, "replaced");
-          return `${change === "uid" ? f.actual.uid + 1 : f.actual.uid}\n`;
-        });
-        expect(f.verify).toThrow(ManagedUpdateError);
-      } finally {
-        f.close();
-      }
-    },
-  );
-});
+    });
+    it.each(["missing", "symlink", "writable", "oversize", "invalid", "environment"])(
+      "rejects unsafe or changed metadata: %s",
+      (change) => {
+        const f = liveFixture();
+        try {
+          if (change === "missing") FS.unlinkSync(f.runtimePath);
+          if (change === "symlink") {
+            FS.renameSync(f.runtimePath, `${f.runtimePath}.saved`);
+            FS.symlinkSync(`${f.runtimePath}.saved`, f.runtimePath);
+          }
+          if (change === "writable") FS.chmodSync(f.runtimePath, 0o666);
+          if (change === "oversize") FS.writeFileSync(f.runtimePath, "x".repeat(65537));
+          if (change === "invalid") FS.writeFileSync(f.runtimePath, "{");
+          if (change === "environment") FS.writeFileSync(f.environmentPath, "another-environment");
+          expect(f.verify).toThrow(ManagedUpdateError);
+          expect(f.run).not.toHaveBeenCalled();
+        } finally {
+          f.close();
+        }
+      },
+    );
+    it.each(["pid", "stopped", "path", "uid", "error", "race"])(
+      "rejects an unbound running service: %s",
+      (change) => {
+        const f = liveFixture();
+        try {
+          f.run.mockImplementation((command) => {
+            if (change === "error") throw new Error("private diagnostic");
+            if (command === "/bin/launchctl")
+              return change === "pid"
+                ? f.job.replace("pid = 77", "pid = 88")
+                : change === "stopped"
+                  ? f.job.replace("running", "waiting")
+                  : change === "path"
+                    ? f.job.replace(f.plist, "/tmp/foreign.plist")
+                    : f.job;
+            if (change === "race") FS.writeFileSync(f.environmentPath, "replaced");
+            return `${change === "uid" ? f.actual.uid + 1 : f.actual.uid}\n`;
+          });
+          expect(f.verify).toThrow(ManagedUpdateError);
+        } finally {
+          f.close();
+        }
+      },
+    );
+  },
+);
 
 describe("trusted controller metadata and helper wire", () => {
   it("extracts only the trusted two-part bearer session metadata", () => {
@@ -512,41 +532,45 @@ describe("trusted controller metadata and helper wire", () => {
       expect(String(error)).not.toContain("redacted");
     }
   });
-  it("passes only controller metadata over bounded helper stdin, with exact state-dir argv", async () => {
-    const home = FS.mkdtempSync(Path.join(OS.tmpdir(), "managed-helper-"));
-    try {
-      const fixture = Path.join(home, "fixture.py");
-      const installation = parse(receipt())!;
-      FS.writeFileSync(
-        fixture,
-        `import sys,json,os\nr=json.load(sys.stdin)\nassert sys.argv[1:]==['--state-dir',${JSON.stringify(installation.stateDir)}]\nassert sys.flags.ignore_environment and sys.flags.no_user_site and sys.flags.dont_write_bytecode\nassert r['controller']=={'sessionId':'trusted-session','subject':'browser'}\nassert r['action']=='enroll-local'\nassert 'SECRET_FIXTURE' not in os.environ\nprint(${JSON.stringify(JSON.stringify({ ok: true, status }))})\n`,
-      );
-      const result = await invokeManagedUpdateHelper(
-        fixture,
-        installation,
-        { ...owner, homeDirectory: home },
-        {
-          action: "enroll-local",
-          environmentId: "environment-7",
-          controller: { sessionId: "trusted-session", subject: "browser" },
-          input: {
-            installationId: "work-mac",
+  // The helper runs under macOS /usr/bin/python3 with a POSIX state directory.
+  it.skipIf(HostProcessPlatform.defaultValue() === "win32")(
+    "passes only controller metadata over bounded helper stdin, with exact state-dir argv",
+    async () => {
+      const home = FS.mkdtempSync(Path.join(OS.tmpdir(), "managed-helper-"));
+      try {
+        const fixture = Path.join(home, "fixture.py");
+        const installation = parse(receipt())!;
+        FS.writeFileSync(
+          fixture,
+          `import sys,json,os\nr=json.load(sys.stdin)\nassert sys.argv[1:]==['--state-dir',${JSON.stringify(installation.stateDir)}]\nassert sys.flags.ignore_environment and sys.flags.no_user_site and sys.flags.dont_write_bytecode\nassert r['controller']=={'sessionId':'trusted-session','subject':'browser'}\nassert r['action']=='enroll-local'\nassert 'SECRET_FIXTURE' not in os.environ\nprint(${JSON.stringify(JSON.stringify({ ok: true, status }))})\n`,
+        );
+        const result = await invokeManagedUpdateHelper(
+          fixture,
+          installation,
+          { ...owner, homeDirectory: home },
+          {
+            action: "enroll-local",
             environmentId: "environment-7",
-            expectedRevision: 0,
-            consent: true,
+            controller: { sessionId: "trusted-session", subject: "browser" },
+            input: {
+              installationId: "work-mac",
+              environmentId: "environment-7",
+              expectedRevision: 0,
+              consent: true,
+            },
+            approval: {
+              kind: "native-owner",
+              confirmed: true,
+              installationId: "work-mac",
+              environmentId: "environment-7",
+              expectedRevision: 0,
+            },
           },
-          approval: {
-            kind: "native-owner",
-            confirmed: true,
-            installationId: "work-mac",
-            environmentId: "environment-7",
-            expectedRevision: 0,
-          },
-        },
-      );
-      expect(result).toEqual(status);
-    } finally {
-      FS.rmSync(home, { recursive: true, force: true });
-    }
-  });
+        );
+        expect(result).toEqual(status);
+      } finally {
+        FS.rmSync(home, { recursive: true, force: true });
+      }
+    },
+  );
 });

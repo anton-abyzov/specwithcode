@@ -15,6 +15,9 @@ import {
 import { nodeBundleLauncherScript } from "../cloud/pinnedRuntime.ts";
 import { repointLauncher, resolveLaunchedAs, resolveLauncherPath } from "./update.ts";
 
+const hostPlatform = process.platform === "win32" ? "win32" : "linux";
+const pathDelimiter = hostPlatform === "win32" ? ";" : ":";
+
 it.layer(NodeServices.layer)("specweave-studio update launcher", (it) => {
   it.effect("repoints a symlink that lives in a runtime versions tree", () =>
     Effect.gen(function* () {
@@ -88,7 +91,7 @@ it.layer(NodeServices.layer)("specweave-studio update launcher", (it) => {
       const bare = yield* resolveLauncherPath.pipe(
         Effect.provideService(HostProcessInvokedAs, "specweave-studio"),
         Effect.provideService(HostProcessEnvironment, {
-          PATH: `${path.join(root, "missing")}:${path.join(root, "bin")}`,
+          PATH: `${path.join(root, "missing")}${pathDelimiter}${path.join(root, "bin")}`,
         }),
         Effect.provideService(HostProcessWorkingDirectory, root),
       );
@@ -106,56 +109,60 @@ it.layer(NodeServices.layer)("specweave-studio update launcher", (it) => {
       assert.equal(bare, launcher);
       assert.equal(relative, launcher);
       assert.equal(absent, undefined);
-    }).pipe(Effect.scoped, Effect.provideService(HostProcessPlatform, "linux")),
+    }).pipe(Effect.scoped, Effect.provideService(HostProcessPlatform, hostPlatform)),
   );
-  it.effect("repoints a node-bundle launcher found through STUDIO_CLI_NAME", () =>
-    Effect.gen(function* () {
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const root = yield* fs.makeTempDirectoryScoped({ prefix: "studio-update-node-bundle-" });
-      const versionsDir = path.join(root, "runtime/versions");
-      const oldLauncher = path.join(versionsDir, "1.0.0/specweave-studio");
-      const newLauncher = path.join(versionsDir, "2.0.0/specweave-studio");
-      for (const file of [oldLauncher, newLauncher]) {
-        yield* fs.makeDirectory(path.dirname(file), { recursive: true });
-        yield* fs.writeFileString(file, nodeBundleLauncherScript("/usr/bin/node", false));
-        yield* fs.writeFileString(path.join(path.dirname(file), "bin.mjs"), "");
-      }
-      const binDir = path.join(root, "bin");
-      const onPath = path.join(binDir, "specwithcode");
-      yield* fs.makeDirectory(binDir, { recursive: true });
-      yield* fs.symlink(oldLauncher, onPath);
-      // Under the launcher script argv0 is node, never the launcher.
-      const underNode = <A, E, R>(effect: Effect.Effect<A, E, R>, env: Record<string, string>) =>
-        effect.pipe(
-          Effect.provideService(HostProcessIsExecutable, false),
-          Effect.provideService(HostProcessInvokedAs, "/usr/bin/node"),
-          Effect.provideService(HostProcessEnvironment, {
-            PATH: `${path.join(root, "missing")}:${binDir}`,
-            ...env,
-          }),
-          Effect.provideService(HostProcessWorkingDirectory, root),
-        );
+  // The node-bundle launcher is a POSIX shell script behind a symlink; Windows
+  // installs a .cmd shim instead.
+  it.effect.skipIf(process.platform === "win32")(
+    "repoints a node-bundle launcher found through STUDIO_CLI_NAME",
+    () =>
+      Effect.gen(function* () {
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const root = yield* fs.makeTempDirectoryScoped({ prefix: "studio-update-node-bundle-" });
+        const versionsDir = path.join(root, "runtime/versions");
+        const oldLauncher = path.join(versionsDir, "1.0.0/specweave-studio");
+        const newLauncher = path.join(versionsDir, "2.0.0/specweave-studio");
+        for (const file of [oldLauncher, newLauncher]) {
+          yield* fs.makeDirectory(path.dirname(file), { recursive: true });
+          yield* fs.writeFileString(file, nodeBundleLauncherScript("/usr/bin/node", false));
+          yield* fs.writeFileString(path.join(path.dirname(file), "bin.mjs"), "");
+        }
+        const binDir = path.join(root, "bin");
+        const onPath = path.join(binDir, "specwithcode");
+        yield* fs.makeDirectory(binDir, { recursive: true });
+        yield* fs.symlink(oldLauncher, onPath);
+        // Under the launcher script argv0 is node, never the launcher.
+        const underNode = <A, E, R>(effect: Effect.Effect<A, E, R>, env: Record<string, string>) =>
+          effect.pipe(
+            Effect.provideService(HostProcessIsExecutable, false),
+            Effect.provideService(HostProcessInvokedAs, "/usr/bin/node"),
+            Effect.provideService(HostProcessEnvironment, {
+              PATH: `${path.join(root, "missing")}:${binDir}`,
+              ...env,
+            }),
+            Effect.provideService(HostProcessWorkingDirectory, root),
+          );
 
-      const withoutName = yield* underNode(resolveLaunchedAs, {});
-      assert.isUndefined(withoutName);
-      const untouched = yield* repointLauncher({
-        launchedAs: withoutName,
-        versionsDir,
-        targetEntryPath: newLauncher,
-      });
-      assert.equal(untouched._tag, "None");
-      assert.equal(yield* fs.readLink(onPath), oldLauncher);
+        const withoutName = yield* underNode(resolveLaunchedAs, {});
+        assert.isUndefined(withoutName);
+        const untouched = yield* repointLauncher({
+          launchedAs: withoutName,
+          versionsDir,
+          targetEntryPath: newLauncher,
+        });
+        assert.equal(untouched._tag, "None");
+        assert.equal(yield* fs.readLink(onPath), oldLauncher);
 
-      const launchedAs = yield* underNode(resolveLaunchedAs, { STUDIO_CLI_NAME: "specwithcode" });
-      assert.equal(launchedAs, onPath);
-      const repointed = yield* repointLauncher({
-        launchedAs,
-        versionsDir,
-        targetEntryPath: newLauncher,
-      });
-      assert.deepStrictEqual(Option.getOrUndefined(repointed), onPath);
-      assert.equal(yield* fs.readLink(onPath), newLauncher);
-    }).pipe(Effect.scoped, Effect.provideService(HostProcessPlatform, "linux")),
+        const launchedAs = yield* underNode(resolveLaunchedAs, { STUDIO_CLI_NAME: "specwithcode" });
+        assert.equal(launchedAs, onPath);
+        const repointed = yield* repointLauncher({
+          launchedAs,
+          versionsDir,
+          targetEntryPath: newLauncher,
+        });
+        assert.deepStrictEqual(Option.getOrUndefined(repointed), onPath);
+        assert.equal(yield* fs.readLink(onPath), newLauncher);
+      }).pipe(Effect.scoped, Effect.provideService(HostProcessPlatform, "linux")),
   );
 });

@@ -3,6 +3,7 @@ import {
   AuthAccessWriteScope,
   BROWSER_EXTENSION_STORE_URL,
   AuthFilesystemReadScope,
+  AuthSettingsWriteScope,
   AuthTerminalOperateScope,
   type BrowserExtensionAction,
   type BrowserExtensionCheck,
@@ -26,10 +27,12 @@ import {
   SquareIcon,
 } from "lucide-react";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
+import { useEnvironmentSettings } from "../../hooks/useSettings";
 import { ensureLocalApi } from "../../localApi";
 import { useThreadShell } from "../../state/entities";
 import { useEnvironment } from "../../state/environments";
 import { useEnvironmentQuery } from "../../state/query";
+import { serverEnvironment } from "../../state/server";
 import { useEnvironmentScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { projectWorkspace } from "../../studio/projectWorkspace";
@@ -38,6 +41,7 @@ import { Badge } from "../ui/badge";
 import { Button } from "../ui/button";
 import { Input } from "../ui/input";
 import { Spinner } from "../ui/spinner";
+import { Switch } from "../ui/switch";
 import { SettingsSection, useRelativeTimeTick } from "./settingsLayout";
 
 /** Anchor for settings search. */
@@ -396,6 +400,8 @@ export function BrowserExtensionCard({
           )}
         </div>
 
+        <PreferSpecWithCodeBrowser environmentId={environmentId} machine={machine} />
+
         {!canOperate && (
           <p className="text-xs text-muted-foreground">
             This device can view {machine}'s Chrome but not pair or test it.
@@ -566,6 +572,54 @@ function threadsOf(profile: BrowserExtensionProfile): ReadonlyArray<BrowserExten
 }
 
 /** A thread by its title, as the sidebar shows it; ids mean nothing to people. */
+/**
+ * Claude Code's built-in Claude in Chrome lists unnamed browsers and makes
+ * agents ask which one to use, so Claude threads on a paired machine start
+ * without it. Server-side: the server launches the threads.
+ */
+function PreferSpecWithCodeBrowser({
+  environmentId,
+  machine,
+}: {
+  environmentId: EnvironmentId;
+  machine: string;
+}) {
+  const prefer = useEnvironmentSettings(
+    environmentId,
+    (settings) => settings.preferSpecWithCodeBrowser,
+  );
+  const canWrite = useEnvironmentScope(environmentId, AuthSettingsWriteScope);
+  const update = useAtomCommand(serverEnvironment.updateSettings, {
+    label: "save the Chrome preference",
+  });
+  return (
+    <div
+      className="flex items-start justify-between gap-4 rounded-md border border-border/60 px-3 py-2.5"
+      data-testid="prefer-specwithcode-browser"
+    >
+      <div className="min-w-0 max-w-prose space-y-0.5">
+        <p className="text-sm font-medium">Use SpecWithCode Browser in Claude threads</p>
+        <p className="text-xs text-muted-foreground">
+          While a Chrome profile is paired with {machine}, Claude threads there start without Claude
+          in Chrome, so agents use the profile named above instead of asking you to pick a browser.
+          Off keeps Claude in Chrome. Applies from a thread's next message.
+        </p>
+      </div>
+      <Switch
+        aria-label="Use SpecWithCode Browser in Claude threads"
+        checked={prefer}
+        disabled={!canWrite}
+        onCheckedChange={(checked) =>
+          void update({
+            environmentId,
+            input: { patch: { preferSpecWithCodeBrowser: checked } },
+          })
+        }
+      />
+    </div>
+  );
+}
+
 export function ThreadName({
   environmentId,
   threadId,

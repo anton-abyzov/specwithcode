@@ -21,7 +21,7 @@ export const LSREGISTER_PATH =
 
 /** `/Applications/Studio.app/Contents/MacOS/Studio` -> `/Applications/Studio.app` */
 export function resolveRunningAppBundle(execPath: string): string | null {
-  const bundle = Path.resolve(execPath, "..", "..", "..");
+  const bundle = Path.posix.resolve(execPath, "..", "..", "..");
   return bundle.endsWith(".app") ? bundle : null;
 }
 

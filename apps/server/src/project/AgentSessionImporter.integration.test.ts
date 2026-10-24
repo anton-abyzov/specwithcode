@@ -7,6 +7,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
 import * as ServerConfig from "../config.ts";
@@ -85,7 +86,8 @@ type Services =
   | ProviderRuntime.ProviderSessionRuntimeRepository
   | EventSink.EventSinkV2
   | SqlClient.SqlClient
-  | FileSystem.FileSystem;
+  | FileSystem.FileSystem
+  | Path.Path;
 
 /** Only facade getters are replaced, and both read the actual SQLite stores.
  * Scanner, importer, event transactions, projections and resume metadata are real.
@@ -133,14 +135,17 @@ const withFixture = <A, E>(test: (fixture: Fixture) => Effect.Effect<A, E, Servi
   Effect.scoped(
     Effect.gen(function* () {
       const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
       const root = yield* fs.makeTempDirectoryScoped({ prefix: "agent-import-integration-" });
-      const workspace = `${root}/workspace`;
+      const workspace = path.join(root, "workspace");
+      // Native separators: the scanner records the paths it walked.
+      const sessions = path.join(root, "codex", "sessions", "2026", "10", "09");
       const fixture = {
         root,
         workspace,
-        codexFile: `${root}/codex/sessions/2026/10/09/rollout-one.jsonl`,
-        duplicateFile: `${root}/codex/sessions/2026/10/09/rollout-two.jsonl`,
-        claudeFile: `${root}/claude/projects/synthetic/${claudeId}.jsonl`,
+        codexFile: path.join(sessions, "rollout-one.jsonl"),
+        duplicateFile: path.join(sessions, "rollout-two.jsonl"),
+        claudeFile: path.join(root, "claude", "projects", "synthetic", `${claudeId}.jsonl`),
       };
       yield* fs.makeDirectory(workspace, { recursive: true });
       yield* TestClock.setTime(now);
@@ -156,12 +161,12 @@ const withFixture = <A, E>(test: (fixture: Fixture) => Effect.Effect<A, E, Servi
         Layer.provideMerge(facades),
         Layer.provideMerge(stores),
         Layer.provideMerge(Sqlite.layerMemory),
-        Layer.provide(ServerConfig.layerTest(workspace, `${root}/studio-state`)),
+        Layer.provide(ServerConfig.layerTest(workspace, path.join(root, "studio-state"))),
         Layer.provide(
           Settings.layerTest({
             providers: {
-              codex: { homePath: `${root}/codex` },
-              claudeAgent: { homePath: `${root}/claude` },
+              codex: { homePath: path.join(root, "codex") },
+              claudeAgent: { homePath: path.join(root, "claude") },
             },
           }),
         ),
@@ -172,7 +177,7 @@ const withFixture = <A, E>(test: (fixture: Fixture) => Effect.Effect<A, E, Servi
         yield* sql`INSERT INTO projection_projects
       (project_id,title,workspace_root,default_model_selection_json,scripts_json,created_at,updated_at,deleted_at)
       VALUES (${projectId},'Synthetic import',${workspace},NULL,'[]',${at},${at},NULL),
-             (${foreignId},'Foreign project',${root + "/foreign"},NULL,'[]',${at},${at},NULL)`;
+             (${foreignId},'Foreign project',${path.join(root, "foreign")},NULL,'[]',${at},${at},NULL)`;
         return yield* test(fixture);
       }).pipe(Effect.provide(layer));
     }),
@@ -180,7 +185,7 @@ const withFixture = <A, E>(test: (fixture: Fixture) => Effect.Effect<A, E, Servi
 
 const write = Effect.fn(function* (path: string, contents: string) {
   const fs = yield* FileSystem.FileSystem;
-  yield* fs.makeDirectory(path.slice(0, path.lastIndexOf("/")), { recursive: true });
+  yield* fs.makeDirectory((yield* Path.Path).dirname(path), { recursive: true });
   yield* fs.writeFileString(path, contents);
   yield* fs.utimes(path, (now - 1000) / 1000, (now - 1000) / 1000);
 });

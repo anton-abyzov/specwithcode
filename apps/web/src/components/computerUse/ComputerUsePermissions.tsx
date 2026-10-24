@@ -1,8 +1,11 @@
 import { useAtomValue } from "@effect/atom-react";
-import type {
-  ComputerUsePermission,
-  ComputerUsePermissions,
-  EnvironmentId,
+import {
+  computerUseHostPlatformFor,
+  computerUseUnsupportedPlatformReason,
+  isComputerUseSupportedHostPlatform,
+  type ComputerUsePermission,
+  type ComputerUsePermissions,
+  type EnvironmentId,
 } from "@specweave-studio/contracts";
 import { CircleCheckIcon, MonitorIcon } from "lucide-react";
 import { createContext, use, useState, useSyncExternalStore, type ReactNode } from "react";
@@ -50,6 +53,26 @@ export function useComputerUsePermissionsAreLocal(environmentId: EnvironmentId |
     computerUsePermissionsAvailable() &&
     (environmentId === null || environmentId === primaryEnvironmentId)
   );
+}
+
+/**
+ * The host platform of the machine being configured when computer use does not
+ * work there, else null. The server's own OS decides, because agents act on the
+ * desktop of the machine their server runs on.
+ */
+export function useComputerUseUnsupportedPlatform(environmentId: EnvironmentId | null) {
+  const environment = useEnvironment(environmentId);
+  const primaryEnvironmentId = useAtomValue(primaryEnvironmentIdAtom);
+  const serverOs = environment?.serverConfig?.environment.platform.os;
+  const local = environmentId === null || environmentId === primaryEnvironmentId;
+  const os =
+    serverOs ??
+    (local && typeof window !== "undefined"
+      ? window.desktopBridge?.getClientPlatform?.()
+      : undefined);
+  if (os === undefined) return null;
+  const platform = computerUseHostPlatformFor(os);
+  return isComputerUseSupportedHostPlatform(platform) ? null : platform;
 }
 
 // One poll serves every card, banner and settings row on screen: each check
@@ -355,9 +378,18 @@ export function ComputerUsePermissionSetup({
 }: {
   environmentId: EnvironmentId | null;
 }) {
+  const unsupported = useComputerUseUnsupportedPlatform(environmentId);
   const local = useComputerUsePermissionsAreLocal(environmentId);
-  const state = useComputerUsePermissions(local);
+  const state = useComputerUsePermissions(local && unsupported === null);
   const machine = useEnvironment(environmentId)?.label ?? "that Mac";
+  if (unsupported !== null) {
+    return (
+      <p className="text-xs text-muted-foreground" data-testid="computer-use-unsupported">
+        {computerUseUnsupportedPlatformReason(unsupported)} Agents on this machine cannot see or
+        control its desktop.
+      </p>
+    );
+  }
   if (!local) {
     return (
       <p className="text-xs text-muted-foreground">

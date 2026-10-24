@@ -10,7 +10,8 @@ import {
   exposesProtectedLocation,
 } from "./ProjectEnvironmentPaths.ts";
 
-const path = NodePath.posix;
+/** The spelling checks run on POSIX paths; the identity checks below use the native ones. */
+const posix = NodePath.posix;
 const home = "/Users/person";
 
 it("refuses root, home, its ancestors and credential folders as approved project folders", () => {
@@ -27,7 +28,7 @@ it("refuses root, home, its ancestors and credential folders as approved project
     `${home}/Library/Keychains`,
     `${home}/Library`,
   ])
-    assert.isTrue(exposesProtectedLocation(folder, home, path), folder);
+    assert.isTrue(exposesProtectedLocation(folder, home, posix), folder);
 });
 
 it("accepts ordinary project and data folders", () => {
@@ -38,9 +39,11 @@ it("accepts ordinary project and data folders", () => {
     `${home}/Documents/contracts`,
     "/srv/data",
   ])
-    assert.isFalse(exposesProtectedLocation(folder, home, path), folder);
+    assert.isFalse(exposesProtectedLocation(folder, home, posix), folder);
 });
 
+/** Native path semantics, matching the real paths the identity checks read and return. */
+const path = NodePath;
 const scratch: string[] = [];
 afterEach(() => {
   for (const folder of scratch.splice(0)) NodeFS.rmSync(folder, { recursive: true, force: true });
@@ -65,10 +68,18 @@ const caseInsensitive = (base: string) => {
 
 it("refuses another letter case of home or a credential folder by identity", async () => {
   const { base, home, ssh, project } = tree();
-  for (const folder of [home, ssh, `${ssh}/keys`, `${home}/.SSH`, home.toUpperCase(), base, "/"])
+  for (const folder of [
+    home,
+    ssh,
+    path.join(ssh, "keys"),
+    path.join(home, ".SSH"),
+    home.toUpperCase(),
+    base,
+    "/",
+  ])
     assert.isTrue(await exposesProtectedFolder(folder, home, path), folder);
   assert.isFalse(await exposesProtectedFolder(project, home, path));
-  assert.isTrue(await exposesProtectedFolder(`${base}/missing`, home, path));
+  assert.isTrue(await exposesProtectedFolder(path.join(base, "missing"), home, path));
 });
 
 it("refuses folders holding a credential folder that does not exist yet", async () => {
@@ -84,7 +95,7 @@ it("refuses folders holding a credential folder inside home by identity", async 
   const config = path.dirname(dir("home/.config/gh"));
   const library = path.dirname(dir("home/Library/Keychains"));
   const spellings = [config, library];
-  if (caseInsensitive(base)) spellings.push(`${home}/.CONFIG`, `${home}/library`);
+  if (caseInsensitive(base)) spellings.push(path.join(home, ".CONFIG"), path.join(home, "library"));
   for (const folder of spellings)
     assert.isTrue(await exposesProtectedFolder(folder, home, path), folder);
   for (const folder of [dir("home/.config/app-settings"), dir("home/Projects/x")])
@@ -135,7 +146,7 @@ it("accepts a folder holding a symlink spelled like the path to home", async () 
   const name = path.basename(home);
   const decoy = dir("decoy");
   NodeFS.symlinkSync(home, path.join(decoy, name));
-  const nested = dir(`nested/${path.basename(base)}`);
+  const nested = dir(path.join("nested", path.basename(base)));
   NodeFS.symlinkSync(home, path.join(nested, name));
   for (const folder of [decoy, path.dirname(nested)])
     assert.isFalse(await exposesProtectedFolder(folder, home, path), folder);
@@ -172,7 +183,7 @@ it("tells distinct folders apart by letter case only on a case-sensitive volume"
   const upper = dir("Proj");
   if (caseInsensitive(base)) {
     // One folder under two spellings: already reachable.
-    assert.deepStrictEqual(await approvedFolderReaching(`${base}/proj`, [upper], path), {
+    assert.deepStrictEqual(await approvedFolderReaching(path.join(base, "proj"), [upper], path), {
       folder: upper,
       same: true,
     });

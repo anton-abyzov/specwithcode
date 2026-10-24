@@ -1,3 +1,4 @@
+import { useProjectReturnSearch } from "../../../studio/projectReturnNavigation";
 /**
  * The sidebar's Projects list: pinned projects, a divider, then the rest. A
  * project is dragged to a new place the way a Finder sidebar item is: it lifts
@@ -458,6 +459,12 @@ export function ProjectRow(props: {
   // The group keeps repository identity; its visible name and icon belong to
   // the checkout the workspace opens, including an explicit remote checkout.
   const project = props.displayedProject ?? group;
+  const returnSearch = useProjectReturnSearch(
+    group.projectKey,
+    props.displayedProject && !props.displayedProject.workspaceSettings?.logicalProject
+      ? coordinatorMachineKey(props.displayedProject)
+      : undefined,
+  );
   const displayName = displayNameOf(group, props.displayedProject);
   const personal = isPersonalGroup(group);
   const nickname = useMachineNicknames();
@@ -506,11 +513,7 @@ export function ProjectRow(props: {
           <Link
             to="/projects/$projectKey"
             params={{ projectKey: group.projectKey }}
-            search={
-              props.displayedProject && !props.displayedProject.workspaceSettings?.logicalProject
-                ? { checkout: coordinatorMachineKey(props.displayedProject) }
-                : {}
-            }
+            search={returnSearch}
             ref={linkRef}
             className="sws-side-row"
             aria-current={props.current ? "page" : undefined}

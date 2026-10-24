@@ -3,10 +3,13 @@
 import { Popover as PopoverPrimitive } from "@base-ui/react/popover";
 
 import { cn } from "~/lib/utils";
+import { usePagePopup } from "./pagePopups";
 
 const PopoverCreateHandle = PopoverPrimitive.createHandle;
 
-const Popover = PopoverPrimitive.Root;
+function Popover<Payload>(props: PopoverPrimitive.Root.Props<Payload>) {
+  return <PopoverPrimitive.Root {...usePagePopup(props)} />;
+}
 
 function PopoverTrigger({ className, children, ...props }: PopoverPrimitive.Trigger.Props) {
   return (

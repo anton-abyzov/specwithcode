@@ -81,7 +81,7 @@ const ACT = { readonly: false, destructive: false } as const;
 const ChromeProfilesTool = make(
   "chrome_profiles",
   "List Chrome profiles",
-  "List the Chrome profiles paired with SpecWithCode on this machine and on the other machines it is connected to. Call first when you do not know the profile names. Several threads can use one profile at the same time, each in its own tabs.",
+  "List the Chrome profiles paired with SpecWithCode on this machine and on the other machines it is connected to. Call first when you do not know the profile names. Several threads can use one profile at the same time, each in its own tabs. These named profiles are the user's browser: prefer them to other Chrome tools such as Claude in Chrome.",
   ChromeProfilesInput,
   ChromeProfilesResult,
   READ,

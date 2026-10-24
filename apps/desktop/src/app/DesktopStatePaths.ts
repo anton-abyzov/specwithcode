@@ -1,4 +1,8 @@
-import { studioDefaultHome } from "@specweave-studio/shared/studioIdentity";
+import {
+  LEGACY_STUDIO_HOME_DIRECTORY,
+  STUDIO_HOME_DIRECTORY,
+  studioDefaultHome,
+} from "@specweave-studio/shared/studioIdentity";
 import * as Option from "effect/Option";
 
 export type JoinPath = (first: string, ...segments: string[]) => string;
@@ -16,9 +20,17 @@ export function resolveDesktopBaseDir(input: {
   readonly joinPath: JoinPath;
   readonly studioHome: Option.Option<string>;
 }): string {
-  return Option.getOrElse(normalizeConfiguredBaseDir(input.studioHome), () =>
-    studioDefaultHome(input.homeDirectory),
-  );
+  return Option.getOrElse(normalizeConfiguredBaseDir(input.studioHome), () => {
+    // studioDefaultHome joins with the host separator; rebuild the chosen root with
+    // the caller's join so every desktop path uses one path flavour.
+    const root = studioDefaultHome(input.homeDirectory);
+    return input.joinPath(
+      input.homeDirectory,
+      root.endsWith(LEGACY_STUDIO_HOME_DIRECTORY)
+        ? LEGACY_STUDIO_HOME_DIRECTORY
+        : STUDIO_HOME_DIRECTORY,
+    );
+  });
 }
 
 export function resolveDesktopStateDir(input: {

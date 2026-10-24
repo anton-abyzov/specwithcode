@@ -15,6 +15,7 @@ import unittest
 from unittest.mock import patch
 
 import fleet_health
+import install_progress
 import update_agent
 import update_agent_recovery as recovery
 import update_request
@@ -153,6 +154,37 @@ class ApplyTimings(unittest.TestCase):
         self.assertFalse(fixture.output.exists())  # Refused before 'prepared': main() writes the receipt.
         update.write_preflight_failure(fixture.output, 'm4', refusal)
         self.assertEqual(set(json.loads(fixture.output.read_text())), PREFLIGHT_KEYS)
+
+    def test_the_agents_timings_reach_the_progress_file_and_every_receipt_but_the_preflight_one(self):
+        """The agent's wait before this helper (update_agent_run.Timings) is copied as it came, next to,
+        never into, the helper's own `timings`, which the desktop sums for the install's start."""
+        handed = {'requestWait': 1500, 'beforeInstall': 200, 'verifyHelpers': 30, 'snapshot': 61000,
+                  'retryWait': 10000, 'total': 71230}
+        progress_path = lambda fixture: fixture.own / 'updates' / install_progress.FILE
+        cases = (('verified', None, json.dumps(handed)), ('refused before the restart', 'pre-restart-active', json.dumps(handed)),
+                 ('an older agent passes none', None, None))
+        for name, scenario, agent_env in cases:
+            with self.subTest(name):
+                fixture = self.harness()
+                fixture.scenario = scenario or fixture.scenario
+                env = {install_progress.AGENT_TIMINGS_ENV: agent_env} if agent_env else {}
+                with patch.dict(os.environ, env):
+                    if scenario:
+                        with self.assertRaises(AssertionError):
+                            fixture.execute()
+                    else:
+                        fixture.execute()
+                expected = handed if agent_env else {}
+                self.assertEqual(json.loads(fixture.output.read_text())['agentTimings'], expected)
+                progress = json.loads(progress_path(fixture).read_text())
+                self.assertEqual(progress['agentTimings'], expected)
+                self.assertNotIn('requestWait', progress['timings'])
+        fixture = self.harness()
+        with patch.dict(os.environ, {install_progress.AGENT_TIMINGS_ENV: json.dumps(handed)}), \
+                patch.object(update, 'assert_prestate', side_effect=AssertionError('Guarded prestate changed: rows')), \
+                self.assertRaises(AssertionError):
+            fixture.execute()
+        self.assertEqual(json.loads(progress_path(fixture).read_text())['agentTimings'], handed)  # Visible on a refusal too.
 
 
 # The installation a reader binds a receipt to (test-update-agent.py's write_installation).

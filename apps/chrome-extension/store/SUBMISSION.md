@@ -1,4 +1,4 @@
-# Chrome Web Store submission: SpecWithCode Browser 1.0.3
+# Chrome Web Store submission: SpecWithCode Browser 1.0.4
 
 Every field the developer dashboard asks for, in the order it asks, with paste-ready values. Images are in `screenshots/`; the privacy policy text is in `privacy-policy.md`.
 
@@ -6,14 +6,14 @@ Every field the developer dashboard asks for, in the order it asks, with paste-r
 
 - **Publisher account:** anton.abyzov@gmail.com (registration fee of USD 5 already paid). Per the JobWeave notes of October 6, 2026, the account still has **no verified contact email**. Add one and click the verification link (Dashboard → Account → Contact email) before submitting; publishing is blocked without it.
 - **Privacy policy page:** publish `privacy-policy.md` at <https://spec-weave.com/specwithcode/chrome-extension-privacy>. The page does not exist yet and review checks that it loads.
-- **Package:** `apps/chrome-extension/dist/specwithcode-browser-1.0.3.zip`. Build it with `node apps/chrome-extension/scripts/build.mjs` (or `pnpm --filter @specweave-studio/chrome-extension build`). The build refuses a manifest with a `key`, host permissions, an unreviewed permission or a description over 132 characters.
+- **Package:** `apps/chrome-extension/dist/specwithcode-browser-1.0.4.zip`. Build it with `node apps/chrome-extension/scripts/build.mjs` (or `pnpm --filter @specweave-studio/chrome-extension build`). The build refuses a manifest with a `key`, host permissions, an unreviewed permission or a description over 132 characters.
 - **Screenshots:** regenerate with `PWDEBUG=0 PLAYWRIGHT_HTML_OPEN=never node apps/chrome-extension/store/screenshots/src/render.mjs` (headless Chromium).
 
 ## 1. Package
 
 | Field  | Value                                                       |
 | ------ | ----------------------------------------------------------- |
-| Upload | `apps/chrome-extension/dist/specwithcode-browser-1.0.3.zip` |
+| Upload | `apps/chrome-extension/dist/specwithcode-browser-1.0.4.zip` |
 
 The summary shown on the listing comes from the manifest `description` (121 of 132 characters):
 
@@ -164,7 +164,7 @@ The `debugger` permission usually triggers an in-depth review, so expect more th
 1. Sign in to <https://chrome.google.com/webstore/devconsole> as anton.abyzov@gmail.com.
 2. Account: add a contact email and verify it from the link Google sends.
 3. Confirm <https://spec-weave.com/specwithcode/chrome-extension-privacy> loads with the text of `privacy-policy.md`.
-4. Items → New item → upload `apps/chrome-extension/dist/specwithcode-browser-1.0.3.zip`.
+4. Items → New item → upload `apps/chrome-extension/dist/specwithcode-browser-1.0.4.zip`.
 5. Store listing: paste the detailed description; set category Developer Tools and language English.
 6. Store listing: upload the store icon, the five screenshots in order and both promo tiles.
 7. Store listing: set homepage and support URLs to `https://spec-weave.com`.

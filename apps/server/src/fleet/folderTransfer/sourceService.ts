@@ -21,7 +21,7 @@ import {
   type ClassTotals,
   type RepositoryInfo,
 } from "./manifest.ts";
-import { isSafeRelativePath } from "./paths.ts";
+import { isSafeRelativePath, linkTargetOnWire } from "./paths.ts";
 import { preparePortableGit, sourceEntryRoot } from "./portableGit.ts";
 import {
   MAX_SECRET_FILE_BYTES,
@@ -146,7 +146,10 @@ function summarize(scan: FolderScan, warnings: ReadonlyArray<string> = []): Sour
       .slice(0, 500)
       .map((entry) => ({ path: entry.path, size: entry.size })),
     linksOutside: scan.entries.filter(
-      (entry) => entry.type === "symlink" && entry.target?.startsWith("/"),
+      (entry) =>
+        entry.type === "symlink" &&
+        typeof entry.target === "string" &&
+        (entry.target.startsWith("/") || /^[A-Za-z]:/.test(entry.target)),
     ).length,
     warnings: [...new Set([...warnings, ...scan.warnings, ...(scan.notices ?? [])])].slice(0, 50),
   };
@@ -612,7 +615,9 @@ export class SourceTransfers {
                 : "other",
           size: stat.size,
           mtimeMs: Math.trunc(stat.mtimeMs),
-          ...(stat.isSymbolicLink() ? { target: await NodeFSP.readlink(absolute) } : {}),
+          ...(stat.isSymbolicLink()
+            ? { target: linkTargetOnWire(await NodeFSP.readlink(absolute)) }
+            : {}),
         });
       }
       return result;
@@ -641,7 +646,7 @@ export class SourceTransfers {
         if (stat.isSymbolicLink()) {
           next = {
             ...previous,
-            target: await NodeFSP.readlink(absolute),
+            target: linkTargetOnWire(await NodeFSP.readlink(absolute)),
             mtimeMs: Math.trunc(stat.mtimeMs),
           };
         } else {

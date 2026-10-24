@@ -133,24 +133,30 @@ it("says when it could not read the whole project, so missing files are not take
     hub.files.map((file) => file.location),
     [".specweave/docs/d.md"],
   );
-
-  const locked = workspace({
-    ".specweave/docs/d.md": "doc",
-    ".specweave/reports/sealed/r.md": "report",
-  });
-  const sealed = NodePath.join(locked, ".specweave/reports/sealed");
-  NodeFS.chmodSync(sealed, 0o000);
-  try {
-    const folder = await scanKnowledgeFiles(
-      locked,
-      guard(() => false),
-    );
-    assert.isFalse(folder.complete, "a folder that failed to list");
-    assert.deepEqual(
-      folder.files.map((file) => file.location),
-      [".specweave/docs/d.md"],
-    );
-  } finally {
-    NodeFS.chmodSync(sealed, 0o700);
-  }
 });
+
+// chmod 000 only blocks listing under POSIX permissions; Windows ignores the mode.
+it.skipIf(process.platform === "win32")(
+  "says when a folder it may not list leaves the project incomplete",
+  async () => {
+    const locked = workspace({
+      ".specweave/docs/d.md": "doc",
+      ".specweave/reports/sealed/r.md": "report",
+    });
+    const sealed = NodePath.join(locked, ".specweave/reports/sealed");
+    NodeFS.chmodSync(sealed, 0o000);
+    try {
+      const folder = await scanKnowledgeFiles(
+        locked,
+        guard(() => false),
+      );
+      assert.isFalse(folder.complete, "a folder that failed to list");
+      assert.deepEqual(
+        folder.files.map((file) => file.location),
+        [".specweave/docs/d.md"],
+      );
+    } finally {
+      NodeFS.chmodSync(sealed, 0o700);
+    }
+  },
+);

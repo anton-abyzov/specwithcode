@@ -58,7 +58,7 @@ describe("shouldIncludeModelPickerOption", () => {
     ["antigravity", "error"],
     ["antigravity", "warning"],
   ] as const)(
-    "keeps only the active synthetic %s row when the provider status is %s",
+    "preserves the active synthetic %s row and respects model availability when status is %s",
     (driver, status) => {
       const providerEntry = entry(status, driver);
       const activeInstanceId = providerEntry.instanceId;
@@ -79,11 +79,11 @@ describe("shouldIncludeModelPickerOption", () => {
       expect(
         shouldIncludeModelPickerOption({
           entry: providerEntry,
-          option: { slug: "stale/model", name: "Stale model" },
+          option: { slug: "catalog/model", name: "Catalog model" },
           activeInstanceId,
           activeModel,
         }),
-      ).toBe(false);
+      ).toBe(status === "warning");
       expect(
         shouldIncludeModelPickerOption({
           entry: providerEntry,

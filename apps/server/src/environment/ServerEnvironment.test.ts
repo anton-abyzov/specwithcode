@@ -10,6 +10,7 @@ import * as PlatformError from "effect/PlatformError";
 import * as Schema from "effect/Schema";
 import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as TestClock from "effect/testing/TestClock";
 
 import { DEFAULT_SIGNAL_EXPORT } from "@specweave-studio/shared/observability";
@@ -94,19 +95,31 @@ it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
       // Ownership is proven against the resolved entry, so the published
       // prefix is the real one. macOS hands out temp directories under the
       // `/var` link to `/private/var`.
+      const path = yield* Path.Path;
       const baseDir = yield* fs.realPath(yield* fs.makeTempDirectoryScoped());
-      const prefix = `${baseDir}/node`;
-      const entry = `${prefix}/lib/node_modules/specweave-studio/dist/bin.mjs`;
-      yield* fs.makeDirectory(`${prefix}/lib/node_modules/specweave-studio/dist`, {
-        recursive: true,
-      });
-      yield* fs.makeDirectory(`${prefix}/bin`, { recursive: true });
+      // npm lays a global install out as <prefix>/lib/node_modules plus a bin
+      // symlink on POSIX, and <prefix>\node_modules plus a .cmd shim on Windows.
+      const windows = process.platform === "win32";
+      const prefix = path.join(baseDir, "node");
+      const packageRoot = windows
+        ? path.join(prefix, "node_modules", "specweave-studio")
+        : path.join(prefix, "lib", "node_modules", "specweave-studio");
+      const entry = path.join(packageRoot, "dist", "bin.mjs");
+      yield* fs.makeDirectory(path.dirname(entry), { recursive: true });
       yield* fs.writeFileString(entry, "");
       yield* fs.writeFileString(
-        `${prefix}/lib/node_modules/specweave-studio/package.json`,
+        path.join(packageRoot, "package.json"),
         '{"name":"specweave-studio","version":"0.0.45","bin":{"specweave-studio":"./dist/bin.mjs"}}',
       );
-      yield* fs.symlink(entry, `${prefix}/bin/specweave-studio`);
+      if (windows) {
+        yield* fs.writeFileString(
+          path.join(prefix, "specweave-studio.cmd"),
+          '@ECHO off\r\n"%_prog%"  "%dp0%\\node_modules\\specweave-studio\\dist\\bin.mjs" %*\r\n',
+        );
+      } else {
+        yield* fs.makeDirectory(path.join(prefix, "bin"), { recursive: true });
+        yield* fs.symlink(entry, path.join(prefix, "bin", "specweave-studio"));
+      }
       const config = yield* makeServerConfig(baseDir);
       yield* fs.makeDirectory(config.stateDir, { recursive: true });
       for (const mode of ["web", "desktop"] as const) {
@@ -122,7 +135,7 @@ it.layer(NodeServices.layer)("ServerEnvironmentLive", (it) => {
           ),
           Effect.provideService(HostProcessArguments, ["node", entry]),
           Effect.provideService(HostProcessIsExecutable, false),
-          Effect.provideService(HostProcessPlatform, "linux"),
+          Effect.provideService(HostProcessPlatform, windows ? "win32" : "linux"),
           Effect.provideService(HostProcessEnvironment, {}),
         );
         expect(descriptor.capabilities.serverInstallation).toEqual(

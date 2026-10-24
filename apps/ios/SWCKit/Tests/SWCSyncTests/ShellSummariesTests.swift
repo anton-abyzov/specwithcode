@@ -169,6 +169,149 @@ import SWCWire
     #expect(output.projects.first?.isAutomated == false)
   }
 
+  @Test func sharedRemoteWithDifferentRootsStaySeparate() throws {
+    // Canonical workspace policy: never merge distinct checkouts solely because remotes match.
+    // Two independent roots/worktrees with the same GitHub remote must remain separate projects
+    // and not aggregate unrelated threads.
+    let repo = RepositoryIdentity(canonicalKey: "github.com/anton-abyzov/sw-easychamp")
+    func easychamp(_ id: String, _ root: String) throws -> ProjectShell {
+      try TestData.project(id: id, title: "EasyChamp", root: root, identity: repo)
+    }
+    let m1 = try [
+      easychamp("m1-main", "/Users/anton/Projects/sw-easychamp"),
+      easychamp("m1-main-dup", "/Users/anton/Projects/sw-easychamp/"),
+      easychamp("m1-worktree", "/Users/anton/Projects/sw-easychamp-worktree"),
+      easychamp("m1-copy", "/Users/anton/work/sw-easychamp"),
+    ]
+    let m4 = try [
+      easychamp("m4-main", "/Users/you/Projects/sw-easychamp"),
+    ]
+    let output = ShellSummaries.build([
+      machine("m1", threads: [
+        try TestData.thread(id: "t-main", projectId: "m1-main", updatedAt: "2026-10-21T10:00:00.000Z"),
+        try TestData.thread(id: "t-worktree", projectId: "m1-worktree", updatedAt: "2026-10-21T11:00:00.000Z"),
+      ], projects: m1),
+      machine("m4", threads: [
+        try TestData.thread(id: "t-m4", projectId: "m4-main", updatedAt: "2026-10-21T12:00:00.000Z"),
+      ], projects: m4),
+    ])
+
+    // m1-main and m1-main-dup merge (exact same folder on same machine)
+    // m1-worktree stays separate (distinct root)
+    // m1-copy stays separate (distinct root)
+    // m4-main stays separate (distinct machine, unlinked)
+    #expect(output.projects.count == 4)
+
+    let mainProject = try #require(output.projects.first { $0.ref.projectId == "m1-main" })
+    #expect(mainProject.members.map(\.ref.projectId).sorted() == ["m1-main", "m1-main-dup"])
+    #expect(output.threadsByProject[mainProject.ref]?.map(\.ref.threadId) == ["t-main"])
+
+    let worktreeProject = try #require(output.projects.first { $0.ref.projectId == "m1-worktree" })
+    #expect(output.threadsByProject[worktreeProject.ref]?.map(\.ref.threadId) == ["t-worktree"])
+
+    let m4Project = try #require(output.projects.first { $0.ref.projectId == "m4-main" })
+    #expect(output.threadsByProject[m4Project.ref]?.map(\.ref.threadId) == ["t-m4"])
+  }
+
+  @Test func duplicatesFixtureListsEachProjectOnce() {
+    let titles = FixtureDuplicates.output(now: Date()).projects.map(\.title)
+    #expect(titles.sorted() == ["EasyChamp", "Notes", "SpecWeave"])
+  }
+
+  @Test func sameFolderTwiceOnOneMachineIsOneRow() throws {
+    let repo = RepositoryIdentity(canonicalKey: "github.com/example/notes")
+    let a = try TestData.project(id: "a", title: "Notes", root: "/Users/x/notes", identity: repo)
+    let b = try TestData.project(id: "b", title: "notes", root: "/Users/x/notes/", identity: repo)
+    let other = try TestData.project(id: "c", title: "Notes", root: "/Users/x/other-notes", identity: repo)
+    let output = ShellSummaries.build([machine("env", threads: [], projects: [a, b, other])])
+    // Duplicate normalized folder merges, while distinct root stays separate even with same repository.
+    #expect(output.projects.count == 2)
+  }
+
+  @Test func differentFoldersOfOneRepositoryStaySeparate() throws {
+    var repo = RepositoryIdentity(canonicalKey: "github.com/x/mono")
+    repo.rootPath = "/Users/x/mono"
+    let web = try TestData.project(id: "web", title: "Web", root: "/Users/x/mono/apps/web", identity: repo)
+    let api = try TestData.project(id: "api", title: "API", root: "/Users/x/mono/apps/api", identity: repo)
+    let output = ShellSummaries.build([machine("env", threads: [], projects: [web, api])])
+    #expect(output.projects.count == 2)
+  }
+
+  @Test func linkedCopyStaysLinkedBesideAnUnlinkedCopy() throws {
+    let repo = RepositoryIdentity(canonicalKey: "github.com/x/app")
+    let logical = LogicalProject(id: "logical:app", title: "App", coordinatorId: "coordinator:logical:app")
+    var a = try TestData.project(id: "a", title: "App", root: "/Users/x/app", identity: repo)
+    a.workspaceSettings?.logicalProject = logical
+    var b = try TestData.project(id: "b", title: "App", root: "/Users/y/app", identity: repo)
+    b.workspaceSettings?.logicalProject = logical
+    let stray = try TestData.project(id: "stray", title: "App", root: "/Users/z/app", identity: repo)
+    let output = ShellSummaries.build([
+      machine("e1", threads: [], projects: [a]),
+      machine("e2", threads: [], projects: [b]),
+      machine("e3", threads: [], projects: [stray]),
+    ])
+    // a and b merge through explicit logicalProject; stray is unlinked with a distinct root so stays separate.
+    #expect(output.projects.count == 2)
+    let linkedProject = try #require(output.projects.first { $0.title == "App" && $0.members.count == 2 })
+    let linked = Set(linkedProject.members.filter(\.isLinked).map(\.ref.environmentId))
+    #expect(linked == ["e1", "e2"])
+    let strayProject = try #require(output.projects.first { $0.ref.projectId == "stray" })
+    #expect(strayProject.ref.environmentId == "e3")
+  }
+
+  @Test func rowLeadsWithALinkedCopyOverANewerUnlinkedOne() throws {
+    let logical = LogicalProject(id: "logical:app", title: "App", coordinatorId: "coordinator:logical:app")
+    var a = try TestData.project(id: "a", title: "App", root: "/Users/x/app")
+    a.workspaceSettings?.logicalProject = logical
+    var b = try TestData.project(id: "b", title: "App", root: "/Users/y/app")
+    b.workspaceSettings?.logicalProject = logical
+    let stray = try TestData.project(id: "stray", title: "App", root: "/Users/x/app/")
+    let output = ShellSummaries.build([
+      machine("e1", threads: [
+        try TestData.thread(id: "t-a", projectId: "a", updatedAt: "2026-10-21T10:00:00.000Z"),
+        try TestData.thread(id: "t-stray", projectId: "stray", updatedAt: "2026-10-21T12:00:00.000Z"),
+      ], projects: [a, stray]),
+      machine("e2", threads: [
+        try TestData.thread(id: "t-b", projectId: "b", updatedAt: "2026-10-21T11:00:00.000Z"),
+      ], projects: [b]),
+    ])
+    #expect(output.projects.count == 1)
+    let row = try #require(output.projects.first)
+    #expect(row.ref == ProjectRef(environmentId: "e2", projectId: "b"))
+    #expect(row.members.count == 3)
+    #expect(output.threadsByProject[row.ref]?.count == 3)
+  }
+
+  @Test func offlineLinkedCopyStillLeadsOverAnUnlinkedOne() throws {
+    let logical = LogicalProject(id: "logical:app", title: "App", coordinatorId: "coordinator:logical:app")
+    let stray = try TestData.project(id: "stray", title: "App", root: "/Users/x/app/")
+    var a = try TestData.project(id: "a", title: "App", root: "/Users/x/app")
+    a.workspaceSettings?.logicalProject = logical
+    var b = try TestData.project(id: "b", title: "App", root: "/Users/y/app")
+    b.workspaceSettings?.logicalProject = logical
+    var e1 = machine("e1", threads: [], projects: [stray, a])
+    e1.online = false
+    var e2 = machine("e2", threads: [], projects: [b])
+    e2.online = false
+    let output = ShellSummaries.build([e1, e2])
+    #expect(output.projects.count == 1)
+    #expect(output.projects.first?.ref.projectId != "stray")
+  }
+
+  @Test func duplicatesFixtureMergesThreadsOfBothCopies() throws {
+    let output = FixtureDuplicates.output(now: Date())
+    let notes = try #require(output.projects.first { $0.title == "Notes" })
+    #expect(output.threadsByProject[notes.ref]?.map(\.ref.threadId) == ["t-signup"])
+  }
+
+  @Test func checkCopiesOfARepositoryStayUnderAutomated() throws {
+    let repo = RepositoryIdentity(canonicalKey: "github.com/x/app")
+    let mine = try TestData.project(id: "mine", title: "App", root: "/Users/x/Projects/app", identity: repo)
+    let proof = try TestData.project(id: "proof", title: "App", root: "/Users/x/.local/share/specweave/fleet/handoff-proof/app", identity: repo)
+    let output = ShellSummaries.build([machine("env", threads: [], projects: [mine, proof])])
+    #expect(output.projects.map(\.isAutomated).sorted { !$0 && $1 } == [false, true])
+  }
+
   @Test func aideComesFromTheLowestEnvironmentId() throws {
     var personal = try TestData.project(id: "aide", title: "Aide")
     personal.workspaceSettings?.kind = .personal
