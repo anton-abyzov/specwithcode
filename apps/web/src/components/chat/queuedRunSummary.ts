@@ -40,3 +40,16 @@ export function queuedAgeLabel(queuedAtMs: number | null, nowMs: number): string
   if (hours < 24) return `queued ${hours} h${minutes % 60 ? ` ${minutes % 60} min` : ""}`;
   return `queued ${Math.floor(hours / 24)} d`;
 }
+
+// Why the queue's actions (steer, delete, discard, reorder, edit) are off, or null when
+// they work. Every queue view of a thread passes the same reason.
+export function queuedRunActionsUnavailableReason(input: {
+  readonly canOperateThread: boolean;
+  readonly environmentUnavailable: boolean;
+  readonly environmentLabel: string | null;
+}): string | null {
+  if (!input.canOperateThread) return "This connection cannot change threads.";
+  if (input.environmentUnavailable)
+    return `${input.environmentLabel ?? "This machine"} is not connected.`;
+  return null;
+}

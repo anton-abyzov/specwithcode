@@ -176,37 +176,172 @@ export function partitionProjectGroups<G extends ProjectListGroup>(
 }
 
 /**
- * The projects a project picker offers: the main list, then automated projects, so
- * neither a machine's "No project" folder nor an archived project is a row. The
- * selected project stays listed even when archived, so the picker still shows its choice.
+ * What a picker chooses a project for. "work" (the default) and "design" offer every
+ * project of the person's own, personal assistants included; "code" offers only code
+ * projects, for flows that read a codebase (Design from code, Scan from code).
+ */
+export type ProjectPickerPurpose = "work" | "design" | "code";
+
+export interface ProjectPickerOptions {
+  readonly purpose?: ProjectPickerPurpose | undefined;
+  /**
+   * Management lists only: automated projects follow the person's own. An ordinary
+   * picker never sets it.
+   */
+  readonly includeAutomated?: boolean | undefined;
+}
+
+/** Why a project is not an ordinary choice in a picker. */
+export type IneligibleProjectReason = "scratch" | "archived" | "automated" | "not-code";
+
+/** A project without a kind is a code project, as the workspace settings decode it. */
+function fitsPurpose(member: ProjectListMember, purpose: ProjectPickerPurpose) {
+  return purpose !== "code" || (member.workspaceSettings?.kind ?? "code") === "code";
+}
+
+/**
+ * Why one machine's project is not an ordinary choice, or null when it is: a machine's
+ * "No project" folder, an archived project, a project a check or agent made for itself,
+ * or, for a code picker, a project that is not a code project.
+ */
+export function projectChoiceIneligibleReason(
+  member: ProjectListMember,
+  scratchRootFor: ScratchRootLookup,
+  purpose: ProjectPickerPurpose = "work",
+): IneligibleProjectReason | null {
+  if (isScratchMember(member, scratchRootFor)) return "scratch";
+  if (isArchivedMember(member)) return "archived";
+  if (isAutomatedMember(member)) return "automated";
+  return fitsPurpose(member, purpose) ? null : "not-code";
+}
+
+/** True when a picker offers this project: one of the person's own, fit for the purpose. */
+export function isOrdinaryProjectChoice(
+  member: ProjectListMember,
+  scratchRootFor: ScratchRootLookup,
+  purpose: ProjectPickerPurpose = "work",
+): boolean {
+  return projectChoiceIneligibleReason(member, scratchRootFor, purpose) === null;
+}
+
+/** {@link projectChoiceIneligibleReason} for a project listed once across machines. */
+export function projectGroupIneligibleReason(
+  group: ProjectListGroup,
+  scratchRootFor: ScratchRootLookup,
+  purpose: ProjectPickerPurpose = "work",
+): IneligibleProjectReason | null {
+  if (isScratchGroup(group, scratchRootFor)) return "scratch";
+  if (isArchivedGroup(group, scratchRootFor)) return "archived";
+  if (isAutomatedGroup(group, scratchRootFor)) return "automated";
+  return groupFitsPurpose(group, scratchRootFor, purpose) ? null : "not-code";
+}
+
+function groupFitsPurpose(
+  group: ProjectListGroup,
+  scratchRootFor: ScratchRootLookup,
+  purpose: ProjectPickerPurpose,
+) {
+  return (
+    purpose !== "code" ||
+    group.memberProjects.some(
+      (member) => !isScratchMember(member, scratchRootFor) && fitsPurpose(member, purpose),
+    )
+  );
+}
+
+/**
+ * The projects a project picker offers: only the person's own, so neither a machine's
+ * "No project" folder, an archived project nor a project a check or agent made for itself
+ * is a choice, not even the one already selected. A picker whose current selection is
+ * one of those shows it apart, as a row that cannot be chosen; see
+ * {@link ineligibleSelectedGroup}.
  */
 export function projectPickerGroups<G extends ProjectListGroup>(
   groups: ReadonlyArray<G>,
   scratchRootFor: ScratchRootLookup,
-  selectedProjectKey: string | null = null,
+  options: ProjectPickerOptions = {},
 ): G[] {
-  const { listed, automated } = partitionProjectGroups(groups, scratchRootFor, selectedProjectKey);
-  return [...listed, ...automated];
+  const purpose = options.purpose ?? "work";
+  const reasons = groups.map((group) =>
+    projectGroupIneligibleReason(group, scratchRootFor, purpose),
+  );
+  const own = groups.filter((_, index) => reasons[index] === null);
+  if (!options.includeAutomated) return own;
+  const automated = groups.filter(
+    (group, index) =>
+      reasons[index] === "automated" && groupFitsPurpose(group, scratchRootFor, purpose),
+  );
+  return [...own, ...automated];
 }
 
 /** {@link projectPickerGroups} for a picker that lists one row per machine's project. */
 export function projectPickerMembers<M extends ProjectListMember>(
   projects: ReadonlyArray<M>,
   scratchRootFor: ScratchRootLookup,
-  selected: Pick<ProjectListMember, "environmentId" | "id"> | null = null,
+  options: ProjectPickerOptions = {},
 ): M[] {
-  const offered = projects.filter(
-    (project) =>
-      (selected !== null &&
-        project.environmentId === selected.environmentId &&
-        project.id === selected.id) ||
-      (!isScratchMember(project, scratchRootFor) && !isArchivedMember(project)),
+  const purpose = options.purpose ?? "work";
+  const own = projects.filter((project) =>
+    isOrdinaryProjectChoice(project, scratchRootFor, purpose),
   );
+  if (!options.includeAutomated) return own;
   // The person's own projects lead; automated ones follow, in their own order.
-  return [
-    ...offered.filter((project) => !isAutomatedMember(project)),
-    ...offered.filter(isAutomatedMember),
-  ];
+  const automated = projects.filter(
+    (project) =>
+      projectChoiceIneligibleReason(project, scratchRootFor, purpose) === "automated" &&
+      fitsPurpose(project, purpose),
+  );
+  return [...own, ...automated];
+}
+
+/** A picker's current selection that is not an ordinary choice, and why. */
+export interface IneligibleProjectSelection<P> {
+  readonly project: P;
+  readonly reason: IneligibleProjectReason;
+}
+
+/**
+ * The selected project when the picker does not offer it, so the picker can show it as
+ * its current context, in a row that cannot be chosen. Null when nothing is selected,
+ * the selection is an ordinary choice, or no listed project matches it.
+ */
+export function ineligibleSelectedMember<M extends ProjectListMember>(
+  projects: ReadonlyArray<M>,
+  selected: Pick<ProjectListMember, "environmentId" | "id"> | null | undefined,
+  scratchRootFor: ScratchRootLookup,
+  purpose: ProjectPickerPurpose = "work",
+): IneligibleProjectSelection<M> | null {
+  if (!selected) return null;
+  const project = projects.find(
+    (entry) => entry.environmentId === selected.environmentId && entry.id === selected.id,
+  );
+  const reason = project && projectChoiceIneligibleReason(project, scratchRootFor, purpose);
+  return project && reason ? { project, reason } : null;
+}
+
+/** {@link ineligibleSelectedMember} for a picker that lists each project once across machines. */
+export function ineligibleSelectedGroup<G extends ProjectListGroup>(
+  groups: ReadonlyArray<G>,
+  selectedProjectKey: string | null | undefined,
+  scratchRootFor: ScratchRootLookup,
+  purpose: ProjectPickerPurpose = "work",
+): IneligibleProjectSelection<G> | null {
+  if (!selectedProjectKey) return null;
+  const project = groups.find((group) => group.projectKey === selectedProjectKey);
+  const reason = project && projectGroupIneligibleReason(project, scratchRootFor, purpose);
+  return project && reason ? { project, reason } : null;
+}
+
+const INELIGIBLE_PROJECT_LABELS: Record<IneligibleProjectReason, string> = {
+  scratch: "No project, not available here",
+  archived: "Archived project, not available here",
+  automated: "Automated project, not available here",
+  "not-code": "Not a code project, not available here",
+};
+
+/** What a picker says beside a current selection it does not offer. */
+export function ineligibleProjectLabel(reason: IneligibleProjectReason): string {
+  return INELIGIBLE_PROJECT_LABELS[reason];
 }
 
 /** The workspace-settings patch that moves one project to or from the automated list. */

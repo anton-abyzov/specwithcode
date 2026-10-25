@@ -913,6 +913,8 @@ export function capturePosixOwnershipLedger(input: {
 
 export function terminatePosixOwnedProcessTree(input: {
   readonly controller: AcpPosixProcessTreeController;
+  /** This SpecWithCode process: never signalled, nor its group or session. Defaults to `process.pid`. */
+  readonly currentPid?: number;
   readonly discoveryPasses?: number;
   readonly grace?: Duration.Input;
   readonly ledger?: Map<string, AcpOwnedPosixProcess>;
@@ -923,6 +925,7 @@ export function terminatePosixOwnedProcessTree(input: {
   // visible before it breaks. A descendant that double-forks before discovery
   // requires pre-exec cgroup containment for a hard ownership guarantee.
   const ledger = input.ledger ?? new Map<string, AcpOwnedPosixProcess>();
+  const currentPid = input.currentPid ?? process.pid;
 
   const fail = (detail: string, cause?: unknown) =>
     new AcpProcessGroupTerminationError({ detail, ...(cause === undefined ? {} : { cause }) });
@@ -945,7 +948,7 @@ export function terminatePosixOwnedProcessTree(input: {
     const table = snapshot();
     discover(table);
     const byPid = new Map(table.map((entry) => [entry.pid, entry]));
-    const current = input.controller.identity(process.pid);
+    const current = input.controller.identity(currentPid);
     if (current === undefined) throw fail("Cannot identify the current SpecWithCode process group");
     const ledgerByPid = new Map(
       [...ledger.values()].map((process) => [process.pid, process] as const),
@@ -970,7 +973,7 @@ export function terminatePosixOwnedProcessTree(input: {
       const observed = input.controller.identity(candidate.pid);
       if (
         candidate.pid <= 1 ||
-        candidate.pid === process.pid ||
+        candidate.pid === currentPid ||
         observed === undefined ||
         observed.pgid === current.pgid ||
         observed.sid === current.sid ||

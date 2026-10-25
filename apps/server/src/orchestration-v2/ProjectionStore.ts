@@ -160,7 +160,9 @@ export type ProjectionRecoveryKind =
   // Latest run was stopped for a service update and has not been continued.
   | "update-interrupted"
   // A service update cancelled queued messages that the restart queues again.
-  | "update-requeue";
+  | "update-requeue"
+  // Open provider-native subagent state: rows, items, or a child's runless root turn.
+  | "stranded-subagents";
 
 /** Persisted state needed for limit recovery, without transcript or fork history. */
 /** A pending request with the detail that tells whether it holds the thread. */
@@ -600,6 +602,27 @@ function needsRecovery(
         )
       );
     }
+    case "stranded-subagents":
+      return (
+        projection.subagents.some(
+          (subagent) =>
+            subagent.origin === "provider_native" &&
+            ["pending", "running", "waiting"].includes(subagent.status),
+        ) ||
+        projection.turnItems.some(
+          (item) =>
+            item.type === "subagent" &&
+            item.origin === "provider_native" &&
+            ["pending", "running", "waiting"].includes(item.status),
+        ) ||
+        (projection.thread.lineage.relationshipToParent === "subagent" &&
+          projection.nodes.some(
+            (node) =>
+              node.kind === "root_turn" &&
+              node.runId === null &&
+              ["pending", "running", "waiting"].includes(node.status),
+          ))
+      );
     case "runtime":
       return (
         projection.runs.some(
@@ -996,6 +1019,7 @@ type ShellThreadRow = {
   readonly latest_run_started_at: string | null;
   readonly latest_run_completed_at: string | null;
   readonly active_run_id: string | null;
+  readonly active_run_activity_at?: string | null;
   readonly activity_run_status: string | null;
   readonly activity_run_started_at: string | null;
   readonly last_error: string | null;
@@ -1524,6 +1548,15 @@ export function threadShellFromProjection(
     turnItems: projection.turnItems,
     toMillis: DateTime.toEpochMillis,
   });
+  let latestActiveRunItemAt: DateTime.Utc | null = null;
+  for (const item of projection.turnItems) {
+    if (activeRun === null || item.runId !== activeRun.id) continue;
+    if (
+      latestActiveRunItemAt === null ||
+      DateTime.toEpochMillis(item.updatedAt) > DateTime.toEpochMillis(latestActiveRunItemAt)
+    )
+      latestActiveRunItemAt = item.updatedAt;
+  }
   const modelRun = projection.runs
     .filter(
       (run) =>
@@ -1569,24 +1602,29 @@ export function threadShellFromProjection(
     latestRunRequestedAt: latestRun?.requestedAt ?? null,
     latestRunStartedAt: latestRun?.startedAt ?? null,
     latestRunCompletedAt: latestRun?.completedAt ?? null,
-    modelIdentity: threadModelIdentity({
-      thread: projection.thread.modelSelection,
-      running: modelRun
-        ? { ...modelRun.modelSelection, instanceId: modelRun.providerInstanceId }
-        : null,
-      fallbackFrom:
-        (limitFallbackPairing(
-          projection.messages,
-          projection.runs,
-          projection.thread.modelSelection,
-        )?.original as ModelSelection | undefined) ?? null,
-    }),
+    modelIdentity: (() => {
+      const pairing = limitFallbackPairing(
+        projection.messages,
+        projection.runs,
+        projection.thread.modelSelection,
+        projection.thread.launchFallbackFrom,
+      );
+      return threadModelIdentity({
+        thread: projection.thread.modelSelection,
+        running: modelRun
+          ? { ...modelRun.modelSelection, instanceId: modelRun.providerInstanceId }
+          : null,
+        fallbackFrom: (pairing?.original as ModelSelection | undefined) ?? null,
+        launched: pairing?.launched === true,
+      });
+    })(),
     activeRunId: activeRun?.id ?? null,
     activityRunStatus: activityRun?.status ?? subagentActivity?.status ?? null,
     activityRunStartedAt:
       activityRun === null
         ? (subagentActivity?.startedAt ?? null)
         : orchestrationV2RunWorkStartedAt(activityRun),
+    activeRunActivityAt: activeRunActivityAt(activeRun, latestActiveRunItemAt),
     activeWork,
     status: latestRun?.status ?? "idle",
     ...threadErrorSummary(
@@ -1687,6 +1725,22 @@ function activeProviderGoalForShell(
   return providerThreads.find((thread) => thread.id === activeProviderThreadId)?.goal ?? null;
 }
 
+/**
+ * The active run's latest provider activity: the newer of its start and its
+ * newest item change (`latestItemAt`). Null without an active run.
+ */
+function activeRunActivityAt(
+  run: Pick<OrchestrationV2Run, "startedAt" | "requestedAt"> | null,
+  latestItemAt: DateTime.Utc | null,
+): DateTime.Utc | null {
+  if (run === null) return null;
+  const startedAt = run.startedAt ?? run.requestedAt;
+  return latestItemAt !== null &&
+    DateTime.toEpochMillis(latestItemAt) > DateTime.toEpochMillis(startedAt)
+    ? latestItemAt
+    : startedAt;
+}
+
 function isInterruptibleRunForShell(run: OrchestrationV2ThreadProjection["runs"][number]): boolean {
   return run.status === "preparing" || run.status === "starting" || run.status === "running";
 }
@@ -1713,6 +1767,7 @@ type ShellThreadState = {
   readonly activityRunStatus: ShellActivityRunStatus | null;
   readonly activityRunStartedAt: DateTime.Utc | null;
   readonly activeWork: NonNullable<OrchestrationV2ThreadShell["activeWork"]> | null;
+  readonly activeRunActivityAt: DateTime.Utc | null;
   readonly lastError: string | null;
   readonly lastErrorClass: OrchestrationV2ThreadShell["lastErrorClass"];
   readonly usageLimitResetAt: OrchestrationV2ThreadShell["usageLimitResetAt"];
@@ -1922,6 +1977,7 @@ function shellFromState(input: {
     activeRunId: input.state.activeRunId,
     activityRunStatus: input.state.activityRunStatus,
     activityRunStartedAt: input.state.activityRunStartedAt,
+    activeRunActivityAt: input.state.activeRunActivityAt,
     activeWork: input.state.activeWork,
     status: input.state.latestRunStatus,
     lastError: input.state.lastError,
@@ -3858,6 +3914,30 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                     THEN json_extract(payload_json, '$.cancelledForUpdate') = 1
                     ELSE 0 END
               `;
+            case "stranded-subagents":
+              return sql`
+                SELECT thread_id FROM orchestration_v2_projection_subagents
+                WHERE origin = 'provider_native'
+                  AND status IN ('pending', 'starting', 'running', 'waiting')
+                UNION
+                SELECT thread_id FROM orchestration_v2_projection_turn_items
+                WHERE type = 'subagent'
+                  AND status IN ('pending', 'running', 'waiting')
+                  AND CASE WHEN json_valid(payload_json)
+                    THEN json_extract(payload_json, '$.origin') = 'provider_native'
+                    ELSE 0 END
+                UNION
+                SELECT subagents.child_thread_id FROM orchestration_v2_projection_subagents AS subagents
+                WHERE subagents.child_thread_id IS NOT NULL
+                  AND subagents.origin = 'provider_native'
+                  AND EXISTS (
+                    SELECT 1 FROM orchestration_v2_projection_nodes AS node
+                    WHERE node.thread_id = subagents.child_thread_id
+                      AND node.run_id IS NULL
+                      AND node.kind = 'root_turn'
+                      AND node.status IN ('pending', 'running', 'waiting')
+                  )
+              `;
             case "runtime":
               return sql`
                 WITH pending_provider_threads AS MATERIALIZED (
@@ -4311,6 +4391,12 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                     WHERE item.thread_id = ${threadId} AND item.type = 'subagent'
                       AND item.status IN ('pending', 'running', 'waiting')
                   )
+                  -- An open provider-native subagent row whose item already settled.
+                  OR node.node_id IN (
+                    SELECT subagent_id FROM orchestration_v2_projection_subagents
+                    WHERE thread_id = ${threadId} AND origin = 'provider_native'
+                      AND status IN ('pending', 'starting', 'running', 'waiting')
+                  )
                 )
               ORDER BY COALESCE(node.started_at, ''), node.node_id ASC
             `,
@@ -4330,6 +4416,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                     WHERE item.thread_id = ${threadId} AND item.type = 'subagent'
                       AND item.status IN ('pending', 'running', 'waiting')
                   )
+                  -- Provider-native rows stay open only while a process runs them.
+                  OR subagent.origin = 'provider_native'
                 )
               ORDER BY COALESCE(subagent.started_at, ''), subagent.subagent_id ASC
             `,
@@ -5268,29 +5356,54 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   AND COALESCE(json_extract(r.payload_json, '$.queueHeld'), 0) = 0
                 ORDER BY CASE WHEN r.status = 'queued' THEN 1 ELSE 0 END, r.ordinal DESC LIMIT 1
               ) AS running_model_json,
-              (
-                SELECT json_object('original', json_extract(stopped.payload_json, '$.modelSelection'))
-                FROM orchestration_v2_projection_messages continuation
-                JOIN orchestration_v2_projection_runs stopped
-                  ON stopped.thread_id = t.thread_id
-                  AND substr(continuation.message_id, -length(stopped.run_id) - 1) = ':' || stopped.run_id
-                LEFT JOIN orchestration_v2_projection_runs resumed
-                  ON resumed.run_id = continuation.run_id
-                WHERE continuation.thread_id = t.thread_id
-                  AND continuation.message_id = (
-                    SELECT m.message_id FROM orchestration_v2_projection_messages m
-                    WHERE m.thread_id = t.thread_id
-                      AND (m.message_id LIKE 'limit-fallback:%' OR m.message_id LIKE 'provider-fallback:%')
-                    ORDER BY m.created_at DESC, m.message_id DESC LIMIT 1
-                  )
-                  AND continuation.message_id LIKE 'limit-fallback:%'
-                  AND json_extract(stopped.payload_json, '$.modelSelection.instanceId') <> json_extract(t.payload_json, '$.modelSelection.instanceId')
-                  AND NOT EXISTS (
-                    SELECT 1 FROM orchestration_v2_projection_runs returned
-                    WHERE returned.thread_id = t.thread_id AND returned.ordinal > resumed.ordinal
-                      AND json_extract(returned.payload_json, '$.modelSelection.instanceId') = json_extract(stopped.payload_json, '$.modelSelection.instanceId')
-                  )
-                ORDER BY length(stopped.run_id) DESC LIMIT 1
+              COALESCE(
+                (
+                  SELECT json_object('original', json_extract(stopped.payload_json, '$.modelSelection'))
+                  FROM orchestration_v2_projection_messages continuation
+                  JOIN orchestration_v2_projection_runs stopped
+                    ON stopped.thread_id = t.thread_id
+                    AND substr(continuation.message_id, -length(stopped.run_id) - 1) = ':' || stopped.run_id
+                  LEFT JOIN orchestration_v2_projection_runs resumed
+                    ON resumed.run_id = continuation.run_id
+                  WHERE continuation.thread_id = t.thread_id
+                    AND continuation.message_id = (
+                      SELECT m.message_id FROM orchestration_v2_projection_messages m
+                      WHERE m.thread_id = t.thread_id
+                        AND (m.message_id LIKE 'limit-fallback:%' OR m.message_id LIKE 'provider-fallback:%')
+                      ORDER BY m.created_at DESC, m.message_id DESC LIMIT 1
+                    )
+                    AND continuation.message_id LIKE 'limit-fallback:%'
+                    -- Mirrors limitFallbackPairing: another provider, or another model on the
+                    -- same one; a bracketed variant ([1m]) is the same model.
+                    AND NOT (
+                      json_extract(stopped.payload_json, '$.modelSelection.instanceId') = json_extract(t.payload_json, '$.modelSelection.instanceId')
+                      AND (CASE WHEN instr(json_extract(stopped.payload_json, '$.modelSelection.model'), '[') > 1 THEN substr(json_extract(stopped.payload_json, '$.modelSelection.model'), 1, instr(json_extract(stopped.payload_json, '$.modelSelection.model'), '[') - 1) ELSE json_extract(stopped.payload_json, '$.modelSelection.model') END) = (CASE WHEN instr(json_extract(t.payload_json, '$.modelSelection.model'), '[') > 1 THEN substr(json_extract(t.payload_json, '$.modelSelection.model'), 1, instr(json_extract(t.payload_json, '$.modelSelection.model'), '[') - 1) ELSE json_extract(t.payload_json, '$.modelSelection.model') END)
+                    )
+                    AND NOT EXISTS (
+                      SELECT 1 FROM orchestration_v2_projection_runs returned
+                      WHERE returned.thread_id = t.thread_id AND returned.ordinal > resumed.ordinal
+                        AND json_extract(returned.payload_json, '$.modelSelection.instanceId') = json_extract(stopped.payload_json, '$.modelSelection.instanceId')
+                        AND (CASE WHEN instr(json_extract(returned.payload_json, '$.modelSelection.model'), '[') > 1 THEN substr(json_extract(returned.payload_json, '$.modelSelection.model'), 1, instr(json_extract(returned.payload_json, '$.modelSelection.model'), '[') - 1) ELSE json_extract(returned.payload_json, '$.modelSelection.model') END) = (CASE WHEN instr(json_extract(stopped.payload_json, '$.modelSelection.model'), '[') > 1 THEN substr(json_extract(stopped.payload_json, '$.modelSelection.model'), 1, instr(json_extract(stopped.payload_json, '$.modelSelection.model'), '[') - 1) ELSE json_extract(stopped.payload_json, '$.modelSelection.model') END)
+                    )
+                  ORDER BY length(stopped.run_id) DESC LIMIT 1
+                ),
+                -- Mirrors launchFallbackPairing: a thread whose launch moved off a model with
+                -- no room stands in for it while it is not set on the original and no run has
+                -- gone there. A pick by hand clears launchFallbackFrom at write time.
+                (
+                  SELECT json_object('original', json_extract(t.payload_json, '$.launchFallbackFrom'), 'source', 'launch')
+                  WHERE json_type(t.payload_json, '$.launchFallbackFrom') = 'object'
+                    AND NOT (
+                      json_extract(t.payload_json, '$.launchFallbackFrom.instanceId') = json_extract(t.payload_json, '$.modelSelection.instanceId')
+                      AND (CASE WHEN instr(json_extract(t.payload_json, '$.launchFallbackFrom.model'), '[') > 1 THEN substr(json_extract(t.payload_json, '$.launchFallbackFrom.model'), 1, instr(json_extract(t.payload_json, '$.launchFallbackFrom.model'), '[') - 1) ELSE json_extract(t.payload_json, '$.launchFallbackFrom.model') END) = (CASE WHEN instr(json_extract(t.payload_json, '$.modelSelection.model'), '[') > 1 THEN substr(json_extract(t.payload_json, '$.modelSelection.model'), 1, instr(json_extract(t.payload_json, '$.modelSelection.model'), '[') - 1) ELSE json_extract(t.payload_json, '$.modelSelection.model') END)
+                    )
+                    AND NOT EXISTS (
+                      SELECT 1 FROM orchestration_v2_projection_runs launched
+                      WHERE launched.thread_id = t.thread_id
+                        AND json_extract(launched.payload_json, '$.modelSelection.instanceId') = json_extract(t.payload_json, '$.launchFallbackFrom.instanceId')
+                        AND (CASE WHEN instr(json_extract(launched.payload_json, '$.modelSelection.model'), '[') > 1 THEN substr(json_extract(launched.payload_json, '$.modelSelection.model'), 1, instr(json_extract(launched.payload_json, '$.modelSelection.model'), '[') - 1) ELSE json_extract(launched.payload_json, '$.modelSelection.model') END) = (CASE WHEN instr(json_extract(t.payload_json, '$.launchFallbackFrom.model'), '[') > 1 THEN substr(json_extract(t.payload_json, '$.launchFallbackFrom.model'), 1, instr(json_extract(t.payload_json, '$.launchFallbackFrom.model'), '[') - 1) ELSE json_extract(t.payload_json, '$.launchFallbackFrom.model') END)
+                    )
+                )
               ) AS fallback_pairing_json,
               CASE
                 WHEN json_extract(t.payload_json, '$.forkedFrom.type') = 'run'
@@ -5310,6 +5423,26 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 ORDER BY r.ordinal DESC, r.run_id DESC
                 LIMIT 1
               ) AS active_run_id,
+              (
+                -- Mirrors activeRunActivityAt: the newer of the run's start and its newest item.
+                SELECT max(
+                  COALESCE(json_extract(r.payload_json, '$.startedAt'), r.requested_at),
+                  COALESCE(
+                    (
+                      SELECT MAX(item.updated_at)
+                      FROM orchestration_v2_projection_turn_items item
+                        INDEXED BY orchestration_v2_projection_turn_items_thread_run_idx
+                      WHERE item.thread_id = t.thread_id AND item.run_id = r.run_id
+                    ),
+                    ''
+                  )
+                )
+                FROM orchestration_v2_projection_runs r
+                WHERE r.thread_id = t.thread_id
+                  AND r.status IN ('preparing', 'starting', 'running')
+                ORDER BY r.ordinal DESC, r.run_id DESC
+                LIMIT 1
+              ) AS active_run_activity_at,
               COALESCE(
                 (
                   SELECT r.status
@@ -5951,6 +6084,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           latestRunStartedAt,
           latestRunCompletedAt,
           activeRunId: row.active_run_id === null ? null : RunId.make(row.active_run_id),
+          activeRunActivityAt:
+            row.active_run_activity_at == null
+              ? null
+              : DateTime.makeUnsafe(row.active_run_activity_at),
           activeWork: deriveActiveRunWork<DateTime.Utc, OrchestrationV2TurnItem>({
             activeRunId: row.active_run_id,
             turnItems: pendingTurnItemsByThreadId.get(thread.id) ?? [],
@@ -6005,12 +6142,21 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 : yield* Schema.decodeUnknownEffect(Schema.fromJsonString(ModelSelectionSchema))(
                     row.running_model_json,
                   ),
-            fallbackFrom:
-              row.fallback_pairing_json === null
-                ? null
-                : (yield* Schema.decodeUnknownEffect(
-                    Schema.fromJsonString(Schema.Struct({ original: ModelSelectionSchema })),
-                  )(row.fallback_pairing_json)).original,
+            ...(row.fallback_pairing_json === null
+              ? {}
+              : yield* Schema.decodeUnknownEffect(
+                  Schema.fromJsonString(
+                    Schema.Struct({
+                      original: ModelSelectionSchema,
+                      source: Schema.optional(Schema.Literal("launch")),
+                    }),
+                  ),
+                )(row.fallback_pairing_json).pipe(
+                  Effect.map((pairing) => ({
+                    fallbackFrom: pairing.original,
+                    launched: pairing.source === "launch",
+                  })),
+                )),
           }),
           itemCount: row.item_count,
           runlessItemCount: row.runless_item_count,

@@ -38,22 +38,13 @@ import * as ThreadManagementService from "../orchestration-v2/ThreadManagementSe
 import { ProjectCoordinatorService } from "../project/ProjectCoordinatorService.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
-import {
-  checkedPrompt,
-  isModelPinned,
-  routineCoordinatorPrompt,
-  runScheduledTaskCheck,
-} from "./ScheduledTaskCheck.ts";
+import { checkedPrompt, isModelPinned, runScheduledTaskCheck } from "./ScheduledTaskCheck.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
 import * as ServiceUpdateHold from "../serviceUpdate/ServiceUpdateHold.ts";
 import { isMissedFixedTimeRun, isSameSchedule } from "./Schedule.ts";
 import * as ProjectAdmission from "../project/ProjectAdmission.ts";
-import {
-  assertTaskAdmission,
-  routineCoordinatorThreadId,
-  suspendedProjectState,
-} from "./ScheduledTaskAdmission.ts";
+import { assertTaskAdmission, suspendedProjectState } from "./ScheduledTaskAdmission.ts";
 import { reserveRun, completeRun } from "./ScheduledTaskRunReceipt.ts";
 import { DEFER_DEFAULT_MS, routeRoutineFire } from "./ScheduledTaskProviderRoute.ts";
 import { makeWebhookTrigger } from "./ScheduledTaskWebhookTrigger.ts";
@@ -76,8 +67,11 @@ import { followDispatchedOccurrences } from "./ScheduledTaskFollow.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { resolveProjectSettings } from "@specweave-studio/shared/projectSettings";
 import {
+  asOwnThreadRoutine,
   bindOwnThread,
   ownThreadLaunchCommandId,
+  readRoutineProject,
+  type RoutineProject,
   withLiveOwnThread,
 } from "./ScheduledTaskOwnThread.ts";
 import { routineBriefHeader } from "@specweave-studio/shared/routineBrief";
@@ -227,7 +221,21 @@ export const layer = Layer.effect(
     const listRows = Effect.fn("ScheduledTaskService.listRows")(function* () {
       const rows = yield* selectAllRows();
       const origin = yield* readWebhookOrigin;
-      return yield* Effect.forEach(rows, (row) => decodeRow(row, origin), { concurrency: 1 });
+      const tasks = yield* Effect.forEach(rows, (row) => decodeRow(row, origin), {
+        concurrency: 1,
+      });
+      // One project read per project, not per routine.
+      const projectsById = new Map<string, RoutineProject | null>();
+      for (const projectId of new Set(tasks.map((task) => task.projectId)))
+        projectsById.set(
+          projectId,
+          yield* readRoutineProject(projectId).pipe(
+            Effect.provideService(ProjectStore.ProjectStoreV2, projects),
+          ),
+        );
+      return tasks.map((task) =>
+        asOwnThreadRoutine(task, projectsById.get(task.projectId) ?? null),
+      );
     });
 
     const getRows = (id: ScheduledTaskId) => sql<ScheduledTaskRow>`
@@ -258,6 +266,13 @@ export const layer = Layer.effect(
       FROM scheduled_tasks
       WHERE task_id = ${id}
     `;
+
+    // The routine as it runs and lists: never in the coordinator (see asOwnThreadRoutine).
+    const ownThreadRoutine = (task: ScheduledTask) =>
+      readRoutineProject(task.projectId).pipe(
+        Effect.map((project) => asOwnThreadRoutine(task, project)),
+        Effect.provideService(ProjectStore.ProjectStoreV2, projects),
+      );
 
     /** Load a task, returning `null` when it does not exist; real load/decode failures propagate. */
     const findTask = Effect.fn("ScheduledTaskService.findTask")(function* (id: ScheduledTaskId) {
@@ -615,7 +630,8 @@ export const layer = Layer.effect(
         const active =
           stored === null
             ? null
-            : yield* withLiveOwnThread(stored).pipe(
+            : yield* ownThreadRoutine(stored).pipe(
+                Effect.flatMap(withLiveOwnThread),
                 Effect.provideService(SqlClient.SqlClient, sql),
               );
         if (active === null) {
@@ -763,16 +779,14 @@ export const layer = Layer.effect(
         // Only a routine set to "Use a specific model" overrides the project's choice.
         const pinned = isModelPinned(active);
         // Each destination is routed on the model its dispatch below will
-        // use: a coordinator, bound or woken, on what its next turn resolves
-        // to; a new thread on the routine's model; any other thread on its
-        // own provider. A thread the fallback moved goes back once its
+        // use: a new own thread on the routine's model; a bound thread on what
+        // its next turn resolves to. A thread the fallback moved goes back once its
         // provider can take a turn; a provider that cannot take this run
         // moves it under the `switch` rule, and otherwise the occurrence
         // waits (see routineRoute). A snapshot that cannot be read fires as
         // before.
-        // The model a prompt posted to `threadId` is sent with (see sendTo);
-        // null asks for the project's coordinator before it is started.
-        const sendModel = (threadId: ThreadId | null) =>
+        // The model a prompt posted to `threadId` is sent with (see sendTo).
+        const sendModel = (threadId: ThreadId) =>
           pinned
             ? Effect.succeed(active.modelSelection)
             : coordinators === undefined
@@ -783,14 +797,7 @@ export const layer = Layer.effect(
             ? sendModel(ThreadId.make(active.threadId)).pipe(
                 Effect.map((modelSelection) => ({ threadId: active.threadId, modelSelection })),
               )
-            : active.ownThread || coordinators === undefined
-              ? Effect.succeed({ threadId: null, modelSelection: active.modelSelection })
-              : Effect.all([
-                  routineCoordinatorThreadId(active).pipe(
-                    Effect.provideService(ProjectStore.ProjectStoreV2, projects),
-                  ),
-                  sendModel(null),
-                ]).pipe(Effect.map(([threadId, modelSelection]) => ({ threadId, modelSelection })));
+            : Effect.succeed({ threadId: null, modelSelection: active.modelSelection });
         const fallbackRule =
           serverSettings === undefined
             ? Effect.succeed(null)
@@ -896,7 +903,7 @@ export const layer = Layer.effect(
         // A routine with a thread of its own starts it, titled after the
         // routine, and binds it; a launch resumed after an interrupted run
         // gets this run's prompt as a follow-up.
-        const launchOwnThread = (replacing: string | null) =>
+        const launchOwnThreadUnchecked = (replacing: string | null) =>
           threadLaunch
             .launch({
               commandId: ownThreadLaunchCommandId(active, replacing),
@@ -933,6 +940,18 @@ export const layer = Layer.effect(
               ),
             );
 
+        // A pre-run check can outlive a project handoff. Recheck ownership at
+        // dispatch, under the same reentrant lock used by bound-thread sends.
+        const launchOwnThread = (replacing: string | null) =>
+          admission.withLock(
+            active.projectId,
+            assertTaskAdmission(active).pipe(
+              Effect.provideService(ProjectStore.ProjectStoreV2, projects),
+              Effect.provideService(SqlClient.SqlClient, sql),
+              Effect.andThen(launchOwnThreadUnchecked(replacing)),
+            ),
+          );
+
         // Effect.exit (not Effect.result) so defects and interruptions in the
         // dispatch are also captured and recorded as a failed run instead of
         // aborting before markCompleted.
@@ -943,45 +962,9 @@ export const layer = Layer.effect(
               ? Exit.void
               : active.threadId !== null
                 ? yield* Effect.exit(sendTo(ThreadId.make(active.threadId), prompt))
-                : active.ownThread
-                  ? yield* Effect.exit(launchOwnThread(stored?.threadId ?? null))
-                  : coordinators !== undefined
-                    ? // A routine with no thread of its own wakes the project's
-                      // coordinator, which answers it or starts the threads it
-                      // needs on the project's recommended model.
-                      yield* Effect.exit(
-                        coordinators
-                          .start({
-                            projectId: active.projectId,
-                            commandId: CommandId.make(`${commandId}:coordinator`),
-                          })
-                          .pipe(
-                            Effect.flatMap(({ threadId }) =>
-                              sendTo(threadId, routineCoordinatorPrompt(active, prompt)),
-                            ),
-                          ),
-                      )
-                    : yield* Effect.exit(
-                        threadLaunch
-                          .launch({
-                            commandId,
-                            projectId: active.projectId,
-                            title: active.title,
-                            modelSelection: routedModel ?? active.modelSelection,
-                            runtimeMode: active.runtimeMode,
-                            interactionMode: active.interactionMode,
-                            workspaceStrategy: active.workspaceStrategy,
-                            initialMessage: {
-                              messageId,
-                              scheduledTaskId: active.id,
-                              text: prompt,
-                              attachments: [],
-                            },
-                            createdBy: active.createdBy,
-                            creationSource: active.creationSource,
-                          })
-                          .pipe(Effect.tap(({ threadId }) => recordDispatch(threadId))),
-                      );
+                : // No live thread yet: start the routine's own (see asOwnThreadRoutine),
+                  // replacing whatever thread the stored row still names.
+                  yield* Effect.exit(launchOwnThread(stored?.threadId ?? null));
 
         const completedAt = yield* localNow;
         const runSucceeded = result._tag === "Success" && route?.type !== "defer";
@@ -1326,7 +1309,7 @@ export const layer = Layer.effect(
                   taskError("Could not load schedule task.", { taskId: id, cause }),
                 ),
               )) + (schedule.type === "once" && !scheduleUnchanged ? 1 : 0);
-        const task: ScheduledTask = {
+        const saved: ScheduledTask = {
           id,
           title: input.title,
           prompt: input.prompt,
@@ -1366,6 +1349,9 @@ export const layer = Layer.effect(
             : {}),
           ...((input.ownThread ?? existingTask?.ownThread) ? { ownThread: true } : {}),
         };
+        // Saved as it will run: a routine left without a thread, or pointed at
+        // the coordinator, gets a thread of its own.
+        const task = yield* ownThreadRoutine(saved);
         yield* saveTask(task, input.requireExisting === true, webhook, onceGeneration);
         yield* notifyChanged;
         return { task: (yield* findTask(id)) ?? task };
@@ -1417,7 +1403,10 @@ export const layer = Layer.effect(
       Effect.gen(function* () {
         const task = yield* loadTask(input.id).pipe(
           Effect.flatMap((loaded) =>
-            withLiveOwnThread(loaded).pipe(Effect.provideService(SqlClient.SqlClient, sql)),
+            ownThreadRoutine(loaded).pipe(
+              Effect.flatMap(withLiveOwnThread),
+              Effect.provideService(SqlClient.SqlClient, sql),
+            ),
           ),
         );
         if (task.schedule.type === "webhook") {

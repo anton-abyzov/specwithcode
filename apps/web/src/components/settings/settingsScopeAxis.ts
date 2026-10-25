@@ -1,6 +1,8 @@
 import type { EnvironmentPresentation } from "../../state/environments";
 import {
+  ineligibleSelectedGroup,
   projectPickerGroups,
+  type IneligibleProjectSelection,
   type ProjectListGroup,
   type ScratchRootLookup,
 } from "../../studio/projectListVisibility";
@@ -24,13 +26,19 @@ export function settingsScopeEnvironmentLabel(
 export const ALL_ENVIRONMENTS_VALUE = "all";
 export const ALL_PROJECTS_VALUE = "all";
 
-/** The projects the scope picker offers; see {@link projectPickerGroups}. */
+/**
+ * The projects the scope picker offers (see {@link projectPickerGroups}), and the current
+ * scope when it is not one of them, which the picker shows as a row that cannot be chosen.
+ */
 export function settingsScopeProjectChoices<G extends ProjectListGroup>(
   groups: readonly G[],
   scratchRootFor: ScratchRootLookup,
   selectedProjectKey: string | undefined,
-): G[] {
-  return projectPickerGroups(groups, scratchRootFor, selectedProjectKey ?? null);
+): { readonly choices: G[]; readonly unavailable: IneligibleProjectSelection<G> | null } {
+  return {
+    choices: projectPickerGroups(groups, scratchRootFor),
+    unavailable: ineligibleSelectedGroup(groups, selectedProjectKey, scratchRootFor),
+  };
 }
 
 /**

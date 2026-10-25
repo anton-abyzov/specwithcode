@@ -1,6 +1,13 @@
 import { useId, useMemo, useRef, useState } from "react";
 import { Link } from "@tanstack/react-router";
-import { PauseIcon, PlayIcon, PlusIcon, PowerIcon, Settings2Icon } from "lucide-react";
+import {
+  ArrowUpRightIcon,
+  PauseIcon,
+  PlayIcon,
+  PlusIcon,
+  PowerIcon,
+  Settings2Icon,
+} from "lucide-react";
 import {
   CommandId,
   type EnvironmentId,
@@ -43,7 +50,7 @@ export function ProjectRoutines({
   admissionBlocked: boolean;
   /** A personal assistant offers ready-made routines for repeating work. */
   personal?: boolean;
-  /** The model a routine started from a template runs on: the coordinator's. */
+  /** The model a routine started from a template starts its thread on: the coordinator's. */
   modelSelection?: ModelSelection | null;
   /** The machine every routine here runs on, named once in the header. */
   machineLabel?: string | null;
@@ -179,7 +186,7 @@ export function ProjectRoutines({
             <p>
               {personal
                 ? "Start one from a template below."
-                : "A routine sends the coordinator a request on a schedule or when you ask."}
+                : "A routine runs a request in a thread of its own, on a schedule or when you ask."}
             </p>
             {canOperate && !personal ? newRoutine : null}
           </div>
@@ -289,19 +296,8 @@ function RoutineRow({
               Last ran <time dateTime={task.lastRunAt}>{routineRunTimeLabel(task.lastRunAt)}</time>
             </span>
           ) : null}
-          {task.threadId && onOpenThread ? (
-            <span>
-              <button
-                type="button"
-                className="sws-routine-link"
-                onClick={() => onOpenThread(task.threadId as ThreadId)}
-              >
-                Open its thread
-              </button>
-            </span>
-          ) : destination ? (
-            <span>{destination}</span>
-          ) : null}
+          {/* A started thread is an action below; until then, say where runs will go. */}
+          {task.threadId && onOpenThread ? null : <span>{destination}</span>}
         </p>
         {task.brief && (task.brief.inputs.length > 0 || task.brief.output) ? (
           <ul className="sws-routine-brief">
@@ -346,6 +342,19 @@ function RoutineRow({
             {task.enabled ? "Pause" : "Enable"}
           </button>
         )}
+        {task.threadId && onOpenThread ? (
+          <button
+            type="button"
+            className="sws-routines-button"
+            aria-describedby={titleId}
+            aria-label="Open thread"
+            data-routine-thread={task.threadId}
+            onClick={() => onOpenThread(task.threadId as ThreadId)}
+          >
+            <ArrowUpRightIcon aria-hidden />
+            Thread
+          </button>
+        ) : null}
       </div>
       {unknownRun && (
         <div className="project-notice sws-routine-retry">

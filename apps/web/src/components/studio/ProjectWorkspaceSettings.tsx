@@ -450,9 +450,31 @@ export function ProjectWorkspaceSettings({
                     Threads the coordinator starts, including the ones a routine needs, run on this
                     model, on whichever provider serving it has room.
                   </p>
+                  {/* One chain under the models it guards: the same model elsewhere, then the
+                      rules for another model, then recovery for a thread that stops anyway. */}
                   <SettingsScopeProvider search={limitScope} onChange={keepProjectScope}>
-                    <RecommendedModelProviders model={worker} />
+                    <SettingsSection
+                      id="project-provider-limits"
+                      title="When a model runs out"
+                      className="pt-3"
+                    >
+                      <RecommendedModelProviders model={worker} />
+                      <ProviderLimitSettings />
+                    </SettingsSection>
                   </SettingsScopeProvider>
+                  <label className="project-checkbox">
+                    <input
+                      type="checkbox"
+                      checked={autoResume}
+                      disabled={disabled}
+                      onChange={(e) => change(setAutoResume, e.target.checked)}
+                    />
+                    Automatically arm recovery for new usage-limit stops in this project
+                  </label>
+                  <p className="project-muted">
+                    Native providers own quota recovery. Already armed threads keep their recovery
+                    controls. This never changes accounts or enables paid overage.
+                  </p>
                   {machineChoices.length > 1 || workerMachine ? (
                     <label>
                       Worker machine
@@ -489,24 +511,6 @@ export function ProjectWorkspaceSettings({
                       VPS, add it under Settings &gt; Connections &gt; Your private machines.
                     </p>
                   )}
-                  <label className="project-checkbox">
-                    <input
-                      type="checkbox"
-                      checked={autoResume}
-                      disabled={disabled}
-                      onChange={(e) => change(setAutoResume, e.target.checked)}
-                    />
-                    Automatically arm recovery for new usage-limit stops in this project
-                  </label>
-                  <p className="project-muted">
-                    Native providers own quota recovery. Already armed threads keep their recovery
-                    controls. This never changes accounts or enables paid overage.
-                  </p>
-                  <SettingsScopeProvider search={limitScope} onChange={keepProjectScope}>
-                    <SettingsSection id="project-provider-limits" title="Usage limits">
-                      <ProviderLimitSettings />
-                    </SettingsSection>
-                  </SettingsScopeProvider>
                   {snapshot.settings.kind !== "personal" ? (
                     <ProjectFolderChange
                       project={project}
@@ -679,6 +683,14 @@ export function ProjectWorkspaceSettings({
                   projectKey={projectKey}
                   canOperate={!disabled}
                   admissionBlocked={snapshot.settings.paused || snapshot.settings.archived}
+                  onOpenThread={(id) => {
+                    if (dirty || memoryDirty || environmentDraftDirty || connectionDirty) {
+                      setCloseWarning(true);
+                      return;
+                    }
+                    onClose();
+                    onOpenThread(id);
+                  }}
                 />
               )}
             </div>

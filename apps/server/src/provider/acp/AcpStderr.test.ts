@@ -7,6 +7,20 @@ import {
 } from "./AcpStderr.ts";
 
 describe("AcpStderr", () => {
+  it.each([
+    // Credential-shaped values are built at runtime so no secret-shaped literal sits in the source.
+    `sk-ant-${"api03-abcdefghijklmnop_qrstuvwxyz-123456"}`,
+    `gho_${"abcdefghijklmnopqrstuvwxyz012345"}`,
+    `ghs_${"abcdefghijklmnopqrstuvwxyz012345"}`,
+    `github_pat_${"abcdefghijklmnopqrstuvwxyz_012345"}`,
+    `AKIA${"ABCDEFGHIJKLMNOP"}`,
+    "sk-abcdefgh",
+    "ghp_short",
+    "xoxz-short",
+  ])("redacts the complete raw credential %s", (token) => {
+    expect(sanitizeAcpStderrExcerpt(`failed with ${token}`)).toBe("failed with [redacted]");
+  });
+
   it("keeps a bounded tail of stderr chunks", () => {
     const prefix = "x".repeat(ACP_STDERR_TAIL_MAX_CHARS);
     expect(appendAcpStderrTail(prefix, "abc")).toBe(`${prefix.slice(3)}abc`);

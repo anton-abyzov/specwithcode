@@ -335,6 +335,121 @@ const reportProjection = {
   runs: [],
   turnItems: [],
 };
+/**
+ * `?payload`: workers write to the coordinator in dense agent shorthand: words
+ * run together, a routing ID, a tool's options object, bare paths. Synthetic
+ * text in the shape of real messages; nothing here names a real machine.
+ */
+const payloadFixture = new URLSearchParams(window.location.search).has("payload");
+const PAYLOAD_DENSE = `Need exactEXISTINGbackend/canonical ownerbinding, no newworker. Userrequests research/updateALLseason5v5/8v8subtypes+3persistentfamiliesMonLeague5v5/TueLeague8v8/ThuCup5v5; categoryowner ${TUTORIALS_ID} has schema/catalogue readonlyauditsactive. Winter/Fallsuccessor explicitly505ONLY, excludes10canonical1009rows andallnewsubtype/family work. Original0952read-onlydisposition explicitlydoesNOTownhistoryAPI files; do NOTassignthembyassumption.1009threadposition745 canonicalacceptance came frommessage:mcp:0f3c9a1e-5b7d-4c2a-9e81-2d6f4b0a7c55:thread-send:plan-ack-2 but senderisnotverifiedthreadID. Asked1009to identify/forwardexistingcanonicalowner. Please bindexactexistingthreadRef androuteauditfindings for supportedAPI DRYRUNONLY afterschemaresults, preserve10rows exclusivity/awards/title/deductions, no505expansion/readprojection/DBwrites/newincrement/cap10/stabilitynextslotbypass. Allreleaseholdsunchanged. We must settleowneridentity before anydata preparation/write claim.`;
+const PAYLOAD_LAUNCH = `1040 repository registration now exists at revision20. Latest instruction requires asking you before a new top-level writer. Approve one studio_thread_launch for existing increment1040, native Codex gpt-6-astra, workspaceStrategy {type:'worktree',repository:'7d1e2c40-5b8a-4f3e-9a61-0c2b8e4d9f17',baseRef:'main',branch:'fix/1040-project-attention-counts',startFromOrigin:true}, reportBack:true? Current thread cannot rebind. This writer would own remaining implementation/tests/review/PR; I retain coordination, no duplicate edits. Plan /scratch/atlas/.specweave/increments/1040-fix-project-badges/spec.md; audit /scratch/atlas/evidence/project-attention-1040/audit.md. Preserve1036 notification repair,1037 navigation,1039 review,1011 hold, and [Record the tutorials](studio://thread/${encodeURIComponent(TUTORIALS_ID)}) merge/release/installed ownership. All browser automation headless true with file evidence. No launch yet.`;
+const PAYLOAD_JSON = [
+  "Release check finished; the summary the checker wrote:",
+  "",
+  '{"status":"pass","checks":12,"failed":0,"head":"a1b2c3d","evidence":"/scratch/atlas/evidence/release-check.json"}',
+  "",
+  "Gate rows as they printed:",
+  "",
+  "```text",
+  "ok    lint         0.8s",
+  "ok    unit        41.2s",
+  "ok    headless    63.0s",
+  "```",
+  "",
+  "Options object for the next run, as the tool takes it (not JSON): {mode:'async', retries:2}. Nothing else changed; the branch is ready for the release owner to pick up when the freeze lifts, and I am stopping here.",
+].join("\n");
+const PAYLOAD_BLOCKED = `Publishing is held: the update feed signature check failed with "error: signature mismatch for latest-mac.yml (expected key 3F2A, got 9C1B)". I did not retry or re-sign. **Blockers:** approve re-signing with the release key, or keep the hold until the key owner checks it (recommended). Evidence: /scratch/atlas/evidence/feed-signature/receipt.json; the failing run, the key fingerprints and both manifests are in that folder, and nothing else in the release changed.`;
+const PAYLOAD_SHORT =
+  "Done. The PR is green; evidence in [the report](/scratch/atlas/evidence/report.md).";
+const payloadProjection = {
+  messages: [
+    {
+      id: "p1",
+      role: "user",
+      createdBy: "user",
+      text: "Who owns the subtype mapping, and is the 1040 writer ready?",
+      createdAt: reportAgo(12),
+      attachments: [],
+    },
+    {
+      id: "p2",
+      role: "user",
+      createdBy: "agent",
+      senderThreadId: "skills",
+      text: PAYLOAD_DENSE,
+      createdAt: reportAgo(11),
+      attachments: [],
+    },
+    {
+      id: "p3",
+      role: "assistant",
+      text: "Ownership is still unverified. I asked the [Consolidate the skills](studio://thread/skills) worker to name the existing owner; no new worker.",
+      createdAt: reportAgo(10.5),
+      attachments: [],
+    },
+    {
+      id: "p4",
+      role: "user",
+      createdBy: "agent",
+      senderThreadId: "build",
+      text: PAYLOAD_LAUNCH,
+      createdAt: reportAgo(9),
+      attachments: [],
+    },
+    {
+      id: "p5",
+      role: "assistant",
+      text: "The 1040 writer is waiting for your approval to launch.",
+      createdAt: reportAgo(8.5),
+      attachments: [],
+    },
+    {
+      id: "p6",
+      role: "user",
+      createdBy: "agent",
+      senderThreadId: "skills",
+      text: PAYLOAD_JSON,
+      createdAt: reportAgo(6),
+      attachments: [],
+    },
+    {
+      id: "p7",
+      role: "user",
+      createdBy: "agent",
+      senderThreadId: "build",
+      text: PAYLOAD_BLOCKED,
+      createdAt: reportAgo(4),
+      attachments: [],
+    },
+    {
+      id: "p8",
+      role: "user",
+      createdBy: "agent",
+      senderThreadId: "skills",
+      text: PAYLOAD_SHORT,
+      createdAt: reportAgo(2),
+      attachments: [],
+    },
+    {
+      id: "p9",
+      role: "assistant",
+      text: "Publishing is held on a signature mismatch; it needs your decision.",
+      createdAt: reportAgo(1),
+      attachments: [],
+    },
+  ],
+  runs: [],
+  turnItems: [],
+};
+Object.assign(window, {
+  payloadFixtureTexts: {
+    dense: PAYLOAD_DENSE,
+    launch: PAYLOAD_LAUNCH,
+    json: PAYLOAD_JSON,
+    blocked: PAYLOAD_BLOCKED,
+    short: PAYLOAD_SHORT,
+  },
+});
 const shell = (id, title, extra = {}) => ({
   id,
   title,
@@ -884,46 +999,48 @@ const baseThreadProjection = () => ({
       }
     : reportFixture
       ? reportProjection
-      : activity
-        ? activityProjection
-        : {
-            messages:
-              fresh !== null
-                ? failedTurn
-                  ? [
-                      {
-                        id: "m-failed",
-                        role: "user",
-                        createdBy: "user",
-                        runId: recoveryFailureId,
-                        text: "Reply with OK",
-                        attachments: [],
-                      },
-                    ]
-                  : []
-                : turns
-                  ? turnMessages
-                  : followups
-                    ? followUpMessages
-                    : [
+      : payloadFixture
+        ? payloadProjection
+        : activity
+          ? activityProjection
+          : {
+              messages:
+                fresh !== null
+                  ? failedTurn
+                    ? [
                         {
-                          id: "m1",
+                          id: "m-failed",
                           role: "user",
                           createdBy: "user",
-                          text: "Keep the project moving. Show me the work that needs a decision.",
-                          createdAt: "2026-10-09T00:00:00Z",
+                          runId: recoveryFailureId,
+                          text: "Reply with OK",
                           attachments: [],
                         },
-                        {
-                          id: "m2",
-                          role: "assistant",
-                          text: `Started [Consolidate the skills](studio://thread/skills) and [Record the tutorials](studio://thread/${TUTORIALS_ID}). The memory work is running. [Review the landing page](studio://thread/review) needs your decision before we continue. The old [Draft the launch post](studio://thread/thread%3Adelegated-task%3Acommand%253Amcp%253Afixture-0002) worker is no longer here.\n\nOnboarding is ready for another pass; the pagination fix is resolved and retained for future follow-ups.`,
-                          createdAt: "2026-10-09T00:00:04Z",
-                          updatedAt: "2026-10-09T00:00:05Z",
-                          attachments: [],
-                        },
-                      ],
-          },
+                      ]
+                    : []
+                  : turns
+                    ? turnMessages
+                    : followups
+                      ? followUpMessages
+                      : [
+                          {
+                            id: "m1",
+                            role: "user",
+                            createdBy: "user",
+                            text: "Keep the project moving. Show me the work that needs a decision.",
+                            createdAt: "2026-10-09T00:00:00Z",
+                            attachments: [],
+                          },
+                          {
+                            id: "m2",
+                            role: "assistant",
+                            text: `Started [Consolidate the skills](studio://thread/skills) and [Record the tutorials](studio://thread/${TUTORIALS_ID}). The memory work is running. [Review the landing page](studio://thread/review) needs your decision before we continue. The old [Draft the launch post](studio://thread/thread%3Adelegated-task%3Acommand%253Amcp%253Afixture-0002) worker is no longer here.\n\nOnboarding is ready for another pass; the pagination fix is resolved and retained for future follow-ups.`,
+                            createdAt: "2026-10-09T00:00:04Z",
+                            updatedAt: "2026-10-09T00:00:05Z",
+                            attachments: [],
+                          },
+                        ],
+            },
 });
 /* `?stream`: a long coordinator conversation that the check grows while a
    reader is scrolled up. `window.__streamPush` adds a message and
@@ -1313,13 +1430,26 @@ export const useThreadActions = () => ({
   },
 });
 export const isElectron = false;
-export const useNavigate = () => () => {};
+export const useNavigate = () => (target) => {
+  window.__attentionNavigation = target;
+};
 export const useParams = () => ({});
-export const Link = ({ children, to, search, className }) => (
-  <a href={search ? `${to}?${new URLSearchParams(search)}` : to} className={className}>
-    {children}
-  </a>
-);
+// Resolves `$param` segments like the router, so a check can read where a link goes.
+export const Link = ({ children, to, params, search, className, ...rest }) => {
+  const path = String(to).replace(/\$(\w+)/g, (_, key) =>
+    encodeURIComponent(String(params?.[key] ?? `$${key}`)),
+  );
+  const data = Object.fromEntries(Object.entries(rest).filter(([key]) => key.startsWith("data-")));
+  return (
+    <a
+      href={search ? `${path}?${new URLSearchParams(search)}` : path}
+      className={className}
+      {...data}
+    >
+      {children}
+    </a>
+  );
+};
 export const WorkspacePageHeader = ({ children, className }) => (
   <header className={`flex items-center px-5 ${className}`}>{children}</header>
 );
@@ -1659,7 +1789,9 @@ const NO_UNREACHABLE_ENVIRONMENTS: ReadonlySet<string> = new Set();
 export const useUnreachableEnvironmentIds = () => NO_UNREACHABLE_ENVIRONMENTS;
 export const useEnvironments = () => ({
   isReady: true,
-  environments: [],
+  environments: new URLSearchParams(location.search).has("attention")
+    ? [{ environmentId: "host", label: "Fixture host", connection: { phase: "connected" } }]
+    : [],
   presentationById: new Map(),
 });
 export const usePrimaryEnvironmentId = () => (fallbackFixture ? "this-mac" : "host");
@@ -1755,3 +1887,75 @@ export const useEnvironmentSettings = () => ({
 });
 
 export const formatEnvironmentQueryError = () => "The environment request failed.";
+
+// Live transport observations for the isolated fixture, never the installed app.
+export const attentionShellAtom = Atom.make({
+  snapshot: Option.some({ projects: [project] }),
+  status: "live",
+  error: Option.none(),
+});
+export const environmentShell = { stateValueAtom: () => attentionShellAtom };
+export const allEnvironmentProjectSnapshotsReadyAtom = Atom.make(true);
+export const allEnvironmentShellsBootstrappedAtom = Atom.make(true);
+export const attentionFixtureProject = {
+  ...project,
+  workspaceSettings: { coordinatorThreadId: "coord" },
+};
+export function setAttentionScenario(scenario: string) {
+  const active = { runtime: { status: "running" } };
+  const child = (id, parent, extra = {}) =>
+    shell(id, id, {
+      lineage: { parentThreadId: parent, relationshipToParent: "subagent", rootThreadId: parent },
+      ...extra,
+    });
+  shells = [
+    shell("coord", "Project coordinator"),
+    ...[1, 2, 3, 4, 5].map((n) => shell(`worker-${n}`, `Worker ${n}`, n < 4 ? active : {})),
+    child("child-4", "worker-4", active),
+    child("child-5", "worker-5", active),
+  ];
+  if (scenario === "coordinator") shells[0] = { ...shells[0], hasPendingUserInput: true };
+  if (scenario === "children")
+    shells = shells.map((s) =>
+      s.id.startsWith("child-")
+        ? { ...s, lineage: { ...s.lineage, parentThreadId: "worker-4" }, hasPendingUserInput: true }
+        : s,
+    );
+  if (scenario === "signin")
+    shells[1] = {
+      ...shells[1],
+      source: {
+        pendingRuntimeRequest: {
+          id: "auth-1",
+          kind: "auth_refresh",
+          createdAt: DateTime.makeUnsafe(Date.now()),
+        },
+      },
+    };
+  if (scenario === "held") shells[4] = { ...shells[4], heldQueuedCount: 2 };
+  if (scenario === "operational")
+    shells = shells.map((s) => ({
+      ...s,
+      runtime: { status: "failed", lastErrorClass: "usage_limit" },
+      reportedBlocker: "Waiting for CI",
+    }));
+  if (scenario === "resolved")
+    shells[0] = { ...shells[0], hasPendingUserInput: true, settledOverride: "settled" };
+  if (scenario === "archive")
+    shells[0] = { ...shells[0], hasPendingUserInput: true, archivedAt: new Date().toISOString() };
+  if (scenario === "delete")
+    shells[0] = { ...shells[0], hasPendingUserInput: true, deletedAt: new Date().toISOString() };
+  if (scenario === "pagination")
+    shells.push(
+      ...[6, 7, 8, 9, 10, 11].map((n) =>
+        shell(`worker-${n}`, `Worker ${n}`, { hasPendingUserInput: true }),
+      ),
+    );
+  shellListeners.forEach((notify) => notify());
+}
+if (new URLSearchParams(location.search).has("attention")) setAttentionScenario("baseline");
+export const environmentSnapshotAtom = () => Atom.make(Option.none());
+export const shellEnvironment = fixtureAnything("shellEnvironment");
+
+export const attentionRemoteAtom = Atom.make({ workers: [], complete: true });
+export const projectRemoteAttentionAtom = () => attentionRemoteAtom;

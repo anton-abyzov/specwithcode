@@ -186,6 +186,56 @@ export function limitReadShowsRoom(
     : "check";
 }
 
+/**
+ * Whether the instance is now signed in to another account that has room for
+ * a stopped thread. The stop's reset belongs to the account it hit, so after
+ * the server sees the account change (`accountChangedAt`, later than the stop)
+ * a complete read of the new account, taken at or after the change and within
+ * LIMIT_CHECK_INTERVAL_MS, must show room. The same account, a read of the old
+ * one, a partial read or a new account that is limited too never qualifies.
+ */
+export function accountChangeShowsRoom(
+  provider: ServerProvider | undefined,
+  stopMs: number,
+  nowMs: number,
+): boolean {
+  const limits = provider?.usageLimits;
+  const changedMs = Date.parse(limits?.accountChangedAt ?? "");
+  const fullReadMs = Date.parse(limits?.nativeAllowanceObservedAt ?? "");
+  const readMs = Date.parse(limits?.checkedAt ?? "");
+  return (
+    limits !== undefined &&
+    limits.unavailable === undefined &&
+    Number.isFinite(changedMs) &&
+    changedMs > stopMs &&
+    Number.isFinite(fullReadMs) &&
+    fullReadMs >= changedMs &&
+    Number.isFinite(readMs) &&
+    nowMs - readMs <= LIMIT_CHECK_INTERVAL_MS &&
+    limitReadShowsRoom(provider, stopMs, nowMs) === "room"
+  );
+}
+
+const ACCOUNT_CHANGE_MARK = ":acct:";
+const LIMIT_RESUME_PREFIX = "limit-resume:";
+
+/** The id mark of a resume sent because the account changed, before the arm's request id. */
+export function accountChangeMark(changedMs: number): string {
+  return `:acct:${changedMs}`;
+}
+
+/** When the account changed, read from a resume's id, or null for any other resume. */
+export function accountChangeOf(commandId: string): number | null {
+  const at = commandId.indexOf(ACCOUNT_CHANGE_MARK);
+  if (at < 0) return null;
+  // A refused id can come back as the next arm's request id, at the end of a
+  // later resume's id. A mark inside it follows a second `limit-resume:` and is
+  // no fresh proof of a change.
+  if (commandId.slice(0, at).lastIndexOf(LIMIT_RESUME_PREFIX) !== 0) return null;
+  const match = /^(\d+):/.exec(commandId.slice(at + ACCOUNT_CHANGE_MARK.length));
+  return match ? Number(match[1]) : null;
+}
+
 /** A recovery snooze may end early; a user-chosen unrelated snooze remains authoritative. */
 export function recoverySnoozeBlocks(
   thread: Pick<ProjectionLimitRecoveryCandidate, "snoozedUntil" | "limitRecovery">,

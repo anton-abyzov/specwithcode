@@ -226,7 +226,7 @@ it("ranks copies by fingerprint, keeps the most recent coordinator and merges no
   });
   expect(state.calls.at(-1)?.input.notes).toEqual([
     { name: "only-m4.md", content: "from M4", expectedRevision: null },
-    { name: "plan-m4.md", content: "M4 plan", expectedRevision: null },
+    { name: "plan-m4.md", content: "M4 plan", expectedRevision: null, createOnly: true },
   ]);
   expect(text()).toContain("Projects linked");
   expect(localStorage.length).toBe(0);

@@ -2901,6 +2901,130 @@ describe("ClaudeAdapterV2 background wake turns", () => {
     ),
   );
 
+  it.effect("keeps a background worker's process when project folders are only added", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+        const normal = {
+          instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
+          model: "claude-opus-5-5",
+        } satisfies ModelSelection;
+        const turn = (
+          ordinal: number,
+          projectAdditionalDirectories: ReadonlyArray<string>,
+          modelSelection: ModelSelection = normal,
+        ) => ({
+          ...makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make(`attempt-added-folders:${ordinal}`),
+            text: `Request ${ordinal}`,
+            attachments: [],
+            providerTurnOrdinal: ordinal,
+            modelSelection,
+          }),
+          projectAdditionalDirectories,
+        });
+        yield* harness.runtime.startTurn(turn(1, ["/approved/docs"]));
+        const originalOptions = harness.getOpenedOptions();
+        yield* harness.offerAndWait(wakeTaskStarted);
+        yield* harness.offerAndWait(turnOneResult);
+        yield* Queue.take(harness.terminalReceipts);
+        assert.isTrue(yield* harness.hasPendingBackgroundWork);
+
+        // The user approved another folder while the background shell runs.
+        yield* harness.runtime.startTurn(turn(2, ["/approved/docs", "/approved/app"]));
+        assert.strictEqual(harness.getOpenedOptions(), originalOptions);
+        assert.notInclude(originalOptions?.additionalDirectories ?? [], "/approved/app");
+        assert.lengthOf(harness.offeredMessages, 2);
+        yield* harness.offerAndWait(turnOneResult);
+        yield* Queue.take(harness.terminalReceipts);
+        assert.isTrue(yield* harness.hasPendingBackgroundWork);
+
+        // A removed folder narrows access, which cannot wait.
+        const removed = yield* harness.runtime
+          .startTurn(turn(3, ["/approved/app"]))
+          .pipe(Effect.flip);
+        assert.instanceOf(
+          removed.cause,
+          ClaudeAdapterV2.ClaudeBackgroundWorkBlocksQueryReplacementError,
+        );
+        assert.include(removed.cause.message, "this folder or permission change would end them");
+
+        // A model change still ends the background work, and says so.
+        const modelChange = yield* harness.runtime
+          .startTurn(
+            turn(4, ["/approved/docs", "/approved/app"], {
+              ...normal,
+              options: [{ id: "fastMode", value: true }],
+            }),
+          )
+          .pipe(Effect.flip);
+        assert.instanceOf(
+          modelChange.cause,
+          ClaudeAdapterV2.ClaudeBackgroundWorkBlocksQueryReplacementError,
+        );
+        assert.include(modelChange.cause.message, "this model change would end them");
+        const modelAndFolders = yield* harness.runtime
+          .startTurn(
+            turn(5, ["/approved/app"], { ...normal, options: [{ id: "fastMode", value: true }] }),
+          )
+          .pipe(Effect.flip);
+        assert.instanceOf(
+          modelAndFolders.cause,
+          ClaudeAdapterV2.ClaudeBackgroundWorkBlocksQueryReplacementError,
+        );
+        assert.include(
+          modelAndFolders.cause.message,
+          "this model, folder or permission change would end them",
+        );
+        assert.strictEqual(harness.getOpenedOptions(), originalOptions);
+        assert.lengthOf(harness.offeredMessages, 2);
+        assert.isTrue(yield* harness.hasPendingBackgroundWork);
+
+        // Once the background work ends, the next prompt gets the new folder.
+        yield* harness.offerAndWait(wakeNotification);
+        assert.isFalse(yield* harness.hasPendingBackgroundWork);
+        yield* harness.runtime.startTurn(turn(6, ["/approved/docs", "/approved/app"]));
+        const reopened = harness.getOpenedOptions();
+        assert.notStrictEqual(reopened, originalOptions);
+        assert.include(reopened?.additionalDirectories ?? [], "/approved/app");
+      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+    ),
+  );
+
+  it.effect("opens a new process with added project folders when no background work runs", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+        const turn = (ordinal: number, projectAdditionalDirectories: ReadonlyArray<string>) => ({
+          ...makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make(`attempt-added-folders-idle:${ordinal}`),
+            text: `Request ${ordinal}`,
+            attachments: [],
+            providerTurnOrdinal: ordinal,
+          }),
+          projectAdditionalDirectories,
+        });
+        yield* harness.runtime.startTurn(turn(1, ["/approved/docs"]));
+        const originalOptions = harness.getOpenedOptions();
+        yield* harness.offerAndWait(turnOneResult);
+        yield* Queue.take(harness.terminalReceipts);
+        assert.isFalse(yield* harness.hasPendingBackgroundWork);
+        yield* harness.runtime.startTurn(turn(2, ["/approved/docs", "/approved/app"]));
+        const reopened = harness.getOpenedOptions();
+        assert.notStrictEqual(reopened, originalOptions);
+        assert.include(reopened?.additionalDirectories ?? [], "/approved/app");
+      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+    ),
+  );
+
   it.effect("opens a new process for changed saved rules when no background work runs", () =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -8797,6 +8921,186 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           assert.isFalse(yield* hasPendingBackgroundWork);
         }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
       ),
+  );
+
+  it.effect("settles a background subagent whose CLI process exited before the next turn", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const SUBAGENT_TASK_ID = "task-process-exit-subagent";
+        const fileSystem = yield* FileSystem.FileSystem;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const attachmentsDir = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "studio-claude-v2-process-exit-subagent-",
+        });
+        const processQueues: Array<Queue.Queue<SDKMessage>> = [];
+        const events: Array<ProviderAdapterV2Event> = [];
+        const adapter = ClaudeAdapterV2.makeClaudeAdapterV2({
+          instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
+          settings: DEFAULT_CLAUDE_SETTINGS,
+          environment: {},
+          attachmentsDir,
+          fileSystem,
+          path: yield* Path.Path,
+          crypto: yield* Crypto.Crypto,
+          idAllocator,
+          continuationRequests: { offer: () => Effect.void },
+          queryRunner: {
+            allocateSessionId: Effect.succeed(WAKE_NATIVE_SESSION),
+            open: () =>
+              Effect.gen(function* () {
+                const sdkMessages = yield* Queue.unbounded<SDKMessage>();
+                processQueues.push(sdkMessages);
+                return {
+                  messages: Stream.fromQueue(sdkMessages),
+                  offer: () => Effect.void,
+                  setModel: () => Effect.void,
+                  setPermissionMode: () => Effect.void,
+                  interrupt: Effect.void,
+                  close: Queue.shutdown(sdkMessages),
+                };
+              }),
+            forkSession: () => Effect.die("unused forkSession"),
+            subagentLaunchToolUseId: () => Effect.succeed(null),
+            assertComplete: Effect.void,
+          },
+        });
+        const threadId = ThreadId.make("thread-claude-process-exit-subagent");
+        const runtime = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make(
+            "provider-session-claude-process-exit-subagent",
+          ),
+          modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+          runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
+        });
+        const providerThread = yield* runtime.ensureThread({
+          threadId,
+          modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+          runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
+        });
+        yield* runtime.events.pipe(
+          Stream.runForEach((event) =>
+            Effect.sync(() => {
+              events.push(event);
+            }),
+          ),
+          Effect.forkScoped,
+        );
+        const liveBackgroundWork = runtime.liveBackgroundWork;
+        if (liveBackgroundWork === undefined) {
+          return yield* Effect.die("Claude adapter runtime must expose liveBackgroundWork.");
+        }
+        const terminals = () => events.filter((event) => event.type === "turn.terminal");
+        const subagentStatuses = () =>
+          events.flatMap((event) =>
+            event.type === "subagent.updated" &&
+            event.subagent.nativeTaskRef?.nativeId === SUBAGENT_TASK_ID
+              ? [[event.subagent.status, event.subagent.progress ?? null]]
+              : [],
+          );
+        const now = yield* DateTime.now;
+
+        yield* runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId,
+            providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-process-exit-subagent-a"),
+            text: "Spawn a background subagent.",
+            attachments: [],
+          }),
+        );
+        const firstProcess = processQueues[0]!;
+        yield* Queue.offer(
+          firstProcess,
+          claudeSdkFrame({
+            type: "system",
+            subtype: "task_started",
+            task_id: SUBAGENT_TASK_ID,
+            tool_use_id: "toolu-process-exit-subagent",
+            description: "Background research",
+            subagent_type: "general-purpose",
+            task_type: "local_agent",
+            prompt: "Research, then report.",
+            uuid: "00000000-0000-4000-8000-000000000a01",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        for (const frame of makeSubagentAssistantFrames({
+          parentToolUseId: "toolu-process-exit-subagent",
+          uuid: "00000000-0000-4000-8000-000000000a03",
+          bashToolUseId: "toolu-child-open-command",
+        }))
+          yield* Queue.offer(firstProcess, frame);
+        yield* Queue.offer(
+          firstProcess,
+          makeResultFrame({
+            uuid: "00000000-0000-4000-8000-000000000a02",
+            result: "Spawned the subagent in the background.",
+          }),
+        );
+        yield* awaitUntil(() => terminals().length === 1, "first turn terminal");
+        // The parent turn completed; its process still runs the subagent.
+        assert.isTrue(yield* liveBackgroundWork(providerThread));
+        assert.deepEqual(subagentStatuses().at(-1), ["running", null]);
+
+        // The CLI process exits without reporting the subagent's end.
+        yield* Queue.shutdown(firstProcess);
+        for (let attempt = 0; yield* liveBackgroundWork(providerThread); attempt++) {
+          if (attempt > 5000) return yield* Effect.die("Timed out waiting for the process exit.");
+          yield* Effect.yieldNow;
+        }
+
+        const nextInput = makeClaudeTestTurnInput({
+          threadId,
+          providerThread: { ...providerThread, status: "active" },
+          now,
+          attemptId: RunAttemptId.make("attempt-claude-process-exit-subagent-b"),
+          text: "Continue.",
+          attachments: [],
+          providerTurnOrdinal: 2,
+        });
+        const prepared = yield* runtime.prepareTurn!(nextInput);
+        assert.isTrue(
+          prepared.some(
+            (event) => event.type === "subagent.updated" && event.subagent.status === "interrupted",
+          ),
+        );
+        // Preparation returns settlements before any prompt; storage can retry them.
+        assert.deepEqual(yield* runtime.prepareTurn!(nextInput), prepared);
+        events.push(...prepared);
+        yield* runtime.startTurn(nextInput);
+        assert.lengthOf(processQueues, 2);
+        yield* awaitUntil(
+          () => subagentStatuses().some(([status]) => status === "interrupted"),
+          "subagent settled by the new process",
+        );
+        assert.deepEqual(subagentStatuses().at(-1), [
+          "interrupted",
+          "Stopped when the provider session ended",
+        ]);
+        const childCommands = events.flatMap((event) =>
+          event.type === "turn_item.updated" &&
+          event.turnItem.type === "command_execution" &&
+          event.turnItem.runId === null
+            ? [event.turnItem]
+            : [],
+        );
+        assert.isTrue(childCommands.some((item) => item.status === "running"));
+        yield* awaitUntil(
+          () =>
+            events.some(
+              (event) =>
+                event.type === "turn_item.updated" &&
+                event.turnItem.id === childCommands[0]?.id &&
+                event.turnItem.status === "interrupted",
+            ),
+          "child command settled by the new process",
+        );
+        // The new process runs nothing the old one started.
+        assert.isFalse(yield* liveBackgroundWork(providerThread));
+      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+    ),
   );
 
   it.effect("refuses a model change that would kill a running background subagent", () =>

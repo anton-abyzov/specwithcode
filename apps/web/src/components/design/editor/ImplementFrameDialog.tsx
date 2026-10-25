@@ -15,15 +15,15 @@ import { InputGroup, InputGroupAddon, InputGroupInput } from "~/components/ui/in
 import { Spinner } from "~/components/ui/spinner";
 import { cn } from "~/lib/utils";
 import type { DesignCodingThread } from "./backend";
-
-type Target = { kind: "new" } | { kind: "existing"; binding: DesignThreadBinding };
+import type { ImplementTarget as Target } from "./handoff";
 
 const sameBinding = (a: DesignThreadBinding, b: DesignThreadBinding) =>
   a.environmentId === b.environmentId && a.threadId === b.threadId;
 
 /**
  * Picks the coding thread that receives "Implement this frame": a new thread
- * in the design's project, or one of its existing threads.
+ * in the design's project, or one of its existing threads. Without a ready
+ * provider a new thread is created with the frame waiting in its composer.
  */
 export function ImplementFrameDialog({
   open,
@@ -31,6 +31,7 @@ export function ImplementFrameDialog({
   frameName,
   threads,
   canStartNew,
+  providerReady = true,
   onSend,
 }: {
   open: boolean;
@@ -38,6 +39,8 @@ export function ImplementFrameDialog({
   frameName: string;
   threads: readonly DesignCodingThread[];
   canStartNew: boolean;
+  /** False when no provider on the design's machine can start a turn. */
+  providerReady?: boolean;
   onSend: (target: Target) => Promise<void>;
 }) {
   const [target, setTarget] = useState<Target | null>(canStartNew ? { kind: "new" } : null);
@@ -69,9 +72,10 @@ export function ImplementFrameDialog({
       <DialogPopup className="max-w-md" data-testid="implement-frame-dialog">
         <DialogHeader>
           <DialogTitle>Implement {frameName}</DialogTitle>
-          <DialogDescription>
-            Sends the frame as JSON with a PNG, the tokens it uses and the matching design-system
-            components to a coding thread.
+          <DialogDescription data-testid="implement-frame-description">
+            {providerReady
+              ? "Sends the frame as JSON with a PNG, the tokens it uses and the matching design-system components to a coding thread."
+              : "Puts the frame as JSON with a PNG, the tokens it uses and the matching design-system components in a coding thread. No provider is ready, so a new thread holds it for you to send."}
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>
@@ -82,7 +86,11 @@ export function ImplementFrameDialog({
                   selected={target?.kind === "new"}
                   onSelect={() => setTarget({ kind: "new" })}
                   title="New coding thread"
-                  detail="Starts in this design's project with its worker model"
+                  detail={
+                    providerReady
+                      ? "Starts in this design's project with its worker model"
+                      : "Created in this design's project with the frame waiting to send. Nothing runs until you press Send."
+                  }
                 />
               )}
               {threads.length > 6 && (
@@ -128,7 +136,7 @@ export function ImplementFrameDialog({
           </Button>
           <Button disabled={target === null || sending} onClick={() => void send()}>
             {sending && <Spinner />}
-            Send frame
+            {target?.kind === "new" && !providerReady ? "Create thread" : "Send frame"}
           </Button>
         </DialogFooter>
       </DialogPopup>

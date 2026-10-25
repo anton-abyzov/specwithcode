@@ -1,6 +1,7 @@
 /**
- * "0996 · 3/5" beside a thread in lists: how far its increment or todo list
- * is ("3/5" for a todo list, "0996" alone for an increment with no tasks yet),
+ * "0996 · 3/5" beside a thread in lists: how far its increment or the agent's
+ * checklist is ("Checklist 3/5" for a provider todo list, so it never reads as
+ * an increment's tasks; "0996" alone for an increment with no tasks yet),
  * with what runs now and what comes next on hover and for screen readers.
  * Never a button: it sits inside rows that are buttons.
  */
@@ -8,6 +9,7 @@ import { ListChecksIcon, ListTodoIcon } from "lucide-react";
 
 import { cn } from "~/lib/utils";
 import {
+  CHECKLIST_LABEL,
   describeThreadPlan,
   incrementNumber,
   type ThreadPlanCompact,
@@ -29,7 +31,7 @@ export function PlanProgressChip({
   const label =
     plan.source === "increment" && plan.label !== null
       ? [incrementNumber(plan.label), count].filter(Boolean).join(" · ")
-      : (count ?? "0/0");
+      : `${CHECKLIST_LABEL} ${count ?? "0/0"}`;
   const description = describeThreadPlan(plan);
   const Icon = plan.source === "increment" ? ListChecksIcon : ListTodoIcon;
   const chip = (
@@ -43,7 +45,19 @@ export function PlanProgressChip({
       data-plan-progress={`${plan.completed}/${plan.total}`}
     >
       <Icon aria-hidden className="size-3.5" />
-      <span aria-hidden>{label}</span>
+      <span aria-hidden>
+        {plan.source === "increment" && plan.label !== null ? (
+          <>
+            <span className={count ? "sws-thread-plan-id" : undefined}>
+              {incrementNumber(plan.label)}
+              {count ? " · " : ""}
+            </span>
+            {count}
+          </>
+        ) : (
+          label
+        )}
+      </span>
       <span className="sr-only">{description}</span>
     </span>
   );

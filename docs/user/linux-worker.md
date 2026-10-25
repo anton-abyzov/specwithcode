@@ -1,5 +1,7 @@
 # Linux worker
 
+Replace `<main-machine-environment-id>` with the environment ID from Settings > Connections on your main machine. This explicitly approves that machine to manage access here.
+
 Add a Linux machine, such as a small VPS, to your private fleet so coordinators on
 your Mac can start workers there. It runs the same SpecWithCode server as a Mac
 worker; only the install differs. Cloud compute stays yours: you rent the VPS and
@@ -168,7 +170,7 @@ subscription on a VPS.
 On the Linux host, run:
 
 ```bash
-specwithcode fleet invite
+specwithcode fleet invite --coordinator '<main-machine-environment-id>'
 ```
 
 It publishes the server on `https://<host>.<tailnet>.ts.net` through Tailscale

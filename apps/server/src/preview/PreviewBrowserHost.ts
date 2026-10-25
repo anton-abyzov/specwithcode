@@ -20,6 +20,65 @@ export const SETUP_SUBCOMMAND = "browser setup";
 /** What Chrome prints before aborting when it cannot sandbox itself. */
 export const NO_SANDBOX_SIGNATURE = "No usable sandbox";
 
+/**
+ * What Chrome prints before aborting when its GPU process keeps failing to
+ * start, as it does when the server runs inside another sandbox, such as
+ * `sandbox-exec` or a locked-down container, that Chrome cannot nest its own in.
+ */
+export const GPU_UNUSABLE_SIGNATURE = "GPU process isn't usable";
+
+const MAX_LAST_ERROR_CHARS = 300;
+// Chrome's log prefix: `[pid:tid/MMDD/HHMMSS.micros:LEVEL:file.cc(:line)] `.
+const CHROME_LOG_LINE = /^\[[^\]]*:(VERBOSE\d*|INFO|WARNING|ERROR|FATAL):[^\]]*\]\s*/;
+
+/**
+ * The browser's own last error from the end of its stderr: its last FATAL or
+ * ERROR line without Chrome's log prefix, else its last line. Undefined when
+ * it printed nothing.
+ */
+export const browserLastError = (output: string): string | undefined => {
+  const lines = output
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
+  const level = (line: string) => CHROME_LOG_LINE.exec(line)?.[1];
+  const chosen =
+    lines.findLast((line) => level(line) === "FATAL") ??
+    lines.findLast((line) => level(line) === "ERROR") ??
+    lines.at(-1);
+  if (chosen === undefined) return undefined;
+  const text = chosen.replace(CHROME_LOG_LINE, "");
+  return text.length > MAX_LAST_ERROR_CHARS ? `${text.slice(0, MAX_LAST_ERROR_CHARS)}…` : text;
+};
+
+// Playwright logs each stderr line of the browser it launched as `[pid=N][err] …`, and its
+// launch error repeats them under "Browser logs" and, as `- …`, under "Call log".
+const PLAYWRIGHT_STDERR_LINE = /^(?:-\s+)?\[pid=\d+\]\[err\]\s?(.*)$/;
+const PLAYWRIGHT_STDERR_LINES = 40;
+// Playwright replaces the log with its own note when Chrome's sandbox failed.
+const PLAYWRIGHT_SANDBOX_NOTE = /sandboxing failed/i;
+
+/**
+ * The browser's last stderr lines from a Playwright launch error, for
+ * {@link diagnoseLaunchFailure}. Playwright's sandbox note stands for Chrome's
+ * abort message, which it drops. Empty when the error holds neither.
+ */
+export const playwrightBrowserOutput = (cause: unknown): string => {
+  const text = cause instanceof Error ? cause.message : String(cause);
+  const lines = text
+    .split(/\r?\n/)
+    .flatMap((line) => {
+      const match = PLAYWRIGHT_STDERR_LINE.exec(line.trim());
+      return match === null ? [] : [match[1]!];
+    })
+    .slice(-PLAYWRIGHT_STDERR_LINES);
+  if (PLAYWRIGHT_SANDBOX_NOTE.test(text)) lines.push(NO_SANDBOX_SIGNATURE);
+  return lines.join("\n");
+};
+
+/** The operator's opt-out that runs the browser without Chrome's sandbox. */
+export const SANDBOX_OPT_OUT = "STUDIO_SERVER_BROWSER_SANDBOX=0";
+
 /** Whether an operator explicitly allowed Chrome to run without its sandbox. */
 export const sandboxDisabled = (env: Readonly<Record<string, string | undefined>>) =>
   env.STUDIO_SERVER_BROWSER_SANDBOX === "0";
@@ -87,32 +146,75 @@ export class PreviewBrowserLibrariesError extends Schema.TaggedError<PreviewBrow
   }
 }
 
-export type PreviewBrowserHostError = PreviewBrowserSandboxError | PreviewBrowserLibrariesError;
+export class PreviewBrowserGpuError extends Schema.TaggedError<PreviewBrowserGpuError>()(
+  "PreviewBrowserGpuError",
+  /** `sandboxOff`: the browser already ran without Chrome's sandbox, so the opt-out cannot help. */
+  { lastError: Schema.String, sandboxOff: Schema.Boolean },
+) {
+  override get message(): string {
+    const quit = `SpecWithCode's browser quit because its GPU process could not start (Chrome: "${this.lastError}")`;
+    const why =
+      "This happens when the server runs inside another sandbox, such as sandbox-exec or a locked-down container.";
+    return this.sandboxOff
+      ? `${quit}, even without Chrome's sandbox. ${why} Start the server outside it, then try again.`
+      : `${quit}. ${why} Start the server outside it, or set ${SANDBOX_OPT_OUT} for the server to run the browser without Chrome's sandbox, then try again.`;
+  }
+}
+
+export type PreviewBrowserHostError =
+  | PreviewBrowserSandboxError
+  | PreviewBrowserLibrariesError
+  | PreviewBrowserGpuError;
 
 const MISSING_LIBRARY = /^\s*(\S+) => not found$/gm;
 
 /**
  * After a launch fails, names the host setup it is missing: the sandbox, from
- * Chrome's own abort message, or shared libraries, from `ldd`. Undefined when
- * neither explains it. Linux only; other hosts never need either.
+ * Chrome's own abort message, shared libraries, from `ldd` (Linux only), or a
+ * GPU process that cannot start inside an outer sandbox. Undefined when none
+ * explains it.
  */
 export const diagnoseLaunchFailure = Effect.fn("PreviewBrowserHost.diagnoseLaunchFailure")(
   function* (input: {
     readonly executable: string;
     readonly output: string;
     readonly setupCommand: string;
+    /** Whether the browser ran without Chrome's sandbox, from {@link sandboxDisabled}. */
+    readonly sandboxOff?: boolean;
   }) {
     const { setupCommand } = input;
     if (input.output.includes(NO_SANDBOX_SIGNATURE)) {
       return new PreviewBrowserSandboxError({ setupCommand });
     }
-    if ((yield* HostProcessPlatform) !== "linux") return undefined;
-    const libraries = yield* missingLibraries(input.executable);
-    return libraries.length === 0
-      ? undefined
-      : new PreviewBrowserLibrariesError({ setupCommand, libraries });
+    // A missing library can also take the GPU process down, and setup fixes that.
+    if ((yield* HostProcessPlatform) === "linux") {
+      const libraries = yield* missingLibraries(input.executable);
+      if (libraries.length > 0)
+        return new PreviewBrowserLibrariesError({ setupCommand, libraries });
+    }
+    if (input.output.includes(GPU_UNUSABLE_SIGNATURE)) {
+      return new PreviewBrowserGpuError({
+        lastError: browserLastError(input.output) ?? `${GPU_UNUSABLE_SIGNATURE}.`,
+        sandboxOff: input.sandboxOff === true,
+      });
+    }
+    return undefined;
   },
 );
+
+/** {@link diagnoseLaunchFailure} for a Playwright launch error, from the browser's stderr in it. */
+export const diagnosePlaywrightLaunch = (input: {
+  readonly executable: string;
+  readonly cause: unknown;
+  readonly setupCommand: string;
+  readonly sandboxOff?: boolean;
+}) =>
+  diagnoseLaunchFailure({
+    executable: input.executable,
+    setupCommand: input.setupCommand,
+    output: playwrightBrowserOutput(input.cause),
+    ...(input.sandboxOff === undefined ? {} : { sandboxOff: input.sandboxOff }),
+  });
 
 /** Shared libraries the loader cannot find for `executable`, by `ldd`. */
 export const missingLibraries = Effect.fn("PreviewBrowserHost.missingLibraries")(function* (

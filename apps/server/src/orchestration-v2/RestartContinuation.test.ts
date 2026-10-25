@@ -566,14 +566,25 @@ it.effect.each([
         assert.lengthOf(commits, 1);
         assert.lengthOf(commits[0]!.effects, 0);
         const events = commits[0]!.events;
-        for (const type of ["turn-item.updated", "subagent.updated"] as const)
-          assert.isTrue(
-            events.some((event) => event.type === type && event.payload.status === "cancelled"),
-          );
+        for (const type of ["turn-item.updated", "subagent.updated"] as const) {
+          const settled = events
+            .filter(
+              (event) => event.type === "turn-item.updated" || event.type === "subagent.updated",
+            )
+            .filter((event) => event.type === type);
+          assert.lengthOf(settled, 1);
+          assert.equal(settled[0]!.payload.status, "interrupted");
+          assert.isNotNull(settled[0]!.payload.completedAt);
+        }
+        const settledSubagent = events.find((event) => event.type === "subagent.updated");
+        assert.equal(
+          settledSubagent?.payload.progress,
+          `Stopped when SpecWithCode ${trigger === "startup" ? "restarted" : "shut down"}`,
+        );
         const note = events.find((event) => event.type === "run.background-work-cancelled");
         assert.equal(note?.runId, runId);
         assert.deepEqual(note?.payload.restartCancelledBackgroundWork, [
-          { kind: "subagent", label: "Background reviewer", id: "turn-item:background-subagent" },
+          { kind: "subagent", label: "Background reviewer", id: "subagent:background" },
         ]);
         if (status === "completed")
           assert.isFalse(events.some((event) => event.type === "run.updated"));

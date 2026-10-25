@@ -349,6 +349,188 @@ it.layer(layerTest)("ThreadIncrementProgressService", (it) => {
     }),
   );
 
+  it.effect("drops a native subagent's edits once the run that spawned it is rolled back", () =>
+    Effect.gen(function* () {
+      const root = specweaveRoot();
+      try {
+        const parent = yield* addThread("thread:unplanned:undone-parent");
+        const child = yield* addThread("thread:unplanned:undone-child", {
+          providerChild: true,
+          parent,
+        });
+        yield* addRun(parent, { changed: false });
+        const sql = yield* SqlClient.SqlClient;
+        yield* sql`INSERT INTO orchestration_v2_projection_turn_items (turn_item_id, thread_id, run_id, ordinal, type, status, updated_at, payload_json) VALUES ('undone:edit', ${child}, NULL, 1, 'file_change', 'completed', '2026-10-22T10:00:00Z', '{"fileName":"/work/app/src/index.ts"}')`;
+        yield* sql`INSERT INTO orchestration_v2_projection_subagents (subagent_id, thread_id, run_id, parent_node_id, provider, child_thread_id, origin, status, updated_at, payload_json) VALUES ('node:undone', ${parent}, ${`${parent}:run:1`}, 'node:undone-parent', 'codex', ${child}, 'provider_native', 'completed', '2026-10-22T10:00:00Z', '{}')`;
+        unbound.add(parent);
+        unbound.add(child);
+        const { service } = yield* makeService(root);
+        const input = { projectId: PROJECT, threadIds: [parent, child] };
+        assert.deepStrictEqual((yield* service.read(input)).unplanned, [parent]);
+
+        yield* sql`UPDATE orchestration_v2_projection_runs SET status = 'rolled_back' WHERE thread_id = ${parent}`;
+        const snapshot = yield* service.read(input);
+        assert.deepStrictEqual(snapshot.unplanned, []);
+        assert.strictEqual(snapshot.documentation, undefined);
+      } finally {
+        NodeFS.rmSync(root, { recursive: true, force: true });
+      }
+    }),
+  );
+
+  it.effect("lists report and spec-only work as documentation, not code", () =>
+    Effect.gen(function* () {
+      const root = specweaveRoot();
+      try {
+        const reports = yield* addThread("thread:unplanned:reports");
+        const mixed = yield* addThread("thread:unplanned:mixed");
+        const delegating = yield* addThread("thread:unplanned:spec-parent");
+        const child = yield* addThread("thread:unplanned:spec-child", {
+          providerChild: true,
+          parent: delegating,
+        });
+        const sql = yield* SqlClient.SqlClient;
+        const edit = (id: string, threadId: ThreadId, runId: string | null, payload: object) =>
+          sql`INSERT INTO orchestration_v2_projection_turn_items (turn_item_id, thread_id, run_id, ordinal, type, status, updated_at, payload_json) VALUES (${id}, ${threadId}, ${runId}, 1, 'file_change', 'completed', '2026-10-22T10:00:00Z', ${JSON.stringify(payload)})`;
+        for (const thread of [reports, mixed, delegating])
+          yield* addRun(thread, { changed: false });
+        yield* edit("reports:spec", reports, `${reports}:run:1`, {
+          fileName: "/work/umb/.specweave/increments/1001-x/spec.md",
+        });
+        yield* edit("reports:page", reports, `${reports}:run:1`, {
+          fileName: "/home/me/evidence/run-1/report.html",
+          changes: [
+            { operation: "add", path: "/home/me/evidence/run-1/report.html" },
+            { operation: "add", path: "/home/me/evidence/run-1/dark.png" },
+          ],
+        });
+        yield* edit("mixed:notes", mixed, `${mixed}:run:1`, { fileName: "/work/app/NOTES.md" });
+        yield* edit("mixed:code", mixed, `${mixed}:run:1`, {
+          fileName: "/work/app/reports/summary.md",
+          changes: [
+            { operation: "update", path: "/work/app/reports/summary.md" },
+            { operation: "update", path: "/work/app/src/reports/view.ts" },
+          ],
+        });
+        yield* edit("child:ledger", child, null, {
+          fileName: "C:\\work\\umb\\.specweave\\increments\\1001-x\\ledger.jsonl",
+        });
+        for (const thread of [reports, mixed, delegating, child]) unbound.add(thread);
+        const { service } = yield* makeService(root);
+
+        const snapshot = yield* service.read({
+          projectId: PROJECT,
+          threadIds: [reports, mixed, delegating, child],
+        });
+
+        assert.deepStrictEqual(snapshot.unplanned, [mixed]);
+        assert.deepStrictEqual(snapshot.documentation, [delegating, reports].toSorted());
+      } finally {
+        NodeFS.rmSync(root, { recursive: true, force: true });
+      }
+    }),
+  );
+
+  it.effect("a running thread's code edit after a document edit is not hidden", () =>
+    Effect.gen(function* () {
+      const root = specweaveRoot();
+      try {
+        const thread = yield* addThread("thread:unplanned:doc-then-code");
+        yield* addRun(thread, { status: "running", changed: false });
+        unbound.add(thread);
+        const sql = yield* SqlClient.SqlClient;
+        const edit = (id: string, ordinal: number, fileName: string) =>
+          sql`INSERT INTO orchestration_v2_projection_turn_items (turn_item_id, thread_id, run_id, ordinal, type, status, updated_at, payload_json) VALUES (${id}, ${thread}, ${`${thread}:run:1`}, ${ordinal}, 'file_change', 'completed', '2026-10-22T10:00:00Z', ${JSON.stringify({ fileName })})`;
+        const { service } = yield* makeService(root);
+        const input = { projectId: PROJECT, threadIds: [thread] };
+        yield* edit("doc-then-code:readme", 1, "/work/app/README.md");
+        const first = yield* service.read(input);
+        assert.deepStrictEqual(first.unplanned, []);
+        assert.deepStrictEqual(first.documentation, [thread]);
+
+        yield* edit("doc-then-code:src", 2, "/work/app/src/index.ts");
+        yield* TestClock.adjust("10 seconds");
+        const second = yield* service.read(input);
+        assert.deepStrictEqual(second.unplanned, [thread]);
+        assert.strictEqual(second.documentation, undefined);
+      } finally {
+        NodeFS.rmSync(root, { recursive: true, force: true });
+      }
+    }),
+  );
+
+  it.effect("finds a code change past the first page of document edits", () =>
+    Effect.gen(function* () {
+      const root = specweaveRoot();
+      try {
+        // Its worktree is /work/reports: a checkout under a folder named
+        // "reports" is judged by paths inside it, so its data file is code.
+        const thread = yield* addThread("reports");
+        yield* addRun(thread, { changed: false });
+        unbound.add(thread);
+        const sql = yield* SqlClient.SqlClient;
+        yield* sql`INSERT INTO orchestration_v2_projection_turn_items (turn_item_id, thread_id, run_id, ordinal, type, status, updated_at, payload_json) VALUES ('reports:data', ${thread}, ${`${thread}:run:1`}, 1, 'file_change', 'completed', '2026-10-22T10:00:00Z', ${JSON.stringify({ fileName: "/work/reports/data.json" })})`;
+        for (let ordinal = 2; ordinal <= 60; ordinal++) {
+          yield* sql`INSERT INTO orchestration_v2_projection_turn_items (turn_item_id, thread_id, run_id, ordinal, type, status, updated_at, payload_json) VALUES (${`reports:doc:${ordinal}`}, ${thread}, ${`${thread}:run:1`}, ${ordinal}, 'file_change', 'completed', '2026-10-22T10:00:00Z', ${JSON.stringify({ fileName: `/work/reports/docs/${ordinal}.md` })})`;
+        }
+        const { service } = yield* makeService(root);
+        const snapshot = yield* service.read({ projectId: PROJECT, threadIds: [thread] });
+        assert.deepStrictEqual(snapshot.unplanned, [thread]);
+      } finally {
+        NodeFS.rmSync(root, { recursive: true, force: true });
+      }
+    }),
+  );
+
+  it("classifies changed paths as documentation or code", () => {
+    for (const path of [
+      "/u/umb/.specweave/increments/1001-x/spec.md",
+      ".specweave/config.json",
+      "docs/guide.MD",
+      "/u/app/reports/run/notes.txt",
+      "/u/app/reports/run/screenshot.png",
+      "C:\\u\\evidence\\capture.webm",
+      "/u/app/reports/run/frame.b64",
+    ]) {
+      assert.strictEqual(ThreadIncrementProgressService.isDocumentationPath(path), true, path);
+    }
+    for (const path of [
+      "/u/app/src/reports/view.ts",
+      "/u/app/evidence/run.sh",
+      "/u/app/package.json",
+      "File change",
+      "/u/app/report.html",
+      "README.txt",
+      "requirements.txt",
+      "CMakeLists.txt",
+    ]) {
+      assert.strictEqual(ThreadIncrementProgressService.isDocumentationPath(path), false, path);
+    }
+    assert.strictEqual(ThreadIncrementProgressService.fileChangeKind(null, "[]"), "code");
+    assert.strictEqual(ThreadIncrementProgressService.fileChangeKind("a.md", "not json"), "code");
+    assert.strictEqual(
+      ThreadIncrementProgressService.fileChangeKind("a.md", '[["b.md","src/old.ts"]]'),
+      "code",
+    );
+    assert.strictEqual(
+      ThreadIncrementProgressService.fileChangeKind("a.md", '[["b.md",null]]'),
+      "documentation",
+    );
+    // Judged inside the checkout: its own location does not make it a report folder.
+    assert.strictEqual(
+      ThreadIncrementProgressService.fileChangeKind("/w/reports/app/out.json", "[]", [
+        "/w/reports/app",
+      ]),
+      "code",
+    );
+    assert.strictEqual(
+      ThreadIncrementProgressService.fileChangeKind("/w/reports/app/reports/out.json", "[]", [
+        "/w/reports/app",
+      ]),
+      "documentation",
+    );
+  });
+
   it.effect("stops flagging a thread once its edits are rolled back", () =>
     Effect.gen(function* () {
       const root = specweaveRoot();

@@ -29,6 +29,13 @@ import type { SidebarThreadSummary, Thread } from "../types";
 import { cn } from "../lib/utils";
 import { isLatestRunSettled } from "../session-logic";
 import { resolveServerBackedAppStageLabel } from "../branding.logic";
+import {
+  ineligibleProjectLabel,
+  ineligibleSelectedGroup,
+  projectPickerGroups,
+  type ProjectListGroup,
+  type ScratchRootLookup,
+} from "../studio/projectListVisibility";
 
 export function shouldNavigateAfterThreadPark(input: {
   readonly threadKey: string;
@@ -1111,6 +1118,41 @@ export function searchSidebarThreads<
     }
   }
   return [...titleMatches, ...contentMatches];
+}
+
+export interface SidebarProjectScopeItem {
+  readonly value: string;
+  readonly label: string;
+  /** Why the current scope is no longer a choice; the menu shows it without offering it. */
+  readonly unavailable?: string;
+}
+
+/**
+ * The project scope menu's rows: "All projects", the current scope when it is archived or
+ * automated (shown, never chosen), then the person's own projects.
+ */
+export function sidebarProjectScopeItems(
+  groups: ReadonlyArray<ProjectListGroup & { readonly displayName: string }>,
+  scratchRootFor: ScratchRootLookup,
+  scopeKey: string | null,
+): SidebarProjectScopeItem[] {
+  const current = ineligibleSelectedGroup(groups, scopeKey, scratchRootFor);
+  return [
+    { value: "all", label: "All projects" },
+    ...(current
+      ? [
+          {
+            value: current.project.projectKey,
+            label: current.project.displayName,
+            unavailable: ineligibleProjectLabel(current.reason),
+          },
+        ]
+      : []),
+    ...projectPickerGroups(groups, scratchRootFor).map((group) => ({
+      value: group.projectKey,
+      label: group.displayName,
+    })),
+  ];
 }
 
 export function filterSidebarProjectScopeItems<TItem extends { readonly value: string }>(input: {

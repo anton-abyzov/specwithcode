@@ -10,6 +10,7 @@ import * as Stream from "effect/Stream";
 import * as ChildProcess from "effect/process/ChildProcess";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 
+import { browserLastError } from "../preview/PreviewBrowserHost.ts";
 import { publicProxy } from "./publicProxy.ts";
 
 export class HtmlRenderBrowserError extends Schema.TaggedError<HtmlRenderBrowserError>()(
@@ -22,7 +23,10 @@ export class HtmlRenderBrowserError extends Schema.TaggedError<HtmlRenderBrowser
   },
 ) {
   override get message(): string {
-    return `Headless Chrome could not render the page: ${this.reason}.`;
+    const lastError = this.output === undefined ? undefined : browserLastError(this.output);
+    return lastError === undefined
+      ? `Headless Chrome could not render the page: ${this.reason}.`
+      : `Headless Chrome could not render the page: ${this.reason}. Its last error: "${lastError}"`;
   }
 }
 
@@ -156,6 +160,50 @@ const SETTLE_EXPRESSION =
 // reports its own box height instead.
 const MEASURE_EXPRESSION =
   "(() => { const root = document.documentElement; return root.scrollHeight > root.clientHeight ? root.scrollHeight : root.getBoundingClientRect().height; })()";
+
+// For each `[data-node]` element: its first baseline (a zero-size inline-block
+// sits on it), its line height and, for its first text node, the index each
+// line starts at, walked one code point at a time. SVG text does not wrap, so
+// the SVG export sets these lines itself.
+const TEXT_LINES_EXPRESSION = `[...document.querySelectorAll("[data-node]")].map((el) => {
+  const style = getComputedStyle(el);
+  const box = el.getBoundingClientRect();
+  const probe = document.createElement("span");
+  probe.style.cssText = "display:inline-block;width:0;height:0";
+  el.prepend(probe);
+  const baseline = probe.getBoundingClientRect().top - box.top;
+  probe.remove();
+  const lineHeight = parseFloat(style.lineHeight) || parseFloat(style.fontSize) * 1.2;
+  const top = box.top + (parseFloat(style.paddingTop) || 0);
+  const text = [...el.childNodes].find((node) => node.nodeType === Node.TEXT_NODE);
+  const value = text ? text.data : "";
+  const range = document.createRange();
+  const starts = [];
+  for (let at = 0; at < value.length; ) {
+    const size = value.codePointAt(at) > 0xffff ? 2 : 1;
+    if (value[at] !== "\\n") {
+      range.setStart(text, at);
+      range.setEnd(text, at + size);
+      const rect = range.getClientRects()[0];
+      if (rect) {
+        const line = Math.round((rect.top + rect.height / 2 - top - lineHeight / 2) / lineHeight);
+        if (starts.length === 0 || starts[starts.length - 1][1] !== line) starts.push([at, line]);
+      }
+    }
+    at += size;
+  }
+  return { id: el.dataset.node, baseline, lineHeight, starts };
+})`;
+
+/** Where one element's text lines start, as `TEXT_LINES_EXPRESSION` reports it. */
+export const TextLines = Schema.Struct({
+  id: Schema.String,
+  baseline: Schema.Finite,
+  lineHeight: Schema.Finite,
+  /** `[index into the text, line number]` at each line change; empty lines are skipped. */
+  starts: Schema.Array(Schema.Tuple([Schema.Number, Schema.Number])),
+});
+export type TextLines = typeof TextLines.Type;
 
 const Ignored = Schema.Unknown;
 const Navigation = Schema.Struct({ errorText: Schema.optional(Schema.String) });
@@ -541,7 +589,16 @@ const launchBrowser = Effect.fnUntraced(function* (input: {
       Effect.ignore,
     );
 
-    return { load, screenshot, pdf, consoleMessages, close };
+    /** The value of `expression` in the loaded page. */
+    const evaluate = <A>(expression: string, schema: Schema.Decoder<A>) =>
+      send(
+        "Runtime.evaluate",
+        { expression, returnByValue: true },
+        Schema.Struct({ result: Schema.Struct({ value: schema }) }),
+        sessionId,
+      ).pipe(Effect.map(({ result }) => result.value));
+
+    return { load, screenshot, pdf, evaluate, consoleMessages, close };
   });
 
   return { openPage };
@@ -635,6 +692,38 @@ export const captureFixedHtml = Effect.fn("headlessChrome.captureFixedHtml")(
       Effect.fail(
         new HtmlRenderBrowserError({
           reason: "the page did not finish rendering within 60 seconds",
+        }),
+      ),
+  }),
+);
+
+/** Text lines of every `[data-node]` element of `html`, laid out at `width` x `height`. */
+export const measureTextLines = Effect.fn("headlessChrome.measureTextLines")(
+  function* (input: {
+    readonly executable: string;
+    readonly noSandbox: boolean;
+    readonly html: string;
+    readonly width: number;
+    readonly height: number;
+  }) {
+    const path = yield* Path.Path;
+    const directory = yield* scratchDirectory;
+    const browser = yield* launchBrowser({
+      executable: input.executable,
+      noSandbox: input.noSandbox,
+      profileDirectory: path.join(directory, "profile"),
+    });
+    const page = yield* browser.openPage(input.width, { height: input.height });
+    yield* page.load(pageBody(input.html), "");
+    return yield* page.evaluate(TEXT_LINES_EXPRESSION, Schema.Array(TextLines));
+  },
+  Effect.scoped,
+  Effect.timeoutOrElse({
+    duration: "60 seconds",
+    orElse: () =>
+      Effect.fail(
+        new HtmlRenderBrowserError({
+          reason: "the text did not finish measuring within 60 seconds",
         }),
       ),
   }),

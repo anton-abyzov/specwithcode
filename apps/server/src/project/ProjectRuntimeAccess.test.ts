@@ -115,3 +115,31 @@ it.effect("partial propagation reports failure and a repeated save retries every
     true,
   ),
 );
+
+it.effect("per-key project saves fan out only when they set or reset the permission", () =>
+  scenario((service, commands) =>
+    Effect.gen(function* () {
+      yield* service.updateSettings({
+        projectSettingsOverrideChanges: { [projectId]: { set: { defaultAutoPull: true } } },
+      });
+      assert.equal(commands.length, 0);
+      const saved = yield* service.updateSettings({
+        projectSettingsOverrideChanges: {
+          [projectId]: { set: { defaultRuntimeMode: "full-access" } },
+        },
+      });
+      assert.deepEqual(saved.projectSettingsOverrides[projectId], {
+        defaultAutoPull: true,
+        defaultRuntimeMode: "full-access",
+      });
+      assert.deepEqual(commands.map((c) => c.threadId).sort(), ["archived", "child", "ordinary"]);
+      // A reset follows the environment default, which no longer matches the chats.
+      yield* service.updateSettings({ defaultRuntimeMode: "full-access" });
+      yield* service.updateSettings({
+        projectSettingsOverrideChanges: { [projectId]: { clear: ["defaultRuntimeMode"] } },
+      });
+      assert.equal(commands.length, 6);
+      assert.equal(commands[5].runtimeMode, "full-access");
+    }),
+  ),
+);

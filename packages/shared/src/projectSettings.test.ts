@@ -7,14 +7,13 @@ import {
 import { describe, expect, it } from "vite-plus/test";
 import { createModelSelection } from "./model.ts";
 import {
-  clearProjectSettingsOverrides,
   hasProjectSettingsOverrides,
   resolveProjectFileBackedSetting,
   resolveProjectSettings,
   resolveWorktreeCleanup,
   withProjectSettingsOverrides,
 } from "./projectSettings.ts";
-import { applyServerSettingsPatch } from "./serverSettings.ts";
+import { applyProjectSettingsOverrideChange, applyServerSettingsPatch } from "./serverSettings.ts";
 
 const projectId = ProjectId.make("project-a");
 const otherProjectId = ProjectId.make("project-b");
@@ -317,16 +316,20 @@ describe("projectSettingsOverrides patches", () => {
         [projectId]: { defaultAutoPull: true, enableAgentBrowserAccess: false },
       },
     });
-    expect(clearProjectSettingsOverrides(settings, projectId, ["defaultAutoPull"])).toEqual({
+    const entry = settings.projectSettingsOverrides[projectId];
+    expect(applyProjectSettingsOverrideChange(entry, { clear: ["defaultAutoPull"] })).toEqual({
       enableAgentBrowserAccess: false,
     });
     expect(
-      clearProjectSettingsOverrides(settings, projectId, [
-        "defaultAutoPull",
-        "enableAgentBrowserAccess",
-      ]),
+      applyProjectSettingsOverrideChange(entry, {
+        clear: ["defaultAutoPull", "enableAgentBrowserAccess"],
+      }),
     ).toBeNull();
-    expect(clearProjectSettingsOverrides(settings, otherProjectId, ["defaultAutoPull"])).toBeNull();
+    expect(
+      applyProjectSettingsOverrideChange(settings.projectSettingsOverrides[otherProjectId], {
+        clear: ["defaultAutoPull"],
+      }),
+    ).toBeNull();
     expect(withProjectSettingsOverrides(settings, projectId, null)).toEqual({});
     expect(
       withProjectSettingsOverrides(settings, otherProjectId, { defaultThreadEnvMode: "worktree" }),
@@ -365,9 +368,7 @@ describe("resolveWorktreeCleanup", () => {
     expect(resolveWorktreeCleanup(custom, projectId).worktreeAfterDays).toBe(15);
     expect(custom.storageCleanup.logsAfterDays).toBe(3);
     const reset = applyServerSettingsPatch(custom, {
-      projectSettingsOverrides: {
-        [projectId]: clearProjectSettingsOverrides(custom, projectId, ["worktreeCleanup"]),
-      },
+      projectSettingsOverrideChanges: { [projectId]: { clear: ["worktreeCleanup"] } },
     });
     expect(resolveWorktreeCleanup(reset, projectId)).toEqual(inherited);
   });
@@ -411,9 +412,7 @@ it("inherits branch naming defaults and applies project overrides independently"
     branchNamePrefix: "team/",
   });
   const cleared = applyServerSettingsPatch(settings, {
-    projectSettingsOverrides: {
-      [projectId]: clearProjectSettingsOverrides(settings, projectId, ["branchNamingMode"]),
-    },
+    projectSettingsOverrideChanges: { [projectId]: { clear: ["branchNamingMode"] } },
   });
   expect(resolveProjectSettings(cleared, projectId).settings.branchNamingMode).toBe("static");
 });

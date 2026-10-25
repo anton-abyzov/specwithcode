@@ -22,6 +22,7 @@ import { ConversationFindBar } from "../components/find/ConversationFindBar";
 import { ModsHost } from "../mods/ModsHost";
 import { CustomSnoozeDialogHost } from "../components/CustomSnoozeDialog";
 import { ThreadMoveDialogHost } from "../components/ThreadMoveDialog";
+import { UsageSheetHost } from "../components/usage/UsageSheet";
 import { HandoffDesktopBridge } from "../components/handoff/HandoffDesktopBridge";
 import { HandOffMachineDialogHost } from "../components/handoff/HandOffMachineDialog";
 import { HandOffThreadDialogHost } from "../components/handoff/HandOffThreadDialog";
@@ -269,6 +270,7 @@ function RootRouteView() {
           <ThreadMoveDialogHost />
           <HandOffThreadDialogHost />
           <HandOffMachineDialogHost />
+          <UsageSheetHost />
           <SlowRpcRequestToastCoordinator />
           <PermissionUpdateNotice />
           {primaryEnvironmentAuthenticated ? <LegacyThreadMigrationToast /> : null}

@@ -6,7 +6,16 @@ import type {
   DesignSystem,
 } from "@specweave-studio/contracts";
 
+import {
+  compositeColor,
+  contrastRatio,
+  cssColorToRgba,
+  MIN_TEXT_CONTRAST,
+  type Rgba,
+  relativeLuminance,
+} from "./colorContrast.ts";
 import { designId, SLIDE_FRAME } from "./designOps.ts";
+import { designTokenValue } from "./designRender.ts";
 
 /**
  * Slide layouts built from a design system. Every color and font is a
@@ -111,6 +120,20 @@ const QUALIFIERS = new Set([
   "link",
   "code",
   "tooltip",
+  // Component tokens: a chip or button color is never the slide's background or text.
+  "invert",
+  "inverted",
+  "chip",
+  "btn",
+  "button",
+  "badge",
+  "tag",
+  "ghost",
+  "toast",
+  "alert",
+  "menu",
+  "nav",
+  "tab",
 ]);
 
 function normalize(name: string) {
@@ -133,8 +156,9 @@ function pick(names: readonly string[], keys: readonly string[], taken: Readonly
   return null;
 }
 
-const BACKGROUND_KEYS = ["background", "bg", "canvas", "paper", "page", "base", "surface"];
-const INK_KEYS = ["foreground", "fg", "ink", "text", "on-background", "body", "content"];
+// Real surface and text names first; the `bg`/`fg` shorthands that component tokens use come last.
+const BACKGROUND_KEYS = ["background", "canvas", "paper", "page", "surface", "base", "bg"];
+const INK_KEYS = ["foreground", "text", "ink", "on-background", "body", "content", "fg"];
 const MUTED_INK_KEYS = [
   "muted-foreground",
   "ink-muted",
@@ -191,32 +215,164 @@ const BODY_FONT_KEYS = [
   "font",
 ];
 
+/** Plain colors for when no token pairing can be read. */
+const PLAIN = {
+  lightInk: NEUTRAL.ink,
+  darkInk: "#ffffff",
+  lightSurface: NEUTRAL.surface,
+  darkSurface: "#262a31",
+} as const;
+
+const WHITE: Rgba = { r: 1, g: 1, b: 1, a: 1 };
+
+/** The mode a deck renders in: the system's first mode. */
+export function slideDeckMode(system: DesignSystem | null): string {
+  return system?.modes[0]?.id ?? "light";
+}
+
 /** Which of the system's tokens a slide uses for each role. */
 export function slideTokens(system: DesignSystem | null): SlideTokens {
   const colors = (system?.tokens ?? []).filter((token) => token.type === "color");
   const names = colors.map((token) => token.name);
+  const mode = slideDeckMode(system);
   const taken = new Set<string>();
   const take = (keys: readonly string[]) => {
     const name = pick(names, keys, taken);
     if (name !== null) taken.add(name);
     return name;
   };
-  // Most specific roles first, so `primary-foreground` never ends up as the accent.
-  const accentInk = take(ACCENT_INK_KEYS);
-  const mutedInk = take(MUTED_INK_KEYS);
-  const accent = take(ACCENT_KEYS);
-  const background = take(BACKGROUND_KEYS);
-  const ink = take(INK_KEYS);
-  // A bare `muted` is a surface beside `muted-foreground` (shadcn), and the muted ink otherwise.
-  const bareMuted = mutedInk === null ? take(["muted"]) : null;
-  const surface = take(mutedInk === null ? SURFACE_KEYS : [...SURFACE_KEYS, "muted"]);
-  const muted = mutedInk ?? bareMuted;
+  /** Every untaken name for `keys`, in key priority. */
+  const candidates = (keys: readonly string[]) => {
+    const found: string[] = [];
+    for (const key of keys)
+      for (const name of names)
+        if (!taken.has(name) && !found.includes(name) && nameMatches(normalize(name), key))
+          found.push(name);
+    return found;
+  };
+  const rgbOf = (name: string) => cssColorToRgba(designTokenValue(system, name, mode));
+  const colorOf = (color: SlideColor, under: Rgba): Rgba | null => {
+    const top =
+      typeof color.paint === "string" ? cssColorToRgba(color.paint) : rgbOf(color.paint.token);
+    return top === null ? null : compositeColor(top, under, color.opacity ?? 1);
+  };
+  const readable = (text: SlideColor, under: Rgba) => {
+    const ink = colorOf(text, under);
+    return ink === null || contrastRatio(ink, under) >= MIN_TEXT_CONTRAST;
+  };
+  const tokenColor = (name: string): SlideColor => ({ paint: { token: name } });
 
-  const token = (name: string | null, fallback: string): SlideColor =>
-    name === null ? { paint: fallback } : { paint: { token: name } };
-  const inkColor = token(ink, NEUTRAL.ink);
-  const accentColor = token(accent, NEUTRAL.accent);
-  const backgroundColor = token(background, NEUTRAL.background);
+  // Most specific roles first, so `primary-foreground` never ends up as the accent.
+  const accentInkName = take(ACCENT_INK_KEYS);
+  const mutedName = take(MUTED_INK_KEYS);
+  const accentName = take(ACCENT_KEYS);
+
+  // Background and ink as a pair that reads in the deck's mode.
+  const backgrounds = candidates(BACKGROUND_KEYS);
+  const inks = candidates(INK_KEYS);
+  const opaque = (name: string) => {
+    const rgb = rgbOf(name);
+    return rgb !== null && rgb.a === 1 ? rgb : null;
+  };
+  let background: SlideColor | null = null;
+  let backgroundRgb: Rgba | null = null;
+  let ink: SlideColor | null = null;
+  const knownBackgrounds = backgrounds.filter((name) => opaque(name) !== null);
+  const knownInks = inks.filter((name) => rgbOf(name) !== null);
+  if (knownBackgrounds.length === 0 && knownInks.length === 0) {
+    // Nothing can be checked (unresolved references): trust the names.
+    const backgroundName = backgrounds[0] ?? null;
+    if (backgroundName !== null) {
+      taken.add(backgroundName);
+      background = tokenColor(backgroundName);
+    }
+    const inkName = inks.find((name) => name !== backgroundName) ?? null;
+    if (inkName !== null) {
+      taken.add(inkName);
+      ink = tokenColor(inkName);
+    }
+  } else {
+    for (const backgroundName of knownBackgrounds) {
+      const under = opaque(backgroundName)!;
+      const inkName = knownInks.find(
+        (name) => name !== backgroundName && readable(tokenColor(name), under),
+      );
+      if (inkName === undefined) continue;
+      background = tokenColor(backgroundName);
+      backgroundRgb = under;
+      ink = tokenColor(inkName);
+      taken.add(backgroundName);
+      taken.add(inkName);
+      break;
+    }
+    if (background === null) {
+      const backgroundName = knownBackgrounds[0];
+      if (backgroundName !== undefined) {
+        // A background token with no readable ink token: plain light or dark text on it.
+        backgroundRgb = opaque(backgroundName)!;
+        background = tokenColor(backgroundName);
+        taken.add(backgroundName);
+        const dark: SlideColor = { paint: PLAIN.lightInk };
+        ink = readable(dark, backgroundRgb) ? dark : { paint: PLAIN.darkInk };
+      } else {
+        backgroundRgb = WHITE;
+        const inkName = knownInks.find((name) => readable(tokenColor(name), WHITE));
+        if (inkName !== undefined) {
+          taken.add(inkName);
+          ink = tokenColor(inkName);
+        }
+      }
+    }
+  }
+  const backgroundColor = background ?? { paint: NEUTRAL.background };
+  const inkColor = ink ?? { paint: NEUTRAL.ink };
+  const base = backgroundRgb ?? colorOf(backgroundColor, WHITE) ?? WHITE;
+  const lightBase = relativeLuminance(base) > 0.18;
+  const accentColor = accentName === null ? { paint: NEUTRAL.accent } : tokenColor(accentName);
+
+  // A bare `muted` is a surface beside `muted-foreground` (shadcn), and the muted ink otherwise.
+  const bareMuted = mutedName === null ? take(["muted"]) : null;
+  const mutedToken = mutedName ?? bareMuted;
+
+  // Cards: the first surface the ink reads on.
+  const surfaces = candidates(mutedName === null ? SURFACE_KEYS : [...SURFACE_KEYS, "muted"]);
+  const surfaceOptions: SlideColor[] = [
+    ...surfaces.map(tokenColor),
+    ...(accentName !== null ? [{ paint: accentColor.paint, opacity: 0.1 }] : []),
+    { paint: lightBase ? PLAIN.lightSurface : PLAIN.darkSurface },
+  ];
+  const surfaceColor =
+    surfaceOptions.find((option) => {
+      const fill = colorOf(option, base);
+      // An unreadable value is only trusted when nothing else could be checked either.
+      return fill === null ? backgroundRgb === null : readable(inkColor, fill);
+    }) ?? backgroundColor;
+  const surfaceRgb = colorOf(surfaceColor, base) ?? base;
+
+  const readsOnBoth = (text: SlideColor) => readable(text, base) && readable(text, surfaceRgb);
+  const mutedOptions: SlideColor[] = [
+    ...(mutedToken !== null ? [tokenColor(mutedToken)] : []),
+    ...(ink !== null ? [{ paint: inkColor.paint, opacity: 0.68 }] : [{ paint: NEUTRAL.muted }]),
+  ];
+  const muted = mutedOptions.find(readsOnBoth) ?? inkColor;
+
+  const accentRgb = colorOf(accentColor, base);
+  const accentInkOptions: SlideColor[] = [
+    ...(accentInkName !== null ? [tokenColor(accentInkName)] : []),
+    ...(background !== null ? [backgroundColor] : []),
+    { paint: NEUTRAL.accentInk },
+    { paint: PLAIN.lightInk },
+  ];
+  const accentInk =
+    accentRgb === null
+      ? accentInkOptions[0]!
+      : (accentInkOptions.find((option) => readable(option, accentRgb)) ??
+        accentInkOptions.reduce((best, option) =>
+          contrastRatio(colorOf(option, accentRgb) ?? accentRgb, accentRgb) >
+          contrastRatio(colorOf(best, accentRgb) ?? accentRgb, accentRgb)
+            ? option
+            : best,
+        ));
 
   const fonts = (system?.tokens ?? []).filter((item) => item.type === "fontFamily");
   const fontNames = fonts.map((item) => item.name);
@@ -234,24 +390,9 @@ export function slideTokens(system: DesignSystem | null): SlideTokens {
     background: backgroundColor,
     ink: inkColor,
     accent: accentColor,
-    muted:
-      muted !== null
-        ? { paint: { token: muted } }
-        : ink !== null
-          ? { paint: inkColor.paint, opacity: 0.68 }
-          : { paint: NEUTRAL.muted },
-    surface:
-      surface !== null
-        ? { paint: { token: surface } }
-        : accent !== null
-          ? { paint: accentColor.paint, opacity: 0.1 }
-          : { paint: NEUTRAL.surface },
-    accentInk:
-      accentInk !== null
-        ? { paint: { token: accentInk } }
-        : background !== null
-          ? backgroundColor
-          : { paint: NEUTRAL.accentInk },
+    muted,
+    surface: surfaceColor,
+    accentInk,
     ...(display === null ? {} : { display: { token: display } }),
     ...(body === null ? {} : { body: { token: body } }),
   };

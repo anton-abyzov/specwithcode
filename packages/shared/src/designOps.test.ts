@@ -1,4 +1,4 @@
-import type { DesignDocument, DesignOperation } from "@specweave-studio/contracts";
+import type { DesignComment, DesignDocument, DesignOperation } from "@specweave-studio/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import {
@@ -6,6 +6,7 @@ import {
   designAccess,
   designAccessAllows,
   designBoundThread,
+  designCommentThreads,
   designId,
   designOperationWrites,
   designSubtreeIds,
@@ -224,6 +225,107 @@ describe("designOps", () => {
     // Deleting a page drops its comments.
     const dropped = apply(unpinned, [{ op: "delete_page", pageId: page.id }]);
     expect(dropped.comments).toHaveLength(0);
+  });
+
+  it("threads replies under the first comment", () => {
+    const design = fixture();
+    const page = pageOf(design);
+    const frame = frameOf(design);
+    const comment = (id: string, extra: Partial<DesignComment> = {}): DesignOperation => ({
+      op: "add_comment",
+      comment: {
+        id,
+        pageId: page.id,
+        nodeId: frame.id,
+        x: 12,
+        y: 8,
+        text: `Comment ${id}`,
+        author: { kind: "user" },
+        createdAt: "2026-10-24T00:00:00.000Z",
+        resolved: false,
+        ...extra,
+      },
+    });
+    const threaded = apply(design, [
+      { op: "add_page", page: { id: "p2", name: "Two", nodes: [] } },
+      comment("c_root"),
+      comment("c_other", { nodeId: null, x: 100, y: 100 }),
+      // A reply sent with another anchor takes the root's.
+      comment("c_reply", { parentId: "c_root", pageId: "p2", nodeId: null, x: 1, y: 2 }),
+      // A reply to a reply joins the root's thread.
+      comment("c_nested", { parentId: "c_reply" }),
+    ]);
+    const byId = new Map(threaded.comments.map((c) => [c.id, c]));
+    for (const id of ["c_reply", "c_nested"])
+      expect(byId.get(id)).toMatchObject({
+        parentId: "c_root",
+        pageId: page.id,
+        nodeId: frame.id,
+        x: 12,
+        y: 8,
+      });
+    expect(byId.get("c_root")).not.toHaveProperty("parentId");
+
+    const missing = applyDesignOperations(threaded, [comment("c_lost", { parentId: "c_gone" })]);
+    expect(missing).toMatchObject({ ok: false, error: { code: "not_found", index: 0 } });
+
+    // Resolving the root, or any reply, resolves and reopens the whole thread.
+    const resolved = apply(threaded, [
+      { op: "resolve_comment", commentId: "c_root", resolved: true },
+    ]);
+    expect(resolved.comments.map((c) => [c.id, c.resolved])).toEqual([
+      ["c_root", true],
+      ["c_other", false],
+      ["c_reply", true],
+      ["c_nested", true],
+    ]);
+    const reopened = apply(resolved, [
+      { op: "resolve_comment", commentId: "c_nested", resolved: false },
+    ]);
+    expect(reopened.comments.every((c) => !c.resolved)).toBe(true);
+    // A reply to a resolved thread arrives resolved.
+    const late = apply(resolved, [comment("c_late", { parentId: "c_root" })]);
+    expect(late.comments.at(-1)).toMatchObject({ id: "c_late", resolved: true });
+
+    // Deleting a reply leaves the thread; deleting the root drops its replies.
+    const withoutReply = apply(threaded, [{ op: "delete_comment", commentId: "c_reply" }]);
+    expect(withoutReply.comments.map((c) => c.id)).toEqual(["c_root", "c_other", "c_nested"]);
+    const withoutRoot = apply(threaded, [{ op: "delete_comment", commentId: "c_root" }]);
+    expect(withoutRoot.comments.map((c) => c.id)).toEqual(["c_other"]);
+
+    // Replies share the root's page and node, so they unpin and drop with it.
+    const unpinned = apply(threaded, [{ op: "delete_node", pageId: page.id, id: frame.id }]);
+    expect(unpinned.comments.filter((c) => c.nodeId !== null)).toEqual([]);
+    const dropped = apply(threaded, [{ op: "delete_page", pageId: page.id }]);
+    expect(dropped.comments).toEqual([]);
+
+    // Threads keep document order, and a reply whose root is gone is a thread of its own.
+    const orphan: DesignComment = {
+      ...threaded.comments[2]!,
+      id: "c_orphan",
+      parentId: "c_missing",
+    };
+    const threads = designCommentThreads([...threaded.comments, orphan]);
+    expect(threads.map((t) => [t.root.id, t.replies.map((r) => r.id)])).toEqual([
+      ["c_root", ["c_reply", "c_nested"]],
+      ["c_other", []],
+      ["c_orphan", []],
+    ]);
+    // Replying to that orphan threads under it rather than failing.
+    const adopted = apply({ ...threaded, comments: [...threaded.comments, orphan] }, [
+      comment("c_adopted", { parentId: "c_orphan" }),
+    ]);
+    expect(adopted.comments.at(-1)).toMatchObject({ parentId: "c_orphan" });
+    // Links that loop (a hand-edited file) still list every comment once.
+    const looped = designCommentThreads([
+      { ...orphan, id: "c_a", parentId: "c_b" },
+      { ...orphan, id: "c_b", parentId: "c_a" },
+    ]);
+    expect(looped.map((t) => t.root.id)).toEqual(["c_a", "c_b"]);
+    // Reply operations write only their own comment key, like any comment.
+    expect(designOperationWrites(comment("c_new", { parentId: "c_root" }))).toEqual([
+      "comment:c_new",
+    ]);
   });
 
   it("reports which keys an operation writes so concurrent edits rebase", () => {

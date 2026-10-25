@@ -688,7 +688,15 @@ export function StudioFleetRoster({
             <span className="block text-sm">Add a machine</span>
             <span className="block text-xs text-muted-foreground">
               On that machine, choose Invite this machine under Settings &gt; Connections (or run{" "}
-              <code className="font-mono">specwithcode fleet invite</code>) and paste the line.
+              <code className="font-mono">
+                {"specwithcode fleet invite --coordinator '<main-machine-environment-id>'"}
+              </code>
+              ) and paste the line.
+            </span>
+            <span className="block text-xs text-muted-foreground">
+              {
+                "Replace <main-machine-environment-id> with the environment ID from Settings > Connections on your main machine to approve it to manage access on the other machine."
+              }
             </span>
             <span className="block text-xs text-muted-foreground">
               For a Linux server you rent (a VPS), set it up with the{" "}
@@ -700,8 +708,11 @@ export function StudioFleetRoster({
               >
                 Linux worker guide
               </a>
-              , then run <code className="font-mono">specwithcode fleet invite</code> there and
-              paste the line here.
+              , then run{" "}
+              <code className="font-mono">
+                {"specwithcode fleet invite --coordinator '<main-machine-environment-id>'"}
+              </code>{" "}
+              there and paste the line here.
             </span>
           </span>
           <div className="flex min-w-0 gap-2 sm:w-96 sm:shrink-0">

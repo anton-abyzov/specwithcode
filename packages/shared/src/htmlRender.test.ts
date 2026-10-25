@@ -9,7 +9,10 @@ import {
   htmlRenderThemeFragment,
   injectHtmlRenderBootstrap,
   htmlRenderThemeMessage,
+  legacyLocalPathFromOpenLink,
+  normalizeEvidencePath,
   readHtmlRenderContentHeight,
+  readHtmlRenderFileRequest,
   readHtmlRenderLinkRequest,
   readHtmlRenderReference,
 } from "./htmlRender.ts";
@@ -306,5 +309,170 @@ describe("HTML_RENDER_EXACT_COPY_SCRIPT", () => {
 
   it("ships in every page's bootstrap", () => {
     expect(injectHtmlRenderBootstrap("<p>x</p>")).toContain(HTML_RENDER_EXACT_COPY_SCRIPT);
+  });
+});
+
+describe("normalizeEvidencePath", () => {
+  it("accepts emoji and joining-script names whose invisible characters form a visible glyph", () => {
+    for (const name of [
+      "❤️ notes.png",
+      "⚠️ issues.log",
+      "1️⃣ step.png",
+      "👩‍💻 setup.md",
+      "👩🏽‍💻 setup.md",
+      "🏳️‍🌈.png",
+      "🏴\u{e0067}\u{e0062}\u{e0065}\u{e006e}\u{e0067}\u{e007f} team.png",
+      "می\u200cخواهم.txt",
+      "क्\u200dष.txt",
+      "Résumé 履歴書 🇺🇸.pdf",
+    ])
+      expect(normalizeEvidencePath(`/Users/a/${name}`)?.path, name).toBe(`/Users/a/${name}`);
+    // The same characters stay refused where they draw nothing.
+    for (const name of [
+      "a\ufe0fb.png",
+      "a1\ufe0f.png",
+      "a\u200db.png",
+      "a\u200cb.png",
+      "x\u{e0067}.png",
+      "\u0661\u200c\u0662.png",
+      "\u0967\u200c\u0968.png",
+      "\u{1f3f4}\u{e0061}\u{e0062}\u{e0063}.png",
+    ])
+      expect(normalizeEvidencePath(`/Users/a/${name}`), JSON.stringify(name)).toBeUndefined();
+  });
+
+  it("accepts absolute POSIX, home and Windows drive paths as written", () => {
+    expect(normalizeEvidencePath("/Users/a/shot one.png")).toEqual({
+      path: "/Users/a/shot one.png",
+      kind: "posix",
+    });
+    expect(normalizeEvidencePath("~/evidence/run.log")?.kind).toBe("home");
+    expect(normalizeEvidencePath("C:\\Users\\a\\x.png")?.kind).toBe("windows");
+    expect(normalizeEvidencePath("C:/Users/a/x.png")?.kind).toBe("windows");
+    expect(normalizeEvidencePath(`/${"a".repeat(4095)}`)).toBeDefined();
+  });
+
+  it("refuses URLs, relative, network, traversing, encoded, invisible and oversized paths", () => {
+    for (const path of [
+      "javascript:alert(1)",
+      "data:text/html,x",
+      "blob:https://x/1",
+      "https://x.test/a.png",
+      "/Users/a/../../etc/passwd",
+      "/Users/a/./x",
+      "/Users/%2e%2e/x",
+      "/Users/a/%2fx",
+      "/Users/a/x\u0000.png",
+      "/Users/a/\u001b[0m.png",
+      "/Users/a/x\n.png",
+      "/Users/a/\u202ex.png",
+      "/Users/a/\ud800.png",
+      "/Users/a\\..\\b",
+      "x.png",
+      "./x.png",
+      "",
+      "~",
+      "/",
+      "/Users/a/",
+      "//host/share",
+      "C:\\..\\x",
+      "\\\\host",
+      "\\\\host\\share\\x.png",
+      "\\\\?\\C:\\x.png",
+      "\\\\.\\pipe\\x",
+      "/Users/a/x\u200b.png",
+      "/Users/a/\ufeffx.png",
+      "/Users/a/x\u2060.png",
+      "/Users/a/x\u00ad.png",
+      "/Users/a/x\u034f.png",
+      "/Users/a/x\u3164.png",
+      "/Users/a/x\ufe0f.png",
+      "/Users/a/x\u{e0041}.png",
+      "/Users/a/\udc00.png",
+      `/${"a".repeat(4096)}`,
+      42,
+      null,
+    ])
+      expect(normalizeEvidencePath(path), String(path)).toBeUndefined();
+  });
+});
+
+describe("readHtmlRenderFileRequest", () => {
+  const request = (params: unknown, extra: object = {}) => ({
+    jsonrpc: "2.0",
+    id: "studio-file-1",
+    method: "specwithcode/open-file",
+    params,
+    ...extra,
+  });
+
+  it("reads only the path and line of an open or copy request", () => {
+    expect(
+      readHtmlRenderFileRequest(
+        request({
+          path: "/Users/a/x.png",
+          line: 42,
+          environmentId: "other",
+          threadId: "project-coordinator:x",
+          cwd: "/",
+        }),
+      ),
+    ).toEqual({ id: "studio-file-1", method: "open-file", path: "/Users/a/x.png", line: 42 });
+    expect(
+      readHtmlRenderFileRequest(
+        request({ path: "/Users/a/x.png", line: 3 }, { method: "specwithcode/copy-path" }),
+      ),
+    ).toEqual({ id: "studio-file-1", method: "copy-path", path: "/Users/a/x.png" });
+  });
+
+  it("rejects other shapes and lines", () => {
+    for (const data of [
+      request({ path: "/Users/a/x.png" }, { id: undefined }),
+      request({ path: "/Users/a/x.png" }, { jsonrpc: "1.0" }),
+      request({ url: "file:///Users/a/x.png" }, { method: "ui/open-link" }),
+      request({ path: "/Users/a/x.png", line: -1 }),
+      request({ path: "/Users/a/x.png", line: 1.5 }),
+      request({ path: "/Users/a/x.png", line: "42" }),
+      request({ path: "../x.png" }),
+      request(null),
+      "specwithcode/open-file",
+    ])
+      expect(readHtmlRenderFileRequest(data)).toBeUndefined();
+  });
+});
+
+describe("legacyLocalPathFromOpenLink", () => {
+  const frame = "https://host.test/api/assets/abc/report.html?sig=1#studio-theme=x";
+  it("reads a path an old bootstrap resolved against the frame's own server", () => {
+    expect(legacyLocalPathFromOpenLink("https://host.test/Users/a/shot%20one.png", frame)).toBe(
+      "/Users/a/shot one.png",
+    );
+  });
+  it("leaves the app's own pages, other origins and unsafe paths as links", () => {
+    expect(
+      legacyLocalPathFromOpenLink("https://host.test/api/assets/x.png", frame),
+    ).toBeUndefined();
+    expect(
+      legacyLocalPathFromOpenLink("https://host.test/settings/general", frame),
+    ).toBeUndefined();
+    expect(legacyLocalPathFromOpenLink("https://host.test/", frame)).toBeUndefined();
+    expect(legacyLocalPathFromOpenLink("https://other.test/Users/a/x.png", frame)).toBeUndefined();
+    expect(
+      legacyLocalPathFromOpenLink("https://host.test/Users/%252e%252e/x", frame),
+    ).toBeUndefined();
+    expect(legacyLocalPathFromOpenLink("not a url", frame)).toBeUndefined();
+  });
+});
+
+describe("evidence links in the bootstrap", () => {
+  it("ships the evidence styles with the theme and lets a handled click stay handled", () => {
+    const injected = injectHtmlRenderBootstrap("<p>x</p>");
+    expect(injected).toContain("a.studio-evidence{");
+    expect(injected).toContain('"specwithcode/open-file"');
+    expect(injected).toContain('"specwithcode/copy-path"');
+    // The link handler leaves a click an evidence link already took.
+    expect(injected).toContain("if(!l||e.defaultPrevented)return;");
+    for (const script of injected.matchAll(/<script>([\s\S]*?)<\/script>/g))
+      expect(() => new Function(script[1]!)).not.toThrow();
   });
 });

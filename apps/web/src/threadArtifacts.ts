@@ -11,6 +11,7 @@ import {
   resolveMarkdownFileLinkMeta,
   threadFileFolders,
 } from "./markdown-links";
+import type { NativeArtifactReference } from "./nativeArtifacts";
 
 export type ThreadArtifactKind =
   | "image"
@@ -21,7 +22,8 @@ export type ThreadArtifactKind =
   | "pdf"
   | "code"
   | "file"
-  | "link";
+  | "link"
+  | "native";
 
 interface ThreadArtifactBase {
   /** Stable across renders: the file's authored path or the link's URL. */
@@ -33,7 +35,7 @@ interface ThreadArtifactBase {
 }
 
 export interface ThreadFileArtifact extends ThreadArtifactBase {
-  readonly kind: Exclude<ThreadArtifactKind, "link">;
+  readonly kind: Exclude<ThreadArtifactKind, "link" | "native">;
   /** How the message named it; the host settles where it is. */
   readonly meta: MarkdownFileLinkMeta;
 }
@@ -50,7 +52,20 @@ export interface ThreadRenderArtifact extends ThreadArtifactBase {
   readonly attachmentId: string;
 }
 
-export type ThreadArtifact = ThreadFileArtifact | ThreadLinkArtifact | ThreadRenderArtifact;
+/**
+ * A page Claude Code published to claude.ai with its Artifact tool: a
+ * reference to the account's private page, opened in the browser, never here.
+ */
+export interface ThreadNativeArtifact extends ThreadArtifactBase {
+  readonly kind: "native";
+  readonly native: NativeArtifactReference;
+}
+
+export type ThreadArtifact =
+  | ThreadFileArtifact
+  | ThreadLinkArtifact
+  | ThreadRenderArtifact
+  | ThreadNativeArtifact;
 
 /** A file a thread's tool calls wrote, as the tool named it. */
 export interface ThreadCreatedFile {
@@ -223,9 +238,22 @@ export function fileArtifact(meta: MarkdownFileLinkMeta, messageId: string): Thr
   };
 }
 
-/** Artifacts the viewer shows: everything but links, which open in the browser. */
+export function nativeArtifact(native: NativeArtifactReference): ThreadNativeArtifact {
+  return {
+    key: `native:${native.key}`,
+    kind: "native",
+    name: native.title,
+    native,
+    messageId: native.itemId,
+  };
+}
+
+/**
+ * Artifacts the viewer shows: everything but links and native artifacts,
+ * which open in the browser. A claude.ai page is never framed here.
+ */
 export function isViewableArtifact(
   artifact: ThreadArtifact,
 ): artifact is ThreadFileArtifact | ThreadRenderArtifact {
-  return artifact.kind !== "link";
+  return artifact.kind !== "link" && artifact.kind !== "native";
 }

@@ -1,0 +1,28 @@
+/* Copied from @acme/uikit for the static status page; the spacing scale was left out. */
+:root,
+[data-theme="light"] {
+  --acme-orange: #f97316;
+  --acme-brand: #4f46e5;
+  --acme-accent: var(--acme-orange);
+  --acme-bg: #fafafa;
+  --acme-surface: #ffffff;
+  --acme-ink: #1f2937;
+  --acme-muted: #6b7280;
+  --acme-line: #e5e7eb;
+  --acme-success: #16a34a;
+  --acme-warning: #b45309;
+  --acme-danger: #dc2626;
+  --acme-focus: var(--acme-brand);
+  --acme-link: var(--acme-focus);
+  --acme-radius-sm: 4px;
+  --acme-radius-md: 8px;
+}
+
+[data-theme="dark"] {
+  --acme-brand: #818cf8;
+  --acme-bg: #0b0f14;
+  --acme-surface: #111827;
+  --acme-ink: #f3f4f6;
+  --acme-muted: #9ca3af;
+  --acme-line: #1f2937;
+}

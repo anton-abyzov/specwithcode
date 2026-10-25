@@ -197,6 +197,7 @@ import * as ThreadSettlementService from "./orchestration-v2/ThreadSettlementSer
 import * as ThreadFinishActionService from "./orchestration-v2/ThreadFinishActionService.ts";
 import * as IdAllocator from "./orchestration-v2/IdAllocator.ts";
 import * as StaleRunWatchdog from "./orchestration-v2/StaleRunWatchdog.ts";
+import * as StrandedSubagents from "./orchestration-v2/StrandedSubagents.ts";
 import * as HandoffModeReactor from "./handoff/HandoffModeReactor.ts";
 import * as ScheduledTaskRunReactor from "./scheduledTasks/ScheduledTaskRunReactor.ts";
 import * as HandoffMoves from "./handoff/HandoffMoves.ts";
@@ -644,6 +645,15 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   // their provider events).
   Layer.effectDiscard(
     StaleRunWatchdog.make.pipe(Effect.flatMap((watchdog) => watchdog.start())),
+  ).pipe(
+    Layer.provide(
+      Layer.mergeAll(ProjectionStoreV2.layer, RuntimeLayer.layerEventSink, IdAllocator.layer),
+    ),
+  ),
+  // Settles provider-native subagents whose provider process is gone, and
+  // tells their parent which ones an outage interrupted.
+  Layer.effectDiscard(
+    StrandedSubagents.make.pipe(Effect.flatMap((sweeper) => sweeper.start())),
   ).pipe(
     Layer.provide(
       Layer.mergeAll(ProjectionStoreV2.layer, RuntimeLayer.layerEventSink, IdAllocator.layer),

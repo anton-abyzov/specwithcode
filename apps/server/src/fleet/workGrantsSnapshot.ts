@@ -13,7 +13,7 @@ import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
-import { coordinatorOfWorkerLabel } from "./workGrantPolicy.ts";
+import { coordinatorOfPrincipal } from "./workGrantPolicy.ts";
 import * as WorkGrants from "./WorkGrants.ts";
 
 /**
@@ -32,7 +32,7 @@ export const workGrantsSnapshot = (input: {
     const now = yield* Clock.currentTimeMillis;
     const sessions = (yield* auth.listSessions()).flatMap((session) => {
       if (session.subject !== EnvironmentAuth.MCP_CLIENT_SUBJECT) return [];
-      const coordinator = coordinatorOfWorkerLabel(session.client.label ?? undefined);
+      const coordinator = coordinatorOfPrincipal(session.principal);
       return coordinator === undefined ? [] : [{ coordinator, session }];
     });
     // A grant minted here but not used yet gets its policy now, so it can be seen and edited.

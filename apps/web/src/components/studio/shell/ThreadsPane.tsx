@@ -1,12 +1,15 @@
+import { Button } from "../../ui/button";
+import type { ProjectAttention } from "@specweave-studio/client-runtime/state/projectAttention";
 /**
  * The project's Threads pane: what is waiting on the person first, then what
  * is idle or done. Each row names who runs the thread and on which model. In
  * a SpecWeave project, threads that changed code without an increment carry
- * an "Unplanned" chip, and the header can narrow the list to them.
+ * a muted No increment glyph, and the header can narrow the list to them.
  */
-import type { EnvironmentId, ThreadId } from "@specweave-studio/contracts";
+import type { DesignSummary, EnvironmentId, ThreadId } from "@specweave-studio/contracts";
 import type { EnvironmentThreadShell } from "@specweave-studio/client-runtime/state/shell";
 import { resolveThreadCurrentPullRequestLink } from "@specweave-studio/shared/threadPullRequests";
+import { useRouter } from "@tanstack/react-router";
 import * as Schema from "effect/Schema";
 import {
   CheckIcon,
@@ -14,6 +17,7 @@ import {
   ChevronRightIcon,
   LaptopIcon,
   ListChecksIcon,
+  PaletteIcon,
   RotateCcwIcon,
   SearchIcon,
   SlidersVerticalIcon,
@@ -70,8 +74,9 @@ import { useProjectThreadIncrementProgress } from "../../../studio/useThreadIncr
 import { ProjectPaneBar, type ProjectPaneBarProps } from "./ProjectPaneBar";
 import { Tip } from "./Tip";
 import { UnplannedThreadChip, UnplannedThreadsFilter } from "./UnplannedThreads";
-import { useUnplannedNoticeShown } from "../../../studio/unplannedNotice";
+import { useUnplannedNotice } from "../../../studio/unplannedNotice";
 import { HandoffRowAction, HandoffRowBadge } from "../../handoff/HandoffBadge";
+import { designRoute } from "../../design/gallery/designLinks";
 import { useUnreachableHosts } from "../../../studio/unreachableHosts";
 
 const SORT_STORAGE_KEY = "studio:project-threads-sort:v1";
@@ -107,6 +112,8 @@ export function ThreadsPane({
   threads: readonly EnvironmentThreadShell[];
   /** Working subagents per `environmentId:threadId`; they roll up into their thread's row. */
   runningSubagents?: ReadonlyMap<string, number>;
+  attention?: ProjectAttention;
+  onOpenAction?: (id: ThreadId, environmentId: EnvironmentId) => void;
   canChange: boolean;
   findRef: RefObject<HTMLInputElement | null>;
   onOpen: (id: ThreadId, environmentId?: EnvironmentId) => void;
@@ -117,6 +124,8 @@ export function ThreadsPane({
   notice?: ReactNode;
   /** Workers this project runs on other machines; they are not threads here. */
   remoteWorkerCount?: number;
+  /** The project's design each agent thread is bound to, by thread id. */
+  designsByThread?: ReadonlyMap<string, DesignSummary>;
   bar: ProjectPaneBarProps;
   /** First tasks to offer in place of the groups while the project has no threads. */
   starters?: ReactNode;
@@ -137,6 +146,7 @@ export function ThreadsPane({
     | undefined;
 }) {
   const entriesByEnvironment = useProviderEntriesByEnvironment();
+  const router = useRouter();
   const now = nowFromMinute(useNowMinute());
   const [sortBy, setSortBy] = useLocalStorage<ThreadSort, ThreadSort>(
     SORT_STORAGE_KEY,
@@ -186,21 +196,36 @@ export function ThreadsPane({
         labels.get(environmentId) ?? fallbackLabel ?? name(environmentId),
     };
   }, [environments, props.machineLabels, nickname]);
-  const { progress: incrementProgress, unplanned } = useProjectThreadIncrementProgress(
-    props.environmentId,
-    allThreads,
-  );
+  const {
+    progress: incrementProgress,
+    unplanned,
+    answered: unplannedAnswered,
+  } = useProjectThreadIncrementProgress(props.environmentId, allThreads);
   const isUnplanned = (thread: EnvironmentThreadShell) =>
     thread.environmentId === props.environmentId && unplanned.has(thread.id);
-  // Increments are recommended, not required: the notice, its filter and the
-  // row chips go away for good once the person hides them for this project.
-  const [unplannedNoticeShown, setUnplannedNoticeShown] = useUnplannedNoticeShown(
+  // Increments are recommended, not required. Dismissing the notice acknowledges
+  // the threads it counts, and it comes back only for a thread it has not
+  // counted; the sort menu switch turns the notice and the row chips off for good.
+  const {
+    shown: unplannedNoticeShown,
+    setShown: setUnplannedNoticeShown,
+    fresh: freshUnplanned,
+    dismiss: dismissUnplanned,
+  } = useUnplannedNotice(
     props.environmentId,
     allThreads.find((thread) => thread.environmentId === props.environmentId)?.projectId,
+    unplanned,
   );
-  const unplannedCount = unplannedNoticeShown ? allThreads.filter(isUnplanned).length : 0;
+  const unplannedCount = allThreads.filter(
+    (thread) => isUnplanned(thread) && freshUnplanned.has(thread.id),
+  ).length;
   const [unplannedOnly, setUnplannedOnly] = useState(false);
-  // The filter lets go by itself once every unplanned thread is linked or cleared.
+  // The filter lets go by itself once nothing is left to count (linked, cleared,
+  // dismissed in another window or switched off), so a later unplanned thread
+  // never narrows the list unasked. A read still in flight for a changed thread
+  // list, one that failed before any answer, or a session that is refreshing
+  // counts nothing yet, so only an answered read lets it go.
+  if (unplannedOnly && unplannedAnswered && unplannedCount === 0) setUnplannedOnly(false);
   const showUnplannedOnly = unplannedOnly && unplannedCount > 0;
   const groups = useMemo(() => {
     const built = buildThreadPaneGroups(
@@ -209,12 +234,14 @@ export function ThreadsPane({
       query,
       props.runningSubagents,
       unreachable,
+      props.attention,
     );
     return showUnplannedOnly
       ? built.map((entry) => ({
           ...entry,
           threads: entry.threads.filter(
-            (thread) => thread.environmentId === props.environmentId && unplanned.has(thread.id),
+            (thread) =>
+              thread.environmentId === props.environmentId && freshUnplanned.has(thread.id),
           ),
         }))
       : built;
@@ -223,10 +250,11 @@ export function ThreadsPane({
     query,
     sortBy,
     props.runningSubagents,
+    props.attention,
     props.environmentId,
     unreachable,
     showUnplannedOnly,
-    unplanned,
+    freshUnplanned,
   ]);
   const matches = groups.reduce((sum, group) => sum + group.threads.length, 0);
   const searching = query.trim() !== "";
@@ -362,9 +390,15 @@ export function ThreadsPane({
         <header className="sws-threads-head">
           <h2>{offerStarters ? "Welcome." : "Welcome back."}</h2>
           <p role="status">
-            {offerStarters
+            {offerStarters && !props.attention
               ? "No threads yet. Pick a first task, or ask the coordinator for one."
-              : threadsSummary(allThreads, props.remoteWorkerCount, unreachable)}
+              : threadsSummary(
+                  allThreads,
+                  props.remoteWorkerCount,
+                  unreachable,
+                  props.runningSubagents,
+                  props.attention,
+                )}
           </p>
           {unplannedCount > 0 && !offerStarters ? (
             <UnplannedThreadsFilter
@@ -373,11 +407,52 @@ export function ThreadsPane({
               onToggle={() => setUnplannedOnly((on) => !on)}
               onHide={() => {
                 setUnplannedOnly(false);
-                setUnplannedNoticeShown(false);
+                dismissUnplanned();
               }}
             />
           ) : null}
         </header>
+        {props.attention && (!props.attention.complete || props.attention.count > 0) ? (
+          <section aria-label="Project attention" className="px-4 pb-3 text-sm">
+            <h3 className="font-medium">{props.attention.label}</h3>
+            {!props.attention.complete ? (
+              <p className="text-muted-foreground">
+                Some project hosts are not current. Known actions below are a partial total.
+              </p>
+            ) : null}
+            {props.attention.roots
+              .filter((root) => root.actions.length > 0)
+              .map((root) => (
+                <div key={root.key} className="mt-2">
+                  <p>{root.coordinator ? "Coordinator" : root.thread.title}</p>
+                  {root.actions.map((action) => (
+                    <Button
+                      key={action.key}
+                      variant="ghost"
+                      size="sm"
+                      onClick={() =>
+                        (props.onOpenAction ?? props.onOpen)(
+                          action.threadId as ThreadId,
+                          action.environmentId as EnvironmentId,
+                        )
+                      }
+                    >
+                      {action.reason === "input"
+                        ? "Answer question"
+                        : action.reason === "signin"
+                          ? "Sign in"
+                          : action.reason === "held"
+                            ? "Resume or discard"
+                            : action.reason === "plan"
+                              ? "Review plan"
+                              : "Review approval"}
+                      {action.threadId !== root.thread.id ? ` · ${action.title ?? "subagent"}` : ""}
+                    </Button>
+                  ))}
+                </div>
+              ))}
+          </section>
+        ) : null}
         {props.notice}
         <div id="sws-threads-find">
           {findShown ? (
@@ -440,9 +515,10 @@ export function ThreadsPane({
                   onClick={narrowed ? undefined : () => setGroupFolded(group, !isFolded)}
                 >
                   {isFolded ? <ChevronRightIcon aria-hidden /> : <ChevronDownIcon aria-hidden />}
-                  {group}
+                  {group === "Waiting on you" ? "Workers waiting on you" : group}
                   <span className="sws-group-count">
                     {threads.length}
+                    {narrowed ? " shown" : ""}
                     <span className="sr-only"> threads</span>
                   </span>
                 </button>
@@ -515,76 +591,82 @@ export function ThreadsPane({
                           <span className="sws-thread-text">
                             <strong>{thread.title || "Untitled thread"}</strong>
                             <span className="sws-thread-meta">
-                              {rowStatus
-                                ? (() => {
-                                    const blocker = threadAttentionNote(thread);
-                                    const word = (
-                                      <span className="sws-thread-status" data-tone={tone}>
-                                        {rowStatus}
-                                      </span>
-                                    );
-                                    // Blocked says on hover what the report asks of the reader.
-                                    return blocker ? (
-                                      <Tip label={blocker} side="top">
-                                        {word}
-                                      </Tip>
-                                    ) : (
-                                      word
-                                    );
-                                  })()
-                                : null}
-                              <ThreadModelBadge
-                                thread={thread}
-                                entries={
-                                  entriesByEnvironment.get(thread.environmentId) ?? new Map()
-                                }
-                              />
-                              {plan ? <PlanProgressChip plan={plan} /> : null}
-                              {unplannedNoticeShown && isUnplanned(thread) ? (
-                                <UnplannedThreadChip />
-                              ) : null}
-                              {pullRequest ? (
-                                <span className="sws-thread-pr" data-state={pullRequest.state}>
-                                  <pullRequest.Icon
-                                    aria-hidden
-                                    className={pullRequest.toneClassName}
-                                  />
-                                  <span className="sr-only">Pull request </span>#
-                                  {pullRequest.number}
-                                  <span className="sr-only">, {pullRequest.label}</span>
-                                </span>
-                              ) : null}
-                              {machine ? (
-                                <Tooltip>
-                                  <TooltipTrigger
-                                    render={
-                                      <span
-                                        className="sws-thread-machine"
-                                        data-execution={machine.state}
-                                        data-moved={machine.moved || undefined}
-                                      />
-                                    }
-                                  >
-                                    {machine.state === "unknown" ? (
-                                      <WifiOffIcon aria-hidden />
-                                    ) : (
-                                      <LaptopIcon aria-hidden />
-                                    )}
-                                    <span className="sr-only">{machine.description}</span>
-                                    <span aria-hidden>{machine.label}</span>
-                                  </TooltipTrigger>
-                                  <TooltipPopup side="bottom">{machine.description}</TooltipPopup>
-                                </Tooltip>
-                              ) : null}
-                              <HandoffRowBadge
-                                environmentId={thread.environmentId}
-                                threadId={thread.id}
-                                localEnvironmentId={props.environmentId}
-                                hostOffline={hostOffline}
-                              />
-                              {thread.runtime?.lastError ? (
-                                <span className="sws-thread-error">{thread.runtime.lastError}</span>
-                              ) : null}
+                              <span className="sws-thread-meta-lead">
+                                {rowStatus
+                                  ? (() => {
+                                      const blocker = threadAttentionNote(thread);
+                                      const word = (
+                                        <span className="sws-thread-status" data-tone={tone}>
+                                          {rowStatus}
+                                        </span>
+                                      );
+                                      // Blocked says on hover what the report asks of the reader.
+                                      return blocker ? (
+                                        <Tip label={blocker} side="top">
+                                          {word}
+                                        </Tip>
+                                      ) : (
+                                        word
+                                      );
+                                    })()
+                                  : null}
+                                <ThreadModelBadge
+                                  thread={thread}
+                                  entries={
+                                    entriesByEnvironment.get(thread.environmentId) ?? new Map()
+                                  }
+                                />
+                              </span>
+                              <span className="sws-thread-meta-rest">
+                                {plan ? <PlanProgressChip plan={plan} /> : null}
+                                {unplannedNoticeShown && isUnplanned(thread) ? (
+                                  <UnplannedThreadChip />
+                                ) : null}
+                                {pullRequest ? (
+                                  <span className="sws-thread-pr" data-state={pullRequest.state}>
+                                    <pullRequest.Icon
+                                      aria-hidden
+                                      className={pullRequest.toneClassName}
+                                    />
+                                    <span className="sr-only">Pull request </span>#
+                                    {pullRequest.number}
+                                    <span className="sr-only">, {pullRequest.label}</span>
+                                  </span>
+                                ) : null}
+                                {machine ? (
+                                  <Tooltip>
+                                    <TooltipTrigger
+                                      render={
+                                        <span
+                                          className="sws-thread-machine"
+                                          data-execution={machine.state}
+                                          data-moved={machine.moved || undefined}
+                                        />
+                                      }
+                                    >
+                                      {machine.state === "unknown" ? (
+                                        <WifiOffIcon aria-hidden />
+                                      ) : (
+                                        <LaptopIcon aria-hidden />
+                                      )}
+                                      <span className="sr-only">{machine.description}</span>
+                                      <span aria-hidden>{machine.label}</span>
+                                    </TooltipTrigger>
+                                    <TooltipPopup side="bottom">{machine.description}</TooltipPopup>
+                                  </Tooltip>
+                                ) : null}
+                                <HandoffRowBadge
+                                  environmentId={thread.environmentId}
+                                  threadId={thread.id}
+                                  localEnvironmentId={props.environmentId}
+                                  hostOffline={hostOffline}
+                                />
+                                {thread.runtime?.lastError ? (
+                                  <span className="sws-thread-error">
+                                    {thread.runtime.lastError}
+                                  </span>
+                                ) : null}
+                              </span>
                             </span>
                           </span>
                           <span className="sr-only">
@@ -594,6 +676,29 @@ export function ThreadsPane({
                             {compactAge(sessionStateSince(thread), now)}
                           </time>
                         </button>
+                        {(() => {
+                          const bound = props.designsByThread?.get(thread.id);
+                          if (!bound || bound.ref.owner.kind !== "project") return null;
+                          const owner = {
+                            kind: "project",
+                            projectId: bound.ref.owner.projectId,
+                          } as const;
+                          return (
+                            <Tip label={`Open the design ${bound.title || "Untitled"}`}>
+                              <button
+                                type="button"
+                                className="sws-thread-handoff-action sws-thread-design-action"
+                                data-testid="thread-design-pill"
+                                onClick={() =>
+                                  void router.navigate(designRoute(owner, bound.ref.designId))
+                                }
+                              >
+                                <PaletteIcon aria-hidden />
+                                Design
+                              </button>
+                            </Tip>
+                          );
+                        })()}
                         <HandoffRowAction
                           environmentId={thread.environmentId}
                           threadId={thread.id}

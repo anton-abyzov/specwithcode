@@ -1,4 +1,4 @@
-import { InfoIcon } from "lucide-react";
+import { ChevronUpIcon, InfoIcon } from "lucide-react";
 import { useEffect, useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
@@ -36,37 +36,50 @@ export type ComposerBannerStackContent = Pick<
 
 type ComposerBannerStackEntry = ComposerBannerStackItem | ComposerBannerStackContent;
 
+/**
+ * Severity orders the notices: an account change or limit, then errors, then
+ * warnings, then running work (a pull request watch, a goal) and the rest. A
+ * watcher never hides a limit.
+ */
 function bannerPriority(item: ComposerBannerStackEntry) {
-  if (item.priority === "activity") {
-    return 0;
-  }
-  if (item.priority === "urgent" || item.variant === "error" || item.variant === "warning") {
-    return 1;
-  }
-  return 2;
+  if (item.priority === "urgent") return 0;
+  if (item.variant === "error") return 1;
+  if (item.variant === "warning") return 2;
+  if (item.priority === "activity") return 3;
+  return 4;
 }
+
+/** Notices shown before the rest fold into the "N more notices" button. */
+const VISIBLE_NOTICES = 2;
 
 interface ComposerBannerStackProps {
   readonly className?: string;
   readonly items: ReadonlyArray<ComposerBannerStackEntry>;
-  /** Attachments that sit between the stacked notices and the front item, such as the queue.
-      The stacked notices peek above the whole column, never from between two attachments. */
+  /** Attachments between the notices and the composer's own drawers, such as the queue. */
   readonly attachedAbove?: ReactNode;
 }
 
+/**
+ * Notices about the thread float above the composer as whole cards, each with
+ * its own border, in severity order. The composer's own drawers (content
+ * entries, such as the activity row) stay attached to it below the queue.
+ */
 export function ComposerBannerStack({ className, items, attachedAbove }: ComposerBannerStackProps) {
-  const [stackExpanded, setStackExpanded] = useState(false);
-  const noticesRef = useRef<HTMLDivElement>(null);
-  const peekRef = useRef<HTMLButtonElement>(null);
-  const expandedItemsRef = useRef<HTMLDivElement>(null);
-  const pendingFocusRef = useRef<"peek" | "notice" | null>(null);
-  const expandedItemsId = useId();
+  const [expandedState, setExpanded] = useState(false);
+  const toggleRef = useRef<HTMLButtonElement>(null);
+  const listId = useId();
   const [requestedExitingItemId, setExitingItemId] = useState<string | null>(null);
   const dismissTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const exitingItemId =
     requestedExitingItemId !== null && items.some((item) => item.id === requestedExitingItemId)
       ? requestedExitingItemId
       : null;
+  const notices = items
+    .filter((item): item is ComposerBannerStackItem => !("content" in item))
+    .toSorted((a, b) => bannerPriority(a) - bannerPriority(b));
+  const drawers = items.filter((item): item is ComposerBannerStackContent => "content" in item);
+  const folds = notices.length > VISIBLE_NOTICES;
+  const expanded = expandedState && folds;
 
   useEffect(() => {
     return () => {
@@ -75,40 +88,6 @@ export function ComposerBannerStack({ className, items, attachedAbove }: Compose
       }
     };
   }, []);
-
-  useEffect(() => {
-    if (items.length < 2) setStackExpanded(false);
-  }, [items.length]);
-
-  useLayoutEffect(() => {
-    if (stackExpanded && pendingFocusRef.current === "notice") {
-      pendingFocusRef.current = null;
-      const firstControl = expandedItemsRef.current?.querySelector<HTMLElement>(
-        'button:not(:disabled), a[href], input:not(:disabled), [tabindex="0"]',
-      );
-      (firstControl ?? expandedItemsRef.current)?.focus({ preventScroll: true });
-    } else if (!stackExpanded && pendingFocusRef.current === "peek") {
-      pendingFocusRef.current = null;
-      peekRef.current?.focus({ preventScroll: true });
-    }
-  }, [stackExpanded]);
-
-  // Activity stays attached. Urgency and severity only order the notices behind it.
-  const orderedItems = items.toSorted((a, b) => bannerPriority(a) - bannerPriority(b));
-  const frontItem = orderedItems[0];
-  if (!frontItem) {
-    return (
-      <>
-        {null}
-        {attachedAbove}
-        {null}
-      </>
-    );
-  }
-  const stackedItems = orderedItems.slice(1);
-  const hasStack = stackedItems.length > 0;
-  const showCollapsedStackCap = hasStack && exitingItemId !== frontItem.id;
-  const firstStackedItem = stackedItems[0];
 
   const requestDismiss = (item: ComposerBannerStackEntry) => {
     if (!("onDismiss" in item) || !item.onDismiss || exitingItemId) {
@@ -124,133 +103,91 @@ export function ComposerBannerStack({ className, items, attachedAbove }: Compose
     }, DISMISS_TRANSITION_MS);
   };
 
+  const shown = expanded ? notices : notices.slice(0, VISIBLE_NOTICES);
+  const hiddenCount = notices.length - shown.length;
+
   return (
     <>
-      {hasStack ? (
+      {notices.length > 0 ? (
         <div
-          ref={noticesRef}
+          data-composer-notice-stack="true"
           data-chat-composer-collapsed-controls="true"
-          className={cn("relative z-20 min-h-3", stackExpanded && "z-50")}
-          onPointerEnter={(event) => {
-            if (event.pointerType === "touch") return;
-            if (document.activeElement === peekRef.current) {
-              pendingFocusRef.current = "notice";
-            }
-            setStackExpanded(true);
-          }}
-          onPointerLeave={(event) => {
-            if (!event.currentTarget.contains(document.activeElement)) setStackExpanded(false);
-          }}
-          onBlurCapture={(event) => {
-            if (
-              !event.currentTarget.contains(event.relatedTarget) &&
-              !event.currentTarget.matches(":hover")
-            ) {
-              setStackExpanded(false);
-            }
-          }}
+          className={cn(
+            "relative z-20 flex flex-col gap-1.5 pb-2",
+            // Last in the dock, the notices clear the 17px the dock tucks under the composer.
+            "last:pb-6",
+          )}
           onKeyDown={(event) => {
-            if (event.key !== "Escape" || !stackExpanded) return;
+            if (event.key !== "Escape" || !expanded) return;
             event.preventDefault();
             event.stopPropagation();
-            pendingFocusRef.current = "peek";
-            setStackExpanded(false);
+            setExpanded(false);
+            toggleRef.current?.focus({ preventScroll: true });
           }}
         >
-          {showCollapsedStackCap && firstStackedItem ? (
-            <ComposerBanner.Peek
-              ref={peekRef}
-              variant={firstStackedItem.variant}
-              aria-label="Show other notices"
-              aria-expanded={stackExpanded}
-              aria-controls={expandedItemsId}
-              aria-hidden={stackExpanded || undefined}
-              tabIndex={stackExpanded ? -1 : 0}
-              onClick={(event) => {
-                event.currentTarget.focus({ preventScroll: true });
-                pendingFocusRef.current = "notice";
-                setStackExpanded(true);
-              }}
-              className={cn(stackExpanded && "pointer-events-none invisible opacity-0")}
-            />
-          ) : null}
-          <div
-            id={expandedItemsId}
-            ref={expandedItemsRef}
-            role="group"
-            aria-label="Other notices"
-            tabIndex={-1}
-            data-composer-banner-stack-expanded-items="true"
-            className={cn(
-              "grid transition-[grid-template-rows] duration-150 ease-out focus-visible:outline-2 focus-visible:-outline-offset-2 focus-visible:outline-ring",
-              stackExpanded ? "grid-rows-[1fr]" : "grid-rows-[0fr]",
-            )}
-          >
-            <div className="min-h-0 overflow-hidden">
-              <div
+          {folds ? (
+            <button
+              ref={toggleRef}
+              type="button"
+              aria-expanded={expanded}
+              aria-controls={listId}
+              onClick={() => setExpanded((current) => !current)}
+              className={cn(
+                "flex min-h-8 items-center gap-1.5 self-center rounded-full border px-3 text-xs text-muted-foreground shadow-sm outline-none",
+                "border-border bg-card dark:bg-(--surface-raised)",
+                "transition-colors hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring pointer-coarse:min-h-11",
+              )}
+            >
+              <ChevronUpIcon
+                aria-hidden
                 className={cn(
-                  "transform-gpu space-y-2 pb-2 transition-[opacity,transform] duration-150 ease-out will-change-[opacity,transform]",
-                  stackExpanded
-                    ? "pointer-events-auto visible translate-y-0 opacity-100"
-                    : "pointer-events-none invisible translate-y-1 opacity-0",
+                  "size-3.5 transition-transform motion-reduce:transition-none",
+                  expanded && "rotate-180",
+                )}
+              />
+              {expanded
+                ? "Show fewer notices"
+                : `${hiddenCount} more ${hiddenCount === 1 ? "notice" : "notices"}`}
+            </button>
+          ) : null}
+          <div id={listId} role="group" aria-label="Notices" className="flex flex-col gap-1.5">
+            {shown.map((item) => (
+              <div
+                key={item.id}
+                className={cn(
+                  "transition-[opacity,translate] duration-220 ease-in motion-reduce:transition-none",
+                  exitingItemId === item.id
+                    ? "pointer-events-none translate-y-2 opacity-0"
+                    : "opacity-100",
                 )}
               >
-                {stackedItems.map((item) => (
-                  <div
-                    key={item.id}
-                    className={cn(
-                      "transition-[opacity,translate] duration-220 ease-in",
-                      exitingItemId === item.id
-                        ? "pointer-events-none translate-y-28 opacity-0"
-                        : "opacity-100",
-                    )}
-                  >
-                    <ComposerBannerStackAlert
-                      item={item}
-                      attached={false}
-                      exiting={exitingItemId === item.id}
-                      onDismissRequest={() => requestDismiss(item)}
-                    />
-                  </div>
-                ))}
+                <ComposerBannerStackAlert
+                  item={item}
+                  attached={false}
+                  exiting={exitingItemId === item.id}
+                  onDismissRequest={() => requestDismiss(item)}
+                />
               </div>
-            </div>
+            ))}
           </div>
         </div>
       ) : null}
       {attachedAbove}
-      <ComposerBanner.Attachment
-        className={className}
-        data-composer-banner-drawer="true"
-        data-chat-composer-collapsed-controls="true"
-      >
-        <div
-          key={frontItem.id}
-          className={cn(
-            "relative z-10 transition-[opacity,translate] duration-220 ease-in",
-            exitingItemId === frontItem.id
-              ? "pointer-events-none translate-y-16 opacity-0"
-              : "opacity-100",
-          )}
-          onPointerDownCapture={() => {
-            setStackExpanded(false);
-            const activeElement = document.activeElement;
-            if (
-              activeElement instanceof HTMLElement &&
-              noticesRef.current?.contains(activeElement)
-            ) {
-              activeElement.blur();
-            }
-          }}
+      {drawers.map((item) => (
+        <ComposerBanner.Attachment
+          key={item.id}
+          className={className}
+          data-composer-banner-drawer="true"
+          data-chat-composer-collapsed-controls="true"
         >
           <ComposerBannerStackAlert
-            item={frontItem}
+            item={item}
             attached
-            exiting={exitingItemId === frontItem.id}
-            onDismissRequest={() => requestDismiss(frontItem)}
+            exiting={false}
+            onDismissRequest={() => requestDismiss(item)}
           />
-        </div>
-      </ComposerBanner.Attachment>
+        </ComposerBanner.Attachment>
+      ))}
     </>
   );
 }
@@ -389,7 +326,7 @@ function ComposerBannerStackAlert({
   );
   const dismiss = item.onDismiss ? (
     <ComposerBanner.Dismiss
-      aria-label={item.dismissLabel ?? "Dismiss warning"}
+      aria-label={item.dismissLabel ?? "Dismiss notice"}
       disabled={exiting}
       onClick={onDismissRequest}
     />
@@ -397,7 +334,7 @@ function ComposerBannerStackAlert({
   if (item.actionsLayout === "wrap-below") {
     return (
       <ComposerBanner.Root
-        role="alert"
+        role={bannerPriority(item) <= 2 ? "alert" : "status"}
         placement={attached ? "attached" : "floating"}
         variant={item.variant}
         density="comfortable"
@@ -429,7 +366,7 @@ function ComposerBannerStackAlert({
   }
   return (
     <ComposerBanner.Root
-      role="alert"
+      role={bannerPriority(item) <= 2 ? "alert" : "status"}
       placement={attached ? "attached" : "floating"}
       variant={item.variant}
       density="comfortable"

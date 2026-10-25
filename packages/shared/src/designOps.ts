@@ -5,6 +5,7 @@ import {
   DESIGN_MAX_PAGES,
   DesignNode,
   type DesignActor,
+  type DesignComment,
   type DesignDocument,
   type DesignKind,
   type DesignOperation,
@@ -286,17 +287,37 @@ function applyOne(document: DesignDocument, operation: DesignOperation): DesignD
       const { comment } = operation;
       if (document.comments.some((existing) => existing.id === comment.id))
         fail("invalid", `Comment id ${comment.id} is already used.`);
+      if (comment.parentId !== undefined) {
+        // A reply joins its thread: it takes the first comment's place and state.
+        const parentId = comment.parentId;
+        const parent = document.comments.find((candidate) => candidate.id === parentId);
+        if (parent === undefined) return fail("not_found", `No comment ${parentId} to reply to.`);
+        const root = commentChain(commentIndex(document.comments), parent).at(-1)!;
+        const reply: DesignComment = {
+          ...comment,
+          parentId: root.id,
+          pageId: root.pageId,
+          nodeId: root.nodeId,
+          x: root.x,
+          y: root.y,
+          resolved: root.resolved,
+        };
+        return { ...document, comments: [...document.comments, reply] };
+      }
       const page = document.pages[pageIndex(document, comment.pageId)]!;
       if (comment.nodeId !== null) nodeIndex(page, comment.nodeId);
       return { ...document, comments: [...document.comments, comment] };
     }
     case "resolve_comment": {
-      if (!document.comments.some((comment) => comment.id === operation.commentId))
-        fail("not_found", `No comment ${operation.commentId}.`);
+      const target = document.comments.find((comment) => comment.id === operation.commentId);
+      if (target === undefined) return fail("not_found", `No comment ${operation.commentId}.`);
+      // Resolving any comment of a thread resolves or reopens the whole thread.
+      const byId = commentIndex(document.comments);
+      const rootId = commentChain(byId, target).at(-1)!.id;
       return {
         ...document,
         comments: document.comments.map((comment) =>
-          comment.id === operation.commentId
+          commentChain(byId, comment).at(-1)!.id === rootId
             ? { ...comment, resolved: operation.resolved }
             : comment,
         ),
@@ -305,9 +326,13 @@ function applyOne(document: DesignDocument, operation: DesignOperation): DesignD
     case "delete_comment": {
       if (!document.comments.some((comment) => comment.id === operation.commentId))
         fail("not_found", `No comment ${operation.commentId}.`);
+      // Deleting a thread's first comment deletes its replies with it.
+      const byId = commentIndex(document.comments);
       return {
         ...document,
-        comments: document.comments.filter((comment) => comment.id !== operation.commentId),
+        comments: document.comments.filter(
+          (comment) => !commentChain(byId, comment).some((link) => link.id === operation.commentId),
+        ),
       };
     }
     case "set_thread": {
@@ -316,6 +341,13 @@ function applyOne(document: DesignDocument, operation: DesignOperation): DesignD
         return rest;
       }
       return { ...document, thread: operation.thread };
+    }
+    case "set_reuse": {
+      if (operation.reuse === null) {
+        const { reuse: _removed, ...rest } = document;
+        return rest;
+      }
+      return { ...document, reuse: operation.reuse };
     }
     case "set_access": {
       const current = document.access ?? DESIGN_DEFAULT_ACCESS;
@@ -328,6 +360,59 @@ function applyOne(document: DesignDocument, operation: DesignOperation): DesignD
       };
     }
   }
+}
+
+const commentIndex = (comments: readonly DesignComment[]) =>
+  new Map(comments.map((comment) => [comment.id, comment] as const));
+
+/**
+ * The comment, then its parent and so on up to its thread's first comment.
+ * Only hand-edited files break the links: a missing parent ends the walk, and a
+ * comment whose links loop starts a thread of its own. Either way every comment
+ * belongs to exactly one thread.
+ */
+function commentChain(
+  byId: ReadonlyMap<string, DesignComment>,
+  comment: DesignComment,
+): DesignComment[] {
+  const chain = [comment];
+  const seen = new Set([comment.id]);
+  for (let current = comment; current.parentId !== undefined;) {
+    const parent = byId.get(current.parentId);
+    if (parent === undefined) break;
+    if (seen.has(parent.id)) return [comment];
+    chain.push(parent);
+    seen.add(parent.id);
+    current = parent;
+  }
+  return chain;
+}
+
+export interface DesignCommentThread {
+  readonly root: DesignComment;
+  readonly replies: readonly DesignComment[];
+}
+
+/**
+ * Comments grouped into threads, in document order. A reply whose first
+ * comment is missing (a hand-edited file) shows as a thread of its own.
+ */
+export function designCommentThreads(
+  comments: readonly DesignComment[],
+): readonly DesignCommentThread[] {
+  const byId = commentIndex(comments);
+  const threads = new Map<string, { root: DesignComment; replies: DesignComment[] }>();
+  const rootOf = new Map<string, string>();
+  for (const comment of comments) {
+    const root = commentChain(byId, comment).at(-1)!;
+    rootOf.set(comment.id, root.id);
+    if (root === comment) threads.set(root.id, { root, replies: [] });
+  }
+  for (const comment of comments) {
+    const rootId = rootOf.get(comment.id)!;
+    if (rootId !== comment.id) threads.get(rootId)!.replies.push(comment);
+  }
+  return [...threads.values()];
 }
 
 /** The thread a design is bound to, if any. */
@@ -414,6 +499,8 @@ export function designOperationWrites(operation: DesignOperation): readonly stri
       return [`comment:${operation.commentId}`];
     case "set_thread":
       return ["thread"];
+    case "set_reuse":
+      return ["reuse"];
     case "set_access":
       return [
         ...(operation.members === undefined ? [] : ["access:members"]),

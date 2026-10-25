@@ -29,6 +29,8 @@ const server = createFakeServer({
   ...(params.get("member") === null
     ? {}
     : { member: params.get("member") as "edit" | "comment" | "view" }),
+  noReplies: params.has("noReplies"),
+  noSvgExport: params.has("noSvgExport"),
 });
 (window as unknown as { __design: typeof server }).__design = server;
 

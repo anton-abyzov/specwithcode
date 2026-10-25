@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vite-plus/test";
-import { COMFORTABLE_CANVAS_WIDTH, editorLayout, MIN_CANVAS_WIDTH } from "./editorLayout";
+import {
+  COMFORTABLE_CANVAS_WIDTH,
+  editorLayout,
+  HEADER_CRUMBS_WIDTH,
+  HEADER_TOOLS_WIDTH,
+  headerLayout,
+  MIN_CANVAS_WIDTH,
+} from "./editorLayout";
 
 // The app sidebar takes 256 px of the window; the editor gets the rest.
 const SIDEBAR = 256;
@@ -46,5 +53,20 @@ describe("editorLayout", () => {
     const design = editorLayout({ width: 1024, chatWidth: 400, chatOpen: true, slides: false });
     expect(design.rail).toBeNull();
     expect(design.canvasWidth).toBeGreaterThanOrEqual(MIN_CANVAS_WIDTH);
+  });
+});
+
+describe("headerLayout", () => {
+  it("collapses by the header's own width, tools before nothing, crumbs before tools", () => {
+    // 768 px window with the app sidebar open: the header is far narrower than the window.
+    expect(headerLayout(508)).toEqual({
+      tools: false,
+      crumbs: false,
+      saveLabel: false,
+      roomy: false,
+    });
+    expect(headerLayout(HEADER_TOOLS_WIDTH)).toMatchObject({ tools: true, crumbs: false });
+    expect(headerLayout(HEADER_CRUMBS_WIDTH)).toMatchObject({ tools: true, crumbs: true });
+    expect(headerLayout(1440)).toEqual({ tools: true, crumbs: true, saveLabel: true, roomy: true });
   });
 });

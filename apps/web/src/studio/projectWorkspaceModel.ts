@@ -1,7 +1,8 @@
+import { classifyProjectActions } from "@specweave-studio/shared/projectAttention";
+import { observeProjectThread } from "@specweave-studio/client-runtime/state/projectAttention";
 import type { EnvironmentThreadShell } from "@specweave-studio/client-runtime/state/shell";
 import { threadRuntimeIsActive } from "@specweave-studio/client-runtime/state/shell";
 import type { ProjectId, ThreadId } from "@specweave-studio/contracts";
-import { resolveSidebarThreadStatus } from "../components/Sidebar.logic";
 import { isAgentOwnedProjectThread } from "./projectPaneThreads";
 import { isProjectCoordinatorThread } from "./projectCoordinatorThreads";
 import { isNestedSubagentThread } from "./threadSubagents";
@@ -14,7 +15,13 @@ import {
   studioThreadLinkLabel,
 } from "./studioThreadLinks";
 
-export const PROJECT_THREAD_GROUPS = ["Waiting on you", "Working", "Idle", "Resolved"] as const;
+export const PROJECT_THREAD_GROUPS = [
+  "Waiting on you",
+  "Working",
+  "Unavailable",
+  "Idle",
+  "Resolved",
+] as const;
 export type ProjectThreadGroup = (typeof PROJECT_THREAD_GROUPS)[number];
 
 /** Attention and lifecycle remain independent in storage; grouping is only a view. */
@@ -57,16 +64,12 @@ export function projectThreadGroup(
   hostOffline = false,
 ): ProjectThreadGroup {
   if (thread.archivedAt !== null) return "Resolved";
-  if (hostOffline) return thread.settledOverride === "settled" ? "Resolved" : "Idle";
-  const status = resolveSidebarThreadStatus(thread);
-  if (thread.hasPendingApprovals || thread.hasPendingUserInput || thread.hasActionableProposedPlan)
-    return "Waiting on you";
+  if (hostOffline) return thread.settledOverride === "settled" ? "Resolved" : "Unavailable";
+  if (classifyProjectActions(observeProjectThread(thread)).length > 0) return "Waiting on you";
   if (threadRuntimeIsActive(thread.runtime)) return "Working";
   // Undelivered messages outrank a resolved mark: nothing else will start them.
   if (threadHeldQueue(thread) !== null) return "Waiting on you";
   if (thread.settledOverride === "settled") return "Resolved";
-  if (threadBlocker(thread) !== null) return "Waiting on you";
-  if (status === "limited" || status === "failed") return "Waiting on you";
   return "Idle";
 }
 

@@ -1,0 +1,20 @@
+/* Snapshot renderer: a copy of @acme/uikit's tokens, light only. */
+:root {
+  --acme-orange: #f97316;
+  --acme-brand: #4f46e5;
+  --acme-accent: var(--acme-orange);
+  --acme-bg: #fafafa;
+  --acme-surface: #ffffff;
+  --acme-ink: #1f2937;
+  --acme-muted: #6b7280;
+  --acme-line: #e5e7eb;
+  --acme-success: #16a34a;
+  --acme-warning: #b45309;
+  --acme-danger: #dc2626;
+  --acme-focus: var(--acme-brand);
+  --acme-link: var(--acme-focus);
+  --acme-radius-sm: 4px;
+  --acme-radius-md: 8px;
+  --acme-space-1: 4px;
+  --acme-space-2: 8px;
+}

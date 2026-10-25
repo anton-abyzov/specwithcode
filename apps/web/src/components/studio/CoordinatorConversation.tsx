@@ -16,7 +16,13 @@ import {
 } from "../../studio/projectCoordinatorMessageDisplay";
 import { ProjectWorkspaceAttachments } from "./ProjectWorkspaceAttachments";
 import { ProjectMessageBody } from "./ProjectMessageBody";
+import { WorkerMessageBody } from "./WorkerMessageBody";
 import { RoutineRunCard } from "./RoutineRunCard";
+import { CoordinatorDecisionRow } from "./CoordinatorQuestionCard";
+import {
+  answeredQuestionsByMessageId,
+  COORDINATOR_ASKER,
+} from "../../studio/coordinatorQuestionAnswers";
 import { parseRoutineRunMessage, type RoutineRunMessage } from "../../studio/routineRunMessage";
 import { useKnownRoutines } from "../../studio/useKnownRoutines";
 import { CollapsibleReport } from "../chat/CollapsibleReport";
@@ -30,6 +36,7 @@ import {
 } from "../../studio/coordinatorActivity";
 import {
   createContext,
+  Fragment,
   memo,
   startTransition,
   useCallback,
@@ -362,6 +369,10 @@ export function CoordinatorConversation({
       ),
     [prepared, linkWorkers],
   );
+  const answeredQuestions = useMemo(
+    () => answeredQuestionsByMessageId(turnItems ?? []),
+    [turnItems],
+  );
   // Concise: a reply that shows carries the cards and files of the replies it hides.
   const rows = useMemo(
     () =>
@@ -384,8 +395,10 @@ export function CoordinatorConversation({
           senderTitle: row.message.senderThreadId
             ? (linkWorkers.find((t) => t.id === row.message.senderThreadId)?.title ?? null)
             : null,
+          // The question this message answered: a card answer folds into it.
+          decision: answeredQuestions.get(row.message.id) ?? null,
         })),
-    [prepared, view, hidden, newThreads, messagesById, linkWorkers],
+    [prepared, view, hidden, newThreads, messagesById, linkWorkers, answeredQuestions],
   );
   // Only the latest messages mount; scrolling up or "Show earlier" mounts more.
   // A find in this conversation mounts them all, so every match can be found, and
@@ -516,39 +529,57 @@ export function CoordinatorConversation({
         )}
         {thread && messages.length === 0 && !history.hasMoreHistory ? empty : null}
         {rows.slice(firstShown).map((row) => (
-          <CoordinatorMessageRow
-            key={row.message.id}
-            message={row.message}
-            notice={row.notice}
-            text={row.text}
-            displayText={row.display.text}
-            sourceThreadId={row.display.sourceThread?.id ?? null}
-            sourceThreadTitle={row.display.sourceThread?.title ?? null}
-            routedFrom={row.display.routedFrom}
-            senderTitle={row.senderTitle}
-            executionLabel={row.executionLabel}
-            routine={row.routine}
-            routineCadence={row.routineCadence}
-            announcedKey={row.announcedKey}
-            attachments={row.attachments}
-            turn={turns.get(row.message.id)}
-            activity={view.activityByMessageId.get(row.message.id)}
-            isReport={reportIds.has(row.message.id)}
-            timestampFormat={timestampFormat}
-            environmentId={project.environmentId}
-            projectId={project.id}
-            workspaceRoot={project.workspaceRoot}
-            threadRef={ref}
-            coordinatorId={coordinatorId}
-            linkWorkers={linkWorkers}
-            linkTargets={environmentThreads}
-            canChange={canChange}
-            onOpenThread={onOpenThread}
-            onCreatePullRequest={onCreatePullRequest}
-            onOpenPullRequest={onOpenPullRequest}
-            onOpenCoordinatorPage={onOpenCoordinatorPage}
-            onOpenCoordinatorActivity={onOpenCoordinatorActivity}
-          />
+          <Fragment key={row.message.id}>
+            {row.decision ? (
+              <>
+                <TurnSeparator
+                  at={turns.get(row.message.id)?.separatorAt}
+                  timestampFormat={timestampFormat}
+                />
+                <CoordinatorDecisionRow
+                  item={row.decision.item}
+                  askedBy={COORDINATOR_ASKER}
+                  cwd={project.workspaceRoot}
+                  threadRef={ref}
+                />
+              </>
+            ) : null}
+            {row.decision?.folded ? null : (
+              <CoordinatorMessageRow
+                message={row.message}
+                notice={row.notice}
+                text={row.text}
+                displayText={row.display.text}
+                sourceThreadId={row.display.sourceThread?.id ?? null}
+                sourceThreadTitle={row.display.sourceThread?.title ?? null}
+                routedFrom={row.display.routedFrom}
+                senderTitle={row.senderTitle}
+                executionLabel={row.executionLabel}
+                routine={row.routine}
+                routineCadence={row.routineCadence}
+                announcedKey={row.announcedKey}
+                attachments={row.attachments}
+                turn={turns.get(row.message.id)}
+                separatorAbove={row.decision !== null}
+                activity={view.activityByMessageId.get(row.message.id)}
+                isReport={reportIds.has(row.message.id)}
+                timestampFormat={timestampFormat}
+                environmentId={project.environmentId}
+                projectId={project.id}
+                workspaceRoot={project.workspaceRoot}
+                threadRef={ref}
+                coordinatorId={coordinatorId}
+                linkWorkers={linkWorkers}
+                linkTargets={environmentThreads}
+                canChange={canChange}
+                onOpenThread={onOpenThread}
+                onCreatePullRequest={onCreatePullRequest}
+                onOpenPullRequest={onOpenPullRequest}
+                onOpenCoordinatorPage={onOpenCoordinatorPage}
+                onOpenCoordinatorActivity={onOpenCoordinatorActivity}
+              />
+            )}
+          </Fragment>
         ))}
         <RemoteWorkerCards environmentId={project.environmentId} projectId={project.id} />
         {view.liveActivity && working ? (
@@ -623,6 +654,24 @@ export function CoordinatorConversation({
   );
 }
 
+/** A centered time line where the conversation picks up after a pause. */
+function TurnSeparator({
+  at,
+  timestampFormat,
+}: {
+  readonly at: string | null | undefined;
+  readonly timestampFormat: TimestampFormat;
+}) {
+  if (!at) return null;
+  return (
+    <p className="sws-turn-separator">
+      <time dateTime={at}>
+        {formatConversationSeparator(at, (iso) => formatShortTimestamp(iso, timestampFormat))}
+      </time>
+    </p>
+  );
+}
+
 /**
  * One message of the conversation. Its props are the message and plain values
  * derived from it, so a keystroke, a send or another thread's update leaves it,
@@ -643,6 +692,7 @@ const CoordinatorMessageRow = memo(function CoordinatorMessageRow({
   announcedKey,
   attachments,
   turn,
+  separatorAbove,
   activity,
   isReport,
   timestampFormat,
@@ -679,6 +729,8 @@ const CoordinatorMessageRow = memo(function CoordinatorMessageRow({
   readonly announcedKey: string;
   readonly attachments: ReadonlyArray<ChatAttachment>;
   readonly turn: CoordinatorTurnLayout | undefined;
+  /** The answered question card above this message carries its time line. */
+  readonly separatorAbove: boolean;
   readonly activity: RunActivity | undefined;
   readonly isReport: boolean;
   readonly timestampFormat: TimestampFormat;
@@ -737,16 +789,9 @@ const CoordinatorMessageRow = memo(function CoordinatorMessageRow({
     },
     [announced, coordinatorId, linkWorkers, linkTargets, onOpenThread],
   );
-  // A centered time line where the conversation picks up after a pause.
-  const separator = turn?.separatorAt ? (
-    <p className="sws-turn-separator">
-      <time dateTime={turn.separatorAt}>
-        {formatConversationSeparator(turn.separatorAt, (iso) =>
-          formatShortTimestamp(iso, timestampFormat),
-        )}
-      </time>
-    </p>
-  ) : null;
+  const separator = separatorAbove ? null : (
+    <TurnSeparator at={turn?.separatorAt} timestampFormat={timestampFormat} />
+  );
   if (notice !== null)
     return (
       <>
@@ -876,10 +921,29 @@ const CoordinatorMessageRow = memo(function CoordinatorMessageRow({
               renderThreadLink={renderThreadLink}
             />
           </ReportArtifact>
+        ) : author === "Message from a worker" &&
+          !message.streaming &&
+          !message.id.startsWith("async-answer:") ? (
+          <WorkerMessageBody
+            original={message.text}
+            text={text}
+            renderMarkdown={(part) => (
+              <ChatMarkdown
+                text={part}
+                cwd={workspaceRoot}
+                threadRef={threadRef}
+                isStreaming={false}
+                lineBreaks
+                parseRawHtml={false}
+                renderContextReference={renderReference}
+                renderThreadLink={renderThreadLink}
+              />
+            )}
+          />
         ) : (
           <ProjectMessageBody
             text={displayText}
-            // A worker's answer follows the report rule, not the fold for the person's own prompts.
+            // The person's own long prompts fold; a worker's follows its own rule above.
             collapsible={message.role === "user" && author !== "Message from a worker"}
           >
             <CollapsibleReport
@@ -1046,7 +1110,7 @@ function MessageThreadLink({
   if (thread)
     return (
       <span className="project-message-source">
-        {prefix}{" "}
+        <span className="project-message-source-prefix">{prefix}</span>{" "}
         <ProjectThreadChip
           thread={thread}
           label={thread.title.trim() || "Untitled thread"}

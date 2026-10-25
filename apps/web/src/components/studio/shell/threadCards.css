@@ -73,13 +73,24 @@
     display: flex;
   }
 }
-/* The thread a coordinator message came from, above the message. */
+/* The thread a coordinator message came from, above the message. In a narrow
+   bubble the chip moves under "Sent by" and shortens; the words never break. */
 .project-message-source {
   display: inline-flex;
+  flex-wrap: wrap;
+  max-width: 100%;
+  min-width: 0;
   align-items: center;
-  gap: 6px;
+  gap: 2px 6px;
   color: var(--muted-foreground);
   font-size: 12.5px;
+}
+.project-message-source-prefix {
+  flex: none;
+  white-space: nowrap;
+}
+.project-message-source .sws-thread-link {
+  min-width: 0;
 }
 /* The machine a worker started elsewhere runs on. */
 .sws-machine-chip {

@@ -29,7 +29,9 @@ import {
   incrementRootFor,
   readRequireIncrementMode,
   readThreadIncrementProgress,
+  registeredRootAccepted,
   resolveIncrementRef,
+  resolveRegisteredIncrementRef,
   writeLaunchBinding,
   type ThreadIncrementSource,
 } from "./ThreadIncrementProgress.ts";
@@ -53,6 +55,11 @@ export interface LaunchIncrement {
   readonly specPath: string;
   /** The caller whose binding the worker inherited, when no ref was passed. */
   readonly inheritedFrom?: ThreadId;
+  /**
+   * An explicit ref found only in another checkout Git registered for the
+   * project's repository; its root is then readable by the new thread too.
+   */
+  readonly registered?: true;
 }
 
 export interface LaunchIncrementOutcome {
@@ -72,8 +79,25 @@ function linkDestination(path: string): string {
   return /[\s()<>]/u.test(path) ? `<${path}>` : path;
 }
 
-function existingBrief(increment: { readonly incrementId: string; readonly specPath: string }) {
-  return `Increment ${increment.incrementId} ([spec](${linkDestination(increment.specPath)})): run \`specweave pickup ${increment.incrementId}\` first.`;
+/** A path as one POSIX shell word. */
+function shellWord(path: string): string {
+  return /^[\w./-]+$/u.test(path) ? path : `'${path.replaceAll("'", `'\\''`)}'`;
+}
+
+function existingBrief(increment: {
+  readonly root: string;
+  readonly incrementId: string;
+  readonly specPath: string;
+  readonly registered?: true | undefined;
+}) {
+  const spec = `Increment ${increment.incrementId} ([spec](${linkDestination(increment.specPath)}))`;
+  const pickup = `specweave pickup ${increment.incrementId}`;
+  // SpecWeave resolves increments from the current directory, so a worker whose
+  // checkout lacks the folder runs its SpecWeave commands where it is planned. A
+  // new worktree made from a branch that holds it has it too, so try it first.
+  return increment.registered === true
+    ? `${spec}: run \`${pickup}\` first. It is planned in another checkout of this repository; if yours lacks it, run \`cd ${shellWord(increment.root)} && ${pickup}\` instead, and its other SpecWeave commands there too.`
+    : `${spec}: run \`${pickup}\` first.`;
 }
 
 function newBrief(title: string | undefined): string {
@@ -86,17 +110,31 @@ export const NO_INCREMENT_BRIEF = 'If you change code, run `specweave small-fix 
 /**
  * Whether a thread starting in `worktreePath` (null: the project) reads
  * `increment`: its checkout holds the folder, or `root` is one its plan card
- * and SpecWeave's edit guard accept for that thread.
+ * and SpecWeave's edit guard accept for that thread. Another registered
+ * checkout of the repository counts only for an increment named on purpose
+ * (`registered`), never for an inherited one.
  */
 async function readableFrom(
   workspaceRoot: string,
   worktreePath: string | null,
-  increment: { readonly root: string; readonly incrementId: string },
+  increment: {
+    readonly root: string;
+    readonly incrementId: string;
+    readonly registered?: true | undefined;
+  },
 ): Promise<"checkout" | "root" | null> {
   if (await incrementExists(workspaceRoot, worktreePath, increment.incrementId)) return "checkout";
   const root = await NodeFSP.realpath(increment.root).catch(() => null);
   const allowed = [workspaceRoot, ...(worktreePath === null ? [] : [worktreePath])];
-  return root !== null && (await bindingRootAccepted(root, allowed)) ? "root" : null;
+  if (root === null) return null;
+  if (await bindingRootAccepted(root, allowed)) return "root";
+  return increment.registered === true && (await registeredRootAccepted(root, allowed))
+    ? "root"
+    : null;
+}
+
+function registeredWarning(incrementId: string, root: string): string {
+  return `Increment ${incrementId} is in another checkout of this repository, ${root}: its ledger there is the one the plan card reads.`;
 }
 
 function notPassedOn(incrementId: string): string {
@@ -167,6 +205,22 @@ export async function resolveLaunchIncrement(input: {
           fellBack = retried.kind === "found";
         }
       }
+      // Planned in a checkout Git registered for this repository, such as another
+      // thread's worktree: named on purpose, so it resolves there.
+      let registered = false;
+      let elsewhereAmbiguous = false;
+      if (resolved.kind === "not_found") {
+        const elsewhere = await resolveRegisteredIncrementRef(
+          input.workspaceRoot,
+          input.worktreePath,
+          ref,
+        );
+        if (elsewhere.kind !== "not_found") {
+          resolved = elsewhere;
+          registered = elsewhere.kind === "found";
+          elsewhereAmbiguous = elsewhere.kind === "ambiguous";
+        }
+      }
       switch (resolved.kind) {
         case "not_found":
           return {
@@ -176,7 +230,9 @@ export async function resolveLaunchIncrement(input: {
         case "ambiguous":
           return {
             ok: false,
-            message: `Increment number ${ref} matches more than one folder in ${resolved.root}/.specweave/increments; pass the full folder name.`,
+            message: elsewhereAmbiguous
+              ? `Increment number ${ref} names different folders in other checkouts of this repository; pass the full folder name.`
+              : `Increment number ${ref} matches more than one folder in ${resolved.root}/.specweave/increments; pass the full folder name.`,
           };
         case "closed":
           return {
@@ -184,18 +240,24 @@ export async function resolveLaunchIncrement(input: {
             message: `Increment ${resolved.incrementId} is ${resolved.status}. Pass an open increment, "new" for new work, or "none".`,
           };
         case "found": {
-          const increment = {
+          const increment: LaunchIncrement = {
             root: resolved.root,
             incrementId: resolved.incrementId,
             title: resolved.title,
             specPath: resolved.specPath,
+            ...(registered ? { registered: true as const } : {}),
           };
+          const warning = registered
+            ? registeredWarning(increment.incrementId, increment.root)
+            : fellBack
+              ? fallbackWarning(increment.incrementId)
+              : undefined;
           return {
             ok: true,
             value: {
               increment,
               brief: existingBrief(increment),
-              ...(fellBack ? { warning: fallbackWarning(increment.incrementId) } : {}),
+              ...(warning === undefined ? {} : { warning }),
             },
           };
         }
@@ -281,7 +343,11 @@ export function launchIncrementFields(outcome: LaunchIncrementOutcome): {
  */
 export async function seedLaunchBinding(input: {
   readonly threadId: string;
-  readonly increment: { readonly root: string; readonly incrementId: string };
+  readonly increment: {
+    readonly root: string;
+    readonly incrementId: string;
+    readonly registered?: true | undefined;
+  };
   readonly workspaceRoot: string;
   readonly worktreePath: string | null;
   readonly home?: string;

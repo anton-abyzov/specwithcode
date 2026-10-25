@@ -63,6 +63,19 @@ export const braceReferences =
     return references;
   };
 
+/** True when `raw` is only `var(--name)` (or `{name}`), the token reading itself. */
+function isSelfReExport(raw: string | undefined, name: string, find: ReferenceFinder) {
+  if (raw === undefined) return false;
+  const text = raw.trim();
+  const references = find(text);
+  return (
+    references.length === 1 &&
+    references[0]!.name === name &&
+    references[0]!.start === 0 &&
+    references[0]!.end === text.length
+  );
+}
+
 export interface ResolveOptions {
   readonly baseMode: string;
   readonly modes: ReadonlyArray<string>;
@@ -175,6 +188,10 @@ export const resolveModes = (
     const cycleStart = stack.indexOf(name);
     if (cycleStart >= 0) {
       const members = [...stack.slice(cycleStart)];
+      // `--x: var(--x)` re-exports a variable another layer defines (Tailwind v4 `@theme`
+      // reading `:root`); it is unresolved here, not a cycle.
+      if (members.length === 1 && isSelfReExport(declared(name, mode)?.raw, name, options.references))
+        return null;
       const signature = `${mode}:${[...members].sort(compareText).join(",")}`;
       if (!reportedCycles.has(signature)) {
         reportedCycles.add(signature);

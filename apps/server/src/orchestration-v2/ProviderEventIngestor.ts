@@ -4,6 +4,7 @@ import {
   OrchestrationV2DomainEvent,
   OrchestrationV2StoredEvent,
   type OrchestrationV2PlanArtifact,
+  type OrchestrationV2RestartCancelledBackgroundWork,
   type OrchestrationV2Run,
   type OrchestrationV2ProviderTurn,
   type OrchestrationV2Subagent,
@@ -29,6 +30,7 @@ import { getModelSelectionStringOptionValue } from "@specweave-studio/shared/mod
 import * as AnalyticsService from "../telemetry/AnalyticsService.ts";
 import * as EventSink from "./EventSink.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
+import { lostWorkNoteEvents } from "./SubagentSettlement.ts";
 import * as IdAllocator from "./IdAllocator.ts";
 import { ProviderAdapterV2Event } from "./ProviderAdapter.ts";
 import { makeProviderFailureTurnItem } from "./ProviderFailure.ts";
@@ -235,6 +237,18 @@ export interface ProviderEventIngestorV2Shape {
       };
     },
   ) => Effect.Effect<ReadonlyArray<OrchestrationV2StoredEvent>, ProviderEventIngestorV2Error>;
+  /**
+   * Records subagents an outage interrupted on the provider thread's latest
+   * started run, so its next turn is told once. Work any run of the thread
+   * already records is skipped, so a repeated settlement adds nothing.
+   */
+  readonly noteLostSubagentWork?: (input: {
+    readonly threadId: ThreadId;
+    readonly providerThreadId: ProviderThreadId;
+    readonly work: ReadonlyArray<OrchestrationV2RestartCancelledBackgroundWork>;
+    /** Preparation discovers loss before this run offers its prompt. */
+    readonly beforeRunId?: RunId | null;
+  }) => Effect.Effect<ReadonlyArray<OrchestrationV2StoredEvent>, unknown>;
 }
 
 export class ProviderEventIngestorV2 extends Context.Service<
@@ -546,8 +560,26 @@ export const layer: Layer.Layer<
         ),
       );
 
+    const noteLostSubagentWork: NonNullable<
+      ProviderEventIngestorV2Shape["noteLostSubagentWork"]
+    > = (input) =>
+      Effect.gen(function* () {
+        if (input.work.length === 0) return [];
+        const { thread, runs } = yield* projections.getThreadRecords(input.threadId, ["runs"]);
+        const events = yield* lostWorkNoteEvents({
+          projection: { thread, runs },
+          beforeRunId: input.beforeRunId,
+          lostWork: new Map([[input.providerThreadId, input.work]]),
+          now: yield* DateTime.now,
+          allocateEventId: () => idAllocator.allocate.event({ threadId: input.threadId }),
+        });
+        if (events.length === 0) return [];
+        return yield* eventSink.write({ events });
+      });
+
     return ProviderEventIngestorV2.of({
       normalize,
+      noteLostSubagentWork,
       ingestNormalized: (input) =>
         Effect.gen(function* () {
           const events = yield* normalize(input);

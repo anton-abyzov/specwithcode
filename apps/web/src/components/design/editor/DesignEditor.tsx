@@ -3,13 +3,23 @@ import type {
   DesignComment,
   DesignNode,
   DesignOperation,
+  DesignSystemComponent,
   DesignThreadBinding,
 } from "@specweave-studio/contracts";
-import { designAccess, designBoundThread } from "@specweave-studio/shared/designOps";
-import type { DesignRenderContext } from "@specweave-studio/shared/designRender";
+import {
+  designAccess,
+  designBoundThread,
+  designCommentThreads,
+} from "@specweave-studio/shared/designOps";
+import {
+  type DesignRenderContext,
+  designRenderMode,
+  detachDesignTokens,
+} from "@specweave-studio/shared/designRender";
 import {
   CodeIcon,
   DownloadIcon,
+  HistoryIcon,
   MessageSquareIcon,
   PanelLeftCloseIcon,
   PanelLeftOpenIcon,
@@ -32,7 +42,7 @@ import {
 import { Button } from "~/components/ui/button";
 import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "~/components/ui/menu";
 import { toastManager } from "~/components/ui/toast";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "~/components/ui/tooltip";
+import { Tooltip, TooltipPopup, TooltipProvider, TooltipTrigger } from "~/components/ui/tooltip";
 import { WorkspacePageHeader } from "~/components/WorkspacePageHeader";
 import { isElectron } from "~/env";
 import { useTheme } from "~/hooks/useTheme";
@@ -42,7 +52,7 @@ import { DesignCanvas, zoomToContent } from "../canvas/DesignCanvas";
 import { indexNodes, pageRect, type Point } from "../canvas/geometry";
 import { DesignRenderContextValue } from "../canvas/NodeView";
 import { PresentMode, presentationFrames } from "../canvas/PresentMode";
-import { createImageNode, type CanvasTool } from "../canvas/tools";
+import { createComponentNode, createImageNode, type CanvasTool } from "../canvas/tools";
 import {
   downloadExport,
   cropExportImage,
@@ -54,23 +64,33 @@ import {
   type DesignEditorBackend,
   type DesignEditorData,
   type DesignExportRequest,
+  type DesignMessage,
 } from "./backend";
-import { DesignSystemPickerView } from "../systems/DesignSystemPicker";
+import { encodeSystemKey } from "../designKey";
+import { EditorMoreMenu, type EditorPlace } from "./EditorMoreMenu";
+import { EditorSystemPicker, useEditorSystem } from "./EditorSystemPicker";
+import { systemChangeOperations } from "./editorSystem";
+import { VersionHistoryPanel } from "./VersionHistoryPanel";
 import { editorLayout } from "./editorLayout";
-import { BoundThreadPane } from "./BoundThreadPane";
+import { useHeaderLayout } from "./useHeaderLayout";
+import { BoundThreadPane, threadNotice } from "./BoundThreadPane";
 import { CommentsPanel, type CommentDraft } from "./CommentsPanel";
+import { ComponentPicker } from "./ComponentPicker";
 import { PageMenu, ToolRail, ZoomMenu } from "./DesignToolbar";
 import {
   containingArtboard,
-  implementFrameMessage,
   selectionCrop,
   selectionMessage,
+  sendFrameHandoff,
+  type ImplementTarget,
 } from "./handoff";
 import { ImplementFrameDialog } from "./ImplementFrameDialog";
-import { useFieldDraft } from "./fieldDraft";
 import { MiniToolbar } from "./MiniToolbar";
 import { PropertiesPanel } from "./PropertiesPanel";
+import { ReuseChip } from "./ReuseChip";
 import { ShareDialog } from "./ShareDialog";
+import { OwnerCrumbs, SaveState, TitleField } from "./EditorTitleBar";
+import { ownerLinks } from "./ownerLinks";
 import { applySlideLayout } from "@specweave-studio/shared/slideLayouts";
 import { isEmptySlide, setSlideNotes } from "../slides/slideActions";
 import { SlideRail } from "../slides/SlideRail";
@@ -101,9 +121,11 @@ export interface DesignEditorProps {
  */
 export function DesignEditor({ backend, data, designKey, renderChat }: DesignEditorProps) {
   const router = useRouter();
-  const title = data.initial.title;
+  // The toast fires after the editor closed: name the design as it was last shown, not as it opened.
+  const titleRef = useRef(data.initial.title);
   const onUnsaved = useCallback(
     (outcome: DesignUnsavedOutcome) => {
+      const title = titleRef.current;
       toastManager.add({
         type: "error",
         title:
@@ -121,7 +143,7 @@ export function DesignEditor({ backend, data, designKey, renderChat }: DesignEdi
         },
       });
     },
-    [designKey, router, title],
+    [designKey, router],
   );
   const { session, snapshot } = useDesignSession(
     `${backend.environmentId}:${designKey}`,
@@ -131,6 +153,9 @@ export function DesignEditor({ backend, data, designKey, renderChat }: DesignEdi
     onUnsaved,
   );
   const document = snapshot.document;
+  useEffect(() => {
+    titleRef.current = document.title;
+  }, [document.title]);
   const [pageId, setPageId] = useState(document.pages[0]!.id);
   const page = document.pages.find((candidate) => candidate.id === pageId) ?? document.pages[0]!;
   const [tool, setTool] = useState<CanvasTool>("select");
@@ -138,7 +163,7 @@ export function DesignEditor({ backend, data, designKey, renderChat }: DesignEdi
   const [camera] = useState(() => new CameraStore());
   const [canvasOnly, setCanvasOnly] = useState(false);
   const [chatWidth, setChatWidth] = useState(() => readChatWidth());
-  const [side, setSide] = useState<"properties" | "comments">("properties");
+  const [side, setSide] = useState<"properties" | "comments" | "history">("properties");
   // Narrow windows: the thread and the side panel open over the canvas instead of beside it.
   const [chatOverlayOpen, setChatOverlayOpen] = useState(false);
   const [sideOverlayOpen, setSideOverlayOpen] = useState(false);
@@ -160,11 +185,16 @@ export function DesignEditor({ backend, data, designKey, renderChat }: DesignEdi
   const level = backend.audience === "owner" ? "edit" : access.members;
   const readOnly = level !== "edit";
   const canComment = level !== "view";
-  const mode = useMemo(() => {
-    const modes = data.system?.modes.map((item) => item.id) ?? [];
-    if (modes.includes(resolvedTheme)) return resolvedTheme;
-    return modes[0] ?? "light";
-  }, [data.system, resolvedTheme]);
+  // One pin per thread: replies sit with their first comment.
+  const threadRoots = useMemo(
+    () => designCommentThreads(document.comments).map((thread) => thread.root),
+    [document.comments],
+  );
+  // Slides render in the deck's mode, not the viewer's theme.
+  const mode = useMemo(
+    () => designRenderMode(document.kind, data.system, resolvedTheme),
+    [data.system, document.kind, resolvedTheme],
+  );
   const renderContext = useMemo<DesignRenderContext>(
     () => ({ system: data.system, mode, assetUrl: data.assetUrl }),
     [data.assetUrl, data.system, mode],
@@ -192,7 +222,18 @@ export function DesignEditor({ backend, data, designKey, renderChat }: DesignEdi
     slides,
   });
   const sideVisible = layout.side === "column" || sideOverlayOpen;
-  const showSide = (next: "properties" | "comments") => {
+  const [headerRef, header] = useHeaderLayout();
+  const undo = () => {
+    const r = session.undo();
+    if (!r.ok) reportError(r.detail);
+  };
+  const redo = () => {
+    const r = session.redo();
+    if (!r.ok) reportError(r.detail);
+  };
+  /** A header tool that moves into More on a narrow header. */
+  const headerTool = header.tools ? "" : "hidden";
+  const showSide = (next: "properties" | "comments" | "history") => {
     setSide(next);
     setSideOverlayOpen(true);
   };
@@ -225,6 +266,44 @@ export function DesignEditor({ backend, data, designKey, renderChat }: DesignEdi
     [reportError, session],
   );
 
+  const systemControl = useEditorSystem({
+    owner: backend.address.owner,
+    systems: backend.designSystems.systems,
+    projects: backend.designSystems.projects,
+    value: document.designSystem,
+    reuse: document.reuse ?? null,
+    // With no system, token layers keep the values they show now instead of turning transparent.
+    onChange: (systemId) =>
+      commit([
+        ...(systemId === null ? detachDesignTokens(document, renderContext) : []),
+        ...systemChangeOperations(systemId, document.reuse ?? null),
+      ]),
+    onCopy: backend.designSystems.copy,
+    onOpen: ({ owner, systemId }) =>
+      void router.navigate({
+        to: "/design/systems/$systemKey",
+        params: { systemKey: encodeSystemKey(owner, systemId) },
+      }),
+    onManage: () => void router.navigate({ to: "/settings/design-systems" }),
+    disabled: readOnly,
+  });
+  const versions = backend.versions ?? null;
+  const toggleSide = (next: "comments" | "history") => {
+    if (layout.side === "overlay")
+      return sideOverlayOpen && side === next ? setSideOverlayOpen(false) : showSide(next);
+    setSide(side === next ? "properties" : next);
+  };
+  /** Saves what is pending, then puts `revision` back as the newest revision. */
+  const restoreVersion = async (revision: number) => {
+    if (versions === null) return;
+    // A save still on the wire would land on top of the restore, or be rebased onto it.
+    if (!(await session.settle())) {
+      reportError("Some edits are not saved yet. Resolve them, then restore the version.");
+      return;
+    }
+    session.receive(await versions.restore(revision, session.getSnapshot().base.revision));
+  };
+
   const changePage = (next: string) => {
     setPageId(next);
     setSelection([]);
@@ -256,16 +335,30 @@ export function DesignEditor({ backend, data, designKey, renderChat }: DesignEdi
     }
     setTool("select");
   };
+  /** The page point at the centre of the canvas viewport. */
+  const viewCenter = (): Point => {
+    const size = camera.viewportSize();
+    const view = camera.get();
+    return { x: (size.width / 2 - view.x) / view.zoom, y: (size.height / 2 - view.y) / view.zoom };
+  };
   const pickImage = (at?: Point) => {
-    if (at === undefined) {
-      const size = camera.viewportSize();
-      const view = camera.get();
-      imageAt.current = {
-        x: (size.width / 2 - view.x) / view.zoom,
-        y: (size.height / 2 - view.y) / view.zoom,
-      };
-    } else imageAt.current = at;
+    imageAt.current = at ?? viewCenter();
     imageInput.current?.click();
+  };
+
+  // ---- components -----------------------------------------------------------
+  /** Into the middle of the selected frame, else the middle of the view. */
+  const insertComponent = (component: DesignSystemComponent) => {
+    const frame = selectedNodes.find((node) => node.type === "frame");
+    let at = viewCenter();
+    if (frame !== undefined) {
+      const rect = pageRect(index, frame);
+      at = { x: rect.x + rect.width / 2, y: rect.y + rect.height / 2 };
+    }
+    const { operation, node } = createComponentNode({ page, index }, component, at);
+    if (!commit([operation])) return;
+    setSelection([node.id]);
+    setTool("select");
   };
 
   // ---- export -------------------------------------------------------------------
@@ -312,6 +405,16 @@ export function DesignEditor({ backend, data, designKey, renderChat }: DesignEdi
       >
         PNG at 2x
       </MenuItem>
+      {backend.svgExport === true && (
+        <MenuItem
+          disabled={frame === null}
+          onClick={() =>
+            frame !== null && void runExport({ pageId: page.id, frameId: frame.id, format: "svg" })
+          }
+        >
+          SVG
+        </MenuItem>
+      )}
       <MenuItem
         disabled={frame === null}
         onClick={() =>
@@ -352,10 +455,35 @@ export function DesignEditor({ backend, data, designKey, renderChat }: DesignEdi
     });
     return [exportAsImage(result, `${(frame.name ?? "frame").replace(/[^\w.-]+/g, "-")}.png`)];
   };
+  // A thread this window started whose binding the server refused: the agent binds it itself.
+  const [selfBinding, setSelfBinding] = useState<{
+    readonly thread: DesignThreadBinding;
+    readonly reason: string;
+  } | null>(null);
+  const shownBinding =
+    binding ?? (selfBinding !== null && document.thread === undefined ? selfBinding.thread : null);
+  /**
+   * Starts the design's thread: binds it first, in a write of its own, so the
+   * agent's first edit never races the binding and a refusal never holds back
+   * canvas edits. When this window may not bind it, the thread still starts
+   * and binds itself (an agent may always bind its own thread).
+   */
+  const startBoundThread = async (first: DesignMessage | null) => {
+    const thread = { environmentId: backend.environmentId, threadId: backend.newThreadId() };
+    const previous = document.thread ?? null;
+    const bound = await session.applyAlone([{ op: "set_thread", thread }]);
+    try {
+      await backend.startThread(first, { threadId: thread.threadId, selfBind: !bound.ok });
+    } catch (cause) {
+      // No thread to point at: put the earlier binding back.
+      if (bound.ok) void session.applyAlone([{ op: "set_thread", thread: previous }]);
+      throw cause;
+    }
+    setSelfBinding(bound.ok ? null : { thread, reason: bound.detail });
+    return thread;
+  };
   const startThread = async () => {
-    const created = await backend.startThread(null);
-    commit([{ op: "set_thread", thread: created }]);
-    await session.flush();
+    await startBoundThread(null);
   };
   /** A PNG of exactly the selection (AC-06), also for layers outside any frame. */
   const selectionImage = async (ids: readonly string[]) => {
@@ -374,44 +502,58 @@ export function DesignEditor({ backend, data, designKey, renderChat }: DesignEdi
       text: selectionMessage({ document, page, ids: selection, designKey, request }),
       images: await selectionImage(selection),
     };
-    if (binding === null) {
-      const created = await backend.startThread(message);
-      commit([{ op: "set_thread", thread: created }]);
-    } else if (binding.environmentId !== backend.environmentId) {
+    if (binding === null && selfBinding === null) {
+      await startBoundThread(message);
+    } else if (binding === null && selfBinding !== null) {
+      await backend.sendToThread(selfBinding.thread, message);
+    } else if (binding !== null && binding.environmentId !== backend.environmentId) {
       throw new Error(
         `The design's thread runs on ${backend.machine(binding.environmentId)?.label ?? "another machine"}. Start a thread here first.`,
       );
-    } else await backend.sendToThread(binding, message);
+    } else if (binding !== null) await backend.sendToThread(binding, message);
     toastManager.add({ type: "success", title: "Sent to the design's thread" });
   };
-  const sendImplementation = async (
-    target: { kind: "new" } | { kind: "existing"; binding: DesignThreadBinding },
-  ) => {
+  const sendImplementation = async (target: ImplementTarget) => {
     const frame = implementFrame;
     if (frame === null) return;
-    const { title, text } = implementFrameMessage({
-      document,
-      page,
-      frame,
-      system: data.system,
-      mode,
-      designKey,
-    });
-    const message = { text, images: await frameImage(frame) };
-    let thread: DesignThreadBinding;
-    if (target.kind === "new") {
-      if (backend.startCodingThread === null)
-        throw new Error("This design has no project to start a coding thread in.");
-      thread = await backend.startCodingThread(message, title);
-    } else {
-      await backend.sendToThread(target.binding, message);
-      thread = target.binding;
-    }
-    toastManager.add({
-      type: "success",
-      title: `Sent ${frame.name ?? "the frame"} to a coding thread`,
-      actionProps: { children: "Open thread", onClick: () => backend.openThread(thread) },
-    });
+    const sent = await sendFrameHandoff(
+      {
+        settle: () => session.settle(),
+        saved: () => {
+          const snapshot = session.getSnapshot();
+          return { document: snapshot.base, saveState: snapshot.saveState };
+        },
+        render: frameImage,
+        startCodingThread: backend.startCodingThread,
+        sendToThread: backend.sendToThread,
+      },
+      { pageId: page.id, frameId: frame.id, system: data.system, mode, designKey, target },
+    );
+    const noPng =
+      sent.pngProblem === null
+        ? ""
+        : `No PNG went with it: the frame could not be rendered${sent.pngProblem === "" ? "" : ` (${sent.pngProblem})`}.`;
+    const open = { children: "Open thread", onClick: () => backend.openThread(sent.thread) };
+    toastManager.add(
+      sent.waiting
+        ? {
+            type: sent.pngProblem === null ? "info" : "warning",
+            title: `Created a coding thread for ${sent.frameName}`,
+            description: [
+              "No provider is ready, so the handoff waits in its composer and no turn has started. Sign in to one in Settings > Providers, then press Send.",
+              noPng,
+            ]
+              .filter((line) => line !== "")
+              .join(" "),
+            actionProps: open,
+          }
+        : {
+            type: sent.pngProblem === null ? "success" : "warning",
+            title: `Sent ${sent.frameName} to a coding thread`,
+            ...(noPng === "" ? {} : { description: noPng }),
+            actionProps: open,
+          },
+    );
   };
 
   // ---- comments --------------------------------------------------------------------
@@ -442,6 +584,34 @@ export function DesignEditor({ backend, data, designKey, renderChat }: DesignEdi
     setPresenting(selectedFrame?.id ?? frames[0]?.frame.id ?? null);
   };
 
+  const connect = backend.connectToProject
+    ? () =>
+        // Save what is pending first, so the move carries every edit.
+        void session
+          .flush()
+          .then(() => backend.connectToProject?.(() => session.getSnapshot().base))
+    : null;
+  // The breadcrumb's links, for More while the header hides it.
+  const owner = backend.share.ownerProject ?? null;
+  const links = ownerLinks(backend.share);
+  const project = links.project;
+  const places: EditorPlace[] = [
+    ...(owner !== null && project !== null
+      ? [
+          {
+            kind: "project" as const,
+            label: owner.label,
+            go: () => void router.navigate(project.route),
+          },
+        ]
+      : []),
+    {
+      kind: "designs",
+      label: owner === null ? "Playground designs" : `Designs in ${owner.label}`,
+      go: () => void router.navigate(links.designs.route),
+    },
+  ];
+
   const accessory =
     selectedNodes.length > 0 ? (
       <MiniToolbar
@@ -469,154 +639,183 @@ export function DesignEditor({ backend, data, designKey, renderChat }: DesignEdi
       />
     ) : null;
 
-  const saveLabel =
-    snapshot.saveState === "saved"
-      ? "Saved"
-      : snapshot.saveState === "saving"
-        ? "Saving..."
-        : snapshot.saveState === "pending"
-          ? "Unsaved changes"
-          : snapshot.saveState === "conflict"
-            ? "Waiting for your choice"
-            : "Not saved";
-
   return (
     <DesignRenderContextValue value={renderContext}>
       <div
         className="flex min-h-0 min-w-0 flex-1 flex-col bg-background text-foreground"
         data-testid="design-editor"
       >
-        <WorkspacePageHeader electron={isElectron} className="gap-1 border-b border-border/70">
-          {layout.chat === "overlay" ? (
-            <HeaderButton
-              label={chatOverlayOpen ? "Hide thread" : "Show thread"}
-              pressed={chatOverlayOpen}
-              onClick={() => setChatOverlayOpen(!chatOverlayOpen)}
-            >
-              {chatOverlayOpen ? <PanelLeftCloseIcon /> : <PanelLeftOpenIcon />}
-            </HeaderButton>
-          ) : (
-            <HeaderButton
-              label={canvasOnly ? "Show thread" : "Canvas only"}
-              pressed={canvasOnly}
-              onClick={() => setCanvasOnly(!canvasOnly)}
-            >
-              {canvasOnly ? <PanelLeftOpenIcon /> : <PanelLeftCloseIcon />}
-            </HeaderButton>
-          )}
-          {readOnly ? (
-            <h1 className="truncate px-1.5 text-sm font-medium">{document.title}</h1>
-          ) : (
-            <TitleField
-              title={document.title}
-              onRename={(title) => commit([{ op: "set_title", title }])}
-            />
-          )}
-          <div className="ml-1 w-44 shrink-0">
-            <DesignSystemPickerView
-              inline
-              owner={backend.address.owner}
-              systems={backend.designSystems.systems}
-              projects={backend.designSystems.projects}
-              value={document.designSystem}
-              onChange={(systemId) => commit([{ op: "set_design_system", systemId }])}
-              onCopy={backend.designSystems.copy}
-              disabled={readOnly}
-            />
-          </div>
-          <span
-            className={cn(
-              "ml-1 text-xs text-muted-foreground",
-              snapshot.saveState === "error" && "text-destructive-foreground",
-            )}
-            role="status"
-            data-testid="save-state"
+        {/* Header tooltips open after 400 ms, then instantly between neighbours. */}
+        <TooltipProvider delay={400}>
+          <WorkspacePageHeader
+            ref={headerRef}
+            electron={isElectron}
+            className="gap-1 border-b border-border/70"
           >
-            {saveLabel}
-          </span>
-          {snapshot.saveState === "error" && (
-            <Button variant="ghost" size="xs" onClick={() => void session.flush()}>
-              Retry
-            </Button>
-          )}
-          <div className="ml-auto flex items-center gap-0.5">
-            <HeaderButton
-              label="Undo (Cmd+Z)"
-              disabled={readOnly || !snapshot.canUndo}
-              onClick={() => {
-                const r = session.undo();
-                if (!r.ok) reportError(r.detail);
-              }}
-            >
-              <Undo2Icon />
-            </HeaderButton>
-            <HeaderButton
-              label="Redo (Shift+Cmd+Z)"
-              disabled={readOnly || !snapshot.canRedo}
-              onClick={() => {
-                const r = session.redo();
-                if (!r.ok) reportError(r.detail);
-              }}
-            >
-              <Redo2Icon />
-            </HeaderButton>
-            {layout.side === "overlay" && (
+            {layout.chat === "overlay" ? (
               <HeaderButton
-                label="Properties"
-                pressed={sideOverlayOpen && side === "properties"}
-                onClick={() =>
-                  sideOverlayOpen && side === "properties"
-                    ? setSideOverlayOpen(false)
-                    : showSide("properties")
+                label={chatOverlayOpen ? "Hide thread" : "Show thread"}
+                pressed={chatOverlayOpen}
+                onClick={() => setChatOverlayOpen(!chatOverlayOpen)}
+              >
+                {chatOverlayOpen ? <PanelLeftCloseIcon /> : <PanelLeftOpenIcon />}
+              </HeaderButton>
+            ) : (
+              <HeaderButton
+                label={canvasOnly ? "Show thread" : "Canvas only"}
+                pressed={canvasOnly}
+                onClick={() => setCanvasOnly(!canvasOnly)}
+              >
+                {canvasOnly ? <PanelLeftOpenIcon /> : <PanelLeftCloseIcon />}
+              </HeaderButton>
+            )}
+            {header.crumbs && <OwnerCrumbs share={backend.share} onConnect={connect} />}
+            {readOnly ? (
+              <h1 className="min-w-0 shrink-[4] truncate px-1.5 text-sm font-medium">
+                {document.title}
+              </h1>
+            ) : (
+              <TitleField
+                title={document.title}
+                onRename={(title) => commit([{ op: "set_title", title }])}
+              />
+            )}
+            <EditorSystemPicker
+              control={systemControl}
+              className={cn(
+                "ml-1 shrink-0",
+                header.roomy ? "w-44" : "w-36",
+                !header.tools && "hidden",
+              )}
+            />
+            {document.reuse !== undefined && document.designSystem === null ? (
+              <ReuseChip
+                reuse={document.reuse}
+                named={header.roomy}
+                onOpenSettings={() => void router.navigate({ to: "/settings/design-systems" })}
+              />
+            ) : null}
+            <SaveState state={snapshot.saveState} label={header.saveLabel} roomy={header.roomy} />
+            {snapshot.saveState === "error" && (
+              <Button variant="ghost" size="xs" onClick={() => void session.flush()}>
+                Retry
+              </Button>
+            )}
+            <div className="ml-auto flex shrink-0 items-center gap-0.5">
+              <HeaderButton
+                label="Undo (Cmd+Z)"
+                className={headerTool}
+                disabled={readOnly || !snapshot.canUndo}
+                onClick={undo}
+              >
+                <Undo2Icon />
+              </HeaderButton>
+              <HeaderButton
+                label="Redo (Shift+Cmd+Z)"
+                className={headerTool}
+                disabled={readOnly || !snapshot.canRedo}
+                onClick={redo}
+              >
+                <Redo2Icon />
+              </HeaderButton>
+              {layout.side === "overlay" && (
+                <HeaderButton
+                  label="Properties"
+                  pressed={sideOverlayOpen && side === "properties"}
+                  onClick={() =>
+                    sideOverlayOpen && side === "properties"
+                      ? setSideOverlayOpen(false)
+                      : showSide("properties")
+                  }
+                >
+                  <PanelRightIcon />
+                </HeaderButton>
+              )}
+              <HeaderButton
+                label="Comments"
+                pressed={sideVisible && side === "comments"}
+                onClick={() => toggleSide("comments")}
+              >
+                <MessageSquareIcon />
+              </HeaderButton>
+              {versions !== null && (
+                <HeaderButton
+                  label="Version history"
+                  className={headerTool}
+                  pressed={sideVisible && side === "history"}
+                  onClick={() => toggleSide("history")}
+                >
+                  <HistoryIcon />
+                </HeaderButton>
+              )}
+              <Menu>
+                <MenuTrigger
+                  render={
+                    <Button
+                      variant="ghost"
+                      size="icon-sm"
+                      aria-label="Export"
+                      className={headerTool}
+                    />
+                  }
+                >
+                  <DownloadIcon />
+                </MenuTrigger>
+                <MenuPopup align="end" className="min-w-56">
+                  {exportItems(targetFrame())}
+                </MenuPopup>
+              </Menu>
+              {backend.startCodingThread !== null && (
+                <HeaderButton
+                  label="Implement this frame"
+                  className={headerTool}
+                  disabled={targetFrame() === null}
+                  onClick={() => setImplementFrame(targetFrame())}
+                >
+                  <CodeIcon />
+                </HeaderButton>
+              )}
+              <HeaderButton label="Present" className={headerTool} onClick={() => presentStart()}>
+                <PlayIcon />
+              </HeaderButton>
+              {slides && (
+                <HeaderButton
+                  label="Presenter view"
+                  className={headerTool}
+                  onClick={() => presentStart(true)}
+                >
+                  <PresentationIcon />
+                </HeaderButton>
+              )}
+              <EditorMoreMenu
+                narrow={!header.tools}
+                crumbs={header.crumbs}
+                places={places}
+                onUndo={readOnly || !snapshot.canUndo ? null : undo}
+                onRedo={readOnly || !snapshot.canRedo ? null : redo}
+                system={systemControl}
+                onConnect={connect}
+                onHistory={versions === null ? null : () => showSide("history")}
+                exportItems={exportItems(targetFrame())}
+                onImplement={
+                  backend.startCodingThread === null ? null : () => setImplementFrame(targetFrame())
                 }
+                implementDisabled={targetFrame() === null}
+                onPresent={() => presentStart()}
+                onPresenterView={slides ? () => presentStart(true) : null}
+              />
+              <Button
+                size="sm"
+                className={cn("ml-1 shrink-0", !header.tools && "px-2")}
+                aria-label="Share"
+                onClick={() => setShareOpen(true)}
               >
-                <PanelRightIcon />
-              </HeaderButton>
-            )}
-            <HeaderButton
-              label="Comments"
-              pressed={sideVisible && side === "comments"}
-              onClick={() => {
-                if (layout.side === "overlay")
-                  return sideOverlayOpen && side === "comments"
-                    ? setSideOverlayOpen(false)
-                    : showSide("comments");
-                setSide(side === "comments" ? "properties" : "comments");
-              }}
-            >
-              <MessageSquareIcon />
-            </HeaderButton>
-            <Menu>
-              <MenuTrigger render={<Button variant="ghost" size="icon-sm" aria-label="Export" />}>
-                <DownloadIcon />
-              </MenuTrigger>
-              <MenuPopup align="end" className="min-w-56">
-                {exportItems(targetFrame())}
-              </MenuPopup>
-            </Menu>
-            {backend.startCodingThread !== null && (
-              <HeaderButton
-                label="Implement this frame"
-                disabled={targetFrame() === null}
-                onClick={() => setImplementFrame(targetFrame())}
-              >
-                <CodeIcon />
-              </HeaderButton>
-            )}
-            <HeaderButton label="Present" onClick={() => presentStart()}>
-              <PlayIcon />
-            </HeaderButton>
-            {slides && (
-              <HeaderButton label="Presenter view" onClick={() => presentStart(true)}>
-                <PresentationIcon />
-              </HeaderButton>
-            )}
-            <Button size="sm" className="ml-1" onClick={() => setShareOpen(true)}>
-              <Share2Icon />
-              Share
-            </Button>
-          </div>
-        </WorkspacePageHeader>
+                <Share2Icon />
+                {header.tools && <span>Share</span>}
+              </Button>
+            </div>
+          </WorkspacePageHeader>
+        </TooltipProvider>
         <div
           ref={body}
           className="relative flex min-h-0 min-w-0 flex-1"
@@ -635,13 +834,19 @@ export function DesignEditor({ backend, data, designKey, renderChat }: DesignEdi
               style={{ width: layout.chatWidth }}
             >
               <BoundThreadPane
-                binding={binding}
+                binding={shownBinding}
                 environmentId={backend.environmentId}
                 machine={backend.machine}
                 renderChat={renderChat}
                 onStartThread={startThread}
                 canStart={!readOnly}
                 onOpenThere={backend.openThread}
+                notice={threadNotice({
+                  binding,
+                  selfBinding,
+                  providerReady: backend.providerReady,
+                  started: binding === null ? undefined : backend.threadStarted?.(binding),
+                })}
               />
             </section>
           )}
@@ -664,7 +869,7 @@ export function DesignEditor({ backend, data, designKey, renderChat }: DesignEdi
                   <DesignCanvas
                     session={session}
                     page={page}
-                    comments={document.comments}
+                    comments={threadRoots}
                     camera={camera}
                     tool={tool}
                     onToolChange={setTool}
@@ -706,6 +911,13 @@ export function DesignEditor({ backend, data, designKey, renderChat }: DesignEdi
                         onToolChange={setTool}
                         onImage={() => pickImage()}
                       />
+                      {!readOnly && (
+                        <ComponentPicker
+                          system={data.system}
+                          mode={mode}
+                          onInsert={insertComponent}
+                        />
+                      )}
                     </div>
                     <div className="pointer-events-auto flex shrink-0 items-center rounded-lg border bg-popover/95 p-0.5 shadow-sm backdrop-blur">
                       <ZoomMenu
@@ -770,19 +982,37 @@ export function DesignEditor({ backend, data, designKey, renderChat }: DesignEdi
               </div>
               {sideVisible && (
                 <aside
-                  aria-label={side === "comments" ? "Comments" : "Properties"}
+                  aria-label={
+                    side === "comments"
+                      ? "Comments"
+                      : side === "history"
+                        ? "Version history"
+                        : "Properties"
+                  }
                   data-testid="design-side-panel"
                   className={cn(
                     "flex w-64 shrink-0 flex-col border-l border-border/70 bg-background",
                     layout.side === "overlay" && "absolute inset-y-0 right-0 z-30 shadow-lg",
                   )}
                 >
-                  {side === "comments" ? (
+                  {side === "history" && versions !== null ? (
+                    <VersionHistoryPanel
+                      versions={versions}
+                      revision={snapshot.base.revision}
+                      readOnly={readOnly}
+                      onRestore={restoreVersion}
+                      onClose={() => {
+                        setSide("properties");
+                        setSideOverlayOpen(false);
+                      }}
+                    />
+                  ) : side === "comments" ? (
                     <CommentsPanel
                       document={document}
                       draft={canComment ? commentDraft : null}
                       activeId={activeComment}
                       canComment={canComment}
+                      canReply={backend.commentReplies === true}
                       onCommit={(operations) => commit(operations)}
                       onCancelDraft={() => setCommentDraft(null)}
                       onOpen={(comment) => {
@@ -849,50 +1079,67 @@ export function DesignEditor({ backend, data, designKey, renderChat }: DesignEdi
         document={document}
         share={backend.share}
         canChangeAccess={backend.audience === "owner"}
-        onCommit={(operations) => commit(operations)}
-        exportActions={
-          <>
-            <Button
-              variant="outline"
-              size="xs"
-              disabled={targetFrame() === null}
-              onClick={() => {
-                const f = targetFrame();
-                if (f !== null)
-                  void runExport({ pageId: page.id, frameId: f.id, format: "png", scale: 2 });
-              }}
-            >
-              PNG
-            </Button>
-            <Button
-              variant="outline"
-              size="xs"
-              disabled={targetFrame() === null}
-              onClick={() => {
-                const f = targetFrame();
-                if (f !== null) void runExport({ pageId: page.id, frameId: f.id, format: "html" });
-              }}
-            >
-              HTML
-            </Button>
-            <Button
-              variant="outline"
-              size="xs"
-              onClick={() => void runExport({ pageId: page.id, format: "pdf" })}
-            >
-              PDF
-            </Button>
-            {slides && (
-              <Button
-                variant="outline"
-                size="xs"
-                onClick={() => void runExport({ pageId: page.id, format: "pptx" })}
-              >
-                PPTX
-              </Button>
-            )}
-          </>
+        onCommit={(operations) =>
+          // Access changes save on their own, so a refusal never holds back canvas edits.
+          void session.applyAlone(operations).then((result) => {
+            if (!result.ok) reportError(result.detail);
+          })
         }
+        threadTitle={
+          shownBinding === null
+            ? null
+            : (backend.codingThreads.find(
+                (thread) => thread.binding.threadId === shownBinding.threadId,
+              )?.title ?? "the design thread")
+        }
+        onOpenThread={shownBinding === null ? null : () => backend.openThread(shownBinding)}
+        onStartThread={
+          shownBinding === null && !readOnly
+            ? () => {
+                setShareOpen(false);
+                void startThread().catch((cause: unknown) =>
+                  reportError(cause instanceof Error ? cause.message : String(cause)),
+                );
+              }
+            : null
+        }
+        exports={[
+          {
+            format: "png",
+            label: "PNG image",
+            disabled: targetFrame() === null,
+            run: async () => {
+              const f = targetFrame();
+              if (f !== null)
+                await runExport({ pageId: page.id, frameId: f.id, format: "png", scale: 2 });
+            },
+          },
+          {
+            format: "html",
+            label: "HTML",
+            disabled: targetFrame() === null,
+            run: async () => {
+              const f = targetFrame();
+              if (f !== null) await runExport({ pageId: page.id, frameId: f.id, format: "html" });
+            },
+          },
+          {
+            format: "pdf",
+            label: "PDF",
+            disabled: false,
+            run: () => runExport({ pageId: page.id, format: "pdf" }),
+          },
+          ...(slides
+            ? [
+                {
+                  format: "pptx" as const,
+                  label: "PowerPoint",
+                  disabled: false,
+                  run: () => runExport({ pageId: page.id, format: "pptx" }),
+                },
+              ]
+            : []),
+        ]}
       />
       {implementFrame !== null && (
         <ImplementFrameDialog
@@ -901,6 +1148,7 @@ export function DesignEditor({ backend, data, designKey, renderChat }: DesignEdi
           frameName={implementFrame.name ?? "frame"}
           threads={backend.codingThreads}
           canStartNew={backend.startCodingThread !== null}
+          providerReady={backend.providerReady !== false}
           onSend={sendImplementation}
         />
       )}
@@ -912,12 +1160,14 @@ function HeaderButton({
   label,
   pressed,
   disabled,
+  className,
   onClick,
   children,
 }: {
   label: string;
   pressed?: boolean;
   disabled?: boolean;
+  className?: string;
   onClick: () => void;
   children: ReactNode;
 }) {
@@ -930,6 +1180,7 @@ function HeaderButton({
             size="icon-sm"
             aria-label={label}
             {...(pressed === undefined ? {} : { "aria-pressed": pressed })}
+            {...(className === undefined ? {} : { className })}
             disabled={disabled}
             onClick={onClick}
           >
@@ -939,30 +1190,6 @@ function HeaderButton({
       />
       <TooltipPopup side="bottom">{label}</TooltipPopup>
     </Tooltip>
-  );
-}
-
-function TitleField({ title, onRename }: { title: string; onRename: (title: string) => void }) {
-  const field = useFieldDraft(title);
-  return (
-    <input
-      aria-label="Design title"
-      {...field.inputProps}
-      maxLength={180}
-      className="h-7 min-w-16 max-w-80 rounded-md bg-transparent px-1.5 field-sizing-content text-sm font-medium outline-none hover:bg-accent focus-visible:bg-background focus-visible:ring-2 focus-visible:ring-ring"
-      onBlur={(event) => {
-        const next = event.currentTarget.value.trim();
-        field.end();
-        if (next !== "" && next !== title) onRename(next);
-      }}
-      onKeyDown={(event) => {
-        if (event.key === "Enter") event.currentTarget.blur();
-        if (event.key === "Escape") {
-          field.set(title);
-          event.currentTarget.blur();
-        }
-      }}
-    />
   );
 }
 

@@ -8,12 +8,15 @@ import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
 import { applyDesignOperations, newDesignDocument } from "./designOps.ts";
-import { designNodeStyle } from "./designRender.ts";
+import { compositeColor, contrastRatio, cssColorToRgba, type Rgba } from "./colorContrast.ts";
+import { designNodeStyle, designTokenValue } from "./designRender.ts";
 import {
   applySlideLayout,
   SLIDE_LAYOUTS,
   slideLayoutNodes,
   slideLayoutPage,
+  type SlideColor,
+  slideDeckMode,
   slideTokens,
 } from "./slideLayouts.ts";
 
@@ -78,6 +81,51 @@ const weave = system([
   token("wv-font", "fontFamily", "Söhne, sans-serif"),
 ]);
 
+/** Shaped like the EasyChamp UI Kit: component tokens, both navy in light mode. */
+const easychamp = system([
+  token("chip-invert-bg", "color", "#0b2545", "#f1f5f9"),
+  token("btn-ghost-fg", "color", "#13315c", "#e2e8f0"),
+  token("color-on-invert", "color", "#ffffff", "#0b2545"),
+  token("color-primary", "color", "#1d4ed8", "#60a5fa"),
+  token("card-bg", "color", "#ffffff", "#0f172a"),
+]);
+
+/** Unqualified `bg` and `fg` that are both navy: names alone cannot be trusted. */
+const navyPair = system([
+  token("bg", "color", "#0b2545", "#0b2545"),
+  token("fg", "color", "#13315c", "#13315c"),
+  token("surface", "color", "#102a4c", "#102a4c"),
+  token("accent", "color", "#1d4ed8", "#1d4ed8"),
+]);
+
+function rgbIn(design: DesignSystem, color: SlideColor, under: Rgba): Rgba {
+  const value =
+    typeof color.paint === "string"
+      ? color.paint
+      : designTokenValue(design, color.paint.token, slideDeckMode(design));
+  const rgb = cssColorToRgba(value);
+  if (rgb === null) throw new Error(`unreadable color ${JSON.stringify(color)}`);
+  return compositeColor(rgb, under, color.opacity ?? 1);
+}
+
+function expectReadable(design: DesignSystem) {
+  const tokens = slideTokens(design);
+  const white: Rgba = { r: 1, g: 1, b: 1, a: 1 };
+  const background = rgbIn(design, tokens.background, white);
+  const surface = rgbIn(design, tokens.surface, background);
+  const accent = rgbIn(design, tokens.accent, background);
+  const pairs: Array<[SlideColor, Rgba]> = [
+    [tokens.ink, background],
+    [tokens.muted, background],
+    [tokens.ink, surface],
+    [tokens.muted, surface],
+    [tokens.accentInk, accent],
+  ];
+  for (const [text, under] of pairs)
+    expect(contrastRatio(rgbIn(design, text, under), under)).toBeGreaterThanOrEqual(4.5);
+  return tokens;
+}
+
 const decode = Schema.decodeUnknownExit(DesignNode);
 
 describe("slideTokens", () => {
@@ -104,6 +152,34 @@ describe("slideTokens", () => {
     expect(tokens.accentInk).toEqual({ paint: { token: "wv-paper" } });
     expect(tokens.display).toEqual({ token: "wv-font" });
     expect(tokens.body).toEqual({ token: "wv-font" });
+  });
+
+  it("never pairs component tokens that share a navy color (EasyChamp)", () => {
+    const tokens = expectReadable(easychamp);
+    expect(tokens.background).not.toEqual({ paint: { token: "chip-invert-bg" } });
+    expect(tokens.ink).not.toEqual({ paint: { token: "btn-ghost-fg" } });
+  });
+
+  it("falls back to plain light text when no ink token reads on the background", () => {
+    const tokens = expectReadable(navyPair);
+    // `surface` outranks the `bg` shorthand; neither has an ink token that reads on it.
+    expect(tokens.background).toEqual({ paint: { token: "surface" } });
+    expect(tokens.ink).toEqual({ paint: "#ffffff" });
+  });
+
+  it("keeps ordinary systems readable with their own tokens", () => {
+    expectReadable(shadcn);
+    expectReadable(weave);
+  });
+
+  it("checks contrast in the system's first mode", () => {
+    const darkFirst = system([
+      token("background", "color", "#ffffff", "#0b0b0f"),
+      token("foreground", "color", "#0b0b0f", "#f4f4f5"),
+    ]);
+    const flipped = { ...darkFirst, modes: [...darkFirst.modes].reverse() } as DesignSystem;
+    expect(slideDeckMode(flipped)).toBe("dark");
+    expectReadable(flipped);
   });
 
   it("falls back to neutral literals without a system", () => {

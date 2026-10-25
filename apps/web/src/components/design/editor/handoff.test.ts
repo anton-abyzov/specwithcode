@@ -3,15 +3,21 @@ import type {
   DesignNode,
   DesignOperation,
   DesignSystem,
+  DesignThreadBinding,
+  EnvironmentId,
+  ThreadId,
 } from "@specweave-studio/contracts";
 import { applyDesignOperations, newDesignDocument } from "@specweave-studio/shared/designOps";
 import { describe, expect, it } from "vite-plus/test";
+import type { DesignImage, DesignMessage } from "./backend";
 import {
   containingArtboard,
   implementFrameMessage,
   matchingComponents,
   selectionCrop,
+  sendFrameHandoff,
   usedTokens,
+  type FrameHandoffDeps,
 } from "./handoff";
 
 const system = {
@@ -152,6 +158,24 @@ describe("handoff", () => {
     expect(parsed.nodes.map((node) => node.id)).toEqual(["f_booking", "n_card", "n_cta"]);
   });
 
+  it("says why no PNG is attached when the frame could not be rendered", () => {
+    const document = booking();
+    const page = document.pages[0]!;
+    const frame = page.nodes.find((node) => node.id === "f_booking")!;
+    const input = { document, page, frame, system, mode: "light", designKey: "pg.d_test" };
+    const without = implementFrameMessage({ ...input, pngProblem: "Chrome did not start." });
+    expect(without.text).toContain(
+      "No PNG is attached: the frame could not be rendered (Chrome did not start). Build it from the frame JSON below",
+    );
+    expect(without.text).not.toContain("The attached PNG is the frame as rendered");
+    expect(implementFrameMessage({ ...input, pngProblem: null }).text).toBe(
+      implementFrameMessage(input).text,
+    );
+    expect(implementFrameMessage(input).text).toContain(
+      "The attached PNG is the frame as rendered",
+    );
+  });
+
   it("crops Ask agent's PNG to the selection, inside a frame or on the page", () => {
     const page = booking().pages[0]!;
     expect(selectionCrop(page, ["n_cta"])).toEqual({
@@ -164,5 +188,132 @@ describe("handoff", () => {
     });
     expect(selectionCrop(page, ["n_cta", "n_loose"])?.frameId).toBeUndefined();
     expect(selectionCrop(page, ["missing"])).toBeNull();
+  });
+});
+
+describe("sendFrameHandoff", () => {
+  const environmentId = "env-a" as EnvironmentId;
+  const existing = { environmentId, threadId: "t-existing" as ThreadId };
+  const png: DesignImage = {
+    name: "Booking.png",
+    mimeType: "image/png",
+    dataUrl: "data:image/png;base64,iVBORw0KGgo=",
+    sizeBytes: 8,
+  };
+
+  /** Deps that record every call; the saved document is revision 7 of the booking design. */
+  function deps(
+    options: {
+      settled?: boolean;
+      saveState?: string;
+      render?: () => Promise<DesignImage[]>;
+      waiting?: boolean;
+    } = {},
+  ) {
+    const saved = { ...booking(), revision: 7 };
+    const calls = {
+      settle: 0,
+      render: [] as string[],
+      started: [] as { message: DesignMessage; title: string }[],
+      sent: [] as { thread: DesignThreadBinding; message: DesignMessage }[],
+    };
+    const handoff: FrameHandoffDeps = {
+      settle: async () => {
+        calls.settle += 1;
+        return options.settled ?? true;
+      },
+      saved: () => ({ document: saved, saveState: options.saveState ?? "saved" }),
+      render: async (frame) => {
+        calls.render.push(frame.id);
+        return options.render === undefined ? [png] : options.render();
+      },
+      startCodingThread: async (message, title) => {
+        calls.started.push({ message, title });
+        return {
+          environmentId,
+          threadId: "t-new" as ThreadId,
+          ...(options.waiting === undefined ? {} : { waiting: options.waiting }),
+        };
+      },
+      sendToThread: async (thread, message) => {
+        calls.sent.push({ thread, message });
+      },
+    };
+    return { handoff, calls };
+  }
+  const input = (target: Parameters<typeof sendFrameHandoff>[1]["target"]) => ({
+    pageId: booking().pages[0]!.id,
+    frameId: "f_booking",
+    system,
+    mode: "light",
+    designKey: "pg.d_test",
+    target,
+  });
+
+  it("refuses while an edit is unsaved and sends nothing", async () => {
+    for (const options of [{ settled: false }, { saveState: "error" }]) {
+      const { handoff, calls } = deps(options);
+      await expect(sendFrameHandoff(handoff, input({ kind: "new" }))).rejects.toThrow(
+        "Your changes are not saved yet, so the frame was not sent.",
+      );
+      expect(calls.settle).toBe(1);
+      expect(calls.render).toEqual([]);
+      expect(calls.started).toEqual([]);
+      expect(calls.sent).toEqual([]);
+    }
+  });
+
+  it("starts a new thread from the saved revision with the frame's PNG", async () => {
+    const { handoff, calls } = deps({ waiting: false });
+    const sent = await sendFrameHandoff(handoff, input({ kind: "new" }));
+    expect(sent).toEqual({
+      thread: { environmentId, threadId: "t-new" },
+      frameName: "Booking",
+      waiting: false,
+      pngProblem: null,
+    });
+    expect(calls.started).toHaveLength(1);
+    expect(calls.started[0]!.title).toBe("Implement Booking");
+    expect(calls.started[0]!.message.images).toEqual([png]);
+    expect(calls.started[0]!.message.text).toContain("(pg.d_test, page");
+    expect(calls.started[0]!.message.text).toContain("revision 7)");
+    expect(calls.sent).toEqual([]);
+  });
+
+  it("reports a new thread that waits for a provider", async () => {
+    const { handoff, calls } = deps({ waiting: true });
+    const sent = await sendFrameHandoff(handoff, input({ kind: "new" }));
+    expect(sent.waiting).toBe(true);
+    expect(sent.thread).toEqual({ environmentId, threadId: "t-new" });
+    expect(calls.started).toHaveLength(1);
+  });
+
+  it("sends without a PNG, saying why, when the frame cannot be rendered", async () => {
+    const { handoff, calls } = deps({
+      render: async () => {
+        throw new Error("Headless Chrome could not start.");
+      },
+    });
+    const sent = await sendFrameHandoff(handoff, input({ kind: "existing", binding: existing }));
+    expect(sent).toEqual({
+      thread: existing,
+      frameName: "Booking",
+      waiting: false,
+      pngProblem: "Headless Chrome could not start",
+    });
+    expect(calls.sent).toHaveLength(1);
+    expect(calls.sent[0]!.message.images).toEqual([]);
+    expect(calls.sent[0]!.message.text).toContain(
+      "No PNG is attached: the frame could not be rendered (Headless Chrome could not start).",
+    );
+    expect(calls.started).toEqual([]);
+  });
+
+  it("refuses a new thread without a project before saving anything", async () => {
+    const { handoff, calls } = deps();
+    await expect(
+      sendFrameHandoff({ ...handoff, startCodingThread: null }, input({ kind: "new" })),
+    ).rejects.toThrow("This design has no project to start a coding thread in.");
+    expect(calls.settle).toBe(0);
   });
 });

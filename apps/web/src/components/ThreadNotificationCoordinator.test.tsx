@@ -1,3 +1,4 @@
+import { __resetNotificationEpisodesForTests } from "../notificationEpisodes";
 import type { ClientSettings } from "@specweave-studio/contracts/settings";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
@@ -10,6 +11,18 @@ const state = vi.hoisted(() => ({
   inApp: true,
   inputAlerts: false,
   title: "Fix the login form",
+  runId: "run-1",
+  requestId: "request-1",
+  requestTime: "2026-09-13T09:00:00.000Z",
+  revision: "2026-09-13T09:00:00.000Z",
+  signin: false,
+  plan: false,
+  held: 0,
+  idle: false,
+  settled: false,
+  deleted: false,
+  present: true,
+
   active: { environmentId: "env-1", threadId: "other-thread" },
   focused: true,
   visible: "visible",
@@ -33,6 +46,8 @@ const state = vi.hoisted(() => ({
   navigate: vi.fn(),
   groups: [] as unknown[],
   paneThread: null as string | null,
+  paneEnvironment: null as string | null,
+  checkout: null as string | null,
   sound: vi.fn(),
   notification: vi.fn(function (_title: string, options: NotificationOptions) {
     return Object.assign(new EventTarget(), { tag: options.tag, close: vi.fn() });
@@ -61,49 +76,70 @@ function mockThreadShell() {
     forkedFrom: null,
     createdBy: state.createdBy,
     creationSource: state.creationSource,
-    latestRunId: "run-1",
+    latestRunId: state.runId,
     activeRunId: null,
-    status: state.completedAt
-      ? "completed"
-      : state.sessionError || state.turnError || state.limited
-        ? "failed"
-        : "running",
+    status: state.idle
+      ? "idle"
+      : state.completedAt
+        ? "completed"
+        : state.sessionError || state.turnError || state.limited
+          ? "failed"
+          : "running",
     lastErrorClass: state.limited ? "usage_limit" : null,
     pendingRuntimeRequest: state.input
-      ? { id: "request-1", kind: "user_input", createdAt: SHELL_NOW }
+      ? {
+          id: state.requestId,
+          kind: "user_input",
+          createdAt: DateTime.makeUnsafe(state.requestTime),
+        }
       : state.approval
-        ? { id: "request-1", kind: "command", createdAt: SHELL_NOW }
-        : null,
+        ? {
+            id: state.requestId,
+            kind: "command",
+            createdAt: DateTime.makeUnsafe(state.requestTime),
+          }
+        : state.signin
+          ? {
+              id: state.requestId,
+              kind: "auth_refresh",
+              createdAt: DateTime.makeUnsafe(state.requestTime),
+            }
+          : null,
     latestVisibleMessage: null,
     latestUserMessageAt: null,
-    hasActionableProposedPlan: false,
+    hasActionableProposedPlan: state.plan,
+    heldQueuedCount: state.held,
     pendingBackgroundTasks: state.background,
     itemCount: 0,
     visibleItemCount: 0,
     createdAt: SHELL_NOW,
-    updatedAt: SHELL_NOW,
+    updatedAt: DateTime.makeUnsafe(state.revision),
     latestRunRequestedAt: SHELL_NOW,
     latestRunStartedAt: SHELL_NOW,
     latestRunCompletedAt: state.completedAt ? DateTime.makeUnsafe(state.completedAt) : undefined,
     archivedAt: state.archivedAt ? DateTime.makeUnsafe(state.archivedAt) : null,
-    settledOverride: null,
-    settledAt: null,
+    settledOverride: state.settled ? "settled" : null,
+    settledAt: state.settled ? SHELL_NOW : null,
     lastVisitedAt: null,
-    deletedAt: null,
+    deletedAt: state.deleted ? SHELL_NOW : null,
   };
 }
 
 vi.mock("@effect/atom-react", () => ({
   useAtomValue: () => ({
     status: state.live ? "live" : "disconnected",
-    snapshot: Option.some({ threads: [mockThreadShell()] }),
+    snapshot: Option.some({ threads: state.present ? [mockThreadShell()] : [] }),
   }),
 }));
 vi.mock("@tanstack/react-router", () => ({
   useNavigate: () => state.navigate,
   useParams: () => state.active,
   useSearch: (options: { select: (search: Record<string, unknown>) => unknown }) =>
-    options.select(state.paneThread === null ? {} : { thread: state.paneThread }),
+    options.select({
+      thread: state.paneThread,
+      threadEnvironment: state.paneEnvironment,
+      checkout: state.checkout,
+    }),
 }));
 vi.mock("./settings/useSettingsProjectGroups", () => ({
   useSettingsProjectGroups: () => state.groups,
@@ -146,6 +182,8 @@ vi.mock("./ui/toast", () => ({
 }));
 
 import { __resetNotificationOwnerForTests } from "../threadNotifications";
+import { setNotificationsConnected } from "../notificationConnection";
+import { __resetNotificationHistoryForTests } from "../notificationHistory";
 import { ThreadNotificationCoordinator } from "./ThreadNotificationCoordinator";
 
 let renderer: ReactTestRenderer | undefined;
@@ -165,11 +203,28 @@ async function complete() {
 beforeEach(() => {
   vi.clearAllMocks();
   __resetNotificationOwnerForTests();
+  __resetNotificationHistoryForTests();
+  __resetNotificationEpisodesForTests();
   Object.assign(state, {
+    paneThread: null,
+    paneEnvironment: null,
+    checkout: null,
+    groups: [],
     mode: "off",
     inApp: true,
     inputAlerts: false,
     title: "Fix the login form",
+    runId: "run-1",
+    requestId: "request-1",
+    requestTime: "2026-09-13T09:00:00.000Z",
+    revision: "2026-09-13T09:00:00.000Z",
+    signin: false,
+    plan: false,
+    held: 0,
+    idle: false,
+    settled: false,
+    deleted: false,
+    present: true,
     active: { environmentId: "env-1", threadId: "other-thread" },
     focused: true,
     visible: "visible",
@@ -188,6 +243,7 @@ beforeEach(() => {
   });
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("window", new EventTarget());
+  setNotificationsConnected(true);
   vi.stubGlobal("document", {
     get visibilityState() {
       return state.visible;
@@ -290,8 +346,55 @@ describe("thread notifications", () => {
     },
   );
 
+  it.each([
+    ["explicit same environment", "env-1", null, false],
+    ["explicit other environment", "env-other", null, true],
+    ["same checkout", null, "env-1:project-1", false],
+    ["other checkout", null, "env-other:project-other", true],
+    ["explicit environment wins over checkout", "env-other", "env-1:project-1", true],
+    ["unknown scope", null, null, true],
+  ] as const)("scopes input alerts to %s", async (_name, environment, checkout, expected) => {
+    state.active = { projectKey: "atlas" } as unknown as typeof state.active;
+    state.paneThread = "thread-1";
+    state.paneEnvironment = environment;
+    state.checkout = checkout;
+    state.groups = [
+      {
+        projectKey: "atlas",
+        memberProjects: [
+          { environmentId: "env-1", id: "project-1" },
+          { environmentId: "env-other", id: "project-other" },
+        ],
+      },
+    ];
+    state.input = true;
+    await render();
+    expect(state.add).toHaveBeenCalledTimes(expected ? 1 : 0);
+  });
+
+  it("does not suppress a checkout belonging to another project", async () => {
+    state.active = { projectKey: "different" } as unknown as typeof state.active;
+    state.paneThread = "thread-1";
+    state.checkout = "env-1:project-1";
+    state.groups = [
+      { projectKey: "atlas", memberProjects: [{ environmentId: "env-1", id: "project-1" }] },
+    ];
+    state.input = true;
+    await render();
+    expect(state.add).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["env-1", "env-other"])("scopes full-page input alerts to %s", async (environmentId) => {
+    state.active = { environmentId, threadId: "thread-1" };
+    state.input = true;
+    await render();
+    expect(state.add).toHaveBeenCalledTimes(environmentId === "env-1" ? 0 : 1);
+  });
+
   it("stays quiet in the app about the thread open in a project's right panel", async () => {
     state.paneThread = "thread-1";
+    state.paneEnvironment = "env-1";
+    state.active = { projectKey: "atlas" } as unknown as typeof state.active;
     try {
       await render();
       await complete();
@@ -338,6 +441,8 @@ describe("thread notifications", () => {
       state[event] = false;
       await render();
       state.focused = false;
+      state.runId = "run-2";
+      state.requestId = "request-2";
       state[event] = true;
       await render();
       await render();
@@ -505,7 +610,7 @@ describe("alerts when a thread needs you", () => {
         tag: "env-1:thread-1",
         title: "Fix the login form",
         body,
-        target: { environmentId: "env-1", threadId: "thread-1" },
+        target: { environmentId: "env-1", threadId: "thread-1", projectId: "project-1" },
       });
       expect(state.notification).not.toHaveBeenCalled();
       expect(state.sound).not.toHaveBeenCalled();
@@ -690,3 +795,415 @@ describe("one alert owner across desktop windows", () => {
     expect(state.add).toHaveBeenCalledTimes(1);
   });
 });
+
+describe("notification connection lifecycle", () => {
+  it("surfaces a pending request on first connection, without replay on remount", async () => {
+    state.inputAlerts = true;
+    state.input = true;
+    state.focused = false;
+    await render();
+    expect(state.notification).toHaveBeenCalledTimes(1);
+    await act(() => renderer?.unmount());
+    renderer = undefined;
+    await render();
+    expect(state.notification).toHaveBeenCalledTimes(1);
+  });
+  it("delivers a request received during disconnection once on reconnect", async () => {
+    state.inputAlerts = true;
+    state.focused = false;
+    await render();
+    state.live = false;
+    await render();
+    state.input = true;
+    state.live = true;
+    await render();
+    state.live = false;
+    await render();
+    state.live = true;
+    await render();
+    expect(state.notification).toHaveBeenCalledTimes(1);
+  });
+  it("disconnect overrides input alerts and closes outstanding system notifications", async () => {
+    state.inputAlerts = true;
+    state.focused = false;
+    await render();
+    state.input = true;
+    await render();
+    const posted = state.notification.mock.results[0]?.value;
+    await act(() => setNotificationsConnected(false));
+    expect(posted.close).toHaveBeenCalled();
+    state.requestId = "request-2";
+    await render();
+    expect(state.notification).toHaveBeenCalledTimes(1);
+  });
+  it("a new request in the same run alerts again", async () => {
+    state.inputAlerts = true;
+    state.focused = false;
+    await render();
+    state.input = true;
+    await render();
+    state.requestId = "request-2";
+    await render();
+    expect(state.notification).toHaveBeenCalledTimes(2);
+  });
+  it("connect surfaces an already waiting request", async () => {
+    state.inputAlerts = true;
+    state.input = true;
+    state.focused = false;
+    setNotificationsConnected(false);
+    await render();
+    expect(state.notification).not.toHaveBeenCalled();
+    await act(() => setNotificationsConnected(true));
+    expect(state.notification).toHaveBeenCalledTimes(1);
+  });
+});
+
+it.each(["env-1", "env-other"])(
+  "uses committed destination after queued navigation to %s",
+  async (destination) => {
+    const callbacks: Array<() => Promise<void>> = [];
+    vi.stubGlobal("navigator", {
+      locks: {
+        request: (_name: string, callback: () => Promise<void>) => {
+          if (_name === "specwithcode:notification-episodes") return Promise.resolve(callback());
+          callbacks.push(callback);
+          return Promise.resolve();
+        },
+      },
+    });
+    state.active = {
+      environmentId: destination === "env-1" ? "env-other" : "env-1",
+      threadId: "thread-1",
+    };
+    state.input = true;
+    await render();
+    state.active = { environmentId: destination, threadId: "thread-1" };
+    await render();
+    await act(async () => {
+      for (const callback of callbacks) await callback();
+    });
+    expect(state.add).toHaveBeenCalledTimes(destination === "env-1" ? 0 : 1);
+  },
+);
+
+describe("queued notification eligibility", () => {
+  it.each(["opt-out", "resolved", "offline", "unmounted"] as const)(
+    "does not post a queued request after %s",
+    async (change) => {
+      const callbacks: Array<() => Promise<void>> = [];
+      vi.stubGlobal("navigator", {
+        locks: {
+          request: (_name: string, callback: () => Promise<void>) => {
+            if (_name === "specwithcode:notification-episodes") return Promise.resolve(callback());
+            callbacks.push(callback);
+            return Promise.resolve();
+          },
+        },
+      });
+      state.mode = "notifications";
+      state.inApp = false;
+      state.focused = false;
+      await render();
+      state.input = true;
+      await render();
+      if (change === "opt-out") state.mode = "off";
+      if (change === "resolved") state.input = false;
+      if (change === "offline") state.live = false;
+      if (change === "unmounted") {
+        await act(() => renderer?.unmount());
+        renderer = undefined;
+      } else await render();
+      await act(async () => {
+        for (const callback of callbacks) await callback();
+      });
+      expect(state.notification).not.toHaveBeenCalled();
+    },
+  );
+});
+
+it("retries a queued unresolved request after reconnect", async () => {
+  const callbacks: Array<() => Promise<void>> = [];
+  vi.stubGlobal("navigator", {
+    locks: {
+      request: (_name: string, callback: () => Promise<void>) => {
+        if (_name === "specwithcode:notification-episodes") return Promise.resolve(callback());
+        callbacks.push(callback);
+        return Promise.resolve();
+      },
+    },
+  });
+  state.inputAlerts = true;
+  state.focused = false;
+  await render();
+  state.input = true;
+  await render();
+  state.live = false;
+  await render();
+  await act(async () => {
+    for (const callback of callbacks.splice(0)) await callback();
+  });
+  expect(state.notification).not.toHaveBeenCalled();
+  state.live = true;
+  await render();
+  await act(async () => {
+    for (const callback of callbacks.splice(0)) await callback();
+  });
+  expect(state.notification).toHaveBeenCalledTimes(1);
+});
+
+it("backs off native refusal while keeping explicit tests and new requests independent", async () => {
+  const showThreadNotification = vi.fn().mockResolvedValue(false);
+  Object.assign(window, { desktopBridge: { showThreadNotification } });
+  const clock = vi.spyOn(Date, "now").mockReturnValue(1_000_000);
+  try {
+    state.inputAlerts = true;
+    state.focused = false;
+    await render();
+    state.input = true;
+    await render();
+    await render();
+    await render();
+    expect(showThreadNotification).toHaveBeenCalledTimes(1);
+    clock.mockReturnValue(1_030_001);
+    await render();
+    expect(showThreadNotification).toHaveBeenCalledTimes(2);
+    state.requestId = "request-2";
+    await render();
+    expect(showThreadNotification).toHaveBeenCalledTimes(3);
+  } finally {
+    clock.mockRestore();
+  }
+});
+
+describe("1040 action delivery contract", () => {
+  it("delivers sign-in as a user action even with the ordinary mode off", async () => {
+    state.signin = true;
+    state.inputAlerts = true;
+    state.focused = false;
+    await render();
+    expect(state.notification).toHaveBeenCalledWith(
+      state.title,
+      expect.objectContaining({ body: "Sign in to continue" }),
+    );
+  });
+
+  it.each([
+    "answer",
+    "dismiss",
+    "generation",
+    "replace",
+    "settled",
+    "archive",
+    "delete",
+    "removed",
+    "offline",
+  ])("rejects the original queued action after %s", async (change) => {
+    const callbacks: Array<() => Promise<void>> = [];
+    vi.stubGlobal("navigator", {
+      locks: {
+        request: (_key: string, callback: () => Promise<void>) => {
+          if (_key === "specwithcode:notification-episodes") return Promise.resolve(callback());
+          callbacks.push(callback);
+          return Promise.resolve();
+        },
+      },
+    });
+    state.input = true;
+    await render();
+    const original = callbacks.shift()!;
+    if (change === "answer" || change === "dismiss") state.input = false;
+    if (change === "generation") state.runId = "run-2";
+    if (change === "replace") state.requestId = "request-2";
+    if (change === "settled") state.settled = true;
+    if (change === "archive") state.archivedAt = state.revision;
+    if (change === "delete") state.deleted = true;
+    if (change === "removed") state.present = false;
+    if (change === "offline") state.live = false;
+    await render();
+    await act(async () => {
+      await original();
+    });
+    expect(state.add).not.toHaveBeenCalled();
+    expect(state.notification).not.toHaveBeenCalled();
+  });
+
+  it("only a newer timestamped request reopens a settled conversation", async () => {
+    state.input = true;
+    state.settled = true;
+    await render();
+    expect(state.add).not.toHaveBeenCalled();
+    state.requestId = "request-new";
+    state.requestTime = "2026-09-13T09:00:01.000Z";
+    await render();
+    expect(state.add).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["plan", "held"] as const)(
+    "delivers %s only on a witnessed transition, not unrelated revisions",
+    async (reason) => {
+      state.idle = true;
+      if (reason === "plan") state.plan = true;
+      else state.held = 1;
+      await render();
+      expect(state.add).not.toHaveBeenCalled();
+      state.revision = "2026-09-13T09:01:00.000Z";
+      await render();
+      expect(state.add).not.toHaveBeenCalled();
+      state.plan = false;
+      state.held = 0;
+      await render();
+      if (reason === "plan") state.plan = true;
+      else state.held = 1;
+      await render();
+      expect(state.add).toHaveBeenCalledTimes(1);
+      state.revision = "2026-09-13T09:02:00.000Z";
+      await render();
+      expect(state.add).toHaveBeenCalledTimes(1);
+    },
+  );
+
+  it.each(["resume", "discard", "active", "revision"])(
+    "revalidates a held action before delivery after %s",
+    async (change) => {
+      state.idle = true;
+      await render();
+      const callbacks: Array<() => Promise<void>> = [];
+      vi.stubGlobal("navigator", {
+        locks: {
+          request: (_key: string, callback: () => unknown) =>
+            _key === "specwithcode:notification-episodes"
+              ? Promise.resolve(callback())
+              : new Promise((resolve) => {
+                  callbacks.push(async () => {
+                    resolve(await callback());
+                  });
+                }),
+        },
+      });
+      state.held = 1;
+      await render();
+      const original = callbacks.shift()!;
+      if (change === "resume" || change === "discard") state.held = 0;
+      if (change === "active") state.idle = false;
+      if (change === "revision") state.revision = "2026-09-13T09:03:00.000Z";
+      await render();
+      await act(async () => {
+        await original();
+      });
+      expect(state.add).not.toHaveBeenCalled();
+      if (change === "revision") {
+        await act(async () => {
+          for (const callback of callbacks) await callback();
+        });
+        expect(state.add).toHaveBeenCalledTimes(1);
+      }
+    },
+  );
+
+  it("does not grant failures or usage limits the user-action override", async () => {
+    state.inputAlerts = true;
+    state.focused = false;
+    state.inApp = false;
+    await render();
+    state.sessionError = true;
+    await render();
+    state.sessionError = false;
+    state.limited = true;
+    await render();
+    expect(state.notification).not.toHaveBeenCalled();
+  });
+
+  it("delivers simultaneous actions independently", async () => {
+    state.idle = true;
+    await render();
+    state.input = true;
+    state.plan = true;
+    await render();
+    expect(state.add).toHaveBeenCalledTimes(2);
+  });
+});
+
+it("deduplicates a witnessed plan transition across two notification clients", async () => {
+  state.idle = true;
+  await render();
+  let second: ReactTestRenderer;
+  await act(async () => {
+    second = create(<ThreadNotificationCoordinator />);
+  });
+  try {
+    state.plan = true;
+    await act(async () => {
+      renderer!.update(<ThreadNotificationCoordinator />);
+      second!.update(<ThreadNotificationCoordinator />);
+    });
+    expect(state.add).toHaveBeenCalledTimes(1);
+  } finally {
+    await act(async () => second!.unmount());
+  }
+});
+
+it("resolving input does not withdraw the still-current plan notification", async () => {
+  state.idle = true;
+  state.mode = "notifications";
+  state.focused = false;
+  await render();
+  state.input = true;
+  state.plan = true;
+  await render();
+  expect(state.notification).toHaveBeenCalledTimes(2);
+  const shown = state.notification.mock.results.map((result) => result.value);
+  const plan = shown.find(
+    (_, index) => state.notification.mock.calls[index]?.[1]?.body === "Review the proposed plan",
+  );
+  expect(plan).toBeDefined();
+  state.input = false;
+  await render();
+  expect(plan.close).not.toHaveBeenCalled();
+  state.plan = false;
+  await render();
+  expect(plan.close).toHaveBeenCalledTimes(1);
+});
+
+it("preserves the native plan banner when a simultaneous input action resolves", async () => {
+  const showThreadNotification = vi.fn().mockResolvedValue(true);
+  const closeThreadNotification = vi.fn().mockResolvedValue(undefined);
+  Object.assign(window, { desktopBridge: { showThreadNotification, closeThreadNotification } });
+  state.idle = true;
+  state.mode = "notifications";
+  state.focused = false;
+  await render();
+  state.input = true;
+  state.plan = true;
+  await render();
+  expect(showThreadNotification).toHaveBeenCalledTimes(2);
+  const replacedCount = closeThreadNotification.mock.calls.length;
+  state.input = false;
+  await render();
+  expect(closeThreadNotification).toHaveBeenCalledTimes(replacedCount);
+  state.plan = false;
+  await render();
+  expect(closeThreadNotification).toHaveBeenCalledTimes(replacedCount + 1);
+});
+
+it.each(["plan", "held"] as const)(
+  "ends persisted %s episodes from an inactive restart baseline",
+  async (reason) => {
+    state.idle = true;
+    await render();
+    if (reason === "plan") state.plan = true;
+    else state.held = 1;
+    await render();
+    expect(state.add).toHaveBeenCalledTimes(1);
+    await act(async () => renderer!.unmount());
+    renderer = undefined;
+    state.plan = false;
+    state.held = 0;
+    state.revision = "2026-09-13T09:05:00.000Z";
+    await render();
+    if (reason === "plan") state.plan = true;
+    else state.held = 1;
+    state.revision = "2026-09-13T09:06:00.000Z";
+    await render();
+    expect(state.add).toHaveBeenCalledTimes(2);
+  },
+);

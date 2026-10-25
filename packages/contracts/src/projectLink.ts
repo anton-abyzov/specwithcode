@@ -217,11 +217,15 @@ export const ProjectLinkAcceptResult = Schema.Struct({
 });
 export type ProjectLinkAcceptResult = typeof ProjectLinkAcceptResult.Type;
 
-/** A note to write into the kept copy. `expectedRevision` null: it must not exist yet. */
+/**
+ * A note to write into the kept copy. `expectedRevision` null: it must not exist yet.
+ * `createOnly`: a kept-both copy; it never replaces a note that holds other text.
+ */
 export const ProjectLinkNoteWrite = Schema.Struct({
   name: ProjectMemoryName,
   content: bounded(PROJECT_MEMORY_FILE_BYTES),
   expectedRevision: Schema.NullOr(NonNegativeInt),
+  createOnly: Schema.optionalKey(Schema.Literal(true)),
 });
 export type ProjectLinkNoteWrite = typeof ProjectLinkNoteWrite.Type;
 const NoteWrites = Schema.Array(ProjectLinkNoteWrite).check(Schema.isMaxLength(4096));
@@ -433,4 +437,44 @@ export function keepBothNoteName(name: string, machineLabel: string): string {
       .replace(/[^a-z0-9]+/gu, "-")
       .replace(/^-+|-+$/gu, "") || "other";
   return `${`${stem}-${slug}`.slice(0, 124).replace(/[-_]+$/u, "")}.md`;
+}
+
+/** How many names `allocateNoteName` tries before giving up. */
+export const NOTE_NAME_ALLOCATION_TRIES = 64;
+const isNoteName = Schema.is(ProjectMemoryName);
+
+/**
+ * Names for a kept-both copy, in order: `plan-m4.md`, `plan-m4-2.md`, `plan-m4-3.md`…
+ * The stem is trimmed so the counter always fits in a valid name.
+ */
+export function noteNameCandidates(base: string, suffix: string): string[] {
+  const first = keepBothNoteName(base, suffix);
+  const head = first.replace(/\.md$/u, "");
+  const names = [first];
+  for (let index = 2; names.length < NOTE_NAME_ALLOCATION_TRIES; index += 1) {
+    const counter = `-${index}`;
+    names.push(`${head.slice(0, 124 - counter.length).replace(/[-_]+$/u, "")}${counter}.md`);
+  }
+  return names.filter(isNoteName);
+}
+
+/**
+ * The first free name for a kept-both copy of `content`. `taken` maps each name
+ * the destination holds, or will hold after this batch, to its text. A name with
+ * the same text is reused, so a retry lands where the first attempt did. The
+ * chosen name is added to `taken`. Null after `NOTE_NAME_ALLOCATION_TRIES` names.
+ */
+export function allocateNoteName(input: {
+  readonly base: string;
+  readonly suffix: string;
+  readonly content: string;
+  readonly taken: Map<string, string>;
+}): string | null {
+  for (const name of noteNameCandidates(input.base, input.suffix)) {
+    const held = input.taken.get(name);
+    if (held !== undefined && held !== input.content) continue;
+    input.taken.set(name, input.content);
+    return name;
+  }
+  return null;
 }

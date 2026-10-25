@@ -33,8 +33,8 @@ const MORE_LEFT = 6 + 16 + 6 + THUMB_WIDTH - 24 - 4;
  * The slide list of a slides document, beside the one design canvas. Click to
  * show a slide; drag, or Alt+Up and Alt+Down, to reorder; the slide menu
  * (the "More" button, right-click or Shift+F10) has the rest. `compact` is a
- * strip of small thumbnails for narrow windows, with the menu on right-click
- * and Shift+F10.
+ * strip of small thumbnails for narrow windows, with a smaller More button
+ * over each thumbnail's top-right corner.
  */
 export function SlideRail({
   document,
@@ -257,22 +257,23 @@ export function SlideRail({
                   )}
                 </span>
               </div>
-              {!readOnly && !compact && (
+              {!readOnly && (
                 // Beside the slide, not inside it: one control per element, and the menu's keys
-                // never reach the slide's own shortcuts.
+                // never reach the slide's own shortcuts. Touch screens have no hover, so it stays.
                 <span
                   className={cn(
-                    "absolute top-2.5 rounded-md opacity-0 shadow-xs group-hover:opacity-100 focus-within:opacity-100 has-data-[popup-open]:opacity-100",
+                    "absolute opacity-0 shadow-xs group-hover:opacity-100 group-focus-within:opacity-100 has-data-[popup-open]:opacity-100 pointer-coarse:opacity-100",
+                    compact ? "top-1.5 right-2 rounded-sm" : "top-2.5 rounded-md",
                     current && "opacity-100",
                   )}
-                  style={{ left: MORE_LEFT }}
+                  style={compact ? undefined : { left: MORE_LEFT }}
                 >
                   <Menu>
                     <MenuTrigger
                       render={
                         <Button
                           variant="secondary"
-                          size="icon-xs"
+                          size={compact ? "icon-micro" : "icon-xs"}
                           tabIndex={current ? 0 : -1}
                           aria-label={`More for slide ${index + 1}`}
                           data-testid="slide-more"

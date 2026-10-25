@@ -414,6 +414,10 @@
     "./state/managedUpdates": {
       "types": "./src/state/managedUpdates.ts",
       "default": "./src/state/managedUpdates.ts"
+    },
+    "./state/projectAttention": {
+      "types": "./src/state/projectAttention.ts",
+      "default": "./src/state/projectAttention.ts"
     }
   },
   "scripts": {

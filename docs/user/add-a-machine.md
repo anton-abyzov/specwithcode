@@ -1,5 +1,7 @@
 # Add a machine
 
+Replace `<main-machine-environment-id>` with the environment ID from Settings > Connections on your main machine. This explicitly approves that machine to manage access here.
+
 Let coordinators on your main machine start work on your other computers: a
 second Mac, a Linux box or a VPS. Every machine reaches the others by its own
 private Tailscale name, so it does not matter which network each one is on, and
@@ -20,13 +22,13 @@ the npm path end to end on 1.0.47.
 Only step 1 differs, depending on how SpecWithCode is installed on the worker.
 Pick the row that matches it:
 
-| On the worker you have                                                      | Make the line with                                     |
-| --------------------------------------------------------------------------- | ------------------------------------------------------ |
-| The desktop app, 1.0.44 or later                                            | [The app itself](#in-the-app-1044-and-later)           |
-| The desktop app, 1.0.43                                                     | [The app's built-in command](#desktop-app-1043)        |
-| No desktop app, and Node.js 22.16 or later                                  | [The npm package](#with-npm)                           |
-| Nothing yet on a Mac or Linux machine, once a release carries the installer | [The one-line installer](#with-the-one-line-installer) |
-| A Linux server or VPS set up by hand                                        | [Linux worker](./linux-worker.md), then `fleet invite` |
+| On the worker you have                                                      | Make the line with                                                                                   |
+| --------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------- |
+| The desktop app, 1.0.44 or later                                            | [The app itself](#in-the-app-1044-and-later)                                                         |
+| The desktop app, 1.0.43                                                     | [The app's built-in command](#desktop-app-1043)                                                      |
+| No desktop app, and Node.js 22.16 or later                                  | [The npm package](#with-npm)                                                                         |
+| Nothing yet on a Mac or Linux machine, once a release carries the installer | [The one-line installer](#with-the-one-line-installer)                                               |
+| A Linux server or VPS set up by hand                                        | [Linux worker](./linux-worker.md), then `fleet invite --coordinator '<main-machine-environment-id>'` |
 
 The app's version is under **Settings → About**. Installing SpecWithCode in the
 first place is covered in [Install SpecWithCode](./install.md).
@@ -112,7 +114,7 @@ the worker, open Terminal and paste this as one line (change `MacBook Air` to
 any name you like):
 
 ```bash
-ELECTRON_RUN_AS_NODE=1 STUDIO_CLI_NAME=specwithcode /Applications/SpecWithCode.app/Contents/MacOS/SpecWithCode /Applications/SpecWithCode.app/Contents/Resources/app.asar/apps/server/dist/bin.mjs fleet invite --label "MacBook Air"
+ELECTRON_RUN_AS_NODE=1 STUDIO_CLI_NAME=specwithcode /Applications/SpecWithCode.app/Contents/MacOS/SpecWithCode /Applications/SpecWithCode.app/Contents/Resources/app.asar/apps/server/dist/bin.mjs fleet invite --coordinator '<main-machine-environment-id>' --label "MacBook Air"
 ```
 
 If you installed the app in your own `Applications` folder, put `~` in front of
@@ -152,7 +154,7 @@ with `brew install node@22`.
 3. In a second Terminal window, make the line:
 
    ```bash
-   specwithcode fleet invite --label "MacBook Air"
+   specwithcode fleet invite --coordinator '<main-machine-environment-id>' --label "MacBook Air"
    ```
 
    It prints the same `swc-machine-…` line as above.
@@ -165,7 +167,7 @@ run `specwithcode service install` again to move the service to it. On 1.0.45 an
 earlier, start `specwithcode serve` again after a restart.
 
 **If the desktop app is already on this Mac**, you do not need a second server.
-Run only `specwithcode fleet invite --label "…"`, which talks to the server the
+Run only `specwithcode fleet invite --coordinator '<main-machine-environment-id>' --label "…"`, which talks to the server the
 app is running. (From 1.0.45, a bare `specwithcode` opens the running server in
 your browser instead of stopping with "A SpecWithCode server is already running
 for …".) Install the npm package at the same
@@ -178,7 +180,7 @@ The installer sets up Tailscale, installs SpecWithCode and prints the line, in
 one go:
 
 ```bash
-curl -fsSL https://github.com/anton-abyzov/specwithcode/releases/latest/download/install.sh | bash -s -- --join
+curl -fsSL https://github.com/anton-abyzov/specwithcode/releases/latest/download/install.sh | bash -s -- --join --coordinator '<main-machine-environment-id>'
 ```
 
 Releases from 1.0.44 carry `install.sh`. On 1.0.43, use the
@@ -197,18 +199,19 @@ What it does:
    [background service](./background-service.md). If the desktop app or a
    managed service already runs SpecWithCode on this machine, it installs
    nothing and uses that one (open the app first if it is not running).
-3. **The line.** It runs `specwithcode fleet invite` and prints the line, plus
+3. **The line.** It runs `specwithcode fleet invite --coordinator '<main-machine-environment-id>'` and prints the line, plus
    the `fleet add` command for your main machine.
 
-Options go after `--join`, for example `bash -s -- --join --yes`:
+Options go after `--join`, for example `bash -s -- --join --coordinator '<main-machine-environment-id>' --yes`:
 
-| Option         | What it does                                                            |
-| -------------- | ----------------------------------------------------------------------- |
-| `--yes`        | Install Tailscale without asking                                        |
-| `--dry-run`    | Show what it would do; changes nothing                                  |
-| `--standalone` | Install the command-line build even when the desktop app is on this Mac |
-| `--version V`  | Install exactly version `V` instead of the newest release               |
-| `--no-service` | Set up the command only, without the background service                 |
+| Option             | What it does                                                                            |
+| ------------------ | --------------------------------------------------------------------------------------- |
+| `--coordinator ID` | Required. Approve the main machine using its environment ID from Settings > Connections |
+| `--yes`            | Install Tailscale without asking                                                        |
+| `--dry-run`        | Show what it would do; changes nothing                                                  |
+| `--standalone`     | Install the command-line build even when the desktop app is on this Mac                 |
+| `--version V`      | Install exactly version `V` instead of the newest release                               |
+| `--no-service`     | Set up the command only, without the background service                                 |
 
 Run the installer with `--help` for every option.
 
@@ -251,14 +254,14 @@ service](./background-service.md) keeps it running across restarts.
 
 ## Revoke a line
 
-A line works for a year unless you revoke it (`fleet invite --ttl` changes that).
+A line works for a year unless you revoke it (`fleet invite --coordinator '<main-machine-environment-id>' --ttl` changes that).
 To turn one off:
 
 - Right after making it in the app, choose **Revoke this line**.
 - Later, on the worker, open **Settings → Connections → Authorized clients** and
   revoke **Fleet management (fleet invite)**.
 - From a terminal on the worker, run the `auth session revoke …` command
-  `fleet invite` printed, or find the session with
+  `fleet invite --coordinator '<main-machine-environment-id>'` printed, or find the session with
   `specwithcode auth session list` and revoke it with
   `specwithcode auth session revoke <id>`.
 
@@ -333,27 +336,27 @@ when each was sent, so you can rotate any that machine should no longer hold.
 
 Messages may be worded slightly differently in older releases.
 
-| You see                                                                                         | What to do                                                                                                                                                                                                                                                    |
-| ----------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| "Tailscale is not installed on this machine."                                                   | Install Tailscale, open it and sign in ([above](#before-you-start-tailscale-on-both-machines)), then try again.                                                                                                                                               |
-| "Tailscale is not signed in on this machine."                                                   | Open Tailscale and sign in with the account your main machine uses.                                                                                                                                                                                           |
-| "Could not reach Tailscale on this machine."                                                    | Open the Tailscale app and check that it is connected.                                                                                                                                                                                                        |
-| "This machine has no Tailscale name yet."                                                       | Sign in to Tailscale and turn on MagicDNS in the admin console under **DNS**.                                                                                                                                                                                 |
-| "Tailscale could not publish this machine on HTTPS port 443."                                   | Enable **DNS → HTTPS Certificates** in the Tailscale admin console, then try again.                                                                                                                                                                           |
-| "HTTPS port 443 on this machine's Tailscale name is already used by another app"                | Something else already uses that port, and the app will not replace it. Choose another port under **Tailscale HTTPS** in **Settings → Connections**, or run `fleet invite --tailscale-serve-port 8443`.                                                       |
-| "HTTPS port 443 on this machine's Tailscale name already shows a different SpecWithCode server" | Another SpecWithCode server on this machine already uses that port. Turn off Tailscale HTTPS for it, or pick another port as above.                                                                                                                           |
-| "Tailscale needs an administrator to sign in on this machine."                                  | Sign in from the Tailscale app, or run `sudo tailscale up` in a terminal yourself.                                                                                                                                                                            |
-| "A SpecWithCode server is already running for …"                                                | SpecWithCode is already running on this machine (often the desktop app); 1.0.43 and 1.0.44 print this for a bare `specwithcode`. Use the running one: run `specwithcode fleet invite` to join, or open the app. From 1.0.45 it opens in your browser instead. |
-| "No running SpecWithCode server found."                                                         | `fleet invite` needs a running server. Open the desktop app, or start `specwithcode serve` in another Terminal window, then run it again.                                                                                                                     |
-| "This is not a machine invitation."                                                             | Part of the line is missing. Make a new line on the worker and copy the whole thing, from `swc-machine-` to the end.                                                                                                                                          |
-| "Pairing is unavailable. Ask the server owner to renew this machine's connection permission."   | The line was revoked or has expired. Make a new line on the worker and add it on the main machine again; that updates the same machine.                                                                                                                       |
-| "This machine is unavailable. Check its private connection and retry."                          | The worker is off, asleep, signed out of Tailscale or not running SpecWithCode. Check each, and that its key has not expired in the Tailscale admin console.                                                                                                  |
-| "Manage access required"                                                                        | This session cannot manage the machine. Use the app on that machine itself.                                                                                                                                                                                   |
-| "Refused: this launch would loop back to a machine it came from (M4 → M1 → M4)."                | Start the work on a machine not on that path, or on the machine itself.                                                                                                                                                                                       |
-| "Refused: this launch came through …, 2 machine hops; this machine allows 1 for that sender."   | On the worker, set the sender to **My machine** in **Who can run work on this Mac** if it is yours, or start the work closer to where it began.                                                                                                               |
-| "Project … on this machine is not linked to …"                                                  | Link the projects, or add the project under **Projects** in **Who can run work on this Mac** on the worker.                                                                                                                                                   |
-| "This machine lets … use only these sign-ins: …"                                                | Pick one of the listed sign-ins, or add that sign-in under **Sign-ins** in **Who can run work on this Mac** on the worker.                                                                                                                                    |
-| "… runs an older SpecWithCode that does not check delegation loops, project scope or …"         | The worker runs the work without these limits. Update SpecWithCode on the worker.                                                                                                                                                                             |
+| You see                                                                                         | What to do                                                                                                                                                                                                                                                                                                  |
+| ----------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| "Tailscale is not installed on this machine."                                                   | Install Tailscale, open it and sign in ([above](#before-you-start-tailscale-on-both-machines)), then try again.                                                                                                                                                                                             |
+| "Tailscale is not signed in on this machine."                                                   | Open Tailscale and sign in with the account your main machine uses.                                                                                                                                                                                                                                         |
+| "Could not reach Tailscale on this machine."                                                    | Open the Tailscale app and check that it is connected.                                                                                                                                                                                                                                                      |
+| "This machine has no Tailscale name yet."                                                       | Sign in to Tailscale and turn on MagicDNS in the admin console under **DNS**.                                                                                                                                                                                                                               |
+| "Tailscale could not publish this machine on HTTPS port 443."                                   | Enable **DNS → HTTPS Certificates** in the Tailscale admin console, then try again.                                                                                                                                                                                                                         |
+| "HTTPS port 443 on this machine's Tailscale name is already used by another app"                | Something else already uses that port, and the app will not replace it. Choose another port under **Tailscale HTTPS** in **Settings → Connections**, or run `fleet invite --coordinator '<main-machine-environment-id>' --tailscale-serve-port 8443`.                                                       |
+| "HTTPS port 443 on this machine's Tailscale name already shows a different SpecWithCode server" | Another SpecWithCode server on this machine already uses that port. Turn off Tailscale HTTPS for it, or pick another port as above.                                                                                                                                                                         |
+| "Tailscale needs an administrator to sign in on this machine."                                  | Sign in from the Tailscale app, or run `sudo tailscale up` in a terminal yourself.                                                                                                                                                                                                                          |
+| "A SpecWithCode server is already running for …"                                                | SpecWithCode is already running on this machine (often the desktop app); 1.0.43 and 1.0.44 print this for a bare `specwithcode`. Use the running one: run `specwithcode fleet invite --coordinator '<main-machine-environment-id>'` to join, or open the app. From 1.0.45 it opens in your browser instead. |
+| "No running SpecWithCode server found."                                                         | `fleet invite --coordinator '<main-machine-environment-id>'` needs a running server. Open the desktop app, or start `specwithcode serve` in another Terminal window, then run it again.                                                                                                                     |
+| "This is not a machine invitation."                                                             | Part of the line is missing. Make a new line on the worker and copy the whole thing, from `swc-machine-` to the end.                                                                                                                                                                                        |
+| "Pairing is unavailable. Ask the server owner to renew this machine's connection permission."   | The line was revoked or has expired. Make a new line on the worker and add it on the main machine again; that updates the same machine.                                                                                                                                                                     |
+| "This machine is unavailable. Check its private connection and retry."                          | The worker is off, asleep, signed out of Tailscale or not running SpecWithCode. Check each, and that its key has not expired in the Tailscale admin console.                                                                                                                                                |
+| "Manage access required"                                                                        | This session cannot manage the machine. Use the app on that machine itself.                                                                                                                                                                                                                                 |
+| "Refused: this launch would loop back to a machine it came from (M4 → M1 → M4)."                | Start the work on a machine not on that path, or on the machine itself.                                                                                                                                                                                                                                     |
+| "Refused: this launch came through …, 2 machine hops; this machine allows 1 for that sender."   | On the worker, set the sender to **My machine** in **Who can run work on this Mac** if it is yours, or start the work closer to where it began.                                                                                                                                                             |
+| "Project … on this machine is not linked to …"                                                  | Link the projects, or add the project under **Projects** in **Who can run work on this Mac** on the worker.                                                                                                                                                                                                 |
+| "This machine lets … use only these sign-ins: …"                                                | Pick one of the listed sign-ins, or add that sign-in under **Sign-ins** in **Who can run work on this Mac** on the worker.                                                                                                                                                                                  |
+| "… runs an older SpecWithCode that does not check delegation loops, project scope or …"         | The worker runs the work without these limits. Update SpecWithCode on the worker.                                                                                                                                                                                                                           |
 
 ## Keep your provider accounts safe
 
@@ -389,10 +392,10 @@ a machine continues there.
 
 If a machine's address does change (a new Tailscale name, a renamed machine, or
 moving off an older setup that reached it through another machine), make a new
-line on it (**Invite this machine**, or `fleet invite`) and add the new line on
+line on it (**Invite this machine**, or `fleet invite --coordinator '<main-machine-environment-id>'`) and add the new line on
 the main machine. That updates the machine in place: it keeps its name, and
 workers you allowed there carry over the next time a coordinator uses them.
 Browsers add the new address on their own and keep the old one as a fallback.
 
-The invitation is valid for a year by default (`fleet invite --ttl` changes it).
+The invitation is valid for a year by default (`fleet invite --coordinator '<main-machine-environment-id>' --ttl` changes it).
 Adding a fresh one renews it.

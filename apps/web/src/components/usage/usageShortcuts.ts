@@ -16,19 +16,26 @@ export const WINDOW_OPTIONS = [
   { days: 90, label: "90 days", command: "usage.period.quarter" },
 ] as const;
 
+export const USAGE_SHEET_SELECTOR = "[data-usage-sheet]";
+
 /** Resolves page shortcuts without taking letters from fields or popup controls. */
 export function resolveUsageShortcut(
   event: ShortcutEventLike & { target: EventTarget | null },
   keybindings: ResolvedKeybindingsConfig,
 ) {
   const target = event.target;
+  // The Usage sheet is itself a dialog; only a popup over it takes the letters.
+  const layer =
+    target instanceof HTMLElement
+      ? target.closest('[role="dialog"], [aria-modal="true"], [data-slot$="popup"]')
+      : null;
   if (
     target instanceof HTMLElement &&
     (target.tagName === "INPUT" ||
       target.tagName === "TEXTAREA" ||
       target.tagName === "SELECT" ||
       target.isContentEditable ||
-      target.closest('[role="dialog"], [aria-modal="true"], [data-slot$="popup"]'))
+      (layer !== null && !layer.matches(USAGE_SHEET_SELECTOR)))
   ) {
     return null;
   }

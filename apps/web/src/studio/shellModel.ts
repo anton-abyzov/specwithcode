@@ -1,3 +1,4 @@
+import type { ProjectAttention } from "@specweave-studio/client-runtime/state/projectAttention";
 /**
  * View logic for the three-pane shell: the projects and chats sidebar, the
  * orchestrator pane and the project's Threads pane. Pure, so every rule that
@@ -428,8 +429,15 @@ export function buildThreadPaneGroups(
   runningSubagents?: ReadonlyMap<string, number>,
   /** Hosts that cannot be reached now; their threads are listed as idle. */
   unreachable?: ReadonlySet<string>,
+  attention?: ProjectAttention,
 ): ThreadPaneGroup[] {
   const groupOf = (thread: EnvironmentThreadShell) => {
+    const root = attention?.roots.find(
+      (r) => r.thread.environmentId === thread.environmentId && r.thread.id === thread.id,
+    );
+    if (root && root.freshness !== "live") return "Unavailable";
+    if (root?.actions.length) return "Waiting on you";
+    if (root?.working) return "Working";
     const group = projectThreadGroup(thread, unreachable?.has(thread.environmentId) ?? false);
     return group === "Idle" &&
       (runningSubagents?.get(`${thread.environmentId}:${thread.id}`) ?? 0) > 0
@@ -447,7 +455,7 @@ export function buildThreadPaneGroups(
         ? compareByActivity
         : compareChats(sortBy);
   const groups: ThreadPaneGroup[] = [];
-  for (const group of ["Waiting on you", "Working", "Idle", "Resolved"] as const) {
+  for (const group of ["Waiting on you", "Working", "Unavailable", "Idle", "Resolved"] as const) {
     const rows = threads
       .filter(
         (thread) =>
@@ -477,11 +485,17 @@ export function threadsSummary(
   /** Workers this project runs on other machines, which are not threads here. */
   remoteWorkers = 0,
   unreachable?: ReadonlySet<string>,
+  runningSubagents?: ReadonlyMap<string, number>,
+  attention?: ProjectAttention,
 ): string {
+  if (attention)
+    return `${attention.complete && attention.count === 0 ? "Nothing is waiting on you" : attention.label}${attention.working > 0 ? ` · ${attention.working} working` : ""}${attention.staleCount > 0 ? ` · ${attention.staleCount} last observed` : ""}.`;
   const waiting = waitingCount(threads, unreachable);
   const working = threads.filter(
     (thread) =>
-      projectThreadGroup(thread, unreachable?.has(thread.environmentId) ?? false) === "Working",
+      projectThreadGroup(thread, unreachable?.has(thread.environmentId) ?? false) === "Working" ||
+      (!unreachable?.has(thread.environmentId) &&
+        (runningSubagents?.get(`${thread.environmentId}:${thread.id}`) ?? 0) > 0),
   ).length;
   if (threads.length === 0)
     return remoteWorkers > 0
@@ -489,7 +503,9 @@ export function threadsSummary(
       : "No threads yet. Ask the coordinator to start one.";
   const parts = [
     waiting === 0
-      ? "Nothing is waiting on you"
+      ? unreachable?.size
+        ? "Attention unavailable on disconnected hosts"
+        : "Nothing is waiting on you"
       : waiting === 1
         ? "1 thread is waiting on you"
         : `${waiting} threads are waiting on you`,

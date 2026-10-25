@@ -64,6 +64,16 @@ export function createDesignAtoms<R, E>(
       label: "design:delete",
       tag: WS_METHODS.designDelete,
     }),
+    /** Moves a Playground design into a project, keeping its id and history (`designMove` capability). */
+    move: createEnvironmentRpcCommand(runtime, {
+      label: "design:move",
+      tag: WS_METHODS.designMove,
+    }),
+    /** Imports a PowerPoint deck as a new slides document (`designDeckImport` capability). */
+    importDeck: createEnvironmentRpcCommand(runtime, {
+      label: "design:import-deck",
+      tag: WS_METHODS.designImportDeck,
+    }),
     assetPut: createEnvironmentRpcCommand(runtime, {
       label: "design:asset-put",
       tag: WS_METHODS.designAssetPut,
@@ -104,6 +114,42 @@ export function createDesignAtoms<R, E>(
       tag: WS_METHODS.designSystemUsage,
       staleTimeMs: 0,
       idleTtlMs: 30_000,
+    }),
+    // Hand editing (`designSystemEditing` capability).
+    /** An empty system started from scratch. */
+    systemCreate: createEnvironmentRpcCommand(runtime, {
+      label: "design-system:create",
+      tag: WS_METHODS.designSystemCreate,
+    }),
+    /** Token, mode and component edits at `expectedRevision`; `conflict` carries the current revision. */
+    systemApply: createEnvironmentRpcCommand(runtime, {
+      label: "design-system:apply",
+      tag: WS_METHODS.designSystemApply,
+    }),
+    /** Stored files and recorded sources, with storage use. */
+    systemFiles: createEnvironmentGuardedRpcQueryAtomFamily(runtime, {
+      label: "design-system:files",
+      tag: WS_METHODS.designSystemFiles,
+      staleTimeMs: 0,
+      idleTtlMs: 30_000,
+    }),
+    systemFileRead: createEnvironmentGuardedRpcQueryAtomFamily(runtime, {
+      label: "design-system:file-read",
+      tag: WS_METHODS.designSystemFileRead,
+      staleTimeMs: 0,
+      idleTtlMs: 15_000,
+    }),
+    systemFilePut: createEnvironmentRpcCommand(runtime, {
+      label: "design-system:file-put",
+      tag: WS_METHODS.designSystemFilePut,
+    }),
+    systemFileDelete: createEnvironmentRpcCommand(runtime, {
+      label: "design-system:file-delete",
+      tag: WS_METHODS.designSystemFileDelete,
+    }),
+    systemFileMove: createEnvironmentRpcCommand(runtime, {
+      label: "design-system:file-move",
+      tag: WS_METHODS.designSystemFileMove,
     }),
   };
 }

@@ -23,6 +23,14 @@ import type { ServerProviderShape } from "./ServerProvider.ts";
 interface ProviderSnapshotState {
   readonly snapshot: ServerProvider;
   readonly enrichmentGeneration: number;
+  /** The account the last signed-in probe reported. */
+  readonly accountEmail?: string | undefined;
+  /**
+   * When that account replaced a different one. Kept here, not only on the
+   * published usage, so a sign-out (whose read carries no mark) followed by
+   * signing in to the same account still publishes it.
+   */
+  readonly accountChangedAt?: string | undefined;
 }
 
 function withUsageLimits(
@@ -50,6 +58,20 @@ function loginChanged(published: ServerProvider, probed: ServerProvider): boolea
   return (
     before !== undefined && probed.auth.status === "authenticated" && loginEmail(probed) !== before
   );
+}
+
+/**
+ * The usage a probe publishes, marked with when this server first saw the
+ * account it belongs to (see `ProviderSnapshotState.accountChangedAt`).
+ */
+export function withAccountChange(
+  usageLimits: ServerProvider["usageLimits"],
+  accountChangedAt: string | undefined,
+): ServerProvider["usageLimits"] {
+  if (!usageLimits) return usageLimits;
+  if (accountChangedAt === undefined || usageLimits.accountChangedAt === accountChangedAt)
+    return usageLimits;
+  return { ...usageLimits, accountChangedAt };
 }
 
 export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(function* <
@@ -87,6 +109,8 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
   const snapshotStateRef = yield* Ref.make<ProviderSnapshotState>({
     snapshot: initialSnapshot,
     enrichmentGeneration: 0,
+    accountEmail:
+      initialSnapshot.auth.status === "authenticated" ? loginEmail(initialSnapshot) : undefined,
   });
   const settingsRef = yield* Ref.make(initialSettings);
   const enrichmentFiberRef = yield* Ref.make<Fiber.Fiber<void, unknown> | null>(null);
@@ -173,19 +197,42 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
         const generation = input.enrichSnapshot
           ? state.enrichmentGeneration + 1
           : state.enrichmentGeneration;
+        // The last account seen signed in, so a sign-out between two accounts
+        // still counts as a switch.
+        const probedEmail =
+          probedSnapshot.auth.status === "authenticated" ? loginEmail(probedSnapshot) : undefined;
+        const switched =
+          probedEmail !== undefined &&
+          state.accountEmail !== undefined &&
+          probedEmail !== state.accountEmail;
+        // A different signed-in account stamps this probe's read; the same
+        // account keeps the earlier stamp, also after a sign-out in between.
+        const accountChangedAt = switched
+          ? (probedSnapshot.usageLimits?.checkedAt ?? probedSnapshot.checkedAt)
+          : state.accountChangedAt;
         const snapshot = withUsageLimits(
           probedSnapshot,
-          loginChanged(state.snapshot, probedSnapshot)
-            ? probedSnapshot.usageLimits
-            : resolveUsageLimitsAfterProbe({
-                driver: probedSnapshot.driver,
-                published: state.snapshot.usageLimits,
-                probed: probedSnapshot.usageLimits,
-              }),
+          withAccountChange(
+            switched || loginChanged(state.snapshot, probedSnapshot)
+              ? probedSnapshot.usageLimits
+              : resolveUsageLimitsAfterProbe({
+                  driver: probedSnapshot.driver,
+                  published: state.snapshot.usageLimits,
+                  probed: probedSnapshot.usageLimits,
+                }),
+            switched || (probedEmail !== undefined && probedEmail === state.accountEmail)
+              ? accountChangedAt
+              : undefined,
+          ),
         );
         return [
           { snapshot, generation },
-          { snapshot, enrichmentGeneration: generation },
+          {
+            snapshot,
+            enrichmentGeneration: generation,
+            accountEmail: probedEmail ?? state.accountEmail,
+            accountChangedAt,
+          },
         ] as const;
       },
     );

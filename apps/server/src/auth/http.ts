@@ -566,7 +566,13 @@ export const layer = HttpApiBuilder.group(
         Effect.fn("environment.auth.renewWorkerGrant")(function* (args) {
           yield* annotateEnvironmentRequest(args.endpoint.name);
           yield* appendCredentialResponseHeaders;
-          yield* requireEnvironmentScope(AuthAccessWriteScope);
+          const manager = yield* requireEnvironmentScope(AuthAccessWriteScope);
+          if (
+            manager.principal?.kind === "coordinator" &&
+            manager.principal.environmentId !== args.payload.coordinatorEnvironmentId
+          ) {
+            return yield* failEnvironmentAuthInvalid("invalid_credential");
+          }
           yield* requireEnvironmentScope(AuthOrchestrationReadScope);
           yield* requireEnvironmentScope(AuthOrchestrationOperateScope);
           return yield* sessions.renewWorkerGrant(args.payload).pipe(
@@ -616,7 +622,24 @@ export const layer = HttpApiBuilder.group(
                 return yield* failEnvironmentScopeRequired(delegatedScope);
               }
             }
-            return yield* serverAuth.issuePairingCredential(args.payload);
+            const coordinator =
+              session.principal?.kind === "coordinator"
+                ? session.principal.environmentId
+                : args.payload.coordinatorEnvironmentId;
+            if (
+              session.principal?.kind === "coordinator" &&
+              args.payload.coordinatorEnvironmentId !== undefined &&
+              args.payload.coordinatorEnvironmentId !== coordinator
+            ) {
+              return yield* failEnvironmentAuthInvalid("invalid_credential");
+            }
+            return yield* serverAuth.issuePairingCredential({
+              ...args.payload,
+              ...(coordinator ? { coordinatorEnvironmentId: coordinator } : {}),
+              ...(session.principal?.kind === "coordinator"
+                ? { principalGeneration: session.principalGeneration }
+                : {}),
+            });
           },
           Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (error) =>
             failEnvironmentInternal("pairing_credential_issuance_failed", error),

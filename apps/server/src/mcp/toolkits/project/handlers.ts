@@ -7,6 +7,7 @@ import {
   type ModelSelection,
   type ProjectRepository,
 } from "@specweave-studio/contracts";
+import { sameRunModel } from "@specweave-studio/shared/threadModelIdentity";
 import { withLearnedPreference } from "@specweave-studio/shared/modelLanes";
 import * as Crypto from "effect/Crypto";
 import * as DateTime from "effect/DateTime";
@@ -380,7 +381,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
         const increment = incrementResolution.value;
         // A coordinator's thread starts on the project's worker model, moved
         // off a provider with no room (see workerLaunchWithRoom).
-        const workerSelection =
+        const workerLaunch =
           isCoordinator && input.modelSelection === undefined && project?.defaultModelSelection
             ? yield* workerLaunchWithRoom({
                 project,
@@ -389,13 +390,25 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
                 providers: yield* (yield* ProviderRegistry.ProviderRegistry).getProviders,
                 runtimePolicy: { runtimeMode, interactionMode },
               })
-            : project?.defaultModelSelection;
+            : null;
+        const workerSelection =
+          workerLaunch === null ? project?.defaultModelSelection : workerLaunch.selection;
         const modelSelection =
           input.modelSelection ??
           (isCoordinator
             ? workerSelection
             : (caller?.modelSelection ?? project?.defaultModelSelection)) ??
           undefined;
+        // The model the thread stands in for: the worker model the room check
+        // moved it off, else, on the caller's own model, what the caller stands in for.
+        const standsInFor =
+          input.modelSelection !== undefined
+            ? null
+            : isCoordinator
+              ? (workerLaunch?.fallbackFrom ?? null)
+              : caller?.modelSelection !== undefined && caller.modelIdentity?.kind === "fallback"
+                ? caller.modelIdentity.preferred
+                : null;
         if (modelSelection === undefined)
           return yield* new OrchestratorMcpFailure({
             code: "invalid_request",
@@ -465,6 +478,9 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
                 )
               : routedModel;
         const routing = decision === null ? undefined : { ...decision, selection: launchSelection };
+        // Same rule as delegate_task: a routed move to another model ends the stand-in.
+        const launchFallbackFrom =
+          standsInFor !== null && sameRunModel(routedModel, modelSelection) ? standsInFor : null;
         const result = yield* ThreadMessageIntake.launchThread({
           commandId,
           threadId,
@@ -472,6 +488,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
           title: input.title,
           modelSelection: launchSelection,
           ...(routing === undefined ? {} : { routing }),
+          ...(launchFallbackFrom === null ? {} : { launchFallbackFrom }),
           runtimeMode,
           interactionMode,
           workspaceStrategy: input.workspaceStrategy ?? { type: "root" },
@@ -481,6 +498,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
                 increment: {
                   root: increment.increment.root,
                   incrementId: increment.increment.incrementId,
+                  ...(increment.increment.registered ? { registered: true as const } : {}),
                 },
               }),
           ...(input.message === undefined && attachments.length === 0
@@ -757,11 +775,8 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
         if (deleted) {
           yield* settingsService
             .updateSettings({
-              projectSettingsOverrides: {
-                [projectId]: {
-                  ...projectOverrides,
-                  learnedModelPreferences: updated,
-                },
+              projectSettingsOverrideChanges: {
+                [projectId]: { set: { learnedModelPreferences: updated } },
               },
             })
             .pipe(Effect.mapError(unavailable));
@@ -796,11 +811,8 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
         const updated = withLearnedPreference(preferences, recorded);
         yield* settingsService
           .updateSettings({
-            projectSettingsOverrides: {
-              [projectId]: {
-                ...projectOverrides,
-                learnedModelPreferences: updated,
-              },
+            projectSettingsOverrideChanges: {
+              [projectId]: { set: { learnedModelPreferences: updated } },
             },
           })
           .pipe(Effect.mapError(unavailable));

@@ -4,6 +4,7 @@ import { afterEach, describe, expect, it } from "vite-plus/test";
 
 import {
   FIND_IGNORE_ATTRIBUTE,
+  FIND_JOINED_TEXT_ATTRIBUTE,
   FIND_SCOPE_ATTRIBUTE,
   collectFindRanges,
   findCountLabel,
@@ -77,6 +78,27 @@ describe("collectFindRanges", () => {
     const { ranges, capped } = collectFindRanges(scope, "OVERLAP");
     expect(capped).toBe(false);
     expect(ranges.map((range) => range.toString())).toEqual(["overlap", "Overlap", "overlap"]);
+  });
+
+  it("matches across the wrap points of a joined value, once per value", () => {
+    document.body.innerHTML = `
+      <div ${FIND_SCOPE_ATTRIBUTE}>
+        <span ${FIND_JOINED_TEXT_ATTRIBUTE}>/tmp/<wbr>report-<wbr>final.<wbr>html</span>
+        <p>report-<wbr>final split outside a value</p>
+        <span ${FIND_JOINED_TEXT_ATTRIBUTE}>report-<wbr>final <span ${FIND_JOINED_TEXT_ATTRIBUTE}>report-<wbr>final</span></span>
+      </div>`;
+    const scope = document.querySelector(`[${FIND_SCOPE_ATTRIBUTE}]`)!;
+    const { ranges } = collectFindRanges(scope, "Report-Final");
+    expect(ranges.map((range) => range.toString())).toEqual([
+      "report-final",
+      "report-final",
+      "report-final",
+    ]);
+    const first = ranges[0]!;
+    expect(first.startContainer.nodeValue).toBe("report-");
+    expect(first.startOffset).toBe(0);
+    expect(first.endContainer.nodeValue).toBe("final.");
+    expect(first.endOffset).toBe(5);
   });
 
   it("caps the number of ranges", () => {

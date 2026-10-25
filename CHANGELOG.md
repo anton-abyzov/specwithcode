@@ -2,8 +2,9 @@
 
 ## Unreleased
 
-- HTML reports now open in a focused reader from a compact preview, with matching app colors and preserved document state on current Chromium. New report guidance emphasizes readable headings and useful diagrams. Historical pages keep their authored content.
+- Every routine runs in a thread of its own instead of the project's coordinator. Before, a routine without a thread (every routine made in the Routines form, such as "New Relic repair watch") woke the coordinator on each run, and a routine the coordinator scheduled for itself posted into the coordinator's conversation, so watches and reports buried the coordinator's planning. Now a routine's first run starts a thread named after it and later runs continue that thread, keeping the routine's history in one place; a deleted or archived thread is replaced on the next run. Existing routines move on their next run, with nothing to do: one without a thread, or one bound to the coordinator, gets its own thread then. A worker that schedules "wake me when CI finishes" still gets that run in its own thread. Project settings > Routines, the Routines pane and Settings > Routines name each routine's thread ("Own thread" until its first run) and open it, and a routine's results still reach Telegram, headed by the routine's name.
 
+- HTML reports now open in a focused reader from a compact preview, with matching app colors and preserved document state on current Chromium. New report guidance emphasizes readable headings and useful diagrams. Historical pages keep their authored content.
 
 - Automatic fallback no longer discovers unselected ACP agents with unknown billing through same-model matching or the coordinator. Explicit configured choices remain available. Agents cannot claim Copilot subscription identity by advertising its icon.
 

@@ -97,7 +97,10 @@ export async function stdioFixture() {
     await waitUntil(async () =>
       (await events()).filter((e) => e.type === "start").every((e) => !isAlive(e.pid)),
     );
-    await fs.rm(root, { recursive: true, force: true });
+    // Windows reports a process dead (exit code set) before it has closed its handles,
+    // including its working directory (`root`), so removing it can briefly fail with
+    // EBUSY. Node retries EBUSY/EPERM/ENOTEMPTY with a linear backoff (up to ~5.5 s).
+    await fs.rm(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   };
   const config: ProjectConnectionConfig = {
     name: "Owned synthetic MCP",

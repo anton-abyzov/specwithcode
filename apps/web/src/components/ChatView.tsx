@@ -43,6 +43,11 @@ import {
   usageLimitRecoveryBannerItem,
 } from "./chat/UsageLimitRecoveryBanner";
 import {
+  accountChangeAutoContinues,
+  accountChangedBannerItem,
+  accountChangedWithRoom,
+} from "./chat/AccountChangedBanner";
+import {
   deviceHandoffText,
   pickContinueTarget,
   pickDeviceModel,
@@ -81,10 +86,9 @@ import {
 } from "@specweave-studio/client-runtime/state/models";
 import { visibleThreadPullRequests } from "@specweave-studio/shared/threadPullRequests";
 import {
-  latestExecutedRun,
-  latestRootProviderFailure,
   latestRootProviderFailureItem,
   providerFailureDisplayMessage,
+  resumableRunId as resumableRunIdOf,
   threadErrorIsLive,
 } from "@specweave-studio/shared/orchestrationV2ThreadError";
 import type { UsageLimitSourceSnapshots } from "@specweave-studio/contracts";
@@ -105,6 +109,22 @@ import {
   useQuestionAttachmentPreparation,
 } from "../questionAttachments";
 import { planQuestionChatReply, type QuestionChatReply } from "../questionChatReply";
+import { questionAnswerCommandId } from "../studio/coordinatorQuestionAnswers";
+import {
+  QuestionLiveStatus,
+  useLiveAnnouncement,
+  useQuestionSettleAnnouncements,
+} from "./chat/questionLiveStatus";
+import {
+  isAnswerProblemOutdated,
+  questionSendResult,
+  settleQuestionAnswer,
+  settledSendReason,
+  settleQuestionDismiss,
+  shownAnswerProblem as answerProblemText,
+  type AnswerProblem,
+  type QuestionSendProblem,
+} from "./chat/questionSendOutcome";
 import { useAttachmentUploadStore } from "../lib/attachmentUploadQueue";
 import {
   AuthOrchestrationOperateScope,
@@ -207,7 +227,10 @@ import {
   latestUnheldRun,
   usageLimitRunPresentedAsLatest,
 } from "@specweave-studio/shared/orchestrationV2ThreadError";
-import { resolveProjectSettings } from "@specweave-studio/shared/projectSettings";
+import {
+  projectSettingsOverrideChangesPatch,
+  resolveProjectSettings,
+} from "@specweave-studio/shared/projectSettings";
 import {
   isApiCreditExhaustedMessage,
   limitRestartRequest,
@@ -377,6 +400,7 @@ import { ThreadPullRequestsPanel } from "./pullRequest/ThreadPullRequestsPanel";
 import { useDeviceState } from "~/state/device";
 import { DeviceSetup } from "./device/DeviceSetup";
 import { Dialog } from "./ui/dialog";
+import { isAppSheetOpen } from "./ui/appSheetState";
 import { WizardPopup } from "./ui/wizard";
 import { BranchToolbar, type BranchToolbarHandle } from "./BranchToolbar";
 import { useWorkspaceFileDropHandlers } from "./chat/workspaceFileDrop";
@@ -430,6 +454,7 @@ import {
   useClientSettings,
   useClientSettingsHydrated,
   useEnvironmentSettings,
+  useProjectOverrideWriteMode,
 } from "../hooks/useSettings";
 import { useNowMinute } from "../hooks/useNowMinute";
 import { usePanelAnimationSettings, usePanelPresence } from "../panelAnimations";
@@ -552,6 +577,7 @@ import { ChatComposer, type ChatComposerHandle } from "./chat/ChatComposer";
 import { createPageScrollController, type PageScrollKey } from "./chat/pageScrollController";
 import { isTimelineScrollTarget } from "./chat/timelineScrollTarget";
 import { DraftHeroHeadline } from "./chat/DraftHeroHeadline";
+import { fallbackModelState } from "./chat/ModelStateTag";
 import { DraftMachinePicker } from "./chat/DraftMachinePicker";
 import { buildLogicalProjectEnvironments } from "./chat/logicalProjectEnvironments";
 import { useDraftMachineRouting } from "./chat/useDraftMachineRouting";
@@ -606,6 +632,7 @@ import {
   type QueuedRunsControlHandle,
   type EditQueuedRunRequest,
 } from "./chat/QueuedRunsControl";
+import { queuedRunActionsUnavailableReason } from "./chat/queuedRunSummary";
 import { useLinkedThreadPullRequest } from "./ThreadStatusIndicators";
 import type { ComposerBannerStackItem } from "./chat/ComposerBannerStack";
 import {
@@ -725,7 +752,11 @@ import {
 } from "./chat/BackgroundWorkStrip";
 import { useAssetUrls } from "../assets/assetUrls";
 import { useOpenLink } from "../browser/useOpenLink";
-import { openFileInFront, viewerOverlayInFront } from "~/lib/openInFront";
+import {
+  openFileInFront,
+  useFileReaderLayoutReport,
+  viewerOverlayInFront,
+} from "~/lib/openInFront";
 import { useOpenChangeRequestLink } from "~/lib/openPullRequestLink";
 import { useOpenInPreferredEditor } from "../editorPreferences";
 import { deriveThreadPlanView, displayFolder } from "../studio/threadPlanProgress";
@@ -770,6 +801,7 @@ const EMPTY_FEEDBACK_SUBMISSIONS: ReadonlyArray<CodexFeedbackSubmission> = [];
 const VISIT_DISPATCH_THROTTLE_MS = 10_000;
 const EMPTY_PROVIDER_SKILLS: ServerProvider["skills"] = [];
 const EMPTY_PENDING_USER_INPUT_ANSWERS: Record<string, PendingUserInputDraftAnswer> = {};
+const EMPTY_REVIEW_OPTIMISTIC_MESSAGES: ReadonlyArray<never> = [];
 function useDraftHeroLayoutTransition(
   isDraftHeroState: boolean,
   animationsActive: boolean,
@@ -2484,16 +2516,18 @@ function useChatViewState(props: ChatViewProps) {
     isServerThread &&
     serverProjection?.runs.some((run) => run.status === "queued" && run.queueHeld === true) ===
       true;
-  const resumableRunId = useMemo(() => {
-    if (!isServerThread || serverProjection === null) return null;
-    const run = latestExecutedRun(serverProjection.runs);
-    if (run?.status === "interrupted") return run.id;
-    return run?.status === "failed" &&
-      serverRuntime?.lastErrorClass === "usage_limit" &&
-      latestRootProviderFailure(run, serverProjection.turnItems)?.class === "usage_limit"
-      ? run.id
-      : null;
-  }, [isServerThread, serverProjection, serverRuntime?.lastErrorClass]);
+  // Stopped, limited, or failed in a way Continue can pick up in place.
+  const resumableRunId = useMemo(
+    () =>
+      !isServerThread || serverProjection === null
+        ? null
+        : resumableRunIdOf({
+            runs: serverProjection.runs,
+            turnItems: serverProjection.turnItems,
+            lastErrorClass: serverRuntime?.lastErrorClass,
+          }),
+    [isServerThread, serverProjection, serverRuntime?.lastErrorClass],
+  );
   const parentSubagentThreadId =
     activeThread?.lineage.relationshipToParent === "subagent"
       ? activeThread.lineage.parentThreadId
@@ -2803,6 +2837,13 @@ function useChatViewState(props: ChatViewProps) {
   const canMaximizeRightPanel = rightPanelOpen && !shouldUsePlanSidebarSheet;
   const rightPanelMaximized =
     canMaximizeRightPanel && maximizedRightPanelThreadKey === routeThreadKey;
+  useFileReaderLayoutReport(
+    inViewerOverlay ? null : activeThreadTarget,
+    workspaceLayoutWidth,
+    previewPanelInlineSize.width,
+    shouldUsePlanSidebarSheet,
+    rightPanelMaximized,
+  );
   const inlineRightPanelOwnsTitleBar = rightPanelOpen && !shouldUsePlanSidebarSheet;
   const [threadPanelPresentation, setThreadPanelPresentation] =
     useState<ThreadPanelPresentation>("inline");
@@ -6289,9 +6330,11 @@ function useChatViewActions(
     [activeProject, activeThreadId, activeThreadWorktreePath, environmentId, gitCwd, runtimeMode],
   );
 
+  const environmentCapabilities =
+    environmentById.get(environmentId)?.serverConfig?.environment.capabilities;
   const supportsProjectSettingsOverrides =
-    environmentById.get(environmentId)?.serverConfig?.environment.capabilities
-      .projectSettingsOverrides === true;
+    environmentCapabilities?.projectSettingsOverrides === true;
+  const projectOverrideWriteMode = useProjectOverrideWriteMode(environmentId);
   const persistProjectScripts = useCallback(
     async (input: {
       projectId: ProjectId;
@@ -6301,6 +6344,15 @@ function useChatViewActions(
       keybinding: NewProjectScriptInput["keybinding"];
       keybindingCommand: KeybindingCommand | null;
     }): Promise<AtomCommandResult<void, unknown>> => {
+      // Until the machine's settings load, the scripts come from the defaults
+      // and saving them would replace the project's saved actions.
+      if (projectOverrideWriteMode === null) {
+        return AsyncResult.failure(
+          Cause.fail(
+            new Error("This machine's settings are still loading. Try again in a moment."),
+          ),
+        );
+      }
       const previousKeybinding = keybindingValueForCommand(
         appAtomRegistry.get(serverEnvironment.configValueAtom(environmentId))?.keybindings ?? [],
         input.keybindingCommand,
@@ -6336,14 +6388,11 @@ function useChatViewActions(
             // The canonical key on servers that understand it; the legacy
             // per-project map is still translated on older ones.
             patch: supportsProjectSettingsOverrides
-              ? {
-                  projectSettingsOverrides: {
-                    [input.projectId]: {
-                      ...settings.projectSettingsOverrides[input.projectId],
-                      defaultProjectScripts: input.nextScripts,
-                    },
-                  },
-                }
+              ? projectSettingsOverrideChangesPatch(
+                  settings,
+                  { [input.projectId]: { set: { defaultProjectScripts: input.nextScripts } } },
+                  projectOverrideWriteMode === "per-key",
+                )
               : {
                   projectScriptOverrides: {
                     [input.projectId]: input.nextScripts,
@@ -6427,6 +6476,7 @@ function useChatViewActions(
       allProjects,
       environmentById,
       environmentId,
+      projectOverrideWriteMode,
       removeKeybinding,
       settings,
       supportsProjectSettingsOverrides,
@@ -9793,6 +9843,65 @@ export default function ChatView(props: ChatViewProps) {
     worktreeSetupBlocksSend,
     worktreeSetupOwnerKey,
   } = chatViewState;
+  const pendingUserInputIds = useMemo<ReadonlyArray<string>>(
+    () => pendingUserInputs.map((input) => input.requestId),
+    [pendingUserInputs],
+  );
+  // Read to a screen reader when an answer is sent or a question settles.
+  const [answerAnnouncement, announceAnswer] = useLiveAnnouncement();
+  const answerSettle = useQuestionSettleAnnouncements(
+    serverProjection === null || !activeThreadId ? null : `${environmentId}:${activeThreadId}`,
+    pendingUserInputIds,
+    announceAnswer,
+  );
+  // Why an answer was not sent, shown beside the composer.
+  const [answerProblem, setAnswerProblem] = useState<AnswerProblem | null>(null);
+  const shownAnswerProblem = answerProblemText(answerProblem, activeThreadId, pendingUserInputIds);
+  // A settled question's reason must not come back once a newer question has come and gone.
+  useEffect(() => {
+    if (!isAnswerProblemOutdated(answerProblem, activeThreadId, pendingUserInputIds)) return;
+    // Only this reason: one set since by a send's result stays.
+    setAnswerProblem((current) => (current === answerProblem ? null : current));
+  }, [activeThreadId, answerProblem, pendingUserInputIds]);
+  const dismissAnswerProblem = useCallback(() => setAnswerProblem(null), []);
+  const clearThreadAnswerProblem = useCallback(
+    (threadId: string) =>
+      setAnswerProblem((problem) => (problem?.threadId === threadId ? null : problem)),
+    [],
+  );
+  const serverProjectionRef = useLatestRef(serverProjection);
+  const pendingUserInputIdsRef = useLatestRef(pendingUserInputIds);
+  const activeThreadIdRef = useLatestRef(activeThreadId);
+  // True when the reason is kept. A settled question's reason is judged against
+  // the requests waiting when the answer was sent: any other is newer, and
+  // sending the box now would answer it, so the reason is dropped.
+  const showSendProblem = useCallback(
+    (
+      threadId: string,
+      requestId: string,
+      problem: QuestionSendProblem,
+      waitingAtSend: ReadonlyArray<string> = pendingUserInputIdsRef.current,
+    ) => {
+      const next = settledSendReason({
+        threadId,
+        requestId,
+        problem,
+        waitingAtSend,
+        activeThreadId: activeThreadIdRef.current,
+        pendingRequestIds: pendingUserInputIdsRef.current,
+      });
+      if (next === null) return false;
+      setAnswerProblem(next);
+      return true;
+    },
+    [activeThreadIdRef, pendingUserInputIdsRef],
+  );
+  // The held queue above the composer and the queue in it share one reason.
+  const queuedActionsUnavailableReason = queuedRunActionsUnavailableReason({
+    canOperateThread,
+    environmentUnavailable: activeEnvironmentUnavailable,
+    environmentLabel: activeEnvironmentUnavailableLabel,
+  });
   // The same rule that files the thread under Blocked, so the two never disagree.
   const activeThreadBlocker = activeThreadShell ? threadBlocker(activeThreadShell) : null;
   const {
@@ -10141,8 +10250,9 @@ export default function ChatView(props: ChatViewProps) {
             return {
               provider,
               context: creditRecoveryContext!,
-              onContinue: (intent: ManualCodexCreditIntent) =>
-                onResume(activeThreadShell.modelSelection, limitRestart ?? undefined, intent),
+              onContinue: async (intent: ManualCodexCreditIntent) => {
+                await onResume(activeThreadShell.modelSelection, limitRestart ?? undefined, intent);
+              },
             };
           })(),
           creditsExhausted: isApiCreditExhaustedMessage(serverRuntime?.lastError),
@@ -10328,6 +10438,7 @@ export default function ChatView(props: ChatViewProps) {
       ? {
           original: activeThreadShell.modelIdentity.preferred,
           stoppedRunId: `model:${activeThreadShell.modelIdentity.preferred.instanceId}:${activeThreadShell.modelIdentity.preferred.model}`,
+          launched: activeThreadShell.modelIdentity.launched === true,
         }
       : null
     : activeThreadShell && serverProjection
@@ -10335,72 +10446,197 @@ export default function ChatView(props: ChatViewProps) {
           serverProjection.messages,
           serverProjection.runs,
           activeThreadShell.modelSelection,
+          serverProjection.thread.launchFallbackFrom,
         )
       : null;
   const pairingProvider =
     pairing === null
       ? undefined
       : providerStatuses.find((provider) => provider.instanceId === pairing.original.instanceId);
-  const pairingKey =
-    pairing === null ? null : `limit-pairing:${routeThreadKey}:${pairing.stoppedRunId}`;
-  const selectionLabel = (selection: { readonly instanceId: string; readonly model: string }) =>
-    threadIdentityLabel(
-      providerInstanceEntries.find((entry) => entry.instanceId === selection.instanceId) ?? null,
-      selection.instanceId,
-      selection.model,
-    ).full;
-  const pairingBanner = useBannerItem(
-    limitFallbackPairingBannerItem,
-    pairing !== null &&
-      pairingKey !== null &&
-      activeThreadShell &&
-      !dismissedUsageApproaching.has(pairingKey)
-      ? {
-          id: pairingKey,
-          current: selectionLabel(
-            activeThreadShell.modelIdentity?.current ?? activeThreadShell.modelSelection,
-          ),
-          original: selectionLabel(pairing.original),
-          resetAt:
-            pairingProvider === undefined
-              ? null
-              : usageResetAt(pairingProvider, 100, approachingNowMs, pairing.original.model),
-          ...limitPairingRoom(
+  const pairingStandIn =
+    pairing === null
+      ? null
+      : (() => {
+          const originalEntry =
+            providerInstanceEntries.find(
+              (entry) => entry.instanceId === pairing.original.instanceId,
+            ) ?? null;
+          const runningSelection =
+            activeThreadShell?.modelIdentity?.current ?? activeThreadShell?.modelSelection ?? null;
+          const runningEntry = runningSelection
+            ? (providerInstanceEntries.find(
+                (entry) => entry.instanceId === runningSelection.instanceId,
+              ) ?? null)
+            : null;
+          // The chip's twin rule: a pick named like the running model goes by its provider.
+          const originalLabel = fallbackModelState({
+            pick: {
+              ...threadIdentityLabel(
+                originalEntry,
+                pairing.original.instanceId,
+                pairing.original.model,
+              ),
+              instance: originalEntry?.displayName ?? pairing.original.instanceId,
+            },
+            running: runningSelection
+              ? {
+                  ...threadIdentityLabel(
+                    runningEntry,
+                    runningSelection.instanceId,
+                    runningSelection.model,
+                  ),
+                  instance: runningEntry?.displayName ?? runningSelection.instanceId,
+                }
+              : null,
+          });
+          const room = limitPairingRoom(
             pairingProvider,
             approachingNowMs,
             pairing.original.model,
             activeThreadShell
               ? provenFallbackSelection(activeThreadShell, activeCoordinatorShell)
               : null,
-          ),
-          onBack: () => {
-            const selection = {
-              instanceId: pairing.original.instanceId,
-              model: pairing.original.model,
-            } as ModelSelection;
-            if (projectRouting?.saveCoordinatorModel)
-              void projectRouting.saveCoordinatorModel(selection);
-            else
-              onProviderModelSelect(selection.instanceId, selection.model, {
-                focusComposer: false,
-              });
-          },
+          );
+          return {
+            original: originalLabel.pick,
+            originalModel: originalLabel.pickModel,
+            launched: pairing.launched === true,
+            resetAt:
+              pairingProvider === undefined
+                ? null
+                : usageResetAt(pairingProvider, 100, approachingNowMs, pairing.original.model),
+            ...room,
+            onBack: () => {
+              const selection = {
+                instanceId: pairing.original.instanceId,
+                model: pairing.original.model,
+              } as ModelSelection;
+              if (projectRouting?.saveCoordinatorModel)
+                void projectRouting.saveCoordinatorModel(selection);
+              else
+                onProviderModelSelect(selection.instanceId, selection.model, {
+                  focusComposer: false,
+                });
+            },
+          };
+        })();
+  const pairingKey =
+    pairing && pairingStandIn
+      ? `limit-pairing:${routeThreadKey}:${pairing.stoppedRunId}:${pairingStandIn.hasRoom ? "room" : pairingStandIn.roomUnknown}`
+      : null;
+  const pairingResetLabel =
+    pairingStandIn?.resetAt == null
+      ? null
+      : new Date(pairingStandIn.resetAt).toLocaleTimeString([], {
+          hour: "numeric",
+          minute: "2-digit",
+        });
+  // A launch fallback has no limit stop to return from: nothing moves it back on its own.
+  const pairingLaunched = pairing?.launched === true;
+  const modelStateHeader = pairingStandIn
+    ? {
+        title: `Fallback for ${pairingStandIn.original}`,
+        detail: pairingLaunched
+          ? pairingStandIn.hasRoom
+            ? `${pairingStandIn.originalModel} had no room when this thread started and has room now.`
+            : pairingStandIn.roomUnknown
+              ? `${pairingStandIn.originalModel} had no room when this thread started. Its room is unknown.`
+              : `${pairingStandIn.originalModel} had no room when this thread started. Switch back when it has room.`
+          : pairingStandIn.hasRoom
+            ? `${pairingStandIn.originalModel} hit its usage limit and has room again.`
+            : pairingStandIn.roomUnknown
+              ? `${pairingStandIn.originalModel} hit its usage limit. Its room is unknown.`
+              : pairingResetLabel
+                ? `${pairingStandIn.originalModel} hit its usage limit and resets at ${pairingResetLabel}. The next turn after that goes back on its own.`
+                : `${pairingStandIn.originalModel} hit its usage limit. It has no room yet.`,
+        back: {
+          label: `Back to ${pairingStandIn.originalModel}`,
+          onClick: pairingStandIn.onBack,
+          disabledReason:
+            pairingStandIn.hasRoom || pairingStandIn.roomUnknown
+              ? null
+              : pairingResetLabel
+                ? `Available at ${pairingResetLabel}`
+                : `${pairingStandIn.originalModel} has no room yet`,
+        },
+      }
+    : null;
+  const pairingBanner = useBannerItem(
+    limitFallbackPairingBannerItem,
+    pairingStandIn && pairingKey && activeThreadShell && !dismissedUsageApproaching.has(pairingKey)
+      ? {
+          ...pairingStandIn,
+          id: pairingKey,
           onDismiss: () =>
             setDismissedUsageApproaching((current) => new Set(current).add(pairingKey)),
         }
       : null,
   );
+  const [dismissedAccountChanges, setDismissedAccountChanges] = useState<ReadonlySet<string>>(
+    () => new Set(),
+  );
+  const accountChangedProvider = providerStatuses.find(
+    (provider) => provider.instanceId === activeThreadShell?.providerInstanceId,
+  );
+  const accountChangedKey =
+    limitStopped && activeThreadShell?.latestRun
+      ? `${activeThreadShell.latestRun.runId}:${accountChangedProvider?.usageLimits?.accountChangedAt ?? ""}`
+      : null;
+  const accountChangedBanner = useBannerItem(
+    accountChangedBannerItem,
+    limitStopped &&
+      activeThreadShell?.latestRun &&
+      accountChangedKey !== null &&
+      !dismissedAccountChanges.has(accountChangedKey) &&
+      accountChangedWithRoom(
+        accountChangedProvider,
+        Date.parse(activeThreadShell.latestRun.completedAt ?? activeThreadShell.updatedAt),
+        // Room as the read saw it; a newer read re-renders this.
+        Date.parse(accountChangedProvider?.usageLimits?.checkedAt ?? ""),
+      )
+      ? {
+          runId: activeThreadShell.latestRun.runId,
+          providerName: accountChangedProvider
+            ? resolveProviderInstanceDisplayName(accountChangedProvider)
+            : "provider",
+          autoContinuing: accountChangeAutoContinues({
+            driver: accountChangedProvider?.driver,
+            runId: activeThreadShell.latestRun.runId,
+            limitRecovery: activeThreadShell.limitRecovery,
+            settledOverride: activeThreadShell.settledOverride,
+            snoozedUntil: activeThreadShell.snoozedUntil,
+            pendingRequest:
+              activeThreadShell.hasPendingApprovals || activeThreadShell.hasPendingUserInput,
+            project: activeProject?.workspaceSettings,
+            nowMs: Date.now(),
+          }),
+          // The notice shows a failure inline as well as on the thread.
+          onContinue: async () => {
+            const failure = await onResume(
+              activeThreadShell.modelSelection,
+              limitRestart ?? undefined,
+            );
+            if (failure !== null) throw new Error(failure);
+          },
+          onDismiss: () =>
+            setDismissedAccountChanges((current) => new Set(current).add(accountChangedKey)),
+        }
+      : null,
+  );
   const composerBannerItems = useMemo<ComposerBannerStackItem[]>(() => {
     // A handed-off thread is read-only: its move banner leads, not the limit it left behind.
+    // A limit the previous account hit gives way to the account change that lifts it.
     const limitRecoveryItems = movedAwayBanner(threadMoveBannerItem?.id)
       ? []
-      : limitRecoveryBanner !== null
-        ? [limitRecoveryBanner]
-        : usageApproachingBanner !== null
-          ? [usageApproachingBanner]
-          : pairingBanner !== null
-            ? [pairingBanner]
-            : [];
+      : accountChangedBanner !== null
+        ? [accountChangedBanner]
+        : limitRecoveryBanner !== null
+          ? [limitRecoveryBanner]
+          : usageApproachingBanner !== null
+            ? [usageApproachingBanner]
+            : pairingBanner !== null
+              ? [pairingBanner]
+              : [];
     const backgroundWorkItems = [goalBannerItem, backgroundWorkBannerItem].filter(
       (item) => item !== null,
     );
@@ -10485,6 +10721,7 @@ export default function ChatView(props: ChatViewProps) {
     serverRuntime?.usageLimitResetAt,
     canWriteSourceControl,
     feedbackBannerItems,
+    accountChangedBanner,
     limitRecoveryBanner,
     usageApproachingBanner,
     pairingBanner,
@@ -10614,6 +10851,8 @@ export default function ChatView(props: ChatViewProps) {
         return;
       }
       if (eventPathContainsSelector(event, KEYBOARD_OWNER_SELECTOR)) return;
+      // A sheet over the app (Usage) leaves this chat mounted; its keys are the sheet's.
+      if (isAppSheetOpen()) return;
       const terminalFocusOwner = getTerminalFocusOwner();
       if (event.defaultPrevented && terminalFocusOwner === null) {
         return;
@@ -11264,7 +11503,10 @@ export default function ChatView(props: ChatViewProps) {
     void sendStandaloneCommand("/compact", "Failed to compact context.");
   };
 
-  /** With a model selection, the stopped run continues on that provider through a context handoff. */
+  /**
+   * With a model selection, the stopped run continues on that provider through a context handoff.
+   * Resolves to the failure it also shows as the thread error, or null.
+   */
   const onResume = async (
     modelSelection?: ModelSelection,
     restart?: {
@@ -11272,7 +11514,7 @@ export default function ChatView(props: ChatViewProps) {
       readonly attachments: ReadonlyArray<ContractChatAttachment>;
     },
     creditIntent?: ManualCodexCreditIntent,
-  ) => {
+  ): Promise<string | null> => {
     if (
       !activeThread ||
       (resumableRunId === null && !hasHeldQueuedRuns) ||
@@ -11284,7 +11526,7 @@ export default function ChatView(props: ChatViewProps) {
       activeEnvironmentUnavailable ||
       sendInFlightRef.current
     ) {
-      return;
+      return null;
     }
     const capturedRecoveryContext = creditRecoveryContextRef.current;
     const creditStillCurrent = () => {
@@ -11317,6 +11559,7 @@ export default function ChatView(props: ChatViewProps) {
     sendInFlightRef.current = true;
     setResumingThreadKeys((current) => new Set(current).add(routeThreadKey));
     setThreadError(threadId, null);
+    let failure: string | null = null;
     await settleCaught(
       async () => {
         const resume = async (selectedModel: ModelSelection | undefined) => {
@@ -11384,10 +11627,8 @@ export default function ChatView(props: ChatViewProps) {
         if (result._tag === "Failure") {
           if (!isAtomCommandInterrupted(result)) {
             const error = squashAtomCommandFailure(result);
-            setThreadError(
-              threadId,
-              error instanceof Error ? error.message : "Could not resume thread.",
-            );
+            failure = error instanceof Error ? error.message : "Could not resume thread.";
+            setThreadError(threadId, failure);
           }
         } else {
           clearUsageLimitsFor(routeThreadKey);
@@ -11395,10 +11636,8 @@ export default function ChatView(props: ChatViewProps) {
         }
       },
       (error) => {
-        setThreadError(
-          threadId,
-          error instanceof Error ? error.message : "Could not resume coordinator.",
-        );
+        failure = error instanceof Error ? error.message : "Could not resume coordinator.";
+        setThreadError(threadId, failure);
       },
       () => {
         sendInFlightRef.current = false;
@@ -11409,6 +11648,7 @@ export default function ChatView(props: ChatViewProps) {
         });
       },
     );
+    return failure;
   };
 
   // Continue on a stalled turn: stop it, then resume once the stop has landed.
@@ -11504,6 +11744,7 @@ export default function ChatView(props: ChatViewProps) {
     sendInFlightRef.current = true;
     beginLocalDispatch({ preparingWorktree: false });
     setThreadError(threadIdForSend, null);
+    clearThreadAnswerProblem(threadIdForSend);
 
     // Position this sent row once LegendList has measured the anchored tail.
     isAtEndRef.current = true;
@@ -11802,7 +12043,13 @@ export default function ChatView(props: ChatViewProps) {
         supportsQuestionAttachments,
       });
       if (reply.kind === "blocked") {
-        setThreadError(activeThreadId, reply.reason);
+        if (activeThreadId)
+          setAnswerProblem({
+            threadId: activeThreadId,
+            requestId: activePendingUserInput?.requestId ?? null,
+            text: reply.reason,
+          });
+        else setThreadError(activeThreadId, reply.reason);
         return;
       }
       if (reply.kind === "reply") {
@@ -12584,6 +12831,7 @@ export default function ChatView(props: ChatViewProps) {
               clearedDraftSnapshot &&
             multipleModelSelectionsRef.current === submittedSelections;
           setThreadError(threadIdForSend, null);
+          clearThreadAnswerProblem(threadIdForSend);
           const starts = Promise.all(
             multipleTargets.map(async (target) => {
               const retryKey = JSON.stringify([
@@ -12878,6 +13126,7 @@ export default function ChatView(props: ChatViewProps) {
       },
     ]);
     setThreadError(threadIdForSend, null);
+    clearThreadAnswerProblem(threadIdForSend);
     if (expiredTerminalContextCount > 0) {
       const toastCopy = buildExpiredTerminalContextToastCopy(
         expiredTerminalContextCount,
@@ -13278,13 +13527,15 @@ export default function ChatView(props: ChatViewProps) {
         readonly questionId: string;
         readonly attachments: ReadonlyArray<ContractChatAttachment>;
       },
+      /** A send that seemed to fail landed after all: clear what it sent. */
+      onLanded?: () => void,
     ) => {
       if (!activeThreadId || !readEnvironmentScope(environmentId, AuthOrchestrationOperateScope))
-        return;
+        return false;
       const pendingInput = pendingUserInputs.find((input) => input.requestId === requestId);
-      if (!pendingInput || pendingInput.responseCapability === "not_resumable") return;
+      if (!pendingInput || pendingInput.responseCapability === "not_resumable") return false;
       const responseKey = JSON.stringify([environmentId, activeThreadId, requestId]);
-      if (userInputResponsesInFlight.current.has(responseKey)) return;
+      if (userInputResponsesInFlight.current.has(responseKey)) return false;
       const attachmentsByQuestionId = new Map<
         string,
         import("@specweave-studio/contracts").UserInputAttachments[string]
@@ -13296,7 +13547,7 @@ export default function ChatView(props: ChatViewProps) {
           requestId,
           question.id,
         );
-        if ((useQuestionAttachmentPreparation.getState().counts[target] ?? 0) > 0) return;
+        if ((useQuestionAttachmentPreparation.getState().counts[target] ?? 0) > 0) return false;
         const draft = useComposerDraftStore.getState().getComposerDraft(target);
         const attachments = draft ? [...draft.images, ...draft.files] : [];
         const fromChat = chatReply?.questionId === question.id ? chatReply.attachments : [];
@@ -13304,11 +13555,12 @@ export default function ChatView(props: ChatViewProps) {
         const fromDraft = getUploadedAttachments({ environmentId, images: attachments });
         const uploaded = fromDraft ? [...fromDraft, ...fromChat] : null;
         if (!uploaded) {
-          setThreadError(
-            activeThreadId,
-            "Wait for attachments to finish uploading, or remove failed uploads.",
-          );
-          return;
+          setAnswerProblem({
+            threadId: activeThreadId,
+            requestId,
+            text: "Wait for attachments to finish uploading, or remove failed uploads.",
+          });
+          return false;
         }
         attachmentsByQuestionId.set(
           question.id,
@@ -13316,13 +13568,30 @@ export default function ChatView(props: ChatViewProps) {
         );
       }
       userInputResponsesInFlight.current.add(responseKey);
+      // Another thread's reason waits for its return.
+      clearThreadAnswerProblem(activeThreadId);
+      answerSettle.claim(requestId);
 
       setRespondingUserInputRequestIds((existing) =>
         existing.includes(requestId) ? existing : [...existing, requestId],
       );
+      const waitingAtSend = pendingUserInputIdsRef.current;
       const result = await respondToThreadUserInput({
         environmentId,
         input: {
+          // The same answer sent again replays one command instead of a refused second one.
+          commandId: CommandId.make(
+            questionAnswerCommandId({
+              requestId,
+              answers,
+              attachmentIdsByQuestionId: Object.fromEntries(
+                [...attachmentsByQuestionId].map(([id, list]) => [
+                  id,
+                  list.map((attachment) => attachment.id),
+                ]),
+              ),
+            }),
+          ),
           threadId: activeThreadId,
           requestId,
           answers,
@@ -13332,23 +13601,40 @@ export default function ChatView(props: ChatViewProps) {
           ...(chatReply ? { answeredInChat: true } : {}),
         },
       });
-      if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-        const error = squashAtomCommandFailure(result);
-        setThreadError(
-          activeThreadId,
-          error instanceof Error ? error.message : "Failed to submit user input.",
-        );
-      }
       userInputResponsesInFlight.current.delete(responseKey);
       setRespondingUserInputRequestIds((existing) => existing.filter((id) => id !== requestId));
-      return result;
+      const threadId = activeThreadId;
+      const problem = settleQuestionAnswer({
+        result: questionSendResult(result, "Failed to submit user input."),
+        requestId,
+        answers,
+        files: Object.fromEntries(attachmentsByQuestionId),
+        heldInBox: chatReply !== undefined,
+        runtimeRequests: () => serverProjectionRef.current?.runtimeRequests,
+        settle: answerSettle,
+        announce: announceAnswer,
+        onLanded: () => {
+          clearThreadAnswerProblem(threadId);
+          onLanded?.();
+        },
+        onSettledElsewhere: (settled) =>
+          showSendProblem(threadId, requestId, settled, waitingAtSend),
+      });
+      if (problem === null) return true;
+      if (!problem.settled) showSendProblem(threadId, requestId, problem);
+      return false;
     },
     [
       activeThreadId,
+      announceAnswer,
+      answerSettle,
       environmentId,
+      pendingUserInputIdsRef,
       pendingUserInputs,
       respondToThreadUserInput,
-      setThreadError,
+      serverProjectionRef,
+      showSendProblem,
+      clearThreadAnswerProblem,
       userInputResponsesInFlight,
       setRespondingUserInputRequestIds,
     ],
@@ -13359,30 +13645,40 @@ export default function ChatView(props: ChatViewProps) {
   const onDismissUserInput = useCallback(
     async (requestId: RuntimeRequestId) => {
       if (!activeThreadId) return;
+      answerSettle.claim(requestId);
 
       setRespondingUserInputRequestIds((existing) =>
         existing.includes(requestId) ? existing : [...existing, requestId],
       );
+      const waitingAtSend = pendingUserInputIdsRef.current;
+      const threadId = activeThreadId;
       const result = await dismissThreadUserInput({
         environmentId,
-        input: { threadId: activeThreadId, requestId },
+        input: { threadId, requestId },
       });
-      if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
-        const error = squashAtomCommandFailure(result);
-        setThreadError(
-          activeThreadId,
-          error instanceof Error ? error.message : "Failed to dismiss the question.",
-        );
-      }
+      const problem = settleQuestionDismiss({
+        result: questionSendResult(result, "Failed to dismiss the question."),
+        requestId,
+        runtimeRequests: () => serverProjectionRef.current?.runtimeRequests,
+        settle: answerSettle,
+        announce: announceAnswer,
+        onSettledElsewhere: (settled) =>
+          showSendProblem(threadId, requestId, settled, waitingAtSend),
+      });
+      if (problem !== null && !problem.settled) showSendProblem(threadId, requestId, problem);
       setRespondingUserInputRequestIds((existing) => existing.filter((id) => id !== requestId));
       return result;
     },
     [
       activeThreadId,
+      announceAnswer,
+      answerSettle,
       dismissThreadUserInput,
       environmentId,
-      setThreadError,
+      pendingUserInputIdsRef,
+      serverProjectionRef,
       setRespondingUserInputRequestIds,
+      showSendProblem,
     ],
   );
 
@@ -13511,10 +13807,11 @@ export default function ChatView(props: ChatViewProps) {
     const files = [...reply.images, ...reply.files];
     const uploaded = getUploadedAttachments({ environmentId, images: files });
     if (!uploaded) {
-      setThreadError(
-        activeThreadId,
-        "Wait for attachments to finish uploading, or remove failed uploads.",
-      );
+      setAnswerProblem({
+        threadId: activeThreadId,
+        requestId: request.requestId,
+        text: "Wait for attachments to finish uploading, or remove failed uploads.",
+      });
       return;
     }
     const store = useComposerDraftStore.getState();
@@ -13548,14 +13845,20 @@ export default function ChatView(props: ChatViewProps) {
       [question.id]: { customAnswer: reply.text, attachmentCount: files.length },
     });
     if (!answers) {
-      setThreadError(activeThreadId, "Answer each question on the card before sending.");
+      setAnswerProblem({
+        threadId: activeThreadId,
+        requestId: request.requestId,
+        text: "Answer each question on the card before sending.",
+      });
       return;
     }
-    const result = await onRespondToUserInput(request.requestId, answers, {
-      questionId: question.id,
-      attachments: uploaded,
-    });
-    if (result?._tag === "Success") clearSentDraft();
+    const delivered = await onRespondToUserInput(
+      request.requestId,
+      answers,
+      { questionId: question.id, attachments: uploaded },
+      clearSentDraft,
+    );
+    if (delivered) clearSentDraft();
   };
 
   const onPreviousActivePendingUserInputQuestion = useCallback(() => {
@@ -14360,18 +14663,27 @@ export default function ChatView(props: ChatViewProps) {
         progress={activePendingProgress}
         respondingQuestions={respondingUserInputRequestIds}
         onOption={onSelectActivePendingUserInputOption}
-        onCustomAnswer={onChangeActivePendingUserInputCustomAnswer}
-        questionAttachmentContext={
-          supportsQuestionAttachments && supportsAttachmentUploads && activeThreadId
-            ? { environmentId, threadId: activeThreadId, maxFileBytes: maxFileAttachmentBytes }
-            : undefined
-        }
         onPrevious={onPreviousActivePendingUserInputQuestion}
         onAdvance={onAdvanceActivePendingUserInput}
         onDismiss={(id) => void onDismissUserInput(id)}
         planMarkdown={showPlanFollowUpPrompt ? (activeProposedPlan?.planMarkdown ?? null) : null}
         onImplementPlan={() =>
           onSubmitPlanFollowUp({ text: "Implement this plan.", interactionMode: "default" })
+        }
+        // The held queue's own Resume and Discard; editing needs the thread's composer.
+        heldQueue={
+          hasHeldQueuedRuns && isServerThread && activeThread ? (
+            <QueuedRunsControl
+              environmentId={activeThread.environmentId}
+              threadId={activeThread.id}
+              optimisticMessages={EMPTY_REVIEW_OPTIMISTIC_MESSAGES}
+              editingRunId={null}
+              onCancelEdit={cancelEditingQueuedRun}
+              onResumeHeld={canOperateThread ? () => void onResume() : undefined}
+              resumeBusy={isSendBusy || isResuming || isConnecting || threadDetailLoading}
+              actionsUnavailableReason={queuedActionsUnavailableReason}
+            />
+          ) : null
         }
       />
     );
@@ -14531,6 +14843,21 @@ export default function ChatView(props: ChatViewProps) {
                   localServerError === null && visibleThreadError === serverRuntimeError
                     ? (serverRuntime?.lastErrorClass ?? null)
                     : null
+                }
+                onContinue={
+                  resumableRunId !== null &&
+                  canOperateThread &&
+                  localServerError === null &&
+                  visibleThreadError === serverRuntimeError
+                    ? () => void onResume()
+                    : undefined
+                }
+                continueBusy={
+                  isSendBusy ||
+                  isResuming ||
+                  isConnecting ||
+                  threadDetailLoading ||
+                  isRevertingCheckpoint
                 }
                 onDismiss={() => {
                   setThreadError(activeThread.id, null);
@@ -14835,12 +15162,14 @@ export default function ChatView(props: ChatViewProps) {
                               }
                             />
                           ) : null}
+                          <QuestionLiveStatus announcement={answerAnnouncement} />
                           {!composerMounted ? null : (
                             <ChatComposer
                               allowManualCodexCredits={!routesViaCoordinator(projectRouting)}
                               canOperateThread={canOperateThread}
                               reportedModelSelection={reportedModelSelection}
                               limitFallbackFrom={pairing?.original ?? null}
+                              modelStateHeader={modelStateHeader}
                               multipleModelSelections={multipleModelSelections}
                               supportsMultipleModels={
                                 serverConfig?.environment.capabilities.requiredWorktreeBootstrap ===
@@ -14924,6 +15253,7 @@ export default function ChatView(props: ChatViewProps) {
                                       threadDetailLoading ||
                                       isRevertingCheckpoint
                                     }
+                                    actionsUnavailableReason={queuedActionsUnavailableReason}
                                   />
                                 ) : null
                               }
@@ -14942,6 +15272,8 @@ export default function ChatView(props: ChatViewProps) {
                               activePendingApproval={activePendingApproval}
                               pendingApprovals={pendingApprovals}
                               pendingUserInputs={pendingUserInputs}
+                              answerProblem={shownAnswerProblem}
+                              onDismissAnswerProblem={dismissAnswerProblem}
                               activePendingProgress={activePendingProgress}
                               activePendingResolvedAnswers={activePendingResolvedAnswers}
                               activePendingIsResponding={activePendingIsResponding}

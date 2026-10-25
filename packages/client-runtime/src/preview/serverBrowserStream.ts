@@ -233,7 +233,7 @@ export interface PreviewStreamEvents {
   /** The tab was closed on the server. The client has stopped. */
   readonly onGone?: () => void;
   /** The server's browser cannot start until its host is set up. The client has stopped. */
-  readonly onHostSetup?: (setup: PreviewStreamHostSetup) => void;
+  readonly onHostSetup?: (setup: PreviewHostSetupNotice) => void;
 }
 
 export interface PreviewStreamClient {
@@ -477,22 +477,42 @@ export function createPreviewFramePainter(
   };
 }
 
+/**
+ * The host setup a viewer shows. `need` is "other" for one this client is older than,
+ * so the server's own command still shows, beside generic copy.
+ */
+export interface PreviewHostSetupNotice {
+  readonly need: PreviewStreamHostSetup["need"] | "other";
+  readonly command: string;
+}
+
+const KNOWN_NEEDS: ReadonlySet<string> = new Set(["sandbox", "libraries", "gpu"]);
+
 /** A malformed reason still stops the viewer and offers the usual command. */
-const decodeHostSetup = (reason: string): PreviewStreamHostSetup => {
+const decodeHostSetup = (reason: string): PreviewHostSetupNotice => {
   try {
-    const value = JSON.parse(reason) as Partial<PreviewStreamHostSetup>;
-    if (
-      (value.need === "sandbox" || value.need === "libraries") &&
-      typeof value.command === "string"
-    ) {
-      return { need: value.need, command: value.command };
+    const value = JSON.parse(reason) as { need?: unknown; command?: unknown };
+    if (typeof value.command === "string") {
+      const need =
+        typeof value.need === "string" && KNOWN_NEEDS.has(value.need)
+          ? (value.need as PreviewStreamHostSetup["need"])
+          : "other";
+      return { need, command: value.command };
     }
   } catch {}
   return { need: "sandbox", command: "sudo specweave-studio browser setup" };
 };
 
 /** What a viewer tells the person; `command` is shown beside it, ready to copy. */
-export const previewStreamHostSetupMessage = (setup: PreviewStreamHostSetup) =>
-  setup.need === "sandbox"
-    ? "This server's host blocks the sandbox its browser runs in. Run this once on the host, then try again:"
-    : "This server's host is missing libraries its browser needs. Run this once on the host, then try again:";
+export const previewStreamHostSetupMessage = (setup: PreviewHostSetupNotice) => {
+  switch (setup.need) {
+    case "sandbox":
+      return "This server's host blocks the sandbox its browser runs in. Run this once on the host, then try again:";
+    case "libraries":
+      return "This server's host is missing libraries its browser needs. Run this once on the host, then try again:";
+    case "gpu":
+      return "Chrome's GPU process cannot start inside the sandbox this server runs in. Start the server outside it, or restart it with this set in its environment, then try again:";
+    case "other":
+      return "This server's browser needs setup on its host. Do this there, then try again:";
+  }
+};

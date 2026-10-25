@@ -1,10 +1,19 @@
-import type { AssetResource, EnvironmentId, ScopedThreadRef } from "@specweave-studio/contracts";
+import { executeAtomQuery } from "@specweave-studio/client-runtime/state/runtime";
+import { turnItemDetailRevision } from "@specweave-studio/client-runtime/work-log/item-detail";
+import type {
+  AssetResource,
+  EnvironmentId,
+  OrchestrationV2TurnItem,
+  ScopedThreadRef,
+} from "@specweave-studio/contracts";
 import { htmlRenderFileName } from "@specweave-studio/shared/htmlRender";
 import { visibleThreadPullRequests } from "@specweave-studio/shared/threadPullRequests";
 import { htmlRenderFromToolItem } from "@specweave-studio/shared/toolOutput";
 import {
+  CheckIcon,
   ChevronLeftIcon,
   ChevronRightIcon,
+  CopyIcon,
   DownloadIcon,
   ExternalLinkIcon,
   FileAudioIcon,
@@ -12,27 +21,42 @@ import {
   FileIcon,
   FileTextIcon,
   FileVideoIcon,
+  GlobeIcon,
   HashIcon,
   ImageIcon,
   LinkIcon,
   PanelRightOpenIcon,
   ShapesIcon,
 } from "lucide-react";
-import { type ReactNode, type Ref, useMemo, useRef, useState } from "react";
+import { type ReactNode, type Ref, useEffect, useMemo, useRef, useState } from "react";
 import { createPortal } from "react-dom";
 
 import { useAssetUrlState } from "~/assets/assetUrls";
 import ChatMarkdown from "~/components/ChatMarkdown";
+import { useCopyToClipboard } from "~/hooks/useCopyToClipboard";
 import { stepOutOfViewerOverlay } from "~/lib/openInFront";
 import { readLocalApi } from "~/localApi";
 import {
+  ARTIFACT_KIND_LABEL,
   canonicalLinkKey,
   shelfEntries,
+  shelfLocalPath,
   type ShelfEntry,
   type ShelfPullRequest,
 } from "~/artifactShelf";
+import {
+  cachedDetailRead,
+  isClaudeArtifactUrl,
+  isNativeArtifactCandidate,
+  type NativeArtifactDetailRead,
+  type NativeArtifactReference,
+  resolveNativeArtifacts,
+} from "~/nativeArtifacts";
+import { appAtomRegistry } from "../../rpc/atomRegistry";
 // Relative, so the headless fixture (tests/project-workspace) can stand in for it.
 import { useThreadProjection, useThreadShell } from "../../state/entities";
+import { useEnvironment, useUnreachableEnvironmentIds } from "../../state/environments";
+import { orchestrationEnvironment } from "../../state/orchestration";
 import { formatViewerDate, viewerIso } from "~/viewerDate";
 import {
   InViewerOverlay,
@@ -44,13 +68,14 @@ import {
   collectThreadArtifacts,
   settleThreadArtifacts,
   isViewableArtifact,
+  nativeArtifact,
   type ThreadArtifact,
   type ThreadArtifactKind,
   type ThreadFileArtifact,
   type ThreadRenderArtifact,
   fileArtifact,
 } from "~/threadArtifacts";
-import { mayBeDirectory, type MarkdownFileLinkMeta } from "~/markdown-links";
+import { fileLinkMetaAtPath, mayBeDirectory, type MarkdownFileLinkMeta } from "~/markdown-links";
 import { AudioPreview } from "../files/AudioPreview";
 import { ReadOnlySourcePreview } from "../files/AttachmentFilePreview";
 import { BrowserDocumentFrame } from "../files/BrowserDocumentFrame";
@@ -59,9 +84,17 @@ import { Button } from "../ui/button";
 import { MenuItem } from "../ui/menu";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { ArtifactShelfList } from "./ArtifactShelfList";
+import { mayBeMissing, MissingFileNotice } from "./MissingFileNotice";
 import { MarkdownDocumentView } from "./ReportReader";
-import { useArtifactShelfState } from "./useArtifactShelfState";
-import { useMissingArtifactFiles } from "./useMissingArtifactFiles";
+import {
+  readOriginSnapshot,
+  remapShelfPath,
+  shelfOrigins,
+  type ShelfOrigin,
+  type ShelfSnapshotEntry,
+  useArtifactShelfState,
+} from "./useArtifactShelfState";
+import { useArtifactFileChecks } from "./useMissingArtifactFiles";
 import { ViewerFileActions } from "./ViewerFileActions";
 import { ViewerImageStage } from "./ViewerImageStage";
 import type { ZoomableImageHandle } from "./ZoomableImage";
@@ -79,20 +112,11 @@ const KIND_ICON: Record<ThreadArtifactKind, typeof FileIcon> = {
   code: FileCodeIcon,
   file: FileIcon,
   link: LinkIcon,
+  native: GlobeIcon,
 };
 
 /** What an artifact is, in the overlay header's words. */
-const KIND_LABEL: Record<ThreadArtifactKind, string> = {
-  image: "Image",
-  video: "Video",
-  audio: "Audio",
-  html: "Page",
-  markdown: "Document",
-  pdf: "PDF",
-  code: "File",
-  file: "File",
-  link: "Link",
-};
+const KIND_LABEL = ARTIFACT_KIND_LABEL;
 
 function extensionBadge(name: string): string {
   const dot = name.lastIndexOf(".");
@@ -105,11 +129,111 @@ function openExternally(url: string) {
   else window.open(url, "_blank", "noopener,noreferrer");
 }
 
+const artifactDetailReaders = new Map<string, NativeArtifactDetailRead<OrchestrationV2TurnItem>>();
+/** A host that has not returned a tool call by then is asked again next time. */
+const DETAIL_READ_TIMEOUT_MS = 10_000;
+
+/**
+ * Reads an Artifact call's full result, which the timeline withholds, once
+ * per finished revision for the session.
+ */
+function artifactDetailReader(
+  threadRef: ScopedThreadRef,
+): NativeArtifactDetailRead<OrchestrationV2TurnItem> {
+  const scope = `${threadRef.environmentId}:${threadRef.threadId}`;
+  const existing = artifactDetailReaders.get(scope);
+  if (existing) return existing;
+  const reader = cachedDetailRead<OrchestrationV2TurnItem>(
+    async (item) => {
+      const result = await executeAtomQuery(
+        appAtomRegistry,
+        orchestrationEnvironment.turnItem({
+          environmentId: threadRef.environmentId,
+          input: {
+            threadId: threadRef.threadId,
+            itemId: item.id,
+            revision: turnItemDetailRevision(item),
+          },
+        }),
+        // A reconnecting host never answers; a hung read must not stay cached.
+        {
+          reportFailure: false,
+          reportDefect: false,
+          signal: AbortSignal.timeout(DETAIL_READ_TIMEOUT_MS),
+        },
+      );
+      if (result._tag !== "Success") throw new Error("The host did not return the tool call.");
+      return result.value.item;
+    },
+    (item) => `${item.id}:${turnItemDetailRevision(item)}`,
+  );
+  artifactDetailReaders.set(scope, reader);
+  return reader;
+}
+
+const NO_NATIVE_ARTIFACTS: ReadonlyArray<NativeArtifactReference> = [];
+/** A page the host did not answer for is asked again after this, doubling to the cap. */
+const DETAIL_RETRY_MS = 15_000;
+const DETAIL_RETRY_CAP_MS = 5 * 60_000;
+
+/**
+ * The pages the thread published with Claude Code's Artifact tool, one per
+ * page at its latest version. Their results reach the client only on a
+ * detail read, so one read per page, and only for publish calls. A page the
+ * host did not answer for is asked again later, and at once when its machine
+ * comes back; nothing is asked while it is offline.
+ */
+function useNativeArtifacts(
+  threadRef: ScopedThreadRef | null,
+  turnItems: ReadonlyArray<OrchestrationV2TurnItem> | undefined,
+): ReadonlyArray<NativeArtifactReference> {
+  const candidates = useMemo(
+    () => (turnItems ?? []).filter(isNativeArtifactCandidate),
+    [turnItems],
+  );
+  const signature = candidates
+    .map((item) => `${item.id}:${turnItemDetailRevision(item)}`)
+    .join("\n");
+  const scope = threadRef === null ? null : `${threadRef.environmentId}:${threadRef.threadId}`;
+  const unreachable = useUnreachableEnvironmentIds();
+  const offline = threadRef !== null && unreachable.has(threadRef.environmentId);
+  const [attempt, setAttempt] = useState(0);
+  const [resolved, setResolved] = useState<{
+    readonly scope: string;
+    readonly refs: ReadonlyArray<NativeArtifactReference>;
+  } | null>(null);
+  useEffect(() => {
+    if (threadRef === null || scope === null || candidates.length === 0 || offline) return;
+    let active = true;
+    let unanswered = false;
+    let retry: ReturnType<typeof setTimeout> | undefined;
+    const read = artifactDetailReader(threadRef);
+    void resolveNativeArtifacts(candidates, (item) =>
+      read(item).catch((error: unknown) => {
+        unanswered = true;
+        throw error;
+      }),
+    ).then((refs) => {
+      if (!active) return;
+      setResolved({ scope, refs });
+      if (unanswered) {
+        const delay = Math.min(DETAIL_RETRY_CAP_MS, DETAIL_RETRY_MS * 2 ** Math.min(attempt, 5));
+        retry = setTimeout(() => setAttempt((count) => count + 1), delay);
+      }
+    });
+    return () => {
+      active = false;
+      if (retry !== undefined) clearTimeout(retry);
+    };
+  }, [scope, signature, offline, attempt]);
+  return candidates.length > 0 && resolved?.scope === scope ? resolved.refs : NO_NATIVE_ARTIFACTS;
+}
+
 /**
  * Everything a thread produced or pointed at: the files, pages, documents and
- * links its replies name, and the pages it published with `html_render`.
- * Paths are settled on the host, so a file in a sibling worktree lists where
- * it really is.
+ * links its replies name, the pages it published with `html_render`, and the
+ * claude.ai pages Claude Code published. Paths are settled on the host, so a
+ * file in a sibling worktree lists where it really is.
  */
 export function useThreadArtifacts(
   threadRef: ScopedThreadRef | null,
@@ -118,6 +242,7 @@ export function useThreadArtifacts(
   const thread = useThreadProjection(threadRef);
   const messages = thread?.projection.messages;
   const turnItems = thread?.projection.turnItems;
+  const natives = useNativeArtifacts(threadRef, turnItems);
   const authored = useMemo(() => {
     const replies = (messages ?? [])
       .filter((message) => message.role === "assistant")
@@ -146,8 +271,9 @@ export function useThreadArtifacts(
         messageId: item.id,
       });
     }
-    return [...renders.reverse(), ...fromText];
-  }, [cwd, messages, turnItems]);
+    // Before the replies, so a reply's own mention of the page's URL lists as this entry.
+    return [...renders.reverse(), ...natives.map(nativeArtifact), ...fromText];
+  }, [cwd, messages, natives, turnItems]);
   return useSettledArtifacts(authored, threadRef, cwd);
 }
 
@@ -181,21 +307,68 @@ function useSettledArtifacts(
 
 /**
  * The thread header's artifacts chip: a count that opens the organized list,
- * and the viewer that steps through it.
+ * and the viewer that steps through it. A thread continued from another
+ * machine lists what its origin listed, found again in this checkout.
  */
 export function ThreadArtifactsMenu(props: {
   readonly threadRef: ScopedThreadRef | null;
   readonly cwd: string | undefined;
 }) {
-  const artifacts = useThreadArtifacts(props.threadRef, props.cwd);
-  // Oldest first, so stepping forward moves forward in the thread.
-  const viewable = useMemo(() => artifacts.filter(isViewableArtifact).toReversed(), [artifacts]);
+  const thread = useThreadProjection(props.threadRef);
+  const appThread = thread?.projection.thread;
+  const environmentId = props.threadRef?.environmentId ?? null;
+  const originsKey = JSON.stringify([
+    appThread?.execution?.sourceRoot ?? null,
+    appThread?.movedFrom ?? null,
+  ]);
+  const origins = useMemo(
+    () => (environmentId === null ? [] : shelfOrigins(appThread, environmentId)),
+    [environmentId, originsKey],
+  );
   const [openKey, setOpenKey] = useState<string | null>(null);
   const [listOpen, setListOpen] = useState(false);
+  const own = useThreadArtifacts(props.threadRef, props.cwd);
+  const origin = origins[0] ?? null;
+  const originSnapshot = useMemo(
+    () => (origin === null ? false : readOriginSnapshot(origin).length > 0),
+    [origin],
+  );
+  // With a snapshot of the origin's list to count from, its own thread is
+  // read only while its entries are on screen.
+  const inherited = useInheritedArtifacts(
+    origin,
+    props.cwd,
+    !originSnapshot || listOpen || openKey !== null,
+  );
+  const artifacts = useMemo(
+    () => (inherited.artifacts.length === 0 ? own : [...own, ...inherited.artifacts]),
+    [inherited.artifacts, own],
+  );
+  // Oldest first, so stepping forward moves forward in the thread.
+  const viewable = useMemo(() => artifacts.filter(isViewableArtifact).toReversed(), [artifacts]);
   // When the list last opened: what has gone quiet since is aged against it.
   const [openedAt, setOpenedAt] = useState(() => Date.now());
-  const shelfState = useArtifactShelfState(props.threadRef);
-  const entries = useShelfEntries(props.threadRef, artifacts, shelfState, listOpen, openedAt);
+  const shelfState = useArtifactShelfState(props.threadRef, {
+    origins,
+    workspaceRoot: props.cwd ?? null,
+  });
+  const { entries, notice } = useShelfEntries(
+    props.threadRef,
+    artifacts,
+    shelfState,
+    listOpen,
+    openedAt,
+    props.cwd,
+    inherited,
+  );
+  const { recordSnapshot } = shelfState;
+  useEffect(() => {
+    if (listOpen) recordSnapshot(entries);
+  }, [listOpen]);
+  const stateByKey = useMemo(
+    () => new Map(entries.map((entry) => [entry.artifact.key, entry] as const)),
+    [entries],
+  );
   if (artifacts.length === 0 || props.threadRef === null) return null;
   const index = viewable.findIndex((artifact) => artifact.key === openKey);
   const visible = entries.filter((entry) => !entry.hidden).length;
@@ -224,8 +397,19 @@ export function ThreadArtifactsMenu(props: {
         <PopoverPopup align="end" padding="compact" className="w-96 max-w-[90vw]">
           <ArtifactShelfList
             entries={entries}
+            now={openedAt}
+            notice={notice}
             iconFor={(entry) => KIND_ICON[entry.artifact.kind]}
             onOpen={(entry) => {
+              // Links and claude.ai pages open in the browser; nothing frames them here.
+              if (entry.artifact.kind === "native") {
+                const url = entry.artifact.native.url;
+                // A result that named another site has no link to offer.
+                if (url === null) return;
+                setListOpen(false);
+                openExternally(url);
+                return;
+              }
               setListOpen(false);
               if (entry.artifact.kind === "link") openExternally(entry.artifact.url);
               else setOpenKey(entry.artifact.key);
@@ -243,16 +427,227 @@ export function ThreadArtifactsMenu(props: {
           index={index}
           onIndex={(next) => setOpenKey(viewable[next]?.key ?? null)}
           onClose={() => setOpenKey(null)}
+          fileStateOf={(artifact) => {
+            const entry = stateByKey.get(artifact.key);
+            return entry?.fileState
+              ? { state: entry.fileState, reason: entry.stateReason, offline: notice !== null }
+              : null;
+          }}
         />
       ) : null}
     </>
   );
 }
 
+/** What a continued thread carries from its origin, already moved into this checkout. */
+interface InheritedArtifacts {
+  readonly artifacts: ReadonlyArray<ThreadArtifact>;
+  /** When the origin's messages named them, by message id. */
+  readonly dates: ReadonlyMap<string, number>;
+  readonly machineLabel: string | null;
+}
+
+const NO_INHERITED: InheritedArtifacts = { artifacts: [], dates: new Map(), machineLabel: null };
+
+/** An origin's artifact as this checkout has it; a page kept as an attachment stays behind. */
+function carriedArtifact(
+  artifact: ThreadArtifact,
+  fromRoot: string | null,
+  toRoot: string | undefined,
+): ThreadArtifact | null {
+  const into = toRoot ?? null;
+  if (artifact.kind === "native") {
+    const localPath = remapShelfPath(artifact.native.localPath, fromRoot, into);
+    return localPath === artifact.native.localPath
+      ? artifact
+      : nativeArtifact({ ...artifact.native, localPath });
+  }
+  if ("attachmentId" in artifact) return null;
+  if (!("meta" in artifact)) return artifact;
+  const path = remapShelfPath(artifact.meta.filePath, fromRoot, into);
+  if (path === artifact.meta.filePath) return artifact;
+  return fileArtifact(fileLinkMetaAtPath(artifact.meta, path, toRoot), artifact.messageId);
+}
+
+/** The entries an origin last showed here, for when its thread cannot be read. */
+function snapshotArtifacts(
+  snapshot: ReadonlyArray<ShelfSnapshotEntry>,
+  root: string | null,
+): ThreadArtifact[] {
+  return snapshot.flatMap((entry): ThreadArtifact[] => {
+    const messageId = `snapshot:${entry.id}`;
+    if (entry.kind === "link" && entry.url) {
+      try {
+        const parsed = new URL(entry.url);
+        if (parsed.protocol !== "https:" && parsed.protocol !== "http:") return [];
+        const host = parsed.hostname.replace(/^www\./, "");
+        return [
+          { key: entry.url, kind: "link", url: entry.url, host, name: entry.name, messageId },
+        ];
+      } catch {
+        return [];
+      }
+    }
+    if (entry.kind === "native") {
+      // A link that is not a claude.ai page's is never carried; a page kept without one is.
+      const url = entry.url === undefined ? null : isClaudeArtifactUrl(entry.url);
+      if (!entry.path || (entry.url !== undefined && url === null)) return [];
+      return [
+        nativeArtifact({
+          key: `claudeAgent:${url ?? `path:${entry.path}`}`,
+          provider: "claudeAgent",
+          title: entry.name,
+          version: null,
+          seq: null,
+          localPath: entry.path,
+          url,
+          artifactId: null,
+          audience: null,
+          itemId: messageId,
+          publishedAt: entry.at ?? null,
+          source: "snapshot",
+        }),
+      ];
+    }
+    if (!entry.path || !entry.path.startsWith("/")) return [];
+    return [fileArtifact(fileLinkMetaAtPath({}, entry.path, root ?? undefined), messageId)];
+  });
+}
+
 /**
- * The thread's artifacts as list entries: deduplicated, dated by the message
- * that last named them, pull requests with their tracked state, and files
- * checked against the host while the list is open.
+ * The entries of the thread this one continued: read from its own thread
+ * while `live` and its machine is connected here, else from the snapshot it
+ * left when its list was last opened here. Paths move from its checkout into
+ * this one, so they are checked on this machine.
+ */
+function useInheritedArtifacts(
+  origin: ShelfOrigin | null,
+  cwd: string | undefined,
+  live: boolean,
+): InheritedArtifacts {
+  const originRef = useMemo(
+    () =>
+      origin === null || !live
+        ? null
+        : { environmentId: origin.environmentId, threadId: origin.threadId },
+    [origin?.environmentId, origin?.threadId, live],
+  );
+  const source = useThreadProjection(originRef);
+  const fromThread = useThreadArtifacts(originRef, origin?.workspaceRoot ?? undefined);
+  const originEnvironment = useEnvironment(origin?.environmentId ?? null);
+  const messages = source?.projection.messages;
+  const turnItems = source?.projection.turnItems;
+  const sourceDates = useMemo(() => artifactDates(messages, turnItems), [messages, turnItems]);
+  return useMemo(() => {
+    if (origin === null) return NO_INHERITED;
+    const loaded = originRef !== null && (messages?.length ?? 0) > 0;
+    const snapshot = loaded ? [] : readOriginSnapshot(origin);
+    const listed = loaded ? fromThread : snapshotArtifacts(snapshot, origin.workspaceRoot);
+    return {
+      artifacts: listed.flatMap(
+        (artifact) => carriedArtifact(artifact, origin.workspaceRoot, cwd) ?? [],
+      ),
+      dates: loaded
+        ? sourceDates
+        : new Map(
+            snapshot.flatMap((entry) =>
+              entry.at === undefined ? [] : [[`snapshot:${entry.id}`, entry.at] as const],
+            ),
+          ),
+      machineLabel: origin.machineLabel ?? originEnvironment?.label ?? null,
+    };
+  }, [cwd, fromThread, messages, origin, originEnvironment?.label, originRef, sourceDates]);
+}
+
+/** When each message and tool call was written. */
+function artifactDates(
+  messages: ReadonlyArray<{ readonly id: string; readonly createdAt: unknown }> | undefined,
+  turnItems: ReadonlyArray<OrchestrationV2TurnItem> | undefined,
+): ReadonlyMap<string, number> {
+  const byId = new Map<string, number>();
+  const add = (id: string, value: unknown) => {
+    const iso = viewerIso(value as Parameters<typeof viewerIso>[0]);
+    const at = iso === null ? Number.NaN : Date.parse(iso);
+    if (!Number.isNaN(at)) byId.set(id, at);
+  };
+  for (const message of messages ?? []) add(message.id, message.createdAt);
+  // Turn items carry when they finished, or their last update.
+  for (const item of turnItems ?? []) add(item.id, item.completedAt ?? item.updatedAt);
+  return byId;
+}
+
+const SOURCE_LABEL_LENGTH = 48;
+
+/** A reply named by its first line, plain text, short enough for a row. */
+function replyLabel(text: string): string {
+  const line = text
+    .split("\n")
+    .map((part) => part.trim())
+    .find((part) => part.length > 0 && !part.startsWith("```"));
+  const plain = (line ?? "")
+    .replace(/!?\[([^\]]*)\]\([^)]*\)/g, "$1")
+    .replace(/^(?:#{1,6}\s+|>\s*|[-*+]\s+|\d+[.)]\s+)/, "")
+    .replace(/[*_`~]/g, "")
+    .trim();
+  if (plain.length === 0) return "Reply";
+  return plain.length > SOURCE_LABEL_LENGTH
+    ? `${plain.slice(0, SOURCE_LABEL_LENGTH - 1).trimEnd()}…`
+    : plain;
+}
+
+/** What named each artifact: a reply by its first line, or the kind of tool call. */
+function artifactSources(
+  messages:
+    | ReadonlyArray<{ readonly id: string; readonly role: string; readonly text: string }>
+    | undefined,
+  turnItems: ReadonlyArray<OrchestrationV2TurnItem> | undefined,
+): ReadonlyMap<string, string> {
+  const byId = new Map<string, string>();
+  for (const message of messages ?? []) {
+    if (message.role === "assistant") byId.set(message.id, replyLabel(message.text));
+  }
+  for (const item of turnItems ?? []) {
+    if (item.type === "file_change") byId.set(item.id, "File change");
+    else if (item.type === "dynamic_tool" && isNativeArtifactCandidate(item)) {
+      byId.set(item.id, "Published to claude.ai");
+    } else if (item.type === "dynamic_tool" && htmlRenderFromToolItem(item)) {
+      byId.set(item.id, "Published page");
+    }
+  }
+  return byId;
+}
+
+/**
+ * Where each local file stands on the thread's machine, and what the list
+ * says about the machine. An offline machine makes every file unreachable
+ * without asking it; otherwise each folder is checked while the list is open.
+ */
+function useShelfFileChecks(
+  threadRef: ScopedThreadRef | null,
+  paths: ReadonlyArray<string>,
+  enabled: boolean,
+) {
+  const environmentId = threadRef?.environmentId ?? null;
+  const machine = useEnvironment(environmentId)?.label ?? null;
+  const unreachable = useUnreachableEnvironmentIds();
+  const offline =
+    environmentId !== null && unreachable.has(environmentId)
+      ? `${machine ?? "The machine"} is offline`
+      : null;
+  const checks = useArtifactFileChecks({ environmentId, paths, enabled, offline });
+  return {
+    checks,
+    notice:
+      offline !== null && paths.length > 0
+        ? `${machine ?? "The machine"} is offline. Its files can't be checked until it is back.`
+        : null,
+  };
+}
+
+/**
+ * The thread's artifacts as list entries: deduplicated, dated and named by
+ * the message that last named them, pull requests with their tracked state,
+ * and files checked against the host while the list is open.
  */
 function useShelfEntries(
   threadRef: ScopedThreadRef | null,
@@ -260,25 +655,15 @@ function useShelfEntries(
   { pinned, hidden }: Pick<ReturnType<typeof useArtifactShelfState>, "pinned" | "hidden">,
   checkFiles: boolean,
   now: number,
-): ReadonlyArray<ShelfEntry> {
+  cwd: string | undefined,
+  inherited: InheritedArtifacts = NO_INHERITED,
+): { readonly entries: ReadonlyArray<ShelfEntry>; readonly notice: string | null } {
   const thread = useThreadProjection(threadRef);
   const shell = useThreadShell(threadRef);
   const messages = thread?.projection.messages;
   const turnItems = thread?.projection.turnItems;
-  const dates = useMemo(() => {
-    const byId = new Map<string, number>();
-    for (const message of messages ?? []) {
-      const at = Date.parse(viewerIso(message.createdAt) ?? "");
-      if (!Number.isNaN(at)) byId.set(message.id, at);
-    }
-    for (const item of (turnItems ?? []) as ReadonlyArray<unknown>) {
-      if (item === null || typeof item !== "object" || !("id" in item)) continue;
-      const createdAt = "createdAt" in item ? item.createdAt : null;
-      const at = typeof createdAt === "string" ? Date.parse(createdAt) : Number.NaN;
-      if (typeof item.id === "string" && !Number.isNaN(at)) byId.set(item.id, at);
-    }
-    return byId;
-  }, [messages, turnItems]);
+  const dates = useMemo(() => artifactDates(messages, turnItems), [messages, turnItems]);
+  const sources = useMemo(() => artifactSources(messages, turnItems), [messages, turnItems]);
   const pullRequests = useMemo(
     () =>
       new Map(
@@ -292,23 +677,35 @@ function useShelfEntries(
     [shell?.pullRequests],
   );
   const paths = useMemo(
-    () => artifacts.flatMap((artifact) => ("meta" in artifact ? [artifact.meta.filePath] : [])),
+    () => artifacts.flatMap((artifact) => shelfLocalPath(artifact) ?? []),
     [artifacts],
   );
-  const missingPaths = useMissingArtifactFiles(threadRef?.environmentId ?? null, paths, checkFiles);
-  return useMemo(
+  const { checks, notice } = useShelfFileChecks(threadRef, paths, checkFiles);
+  const carried = useMemo(() => new Set(inherited.artifacts), [inherited.artifacts]);
+  const entries = useMemo(
     () =>
       shelfEntries({
         artifacts,
-        mentionedAt: (artifact) => dates.get(artifact.messageId) ?? null,
+        mentionedAt: (artifact) =>
+          dates.get(artifact.messageId) ?? inherited.dates.get(artifact.messageId) ?? null,
+        source: (artifact) => {
+          // A result with no claude.ai link does not read as published there.
+          if (artifact.kind === "native" && artifact.native.url === null) return null;
+          const label = sources.get(artifact.messageId);
+          return label ? { label } : null;
+        },
+        inherited: (artifact) =>
+          carried.has(artifact) ? { machineLabel: inherited.machineLabel } : null,
+        root: cwd ?? null,
         pullRequests,
-        missingPaths,
+        fileChecks: checks,
         pinned,
         hidden,
         now,
       }),
-    [artifacts, dates, hidden, missingPaths, now, pinned, pullRequests],
+    [artifacts, carried, checks, cwd, dates, hidden, inherited, now, pinned, pullRequests, sources],
   );
+  return { entries, notice };
 }
 
 function artifactResource(
@@ -332,7 +729,7 @@ function artifactResource(
     : null;
 }
 
-/** When the message that names an artifact was written. */
+/** When the message or tool call that names an artifact was written. */
 function useArtifactDate(threadRef: ScopedThreadRef, artifact: ViewableArtifact): string | null {
   const thread = useThreadProjection(threadRef);
   const messages = thread?.projection.messages;
@@ -340,14 +737,56 @@ function useArtifactDate(threadRef: ScopedThreadRef, artifact: ViewableArtifact)
   return useMemo(() => {
     const message = messages?.find((entry) => entry.id === artifact.messageId);
     if (message) return viewerIso(message.createdAt);
-    const item: unknown = turnItems?.find((entry) => entry.id === artifact.messageId);
-    return item !== null &&
-      typeof item === "object" &&
-      "createdAt" in item &&
-      typeof item.createdAt === "string"
-      ? item.createdAt
-      : null;
+    const item = turnItems?.find((entry) => entry.id === artifact.messageId);
+    return item ? viewerIso(item.completedAt ?? item.updatedAt) : null;
   }, [artifact.messageId, messages, turnItems]);
+}
+
+/** What the Files list last knew about a file the viewer opens. */
+export interface ViewerFileState {
+  readonly state: "present" | "missing" | "unreachable" | "remote-only" | "unknown";
+  readonly reason: string | null;
+  /** The machine is offline, so the file is not asked for. */
+  readonly offline: boolean;
+}
+
+function CopyPathButton(props: { readonly path: string }) {
+  const { copyToClipboard, isCopied } = useCopyToClipboard({ preserveBytes: true });
+  return (
+    <Button
+      type="button"
+      size="xs"
+      variant="outline"
+      data-copy-path={props.path}
+      onClick={() => copyToClipboard(props.path, undefined)}
+    >
+      {isCopied ? <CheckIcon aria-hidden /> : <CopyIcon aria-hidden />}
+      {isCopied ? "Copied" : "Copy path"}
+    </Button>
+  );
+}
+
+/** A file whose machine is offline: said plainly, with where it was, and nothing asked of the host. */
+function UnreachableFileNotice(props: {
+  readonly name: string;
+  readonly path: string;
+  readonly reason: string | null;
+}) {
+  return (
+    <div
+      className="flex flex-col gap-2 p-4 text-sm"
+      role="status"
+      data-unreachable-file={props.path}
+    >
+      <p>
+        {props.reason ?? "The machine is offline"}. {props.name} can be opened once it is back.
+      </p>
+      <p className="break-all font-mono text-muted-foreground text-xs">{props.path}</p>
+      <div className="flex gap-1">
+        <CopyPathButton path={props.path} />
+      </div>
+    </div>
+  );
 }
 
 /**
@@ -366,13 +805,20 @@ export function ArtifactViewer(props: {
   readonly reveal?: { readonly key: string; readonly line: number } | undefined;
   /** Hands a file to the side panel, where it can be edited. */
   readonly onOpenInPanel?: ((artifact: ThreadFileArtifact) => void) | undefined;
+  /** What the Files list knows about an artifact's file: a missing one opens as an explained notice. */
+  readonly fileStateOf?: ((artifact: ViewableArtifact) => ViewerFileState | null) | undefined;
 }) {
   const artifact = props.artifacts[props.index]!;
+  const fileState = props.fileStateOf?.(artifact) ?? null;
   const count = props.artifacts.length;
   const imageRef = useRef<ZoomableImageHandle>(null);
+  // A file on an offline machine or no longer on disk is not asked for.
+  const unavailable =
+    "meta" in artifact &&
+    (fileState?.state === "missing" || (fileState?.state === "unreachable" && fileState.offline));
   const resource = useMemo(
-    () => artifactResource(props.threadRef, artifact),
-    [artifact, props.threadRef],
+    () => (unavailable ? null : artifactResource(props.threadRef, artifact)),
+    [artifact, props.threadRef, unavailable],
   );
   const asset = useAssetUrlState(props.threadRef.environmentId, resource);
   const url = asset._tag === "Success" ? asset.url : null;
@@ -447,11 +893,12 @@ export function ArtifactViewer(props: {
       ) : null}
       <ViewerFileActions
         environmentId={props.threadRef.environmentId}
-        path={path}
+        // A file gone from disk or on an offline machine has nothing to open or reveal.
+        path={unavailable ? null : path}
         name={artifact.name}
         menuItems={
           <>
-            {props.onOpenInPanel && "meta" in artifact ? (
+            {props.onOpenInPanel && "meta" in artifact && !unavailable ? (
               <MenuItem
                 onClick={() => {
                   // Out of the overlay first, or the file opens in it as it closes.
@@ -501,6 +948,7 @@ export function ArtifactViewer(props: {
             failed={asset._tag === "Failure"}
             revealLine={props.reveal?.key === artifact.key ? props.reveal.line : undefined}
             imageRef={imageRef}
+            fileState={fileState}
           />
         </div>
       </InViewerOverlay>
@@ -556,11 +1004,28 @@ function ArtifactBody(props: {
   readonly failed: boolean;
   readonly revealLine?: number | undefined;
   readonly imageRef: Ref<ZoomableImageHandle>;
+  readonly fileState?: ViewerFileState | null | undefined;
 }): ReactNode {
   const { artifact, url } = props;
   const notice = (text: string) => (
     <p className="m-auto p-6 text-center text-muted-foreground text-sm">{text}</p>
   );
+  const path = "meta" in artifact ? artifact.meta.filePath : null;
+  if (path !== null && props.fileState?.state === "missing") {
+    return (
+      <MissingFileNotice
+        environmentId={props.environmentId}
+        path={path}
+        error={null}
+        actions={<CopyPathButton path={path} />}
+      />
+    );
+  }
+  if (path !== null && props.fileState?.state === "unreachable" && props.fileState.offline) {
+    return (
+      <UnreachableFileNotice name={artifact.name} path={path} reason={props.fileState.reason} />
+    );
+  }
   switch (artifact.kind) {
     case "markdown":
     case "code":
@@ -576,6 +1041,17 @@ function ArtifactBody(props: {
       );
     default:
       break;
+  }
+  if (props.failed && path !== null) {
+    // Most often the file left the disk; the notice checks and says which.
+    return (
+      <MissingFileNotice
+        environmentId={props.environmentId}
+        path={path}
+        error={`${artifact.name} could not be loaded from the host.`}
+        actions={<CopyPathButton path={path} />}
+      />
+    );
   }
   if (props.failed) return notice(`${artifact.name} could not be loaded from the host.`);
   if (url === null) return notice("Loading…");
@@ -643,6 +1119,16 @@ function ArtifactText(props: {
   const { meta } = props.artifact;
   const file = useProjectFileQuery(props.environmentId, props.cwd ?? "", meta.filePath);
   const contents = file.data?.contents ?? null;
+  if (contents === null && file.error !== null && mayBeMissing(file.readError ?? null)) {
+    return (
+      <MissingFileNotice
+        environmentId={props.environmentId}
+        path={meta.filePath}
+        error={file.error}
+        actions={<CopyPathButton path={meta.filePath} />}
+      />
+    );
+  }
   if (contents === null) {
     return (
       <p className="m-auto p-6 text-center text-muted-foreground text-sm">

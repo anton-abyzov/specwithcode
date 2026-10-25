@@ -134,6 +134,24 @@ describe("DesignService thread binding", () => {
   );
 });
 
+describe("DesignService create-time binding", () => {
+  it.effect("holds a binding on creation to the set_thread rule", () =>
+    withDesigns((designs) =>
+      Effect.gen(function* () {
+        const create = (caller: DesignService.DesignCaller, thread: typeof ownThread) =>
+          designs.create(caller, { owner: projectA, kind: "design", title: "B", thread });
+        // A member and an agent naming another thread are refused, and nothing is written.
+        expect(yield* codeOf(create(member, ownThread))).toBe("forbidden");
+        expect(yield* codeOf(create(agentA, otherThread))).toBe("forbidden");
+        expect((yield* designs.list(owner, { filter: { kind: "all" } })).designs).toEqual([]);
+        // The owner binds any thread; an agent binds its own.
+        expect((yield* create(owner, otherThread)).document.thread).toEqual(otherThread);
+        expect((yield* create(agentA, ownThread)).document.thread).toEqual(ownThread);
+      }),
+    ),
+  );
+});
+
 describe("DesignService versions and assets", () => {
   it.effect("refuses a version or an image once access is view-only", () =>
     withDesigns((designs) =>
@@ -223,6 +241,126 @@ describe("DesignService copy", () => {
       }),
     ),
   );
+
+  it.effect("returns the existing copy and numbers a copy whose name is taken", () =>
+    withDesigns((designs) =>
+      Effect.gen(function* () {
+        const a = yield* designs.ownerRoot(owner, projectA);
+        const b = yield* designs.ownerRoot(owner, projectB);
+        yield* Effect.promise(() =>
+          Store.writeDesignSystem(a.root, brand("s_brand"), {
+            expectedRevision: null,
+            actor: { kind: "user" },
+          }),
+        );
+        // Project B already holds an unrelated system called Brand.
+        yield* Effect.promise(() =>
+          Store.writeDesignSystem(b.root, brand("s_local"), {
+            expectedRevision: null,
+            actor: { kind: "user" },
+          }),
+        );
+        const first = yield* designs.systemCopy(owner, {
+          owner: projectA,
+          systemId: "s_brand",
+          to: projectB,
+        });
+        expect(first.system.name).toBe("Brand 2");
+        const again = yield* designs.systemCopy(owner, {
+          owner: projectA,
+          systemId: "s_brand",
+          to: projectB,
+        });
+        expect(again.system.id).toBe(first.system.id);
+        const listed = yield* designs.systemList(owner, { filter: { kind: "all" } });
+        const inB = listed.systems.filter(
+          (system) =>
+            system.ref.owner.kind === "project" && system.ref.owner.projectId === PROJECT_B,
+        );
+        expect(inB.map((system) => system.name).toSorted()).toEqual(["Brand", "Brand 2"]);
+        expect(inB.find((system) => system.name === "Brand 2")?.copiedFrom?.id).toBe("s_brand");
+      }),
+    ),
+  );
+
+  it.effect("duplicates a system into its own owner every time", () =>
+    withDesigns((designs) =>
+      Effect.gen(function* () {
+        const a = yield* designs.ownerRoot(owner, projectA);
+        yield* Effect.promise(() =>
+          Store.writeDesignSystem(a.root, brand("s_brand"), {
+            expectedRevision: null,
+            actor: { kind: "user" },
+          }),
+        );
+        const address = { owner: projectA, systemId: "s_brand", to: projectA } as const;
+        const first = yield* designs.systemCopy(owner, address);
+        const second = yield* designs.systemCopy(owner, address);
+        expect(new Set(["s_brand", first.system.id, second.system.id]).size).toBe(3);
+        expect([first.system.name, second.system.name]).toEqual(["Brand 2", "Brand 3"]);
+      }),
+    ),
+  );
+
+  it.effect("copies again only when asked and the newest copy predates the source", () =>
+    withDesigns((designs) =>
+      Effect.gen(function* () {
+        const a = yield* designs.ownerRoot(owner, projectA);
+        yield* Effect.promise(() =>
+          Store.writeDesignSystem(a.root, brand("s_brand"), {
+            expectedRevision: null,
+            actor: { kind: "user" },
+          }),
+        );
+        const address = { owner: projectA, systemId: "s_brand", to: projectB } as const;
+        const first = yield* designs.systemCopy(owner, address);
+        // A fresh copy of a source that has not changed is the copy already made.
+        expect((yield* designs.systemCopy(owner, { ...address, fresh: true })).system.id).toBe(
+          first.system.id,
+        );
+        yield* Effect.promise(() =>
+          Store.updateDesignSystem(a.root, "s_brand", {
+            expectedRevision: 0,
+            actor: { kind: "user" },
+            change: (current) => ({ ...current, name: "Brand, revised" }),
+          }),
+        );
+        // Without `fresh`, the older copy still comes back.
+        expect((yield* designs.systemCopy(owner, address)).system.id).toBe(first.system.id);
+        const fresh = yield* designs.systemCopy(owner, { ...address, fresh: true });
+        expect(fresh.system.id).not.toBe(first.system.id);
+        expect(fresh.system.copiedFrom).toMatchObject({ id: "s_brand", revision: 1 });
+        // A retry, fresh or not, gets that newest copy instead of a third.
+        expect((yield* designs.systemCopy(owner, { ...address, fresh: true })).system.id).toBe(
+          fresh.system.id,
+        );
+        expect((yield* designs.systemCopy(owner, address)).system.id).toBe(fresh.system.id);
+        const inB = (yield* designs.systemList(owner, { filter: { kind: "all" } })).systems.filter(
+          (system) =>
+            system.ref.owner.kind === "project" && system.ref.owner.projectId === PROJECT_B,
+        );
+        expect(inB).toHaveLength(2);
+        // A design copied into B afterwards uses the newest copy too.
+        const created = yield* designs.create(owner, {
+          owner: projectA,
+          kind: "design",
+          title: "Branded",
+          designSystem: "s_brand",
+        });
+        const copied = yield* designs.copy(owner, {
+          owner: projectA,
+          designId: created.document.id,
+          to: projectB,
+        });
+        expect(copied.document.designSystem).toBe(fresh.system.id);
+      }),
+    ),
+  );
+
+  it("numbers names past the ones taken", () => {
+    expect(DesignService.freeSystemName("ec-uikit", [])).toBe("ec-uikit");
+    expect(DesignService.freeSystemName("ec-uikit", ["EC-UIKIT", "ec-uikit 2"])).toBe("ec-uikit 3");
+  });
 });
 
 const brand = (id: string): DesignSystem => ({

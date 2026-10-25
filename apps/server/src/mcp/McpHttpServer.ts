@@ -110,6 +110,7 @@ const mcpResourceMetadataUrl = (request: HttpServerRequest.HttpServerRequest) =>
  */
 const unauthorized = (input: {
   readonly request: HttpServerRequest.HttpServerRequest;
+  readonly reapprovalRequired?: boolean;
   readonly presentedToken: boolean;
   readonly offerOAuth: boolean;
 }) => {
@@ -128,8 +129,9 @@ const unauthorized = (input: {
   return HttpServerResponse.jsonUnsafe(
     {
       error: "invalid_mcp_credential",
-      message:
-        !input.presentedToken || input.offerOAuth
+      message: input.reapprovalRequired
+        ? "Approve this device again in SpecWithCode. Create a new pairing code on the receiving machine and sign in again."
+        : !input.presentedToken || input.offerOAuth
           ? "A valid SpecWithCode MCP credential is required."
           : "This SpecWithCode MCP credential is no longer valid (its thread was archived, deleted or idle too long). Send another message in the thread to reconnect.",
     },
@@ -147,12 +149,20 @@ const unauthorized = (input: {
  * Resolves a bearer token that is not a provider-session token: an OAuth
  * client signed in from outside Studio. Undefined when the token is not one.
  */
+export class McpDeviceReapprovalRequired extends Schema.TaggedError<McpDeviceReapprovalRequired>()(
+  "McpDeviceReapprovalRequired",
+  {},
+) {}
+
 export class McpClientAuthenticator extends Context.Service<
   McpClientAuthenticator,
   {
     readonly authenticate: (
       request: HttpServerRequest.HttpServerRequest,
-    ) => Effect.Effect<McpInvocationContext.McpInvocationScope | undefined>;
+    ) => Effect.Effect<
+      McpInvocationContext.McpInvocationScope | undefined,
+      McpDeviceReapprovalRequired
+    >;
   }
 >()("specweave-studio/mcp/McpHttpServer/McpClientAuthenticator") {}
 
@@ -198,8 +208,21 @@ const makeMcpAuthMiddleware = Effect.gen(function* () {
     const invocation =
       (yield* registry.resolve(token)) ??
       (Option.isSome(clients) && token.length > 0
-        ? yield* clients.value.authenticate(request)
+        ? yield* clients.value
+            .authenticate(request)
+            .pipe(
+              Effect.catchTag("McpDeviceReapprovalRequired", () =>
+                Effect.succeed("reapproval" as const),
+              ),
+            )
         : undefined);
+    if (invocation === "reapproval")
+      return unauthorized({
+        request,
+        presentedToken: true,
+        offerOAuth: true,
+        reapprovalRequired: true,
+      });
     if (!invocation) {
       // Without this the only symptom of a dead credential is the agent
       // quietly losing the whole `studio-code` toolkit for the rest of its

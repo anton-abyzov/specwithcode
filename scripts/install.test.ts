@@ -13,6 +13,7 @@ const INSTALLER = NodePath.resolve(import.meta.dirname, "install.sh");
 const FLEET = NodePath.resolve(import.meta.dirname, "studio-fleet");
 const VERSION = "1.2.3";
 const COMMIT12 = "0123456789ab";
+const COORDINATOR = "approved-main-environment";
 const INVITE = "swc-machine-fixture";
 
 interface Fixture {
@@ -91,7 +92,7 @@ async function makeFixture(options: {
       'case "$*" in',
       `  --version) echo "\${STUDIO_CLI_NAME:-specweave-studio} v${VERSION}" ;;`,
       "  'service install') echo 'Installed SpecWithCode service.' ;;",
-      `  'fleet invite') echo 'On your primary machine, run:'; echo "  \${STUDIO_CLI_NAME} fleet add ${INVITE}" ;;`,
+      `  'fleet invite --coordinator ${COORDINATOR}') echo 'On your primary machine, run:'; echo "  \${STUDIO_CLI_NAME} fleet add ${INVITE}" ;;`,
       "  *) exit 3 ;;",
       "esac",
       "",
@@ -285,7 +286,7 @@ describe.skipIf(
       "tailscale",
       `[ "$1 $2" = "status --json" ] && printf '{\\n  "Version": "1.0",\\n  "BackendState": "Running"\\n}\\n'`,
     );
-    const result = await runInstaller(fixture, ["--join"]);
+    const result = await runInstaller(fixture, ["--join", "--coordinator", COORDINATOR]);
     expect(result.code, result.stderr).toBe(0);
     expect(result.stdout).toContain(`specwithcode fleet add ${INVITE}`);
     expect(result.stderr).toContain("Next: on your main machine");
@@ -293,14 +294,14 @@ describe.skipIf(
       .split("\n")
       .filter((line) => line.includes("bin.mjs") && !line.endsWith("--version"))
       .map((line) => line.replace(/^\S+bin\.mjs /, ""));
-    expect(calls).toEqual(["service install", "fleet invite"]);
+    expect(calls).toEqual(["service install", `fleet invite --coordinator ${COORDINATOR}`]);
   });
 
   it("checks Tailscale before downloading anything", async () => {
     const fixture = await makeFixture({ platform: "darwin", arch: "arm64" });
     await stub(fixture, "uname", AS_MAC);
     await stub(fixture, "tailscale", `printf '{"BackendState":"NeedsLogin"}'`);
-    const result = await runInstaller(fixture, ["--join"]);
+    const result = await runInstaller(fixture, ["--join", "--coordinator", COORDINATOR]);
     expect(result.code).toBe(1);
     expect(result.stderr).toContain("Tailscale is not signed in");
     expect(fixture.requests).toEqual([]);
@@ -321,7 +322,12 @@ describe.skipIf(
       ].join("\n"),
     );
     await stub(fixture, "open", `printf '%s\\n' "$*" >> '${opened}'`);
-    const result = await runInstaller(fixture, ["--join", "--no-service"]);
+    const result = await runInstaller(fixture, [
+      "--join",
+      "--coordinator",
+      COORDINATOR,
+      "--no-service",
+    ]);
     expect(result.code, result.stderr).toBe(0);
     expect(result.stderr).toContain("https://login.tailscale.com/a/fixture");
     expect(result.stderr).toContain("Tailscale is signed in.");
@@ -332,13 +338,13 @@ describe.skipIf(
   it("asks before installing Tailscale and installs nothing without an answer", async () => {
     const fixture = await makeFixture({ platform: "darwin", arch: "arm64" });
     await stub(fixture, "uname", AS_MAC);
-    const result = await runInstaller(fixture, ["--join"]);
+    const result = await runInstaller(fixture, ["--join", "--coordinator", COORDINATOR]);
     expect(result.code).toBe(1);
     expect(result.stderr).toContain("--join needs Tailscale");
     expect(result.stderr).toContain("--yes");
     expect(fixture.requests).toEqual([]);
 
-    const plan = await runInstaller(fixture, ["--join", "--dry-run"]);
+    const plan = await runInstaller(fixture, ["--join", "--coordinator", COORDINATOR, "--dry-run"]);
     expect(plan.code, plan.stderr).toBe(0);
     expect(plan.stdout).toContain(
       "Join:      install Tailscale with Tailscale's signed macOS installer",
@@ -367,7 +373,7 @@ describe.skipIf(
     );
     await NodeFSP.mkdir(fixture.bin, { recursive: true });
     await NodeFSP.writeFile(NodePath.join(fixture.bin, "specwithcode"), managed, { mode: 0o700 });
-    const result = await runInstaller(fixture, ["--join"]);
+    const result = await runInstaller(fixture, ["--join", "--coordinator", COORDINATOR]);
     expect(result.code, result.stderr).toBe(0);
     expect(result.stderr).toContain(
       "Nothing to install: a managed SpecWithCode install already provides",
@@ -381,7 +387,9 @@ describe.skipIf(
 
     // The fleet installer's wrapper in ~/.local/bin is found when another bin directory is set.
     const elsewhere = NodePath.join(fixture.root, "other-bin");
-    const again = await runInstaller(fixture, ["--join"], { STUDIO_INSTALL_BIN_DIR: elsewhere });
+    const again = await runInstaller(fixture, ["--join", "--coordinator", COORDINATOR], {
+      STUDIO_INSTALL_BIN_DIR: elsewhere,
+    });
     expect(again.code, again.stderr).toBe(0);
     expect(again.stderr).toContain(`already provides ${fixture.bin}/specwithcode`);
     expect(again.stdout).toContain(`fleet add ${INVITE}`);
@@ -399,7 +407,10 @@ describe.skipIf(
     expect(reused.code, reused.stderr).toBe(0);
     expect(reused.stderr).toContain("Nothing to install: the SpecWithCode desktop app");
     expect(reused.stderr).toContain(`--version ${VERSION} was not installed`);
-    expect(reused.stderr).toContain("run this again with --join.");
+    expect(reused.stderr).toContain("To add this machine to your main one, run ");
+    expect(reused.stderr).toContain("ELECTRON_RUN_AS_NODE=1 STUDIO_CLI_NAME=specwithcode ");
+    expect(reused.stderr).toContain("fleet invite --coordinator '<main-machine-environment-id>'");
+    expect(reused.stderr).toContain("Settings > Connections on your main machine");
     expect(fixture.requests).toEqual([]);
 
     const standalone = await runInstaller(fixture, ["--standalone", "--no-service"]);
@@ -513,3 +524,143 @@ describe.skipIf(
     },
   );
 });
+
+// These dispatch-only probes never run installer discovery, services, downloads or sign-in.
+describe.skipIf(HostProcessPlatform.defaultValue() === "win32")(
+  "printed enrollment commands",
+  () => {
+    for (const kind of ["desktop", "managed", "standalone"] as const) {
+      for (const mode of ["retry", "dry-run", "recovery"] as const) {
+        it(`executes the ${kind} ${mode} command without a CLI on PATH`, async () => {
+          const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "invite-replay-"));
+          try {
+            const home = NodePath.join(root, "home");
+            // Both executable and entrypoint need shell quoting, independently of the ID.
+            const app = NodePath.join(root, "synthetic app's", "SpecWithCode.app");
+            const executable =
+              kind === "desktop"
+                ? NodePath.join(app, "Contents/MacOS/SpecWithCode")
+                : NodePath.join(root, "synthetic bin's", "specwithcode");
+            const entrypoint = NodePath.join(
+              app,
+              "Contents/Resources/app.asar/apps/server/dist/bin.mjs",
+            );
+            const log = NodePath.join(root, "arguments");
+            const marker = NodePath.join(root, "unexpected-execution");
+            const coordinator = `approved '${"$(touch " + marker + ")"}; \\ main\n環境`;
+            await NodeFSP.mkdir(home);
+            await NodeFSP.mkdir(NodePath.dirname(executable), { recursive: true });
+            await NodeFSP.writeFile(
+              executable,
+              [
+                "#!/bin/sh",
+                'printf "%s\\0" "${ELECTRON_RUN_AS_NODE:-}" "${STUDIO_CLI_NAME:-}" "$@" > "$PROBE_LOG"',
+                'if [ "${PROBE_FAIL:-}" = 1 ]; then printf "Synthetic invitation failure\\n" >&2; exit 1; fi',
+                "",
+              ].join("\n"),
+              { mode: 0o700 },
+            );
+            const env = {
+              PATH: "/usr/bin:/bin:/usr/sbin:/sbin",
+              HOME: home,
+              TMPDIR: root,
+              TEST_ROOT: root,
+              TEST_KIND: kind,
+              TEST_MODE: mode,
+              TEST_APP: app,
+              TEST_EXECUTABLE: executable,
+              PROBE_LOG: log,
+              PROBE_FAIL: "1",
+              STUDIO_INSTALL_BIN_DIR:
+                kind === "standalone"
+                  ? NodePath.dirname(executable)
+                  : NodePath.join(root, "unused bin"),
+              LC_ALL: "C",
+              // macOS /bin/sh is bash, which fills an unset SHELL from the account's login shell,
+              // and the PATH hint branches on it. Pin it so every host takes the same branch.
+              SHELL: "/bin/bash",
+            };
+            const definitions = (await NodeFSP.readFile(INSTALLER, "utf8")).replace(
+              /main "\$@"\s*$/,
+              "",
+            );
+            const hook = `
+setup_output() {
+  reset='' bold='' green=''
+  clear_line() { :; }
+  step() { :; }
+  scratch="$TEST_ROOT"
+  # main sets these before any of the paths below.
+  platform=linux arch=x64
+  if [ "$TEST_KIND" = standalone ]; then
+    if [ "$TEST_MODE" = retry ]; then run_invite 1 "$TEST_EXECUTABLE"
+    elif [ "$TEST_MODE" = dry-run ]; then
+      version=fixture base_url=fixture archive=fixture archive_sha256=fixture
+      node_download=false node=fixture target_dir="$TEST_ROOT/runtime" service_skip=fixture
+      print_plan
+    else service_state=installed; print_next_steps; fi
+  else
+    existing="$TEST_KIND" existing_app="$TEST_APP" existing_cli="$TEST_EXECUTABLE"
+    existing_reason='synthetic enrollment fixture'
+    use_existing_install
+  fi
+  exit 0
+}
+main "$@"
+`;
+            const result = NodeChildProcess.spawnSync(
+              "/bin/sh",
+              [
+                "-c",
+                definitions + hook,
+                "installer-probe",
+                ...(mode === "recovery" ? [] : ["--join"]),
+                "--coordinator",
+                coordinator,
+                ...(mode === "dry-run" ? ["--dry-run"] : []),
+              ],
+              { env, encoding: "utf8", timeout: 5000 },
+            );
+            expect(result.error).toBeUndefined();
+            const output = result.stdout + result.stderr;
+            expect(result.status, `${kind} ${mode}:\n${output}`).toBe(mode === "retry" ? 1 : 0);
+            const command =
+              mode === "retry"
+                ? /then run `([\s\S]*?)`\./.exec(output)?.[1]
+                : mode === "dry-run"
+                  ? /  Join:      ([\s\S]*)\n$/.exec(result.stdout)?.[1]
+                  : /, (?:sign in to Tailscale and )?run ([\s\S]*?)\.\n/.exec(result.stderr)?.[1];
+            expect(command, output).toBeDefined();
+            const expectedArguments = [
+              ...(kind === "desktop" ? ["1", "specwithcode", entrypoint] : ["", ""]),
+              "fleet",
+              "invite",
+              "--coordinator",
+              coordinator,
+            ];
+            if (mode === "retry") {
+              expect((await NodeFSP.readFile(log, "utf8")).split("\0").slice(0, -1)).toEqual(
+                expectedArguments,
+              );
+            }
+            // Remove the failed invocation's log, so replay must actually execute the fixture.
+            await NodeFSP.rm(log, { force: true });
+            const replay = NodeChildProcess.spawnSync("/bin/sh", ["-c", command!], {
+              env: { ...env, PROBE_FAIL: "" },
+              encoding: "utf8",
+              timeout: 5000,
+            });
+            expect(replay.error).toBeUndefined();
+            expect(replay.status, replay.stderr).toBe(0);
+            expect((await NodeFSP.readFile(log, "utf8")).split("\0").slice(0, -1)).toEqual(
+              expectedArguments,
+            );
+            expect(NodeFS.existsSync(marker)).toBe(false);
+          } finally {
+            await NodeFSP.rm(root, { recursive: true, force: true });
+          }
+        });
+      }
+    }
+  },
+);

@@ -20,15 +20,21 @@ import {
 } from "@specweave-studio/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
+import * as Queue from "effect/Queue";
 import * as SqlClient from "effect/sql/SqlClient";
+import * as Stream from "effect/Stream";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as McpSessionRegistry from "../mcp/McpSessionRegistry.ts";
+import * as EffectWorker from "./EffectWorker.ts";
+import * as EventSink from "./EventSink.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
-import type { ProviderAdapterV2Shape } from "./ProviderAdapter.ts";
+import type { ProviderAdapterV2Event, ProviderAdapterV2Shape } from "./ProviderAdapter.ts";
 import * as ProviderAdapterRegistry from "./ProviderAdapterRegistry.ts";
 import * as ProviderReplayHarness from "./testkit/ProviderReplayHarness.ts";
+import { checkpointWorkspace } from "./testkit/ReplayFixtureWorkspace.ts";
 
 const instanceId = ProviderInstanceId.make("codex");
 const modelSelection = { instanceId, model: "gpt-5.1-codex" };
@@ -40,8 +46,8 @@ const adapter = {
   openSession: () => Effect.die("No provider process needed for metadata controls"),
 } as ProviderAdapterV2Shape;
 const layerDatabase = fixtureProjectDatabase(
-  ["control-dispatch", "implement-plan", "settle-binding", "parent-pr"].map((name) =>
-    ProjectId.make(`project:${name}`),
+  ["control-dispatch", "implement-plan", "settle-binding", "parent-pr", "launch-stand-in"].map(
+    (name) => ProjectId.make(`project:${name}`),
   ),
 );
 const layerTest = Layer.mergeAll(
@@ -646,4 +652,458 @@ it.effect("keeps delegated child pull-request links independent of the parent", 
     assert.deepEqual(parentAfterChildLink.thread.linkedPullRequest, parentPullRequest);
     assert.deepEqual(parentAfterChildLink.thread.pullRequests, parent.thread.pullRequests);
   }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("ends a launch stand-in on a pick by hand, never on a server move", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const projectId = ProjectId.make("project:launch-stand-in");
+    const standsInFor = {
+      instanceId: ProviderInstanceId.make("claudeAgent"),
+      model: "claude-opus-5-5",
+    };
+    const create = (name: string) =>
+      orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make(`create-${name}`),
+        threadId: ThreadId.make(`thread:${name}`),
+        projectId,
+        title: name,
+        modelSelection,
+        launchFallbackFrom: standsInFor,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdBy: "user",
+        creationSource: "web",
+      });
+    const standIn = (threadId: ThreadId) =>
+      projections.getThread(threadId).pipe(Effect.map((thread) => thread.launchFallbackFrom));
+    const setModel = (threadId: ThreadId, commandId: string, model: string) =>
+      orchestrator.dispatch({
+        type: "thread.model-selection.set",
+        commandId: CommandId.make(commandId),
+        threadId,
+        modelSelection: { ...modelSelection, model },
+      });
+
+    const threadId = ThreadId.make("thread:launch-picked");
+    yield* create("launch-picked");
+    assert.deepEqual(yield* standIn(threadId), standsInFor);
+    // The usage pre-switch is the server's own move: the thread still stands in.
+    yield* setModel(threadId, `limit-preswitch:${threadId}:codex:window`, "gpt-6");
+    assert.deepEqual(yield* standIn(threadId), standsInFor);
+    // A variant of the same model is no pick of another one.
+    yield* setModel(threadId, "pick-variant", "gpt-6[1m]");
+    assert.deepEqual(yield* standIn(threadId), standsInFor);
+    // A pick of another model by hand ends it, and picking back does not restore it.
+    yield* setModel(threadId, "pick-other", "gpt-6.5");
+    assert.isNull(yield* standIn(threadId));
+    yield* setModel(threadId, "pick-back", modelSelection.model);
+    assert.isNull(yield* standIn(threadId));
+
+    // A send on another model by hand ends it the same way.
+    const sentId = ThreadId.make("thread:launch-sent");
+    yield* create("launch-sent");
+    yield* orchestrator.dispatch({
+      type: "message.dispatch",
+      commandId: CommandId.make("send-launch-sent"),
+      threadId: sentId,
+      messageId: MessageId.make("message:launch-sent"),
+      text: "Go on another model",
+      attachments: [],
+      modelSelection: { ...modelSelection, model: "gpt-6.5" },
+      dispatchMode: { type: "start_immediately" },
+      createdBy: "user",
+      creationSource: "web",
+    });
+    assert.isNull(yield* standIn(sentId));
+
+    // A delegated child on a model of its own stands in for nothing its parent did.
+    const parentId = ThreadId.make("thread:launch-parent");
+    yield* create("launch-parent");
+    yield* orchestrator.dispatch({
+      type: "message.dispatch",
+      commandId: CommandId.make("start-launch-parent"),
+      threadId: parentId,
+      messageId: MessageId.make("message:launch-parent"),
+      text: "Delegate a review",
+      attachments: [],
+      dispatchMode: { type: "start_immediately" },
+      createdBy: "user",
+      creationSource: "web",
+    });
+    const parent = yield* projections.getThreadProjection(parentId);
+    assert.deepEqual(parent.thread.launchFallbackFrom, standsInFor);
+    yield* orchestrator.dispatch({
+      type: "delegated_task.request",
+      commandId: CommandId.make("delegate-launch-parent"),
+      parentThreadId: parentId,
+      parentRunId: parent.runs[0]!.id,
+      parentNodeId: parent.runs[0]!.rootNodeId!,
+      task: "Review the changes",
+      modelSelection: { ...modelSelection, model: "gpt-6" },
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      createdBy: "agent",
+      creationSource: "mcp",
+    });
+    const childId = (yield* projections.getThreadProjection(parentId)).subagents[0]!.childThreadId!;
+    assert.isNull(yield* standIn(childId));
+  }).pipe(Effect.provide(layerTest)),
+);
+
+const launchStandIn = {
+  instanceId: ProviderInstanceId.make("claudeAgent"),
+  model: "claude-opus-5-5",
+};
+
+/** A thread that stands in for `launchStandIn`, as a launch fallback leaves it. */
+const createStandIn = (name: string) =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const threadId = ThreadId.make(`thread:${name}`);
+    yield* orchestrator.dispatch({
+      type: "thread.create",
+      commandId: CommandId.make(`create-${name}`),
+      threadId,
+      projectId: ProjectId.make("project:launch-stand-in"),
+      title: name,
+      modelSelection,
+      launchFallbackFrom: launchStandIn,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      branch: null,
+      worktreePath: null,
+      createdBy: "user",
+      creationSource: "web",
+    });
+    return threadId;
+  });
+
+it.effect("keeps a launch stand-in when a usage-limit fallback moves the thread", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const events = yield* EventSink.EventSinkV2;
+    const threadId = yield* createStandIn("launch-limit-fallback");
+    yield* orchestrator.dispatch({
+      type: "message.dispatch",
+      commandId: CommandId.make("start-launch-limit-fallback"),
+      threadId,
+      messageId: MessageId.make("message:launch-limit-fallback"),
+      text: "Work on this.",
+      attachments: [],
+      dispatchMode: { type: "defer_start" },
+      createdBy: "user",
+      creationSource: "web",
+    });
+    const run = (yield* projections.getThreadProjection(threadId)).runs[0]!;
+    const now = yield* DateTime.now;
+    yield* events.write({
+      commandId: CommandId.make("limit-launch-limit-fallback"),
+      events: [
+        {
+          id: EventId.make("launch-limit-fallback:run"),
+          type: "run.updated",
+          threadId,
+          occurredAt: now,
+          payload: { ...run, status: "failed", completedAt: now },
+        },
+        {
+          id: EventId.make("launch-limit-fallback:error"),
+          type: "turn-item.updated",
+          threadId,
+          occurredAt: now,
+          payload: {
+            id: TurnItemId.make("launch-limit-fallback:error"),
+            type: "error",
+            threadId,
+            runId: run.id,
+            nodeId: run.rootNodeId,
+            providerThreadId: null,
+            providerTurnId: null,
+            nativeItemRef: null,
+            parentItemId: null,
+            ordinal: 2,
+            status: "failed",
+            title: "Usage limit reached",
+            startedAt: now,
+            completedAt: now,
+            updatedAt: now,
+            failure: {
+              class: "usage_limit",
+              message: "Plan limit reached.",
+              code: "usageLimitExceeded",
+              retryable: null,
+              resetAt: DateTime.formatIso(DateTime.add(now, { hours: 1 })),
+            },
+          },
+        },
+      ],
+    });
+    // The provider fallback worker's continuation on another model.
+    const identity = `${threadId}:${run.id}`;
+    yield* orchestrator.dispatch({
+      type: "message.dispatch",
+      commandId: CommandId.make(`limit-fallback:${identity}`),
+      messageId: MessageId.make(`limit-fallback:${identity}`),
+      threadId,
+      manualContinuationOfRunId: run.id,
+      modelSelection: { ...modelSelection, model: "gpt-6.5" },
+      text: "Continue.",
+      attachments: [],
+      dispatchMode: { type: "start_immediately" },
+      createdBy: "user",
+      creationSource: "server",
+    });
+    const thread = yield* projections.getThread(threadId);
+    assert.equal(thread.modelSelection.model, "gpt-6.5");
+    assert.deepEqual(thread.launchFallbackFrom, launchStandIn);
+  }).pipe(Effect.provide(layerTest)),
+);
+
+it.effect("keeps a launch stand-in for a server's queued run, not for a person's", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const events = yield* EventSink.EventSinkV2;
+    const threadId = yield* createStandIn("launch-queued");
+    const send = (
+      key: string,
+      creationSource: "web" | "server",
+      dispatchMode: { readonly type: "start_immediately" | "queue_after_active" },
+      model?: string,
+    ) =>
+      orchestrator.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make(`launch-queued:${key}`),
+        threadId,
+        messageId: MessageId.make(`launch-queued:${key}`),
+        text: key,
+        attachments: [],
+        ...(model === undefined ? {} : { modelSelection: { ...modelSelection, model } }),
+        dispatchMode,
+        createdBy: creationSource === "server" ? "agent" : "user",
+        creationSource,
+      });
+    // Ends the latest run so the queue may start the next one.
+    const finishLatest = (key: string) =>
+      Effect.gen(function* () {
+        const run = (yield* projections.getThreadProjection(threadId)).runs.find(
+          (candidate) => candidate.status !== "queued" && candidate.status !== "completed",
+        )!;
+        const now = yield* DateTime.now;
+        yield* events.write({
+          commandId: CommandId.make(`launch-queued:finish:${key}`),
+          events: [
+            {
+              id: EventId.make(`launch-queued:finish:${key}`),
+              type: "run.updated",
+              threadId,
+              occurredAt: now,
+              payload: { ...run, status: "completed", completedAt: now },
+            },
+          ],
+        });
+        yield* orchestrator.dispatch({
+          type: "queue.resume",
+          commandId: CommandId.make(`launch-queued:resume:${key}`),
+          threadId,
+        });
+      });
+    const thread = projections.getThread(threadId);
+
+    yield* send("first", "web", { type: "start_immediately" });
+    yield* send("server", "server", { type: "queue_after_active" }, "gpt-6.5");
+    yield* send("person", "web", { type: "queue_after_active" }, "gpt-6");
+    assert.deepEqual((yield* thread).launchFallbackFrom, launchStandIn);
+    // The server's queued message starts on its own model: the thread still stands in.
+    yield* finishLatest("first");
+    assert.equal((yield* thread).modelSelection.model, "gpt-6.5");
+    assert.deepEqual((yield* thread).launchFallbackFrom, launchStandIn);
+    // A person's queued message on another model is a pick by hand and ends it.
+    yield* finishLatest("server");
+    assert.equal((yield* thread).modelSelection.model, "gpt-6");
+    assert.isNull((yield* thread).launchFallbackFrom);
+  }).pipe(Effect.provide(layerTest)),
+);
+
+// Steering onto another model moves the thread's saved selection: a provider
+// that can restart the turn restarts it, one that cannot takes the steer into
+// the running turn. Either way only a person's steer is a pick by hand.
+it.effect.each([
+  { steering: "into the running turn", creationSource: "server" },
+  { steering: "into the running turn", creationSource: "web" },
+  { steering: "by interrupt and restart", creationSource: "server" },
+  { steering: "by interrupt and restart", creationSource: "web" },
+] as const)(
+  "a $creationSource steer to another model $steering keeps a launch stand-in only when the server sent it",
+  ({ steering, creationSource }) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const key = `launch-steer-${steering.replaceAll(" ", "-")}-${creationSource}`;
+        const projectId = ProjectId.make(`project:${key}`);
+        const databaseLayer = fixtureProjectDatabase([projectId]);
+        const cwd = yield* checkpointWorkspace(key);
+        const providerEvents = yield* Queue.unbounded<ProviderAdapterV2Event>();
+        const capabilities = {
+          ...CodexProviderCapabilitiesV2,
+          turns: {
+            ...CodexProviderCapabilitiesV2.turns,
+            supportsActiveSteering: true,
+            supportsSteeringByInterruptRestart: steering === "by interrupt and restart",
+          },
+        };
+        const liveAdapter: ProviderAdapterV2Shape = {
+          instanceId,
+          driver: adapter.driver,
+          getCapabilities: () => Effect.succeed(capabilities),
+          planSelectionTransition: () => Effect.succeed({ type: "apply_on_next_turn" }),
+          openSession: (input) =>
+            Effect.gen(function* () {
+              const now = yield* DateTime.now;
+              return {
+                instanceId,
+                driver: adapter.driver,
+                providerSessionId: input.providerSessionId,
+                providerSession: {
+                  id: input.providerSessionId,
+                  driver: adapter.driver,
+                  providerInstanceId: instanceId,
+                  status: "ready",
+                  cwd,
+                  model: modelSelection.model,
+                  capabilities,
+                  createdAt: now,
+                  updatedAt: now,
+                  lastError: null,
+                },
+                events: Stream.fromQueue(providerEvents),
+                ensureThread: ({ threadId }) =>
+                  Effect.succeed({
+                    id: ProviderThreadId.make(`provider-thread:${threadId}`),
+                    driver: adapter.driver,
+                    providerInstanceId: instanceId,
+                    providerSessionId: input.providerSessionId,
+                    appThreadId: threadId,
+                    ownerNodeId: null,
+                    nativeThreadRef: {
+                      driver: adapter.driver,
+                      nativeId: "native-thread",
+                      strength: "strong",
+                    },
+                    nativeConversationHeadRef: null,
+                    status: "idle",
+                    firstRunOrdinal: null,
+                    lastRunOrdinal: null,
+                    handoffIds: [],
+                    forkedFrom: null,
+                    createdAt: now,
+                    updatedAt: now,
+                  }),
+                resumeThread: ({ providerThread }) => Effect.succeed(providerThread),
+                startTurn: (turn) =>
+                  Queue.offer(providerEvents, {
+                    type: "provider_turn.updated",
+                    driver: adapter.driver,
+                    providerTurn: {
+                      id: ProviderTurnId.make(`provider-turn:${turn.attemptId}`),
+                      providerThreadId: turn.providerThread.id,
+                      nodeId: turn.rootNodeId,
+                      runAttemptId: turn.attemptId,
+                      nativeTurnRef: {
+                        driver: adapter.driver,
+                        nativeId: `native:${turn.attemptId}`,
+                        strength: "strong",
+                      },
+                      ordinal: turn.providerTurnOrdinal,
+                      status: "running",
+                      startedAt: now,
+                      completedAt: null,
+                    },
+                  }),
+                steerTurn: () => Effect.void,
+                interruptTurn: () => Effect.void,
+                respondToRuntimeRequest: () => Effect.void,
+                readThreadSnapshot: () => Effect.die("unused"),
+                rollbackThread: () => Effect.die("unused"),
+                forkThread: () => Effect.die("unused"),
+              };
+            }),
+        };
+        yield* Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+          const threadId = ThreadId.make(`thread:${key}`);
+          yield* orchestrator.dispatch({
+            type: "thread.create",
+            commandId: CommandId.make(`create-${key}`),
+            threadId,
+            projectId,
+            title: key,
+            modelSelection,
+            launchFallbackFrom: launchStandIn,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: cwd,
+            createdBy: "user",
+            creationSource: "web",
+          });
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            commandId: CommandId.make(`start-${key}`),
+            threadId,
+            messageId: MessageId.make(`message:start-${key}`),
+            text: "Work on this.",
+            attachments: [],
+            dispatchMode: { type: "start_immediately" },
+            createdBy: "user",
+            creationSource: "web",
+          });
+          const running = yield* orchestrator.streamDomainEvents.pipe(
+            Stream.filter(
+              (event) =>
+                event.type === "provider-turn.updated" && event.payload.status === "running",
+            ),
+            Stream.take(1),
+            Stream.runDrain,
+            Effect.forkScoped,
+          );
+          yield* worker.drain();
+          yield* Fiber.join(running);
+          const target = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!;
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            commandId: CommandId.make(`steer-${key}`),
+            threadId,
+            messageId: MessageId.make(`message:steer-${key}`),
+            text: "Go on another model.",
+            attachments: [],
+            modelSelection: { ...modelSelection, model: "gpt-6.5" },
+            dispatchMode: { type: "steer_active", targetRunId: target.id },
+            createdBy: creationSource === "server" ? "agent" : "user",
+            creationSource,
+          });
+          const thread = (yield* orchestrator.getThreadProjection(threadId)).thread;
+          assert.equal(thread.modelSelection.model, "gpt-6.5");
+          if (creationSource === "server") {
+            assert.deepEqual(thread.launchFallbackFrom, launchStandIn);
+          } else {
+            assert.isNull(thread.launchFallbackFrom);
+          }
+        }).pipe(
+          Effect.provide(
+            ProviderReplayHarness.layerWithRegistry(
+              { name: key },
+              ProviderAdapterRegistry.layerSingle(liveAdapter),
+              { runEffectWorker: false, databaseLayer },
+            ).pipe(Layer.provideMerge(databaseLayer)),
+          ),
+        );
+      }),
+    ),
 );

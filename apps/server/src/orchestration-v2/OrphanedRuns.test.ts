@@ -144,6 +144,151 @@ it("gives an unobserved run on a live session longer", () => {
   assert.equal(OrphanedRuns.orphanedRunKind(value, runOf(value), unobserved, at(11)), "unobserved");
 });
 
+it("measures quiet from the run's own activity, not messages queued behind it", () => {
+  // Child reports keep arriving (thread.updatedAt at 59 min); the run itself
+  // has said nothing since it started.
+  const value = projection({
+    thread: {
+      id: "thread-1",
+      projectId: "project-1",
+      providerInstanceId: "copilot",
+      archivedAt: null,
+      deletedAt: null,
+      updatedAt: at(59),
+    },
+  });
+  assert.equal(OrphanedRuns.orphanedRunKind(value, runOf(value), ended, at(60)), "session_ended");
+});
+
+const liveRead = { ingesting: true, sessionLive: true, sessionConfirmed: true };
+
+it("finds a live, read run silent for 45 minutes with nothing open", () => {
+  const value = projection();
+  assert.isNull(OrphanedRuns.orphanedRunKind(value, runOf(value), liveRead, at(44)));
+  assert.equal(OrphanedRuns.orphanedRunKind(value, runOf(value), liveRead, at(46)), "live_silent");
+});
+
+it.each([
+  [
+    "an open tool",
+    {
+      turnItems: [{ runId: "run-1", type: "command_execution", status: "running", updatedAt: T0 }],
+    },
+  ],
+  [
+    "a thread wait",
+    {
+      turnItems: [
+        {
+          runId: "run-1",
+          type: "dynamic_tool",
+          toolName: "mcp__studio-code__studio_thread_wait",
+          status: "running",
+          updatedAt: T0,
+        },
+      ],
+    },
+  ],
+  ["a subagent", { subagents: [{ runId: "run-1", status: "running", updatedAt: T0 }] }],
+  ["a pending request", { runtimeRequests: [{ status: "pending" }] }],
+])("never calls a live run silent while it waits on %s", (_, overrides) => {
+  const value = projection(overrides as never);
+  assert.isNull(OrphanedRuns.orphanedRunKind(value, runOf(value), liveRead, at(600)));
+});
+
+// 1048 review F-02: native subagents outlive the run that launched them, in
+// the same provider process. Interrupting a silent later run closes that
+// process, so live work an earlier run left there keeps the run alive.
+const earlierRunSubagent = {
+  runs: [
+    {
+      id: "run-0",
+      threadId: "thread-1",
+      ordinal: 0,
+      status: "completed",
+      providerInstanceId: "copilot",
+      providerThreadId: "provider-thread-1",
+      requestedAt: T0,
+      startedAt: T0,
+      completedAt: T0,
+    },
+    runOf(projection()),
+  ],
+  subagents: [
+    {
+      id: "subagent-0",
+      runId: "run-0",
+      origin: "provider_native",
+      providerThreadId: null,
+      status: "running",
+      updatedAt: T0,
+    },
+  ],
+};
+
+it("never calls a live run silent while its process runs an earlier run's subagents", () => {
+  const value = projection(earlierRunSubagent as never);
+  const run = value.runs[1] as OrchestrationV2Run;
+  assert.isNull(
+    OrphanedRuns.orphanedRunKind(value, run, { ...liveRead, backgroundWorkLive: true }, at(600)),
+  );
+  // An adapter that cannot tell: an open native subagent there counts as live.
+  assert.isNull(OrphanedRuns.orphanedRunKind(value, run, liveRead, at(600)));
+  // The process says that work is gone: the run is silent after all.
+  assert.equal(
+    OrphanedRuns.orphanedRunKind(value, run, { ...liveRead, backgroundWorkLive: false }, at(46)),
+    "live_silent",
+  );
+});
+
+it("ignores another provider thread's subagents when calling a live run silent", () => {
+  const value = projection({
+    ...earlierRunSubagent,
+    subagents: [{ ...earlierRunSubagent.subagents[0], providerThreadId: "provider-thread-2" }],
+  } as never);
+  assert.equal(
+    OrphanedRuns.orphanedRunKind(value, value.runs[1] as OrchestrationV2Run, liveRead, at(46)),
+    "live_silent",
+  );
+});
+
+it("needs a session this process holds open to call a run live but silent", () => {
+  const value = projection();
+  assert.isNull(
+    OrphanedRuns.orphanedRunKind(
+      value,
+      runOf(value),
+      { ingesting: true, sessionLive: true },
+      at(600),
+    ),
+  );
+});
+
+it("finds a run stuck saving its checkpoint past the deadline", () => {
+  const waiting = projection({
+    runs: [{ ...runOf(projection()), status: "waiting" }],
+    providerTurns: [
+      {
+        id: "provider-turn-1",
+        providerThreadId: "provider-thread-1",
+        nodeId: "node-1",
+        runAttemptId: "attempt-1",
+        ordinal: 1,
+        status: "completed",
+        completedAt: at(1),
+      },
+    ],
+  });
+  assert.isNull(OrphanedRuns.stuckWaitingRun(waiting, at(10)));
+  assert.deepEqual(
+    (({ run, status }) => [run.id, status])(OrphanedRuns.stuckWaitingRun(waiting, at(12))!),
+    ["run-1", "completed"],
+  );
+  // A provider turn still running is not a checkpoint stall.
+  const stillRunning = projection({ runs: [{ ...runOf(projection()), status: "waiting" }] });
+  assert.isNull(OrphanedRuns.stuckWaitingRun(stillRunning, at(600)));
+});
+
 it("closes a held run on an ended session only once it waits on nothing", () => {
   const held = { ingesting: true, sessionLive: false };
   const open = projection({
@@ -170,6 +315,7 @@ const harness = (input: {
   readonly committed?: boolean;
   readonly liveSession?: boolean;
   readonly interrupted?: Ref.Ref<number>;
+  readonly liveBackgroundWork?: boolean;
 }) =>
   Effect.gen(function* () {
     const captured = yield* Ref.make<ReadonlyArray<Captured>>([]);
@@ -177,6 +323,9 @@ const harness = (input: {
     const interrupted = input.interrupted ?? (yield* Ref.make(0));
     const runtime = {
       interruptTurn: () => Ref.update(interrupted, (count) => count + 1),
+      ...(input.liveBackgroundWork === undefined
+        ? {}
+        : { liveBackgroundWork: () => Effect.succeed(input.liveBackgroundWork) }),
     } as unknown as ProviderAdapterV2SessionRuntime;
     const layer = Layer.mergeAll(
       Layer.mock(ProjectionStore.ProjectionStoreV2)({
@@ -317,9 +466,16 @@ it.effect("settles an orphaned run on the second sweep that finds it", () =>
   }),
 );
 
-it.effect("leaves a run alone while this process still reads its events", () =>
+it.effect("leaves a run alone while this process reads its events and a tool is open", () =>
   Effect.gen(function* () {
-    const { layer, captured } = yield* harness({ value: projection(), liveSession: true });
+    const { layer, captured } = yield* harness({
+      value: projection({
+        turnItems: [
+          { runId: "run-1", type: "command_execution", status: "running", updatedAt: T0 },
+        ],
+      }),
+      liveSession: true,
+    });
     yield* Effect.gen(function* () {
       const watchdog = yield* StaleRunWatchdog.make;
       const liveness = yield* RunLiveness.RunLiveness;
@@ -330,6 +486,109 @@ it.effect("leaves a run alone while this process still reads its events", () =>
       yield* release;
     }).pipe(Effect.provide(layer));
     assert.equal((yield* Ref.get(captured)).length, 0);
+  }),
+);
+
+it.effect("interrupts a live run silent for 45 minutes on the second sweep", () =>
+  Effect.gen(function* () {
+    const live = projection({ providerSessions: [{ id: "session-1", status: "ready" }] });
+    const { layer, captured, dispatched } = yield* harness({ value: live, liveSession: true });
+    yield* Effect.gen(function* () {
+      const watchdog = yield* StaleRunWatchdog.make;
+      const liveness = yield* RunLiveness.RunLiveness;
+      const release = yield* liveness.acquire("run-1" as never);
+      yield* TestClock.adjust("44 minutes");
+      assert.equal(yield* watchdog.sweep(), 0);
+      assert.equal(yield* watchdog.sweep(), 0);
+      yield* TestClock.adjust("2 minutes");
+      assert.equal(yield* watchdog.sweep(), 0);
+      assert.equal(yield* Ref.get(dispatched), 0);
+      assert.equal(yield* watchdog.sweep(), 1);
+      yield* release;
+    }).pipe(Effect.provide(layer));
+    assert.equal(yield* Ref.get(dispatched), 1);
+    // Interrupted through its session, never settled behind its back.
+    assert.equal((yield* Ref.get(captured)).length, 0);
+  }),
+);
+
+it.effect.each([
+  [true, 0],
+  [false, 1],
+] as const)(
+  "asks the live process before interrupting a silent run (background work live: %s)",
+  ([liveBackgroundWork, interrupts]) =>
+    Effect.gen(function* () {
+      const live = projection({
+        ...earlierRunSubagent,
+        providerSessions: [{ id: "session-1", status: "ready" }],
+      } as never);
+      const { layer, dispatched } = yield* harness({
+        value: live,
+        liveSession: true,
+        liveBackgroundWork,
+      });
+      yield* Effect.gen(function* () {
+        const watchdog = yield* StaleRunWatchdog.make;
+        const liveness = yield* RunLiveness.RunLiveness;
+        const release = yield* liveness.acquire("run-1" as never);
+        yield* TestClock.adjust("46 minutes");
+        yield* watchdog.sweep();
+        yield* watchdog.sweep();
+        yield* release;
+      }).pipe(Effect.provide(layer));
+      assert.equal(yield* Ref.get(dispatched), interrupts);
+    }),
+);
+
+it.effect("settles a run stuck in waiting on the second sweep past its deadline", () =>
+  Effect.gen(function* () {
+    const waiting = projection({
+      runs: [{ ...runOf(projection()), status: "waiting" }],
+      nodes: [{ id: "node-1", runId: "run-1", status: "running", completedAt: null }],
+      providerTurns: [
+        {
+          id: "provider-turn-1",
+          providerThreadId: "provider-thread-1",
+          nodeId: "node-1",
+          runAttemptId: "attempt-1",
+          ordinal: 1,
+          status: "completed",
+          completedAt: T0,
+        },
+      ],
+    });
+    const { layer, captured } = yield* harness({ value: waiting });
+    yield* Effect.gen(function* () {
+      const watchdog = yield* StaleRunWatchdog.make;
+      yield* TestClock.adjust("9 minutes");
+      assert.equal(yield* watchdog.sweep(), 0);
+      assert.equal(yield* watchdog.sweep(), 0);
+      yield* TestClock.adjust("2 minutes");
+      assert.equal(yield* watchdog.sweep(), 0);
+      assert.equal(yield* watchdog.sweep(), 1);
+    }).pipe(Effect.provide(layer));
+    const events = payloads(yield* Ref.get(captured));
+    const run = events.find((event) => event.type === "run.updated");
+    assert.equal(run?.type === "run.updated" ? run.payload.status : null, "completed");
+    const node = events.find((event) => event.type === "node.updated");
+    assert.equal(node?.type === "node.updated" ? node.payload.status : null, "completed");
+  }),
+);
+
+it.effect("settles an orphan even while messages queued behind it bump the thread", () =>
+  Effect.gen(function* () {
+    const value = projection();
+    const { layer, captured } = yield* harness({ value });
+    yield* Effect.gen(function* () {
+      const watchdog = yield* StaleRunWatchdog.make;
+      yield* TestClock.adjust("3 minutes");
+      // A child report queued just now.
+      (value.thread as { updatedAt: DateTime.Utc }).updatedAt = at(3);
+      assert.equal(yield* watchdog.sweep(), 0);
+      assert.equal(yield* watchdog.sweep(), 1);
+    }).pipe(Effect.provide(layer));
+    assert.equal((yield* Ref.get(captured)).length, 1);
   }),
 );
 

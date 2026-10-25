@@ -90,6 +90,12 @@ export const ServerProviderUsageLimits = Schema.Struct({
   /** Supported config/read route observation; usage notifications never renew it. */
   nativeRouteVerified: Schema.optional(Schema.Boolean),
   nativeRouteObservedAt: Schema.optional(IsoDateTime),
+  /**
+   * When this server saw the instance's signed-in account change, from the
+   * read that first showed the new account. Usage, denials and resets before
+   * it belong to the previous account.
+   */
+  accountChangedAt: Schema.optional(IsoDateTime),
   /** Opaque credential identity when the provider does not report an account. */
   credentialFingerprint: Schema.optional(TrimmedNonEmptyString),
   resetCredits: Schema.optional(ServerProviderResetCredits),

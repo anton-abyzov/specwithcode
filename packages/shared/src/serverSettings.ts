@@ -7,6 +7,7 @@ import {
   type ModelSelection,
   type ProjectId,
   type ProjectScopedServerSettingKey,
+  type ProjectSettingsOverrideChange,
   type ProjectSettingsOverrides,
   type ProviderDriverKind,
   type ServerProvider,
@@ -182,6 +183,41 @@ function mergeSettingsEntries<Value>(
 }
 
 /**
+ * `entry` after `change`: cleared keys inherit again, then set keys take
+ * their new value. `null` when nothing is left overridden.
+ */
+export function applyProjectSettingsOverrideChange(
+  entry: ProjectSettingsOverrides | undefined,
+  change: ProjectSettingsOverrideChange,
+): ProjectSettingsOverrides | null {
+  const next: Record<string, unknown> = { ...entry };
+  for (const key of change.clear ?? []) delete next[key];
+  for (const [key, value] of Object.entries(change.set ?? {})) {
+    if (value !== undefined) next[key] = value;
+  }
+  return Object.keys(next).length === 0 ? null : (next as ProjectSettingsOverrides);
+}
+
+/** Entry replacements first, then per-key changes against that result; empty entries are dropped. */
+function mergeProjectSettingsOverrides(
+  current: ServerSettings["projectSettingsOverrides"],
+  entries: ServerSettingsPatch["projectSettingsOverrides"],
+  changes: ServerSettingsPatch["projectSettingsOverrideChanges"],
+): ServerSettings["projectSettingsOverrides"] {
+  const next = new Map<string, ProjectSettingsOverrides>(
+    Object.entries(entries === undefined ? current : mergeSettingsEntries(current, entries)),
+  );
+  for (const [projectId, change] of Object.entries(changes ?? {})) {
+    const entry = applyProjectSettingsOverrideChange(next.get(projectId), change);
+    if (entry === null) next.delete(projectId);
+    else next.set(projectId, entry);
+  }
+  return Object.fromEntries(
+    [...next].filter(([, entry]) => Object.keys(entry).length > 0),
+  ) as ServerSettings["projectSettingsOverrides"];
+}
+
+/**
  * Derived views of `projectSettingsOverrides` for clients that still read
  * the legacy per-key maps. Recomputed on every patch and load so they
  * cannot drift from the generic record.
@@ -352,6 +388,8 @@ export function applyServerSettingsPatch(
     usageModelAliases: usageModelAliasesPatch,
     // Entry replacement: deepMerge would keep keys the client meant to clear.
     projectSettingsOverrides: projectSettingsOverridesPatch,
+    // Applied per key below, after the entry replacements.
+    projectSettingsOverrideChanges: projectSettingsOverrideChangesPatch,
     // Already translated into `projectSettingsOverrides` above; the legacy
     // maps are derived views and must never be merged directly.
     projectAgentBrowserAccessOverrides: _legacyBrowserAccess,
@@ -453,12 +491,13 @@ export function applyServerSettingsPatch(
     ...(patch.github?.hosts !== undefined
       ? { github: { ...next.github, hosts: patch.github.hosts } }
       : {}),
-    ...(projectSettingsOverridesPatch !== undefined
+    ...(projectSettingsOverridesPatch !== undefined ||
+    projectSettingsOverrideChangesPatch !== undefined
       ? {
-          projectSettingsOverrides: Object.fromEntries(
-            Object.entries(
-              mergeSettingsEntries(current.projectSettingsOverrides, projectSettingsOverridesPatch),
-            ).filter(([, entry]) => Object.keys(entry).length > 0),
+          projectSettingsOverrides: mergeProjectSettingsOverrides(
+            current.projectSettingsOverrides,
+            projectSettingsOverridesPatch,
+            projectSettingsOverrideChangesPatch,
           ),
         }
       : {}),

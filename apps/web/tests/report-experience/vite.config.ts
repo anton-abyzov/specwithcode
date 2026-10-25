@@ -12,7 +12,16 @@ export default defineConfig({
       enforce: "pre",
       resolveId(source, importer) {
         if (
-          (importer?.endsWith("/HtmlRenderFrame.tsx") && source.endsWith("/assets/assetUrls")) ||
+          (importer?.endsWith("/HtmlRenderFrame.tsx") &&
+            (source.endsWith("/assets/assetUrls") || source.endsWith("/state/filesystem"))) ||
+          ((importer?.endsWith("/ViewerLinkedPane.tsx") ||
+            importer?.endsWith("/ViewerOverlayHost.tsx")) &&
+            source.endsWith("/files/projectFilesQueryState")) ||
+          // The Files fixture: the artifact viewer and a missing file's folder listing.
+          (importer?.endsWith("/ThreadArtifacts.tsx") &&
+            (source.endsWith("/assets/assetUrls") ||
+              source.endsWith("/files/projectFilesQueryState"))) ||
+          (importer?.endsWith("/MissingFileNotice.tsx") && source === "./useExistingFileLinks") ||
           (importer?.endsWith("/useHtmlRenderTheme.ts") &&
             (source === "./useTheme" || source === "./useSettings"))
         )
@@ -27,7 +36,9 @@ export default defineConfig({
             here(
               req.url?.includes("historical")
                 ? "../../../../.artifacts/report-experience/ps23.html"
-                : "../../../../docs/reports/report-example.html",
+                : req.url?.includes("evidence")
+                  ? "./evidence.html"
+                  : "../../../../docs/reports/report-example.html",
             ),
             "utf8",
           );
@@ -69,5 +80,9 @@ export default defineConfig({
     },
   },
   server: { host: "127.0.0.1", port: 5843, strictPort: true },
-  build: { outDir: here("../../../../.artifacts/report-experience/site"), emptyOutDir: true },
+  build: {
+    outDir: here("../../../../.artifacts/report-experience/site"),
+    emptyOutDir: true,
+    rollupOptions: { input: { index: here("./index.html"), files: here("./files.html") } },
+  },
 });

@@ -334,16 +334,19 @@ describe("project settings and memory", () => {
     expect(container.textContent).toContain("Coordinator model and effort: thread-model");
     expect(container.textContent).toContain("No override saved");
   });
-  it("edits this project's usage limit rule from the General tab", async () => {
+  it("keeps the fallback chain in one card under the model pickers", async () => {
     await render("general");
     const scopes = [...container.querySelectorAll("[data-settings-project]")];
-    expect(scopes.map((scoped) => scoped.getAttribute("data-settings-project"))).toEqual([
-      "atlas",
-      "atlas",
-    ]);
-    expect(scopes[0]?.textContent).toContain("Also served by");
-    expect(scopes[1]?.textContent).toContain("Usage limits");
-    expect(scopes[1]?.textContent).toContain("When a provider runs out");
+    expect(scopes.map((scoped) => scoped.getAttribute("data-settings-project"))).toEqual(["atlas"]);
+    const chain = scopes[0]!.textContent ?? "";
+    expect(chain).toContain("When a model runs out");
+    expect(chain.indexOf("Also served by")).toBeLessThan(chain.indexOf("When a provider runs out"));
+    const text = container.textContent ?? "";
+    expect(text.indexOf("Recommended model for threads")).toBeLessThan(
+      text.indexOf("When a model runs out"),
+    );
+    const machine = text.indexOf("Worker machine");
+    if (machine !== -1) expect(text.indexOf("When a model runs out")).toBeLessThan(machine);
   });
   it("lists this project's overrides on the General tab", async () => {
     await render("general");

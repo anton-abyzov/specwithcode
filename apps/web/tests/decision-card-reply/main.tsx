@@ -41,6 +41,17 @@ import { planQuestionChatReply } from "../../src/questionChatReply";
 import { useWorkspaceFileDropHandlers } from "../../src/components/chat/workspaceFileDrop";
 import type { PendingUserInput } from "../../src/session-logic";
 import { DecisionCard, type AnsweredQuestionItem } from "../../src/components/chat/DecisionCard";
+import {
+  QuestionLiveStatus,
+  useLiveAnnouncement,
+  useQuestionSettleAnnouncements,
+} from "../../src/components/chat/questionLiveStatus";
+import {
+  answerProblemFor,
+  settleQuestionAnswer,
+  shownAnswerProblem,
+  type AnswerProblem,
+} from "../../src/components/chat/questionSendOutcome";
 import { TooltipProvider } from "../../src/components/ui/tooltip";
 import { ToastProvider, AnchoredToastProvider } from "../../src/components/ui/toast";
 import { applyThemePalette } from "../../src/themePalette";
@@ -122,6 +133,8 @@ declare global {
   interface Window {
     __fixture: {
       responses: Response[];
+      /** "refused": the host turns the next answer down, as a handoff fence does. */
+      next: "ok" | "refused";
       showQuestion: (show: boolean) => void;
       threadDraft: () => { prompt: string; images: number } | null;
     };
@@ -129,6 +142,7 @@ declare global {
 }
 window.__fixture = {
   responses: [],
+  next: "ok",
   showQuestion: () => {},
   threadDraft: () => {
     const draft = useComposerDraftStore.getState().getComposerDraft(threadRef);
@@ -178,6 +192,18 @@ function Harness() {
     images: ComposerImageAttachment[];
   } | null>(null);
   const [threadError, setThreadError] = useState<string | null>(null);
+  // As ChatView does, with its shared rules: why an answer was not sent shows
+  // against the composer, not the thread, and a live status reads the outcome.
+  const [answerProblem, setAnswerProblem] = useState<AnswerProblem | null>(null);
+  const [announcement, announce] = useLiveAnnouncement();
+  const pendingIds = pendingUserInputs.map((input) => input.requestId);
+  const settle = useQuestionSettleAnnouncements(
+    `${environmentId}:${threadId}`,
+    pendingIds,
+    announce,
+  );
+  const reason = (text: string) =>
+    setAnswerProblem({ threadId, requestId: question.requestId, text });
   const promptRef = useRef("");
   const composerImagesRef = useRef<ComposerImageAttachment[]>([]);
   const composerFilesRef = useRef<ComposerFileAttachment[]>([]);
@@ -191,11 +217,44 @@ function Harness() {
 
   const respond = useCallback(
     (response: Response, text: string, images: ComposerImageAttachment[]) => {
+      setAnswerProblem(null);
+      settle.claim(question.requestId);
       window.__fixture.responses.push(response);
+      const refused = window.__fixture.next === "refused";
+      window.__fixture.next = "ok";
+      const problem = settleQuestionAnswer({
+        result: refused
+          ? {
+              kind: "refused",
+              message: "The thread is handing off to another machine. Send it again shortly.",
+            }
+          : { kind: "sent" },
+        requestId: question.requestId,
+        answers: response.answers,
+        files: {},
+        heldInBox: true,
+        runtimeRequests: () => [],
+        settle,
+        announce,
+        onLanded: () => {},
+        onSettledElsewhere: () => false,
+      });
+      if (problem !== null) {
+        setAnswerProblem(
+          answerProblemFor({
+            threadId,
+            requestId: question.requestId,
+            problem,
+            pendingRequestIds: [question.requestId],
+          }),
+        );
+        return false;
+      }
       setSent({ response, text, images });
       setPendingUserInputs([]);
+      return true;
     },
-    [],
+    [announce, settle],
   );
 
   // The same decision ChatView.onSend makes while a card waits.
@@ -208,7 +267,7 @@ function Harness() {
       supportsQuestionAttachments: true,
     });
     if (reply.kind === "blocked") {
-      setThreadError(reply.reason);
+      reason(reply.reason);
       return;
     }
     if (reply.kind === "reply") {
@@ -217,7 +276,7 @@ function Harness() {
         images: [...reply.images, ...reply.files],
       });
       if (!uploaded) return;
-      respond(
+      const delivered = respond(
         {
           answers: { [questionInput.id]: reply.text },
           attachments: { [questionInput.id]: uploaded },
@@ -226,6 +285,8 @@ function Harness() {
         reply.text,
         [...reply.images],
       );
+      // A refused answer stays in the box with its files.
+      if (!delivered) return;
       promptRef.current = "";
       useComposerDraftStore.getState().clearComposerContent(threadRef);
       composerRef.current?.resetCursorState({ cursor: 0 });
@@ -289,6 +350,7 @@ function Harness() {
           </p>
         ) : null}
       </section>
+      <QuestionLiveStatus announcement={announcement} />
       <ChatComposer
         composerDraftTarget={threadRef}
         environmentId={environmentId}
@@ -320,6 +382,8 @@ function Harness() {
         sendDisabledReason={null}
         isPreparingWorktree={false}
         bannerItems={[]}
+        answerProblem={shownAnswerProblem(answerProblem, threadId, pendingIds)}
+        onDismissAnswerProblem={() => setAnswerProblem(null)}
         environmentUnavailable={null}
         activePendingApproval={null}
         pendingApprovals={[]}

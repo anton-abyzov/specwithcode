@@ -1,6 +1,7 @@
 /**
  * The thread's plan card: done, current and next at a glance, from the
- * SpecWeave increment the thread works on or the agent's own todo list.
+ * SpecWeave increment the thread works on ("Increment 0996") or the agent's
+ * own todo list ("Checklist", which says it is not an increment).
  * Collapsed it is one chip-high line that shares the row with the thread's
  * meta chips; open it takes the whole row and lists every step, the
  * increment's acceptance criteria and links to its spec and folder. A worker
@@ -21,6 +22,7 @@ import {
   FolderOpenIcon,
   Link2Icon,
   Link2OffIcon,
+  ListChecksIcon,
   ListTodoIcon,
   OctagonPauseIcon,
 } from "lucide-react";
@@ -31,6 +33,7 @@ import { cn } from "~/lib/utils";
 import { readLocalApi } from "~/localApi";
 import {
   BINDING_LABELS,
+  CHECKLIST_LABEL,
   incrementNumber,
   isDocumentPath,
   isExternalStepLink,
@@ -210,6 +213,8 @@ export const ThreadPlanCard = memo(function ThreadPlanCard({
   const listId = useId();
   const { increment } = plan;
   const fromIncrement = plan.source === "increment" && increment !== null;
+  // A bound increment names the card even while its steps come from the agent's checklist.
+  const bound = increment !== null;
   const criteria = fromIncrement ? increment.criteria : [];
   const allDone = plan.total > 0 && plan.completed >= plan.total;
   const unplanned = plan.unplanned === true && increment === null;
@@ -241,7 +246,13 @@ export const ThreadPlanCard = memo(function ThreadPlanCard({
         "pointer-events-auto rounded-md border border-border/60 lane-surface text-xs shadow-xs",
         expanded ? "basis-full" : empty ? "shrink-0" : "min-w-[min(100%,16rem)] flex-1",
       )}
-      aria-label={fromIncrement ? `Increment ${increment.incrementId} progress` : "Plan progress"}
+      aria-label={
+        bound
+          ? `Increment ${increment.incrementId} progress`
+          : plan.source === "todo"
+            ? "Agent checklist progress"
+            : "Plan progress"
+      }
       data-thread-plan-card={plan.source}
       data-plan-empty={empty || undefined}
       data-plan-unplanned={unplanned || undefined}
@@ -253,10 +264,18 @@ export const ThreadPlanCard = memo(function ThreadPlanCard({
         aria-controls={listId}
         onClick={() => setExpanded((open) => !open)}
       >
-        <ListTodoIcon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
+        {bound ? (
+          <ListChecksIcon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
+        ) : (
+          <ListTodoIcon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
+        )}
         {empty ? null : (
-          <span className="shrink-0 text-muted-foreground">
-            {fromIncrement ? incrementNumber(increment.incrementId) : "Plan"}
+          <span className="shrink-0 text-muted-foreground" data-plan-source-label>
+            {bound
+              ? `Increment ${incrementNumber(increment.incrementId)}`
+              : plan.source === "todo"
+                ? CHECKLIST_LABEL
+                : "Plan"}
           </span>
         )}
         <span
@@ -287,6 +306,8 @@ export const ThreadPlanCard = memo(function ThreadPlanCard({
             )}
             data-plan-count
           >
+            {/* A bound increment's card counting the agent's checklist says so. */}
+            {bound && plan.source === "todo" ? `${CHECKLIST_LABEL} ` : null}
             {plan.completed}/{plan.total}
           </span>
         ) : null}
@@ -303,7 +324,7 @@ export const ThreadPlanCard = memo(function ThreadPlanCard({
           id={listId}
           className="max-h-[45vh] overflow-y-auto border-t border-border/60 px-3 pt-2 pb-2.5 text-sm"
         >
-          {fromIncrement ? (
+          {bound ? (
             <p className="mb-1.5 text-xs text-muted-foreground">
               <span className="font-medium text-foreground/80">
                 {increment.title ?? increment.incrementId}
@@ -327,6 +348,13 @@ export const ThreadPlanCard = memo(function ThreadPlanCard({
               ) : null}
             </p>
           ) : null}
+          {plan.source === "todo" ? (
+            <p className="mb-1.5 text-xs text-muted-foreground" data-plan-checklist-note>
+              {bound
+                ? `Steps from the agent's checklist: the increment's tasks ${increment.readable ? "are not written yet" : "could not be read"}.`
+                : "The agent's own checklist from its provider. It is not a SpecWeave increment."}
+            </p>
+          ) : null}
           {unplanned ? (
             <p className="mb-1.5 text-xs text-muted-foreground" data-plan-unplanned-note>
               This thread changed code without a SpecWeave increment. Increments are recommended,
@@ -342,7 +370,7 @@ export const ThreadPlanCard = memo(function ThreadPlanCard({
           ) : unplanned ? null : (
             <p className="text-xs text-muted-foreground">
               {plan.source === "none"
-                ? "No SpecWeave increment and no todo list from the agent yet. Link the increment this thread works on, or the steps appear when the agent writes its todo list."
+                ? "No SpecWeave increment and no checklist from the agent yet. Link the increment this thread works on, or the steps appear when the agent writes its checklist."
                 : increment && !increment.readable
                   ? "The increment's tasks or ledger could not be read."
                   : "No steps yet."}

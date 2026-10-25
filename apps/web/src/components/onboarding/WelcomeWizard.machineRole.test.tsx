@@ -171,6 +171,22 @@ async function choose(title: string) {
   expect(button, `choice ${title}`).toBeDefined();
   await act(async () => button!.click());
 }
+/** Joining requires explicitly approving the main machine by its environment ID. */
+async function approveMainMachine(id = "approved-main") {
+  const input = [...document.querySelectorAll("label")]
+    .find((element) => element.textContent?.includes("Main machine environment ID"))
+    ?.querySelector("input");
+  expect(input, "main machine environment ID input").toBeDefined();
+  const setValue = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")!.set!;
+  await act(async () => {
+    setValue.call(input!, id);
+    input!.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+}
+const makeLine = () =>
+  [...document.querySelectorAll("button")].find(
+    (element) => element.textContent?.trim() === "Make the line",
+  );
 const heading = () => document.querySelector("h1")?.textContent ?? "";
 const line = () =>
   document.querySelector<HTMLInputElement>(
@@ -218,8 +234,13 @@ it("joins existing machines: makes the line once, then opens to this machine's s
   await choose("Join my existing machines");
   expect(heading()).toBe("Add this machine to your main machine");
   expect(machineRole.onChange).not.toHaveBeenCalled();
+  expect(makeLine()?.disabled).toBe(true);
+  await approveMainMachine();
   await click("Make the line");
-  expect(mocks.invite).toHaveBeenCalledExactlyOnceWith("test-env", { label: "" });
+  expect(mocks.invite).toHaveBeenCalledExactlyOnceWith("test-env", {
+    label: "",
+    coordinatorEnvironmentId: "approved-main",
+  });
   expect(line()?.value).toBe("swc-machine-synthetic-line");
   expect(machineRole.onChange).toHaveBeenCalledExactlyOnceWith("joined");
   expect(document.body.textContent).toContain("Settings > Connections > Add a machine");
@@ -246,6 +267,7 @@ it("says in plain words when Tailscale is missing and keeps the choice open", as
     root.render(<WelcomeWizard localAvailable machineRole={machineRole} onDone={vi.fn()} />),
   );
   await choose("Join my existing machines");
+  await approveMainMachine();
   await click("Make the line");
   const alert = document.querySelector('[role="alert"]');
   expect(alert?.textContent).toContain("Tailscale is not installed");
@@ -298,11 +320,9 @@ it("offers to install Tailscale when it is missing and enables the line once it 
       root.render(<WelcomeWizard localAvailable machineRole={role()} onDone={vi.fn()} />),
     );
     await choose("Join my existing machines");
+    await approveMainMachine();
     expect(document.body.textContent).toContain("Tailscale is not installed");
-    const make = () =>
-      [...document.querySelectorAll("button")].find(
-        (element) => element.textContent?.trim() === "Make the line",
-      );
+    const make = makeLine;
     expect(make()?.disabled).toBe(true);
     await click("Install Tailscale");
     expect(mocks.openExternal).toHaveBeenCalledExactlyOnceWith(

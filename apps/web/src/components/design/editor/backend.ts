@@ -1,14 +1,19 @@
 import type {
   DesignAddress,
   DesignDocument,
+  DesignExportInput,
   DesignExportResult,
+  DesignHistoryEntry,
   DesignSystem,
   DesignSystemSummary,
   DesignThreadBinding,
   EnvironmentId,
+  ProjectId,
+  ThreadId,
 } from "@specweave-studio/contracts";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
-import type { CopyOutcome } from "../systems/DesignSystemPicker";
+import type { ProjectFaviconProject } from "../../ProjectFavicon";
+import type { CopyOptions, CopyOutcome } from "../systems/DesignSystemPicker";
 import type { OwnerProject } from "../systems/reviewModel";
 import { DesignSession, type DesignCloseOutcome, type DesignTransport } from "./designSession";
 
@@ -32,7 +37,8 @@ export interface DesignMessage {
 export interface DesignExportRequest {
   readonly pageId: string;
   readonly frameId?: string;
-  readonly format: "png" | "html" | "pdf" | "pptx";
+  /** `svg` only when the server advertises it (`DesignEditorBackend.svgExport`). */
+  readonly format: DesignExportInput["format"];
   readonly scale?: 1 | 2;
   /** Design-system mode to render in; the editor passes the canvas mode. */
   readonly mode?: string;
@@ -50,8 +56,20 @@ export interface DesignMachine {
   readonly linked: boolean;
 }
 
+/** The project that owns a design, for links back to it. */
+export interface DesignOwnerProject {
+  readonly projectId: ProjectId;
+  readonly label: string;
+  /** The `/projects/$projectKey` workspace, when this window has the project. */
+  readonly projectKey: string | null;
+  /** The project record its sidebar icon is drawn from. */
+  readonly icon: ProjectFaviconProject | null;
+}
+
 export interface DesignShareInfo {
   readonly ownerLabel: string;
+  /** Null for a Playground design. */
+  readonly ownerProject?: DesignOwnerProject | null;
   readonly thisMachine: string;
   /** The owner's other paired devices (phones, browsers). */
   readonly devices: readonly string[];
@@ -67,7 +85,17 @@ export interface DesignSystemChoices {
   readonly systems: readonly DesignSystemSummary[] | null;
   readonly projects: readonly OwnerProject[];
   /** Copies another owner's system into the design's owner; designs never reference across owners. */
-  readonly copy: (system: DesignSystemSummary) => Promise<CopyOutcome>;
+  readonly copy: (system: DesignSystemSummary, options?: CopyOptions) => Promise<CopyOutcome>;
+}
+
+/** Version history through `design.history`, `design.saveVersion` and `design.restore`. */
+export interface DesignVersions {
+  /** Named versions and kept autosaves, as the server lists them. */
+  readonly list: () => Promise<readonly DesignHistoryEntry[]>;
+  /** Names the saved head; returns the history after the save. */
+  readonly save: (name: string) => Promise<readonly DesignHistoryEntry[]>;
+  /** Puts `revision`'s content back as a new revision on top of `expectedRevision`. */
+  readonly restore: (revision: number, expectedRevision: number) => Promise<DesignDocument>;
 }
 
 export interface DesignEditorBackend {
@@ -78,20 +106,58 @@ export interface DesignEditorBackend {
   /** Uploads image bytes (base64) and returns the asset file name. */
   readonly assetPut: (mimeType: string, base64: string) => Promise<string>;
   readonly sendToThread: (thread: DesignThreadBinding, message: DesignMessage) => Promise<void>;
-  /** Starts the design's agent thread on this machine, optionally with a first message. */
-  readonly startThread: (first: DesignMessage | null) => Promise<DesignThreadBinding>;
+  /** A new thread id, so the design can be bound before its thread starts. */
+  readonly newThreadId: () => ThreadId;
+  /**
+   * Starts the design's agent thread on this machine as `threadId`, optionally
+   * with a first message. With `selfBind` the brief asks the agent to bind the
+   * thread to the design itself, because this window was not allowed to.
+   */
+  readonly startThread: (
+    first: DesignMessage | null,
+    options: { readonly threadId: ThreadId; readonly selfBind: boolean },
+  ) => Promise<DesignThreadBinding>;
   /** Coding threads of the design's project that can receive "Implement this frame". */
   readonly codingThreads: readonly DesignCodingThread[];
-  /** Starts a new coding thread in the design's project with the frame as its first message. */
+  /**
+   * Starts a new coding thread in the design's project with the frame as its
+   * first message. Without a ready provider the thread is created with no turn
+   * and the message waits in its composer: then `waiting` is true.
+   */
   readonly startCodingThread:
-    | ((message: DesignMessage, title: string) => Promise<DesignThreadBinding>)
+    | ((
+        message: DesignMessage,
+        title: string,
+      ) => Promise<DesignThreadBinding & { readonly waiting?: boolean }>)
     | null;
   readonly openThread: (thread: DesignThreadBinding) => void;
   readonly machine: (environmentId: EnvironmentId) => DesignMachine | null;
   readonly share: DesignShareInfo;
   readonly designSystems: DesignSystemChoices;
-  /** The owner's own machine, or a member reaching it from a paired device or linked machine. */
+  /**
+   * The owner on this machine, or a member (a paired device, a linked machine,
+   * a session without access rights), as the server reports it.
+   */
   readonly audience: "owner" | "member";
+  /**
+   * Opens "Connect to a project" for a Playground design; `current` reads the
+   * saved document when Move is pressed. Absent where the design cannot move:
+   * a project design, an older server, or a window that is not the owner's.
+   */
+  readonly connectToProject?: ((current: () => DesignDocument) => void) | null;
+  /** Version history; absent where the window has no history access. */
+  readonly versions?: DesignVersions | null;
+  /** False when no provider on the design's machine can start a turn; absent when unknown. */
+  readonly providerReady?: boolean;
+  /**
+   * Whether a thread has messages or runs, from its shell; undefined while the
+   * shell is not loaded. Absent backends never claim a thread has not started.
+   */
+  readonly threadStarted?: (thread: DesignThreadBinding) => boolean | undefined;
+  /** The server threads replies (`designCommentReplies`); absent on older servers, which hide Reply. */
+  readonly commentReplies?: boolean;
+  /** The server writes SVG (`designSvgExport`); absent on older servers, which keep PNG, HTML and PDF. */
+  readonly svgExport?: boolean;
 }
 
 export interface DesignEditorData {

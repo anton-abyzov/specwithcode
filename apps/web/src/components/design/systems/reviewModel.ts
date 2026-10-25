@@ -5,6 +5,7 @@
 import {
   DESIGN_SYSTEM_IMPORT_MAX_FILE_BYTES,
   type DesignActor,
+  type DesignOwner,
   type DesignOwnerInput,
   type DesignProvenance,
   type DesignSystemChangeKind,
@@ -29,6 +30,33 @@ import {
 export interface OwnerProject {
   readonly id: ProjectId;
   readonly title: string;
+  /** "personal" projects have no code to read; "code" when omitted. */
+  readonly kind?: "code" | "personal" | undefined;
+  /**
+   * Why the project is not offered as a place to save (archived, automated), as a
+   * picker says it; omitted for the person's own projects.
+   */
+  readonly unavailable?: string | undefined;
+}
+
+/** The projects a picker offers: never an archived or automated one; `code` also drops personal ones. */
+export function offeredProjects<P extends OwnerProject>(
+  projects: readonly P[],
+  purpose: "design" | "code" = "design",
+): P[] {
+  return projects.filter(
+    (project) =>
+      project.unavailable === undefined && (purpose === "design" || project.kind !== "personal"),
+  );
+}
+
+/** Why the owner is not a place to save, for a picker's disabled current row; null when it is. */
+export function ownerUnavailable(
+  owner: DesignOwnerInput,
+  projects: readonly OwnerProject[],
+): string | null {
+  if (owner.kind === "playground") return null;
+  return projects.find((project) => project.id === owner.projectId)?.unavailable ?? null;
 }
 
 export const PLAYGROUND_KEY = "playground";
@@ -54,6 +82,45 @@ export function sameOwner(left: DesignOwnerInput, right: DesignOwnerInput): bool
   return ownerKey(left) === ownerKey(right);
 }
 
+/**
+ * Whether two stored owners are one, machine included, as the server matches a
+ * copy's source: a repository checked out on two machines holds two sources.
+ */
+export function sameDesignOwner(left: DesignOwner, right: DesignOwner): boolean {
+  return (
+    left.kind === right.kind &&
+    left.environmentId === right.environmentId &&
+    (left.kind === "playground" || (right.kind === "project" && left.projectId === right.projectId))
+  );
+}
+
+/**
+ * The copy in `own` that the server returns for a copy of `source`: the one of
+ * the highest source revision, the latest made among those.
+ */
+export function copyIn(
+  own: readonly DesignSystemSummary[],
+  source: DesignSystemSummary,
+): DesignSystemSummary | undefined {
+  return own
+    .filter(
+      (system) =>
+        system.copiedFrom !== undefined &&
+        system.copiedFrom.id === source.ref.systemId &&
+        sameDesignOwner(system.copiedFrom.owner, source.ref.owner),
+    )
+    .toSorted(
+      (left, right) =>
+        right.copiedFrom!.revision - left.copiedFrom!.revision ||
+        right.copiedFrom!.copiedAt.localeCompare(left.copiedFrom!.copiedAt),
+    )[0];
+}
+
+/** Whether `copy` was made before `source`'s latest change: the source moved past the revision it copied. */
+export function copyPredatesSource(copy: DesignSystemSummary, source: DesignSystemSummary) {
+  return copy.copiedFrom !== undefined && source.revision > copy.copiedFrom.revision;
+}
+
 export function ownerName(owner: DesignOwnerInput, projects: readonly OwnerProject[]): string {
   if (owner.kind === "playground") return "Playground";
   return projects.find((project) => project.id === owner.projectId)?.title ?? "A project";
@@ -66,7 +133,7 @@ export function ownerName(owner: DesignOwnerInput, projects: readonly OwnerProje
 const plural = (count: number, one: string, many = `${one}s`) =>
   `${count} ${count === 1 ? one : many}`;
 
-/** "Code · 2 files", "Figma export", "Figma desktop + Code · 1 file". */
+/** "Code · 2 files", "Tokens file", "Figma desktop + Code · 1 file". */
 export function sourcesLabel(sources: readonly DesignSystemSource[]): string {
   if (sources.length === 0) return "None";
   const count = (kind: DesignSystemSource["kind"]) =>
@@ -75,7 +142,8 @@ export function sourcesLabel(sources: readonly DesignSystemSource[]): string {
   const files = count("file");
   if (files > 0) parts.push(`Code · ${plural(files, "file")}`);
   const exports = count("figma-export");
-  if (exports > 0) parts.push(exports === 1 ? "Figma export" : `Figma export · ${exports} files`);
+  // Uploaded token files are stored as "figma-export" whether Figma or another tool wrote them.
+  if (exports > 0) parts.push(exports === 1 ? "Tokens file" : `Tokens files · ${exports}`);
   if (count("figma-desktop") > 0) parts.push("Figma desktop");
   if (count("agent") > 0) parts.push("Described by an agent");
   return parts.join(" + ");
@@ -389,4 +457,14 @@ export async function readTokensFiles(
   } catch {
     return { ok: false, message: "A file could not be read. Pick it again." };
   }
+}
+
+/** "Brand copy", or "Brand copy 2"… when a sibling already has that name. */
+export function duplicateSystemName(name: string, siblings: readonly string[]): string {
+  const used = new Set(siblings.map((sibling) => sibling.trim().toLowerCase()));
+  const base = `${name.trim().slice(0, 170).trimEnd()} copy`;
+  if (!used.has(base.toLowerCase())) return base;
+  let n = 2;
+  while (used.has(`${base} ${n}`.toLowerCase())) n += 1;
+  return `${base} ${n}`;
 }

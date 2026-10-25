@@ -116,14 +116,17 @@ export const classifyInbound = (
 };
 
 /**
- * A coordinator run goes back to the phone unless the person started it at a
- * desk (Studio web or mobile). Telegram messages, routines and the wake runs
- * that deliver worker results are all forwarded.
+ * A run goes back to the phone unless the person started it at a desk
+ * (Studio web or mobile). Telegram messages, routines (even ones made at a
+ * desk) and the wake runs that deliver worker results are all forwarded.
  */
 export const shouldForwardRun = (
-  userMessage: Pick<OrchestrationV2ConversationMessage, "createdBy" | "creationSource"> | undefined,
+  userMessage:
+    | Pick<OrchestrationV2ConversationMessage, "createdBy" | "creationSource" | "scheduledTaskId">
+    | undefined,
 ): boolean =>
   userMessage === undefined ||
+  userMessage.scheduledTaskId !== undefined ||
   !(
     userMessage.createdBy === "user" &&
     (userMessage.creationSource === "web" || userMessage.creationSource === "mobile")

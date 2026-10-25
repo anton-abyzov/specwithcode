@@ -31,7 +31,7 @@ export function suspendedProjectState(error: unknown): "archived" | "paused" | n
 
 /** Re-read project policy and destination immediately before every trigger dispatch. */
 export const assertTaskAdmission = Effect.fn("ScheduledTaskService.assertAdmission")(function* (
-  task: Pick<ScheduledTask, "id" | "projectId" | "threadId">,
+  task: Pick<ScheduledTask, "id" | "projectId" | "threadId" | "ownThread">,
 ) {
   const sql = yield* SqlClient.SqlClient;
   const projects = yield* ProjectStore.ProjectStoreV2;
@@ -49,7 +49,12 @@ export const assertTaskAdmission = Effect.fn("ScheduledTaskService.assertAdmissi
       readonly workspaceSettings?: ProjectWorkspaceSettings | null;
     }
   ).workspaceSettings;
-  if (projectExecutionIsFenced(policy, task.projectId, task.threadId))
+  // Project-owned routines follow project ownership even after their coordinator
+  // binding is migrated. Explicit worker follow-ups retain their worker scope.
+  const ownershipThread = task.ownThread
+    ? (policy?.coordinatorThreadId ?? `project-coordinator:${task.projectId}`)
+    : task.threadId;
+  if (projectExecutionIsFenced(policy, task.projectId, ownershipThread))
     return yield* taskError("Routine coordinator has handed off ownership.", { taskId: task.id });
   if (policy?.paused || policy?.archived) {
     const state = policy.archived ? "archived" : "paused";
@@ -71,26 +76,4 @@ export const assertTaskAdmission = Effect.fn("ScheduledTaskService.assertAdmissi
         taskId: task.id,
       });
   }
-});
-
-/** The project's coordinator thread, as the coordinator service finds or creates it. */
-export const routineCoordinatorThreadId = Effect.fn(
-  "ScheduledTaskService.routineCoordinatorThreadId",
-)(function* (task: Pick<ScheduledTask, "id" | "projectId">) {
-  const projects = yield* ProjectStore.ProjectStoreV2;
-  const project = yield* projects
-    .get(task.projectId)
-    .pipe(
-      Effect.mapError((cause) =>
-        taskError("Could not read routine project.", { taskId: task.id, cause }),
-      ),
-    );
-  const settings = Option.isNone(project)
-    ? null
-    : (
-        project.value as ProjectStore.ProjectRow & {
-          readonly workspaceSettings?: ProjectWorkspaceSettings | null;
-        }
-      ).workspaceSettings;
-  return settings?.coordinatorThreadId ?? `project-coordinator:${task.projectId}`;
 });

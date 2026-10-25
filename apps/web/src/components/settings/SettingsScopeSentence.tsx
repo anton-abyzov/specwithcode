@@ -5,6 +5,7 @@ import type { ReactNode } from "react";
 
 import type { SidebarProjectSnapshot } from "../../sidebarProjectGrouping";
 import { useServerConfigs } from "../../state/entities";
+import { ineligibleProjectLabel } from "../../studio/projectListVisibility";
 import { useEnvironments, type EnvironmentPresentation } from "../../state/environments";
 import { EnvironmentMachineIcon } from "../EnvironmentMachineIcon";
 import { ProjectFavicon } from "../ProjectFavicon";
@@ -213,7 +214,7 @@ function EnvironmentScopeMenu({
 function ProjectScopeMenu({ value, groups, onChange }: SettingsScopeMenuProps) {
   const configs = useServerConfigs();
   const selected = groups.find((group) => group.projectKey === value.project);
-  const choices = settingsScopeProjectChoices(
+  const { choices, unavailable } = settingsScopeProjectChoices(
     groups,
     (environmentId) => configs.get(environmentId)?.scratchWorkspaceRoot ?? null,
     value.project,
@@ -237,6 +238,21 @@ function ProjectScopeMenu({ value, groups, onChange }: SettingsScopeMenuProps) {
           </span>
         </MenuRadioItem>
         <MenuSeparator />
+        {/* The current scope stays visible as context, never as a choice. */}
+        {unavailable ? (
+          <MenuRadioItem value={unavailable.project.projectKey} disabled>
+            <span className="flex min-w-0 items-center gap-2">
+              <ProjectFavicon project={unavailable.project} className="size-3.5" />
+              <span className="flex min-w-0 flex-1 flex-col">
+                <span className="truncate">{unavailable.project.displayName}</span>
+                <span className="truncate text-muted-foreground text-xs">
+                  {ineligibleProjectLabel(unavailable.reason)}
+                </span>
+              </span>
+              <MenuRadioItemIndicator />
+            </span>
+          </MenuRadioItem>
+        ) : null}
         {choices.map((group) => (
           <MenuRadioItem key={group.projectKey} value={group.projectKey}>
             <span className="flex min-w-0 items-center gap-2">

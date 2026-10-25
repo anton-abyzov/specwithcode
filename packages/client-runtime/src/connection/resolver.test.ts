@@ -193,6 +193,88 @@ const makeDependencies = Effect.fn("TestConnectionResolver.makeDependencies")((o
 });
 
 describe("ConnectionResolver", () => {
+  it.effect(
+    "blocks persisted learned HTTP bearer routes before passing a token to authorization",
+    () =>
+      Effect.gen(function* () {
+        const calls = yield* Ref.make(0);
+        const target = new BearerConnectionTarget({
+          environmentId: ENVIRONMENT_ID,
+          label: "Learned",
+          connectionId: "learned:lan@paired",
+        });
+        const layer = yield* makeDependencies({
+          credentials: [["paired", new BearerConnectionCredential({ token: "synthetic-bearer" })]],
+          authorizeBearer: (input) =>
+            Ref.update(calls, (n) => n + 1).pipe(
+              Effect.as({
+                environmentId: ENVIRONMENT_ID,
+                label: "Learned",
+                httpBaseUrl: input.httpBaseUrl,
+                socketUrl: "ws://192.168.1.10:8319/ws?wsTicket=test",
+                httpAuthorization: { _tag: "Bearer" as const, token: input.bearerToken },
+              }),
+            ),
+        });
+        const broker = yield* ConnectionResolver.ConnectionResolver.pipe(Effect.provide(layer));
+        for (const httpBaseUrl of [
+          "http://192.168.1.10:8319/",
+          "http://100.64.0.9:8319/",
+          "http://127.attacker.example/",
+        ]) {
+          const profile = new BearerConnectionProfile({
+            connectionId: target.connectionId,
+            environmentId: target.environmentId,
+            label: target.label,
+            httpBaseUrl,
+            wsBaseUrl: httpBaseUrl.replace(/^http/, "ws"),
+            learned: true,
+          });
+          const result = yield* broker
+            .prepare(catalogEntry(target, Option.some(profile)))
+            .pipe(Effect.result);
+          expect(result).toMatchObject({
+            _tag: "Failure",
+            failure: { _tag: "ConnectionBlockedError", reason: "configuration" },
+          });
+        }
+        expect(yield* Ref.get(calls)).toBe(0);
+      }),
+  );
+
+  it.effect("keeps paired HTTP and learned HTTPS or loopback bearer routes usable", () =>
+    Effect.gen(function* () {
+      const target = new BearerConnectionTarget({
+        environmentId: ENVIRONMENT_ID,
+        label: "Paired",
+        connectionId: "learned:safe@paired",
+      });
+      const layer = yield* makeDependencies({
+        credentials: [["paired", new BearerConnectionCredential({ token: "synthetic-bearer" })]],
+      });
+      const broker = yield* ConnectionResolver.ConnectionResolver.pipe(Effect.provide(layer));
+      for (const [httpBaseUrl, learned] of [
+        ["http://192.168.1.10:8319/", false],
+        [ENDPOINT.httpBaseUrl, true],
+        ["http://127.0.0.1:8319/", true],
+        ["http://localhost:8319/", true],
+        ["http://[::1]:8319/", true],
+      ] as const) {
+        const profile = new BearerConnectionProfile({
+          connectionId: target.connectionId,
+          environmentId: target.environmentId,
+          label: target.label,
+          httpBaseUrl,
+          wsBaseUrl: httpBaseUrl.replace(/^http/, "ws"),
+          ...(learned ? { learned: true as const } : {}),
+        });
+        expect(
+          (yield* broker.prepare(catalogEntry(target, Option.some(profile)))).httpAuthorization,
+        ).toEqual({ _tag: "Bearer", token: "synthetic-bearer" });
+      }
+    }),
+  );
+
   it.effect("blocks an old host during discovery before opening orchestration RPC", () =>
     Effect.gen(function* () {
       const layerBroker = yield* makeDependencies({ descriptorProtocolVersion: null });

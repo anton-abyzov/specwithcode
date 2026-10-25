@@ -110,6 +110,23 @@ describe("DecisionCard", () => {
   });
 });
 
+describe("DecisionCard asker", () => {
+  it("names who asked, so the question never reads as the person's", () => {
+    const markup = renderToStaticMarkup(
+      <DecisionCard item={item({})} askedBy="Coordinator" defaultExpanded />,
+    );
+    expect(markup).toContain('aria-label="Decision on a question from Coordinator"');
+    expect(markup).toMatch(/data-decision-asker[^>]*>Coordinator asked</);
+    expect(markup).toContain("You chose");
+  });
+
+  it("stays plain when the asker is not known", () => {
+    const markup = renderToStaticMarkup(<DecisionCard item={item({})} defaultExpanded />);
+    expect(markup).toContain('aria-label="Decision"');
+    expect(markup).not.toContain("data-decision-asker");
+  });
+});
+
 describe("formatDecisionTime", () => {
   const now = new Date(2026, 9, 15, 12, 0);
   it("uses the time today, the weekday this week and the date before", () => {

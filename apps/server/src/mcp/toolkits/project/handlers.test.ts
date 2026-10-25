@@ -1,5 +1,6 @@
 // @effect-diagnostics nodeBuiltinImport:off - Increment fixtures and a temporary HOME on disk.
 import * as Ref from "effect/Ref";
+import { applyServerSettingsPatch } from "@specweave-studio/shared/serverSettings";
 import { projectFixture } from "../../../project/ProjectWorkspace.testkit.ts";
 import { expect, it } from "@effect/vitest";
 import {
@@ -972,7 +973,6 @@ it.effect("routes folder moves, archive and delete through the user's approval c
   }),
 );
 
-
 it.effect("manages learned model preferences for a project via studio_model_preference", () =>
   Effect.gen(function* () {
     const sourceThreadId = ThreadId.make("source-thread");
@@ -1026,13 +1026,7 @@ it.effect("manages learned model preferences for a project via studio_model_pref
       Layer.mock(ServerSettings.ServerSettingsService)({
         getSettings: Ref.get(settingsRef),
         updateSettings: (patch) =>
-          Ref.updateAndGet(settingsRef, (current) => ({
-            ...current,
-            projectSettingsOverrides: {
-              ...current.projectSettingsOverrides,
-              ...(patch.projectSettingsOverrides ?? {}),
-            },
-          })),
+          Ref.updateAndGet(settingsRef, (current) => applyServerSettingsPatch(current, patch)),
       }),
       NodeServices.layer,
       ServerConfig.layerTest(process.cwd(), { prefix: "studio-model-pref-" }).pipe(
@@ -1074,7 +1068,10 @@ it.effect("manages learned model preferences for a project via studio_model_pref
     expect(recordResult.action).toBe("record");
     expect(recordResult.recorded).toMatchObject({
       keywords: ["database", "migration"],
-      action: { kind: "prefer", model: { instanceId: providerInstanceId, model: "claude-opus-5-5" } },
+      action: {
+        kind: "prefer",
+        model: { instanceId: providerInstanceId, model: "claude-opus-5-5" },
+      },
       note: "Use Opus for DB tasks",
     });
     const ruleId = recordResult.recorded.id;

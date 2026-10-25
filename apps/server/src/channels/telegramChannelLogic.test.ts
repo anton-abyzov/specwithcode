@@ -1,4 +1,5 @@
 import { describe, expect, it } from "@effect/vitest";
+import { ScheduledTaskId } from "@specweave-studio/contracts";
 
 import type { TelegramMessage } from "./TelegramBotApi.ts";
 import {
@@ -89,6 +90,16 @@ describe("shouldForwardRun", () => {
     expect(shouldForwardRun({ createdBy: "user", creationSource: "server" })).toBe(true);
     expect(shouldForwardRun({ createdBy: "system", creationSource: "server" })).toBe(true);
     expect(shouldForwardRun(undefined)).toBe(true);
+  });
+
+  it("forwards a routine's run even when the routine was made at a desk", () => {
+    expect(
+      shouldForwardRun({
+        createdBy: "user",
+        creationSource: "web",
+        scheduledTaskId: ScheduledTaskId.make("task-seo"),
+      }),
+    ).toBe(true);
   });
 });
 

@@ -5,6 +5,7 @@ import {
   EllipsisIcon,
   FolderInputIcon,
   FolderOpenIcon,
+  FolderSymlinkIcon,
   LinkIcon,
   PanelTopOpenIcon,
   PencilIcon,
@@ -44,6 +45,7 @@ import {
   MenuSubTrigger,
   MenuTrigger,
 } from "../../ui/menu";
+import type { ProjectFaviconProject } from "../../ProjectFavicon";
 import { DESIGN_TITLE_MAX } from "./designMenuActions";
 
 export interface GalleryProject {
@@ -51,6 +53,19 @@ export interface GalleryProject {
   readonly title: string;
   /** The `/projects/$projectKey` workspace this project opens in, when this window has one. */
   readonly projectKey?: string;
+  /** The project record its sidebar icon is drawn from. */
+  readonly icon?: ProjectFaviconProject;
+  /** "personal" projects have no repository to read; "code" when omitted. */
+  readonly kind?: "code" | "personal";
+  /**
+   * Why the project is not a place for a new design (archived, automated), as a picker
+   * says it; omitted for the person's own projects. Its designs still show.
+   */
+  readonly unavailable?: string;
+  /** The project's folder the design list could not find; "" when its path is unknown. */
+  readonly missingFolder?: string;
+  /** The project's own last change, for ordering pickers by recent activity. */
+  readonly updatedAt?: string;
 }
 
 /** What the design menu does; the gallery card and the editor header share it. */
@@ -68,6 +83,12 @@ export interface DesignMenuHandlers {
   readonly onCopyLink: (summary: DesignSummary) => void;
   /** Opens the owning project's workspace; omitted where that is not possible. */
   readonly onOpenProject?: ((summary: DesignSummary, projectKey: string) => void) | null;
+  /**
+   * Opens "Connect to a project" for a Playground design, with `projectId`
+   * chosen when given. Omitted when this machine's server cannot move designs
+   * or this window is not the owner's.
+   */
+  readonly onConnect?: ((summary: DesignSummary, projectId?: ProjectId) => void) | null;
 }
 
 export interface DesignActionHandlers extends DesignMenuHandlers {
@@ -82,6 +103,7 @@ export type DesignMenuAction =
   | "duplicate"
   | "copy-link"
   | "open-project"
+  | "connect-to-project"
   | "copy-to-project"
   | "copy-to-playground"
   | "delete";
@@ -96,6 +118,7 @@ export const DESIGN_MENU_LABELS: Record<DesignMenuAction, string> = {
   duplicate: "Duplicate",
   "copy-link": "Copy link",
   "open-project": "Open project",
+  "connect-to-project": "Connect to a project…",
   "copy-to-project": "Copy to project…",
   "copy-to-playground": "Copy to Playground",
   delete: "Delete…",
@@ -108,6 +131,8 @@ export function designMenuEntries(input: {
   readonly canWrite: boolean;
   readonly copyTargets: number;
   readonly canOpenProject: boolean;
+  /** Playground designs only: this machine moves designs and the window is the owner's. */
+  readonly canConnect?: boolean;
 }): DesignMenuEntry[] {
   const readOnly = !input.canWrite;
   const action = (name: DesignMenuAction, disabled = false): DesignMenuEntry => ({
@@ -123,6 +148,7 @@ export function designMenuEntries(input: {
     action("copy-link"),
     ...(project && input.canOpenProject ? [action("open-project")] : []),
     { kind: "separator" },
+    ...(!project && input.canConnect ? [action("connect-to-project", readOnly)] : []),
     action("copy-to-project", readOnly || input.copyTargets === 0),
     ...(project ? [action("copy-to-playground", readOnly)] : []),
     { kind: "separator" },
@@ -155,6 +181,7 @@ const ICONS: Record<DesignMenuAction, ReactNode> = {
   duplicate: <CopyPlusIcon aria-hidden />,
   "copy-link": <LinkIcon aria-hidden />,
   "open-project": <FolderOpenIcon aria-hidden />,
+  "connect-to-project": <FolderSymlinkIcon aria-hidden />,
   "copy-to-project": <FolderInputIcon aria-hidden />,
   "copy-to-playground": <CopyIcon aria-hidden />,
   delete: <Trash2Icon aria-hidden />,
@@ -191,6 +218,7 @@ export function DesignMenuItems({
     canWrite,
     copyTargets: targets.length,
     canOpenProject: projectKey !== null && openProject !== null,
+    canConnect: handlers.onConnect != null,
   });
   const run: Record<DesignMenuAction, () => void> = {
     open: () => handlers.onOpen?.(summary),
@@ -200,6 +228,7 @@ export function DesignMenuItems({
     "open-project": () => {
       if (projectKey !== null) openProject?.(summary, projectKey);
     },
+    "connect-to-project": () => handlers.onConnect?.(summary),
     "copy-to-project": () => undefined,
     "copy-to-playground": () => void handlers.onCopy(summary, { kind: "playground" }),
     delete: onRequestDelete,

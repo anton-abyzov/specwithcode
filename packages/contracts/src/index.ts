@@ -61,6 +61,8 @@ export * from "./design.ts";
 export * from "./designRpc.ts";
 export * from "./designSystemImport.ts";
 export * from "./designSystemImportRpc.ts";
+export * from "./designSystemEdit.ts";
+export * from "./designSystemEditRpc.ts";
 export * from "./projectKnowledge.ts";
 export * from "./projectSuggestions.ts";
 export * from "./projectConnections.ts";

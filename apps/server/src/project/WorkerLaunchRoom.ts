@@ -16,13 +16,20 @@ import { ProviderFallbackEnv } from "../orchestration-v2/ProviderFallbackWorker.
 import * as ServerSettings from "../serverSettings.ts";
 import { projectCompatibleProviders } from "./ProjectProviderCompatibility.ts";
 
+/** Where a new worker starts, and the model it stands in for when the room check moved it. */
+export interface WorkerLaunch {
+  readonly selection: ModelSelection;
+  readonly fallbackFrom: ModelSelection | null;
+}
+
 /**
  * Where a coordinator's new worker starts when the coordinator names no
  * model: the preferred worker model while its provider has room, else the
  * coordinator's own model, else another provider with room (see
  * resolveWorkerLaunchSelection). Without server settings the project rule
  * falls back to the built-in defaults. Each move is logged, since the worker
- * then runs somewhere other than the project's worker model.
+ * then runs somewhere other than the project's worker model, and returns the
+ * preferred model as `fallbackFrom`: the model the worker stands in for.
  */
 export const workerLaunchWithRoom = Effect.fn("project.workerLaunchWithRoom")(function* (input: {
   readonly project: Project;
@@ -56,7 +63,8 @@ export const workerLaunchWithRoom = Effect.fn("project.workerLaunchWithRoom")(fu
     nowMs,
     limitedInstanceIds: limited,
   });
-  if (decision.selection !== input.preferred)
+  const moved = decision.selection !== input.preferred;
+  if (moved)
     yield* Effect.logInfo("project.worker-launch.moved", {
       projectId: input.project.id,
       reason: decision.reason,
@@ -64,5 +72,9 @@ export const workerLaunchWithRoom = Effect.fn("project.workerLaunchWithRoom")(fu
       selected: decision.selection.instanceId,
       model: decision.selection.model,
     });
-  return decision.selection;
+  const launch: WorkerLaunch = {
+    selection: decision.selection,
+    fallbackFrom: moved ? input.preferred : null,
+  };
+  return launch;
 });

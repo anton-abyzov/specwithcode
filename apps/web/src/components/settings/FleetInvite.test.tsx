@@ -94,6 +94,7 @@ const line = (tree: unknown) =>
 beforeEach(() => {
   hooks.reset();
   runtime.invite.mockReset();
+  render().setCoordinatorEnvironmentId("approved-primary");
   runtime.revoke.mockReset();
 });
 
@@ -105,7 +106,10 @@ describe("inviting this machine to another one", () => {
     expect(line(before)).toBeNull();
     button(before, "Make the line")!.props.onClick();
     await vi.waitFor(() => expect(runtime.invite).toHaveBeenCalledOnce());
-    expect(runtime.invite).toHaveBeenCalledWith(m4, { label: "  Studio Mac " });
+    expect(runtime.invite).toHaveBeenCalledWith(m4, {
+      label: "  Studio Mac ",
+      coordinatorEnvironmentId: "approved-primary",
+    });
     await vi.waitFor(() => expect(render().invitation).toEqual(invitation));
 
     const onCopy = vi.fn();
@@ -290,4 +294,13 @@ describe("Tailscale on this machine before the line", () => {
     expect(button(tree, "Make the line")?.props.disabled).toBe(true);
     expect(button(panel(render()), "Make the line")?.props.disabled).toBe(false);
   });
+});
+
+it("requires explicit coordinator approval and shows the local identity for enrollment", async () => {
+  render().setCoordinatorEnvironmentId("");
+  const controller = render();
+  expect(button(panel(controller), "Make the line")!.props.disabled).toBe(true);
+  expect(text(panel(controller))).toContain("env-m4");
+  expect(await controller.create()).toBeNull();
+  expect(runtime.invite).not.toHaveBeenCalled();
 });

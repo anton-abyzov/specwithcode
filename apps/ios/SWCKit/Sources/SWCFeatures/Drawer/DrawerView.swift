@@ -283,7 +283,7 @@ struct DrawerView: View {
     } else if let current = router.landing(in: model), current.projectRef != nil {
       target = current
     } else {
-      target = model.projects.first.map { .project($0.ref) }
+      target = model.projects.first(where: { !$0.archived && !$0.isAutomated }).map { .project($0.ref) }
     }
     guard let target else {
       router.isDrawerOpen = false

@@ -1,4 +1,4 @@
-import type { ProjectId, TelegramChannelStatus } from "@specweave-studio/contracts";
+import type { EnvironmentId, ProjectId, TelegramChannelStatus } from "@specweave-studio/contracts";
 import {
   AuthOrchestrationReadScope,
   AuthSettingsWriteScope,
@@ -13,7 +13,11 @@ import { MessageCircleIcon } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 
 import { useProjects, useServerConfigs } from "../../state/entities";
-import { projectPickerMembers } from "../../studio/projectListVisibility";
+import {
+  ineligibleProjectLabel,
+  ineligibleSelectedMember,
+  projectPickerMembers,
+} from "../../studio/projectListVisibility";
 import { usePrimaryEnvironmentId } from "../../state/environments";
 import { useEnvironmentQuery } from "../../state/query";
 import { serverEnvironment } from "../../state/server";
@@ -77,6 +81,13 @@ export function MessagingSettingsPanel() {
   const [busy, setBusy] = useState(false);
   const projectId = projectDraft ?? status?.projectId ?? null;
   const enabled = enabledDraft ?? (status?.configured === true ? status.enabled : true);
+  const selectedProject = projects.find((project) => project.id === projectId);
+  const scratchRootFor = (id: EnvironmentId) => configs.get(id)?.scratchWorkspaceRoot ?? null;
+  // Only the person's own projects are choices. A channel whose project was since archived
+  // or made by a check shows it apart: saving needs another project, unless the channel is
+  // turned off, so no work goes there.
+  const projectChoices = projectPickerMembers(projects, scratchRootFor);
+  const unavailableProject = ineligibleSelectedMember(projects, selectedProject, scratchRootFor);
 
   // While a code waits for the phone, re-read so the pairing shows up here.
   const waitingForPairing = status !== null && status.configured && !status.paired;
@@ -113,6 +124,7 @@ export function MessagingSettingsPanel() {
     canWrite &&
     environmentId !== null &&
     projectId !== null &&
+    (unavailableProject === null || !enabled) &&
     tokenLooksValid &&
     (trimmedToken !== "" || status?.configured === true) &&
     !busy;
@@ -138,13 +150,6 @@ export function MessagingSettingsPanel() {
       ? `https://t.me/${status.botUsername}?start=${status.pairingCode}`
       : null;
   const badge = status ? pollingBadge(status) : null;
-  const selectedProject = projects.find((project) => project.id === projectId);
-  // The channel's own project stays a choice even once archived.
-  const projectChoices = projectPickerMembers(
-    projects,
-    (id) => configs.get(id)?.scratchWorkspaceRoot ?? null,
-    selectedProject ?? null,
-  );
 
   return (
     <SettingsPageContainer>
@@ -228,6 +233,14 @@ export function MessagingSettingsPanel() {
                   </SelectValue>
                 </SelectTrigger>
                 <SelectPopup alignItemWithTrigger={false}>
+                  {unavailableProject ? (
+                    <SelectItem value={unavailableProject.project.id} disabled>
+                      {unavailableProject.project.title}
+                      <span className="ms-2 text-muted-foreground text-xs">
+                        {ineligibleProjectLabel(unavailableProject.reason)}
+                      </span>
+                    </SelectItem>
+                  ) : null}
                   {projectChoices.map((project) => (
                     <SelectItem key={project.id} value={project.id}>
                       {project.title}
@@ -237,6 +250,9 @@ export function MessagingSettingsPanel() {
                 </SelectPopup>
               </Select>
               <span className="text-muted-foreground text-xs">
+                {unavailableProject
+                  ? `${ineligibleProjectLabel(unavailableProject.reason)}. Choose another project to save, or turn the channel off. `
+                  : null}
                 Messages go to this project&apos;s coordinator. A personal assistant works best for
                 everyday errands; a code project works for checking on builds from your phone.
               </span>

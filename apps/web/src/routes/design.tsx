@@ -25,7 +25,7 @@ function DesignRoute() {
 }
 
 export const Route = createFileRoute("/design")({
-  // `?tab=`, `?project=` and `?new=design&owner=&system=`; all optional, so the
+  // `?project=` (on any tab), `?tab=`, `?group=` and `?new=design&owner=&system=`; all optional, so the
   // editor route `/design/$designKey` inherits them harmlessly.
   validateSearch: parseDesignGallerySearch,
   component: DesignRoute,

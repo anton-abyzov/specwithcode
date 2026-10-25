@@ -386,7 +386,10 @@ it.live("ends a hold no install request follows while the agent is idle", () =>
     // down, and the agent never heard of an install.
     yield* writeJson(statePath, { status: "up-to-date", updatedAt: yield* isoIn(-60_000) });
     yield* writeJson(path.join(dir, "config.json"), { installRequestedAt: yield* isoIn(-30_000) });
-    const hold = yield* holdAt(statePath, { pollMs: 10, noRequestMs: 100 });
+    // Polls every 10 ms see no request well before it is due: the hold must survive
+    // them. 1.5 s leaves a loaded Windows runner, whose 50 ms sleep has taken over
+    // 100 ms, a wide margin before the no-request release may happen.
+    const hold = yield* holdAt(statePath, { pollMs: 10, noRequestMs: 1_500 });
     yield* hold.acquire({ reason: "app-restart" });
     yield* Effect.sleep(Duration.millis(50));
     assert.isTrue(yield* hold.isHeld);
@@ -401,19 +404,32 @@ it.live("keeps a hold whose request came, and one whose drain is still running",
     const dir = yield* fs.makeTempDirectoryScoped({ prefix: "service-update-hold-requested-" });
     const statePath = path.join(dir, "state.json");
     yield* writeJson(statePath, { status: "downloaded", updatedAt: yield* isoIn(-60_000) });
-    const hold = yield* holdAt(statePath, { pollMs: 10, noRequestMs: 50 });
+    // The request must be on disk before the no-request release is due. A 50 ms
+    // window lost that race on a loaded Windows runner (PR #690, job 121048287859):
+    // the config write and the next poll took longer. 1 s keeps the write far
+    // ahead of it; each check then waits until several polls past the due time,
+    // so the release had every chance to happen.
+    const noRequestMs = 1_000;
+    const hold = yield* holdAt(statePath, { pollMs: 10, noRequestMs });
+    const pastNoRequestDue = (startedAtMs: number) =>
+      Effect.gen(function* () {
+        const dueAtMs = startedAtMs + noRequestMs + 200;
+        yield* Effect.sleep(
+          Duration.millis(Math.max(0, dueAtMs - (yield* Clock.currentTimeMillis))),
+        );
+      });
 
     // A drain cannot be followed by a request before it ends.
-    yield* hold.acquire({ draining: true });
-    yield* Effect.sleep(Duration.millis(150));
+    const drain = yield* hold.acquire({ draining: true });
+    yield* pastNoRequestDue(drain.startedAtMs);
     assert.isTrue(yield* hold.isHeld);
 
-    yield* hold.acquire();
+    const requested = yield* hold.acquire();
     yield* writeJson(path.join(dir, "config.json"), {
       installRequestedAt: yield* isoIn(1),
       installMode: "force",
     });
-    yield* Effect.sleep(Duration.millis(150));
+    yield* pastNoRequestDue(requested.startedAtMs);
     assert.isTrue(yield* hold.isHeld);
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
@@ -458,13 +474,14 @@ it.live("outlasts its time limit while the agent installs, up to the ceiling", (
     const path = yield* Path.Path;
     const dir = yield* fs.makeTempDirectoryScoped({ prefix: "service-update-hold-busy-" });
     const statePath = path.join(dir, "state.json");
-    // The ceiling sits well past the 250 ms check so a loaded host cannot reach it first.
-    // Each poll extends the hold by four polls; 25 ms polls leave 100 ms for a slow
-    // Windows file write between them, where 10 ms polls let the hold lapse. On loaded
-    // Windows runners 50 ms polls leave 200 ms and a 250 ms initial ttl so it does not lapse.
-    const pollMs = process.platform === "win32" ? 50 : 25;
-    const ttlMs = process.platform === "win32" ? 250 : 100;
-    const hold = yield* holdAt(statePath, { pollMs, maxMs: 2_000 });
+    // Each poll extends the hold to four polls ahead, so it lapses only if one poll
+    // gap exceeds 4 * pollMs. Loaded Windows runners stalled the poll fiber past
+    // 200 ms (50 ms polls), so polls are 250 ms: a 1 s stall is tolerated. The first
+    // ttl (1 s) leaves three polls to see `installing`; the check at 1.5 s is past it,
+    // so only the extension can keep the hold; the 4 s ceiling is well after the check.
+    const pollMs = 250;
+    const ttlMs = 1_000;
+    const hold = yield* holdAt(statePath, { pollMs, maxMs: 4_000 });
     yield* hold.acquire({ ttlMs });
     yield* Effect.sleep(Duration.millis(5));
     const requested = yield* isoIn(0);
@@ -479,7 +496,7 @@ it.live("outlasts its time limit while the agent installs, up to the ceiling", (
       updatedAt: yield* isoIn(1),
       handledInstallRequestAt: requested,
     });
-    yield* Effect.sleep(Duration.millis(250));
+    yield* Effect.sleep(Duration.millis(1_500));
     assert.isTrue(yield* hold.isHeld);
     // An agent that never finishes does not hold the service past the ceiling.
     assert.isTrue(yield* awaitSelfRelease(hold));
@@ -513,11 +530,14 @@ it.live(
       const statePath = path.join(dir, "state.json");
       const markerPath = path.join(dir, Hold.HOLD_MARKER_FILE);
       const readMarker = Effect.map(fs.readFileString(markerPath), (text) => JSON.parse(text));
-      // Slow polls and a long first hold, so a loaded machine cannot end the hold early.
-      const hold = yield* holdAt(statePath, { pollMs: 1_000 });
+      // The first hold ends unless a poll extends it, and an extension reaches four
+      // polls ahead, so the first ttl must sit below 4 * pollMs. 2 s polls and a 7 s
+      // ttl leave a poll 5 s to run before the hold lapses (1 s polls and a 3 s ttl
+      // left 2 s, close to the stalls a loaded Windows runner shows).
+      const hold = yield* holdAt(statePath, { pollMs: 2_000 });
       assert.isFalse(yield* fs.exists(markerPath));
 
-      const first = yield* hold.acquire({ ttlMs: 3_000 });
+      const first = yield* hold.acquire({ ttlMs: 7_000 });
       const marker = yield* readMarker;
       assert.deepEqual(marker, {
         schemaVersion: 1,
@@ -541,9 +561,10 @@ it.live(
       });
       yield* writeJson(statePath, { status: "waiting-for-quiet", updatedAt: yield* isoIn(1) });
       let extended = marker;
+      // Up to 10 s: the first poll after the request is about 2 s away.
       for (
         let attempt = 0;
-        attempt < 100 && extended.expiresAt === marker.expiresAt;
+        attempt < 200 && extended.expiresAt === marker.expiresAt;
         attempt += 1
       ) {
         yield* Effect.sleep(Duration.millis(50));

@@ -247,3 +247,39 @@ describe("ProviderModelPicker setup callbacks", () => {
     expect(onOpenProviderSetup).not.toHaveBeenCalled();
   });
 });
+
+it("keeps fallback state inside the running model trigger and names the original pick", () => {
+  const instanceId = ProviderInstanceId.make("codex");
+  const header = {
+    title: "Fallback for Claude Code · Opus 5.5",
+    detail: "Opus 5.5 hit its usage limit and resets at 3:40 PM.",
+    back: null,
+  };
+  contentState.render = true;
+  const markup = renderToStaticMarkup(
+    <ProviderModelPicker
+      activeInstanceId={instanceId}
+      model="gpt-6.1-sol"
+      lockedProvider={null}
+      instanceEntries={[providerEntry("codex", "codex")]}
+      modelOptionsByInstance={
+        new Map([[instanceId, [{ slug: "gpt-6.1-sol", name: "GPT-6.1-Sol" }]]])
+      }
+      onInstanceModelChange={() => {}}
+      triggerParts={{ provider: "Codex", model: "GPT-6.1-Sol" }}
+      triggerState={{
+        kind: "fallback",
+        pick: "Claude Code · Opus 5.5",
+        pickModel: "Opus 5.5",
+        reason: "usage limit",
+      }}
+      triggerStateDetail={header.detail}
+      stateHeader={header}
+    />,
+  );
+  expect(markup).toMatch(
+    /<button[^>]*data-chat-provider-model-picker[^>]*>[\s\S]*sws-model-state[\s\S]*<\/button>/,
+  );
+  expect(markup).toContain("fallback for Claude Code · Opus 5.5 (usage limit, resets 3:40 PM)");
+  expect(contentState.props?.stateHeader).toBe(header);
+});

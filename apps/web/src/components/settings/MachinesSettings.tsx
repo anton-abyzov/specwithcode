@@ -413,6 +413,7 @@ function ConnectBothWays({
     try {
       const result = await createServerPairingCredential({
         label: `App on ${row.label}`,
+        coordinatorEnvironmentId: row.environmentId,
         scopes,
       });
       const host = pairingLinkBaseUrl({

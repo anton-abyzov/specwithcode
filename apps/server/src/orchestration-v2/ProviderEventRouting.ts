@@ -1,6 +1,9 @@
 import {
   isOrchestrationV2WorkActive,
+  type NodeId,
+  type OrchestrationV2ExecutionNode,
   type OrchestrationV2Run,
+  type OrchestrationV2Subagent,
   type OrchestrationV2TurnItem,
   type ProviderThreadId,
   type ProviderTurnId,
@@ -20,6 +23,15 @@ export interface ProviderEventRoutingState {
   readonly ownedProviderThreadIds: ReadonlySet<ProviderThreadId>;
   readonly ownedProviderTurnIds: ReadonlySet<ProviderTurnId>;
   readonly inheritedBackgroundTurnItems: ReadonlyMap<TurnItemId, OrchestrationV2Run["id"]>;
+  /**
+   * Subagents of inherited items, by subagent id. Their earlier process may
+   * be gone, so this run also stores the terminal state an adapter reports
+   * for them (row, node and the child's runless root turn).
+   */
+  readonly inheritedSubagents: ReadonlyMap<
+    NodeId,
+    { readonly runId: OrchestrationV2Run["id"]; readonly childThreadId: ThreadId | null }
+  >;
   readonly rootProviderTurnId: ProviderTurnId | null;
 }
 
@@ -33,6 +45,12 @@ export interface ProviderEventRouteIdentity {
 export interface InheritedBackgroundTurnItemRoute {
   readonly id: TurnItemId;
   readonly runId: OrchestrationV2Run["id"];
+  /** The open item, so a run that fails or is stopped can settle it. */
+  readonly turnItem?: OrchestrationV2TurnItem;
+  /** A subagent item's open row. */
+  readonly subagent?: OrchestrationV2Subagent;
+  /** The item's open nodes (its own and, for a subagent, the subagent's). */
+  readonly nodes?: ReadonlyArray<OrchestrationV2ExecutionNode>;
 }
 
 // Turn item types whose lifecycle can outlive the root turn (background
@@ -66,6 +84,18 @@ export function makeProviderEventRoutingState(input: {
     inheritedBackgroundTurnItems: new Map(
       (input.inheritedBackgroundTurnItems ?? []).map((item) => [item.id, item.runId]),
     ),
+    inheritedSubagents: new Map(
+      (input.inheritedBackgroundTurnItems ?? []).flatMap((item) =>
+        item.turnItem?.type === "subagent"
+          ? [
+              [
+                item.turnItem.subagentId,
+                { runId: item.runId, childThreadId: item.turnItem.childThreadId },
+              ] as const,
+            ]
+          : [],
+      ),
+    ),
     rootProviderTurnId: input.providerTurnId,
   };
 }
@@ -79,6 +109,20 @@ export function routeProviderEvent(
   const ownsChildThread = (threadId: ThreadId): boolean =>
     threadId !== input.threadId && ownsThread(threadId);
   const ownsRun = (runId: string | null): boolean => runId === input.runId;
+  // Only a settlement of inherited subagent work, never its live progress:
+  // a run still ingesting for it stores that.
+  const settlesInheritedSubagent = (id: NodeId, runId: string | null, status: string): boolean =>
+    status !== "pending" &&
+    status !== "running" &&
+    status !== "waiting" &&
+    state.inheritedSubagents.get(id)?.runId === runId;
+  const settlesInheritedChildRoot = (node: OrchestrationV2ExecutionNode): boolean =>
+    node.runId === null &&
+    node.kind === "root_turn" &&
+    !isOrchestrationV2WorkActive(node.status) &&
+    [...state.inheritedSubagents.values()].some(
+      (subagent) => subagent.childThreadId === node.threadId,
+    );
   const addProviderThread = (providerThreadId: ProviderThreadId): ProviderEventRoutingState => ({
     ...state,
     ownedProviderThreadIds: new Set([...state.ownedProviderThreadIds, providerThreadId]),
@@ -134,14 +178,23 @@ export function routeProviderEvent(
       return belongs ? [true, addProviderTurn(event.providerTurn.id, isRoot)] : [false, state];
     }
     case "node.updated": {
-      const belongs = ownsRun(event.node.runId) || ownsChildThread(event.node.threadId);
+      const belongs =
+        ownsRun(event.node.runId) ||
+        ownsChildThread(event.node.threadId) ||
+        settlesInheritedSubagent(event.node.id, event.node.runId, event.node.status) ||
+        settlesInheritedChildRoot(event.node);
       if (!belongs || event.node.providerThreadId === null) {
         return [belongs, state];
       }
       return [true, addProviderThread(event.node.providerThreadId)];
     }
     case "subagent.updated":
-      return [ownsRun(event.subagent.runId) || ownsChildThread(event.subagent.threadId), state];
+      return [
+        ownsRun(event.subagent.runId) ||
+          ownsChildThread(event.subagent.threadId) ||
+          settlesInheritedSubagent(event.subagent.id, event.subagent.runId, event.subagent.status),
+        state,
+      ];
     case "message.updated":
       return [ownsRun(event.message.runId) || ownsChildThread(event.message.threadId), state];
     case "turn_item.updated": {

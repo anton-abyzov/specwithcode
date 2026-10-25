@@ -69,25 +69,6 @@ export function isModelPinned(task: Pick<ScheduledTask, "modelPinned">): boolean
 }
 
 /**
- * The message a routine with no thread of its own sends the project's
- * coordinator: which routine fired, where any thread it starts should work
- * when the routine names a checkout, then the routine's prompt.
- */
-export function routineCoordinatorPrompt(
-  task: Pick<ScheduledTask, "title" | "workspaceStrategy">,
-  prompt: string,
-): string {
-  const strategy = task.workspaceStrategy;
-  const where =
-    strategy.type === "worktree"
-      ? ` Run any thread it needs in a new worktree from ${strategy.baseRef}${strategy.startFromOrigin === true ? " on origin" : ""}.`
-      : strategy.type === "existing_worktree"
-        ? ` Run any thread it needs in the checkout ${strategy.worktreePath}.`
-        : "";
-  return `Routine "${task.title}" fired. Answer it yourself or start the threads it needs.${where}\n\n${prompt}`;
-}
-
-/**
  * Whether a check may be set under these modes. A check runs its command
  * unattended, with no approval prompt, so every mode must already allow full
  * access outside plan mode.

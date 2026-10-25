@@ -116,6 +116,10 @@ function makeTestAdapter(input: {
     Record<number, Omit<OrchestrationV2ProviderTurnTokenUsage, "updatedAt">>
   >;
   readonly failedRunOrdinals?: ReadonlySet<number>;
+  /** The root failure a failed run reports; a generic provider error otherwise. */
+  readonly failureByRunOrdinal?: Readonly<
+    Record<number, Parameters<typeof makeProviderFailure>[0]>
+  >;
   readonly interruptedRunOrdinals?: ReadonlySet<number>;
   readonly holdRunOrdinal?: number;
   readonly holdFirstTurn?: Deferred.Deferred<void>;
@@ -322,11 +326,13 @@ function makeTestAdapter(input: {
                     ? {
                         status: terminalStatus,
                         failureItemOrdinal: turnInput.runOrdinal * 100 + 2,
-                        failure: makeProviderFailure({
-                          message: "Simulated provider failure.",
-                          code: "simulated_failure",
-                          class: "provider_error",
-                        }),
+                        failure: makeProviderFailure(
+                          input.failureByRunOrdinal?.[turnInput.runOrdinal] ?? {
+                            message: "Simulated provider failure.",
+                            code: "simulated_failure",
+                            class: "provider_error",
+                          },
+                        ),
                       }
                     : { status: terminalStatus, failure: null }),
                   threadDisposition: "reusable",
@@ -2078,7 +2084,7 @@ describe("orchestration v2 provider switching", () => {
             activeSession?.id,
           );
           const startCommandId = CommandId.make(
-            `command:system:start-queued:${queued.runs[3]!.id}`,
+            `command:system:start-queued:${queued.runs[3]!.id}:${queued.runs[3]!.activeAttemptId}`,
           );
           const detachEffects = (yield* effectOutbox.listByCommandId(startCommandId)).filter(
             (effect) => effect.request.type === "provider-session.detach",
@@ -2090,6 +2096,10 @@ describe("orchestration v2 provider switching", () => {
                 : null,
             ),
             [activeSession?.id],
+          );
+          assert.deepEqual(
+            detachEffects.map((effect) => effect.status),
+            ["succeeded"],
           );
           return yield* orchestrator.getThreadProjection(queuedThreadId);
         }).pipe(
@@ -3620,6 +3630,155 @@ describe("orchestration v2 provider switching", () => {
             [workThreadId, "work prompt"],
           ],
         );
+      }),
+    ),
+  );
+
+  it.live("returns to the same Claude session after an account switch and a Codex detour", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const cwd = yield* checkpointWorkspace("account-switch-detour");
+        const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
+        const resetAt = DateTime.formatIso(DateTime.add(yield* DateTime.now, { hours: 5 }));
+        const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
+          makeTestAdapter({
+            instanceId: CLAUDE_MODEL_SELECTION.instanceId,
+            driver: CLAUDE_DRIVER,
+            capabilities: ClaudeProviderCapabilitiesV2,
+            modelSelection: CLAUDE_MODEL_SELECTION,
+            responseByRunOrdinal: { 1: "account A finished the parser", 2: "account A ran out" },
+            // Run 2 stops at account A's subscription limit, five hours from its reset.
+            failedRunOrdinals: new Set([2]),
+            failureByRunOrdinal: {
+              2: {
+                message: "Claude usage limit reached.",
+                code: "usageLimitExceeded",
+                class: "usage_limit",
+                retryable: null,
+                resetAt,
+              },
+            },
+            capturedTurns,
+          }),
+          makeTestAdapter({
+            instanceId: CODEX_MODEL_SELECTION.instanceId,
+            driver: CODEX_DRIVER,
+            capabilities: CodexProviderCapabilitiesV2,
+            modelSelection: CODEX_MODEL_SELECTION,
+            responseByRunOrdinal: { 3: "codex added the parser tests" },
+            capturedTurns,
+          }),
+        ]);
+        const projection = yield* Effect.gen(function* () {
+          const orchestrator = yield* Orchestrator.OrchestratorV2;
+          const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+          const send = (key: string, text: string, modelSelection: ModelSelection) =>
+            orchestrator
+              .dispatch({
+                type: "message.dispatch",
+                commandId: CommandId.make(`command:detour:${key}`),
+                threadId,
+                messageId: MessageId.make(`message:detour:${key}`),
+                createdBy: "user",
+                creationSource: "web",
+                text,
+                attachments: [],
+                modelSelection,
+                dispatchMode: { type: "start_immediately" },
+              })
+              .pipe(Effect.andThen(waitForIdle(threadId)), Effect.andThen(worker.drain()));
+          yield* orchestrator.dispatch({
+            type: "thread.create",
+            commandId: CommandId.make("command:detour:create"),
+            threadId,
+            projectId,
+            createdBy: "user",
+            creationSource: "web",
+            title: "Account switch detour",
+            modelSelection: CLAUDE_MODEL_SELECTION,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+          });
+          yield* send("a1", "Write the parser", CLAUDE_MODEL_SELECTION);
+          yield* send("a2", "Now the edge cases", CLAUDE_MODEL_SELECTION);
+          yield* send("b", "Add parser tests", CODEX_MODEL_SELECTION);
+          // The Claude CLI now runs under another subscription; the app instance is unchanged.
+          yield* send("a3", "Continue on the new account", CLAUDE_MODEL_SELECTION);
+          yield* send("a4", "Wrap up", CLAUDE_MODEL_SELECTION);
+          return yield* orchestrator.getThreadProjection(threadId);
+        }).pipe(
+          Effect.provide(
+            ProviderReplayHarness.layerWithRegistry(
+              {
+                name: "account-switch-detour",
+                runtimePolicyOverride: {
+                  cwd,
+                  approvalPolicy: "never",
+                  sandboxPolicy: {
+                    type: "readOnly",
+                    access: { type: "fullAccess" },
+                    networkAccess: false,
+                  },
+                },
+              },
+              layerRegistry,
+              { databaseLayer: fixtureProjectDatabase([projectId]) },
+            ),
+          ),
+        );
+        assert.deepEqual(
+          projection.runs.map((run) => [run.ordinal, run.status]),
+          [
+            [1, "completed"],
+            [2, "failed"],
+            [3, "completed"],
+            [4, "completed"],
+            [5, "completed"],
+          ],
+        );
+        const limitStop = projection.turnItems.find(
+          (item) =>
+            item.type === "error" &&
+            item.runId === projection.runs.find((run) => run.ordinal === 2)?.id,
+        );
+        assert.equal(
+          limitStop?.type === "error" ? limitStop.failure?.class : undefined,
+          "usage_limit",
+        );
+        const turns = yield* Ref.get(capturedTurns);
+        const claudeTurns = turns.filter((turn) => turn.driver === CLAUDE_DRIVER);
+        // One native Claude session across both subscriptions.
+        assert.deepEqual(
+          [...new Set(claudeTurns.map((turn) => turn.nativeThreadId))],
+          [`${CLAUDE_DRIVER}:${threadId}`],
+        );
+        const returning = claudeTurns[2]!.text;
+        const handoffsInto = (ordinal: number) =>
+          projection.contextHandoffs.filter(
+            (handoff) =>
+              handoff.targetRunId === projection.runs.find((run) => run.ordinal === ordinal)?.id,
+          );
+        // Codex got runs 1-2 as a summary. The return carries only the Codex run,
+        // once: runs 1 and 2 (including the limit stop) are already in Claude's
+        // own native session.
+        assert.deepEqual(
+          handoffsInto(3).map((handoff) => [handoff.strategy, handoff.coveredRunOrdinals]),
+          [["full_thread_summary", { from: 1, to: 2 }]],
+        );
+        assert.deepEqual(
+          handoffsInto(4).map((handoff) => [handoff.strategy, handoff.coveredRunOrdinals]),
+          [["delta_since_target_last_seen", { from: 3, to: 3 }]],
+        );
+        assert.include(returning, "codex added the parser tests");
+        assert.equal(returning.split("codex added the parser tests").length, 2);
+        assert.notInclude(returning, "account A finished the parser");
+        assert.notInclude(returning, "Now the edge cases");
+        assert.include(returning, "Continue on the new account");
+        // The next turn replays nothing.
+        assert.lengthOf(handoffsInto(5), 0);
+        assert.equal(claudeTurns[3]!.text, "Wrap up");
       }),
     ),
   );

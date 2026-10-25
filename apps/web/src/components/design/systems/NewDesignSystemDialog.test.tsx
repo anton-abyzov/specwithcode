@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 
 import { FIGMA_CONNECTED, FIGMA_OFF, PROJECTS, SCAN_RESULT } from "./fixtureData";
 import {
+  defaultSystemOwner,
   FIGMA_OFF_INSTRUCTIONS,
   NewDesignSystemDialog,
   type FigmaStatusView,
@@ -181,5 +182,26 @@ describe("NewDesignSystemDialog", () => {
       owner: { kind: "project", projectId: "atlas-web" },
       from: { kind: "code", paths: ["weave/tokens.json", "weave/weave.css"], name: "Weave" },
     });
+  });
+});
+
+describe("defaultSystemOwner", () => {
+  const archived = { id: "archived" as never, title: "Archived", unavailable: "Archived project" };
+  const missing = { id: "missing" as never, title: "Missing", unavailable: "Folder missing" };
+  const plain = { id: "plain" as never, title: "Plain" };
+
+  it("uses the project the dialog was opened for", () => {
+    expect(defaultSystemOwner([archived, plain], plain.id)).toEqual({
+      kind: "project",
+      projectId: "plain",
+    });
+  });
+
+  it("never falls back to an archived, automated or missing-folder project", () => {
+    expect(defaultSystemOwner([archived, missing, plain])).toEqual({
+      kind: "project",
+      projectId: "plain",
+    });
+    expect(defaultSystemOwner([archived, missing])).toEqual({ kind: "playground" });
   });
 });

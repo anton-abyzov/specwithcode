@@ -88,7 +88,7 @@ export function RecommendedModelProviders({ model }: { readonly model: ModelSele
       settingKeys={["defaultModelProviders"]}
       id="project-recommended-model-providers"
       title="Also served by"
-      description={`When ${ownName} has no room, threads run the same model on the first provider below that has room. Providers billed per token are never picked on their own. When none has room, the usage limit rule picks another model.`}
+      description={`When ${ownName} has no room, threads run the same model on the first provider below that has room. Providers billed per token are never picked on their own. When none has room, the rules below pick another model.`}
       status={saved.length === 0 ? "Automatic order" : undefined}
       resetAction={
         saved.length > 0 ? (

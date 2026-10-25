@@ -29,6 +29,9 @@
  *        on disk and stores revision + 1. `updatedAt` is set here; `id` must
  *        match an existing system. The input is validated against
  *        `DesignSystem` before anything is written.
+ *   updateDesignSystem(root, systemId, { expectedRevision, actor, change, now? })
+ *     -> compare-and-set like `updateDesign`: `change` sees the head at
+ *        `expectedRevision` and returns the next system, stored at revision + 1.
  *   deleteDesignSystem(root, systemId, expectedRevision?)
  *     -> true when removed, false when already gone; `conflict` on a stale revision.
  *   designSystemHistory(root, systemId) -> DesignHistoryEntry[], newest first.
@@ -77,7 +80,8 @@ export const DESIGN_VERSIONS_DIR = "versions";
 const LOCK_FILE = ".lock";
 const INDEX_FILE = "index.json";
 const MAX_RECORD_BYTES = 64 * 1024 * 1024;
-const MAX_ASSET_BYTES = 10 * 1024 * 1024;
+/** The largest image a design stores; the deck import skips larger pictures up front. */
+export const MAX_ASSET_BYTES = 10 * 1024 * 1024;
 const LOCK_WAIT_MS = 10_000;
 /** A lock older than this was left by a process that died mid-write. */
 const LOCK_STALE_MS = 30_000;
@@ -137,13 +141,19 @@ function checkId(id: string, label: string): string {
 interface Place {
   readonly root: string;
   readonly dir: string;
+  /** A design's forward record: once it exists the design has moved, and this copy takes no writes. */
+  readonly forward?: string;
 }
+
+/** Forward records of moved Playground designs; a dotted folder is never listed. */
+export const DESIGN_MOVED_DIR = ".moved";
 
 const designDir = (root: string, designId: string) =>
   NodePath.join(root, checkId(designId, "design"));
 const designPlace = (root: string, designId: string): Place => ({
   root,
   dir: designDir(root, designId),
+  forward: NodePath.join(root, DESIGN_MOVED_DIR, `${designId}.json`),
 });
 const systemPlace = (root: string, systemId: string): Place => ({
   root,
@@ -166,7 +176,8 @@ export async function resolveDesignRoot(
   options: { readonly create: boolean; readonly mode?: number },
 ): Promise<string | null> {
   const realBase = await NodeFSP.realpath(base).catch((error: unknown) => {
-    if (isMissing(error)) throw new DesignStoreProblem("not_found", "The folder is missing.");
+    if (isMissing(error))
+      throw new DesignStoreProblem("not_found", `The folder ${base} is missing.`);
     throw error;
   });
   let current = realBase;
@@ -417,6 +428,13 @@ async function withLock<A>(place: Place, run: () => Promise<A>): Promise<A> {
   try {
     const token = await acquireFileLock(lock);
     try {
+      // A write that waited on a move: the copy it would change is about to go.
+      if (place.forward !== undefined && (await lstatOrNull(place.forward)) !== null) {
+        throw new DesignStoreProblem(
+          "conflict",
+          "This design moved to a project, so the change was not saved here. Open it in that project.",
+        );
+      }
       return await run();
     } finally {
       await removeLockIf(lock, token);
@@ -426,6 +444,17 @@ async function withLock<A>(place: Place, run: () => Promise<A>): Promise<A> {
     if (queues.get(lock) === tail) queues.delete(lock);
   }
 }
+
+/**
+ * Runs `run` holding a design's write lock; `DesignMove` copies the design
+ * under it, and finishes a move whose forward record is already written.
+ */
+export const withDesignLock = <A>(root: string, designId: string, run: () => Promise<A>) =>
+  withLock({ root, dir: designDir(root, designId) }, run);
+
+/** The lock under `.history`, or a release of it in progress: never copied with a design. */
+export const isDesignLockFile = (name: string) =>
+  name === LOCK_FILE || name.startsWith(`${LOCK_FILE}.`);
 
 // ---------------------------------------------------------------------------
 // Generic records (designs and systems)
@@ -1047,6 +1076,20 @@ export async function writeDesignSystem(
   });
 }
 
+/** Compare-and-set on a system, with history like a design (see `updateDesign`). */
+export async function updateDesignSystem(
+  root: string,
+  systemId: string,
+  input: {
+    readonly expectedRevision: number;
+    readonly actor: DesignActor;
+    readonly change: (current: DesignSystem) => DesignSystem | Promise<DesignSystem>;
+    readonly now?: string;
+  },
+) {
+  return updateRecord(SYSTEM, systemPlace(root, systemId), { ...input, now: input.now ?? now() });
+}
+
 /**
  * Removes a system with its history. With `expectedRevision`, a head at
  * another revision is a `conflict` and nothing is removed. False when the
@@ -1085,4 +1128,16 @@ export async function deleteDesignSystem(
 
 export async function designSystemHistory(root: string, systemId: string) {
   return recordHistory(SYSTEM, systemPlace(root, systemId));
+}
+
+/**
+ * Runs `run` holding a system's write lock, which also serializes changes to
+ * its stored files (`SystemFilesStore`). The system's folder must exist.
+ */
+export async function withDesignSystemLock<A>(
+  root: string,
+  systemId: string,
+  run: () => Promise<A>,
+): Promise<A> {
+  return withLock(systemPlace(root, systemId), run);
 }

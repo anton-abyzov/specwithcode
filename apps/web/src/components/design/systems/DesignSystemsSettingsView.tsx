@@ -10,26 +10,28 @@ import type {
 } from "@specweave-studio/contracts";
 import {
   ChevronDownIcon,
+  EllipsisIcon,
+  ExternalLinkIcon,
   FigmaIcon,
   FileCode2Icon,
   FileJsonIcon,
   MessageSquareTextIcon,
+  PencilIcon,
   PlusIcon,
   RefreshCwIcon,
   SearchIcon,
+  SparklesIcon,
+  Trash2Icon,
 } from "lucide-react";
 import { useState, type ComponentType, type ReactNode } from "react";
 
 import { SettingsGroup } from "../../settings/SettingsGroup";
 import { Button } from "../../ui/button";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "../../ui/input-group";
-import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../../ui/menu";
+import { Menu, MenuItem, MenuPopup, MenuSeparator, MenuTrigger } from "../../ui/menu";
+import { problemKey, type OwnerProblem } from "../gallery/boardOwner";
 import { editedAgo } from "../gallery/galleryModel";
-import {
-  NEW_SYSTEM_MODES,
-  type FigmaStatusView,
-  type NewSystemMode,
-} from "./NewDesignSystemDialog";
+import { offeredModes, type FigmaStatusView, type NewSystemMode } from "./NewDesignSystemDialog";
 import {
   countsLabel,
   filterSystems,
@@ -50,7 +52,7 @@ export type RescanState =
 export interface DesignSystemsSettingsViewProps {
   systems: readonly DesignSystemSummary[] | null;
   systemsError: string | null;
-  problems: readonly { ownerLabel: string; detail: string }[];
+  problems: readonly OwnerProblem[];
   proposals: readonly DesignSystemProposalSummary[] | null;
   projects: readonly OwnerProject[];
   now: number;
@@ -62,6 +64,97 @@ export interface DesignSystemsSettingsViewProps {
   onNew: (mode: NewSystemMode) => void;
   /** Figma's local desktop MCP server; omitted where it is not checked. */
   figma?: FigmaStatusView;
+  /** The server can start a system from scratch (`designSystemEditing`). */
+  canStartFromScratch?: boolean;
+  /** The system page's address, so a row name opens like a link. */
+  systemHref?: (system: DesignSystemSummary) => string;
+  onOpenSystem?: (system: DesignSystemSummary) => void;
+  onRenameSystem?: (system: DesignSystemSummary) => void;
+  onDeleteSystem?: (system: DesignSystemSummary) => void;
+}
+
+/** A row's name: a link to the system's page when the page is wired, plain text otherwise. */
+function SystemName({
+  system,
+  href,
+  onOpen,
+}: {
+  system: DesignSystemSummary;
+  href: string | undefined;
+  onOpen: ((system: DesignSystemSummary) => void) | undefined;
+}) {
+  if (onOpen === undefined) return <div className="truncate text-foreground">{system.name}</div>;
+  return (
+    <a
+      href={href ?? "#"}
+      data-testid="system-link"
+      className="block truncate text-foreground underline-offset-4 hover:underline focus-visible:underline focus-visible:outline-none"
+      onClick={(event) => {
+        // Modified clicks keep the browser's own new tab or window.
+        if (event.metaKey || event.ctrlKey || event.shiftKey || event.altKey || event.button !== 0)
+          return;
+        event.preventDefault();
+        onOpen(system);
+      }}
+    >
+      {system.name}
+    </a>
+  );
+}
+
+function SystemRowMenu({
+  system,
+  canWrite,
+  onOpen,
+  onRename,
+  onDelete,
+}: {
+  system: DesignSystemSummary;
+  canWrite: boolean;
+  onOpen: ((system: DesignSystemSummary) => void) | undefined;
+  onRename: ((system: DesignSystemSummary) => void) | undefined;
+  onDelete: ((system: DesignSystemSummary) => void) | undefined;
+}) {
+  if (onOpen === undefined && onRename === undefined && onDelete === undefined) return null;
+  return (
+    <Menu>
+      <MenuTrigger
+        render={
+          <Button
+            variant="ghost"
+            size="icon-xs"
+            aria-label={`More for ${system.name}`}
+            data-testid="system-row-menu"
+          />
+        }
+      >
+        <EllipsisIcon aria-hidden />
+      </MenuTrigger>
+      <MenuPopup align="end" className="min-w-44">
+        {onOpen ? (
+          <MenuItem onClick={() => onOpen(system)}>
+            <ExternalLinkIcon aria-hidden />
+            Open
+          </MenuItem>
+        ) : null}
+        {onRename ? (
+          <MenuItem disabled={!canWrite} onClick={() => onRename(system)}>
+            <PencilIcon aria-hidden />
+            Rename…
+          </MenuItem>
+        ) : null}
+        {onDelete ? (
+          <>
+            <MenuSeparator />
+            <MenuItem variant="destructive" disabled={!canWrite} onClick={() => onDelete(system)}>
+              <Trash2Icon aria-hidden />
+              Delete…
+            </MenuItem>
+          </>
+        ) : null}
+      </MenuPopup>
+    </Menu>
+  );
 }
 
 /** "Figma desktop: connected" and friends, from the last check (AC-09). */
@@ -94,6 +187,7 @@ function FigmaDesktopRow({ figma }: { figma: FigmaStatusView }) {
 }
 
 const MODE_ICONS: Record<NewSystemMode, ComponentType<{ className?: string }>> = {
+  scratch: SparklesIcon,
   code: FileCode2Icon,
   "tokens-file": FileJsonIcon,
   figma: FigmaIcon,
@@ -115,7 +209,7 @@ function Section({
     <section className="space-y-2.5" data-testid={testId}>
       <div className="flex min-h-7 flex-wrap items-center justify-between gap-2 px-3 sm:px-4">
         <h2 className="text-sm font-normal text-foreground/70">{title}</h2>
-        <div className="flex items-center gap-2">{action}</div>
+        <div className="flex min-w-0 flex-wrap items-center justify-end gap-2">{action}</div>
       </div>
       <SettingsGroup>{children}</SettingsGroup>
     </section>
@@ -191,7 +285,7 @@ export function DesignSystemsSettingsView(props: DesignSystemsSettingsViewProps)
         }
       />
       <MenuPopup align="end" side="bottom" className="min-w-56">
-        {NEW_SYSTEM_MODES.map(({ mode, label }) => {
+        {offeredModes(props.canStartFromScratch === true).map(({ mode, label }) => {
           const Icon = MODE_ICONS[mode];
           return (
             <MenuItem key={mode} data-mode={mode} onClick={() => props.onNew(mode)}>
@@ -297,14 +391,15 @@ export function DesignSystemsSettingsView(props: DesignSystemsSettingsViewProps)
               : `No design system is named like "${query.trim()}".`}
           </p>
         ) : (
-          <div className="overflow-x-auto">
+          // Narrow cards fold Owner, Sources and Updated into the name cell.
+          <div className="@container/systems overflow-x-auto">
             <table className="w-full text-sm">
               <thead>
                 <tr className="text-left text-xs text-muted-foreground">
                   <th className="px-4 py-2 font-normal">Name</th>
-                  <th className="px-2 py-2 font-normal">Owner</th>
-                  <th className="px-2 py-2 font-normal">Sources</th>
-                  <th className="px-2 py-2 font-normal">Updated</th>
+                  <th className="hidden px-2 py-2 font-normal @lg/systems:table-cell">Owner</th>
+                  <th className="hidden px-2 py-2 font-normal @xl/systems:table-cell">Sources</th>
+                  <th className="hidden px-2 py-2 font-normal @xl/systems:table-cell">Updated</th>
                   <th className="px-4 py-2 font-normal">
                     <span className="sr-only">Actions</span>
                   </th>
@@ -318,27 +413,55 @@ export function DesignSystemsSettingsView(props: DesignSystemsSettingsViewProps)
                     data-system={system.ref.systemId}
                   >
                     <td className="max-w-56 px-4 py-2.5">
-                      <div className="truncate text-foreground">{system.name}</div>
+                      <SystemName
+                        system={system}
+                        href={props.systemHref?.(system)}
+                        onOpen={props.onOpenSystem}
+                      />
                       <div className="truncate text-xs text-muted-foreground">
                         {system.tokenCount} tokens · {system.componentCount} components
                       </div>
+                      <div
+                        className="truncate text-xs text-muted-foreground @xl/systems:hidden"
+                        data-testid="system-row-folded"
+                      >
+                        <span className="@lg/systems:hidden">{system.ownerLabel} · </span>
+                        {editedAgo(system.updatedAt, props.now)}
+                      </div>
+                      {system.sources.length > 0 ? (
+                        <div className="truncate text-xs text-muted-foreground @xl/systems:hidden">
+                          {sourcesLabel(system.sources)}
+                        </div>
+                      ) : null}
                     </td>
-                    <td className="max-w-40 truncate px-2 py-2.5 text-foreground/90">
+                    <td className="hidden max-w-40 truncate px-2 py-2.5 text-foreground/90 @lg/systems:table-cell">
                       {system.ownerLabel}
                     </td>
-                    <td className="px-2 py-2.5 text-muted-foreground" data-testid="system-sources">
+                    <td
+                      className="hidden px-2 py-2.5 text-muted-foreground @xl/systems:table-cell"
+                      data-testid="system-sources"
+                    >
                       {sourcesLabel(system.sources)}
                     </td>
-                    <td className="whitespace-nowrap px-2 py-2.5 text-muted-foreground">
+                    <td className="hidden whitespace-nowrap px-2 py-2.5 text-muted-foreground @xl/systems:table-cell">
                       {updatedLabel(system.updatedAt, props.now)}
                     </td>
                     <td className="px-4 py-2.5">
-                      <RescanCell
-                        system={system}
-                        state={props.rescans[systemKey(system)]}
-                        canWrite={props.canWrite}
-                        onRescan={() => props.onRescan(system)}
-                      />
+                      <div className="flex items-center justify-end gap-1">
+                        <RescanCell
+                          system={system}
+                          state={props.rescans[systemKey(system)]}
+                          canWrite={props.canWrite}
+                          onRescan={() => props.onRescan(system)}
+                        />
+                        <SystemRowMenu
+                          system={system}
+                          canWrite={props.canWrite}
+                          onOpen={props.onOpenSystem}
+                          onRename={props.onRenameSystem}
+                          onDelete={props.onDeleteSystem}
+                        />
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -349,7 +472,7 @@ export function DesignSystemsSettingsView(props: DesignSystemsSettingsViewProps)
         {props.problems.length > 0 ? (
           <ul className="flex flex-col gap-1 px-4 py-3 text-xs text-muted-foreground">
             {props.problems.map((problem) => (
-              <li key={problem.ownerLabel}>
+              <li key={problemKey(problem)}>
                 {problem.ownerLabel}: {problem.detail}
               </li>
             ))}

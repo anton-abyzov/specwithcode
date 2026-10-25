@@ -70,39 +70,6 @@ function Surface({
   );
 }
 
-// A peeking notice uses the first hidden notice's severity, never the attached row's.
-const peekBorder: Record<ComposerBannerVariant, string> = {
-  default: "border-(--chat-composer-attached-outline)",
-  error: "border-destructive/24",
-  info: "border-(--chat-composer-attached-outline)",
-  success: "border-(--chat-composer-attached-outline)",
-  warning: "border-warning/24",
-};
-
-function Peek({
-  className,
-  variant = "default",
-  ...props
-}: ComponentProps<"button"> & { variant?: ComposerBannerVariant }) {
-  return (
-    <button
-      type="button"
-      data-slot="composer-banner-peek"
-      className={cn(
-        surfaceColors,
-        neutralOutline,
-        "absolute inset-x-0 bottom-0 z-0 mx-auto h-3 w-[96%] cursor-pointer rounded-t-2xl border border-b-0 shadow-md",
-        "bg-(--chat-composer-attached-surface)/(--glass-opacity) backdrop-blur-(--glass-blur) backdrop-saturate-(--glass-saturation)",
-        "not-supports-[((backdrop-filter:blur(1px))_or_(-webkit-backdrop-filter:blur(1px)))]:bg-(--chat-composer-attached-surface)",
-        "transition-opacity duration-150 ease-out focus-visible:outline-2 focus-visible:outline-ring",
-        peekBorder[variant],
-        className,
-      )}
-      {...props}
-    />
-  );
-}
-
 function Attachment({ className, ...props }: ComponentProps<"div">) {
   return (
     <div
@@ -123,7 +90,7 @@ function Dock({ className, ...props }: ComponentProps<"div">) {
   return (
     <Attachment
       className={cn(
-        "flex items-end gap-1 not-has-data-[composer-banner-surface=attached]:hidden",
+        "flex items-end gap-1 not-has-data-[composer-banner-surface]:hidden",
         className,
       )}
       {...props}
@@ -340,7 +307,6 @@ function Dismiss({ className, children, ...props }: ComponentProps<typeof Button
 
 export const ComposerBanner = {
   Surface,
-  Peek,
   Attachment,
   Dock,
   Column,

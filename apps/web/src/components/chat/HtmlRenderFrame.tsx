@@ -10,9 +10,10 @@ import { createPortal } from "react-dom";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 
 import { useAssetUrlRefresh, useAssetUrlState } from "~/assets/assetUrls";
+import { useFilesystemReadAccess } from "~/state/filesystem";
 import { useViewerOverlay, useViewerOverlayStore } from "~/viewerOverlayStore";
 
-import { HtmlRenderDocument } from "../files/BrowserDocumentFrame";
+import { HtmlRenderDocument, type HtmlRenderFileTarget } from "../files/BrowserDocumentFrame";
 import { Button } from "../ui/button";
 
 // A frame may load its URL a little after mounting.
@@ -23,8 +24,17 @@ export function HtmlRenderFrame(props: {
   readonly environmentId: EnvironmentId;
   readonly htmlRender: HtmlRenderReference;
   readonly threadRef?: ScopedThreadRef | null;
+  /** The thread's folder; with `threadRef` it lets the report's evidence links open files. */
+  readonly cwd?: string | undefined;
 }) {
   const { attachmentId, title } = props.htmlRender;
+  // Evidence links open in this reply's own thread and folder, whatever the page claims.
+  const { canReadFiles } = useFilesystemReadAccess(props.environmentId);
+  const { threadRef, cwd } = props;
+  const fileTarget = useMemo<HtmlRenderFileTarget | undefined>(
+    () => (threadRef && cwd ? { threadRef, cwd, canReadFiles } : undefined),
+    [threadRef, cwd, canReadFiles],
+  );
   // The frame takes the page's measured height at its own width, read before
   // first paint so the reserved box is already the right size.
   const boxRef = useRef<HTMLDivElement>(null);
@@ -179,6 +189,7 @@ export function HtmlRenderFrame(props: {
                 className="block size-full"
                 onContentHeight={setContentHeight}
                 onEscape={expanded ? close : undefined}
+                fileTarget={fileTarget}
               />
             ) : null}
           </div>

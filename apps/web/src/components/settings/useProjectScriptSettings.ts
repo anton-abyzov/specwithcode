@@ -14,7 +14,7 @@ import {
   type ServerSettings,
 } from "@specweave-studio/contracts";
 import { resolveProjectScripts } from "@specweave-studio/shared/projectScripts";
-import { clearProjectSettingsOverrides } from "@specweave-studio/shared/projectSettings";
+import { projectSettingsOverrideChangesPatch } from "@specweave-studio/shared/projectSettings";
 import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 import { useRef, useState } from "react";
@@ -57,6 +57,8 @@ export function useProjectScriptSettings(
     settings: ServerSettings;
     keybindings: ResolvedKeybindingsConfig;
     project?: { id: ProjectId; scripts: readonly ProjectScript[] };
+    /** The server applies project override edits key by key. */
+    perKeyOverrides?: boolean;
   }[],
 ) {
   const projects = useProjects();
@@ -101,7 +103,7 @@ export function useProjectScriptSettings(
     savingRef.current = true;
     setSaving(true);
     try {
-      for (const { environmentId, settings, keybindings, project } of targets) {
+      for (const { environmentId, settings, keybindings, project, perKeyOverrides } of targets) {
         const current = project
           ? resolveProjectScripts(settings, project)
           : settings.defaultProjectScripts;
@@ -111,19 +113,16 @@ export function useProjectScriptSettings(
           environmentId,
           input: {
             patch: project
-              ? {
-                  projectSettingsOverrides: {
+              ? projectSettingsOverrideChangesPatch(
+                  settings,
+                  {
                     [project.id]:
                       nextScripts === null
-                        ? clearProjectSettingsOverrides(settings, project.id, [
-                            "defaultProjectScripts",
-                          ])
-                        : {
-                            ...settings.projectSettingsOverrides[project.id],
-                            defaultProjectScripts: nextScripts,
-                          },
+                        ? { clear: ["defaultProjectScripts"] }
+                        : { set: { defaultProjectScripts: nextScripts } },
                   },
-                }
+                  perKeyOverrides === true,
+                )
               : { defaultProjectScripts: nextScripts ?? [] },
           },
         });

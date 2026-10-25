@@ -55,6 +55,7 @@ import { collectDtcg, detectTokenJson } from "./extractDtcg.ts";
 import { collectTsTheme, loadTypeScript, tsThemeKeys } from "./extractTsTheme.ts";
 import { collectWeave, crossCheckWeave, isWeaveTokens, weaveCopyDrift } from "./extractWeave.ts";
 import {
+  type ReadBudget,
   RootPathError,
   componentReadPlan,
   detectThemePrefix,
@@ -123,6 +124,16 @@ export const listFolders = async (realRoot: string, start = ""): Promise<Map<str
 const isFolderSource = (folders: ReadonlyMap<string, ReadonlyArray<string>>, path: string) =>
   folders.has(path);
 
+export interface ExtractOptions {
+  /**
+   * Folders to resolve component folders, barrels and Weave copies against.
+   * Listed from the root when omitted; a preview of token files passes none.
+   */
+  readonly folders?: ReadonlyMap<string, ReadonlyArray<string>>;
+  /** Bounds what the selected files may read in total. */
+  readonly budget?: ReadBudget;
+}
+
 /**
  * Reads the selected paths inside the root and extracts them together, so
  * references between files resolve (a stylesheet reading another's tokens).
@@ -130,16 +141,17 @@ const isFolderSource = (folders: ReadonlyMap<string, ReadonlyArray<string>>, pat
 export const extractFromCode = async (
   realRoot: string,
   paths: ReadonlyArray<string>,
+  options: ExtractOptions = {},
 ): Promise<SourcedExtraction> => {
   const unique = [...new Set(paths)].sort(compareText);
-  const folders = await listFolders(realRoot);
+  const folders = options.folders ?? (await listFolders(realRoot));
   const findings: DesignSystemFinding[] = [];
   const sources: Array<Omit<DesignSystemSource, "readAt">> = [];
   const texts = new Map<string, SourceText>();
   for (const path of unique) {
     if (isFolderSource(folders, path)) continue;
     try {
-      texts.set(path, await readInsideRoot(realRoot, path));
+      texts.set(path, await readInsideRoot(realRoot, path, undefined, options.budget));
     } catch (error) {
       const reason = error instanceof RootPathError ? error.reason : "unreadable";
       findings.push(finding("unreadable", "warning", `${path} was not read (${reason})`, path));

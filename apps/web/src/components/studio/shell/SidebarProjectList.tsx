@@ -97,6 +97,8 @@ export interface ProjectRowState {
   displayedProject: SidebarProjectGroupMember | undefined;
   archived: boolean;
   waiting: number;
+  attentionLabel?: string | undefined;
+  attentionComplete?: boolean | undefined;
   current: boolean;
   /** Tells this project apart from another listed under the same name. */
   hint?: string | undefined;
@@ -414,6 +416,8 @@ export function ProjectRow(props: {
   pinned?: boolean;
   dragging?: boolean;
   waiting: number;
+  attentionLabel?: string | undefined;
+  attentionComplete?: boolean | undefined;
   current: boolean;
   hint?: string | undefined;
   onOpen: () => void;
@@ -544,10 +548,21 @@ export function ProjectRow(props: {
             {/* A fixed slot, so a count never shifts the name or hint, and the row
               menu takes its place on hover. */}
             <span className="sws-side-row-end">
-              {waiting > 0 ? (
-                <span className="sws-count sws-count-waiting">
-                  {waiting}
-                  <span className="sr-only"> waiting on you</span>
+              {waiting > 0 || (!archived && props.attentionComplete === false) ? (
+                <span
+                  className="sws-count sws-count-waiting"
+                  title={props.attentionLabel ?? `${waiting} waiting on you`}
+                >
+                  <span aria-hidden="true">
+                    {props.attentionComplete === false
+                      ? waiting > 0
+                        ? `${waiting}+`
+                        : "?"
+                      : waiting}
+                  </span>
+                  <span className="sr-only">
+                    {props.attentionLabel ?? `${waiting} waiting on you`}
+                  </span>
                 </span>
               ) : null}
             </span>

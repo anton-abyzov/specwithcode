@@ -84,10 +84,12 @@ final class AppRouter {
     return Self.defaultLanding(aide: model.aide, projects: model.projects)
   }
 
-  /// Aide when it exists, otherwise the first project.
+  /// Aide when it exists, otherwise the first of the person's own projects.
   static func defaultLanding(aide: ProjectSummary?, projects: [ProjectSummary]) -> ChatTarget? {
     if let aide, !aide.archived { return .aide(aide.ref) }
-    if let first = projects.first(where: { !$0.archived }) { return .project(first.ref) }
+    if let first = projects.first(where: { !$0.archived && !$0.isAutomated }) {
+      return .project(first.ref)
+    }
     return nil
   }
 
@@ -132,7 +134,7 @@ final class AppRouter {
       }
     case .overview, .projectSettings, .thread, .coordinator, .orchestrator:
       guard !model.isLoading else { return false }
-      let first = model.projects.first { !$0.archived }
+      let first = model.projects.first { !$0.archived && !$0.isAutomated }
       let project = first?.ref ?? model.aide?.ref
       switch route {
       case .overview:

@@ -7,6 +7,7 @@ import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Predicate from "effect/Predicate";
 import * as PlatformError from "effect/PlatformError";
+import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 
 import * as ServerConfig from "../config.ts";
@@ -132,6 +133,22 @@ export const isSecretStoreError = Schema.is(SecretStoreError);
 const isPlatformError = (value: unknown): value is PlatformError.PlatformError =>
   Predicate.isTagged(value, "PlatformError");
 
+/**
+ * Windows refuses to replace a file for a moment while another handle has it
+ * (an antivirus scan, a concurrent reader or replacement, a pending delete):
+ * EPERM, which Effect reports as `Unknown`, or EBUSY. These clear within
+ * milliseconds. Lasting failures, including EACCES, still fail the write.
+ */
+const isTransientReplaceError = (cause: PlatformError.PlatformError) =>
+  cause.reason._tag === "Busy" ||
+  (cause.reason._tag === "Unknown" &&
+    Predicate.hasProperty(cause.reason.cause, "code") &&
+    cause.reason.cause.code === "EPERM");
+
+/** About 0.6 s in total; the write then fails closed and leaves the previous secret intact. */
+const REPLACE_RETRIES = 6;
+const replaceRetrySchedule = Schedule.exponential("10 millis");
+
 export const isSecretAlreadyExistsError = (error: SecretStoreError): boolean =>
   "cause" in error && isPlatformError(error.cause) && error.cause.reason._tag === "AlreadyExists";
 
@@ -229,7 +246,13 @@ export const make = Effect.gen(function* () {
           yield* fileSystem.chmod(tempPath, 0o600);
           // Rename preserves the private inode's mode. A concurrent sign-out
           // can delete it immediately afterward, so do not touch the final path.
-          yield* fileSystem.rename(tempPath, secretPath);
+          yield* fileSystem.rename(tempPath, secretPath).pipe(
+            Effect.retry({
+              while: isTransientReplaceError,
+              times: REPLACE_RETRIES,
+              schedule: replaceRetrySchedule,
+            }),
+          );
         }).pipe(
           Effect.catch((cause) =>
             fileSystem.remove(tempPath).pipe(

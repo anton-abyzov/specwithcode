@@ -1,14 +1,23 @@
+import type { ScopedThreadRef } from "@specweave-studio/contracts";
 import {
+  HTML_RENDER_COPY_PATH_METHOD,
+  HTML_RENDER_OPEN_FILE_METHOD,
+  htmlRenderError,
   htmlRenderThemeFragment,
   htmlRenderThemeMessage,
   htmlRenderResult,
+  legacyLocalPathFromOpenLink,
   readHtmlRenderContentHeight,
+  readHtmlRenderFileRequest,
   readHtmlRenderLinkRequest,
 } from "@specweave-studio/shared/htmlRender";
 import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 
 import { useHtmlRenderTheme } from "~/hooks/useHtmlRenderTheme";
+import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
+import { openFileInFront } from "~/lib/openInFront";
 import { cn } from "~/lib/utils";
+import { resolvePathLinkTarget } from "~/terminal-links";
 
 /**
  * Chromium's viewer opens with its own toolbar, a thumbnail rail and a small
@@ -88,6 +97,45 @@ function HtmlRenderPage(props: { readonly src: string; readonly title: string })
 }
 
 /**
+ * Where a render's evidence links open: the thread and folder of the reply
+ * showing it. It comes from the app, never from the page.
+ */
+export interface HtmlRenderFileTarget {
+  readonly threadRef: ScopedThreadRef;
+  readonly cwd: string;
+  /** False when this connection cannot read the machine's files. */
+  readonly canReadFiles: boolean;
+}
+
+// One evidence request per this long; a page cannot flood the reader with files.
+const FILE_REQUEST_INTERVAL_MS = 400;
+
+/** The frame's own page asked, while the reader is using it. */
+function trustedFrameMessage(event: MessageEvent, frame: HTMLIFrameElement | null): boolean {
+  return (
+    frame !== null &&
+    event.source === frame.contentWindow &&
+    // A sandboxed page without allow-same-origin always posts from the opaque origin.
+    event.origin === "null"
+  );
+}
+
+function readerIsUsing(frame: HTMLIFrameElement): boolean {
+  return (
+    !document.hidden &&
+    document.activeElement === frame &&
+    navigator.userActivation?.isActive !== false
+  );
+}
+
+/** A home-relative path against the thread's folder, or undefined when no home is known. */
+function absoluteEvidencePath(path: string, cwd: string): string | undefined {
+  if (!path.startsWith("~/")) return path;
+  const resolved = resolvePathLinkTarget(path, cwd);
+  return resolved.startsWith("~") ? undefined : resolved;
+}
+
+/**
  * A sandboxed agent HTML render in the app theme. The page reads the theme from
  * its URL fragment before first paint, then follows changes posted to its
  * bootstrap. The first URL is kept for the frame's lifetime: signed asset URLs
@@ -100,9 +148,15 @@ export function HtmlRenderDocument(props: {
   /** Receives the page's content height whenever it changes, so an inline frame can fit it. */
   readonly onContentHeight?: (height: number) => void;
   readonly onEscape?: (() => void) | undefined;
+  /** Lets the page's evidence links open and copy files; without it they are refused. */
+  readonly fileTarget?: HtmlRenderFileTarget | undefined;
 }) {
   const theme = useHtmlRenderTheme();
   const frameRef = useRef<HTMLIFrameElement>(null);
+  const fileTargetRef = useRef(props.fileTarget);
+  useLayoutEffect(() => {
+    fileTargetRef.current = props.fileTarget;
+  });
   const [src] = useState(() => `${props.src.split("#", 1)[0]}${htmlRenderThemeFragment(theme)}`);
   const [loaded, setLoaded] = useState(false);
   const postTheme = () => {
@@ -115,23 +169,95 @@ export function HtmlRenderDocument(props: {
   // app. A page can take focus by script, so this stops opens on load, not a
   // page that waits for the reader's next click or key.
   useEffect(() => {
+    let lastFileRequest = Number.NEGATIVE_INFINITY;
+    let copying = false;
+    const reply = (frame: HTMLIFrameElement, message: object) =>
+      frame.contentWindow?.postMessage(message, "*");
+    // Every file request, new or from an old report, shares one pace and waits for a copy.
+    const admitted = (frame: HTMLIFrameElement, id: string | number) => {
+      const now = performance.now();
+      if (now - lastFileRequest < FILE_REQUEST_INTERVAL_MS || copying) {
+        reply(frame, htmlRenderError(id, "Policy violation"));
+        return false;
+      }
+      lastFileRequest = now;
+      return true;
+    };
     const openLink = (event: MessageEvent) => {
       const frame = frameRef.current;
       const request = readHtmlRenderLinkRequest(event.data);
-      if (
-        request === undefined ||
-        frame === null ||
-        event.source !== frame.contentWindow ||
-        document.activeElement !== frame ||
-        navigator.userActivation?.isActive === false
-      ) {
+      if (request === undefined || !trustedFrameMessage(event, frame) || !readerIsUsing(frame!)) {
+        return;
+      }
+      // A report published before evidence links sends `/Users/…` as a URL on its own server.
+      const legacyPath = legacyLocalPathFromOpenLink(request.url, frame!.src);
+      if (legacyPath !== undefined) {
+        if (admitted(frame!, request.id)) openEvidence(frame!, request.id, legacyPath, undefined);
         return;
       }
       window.open(request.url, "_blank", "noopener,noreferrer");
-      frame.contentWindow?.postMessage(htmlRenderResult(request.id), "*");
+      reply(frame!, htmlRenderResult(request.id));
+    };
+    const openEvidence = (
+      frame: HTMLIFrameElement,
+      id: string | number,
+      requested: string,
+      line: number | undefined,
+    ) => {
+      const target = fileTargetRef.current;
+      if (target === undefined) return reply(frame, htmlRenderError(id, "Not allowed here"));
+      if (!target.canReadFiles) return reply(frame, htmlRenderError(id, "Policy violation"));
+      const path = absoluteEvidencePath(requested, target.cwd);
+      if (path === undefined) return reply(frame, htmlRenderError(id, "Invalid path"));
+      // The file pane reads through the connection's file grant and the server's path guards.
+      openFileInFront({ threadRef: target.threadRef, cwd: target.cwd, path, line });
+      reply(frame, htmlRenderResult(id));
+    };
+    const fileRequest = (event: MessageEvent) => {
+      const frame = frameRef.current;
+      if (!trustedFrameMessage(event, frame)) return;
+      const data = event.data as { method?: unknown; id?: unknown } | null;
+      if (
+        data?.method !== HTML_RENDER_OPEN_FILE_METHOD &&
+        data?.method !== HTML_RENDER_COPY_PATH_METHOD
+      )
+        return;
+      if (!readerIsUsing(frame!)) return;
+      const request = readHtmlRenderFileRequest(event.data);
+      if (request === undefined) {
+        if (typeof data.id === "string" || Number.isSafeInteger(data.id))
+          reply(frame!, htmlRenderError(data.id as string | number, "Invalid path"));
+        return;
+      }
+      if (!admitted(frame!, request.id)) return;
+      if (request.method === "open-file") {
+        openEvidence(frame!, request.id, request.path, request.line);
+        return;
+      }
+      if (fileTargetRef.current === undefined)
+        return reply(frame!, htmlRenderError(request.id, "Not allowed here"));
+      // The app writes the clipboard: the sandboxed page cannot. It copies the
+      // validated path exactly as the link wrote it, `~/` included.
+      copying = true;
+      void writeTextToClipboard(request.path, "path", undefined, { preserveBytes: true })
+        .then(
+          (copied) =>
+            reply(
+              frame!,
+              copied ? htmlRenderResult(request.id) : htmlRenderError(request.id, "Copy failed"),
+            ),
+          () => reply(frame!, htmlRenderError(request.id, "Copy failed")),
+        )
+        .finally(() => {
+          copying = false;
+        });
     };
     window.addEventListener("message", openLink);
-    return () => window.removeEventListener("message", openLink);
+    window.addEventListener("message", fileRequest);
+    return () => {
+      window.removeEventListener("message", openLink);
+      window.removeEventListener("message", fileRequest);
+    };
   }, []);
   const { onContentHeight, onEscape } = props;
   useEffect(() => {

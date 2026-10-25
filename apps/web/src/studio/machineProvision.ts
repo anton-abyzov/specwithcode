@@ -1,5 +1,5 @@
 import {
-  createEnvironmentCommand,
+  createEnvironmentGuardedCommand,
   createEnvironmentRpcCommand,
 } from "@specweave-studio/client-runtime/state/runtime";
 import { runStreamGuarded } from "@specweave-studio/client-runtime/rpc";
@@ -31,7 +31,7 @@ export const machineProvision = {
     label: "machine-provision:preview",
     tag: PROVISION_RPC_METHODS.provisionPreview,
   }),
-  run: createEnvironmentCommand(connectionAtomRuntime, {
+  run: createEnvironmentGuardedCommand(connectionAtomRuntime, {
     label: "machine-provision:run",
     execute: (input: { readonly resume: boolean }, registry, environmentId) => {
       const atom = provisionRunAtom(environmentId);

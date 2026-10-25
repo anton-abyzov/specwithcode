@@ -222,8 +222,35 @@ describe("coordinatorModelDisplay", () => {
 
   it("shows a model picked by hand after the fallback", () => {
     const runs = [run(1, codex, "failed"), run(2, copilot, "completed")];
-    // Picked Claude: until a turn runs there, the chip names Copilot and the line
-    // names Claude as the pick, so neither claims the other.
+    // Picked Claude in this window: the save does not move the thread, but the next
+    // turn names the pick, so the chip shows it and claims no fallback.
+    const handPick = { selection: claude, afterOrdinal: 2 };
+    expect(display({ picked: claude, saved: claude, thread: copilot, runs, handPick })).toEqual({
+      shown: claude,
+      fallback: null,
+    });
+    // A newer run that still landed on Copilot means the host kept it there.
+    expect(
+      display({
+        picked: claude,
+        saved: claude,
+        thread: copilot,
+        runs: [...runs, run(3, copilot, "completed")],
+        handPick,
+      }).fallback,
+    ).toMatchObject({ saved: claude, now: copilot });
+    // A fresh pick this client already reads as spent (Codex's weekly is at 100%)
+    // keeps the fallback and its reason: the host moves that turn too.
+    const spentPick = display({
+      picked: codex,
+      saved: codex,
+      thread: copilot,
+      runs,
+      handPick: { selection: codex, afterOrdinal: 2 },
+    });
+    expect(spentPick.shown).toEqual(copilot);
+    expect(spentPick.fallback?.reason).toMatchObject({ text: "weekly limit reached" });
+    // A pick from another window (no hand pick here) shows the thread as it is.
     expect(display({ picked: claude, saved: claude, thread: copilot, runs })).toMatchObject({
       shown: copilot,
       fallback: { saved: claude, now: copilot, reason: null },

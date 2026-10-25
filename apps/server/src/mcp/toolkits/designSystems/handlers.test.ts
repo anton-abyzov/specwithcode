@@ -24,6 +24,7 @@ import {
   layer as layerDesignSystems,
   userCaller,
 } from "../../../design/systems/DesignSystemService.ts";
+import { layOutUmbrella } from "../../../design/systems/umbrellaFixture.testkit.ts";
 import * as Threads from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as ManagedProjectFolders from "../../../project/ManagedProjectFolders.ts";
 import * as Context from "../../McpInvocationContext.ts";
@@ -33,7 +34,11 @@ import * as Handlers from "./handlers.ts";
 import { DesignSystemsToolkit } from "./tools.ts";
 
 const checkout = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "design-systems-mcp-"));
-afterAll(() => NodeFS.rmSync(checkout, { recursive: true, force: true }));
+const umbrella = await layOutUmbrella();
+afterAll(() => {
+  NodeFS.rmSync(checkout, { recursive: true, force: true });
+  NodeFS.rmSync(umbrella, { recursive: true, force: true });
+});
 NodeFS.mkdirSync(NodePath.join(checkout, "src/styles"), { recursive: true });
 NodeFS.writeFileSync(
   NodePath.join(checkout, "src/styles/theme.css"),
@@ -69,23 +74,24 @@ const withWrite = (roots: Pick<typeof DesignSystemRoots.Service, "resolve">) =>
   DesignSystemRoots.of({ ...roots, resolveForWrite: roots.resolve });
 
 const written: DesignSystem[] = [];
-const roots = withWrite({
-  resolve: (who, owner) =>
-    who.scope !== undefined &&
-    (owner.kind !== "project" ||
-      who.scope.kind !== "project" ||
-      owner.projectId !== who.scope.projectId)
-      ? Effect.fail(new DesignError({ code: "forbidden", detail: "Not this thread's project." }))
-      : Effect.succeed({
-          owner:
-            owner.kind === "project"
-              ? { kind: "project", environmentId: "env" as never, projectId: owner.projectId }
-              : { kind: "playground", environmentId: "env" as never },
-          designRoot: NodePath.join(checkout, ".specweave/design"),
-          projectRoot: checkout,
-          refPrefix: ".specweave/design/systems/",
-        }),
-});
+const rootsFor = (projectRoot: string) =>
+  withWrite({
+    resolve: (who, owner) =>
+      who.scope !== undefined &&
+      (owner.kind !== "project" ||
+        who.scope.kind !== "project" ||
+        owner.projectId !== who.scope.projectId)
+        ? Effect.fail(new DesignError({ code: "forbidden", detail: "Not this thread's project." }))
+        : Effect.succeed({
+            owner:
+              owner.kind === "project"
+                ? { kind: "project", environmentId: "env" as never, projectId: owner.projectId }
+                : { kind: "playground", environmentId: "env" as never },
+            designRoot: NodePath.join(projectRoot, ".specweave/design"),
+            projectRoot,
+            refPrefix: ".specweave/design/systems/",
+          }),
+  });
 const files = DesignSystemFiles.of({
   listDesignSystems: async () => ({ systems: written, problems: [] }),
   readDesignSystem: async () => {
@@ -97,12 +103,12 @@ const files = DesignSystemFiles.of({
   },
 });
 
-const layerFor = (invocation: Context.McpInvocationScope) =>
+const layerFor = (invocation: Context.McpInvocationScope, projectRoot = checkout) =>
   Access.HandlersLayer.layer(Handlers.layer).pipe(
     Layer.provideMerge(
       Layer.mergeAll(
         layerDesignSystems.pipe(
-          Layer.provide(Layer.succeed(DesignSystemRoots, roots)),
+          Layer.provide(Layer.succeed(DesignSystemRoots, rootsFor(projectRoot))),
           Layer.provide(Layer.succeed(DesignSystemFiles, files)),
           Layer.provide(DesignSystemProposals.layer),
         ),
@@ -167,6 +173,23 @@ it.effect("scans the thread's project and leaves a proposal for the user to revi
       code: "invalid_request",
     });
   }).pipe(Effect.provide(layerFor(scope))),
+);
+
+it.effect("proposes the strongest suggestion by default, not the first by key", () =>
+  Effect.gen(function* () {
+    const result = (yield* call("design_system_scan", {})) as {
+      scan: { suggestions: Array<{ key: string }> };
+      proposal: { name: string };
+    };
+    // By key app-web comes first; the UI kit holds the tokens, components and light/dark.
+    expect(result.scan.suggestions.map((suggestion) => suggestion.key)).toEqual([
+      "pkg:repositories/acme/uikit",
+      "pkg:repositories/acme/app-web",
+      "pkg:repositories/acme/status-site",
+    ]);
+    expect(result.proposal.name).toBe("uikit");
+    expect(written).toEqual([]);
+  }).pipe(Effect.provide(layerFor(scope, umbrella))),
 );
 
 it.effect("refuses an MCP client outside a thread", () =>

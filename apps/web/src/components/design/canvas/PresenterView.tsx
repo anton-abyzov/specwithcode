@@ -54,6 +54,8 @@ function useStopwatch() {
 /**
  * What the presenter sees: the current slide, the next one, the speaker
  * notes and a timer. The audience view is the same present mode without it.
+ * Below 640 px the parts stack and scroll, the current slide first at full
+ * width; from 640 px the current slide takes the wider left column.
  */
 export function PresenterView({
   current,
@@ -69,19 +71,25 @@ export function PresenterView({
   return (
     <div
       data-testid="presenter-view"
-      className="grid min-h-0 flex-1 grid-cols-[minmax(0,1.75fr)_minmax(16rem,1fr)] gap-6 p-6 pb-3"
+      className="grid min-h-0 flex-1 grid-cols-1 content-start gap-4 overflow-y-auto p-4 pb-3 sm:grid-cols-[minmax(0,1.75fr)_minmax(16rem,1fr)] sm:content-stretch sm:gap-6 sm:overflow-visible sm:p-6 sm:pb-3"
     >
       <section aria-label={`Current ${noun}`} className="flex min-h-0 flex-col gap-2">
         <h2 className="text-xs text-white/55">Now</h2>
-        <FrameStage
-          key={current.frame.id}
-          page={current.page}
-          frame={current.frame}
-          padding={0}
-          fade
-          testId="presenter-current"
-          className="items-start"
-        />
+        {/* Stacked, the grid row has no height of its own: the 16:9 box gives the slide one. */}
+        <div
+          data-testid="presenter-current-box"
+          className="flex aspect-video w-full sm:aspect-auto sm:min-h-0 sm:flex-1"
+        >
+          <FrameStage
+            key={current.frame.id}
+            page={current.page}
+            frame={current.frame}
+            padding={0}
+            fade
+            testId="presenter-current"
+            className="items-start"
+          />
+        </div>
       </section>
       <div className="flex min-h-0 flex-col gap-5">
         <section aria-label={`Next ${noun}`} className="flex shrink-0 flex-col gap-2">

@@ -1,4 +1,5 @@
 import {
+  type AuthPrincipal,
   type AuthMcpClientAccess,
   type EnvironmentId,
   McpCapabilityUnavailableError,
@@ -33,6 +34,7 @@ export interface McpThreadCaller {
 
 /** An agent SpecWithCode did not launch, signed in through MCP OAuth. */
 export interface McpClientCaller {
+  readonly principal?: AuthPrincipal;
   readonly sessionId: string;
   readonly label: string;
   /** Read only, or the most the threads it starts or changes may run with. */

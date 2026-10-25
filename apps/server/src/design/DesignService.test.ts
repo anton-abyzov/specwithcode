@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off globalDate:off - Reads the files the store wrote.
+import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
 import * as NodePath from "node:path";
 import * as NodeZlib from "node:zlib";
@@ -16,6 +17,7 @@ import * as Stream from "effect/Stream";
 
 import * as ServerConfig from "../config.ts";
 import * as DesignService from "./DesignService.ts";
+import { descendants, parseXml } from "./import/xml.ts";
 import {
   agentIn,
   HERE,
@@ -370,6 +372,81 @@ describe("DesignService access levels (AC-14)", () => {
       ),
   );
 
+  it.effect("lets a comment-level member reply in a thread and resolve it whole", () =>
+    withDesigns((designs) =>
+      Effect.gen(function* () {
+        const created = yield* designs.create(owner, {
+          owner: projectA,
+          kind: "design",
+          title: "Thread",
+        });
+        const designId = created.document.id;
+        const page = created.document.pages[0]!;
+        const frameId = page.nodes[0]!.id;
+        const at = (revision: number, operations: DesignOperation[], caller = member) =>
+          designs.apply(caller, {
+            owner: projectA,
+            designId,
+            expectedRevision: revision,
+            operations,
+          });
+        yield* at(0, [{ op: "set_access", members: "comment" }], owner);
+        const comment = (id: string, extra: object = {}): DesignOperation => ({
+          op: "add_comment",
+          comment: {
+            id,
+            pageId: page.id,
+            nodeId: frameId,
+            x: 24,
+            y: 16,
+            text: `Note ${id}`,
+            author: { kind: "user" },
+            createdAt: "2026-10-20T12:00:00.000Z",
+            resolved: false,
+            ...extra,
+          },
+        });
+        yield* at(1, [comment("c_root")]);
+        // The reply forges an agent author and another anchor; the server keeps neither.
+        yield* at(2, [
+          comment("c_reply", {
+            parentId: "c_root",
+            nodeId: null,
+            x: 900,
+            y: 900,
+            author: { kind: "agent", threadId: "thread-forged" },
+            createdAt: "2001-01-01T00:00:00.000Z",
+          }),
+        ]);
+        const address = { owner: projectA, designId } as const;
+        const [root, reply] = (yield* designs.get(member, address)).document.comments;
+        expect(reply).toMatchObject({
+          id: "c_reply",
+          parentId: "c_root",
+          pageId: page.id,
+          nodeId: frameId,
+          x: 24,
+          y: 16,
+          author: { kind: "user" },
+        });
+        expect(reply!.createdAt).not.toBe("2001-01-01T00:00:00.000Z");
+        expect(root).not.toHaveProperty("parentId");
+        const resolved = yield* at(3, [
+          { op: "resolve_comment", commentId: "c_root", resolved: true },
+        ]);
+        expect(resolved.document.comments.map((c) => [c.id, c.resolved])).toEqual([
+          ["c_root", true],
+          ["c_reply", true],
+        ]);
+        // A view-only member may not reply.
+        yield* at(4, [{ op: "set_access", members: "view" }], owner);
+        expect(
+          yield* Effect.flip(at(5, [comment("c_late", { parentId: "c_root" })])),
+        ).toMatchObject({ code: "forbidden" });
+      }),
+    ),
+  );
+
   it.effect("records the bound thread and access in the listing (AC-16)", () =>
     withDesigns((designs) =>
       Effect.gen(function* () {
@@ -526,8 +603,109 @@ function decodePng(bytes: Buffer) {
   }
   const raw = NodeZlib.inflateSync(Buffer.concat(data));
   expect(raw.length).toBe(height * (1 + width * channels));
-  return { width, height };
+  // Undo each scanline's filter (none, sub, up, average, Paeth) to read pixels.
+  const stride = width * channels;
+  const pixels = Buffer.alloc(height * stride);
+  for (let y = 0; y < height; y += 1) {
+    const filter = raw[y * (stride + 1)]!;
+    for (let i = 0; i < stride; i += 1) {
+      const a = i >= channels ? pixels[y * stride + i - channels]! : 0;
+      const b = y > 0 ? pixels[(y - 1) * stride + i]! : 0;
+      const c = i >= channels && y > 0 ? pixels[(y - 1) * stride + i - channels]! : 0;
+      const p = a + b - c;
+      const [pa, pb, pc] = [Math.abs(p - a), Math.abs(p - b), Math.abs(p - c)];
+      const paeth = pa <= pb && pa <= pc ? a : pb <= pc ? b : c;
+      const predictor = [0, a, b, (a + b) >> 1, paeth][filter]!;
+      pixels[y * stride + i] = (raw[y * (stride + 1) + 1 + i]! + predictor) & 0xff;
+    }
+  }
+  const pixel = (x: number, y: number) => [
+    ...pixels.subarray((y * width + x) * channels, (y * width + x + 1) * channels),
+  ];
+  return { width, height, pixel };
 }
+
+/** A design whose 640 x 360 card has a 2 px border, radius 12, a red box and, optionally, text. */
+const exportSvgCard = (designs: DesignService.DesignService["Service"], withText: boolean) =>
+  Effect.gen(function* () {
+    const created = yield* designs.create(owner, {
+      owner: projectA,
+      kind: "design",
+      title: "Booking",
+    });
+    const pageId = created.document.pages[0]!.id;
+    const add = (node: Extract<DesignOperation, { op: "add_node" }>["node"]): DesignOperation => ({
+      op: "add_node",
+      pageId,
+      node,
+    });
+    yield* designs.apply(owner, {
+      owner: projectA,
+      designId: created.document.id,
+      expectedRevision: 0,
+      operations: [
+        add({
+          id: "n_card",
+          parentId: null,
+          type: "frame",
+          name: "Card <1>",
+          x: 2000,
+          y: 0,
+          width: 640,
+          height: 360,
+          fill: "#123456",
+          stroke: "#fff",
+          strokeWidth: 2,
+          radius: 12,
+        }),
+        add({
+          id: "n_box",
+          parentId: "n_card",
+          type: "rect",
+          x: 20,
+          y: 20,
+          width: 100,
+          height: 50,
+          fill: "#e33",
+        }),
+        ...(withText
+          ? [
+              add({
+                id: "n_title",
+                parentId: "n_card",
+                type: "text",
+                name: "Title 🏆",
+                x: 20,
+                y: 120,
+                width: 120,
+                height: 80,
+                text: "Reserve a slip 🏆",
+                fontSize: 24,
+                color: "#fff",
+              }),
+            ]
+          : []),
+      ],
+    });
+    const exported = yield* designs.export(owner, {
+      owner: projectA,
+      designId: created.document.id,
+      pageId,
+      frameId: "n_card",
+      format: "svg",
+    });
+    expect(exported).toMatchObject({
+      fileName: "booking-card-1.svg",
+      mimeType: "image/svg+xml",
+      width: 640,
+      height: 360,
+    });
+    const text = Buffer.from(exported.data, "base64").toString("utf8");
+    expect(text).not.toContain("foreignObject");
+    const svg = parseXml(text);
+    expect(svg).toMatchObject({ name: "svg", attrs: { width: "640", viewBox: "0 0 640 360" } });
+    return { text, svg };
+  });
 
 describe("DesignService export", () => {
   it.effect("exports standalone HTML of a frame", () =>
@@ -621,7 +799,7 @@ describe("DesignService export", () => {
               scale: 2,
             });
             expect(png).toMatchObject({ mimeType: "image/png", width: 1280, height: 720 });
-            expect(decodePng(Buffer.from(png.data, "base64"))).toEqual({
+            expect(decodePng(Buffer.from(png.data, "base64"))).toMatchObject({
               width: 1280,
               height: 720,
             });
@@ -638,6 +816,89 @@ describe("DesignService export", () => {
           }),
         executable,
       );
+    }),
+  );
+
+  it.effect("exports a frame as native SVG shapes, inset like the CSS border", () =>
+    withDesigns((designs) =>
+      Effect.gen(function* () {
+        const { svg } = yield* exportSvgCard(designs, false);
+        const group = (id: string) => descendants(svg, "g").find((g) => g.attrs.id === id)!;
+        const card = group("n_card");
+        expect(card.attrs).toMatchObject({ "data-name": "Card <1>", transform: "translate(0 0)" });
+        // A 2 px stroke is centred on a box inset by 1 px, so its outer edge has radius 12.
+        expect(card.children[0]).toMatchObject({
+          name: "rect",
+          attrs: { x: "1", y: "1", width: "638", height: "358", rx: "11", fill: "#123456" },
+        });
+        expect(card.children[0]!.attrs).toMatchObject({ stroke: "#FFFFFF", "stroke-width": "2" });
+        // Children sit inside the border and are clipped to the padding box, as in the PNG.
+        expect(descendants(svg, "clipPath")[0]!.children[0]!.attrs).toEqual({
+          width: "636",
+          height: "356",
+          rx: "10",
+        });
+        expect(card.children[2]!.attrs).toEqual({
+          transform: "translate(2 2)",
+          "clip-path": "url(#clip.1)",
+        });
+        expect(group("n_box").attrs.transform).toBe("translate(20 20)");
+        expect(group("n_box").children[0]!.attrs.fill).toBe("#EE3333");
+      }),
+    ),
+  );
+
+  it.live("exports SVG text that xmllint and librsvg read outside a browser", (ctx) =>
+    Effect.gen(function* () {
+      const env = yield* HostProcessEnvironment;
+      const executable = env[TEST_BROWSER_ENV];
+      if (!executable) return ctx.skip(`Set ${TEST_BROWSER_ENV} to run this test.`);
+      const { text, svg } = yield* withDesigns(
+        (designs) => exportSvgCard(designs, true),
+        executable,
+      );
+      // The text wraps in the measuring browser, one tspan per line.
+      const lines = descendants(svg, "tspan").map((tspan) => tspan.text);
+      expect(lines.length).toBeGreaterThan(1);
+      // The measuring page walks code points, so the emoji keeps its place and survives.
+      expect(lines.join(" ")).toBe("Reserve a slip 🏆");
+      expect(descendants(svg, "g").find((g) => g.attrs.id === "n_title")!.attrs["data-name"]).toBe(
+        "Title 🏆",
+      );
+      expect(descendants(svg, "text")[0]!.attrs).toMatchObject({
+        "font-size": "24",
+        fill: "#FFFFFF",
+      });
+
+      const run = (tool: string, args: ReadonlyArray<string>) =>
+        NodeChildProcess.spawnSync(tool, args, { input: text, maxBuffer: 64 * 1024 * 1024 });
+      const missing: string[] = [];
+      const xmllint = run("xmllint", ["--noout", "-"]);
+      if (xmllint.error !== undefined) missing.push("xmllint");
+      else
+        expect({ status: xmllint.status, stderr: String(xmllint.stderr) }).toEqual({
+          status: 0,
+          stderr: "",
+        });
+      const rsvg = run("rsvg-convert", []);
+      if (rsvg.error !== undefined) missing.push("rsvg-convert");
+      else {
+        expect(rsvg.status).toBe(0);
+        const png = decodePng(rsvg.stdout);
+        expect([png.width, png.height]).toEqual([640, 360]);
+        // librsvg drew the shapes: the red box and the frame fill, not one flat color.
+        expect(png.pixel(70, 45)).toEqual([0xee, 0x33, 0x33, 255]);
+        expect(png.pixel(600, 300)).toEqual([0x12, 0x34, 0x56, 255]);
+        const evidence = env.STUDIO_DESIGN_EVIDENCE_DIR;
+        if (evidence) {
+          NodeFS.mkdirSync(evidence, { recursive: true });
+          NodeFS.writeFileSync(NodePath.join(evidence, "booking-card-1.svg"), text);
+          NodeFS.writeFileSync(NodePath.join(evidence, "booking-card-1-rsvg.png"), rsvg.stdout);
+        }
+      }
+      if (missing.length > 0) {
+        return ctx.skip(`${missing.join(" and ")} not installed, so that check did not run.`);
+      }
     }),
   );
 });

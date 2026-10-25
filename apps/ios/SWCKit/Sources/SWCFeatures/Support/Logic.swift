@@ -75,7 +75,9 @@ nonisolated struct SearchResults: Equatable {
       self.threads = []
       return
     }
-    self.projects = projects.filter { !$0.archived && $0.title.localizedStandardContains(needle) }
+    self.projects = projects.filter {
+      !$0.archived && !$0.isAutomated && $0.title.localizedStandardContains(needle)
+    }
     self.threads = Array(threads.filter { $0.matches(needle) }.prefix(threadLimit))
   }
 

@@ -7,6 +7,7 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   buildConfirmInput,
+  duplicateSystemName,
   EMPTY_SELECTION,
   failureText,
   filterSystems,
@@ -90,7 +91,7 @@ describe("systems list", () => {
 
   it("labels sources by kind", () => {
     expect(sourcesLabel(summary("a", ["file", "file"]).sources)).toBe("Code · 2 files");
-    expect(sourcesLabel(summary("a", ["figma-export"]).sources)).toBe("Figma export");
+    expect(sourcesLabel(summary("a", ["figma-export"]).sources)).toBe("Tokens file");
     expect(sourcesLabel(summary("a", ["figma-desktop", "file"]).sources)).toBe(
       "Code · 1 file + Figma desktop",
     );
@@ -185,5 +186,14 @@ describe("readTokensFiles", () => {
       message: "big.json is larger than 2 MB.",
     });
     expect((await readTokensFiles([])).ok).toBe(false);
+  });
+});
+
+describe("duplicateSystemName", () => {
+  it("names each duplicate apart from its siblings", () => {
+    expect(duplicateSystemName("Brand", ["Brand"])).toBe("Brand copy");
+    expect(duplicateSystemName("Brand", ["Brand", "brand copy"])).toBe("Brand copy 2");
+    expect(duplicateSystemName("Brand", ["Brand copy", "Brand copy 2"])).toBe("Brand copy 3");
+    expect(duplicateSystemName("x".repeat(180), []).length).toBeLessThanOrEqual(180);
   });
 });

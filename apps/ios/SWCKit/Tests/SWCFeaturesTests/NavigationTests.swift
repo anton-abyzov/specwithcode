@@ -131,6 +131,8 @@ struct LogicTests {
       ProjectSummary(ref: ProjectRef(environmentId: "env", projectId: "p1"), title: "Recipe app", machineLabel: "Build box", machineOnline: true),
       ProjectSummary(ref: ProjectRef(environmentId: "env", projectId: "p2"), title: "Old recipes", machineLabel: "Build box", machineOnline: true, archived: true),
       ProjectSummary(ref: ProjectRef(environmentId: "env", projectId: "p3"), title: "SpecWeave", machineLabel: "Office Mac", machineOnline: true),
+      // A check's project is never a search result, as it is never in the main list.
+      ProjectSummary(ref: ProjectRef(environmentId: "env", projectId: "p4"), title: "Recipe acceptance run", machineLabel: "Build box", machineOnline: true, isAutomated: true),
     ]
     let threads = [thread("t1", .idle, minutesAgo: 1, title: "Shrink the recipe image cache"), thread("t2", .idle, minutesAgo: 1, title: "Other")]
     let results = SearchResults(query: "RECIPE", projects: projects, threads: threads)

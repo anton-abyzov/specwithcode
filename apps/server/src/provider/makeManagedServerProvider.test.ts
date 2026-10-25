@@ -207,6 +207,19 @@ function refreshAcrossLogins(
   first: { readonly email: string; readonly usageLimits: ServerProviderUsageLimits },
   second: { readonly email: string; readonly usageLimits: ServerProviderUsageLimits },
 ) {
+  return refreshThroughLogins(driver, [first, second]).pipe(
+    Effect.map((snapshots) => snapshots[1]!),
+  );
+}
+
+/** One probe per login, in order; `email: null` is a probe that is signed out. */
+function refreshThroughLogins(
+  driver: ProviderDriverKind,
+  logins: ReadonlyArray<{
+    readonly email: string | null;
+    readonly usageLimits: ServerProviderUsageLimits;
+  }>,
+) {
   return Effect.scoped(
     Effect.gen(function* () {
       const checkCalls = yield* Ref.make(0);
@@ -219,19 +232,23 @@ function refreshAcrossLogins(
         initialSnapshot: () => Effect.succeed({ ...initialSnapshot, ...identity }),
         checkProvider: Ref.updateAndGet(checkCalls, (count) => count + 1).pipe(
           Effect.map((count) => {
-            const login = count === 1 ? first : second;
+            const login = logins[count - 1]!;
             return {
               ...(count === 1 ? refreshedSnapshot : refreshedSnapshotSecond),
               ...identity,
-              auth: { status: "authenticated" as const, email: login.email },
+              auth:
+                login.email === null
+                  ? { status: "unauthenticated" as const }
+                  : { status: "authenticated" as const, email: login.email },
               usageLimits: login.usageLimits,
             };
           }),
         ),
         refreshInterval: 0,
       });
-      yield* provider.refresh;
-      return yield* provider.refresh;
+      const snapshots = [];
+      for (const _login of logins) snapshots.push(yield* provider.refresh);
+      return snapshots;
     }),
   ).pipe(Effect.provide(layerAlwaysRunTest));
 }
@@ -263,7 +280,14 @@ describe("makeManagedServerProvider", () => {
       ProviderDriverKind.make("claudeAgent"),
       { email: "old@example.com", usageLimits: exhaustedClaudeLimits },
       { email: "New@Example.com", usageLimits: newAccount },
-    ).pipe(Effect.map((refreshed) => assert.strictEqual(refreshed.usageLimits, newAccount)));
+    ).pipe(
+      Effect.map((refreshed) =>
+        assert.deepStrictEqual(refreshed.usageLimits, {
+          ...newAccount,
+          accountChangedAt: newAccount.checkedAt,
+        }),
+      ),
+    );
   });
 
   it.effect("does not carry Claude usage into a login whose limits cannot be read", () => {
@@ -276,7 +300,14 @@ describe("makeManagedServerProvider", () => {
       ProviderDriverKind.make("claudeAgent"),
       { email: "old@example.com", usageLimits: exhaustedClaudeLimits },
       { email: "new@example.com", usageLimits: unsupported },
-    ).pipe(Effect.map((refreshed) => assert.strictEqual(refreshed.usageLimits, unsupported)));
+    ).pipe(
+      Effect.map((refreshed) =>
+        assert.deepStrictEqual(refreshed.usageLimits, {
+          ...unsupported,
+          accountChangedAt: unsupported.checkedAt,
+        }),
+      ),
+    );
   });
 
   it.effect("keeps the same Claude login's denial until a full read clears it", () => {
@@ -291,6 +322,99 @@ describe("makeManagedServerProvider", () => {
     ).pipe(
       Effect.map((refreshed) =>
         assert.deepStrictEqual(refreshed.usageLimits, exhaustedClaudeLimits),
+      ),
+    );
+  });
+
+  it.effect("marks when the Claude account changed and keeps the mark for that account", () => {
+    const old: ServerProviderUsageLimits = { ...exhaustedClaudeLimits };
+    const next: ServerProviderUsageLimits = {
+      checkedAt: refreshedSnapshotSecond.checkedAt,
+      windows: [{ id: "five_hour", kind: "session", label: "Session", usedPercent: 14 }],
+      nativeAllowanceObservedAt: refreshedSnapshotSecond.checkedAt,
+    };
+    return refreshThroughLogins(ProviderDriverKind.make("claudeAgent"), [
+      { email: "old@example.com", usageLimits: old },
+      { email: "new@example.com", usageLimits: next },
+      { email: "new@example.com", usageLimits: next },
+    ]).pipe(
+      Effect.map(([first, switched, same]) => {
+        // The first read after a start has nothing to compare with.
+        assert.isUndefined(first?.usageLimits?.accountChangedAt);
+        assert.strictEqual(switched?.usageLimits?.accountChangedAt, next.checkedAt);
+        assert.strictEqual(same?.usageLimits?.accountChangedAt, next.checkedAt);
+      }),
+    );
+  });
+
+  it.effect("counts a sign-out between two Claude accounts as a change", () => {
+    const signedOut: ServerProviderUsageLimits = {
+      checkedAt: refreshedSnapshotSecond.checkedAt,
+      windows: [],
+      unavailable: { reason: "probeFailed" },
+    };
+    const next: ServerProviderUsageLimits = {
+      checkedAt: refreshedSnapshotSecond.checkedAt,
+      windows: [{ id: "five_hour", kind: "session", label: "Session", usedPercent: 14 }],
+      nativeAllowanceObservedAt: refreshedSnapshotSecond.checkedAt,
+    };
+    return refreshThroughLogins(ProviderDriverKind.make("claudeAgent"), [
+      { email: "old@example.com", usageLimits: exhaustedClaudeLimits },
+      { email: null, usageLimits: signedOut },
+      { email: "new@example.com", usageLimits: next },
+    ]).pipe(
+      Effect.map(([, out, back]) => {
+        assert.isUndefined(out?.usageLimits?.accountChangedAt);
+        assert.deepStrictEqual(back?.usageLimits, { ...next, accountChangedAt: next.checkedAt });
+      }),
+    );
+  });
+
+  it.effect("keeps the change mark through a sign-out and back in to the new account", () => {
+    const next: ServerProviderUsageLimits = {
+      checkedAt: refreshedSnapshotSecond.checkedAt,
+      windows: [{ id: "five_hour", kind: "session", label: "Session", usedPercent: 14 }],
+      nativeAllowanceObservedAt: refreshedSnapshotSecond.checkedAt,
+    };
+    const later = "2099-01-01T00:10:00.000Z";
+    // A signed-out read replaces the published usage, mark and all.
+    const signedOut: ServerProviderUsageLimits = { checkedAt: later, windows: [] };
+    const again: ServerProviderUsageLimits = {
+      ...next,
+      checkedAt: later,
+      nativeAllowanceObservedAt: later,
+    };
+    return refreshThroughLogins(ProviderDriverKind.make("claudeAgent"), [
+      { email: "old@example.com", usageLimits: exhaustedClaudeLimits },
+      { email: "new@example.com", usageLimits: next },
+      { email: null, usageLimits: signedOut },
+      { email: "New@Example.com", usageLimits: again },
+    ]).pipe(
+      Effect.map(([, switched, out, back]) => {
+        assert.strictEqual(switched?.usageLimits?.accountChangedAt, next.checkedAt);
+        assert.isUndefined(out?.usageLimits?.accountChangedAt);
+        // The mark of the change, not of the sign-in after the sign-out.
+        assert.deepStrictEqual(back?.usageLimits, { ...again, accountChangedAt: next.checkedAt });
+      }),
+    );
+  });
+
+  it.effect("signing back in to the same Claude account is no change", () => {
+    const signedOut: ServerProviderUsageLimits = {
+      checkedAt: refreshedSnapshotSecond.checkedAt,
+      windows: [],
+      unavailable: { reason: "probeFailed" },
+    };
+    return refreshThroughLogins(ProviderDriverKind.make("claudeAgent"), [
+      { email: "same@example.com", usageLimits: exhaustedClaudeLimits },
+      { email: null, usageLimits: signedOut },
+      { email: "Same@Example.com", usageLimits: exhaustedClaudeLimits },
+    ]).pipe(
+      Effect.map((snapshots) =>
+        assert.deepStrictEqual(
+          snapshots.map((snapshot) => snapshot.usageLimits?.accountChangedAt),
+          [undefined, undefined, undefined],
+        ),
       ),
     );
   });
@@ -313,7 +437,14 @@ describe("makeManagedServerProvider", () => {
         },
       },
       { email: "new@example.com", usageLimits: failed },
-    ).pipe(Effect.map((refreshed) => assert.strictEqual(refreshed.usageLimits, failed)));
+    ).pipe(
+      Effect.map((refreshed) =>
+        assert.deepStrictEqual(refreshed.usageLimits, {
+          ...failed,
+          accountChangedAt: failed.checkedAt,
+        }),
+      ),
+    );
   });
 
   it.effect(

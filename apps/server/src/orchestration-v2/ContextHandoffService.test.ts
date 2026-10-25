@@ -162,3 +162,52 @@ it.layer(layerTest)("ContextHandoffService legacy import", (it) => {
     }),
   );
 });
+
+it.layer(layerTest)("ContextHandoffService fork delta", (it) => {
+  it.effect("names the question an ask_user card asked, beside the person's answer", () =>
+    Effect.gen(function* () {
+      const service = yield* ContextHandoffService.ContextHandoffServiceV2;
+      const question = (id: string, text: string) => ({
+        id,
+        header: id,
+        question: text,
+        options: [],
+        allowCustomAnswer: true,
+      });
+      const card = (id: string, questions: ReadonlyArray<ReturnType<typeof question>>) =>
+        ({
+          ...importedItem({ role: "assistant", id, text: "", ordinal: 2 }),
+          type: "user_input_request",
+          requestId: `ask-user:${id}`,
+          responseMode: "message",
+          questions,
+        }) as unknown as OrchestrationV2TurnItem;
+      const handoff = yield* service.prepareForkDelta({
+        sourceThreadId: ThreadId.make("thread:fork"),
+        targetThreadId: ThreadId.make("thread:legacy-context"),
+        targetRunId: RunId.make("run:merge-back"),
+        transferId: null,
+        fromProviderThreadIds: [ProviderThreadId.make("provider-thread:fork")],
+        toProviderThreadId: ProviderThreadId.make("provider-thread:target"),
+        fromProviderInstanceId: ProviderInstanceId.make("codex"),
+        toProviderInstanceId: ProviderInstanceId.make("codex"),
+        coveredRunOrdinals: { from: 1, to: 1 },
+        deltaItems: [
+          card("layout", [
+            question("q1", "Which header layout?"),
+            question("q2", "Which pages change?"),
+          ]),
+          card("empty", []),
+          importedItem({ role: "user", id: "answer", text: "Tall", ordinal: 3 }),
+        ],
+        createdAt: DateTime.makeUnsafe("2026-01-02T00:00:00.000Z"),
+      });
+
+      assert.include(
+        handoff.summaryText,
+        "- Assistant asked: Which header layout? / Which pages change?\n- User: Tall",
+      );
+      assert.notInclude(handoff.summaryText, "- Assistant asked: \n");
+    }),
+  );
+});

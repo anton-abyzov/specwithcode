@@ -12,7 +12,6 @@ import * as Sqlite from "../persistence/Sqlite.ts";
 import {
   START,
   THREAD,
-  COORDINATOR,
   NOT_PREPARED,
   taskInput,
   provider,
@@ -189,11 +188,11 @@ it.effect("fires on a provider that reports warning but can still run turns", ()
   }).pipe(Effect.provide(Sqlite.layerMemory)),
 );
 
-it.effect("checks a coordinator thread on the model its next turn resolves to", () =>
+it.effect("checks a bound thread on the model its next turn resolves to", () =>
   Effect.gen(function* () {
     yield* TestClock.setTime(START);
-    // The coordinator thread last ran on the broken Copilot; the user moved
-    // the coordinator model to Codex to recover.
+    // The bound thread last ran on the broken Copilot; the user moved its
+    // next turn to Codex to recover.
     const { state, run, fireNext, taskRow, failRunOnCopilot } = yield* harness([
       copilotNotPrepared,
       codexReady,
@@ -218,43 +217,6 @@ it.effect("checks a coordinator thread on the model its next turn resolves to", 
           (yield* taskRow).last_run_error,
           `Deferred until 2026-10-21T07:15:00.000Z: GitHub Copilot cannot start on this machine: ${NOT_PREPARED}`,
         );
-      }),
-    );
-  }).pipe(Effect.provide(Sqlite.layerMemory)),
-);
-
-it.effect("checks a threadless routine on the coordinator it wakes", () =>
-  Effect.gen(function* () {
-    yield* TestClock.setTime(START);
-    // The coordinator's last run failed on Copilot, which its next turn still uses.
-    const { state, run, fireNext, taskRow, failRunOnCopilot } = yield* harness([
-      copilotNotPrepared,
-      codexReady,
-    ]);
-    yield* failRunOnCopilot("2026-10-21T06:45:00.000Z", COORDINATOR);
-    state.nextTurn = {
-      instanceId: ProviderInstanceId.make("acpRegistry_copilot"),
-      model: "claude-opus-5.5",
-    };
-    yield* run((service) =>
-      Effect.gen(function* () {
-        yield* service.upsert(taskInput({ threadId: null }));
-        yield* fireNext;
-        // Asked before the coordinator is started, the way a wake resolves it.
-        assert.deepEqual(state.nextTurnAsked, [null]);
-        assert.equal(state.coordinatorWakes, 0);
-        assert.deepEqual(state.sent, []);
-        assert.equal(
-          (yield* taskRow).last_run_error,
-          `Deferred until 2026-10-21T07:05:01.000Z: GitHub Copilot cannot start on this machine: ${NOT_PREPARED}`,
-        );
-
-        // The coordinator model moved to Codex: the wake goes through.
-        state.nextTurn = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5" };
-        yield* fireNext;
-        assert.equal(state.coordinatorWakes, 1);
-        assert.deepEqual(state.sent, [{ threadId: COORDINATOR, instanceId: "codex" }]);
-        assert.equal((yield* taskRow).last_run_status, "succeeded");
       }),
     );
   }).pipe(Effect.provide(Sqlite.layerMemory)),

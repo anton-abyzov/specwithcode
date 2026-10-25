@@ -32,6 +32,7 @@ import {
   type DesignSystemRescanResult,
   type DesignSystemScanInput,
   type DesignSystemScanResult,
+  type DesignSystemSuggestionPreview,
   type DesignTokenType,
   type FigmaDesktopStatus,
   FIGMA_DESKTOP_MCP_URL,
@@ -75,6 +76,7 @@ import {
   readInsideRoot,
   scanCandidates,
 } from "./scanCandidates.ts";
+import { previewScan } from "./scanPreview.ts";
 
 /** Open proposals per actor (the user, or one agent thread). */
 export const MAX_PROPOSALS_PER_ACTOR = 20;
@@ -279,7 +281,8 @@ export const makeDesignSystemService = (options: DesignSystemServiceOptions = {}
     /**
      * Keeps a proposal for review. An actor over its quota loses its own
      * oldest proposal; another actor's pending proposal is never evicted, so
-     * an agent cannot push the user's reviews out.
+     * an agent cannot push the user's reviews out. A proposal that reuses an
+     * open one's id replaces it.
      */
     const remember = (proposal: DesignSystemProposal) =>
       Effect.gen(function* () {
@@ -288,6 +291,10 @@ export const makeDesignSystemService = (options: DesignSystemServiceOptions = {}
             "too_large",
             "This proposal is too large to review. Propose fewer files or tokens at a time.",
           );
+        }
+        if (proposals.delete(proposal.id)) {
+          proposals.set(proposal.id, proposal);
+          return proposal;
         }
         const key = actorKey(proposal.createdBy);
         const own = [...proposals.values()].filter((open) => actorKey(open.createdBy) === key);
@@ -385,10 +392,27 @@ export const makeDesignSystemService = (options: DesignSystemServiceOptions = {}
             )
           : null;
         const name = clip(request.name?.trim() || sourced.suggestedName || "Design system", 180);
-        const systemId = previous?.id ?? (yield* newSystemId(resolved, owner, name));
+        // The same actor proposing the same repository files again (each new design that
+        // reuses a found system does) replaces its open proposal under the same id: designs
+        // that point at it stay linked, and Settings lists it once. Only code proposals: a
+        // described or Figma proposal shares its location across different content.
+        const twin =
+          origin === "code"
+            ? [...proposals.values()].find(
+                (open) =>
+                  open.origin === "code" &&
+                  actorKey(open.createdBy) === actorKey(caller.actor) &&
+                  sameOwner(open.owner, owner) &&
+                  (open.target?.systemId ?? null) === (previous?.id ?? null) &&
+                  open.system.name === name &&
+                  sourceKey(open.system.sources) === sourceKey(sourced.sources),
+              )
+            : undefined;
+        const systemId =
+          previous?.id ?? twin?.system.id ?? (yield* newSystemId(resolved, owner, name));
         return yield* remember(
           buildProposal({
-            id: NodeCrypto.randomUUID(),
+            id: twin?.id ?? NodeCrypto.randomUUID(),
             owner,
             origin,
             createdBy: caller.actor,
@@ -572,7 +596,14 @@ export const makeDesignSystemService = (options: DesignSystemServiceOptions = {}
           const resolved = yield* resolve(caller, input.owner);
           const realRoot = yield* projectRoot(resolved);
           const result = yield* attempt(() => scanCandidates(realRoot));
-          const suggestions = yield* Effect.forEach(result.suggestions, (suggestion) => {
+          // In memory only: no proposal is kept and nothing is written.
+          const previews =
+            input.preview === true
+              ? yield* attempt(() => previewScan(realRoot, result))
+              : new Map<string, DesignSystemSuggestionPreview>();
+          const suggestions = yield* Effect.forEach(result.suggestions, (scanned) => {
+            const preview = previews.get(scanned.key);
+            const suggestion = preview ? { ...scanned, preview } : scanned;
             const upstream = knownSystemByKey(suggestion.key)?.upstream;
             return upstream
               ? Effect.map(findUpstream(resolved, upstream), (derivedFrom) =>
@@ -719,6 +750,13 @@ export const makeDesignSystemService = (options: DesignSystemServiceOptions = {}
 
 export const FIGMA_OFF_DETAIL =
   "Figma desktop's MCP server is off. In Figma, open Preferences and turn on Enable desktop MCP server, or import an exported variables file.";
+
+/** The files (or other sources) a proposal reads, in a stable order. */
+const sourceKey = (sources: ReadonlyArray<{ readonly kind: string; readonly location: string }>) =>
+  sources
+    .map((source) => `${source.kind}:${source.location}`)
+    .sort(compareText)
+    .join("\n");
 
 export const proposalSummary = (proposal: DesignSystemProposal): DesignSystemProposalSummary => ({
   id: proposal.id,

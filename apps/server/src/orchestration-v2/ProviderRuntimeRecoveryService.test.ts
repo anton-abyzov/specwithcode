@@ -1013,13 +1013,13 @@ it.effect(
       const turnItemCancels = events.filter(
         (event) => event.type === "turn-item.updated" && event.payload.status === "cancelled",
       );
-      // Active-run item + settled-run stale + null-run command + null-run subagent.
-      assert.equal(turnItemCancels.length, 4);
+      // Non-native items keep their existing cleanup policy; native work is interrupted.
+      assert.equal(turnItemCancels.length, 3);
       assert.deepEqual(
         turnItemCancels
           .map((event) => event.type === "turn-item.updated" && event.payload.id)
           .sort(),
-        [activeRunItemId, nullRunCommandItemId, nullRunSubagentItemId, settledStaleItemId].sort(),
+        [activeRunItemId, nullRunCommandItemId, settledStaleItemId].sort(),
       );
 
       const cancelById = (id: TurnItemId) =>
@@ -1029,7 +1029,14 @@ it.effect(
       assert.equal(cancelById(nullRunCommandItemId)?.providerInstanceId, secondaryInstanceId);
       // Subagent own instance wins over the matching thread's secondary instance.
       assert.notEqual(subagentInstanceId, secondaryInstanceId);
-      assert.equal(cancelById(nullRunSubagentItemId)?.providerInstanceId, subagentInstanceId);
+      const interrupted = events.find(
+        (event) => event.type === "turn-item.updated" && event.payload.id === nullRunSubagentItemId,
+      );
+      assert.equal(
+        interrupted?.type === "turn-item.updated" ? interrupted.payload.status : null,
+        "interrupted",
+      );
+      assert.equal(interrupted?.providerInstanceId, subagentInstanceId);
       // Settled-run item still prefers the run's provider instance when present.
       assert.equal(cancelById(settledStaleItemId)?.providerInstanceId, claudeInstanceId);
 
@@ -1297,7 +1304,7 @@ it.effect(
 
       // Only the nonterminal subagent item is cancelled.
       const turnItemCancels = events.filter(
-        (event) => event.type === "turn-item.updated" && event.payload.status === "cancelled",
+        (event) => event.type === "turn-item.updated" && event.payload.status === "interrupted",
       );
       assert.equal(turnItemCancels.length, 1);
 
@@ -1311,7 +1318,7 @@ it.effect(
       );
       assert.equal(
         subagentCancel?.type === "subagent.updated" ? subagentCancel.payload.status : null,
-        "cancelled",
+        "interrupted",
       );
 
       // So is its execution node, which no live process can terminalize.

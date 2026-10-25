@@ -68,6 +68,8 @@ const state = vi.hoisted(() => ({
     status: string;
     toolName?: string;
   }>,
+  /** The coordinator's runtime requests; a pending user_input one with its card asks a question. */
+  runtimeRequests: [] as unknown[],
   coordinatorId: "coord" as string | null,
   coordinatorModel: { instanceId: "claude-native", model: "coordinator-model" } as {
     instanceId: string;
@@ -102,6 +104,8 @@ const state = vi.hoisted(() => ({
   coarse: false,
   sendShortcut: "enter",
   uploadsSupported: true,
+  /** The host takes files with a question's answer. */
+  questionAttachments: true,
   uploadFails: false,
   uploadsStarted: [] as string[],
   uploadsReleased: [] as string[],
@@ -199,6 +203,8 @@ vi.mock("../../state/entities", () => ({
           providerInstanceId: run.providerInstanceId ?? selection?.instanceId,
         })),
         turnItems: state.turnItems,
+        thread: { id: state.coordinatorId },
+        runtimeRequests: state.runtimeRequests,
       },
     };
   },
@@ -206,7 +212,10 @@ vi.mock("../../state/entities", () => ({
     ref === null ? null : (state.shells.find((shell) => shell.id === ref.threadId) ?? null),
   useThreadHistory: () => ({ hasMoreHistory: false }),
   useThreadStatus: () => "ready",
+  // The More menu reads each machine's scratch folder to leave Design off "No project".
+  useServerConfigs: () => new Map(),
 }));
+const noUnreachableEnvironments = vi.hoisted(() => new Set<string>());
 vi.mock("../../state/environments", () => ({
   useEnvironments: () => ({
     isReady: true,
@@ -224,6 +233,7 @@ vi.mock("../../state/environments", () => ({
     ],
   }),
   usePrimaryEnvironmentId: () => (state.primaryRegistered ? "primary" : null),
+  useUnreachableEnvironmentIds: () => noUnreachableEnvironments,
   useEnvironment: (environmentId: string) => ({
     label: environmentId === "host" || environmentId === undefined ? "Test host" : environmentId,
     connection: {
@@ -240,6 +250,7 @@ vi.mock("../../state/environments", () => ({
           environment: {
             capabilities: {
               attachmentUploads: state.uploadsSupported,
+              questionAttachments: state.questionAttachments,
               ...(state.maxFileBytes === null
                 ? {}
                 : { fileAttachments: { maxUploadBytes: state.maxFileBytes } }),
@@ -368,6 +379,18 @@ const projectRead = vi.hoisted(() => () => ({
   isPending: state.projectReadPending,
   refresh: state.refresh,
 }));
+// The design list is its own query; without this the catch-all above would answer it with a project read.
+vi.mock("../design/useProjectDesigns", () => ({
+  useProjectDesigns: () => ({
+    designs: [],
+    problems: [],
+    count: 0,
+    byThreadId: new Map(),
+    refresh: vi.fn<FixtureProcedure>(),
+    loaded: true,
+    error: null,
+  }),
+}));
 vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => state.send }));
 vi.mock("../../state/assets", () => ({ assetEnvironment: { createUrl: {} } }));
 vi.mock("../../state/use-atom-query-runner", () => ({
@@ -424,6 +447,7 @@ vi.mock("../../hooks/useSettings", async () => {
   const { DEFAULT_SERVER_SETTINGS } = await import("@specweave-studio/contracts");
   return {
     useEnvironmentSettings: () => DEFAULT_SERVER_SETTINGS,
+    useProjectOverrideWriteMode: () => "per-key" as const,
     usePrimarySettings: (select?: (settings: typeof DEFAULT_SERVER_SETTINGS) => unknown) =>
       select ? select(DEFAULT_SERVER_SETTINGS) : DEFAULT_SERVER_SETTINGS,
     useClientSettings: (
@@ -455,26 +479,27 @@ vi.mock("./shell/CoordinatorModelPicker", async (importOriginal) => {
       if (state.realCoordinatorModelPicker) return <actual.CoordinatorModelPicker {...props} />;
       const { value, running, disabled, onChange } = props;
       return (
-        <button
-          data-coordinator-model
-          data-running-instance={running?.value.instanceId}
-          data-returns-to={running?.returnsTo}
-          data-disabled={disabled ? "true" : "false"}
-          onClick={() => onChange({ instanceId: "codex-native" as never, model: "picked-model" })}
-        >
-          {(running?.value ?? value)?.model ?? "none"}
-        </button>
+        <>
+          <button
+            data-coordinator-model
+            data-running-instance={running?.value.instanceId}
+            data-returns-to={running?.returnsTo}
+            data-fallback-reason={running?.reason ?? undefined}
+            data-disabled={disabled ? "true" : "false"}
+            onClick={() => onChange({ instanceId: "codex-native" as never, model: "picked-model" })}
+          >
+            {(running?.value ?? value)?.model ?? "none"}
+          </button>
+          {running?.onSwitchBack ? (
+            <button data-coordinator-switch-back onClick={running.onSwitchBack}>
+              Back
+            </button>
+          ) : null}
+        </>
       );
     },
   };
 });
-vi.mock("./shell/ProjectUsageIndicator", () => ({
-  ProjectUsageIndicator: ({ onOpenProjectUsage }: { onOpenProjectUsage: () => void }) => (
-    <button data-usage-indicator onClick={onOpenProjectUsage}>
-      usage
-    </button>
-  ),
-}));
 vi.mock("./shell/ModelBadge", () => ({
   ModelBadge: ({ model }: { model: string }) => <span data-model-badge>{model}</span>,
   ThreadModelBadge: ({ thread }: { thread: EnvironmentThreadShell }) => (
@@ -486,6 +511,9 @@ vi.mock("./shell/ModelBadge", () => ({
 }));
 vi.mock("@tanstack/react-router", () => ({
   useNavigate: () => state.navigate,
+  // No `?pane=` deep link in these tests.
+  useSearch: () => null,
+  useRouter: () => ({ navigate: state.navigate }),
   Link: ({ children, ...p }: React.PropsWithChildren) => <a {...p}>{children}</a>,
 }));
 vi.mock("../WorkspacePageHeader", () => ({
@@ -571,6 +599,39 @@ vi.mock("./ProjectWorkspaceAttachments", () => ({
 }));
 vi.mock("./ProjectWorkspaceSettings", () => ({ ProjectWorkspaceSettings: () => null }));
 vi.mock("./RemoteWorkerCards", () => ({ RemoteWorkerCards: () => null }));
+vi.mock("../../studio/useProjectAttention", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../studio/useProjectAttention")>();
+  const { aggregateProjectAttention } =
+    await import("@specweave-studio/client-runtime/state/projectAttention");
+  return {
+    ...actual,
+    useProjectAttention: (
+      threads: EnvironmentThreadShell[],
+      projects: import("../../studio/useProjectAttention").AttentionProjectMember[],
+    ) => {
+      const members = actual.expandAttentionProjects(projects).map((project) => ({
+        environmentId: project.environmentId,
+        projectId: project.id,
+        coordinatorThreadId:
+          project.workspaceSettings?.coordinatorThreadId ?? `project-coordinator:${project.id}`,
+        includeUserRoots: Boolean(project.workspaceSettings?.logicalProject),
+        freshness:
+          !state.connected || state.offlineHosts.includes(project.environmentId)
+            ? ("offline" as const)
+            : !state.shellsBootstrapped
+              ? ("empty" as const)
+              : ("live" as const),
+        remoteWorkers: [],
+        remoteWorkersComplete: true,
+      }));
+      return aggregateProjectAttention({
+        members,
+        roots: actual.projectAttentionRoots(threads, members),
+        threads,
+      });
+    },
+  };
+});
 vi.mock("../../studio/fleet", () => ({
   useProjectRemoteWorkers: () => ({ workers: [], available: false, refresh: () => {} }),
   useStudioFleet: () => ({ snapshot: null, loading: false, failed: false, refresh: () => {} }),
@@ -702,6 +763,7 @@ beforeEach(() => {
   state.threadReports = null;
   state.runs = [];
   state.turnItems = [];
+  state.runtimeRequests = [];
   state.send.mockReset();
   state.navigate.mockReset();
   state.relatedThreadId = "worker";
@@ -743,6 +805,7 @@ beforeEach(() => {
   state.coarse = false;
   state.sendShortcut = "enter";
   state.uploadsSupported = true;
+  state.questionAttachments = true;
   state.uploadFails = false;
   state.uploadsStarted = [];
   state.uploadsReleased = [];

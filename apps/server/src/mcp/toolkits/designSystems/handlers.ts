@@ -78,6 +78,7 @@ export const layer = Access.toLayer(DesignSystemsToolkit, {
       const owner = ownerFor(caller, input.owner);
       const systems = yield* DesignSystemService;
       const scan = yield* systems.scan(caller, { owner }).pipe(Effect.mapError(failure));
+      // Suggestions come strongest first, so the default is the strongest one with files.
       const suggestion =
         input.suggestion === undefined
           ? scan.suggestions.find((candidate) => candidate.paths.length > 0)

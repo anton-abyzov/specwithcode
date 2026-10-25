@@ -16,7 +16,6 @@ import {
   designPageBounds,
   designTokenValue,
   NOTE_COLORS,
-  renderDesignHtml,
   resolveDesignLength,
   resolveDesignPaint,
   safeCssValue,
@@ -28,7 +27,7 @@ import PptxModule from "pptxgenjs";
 import type * as HtmlRender from "../../htmlRender/HtmlRender.ts";
 import { MAX_FIXED_CAPTURE_EDGE } from "../../htmlRender/headlessChrome.ts";
 import { parseCssColor, type PptxColor } from "./cssColor.ts";
-import type { DesignSheet } from "./sheets.ts";
+import { rasterJob, type DesignSheet, type RasterJob } from "./sheets.ts";
 
 export const PPTX_MIME_TYPE =
   "application/vnd.openxmlformats-officedocument.presentationml.presentation";
@@ -55,11 +54,7 @@ type PptxShapeName = import("pptxgenjs").default.SHAPE_NAME;
 const failure = (code: DesignError["code"], detail: string) => new DesignError({ code, detail });
 
 /** A part of a slide drawn by the shared renderer, rendered in one batch. */
-export interface PptxRasterJob {
-  readonly html: string;
-  readonly width: number;
-  readonly height: number;
-}
+export type PptxRasterJob = RasterJob;
 
 type ImagePlacement = Omit<ImageProps, "data" | "path">;
 
@@ -211,19 +206,8 @@ function planSheet(
     objectName: node.name ?? node.id,
   });
 
-  const raster = (node: DesignNode, withChildren: boolean): number => {
-    const { opacity: _opacity, rotation: _rotation, ...flat } = node;
-    const nodes = page.nodes
-      .filter((candidate) => withChildren || candidate.parentId !== node.id)
-      .map((candidate) => (candidate.id === node.id ? (flat as DesignNode) : candidate));
-    const rendered = renderDesignHtml(
-      { ...document, pages: [{ ...page, nodes }] },
-      { pageId: page.id, frameId: node.id },
-      context,
-    );
-    rasters.push({ html: rendered.html, width: rendered.width, height: rendered.height });
-    return rasters.length - 1;
-  };
+  const raster = (node: DesignNode, withChildren: boolean): number =>
+    rasters.push(rasterJob(document, page, node, withChildren, context)) - 1;
   const addRaster = (
     node: DesignNode,
     x: number,

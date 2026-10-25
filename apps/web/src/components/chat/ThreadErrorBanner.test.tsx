@@ -169,4 +169,39 @@ describe("ThreadErrorBanner", () => {
     expect(markup).toContain("h-lh w-4");
     expect(markup).toContain("h-lh self-start");
   });
+
+  it("offers Continue for a failed turn the server can continue, beside dismiss", () => {
+    const markup = renderToStaticMarkup(
+      <ThreadErrorBanner
+        error="The provider could not start this turn. Retry the turn; if it keeps failing, check the provider setup and server logs."
+        errorClass="provider_error"
+        onContinue={() => {}}
+        onDismiss={() => {}}
+      />,
+    );
+    expect(markup).toContain(">Continue</button>");
+    expect(markup).toContain('aria-label="Dismiss error"');
+    const busy = renderToStaticMarkup(
+      <ThreadErrorBanner
+        error="SpecWithCode could not save this turn because the disk is full or the database could not be opened. Free disk space, then press Continue."
+        errorClass="unknown"
+        onContinue={() => {}}
+        continueBusy
+      />,
+    );
+    expect(busy).toMatch(/<button[^>]*disabled=""[^>]*>Continue<\/button>/u);
+  });
+
+  it("offers no Continue without a resumable run or for limits", () => {
+    expect(
+      renderToStaticMarkup(
+        <ThreadErrorBanner error="Provider failed." errorClass="provider_error" />,
+      ),
+    ).not.toContain(">Continue</button>");
+    expect(
+      renderToStaticMarkup(
+        <ThreadErrorBanner error="Limit reached." errorClass="usage_limit" onContinue={() => {}} />,
+      ),
+    ).not.toContain(">Continue</button>");
+  });
 });

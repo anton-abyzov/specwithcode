@@ -32,6 +32,7 @@ import {
 import { useProjects } from "~/state/entities";
 import {
   isArchivedMember,
+  isOrdinaryProjectChoice,
   projectDestinationUnavailableReason,
 } from "~/studio/projectListVisibility";
 import { runOnMachineGroups, type RunOnMachineGroups } from "~/studio/addToMachine";
@@ -186,11 +187,12 @@ export function DraftMachinePicker(props: Props) {
         isThisMachineTarget(choosingEnvironment.entry),
       )
     : null;
+  // Only the person's own projects: no archived project, no project a check or agent made
+  // for itself, and not the machine's "No project" folder, which has its own choice.
   const destinationProjects = projects.filter(
     (project) =>
       project.environmentId === choosingEnvironmentId &&
-      !isArchivedMember(project) &&
-      !isScratchProject(project, scratchWorkspaceRootFor(project.environmentId)),
+      isOrdinaryProjectChoice(project, scratchWorkspaceRootFor),
   );
 
   async function select(target: DraftMachineTarget) {

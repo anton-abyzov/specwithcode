@@ -45,7 +45,9 @@ async function withToolMaintenance(root, operation) {
           try { previous = JSON.parse(maintenanceFs.readFileSync(previousFile, 'utf8')); } catch {}
           if (Number.isSafeInteger(previous?.pid) && previous.pid > 0 && !maintenanceAlive(previous.pid)) {
             // The unique filename belongs only to that owner. Never unlink a replacement owner's file.
-            try { maintenanceFs.unlinkSync(previousFile); } catch (error) { if (error.code !== 'ENOENT') throw error; }
+            // Another contender may be reclaiming the same file: Windows then reports EPERM (delete
+            // pending while a reader holds it) or EBUSY. Leave it to them and retry the lock.
+            try { maintenanceFs.unlinkSync(previousFile); } catch (error) { if (!['ENOENT', 'EPERM', 'EBUSY'].includes(error.code)) throw error; }
           }
         }
         // A concurrent acquirer publishes its owner file with the directory, so this cannot remove it.

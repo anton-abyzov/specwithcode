@@ -10,6 +10,35 @@ export const RAIL_WIDTH = 208;
 export const COMPACT_RAIL_WIDTH = 72;
 export const SIDE_PANEL_WIDTH = 256;
 
+/**
+ * What the editor header shows, by the header's own width: the app sidebar
+ * takes from the window, so window breakpoints would clip Share.
+ */
+export interface HeaderLayout {
+  /** Undo, Redo, History, Export, Implement, Present and the system picker; else in More. */
+  readonly tools: boolean;
+  /** The owner breadcrumb; else "Connect to a project…" moves into More. */
+  readonly crumbs: boolean;
+  /** The save state's words beside its dot. */
+  readonly saveLabel: boolean;
+  /** Room for the wider system picker and save state. */
+  readonly roomy: boolean;
+}
+
+export const HEADER_TOOLS_WIDTH = 720;
+export const HEADER_CRUMBS_WIDTH = 880;
+export const HEADER_SAVE_LABEL_WIDTH = 1024;
+export const HEADER_ROOMY_WIDTH = 1280;
+
+export function headerLayout(width: number): HeaderLayout {
+  return {
+    tools: width >= HEADER_TOOLS_WIDTH,
+    crumbs: width >= HEADER_CRUMBS_WIDTH,
+    saveLabel: width >= HEADER_SAVE_LABEL_WIDTH,
+    roomy: width >= HEADER_ROOMY_WIDTH,
+  };
+}
+
 export interface EditorLayout {
   /** "overlay": the thread does not fit beside the canvas and opens over it on request. */
   readonly chat: "column" | "overlay" | "hidden";

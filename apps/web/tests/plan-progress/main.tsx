@@ -25,7 +25,7 @@ import {
   displayFolder,
 } from "../../src/studio/threadPlanProgress";
 import { applyThemePalette } from "../../src/themePalette";
-import { useUnplannedNoticeShown } from "../../src/studio/unplannedNotice";
+import { useUnplannedNotice } from "../../src/studio/unplannedNotice";
 import "../../src/components/studio/shell/shell.css";
 import "./fixture.css";
 
@@ -123,6 +123,11 @@ const incrementView = deriveThreadPlanView({ increment, todoSteps })!;
 const todoView = deriveThreadPlanView({ increment: null, todoSteps })!;
 const emptyView = deriveThreadPlanView({ increment: emptyIncrement, todoSteps: null })!;
 const unplannedView = deriveThreadPlanView({ increment: null, todoSteps: null, unplanned: true })!;
+// Bound to an increment whose ledger cannot be read: the agent's checklist fills in.
+const unreadableView = deriveThreadPlanView({
+  increment: { ...emptyIncrement, readable: false },
+  todoSteps,
+})!;
 const rows = [
   { title: "Studio plan and progress card", plan: compactThreadPlan(increment, null) },
   { title: "Connect launches to increments", plan: compactThreadPlan(emptyIncrement, null) },
@@ -141,10 +146,19 @@ const rows = [
   },
 ];
 
+const anotherUnplanned = new URLSearchParams(window.location.search).has("another");
+const unplannedThreadIds: ReadonlySet<string> = new Set([
+  "thread-billing-export",
+  "thread-login-redirect",
+  ...(anotherUnplanned ? ["thread-export-timeout"] : []),
+]);
+
 function Fixture() {
   const [unplannedOnly, setUnplannedOnly] = useState(false);
-  // The real per-project setting, saved in this page's localStorage.
-  const [noticeShown, setNoticeShown] = useUnplannedNoticeShown("env-fixture", "project-fixture");
+  // The real per-project setting and acknowledgments, saved in this page's
+  // localStorage. `?another=1` adds a thread the notice has not counted yet.
+  const notice = useUnplannedNotice("env-fixture", "project-fixture", unplannedThreadIds);
+  const noticeShown = notice.shown;
   return (
     <main className="mx-auto min-h-screen max-w-3xl space-y-8 p-6">
       <section data-testid="increment-card" className="space-y-1.5">
@@ -184,6 +198,19 @@ function Fixture() {
           defaultExpanded
         />
       </section>
+      <section data-testid="unreadable-card" className="space-y-1.5">
+        <h2 className="text-sm font-semibold text-muted-foreground">
+          Increment that cannot be read, with the agent&apos;s checklist
+        </h2>
+        <ThreadPlanCard
+          plan={unreadableView}
+          onOpenPath={null}
+          onOpenDocument={openInViewer}
+          onLinkIncrement={() => undefined}
+          onUnlinkIncrement={() => undefined}
+          defaultExpanded
+        />
+      </section>
       <section data-testid="unplanned-card" className="space-y-1.5">
         <h2 className="text-sm font-semibold text-muted-foreground">
           Thread that changed code without an increment
@@ -209,7 +236,7 @@ function Fixture() {
                 <MenuCheckboxItem
                   variant="switch"
                   checked={noticeShown}
-                  onCheckedChange={(checked) => setNoticeShown(checked)}
+                  onCheckedChange={(checked) => notice.setShown(checked)}
                   data-unplanned-notice-toggle
                 >
                   Note threads without an increment
@@ -217,14 +244,14 @@ function Fixture() {
               </MenuGroup>
             </MenuPopup>
           </Menu>
-          {noticeShown ? (
+          {notice.fresh.size > 0 ? (
             <UnplannedThreadsFilter
-              count={2}
+              count={notice.fresh.size}
               pressed={unplannedOnly}
               onToggle={() => setUnplannedOnly((on) => !on)}
               onHide={() => {
                 setUnplannedOnly(false);
-                setNoticeShown(false);
+                notice.dismiss();
               }}
             />
           ) : null}
@@ -233,20 +260,73 @@ function Fixture() {
           <div key={row.title} className="sws-thread-text rounded-lg border p-3">
             <strong>{row.title}</strong>
             <span className="sws-thread-meta">
-              <span>Working</span>
-              <span>Opus 5.5</span>
-              {row.plan ? <PlanProgressChip plan={row.plan} /> : null}
+              <span className="sws-thread-meta-lead">
+                <span className="sws-thread-status" data-tone="working">
+                  Working
+                </span>
+                <span className="sws-model">Opus 5.5</span>
+              </span>
+              <span className="sws-thread-meta-rest">
+                {row.plan ? <PlanProgressChip plan={row.plan} /> : null}
+              </span>
             </span>
           </div>
         ))}
+        {/* The case that read as an increment: its own checklist, and no increment. */}
+        <div
+          className="sws-thread-text rounded-lg border p-3"
+          data-testid="checklist-unplanned-row"
+        >
+          <strong>Tidy the billing export</strong>
+          <span className="sws-thread-meta">
+            <span className="sws-thread-meta-lead">
+              <span>Idle</span>
+              <span className="sws-model">GPT-5.4</span>
+            </span>
+            <span className="sws-thread-meta-rest">
+              <PlanProgressChip
+                plan={{
+                  source: "todo",
+                  label: null,
+                  completed: 4,
+                  total: 4,
+                  current: null,
+                  next: null,
+                }}
+              />
+              {noticeShown ? <UnplannedThreadChip /> : null}
+            </span>
+          </span>
+        </div>
         <div className="sws-thread-text rounded-lg border p-3">
           <strong>Hotfix the login redirect</strong>
           <span className="sws-thread-meta">
-            <span>Idle</span>
-            <span>GPT-5.4</span>
-            {noticeShown ? <UnplannedThreadChip /> : null}
+            <span className="sws-thread-meta-lead">
+              <span>Idle</span>
+              <span className="sws-model">GPT-5.4</span>
+            </span>
+            <span className="sws-thread-meta-rest">
+              {noticeShown ? <UnplannedThreadChip /> : null}
+            </span>
           </span>
         </div>
+        {anotherUnplanned ? (
+          <div
+            className="sws-thread-text rounded-lg border p-3"
+            data-testid="another-unplanned-row"
+          >
+            <strong>Patch the export timeout</strong>
+            <span className="sws-thread-meta">
+              <span className="sws-thread-meta-lead">
+                <span>Idle</span>
+                <span className="sws-model">Opus 5.5</span>
+              </span>
+              <span className="sws-thread-meta-rest">
+                {noticeShown ? <UnplannedThreadChip /> : null}
+              </span>
+            </span>
+          </div>
+        ) : null}
       </section>
     </main>
   );

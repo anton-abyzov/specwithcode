@@ -186,6 +186,65 @@ describe("serverSettings helpers", () => {
     expect(resolveProjectAgentBrowserAccess(enabled, otherProjectId)).toBe(false);
   });
 
+  it("applies per-key project override changes against the saved entry", () => {
+    const projectId = ProjectId.make("project");
+    const saved = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      projectSettingsOverrides: {
+        [projectId]: { enableAgentBrowserAccess: false, defaultModelSelection: null },
+      },
+    });
+    // Both planned from the same snapshot: neither names the other's key.
+    const first = applyServerSettingsPatch(saved, {
+      projectSettingsOverrideChanges: { [projectId]: { set: { defaultAutoPull: true } } },
+    });
+    const second = applyServerSettingsPatch(first, {
+      projectSettingsOverrideChanges: {
+        [projectId]: { set: { removeAgentCreditsOnMerge: true }, clear: ["defaultModelSelection"] },
+      },
+    });
+    expect(second.projectSettingsOverrides[projectId]).toEqual({
+      enableAgentBrowserAccess: false,
+      defaultAutoPull: true,
+      removeAgentCreditsOnMerge: true,
+    });
+    expect(second.projectAutoPullOverrides[projectId]).toBe(true);
+
+    const emptied = applyServerSettingsPatch(second, {
+      projectSettingsOverrideChanges: {
+        [projectId]: {
+          clear: [
+            "enableAgentBrowserAccess",
+            "defaultAutoPull",
+            "removeAgentCreditsOnMerge",
+            "keyFromANewerClient",
+          ],
+        },
+      },
+    });
+    expect(emptied.projectSettingsOverrides).toEqual({});
+    expect(emptied.projectAutoPullOverrides[projectId]).toBeUndefined();
+  });
+
+  it("stores null for a nullable key and applies changes after a same-patch entry", () => {
+    const projectId = ProjectId.make("project");
+    const nulled = applyServerSettingsPatch(DEFAULT_SERVER_SETTINGS, {
+      projectSettingsOverrides: { [projectId]: { defaultAutoPull: true } },
+      projectSettingsOverrideChanges: { [projectId]: { set: { defaultModelSelection: null } } },
+    });
+    expect(nulled.projectSettingsOverrides[projectId]).toEqual({
+      defaultAutoPull: true,
+      defaultModelSelection: null,
+    });
+    // `set` wins over `clear` for the same key.
+    expect(
+      applyServerSettingsPatch(nulled, {
+        projectSettingsOverrideChanges: {
+          [projectId]: { set: { defaultAutoPull: false }, clear: ["defaultAutoPull"] },
+        },
+      }).projectSettingsOverrides[projectId],
+    ).toEqual({ defaultAutoPull: false, defaultModelSelection: null });
+  });
+
   it("preserves other projects' boolean overrides across separate updates and resets", () => {
     const firstProjectId = ProjectId.make("first-project");
     const secondProjectId = ProjectId.make("second-project");

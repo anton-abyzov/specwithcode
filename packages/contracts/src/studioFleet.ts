@@ -146,6 +146,8 @@ export type StudioFleetAddResult = typeof StudioFleetAddResult.Type;
  * invitation for another machine's Add a machine, as `fleet invite` does.
  */
 export const StudioFleetInviteInput = exactStruct({
+  /** Explicit owner approval of the machine receiving this invitation. Never inferred from its label. */
+  coordinatorEnvironmentId: EnvironmentId,
   /** Name shown for this machine on the other one. Defaults to this machine's own name. */
   label: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(80))),
   /** How long the other machine may use the invitation. Default 365. */

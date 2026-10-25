@@ -28,7 +28,9 @@ function quietRunningThread(
   });
 }
 
-const request = (kind: NonNullable<OrchestrationV2ThreadShell["pendingRuntimeRequest"]>["kind"]) => ({
+const request = (
+  kind: NonNullable<OrchestrationV2ThreadShell["pendingRuntimeRequest"]>["kind"],
+) => ({
   id: RuntimeRequestId.make("request-1"),
   kind,
   createdAt: v2Now,
@@ -65,13 +67,21 @@ describe("threadRunHealth", () => {
 
   it("goes by the shell flags when the thread carries no request summary", () => {
     const { source: _source, ...withoutSource } = quietRunningThread(null);
-    expect(
-      threadRunHealth({ ...withoutSource, hasPendingApprovals: true }, nowMs),
-    ).toMatchObject({ state: "waiting", awaitingPerson: "approval", waitingMs: hours(15) });
+    expect(threadRunHealth({ ...withoutSource, hasPendingApprovals: true }, nowMs)).toMatchObject({
+      state: "waiting",
+      awaitingPerson: "approval",
+      waitingMs: hours(15),
+    });
   });
 
   it("reads every approval kind as your approval", () => {
-    for (const kind of ["command", "file-read", "file-change", "permission", "mcp-elicitation"] as const) {
+    for (const kind of [
+      "command",
+      "file-read",
+      "file-change",
+      "permission",
+      "mcp-elicitation",
+    ] as const) {
       expect(threadRunHealth(quietRunningThread(request(kind)), nowMs)).toMatchObject({
         state: "waiting",
         label: "your approval",
@@ -126,5 +136,27 @@ describe("threadAwaitingPerson", () => {
     expect(kindOf("auth_refresh")).toBe("sign-in");
     expect(kindOf("dynamic_tool_call")).toBeNull();
     expect(threadAwaitingPerson(quietRunningThread(null))).toBeNull();
+  });
+
+  it("keeps a stalled turn stalled while messages queued behind it bump the thread", () => {
+    // Child threads reported a minute ago (updatedAt), but the run itself has
+    // sent nothing for two and a half hours.
+    const thread = presentThreadShell(environmentId, {
+      ...v2ThreadShell,
+      latestRunId: RunId.make("run-1"),
+      activeRunId: RunId.make("run-1"),
+      status: "running",
+      pendingRuntimeRequest: null,
+      activeWork: null,
+      activeRunActivityAt: v2Now,
+      updatedAt: DateTime.makeUnsafe(nowMs - 60_000),
+    });
+    expect(threadRunHealth(thread, nowMs)).toMatchObject({
+      state: "stalled",
+      idleMs: hours(15),
+    });
+    // A server that does not report run activity keeps the old clock.
+    const { activeRunActivityAt: _omit, ...older } = thread;
+    expect(threadRunHealth(older, nowMs)).toMatchObject({ state: "working", idleMs: 60_000 });
   });
 });

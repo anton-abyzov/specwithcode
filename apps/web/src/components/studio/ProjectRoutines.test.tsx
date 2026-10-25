@@ -80,7 +80,9 @@ async function render(canOperate = true, admissionBlocked = false, personal = fa
   );
 }
 function button(text: string) {
-  return [...container.querySelectorAll("button")].find((b) => b.textContent === text)!;
+  return [...container.querySelectorAll("button")].find(
+    (b) => b.textContent === text || b.getAttribute("aria-label") === text,
+  )!;
 }
 async function click(text: string) {
   await act(async () => button(text).click());
@@ -208,7 +210,7 @@ describe("Personal routines", () => {
     expect(container.textContent).toContain("/fixtures/example-household/receipts");
     expect(container.textContent).toContain("tax/{period}-prep.md");
     expect(button("Pause")).toBeUndefined();
-    await click("Open its thread");
+    await click("Open thread");
     expect(openThread).toHaveBeenCalledWith("routine-thread-1");
   });
   it("saves a template as a hand-run, prepare-only routine with its own thread", async () => {
@@ -241,6 +243,31 @@ describe("Personal routines", () => {
       prepareOnly: true,
     });
     expect(state.refresh).toHaveBeenCalled();
+  });
+  it("names each routine's thread and opens the one it has", async () => {
+    state.tasks = [
+      {
+        id: "own",
+        projectId: "project",
+        title: "SEO watch",
+        enabled: true,
+        schedule: { type: "manual" },
+        ownThread: true,
+        threadId: null,
+      },
+      {
+        id: "worker",
+        projectId: "project",
+        title: "CI wake",
+        enabled: true,
+        schedule: { type: "manual" },
+        threadId: "worker-thread",
+      },
+    ];
+    await render(true, false, true);
+    expect(container.textContent).toContain("Own thread");
+    await click("Open thread");
+    expect(openThread).toHaveBeenCalledWith("worker-thread");
   });
   it("offers no templates outside a personal project", async () => {
     await render();

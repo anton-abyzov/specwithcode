@@ -5,13 +5,16 @@ import {
   type ProjectId,
   type RuntimeMode,
 } from "@specweave-studio/contracts";
-import { resolveProjectSettings } from "@specweave-studio/shared/projectSettings";
-import { useEnvironmentSettings } from "../../hooks/useSettings";
+import {
+  projectSettingsOverrideChangesPatch,
+  resolveProjectSettings,
+} from "@specweave-studio/shared/projectSettings";
+import { useEnvironmentSettings, useProjectOverrideWriteMode } from "../../hooks/useSettings";
 import { useEnvironmentScope } from "../../state/session";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { runtimeModeConfig, runtimeModeOptions } from "../chat/runtimeModeConfig";
-import { ZapIcon } from "lucide-react";
+import { CircleAlertIcon, Undo2Icon } from "lucide-react";
 import type { ModelLabel } from "../../studio/shellModel";
 import { Tip } from "./shell/Tip";
 
@@ -31,6 +34,7 @@ export function CoordinatorAccessPicker({
   coordinatorRuntimeMode?: RuntimeMode | null;
 }) {
   const settings = useEnvironmentSettings(environmentId);
+  const writeMode = useProjectOverrideWriteMode(environmentId);
   const value =
     coordinatorRuntimeMode ??
     resolveProjectSettings(settings, projectId).settings.defaultRuntimeMode;
@@ -41,7 +45,7 @@ export function CoordinatorAccessPicker({
   const inFlight = useRef(false);
   const attemptedMode = useRef(value);
   async function change(mode: RuntimeMode) {
-    if (!allowed || inFlight.current) return;
+    if (!allowed || inFlight.current || writeMode === null) return;
     inFlight.current = true;
     attemptedMode.current = mode;
     setPending(true);
@@ -50,7 +54,12 @@ export function CoordinatorAccessPicker({
       const result = await save({
         environmentId,
         input: {
-          patch: { projectSettingsOverrides: { [projectId]: { defaultRuntimeMode: mode } } },
+          // Only this key: the project's other overrides stay as saved.
+          patch: projectSettingsOverrideChangesPatch(
+            settings,
+            { [projectId]: { set: { defaultRuntimeMode: mode } } },
+            writeMode === "per-key",
+          ),
         },
       });
       if (result._tag === "Failure")
@@ -69,7 +78,7 @@ export function CoordinatorAccessPicker({
           aria-label="Project permissions"
           className="sws-model-trigger sws-access-trigger max-w-40 bg-transparent"
           value={value}
-          disabled={!allowed || pending}
+          disabled={!allowed || pending || writeMode === null}
           aria-busy={pending}
           onChange={(event) => void change(event.target.value as RuntimeMode)}
         >
@@ -86,7 +95,7 @@ export function CoordinatorAccessPicker({
           className="text-destructive-foreground"
           role="alert"
           onClick={() => void change(attemptedMode.current)}
-          disabled={pending}
+          disabled={pending || writeMode === null}
         >
           {error}
         </button>
@@ -120,8 +129,7 @@ export function CoordinatorComposerControls({
 }) {
   return (
     <>
-      {fallback ? (
-        // The saved model stays saved; this line names what actually runs, then the pick.
+      {fallback && (fallback.onSwitchBack || fallback.spent) ? (
         <p
           className="sws-model-fallback"
           role="status"
@@ -129,27 +137,11 @@ export function CoordinatorComposerControls({
           data-model-fallback-live={fallback.live ? "" : undefined}
           data-model-fallback-spent={fallback.spent ? "" : undefined}
         >
-          <ZapIcon aria-hidden />
+          {fallback.spent ? <CircleAlertIcon aria-hidden /> : <Undo2Icon aria-hidden />}
           <span className="sws-model-fallback-text">
-            <span className="sws-model-fallback-now" data-model-now="">
-              <span className="sws-model-fallback-label">
-                {fallback.live ? "Running now on" : "Now on"}
-              </span>{" "}
-              <strong>{fallback.now.full}</strong>
-              {fallback.spent ? ", which is out of usage too" : ""}.
-            </span>{" "}
-            <span data-model-pick="">
-              <span className="sws-model-fallback-label">Your pick:</span> {fallback.saved.full}
-              {fallback.reason ? `, ${fallback.reason}` : ""}.
-            </span>
-            {fallback.reason ? (
-              <>
-                {" "}
-                <span className="sws-model-fallback-note">
-                  The next turn after it has room goes back to {fallback.saved.provider} on its own.
-                </span>
-              </>
-            ) : null}
+            {fallback.spent
+              ? `${fallback.now.full} is out of usage too; nothing else can run the coordinator yet.`
+              : `Your pick, ${fallback.saved.full}, has room again.`}
           </span>
           {fallback.onSwitchBack ? (
             <Tip
@@ -162,14 +154,23 @@ export function CoordinatorComposerControls({
                 aria-busy={fallback.switching}
                 onClick={fallback.onSwitchBack}
               >
-                Switch back to {fallback.saved.provider}
+                {/* Name what differs: the harness, else the model, else the whole pick. */}
+                Switch back to{" "}
+                {fallback.saved.provider !== fallback.now.provider
+                  ? fallback.saved.provider
+                  : fallback.saved.model !== fallback.now.model
+                    ? fallback.saved.model
+                    : fallback.saved.full}
               </button>
             </Tip>
           ) : null}
         </p>
       ) : null}
       {/* Model, effort and access share one left-aligned row, so resizing never moves them. */}
-      <div className="sws-composer-controls" data-coordinator-composer-controls="">
+      <div
+        className="sws-composer-controls @container/composer-surface"
+        data-coordinator-composer-controls=""
+      >
         {children}
         <CoordinatorAccessPicker
           key={`${project.environmentId}:${project.id}`}

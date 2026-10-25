@@ -83,7 +83,15 @@ function makeController(input: {
   return { controller, processes, signals };
 }
 
-const server = () => identity(process.pid, 1, process.pid, process.pid, "server");
+/**
+ * The SpecWithCode process in synthetic process tables, passed to the code under
+ * test as `currentPid`. It is not `process.pid`: Windows runner PIDs are small
+ * multiples of 4 (1076 on one run), so the real PID can equal a synthetic parent
+ * and turn it into "this process", which is never signalled. Above every
+ * synthetic PID below (the largest is 104_999).
+ */
+const SERVER_PID = 1_999_999_996;
+const server = () => identity(SERVER_PID, 1, SERVER_PID, SERVER_PID, "server");
 
 function processExists(pid: number): boolean {
   try {
@@ -93,6 +101,110 @@ function processExists(pid: number): boolean {
     return false;
   }
 }
+
+/** More than 64 live parents (1_000-1_129, children at pid + 10_000) behind 5_000 tombstones. */
+const rotateLiveParents = () =>
+  Effect.gen(function* () {
+    const parents = Array.from({ length: 130 }, (_, index) =>
+      identity(1_000 + index, 100, 1_000 + index, 1_000 + index),
+    );
+    let childListReads = 0;
+    let identityCalls = 0;
+    let snapshotCalls = 0;
+    const fixture = makeController({
+      processes: [server(), identity(100, SERVER_PID, 100, 100)],
+    });
+    const controller: AcpPosixProcessTreeController = {
+      ...fixture.controller,
+      childPidsOf: (pid) => {
+        childListReads += 1;
+        return fixture.controller.childPidsOf(pid);
+      },
+      identity: (pid) => {
+        identityCalls += 1;
+        return fixture.controller.identity(pid);
+      },
+      snapshot: () => {
+        snapshotCalls += 1;
+        return fixture.controller.snapshot();
+      },
+    };
+    const frontier = new Map<number, AcpOwnedPosixProcess>();
+    const childQueues = new Map<number, Array<number>>();
+    const ledger = new Map<string, AcpOwnedPosixProcess>();
+    const root: AcpPosixOwnershipRoot = { value: undefined };
+    for (let index = 0; index < 5_000; index += 1) {
+      const tombstone = identity(100_000 + index, 1, 100_000 + index, 100_000 + index);
+      ledger.set(`${tombstone.pid}:${tombstone.startTime}`, {
+        ...tombstone,
+        parentExecutable: undefined,
+        parentStartTime: "",
+      });
+    }
+    observePosixOwnershipLedger({
+      childQueues,
+      controller,
+      frontier,
+      ledger,
+      root,
+      rootPid: 100,
+    });
+    for (const parent of parents) {
+      fixture.processes.set(parent.pid, parent);
+      fixture.processes.set(
+        parent.pid + 10_000,
+        identity(parent.pid + 10_000, parent.pid, parent.pgid, parent.sid),
+      );
+    }
+    let passes = 0;
+    while (
+      !parents.every((parent) =>
+        [...ledger.values()].some((owned) => owned.pid === parent.pid + 10_000),
+      ) &&
+      passes < 40
+    ) {
+      childListReads = 0;
+      identityCalls = 0;
+      observePosixOwnershipLedger({
+        childQueues,
+        controller,
+        frontier,
+        ledger,
+        maxProcesses: 64,
+        root,
+        rootPid: 100,
+      });
+      expect(identityCalls + childListReads).toBeLessThanOrEqual(64);
+      passes += 1;
+    }
+
+    const missing = parents.filter(
+      (parent) => ![...ledger.values()].some((owned) => owned.pid === parent.pid + 10_000),
+    );
+    expect(missing, `missing after ${passes} passes`).toEqual([]);
+    expect(passes).toBeGreaterThan(2);
+    yield* terminatePosixOwnedProcessTree({
+      currentPid: SERVER_PID,
+      controller,
+      grace: 0,
+      ledger,
+      rootPid: 100,
+    });
+    expect(snapshotCalls).toBe(10);
+    expect(fixture.processes.size).toBe(1);
+  });
+
+/** Runs `effect` while `process.pid` reads `pid`, as on a runner whose real PID is that value. */
+const withProcessPid = <A, E, R>(pid: number, effect: Effect.Effect<A, E, R>) =>
+  Effect.acquireUseRelease(
+    Effect.sync(() => {
+      const real = Object.getOwnPropertyDescriptor(process, "pid")!;
+      Object.defineProperty(process, "pid", { ...real, value: pid });
+      return real;
+    }),
+    () => effect,
+    (real) => Effect.sync(() => Object.defineProperty(process, "pid", real)),
+  );
 
 describe("terminatePosixOwnedProcessTree", () => {
   it("parses unified cgroup paths and escaped cgroup2 mountinfo", () => {
@@ -491,10 +603,10 @@ describe("terminatePosixOwnedProcessTree", () => {
 
   it("sends TERM only to the exact captured root while it remains in the child cgroup", () => {
     const fixture = makeController({
-      processes: [server(), identity(100, process.pid, 100, 100, "owned")],
+      processes: [server(), identity(100, SERVER_PID, 100, 100, "owned")],
     });
     const ownedRoot: AcpOwnedPosixProcess = {
-      ...identity(100, process.pid, 100, 100, "owned"),
+      ...identity(100, SERVER_PID, 100, 100, "owned"),
       parentExecutable: server().executable,
       parentStartTime: server().startTime,
     };
@@ -512,13 +624,13 @@ describe("terminatePosixOwnedProcessTree", () => {
     expect(fixture.signals).toEqual(["process:100:SIGTERM"]);
 
     const reused = makeController({
-      processes: [server(), identity(100, process.pid, 100, 100, "reused")],
+      processes: [server(), identity(100, SERVER_PID, 100, 100, "reused")],
     });
     signalLinuxCgroupRootTerm({ controller: reused.controller, lease, root });
     expect(reused.signals).toEqual([]);
 
     const migrated = makeController({
-      processes: [server(), identity(100, process.pid, 100, 100, "owned")],
+      processes: [server(), identity(100, SERVER_PID, 100, 100, "owned")],
     });
     signalLinuxCgroupRootTerm({
       controller: migrated.controller,
@@ -583,7 +695,7 @@ describe("terminatePosixOwnedProcessTree", () => {
     Effect.gen(function* () {
       const beforeExec = { ...identity(110, 100, 110, 110), executable: "/provider/fork" };
       const fixture = makeController({
-        processes: [server(), identity(100, process.pid, 100, 100), beforeExec],
+        processes: [server(), identity(100, SERVER_PID, 100, 100), beforeExec],
       });
       const frontier = new Map<number, AcpOwnedPosixProcess>();
       const childQueues = new Map<number, Array<number>>();
@@ -611,6 +723,7 @@ describe("terminatePosixOwnedProcessTree", () => {
         "/usr/bin/bash",
       );
       yield* terminatePosixOwnedProcessTree({
+        currentPid: SERVER_PID,
         controller: fixture.controller,
         grace: 0,
         ledger,
@@ -645,7 +758,7 @@ describe("terminatePosixOwnedProcessTree", () => {
     expect(capture()).toMatchObject({
       detail: "ACP process 100 exited before its ownership ledger was captured",
     });
-    fixture.processes.set(100, identity(100, process.pid, 100, 100, "reused"));
+    fixture.processes.set(100, identity(100, SERVER_PID, 100, 100, "reused"));
     expect(capture()).toMatchObject({
       detail: "ACP process 100 exited before its ownership ledger was captured",
     });
@@ -653,94 +766,12 @@ describe("terminatePosixOwnedProcessTree", () => {
   });
 
   it.live("rotates more than 64 live parents without scanning retained tombstones", () =>
-    Effect.gen(function* () {
-      const parents = Array.from({ length: 130 }, (_, index) =>
-        identity(1_000 + index, 100, 1_000 + index, 1_000 + index),
-      );
-      let childListReads = 0;
-      let identityCalls = 0;
-      let snapshotCalls = 0;
-      const fixture = makeController({
-        processes: [server(), identity(100, process.pid, 100, 100)],
-      });
-      const controller: AcpPosixProcessTreeController = {
-        ...fixture.controller,
-        childPidsOf: (pid) => {
-          childListReads += 1;
-          return fixture.controller.childPidsOf(pid);
-        },
-        identity: (pid) => {
-          identityCalls += 1;
-          return fixture.controller.identity(pid);
-        },
-        snapshot: () => {
-          snapshotCalls += 1;
-          return fixture.controller.snapshot();
-        },
-      };
-      const frontier = new Map<number, AcpOwnedPosixProcess>();
-      const childQueues = new Map<number, Array<number>>();
-      const ledger = new Map<string, AcpOwnedPosixProcess>();
-      const root: AcpPosixOwnershipRoot = { value: undefined };
-      for (let index = 0; index < 5_000; index += 1) {
-        const tombstone = identity(100_000 + index, 1, 100_000 + index, 100_000 + index);
-        ledger.set(`${tombstone.pid}:${tombstone.startTime}`, {
-          ...tombstone,
-          parentExecutable: undefined,
-          parentStartTime: "",
-        });
-      }
-      observePosixOwnershipLedger({
-        childQueues,
-        controller,
-        frontier,
-        ledger,
-        root,
-        rootPid: 100,
-      });
-      for (const parent of parents) {
-        fixture.processes.set(parent.pid, parent);
-        fixture.processes.set(
-          parent.pid + 10_000,
-          identity(parent.pid + 10_000, parent.pid, parent.pgid, parent.sid),
-        );
-      }
-      let passes = 0;
-      while (
-        !parents.every((parent) =>
-          [...ledger.values()].some((owned) => owned.pid === parent.pid + 10_000),
-        ) &&
-        passes < 40
-      ) {
-        childListReads = 0;
-        identityCalls = 0;
-        observePosixOwnershipLedger({
-          childQueues,
-          controller,
-          frontier,
-          ledger,
-          maxProcesses: 64,
-          root,
-          rootPid: 100,
-        });
-        expect(identityCalls + childListReads).toBeLessThanOrEqual(64);
-        passes += 1;
-      }
+    rotateLiveParents(),
+  );
 
-      const missing = parents.filter(
-        (parent) => ![...ledger.values()].some((owned) => owned.pid === parent.pid + 10_000),
-      );
-      expect(missing, `missing after ${passes} passes`).toEqual([]);
-      expect(passes).toBeGreaterThan(2);
-      yield* terminatePosixOwnedProcessTree({
-        controller,
-        grace: 0,
-        ledger,
-        rootPid: 100,
-      });
-      expect(snapshotCalls).toBe(10);
-      expect(fixture.processes.size).toBe(1);
-    }),
+  // Windows server-4 run 40142989845 had process.pid 1076, a synthetic parent here.
+  it.live("rotates live parents when this process's real PID equals a synthetic parent", () =>
+    withProcessPid(1_076, rotateLiveParents()),
   );
 
   it.live("polls only known descendants and stops with its scope", () =>
@@ -749,7 +780,7 @@ describe("terminatePosixOwnedProcessTree", () => {
       let identityCalls = 0;
       let snapshotCalls = 0;
       const fixture = makeController({
-        processes: [server(), identity(100, process.pid, 100, 100), identity(110, 100, 110, 110)],
+        processes: [server(), identity(100, SERVER_PID, 100, 100), identity(110, 100, 110, 110)],
       });
       const controller: AcpPosixProcessTreeController = {
         ...fixture.controller,
@@ -816,7 +847,7 @@ describe("terminatePosixOwnedProcessTree", () => {
       const fixture = makeController({
         processes: [
           server(),
-          identity(100, process.pid, 100, 100),
+          identity(100, SERVER_PID, 100, 100),
           identity(110, 100, 110, 110),
           identity(115, 110, 115, 110),
           identity(120, 110, 120, 120),
@@ -832,6 +863,7 @@ describe("terminatePosixOwnedProcessTree", () => {
       });
 
       yield* terminatePosixOwnedProcessTree({
+        currentPid: SERVER_PID,
         controller: fixture.controller,
         grace: 0,
         rootPid: 100,
@@ -854,7 +886,7 @@ describe("terminatePosixOwnedProcessTree", () => {
       const fixture = makeController({
         processes: [
           server(),
-          identity(100, process.pid, 100, 100),
+          identity(100, SERVER_PID, 100, 100),
           identity(110, 100, 110, 110),
           identity(111, 110, 110, 110),
           unrelated,
@@ -866,6 +898,7 @@ describe("terminatePosixOwnedProcessTree", () => {
       });
 
       yield* terminatePosixOwnedProcessTree({
+        currentPid: SERVER_PID,
         controller: fixture.controller,
         grace: 0,
         rootPid: 100,
@@ -876,39 +909,42 @@ describe("terminatePosixOwnedProcessTree", () => {
     }),
   );
 
-  it.live("re-admits a still-owned child after PID reuse and never signals the Studio session", () =>
-    Effect.gen(function* () {
-      const reused = identity(110, 100, 110, 110, "reused");
-      const fixture = makeController({
-        processes: [
-          server(),
-          identity(100, process.pid, 100, 100),
-          identity(110, 100, 110, 110, "owned"),
-          identity(120, 100, 120, process.pid),
-        ],
-        onProcess: (processes, pid) => {
-          if (pid === 110) processes.set(110, reused);
-          else processes.delete(pid);
-        },
-      });
+  it.live(
+    "re-admits a still-owned child after PID reuse and never signals the Studio session",
+    () =>
+      Effect.gen(function* () {
+        const reused = identity(110, 100, 110, 110, "reused");
+        const fixture = makeController({
+          processes: [
+            server(),
+            identity(100, SERVER_PID, 100, 100),
+            identity(110, 100, 110, 110, "owned"),
+            identity(120, 100, 120, SERVER_PID),
+          ],
+          onProcess: (processes, pid) => {
+            if (pid === 110) processes.set(110, reused);
+            else processes.delete(pid);
+          },
+        });
 
-      const result = yield* Effect.exit(
-        terminatePosixOwnedProcessTree({
-          controller: fixture.controller,
-          grace: 0,
-          rootPid: 100,
-        }),
-      );
+        const result = yield* Effect.exit(
+          terminatePosixOwnedProcessTree({
+            currentPid: SERVER_PID,
+            controller: fixture.controller,
+            grace: 0,
+            rootPid: 100,
+          }),
+        );
 
-      // PID 110 morphs to a new identity under the owned root and never exits, so
-      // teardown fails closed after re-admitting and re-signalling the live child.
-      expect(Exit.isFailure(result)).toBe(true);
-      expect(fixture.processes.get(110)).toEqual(reused);
-      expect(
-        fixture.signals.filter((entry) => entry.startsWith("process:110:")).length,
-      ).toBeGreaterThan(0);
-      expect(fixture.signals.some((entry) => entry.includes(":120:"))).toBe(false);
-    }),
+        // PID 110 morphs to a new identity under the owned root and never exits, so
+        // teardown fails closed after re-admitting and re-signalling the live child.
+        expect(Exit.isFailure(result)).toBe(true);
+        expect(fixture.processes.get(110)).toEqual(reused);
+        expect(
+          fixture.signals.filter((entry) => entry.startsWith("process:110:")).length,
+        ).toBeGreaterThan(0);
+        expect(fixture.signals.some((entry) => entry.includes(":120:"))).toBe(false);
+      }),
   );
 
   it.live("does not treat zombie residual entries as teardown survivors", () =>
@@ -925,7 +961,7 @@ describe("terminatePosixOwnedProcessTree", () => {
       };
       expect(posixProcessIsZombie(withoutState)).toBe(false);
 
-      const root = identity(100, process.pid, 100, 100);
+      const root = identity(100, SERVER_PID, 100, 100);
       const zombieChild = identity(110, 100, 110, 110, "110", "Z");
       const fixture = makeController({
         processes: [server(), root, zombieChild],
@@ -937,6 +973,7 @@ describe("terminatePosixOwnedProcessTree", () => {
         },
       });
       yield* terminatePosixOwnedProcessTree({
+        currentPid: SERVER_PID,
         controller: fixture.controller,
         grace: 0,
         rootPid: 100,
@@ -954,10 +991,10 @@ describe("terminatePosixOwnedProcessTree", () => {
       parentStartTime: "100",
     };
     const liveChild = identity(200, 100, 200, 200, "live-child");
-    const root = identity(100, process.pid, 100, 100);
+    const root = identity(100, SERVER_PID, 100, 100);
     const ownedRoot: AcpOwnedPosixProcess = {
       ...root,
-      parentExecutable: `/proc/${process.pid}/exe`,
+      parentExecutable: `/proc/${SERVER_PID}/exe`,
       parentStartTime: "server",
     };
     const ledger = new Map<string, AcpOwnedPosixProcess>([
@@ -996,10 +1033,10 @@ describe("terminatePosixOwnedProcessTree", () => {
       parentStartTime: "100",
     };
     const liveChild = identity(200, 100, 200, 200, "live-child");
-    const root = identity(100, process.pid, 100, 100);
+    const root = identity(100, SERVER_PID, 100, 100);
     const ownedRoot: AcpOwnedPosixProcess = {
       ...root,
-      parentExecutable: `/proc/${process.pid}/exe`,
+      parentExecutable: `/proc/${SERVER_PID}/exe`,
       parentStartTime: "server",
     };
     const ledger = new Map<string, AcpOwnedPosixProcess>([
@@ -1025,7 +1062,7 @@ describe("terminatePosixOwnedProcessTree", () => {
       const fixture = makeController({
         processes: [
           server(),
-          identity(100, process.pid, 100, 100),
+          identity(100, SERVER_PID, 100, 100),
           identity(110, 100, 110, 110),
           identity(111, 110, 111, 111),
         ],
@@ -1041,6 +1078,7 @@ describe("terminatePosixOwnedProcessTree", () => {
       });
 
       yield* terminatePosixOwnedProcessTree({
+        currentPid: SERVER_PID,
         controller: fixture.controller,
         grace: 0,
         rootPid: 100,
@@ -1056,7 +1094,7 @@ describe("terminatePosixOwnedProcessTree", () => {
     Effect.gen(function* () {
       const lateChild = identity(111, 110, 111, 111);
       const fixture = makeController({
-        processes: [server(), identity(100, process.pid, 100, 100), identity(110, 100, 110, 110)],
+        processes: [server(), identity(100, SERVER_PID, 100, 100), identity(110, 100, 110, 110)],
         onProcess: (processes, pid) => {
           // Leave the descendant parent alive through teardown so it can fork
           // immediately after the last signal pass.
@@ -1077,6 +1115,7 @@ describe("terminatePosixOwnedProcessTree", () => {
 
       const error = yield* Effect.flip(
         terminatePosixOwnedProcessTree({
+          currentPid: SERVER_PID,
           controller,
           discoveryPasses: 2,
           grace: 0,
@@ -1099,7 +1138,7 @@ describe("terminatePosixOwnedProcessTree", () => {
       const fixture = makeController({
         processes: [
           server(),
-          identity(100, process.pid, 100, 100),
+          identity(100, SERVER_PID, 100, 100),
           identity(110, 100, 110, 110),
           identity(111, 110, 110, 110),
         ],
@@ -1119,6 +1158,7 @@ describe("terminatePosixOwnedProcessTree", () => {
 
       const explicit = yield* Effect.exit(
         terminatePosixOwnedProcessTree({
+          currentPid: SERVER_PID,
           controller: fixture.controller,
           grace: 0,
           ledger,
@@ -1140,6 +1180,7 @@ describe("terminatePosixOwnedProcessTree", () => {
       });
       ignoreSignals = false;
       yield* terminatePosixOwnedProcessTree({
+        currentPid: SERVER_PID,
         controller: fixture.controller,
         grace: 0,
         ledger,

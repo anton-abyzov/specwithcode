@@ -1,6 +1,7 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   AuthAdministrativeScopes,
+  EnvironmentId,
   type AuthCreatePairingCredentialInput,
   EnvironmentHttpApi,
 } from "@specweave-studio/contracts";
@@ -128,13 +129,13 @@ const decide = (
     ),
   );
 
-const register = (handler: Handler, redirect = REDIRECT) =>
+const register = (handler: Handler, redirect = REDIRECT, name = "Claude Code") =>
   handler(
     at("/oauth/mcp/register", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: encodeJson({
-        client_name: "Claude Code",
+        client_name: name,
         redirect_uris: [redirect],
         grant_types: ["authorization_code", "refresh_token"],
         token_endpoint_auth_method: "none",
@@ -572,3 +573,98 @@ it("matches loopback redirects on everything but the port, and https redirects e
   expect(matches("https://bot.example/cb", "https://bot.example/cb?x=1")).toBe(false);
   expect(matches("https://bot.example/cb", "https://evil.example/cb")).toBe(false);
 });
+
+it.live("1050 refuses a worker label that differs from its approval principal", () =>
+  withRoutes((handler, auth) =>
+    Effect.gen(function* () {
+      const registered = yield* json<{ client_id: string }>(
+        yield* register(handler, REDIRECT, "SpecWithCode workers · victim"),
+      );
+      const pairing = yield* auth.issuePairingCredential({
+        coordinatorEnvironmentId: EnvironmentId.make("attacker"),
+      });
+      const answer = yield* decide(handler, authorizeParams(registered.client_id), {
+        _tag: "pairing-code",
+        access: "auto",
+        code: pairing.credential,
+      });
+      expect(answer.status).toBe(400);
+      expect(answer.message).toContain("does not match");
+    }),
+  ),
+);
+
+it.live("1050 carries an approval principal through an unlabelled OAuth client", () =>
+  withRoutes((handler, auth) =>
+    Effect.gen(function* () {
+      const clientId = yield* registeredClientId(handler);
+      const pairing = yield* auth.issuePairingCredential({
+        coordinatorEnvironmentId: EnvironmentId.make("coordinator"),
+      });
+      const params = authorizeParams(clientId);
+      const approved = yield* decide(handler, params, {
+        _tag: "pairing-code",
+        access: "auto",
+        code: pairing.credential,
+      });
+      expect(approved.status).toBe(200);
+      const code = new URL(approved.redirectTo!).searchParams.get("code")!;
+      const response = yield* handler(
+        at(
+          "/oauth/mcp/token",
+          form({
+            grant_type: "authorization_code",
+            code,
+            redirect_uri: params.redirect_uri,
+            client_id: clientId,
+            code_verifier: verifier,
+            resource: `${ORIGIN}/mcp`,
+          }),
+        ),
+      );
+      const token = yield* json<{ access_token: string }>(response);
+      const client = yield* auth.authenticateMcpClient(
+        HttpServerRequest.fromWeb(
+          at("/mcp", { headers: { authorization: `Bearer ${token.access_token}` } }),
+        ),
+      );
+      expect(client.principal).toEqual({ kind: "coordinator", environmentId: "coordinator" });
+    }),
+  ),
+);
+
+it.live("1050 delegated managers cannot change their coordinator when minting approval codes", () =>
+  withRoutes((handler, auth) =>
+    Effect.gen(function* () {
+      const pairing = yield* auth.issuePairingCredential({
+        scopes: AuthAdministrativeScopes,
+        coordinatorEnvironmentId: EnvironmentId.make("approved-peer"),
+      });
+      const manager = yield* auth.exchangeBootstrapCredentialForAccessToken(
+        pairing.credential,
+        undefined,
+        { deviceType: "bot" },
+      );
+      const mint = (body: unknown) =>
+        handler(
+          at("/api/auth/pairing-token", {
+            method: "POST",
+            headers: {
+              "content-type": "application/json",
+              authorization: `Bearer ${manager.access_token}`,
+            },
+            body: JSON.stringify(body),
+          }),
+        );
+      expect((yield* mint({ coordinatorEnvironmentId: "victim" })).status).toBe(401);
+      const response = yield* mint({ label: "Unrelated display name" });
+      expect(response.status).toBe(200);
+      const next = yield* json<{ credential: string }>(response);
+      const principal = yield* auth.consumeMcpApprovalCode(next.credential, "auto");
+      expect(principal).toEqual({
+        principal: { kind: "coordinator", environmentId: "approved-peer" },
+        principalGeneration: 0,
+      });
+    }),
+  ),
+);

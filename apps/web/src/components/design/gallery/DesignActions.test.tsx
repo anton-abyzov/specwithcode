@@ -123,6 +123,42 @@ describe("designMenuEntries", () => {
     ]);
   });
 
+  it("offers Connect to a project… only for a Playground design on a machine that moves designs", () => {
+    const base = {
+      surface: "gallery",
+      canWrite: true,
+      copyTargets: 2,
+      canOpenProject: true,
+    } as const;
+    const playgroundEntries = designMenuEntries({
+      ...base,
+      ownerKind: "playground",
+      canConnect: true,
+    });
+    expect(labels(playgroundEntries)).toEqual([
+      "Open",
+      "Rename…",
+      "Duplicate",
+      "Copy link",
+      "---",
+      "Connect to a project…",
+      "Copy to project…",
+      "---",
+      "Delete…",
+    ]);
+    expect(labels(designMenuEntries({ ...base, ownerKind: "playground" }))).not.toContain(
+      "Connect to a project…",
+    );
+    expect(
+      labels(designMenuEntries({ ...base, ownerKind: "project", canConnect: true })),
+    ).not.toContain("Connect to a project…");
+    expect(
+      disabled(
+        designMenuEntries({ ...base, ownerKind: "playground", canConnect: true, canWrite: false }),
+      ),
+    ).toContain("Connect to a project…");
+  });
+
   it("disables Copy to project… when there is no other project", () => {
     const entries = designMenuEntries({
       surface: "gallery",
@@ -181,6 +217,26 @@ describe("DesignMenuItems", () => {
     expect(actions.onOpenProject).toHaveBeenCalledWith(summary(project), "logical-project:atlas");
     act(() => item("rename")!.click());
     expect(rename).toHaveBeenCalled();
+  });
+
+  it("connects a Playground design when the handler is offered", async () => {
+    const onConnect = vi.fn();
+    const { item } = renderMenu(playground, { ...handlers(), onConnect });
+    await flush();
+    act(() => item("connect-to-project")!.click());
+    expect(onConnect).toHaveBeenCalledWith(summary(playground));
+  });
+
+  it("has no Connect to a project… without the capability or for a project design", async () => {
+    renderMenu(playground, { ...handlers(), onConnect: null });
+    await flush();
+    expect(document.querySelector('[data-action="connect-to-project"]')).toBeNull();
+    act(() => root.unmount());
+    root = createRoot(container);
+    renderMenu(project, { ...handlers(), onConnect: vi.fn() });
+    await flush();
+    expect(document.querySelector('[data-action="connect-to-project"]')).toBeNull();
+    expect(document.querySelector('[data-action="duplicate"]')).not.toBeNull();
   });
 
   it("shows no Open project for a Playground design", async () => {

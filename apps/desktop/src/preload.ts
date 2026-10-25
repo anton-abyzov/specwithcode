@@ -101,9 +101,17 @@ function takeThreadNotificationOpen() {
   void ipcRenderer.invoke(IpcChannels.TAKE_THREAD_NOTIFICATION_OPEN_CHANNEL).then(
     (target: unknown) => {
       if (typeof target !== "object" || target === null) return;
-      const { environmentId, threadId } = target as { environmentId?: unknown; threadId?: unknown };
+      const { environmentId, threadId, projectId } = target as {
+        environmentId?: unknown;
+        threadId?: unknown;
+        projectId?: unknown;
+      };
       if (typeof environmentId !== "string" || typeof threadId !== "string") return;
-      const open = { environmentId, threadId };
+      const open = {
+        environmentId,
+        threadId,
+        ...(typeof projectId === "string" ? { projectId } : {}),
+      };
       if (threadOpenListeners.size === 0) {
         // @effect-diagnostics-next-line globalDate:off -- Native preload event timestamps share the renderer wall clock.
         bufferedThreadOpen = { target: open, at: Date.now() };

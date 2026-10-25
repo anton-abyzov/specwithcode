@@ -1,5 +1,10 @@
 import type { OrchestrationV2ThreadShell } from "@specweave-studio/contracts";
-import { ModelStateTag } from "../../chat/ModelStateTag";
+import {
+  fallbackModelState,
+  ModelStateTag,
+  ModelStateTip,
+  type ModelState,
+} from "../../chat/ModelStateTag";
 import { isProviderDriverKind, ProviderDriverKind } from "@specweave-studio/contracts";
 import { useMemo } from "react";
 import { cn } from "~/lib/utils";
@@ -13,6 +18,7 @@ import {
   ProviderInstanceIcon,
   resolveProviderInstanceAcpRegistryIconUrl,
 } from "../../chat/ProviderInstanceIcon";
+import { Tip } from "./Tip";
 import { GitHubCopilotIcon } from "../../GitHubCopilotIcon";
 
 const EMPTY_ENTRIES: ReadonlyMap<string, ProviderInstanceEntry> = new Map();
@@ -111,16 +117,21 @@ export function ModelBadge(props: {
   /** `row` sits in a list line; `chip` is a bordered control-sized label. */
   variant?: "row" | "chip";
   className?: string;
+  state?: ModelState | null;
+  tooltip?: boolean;
+  focusable?: boolean;
 }) {
   const label = modelLabel(props.entry, props.instanceId, props.model);
-  return (
+  const badge = (
     <span
+      tabIndex={props.focusable ? 0 : undefined}
+      data-model-state={props.state?.kind}
       className={cn("sws-model", props.variant === "chip" && "sws-model-chip", props.className)}
     >
       <ModelBadgeMark entry={props.entry} instanceId={props.instanceId} provider={label.provider} />
       {label.full === label.model ? (
         // "Grok 5" already names its maker; saying Grok twice helps nobody.
-        <span className="sws-model-provider">{label.model}</span>
+        <span className="sws-model-name">{label.model}</span>
       ) : (
         <>
           <span className="sws-model-provider">{label.provider}</span>
@@ -130,7 +141,17 @@ export function ModelBadge(props: {
           <span className="sws-model-name">{label.model}</span>
         </>
       )}
+      {props.state ? <ModelStateTag state={props.state} /> : null}
     </span>
+  );
+  return props.tooltip ? (
+    <Tip
+      label={props.state ? <ModelStateTip current={label.full} state={props.state} /> : label.full}
+    >
+      {badge}
+    </Tip>
+  ) : (
+    badge
   );
 }
 
@@ -138,6 +159,8 @@ export function ModelBadge(props: {
 export function ThreadModelBadge(props: {
   thread: Pick<OrchestrationV2ThreadShell, "modelSelection" | "modelIdentity">;
   entries: ReadonlyMap<string, ProviderInstanceEntry>;
+  variant?: "row" | "chip";
+  focusable?: boolean;
 }) {
   const identity = props.thread.modelIdentity;
   const current = identity?.current ?? props.thread.modelSelection;
@@ -149,27 +172,36 @@ export function ThreadModelBadge(props: {
         preferred.model,
       )
     : null;
+  const state: ModelState | null = label
+    ? identity?.kind === "fallback"
+      ? fallbackModelState({
+          pick: {
+            ...label,
+            instance:
+              props.entries.get(preferred!.instanceId)?.displayName ?? preferred!.instanceId,
+          },
+          running: {
+            ...modelLabel(
+              props.entries.get(current.instanceId) ?? null,
+              current.instanceId,
+              current.model,
+            ),
+            instance: props.entries.get(current.instanceId)?.displayName ?? current.instanceId,
+          },
+          reason: "usage limit",
+          launched: identity?.launched === true,
+        })
+      : { kind: "preferred", pick: label.full, pickModel: label.model }
+    : null;
   return (
-    <>
-      <ModelBadge
-        entry={props.entries.get(current.instanceId) ?? null}
-        instanceId={current.instanceId}
-        model={current.model}
-      />
-      {label ? (
-        <ModelStateTag
-          state={
-            identity?.kind === "fallback"
-              ? {
-                  kind: "fallback",
-                  pick: label.full,
-                  pickModel: label.model,
-                  reason: "usage limit",
-                }
-              : { kind: "preferred", pick: label.full }
-          }
-        />
-      ) : null}
-    </>
+    <ModelBadge
+      entry={props.entries.get(current.instanceId) ?? null}
+      instanceId={current.instanceId}
+      model={current.model}
+      {...(props.variant ? { variant: props.variant } : {})}
+      {...(props.focusable ? { focusable: true } : {})}
+      state={state}
+      tooltip
+    />
   );
 }

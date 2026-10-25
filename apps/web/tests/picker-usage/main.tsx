@@ -13,6 +13,9 @@ import { ProviderModelPicker } from "../../src/components/chat/ProviderModelPick
 import type { ModelPickerUsageConfig } from "../../src/components/chat/ModelUsage";
 import { deriveProviderInstanceEntries } from "../../src/providerInstances";
 import { applyThemePalette } from "../../src/themePalette";
+import { HostLimitsCompactView } from "../../src/components/studio/shell/HostLimits";
+import type { HostLimitBlock } from "../../src/studio/hostLimitsModel";
+import "../../src/components/studio/shell/usage.css";
 import "./fixture.css";
 
 const params = new URLSearchParams(location.search);
@@ -211,6 +214,82 @@ const pickerData = (scenario: string) => {
   return { entries, options };
 };
 
+// `?case=limits`: the coordinator picker's second view. MachineLimitsPanel reads the
+// fleet from atoms, so the fixture lays out the same panel over fictional blocks.
+const limitRow = (driver: string, label: string, identity: string, used: number[]) => ({
+  key: `${driver}:${identity}`,
+  instanceId: driver,
+  driver,
+  label,
+  identity,
+  plan: null,
+  sharedWith: [],
+  windows: used.map((usedPercent, index) => ({
+    id: index === 0 ? "session" : "weekly",
+    label: index === 0 ? "5-hour" : "Weekly",
+    kind: index === 0 ? "session" : "weekly",
+    usedPercent,
+    resetsAt: NOW + (index === 0 ? 2 : 60) * HOUR,
+    stale: false,
+    durationMins: index === 0 ? 300 : 10_080,
+  })),
+  peak: Math.max(...used),
+  bankedResets: 0,
+  notice: null,
+  checkedAt: NOW,
+});
+const LIMIT_BLOCKS = [
+  {
+    environmentId: "studio",
+    label: "Studio Mac",
+    isProjectHost: true,
+    isThisMachine: true,
+    status: "online",
+    readAt: NOW,
+    fromSavedReading: false,
+    providers: [
+      limitRow("claudeAgent", "Claude", "you@work.example", [100, 100]),
+      limitRow("codex", "Codex", "you@work.example", [12, 27]),
+    ],
+  },
+  {
+    environmentId: "mbp",
+    label: "MacBook Pro",
+    isProjectHost: false,
+    isThisMachine: false,
+    status: "online",
+    readAt: NOW,
+    fromSavedReading: false,
+    providers: [limitRow("claudeAgent", "Claude", "team@company.example", [30, 62])],
+  },
+] as unknown as HostLimitBlock[];
+const limitsView = {
+  label: "Limits by machine",
+  render: ({ back }: { back: () => void }) => (
+    <div className="sws-usage-popover sws-machine-limits" data-machine-limits="">
+      <header className="sws-usage-popover-head">
+        <button type="button" className="sws-usage-link sws-machine-limits-back" onClick={back}>
+          ← Models
+        </button>
+        <h2 className="sws-machine-limits-title">Limits by machine</h2>
+        <p>
+          Each machine uses its own sign-ins. When a provider has several limit windows, the one
+          that runs out first is brighter.
+        </p>
+      </header>
+      <HostLimitsCompactView
+        blocks={LIMIT_BLOCKS}
+        now={NOW}
+        coordinator={{ environmentId: "studio" as never, instanceId: "claudeAgent" }}
+      />
+      <footer>
+        <span className="sws-usage-link">All limits and accounts →</span>
+        <span className="sws-usage-link">This project's tokens →</span>
+      </footer>
+    </div>
+  ),
+};
+
 function Composer(props: {
   readonly scenario: string;
   readonly initial: { instanceId: string; model: string };
@@ -242,6 +321,7 @@ function Composer(props: {
           usageValueHiddenClassName="@max-[520px]/composer-surface:hidden"
           onOpenProviderSetup={() => {}}
           onManageProviders={() => {}}
+          {...(scenario === "limits" ? { secondaryView: limitsView } : {})}
           getModelDisabledReason={
             props.scenario === "locked"
               ? (instanceId) =>

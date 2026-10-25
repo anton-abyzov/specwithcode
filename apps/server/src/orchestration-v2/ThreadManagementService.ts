@@ -36,6 +36,11 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
+import {
+  latestRootProviderFailure,
+  usageLimitBlockedRun,
+} from "@specweave-studio/shared/orchestrationV2ThreadError";
+
 import * as Orchestrator from "./Orchestrator.ts";
 import { projectTurnItemForDetail } from "./WireProjection.ts";
 import * as LegacyV1ThreadImporter from "./legacy/LegacyV1ThreadImporter.ts";
@@ -802,6 +807,46 @@ const make = Effect.gen(function* () {
       return { type: "interrupt_requested", run: interruptibleRun, dispatch } as const;
     });
 
+  // A parent's Stop is final for its delegated tasks (an outage is not, and
+  // never comes here). A task its own usage limit holds would otherwise resume
+  // by itself once the limit resets, so its automatic resume is turned off.
+  // The recovery keeps the stop's run and reset, so no policy re-arms it.
+  const disarmLimitResume = (input: { readonly threadId: ThreadId; readonly commandId: string }) =>
+    Effect.gen(function* () {
+      const { thread, runs, turnItems } = yield* orchestrator.getThreadRecords(
+        input.threadId,
+        ["runs", "turnItems"],
+        { turnItemTypes: ["error"] },
+      );
+      const run = usageLimitBlockedRun(runs, turnItems, null);
+      const failure = latestRootProviderFailure(run, turnItems);
+      if (run === null || failure?.class !== "usage_limit") return;
+      const resetAt = failure.resetAt ?? null;
+      const recovery = thread.limitRecovery;
+      if (
+        recovery?.runId !== run.id ||
+        recovery.resetAt !== resetAt ||
+        recovery.autoResume !== false ||
+        recovery.snooze === true
+      ) {
+        yield* dispatch({
+          type: "thread.metadata.update",
+          commandId: CommandId.make(`${input.commandId}:limit-disarm:${input.threadId}`),
+          threadId: input.threadId,
+          limitRecovery: { runId: run.id, resetAt, autoResume: false, snooze: false },
+        });
+      }
+      // Provider fallback reads no recovery choice, so settle the task too: a
+      // stop someone asked for is final, and only a person's message reopens it.
+      if (thread.settledOverride === "settled") return;
+      yield* dispatch({
+        type: "thread.settle",
+        commandId: CommandId.make(`${input.commandId}:limit-settle:${input.threadId}`),
+        threadId: input.threadId,
+        note: "Stopped with its parent while waiting for a usage limit.",
+      });
+    });
+
   const stopDelegatedTasks: ThreadManagementServiceShape["stopDelegatedTasks"] = (input) =>
     Effect.gen(function* () {
       const { subagents } = yield* orchestrator.getThreadRecords(input.threadId, ["subagents"]);
@@ -815,6 +860,16 @@ const make = Effect.gen(function* () {
           threadId,
           ...(input.reason === undefined ? {} : { reason: input.reason }),
         }).pipe(
+          Effect.andThen(
+            disarmLimitResume({ threadId, commandId: input.commandId }).pipe(
+              Effect.catch((error) =>
+                Effect.logWarning("Unable to turn off a stopped task's limit resume", {
+                  threadId,
+                  error,
+                }),
+              ),
+            ),
+          ),
           Effect.andThen(stopDelegatedTasks({ ...input, threadId })),
           Effect.catch((error) =>
             Effect.logWarning("Unable to stop a delegated task", {

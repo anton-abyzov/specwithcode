@@ -45,7 +45,7 @@ export class FleetJoinError extends Error {
     super(
       {
         "invalid-code":
-          "This is not a machine invitation. Make a new line on that machine (Invite this machine in its Settings > Connections, or `fleet invite`) and copy the whole line.",
+          "This is not a machine invitation. Make a new line on that machine (Invite this machine in its Settings > Connections, or `fleet invite --coordinator '<main-machine-environment-id>'`) and copy the whole line. Replace <main-machine-environment-id> with the environment ID from Settings > Connections on your main machine. This explicitly approves that machine to manage access here.",
         "address-in-use": "Another configured machine already uses this address.",
         "id-in-use": "Another configured machine already uses this name.",
         "unknown-machine": "No configured machine has that name.",

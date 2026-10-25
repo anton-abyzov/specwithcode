@@ -55,12 +55,21 @@ describe("mobile usage-limit settings across environments", () => {
   );
 });
 
-function environment(environmentId: EnvironmentId, settings: ServerSettings): SettingsTarget {
+function environment(
+  environmentId: EnvironmentId,
+  settings: ServerSettings,
+  overrideChanges = false,
+): SettingsTarget {
   return {
     environmentId,
     serverConfig: {
       settings,
-      environment: { capabilities: { projectSettingsOverrides: true } },
+      environment: {
+        capabilities: {
+          projectSettingsOverrides: true,
+          ...(overrideChanges ? { projectSettingsOverrideChanges: true } : {}),
+        },
+      },
     },
   } as SettingsTarget;
 }
@@ -134,6 +143,44 @@ describe("mobile project settings scope", () => {
               defaultModelSelection: null,
             },
           },
+        },
+      },
+    ]);
+  });
+
+  it("sends only the edited keys to servers that save overrides key by key", () => {
+    const settings: ServerSettings = {
+      ...DEFAULT_SERVER_SETTINGS,
+      projectSettingsOverrides: { [firstProject]: { defaultAutoPull: true } },
+    };
+    const targets = resolveMobileSettingsTargets(
+      [environment(firstId, settings, true)],
+      [{ environmentId: firstId, id: firstProject }],
+    );
+    expect(
+      planMobileScopedSettingsPatch(targets, true, {
+        responseStreamingMode: "turn",
+        defaultThreadEnvMode: null,
+        defaultModelSelection: null,
+      }),
+    ).toEqual([
+      {
+        environmentId: firstId,
+        patch: {
+          projectSettingsOverrideChanges: {
+            [firstProject]: {
+              set: { responseStreamingMode: "turn", defaultModelSelection: null },
+              clear: ["defaultThreadEnvMode"],
+            },
+          },
+        },
+      },
+    ]);
+    expect(planMobileScopedSettingsClear(targets, ["defaultAutoPull"])).toEqual([
+      {
+        environmentId: firstId,
+        patch: {
+          projectSettingsOverrideChanges: { [firstProject]: { clear: ["defaultAutoPull"] } },
         },
       },
     ]);

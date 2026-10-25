@@ -83,7 +83,7 @@ try {
       assert.equal(await rows.count(), 5);
       const sources = await page.getByTestId("system-sources").allTextContents();
       assert.ok(sources.includes("Code · 2 files"), sources.join("|"));
-      assert.ok(sources.includes("Figma export"), sources.join("|"));
+      assert.ok(sources.includes("Tokens file"), sources.join("|"));
       assert.ok(sources.includes("Figma desktop"), sources.join("|"));
       assert.equal(await page.getByRole("button", { name: /^Rescan / }).count(), 2);
       assert.equal(await page.getByTestId("rescan-note").textContent(), "No changes");

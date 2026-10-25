@@ -19,6 +19,16 @@ export interface ProjectMessageRouting {
   readonly coordinatorThreadId: ThreadId | null;
   /** Present only while the requests overlay is mounted. */
   readonly onCoordinatorRequestsResolved?: (() => void) | undefined;
+  /** Closes the requests overlay, focusing the given element instead of its opener. */
+  readonly closeCoordinatorRequests?: ((focus?: HTMLElement | null) => void) | undefined;
+  /**
+   * The coordinator's open question as the project page answers it, so the
+   * requests overlay shows the same card and draft instead of its own.
+   */
+  readonly coordinatorQuestion?:
+    | import("../components/studio/CoordinatorQuestionCard").CoordinatorQuestionRecoveryContext
+    | null
+    | undefined;
   /** Coordinator details share the project picker, including its persistence barrier. */
   readonly coordinatorModelControls?: ReactNode;
   /** Present only for the coordinator's native review, never a worker's runtime answers. */

@@ -1,5 +1,6 @@
 import {
   EnvironmentAuthInvalidError,
+  EnvironmentId,
   type AuthBrowserSessionResult,
   type AuthCreatePairingCredentialInput,
   type AuthSessionState,
@@ -249,6 +250,22 @@ describe("resolveInitialServerAuthGateState", () => {
     await expect(resolveInitialServerAuthGateState()).resolves.toEqual({
       status: "requires-auth",
       auth: LOOPBACK_AUTH,
+    });
+  });
+
+  it("shows the server's one-time device reapproval reason", async () => {
+    const message = "Approve this device again in SpecWithCode.";
+    await installAuthApi({
+      session: () => ({
+        ...unauthenticatedSession(LOOPBACK_AUTH),
+        reapprovalRequired: true,
+        message,
+      }),
+    });
+    const { resolveInitialServerAuthGateState } = await import("./environments/primary");
+    await expect(resolveInitialServerAuthGateState()).resolves.toMatchObject({
+      status: "requires-auth",
+      errorMessage: message,
     });
   });
 
@@ -809,6 +826,7 @@ describe("resolveInitialServerAuthGateState", () => {
     const { createServerPairingCredential } = await import("./environments/primary");
 
     const credential = await createServerPairingCredential({
+      coordinatorEnvironmentId: EnvironmentId.make("approved-primary"),
       label: "Alice iPhone",
       scopes: ["orchestration:read"],
     });
@@ -819,7 +837,11 @@ describe("resolveInitialServerAuthGateState", () => {
     });
     expect(DateTime.formatIso(credential.expiresAt)).toBe("2026-04-05T00:00:00.000Z");
     expect(testApi.calls.pairingCredential).toEqual([
-      { label: "Alice iPhone", scopes: ["orchestration:read"] },
+      {
+        coordinatorEnvironmentId: "approved-primary",
+        label: "Alice iPhone",
+        scopes: ["orchestration:read"],
+      },
     ]);
   });
 });

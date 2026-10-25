@@ -1042,6 +1042,7 @@ export type DesktopOpenProjectWindowInput = typeof DesktopOpenProjectWindowInput
 
 /** The thread a native thread notification opens when clicked. */
 export const DesktopThreadNotificationTargetSchema = Schema.Struct({
+  projectId: Schema.optionalKey(Schema.String),
   environmentId: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(256)),
   threadId: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(256)),
 });

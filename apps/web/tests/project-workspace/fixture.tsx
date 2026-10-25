@@ -1,3 +1,4 @@
+import { AttentionFixture } from "./attention-fixture";
 /* Isolated UI fixture: all host/provider operations are explicit in-memory fakes. */
 import React, { useCallback, useEffect, useState } from "react";
 import { createRoot } from "react-dom/client";
@@ -252,7 +253,9 @@ function SidebarLayout(props: { children: React.ReactNode }) {
 }
 const search = new URLSearchParams(location.search);
 createRoot(document.getElementById("root")!).render(
-  search.has("connections") ? (
+  search.has("attention") ? (
+    <AttentionFixture />
+  ) : search.has("connections") ? (
     <ConnectionsFixture />
   ) : search.has("report") ? (
     <SidebarLayout>

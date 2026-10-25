@@ -32,7 +32,9 @@ const layerServerConfig = (overrides?: Partial<ServerConfig.ServerConfig["Servic
         ...overrides,
       } satisfies ServerConfig.ServerConfig["Service"];
     }),
-  ).pipe(Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "studio-auth-session-test-" })));
+  ).pipe(
+    Layer.provide(ServerConfig.layerTest(process.cwd(), { prefix: "studio-auth-session-test-" })),
+  );
 
 const layerServerEnvironment = (environmentId: EnvironmentId) =>
   Layer.succeed(ServerEnvironment.ServerEnvironmentIdentity, {
@@ -90,6 +92,8 @@ const repositoryFailure = new PersistenceSqlError({
 });
 
 const layerFailingSessionLookupRepository = Layer.succeed(AuthSessions.AuthSessionRepository, {
+  currentPrincipalGeneration: () => Effect.succeed(0),
+  setPrincipalRevoked: () => Effect.succeed([]),
   create: () => Effect.void,
   createReplacingActive: () => Effect.succeed([]),
   createIfAbsent: () => Effect.void,

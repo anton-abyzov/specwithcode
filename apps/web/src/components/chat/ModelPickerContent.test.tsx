@@ -360,3 +360,16 @@ describe("model picker usage limits", () => {
     ).toBe("The weekly limit is used up.");
   });
 });
+
+it("explains the fallback above search without stealing initial focus", async () => {
+  await mount({
+    stateHeader: {
+      title: "Fallback for Claude Code · Opus 5.5",
+      detail: "Opus 5.5 hit its usage limit.",
+      back: { label: "Back to Opus 5.5", onClick: vi.fn(), disabledReason: "Available at 3:40 PM" },
+    },
+  });
+  expect(container.querySelector('[role="status"]')?.textContent).toContain("Available at 3:40 PM");
+  expect(button("Back to Opus 5.5")?.disabled).toBe(true);
+  expect(document.activeElement).toBe(container.querySelector("input"));
+});

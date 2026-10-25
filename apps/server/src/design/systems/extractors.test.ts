@@ -98,6 +98,17 @@ describe("collectCss", () => {
     expect(cycles[0]!.message).toContain("--loop-a");
   });
 
+  it("does not call a Tailwind @theme self re-export a reference cycle", () => {
+    const css = [
+      ":root { --color-ground: #fafafa; }",
+      ".dark { --color-ground: #111111; }",
+      "@theme { --color-ground: var(--color-ground); }",
+    ].join("\n");
+    const extraction = assemble([collectCss(sourceText("entry.css", css))]);
+    expect(extraction.findings.filter((finding) => finding.code === "cycle")).toEqual([]);
+    expect(extraction.tokens.some((token) => token.name === "color-ground")).toBe(true);
+  });
+
   it("compares the prefers-color-scheme fallback with the explicit dark rule", () => {
     const extraction = assemble([collectCss(sourceText("a.css", APP_CSS))]);
     const mismatch = extraction.findings.find((finding) => finding.code === "mismatch");

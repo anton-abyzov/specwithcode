@@ -1,3 +1,5 @@
+import { classifyProjectActions } from "@specweave-studio/shared/projectAttention";
+import { observeProjectThread } from "@specweave-studio/client-runtime/state/projectAttention";
 import { THREAD_LIFECYCLE_LABELS } from "@specweave-studio/shared/threadLifecycleLabels";
 import type {
   EnvironmentProject,
@@ -77,24 +79,10 @@ export function deriveSessions(
         : null;
       const stall = needsYouStall(health);
       const observedAttention: AttentionKind | null =
-        status === "approval" || status === "input"
-          ? status
-          : health?.state === "waiting" && health.awaitingPerson === "sign-in"
-            ? "signin"
-            : // A turn blocked on the person is never a stall, however long it waits.
-              stall !== null
-            ? "stalled"
-            : !observedWorking && thread.hasActionableProposedPlan
-              ? "plan"
-              : status === "limited" || status === "failed"
-                ? status
-                : // A held queue starts only when someone resumes it.
-                  !observedWorking && (thread.heldQueuedCount ?? 0) > 0
-                  ? "held"
-                  : null;
+        classifyProjectActions(observeProjectThread(thread))[0]?.reason ?? null;
       const settled = thread.settledOverride === "settled";
       const observedState =
-        stall !== null && observedAttention === "stalled"
+        stall !== null && observedAttention === null
           ? `No activity for ${formatMinutes(stall.idleMs)}${
               stall.label === null ? "" : ` on ${stall.label}`
             }`

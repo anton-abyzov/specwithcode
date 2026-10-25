@@ -63,8 +63,10 @@ vi.mock("../ui/menu", () => ({
     runtime.change = onValueChange;
     return <div>{children}</div>;
   },
-  MenuRadioItem: ({ children, value }: any) => (
-    <button onClick={() => runtime.change?.(value)}>{children}</button>
+  MenuRadioItem: ({ children, value, disabled }: any) => (
+    <button disabled={disabled} onClick={() => runtime.change?.(value)}>
+      {children}
+    </button>
   ),
 }));
 vi.mock("../ui/tooltip", () => ({
@@ -171,6 +173,39 @@ it("keeps an archived current project in the heading without offering it as a de
   expect(
     [...container.querySelectorAll("button")].filter((node) => node.textContent === "Source"),
   ).toHaveLength(1);
+});
+
+it("offers no automated project and keeps No project as its own item", async () => {
+  const check = project(m1, "check", "Acceptance check");
+  runtime.projects.push(
+    { ...check, workspaceSettings: { archived: false, origin: "automated" } },
+    { ...project(m4, "scratch", "Scratch"), workspaceRoot: "/scratch" },
+    project(m1, "app", "App"),
+  );
+  await render();
+  const rows = [...container.querySelectorAll("button")].map((node) => node.textContent);
+  expect(rows).toContain("No project");
+  expect(rows).toContain("App");
+  expect(document.body.textContent).not.toContain("Acceptance check");
+  expect(document.body.textContent).not.toContain("Scratch");
+});
+
+it.each([
+  ["archived", { archived: true }, "Archived project, not available here"],
+  ["automated", { archived: false, origin: "automated" }, "Automated project, not available here"],
+])("shows an %s current project as a row that cannot be chosen", async (_, settings, label) => {
+  runtime.projects[0].workspaceSettings = settings;
+  runtime.projects.push(project(m1, "app", "App"));
+  await render();
+  const current = [...container.querySelectorAll("button")].find(
+    (node) => node.textContent === `Source${label}`,
+  );
+  expect(current?.disabled).toBe(true);
+  expect(
+    [...container.querySelectorAll("button")].filter(
+      (node) => !node.disabled && node.textContent?.startsWith("Source"),
+    ),
+  ).toEqual([]);
 });
 
 it("can leave an archived current checkout for the active member of the same logical project", async () => {

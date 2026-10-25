@@ -47,6 +47,8 @@ export function isThreadErrorBannerDismissedForSession(bannerKey: string | null)
 export const ThreadErrorBanner = memo(function ThreadErrorBanner({
   error,
   onDismiss,
+  onContinue,
+  continueBusy = false,
   errorClass,
   chatGptUsageLimit = false,
   contextLimitRecovery,
@@ -54,6 +56,12 @@ export const ThreadErrorBanner = memo(function ThreadErrorBanner({
   error: string | null;
   errorClass?: OrchestrationV2ProviderFailureClass | null;
   onDismiss?: () => void;
+  /**
+   * Continues the failed run in its native session ("Continue where you left
+   * off."), the action the error text asks for. Set only when the run can.
+   */
+  onContinue?: (() => void) | undefined;
+  continueBusy?: boolean;
   chatGptUsageLimit?: boolean;
   contextLimitRecovery?: ContextLimitRecoveryActions | undefined;
 }) {
@@ -64,6 +72,9 @@ export const ThreadErrorBanner = memo(function ThreadErrorBanner({
   const displayError = formatDisplayDates(cleanError, timestampFormat);
   const contextLimit = errorClass !== "usage_limit" && isContextLimitError(error);
   const variant = errorClass === "usage_limit" || contextLimit ? "warning" : "error";
+  // Limits and full contexts have their own recovery; Continue would fail again.
+  const showContinue =
+    onContinue !== undefined && !chatGptUsageLimit && errorClass !== "usage_limit" && !contextLimit;
   return (
     <div className="pointer-events-auto mx-auto w-fit max-w-[min(48rem,calc(100%-2rem))] pt-3">
       <Alert variant={variant} surface="lane" controlAlignment="first-line" data-variant={variant}>
@@ -103,9 +114,14 @@ export const ThreadErrorBanner = memo(function ThreadErrorBanner({
           )}
           {contextLimit ? <ContextLimitRecovery recovery={contextLimitRecovery} /> : null}
         </AlertDescription>
-        {(chatGptUsageLimit || onDismiss) && (
+        {(chatGptUsageLimit || showContinue || onDismiss) && (
           <AlertAction>
             {chatGptUsageLimit ? <ChatGptUsageButton variant="default" size="sm" /> : null}
+            {showContinue ? (
+              <Button variant="outline" size="xs" disabled={continueBusy} onClick={onContinue}>
+                Continue
+              </Button>
+            ) : null}
             {onDismiss ? (
               <Button variant="ghost" size="icon-xs" aria-label="Dismiss error" onClick={onDismiss}>
                 <XIcon />

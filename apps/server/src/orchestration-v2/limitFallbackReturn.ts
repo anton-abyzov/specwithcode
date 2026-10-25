@@ -35,6 +35,15 @@ export function isLimitWayBack(commandId: string): boolean {
   return commandId.startsWith("limit-api-return:") || commandId.startsWith("limit-return:");
 }
 
+/**
+ * A model switch the server makes on its own: the way back, or the usage
+ * pre-switch (`limit-preswitch:`) before an idle thread's next turn. These
+ * commands carry no creation source, so the id tells them from a pick.
+ */
+export function isServerSelectionMove(commandId: string): boolean {
+  return isLimitWayBack(commandId) || commandId.startsWith("limit-preswitch:");
+}
+
 /** With no reset time to wait for, an idle thread leaves API credits after this long. */
 export const API_CREDIT_IDLE_RETURN_MS = 15 * 60_000;
 

@@ -296,6 +296,45 @@ it.effect("refuses another project, the Playground, and access changes (AC-07, A
   ),
 );
 
+it.effect(
+  "tells an agent with an old Playground brief where a moved design went (1046 AC-02)",
+  () =>
+    withServer(
+      Effect.gen(function* () {
+        const designs = yield* DesignService.DesignService;
+        const created = yield* designs.create(DesignService.ownerCaller, {
+          owner: { kind: "playground" },
+          kind: "design",
+          title: "Connect me",
+        });
+        yield* designs.move(DesignService.ownerCaller, {
+          owner: { kind: "playground" },
+          designId: created.document.id,
+          to: { kind: "project", projectId: PROJECT_A },
+          expectedRevision: 0,
+        });
+        // The thread moved with it into project A; its brief still names the Playground.
+        const failure = failureOf(
+          yield* call(threadInA, "design_get", {
+            designId: created.document.id,
+            owner: { kind: "playground" },
+          }),
+        );
+        expect(failure).toMatchObject({ code: "invalid_request" });
+        expect(failure.message).toBe(
+          `Moved to Alpha. It keeps its id: retry with owner {"kind":"project","projectId":"${PROJECT_A}"} and designId ${created.document.id}.`,
+        );
+        const there = successOf<DesignGetResult>(
+          yield* call(threadInA, "design_get", {
+            designId: created.document.id,
+            owner: { kind: "project", projectId: PROJECT_A },
+          }),
+        );
+        expect(there.document.title).toBe("Connect me");
+      }),
+    ),
+);
+
 it.live("returns a design screenshot as an MCP image", (ctx) =>
   Effect.gen(function* () {
     const executable = (yield* HostProcessEnvironment)[TEST_BROWSER_ENV];

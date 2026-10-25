@@ -69,8 +69,14 @@ export const claudeSweepHarness = (input: {
   };
   /** The instance the stopped run ran on, as the thread's records give it. */
   runInstance?: ProviderInstanceId;
-  /** Commands the orchestrator refuses; a refused id is refused again on replay. */
+  /** Commands the orchestrator rejects; a rejected id is rejected again on replay. */
   refuses?: (command: OrchestrationV2ServerCommand) => boolean;
+  /**
+   * Resumes the orchestrator refuses. As in `refuseLimitResume`, a refused
+   * resume still commits (it records a metadata update) but starts no run, and
+   * a replay of its id returns the same committed receipt.
+   */
+  refusesResume?: (command: OrchestrationV2ServerCommand) => boolean;
   /** Runs after a resume is built and before it is sent (the handoff check). */
   beforeSend?: (state: { current: ProjectionStore.ProjectionLimitRecoveryCandidate }) => void;
 }) => {
@@ -86,6 +92,14 @@ export const claudeSweepHarness = (input: {
     /** Every dispatch attempt, refused or not. */
     attempts: [] as string[],
     rejected: new Set<string>(),
+    /** Ids that committed without effect, as a refused resume does. */
+    refusedIds: new Set<string>(),
+    /** Runs the accepted message dispatches started, by their message. */
+    runs: [] as Array<{
+      readonly id: RunId;
+      readonly userMessageId: string;
+      readonly providerInstanceId: ProviderInstanceId;
+    }>,
   };
   const deps = Layer.mergeAll(
     ProjectAdmission.layer,
@@ -121,23 +135,22 @@ export const claudeSweepHarness = (input: {
               ...(input.pending ? { pendingRuntimeRequest: input.pending.summary } : {}),
             }) as never,
         ),
-      getThreadProjection: () =>
-        input.pending || input.runInstance
-          ? Effect.sync(
-              () =>
-                ({
-                  runtimeRequests: [],
-                  nodes: [],
-                  ...input.pending?.records,
-                  runs: [
-                    ...(input.pending?.records.runs ?? []),
-                    ...(input.runInstance && state.current.latestRunId
-                      ? [{ id: state.current.latestRunId, providerInstanceId: input.runInstance }]
-                      : []),
-                  ],
-                }) as unknown as OrchestrationV2ThreadProjection,
-            )
-          : Effect.die("unused getThreadProjection"),
+      getThreadProjection: (threadId) =>
+        Effect.sync(
+          () =>
+            ({
+              runtimeRequests: [],
+              nodes: [],
+              ...input.pending?.records,
+              runs: [
+                ...(input.pending?.records.runs ?? []),
+                ...(input.runInstance && state.current.latestRunId
+                  ? [{ id: state.current.latestRunId, providerInstanceId: input.runInstance }]
+                  : []),
+                ...state.runs.filter((run) => run.id.startsWith(`${threadId}:`)),
+              ],
+            }) as unknown as OrchestrationV2ThreadProjection,
+        ),
     }),
     Layer.mock(ThreadManagement.ThreadManagementService)({
       dispatch: (command) =>
@@ -165,7 +178,17 @@ export const claudeSweepHarness = (input: {
                 }),
               );
             }
+            if (state.refusedIds.has(command.commandId) || input.refusesResume?.(command)) {
+              state.refusedIds.add(command.commandId);
+              return Effect.succeed({ sequence: state.attempts.length, storedEvents: [] });
+            }
             state.commands.push(command);
+            if (command.type === "message.dispatch")
+              state.runs.push({
+                id: RunId.make(`${command.threadId}:run-${state.runs.length + 1}`),
+                userMessageId: command.messageId,
+                providerInstanceId: state.current.providerInstanceId,
+              });
             if (command.type === "thread.metadata.update" && command.limitRecovery)
               state.current = {
                 ...state.current,

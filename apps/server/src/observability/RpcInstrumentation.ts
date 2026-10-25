@@ -335,6 +335,8 @@ const RPC_AGGREGATES = {
   [WS_METHODS.designSaveVersion]: "design",
   [WS_METHODS.designRestore]: "design",
   [WS_METHODS.designCopy]: "design",
+  [WS_METHODS.designMove]: "design",
+  [WS_METHODS.designImportDeck]: "design",
   [WS_METHODS.designDelete]: "design",
   [WS_METHODS.designAssetPut]: "design",
   [WS_METHODS.designWatch]: "design",
@@ -353,6 +355,13 @@ const RPC_AGGREGATES = {
   [WS_METHODS.designSystemDiscard]: "design",
   [WS_METHODS.designSystemRescan]: "design",
   [WS_METHODS.designSystemFigmaStatus]: "design",
+  [WS_METHODS.designSystemCreate]: "design",
+  [WS_METHODS.designSystemApply]: "design",
+  [WS_METHODS.designSystemFiles]: "design",
+  [WS_METHODS.designSystemFileRead]: "design",
+  [WS_METHODS.designSystemFilePut]: "design",
+  [WS_METHODS.designSystemFileDelete]: "design",
+  [WS_METHODS.designSystemFileMove]: "design",
 } as const satisfies Readonly<Record<WsRpcMethod, string>>;
 
 const RPC_SPAN_PREFIX = "ws.rpc";

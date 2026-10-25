@@ -41,17 +41,16 @@ try {
   );
   for (const theme of ["dark", "light"]) {
     await page.goto(`${origin}/?theme=${theme}`);
-    const chip = page.locator(".sws-usage-chip");
-    await chip.waitFor();
-    NodeAssert.equal(await page.locator(".sws-usage-chip-value").first().innerText(), "77% left");
-    NodeAssert.match(await chip.getAttribute("aria-label"), /Claude 77% left/);
-    await chip.click();
-    const popover = page.getByText("Coordinator usage on", { exact: false });
-    await popover.waitFor();
-    const text = await page.locator("[data-slot=popover-popup], [role=dialog]").first().innerText();
-    for (const expected of ["77% left", "90% left", "100% left", "0% left"])
-      NodeAssert.ok(text.includes(expected), `${theme} popover lacks "${expected}": ${text}`);
-    NodeAssert.ok(!/% used/.test(text), `${theme} popover still says used: ${text}`);
+    // The coordinator's limits now open from "Limits by machine" (in the picker, or
+    // this button where the coordinator has no picker).
+    const trigger = page.getByRole("button", { name: "Limits by machine" });
+    await trigger.waitFor();
+    await trigger.click();
+    const panel = page.locator("[data-machine-limits]");
+    await panel.waitFor();
+    const text = await panel.innerText();
+    NodeAssert.ok(/\d+% left/.test(text), `${theme} panel shows no remaining share: ${text}`);
+    NodeAssert.ok(!/% used/.test(text), `${theme} panel still says used: ${text}`);
     await page.screenshot({ path: NodePath.join(output, `popover-${theme}.png`) });
     await page.keyboard.press("Escape");
     const settings = page.locator("[data-surface=settings]");

@@ -9,7 +9,11 @@ interface PanelTabCloseButtonProps {
   tooltip?: string;
 }
 
-/** Inside a `group/tab` row, swaps the tab identity for its close action on hover or focus. */
+/**
+ * Inside a `group/tab` row, swaps the tab identity for its close action on
+ * hover or focus. A file reader also has a labeled Close in the tab bar that
+ * shows without either (`RightPanelTabs`).
+ */
 export function PanelTabCloseButton({
   children,
   label,
@@ -22,6 +26,7 @@ export function PanelTabCloseButton({
       className="cursor-pointer group/close relative flex size-4 shrink-0 items-center justify-center rounded-sm hover:bg-muted"
       aria-label={label}
       onClick={onClick}
+      data-panel-tab-close=""
     >
       <span className="relative flex size-3 items-center justify-center group-hover/tab:hidden group-focus-visible/close:hidden">
         {children}

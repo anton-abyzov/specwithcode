@@ -150,7 +150,9 @@ describe("buildRuntimeInstructions", () => {
     expect(writing).toContain("Cut puffery, praise, closing offers, chatbot phrases");
     expect(writing).toContain("stock -ing tails");
     expect(writing).toContain("Avoid em dashes; use a period or comma.");
-    expect(writing).toContain("Concise means fewer sentences, not dropped articles or verbs.");
+    expect(writing).toContain(
+      "Concise means fewer sentences, not dropped articles, verbs or spaces.",
+    );
     expect(writing).toContain("ask what makes this look machine-generated, and fix it");
   });
 

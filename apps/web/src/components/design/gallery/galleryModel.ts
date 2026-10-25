@@ -1,7 +1,7 @@
 /**
- * Pure rules for the Design gallery: which designs a tab shows, search, the
- * `/design` URL filter, the edited-ago label and which "Make something new"
- * kinds this build offers.
+ * Pure rules for the Design gallery: which owner a URL scopes it to, the
+ * owner chips and per-project sections, search, the edited-ago label and
+ * which "Make something new" kinds this build offers.
  */
 import {
   ProjectId,
@@ -12,31 +12,38 @@ import {
 
 import { DESIGN_FEATURES } from "../designFeatures";
 
+/** Legacy `?tab=` values; `projects` still means "every project". */
 export const GALLERY_TABS = ["all", "playground", "projects"] as const;
 export type GalleryTab = (typeof GALLERY_TABS)[number];
-export const GALLERY_TAB_LABELS: Record<GalleryTab, string> = {
-  all: "All",
-  playground: "Playground",
-  projects: "Projects",
-};
 
 export type GalleryView = "grid" | "list";
 
+/** Which owners the gallery shows. A project scope is one project's designs. */
+export type GalleryScope =
+  | { readonly kind: "all" }
+  | { readonly kind: "playground" }
+  | { readonly kind: "projects" }
+  | { readonly kind: "project"; readonly projectId: ProjectId };
+
+/** How the All scope lays designs out: one section per owner, or one recent list. */
+export const GALLERY_GROUPINGS = ["project", "recent"] as const;
+export type GalleryGrouping = (typeof GALLERY_GROUPINGS)[number];
+
 export interface GalleryFilter {
-  readonly tab: GalleryTab;
-  /** Projects tab only: one project, or every project when null. */
-  readonly projectId: ProjectId | null;
+  readonly scope: GalleryScope;
   readonly query: string;
 }
 
 /**
- * `/design` search params. `tab` and `project` are the gallery filter; `new`,
- * `system` and `owner` ask the page to open New design once, preselected.
- * The editor route `/design/$designKey` inherits them and ignores them.
+ * `/design` search params. `project` (any tab), `tab` and `group` are the
+ * gallery view; `new`, `system` and `owner` ask the page to open New design
+ * once, preselected. The editor route `/design/$designKey` inherits them and
+ * ignores them.
  */
 export interface DesignGallerySearch {
   readonly tab?: GalleryTab;
   readonly project?: ProjectId;
+  readonly group?: GalleryGrouping;
   readonly new?: "design";
   readonly system?: DesignSystemId;
   /** `playground`, or a ProjectId. */
@@ -56,37 +63,213 @@ const text = (value: unknown, limit: number): string | null => {
 /** Drops anything malformed, so a hand-edited URL never breaks the page. */
 export function parseDesignGallerySearch(raw: Record<string, unknown>): DesignGallerySearch {
   const tab = GALLERY_TABS.find((value) => value === raw.tab);
+  const group = GALLERY_GROUPINGS.find((value) => value === raw.group);
   const project = text(raw.project, 512);
   const system = text(raw.system, 80);
   const owner = text(raw.owner, 512);
   return {
     ...(tab ? { tab } : {}),
     ...(project ? { project: ProjectId.make(project) } : {}),
+    ...(group ? { group } : {}),
     ...(raw.new === "design" ? { new: "design" as const } : {}),
     ...(system && /^[A-Za-z0-9_-]+$/.test(system) ? { system: system as DesignSystemId } : {}),
     ...(owner ? { owner } : {}),
   };
 }
 
-/** `?project=` implies the Projects tab; a project this window does not know shows every project. */
-export function galleryFilterFromSearch(
-  search: DesignGallerySearch,
-  projects: readonly { readonly id: ProjectId }[],
-): { readonly tab: GalleryTab; readonly projectId: ProjectId | null } {
-  if (search.project !== undefined) {
-    const known = projects.some((project) => project.id === search.project);
-    return { tab: "projects", projectId: known ? search.project : null };
-  }
-  return { tab: search.tab ?? "all", projectId: null };
+/**
+ * The scope a `/design` URL names. `?project=` wins on any tab, so the old
+ * `?tab=projects&project=` links and the plain `?project=` both land on that
+ * project; `?tab=projects` alone is every project.
+ */
+export function resolveScope(search: DesignGallerySearch): GalleryScope {
+  if (search.project !== undefined) return { kind: "project", projectId: search.project };
+  if (search.tab === "playground") return { kind: "playground" };
+  if (search.tab === "projects") return { kind: "projects" };
+  return { kind: "all" };
 }
 
-/** The search params for a filter; All with no project is the bare `/design`. */
+/** The search params for a scope; All with no grouping choice is the bare `/design`. */
+export function searchForScope(
+  scope: GalleryScope,
+  group?: GalleryGrouping | undefined,
+): DesignGallerySearch {
+  const base: DesignGallerySearch =
+    scope.kind === "project"
+      ? { project: scope.projectId }
+      : scope.kind === "all"
+        ? {}
+        : { tab: scope.kind };
+  return group === undefined ? base : { ...base, group };
+}
+
+/** Kept for links built from the older tab and project pair. */
 export function gallerySearchFor(filter: {
   readonly tab: GalleryTab;
   readonly projectId: ProjectId | null;
 }): DesignGallerySearch {
-  if (filter.tab === "projects" && filter.projectId !== null) return { project: filter.projectId };
+  if (filter.projectId !== null) return { project: filter.projectId };
   return filter.tab === "all" ? {} : { tab: filter.tab };
+}
+
+export function sameScope(a: GalleryScope, b: GalleryScope): boolean {
+  if (a.kind !== b.kind) return false;
+  return a.kind !== "project" || a.projectId === (b as { projectId: ProjectId }).projectId;
+}
+
+export function inScope(summary: DesignSummary, scope: GalleryScope): boolean {
+  const owner = summary.ref.owner;
+  if (scope.kind === "all") return true;
+  if (scope.kind === "playground") return owner.kind === "playground";
+  if (owner.kind !== "project") return false;
+  return scope.kind === "projects" || owner.projectId === scope.projectId;
+}
+
+/** A project's name: the window's own title for it, else what the server called it. */
+export function projectLabel(
+  projectId: ProjectId,
+  projects: readonly { readonly id: ProjectId; readonly title: string }[],
+  designs: readonly DesignSummary[] = [],
+): string {
+  return (
+    projects.find((project) => project.id === projectId)?.title ??
+    designs.find(
+      (summary) =>
+        summary.ref.owner.kind === "project" && summary.ref.owner.projectId === projectId,
+    )?.ownerLabel ??
+    "Project"
+  );
+}
+
+/** "All", "Playground", "EasyChamp": the scope as the search field and empty state name it. */
+export function scopeLabel(
+  scope: GalleryScope,
+  projects: readonly { readonly id: ProjectId; readonly title: string }[],
+  designs: readonly DesignSummary[] = [],
+): string {
+  if (scope.kind === "all") return "All";
+  if (scope.kind === "playground") return "Playground";
+  if (scope.kind === "projects") return "Projects";
+  return projectLabel(scope.projectId, projects, designs);
+}
+
+/** One owner chip: the Playground, or a project that owns at least one design. */
+export interface OwnerChip {
+  readonly scope: GalleryScope;
+  readonly label: string;
+  readonly count: number;
+  /** Newest edit, in ms; chips sort by it. */
+  readonly latest: number;
+}
+
+const time = (summary: DesignSummary) => {
+  const at = Date.parse(summary.updatedAt);
+  return Number.isFinite(at) ? at : 0;
+};
+
+/**
+ * The Playground's count, then one chip per project with designs, most
+ * recently edited first. The page shows the first few and folds the rest
+ * into More.
+ */
+export function ownerChips(
+  designs: readonly DesignSummary[],
+  projects: readonly { readonly id: ProjectId; readonly title: string }[],
+): { readonly playground: number; readonly projects: readonly OwnerChip[] } {
+  let playground = 0;
+  const byProject = new Map<ProjectId, { count: number; latest: number }>();
+  for (const summary of designs) {
+    const owner = summary.ref.owner;
+    if (owner.kind === "playground") {
+      playground += 1;
+      continue;
+    }
+    const entry = byProject.get(owner.projectId) ?? { count: 0, latest: 0 };
+    entry.count += 1;
+    entry.latest = Math.max(entry.latest, time(summary));
+    byProject.set(owner.projectId, entry);
+  }
+  const chips = [...byProject].map(([projectId, entry]) => ({
+    scope: { kind: "project", projectId } as const,
+    label: projectLabel(projectId, projects, designs),
+    count: entry.count,
+    latest: entry.latest,
+  }));
+  return {
+    playground,
+    projects: chips.toSorted((a, b) => b.latest - a.latest || a.label.localeCompare(b.label)),
+  };
+}
+
+/**
+ * Projects most recently active first, for the creation pickers: a project's latest
+ * design or its own last change, whichever is newer; then by title.
+ */
+export function byRecentActivity<
+  P extends { readonly id: ProjectId; readonly title: string; readonly updatedAt?: string },
+>(projects: readonly P[], designs: readonly DesignSummary[]): P[] {
+  const latest = new Map<ProjectId, number>();
+  for (const summary of designs) {
+    const owner = summary.ref.owner;
+    if (owner.kind !== "project") continue;
+    latest.set(owner.projectId, Math.max(latest.get(owner.projectId) ?? 0, time(summary)));
+  }
+  const activity = (project: P) => {
+    const own = project.updatedAt === undefined ? 0 : Date.parse(project.updatedAt);
+    return Math.max(latest.get(project.id) ?? 0, Number.isFinite(own) ? own : 0);
+  };
+  return projects.toSorted(
+    (left, right) => activity(right) - activity(left) || left.title.localeCompare(right.title),
+  );
+}
+
+/** One owner's designs in the grouped All view. */
+export interface GallerySection {
+  readonly key: string;
+  readonly scope: GalleryScope;
+  readonly label: string;
+  /** Newest first. */
+  readonly designs: readonly DesignSummary[];
+}
+
+/** One section per project, most recently edited first, then the Playground. */
+export function groupByOwner(
+  designs: readonly DesignSummary[],
+  projects: readonly { readonly id: ProjectId; readonly title: string }[],
+): GallerySection[] {
+  const sorted = designs.toSorted((a, b) => time(b) - time(a));
+  const sections = new Map<string, { scope: GalleryScope; items: DesignSummary[] }>();
+  for (const summary of sorted) {
+    const owner = summary.ref.owner;
+    const key = owner.kind === "playground" ? "playground" : `project:${owner.projectId}`;
+    const scope: GalleryScope =
+      owner.kind === "playground"
+        ? { kind: "playground" }
+        : { kind: "project", projectId: owner.projectId };
+    const section = sections.get(key) ?? { scope, items: [] };
+    section.items.push(summary);
+    sections.set(key, section);
+  }
+  const result = [...sections].map(([key, section]) => ({
+    key,
+    scope: section.scope,
+    label: scopeLabel(section.scope, projects, designs),
+    designs: section.items,
+  }));
+  // Insertion order follows the newest design, so projects already sort by latest edit.
+  return [
+    ...result.filter((section) => section.scope.kind === "project"),
+    ...result.filter((section) => section.scope.kind === "playground"),
+  ];
+}
+
+/** Grouped sections show in All once two or more owners have designs, unless Recent is chosen. */
+export function showsSections(
+  scope: GalleryScope,
+  grouping: GalleryGrouping,
+  sectionCount: number,
+): boolean {
+  return scope.kind === "all" && grouping === "project" && sectionCount >= 2;
 }
 
 /**
@@ -133,12 +316,7 @@ export function filterDesigns(
   const needle = filter.query.trim().toLowerCase();
   return designs
     .filter((summary) => {
-      const owner = summary.ref.owner;
-      if (filter.tab === "playground" && owner.kind !== "playground") return false;
-      if (filter.tab === "projects") {
-        if (owner.kind !== "project") return false;
-        if (filter.projectId !== null && owner.projectId !== filter.projectId) return false;
-      }
+      if (!inScope(summary, filter.scope)) return false;
       if (needle === "") return true;
       return (
         summary.title.toLowerCase().includes(needle) ||

@@ -1,5 +1,12 @@
 import type { EnvironmentId } from "@specweave-studio/contracts";
 
+import {
+  ineligibleSelectedMember,
+  projectPickerMembers,
+  type IneligibleProjectSelection,
+  type ProjectListMember,
+  type ScratchRootLookup,
+} from "../../studio/projectListVisibility";
 import type { AssignableProject } from "./pullRequestProjectAssignment.logic";
 
 interface FilterProject extends AssignableProject {
@@ -50,4 +57,27 @@ export function pullRequestFilterProjects<Project extends FilterProject>(
   return distinguishTitles(byEnvironment, (project) => project.id).toSorted((left, right) =>
     left.title.localeCompare(right.title),
   );
+}
+
+/**
+ * The project filter's rows: the person's own projects only, then the scope the list is
+ * narrowed to when that project was since archived or made by a check. The menus show
+ * that last row as one that cannot be chosen, with `unavailable.reason` as why.
+ */
+export function pullRequestScopeFilterProjects<Project extends FilterProject & ProjectListMember>(
+  projects: ReadonlyArray<Project>,
+  scratchRootFor: ScratchRootLookup,
+  environmentLabels: ReadonlyMap<EnvironmentId, string>,
+  scopedProject: Project | undefined,
+): {
+  readonly projects: Project[];
+  readonly unavailable: IneligibleProjectSelection<Project> | null;
+} {
+  const unavailable = ineligibleSelectedMember(projects, scopedProject, scratchRootFor);
+  const own = pullRequestFilterProjects(
+    projectPickerMembers(projects, scratchRootFor),
+    environmentLabels,
+    scopedProject,
+  );
+  return { projects: unavailable ? [...own, unavailable.project] : own, unavailable };
 }

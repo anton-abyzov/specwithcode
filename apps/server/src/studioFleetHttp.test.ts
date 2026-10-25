@@ -127,6 +127,7 @@ async function api(
   scopes: ReadonlyArray<AuthEnvironmentScope> = [AuthOrchestrationReadScope, AuthAccessWriteScope],
   operatorDelegation = false,
   url = "https://fixture.tailnet.ts.net:8443",
+  coordinatorEnvironmentId?: EnvironmentId,
 ) {
   const config = Layer.effect(
     Config.ServerConfig,
@@ -223,6 +224,14 @@ async function api(
             ? Effect.succeed({
                 sessionId: AuthSessionId.make("synthetic-session"),
                 subject: "fixture",
+                ...(coordinatorEnvironmentId
+                  ? {
+                      principal: {
+                        kind: "coordinator" as const,
+                        environmentId: coordinatorEnvironmentId,
+                      },
+                    }
+                  : {}),
                 method: "bearer-access-token" as const,
                 scopes,
               })
@@ -325,7 +334,7 @@ async function api(
       new Request("http://localhost:8319/api/studio/fleet/invite", {
         method: "POST",
         headers: { "content-type": "application/json", host: "localhost:8319", ...headers },
-        body: JSON.stringify(body),
+        body: JSON.stringify({ coordinatorEnvironmentId: "approved-primary", ...body }),
       }),
     );
   const tailscaleStatus = (
@@ -696,6 +705,8 @@ describe("inviting this machine over HTTP", () => {
       expect(issuedSessions[0]).toMatchObject({
         scopes: [...AuthStandardClientScopes, AuthAccessWriteScope],
         label: "Fleet management (fleet invite)",
+        subject: "fleet-invitation",
+        principal: { kind: "coordinator", environmentId: "approved-primary" },
       });
       expect(Duration.toDays(issuedSessions[0]!.ttl!)).toBe(30);
 
@@ -1025,4 +1036,26 @@ describe("linking a phone to the other machines over HTTP", () => {
       await owner.dispose();
     }
   });
+});
+
+it("R-E-02 refuses delegated phone codes even with a forged hub identity", async () => {
+  const manager = await api(
+    [AuthOrchestrationReadScope, AuthAccessWriteScope],
+    false,
+    ORIGIN,
+    EnvironmentId.make("approved-coordinator"),
+  );
+  try {
+    const response = await manager.phone("/mint", {
+      hubEnvironmentId: "another-hub",
+      hubSessionId: "untrusted-session",
+      label: "Owner phone",
+      scopes: [AuthOrchestrationReadScope],
+    });
+    expect(response.status).toBe(403);
+    expect(phoneAuth.pairingLinks).toEqual([]);
+    expect((await manager.invite({ coordinatorEnvironmentId: "arbitrary-peer" })).status).toBe(403);
+  } finally {
+    await manager.dispose();
+  }
 });

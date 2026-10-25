@@ -2,8 +2,10 @@ import type { ScopedThreadRef } from "@specweave-studio/contracts";
 import {
   ArrowLeftIcon,
   ChevronRightIcon,
+  FolderOpenIcon,
   PanelRightCloseIcon,
   PanelRightOpenIcon,
+  SquarePenIcon,
   XIcon,
 } from "lucide-react";
 import { scopeProjectRef } from "@specweave-studio/client-runtime/environment";
@@ -17,18 +19,30 @@ import {
   useRef,
   useState,
 } from "react";
+import { createPortal } from "react-dom";
 
 import { useProject, useThreadShell } from "../state/entities";
 import {
   InViewerOverlay,
   threadOwnerKey,
   type ViewerCrumb,
+  type ViewerFileTarget,
   type ViewerLinkTarget,
   type ViewerOverlayEntry,
+  useViewerOverlay,
   useViewerOverlayStore,
 } from "~/viewerOverlayStore";
+import {
+  moveFocusedFileToPanel,
+  useFileReaderPlacement,
+  useFocusedFileHost,
+  useFocusedFileStore,
+  viewerOverlayInFront,
+} from "~/lib/openInFront";
 import { useLocation } from "@tanstack/react-router";
 
+import { useProjectFileQuery } from "./files/projectFilesQueryState";
+import { mayBeMissing } from "./chat/MissingFileNotice";
 import { ArtifactViewer, ThreadArtifactStrip, useThreadViewables } from "./chat/ThreadArtifacts";
 import { ViewerLinkedPane, viewerLinkHeader } from "./chat/ViewerLinkedPane";
 import { RenderErrorBoundary } from "./RenderErrorBoundary";
@@ -207,7 +221,8 @@ function OverlayHeader(props: {
           Back
         </Button>
       ) : null}
-      <nav aria-label="Breadcrumb" className="viewer-overlay-crumbs">
+      {/* A narrow window gives the crumbs what is left; they clip rather than run under the actions. */}
+      <nav aria-label="Breadcrumb" className="viewer-overlay-crumbs overflow-hidden">
         <ol>
           {source ? (
             <li className="viewer-overlay-crumb" data-crumb="source">
@@ -293,6 +308,8 @@ function OverlayHeader(props: {
             }
           >
             <XIcon aria-hidden />
+            {/* Named at every width; only the Esc hint folds away in a narrow window. */}
+            Close
             <kbd className="viewer-overlay-esc" aria-hidden>
               Esc
             </kbd>
@@ -305,19 +322,143 @@ function OverlayHeader(props: {
 }
 
 /**
+ * The overlay closed on the focused file: Escape, Close, the backdrop, a
+ * route change or another viewer. Base UI returns focus to what held it when
+ * the overlay opened; the link gets it back here when that was nothing (a
+ * link Safari never focuses) and nothing else in front has taken it.
+ */
+function closeFocusedFile() {
+  const { from } = useFocusedFileStore.getState();
+  useFocusedFileStore.setState({ file: null, from: null });
+  if (from === null) return;
+  requestAnimationFrame(() => {
+    if (viewerOverlayInFront() || !from.isConnected) return;
+    const focused = document.activeElement;
+    if (focused === null || focused === document.body || focused.closest("[data-viewer-overlay]"))
+      from.focus({ preventScroll: true });
+  });
+}
+
+/**
+ * The link's own actions (Open in editor, Reveal), then the move into the
+ * right panel: "Open beside" once the conversation and the reader both fit,
+ * else "Open in panel", which the reader asks for. A file the host lacks has
+ * none of them, as in a linked file.
+ */
+function FocusedFileActions(props: { readonly file: ViewerFileTarget }) {
+  const { file } = props;
+  const beside = useFileReaderPlacement(file.threadRef) === "beside";
+  const read = useProjectFileQuery(file.threadRef.environmentId, file.cwd, file.path);
+  if (read.error !== null && (read.data?.contents ?? null) === null && mayBeMissing(read.readError))
+    return null;
+  return (
+    <>
+      {file.openInEditor ? (
+        <Button type="button" size="xs" variant="ghost" onClick={file.openInEditor}>
+          <SquarePenIcon aria-hidden />
+          Open in editor
+        </Button>
+      ) : null}
+      {file.reveal ? (
+        <Button type="button" size="xs" variant="ghost" onClick={file.reveal}>
+          <FolderOpenIcon aria-hidden />
+          {file.revealLabel ?? "Reveal"}
+        </Button>
+      ) : null}
+      <Button
+        type="button"
+        size="xs"
+        variant="ghost"
+        onClick={moveFocusedFileToPanel}
+        data-focused-file-move=""
+      >
+        <PanelRightOpenIcon aria-hidden />
+        {beside ? "Open beside" : "Open in panel"}
+      </Button>
+    </>
+  );
+}
+
+/**
+ * A file a link opened in front because the right panel would crowd the
+ * conversation or the reader (D-05). It reads as a linked file does, with the
+ * thread beside it, and its own links open in its place with Back to it.
+ */
+export function FocusedFileViewer(): ReactNode {
+  useFocusedFileHost();
+  const focused = useFocusedFileStore((state) => state.file);
+  const threadRef = useStableThreadRef(focused?.threadRef ?? null);
+  const cwd = useThreadCwd(threadRef);
+  // Everything the link knew, with the thread's folder for a link that had none.
+  const target = useMemo<Extract<ViewerLinkTarget, { kind: "file" }> | null>(
+    () =>
+      focused !== null && threadRef !== null
+        ? { kind: "file", file: { ...focused, threadRef, cwd: focused.cwd || cwd || "" } }
+        : null,
+    [cwd, focused, threadRef],
+  );
+  const header = target ? viewerLinkHeader(target) : null;
+  const slots = useViewerOverlay({
+    open: target !== null,
+    title: header?.title ?? "",
+    kind: header?.kind,
+    badge: header?.badge,
+    detail: header?.detail,
+    threadRef,
+    onClose: closeFocusedFile,
+  });
+  if (slots === null || target === null) return null;
+  return (
+    <>
+      {createPortal(<ViewerLinkedPane target={target} actionsSlot={null} />, slots.content)}
+      {slots.actions
+        ? createPortal(<FocusedFileActions file={target.file} />, slots.actions)
+        : null}
+    </>
+  );
+}
+
+// The search keys that name what a page shows: the project pane's thread, the
+// machine it runs on and the checkout. Other keys are view preferences.
+const DESTINATION_SEARCH_KEYS = ["thread", "threadEnvironment", "checkout"] as const;
+
+/**
+ * Where the page behind the overlay is: its path and the thread and checkout
+ * its project pane shows. A notification for another worker in the same
+ * project changes only `?thread=`, and that is a new destination too.
+ */
+export function viewerRouteIdentity(location: {
+  readonly pathname: string;
+  readonly search?: unknown;
+}): string {
+  const search =
+    typeof location.search === "object" && location.search !== null
+      ? (location.search as Record<string, unknown>)
+      : {};
+  const value = (key: string) => {
+    const raw = search[key];
+    return typeof raw === "string" || typeof raw === "number" || typeof raw === "boolean"
+      ? String(raw)
+      : null;
+  };
+  return JSON.stringify([location.pathname, ...DESTINATION_SEARCH_KEYS.map(value)]);
+}
+
+/**
  * A link inside the overlay that goes to another page (a thread, a project,
- * the pull requests list) changes the route behind it. The overlay steps
- * aside then, so the page the reader asked for is the one in front.
+ * the pull requests list), or a notification that opens another thread,
+ * changes the destination behind it. The overlay steps aside then, so the
+ * page the reader asked for is the one in front.
  */
 export function ViewerOverlayRouteGuard() {
-  const pathname = useLocation({ select: (location) => location.pathname });
-  const previous = useRef(pathname);
+  const destination = useLocation({ select: viewerRouteIdentity });
+  const previous = useRef(destination);
   useEffect(() => {
-    if (previous.current === pathname) return;
-    previous.current = pathname;
+    if (previous.current === destination) return;
+    previous.current = destination;
     const { active, close } = useViewerOverlayStore.getState();
     if (active) close(active.key);
-  }, [pathname]);
+  }, [destination]);
   return null;
 }
 
@@ -330,6 +471,17 @@ export function ViewerOverlayRouteGuard() {
  */
 export function ViewerOverlayHost(props: {
   /** Renders a thread beside the viewer; without it the viewer takes the card. */
+  readonly renderThread?: (threadRef: ScopedThreadRef, options: OverlayThreadOptions) => ReactNode;
+}) {
+  return (
+    <>
+      <FocusedFileViewer />
+      <ViewerOverlayDialog {...props} />
+    </>
+  );
+}
+
+function ViewerOverlayDialog(props: {
   readonly renderThread?: (threadRef: ScopedThreadRef, options: OverlayThreadOptions) => ReactNode;
 }) {
   const active = useViewerOverlayStore((state) => state.active);

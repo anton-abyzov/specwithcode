@@ -437,6 +437,8 @@ export const OrchestrationV2AppThread = Schema.Struct({
   limitRecovery: Schema.optional(Schema.NullOr(OrchestrationV2LimitRecovery)),
   /** The Auto routing decision the thread was created with; absent when nothing routed it. */
   routing: Schema.optional(Schema.NullOr(TaskRoutingDecision)),
+  /** The model this thread stands in for: its launch moved off it because it had no room. */
+  launchFallbackFrom: Schema.optional(Schema.NullOr(ModelSelection)),
   pinnedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   autoSettleDisabledAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   // Fractional-index slot in the user-arranged pinned order. Optional so
@@ -1992,6 +1994,8 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
       current: ModelSelection,
       preferred: Schema.NullOr(ModelSelection),
       kind: Schema.NullOr(Schema.Literals(["fallback", "running"])),
+      /** The fallback dates from the launch (no room then), so no reset brings it back on its own. */
+      launched: Schema.optional(Schema.Boolean),
     }),
   ),
   ...OrchestrationV2CreationFields,
@@ -2026,6 +2030,12 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   activityRunStatus: Schema.optional(
     Schema.NullOr(Schema.Literals(["preparing", "starting", "running", "waiting"])),
   ),
+  /**
+   * The active run's latest provider activity: its newest item or subagent
+   * change, or its start. Messages queued behind the run do not move it, so a
+   * stalled turn stays stalled while other threads keep reporting to it.
+   */
+  activeRunActivityAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   /** The active run's newest unfinished command, tool or subagent. */
   activeWork: Schema.optional(
     Schema.NullOr(
@@ -2616,6 +2626,7 @@ export const OrchestrationV2ThreadShellJson = OrchestrationV2ThreadShell.mapFiel
   latestRunStartedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
   latestRunCompletedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
   activityRunStartedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
+  activeRunActivityAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtcFromString)),
   activeWork: Schema.optional(
     Schema.NullOr(
       Schema.Struct({
@@ -2834,6 +2845,8 @@ export const OrchestrationV2Command = Schema.Union([
     branch: Schema.NullOr(TrimmedNonEmptyString),
     worktreePath: Schema.NullOr(TrimmedNonEmptyString),
     routing: Schema.optional(TaskRoutingDecision),
+    /** The model the new thread stands in for: its launch moved off it because it had no room. */
+    launchFallbackFrom: Schema.optional(Schema.NullOr(ModelSelection)),
     importedNativeThread: Schema.optional(
       Schema.Struct({
         ref: Schema.Struct({
@@ -3250,6 +3263,8 @@ export const OrchestrationV2Command = Schema.Union([
     title: Schema.optional(TrimmedNonEmptyString),
     modelSelection: ModelSelection,
     routing: Schema.optional(TaskRoutingDecision),
+    /** The model the child stands in for: its launch moved off it because it had no room. */
+    launchFallbackFrom: Schema.optional(Schema.NullOr(ModelSelection)),
     runtimeMode: RuntimeMode,
     interactionMode: ProviderInteractionMode,
     // Omitted behaves as "settled_only" (no wake while the parent has a live
@@ -3304,6 +3319,14 @@ export type OrchestrationV2Command = typeof OrchestrationV2Command.Type;
  * send them.
  */
 const OrchestrationV2InternalCommand = Schema.Union([
+  /** Provider acknowledgement and removal of a promoted queue row commit together. */
+  Schema.Struct({
+    type: Schema.Literal("queued-message.steer-settle"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    messageId: MessageId,
+    accepted: Schema.Boolean,
+  }),
   /**
    * Records what a pull request watch saw, and wakes the agent in the same transaction when
    * `wake` is set. Rejected once the watch started at `startedAt` has ended, and a wake is
@@ -3495,6 +3518,8 @@ export const OrchestrationV2ThreadLaunchInput = Schema.Struct({
   modelSelection: ModelSelection,
   /** The Auto routing decision behind `modelSelection`, kept on the thread. */
   routing: Schema.optional(TaskRoutingDecision),
+  /** The model the thread stands in for: its launch moved off it because it had no room. */
+  launchFallbackFrom: Schema.optional(Schema.NullOr(ModelSelection)),
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
   workspaceStrategy: OrchestrationV2ThreadLaunchWorkspaceStrategy,

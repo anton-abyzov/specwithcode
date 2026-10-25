@@ -1,1 +1,3 @@
 `weave/` holds byte-for-byte copies of Weave's canonical `design/weave/tokens.json` and `weave.css` from the specweave repository (October 20, 2026). The `.fixture` extension keeps the formatter from rewriting them, so line numbers in the tests match the originals.
+
+`umbrella/` is a synthetic workspace for the scan's ranking tests: `repositories/acme/<repo>` checkouts (a UI kit, a status site holding a copy of its tokens, an app and a duplicate checkout of it) and `tools/snap`, another copy. Every file ends in `.fixture`; `umbrellaFixture.testkit.ts` lays it out in a temp folder without the suffix, so the workspace's own tooling never reads these manifests, stylesheets and components.

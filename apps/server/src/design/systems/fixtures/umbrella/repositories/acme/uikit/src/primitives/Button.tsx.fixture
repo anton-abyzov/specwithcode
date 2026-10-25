@@ -1,0 +1,8 @@
+export interface ButtonProps {
+  label: string;
+  tone?: "brand" | "quiet";
+}
+
+export function Button({ label, tone = "brand" }: ButtonProps) {
+  return <button className={`acme-btn acme-btn--${tone}`}>{label}</button>;
+}

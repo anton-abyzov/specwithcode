@@ -814,9 +814,18 @@ describe("CodexAdapterV2 process spawning", () => {
       yield* open({});
       yield* open({ STUDIO_CODEX_LAUNCH_ARGS: " --enable env-feature " });
 
+      // The thread's SpecWeave identity follows the launch arguments, so it wins.
+      const identity = [
+        "-c",
+        'shell_environment_policy.set.SPECWEAVE_STUDIO_THREAD_ID="thread-launch-args"',
+        "-c",
+        'shell_environment_policy.set.SPECWEAVE_TOOL="codex"',
+        "-c",
+        'shell_environment_policy.set.SPECWEAVE_MODEL=""',
+      ];
       assert.deepEqual(spawnedArgs, [
-        ["app-server", "--strict-config", "-c", "model_reasoning_summary=detailed"],
-        ["app-server", "--enable", "env-feature"],
+        ["app-server", "--strict-config", "-c", "model_reasoning_summary=detailed", ...identity],
+        ["app-server", "--enable", "env-feature", ...identity],
       ]);
     }).pipe(Effect.provideService(HostProcessPlatform, "linux")),
   );
@@ -2023,6 +2032,13 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                         onRequest(method, params).pipe(
                           Effect.andThen(client.request(method, params)),
                         ),
+                      raw: {
+                        ...client.raw,
+                        request: (method, params) =>
+                          onRequest(method, params).pipe(
+                            Effect.andThen(client.raw.request(method, params)),
+                          ),
+                      },
                     }) satisfies CodexClient.CodexAppServerClient["Service"],
                 ),
                 Effect.provide(context),
@@ -2489,6 +2505,267 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       assert.lengthOf(harness.terminalEvents(), 1);
       assert.isFalse(interruptSent, "A terminal native turn must not receive turn/interrupt");
       assert.isFalse(yield* harness.hasPendingBackgroundWork);
+    }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+  );
+
+  // October 23, 2026: Codex unloaded an idle thread a minute after it was
+  // unsubscribed. The next turn/start and history injection got
+  // "thread not found" and failed the turn, twice, until a fresh thread.
+  it.effect("resumes a thread Codex unloaded and starts the turn on it", () =>
+    Effect.gen(function* () {
+      const nativeThreadId = "unloaded-thread";
+      const nativeTurnId = "after-reload-turn";
+      const prompt = "complete the job";
+      const preamble = codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt });
+      const turnStart = preamble[5]!;
+      const transcript = makeCodexReplayTranscript({
+        scenario: "thread-not-loaded",
+        entries: [
+          ...preamble.slice(0, 6),
+          {
+            type: "emit_inbound",
+            label: "turn/start on an unloaded thread",
+            frame: {
+              id: 3,
+              error: { code: -32600, message: `thread not found: ${nativeThreadId}` },
+            },
+          },
+          {
+            type: "expect_outbound",
+            label: "resume the unloaded thread",
+            frame: {
+              id: 4,
+              method: "thread/resume",
+              params: {
+                threadId: nativeThreadId,
+                excludeTurns: true,
+                cwd: "/workspace",
+                model: "gpt-5.4",
+                config: CodexAdapterV2.CODEX_THREAD_CONFIG,
+              },
+            },
+          },
+          {
+            type: "emit_inbound",
+            label: "resumed",
+            frame: { id: 4, result: { thread: { id: nativeThreadId, updatedAt: 1782622450 } } },
+          },
+          withReplayRequestId(turnStart, 5),
+          withReplayRequestId(preamble[6]!, 5),
+          preamble[7]!,
+        ],
+      });
+      const harness = yield* makeCodexReplayHarness(transcript);
+      yield* harness.runtime.startTurn(
+        makeCodexTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("reload-attempt"),
+          text: prompt,
+        }),
+      );
+    }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+  );
+
+  it.effect("resumes an unloaded thread with the turn's parameters before injecting history", () =>
+    Effect.gen(function* () {
+      const nativeThreadId = "unloaded-inject-thread";
+      const prompt = "complete the job";
+      const history: ProviderAdapterV2HistoricalContext = {
+        context: "Missed turns",
+        messages: [
+          {
+            role: "user",
+            text: "Earlier request",
+            threadId: ThreadId.make("source"),
+            runId: RunId.make("source-run"),
+            itemId: TurnItemId.make("source-user"),
+            providerThreadId: null,
+            kind: "user_message",
+            status: "completed",
+          },
+        ],
+      };
+      const inject = {
+        type: "expect_outbound" as const,
+        label: "inject",
+        frame: {
+          id: 3,
+          method: "thread/inject_items",
+          params: {
+            threadId: nativeThreadId,
+            items: historyResponseItems(history.messages, history.context),
+          },
+        },
+      };
+      const preamble = codexReplayPreamble({ nativeThreadId, nativeTurnId: "unused", prompt });
+      const resumes: unknown[] = [];
+      const harness = yield* makeCodexReplayHarness(
+        makeCodexReplayTranscript({
+          scenario: "inject-thread-not-loaded",
+          entries: [
+            ...preamble.slice(0, 5),
+            inject,
+            {
+              type: "emit_inbound",
+              label: "inject on an unloaded thread",
+              frame: {
+                id: 3,
+                error: { code: -32600, message: `thread not found: ${nativeThreadId}` },
+              },
+            },
+            {
+              type: "expect_outbound",
+              label: "resume with the turn's parameters",
+              frame: {
+                id: 4,
+                method: "thread/resume",
+                params: {
+                  threadId: nativeThreadId,
+                  excludeTurns: true,
+                  cwd: "/workspace",
+                  model: "gpt-5.4",
+                  config: CodexAdapterV2.CODEX_THREAD_CONFIG,
+                },
+              },
+            },
+            {
+              type: "emit_inbound",
+              label: "resumed",
+              frame: { id: 4, result: { thread: { id: nativeThreadId, updatedAt: 1782622450 } } },
+            },
+            withReplayRequestId(inject, 5),
+            { type: "emit_inbound", label: "injected", frame: { id: 5, result: {} } },
+          ],
+        }),
+        () => Effect.void,
+        (method, params) =>
+          Effect.sync(() => {
+            if (method === "thread/resume") resumes.push(params);
+          }),
+      );
+      const turn = makeCodexTestTurnInput({
+        threadId: harness.threadId,
+        providerThread: harness.providerThread,
+        now: yield* DateTime.now,
+        attemptId: RunAttemptId.make("inject-reload-attempt"),
+        text: prompt,
+      });
+      const injected = yield* harness.runtime.injectHistory!({
+        providerThread: harness.providerThread,
+        turn,
+        ...history,
+      });
+      assert.isTrue(injected);
+      // The replay ignores cwd and model on thread/resume; the thread must
+      // load in the turn's folder and model, as resumeThread loads it.
+      assert.deepEqual(resumes, [
+        {
+          threadId: nativeThreadId,
+          excludeTurns: true,
+          cwd: "/workspace",
+          model: "gpt-5.4",
+          config: CodexAdapterV2.CODEX_THREAD_CONFIG,
+        },
+      ]);
+    }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+  );
+
+  it.effect("resumes an unloaded thread before compacting it", () =>
+    Effect.gen(function* () {
+      const nativeThreadId = "unloaded-compact-thread";
+      const compact = {
+        type: "expect_outbound" as const,
+        label: "compact",
+        frame: { id: 3, method: "thread/compact/start", params: { threadId: nativeThreadId } },
+      };
+      const harness = yield* makeCodexReplayHarness(
+        makeCodexReplayTranscript({
+          scenario: "compact-thread-not-loaded",
+          entries: [
+            ...codexReplayPreamble({
+              nativeThreadId,
+              nativeTurnId: "unused",
+              prompt: "unused",
+            }).slice(0, 5),
+            compact,
+            {
+              type: "emit_inbound",
+              label: "compact on an unloaded thread",
+              frame: {
+                id: 3,
+                error: { code: -32600, message: `thread not found: ${nativeThreadId}` },
+              },
+            },
+            {
+              type: "expect_outbound",
+              label: "resume",
+              frame: {
+                id: 4,
+                method: "thread/resume",
+                params: {
+                  threadId: nativeThreadId,
+                  excludeTurns: true,
+                  cwd: "/workspace",
+                  model: "gpt-5.4",
+                  config: CodexAdapterV2.CODEX_THREAD_CONFIG,
+                },
+              },
+            },
+            {
+              type: "emit_inbound",
+              label: "resumed",
+              frame: { id: 4, result: { thread: { id: nativeThreadId, updatedAt: 1782622450 } } },
+            },
+            withReplayRequestId(compact, 5),
+            { type: "emit_inbound", label: "compacting", frame: { id: 5, result: {} } },
+          ],
+        }),
+      );
+      yield* harness.runtime.compactThread!(
+        makeCodexTestTurnInput({
+          threadId: harness.threadId,
+          providerThread: harness.providerThread,
+          now: yield* DateTime.now,
+          attemptId: RunAttemptId.make("compact-reload-attempt"),
+          text: "/compact",
+        }),
+      );
+    }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+  );
+
+  it.effect("does not retry other turn/start errors", () =>
+    Effect.gen(function* () {
+      const nativeThreadId = "refusing-thread";
+      const prompt = "complete the job";
+      const preamble = codexReplayPreamble({ nativeThreadId, nativeTurnId: "unused", prompt });
+      const harness = yield* makeCodexReplayHarness(
+        makeCodexReplayTranscript({
+          scenario: "turn-start-refused",
+          entries: [
+            ...preamble.slice(0, 6),
+            {
+              type: "emit_inbound",
+              label: "turn/start refused",
+              frame: { id: 3, error: { code: -32600, message: "invalid request" } },
+            },
+          ],
+        }),
+      );
+      const error = yield* Effect.flip(
+        harness.runtime.startTurn(
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("refused-attempt"),
+            text: prompt,
+          }),
+        ),
+      );
+      assert.equal(error._tag, "ProviderAdapterTurnStartError");
+      assert.nestedPropertyVal(error, "cause.errorMessage", "invalid request");
     }).pipe(Effect.scoped, Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
   );
 
@@ -3365,6 +3642,92 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
     ),
   );
+
+  for (const withNotification of [true, false]) {
+    it.effect(
+      `asks for a fresh app-server when Codex's account changed outside it (error notification: ${withNotification})`,
+      () =>
+        Effect.scoped(
+          Effect.gen(function* () {
+            const scenario = `codex-auth-changed-${withNotification ? "notified" : "completed"}`;
+            const nativeThreadId = `native-${scenario}-thread`;
+            const nativeTurnId = `native-${scenario}-turn`;
+            const nativeMessage =
+              "Your access token could not be refreshed because you have since logged out or signed in to another account. Please sign in again.";
+            const transcript = makeCodexReplayTranscript({
+              scenario,
+              entries: [
+                ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "Say hi." }),
+                ...(withNotification
+                  ? [
+                      {
+                        type: "emit_inbound" as const,
+                        label: "error/auth-changed",
+                        frame: {
+                          method: "error",
+                          params: {
+                            threadId: nativeThreadId,
+                            turnId: nativeTurnId,
+                            willRetry: false,
+                            error: { message: nativeMessage },
+                          },
+                        },
+                      },
+                    ]
+                  : []),
+                {
+                  type: "emit_inbound",
+                  label: "turn/completed",
+                  frame: {
+                    method: "turn/completed",
+                    params: {
+                      threadId: nativeThreadId,
+                      turn: {
+                        ...makeCodexReplayTurn({ id: nativeTurnId, status: "failed" }),
+                        error: { message: nativeMessage, codexErrorInfo: "other" },
+                      },
+                    },
+                  },
+                },
+              ],
+            });
+            const harness = yield* makeCodexReplayHarness(transcript);
+            assert.isNull(yield* harness.runtime.restartRequired!);
+            const now = yield* DateTime.now;
+            yield* harness.runtime.startTurn(
+              makeCodexTestTurnInput({
+                threadId: harness.threadId,
+                providerThread: harness.providerThread,
+                now,
+                attemptId: RunAttemptId.make(`attempt-${scenario}`),
+                text: "Say hi.",
+              }),
+            );
+            yield* awaitUntil(() => harness.terminalEvents().length === 1, "auth-changed turn");
+
+            const terminal = harness.terminalEvents()[0];
+            assert.equal(terminal?.status, "failed");
+            const failure = terminal?.status === "failed" ? terminal.failure : undefined;
+            assert.equal(failure?.code, CodexAdapterV2.CODEX_AUTH_CHANGED_FAILURE_CODE);
+            assert.equal(failure?.message, CodexAdapterV2.CODEX_AUTH_CHANGED_FAILURE_MESSAGE);
+            assert.equal(
+              yield* harness.runtime.restartRequired!,
+              CodexAdapterV2.CODEX_AUTH_CHANGED_RESTART_REASON,
+            );
+          }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+        ),
+    );
+  }
+
+  it("recognizes only Codex's account-changed refresh failure", () => {
+    assert.isTrue(
+      CodexAdapterV2.isCodexAuthChangedMessage(
+        "Your access token could not be refreshed because you have since logged out or signed in to another account. Please sign in again.",
+      ),
+    );
+    assert.isFalse(CodexAdapterV2.isCodexAuthChangedMessage("Reconnecting... 2/5"));
+    assert.isFalse(CodexAdapterV2.isCodexAuthChangedMessage(undefined));
+  });
 
   it.effect("stamps Codex items with their own start time, not the turn's", () =>
     Effect.scoped(

@@ -154,6 +154,27 @@ function shellStatus(thread: EnvironmentThreadShell): SubagentEntryStatus {
   return "completed";
 }
 
+const TERMINAL_RUN_STATUSES = new Set(["completed", "failed", "cancelled", "interrupted"]);
+
+/**
+ * What a row shows. The parent's record can lag behind the child: a process
+ * that died, a person's Stop or a usage limit can end the child's own run
+ * while the parent still says it runs. A child whose own run has ended and
+ * holds no live runtime wins over that stale record. A provider's own subagent
+ * has no run to read, so its record stands.
+ */
+function entryStatus(
+  agent: Pick<ProjectedSubagent, "status"> | undefined,
+  thread: EnvironmentThreadShell,
+): SubagentEntryStatus {
+  if (!agent) return shellStatus(thread);
+  if (!isOrchestrationV2WorkActive(agent.status)) return agent.status;
+  const run = thread.latestRun?.status;
+  if (run === undefined || !TERMINAL_RUN_STATUSES.has(run)) return agent.status;
+  if (threadRuntimeIsActive(thread.runtime)) return agent.status;
+  return shellStatus(thread);
+}
+
 /**
  * The subagents a thread started, from its own records (title, model, result)
  * and from the backing threads the client has loaded, so a row shows while the
@@ -176,7 +197,7 @@ export function threadSubagentEntries(input: {
   for (const { thread, depth } of subagentDescendants(input.shells, input.parent, coordinatorIds)) {
     const agent = byChild.get(thread.id);
     listed.add(thread.id);
-    const status = agent?.status ?? shellStatus(thread);
+    const status = entryStatus(agent, thread);
     // A run blocked on an approval or a question waits on the person, not on its work.
     const awaitingPerson = isOrchestrationV2WorkActive(status) ? awaitingPersonOf(thread) : null;
     entries.push({
@@ -271,7 +292,9 @@ const AWAITING_PERSON_LABELS: Record<SubagentAwaitingPerson, string> = {
 };
 
 /** A row's status words: what it waits on from the person, or its status. */
-export function subagentEntryLabel(entry: Pick<SubagentEntry, "status" | "awaitingPerson">): string {
+export function subagentEntryLabel(
+  entry: Pick<SubagentEntry, "status" | "awaitingPerson">,
+): string {
   return entry.awaitingPerson === undefined
     ? SUBAGENT_STATUS_LABELS[entry.status]
     : AWAITING_PERSON_LABELS[entry.awaitingPerson];

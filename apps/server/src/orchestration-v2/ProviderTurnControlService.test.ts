@@ -17,10 +17,12 @@ import {
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
@@ -323,4 +325,78 @@ it.effect(
       assert.equal(interrupted?.id, providerThreadId);
       assert.equal(interrupted?.nativeThreadRef?.nativeId, "native-thread:restart-session");
     }),
+);
+
+it.effect("settles Stop locally when a live session never acknowledges the interrupt", () =>
+  Effect.gen(function* () {
+    const now = yield* DateTime.now;
+    const threadId = ThreadId.make("thread:hung-session");
+    const sessionId = ProviderSessionId.make("provider-session:hung");
+    const providerThreadId = ProviderThreadId.make("provider-thread:hung");
+    const providerTurnId = ProviderTurnId.make("provider-turn:hung");
+    const attemptId = RunAttemptId.make("run-attempt:hung");
+    const providerThread = {
+      id: providerThreadId,
+      driver,
+      providerInstanceId,
+      providerSessionId: sessionId,
+      appThreadId: threadId,
+      ownerNodeId: null,
+      nativeThreadRef: null,
+      nativeConversationHeadRef: null,
+      status: "active",
+      firstRunOrdinal: 1,
+      lastRunOrdinal: 1,
+      handoffIds: [],
+      forkedFrom: null,
+      createdAt: now,
+      updatedAt: now,
+    } satisfies OrchestrationV2ProviderThread;
+    const projection = makeProjection({ now, threadId, providerThread, providerTurnId, attemptId });
+    const interruptCalls = yield* Ref.make(0);
+    // A hung provider: the interrupt call never returns.
+    const runtime = {
+      interruptTurn: () =>
+        Ref.update(interruptCalls, (count) => count + 1).pipe(Effect.andThen(Effect.never)),
+    } as unknown as ProviderAdapterV2SessionRuntime;
+    const layer = ProviderTurnControlService.layer.pipe(
+      Layer.provide(
+        Layer.merge(
+          Layer.mock(ProjectionStore.ProjectionStoreV2)({
+            getProviderControlContext: (_threadId, target) =>
+              Effect.succeed({
+                providerThread: projection.providerThreads.find(
+                  (thread) => thread.id === target.providerThreadId,
+                ),
+                providerTurn: projection.providerTurns.find(
+                  (turn) => turn.id === target.providerTurnId,
+                ),
+                attempt: undefined,
+                message: undefined,
+                run: undefined,
+              }),
+          }),
+          Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({
+            get: () => Effect.succeed(Option.some(runtime)),
+          }),
+        ),
+      ),
+    );
+    const fiber = yield* Effect.gen(function* () {
+      const control = yield* ProviderTurnControlService.ProviderTurnControlServiceV2;
+      return yield* control.interrupt({
+        threadId,
+        providerSessionId: sessionId,
+        providerThreadId,
+        providerTurnId,
+      });
+    }).pipe(Effect.provide(layer), Effect.forkChild);
+    yield* TestClock.adjust("29 seconds");
+    assert.isUndefined(fiber.pollUnsafe());
+    yield* TestClock.adjust("2 seconds");
+    const exit = yield* Fiber.await(fiber);
+    // Succeeding lets the effect worker settle the run as interrupted.
+    assert.isTrue(Exit.isSuccess(exit));
+    assert.equal(yield* Ref.get(interruptCalls), 1);
+  }),
 );

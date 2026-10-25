@@ -158,6 +158,43 @@ describe("thread subagents", () => {
     expect(runningSubagentCount(shells, worker)).toBe(1);
   });
 
+  it("shows a child's ended run over the parent's stale running record", () => {
+    const run = (status: string) =>
+      ({ runId: "run", status, completedAt: "2026-10-15T10:05:00.000Z" }) as never;
+    const record = (childThreadId: string) => ({
+      id: `node:${childThreadId}`,
+      childThreadId,
+      title: childThreadId,
+      prompt: null,
+      status: "running",
+      origin: "app_owned",
+      providerInstanceId: "codex",
+      model: null,
+      result: null,
+      startedAt: null,
+      completedAt: null,
+    });
+    const stopped = shell("stopped", "native", { latestRun: run("cancelled") });
+    const limited = shell("limited", "native", { latestRun: run("interrupted") });
+    const live = shell("live", "native", {
+      latestRun: run("completed"),
+      runtime: { status: "running" } as EnvironmentThreadShell["runtime"],
+    });
+    const runless = shell("runless", "native");
+    const entries = threadSubagentEntries({
+      parent: worker,
+      shells: [...all, stopped, limited, live, runless],
+      projected: [record("stopped"), record("limited"), record("live"), record("runless")] as never,
+    });
+    const status = (id: string) => entries.find((entry) => entry.childThreadId === id)!.status;
+    expect(status("stopped")).toBe("cancelled");
+    expect(status("limited")).toBe("interrupted");
+    // A child still at work, and a native child with no run of its own, keep the record.
+    expect(status("live")).toBe("running");
+    expect(status("runless")).toBe("running");
+    expect(runningSubagentCount([...all, stopped, limited, live, runless], worker)).toBe(2);
+  });
+
   it("names the thread's model for a task that ran outside any run", () => {
     const model = { instanceId: "claudeAgent", model: "claude-opus-5-5" };
     expect(requestExecutionLabel({ runId: null }, [], "Mac", undefined, model)).toBe(

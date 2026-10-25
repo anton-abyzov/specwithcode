@@ -1,6 +1,7 @@
 import * as DateTime from "effect/DateTime";
 import {
   DesktopThreadNotificationInputSchema,
+  DesktopThreadNotificationTargetSchema,
   type DesktopThreadNotificationInput,
   type DesktopThreadNotificationTarget,
 } from "@specweave-studio/contracts";
@@ -275,9 +276,7 @@ export const installThreadNotifications = Effect.fn("desktop.ipc.installThreadNo
       DesktopIpc.makeIpcMethod({
         channel: TAKE_THREAD_NOTIFICATION_OPEN_CHANNEL,
         payload: Schema.Void,
-        result: Schema.NullOr(
-          Schema.Struct({ environmentId: Schema.String, threadId: Schema.String }),
-        ),
+        result: Schema.NullOr(DesktopThreadNotificationTargetSchema),
         handler: (_input, event) =>
           Effect.sync(() =>
             center.takePendingOpen(event?.sender.id ?? -1, (id) => {

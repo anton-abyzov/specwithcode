@@ -60,10 +60,13 @@ const ANSI_PATTERN =
 const GH_LOG_PREFIX = /^[^\t\n]*\t[^\t\n]*\t/;
 /** The runner's own timestamp, often behind a byte-order mark. */
 const RUNNER_TIMESTAMP = /^﻿?\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z ?/;
-const SECRET_PATTERNS: ReadonlyArray<readonly [RegExp, string]> = [
-  [/\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})\b/g, "[redacted]"],
-  [/\b(?:sk-[A-Za-z0-9][A-Za-z0-9_-]{15,}|xox[abposr]-[A-Za-z0-9-]{10,})\b/g, "[redacted]"],
+const CREDENTIAL_TOKEN_PATTERNS: ReadonlyArray<readonly [RegExp, string]> = [
+  [/\b(?:gh[pousr]_[A-Za-z0-9]+|github_pat_[A-Za-z0-9_]{20,})\b/g, "[redacted]"],
+  [/\b(?:sk-[A-Za-z0-9][A-Za-z0-9_-]{7,}|xox[a-zA-Z]-[A-Za-z0-9-]+)\b/g, "[redacted]"],
   [/\bAKIA[0-9A-Z]{16}\b/g, "[redacted]"],
+];
+const SECRET_PATTERNS: ReadonlyArray<readonly [RegExp, string]> = [
+  ...CREDENTIAL_TOKEN_PATTERNS,
   [/\b(Bearer|Basic|token)\s+[A-Za-z0-9._~+/=-]{16,}/gi, "$1 [redacted]"],
   [/(https?:\/\/)[^\s/:@]+:[^\s/@]+@/gi, "$1[redacted]@"],
   [
@@ -71,6 +74,14 @@ const SECRET_PATTERNS: ReadonlyArray<readonly [RegExp, string]> = [
     "$1[redacted]",
   ],
 ];
+
+/** Token shapes only, preserving each caller's header and excerpt formatting. */
+export function scrubCredentialTokens(text: string): string {
+  for (const [pattern, replacement] of CREDENTIAL_TOKEN_PATTERNS) {
+    text = text.replace(pattern, replacement);
+  }
+  return text;
+}
 
 /** Removes credential shapes, and any exact secret the caller knows about, from log text. */
 export function scrubLogSecrets(text: string, known: ReadonlyArray<string> = []): string {

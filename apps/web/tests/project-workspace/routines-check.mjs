@@ -40,7 +40,7 @@ try {
   // A routine run by hand has nothing to pause; a monthly one does.
   assert.equal(await tax.first().getByRole("button", { name: "Pause" }).count(), 0);
   assert.equal(await pane.getByRole("button", { name: "Pause" }).count(), 1);
-  assert(await pane.getByText("Own thread from the first run").isVisible());
+  assert(await pane.getByText("Own thread", { exact: true }).isVisible());
   await shot(page, "routines-desktop");
 
   // Run now sends one request for that routine.

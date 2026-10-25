@@ -551,6 +551,11 @@ it("keeps agent-origin messages and their sending-thread control unchanged", asy
   expect(conversation.textContent).toContain(text);
   const sender = conversation.querySelector<HTMLButtonElement>('[data-thread-chip="worker"]')!;
   expect(sender.closest(".project-message-source")!.textContent).toMatch(/^Sent by /);
+  // "Sent by" is one unit the narrow-bubble rule keeps on one line (see threadCards.css).
+  expect(
+    sender.closest(".project-message-source")!.querySelector(".project-message-source-prefix")!
+      .textContent,
+  ).toBe("Sent by");
   expect(sender.querySelector(".sws-dot")).not.toBeNull();
   await act(async () => sender.click());
   expect(container.querySelector('[data-native-thread="worker"]')).not.toBeNull();

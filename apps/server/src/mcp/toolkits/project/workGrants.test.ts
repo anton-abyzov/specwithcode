@@ -109,6 +109,7 @@ const projects = new Map([
 
 const workerSession = (coordinator: EnvironmentId) => ({
   sessionId: AuthSessionId.make(`session-${coordinator}`),
+  principal: { kind: "coordinator", environmentId: coordinator },
   subject: EnvironmentAuth.MCP_CLIENT_SUBJECT,
   client: { label: workerClientName(coordinator), deviceType: "bot" },
 });
@@ -137,6 +138,11 @@ const setup = (input: {
     NodeServices.layer,
     config,
     Layer.mock(EnvironmentAuth.EnvironmentAuth)({
+      setPrincipalRevoked: (principal, isRevoked) =>
+        Effect.sync(() => {
+          if (isRevoked && principal.kind === "coordinator")
+            revoked.push(`session-${principal.environmentId}`);
+        }),
       listSessions: () => Effect.succeed(live as never),
       revokeSession: (sessionId) =>
         Effect.sync(() => revoked.push(sessionId)).pipe(Effect.as(true)),
@@ -221,6 +227,7 @@ const setup = (input: {
     thread: undefined,
     client: {
       sessionId: `session-${coordinator}`,
+      principal: { kind: "coordinator", environmentId: coordinator },
       label: workerClientName(coordinator),
       access: "full-access",
     },
@@ -513,6 +520,7 @@ describe("a personal assistant here, seen by another machine's work", () => {
     thread: undefined,
     client: {
       sessionId: "session-example-desktop",
+      principal: { kind: "device", id: "example-desktop" },
       label: "Example Desktop",
       access: "full-access",
     },

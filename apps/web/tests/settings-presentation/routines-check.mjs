@@ -81,6 +81,23 @@ try {
       NodeAssert.match(watch, /Atlas Studio/);
       NodeAssert.doesNotMatch(watch, /Coordinator/);
       NodeAssert.match(campaign, /Its own thread/);
+      // Every routine names its thread; a started one links to it.
+      NodeAssert.match(watch, /Its own thread/);
+      NodeAssert.match(results, /Own thread\b/);
+      NodeAssert.match(release, /Continues a worker's thread/);
+      NodeAssert.match(hook, /Own thread\b/);
+      for (const row of rows) NodeAssert.doesNotMatch(row.text, /Coordinator/);
+      const links = await page
+        .locator("[data-slot='settings-row'] a[data-routine-thread]")
+        .evaluateAll((list) => list.map((a) => [a.textContent, new URL(a.href).pathname]));
+      NodeAssert.deepEqual(
+        links.map(([text, path]) => [text, path.split("/").at(-1)]),
+        [
+          ["Its own thread", "idle"],
+          ["Continues a worker's thread", "skills"],
+          ["Its own thread", "idle"],
+        ],
+      );
       NodeAssert.match(results, /Paused/);
       NodeAssert.doesNotMatch(results, /Next/);
       NodeAssert.match(release, /could not reach the store listing/);

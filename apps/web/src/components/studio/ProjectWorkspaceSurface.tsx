@@ -1,3 +1,4 @@
+import { useProjectAttention } from "../../studio/useProjectAttention";
 import { ThreadArtifactsMenu } from "../chat/ThreadArtifacts";
 import { CoordinatorComposerControls } from "./CoordinatorAccessPicker";
 import { useProjectThreadInventory } from "../../studio/useProjectThreadInventory";
@@ -11,6 +12,8 @@ import { useProjectCoordinatorDraft } from "../../studio/projectCoordinatorDraft
 import { getProjectCoordinatorComposer } from "../../studio/projectCoordinatorComposer";
 import { settleAfter, settleCaught } from "../../lib/settle";
 import { CoordinatorComposer } from "./CoordinatorComposer";
+import { CoordinatorQuestionCard, focusCoordinatorPrompt } from "./CoordinatorQuestionCard";
+import { useCoordinatorQuestion } from "./useCoordinatorQuestion";
 import { useDurableCoordinatorDraft, whenHostReady } from "../../lib/durableComposerDraftBindings";
 import { retryTransientSend } from "../../lib/transientSendRetry";
 import { ProjectCoordinatorDetails } from "./ProjectCoordinatorDetails";
@@ -20,16 +23,7 @@ import { TimelineDetailMenu } from "../chat/TimelineDetailMenu";
 import { useCallback, useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
 import { useNavigate } from "@tanstack/react-router";
 import { useAtomValue } from "@effect/atom-react";
-import {
-  AppWindowIcon,
-  EllipsisVerticalIcon,
-  GaugeIcon,
-  LaptopIcon,
-  ListChecksIcon,
-  PanelRightIcon,
-  RepeatIcon,
-  SettingsIcon,
-} from "lucide-react";
+import { LaptopIcon, PanelRightIcon, SettingsIcon } from "lucide-react";
 import * as Schema from "effect/Schema";
 import {
   AuthOrchestrationOperateScope,
@@ -37,6 +31,7 @@ import {
   CommandId,
   logicalProjectTitle,
   type ChatAttachment,
+  type ModelSelection,
   type ProjectStarterSuggestion,
   type ThreadId,
   PERSONAL_ASSISTANT_DESCRIPTION,
@@ -88,7 +83,7 @@ import {
   hostDisconnectedLabel,
   projectAdmissionReason,
 } from "../../studio/projectWorkspaceModel";
-import { modelLabel, THREAD_TONE_LABELS, threadTone, waitingCount } from "../../studio/shellModel";
+import { modelLabel, THREAD_TONE_LABELS, threadTone } from "../../studio/shellModel";
 import {
   PULL_REQUEST_REQUEST_EXPIRED_REASON,
   PULL_REQUEST_REQUEST_TTL_MS,
@@ -107,18 +102,17 @@ import { WorkspacePageHeader } from "../WorkspacePageHeader";
 import { SidebarInset } from "../ui/sidebar";
 import { Button } from "../ui/button";
 import { isElectron } from "../../env";
-import { canOpenProjectWindowFor, openProjectWindow } from "../../lib/projectWindow";
 import { ProjectWorkspaceSettings, type ProjectSettingsTab } from "./ProjectWorkspaceSettings";
 import { isProjectSettingsTab } from "./projectSettingsSearch.logic";
 import { useProjectSettingsRequest } from "../../studio/projectSettingsRequests";
 import { fileAttachmentStagingLimit } from "../chat/composerAttachmentFiles";
 import { coordinatorRetryMessage, coordinatorRetryFingerprint } from "./coordinatorRecovery";
+import { QuestionLiveStatus, useLiveAnnouncement } from "../chat/questionLiveStatus";
 import {
   useProjectCoordinatorRecovery,
   useProjectCoordinatorModelControls,
 } from "./useProjectCoordinatorRecovery";
 import { useCoordinatorModelsLoading } from "./shell/useCoordinatorModelsLoading";
-import { ProjectUsageIndicator } from "./shell/ProjectUsageIndicator";
 import { useProviderEntries } from "./shell/ModelBadge";
 import {
   StarterSuggestions,
@@ -135,6 +129,9 @@ import { bulkThreadTargets } from "../../studio/bulkThreadControl";
 import { useBulkThreadControl } from "../../studio/useBulkThreadControl";
 import { useComposerAppCommands } from "../../studio/useComposerAppCommands";
 import { LibraryPane } from "./shell/LibraryPane";
+import { ProjectDesignsButton, ProjectDesignsPane } from "./shell/ProjectDesignsPane";
+import { useProjectDesigns } from "../design/useProjectDesigns";
+import { useProjectPaneDeepLink } from "../../studio/useProjectPaneDeepLink";
 import { PullRequestsPane } from "./shell/PullRequestsPane";
 import { ScheduledPane } from "./shell/ScheduledPane";
 import type { ProjectPaneBarProps } from "./shell/ProjectPaneBar";
@@ -152,15 +149,13 @@ import { coordinatorProgress } from "../../studio/coordinatorProgress";
 import { Tip } from "./shell/Tip";
 import { useCoordinatorVoiceAsk, useVoiceCall, VoiceCallBar, VoiceCallButton } from "./VoiceCall";
 import { ProjectIconButton } from "./ProjectIconEditor";
-import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
+import { ProjectMoreMenu } from "./shell/ProjectMoreMenu";
 import { randomUUID } from "../../lib/utils";
 
 import { CoordinatorConversation } from "./CoordinatorConversation";
 import { ProjectOrchestratorSwitcher } from "./OrchestratorSwitcher";
 import type { OrchestratorCopy } from "../../studio/projectCoordinatorMachine";
 import { useMachineNickname } from "../../studio/machineNickname";
-import { useUnreachableHosts } from "../../studio/unreachableHosts";
 import { isThisMachineTarget } from "../../connection/desktopLocal";
 import {
   environmentWaitsForReconnectGrace,
@@ -258,7 +253,7 @@ export function ProjectWorkspaceSurface({
     project,
     iconCheckouts,
     mainCoordinatorId,
-    selected !== null,
+    true,
   );
   const remoteWorkerCount = visibleRemoteWorkers(
     useProjectRemoteWorkers(project.environmentId, project.id).workers,
@@ -429,6 +424,7 @@ export function ProjectWorkspaceSurface({
   const sendCommand = useAtomCommand(projectWorkspace.send, { reportFailure: false });
   const navigate = useNavigate();
   const connected = environment?.connection.phase === "connected";
+  const designs = useProjectDesigns(project.environmentId, project.id, connected);
   // This machine reads as busy, never offline: a short blip shows neutral
   // text and only a stall past the grace says more. The grace runs in the same
   // phases as the chat banner's, so the two surfaces agree. Remote hosts keep
@@ -526,7 +522,13 @@ export function ProjectWorkspaceSurface({
   // model with the next message, so the line must not claim a limit then.
   // The fallback never rewrites the saved model. An ongoing run names its actual
   // provider; after it ends, thread metadata reflects a later Switch back.
+  // A pick made here names the next turn until one runs; see coordinatorModelDisplay.
+  const [handPick, setHandPick] = useState<{
+    selection: ModelSelection;
+    afterOrdinal: number;
+  } | null>(null);
   const coordinatorDisplay = coordinatorModelDisplay({
+    handPick,
     picked: model ?? null,
     saved: coordinator ? savedCoordinatorModel : null,
     thread: coordinator?.modelSelection ?? null,
@@ -619,6 +621,13 @@ export function ProjectWorkspaceSurface({
       });
       if (result._tag === "Failure") throw squashAtomCommandFailure(result);
       continuationSelection.observe(selection, expectedRevision + 1);
+      setHandPick({
+        selection,
+        afterOrdinal: Math.max(
+          0,
+          ...(coordinatorThread?.projection.runs ?? []).map((run) => run.ordinal),
+        ),
+      });
     },
     onError: setError,
     onSaved: () => setNotice("Coordinator model saved for this project."),
@@ -641,6 +650,14 @@ export function ProjectWorkspaceSurface({
               // Back after a reset only when a limit is known to keep the pick out.
               returnsTo: coordinatorFallback?.reason ? coordinatorFallback.saved.provider : null,
               offPick: coordinatorFallback !== null,
+              reason: coordinatorFallback?.reason ?? null,
+              // The picker header always offers the way back; the composer line only
+              // once the pick has room again.
+              onSwitchBack:
+                coordinatorFallback && canOperate && connected
+                  ? () => void switchCoordinatorBack()
+                  : null,
+              switching: switchingBack,
             }
           : null,
       canOperate,
@@ -651,6 +668,7 @@ export function ProjectWorkspaceSurface({
       retrying: retryingCoordinator,
       onChange: (selection) => void saveCoordinatorModel(selection),
       onOpenSettings: () => setTab("general"),
+      onOpenProjectUsage: () => setTab("usage"),
     });
   const threadOpen = selectedThread !== null;
   const threadBusy = selectedThread ? threadTone(selectedThread) === "working" : false;
@@ -692,6 +710,16 @@ export function ProjectWorkspaceSurface({
       document.querySelector<HTMLTextAreaElement>("#project-prompt")?.focus(),
     );
   }, [phone, setOverviewOpen, setSelected]);
+  // The header's Designs button and `?pane=designs` land on the panel's Designs tab.
+  const showPaneTab = useCallback(
+    (tab: ProjectPaneTab) => {
+      if (selectedThread !== null) setSelected(null);
+      setPaneTab(tab);
+      setOverviewOpen(true);
+    },
+    [selectedThread, setOverviewOpen, setPaneTab, setSelected],
+  );
+  useProjectPaneDeepLink(showPaneTab);
   const toggleOverview = useCallback(() => {
     if (threadOpen || overviewOpen) hideOverview();
     else setOverviewOpen(true);
@@ -934,11 +962,39 @@ export function ProjectWorkspaceSurface({
     () => composer.getSnapshot().submitting,
     () => composer.getSnapshot().submitting,
   );
+  // The coordinator's open question is answered here, chat first: options on its card,
+  // or the composer's text and files. Answering needs no model, only the host.
+  const composerProblem =
+    blocked ??
+    modelCompatibility ??
+    (!model && !coordinatorId ? missingModelMessage(modelsLoading) : null);
+  // Read to a screen reader when an answer is sent or a question settles.
+  const [questionAnnouncement, announceQuestion] = useLiveAnnouncement();
+  const retireError = useCallback(
+    (message: string) => setError((current) => (current === message ? null : current)),
+    [],
+  );
+  const coordinatorQuestion = useCoordinatorQuestion({
+    environmentId: project.environmentId,
+    coordinatorId,
+    projection: coordinatorThread?.projection ?? null,
+    composer,
+    supportsQuestionAttachments: hostCapabilities?.questionAttachments === true,
+    disabled: !canOperate || !connected,
+    composerCanAnswer: composerProblem === null,
+    reportError: setError,
+    retireError,
+    announce: announceQuestion,
+  });
   const sendFromComposer = useCallback(
     (text: string, attachments: ReadonlyArray<ChatAttachment> | undefined) =>
-      routingSend(text, undefined, attachments),
-    [routingSend],
+      coordinatorQuestion
+        ? coordinatorQuestion.answerFromDraft(text, attachments)
+        : routingSend(text, undefined, attachments),
+    [coordinatorQuestion, routingSend],
   );
+  // While the composer can answer, the card above it is the request: no second notice.
+  const answersInChat = coordinatorQuestion?.composerCanAnswer === true;
   const retryMessage = coordinatorRetryMessage(coordinatorThread?.projection.messages ?? []);
   const retryCoordinator = useProjectCoordinatorRecovery({
     message: retryMessage,
@@ -1044,10 +1100,15 @@ export function ProjectWorkspaceSurface({
       onStart={(suggestion) => void startSuggestion(suggestion)}
     />
   );
-  const unreachableHosts = useUnreachableHosts();
   const coordinatorTone = coordinator ? threadTone(coordinator) : null;
   // Native review controls stay with the coordinator, in this project's main pane.
   const attention = coordinatorAttention(coordinator ?? null);
+  const chipOpens =
+    attention?.reason === "input" && answersInChat
+      ? "answer"
+      : attention && attention.reason !== "failed"
+        ? "coordinator-review"
+        : "conversation";
   const openCoordinatorPage = useCallback(() => {
     if (!coordinatorId) return;
     setCoordinatorReviewView("requests");
@@ -1064,7 +1125,29 @@ export function ProjectWorkspaceSurface({
     [coordinatorId],
   );
 
-  const waiting = waitingCount(workers, unreachableHosts);
+  const attentionProjects = useMemo(
+    () =>
+      executionScopes.map((scope) => ({
+        environmentId: scope.environmentId,
+        id: scope.projectId,
+        workspaceSettings: {
+          logicalProject: project.workspaceSettings?.logicalProject,
+          coordinatorThreadId:
+            scope.environmentId === project.environmentId && scope.projectId === project.id
+              ? mainCoordinatorId
+              : scope.coordinatorThreadId,
+        },
+      })),
+    [
+      executionScopes,
+      project.environmentId,
+      project.id,
+      project.workspaceSettings?.logicalProject,
+      mainCoordinatorId,
+    ],
+  );
+  const projectAttention = useProjectAttention(shells, attentionProjects);
+  const waiting = projectAttention.count;
   const openLink = useOpenLink(null);
   const machineLabels = useMemo(
     () =>
@@ -1126,7 +1209,14 @@ export function ProjectWorkspaceSurface({
     tab: paneTab,
     onTabChange: setPaneTab,
     counts: {
-      threads: { value: waiting, label: "waiting on you", tone: "waiting" },
+      threads: {
+        value: waiting,
+        label: projectAttention.complete
+          ? "waiting on you"
+          : "waiting on you · partial / unavailable",
+        tone: "waiting",
+      },
+      designs: { value: designs.count, label: designs.count === 1 ? "design" : "designs" },
       prs: { value: openPullRequests, label: "open" },
     },
     onNewThread: askCoordinator,
@@ -1242,6 +1332,11 @@ export function ProjectWorkspaceSurface({
                 ) : null}
               </div>
               <div className="project-header-actions sws-top-actions">
+                <ProjectDesignsButton
+                  designs={designs}
+                  pressed={paneOpen && !selectedThread && paneTab === "designs"}
+                  onClick={() => showPaneTab("designs")}
+                />
                 <Tip
                   label={`${paneOpen ? "Hide" : "Show"} overview${overviewShortcut ? ` (${overviewShortcut})` : ""}`}
                 >
@@ -1277,48 +1372,14 @@ export function ProjectWorkspaceSurface({
                     <SettingsIcon aria-hidden />
                   </button>
                 </Tip>
-                <Menu>
-                  <Tooltip>
-                    <TooltipTrigger
-                      render={
-                        <MenuTrigger
-                          render={
-                            <button
-                              type="button"
-                              className="sws-icon-button"
-                              aria-label="More project actions"
-                            />
-                          }
-                        />
-                      }
-                    >
-                      <EllipsisVerticalIcon aria-hidden />
-                    </TooltipTrigger>
-                    <TooltipPopup side="bottom">More</TooltipPopup>
-                  </Tooltip>
-                  <MenuPopup align="end" side="bottom" className="min-w-52">
-                    <MenuItem onClick={() => setPlanOpen(true)}>
-                      <ListChecksIcon aria-hidden />
-                      Plan
-                    </MenuItem>
-                    <MenuItem onClick={() => setTab("usage")}>
-                      <GaugeIcon aria-hidden />
-                      Usage
-                    </MenuItem>
-                    <MenuItem onClick={() => setTab("routines")}>
-                      <RepeatIcon aria-hidden />
-                      Routines
-                    </MenuItem>
-                    {canOpenProjectWindowFor(projectKey) ? (
-                      <MenuItem
-                        onClick={() => void openProjectWindow({ projectKey, title: projectTitle })}
-                      >
-                        <AppWindowIcon aria-hidden />
-                        Open in new window
-                      </MenuItem>
-                    ) : null}
-                  </MenuPopup>
-                </Menu>
+                <ProjectMoreMenu
+                  project={project}
+                  projectKey={projectKey}
+                  projectTitle={projectTitle}
+                  onOpenPlan={() => setPlanOpen(true)}
+                  onOpenSettingsTab={setTab}
+                  designHere={project.environmentId === primaryEnvironmentId}
+                />
               </div>
             </WorkspacePageHeader>
             {coordinatorDetailsOpen && coordinatorId ? (
@@ -1337,6 +1398,16 @@ export function ProjectWorkspaceSurface({
                   send: (text, attachments) => routingSend(text, undefined, attachments),
                   openCoordinator,
                   openThread: openThreadInPane,
+                  coordinatorQuestion: coordinatorQuestion && {
+                    question: coordinatorQuestion,
+                    composer,
+                    environmentId: project.environmentId,
+                    cwd: project.workspaceRoot,
+                    uploadsSupported,
+                    canAttach: canOperate && connected,
+                    maxFileBytes,
+                    composerProblem,
+                  },
                 }}
                 onClose={() => setCoordinatorDetailsOpen(false)}
               />
@@ -1369,7 +1440,7 @@ export function ProjectWorkspaceSurface({
                   canChange={canWriteSourceControl && connected}
                   onCreatePullRequest={createPullRequest}
                   onOpenPullRequest={(url) => void openLink(url).catch(() => undefined)}
-                  attention={attention}
+                  attention={attention?.reason === "input" && answersInChat ? null : attention}
                   onOpenCoordinatorPage={openCoordinatorPage}
                   onOpenCoordinatorActivity={openCoordinatorActivity}
                   failure={coordinatorFailure}
@@ -1392,6 +1463,7 @@ export function ProjectWorkspaceSurface({
                 // workspace read is pending, a coordinator with history may be behind it.
                 welcome
               ) : null}
+              <QuestionLiveStatus announcement={questionAnnouncement} />
               <CoordinatorComposer
                 composer={composer}
                 // A viewer showing the coordinator borrows this composer.
@@ -1412,7 +1484,26 @@ export function ProjectWorkspaceSurface({
                 uploadsSupported={uploadsSupported}
                 maxFileBytes={maxFileBytes}
                 sending={sending}
-                placeholder={promptPlaceholder}
+                placeholder={
+                  coordinatorQuestion
+                    ? "Answer the coordinator: type, paste or attach, then send"
+                    : promptPlaceholder
+                }
+                promptLabel={
+                  coordinatorQuestion
+                    ? "Your answer to the coordinator's question"
+                    : "Message the project coordinator"
+                }
+                question={
+                  coordinatorQuestion ? (
+                    <CoordinatorQuestionCard
+                      question={coordinatorQuestion}
+                      environmentId={project.environmentId}
+                      cwd={project.workspaceRoot}
+                      onAnswerElsewhere={openCoordinatorPage}
+                    />
+                  ) : null
+                }
                 keybindings={keybindings}
                 isPhoneKeyboard={isPhoneKeyboard}
                 sendShortcut={sendShortcut}
@@ -1452,32 +1543,34 @@ export function ProjectWorkspaceSurface({
                     {coordinator && coordinatorTone ? (
                       <Tip
                         label={
-                          attention && attention.reason !== "failed"
-                            ? `${attention.message} Review here`
-                            : "Coordinator status. Show its latest message"
+                          chipOpens === "answer"
+                            ? "The coordinator asked you a question. Answer it in the message box"
+                            : attention && chipOpens === "coordinator-review"
+                              ? `${attention.message} Review here`
+                              : "Coordinator status. Show its latest message"
                         }
                       >
                         <button
                           type="button"
                           className="sws-state"
                           data-tone={coordinatorTone}
-                          data-opens={
-                            attention && attention.reason !== "failed"
-                              ? "coordinator-review"
-                              : "conversation"
-                          }
+                          data-opens={chipOpens}
                           onClick={
-                            attention && attention.reason !== "failed"
-                              ? openCoordinatorPage
-                              : openCoordinator
+                            chipOpens === "answer"
+                              ? () => void focusCoordinatorPrompt()
+                              : chipOpens === "coordinator-review"
+                                ? openCoordinatorPage
+                                : openCoordinator
                           }
                         >
                           <span className="sws-dot" data-tone={coordinatorTone} aria-hidden />
                           {THREAD_TONE_LABELS[coordinatorTone]}
                           <span className="sr-only">
-                            {attention && attention.reason !== "failed"
-                              ? `, ${attention.action.toLowerCase()} here`
-                              : ", show the coordinator's latest message"}
+                            {chipOpens === "answer"
+                              ? ", answer the coordinator's question in the message box"
+                              : attention && chipOpens === "coordinator-review"
+                                ? `, ${attention.action.toLowerCase()} here`
+                                : ", show the coordinator's latest message"}
                           </span>
                         </button>
                       </Tip>
@@ -1519,13 +1612,6 @@ export function ProjectWorkspaceSurface({
                         onOpenChange={handoffOpenChange}
                       />
                     )}
-                    <ProjectUsageIndicator
-                      onOpenProjectUsage={() => setTab("usage")}
-                      projectEnvironmentId={project.environmentId}
-                      // The provider that runs the next turn, not the saved one it moved off.
-                      providerInstanceId={coordinatorDisplay.shown?.instanceId ?? null}
-                      model={coordinatorDisplay.shown?.model ?? null}
-                    />
                   </>
                 }
                 controls={
@@ -1537,8 +1623,15 @@ export function ProjectWorkspaceSurface({
                         ? {
                             ...coordinatorFallback,
                             switching: switchingBack,
+                            // The line offers the way back only once the pick has room again
+                            // (or nothing else has any); while its limit holds, the picker's
+                            // header names it.
                             onSwitchBack:
-                              canOperate && connected ? () => void switchCoordinatorBack() : null,
+                              canOperate &&
+                              connected &&
+                              (!coordinatorFallback.reason || coordinatorFallback.spent)
+                                ? () => void switchCoordinatorBack()
+                                : null,
                           }
                         : null
                     }
@@ -1600,6 +1693,17 @@ export function ProjectWorkspaceSurface({
                     toolsSlotRef: setThreadToolsSlot,
                   }}
                 />
+              ) : paneTab === "designs" ? (
+                <ProjectDesignsPane
+                  environmentId={project.environmentId}
+                  projectId={project.id}
+                  projectTitle={projectTitle}
+                  workspaceRoot={project.workspaceRoot}
+                  designs={designs}
+                  threadTitle={(id) => shells.find((t) => t.id === id)?.title ?? null}
+                  onOpenThread={openThread}
+                  bar={paneBar}
+                />
               ) : paneTab === "library" ? (
                 <LibraryPane
                   environmentId={project.environmentId}
@@ -1634,6 +1738,16 @@ export function ProjectWorkspaceSurface({
                 <ThreadsPane
                   environmentId={project.environmentId}
                   threads={workers}
+                  attention={projectAttention}
+                  onOpenAction={(threadId, environmentId) => {
+                    if (threadId === mainCoordinatorId && environmentId === project.environmentId)
+                      openCoordinatorPage();
+                    else
+                      void navigate({
+                        to: "/$environmentId/$threadId",
+                        params: { environmentId, threadId },
+                      });
+                  }}
                   runningSubagents={runningSubagents}
                   canChange={canOperate && connected}
                   findRef={findRef}
@@ -1660,11 +1774,13 @@ export function ProjectWorkspaceSurface({
                       : undefined
                   }
                   remoteWorkerCount={remoteWorkerCount}
+                  designsByThread={designs.byThreadId}
                   notice={
                     <>
                       <ProjectThreadAvailability scopes={executionScopes} />
                       {remoteWorkerCount > 0 ? (
                         <RemoteWorkerCards
+                          representedThreads={projectAttention.roots.map((root) => root.thread)}
                           environmentId={project.environmentId}
                           projectId={project.id}
                         />

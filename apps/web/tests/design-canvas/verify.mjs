@@ -479,10 +479,11 @@ await check("ask the agent about a selection sends text and a PNG", async () => 
   return { threadId: message.threadId, images: message.images };
 });
 
-await check("export PNG, HTML and PDF downloads", async () => {
+await check("export PNG, SVG, HTML and PDF downloads", async () => {
   const files = {};
   for (const [item, ext] of [
     [/^PNG of Booking/, "png"],
+    ["SVG", "svg"],
     ["Standalone HTML", "html"],
     ["PDF of all frames", "pdf"],
   ]) {
@@ -496,6 +497,7 @@ await check("export PNG, HTML and PDF downloads", async () => {
     const bytes = NodeFS.readFileSync(file);
     files[ext] = bytes.length;
     if (ext === "png") assert(bytes.subarray(1, 4).toString() === "PNG", "not a PNG");
+    if (ext === "svg") assert(bytes.toString().includes("<svg"), "not an SVG");
     if (ext === "html")
       assert(bytes.toString().includes("Berths for tonight"), "HTML lacks the headline");
     if (ext === "pdf") assert(bytes.subarray(0, 5).toString() === "%PDF-", "not a PDF");
@@ -518,24 +520,35 @@ await check("share dialog lists access and states public links are unavailable",
   await page.getByRole("button", { name: "Share" }).click();
   const dialog = page.getByTestId("share-dialog");
   await dialog.waitFor();
-  const text = await dialog.textContent();
-  for (const expected of [
-    "Can edit",
-    "Agent threads",
-    "Copy link",
-    "Public web links are not available",
-    "/design/pg.d_fixture",
-  ])
-    assert(text.includes(expected), `share dialog lacks "${expected}"`);
-  await dialog.getByRole("combobox", { name: "Agent threads access" }).click();
-  await page.getByRole("option", { name: "Can comment" }).click();
-  await saved(page);
-  const access = (await head(page)).access;
-  assert(access?.agents === "comment", `access ${JSON.stringify(access)}`);
-  await shot(page, "09-share");
-  await page.keyboard.press("Escape");
-  await dialog.waitFor({ state: "detached", timeout: 2000 });
-  return { access };
+  try {
+    const text = await dialog.textContent();
+    // 94a06761d2 reworded the notice ("aren't available in this build yet") and moved the
+    // link into the Copy link tooltip; both must still be stated.
+    for (const expected of [
+      "Can edit",
+      "Agent threads",
+      "Copy link",
+      "Public web links aren't available",
+    ])
+      assert(text.includes(expected), `share dialog lacks "${expected}"`);
+    await dialog.getByTestId("share-copy-link").hover();
+    await page.getByText("/design/pg.d_fixture").waitFor({ timeout: 3000 });
+    await dialog.getByRole("combobox", { name: "Agent threads access" }).click();
+    await page.getByRole("option", { name: "Can comment" }).click();
+    await saved(page);
+    const access = (await head(page)).access;
+    assert(access?.agents === "comment", `access ${JSON.stringify(access)}`);
+    await shot(page, "09-share");
+    await page.keyboard.press("Escape");
+    await dialog.waitFor({ state: "detached", timeout: 2000 });
+    return { access };
+  } finally {
+    // A failed assertion must not leave the modal open: that also failed the next three checks.
+    for (let i = 0; i < 3 && (await dialog.count()) > 0; i += 1) {
+      await page.keyboard.press("Escape");
+      await page.waitForTimeout(150);
+    }
+  }
 });
 
 await check(
@@ -720,6 +733,19 @@ await check("comment access: C picks the comment tool, Ask agent stays hidden", 
     "Ask agent shown",
   );
   await ctx.close();
+});
+
+await check("an older server without SVG export keeps PNG, HTML and PDF", async () => {
+  const ctx = await browser.newContext({ viewport: VIEWPORT });
+  const p = await open(ctx, "noSvgExport");
+  await p.getByRole("button", { name: "Export", exact: true }).click();
+  await p.getByRole("menuitem", { name: "Standalone HTML" }).waitFor();
+  const items = await p.getByRole("menuitem").allTextContents();
+  await ctx.close();
+  assert(!items.includes("SVG"), `SVG offered: ${items.join(", ")}`);
+  for (const expected of ["PNG at 2x", "Standalone HTML", "PDF of all frames"])
+    assert(items.includes(expected), `lacks "${expected}": ${items.join(", ")}`);
+  return { items };
 });
 
 // ---- bound thread states ---------------------------------------------------------------------

@@ -2,6 +2,7 @@ import type {
   DesignDocument,
   DesignLength,
   DesignNode,
+  DesignOperation,
   DesignPage,
   DesignPaint,
   DesignSystem,
@@ -32,6 +33,21 @@ export const NOTE_COLORS = {
 } as const;
 
 const FALLBACK_INK = "#1f1d24";
+
+/**
+ * The mode a design renders in. A deck renders in its system's first mode for
+ * every viewer, so the editor, Present and exports match whatever the viewer's
+ * app theme is; other designs follow the viewer's theme when the system has it.
+ */
+export function designRenderMode(
+  kind: DesignDocument["kind"],
+  system: DesignSystem | null,
+  viewerTheme: string,
+): string {
+  const modes = system?.modes.map((item) => item.id) ?? [];
+  if (kind !== "slides" && modes.includes(viewerTheme)) return viewerTheme;
+  return modes[0] ?? "light";
+}
 
 /** A token's value in the context's mode, falling back to `light`, then any mode. */
 export function designTokenValue(
@@ -69,6 +85,104 @@ export function resolveDesignLength(
   const value = designTokenValue(context.system, length.token, context.mode);
   if (value === null) return undefined;
   return cssLengthToPx(value);
+}
+
+/** CSS Color 4 keywords; `currentcolor` and the system colors depend on context. */
+const CSS_COLOR_NAMES = new Set(
+  (
+    "aliceblue antiquewhite aqua aquamarine azure beige bisque black blanchedalmond blue " +
+    "blueviolet brown burlywood cadetblue chartreuse chocolate coral cornflowerblue cornsilk " +
+    "crimson cyan darkblue darkcyan darkgoldenrod darkgray darkgreen darkgrey darkkhaki " +
+    "darkmagenta darkolivegreen darkorange darkorchid darkred darksalmon darkseagreen " +
+    "darkslateblue darkslategray darkslategrey darkturquoise darkviolet deeppink deepskyblue " +
+    "dimgray dimgrey dodgerblue firebrick floralwhite forestgreen fuchsia gainsboro ghostwhite " +
+    "gold goldenrod gray green greenyellow grey honeydew hotpink indianred indigo ivory khaki " +
+    "lavender lavenderblush lawngreen lemonchiffon lightblue lightcoral lightcyan " +
+    "lightgoldenrodyellow lightgray lightgreen lightgrey lightpink lightsalmon lightseagreen " +
+    "lightskyblue lightslategray lightslategrey lightsteelblue lightyellow lime limegreen linen " +
+    "magenta maroon mediumaquamarine mediumblue mediumorchid mediumpurple mediumseagreen " +
+    "mediumslateblue mediumspringgreen mediumturquoise mediumvioletred midnightblue mintcream " +
+    "mistyrose moccasin navajowhite navy oldlace olive olivedrab orange orangered orchid " +
+    "palegoldenrod palegreen paleturquoise palevioletred papayawhip peachpuff peru pink plum " +
+    "powderblue purple rebeccapurple red rosybrown royalblue saddlebrown salmon sandybrown " +
+    "seagreen seashell sienna silver skyblue slateblue slategray slategrey snow springgreen " +
+    "steelblue tan teal thistle tomato turquoise violet wheat white whitesmoke yellow " +
+    "yellowgreen transparent"
+  ).split(" "),
+);
+
+/**
+ * A color that paints on its own: a hex color, a color keyword, or one color function
+ * over plain numbers. `var()`, `color-mix()`, relative colors and token aliases
+ * (`{color.primary}`, `colors.blue.500`) need something else to resolve, so they are not.
+ */
+export function isConcreteCssColor(value: string): boolean {
+  const text = value.trim().toLowerCase();
+  if (CSS_COLOR_NAMES.has(text)) return true;
+  if (/^#(?:[0-9a-f]{3,4}|[0-9a-f]{6}|[0-9a-f]{8})$/.test(text)) return true;
+  return /^(?:rgba?|hsla?|hwb|lab|lch|oklab|oklch|color)\((?=[^()]*\d)[-+.\w%\s,/]*\)$/.test(text);
+}
+
+/**
+ * A font-family list of quoted names and plain identifiers (`Inter, "SF Pro", sans-serif`).
+ * `var()`, custom properties and dotted or `$` aliases are not one.
+ */
+export function isFontFamilyList(value: string): boolean {
+  const family = /^(?:"[^"\\]*"|'[^'\\]*'|-?[a-z_][\w-]*(?:\s+[\w-]+)*)$/i;
+  return value.split(",").every((part) => family.test(part.trim()));
+}
+
+/**
+ * Update operations that write each token reference in the document as the value it
+ * shows now: the token's resolved value in `context.mode`, or its raw value when it has
+ * none. Choosing no system runs them first, so token-filled layers keep their fills,
+ * strokes, text colors, radii and type instead of turning transparent. A token the
+ * system lacks, or one whose value is not a concrete color, length or font list (a
+ * `var()`, an alias), stays a reference.
+ */
+export function detachDesignTokens(
+  document: Pick<DesignDocument, "pages">,
+  context: Pick<DesignRenderContext, "system" | "mode">,
+): DesignOperation[] {
+  const { system, mode } = context;
+  if (system === null) return [];
+  const literal = (token: string) => {
+    const value = designTokenValue(system, token, mode);
+    return value === null ? undefined : safeCssValue(value);
+  };
+  const paint = (value: DesignPaint | undefined) => {
+    if (value === undefined || typeof value === "string") return undefined;
+    const css = literal(value.token);
+    // A paint holds at most 120 characters.
+    return css === undefined || css.length > 120 || !isConcreteCssColor(css) ? undefined : css;
+  };
+  const length = (value: DesignLength | undefined) => {
+    if (value === undefined || typeof value === "number") return undefined;
+    const css = literal(value.token);
+    const px = css === undefined ? undefined : cssLengthToPx(css);
+    return px === undefined || px < 0 || px > 1e6 ? undefined : px;
+  };
+  const operations: DesignOperation[] = [];
+  for (const page of document.pages)
+    for (const node of page.nodes) {
+      const patch: Record<string, string | number | undefined> = {};
+      if ("fill" in node) patch.fill = paint(node.fill);
+      if ("stroke" in node) patch.stroke = paint(node.stroke);
+      if ("radius" in node) patch.radius = length(node.radius);
+      if (node.type === "text") {
+        patch.color = paint(node.color);
+        patch.fontSize = length(node.fontSize);
+        if (node.fontFamily !== undefined && typeof node.fontFamily !== "string") {
+          const family = literal(node.fontFamily.token);
+          if (family !== undefined && family.length <= 200 && isFontFamilyList(family))
+            patch.fontFamily = family;
+        }
+      }
+      for (const key of Object.keys(patch)) if (patch[key] === undefined) delete patch[key];
+      if (Object.keys(patch).length > 0)
+        operations.push({ op: "update_node", pageId: page.id, id: node.id, patch });
+    }
+  return operations;
 }
 
 /** px, rem (16 px) and unitless numbers; anything else is unknown. */
@@ -223,7 +337,57 @@ export function designHtmlSrcdoc(
   return doc.slice(0, at) + DESIGN_FRAME_CSP_META + doc.slice(at);
 }
 
-/** The document a sandboxed component preview frame shows. */
+/** `{brand-500}` or `var(--brand-500)` names another token; returns that name. */
+export function designTokenAlias(raw: string): string | null {
+  const trimmed = raw.trim();
+  const braces = /^\{([A-Za-z0-9._-]+)\}$/.exec(trimmed);
+  if (braces) return braces[1]!;
+  const variable = /^var\(\s*--([A-Za-z0-9._-]+)\s*\)$/.exec(trimmed);
+  return variable ? variable[1]! : null;
+}
+
+const cssName = (name: string) => name.replace(/[^A-Za-z0-9_-]/g, (character) => `\\${character}`);
+
+type TokenSource = Pick<DesignSystem, "tokens" | "modes">;
+const tokensCssCache = new WeakMap<TokenSource, Map<string, string>>();
+
+/**
+ * `:root{--name:value}` for one mode: the token's own value there, else the first
+ * mode's, `default` or any value, as the design system page shows it. Aliases become
+ * `var(--target)`; values that could break out of a declaration are left out. Empty
+ * for no system or no usable token. Component frames on the canvas, in the picker,
+ * on the system page and in every export get the same block.
+ */
+export function designTokensCss(system: TokenSource | null, mode: string): string {
+  if (system === null) return "";
+  let byMode = tokensCssCache.get(system);
+  const cached = byMode?.get(mode);
+  if (cached !== undefined) return cached;
+  const first = system.modes[0]?.id;
+  const declarations: string[] = [];
+  for (const token of system.tokens) {
+    const value =
+      token.values[mode] ??
+      (first === undefined ? undefined : token.values[first]) ??
+      token.values.default ??
+      Object.values(token.values)[0];
+    if (value === undefined) continue;
+    const raw = value.resolved ?? value.raw;
+    const alias = designTokenAlias(raw);
+    const css = alias === null ? safeCssValue(raw) : `var(--${cssName(alias)})`;
+    if (css === undefined || css === "") continue;
+    declarations.push(`--${cssName(token.name)}:${css}`);
+  }
+  const css = declarations.length === 0 ? "" : `:root{${declarations.join(";")}}`;
+  if (byMode === undefined) tokensCssCache.set(system, (byMode = new Map()));
+  byMode.set(mode, css);
+  return css;
+}
+
+/**
+ * The document a sandboxed component preview frame shows: the system's tokens as
+ * CSS variables, then its stylesheet (which wins on a clash), then the preview HTML.
+ */
 export function designComponentSrcdoc(
   node: Extract<DesignNode, { type: "component" }>,
   context: DesignRenderContext,
@@ -231,8 +395,10 @@ export function designComponentSrcdoc(
   const component = context.system?.components.find((item) => item.id === node.componentId);
   const body =
     component?.previewHtml ??
-    `<div style="font:12px system-ui;color:#675d69;padding:8px">${escapeHtml(component?.name ?? node.componentId)}</div>`;
-  const css = (context.system?.stylesheet ?? "").replaceAll("</style", "<\\/style");
+    `<div style="font:12px system-ui;color:#675d69;padding:8px">${escapeHtml(component?.name ?? node.name ?? node.componentId)}</div>`;
+  const css = (
+    designTokensCss(context.system, context.mode) + (context.system?.stylesheet ?? "")
+  ).replaceAll("</style", "<\\/style");
   return `<!doctype html><html data-theme="${escapeHtml(context.mode)}"><head>${DESIGN_FRAME_CSP_META}<meta charset="utf-8"><style>html,body{margin:0}${css}</style></head><body>${body}</body></html>`;
 }
 

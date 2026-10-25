@@ -1,5 +1,7 @@
+const mocks = vi.hoisted(() => ({ writeMode: "per-key" as "per-key" | "entry" | null }));
 vi.mock("../../../hooks/useSettings", () => ({
   useEnvironmentSettings: () => ({ projectSettingsOverrides: {} }),
+  useProjectOverrideWriteMode: () => mocks.writeMode,
 }));
 vi.mock("../../../state/environments", () => ({
   useEnvironments: () => ({ environments: [{ environmentId: "env-1" }] }),
@@ -105,7 +107,11 @@ describe("RoutingDecisionChip", () => {
     };
     expect(routingChipText(laneDecision)).toBe("Lanes · Complex · Translation");
     const html = renderToStaticMarkup(
-      <RoutingDecisionChip routing={laneDecision} entries={undefined} projectId={"proj-1" as any} />,
+      <RoutingDecisionChip
+        routing={laneDecision}
+        entries={undefined}
+        projectId={"proj-1" as any}
+      />,
     );
     expect(html).toContain("Model lane routing");
     expect(html).toContain("Model lane");
@@ -116,5 +122,23 @@ describe("RoutingDecisionChip", () => {
     expect(html).toContain("Teach this project:");
     expect(html).toContain("Prefer this model");
     expect(html).toContain("Avoid this model");
+  });
+
+  it("keeps project feedback disabled until the machine's settings load", () => {
+    const feedbackButtons = (html: string) =>
+      [...html.matchAll(/<button[^>]*>(Prefer|Avoid) this model<\/button>/g)].map((match) =>
+        /\sdisabled=""/.test(match[0]),
+      );
+    const render = () =>
+      renderToStaticMarkup(
+        <RoutingDecisionChip routing={decision} entries={undefined} projectId={"proj-1" as any} />,
+      );
+    expect(feedbackButtons(render())).toEqual([false, false]);
+    mocks.writeMode = null;
+    try {
+      expect(feedbackButtons(render())).toEqual([true, true]);
+    } finally {
+      mocks.writeMode = "per-key";
+    }
   });
 });

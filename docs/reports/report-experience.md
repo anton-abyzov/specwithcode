@@ -16,13 +16,13 @@ The previous project note points to [Ray Amjad's video](https://www.youtube.com/
 
 ## Primary-source comparison
 
-| Approach | Useful here | Decision |
-| --- | --- | --- |
-| [Claude artifacts](https://academy.claude.com/tutorials/intro-to-artifacts) | Claude describes a dedicated artifact page, sharing and collaboration, in addition to the adjacent panel. | Borrow focused reading, not another crowded sidebar. Hosted artifacts remain a separate account/publishing feature. |
-| [Agent SDK custom tools](https://code.claude.com/docs/en/agent-sdk/custom-tools) | MCP custom tools expose application capabilities to agents. | Keep this provider-neutral renderer; a Claude harness does not supply a host UI automatically. |
-| [Mermaid accessibility](https://mermaid.js.org/config/accessibility.html), [security](https://mermaid.js.org/config/usage.html) | Declarative flow/sequence diagrams; accessible title/description; strict mode disables clickable diagram content. | Use existing Markdown Mermaid for technical diagrams. Do not add a remote runtime for a three-step report flow. |
-| [Chart.js accessibility](https://www.chartjs.org/docs/latest/general/accessibility.html) | Quantitative charts, with explicit canvas accessibility and text alternatives required. | Use only for real numerical series; this PS23 explanation is a state transition, not a chart. |
-| Semantic HTML / inline SVG | Small flows, no dependency, portable, theme-aware, text accessible. | Chosen for the report example's publication/registration gates. |
+| Approach                                                                                                                        | Useful here                                                                                                       | Decision                                                                                                            |
+| ------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| [Claude artifacts](https://academy.claude.com/tutorials/intro-to-artifacts)                                                     | Claude describes a dedicated artifact page, sharing and collaboration, in addition to the adjacent panel.         | Borrow focused reading, not another crowded sidebar. Hosted artifacts remain a separate account/publishing feature. |
+| [Agent SDK custom tools](https://code.claude.com/docs/en/agent-sdk/custom-tools)                                                | MCP custom tools expose application capabilities to agents.                                                       | Keep this provider-neutral renderer; a Claude harness does not supply a host UI automatically.                      |
+| [Mermaid accessibility](https://mermaid.js.org/config/accessibility.html), [security](https://mermaid.js.org/config/usage.html) | Declarative flow/sequence diagrams; accessible title/description; strict mode disables clickable diagram content. | Use existing Markdown Mermaid for technical diagrams. Do not add a remote runtime for a three-step report flow.     |
+| [Chart.js accessibility](https://www.chartjs.org/docs/latest/general/accessibility.html)                                        | Quantitative charts, with explicit canvas accessibility and text alternatives required.                           | Use only for real numerical series; this PS23 explanation is a state transition, not a chart.                       |
+| Semantic HTML / inline SVG                                                                                                      | Small flows, no dependency, portable, theme-aware, text accessible.                                               | Chosen for the report example's publication/registration gates.                                                     |
 
 The earlier 1019 investigation found experimental native Artifact tool contracts in the installed CLI/SDK, with default-off gates. That research is not proof of live entitlement. Nothing here turns them on, publishes remotely or changes provider permissions.
 
@@ -48,10 +48,17 @@ Conversation                       Focused reader
                                    └──────────────────────────────────┘
 ```
 
+## Evidence links
+
+A report links a local file with an ordinary anchor whose href is its absolute path: `<a href="/Users/me/run/login.png">Login screenshot</a>`. Absolute POSIX paths, `~/…`, Windows drive paths and `file:` URLs without a host count. Network (UNC) paths do not: opening one would make the machine connect, and sign in, to a host the page names. The publish-time bootstrap shows each one as a compact chip: a colored dot and tint for the kind of file (blue for images and video, the accent for reports, gray for logs and other files), the author's label (a label that only repeats the path shows the file name), the full path on hover and keyboard focus, and a copy button. Text and code are never turned into links, `#fragment` links stay in the page, web links still open in the browser, and `data-no-evidence` on an element keeps its links as the author styled them.
+
+Activating a chip sends `specwithcode/open-file` with only `path` and `line` (from `#L12` or `:12`); the copy button sends `specwithcode/copy-path`. The app answers only its own frame (`event.source`, opaque origin `null`), while that frame has focus and the reader has just used it, at most once per 400 ms. It refuses URLs, relative, network, traversing, percent-encoded, control-character, bidirectional, invisible-character and oversized paths. The machine, thread and folder come from the reply that shows the report, never from the page; a frame shown without a thread (a file preview, an attachment) refuses, and so does a connection without file access. The file opens in the focused reader with Back to the report, through the same file read and server path guards as any other file link. The app writes the clipboard itself with the validated path, exactly as the link wrote it. The sandbox keeps no `allow-same-origin`.
+
+Reports published before this change keep their old bootstrap: their paths still render as the author wrote them, but a click on a link under a filesystem root such as `/Users/…`, which the old bootstrap sent as a URL on the report's own server, now opens the file instead of a missing page in the browser, under the same checks and pace. Links to the app's own pages still open in the browser.
+
 ## Preservation and limits
 
 Historical attachment bytes are unchanged. New generation guidance and an example improve future pages; arbitrary old serif headings are not silently rewritten. The iframe retains its opaque sandbox origin. No additional network library, paid call, live-data change or release is required. The approved release owner integrates the reviewed PR; installed acceptance remains a distinct follow-up.
-
 
 ## Verification receipt
 

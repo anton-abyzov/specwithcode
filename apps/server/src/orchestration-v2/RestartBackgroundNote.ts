@@ -68,6 +68,22 @@ function restartWorkKind(task: OrchestrationV2PendingBackgroundTask): Work["kind
   }
 }
 
+/**
+ * Describes a provider-native subagent that an outage interrupted, keyed by
+ * its subagent id so every settlement path names it the same way.
+ */
+export function interruptedSubagentWork(subagent: {
+  readonly id: string;
+  readonly title: string | null;
+  readonly prompt: string;
+}): Work {
+  return {
+    kind: "subagent",
+    label: compactLabel(subagent.title) ?? compactLabel(subagent.prompt) ?? "subagent",
+    id: subagent.id,
+  };
+}
+
 /** Describes a provider-reported background task (the provider-thread roster). */
 export function cancelledRosterTaskWork(task: OrchestrationV2PendingBackgroundTask): Work {
   const kind = restartWorkKind(task);
@@ -91,7 +107,7 @@ const MAX_NOTE_ENTRIES = 10;
 export function restartCancelledBackgroundWorkNote(work: ReadonlyArray<Work>): string {
   const omitted = work.length - MAX_NOTE_ENTRIES;
   return [
-    "Note: the SpecWithCode server restarted, and this background work was cancelled before it finished. It will not report back:",
+    "Note: this background work was interrupted before it finished (a SpecWithCode server restart, a usage limit or a provider failure ended it). It will not report back. Rerun or finish it yourself if it is still needed:",
     ...work.slice(0, MAX_NOTE_ENTRIES).map((entry) => `- ${entry.kind}: ${entry.label}`),
     ...(omitted > 0 ? [`- and ${omitted} more`] : []),
   ].join("\n");

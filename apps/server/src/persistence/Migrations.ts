@@ -19,6 +19,8 @@ import { reconcileV2PreviewMigration } from "./reconcileV2PreviewMigration.ts";
 
 import Migration0062 from "./Migrations/062_ProjectEnvironmentPreparations.ts";
 
+import Migration0067 from "./Migrations/067_AuthPrincipal.ts";
+
 // Import all migrations statically
 import Migration0001 from "./Migrations/001_OrchestrationEvents.ts";
 import Migration0002 from "./Migrations/002_OrchestrationCommandReceipts.ts";
@@ -161,6 +163,7 @@ export const migrationEntries = [
   [64, "ThreadIncrementLinks", Migration0064],
   [65, "ProjectActionRequests", Migration0065],
   [66, "ScheduledTaskRunPolicy", Migration0066],
+  [67, "AuthPrincipal", Migration0067],
 ] as const;
 
 export const migrationManifest = migrationEntries.map(([id, name]) => [id, name] as const);

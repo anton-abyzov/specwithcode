@@ -1,3 +1,4 @@
+import { currentPrincipalGeneration } from "./authPrincipalGeneration.ts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -6,7 +7,7 @@ import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as SqlSchema from "effect/sql/SqlSchema";
 
-import { AuthEnvironmentScopes } from "@specweave-studio/contracts";
+import { AuthEnvironmentScopes, AuthPrincipal } from "@specweave-studio/contracts";
 
 import {
   type AuthPairingLinkRepositoryError,
@@ -20,6 +21,8 @@ export const AuthPairingLinkRecord = Schema.Struct({
   credential: Schema.String,
   method: Schema.Literals(["desktop-bootstrap", "one-time-token"]),
   scopes: Schema.fromJsonString(AuthEnvironmentScopes),
+  principalGeneration: Schema.optionalKey(Schema.Number),
+  principal: Schema.optionalKey(Schema.NullOr(Schema.fromJsonString(AuthPrincipal))),
   subject: Schema.String,
   label: Schema.NullOr(Schema.String),
   proofKeyThumbprint: Schema.NullOr(Schema.String),
@@ -35,6 +38,8 @@ export const CreateAuthPairingLinkInput = Schema.Struct({
   credential: Schema.String,
   method: Schema.Literals(["desktop-bootstrap", "one-time-token"]),
   scopes: AuthEnvironmentScopes,
+  principalGeneration: Schema.optionalKey(Schema.Number),
+  principal: Schema.optionalKey(AuthPrincipal),
   subject: Schema.String,
   label: Schema.NullOr(Schema.String),
   proofKeyThumbprint: Schema.NullOr(Schema.String),
@@ -69,6 +74,8 @@ export const GetAuthPairingLinkByCredentialInput = Schema.Struct({
 export type GetAuthPairingLinkByCredentialInput = typeof GetAuthPairingLinkByCredentialInput.Type;
 
 const AuthPairingLinkRawDbRow = Schema.Struct({
+  principal: Schema.Unknown,
+  principalGeneration: Schema.Unknown,
   id: Schema.String,
   credential: Schema.Unknown,
   method: Schema.Unknown,
@@ -87,6 +94,9 @@ const decodeAuthPairingLinkDbRow = Schema.decodeUnknownEffect(AuthPairingLinkRec
 export class AuthPairingLinkRepository extends Context.Service<
   AuthPairingLinkRepository,
   {
+    readonly currentPrincipalGeneration: (
+      principal: typeof AuthPrincipal.Type,
+    ) => Effect.Effect<number, AuthPairingLinkRepositoryError>;
     readonly create: (
       input: CreateAuthPairingLinkInput,
     ) => Effect.Effect<void, AuthPairingLinkRepositoryError>;
@@ -130,6 +140,8 @@ export const make = Effect.gen(function* () {
       sql`
         INSERT INTO auth_pairing_links (
           id,
+          principal,
+          principal_generation,
           credential,
           method,
           scopes,
@@ -143,6 +155,8 @@ export const make = Effect.gen(function* () {
         )
         VALUES (
           ${input.id},
+          ${input.principal ? JSON.stringify(input.principal) : null},
+          ${input.principalGeneration ?? 0},
           ${input.credential},
           ${input.method},
           ${JSON.stringify(input.scopes)},
@@ -184,6 +198,8 @@ export const make = Effect.gen(function* () {
           credential AS "credential",
           method AS "method",
           scopes AS "scopes",
+          principal AS "principal",
+          principal_generation AS "principalGeneration",
           subject AS "subject",
           label AS "label",
           proof_key_thumbprint AS "proofKeyThumbprint",
@@ -204,6 +220,8 @@ export const make = Effect.gen(function* () {
           credential AS "credential",
           method AS "method",
           scopes AS "scopes",
+          principal AS "principal",
+          principal_generation AS "principalGeneration",
           subject AS "subject",
           label AS "label",
           proof_key_thumbprint AS "proofKeyThumbprint",
@@ -243,6 +261,8 @@ export const make = Effect.gen(function* () {
           credential AS "credential",
           method AS "method",
           scopes AS "scopes",
+          principal AS "principal",
+          principal_generation AS "principalGeneration",
           subject AS "subject",
           label AS "label",
           proof_key_thumbprint AS "proofKeyThumbprint",
@@ -354,6 +374,7 @@ export const make = Effect.gen(function* () {
     );
 
   return {
+    currentPrincipalGeneration: (principal) => currentPrincipalGeneration(sql, principal),
     create,
     consumeAvailable,
     listActive,

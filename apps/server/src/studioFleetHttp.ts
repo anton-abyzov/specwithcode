@@ -146,7 +146,18 @@ export const layer = HttpApiBuilder.group(
     const requireGrantManager = requireTrustedRequest(
       AuthAccessWriteScope,
       "Changing worker access requires an authorized same-origin request.",
-    ).pipe(Effect.asVoid);
+    ).pipe(
+      Effect.flatMap((session) =>
+        session.principal?.kind === "coordinator"
+          ? Effect.fail(
+              new EnvironmentHttpForbiddenError({
+                message:
+                  "Only this machine's owner can change worker access. Approve this device again on this machine to restore its access.",
+              }),
+            )
+          : Effect.void,
+      ),
+    );
     const directEndpoints = yield* Effect.serviceOption(DirectEndpoints.DirectEndpoints);
     const authFailure = () =>
       new EnvironmentHttpInternalServerError({
@@ -273,12 +284,13 @@ export const layer = HttpApiBuilder.group(
             if (!FLEET_INVITE_SCOPES.every((scope) => principal.scopes.has(scope)))
               return yield* new EnvironmentHttpForbiddenError({
                 message:
-                  "Inviting this machine hands out full access to it, so it needs a sign-in that has full access here. Use Invite this machine in the SpecWithCode app on this machine, or run `specwithcode fleet invite` there.",
+                  "Inviting this machine hands out full access to it, so it needs a sign-in that has full access here. Use Invite this machine in the SpecWithCode app on this machine, or run `specwithcode fleet invite --coordinator '<main-machine-environment-id>'` there. Replace <main-machine-environment-id> with the environment ID from Settings > Connections on your main machine. This explicitly approves that machine to manage access here.",
               });
             const descriptor = yield* serverEnvironment.getDescriptor;
             const state = yield* listening;
             const issued = yield* issueFleetInvitation({
               environmentId: descriptor.environmentId,
+              coordinatorEnvironmentId: payload.coordinatorEnvironmentId,
               ownLabel: descriptor.label,
               state,
               // The port Tailscale HTTPS already uses here, so an existing
@@ -540,6 +552,10 @@ export const layer = HttpApiBuilder.group(
               AuthAccessWriteScope,
               "Linking a phone requires an authorized request.",
             );
+            if (principal.principal?.kind === "coordinator")
+              return yield* new EnvironmentHttpForbiddenError({
+                message: "Only this machine's owner can approve a phone here.",
+              });
             const scopes = PhoneLinks.phoneCodeScopes(payload.scopes, principal.scopes);
             if (scopes === null)
               return yield* new EnvironmentHttpBadRequestError({

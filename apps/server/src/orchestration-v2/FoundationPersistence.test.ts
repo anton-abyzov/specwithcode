@@ -3220,14 +3220,15 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
       yield* recovery.recover;
 
       const parentProjection = yield* projectionStore.getThreadProjection(parentId);
-      assert.equal(parentProjection.subagents[0]?.status, "cancelled");
+      assert.equal(parentProjection.subagents[0]?.status, "interrupted");
+      assert.equal(parentProjection.subagents[0]?.progress, "Stopped when SpecWithCode restarted");
       const childProjection = yield* projectionStore.getThreadProjection(childId);
       const childRoot = childProjection.nodes.find((candidate) => candidate.id === childRootId);
-      assert.equal(childRoot?.status, "cancelled");
+      assert.equal(childRoot?.status, "interrupted");
       assert.isNotNull(childRoot?.completedAt ?? null);
       // Nothing inside the child keeps reading as live work either.
       const progress = childProjection.turnItems.find((item) => item.type === "reasoning");
-      assert.equal(progress?.status, "cancelled");
+      assert.equal(progress?.status, "interrupted");
       assert.isFalse(progress?.type === "reasoning" && progress.streaming);
       assert.isNotNull(progress?.completedAt ?? null);
       assert.notInclude(yield* projectionStore.getRecoveryThreadIds("runtime"), childId);

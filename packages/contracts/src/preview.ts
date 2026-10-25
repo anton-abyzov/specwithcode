@@ -178,7 +178,7 @@ export type PreviewRuntime = typeof PreviewRuntime.Type;
  * fixes it. Close reasons are capped at 123 bytes, which this fits.
  */
 export const PreviewStreamHostSetup = Schema.Struct({
-  need: Schema.Literals(["sandbox", "libraries"]),
+  need: Schema.Literals(["sandbox", "libraries", "gpu"]),
   /** For example `sudo specweave-studio browser setup`, matching how the server was launched. */
   command: Schema.String,
 });

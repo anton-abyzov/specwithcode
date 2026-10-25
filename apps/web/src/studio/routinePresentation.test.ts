@@ -64,12 +64,11 @@ describe("routineRunTimeLabel", () => {
 });
 
 describe("routineDestinationLabel", () => {
-  it("names where runs land, except the coordinator", () => {
-    expect(routineDestinationLabel({ threadId: null })).toBeNull();
-    expect(routineDestinationLabel({ threadId: "t" as never })).toBe("Continues its thread");
-    expect(routineDestinationLabel({ threadId: null, ownThread: true })).toBe(
-      "Own thread from the first run",
-    );
+  it("names where runs land", () => {
+    // Only a host from before own threads still reports a threadless routine like this.
+    expect(routineDestinationLabel({ threadId: null })).toBe("Coordinator");
+    expect(routineDestinationLabel({ threadId: "t" as never })).toBe("Continues a worker's thread");
+    expect(routineDestinationLabel({ threadId: null, ownThread: true })).toBe("Own thread");
     expect(routineDestinationLabel({ threadId: "t" as never, ownThread: true })).toBe(
       "Its own thread",
     );

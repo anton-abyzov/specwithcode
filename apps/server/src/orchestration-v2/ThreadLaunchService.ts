@@ -167,6 +167,8 @@ export interface ThreadLaunchInput {
   readonly modelSelection: ModelSelection;
   /** The Auto routing decision behind `modelSelection`, kept on the thread. */
   readonly routing?: TaskRoutingDecision | undefined;
+  /** The model the thread stands in for: its launch moved off it because it had no room. */
+  readonly launchFallbackFrom?: ModelSelection | null | undefined;
   readonly runtimeMode: RuntimeMode;
   readonly interactionMode: ProviderInteractionMode;
   readonly workspaceStrategy: ThreadLaunchWorkspaceStrategy;
@@ -175,7 +177,14 @@ export interface ThreadLaunchInput {
    * The SpecWeave increment the launch named, resolved before launch. Its
    * binding is seeded once the workspace is recorded, before the first turn.
    */
-  readonly increment?: { readonly root: string; readonly incrementId: string } | undefined;
+  readonly increment?:
+    | {
+        readonly root: string;
+        readonly incrementId: string;
+        /** Found only in another registered checkout of the repository (launchIncrement.ts). */
+        readonly registered?: true | undefined;
+      }
+    | undefined;
   readonly importedNativeThread?: {
     readonly ref: {
       readonly driver: ProviderDriverKind;
@@ -988,6 +997,9 @@ const make = Effect.gen(function* () {
                 branch: initialBranch,
                 worktreePath: initialWorktreePath,
                 ...(input.routing === undefined ? {} : { routing: input.routing }),
+                ...(input.launchFallbackFrom == null
+                  ? {}
+                  : { launchFallbackFrom: input.launchFallbackFrom }),
                 ...(input.importedNativeThread === undefined
                   ? {}
                   : { importedNativeThread: input.importedNativeThread }),

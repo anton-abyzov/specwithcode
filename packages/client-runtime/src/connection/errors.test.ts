@@ -129,3 +129,17 @@ describe("mapRemoteDpopEnvironmentError", () => {
     expect(mapped.message).toBe(`The environment credential is invalid. ${DPOP_RETRY_HINT}`);
   });
 });
+
+it("preserves the required device reapproval reason for direct and relay connections", () => {
+  const error = new EnvironmentAuthInvalidError({
+    code: "auth_invalid",
+    reason: "device_reapproval_required",
+    traceId: "trace-reapprove",
+  });
+  for (const mapped of [
+    mapRemoteEnvironmentError(error),
+    mapRemoteEnvironmentError(error, "relay"),
+    mapRemoteDpopEnvironmentError(error),
+  ])
+    expect(mapped.message).toContain("Approve this device again");
+});

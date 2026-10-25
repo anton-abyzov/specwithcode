@@ -35,23 +35,24 @@ try {
       await page.goto(`${base}?${variant}`);
       await page.locator("p[data-model-fallback]").waitFor();
       const read = {
-        now: await page.locator("[data-model-now]").innerText(),
-        pick: await page.locator("[data-model-pick]").innerText(),
+        line: await page.locator("p[data-model-fallback]").innerText(),
         chip: await page.locator("[data-coordinator-model-controls]").first().innerText(),
-        tag: await page.locator('[data-model-state="fallback"]').innerText(),
+        tag: await page
+          .locator("[data-coordinator-model-controls] .sws-model-state[data-model-state=fallback]")
+          .first()
+          .innerText(),
         machine: await page.locator("[data-project-machine]").innerText(),
         host: await page.locator(".sws-host-name").first().innerText(),
         notes: await page.locator(".project-inline-notice").allInnerTexts(),
         userBubbles: await page.locator(".project-message-user").count(),
         headers: await page.locator("[data-request-execution]").allInnerTexts(),
       };
-      NodeAssert.match(read.now, now);
-      NodeAssert.equal(read.pick, "Your pick: Claude Code · Opus 5.5.");
-      // The chip itself names the model that runs, not the pick.
+      // The chip itself names the model that runs, then the pick it stands in for.
       const chipModel = read.chip.split("\n").slice(0, 3).join(" ");
-      NodeAssert.equal(`Now on ${chipModel}.`, read.now);
-      NodeAssert.equal(read.tag, "Fallback for Opus 5.5");
-      NodeAssert.match(await page.locator("p[data-model-fallback]").innerText(), /Switch back/);
+      NodeAssert.match(`Now on ${chipModel}.`, now);
+      NodeAssert.match(read.tag, /fallback for Claude Code · Opus 5\.5/);
+      NodeAssert.match(read.line, /Your pick, Claude Code · Opus 5\.5, has room again\./);
+      NodeAssert.match(read.line, /Switch back/);
       NodeAssert.ok(read.machine.trim(), "the header names the machine that runs the project");
       NodeAssert.ok(read.host.trim(), "the composer names the machine, not just a dot");
       NodeAssert.equal(read.userBubbles, 1, "the resent request is a note, not a second bubble");

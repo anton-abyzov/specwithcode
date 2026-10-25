@@ -36,6 +36,8 @@ export function DecisionCard(props: {
   readonly item: AnsweredQuestionItem;
   readonly renderText?: ((text: string) => ReactNode) | undefined;
   readonly defaultExpanded?: boolean | undefined;
+  /** Who asked: the coordinator, or the thread's title. */
+  readonly askedBy?: string | undefined;
 }) {
   const { item } = props;
   const decision = useMemo(
@@ -54,7 +56,7 @@ export function DecisionCard(props: {
     <Collapsible defaultOpen={props.defaultExpanded ?? false}>
       <section
         data-decision-card={item.requestId}
-        aria-label="Decision"
+        aria-label={props.askedBy ? `Decision on a question from ${props.askedBy}` : "Decision"}
         className="rounded-xl border border-border/80 bg-card/40"
       >
         <CollapsibleTrigger
@@ -94,6 +96,11 @@ export function DecisionCard(props: {
         </CollapsibleTrigger>
         <CollapsiblePanel>
           <div className="space-y-2.5 px-4 pb-3">
+            {props.askedBy ? (
+              <p data-decision-asker className="text-xs text-muted-foreground">
+                {`${props.askedBy} asked`}
+              </p>
+            ) : null}
             {decision.map((question) => (
               <div key={question.id} className="min-w-0">
                 {question.question ? (

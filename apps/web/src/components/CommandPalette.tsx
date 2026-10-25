@@ -1424,9 +1424,9 @@ function OpenCommandPaletteDialog(props: {
     ],
   );
 
-  // Pickers list neither a machine's "No project" folder nor an archived project;
-  // "No project" shows once, as its own item, and an archived project takes no new
-  // work until it is restored.
+  // Pickers list neither a machine's "No project" folder, an archived project nor a
+  // project a check or agent made for itself; "No project" shows once, as its own item,
+  // and an archived project takes no new work until it is restored.
   const listedPickerProjects = useMemo(
     () => projectPickerMembers(pickerProjects, scratchWorkspaceRootFor),
     [pickerProjects, scratchWorkspaceRootFor],

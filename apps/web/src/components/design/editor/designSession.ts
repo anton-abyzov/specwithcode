@@ -1,10 +1,10 @@
-import type { DesignDocument, DesignOperation } from "@specweave-studio/contracts";
+import type { DesignDocument, DesignOperation, DesignReuse } from "@specweave-studio/contracts";
 import {
   applyDesignOperations,
   designOperationWrites,
   designWritesOverlap,
 } from "@specweave-studio/shared/designOps";
-import { designDiff } from "./designDiff";
+import { designDiff, sameValue } from "./designDiff";
 
 /**
  * One open design: the confirmed server document, the user's pending
@@ -20,7 +20,13 @@ import { designDiff } from "./designDiff";
 export type DesignApplyResponse =
   | { readonly ok: true; readonly document: DesignDocument }
   | { readonly ok: false; readonly reason: "conflict"; readonly currentRevision?: number }
-  | { readonly ok: false; readonly reason: "error"; readonly detail: string };
+  | {
+      readonly ok: false;
+      readonly reason: "error";
+      readonly detail: string;
+      /** The server's error code (`forbidden`, `invalid`), when it sent one. */
+      readonly code?: string;
+    };
 
 export interface DesignTransport {
   readonly apply: (
@@ -36,14 +42,29 @@ interface UndoEntry {
   readonly source: DesignChangeSource;
   undo: readonly DesignOperation[];
   redo: readonly DesignOperation[];
+  /**
+   * The design system this change switched, when the user picked it here. Undo puts
+   * `before` back only while the design still uses `after`, and redo the reverse, so
+   * Cmd+Z never overwrites a system someone else chose since.
+   */
+  system?: DesignSystemSwitch;
   /** Order of creation; entries above `savedSeq` hold edits not yet on the server. */
   readonly seq: number;
 }
 
+interface DesignSystemSwitch {
+  readonly before: DesignDocument["designSystem"];
+  readonly after: DesignDocument["designSystem"];
+  /** The reuse record the same pick changed (None clears it), restored under the same rule. */
+  readonly reuse?: { readonly before: DesignReuse | null; readonly after: DesignReuse | null };
+}
+
 /**
- * Undo covers node and page edits only. Comments, sharing, the bound thread,
- * the title and the design system are never undone: they may come from
- * another device or person, and Cmd+Z must not reach them.
+ * Undo covers node and page edits, plus the design system the user picks in this
+ * window, in one step with the edits committed with it (setting None bakes token
+ * layers to literals, and undo restores both). Comments, sharing, the bound thread,
+ * the title and a system set elsewhere are never undone: they may come from another
+ * device or person, and Cmd+Z must not reach them.
  */
 const UNDOABLE_OPS: ReadonlySet<DesignOperation["op"]> = new Set([
   "add_node",
@@ -91,9 +112,11 @@ export interface DesignSessionSnapshot {
 
 export type DesignCommitResult =
   | { readonly ok: true }
-  | { readonly ok: false; readonly detail: string };
+  | { readonly ok: false; readonly detail: string; readonly code?: string };
 
 const UNDO_LIMIT = 200;
+/** Conflicts `applyAlone` retries against a fresh read before giving up. */
+const ALONE_CONFLICT_RETRIES = 3;
 /** Conflict retries whose fresh read is no newer than our base, before the session gives up. */
 const STALE_CONFLICT_RETRIES = 5;
 const CLOSE_STEPS = 20;
@@ -197,17 +220,101 @@ export class DesignSession {
     this.view = outcome.document;
     this.pending.push(...operations);
     const undo = undoableOperations(designDiff(outcome.document, before));
-    if (undo.length > 0) {
+    const reuse = { before: before.reuse ?? null, after: outcome.document.reuse ?? null };
+    const system: DesignSystemSwitch | undefined =
+      before.designSystem === outcome.document.designSystem
+        ? undefined
+        : {
+            before: before.designSystem,
+            after: outcome.document.designSystem,
+            ...(sameValue(reuse.before, reuse.after) ? {} : { reuse }),
+          };
+    if (undo.length > 0 || system !== undefined) {
       this.pushUndo({
         source: "user",
         undo,
         redo: undoableOperations(designDiff(before, outcome.document)),
+        ...(system === undefined ? {} : { system }),
       });
       this.redoStack = [];
     }
     this.schedule();
     this.emit();
     return { ok: true };
+  }
+
+  /**
+   * Saves operations in a write of their own, outside the autosave batch, and
+   * reports the server's answer. A refusal (a thread binding this window may
+   * not change) stays with the caller and never holds back canvas edits. Waits
+   * for a save in flight; unsaved edits rebase onto the result like any newer
+   * revision. Not undoable.
+   */
+  async applyAlone(operations: readonly DesignOperation[]): Promise<DesignCommitResult> {
+    if (operations.length === 0) return { ok: true };
+    let expected = this.base.revision;
+    for (let attempt = 0; ; attempt += 1) {
+      while (this.inflightDone !== null) await this.inflightDone;
+      expected = Math.max(expected, this.base.revision);
+      if (this.timer !== null) {
+        clearTimeout(this.timer);
+        this.timer = null;
+      }
+      let finish!: () => void;
+      this.inflightDone = new Promise((resolve) => (finish = resolve));
+      this.inflight = operations;
+      this.emit();
+      let response: DesignApplyResponse;
+      try {
+        response = await this.transport.apply(expected, operations);
+      } catch (cause) {
+        response = { ok: false, reason: "error", detail: String(cause) };
+      }
+      this.inflight = null;
+      this.inflightDone = null;
+      finish();
+      if (response.ok) {
+        const deferred = this.deferredRemote;
+        this.deferredRemote = null;
+        this.rebaseOnto(response.document);
+        if (deferred !== null) this.rebaseOnto(deferred);
+        this.resume();
+        return { ok: true };
+      }
+      if (response.reason === "conflict" && attempt < ALONE_CONFLICT_RETRIES) {
+        const latest = response.currentRevision ?? (await this.latestRevision());
+        if (latest !== null && latest > expected) {
+          expected = latest;
+          continue;
+        }
+      }
+      // A remote revision that arrived during the refused write still lands.
+      const deferred = this.deferredRemote;
+      this.deferredRemote = null;
+      if (deferred !== null) this.rebaseOnto(deferred);
+      this.resume();
+      return response.reason === "conflict"
+        ? { ok: false, detail: "The design kept changing. Try again." }
+        : {
+            ok: false,
+            detail: response.detail,
+            ...(response.code === undefined ? {} : { code: response.code }),
+          };
+    }
+  }
+
+  private async latestRevision(): Promise<number | null> {
+    try {
+      return (await this.transport.get()).revision;
+    } catch {
+      return null;
+    }
+  }
+
+  /** After a write of its own: unsaved edits go back to autosave. */
+  private resume() {
+    if (this.pending.length > 0 && this.conflict === null) this.schedule();
+    this.emit();
   }
 
   /** Shows operations without recording or saving them (drag in progress). */
@@ -232,7 +339,20 @@ export class DesignSession {
   private step(from: UndoEntry[], to: UndoEntry[], direction: "undo" | "redo"): DesignCommitResult {
     const entry = from.pop();
     if (entry === undefined) return { ok: true };
-    const operations = direction === "undo" ? entry.undo : entry.redo;
+    const operations = [...(direction === "undo" ? entry.undo : entry.redo)];
+    if (entry.system !== undefined) {
+      const { before, after, reuse } = entry.system;
+      const [expected, next] = direction === "undo" ? [after, before] : [before, after];
+      if (this.view.designSystem === expected) {
+        operations.push({ op: "set_design_system", systemId: next });
+        if (reuse !== undefined) {
+          const [had, put] =
+            direction === "undo" ? [reuse.after, reuse.before] : [reuse.before, reuse.after];
+          if (sameValue(this.view.reuse ?? null, had))
+            operations.push({ op: "set_reuse", reuse: put });
+        }
+      }
+    }
     const outcome = applyDesignOperations(this.view, operations);
     if (!outcome.ok) {
       this.emit();
@@ -294,6 +414,25 @@ export class DesignSession {
     this.view = current;
     if (kept.length > 0) this.schedule(0);
     this.emit();
+  }
+
+  /**
+   * Waits for the save in flight, then saves what is pending, so the caller can
+   * replace the document (a version restore) on the latest revision. Resolves
+   * false while a conflict or a failed save still holds edits back.
+   */
+  async settle(): Promise<boolean> {
+    for (let step = 0; step < CLOSE_STEPS; step += 1) {
+      if (this.inflightDone !== null) {
+        await this.inflightDone;
+        continue;
+      }
+      if (this.conflict !== null) return false;
+      if (this.pending.length === 0) return true;
+      await this.flush();
+      if (this.error !== null && this.pending.length > 0) return false;
+    }
+    return false;
   }
 
   /** Saves pending operations now. */
@@ -439,6 +578,8 @@ export class DesignSession {
     );
     for (const entry of this.undoStack.slice(insertAt)) {
       if (entry.source !== "user") continue;
+      if (entry.system !== undefined && conflicting.has("designSystem"))
+        entry.system = { before: theirs.designSystem, after: entry.system.after };
       entry.undo = entry.undo.map((operation) => {
         if (operation.op !== "update_node") return operation;
         const node = theirNodes.get(operation.id) as Record<string, unknown> | undefined;

@@ -8,7 +8,9 @@
  *   1. claim — SpecWeave writes `~/.specweave/studio/threads/<thread>.json`
  *      whenever a process in the thread's turn appends to a ledger (`specweave
  *      task claim|done|…`, `pickup`, `note`). Its root must lie inside the
- *      thread's checkout or the project folder.
+ *      thread's checkout or the project folder, be the umbrella that plans
+ *      them, or be another checkout Git registered for one of their
+ *      repositories (registeredCheckout.ts).
  *   2. branch — the thread's worktree branch is `inc/NNNN-*` and exactly one
  *      `NNNN-*` increment exists, or an event in a recent increment's ledger
  *      has a `by` that names the branch. Nothing is written for it.
@@ -42,6 +44,11 @@ import {
 } from "../mods/SpecweaveProgress.ts";
 import { nodePath as NodePath } from "../nodePath.ts";
 import { specweaveStudioCheckpointPath } from "../orchestration-v2/SpecweaveCheckpoint.ts";
+import {
+  registeredCheckouts,
+  sameRepositoryCheckout,
+  withinCheckTime,
+} from "./registeredCheckout.ts";
 import { INCREMENTS_DIR, resolveReportIncrement } from "./ThreadReports.ts";
 
 const SPEC_BYTES = 262_144;
@@ -300,6 +307,67 @@ export async function bindingRootAccepted(
 }
 
 /**
+ * Whether `root` (already resolved through links) is the top of another
+ * checkout Git registered for the repository of one of `allowedRoots`: a
+ * linked worktree made elsewhere with `git worktree add`. Only the project's
+ * own repositories count, never the umbrella's above them (whose main
+ * checkout bindingRootAccepted already takes). Any other folder stays refused.
+ */
+export async function registeredRootAccepted(
+  root: string,
+  allowedRoots: ReadonlyArray<string>,
+): Promise<boolean> {
+  return sameRepositoryCheckout(root, allowedRoots);
+}
+
+/** The registered checkouts of `allowedRoots`' repositories that plan increments of their own. */
+async function planningCheckouts(allowedRoots: ReadonlyArray<string>): Promise<string[]> {
+  const tops = await registeredCheckouts(allowedRoots);
+  const planning = await Promise.all(
+    tops.map((top) =>
+      withinCheckTime(top, () => isDirectory(NodePath.join(top, INCREMENTS_DIR)), false),
+    ),
+  );
+  return tops.filter((_, index) => planning[index]);
+}
+
+/**
+ * The newest ledger write in an increment folder, for choosing between
+ * checkouts that hold the same increment; 0 when it has no ledger.
+ */
+async function ledgerWrittenAt(folder: string): Promise<number> {
+  return (
+    (await NodeFSP.stat(NodePath.join(folder, "ledger.jsonl")).catch(() => null))?.mtimeMs ?? 0
+  );
+}
+
+/**
+ * Where a thread reads `incrementId` when it names it on purpose (a link made
+ * by hand, a launch's explicit ref): its own checkout when that holds the
+ * folder, otherwise the registered checkout of its own repositories that holds it,
+ * the one with the newest ledger write when several do (the first in
+ * registeredCheckouts' order on a tie). Null when none holds it.
+ */
+export async function linkedIncrementRoot(
+  workspaceRoot: string,
+  worktreePath: string | null,
+  incrementId: string,
+): Promise<string | null> {
+  if (!INCREMENT_FOLDER.test(incrementId)) return null;
+  const own = await incrementRootFor(workspaceRoot, worktreePath);
+  if (await isDirectory(NodePath.join(own, INCREMENTS_DIR, incrementId))) return own;
+  const allowed = [workspaceRoot, ...(worktreePath === null ? [] : [worktreePath])];
+  let best: { readonly root: string; readonly at: number } | null = null;
+  for (const top of await planningCheckouts(allowed)) {
+    const folder = NodePath.join(top, INCREMENTS_DIR, incrementId);
+    if (!(await withinCheckTime(top, () => isDirectory(folder), false))) continue;
+    const at = await withinCheckTime(top, () => ledgerWrittenAt(folder), 0);
+    if (best === null || at > best.at) best = { root: top, at };
+  }
+  return best?.root ?? null;
+}
+
+/**
  * The increment SpecWeave bound this thread to by a ledger write, when its
  * root lies inside one of `allowedRoots` or is exactly the umbrella workspace
  * that plans for the thread's checkout, and the increment folder exists.
@@ -320,7 +388,15 @@ async function claimedBinding(
     return null;
   }
   const root = await NodeFSP.realpath(binding.root).catch(() => null);
-  if (root === null || !(await bindingRootAccepted(root, allowedRoots))) return null;
+  if (
+    root === null ||
+    !(
+      (await bindingRootAccepted(root, allowedRoots)) ||
+      (await registeredRootAccepted(root, allowedRoots))
+    )
+  ) {
+    return null;
+  }
   if (!(await isDirectory(NodePath.join(root, INCREMENTS_DIR, binding.incrementId)))) return null;
   return {
     root,
@@ -499,7 +575,9 @@ export async function readThreadIncrementProgress(
         if (claimed !== null && claimed.incrementId === incrementId) {
           root = claimed.root;
         } else {
-          root = await incrementRootFor(workspaceRoot, thread.worktreePath);
+          root =
+            (await linkedIncrementRoot(workspaceRoot, thread.worktreePath, incrementId)) ??
+            (await incrementRootFor(workspaceRoot, thread.worktreePath));
           boundTaskId = null;
         }
       } else if (claimed !== null) {
@@ -721,6 +799,55 @@ export async function resolveIncrementRef(
     status: meta.status,
     specPath: spec === null ? folder : specFile,
   };
+}
+
+/**
+ * An explicit launch ref that the thread's own checkout does not hold,
+ * resolved in the other checkouts Git registered for its repositories (see
+ * linkedIncrementRoot). A number that names different folders in different
+ * checkouts is ambiguous; the same folder in several resolves to the copy with
+ * the newest ledger write, so one closed there stays closed even when an older
+ * branch still has it open. `root` of a miss is the thread's own checkout.
+ */
+export async function resolveRegisteredIncrementRef(
+  workspaceRoot: string,
+  worktreePath: string | null,
+  ref: string,
+): Promise<IncrementRefResolution> {
+  const own = await incrementRootFor(workspaceRoot, worktreePath);
+  const allowed = [workspaceRoot, ...(worktreePath === null ? [] : [worktreePath])];
+  const hits: Array<{
+    readonly top: string;
+    readonly resolved: Exclude<IncrementRefResolution, { kind: "not_found" }>;
+  }> = [];
+  // Only checkouts with increments of their own, so none reads an umbrella above it.
+  for (const top of await planningCheckouts(allowed)) {
+    if (top === own) continue;
+    const resolved = await withinCheckTime(top, () => resolveIncrementRef(top, null, ref), {
+      kind: "not_found" as const,
+      root: top,
+    });
+    if (resolved.kind === "not_found") continue;
+    hits.push({ top, resolved });
+  }
+  if (hits.length === 0) return { kind: "not_found", root: own };
+  const ids = new Set(
+    hits.map(({ resolved }) => ("incrementId" in resolved ? resolved.incrementId : null)),
+  );
+  if (hits.some(({ resolved }) => resolved.kind === "ambiguous") || ids.size > 1) {
+    return { kind: "ambiguous", root: own };
+  }
+  const [incrementId] = ids;
+  let best: { readonly resolved: IncrementRefResolution; readonly at: number } | null = null;
+  for (const { top, resolved } of hits) {
+    const at = await withinCheckTime(
+      top,
+      () => ledgerWrittenAt(NodePath.join(top, INCREMENTS_DIR, incrementId!)),
+      0,
+    );
+    if (best === null || at > best.at) best = { resolved, at };
+  }
+  return best!.resolved;
 }
 
 /** The ledger event a launch's seeded binding carries; SpecWeave never writes it. */

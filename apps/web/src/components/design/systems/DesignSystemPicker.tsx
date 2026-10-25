@@ -1,7 +1,8 @@
 /**
  * Picks the design system a design uses. A design may only use a system its
  * owner holds, so another owner's system is offered as "Copy into …": the
- * copy is made first and then selected.
+ * copy is made first and then selected. An owner that already holds a copy
+ * uses it, and one made before the source's latest change can be made again.
  */
 import { squashAtomCommandFailure } from "@specweave-studio/client-runtime/state/runtime";
 import type {
@@ -29,6 +30,8 @@ import {
   SelectValue,
 } from "../../ui/select";
 import {
+  copyIn,
+  copyPredatesSource,
   failureText,
   ownerName,
   ownerOfSummary,
@@ -40,10 +43,26 @@ import { useOwnerProjects } from "./useOwnerProjects";
 
 const NONE = "__none__";
 const COPY = "copy:";
+const FRESH = "fresh:";
 
 export type CopyOutcome =
   | { readonly ok: true; readonly systemId: DesignSystemId; readonly name: string }
   | { readonly ok: false; readonly message: string };
+
+/** `fresh` copies again when the owner's copy predates the source; see `DesignSystemCopyInput`. */
+export interface CopyOptions {
+  readonly fresh?: boolean;
+}
+
+/** "Use the copy in Atlas", and when it predates the source, says so. */
+export const copyInLabel = (
+  copy: DesignSystemSummary,
+  source: DesignSystemSummary,
+  target: string,
+) =>
+  copyPredatesSource(copy, source)
+    ? `Use the copy in ${target}, copied before the latest change`
+    : `Use the copy in ${target}`;
 
 export interface DesignSystemPickerViewProps {
   id?: string;
@@ -54,7 +73,7 @@ export interface DesignSystemPickerViewProps {
   value: DesignSystemId | null;
   onChange: (value: DesignSystemId | null) => void;
   /** Copies another owner's system into `owner`. Without it, other owners' systems are not offered. */
-  onCopy?: ((system: DesignSystemSummary) => Promise<CopyOutcome>) | null;
+  onCopy?: ((system: DesignSystemSummary, options?: CopyOptions) => Promise<CopyOutcome>) | null;
   disabled?: boolean;
   /** In a fixed-height bar: loading shows in the trigger and a copy error floats below it. */
   inline?: boolean;
@@ -85,11 +104,15 @@ export function DesignSystemPickerView({
   const pick = (next: string | null) => {
     setError(null);
     if (next === null || next === NONE) return onChange(null);
-    if (!next.startsWith(COPY)) return onChange(next as DesignSystemId);
-    const source = others.find((system) => `${COPY}${systemKey(system)}` === next);
+    const fresh = next.startsWith(FRESH);
+    if (!fresh && !next.startsWith(COPY)) return onChange(next as DesignSystemId);
+    const source = others.find((system) => `${fresh ? FRESH : COPY}${systemKey(system)}` === next);
     if (source === undefined || onCopy === null) return;
+    // The owner already holds a copy of it: select that copy instead of writing another.
+    const existing = copyIn(own, source);
+    if (existing !== undefined && !fresh) return onChange(existing.ref.systemId);
     setCopying(source.name);
-    void onCopy(source).then((outcome) => {
+    void onCopy(source, fresh ? { fresh: true } : {}).then((outcome) => {
       setCopying(null);
       if (!outcome.ok) return setError(outcome.message);
       setCopied({ id: outcome.systemId, name: outcome.name });
@@ -127,20 +150,42 @@ export function DesignSystemPickerView({
           {others.length > 0 ? (
             <SelectGroup>
               <SelectGroupLabel>Other projects</SelectGroupLabel>
-              {others.map((system) => (
-                <SelectItem
-                  key={systemKey(system)}
-                  value={`${COPY}${systemKey(system)}`}
-                  data-testid="design-system-picker-copy"
-                >
-                  <span className="flex min-w-0 flex-col">
-                    <span className="truncate">{system.name}</span>
-                    <span className="truncate text-muted-foreground text-xs">
-                      {system.ownerLabel} · Copy into {target}
+              {others.flatMap((system) => {
+                const existing = copyIn(own, system);
+                const row = (
+                  <SelectItem
+                    key={systemKey(system)}
+                    value={`${COPY}${systemKey(system)}`}
+                    data-testid="design-system-picker-copy"
+                  >
+                    <span className="flex min-w-0 flex-col">
+                      <span className="truncate">{system.name}</span>
+                      <span className="truncate text-muted-foreground text-xs">
+                        {system.ownerLabel} ·{" "}
+                        {existing !== undefined
+                          ? copyInLabel(existing, system, target)
+                          : `Copy into ${target}`}
+                      </span>
                     </span>
-                  </span>
-                </SelectItem>
-              ))}
+                  </SelectItem>
+                );
+                if (existing === undefined || !copyPredatesSource(existing, system)) return [row];
+                return [
+                  row,
+                  <SelectItem
+                    key={`${FRESH}${systemKey(system)}`}
+                    value={`${FRESH}${systemKey(system)}`}
+                    data-testid="design-system-picker-fresh"
+                  >
+                    <span className="flex min-w-0 flex-col">
+                      <span className="truncate">{system.name}</span>
+                      <span className="truncate text-muted-foreground text-xs">
+                        {system.ownerLabel} · Make a fresh copy in {target}
+                      </span>
+                    </span>
+                  </SelectItem>,
+                ];
+              })}
             </SelectGroup>
           ) : null}
         </SelectPopup>
@@ -171,13 +216,22 @@ export function DesignSystemPickerView({
 export function useCopyDesignSystem(
   environmentId: EnvironmentId | null,
   refresh: () => void,
-): (system: DesignSystemSummary, to: DesignOwnerInput) => Promise<CopyOutcome> {
+): (
+  system: DesignSystemSummary,
+  to: DesignOwnerInput,
+  options?: CopyOptions,
+) => Promise<CopyOutcome> {
   const copySystem = useAtomCommand(design.systemCopy, { reportFailure: false });
-  return async (system, to) => {
+  return async (system, to, options) => {
     if (environmentId === null) return { ok: false, message: "Connect to this Mac first." };
     const result = await copySystem({
       environmentId,
-      input: { owner: ownerOfSummary(system), systemId: system.ref.systemId, to },
+      input: {
+        owner: ownerOfSummary(system),
+        systemId: system.ref.systemId,
+        to,
+        ...(options?.fresh === true ? { fresh: true } : {}),
+      },
     });
     if (result._tag === "Failure")
       return {
@@ -211,7 +265,8 @@ export function DesignSystemPicker({
       : design.systemList({ environmentId, input: { filter: { kind: "all" } } }),
   );
   const copy = useCopyDesignSystem(environmentId, list.refresh);
-  const onCopy = (system: DesignSystemSummary) => copy(system, owner);
+  const onCopy = (system: DesignSystemSummary, options?: CopyOptions) =>
+    copy(system, owner, options);
 
   return (
     <DesignSystemPickerView

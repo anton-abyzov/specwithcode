@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off
+import * as NodeChildProcess from "node:child_process";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -91,6 +92,25 @@ function launch(
     isCoordinator: false,
     ...input,
   });
+}
+
+/** A Git repository at `folder` with one commit and a linked worktree at `linked`, no user config. */
+function gitCheckouts(folder: string, linked: string): void {
+  const env = {
+    PATH: process.env.PATH ?? "",
+    HOME: folder,
+    GIT_CONFIG_NOSYSTEM: "1",
+    GIT_CONFIG_GLOBAL: "/dev/null",
+    GIT_AUTHOR_NAME: "Test",
+    GIT_AUTHOR_EMAIL: "test@example.invalid",
+    GIT_COMMITTER_NAME: "Test",
+    GIT_COMMITTER_EMAIL: "test@example.invalid",
+  };
+  const git = (...args: string[]) =>
+    NodeChildProcess.execFileSync("git", args, { cwd: folder, stdio: "ignore", env });
+  git("init", "-q", "-b", "main");
+  git("commit", "-q", "--allow-empty", "-m", "init");
+  git("worktree", "add", "-q", "-b", "wt", linked);
 }
 
 describe("resolveLaunchIncrement", () => {
@@ -277,6 +297,80 @@ describe("seedLaunchBinding", () => {
       }),
     ).toBe(true);
     expect(await read("fallback")).toMatchObject({ root, incrementId: "0996-connect" });
+  });
+
+  it("resolves an explicit ref planned in another registered checkout, but never inherits one", async () => {
+    const root = await NodeFSP.realpath(await project());
+    const home = await temp("launch-increment-home-");
+    const owner = `${root}-owner's tree`;
+    roots.push(owner);
+    gitCheckouts(root, owner);
+    await increment(owner, "1009-shared");
+    // The owner thread works on 1009 in its worktree; the project root lacks it.
+    const resolved = await launch(root, { ref: "1009" });
+    expect(resolved).toMatchObject({
+      ok: true,
+      value: {
+        increment: { root: owner, incrementId: "1009-shared", registered: true },
+        warning: expect.stringContaining("another checkout of this repository"),
+      },
+    });
+    // The brief tries the worker's own checkout first, then names where the
+    // increment is planned (SpecWeave resolves increments from the current directory).
+    const brief = resolved.ok ? (resolved.value.brief ?? "") : "";
+    expect(brief).toContain("run `specweave pickup 1009-shared` first.");
+    const command = /run `(cd [^`]+)` instead/u.exec(brief);
+    expect(command?.[1]).toContain("specweave pickup 1009-shared");
+    // The quoting is POSIX shell quoting; Windows has no /bin/sh to run it with.
+    if (process.platform !== "win32") {
+      const bin = await temp("launch-increment-bin-");
+      await NodeFSP.writeFile(
+        NodePath.join(bin, "specweave"),
+        '#!/bin/sh\nprintf "%s|%s" "$(pwd -P)" "$*"\n',
+        { mode: 0o755 },
+      );
+      expect(
+        NodeChildProcess.execFileSync("/bin/sh", ["-c", command![1]!], {
+          cwd: root,
+          env: { PATH: `${bin}:${process.env.PATH ?? ""}` },
+          encoding: "utf8",
+        }),
+      ).toBe(`${owner}|pickup 1009-shared`);
+    }
+    const increment1009 = resolved.ok ? resolved.value.increment! : null;
+    expect(
+      await seedLaunchBinding({
+        threadId: "ps23",
+        increment: increment1009!,
+        workspaceRoot: root,
+        worktreePath: null,
+        home,
+      }),
+    ).toBe(true);
+    const [progress] = await readThreadIncrementProgress(root, [
+      { threadId: "ps23", title: null, branch: null, worktreePath: null, home },
+    ]);
+    expect(progress).toMatchObject({ incrementId: "1009-shared", binding: "claim" });
+
+    // Inherited from a caller bound there, it is not passed on.
+    await bind(home, "worker", owner, "1009-shared");
+    expect(await launch(root, { home })).toEqual({
+      ok: true,
+      value: {
+        warning:
+          "Increment 1009-shared was not passed on: the new thread's checkout does not have it. Pass increment to name one it has.",
+      },
+    });
+    // Without the explicit flag the same root is not seeded.
+    expect(
+      await seedLaunchBinding({
+        threadId: "child",
+        increment: { root: owner, incrementId: "1009-shared" },
+        workspaceRoot: root,
+        worktreePath: null,
+        home,
+      }),
+    ).toBe(false);
   });
 
   it("never seeds another thread's worktree as the root", async () => {

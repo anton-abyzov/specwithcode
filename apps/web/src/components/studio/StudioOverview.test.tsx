@@ -36,6 +36,31 @@ const state = vi.hoisted(() => ({
     },
   ],
 }));
+// Attention transport is isolated; root selection and aggregation remain real.
+vi.mock("../../studio/fleet", () => ({ projectRemoteAttentionAtom: {} }));
+vi.mock("../../studio/useProjectAttention", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../studio/useProjectAttention")>();
+  return {
+    ...actual,
+    useAttentionMembers: (
+      projects: import("../../studio/useProjectAttention").AttentionProjectMember[],
+    ) =>
+      actual.expandAttentionProjects(projects).map((project) => ({
+        environmentId: project.environmentId,
+        projectId: project.id,
+        coordinatorThreadId:
+          project.workspaceSettings?.coordinatorThreadId ?? `project-coordinator:${project.id}`,
+        includeUserRoots: Boolean(project.workspaceSettings?.logicalProject),
+        freshness:
+          state.environments.find((host) => host.environmentId === project.environmentId)
+            ?.connection.phase === "connected"
+            ? ("live" as const)
+            : ("offline" as const),
+        remoteWorkers: [],
+        remoteWorkersComplete: true,
+      })),
+  };
+});
 vi.mock("../settings/useSettingsProjectGroups", () => ({
   useSettingsProjectGroups: () => [
     {
@@ -132,6 +157,7 @@ vi.mock("../../state/session", () => ({
   useEnvironmentsWithScope: () => new Set(["host-local", "host-worker"]),
   // Increment progress needs file access; these sessions show their todo lists only.
   useEnvironmentScope: () => false,
+  useEnvironmentScopeAccess: () => "denied",
 }));
 vi.mock("../../hooks/useNewChatDestination", () => ({
   useNewChatDestination: () => state.createDraft,
@@ -463,7 +489,7 @@ describe("deliberate native session entry", () => {
     setWorkerConnection("offline");
     await render();
     expect(count("Sessions working")).toBe("0");
-    expect(count("Need attention")).toBe("0");
+    expect(count("Sessions needing action")).toBe("0");
     expect(container.textContent).toContain("Disconnected · Last observed: Working");
     expect(container.textContent).toContain("Disconnected · Last observed: Approval requested");
     expect(container.querySelectorAll(".studio-session-item")).toHaveLength(2);
@@ -476,7 +502,7 @@ describe("deliberate native session entry", () => {
     setWorkerConnection("connected");
     await render();
     expect(count("Sessions working")).toBe("1");
-    expect(count("Need attention")).toBe("1");
+    expect(count("Sessions needing action")).toBe("1");
     expect(container.querySelectorAll(".studio-attention-item")).toHaveLength(1);
     expect(container.textContent).not.toContain("Disconnected · Last observed:");
     expect(state.createDraft).not.toHaveBeenCalled();

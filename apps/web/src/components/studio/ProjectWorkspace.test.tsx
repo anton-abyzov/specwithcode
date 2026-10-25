@@ -4,8 +4,9 @@ import * as NodeFileSystem from "@effect/platform-node/NodeFileSystem";
 import * as FileSystem from "effect/FileSystem";
 import * as Effect from "effect/Effect";
 import { act } from "react";
-import { describe, expect, it } from "vite-plus/test";
+import { describe, expect, it, vi } from "vite-plus/test";
 import { DEFAULT_SERVER_SETTINGS } from "@specweave-studio/contracts";
+import { setConversationFindState } from "../find/conversationFindStore";
 import type { EnvironmentThreadShell } from "@specweave-studio/client-runtime/state/shell";
 import {
   recreateRoot,
@@ -29,7 +30,9 @@ describe("project coordinator surface", () => {
     ];
     await render();
     const meta = container.querySelector("[data-thread-id='worker'] .sws-thread-meta")!;
-    const parts = [...meta.children];
+    // The lead (status, model) never gives way; the rest shrinks after it.
+    const parts = [...meta.children].flatMap((group) => [...group.children]);
+    expect(meta.firstElementChild?.matches(".sws-thread-meta-lead")).toBe(true);
     expect(parts[0]?.matches("[data-model-badge]")).toBe(true);
     expect(parts.at(-1)?.textContent).toBe("You have hit your usage limit");
     // A project on one machine leaves the machine to the composer.
@@ -94,43 +97,31 @@ describe("project coordinator surface", () => {
       // names Codex and the pick, and claims no limit it cannot read.
       state.providers = [claude(20), codex];
       await render();
-      const unread = container.querySelector("p[data-model-fallback]");
-      expect(unread?.querySelector("[data-model-now]")?.textContent).toBe(
-        "Now on Codex · GPT-6.1 Sol.",
-      );
-      expect(unread?.querySelector("[data-model-pick]")?.textContent).toBe(
-        "Your pick: Claude Code · Opus 5.5.",
-      );
-      expect(unread?.textContent).not.toContain("limit");
+      const room = container.querySelector("p[data-model-fallback]");
+      // One line, only because the pick has room again: what to do, not what happened.
+      expect(room?.textContent).toContain("Your pick, Claude Code · Opus 5.5, has room again.");
+      expect(room?.textContent).not.toContain("limit");
       expect(
         container.querySelector("[data-coordinator-model]")?.getAttribute("data-running-instance"),
       ).toBe("codex");
       expect(
         container.querySelector("[data-coordinator-model]")?.hasAttribute("data-returns-to"),
       ).toBe(false);
-      // The weekly is spent: the session's room cannot be used, so the limit is real.
-      state.providers = [claude(100), codex];
-      await render();
-      const line = container.querySelector("p[data-model-fallback]");
-      // The line names the reason, the target and the way back.
-      expect(line?.querySelector("[data-model-now]")?.textContent).toBe(
-        "Now on Codex · GPT-6.1 Sol.",
-      );
-      expect(line?.textContent).toContain(
-        "Your pick: Claude Code · Opus 5.5, weekly limit reached, resets in 1d 15h",
-      );
-      expect(line?.textContent).toContain("goes back to Claude Code on its own");
-      // The picker under it names what runs, not the saved model it moved off.
-      const picker = container.querySelector("[data-coordinator-model]");
-      expect(picker?.getAttribute("data-running-instance")).toBe("codex");
-      expect(picker?.getAttribute("data-returns-to")).toBe("Claude Code");
-      expect(picker?.textContent).toBe("gpt-6.1-sol");
       // The saved model runs the next turn once asked; the host decides if it has room.
       state.send.mockClear();
       await click("Switch back to Claude Code");
       expect(state.send).toHaveBeenCalledWith(
         expect.objectContaining({ input: { threadId: "coord", modelSelection: saved } }),
       );
+      // The weekly is spent: the session's room cannot be used, so the limit is real. The
+      // picker says it once (its suffix and header); no line repeats it.
+      state.providers = [claude(100), codex];
+      await render();
+      expect(container.querySelector("p[data-model-fallback]")).toBeNull();
+      const picker = container.querySelector("[data-coordinator-model]");
+      expect(picker?.getAttribute("data-running-instance")).toBe("codex");
+      expect(picker?.getAttribute("data-returns-to")).toBe("Claude Code");
+      expect(picker?.textContent).toBe("gpt-6.1-sol");
       // The project runs on another machine than this one, and its header says so.
       expect(container.querySelector("[data-project-machine]")).not.toBeNull();
     } finally {
@@ -209,7 +200,6 @@ describe("project coordinator surface", () => {
   it("leaves the project's goal to settings instead of the top of the project", async () => {
     state.goal = "Ship the Atlas importer";
     await render();
-    expect(container.querySelector("[data-usage-indicator]")).not.toBeNull();
     expect(container.querySelector("[data-project-pane='coordinator']")).not.toBeNull();
     expect(container.textContent).not.toContain("Ship the Atlas importer");
     expect(container.querySelector("button[aria-label='Edit project goal']")).toBeNull();
@@ -272,11 +262,12 @@ describe("project coordinator surface", () => {
     expect(groups).toEqual([
       ["Waiting on you", 1],
       ["Working", 0],
+      ["Unavailable", 0],
       ["Idle", 1],
       ["Resolved", 0],
     ]);
     expect(container.querySelector(".sws-threads-head")?.textContent).toContain(
-      "1 thread is waiting on you",
+      "1 waiting on you.",
     );
     expect(container.querySelector(".sws-thread-status")?.textContent).toBe("Answer needed");
     const resolved = container.querySelector<HTMLButtonElement>(
@@ -687,7 +678,7 @@ describe("project coordinator surface", () => {
     await act(async () => toggle.click());
     expect(relay.querySelector('[data-report-collapsed="true"]')).not.toBeNull();
   });
-  it("shows a worker's direct answer whole in the chat", async () => {
+  it("keeps a worker's direct answer in the chat: its opening, then the rest on request", async () => {
     const sentence =
       "The relay token expired, so both machines dropped and the list waited on them.";
     const answer = [
@@ -713,12 +704,120 @@ describe("project coordinator surface", () => {
         attachments: [],
       },
     ];
+    const writeText = vi.fn(async () => {});
+    Object.defineProperty(navigator, "clipboard", { configurable: true, value: { writeText } });
     await render();
     const conversation = container.querySelector('[aria-label="Coordinator conversation"]')!;
     expect(conversation.querySelector("[data-report-artifact]")).toBeNull();
     expect(conversation.textContent).not.toContain("Open report");
-    expect(conversation.textContent).not.toContain("Show full message");
+    // Sent by stays; the opening shows as written and says how much more there is.
+    expect(conversation.textContent).toContain("Sent by");
+    expect(conversation.textContent).toContain(
+      "Both machines are back and the UI no longer freezes.",
+    );
+    expect(conversation.textContent).not.toContain("Nothing needs you right now.");
+    const toggle = [...conversation.querySelectorAll("button")].find(
+      (b) => b.textContent === "Show full message",
+    )!;
+    expect(toggle.getAttribute("aria-expanded")).toBe("false");
+    const hidden = /^Show full message, ([\d,]+) more characters$/.exec(
+      toggle.getAttribute("aria-label")!,
+    );
+    expect(Number(hidden![1]!.replaceAll(",", ""))).toBeGreaterThan(answer.length / 2);
+    expect(Number(hidden![1]!.replaceAll(",", ""))).toBeLessThan(answer.length);
+    expect(document.getElementById(toggle.getAttribute("aria-controls")!)).not.toBeNull();
+    await act(async () => toggle.click());
+    expect(toggle.getAttribute("aria-expanded")).toBe("true");
     expect(conversation.textContent).toContain("Nothing needs you right now.");
+    const copy = [...conversation.querySelectorAll("button")].find(
+      (b) => b.getAttribute("aria-label") === "Copy original message",
+    )!;
+    await act(async () => copy.click());
+    expect(writeText).toHaveBeenCalledWith(answer);
+    Reflect.deleteProperty(navigator, "clipboard");
+  });
+  it("opens a folded worker message for find while its hidden part holds more matches", async () => {
+    const answer = [
+      "The worktree is ready and the checks pass.",
+      "",
+      Array.from(
+        { length: 6 },
+        (_, index) => `Step ${index + 1} cleaned one worktree and kept its branch.`,
+      ).join(" "),
+      "",
+      "x ".repeat(300).trim(),
+    ].join("\n");
+    state.messages = [
+      {
+        id: "worker-find",
+        role: "user",
+        createdBy: "agent",
+        senderThreadId: "worker",
+        text: answer,
+        streaming: false,
+        attachments: [],
+      },
+    ];
+    await render();
+    const conversation = container.querySelector('[aria-label="Coordinator conversation"]')!;
+    const folded = () =>
+      conversation.querySelector("[data-worker-message]")!.getAttribute("data-worker-message");
+    expect(folded()).toBe("folded");
+    // The opening shows "worktree" once; the hidden part holds six more.
+    const scope = container.querySelector<HTMLElement>("[data-conversation-find-scope]")!;
+    await act(async () => setConversationFindState({ query: "worktree", scope }));
+    expect(folded()).toBe("open");
+    // Show less still folds it while that find stays open.
+    const less = [...conversation.querySelectorAll("button")].find(
+      (b) => b.textContent === "Show less",
+    )!;
+    await act(async () => less.click());
+    expect(folded()).toBe("folded");
+    // Closing find and searching the same word again opens it again.
+    await act(async () => setConversationFindState({ query: "", scope: null }));
+    await act(async () => setConversationFindState({ query: "worktree", scope }));
+    expect(folded()).toBe("open");
+    await act(async () => setConversationFindState({ query: "", scope: null }));
+  });
+  it("leaves a long answer to the coordinator's question unfolded", async () => {
+    const answer = Array.from(
+      { length: 14 },
+      (_, index) => `Answer line ${index + 1}: the relay is back and the list loads.`,
+    ).join("\n");
+    state.messages = [
+      {
+        id: "async-answer:question-1",
+        role: "user",
+        createdBy: "agent",
+        senderThreadId: "worker",
+        text: answer,
+        streaming: false,
+        attachments: [],
+      },
+    ];
+    await render();
+    const conversation = container.querySelector('[aria-label="Coordinator conversation"]')!;
+    expect(conversation.querySelector("[data-worker-message]")).toBeNull();
+    expect(conversation.textContent).toContain("Answer line 14");
+    expect(conversation.textContent).not.toContain("Copy original");
+  });
+  it("shows a short worker message whole, with no fold controls", async () => {
+    state.messages = [
+      {
+        id: "worker-short",
+        role: "user",
+        createdBy: "agent",
+        senderThreadId: "worker",
+        text: "Done. The PR is green and the evidence is saved.",
+        streaming: false,
+        attachments: [],
+      },
+    ];
+    await render();
+    const conversation = container.querySelector('[aria-label="Coordinator conversation"]')!;
+    expect(conversation.textContent).toContain("Done. The PR is green and the evidence is saved.");
+    expect(conversation.textContent).not.toContain("Show full message");
+    expect(conversation.textContent).not.toContain("Copy original");
   });
   it("announces a thread started this turn with a card and links one that existed", async () => {
     state.shells.push(
@@ -910,7 +1009,7 @@ describe("project coordinator surface", () => {
     ).toBe(true);
     expect(state.send).not.toHaveBeenCalled();
   });
-  it("lays the panel out as Threads, Library, PRs and Scheduled tabs", async () => {
+  it("lays the panel out as Threads, Designs, Library, PRs and Routines tabs", async () => {
     state.shells = [
       shell("coord"),
       shell("worker", {
@@ -933,18 +1032,19 @@ describe("project coordinator surface", () => {
     const tabs = () => [...container.querySelectorAll<HTMLButtonElement>('[role="tab"]')];
     expect(tabs().map((tab) => tab.querySelector(".sws-pane-tab-label")?.textContent)).toEqual([
       "Threads",
+      "Designs",
       "Library",
       "PRs",
       "Routines",
     ]);
     expect(tabs()[0]!.getAttribute("aria-selected")).toBe("true");
-    expect(tabs()[2]!.textContent).toContain("1");
-    await act(async () => tabs()[2]!.click());
+    expect(tabs()[3]!.textContent).toContain("1");
+    await act(async () => tabs()[3]!.click());
     expect(container.querySelector("#sws-pane-prs")?.textContent).toContain("acme/atlas #21");
     expect(localStorage.getItem("studio:project-pane-tab:v1")).toContain("prs");
     // Arrow keys move along the tabs, as a tablist does.
     await act(async () =>
-      tabs()[2]!.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowLeft", bubbles: true })),
+      tabs()[3]!.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowLeft", bubbles: true })),
     );
     expect(container.textContent).toContain("Library pane");
   });
@@ -975,7 +1075,7 @@ describe("project coordinator surface", () => {
       }),
     ];
     await render();
-    const prsTab = [...container.querySelectorAll<HTMLButtonElement>('[role="tab"]')][2]!;
+    const prsTab = [...container.querySelectorAll<HTMLButtonElement>('[role="tab"]')][3]!;
     await act(async () => prsTab.click());
     const pane = container.querySelector("#sws-pane-prs")!;
     expect(pane.querySelector("[data-prs-across-machines]")?.textContent).toBe(

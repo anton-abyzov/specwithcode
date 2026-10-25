@@ -61,6 +61,7 @@ import {
 } from "../ui/menu";
 import { ScrollArea } from "../ui/scroll-area";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
+import { AppSheet } from "../ui/app-sheet";
 import { SidebarInset } from "../ui/sidebar";
 import { Skeleton } from "../ui/skeleton";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
@@ -120,13 +121,30 @@ function isUsageWindowDays(value: number): value is UsagePagePreferences["window
   return WINDOW_OPTIONS.some((option) => option.days === value);
 }
 
-export function UsagePage() {
+export function UsagePage({
+  variant = "page",
+  initialMetric,
+  onClose,
+}: {
+  /** A sheet renders over the app, without the page's sidebar inset and window header. */
+  readonly variant?: "page" | "sheet";
+  /** Opens on this tab without saving it; switching tabs inside saves as usual. */
+  readonly initialMetric?: UsageMetric;
+  /** Closes the sheet; Escape uses it once nothing on the page is pinned. */
+  readonly onClose?: () => void;
+} = {}) {
+  const sheet = variant === "sheet";
   const [filters, setFilters] = useState<UsageFilters>(NO_USAGE_FILTERS);
-  const [preferences, setPreferences] = useState(readUsagePagePreferences);
+  const [preferences, setPreferences] = useState(() => {
+    const saved = readUsagePagePreferences();
+    return initialMetric === undefined ? saved : { ...saved, metric: initialMetric };
+  });
   useEscapeToGoBack(
-    filters.period === null
-      ? undefined
-      : () => setFilters((current) => ({ ...current, period: null })),
+    filters.period !== null
+      ? () => setFilters((current) => ({ ...current, period: null }))
+      : sheet
+        ? () => onClose?.()
+        : undefined,
   );
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const shortcutTitle = (
@@ -544,12 +562,14 @@ export function UsagePage() {
     </div>
   );
 
-  return (
-    <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none isolate">
+  const body = (
+    <>
       <div className="flex min-h-0 min-w-0 flex-1 flex-col bg-background text-foreground">
-        <WorkspacePageHeader electron={isElectron} className="h-auto">
-          {topbarContent}
-        </WorkspacePageHeader>
+        {sheet ? null : (
+          <WorkspacePageHeader electron={isElectron} className="h-auto">
+            {topbarContent}
+          </WorkspacePageHeader>
+        )}
 
         <ScrollArea className="min-h-0 flex-1">
           <WorkspacePageContainer width="expanded">
@@ -1035,6 +1055,28 @@ export function UsagePage() {
           }}
         />
       ) : null}
+    </>
+  );
+
+  if (sheet) {
+    return (
+      <AppSheet
+        title="Usage"
+        closeLabel="Close usage"
+        slot="usage-sheet"
+        popupProps={{ "data-usage-sheet": "" }}
+        focusSheetFirst
+        headerWraps
+        header={topbarContent}
+        onClose={() => onClose?.()}
+      >
+        {body}
+      </AppSheet>
+    );
+  }
+  return (
+    <SidebarInset className="h-dvh min-h-0 overflow-hidden overscroll-y-none isolate">
+      {body}
     </SidebarInset>
   );
 }

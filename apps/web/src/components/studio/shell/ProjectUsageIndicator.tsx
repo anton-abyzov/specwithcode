@@ -1,9 +1,8 @@
 /**
- * Subscription usage at a glance, under the coordinator composer: one ring per
- * provider for its fullest window, and a popover listing every machine with
- * what is signed in there, the coordinator's own account in full. It reads the
- * snapshots Usage → Limits already holds, so opening it never asks a provider
- * for anything, and it spends nothing.
+ * Subscription usage beyond the model picker's own band: every machine with what
+ * is signed in there, the coordinator's account in full, and the pooled summary
+ * the project's Usage tab shows. It reads the snapshots Usage → Limits already
+ * holds, so opening it never asks a provider for anything, and it spends nothing.
  */
 import { useAtomValue } from "@effect/atom-react";
 import {
@@ -14,14 +13,13 @@ import {
   type LimitPool,
 } from "@specweave-studio/shared/usageLimits";
 import { Link } from "@tanstack/react-router";
-import { ArrowRightIcon, TicketIcon } from "lucide-react";
+import { ArrowLeftIcon, ArrowRightIcon, TicketIcon } from "lucide-react";
 import { useMemo, useState } from "react";
 import { environmentPresentations } from "../../../state/presentation";
 import {
   blockedLabel,
   leftPercent,
   usageIndicatorProviders,
-  usageIndicatorSummary,
   usageLeftLabel,
   usageTone,
   type UsageIndicatorProvider,
@@ -29,35 +27,15 @@ import {
 } from "../../../studio/usageIndicatorModel";
 import { ProviderInstanceIcon } from "../../chat/ProviderInstanceIcon";
 import { getDriverOption } from "../../settings/providerDriverMeta";
-import { Popover, PopoverPopup, PopoverTitle, PopoverTrigger } from "../../ui/popover";
 import "./usage.css";
 import { resetCreditsSummary } from "../../usage/UsageLimits";
+import { openUsageSheet } from "../../usage/usageSheetStore";
 import type { EnvironmentId, ProviderInstanceId } from "@specweave-studio/contracts";
 import { HostLimitsCompact } from "./HostLimits";
+import { Popover, PopoverPopup, PopoverTrigger } from "../../ui/popover";
 
 const driverLabel = (driver: LimitPool["driver"]) =>
   getDriverOption(driver)?.label ?? String(driver);
-
-/** A 14px ring filled clockwise from the top by the share left. */
-function UsageRing({ percent, tone }: { percent: number | null; tone: string }) {
-  const circumference = 2 * Math.PI * 5.5;
-  const left = Math.min(100, Math.max(0, percent ?? 0));
-  return (
-    <svg className="sws-usage-ring" viewBox="0 0 14 14" data-tone={tone} aria-hidden>
-      <circle cx="7" cy="7" r="5.5" className="sws-usage-ring-track" />
-      {percent === null ? null : (
-        <circle
-          cx="7"
-          cy="7"
-          r="5.5"
-          className="sws-usage-ring-value"
-          strokeDasharray={`${(left / 100) * circumference} ${circumference}`}
-          transform="rotate(-90 7 7)"
-        />
-      )}
-    </svg>
-  );
-}
 
 function WindowRow({ window, now }: { window: UsageIndicatorWindow; now: number }) {
   const left = leftPercent(window.usedPercent);
@@ -163,42 +141,14 @@ function ProviderSection({
 }
 
 /** Every provider's pooled windows across the connected hosts and hubs, as of `now`. */
-function useSubscriptionUsage(
-  now: number,
-  destination?: {
-    environmentId: EnvironmentId | null;
-    instanceId: ProviderInstanceId | null;
-    model?: string | null;
-  },
-) {
+function useSubscriptionUsage(now: number) {
   const presentations = useAtomValue(environmentPresentations.presentationsAtom);
-  const environmentId = destination?.environmentId;
-  const instanceId = destination?.instanceId;
-  const model = destination?.model ?? null;
-  const scoped = destination !== undefined;
-  const presentation = environmentId ? presentations.get(environmentId) : undefined;
-  const pools = useMemo(() => {
-    if (!scoped) return collectLimitPools(collectLimitAccounts(presentations), now);
-    // Admission runs against this host and native instance. Other accounts,
-    // even a fresher hub snapshot, cannot lend it their remaining capacity.
-    if (!environmentId || !instanceId || !presentation?.serverConfig) return [];
-    const selected = new Map([
-      [
-        environmentId,
-        {
-          ...presentation,
-          serverConfig: {
-            providers: presentation.serverConfig.providers?.filter(
-              (provider) => provider.instanceId === instanceId,
-            ),
-          },
-        },
-      ],
-    ]);
-    return collectLimitPools(collectLimitAccounts(selected), now);
-  }, [presentations, now, scoped, environmentId, instanceId, presentation]);
-  const providers = useMemo(() => usageIndicatorProviders(pools, now, model), [pools, now, model]);
-  return { pools, providers, environmentLabel: presentation?.entry.target.label };
+  const pools = useMemo(
+    () => collectLimitPools(collectLimitAccounts(presentations), now),
+    [presentations, now],
+  );
+  const providers = useMemo(() => usageIndicatorProviders(pools, now, null), [pools, now]);
+  return { pools, providers };
 }
 
 function ProviderSections({
@@ -239,91 +189,101 @@ export function SubscriptionUsageSummary() {
   );
 }
 
-export function ProjectUsageIndicator({
+/**
+ * Limits on every machine, inside the coordinator's model picker: the picker's band
+ * covers the provider in view, this the rest of the fleet.
+ */
+export function MachineLimitsPanel({
+  projectEnvironmentId,
+  coordinatorInstanceId,
+  onBack,
+  onClose,
   onOpenProjectUsage,
-  projectEnvironmentId = null,
-  providerInstanceId = null,
-  model = null,
 }: {
-  onOpenProjectUsage: () => void;
-  /** The actual host and native instance used by this project's coordinator. */
-  projectEnvironmentId?: EnvironmentId | null;
-  providerInstanceId?: ProviderInstanceId | null;
-  /** The model of the coordinator's next turn: model windows (Weekly · Fable) count only for it. */
-  model?: string | null;
+  projectEnvironmentId: EnvironmentId | null;
+  coordinatorInstanceId: ProviderInstanceId | null;
+  /** Back to the models, when the panel replaced the picker's list. */
+  onBack?: (() => void) | undefined;
+  /** Closes the popover holding the panel before the Usage sheet opens over the app. */
+  onClose?: (() => void) | undefined;
+  onOpenProjectUsage?: (() => void) | undefined;
 }) {
-  // The clock moves when the popover opens; a ticking one would repaint the composer for nothing.
-  const [now, setNow] = useState(Date.now);
-  const [open, setOpen] = useState(false);
-  const usage = useSubscriptionUsage(now, {
-    environmentId: projectEnvironmentId,
-    instanceId: providerInstanceId,
-    model,
-  });
-  const { providers } = usage;
-  if (providers.length === 0) return null;
+  // Read once when it opens; a ticking clock would repaint the picker for nothing.
+  const [now] = useState(Date.now);
   return (
-    <Popover
-      open={open}
-      onOpenChange={(next) => {
-        if (next) setNow(Date.now());
-        setOpen(next);
-      }}
-    >
-      <PopoverTrigger
-        className="sws-usage-chip"
-        aria-label={`Coordinator subscription usage on ${usage.environmentLabel}: ${usageIndicatorSummary(providers, driverLabel)}`}
-        title={`Coordinator subscription usage on ${usage.environmentLabel}`}
-      >
-        {providers.map((provider) => (
-          <span key={provider.driver} className="sws-usage-chip-item" data-tone={provider.tone}>
-            <ProviderInstanceIcon
-              driverKind={provider.driver}
-              displayName={driverLabel(provider.driver)}
-              showBadge={false}
-              className="size-3.5"
-              iconClassName="size-3.5"
-            />
-            <UsageRing
-              percent={provider.peak ? leftPercent(provider.peak.usedPercent) : null}
-              tone={provider.tone}
-            />
-            <span className="sws-usage-chip-value">
-              {provider.peak ? `${leftPercent(provider.peak.usedPercent)}% left` : "?"}
-            </span>
-          </span>
-        ))}
-      </PopoverTrigger>
+    <div className="sws-usage-popover sws-machine-limits" data-machine-limits="">
+      <header className="sws-usage-popover-head">
+        {onBack ? (
+          <button type="button" className="sws-usage-link sws-machine-limits-back" onClick={onBack}>
+            <ArrowLeftIcon aria-hidden />
+            Models
+          </button>
+        ) : null}
+        <h2 className="sws-machine-limits-title">Limits by machine</h2>
+        <p>
+          Each machine uses its own sign-ins. When a provider has several limit windows, the one
+          that runs out first is brighter.
+        </p>
+      </header>
+      <HostLimitsCompact
+        projectEnvironmentId={projectEnvironmentId}
+        coordinatorInstanceId={coordinatorInstanceId}
+        now={now}
+      />
+      <footer>
+        <button
+          type="button"
+          className="sws-usage-link"
+          aria-haspopup="dialog"
+          onClick={() => {
+            onClose?.();
+            openUsageSheet({ metric: "limits" });
+          }}
+        >
+          All limits and accounts <ArrowRightIcon aria-hidden />
+        </button>
+        {onOpenProjectUsage ? (
+          <button type="button" className="sws-usage-link" onClick={onOpenProjectUsage}>
+            This project's tokens <ArrowRightIcon aria-hidden />
+          </button>
+        ) : null}
+      </footer>
+    </div>
+  );
+}
+
+/**
+ * The same panel where the coordinator has no model picker (nothing can run it on
+ * this host), which is when the other machines' limits matter most.
+ */
+export function MachineLimitsButton({
+  className,
+  ...panel
+}: {
+  className?: string;
+  projectEnvironmentId: EnvironmentId | null;
+  coordinatorInstanceId: ProviderInstanceId | null;
+  onOpenProjectUsage?: (() => void) | undefined;
+}) {
+  const [open, setOpen] = useState(false);
+  return (
+    <Popover open={open} onOpenChange={setOpen}>
+      <PopoverTrigger className={className}>Limits by machine</PopoverTrigger>
       <PopoverPopup side="top" align="start" width="lg" padding="compact">
-        <div className="sws-usage-popover">
-          <header className="sws-usage-popover-head">
-            <PopoverTitle>Limits by machine</PopoverTitle>
-            <p>
-              Each machine uses its own sign-ins. Every limit window is listed; when a provider has
-              several, the one that runs out first is brighter.
-            </p>
-          </header>
-          <HostLimitsCompact
-            projectEnvironmentId={projectEnvironmentId}
-            coordinatorInstanceId={providerInstanceId}
-            now={now}
+        {open ? (
+          <MachineLimitsPanel
+            {...panel}
+            onClose={() => setOpen(false)}
+            onOpenProjectUsage={
+              panel.onOpenProjectUsage
+                ? () => {
+                    setOpen(false);
+                    panel.onOpenProjectUsage?.();
+                  }
+                : undefined
+            }
           />
-          <footer>
-            <Link to="/usage" className="sws-usage-link">
-              All limits and accounts <ArrowRightIcon aria-hidden />
-            </Link>
-            <button
-              type="button"
-              className="sws-usage-link"
-              onClick={() => {
-                setOpen(false);
-                onOpenProjectUsage();
-              }}
-            >
-              This project's tokens <ArrowRightIcon aria-hidden />
-            </button>
-          </footer>
-        </div>
+        ) : null}
       </PopoverPopup>
     </Popover>
   );

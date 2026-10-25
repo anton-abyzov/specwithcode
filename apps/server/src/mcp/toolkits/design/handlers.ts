@@ -74,7 +74,9 @@ export const designFailure = (error: DesignError) =>
         ? `${error.detail} The design is now at revision ${error.currentRevision}: call design_get, rebuild your operations on it and apply again with expectedRevision ${error.currentRevision}.`
         : error.code === "not_on_this_machine" && error.member !== undefined
           ? `${error.detail} Project ${error.member.projectId} on machine ${error.member.environmentId} has it.`
-          : error.detail,
+          : error.code === "not_found" && error.movedTo !== undefined
+            ? `${error.detail} It keeps its id: retry with owner ${JSON.stringify(error.movedTo.owner)} and designId ${error.movedTo.designId}.`
+            : error.detail,
   });
 
 /** Runs `use` with the caller and the owner it addresses. */

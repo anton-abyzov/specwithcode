@@ -1,4 +1,10 @@
-import { CommandId, RunId, ThreadId } from "@specweave-studio/contracts";
+import {
+  CommandId,
+  type MessageId,
+  type OrchestrationV2Run,
+  RunId,
+  ThreadId,
+} from "@specweave-studio/contracts";
 import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -24,6 +30,7 @@ import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as ProviderTurnControlService from "./ProviderTurnControlService.ts";
 import * as ProviderTurnStartService from "./ProviderTurnStartService.ts";
 import * as RunLiveness from "./RunLiveness.ts";
+import * as SteersInFlight from "./SteersInFlight.ts";
 import * as RuntimeRequestService from "./RuntimeRequestService.ts";
 import * as ThreadTitleRegenerationService from "./ThreadTitleRegenerationService.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
@@ -48,6 +55,20 @@ export class OrchestrationEffectExecutionError extends Schema.TaggedError<Orches
  * `starting`, the thread's effect lane busy and its queue waiting forever.
  */
 export const PROVIDER_TURN_START_TIMEOUT = Duration.minutes(2);
+
+/** How long one checkpoint capture (git snapshot and commit) may take before it is retried. */
+export const CHECKPOINT_CAPTURE_TIMEOUT = Duration.minutes(3);
+
+/**
+ * The queued run Steer now kept for `messageId`: still queued while its
+ * message was moved onto the turn being steered.
+ */
+function steeredQueuedRun(
+  runs: ReadonlyArray<OrchestrationV2Run>,
+  messageId: MessageId,
+): OrchestrationV2Run | undefined {
+  return runs.find((run) => run.status === "queued" && run.userMessageId === messageId);
+}
 
 /** Shown on the run a timed-out start ends; `provider_start_timeout` names it in the logs. */
 export { PROVIDER_TURN_START_TIMEOUT_MESSAGE } from "./systemInterruptReasons.ts";
@@ -135,6 +156,7 @@ export const layerExecutor: Layer.Layer<
     const threads = yield* ThreadManagementService.ThreadManagementService;
     const settings = yield* ServerSettings.ServerSettingsService;
     const liveness = yield* RunLiveness.RunLiveness;
+    const steersInFlight = yield* SteersInFlight.SteersInFlight;
     // Absent where the service keeps no record of what an update closed (tools, tests).
     const closedQuestions = yield* Effect.serviceOption(
       ServiceUpdateClosedQuestions.ServiceUpdateClosedQuestions,
@@ -328,26 +350,64 @@ export const layerExecutor: Layer.Layer<
                     }),
                 ),
               );
-          case "provider-turn.steer":
-            return providerTurnControl
-              .steer({
-                threadId: effect.threadId,
-                providerSessionId: effect.request.providerSessionId,
-                providerThreadId: effect.request.providerThreadId,
-                providerTurnId: effect.request.providerTurnId,
-                messageId: effect.request.messageId,
-              })
-              .pipe(
+          case "provider-turn.steer": {
+            const request = effect.request;
+            return steersInFlight.track(
+              request.messageId,
+              steersInFlight.wasAccepted(request.messageId).pipe(
+                Effect.flatMap((accepted) =>
+                  Effect.gen(function* () {
+                    if (request.type !== "provider-turn.steer" || accepted) return;
+                    const records = yield* threads.getThreadRecords(
+                      effect.threadId,
+                      ["turnItems"],
+                      { turnItemTypes: ["user_message"] },
+                    );
+                    if (
+                      records.turnItems.some(
+                        (item) =>
+                          item.type === "user_message" &&
+                          item.messageId === request.messageId &&
+                          item.inputIntent === "promoted_queued_to_steer" &&
+                          item.status === "completed",
+                      )
+                    )
+                      return;
+                    yield* providerTurnControl.steer({
+                      threadId: effect.threadId,
+                      providerSessionId: request.providerSessionId,
+                      providerThreadId: request.providerThreadId,
+                      providerTurnId: request.providerTurnId,
+                      messageId: request.messageId,
+                    });
+                  }),
+                ),
+                Effect.tap(() => steersInFlight.accept(request.messageId)),
                 Effect.tap(() =>
                   Effect.gen(function* () {
-                    if (effect.request.type !== "provider-turn.steer") return;
-                    const messageId = effect.request.messageId;
+                    if (request.type !== "provider-turn.steer") return;
+                    const messageId = request.messageId;
                     const projection = yield* threads.getThreadRecords(
                       effect.threadId,
                       ["messages", "runs"],
-                      { messageIds: [effect.request.messageId] },
+                      { messageIds: [request.messageId] },
                     );
                     const message = projection.messages.find((row) => row.id === messageId);
+                    // Steer now keeps the queued row until the provider takes the
+                    // message; it has, so the row leaves the queue.
+                    const promotedRow = steeredQueuedRun(projection.runs, messageId);
+                    if (promotedRow !== undefined) {
+                      yield* threads
+                        .dispatch({
+                          type: "queued-message.steer-settle",
+                          commandId: CommandId.make(`command:steer-accepted:${effect.id}`),
+                          threadId: effect.threadId,
+                          messageId,
+                          accepted: true,
+                        })
+                        .pipe(Effect.retry({ times: 2 }));
+                    }
+                    yield* steersInFlight.forget(messageId);
                     if (message?.delegatedCompletion === undefined) return;
                     yield* threads.dispatch({
                       type: "notification.delivery.accept",
@@ -359,22 +419,34 @@ export const layerExecutor: Layer.Layer<
                 ),
                 Effect.catch((error) =>
                   Effect.gen(function* () {
-                    if (
-                      !("turnCompleted" in error) ||
-                      !error.turnCompleted ||
-                      effect.request.type !== "provider-turn.steer"
-                    ) {
+                    if (!("turnCompleted" in error) || request.type !== "provider-turn.steer") {
                       return yield* error;
                     }
                     const projection = yield* threads.getThreadRecords(
                       effect.threadId,
                       ["messages", "runs"],
-                      { messageIds: [effect.request.messageId] },
+                      { messageIds: [request.messageId] },
                     );
-                    const messageId = effect.request.messageId;
+                    const messageId = request.messageId;
                     const message = projection.messages.find((item) => item.id === messageId);
                     const run = projection.runs.find((item) => item.id === message?.runId);
                     if (message === undefined || run === undefined) return yield* error;
+                    yield* threads.dispatch({
+                      type: "queued-message.steer-settle",
+                      commandId: CommandId.make(`command:steer-refused:${effect.id}`),
+                      threadId: effect.threadId,
+                      messageId,
+                      accepted: false,
+                    });
+                    if (!error.turnCompleted) return yield* error;
+                    // A Steer now's message belongs to its queued row: still queued,
+                    // the row delivers it after the turn; started, it already did;
+                    // removed, the person dropped it. A follow-up would repeat it.
+                    if (
+                      projection.runs.some((candidate) => candidate.userMessageId === messageId)
+                    ) {
+                      return;
+                    }
                     // Reuse the message identity and a stable command receipt so an outbox
                     // retry cannot append a duplicate message or start a second follow-up.
                     yield* threads.dispatch({
@@ -418,11 +490,13 @@ export const layerExecutor: Layer.Layer<
                   (cause) =>
                     new OrchestrationEffectExecutionError({
                       effectId: effect.id,
-                      effectType: effect.request.type,
+                      effectType: request.type,
                       cause,
                     }),
                 ),
-              );
+              ),
+            );
+          }
           case "provider-turn.restart":
             return providerTurnControl
               .interruptAndAwaitTerminal({
@@ -550,6 +624,10 @@ export const layerExecutor: Layer.Layer<
                 scopeId: effect.request.scopeId,
               })
               .pipe(
+                // A capture stuck behind git leaves the run `waiting`, which
+                // blocks the queue; fail it so the worker retries, and the
+                // watchdog settles a run still waiting past its deadline.
+                Effect.timeout(CHECKPOINT_CAPTURE_TIMEOUT),
                 Effect.mapError(
                   (cause) =>
                     new OrchestrationEffectExecutionError({

@@ -405,7 +405,7 @@ describe("native shells and explicit instance selection", () => {
       now,
     );
     const stuck = views.find((s) => s.thread.id === "stuck");
-    expect(stuck?.attention).toBe("stalled");
+    expect(stuck?.attention).toBeNull();
     expect(stuck?.state).toBe("No activity for 30m");
     const tests = views.find((s) => s.thread.id === "tests");
     expect(tests?.attention).toBeNull();
@@ -451,7 +451,7 @@ describe("native shells and explicit instance selection", () => {
       now,
     );
     const byId = (id: string) => views.find((s) => s.thread.id === id);
-    expect(byId("quiet")).toMatchObject({ attention: "stalled", state: "No activity for 35m" });
+    expect(byId("quiet")).toMatchObject({ attention: null, state: "No activity for 35m" });
     expect(byId("briefly-quiet")?.attention).toBeNull();
     // Its own command keeps the long-command allowance.
     expect(byId("quiet-build")).toMatchObject({
@@ -544,7 +544,7 @@ describe("native shells and explicit instance selection", () => {
       new Set(["host"]),
     );
     expect(views).toHaveLength(1);
-    expect(views[0]?.attention).toBe("limited");
+    expect(views[0]?.attention).toBeNull();
   });
   it("keeps disconnected cached work and approvals as history until the host reconnects", () => {
     const shells = [

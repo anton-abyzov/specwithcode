@@ -15,6 +15,10 @@ import {
   ProjectEnvironmentError,
 } from "@specweave-studio/contracts";
 import {
+  LOCAL_STORAGE_FAILURE_CODE,
+  LOCAL_STORAGE_FAILURE_MESSAGE,
+  PREVIOUS_TURN_ACTIVE_FAILURE_CODE,
+  PREVIOUS_TURN_ACTIVE_FAILURE_MESSAGE,
   providerFailureFallbackMessage,
   unwrapProviderErrorMessage,
 } from "@specweave-studio/shared/orchestrationV2ThreadError";
@@ -87,10 +91,11 @@ const DIAGNOSTIC_ERROR_TAGS = new Set([
 ]);
 
 /** Local logs need the cause category, never raw prompts, paths, credentials or defect text. */
-export function providerFailureDiagnostics(cause: unknown): {
+export function providerFailureDiagnostics(input: unknown): {
   readonly errorTags: ReadonlyArray<string>;
   readonly errorCode?: string;
 } {
+  let cause = input;
   const errorTags: string[] = [],
     seen = new Set<unknown>();
   let errorCode: string | undefined;
@@ -113,7 +118,86 @@ export function providerFailureDiagnostics(cause: unknown): {
       break;
     }
   }
+  // The classified cause stands in for detail text, which names internal ids.
+  errorCode ??= classifiedFailureCode(input);
   return { errorTags, ...(errorCode === undefined ? {} : { errorCode }) };
+}
+
+const STORAGE_ERROR_TAGS: ReadonlySet<string> = new Set([
+  "PersistenceSqlError",
+  "EventStoreAppendEventsError",
+]);
+const STORAGE_ERROR_CODE =
+  /^(?:ENOSPC|EDQUOT|SQLITE_(?:FULL|CANTOPEN|IOERR|READONLY|CORRUPT|NOTADB))/u;
+const STORAGE_ERROR_TEXT =
+  /\bSQLITE\(\d+\)|\bSQLITE_(?:FULL|CANTOPEN|IOERR)|\bENOSPC\b|no space left on device/iu;
+
+/**
+ * Whether a cause chain says SpecWithCode could not write its own state: a
+ * SQL or event store failure, a full disk, or a database SQLite could not
+ * open. Such a turn failed locally, not in the provider.
+ */
+export function isLocalStorageFailure(error: unknown): boolean {
+  let storage = false;
+  walkCauses(error, (cause) => {
+    const tag = stringField(cause, "_tag");
+    const code = stringField(cause, "code");
+    if (
+      (tag !== undefined && STORAGE_ERROR_TAGS.has(tag)) ||
+      (code !== undefined && STORAGE_ERROR_CODE.test(code)) ||
+      STORAGE_ERROR_TEXT.test(
+        typeof cause === "string" ? cause : (stringField(cause, "message") ?? ""),
+      )
+    ) {
+      storage = true;
+      return "stop";
+    }
+  });
+  return storage;
+}
+
+// Claude, Cursor and ACP all word it this way (see their startTurn guards).
+const PREVIOUS_TURN_ACTIVE_DETAIL = /provider turn (\S+) is still active\.?$/u;
+
+/**
+ * When a start failed because the provider is still running an earlier turn
+ * on this session: that turn's id, or null when the error does not name it.
+ * Undefined for any other failure.
+ */
+export function previousActiveProviderTurn(error: unknown): ProviderTurnId | null | undefined {
+  let found: ProviderTurnId | null | undefined;
+  walkCauses(error, (cause) => {
+    if (stringField(cause, "_tag") !== "ProviderAdapterProtocolError") return;
+    const named = previousTurnActivePayload(cause);
+    const match = PREVIOUS_TURN_ACTIVE_DETAIL.exec(stringField(cause, "detail") ?? "");
+    if (named === undefined && match === null) return;
+    found = (named ?? match?.[1] ?? null) as ProviderTurnId | null;
+    return "stop";
+  });
+  return found;
+}
+
+function previousTurnActivePayload(cause: unknown): string | undefined {
+  try {
+    const payload = (cause as { readonly payload?: unknown }).payload;
+    if (typeof payload !== "object" || payload === null) return undefined;
+    const previous = (payload as { readonly previousTurnActive?: unknown }).previousTurnActive;
+    if (typeof previous !== "object" || previous === null) return undefined;
+    const id = (previous as { readonly providerTurnId?: unknown }).providerTurnId;
+    return typeof id === "string" && id.length > 0 ? id : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+export const isPreviousTurnActiveFailure = (error: unknown): boolean =>
+  previousActiveProviderTurn(error) !== undefined;
+
+/** The stable code of a failure SpecWithCode recognizes in the cause chain itself. */
+function classifiedFailureCode(error: unknown): string | undefined {
+  if (isPreviousTurnActiveFailure(error)) return PREVIOUS_TURN_ACTIVE_FAILURE_CODE;
+  if (isLocalStorageFailure(error)) return LOCAL_STORAGE_FAILURE_CODE;
+  return undefined;
 }
 
 /** Translate known categories without exposing arbitrary provider defect text. */
@@ -148,6 +232,9 @@ function causeMessage(cause: unknown): string | undefined {
         // name the real reason, such as a native status check that timed out.
         case "ProviderSetupError":
           return stringField(cause, "detail") ?? message;
+        case "ProviderAdapterProtocolError":
+          if (isPreviousTurnActiveFailure(cause)) return PREVIOUS_TURN_ACTIVE_FAILURE_MESSAGE;
+          break;
         case "ContextHandoffDeliveryUncertainError":
           return "SpecWithCode could not confirm whether conversation history reached the provider. Retry the turn to recover the session.";
         case "ProviderAdapterTurnStartError":
@@ -370,7 +457,12 @@ export function makeProviderFailure(input: {
   // Without a message the class still says what kind of failure it was;
   // untranslated cause text stays in the server log.
   const fallbackMessage = providerFailureFallbackMessage(failureClass);
-  const rawMessage = input.message ?? causeMessage(input.cause) ?? fallbackMessage;
+  const classifiedCode = classifiedFailureCode(input.cause);
+  const rawMessage =
+    input.message ??
+    (classifiedCode === LOCAL_STORAGE_FAILURE_CODE ? LOCAL_STORAGE_FAILURE_MESSAGE : undefined) ??
+    causeMessage(input.cause) ??
+    fallbackMessage;
   const message = boundedText(
     unwrapProviderErrorMessage(rawMessage),
     MAX_PROVIDER_FAILURE_MESSAGE_LENGTH,
@@ -380,6 +472,7 @@ export function makeProviderFailure(input: {
     (setup?.unavailable && failureClass !== "usage_limit"
       ? ORCHESTRATION_V2_PROVIDER_UNAVAILABLE_FAILURE_CODE
       : undefined) ??
+    classifiedCode ??
     causeCode(input.cause) ??
     null;
   const code =

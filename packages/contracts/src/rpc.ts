@@ -22,6 +22,7 @@ import {
   DESIGN_SYSTEM_IMPORT_RPC_METHODS,
   designSystemImportRpcs,
 } from "./designSystemImportRpc.ts";
+import { DESIGN_SYSTEM_EDIT_RPC_METHODS, designSystemEditRpcs } from "./designSystemEditRpc.ts";
 import {
   nativeConnectionApplyRpc,
   PROJECT_CONNECTION_RPC_METHODS,
@@ -426,6 +427,7 @@ export const WS_METHODS = {
   ...COMPUTER_USE_RPC_METHODS,
   ...DESIGN_RPC_METHODS,
   ...DESIGN_SYSTEM_IMPORT_RPC_METHODS,
+  ...DESIGN_SYSTEM_EDIT_RPC_METHODS,
   // Project registry methods
   projectsList: "projects.list",
   projectsAdd: "projects.add",
@@ -2286,10 +2288,11 @@ export const WsProjectKnowledgeRpcGroup = RpcGroup.make(...projectKnowledgeRpcs)
 /** Designs, slides and design systems; its own group for the same depth reason. */
 export const WsDesignRpcGroup = RpcGroup.make(...designRpcs).middleware(RpcScopeAuthorization);
 
-/** Design-system import and review; its own group for the same depth reason. */
-export const WsDesignSystemImportRpcGroup = RpcGroup.make(...designSystemImportRpcs).middleware(
-  RpcScopeAuthorization,
-);
+/** Design-system import, review and hand editing; its own group for the same depth reason. */
+export const WsDesignSystemImportRpcGroup = RpcGroup.make(
+  ...designSystemImportRpcs,
+  ...designSystemEditRpcs,
+).middleware(RpcScopeAuthorization);
 
 /** Handoff mode checkpoints, leases and hand-offs; its own group for the same depth reason. */
 export const WsHandoffModeRpcGroup = RpcGroup.make(...handoffModeRpcs).middleware(

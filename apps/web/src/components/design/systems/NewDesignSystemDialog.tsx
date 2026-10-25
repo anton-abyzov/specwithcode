@@ -4,6 +4,7 @@
  */
 import type {
   DesignOwnerInput,
+  DesignSystemCreateInput,
   DesignSystemProposeInput,
   DesignSystemTokensFile,
   FigmaDesktopStatus,
@@ -24,20 +25,24 @@ import {
 } from "../../ui/dialog";
 import { Input } from "../../ui/input";
 import { Label } from "../../ui/label";
-import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../../ui/select";
+import { OwnerSelect, UnavailableOwner } from "./OwnerSelect";
 import {
   formatBytes,
-  ownerFromKey,
-  ownerKey,
-  PLAYGROUND_KEY,
+  offeredProjects,
+  ownerUnavailable,
   readTokensFiles,
   type OwnerProject,
 } from "./reviewModel";
 import { ScanFromCode, type ScanOutcome } from "./ScanFromCode";
+import { StartFromScratchPanel } from "./StartFromScratchPanel";
 
-export type NewSystemMode = "code" | "tokens-file" | "figma" | "describe";
+export { UnavailableOwner };
 
+export type NewSystemMode = "scratch" | "code" | "tokens-file" | "figma" | "describe";
+
+/** Every way to start a system; "scratch" needs a server with `designSystemEditing`. */
 export const NEW_SYSTEM_MODES: ReadonlyArray<{ mode: NewSystemMode; label: string }> = [
+  { mode: "scratch", label: "Start from scratch" },
   { mode: "code", label: "From this project's code" },
   { mode: "tokens-file", label: "From a tokens file" },
   { mode: "figma", label: "From Figma desktop" },
@@ -52,39 +57,6 @@ export interface FigmaStatusView {
   readonly error: string | null;
   readonly checking: boolean;
   readonly onCheck: () => void;
-}
-
-function OwnerSelect({
-  id,
-  projects,
-  value,
-  onChange,
-}: {
-  id: string;
-  projects: readonly OwnerProject[];
-  value: DesignOwnerInput;
-  onChange: (owner: DesignOwnerInput) => void;
-}) {
-  const key = ownerKey(value);
-  const project = value.kind === "project" ? projects.find((p) => p.id === value.projectId) : null;
-  return (
-    <div className="flex flex-col gap-1.5">
-      <Label htmlFor={id}>Save in</Label>
-      <Select value={key} onValueChange={(next) => onChange(ownerFromKey(next ?? PLAYGROUND_KEY))}>
-        <SelectTrigger id={id} size="sm">
-          <SelectValue>{project?.title ?? "Playground"}</SelectValue>
-        </SelectTrigger>
-        <SelectPopup>
-          <SelectItem value={PLAYGROUND_KEY}>Playground</SelectItem>
-          {projects.map((candidate) => (
-            <SelectItem key={candidate.id} value={`p:${candidate.id}`}>
-              {candidate.title}
-            </SelectItem>
-          ))}
-        </SelectPopup>
-      </Select>
-    </div>
-  );
 }
 
 function NameInput({
@@ -201,7 +173,7 @@ function TokensFilePanel({
       <div className="flex justify-end">
         <Button
           data-testid="tokens-file-propose"
-          disabled={busy || files.length === 0}
+          disabled={busy || files.length === 0 || ownerUnavailable(owner, projects) !== null}
           onClick={() => {
             setBusy(true);
             setError(null);
@@ -369,7 +341,7 @@ function FigmaPanel({
       <Problem>{error}</Problem>
       <div className="flex justify-end">
         <Button
-          disabled={busy}
+          disabled={busy || ownerUnavailable(owner, projects) !== null}
           onClick={() => {
             setBusy(true);
             setError(null);
@@ -395,6 +367,11 @@ function FigmaPanel({
   );
 }
 
+/** The modes a server offers: scratch only where it can create systems. */
+export function offeredModes(canStartFromScratch: boolean) {
+  return NEW_SYSTEM_MODES.filter(({ mode }) => mode !== "scratch" || canStartFromScratch);
+}
+
 function DescribePanel() {
   return (
     <div className="flex flex-col gap-3 text-sm" data-testid="describe-panel">
@@ -411,6 +388,20 @@ function DescribePanel() {
   );
 }
 
+/**
+ * Where a new system is saved unless the person picks another owner: the project it was
+ * opened for, else the first project a picker offers, else the Playground. An archived,
+ * automated or missing-folder project is never the fallback.
+ */
+export function defaultSystemOwner(
+  projects: readonly OwnerProject[],
+  defaultProjectId?: ProjectId | null,
+): DesignOwnerInput {
+  if (defaultProjectId != null) return { kind: "project", projectId: defaultProjectId };
+  const first = offeredProjects(projects)[0];
+  return first ? { kind: "project", projectId: first.id } : { kind: "playground" };
+}
+
 export function NewDesignSystemDialog({
   mode,
   onModeChange,
@@ -420,6 +411,7 @@ export function NewDesignSystemDialog({
   figma,
   onScan,
   onPropose,
+  onCreate,
 }: {
   mode: NewSystemMode;
   onModeChange: (mode: NewSystemMode) => void;
@@ -430,13 +422,10 @@ export function NewDesignSystemDialog({
   onScan: (projectId: ProjectId) => Promise<ScanOutcome>;
   /** Resolves to an error message, or null once the review is open. */
   onPropose: (input: DesignSystemProposeInput) => Promise<string | null>;
+  /** Start from scratch; resolves to an error message, or null once the system's page opens. */
+  onCreate?: (input: DesignSystemCreateInput) => Promise<string | null>;
 }) {
-  const defaultOwner: DesignOwnerInput =
-    defaultProjectId != null
-      ? { kind: "project", projectId: defaultProjectId }
-      : projects[0]
-        ? { kind: "project", projectId: projects[0].id }
-        : { kind: "playground" };
+  const defaultOwner = defaultSystemOwner(projects, defaultProjectId);
   const title = NEW_SYSTEM_MODES.find((entry) => entry.mode === mode)?.label ?? "";
   return (
     <Dialog open onOpenChange={onOpenChange}>
@@ -446,11 +435,26 @@ export function NewDesignSystemDialog({
             New design system: {title.charAt(0).toLowerCase() + title.slice(1)}
           </DialogTitle>
           <DialogDescription>
-            The app reads the source and shows a review. Only what you confirm is saved.
+            {mode === "scratch"
+              ? "An empty design system with Light and Dark modes. Its page opens next, ready for colors, type and assets."
+              : "The app reads the source and shows a review. Only what you confirm is saved."}
           </DialogDescription>
         </DialogHeader>
         <DialogPanel>
-          {mode === "code" ? (
+          {mode === "scratch" ? (
+            onCreate ? (
+              <StartFromScratchPanel
+                projects={projects}
+                defaultOwner={defaultOwner}
+                onCreate={onCreate}
+              />
+            ) : (
+              <p className="text-sm text-muted-foreground">
+                This machine's app is too old to start a design system from scratch. Update it, or
+                import one instead.
+              </p>
+            )
+          ) : mode === "code" ? (
             <ScanFromCode projects={projects} onScan={onScan} onPropose={onPropose} />
           ) : mode === "tokens-file" ? (
             <TokensFilePanel

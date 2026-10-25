@@ -70,6 +70,7 @@ import * as ProviderTurnControlService from "./ProviderTurnControlService.ts";
 import * as ProviderTurnStartService from "./ProviderTurnStartService.ts";
 import * as RunExecutionService from "./RunExecutionService.ts";
 import * as RunLiveness from "./RunLiveness.ts";
+import * as SteersInFlight from "./SteersInFlight.ts";
 import * as RunFinalizationService from "./RunFinalizationService.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
 import * as RuntimeRequestService from "./RuntimeRequestService.ts";
@@ -296,6 +297,8 @@ const layerOrchestratorProvided = Orchestrator.layer.pipe(
       ThreadForkService.layer,
       // Shares HandoffModeStore.layer with HandoffMode.layer (one cached document).
       HandoffTurnGate.layer,
+      // One reference where steers run (the effect executor) and the queue starts.
+      SteersInFlight.layer,
     ),
   ),
 );
@@ -407,6 +410,7 @@ const layerEffectExecutorProvided = EffectWorker.layerExecutor.pipe(
   Layer.provide(
     Layer.mergeAll(
       RunLiveness.layer,
+      SteersInFlight.layer,
       layerRunFinalizationServiceProvided,
       layerCheckpointRollbackServiceProvided,
       layerProviderSessionManagerProvided,
@@ -435,6 +439,7 @@ const layerProviderRuntimeRecoveryProvided = ProviderRuntimeRecoveryService.laye
 
 export const layer = Layer.mergeAll(
   RunLiveness.layer,
+  SteersInFlight.layer,
   layerOrchestratorProvided,
   layerThreadManagementProvided,
   layerEffectWorkerProvided,
@@ -524,6 +529,7 @@ export const layerProduction = Layer.mergeAll(
   ProviderFallbackWorker.layer.pipe(
     Layer.provide(
       Layer.mergeAll(
+        layerEventSinkProvided,
         ProjectionStore.layer,
         layerThreadManagementProvided,
         layerProjectService,

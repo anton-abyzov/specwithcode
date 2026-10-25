@@ -24,14 +24,9 @@ vi.mock("../../settings/providerDriverMeta", () => ({
 }));
 vi.mock("../../usage/UsageLimits", () => ({ resetCreditsSummary: () => "" }));
 vi.mock("./HostLimits", () => ({ HostLimitsCompact: () => null }));
-vi.mock("../../ui/popover", () => ({
-  Popover: ({ children }: { children: ReactNode }) => <div>{children}</div>,
-  PopoverTrigger: (props: Record<string, unknown>) => <button {...props} />,
-  PopoverPopup: ({ children }: { children: ReactNode }) => <div>{children}</div>,
-  PopoverTitle: ({ children }: { children: ReactNode }) => <h2>{children}</h2>,
-}));
 
-import { ProjectUsageIndicator, SubscriptionUsageSummary } from "./ProjectUsageIndicator";
+import { MachineLimitsPanel, SubscriptionUsageSummary } from "./ProjectUsageIndicator";
+import { closeUsageSheet, useUsageSheetRequest } from "../../usage/usageSheetStore";
 
 const host = EnvironmentId.make("m4");
 const other = EnvironmentId.make("m1");
@@ -93,52 +88,52 @@ afterEach(async () => {
   await act(async () => root.unmount());
   container.remove();
 });
-async function render(
-  environmentId: EnvironmentId | null = host,
-  instanceId: ProviderInstanceId | null = selected,
-) {
-  await act(async () =>
-    root.render(
-      <ProjectUsageIndicator
-        projectEnvironmentId={environmentId}
-        providerInstanceId={instanceId}
-        onOpenProjectUsage={() => {}}
-      />,
-    ),
-  );
-}
-describe("project coordinator usage scope", () => {
-  it("shows the selected account's 0% left, never the fleet or same-host account average", async () => {
-    await render();
-    expect(container.querySelector(".sws-usage-chip-value")?.textContent).toBe("0% left");
-    expect(container.querySelector(".sws-usage-chip-item")?.getAttribute("data-tone")).toBe("full");
-    expect(container.querySelector(".sws-usage-chip")?.getAttribute("aria-label")).toContain("M4");
-    expect(container.querySelector(".sws-usage-chip")?.getAttribute("aria-label")).toContain(
-      "Codex limit reached",
+describe("machine limits", () => {
+  it("lists every machine's sign-ins and goes back to the models", async () => {
+    const back = vi.fn();
+    await act(async () =>
+      root.render(
+        <MachineLimitsPanel
+          projectEnvironmentId={host}
+          coordinatorInstanceId={selected}
+          onBack={back}
+          onOpenProjectUsage={() => {}}
+        />,
+      ),
     );
+    expect(container.textContent).toContain("Limits by machine");
+    expect(container.textContent).toContain("This project's tokens");
+    const backButton = [...container.querySelectorAll("button")].find(
+      (button) => button.textContent === "Models",
+    );
+    await act(async () => backButton!.click());
+    expect(back).toHaveBeenCalledOnce();
   });
-  it("updates scope when the project's machine changes", async () => {
-    await render();
-    await render(other);
-    expect(container.querySelector(".sws-usage-chip-value")?.textContent).toBe("98% left");
-    expect(container.querySelector(".sws-usage-chip")?.getAttribute("aria-label")).toContain("M1");
+  it("opens all limits as an app-wide sheet on Limits after closing its popover", async () => {
+    closeUsageSheet();
+    const calls: string[] = [];
+    const close = vi.fn(() => {
+      calls.push(useUsageSheetRequest.getState().request ? "close-after-open" : "close");
+    });
+    await act(async () =>
+      root.render(
+        <MachineLimitsPanel
+          projectEnvironmentId={host}
+          coordinatorInstanceId={selected}
+          onClose={close}
+        />,
+      ),
+    );
+    const button = [...container.querySelectorAll("button")].find((element) =>
+      element.textContent?.includes("All limits and accounts"),
+    );
+    expect(button?.getAttribute("aria-haspopup")).toBe("dialog");
+    expect(container.querySelector("a")?.textContent ?? "").not.toContain("All limits");
+    await act(async () => button!.click());
+    expect(calls).toEqual(["close"]);
+    expect(useUsageSheetRequest.getState().request?.metric).toBe("limits");
+    closeUsageSheet();
   });
-  it("updates scope when the coordinator account changes", async () => {
-    await render(host, ProviderInstanceId.make("other-account"));
-    expect(container.querySelector(".sws-usage-chip-value")?.textContent).toBe("100% left");
-  });
-  it.each([
-    [null, selected],
-    [host, null],
-    [EnvironmentId.make("missing"), selected],
-    [host, ProviderInstanceId.make("missing")],
-  ] as const)(
-    "never substitutes fleet capacity for an unknown destination",
-    async (env, instance) => {
-      await render(env, instance);
-      expect(container.querySelector(".sws-usage-chip-value")).toBeNull();
-    },
-  );
   it("keeps the full subscription summary available separately", async () => {
     await act(async () => root.render(<SubscriptionUsageSummary />));
     expect(container.textContent).toContain("3 accounts pooled");

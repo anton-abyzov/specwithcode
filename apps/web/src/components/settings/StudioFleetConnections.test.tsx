@@ -529,6 +529,11 @@ describe("inviting this machine from its own roster", () => {
       render({ onAddMachine: vi.fn(), onInvitationChange: vi.fn(), canManageWorkers: true }),
     );
     expect(hint).toContain("choose Invite this machine under Settings > Connections");
+    expect(hint).toContain(
+      "specwithcode fleet invite --coordinator '<main-machine-environment-id>'",
+    );
+    expect(hint).toContain("Settings > Connections on your main machine");
+    expect(hint).toContain("Replace <main-machine-environment-id>");
     expect(hint.indexOf("Invite this machine")).toBeLessThan(
       hint.indexOf("specwithcode fleet invite"),
     );

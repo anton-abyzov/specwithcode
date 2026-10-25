@@ -1,6 +1,6 @@
 import type { DeviceHubAccess } from "@specweave-studio/client-runtime/device/hub-access";
-import type { PreviewStreamHostSetup } from "@specweave-studio/contracts";
 import type {
+  PreviewHostSetupNotice,
   PreviewStreamControl,
   PreviewStreamDownload,
   PreviewStreamFileChooser,
@@ -25,7 +25,7 @@ export type PreviewStreamMessage =
     }
   | { readonly type: "unauthorized" }
   | { readonly type: "gone" }
-  | ({ readonly type: "hostSetup" } & PreviewStreamHostSetup)
+  | ({ readonly type: "hostSetup" } & PreviewHostSetupNotice)
   | { readonly type: "viewport"; readonly width: number; readonly height: number }
   | { readonly type: "clipboard"; readonly text: string }
   | ({ readonly type: "download" } & PreviewStreamDownload)

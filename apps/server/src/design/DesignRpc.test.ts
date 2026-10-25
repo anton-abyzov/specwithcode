@@ -28,6 +28,7 @@ import {
   PROJECT_B,
 } from "./DesignService.testkit.ts";
 import * as Store from "./DesignStore.ts";
+import { exportedDeck } from "./import/pptxImport.testkit.ts";
 import { DesignSystemProposals } from "./systems/DesignSystemService.ts";
 
 const projectA = { kind: "project", projectId: PROJECT_A } as const;
@@ -59,10 +60,18 @@ const withFixture = <A, E, R>(run: Effect.Effect<A, E, R>) =>
 
 it("treats the desktop app, startup link and CLI as the owner and every paired session as a member", () => {
   const scopes = AuthStandardClientScopes;
-  for (const subject of ["desktop-bootstrap", "administrative-bootstrap", "cli-issued-session"]) {
+  for (const subject of ["desktop-bootstrap", "administrative-bootstrap", "local-cli-owner"]) {
     expect(DesignRpc.designCallerForSession({ subject, scopes }).audience).toBe("owner");
   }
-  for (const subject of ["one-time-token", "device-approval", "mcp-client", "cloud-connect", "x"]) {
+  for (const subject of [
+    "cli-issued-session",
+    "fleet-invitation",
+    "one-time-token",
+    "device-approval",
+    "mcp-client",
+    "cloud-connect",
+    "x",
+  ]) {
     expect(DesignRpc.designCallerForSession({ subject, scopes }).audience).toBe("members");
   }
 });
@@ -105,6 +114,51 @@ it.effect("lets the app paired with a running service bind a design to its new t
       expect(bound.document.thread).toMatchObject(thread);
     }),
   ),
+);
+
+it.effect(
+  "creates a design already bound for the paired app and writes nothing on a refused bind",
+  () =>
+    withFixture(
+      Effect.gen(function* () {
+        const app = yield* clientFor("one-time-token", AuthAdministrativeScopes);
+        const phone = yield* clientFor("one-time-token", AuthStandardClientScopes);
+        const thread = { environmentId: HERE, threadId: ThreadId.make("design-thread") };
+        const reuse = {
+          name: "ec-uikit",
+          paths: ["repositories/anton-abyzov/ec-uikit/src/styles/tokens.css"],
+          tokens: 283,
+          components: 321,
+          modes: ["light", "dark"],
+          foundAt: "2026-10-23T23:00:00.000Z",
+        };
+        // A member may not bind on creation either; the refusal leaves no design behind.
+        expect(
+          yield* phone[WS_METHODS.designCreate]({
+            owner: projectA,
+            kind: "design",
+            title: "Refused",
+            thread,
+          }).pipe(Effect.flip),
+        ).toMatchObject({ _tag: "DesignError", code: "forbidden" });
+        expect((yield* app[WS_METHODS.designList]({ filter: { kind: "all" } })).designs).toEqual(
+          [],
+        );
+        const created = yield* app[WS_METHODS.designCreate]({
+          owner: projectA,
+          kind: "design",
+          title: "EasyChamp_SWC_Design",
+          thread,
+          reuse,
+        });
+        expect(created.document.thread).toEqual(thread);
+        expect(created.document.reuse).toEqual(reuse);
+        // design.get says who the server takes each window for.
+        const address = { owner: projectA, designId: created.document.id };
+        expect((yield* app[WS_METHODS.designGet](address)).audience).toBe("owner");
+        expect((yield* phone[WS_METHODS.designGet](address)).audience).toBe("members");
+      }),
+    ),
 );
 
 it.effect("enforces design access for a paired device over RPC (AC-14)", () =>
@@ -271,6 +325,82 @@ it.effect("renames and deletes a system over RPC, discarding its open proposals"
       expect(yield* phone[WS_METHODS.designSystemGet](address).pipe(Effect.flip)).toMatchObject({
         code: "not_found",
       });
+    }).pipe(Effect.scoped),
+  ),
+);
+
+it.effect("moves a Playground design into a project for the owner only (1046 AC-02)", () =>
+  withFixture(
+    Effect.gen(function* () {
+      const scopes = [AuthFilesystemReadScope, AuthFilesystemWriteScope];
+      const ownerClient = yield* clientFor("desktop-bootstrap", scopes);
+      const phone = yield* clientFor("one-time-token", scopes);
+      const reader = yield* clientFor("desktop-bootstrap", [AuthFilesystemReadScope]);
+      const created = yield* ownerClient[WS_METHODS.designCreate]({
+        owner: { kind: "playground" },
+        kind: "design",
+        title: "Connect me",
+      });
+      const input = {
+        owner: { kind: "playground" } as const,
+        designId: created.document.id,
+        to: projectA,
+        expectedRevision: 0,
+      };
+      expect(yield* reader[WS_METHODS.designMove](input).pipe(Effect.flip)).toMatchObject({
+        requiredPermission: AuthFilesystemWriteScope,
+      });
+      expect(yield* phone[WS_METHODS.designMove](input).pipe(Effect.flip)).toMatchObject({
+        _tag: "DesignError",
+        code: "forbidden",
+      });
+      const moved = yield* ownerClient[WS_METHODS.designMove](input);
+      expect(moved.ref).toMatchObject({
+        owner: { kind: "project", projectId: PROJECT_A },
+        designId: created.document.id,
+      });
+      expect(moved.document).toEqual(created.document);
+      // The old address names the new one, so a client can follow it.
+      expect(
+        yield* phone[WS_METHODS.designGet]({
+          owner: { kind: "playground" },
+          designId: created.document.id,
+        }).pipe(Effect.flip),
+      ).toMatchObject({
+        _tag: "DesignError",
+        code: "not_found",
+        movedTo: { owner: projectA, designId: created.document.id },
+      });
+    }).pipe(Effect.scoped),
+  ),
+);
+
+it.effect("imports a PowerPoint deck for writers only (1051 AC-03)", () =>
+  withFixture(
+    Effect.gen(function* () {
+      const writer = yield* clientFor("desktop-bootstrap", [
+        AuthFilesystemReadScope,
+        AuthFilesystemWriteScope,
+      ]);
+      const reader = yield* clientFor("desktop-bootstrap", [AuthFilesystemReadScope]);
+      const data = Buffer.from(yield* Effect.promise(exportedDeck)).toString("base64");
+      const input = {
+        owner: { kind: "playground" } as const,
+        title: "Imported",
+        designSystem: null,
+        data,
+      };
+      expect(yield* reader[WS_METHODS.designImportDeck](input).pipe(Effect.flip)).toMatchObject({
+        requiredPermission: AuthFilesystemWriteScope,
+      });
+      const imported = yield* writer[WS_METHODS.designImportDeck](input);
+      expect(imported.notImported).toEqual([]);
+      const opened = yield* writer[WS_METHODS.designGet]({
+        owner: { kind: "playground" },
+        designId: imported.ref.designId,
+      });
+      expect(opened.document).toMatchObject({ kind: "slides", title: "Imported" });
+      expect(opened.document.pages).toHaveLength(3);
     }).pipe(Effect.scoped),
   ),
 );

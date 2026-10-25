@@ -16,12 +16,20 @@ import {
   useState,
   type DragEvent as ReactDragEvent,
   type KeyboardEvent as ReactKeyboardEvent,
+  type MouseEvent as ReactMouseEvent,
   type PointerEvent as ReactPointerEvent,
   type ReactNode,
 } from "react";
 import { cn } from "~/lib/utils";
 import type { DesignSession } from "../editor/designSession";
 import type { CameraStore } from "./camera";
+import {
+  CANVAS_KEY_SCOPE,
+  shouldCanvasHandleKey,
+  trackCanvasPresses,
+  textNodeAt,
+  withoutDoubleClickPoint,
+} from "./canvasInput";
 import {
   alignOperations,
   artboards,
@@ -124,6 +132,22 @@ const EDIT_TOOLS = new Set<CanvasTool>([
 
 const MemoPage = memo(DesignPageView);
 
+/** What the canvas reads from a keydown, whether React's or the document's. */
+type CanvasKeyEvent = Pick<
+  KeyboardEvent,
+  | "target"
+  | "key"
+  | "code"
+  | "repeat"
+  | "metaKey"
+  | "ctrlKey"
+  | "altKey"
+  | "shiftKey"
+  | "defaultPrevented"
+  | "preventDefault"
+  | "stopPropagation"
+>;
+
 export function DesignCanvas(props: DesignCanvasProps) {
   const {
     session,
@@ -140,6 +164,9 @@ export function DesignCanvas(props: DesignCanvasProps) {
   const viewportRef = useRef<HTMLDivElement>(null);
   const worldRef = useRef<HTMLDivElement>(null);
   const gesture = useRef<Gesture | null>(null);
+  // Pointer capture retargets the click and dblclick that follow to the canvas itself, so a
+  // double-click reads what the last press landed on (frame labels and handles included).
+  const pressedTarget = useRef<EventTarget | null>(null);
   const pendingMove = useRef<{ x: number; y: number; shift: boolean } | null>(null);
   const moveFrame = useRef(0);
   const [draft, setDraft] = useState<Draft>(null);
@@ -385,10 +412,6 @@ export function DesignCanvas(props: DesignCanvasProps) {
           finishPen(true);
           return;
         }
-        if (event.detail >= 2 && points.length >= 2) {
-          finishPen(false);
-          return;
-        }
         setPen({ points: [...points, next], cursor: next });
         return;
       }
@@ -417,10 +440,6 @@ export function DesignCanvas(props: DesignCanvasProps) {
           };
           if (!event.shiftKey) onSelectionChange([]);
           event.currentTarget.setPointerCapture(event.pointerId);
-          return;
-        }
-        if (event.detail >= 2 && (node.type === "text" || node.type === "note") && !readOnly) {
-          setEditing({ node, isNew: false });
           return;
         }
         let ids = selection;
@@ -553,8 +572,24 @@ export function DesignCanvas(props: DesignCanvasProps) {
     }
   };
 
-  const finishPen = (closed: boolean) => {
-    const points = pen?.points ?? [];
+  // Chromium reports no click count on pointerdown, so double-clicks are read here.
+  const onDoubleClick = (event: ReactMouseEvent<HTMLDivElement>) => {
+    if (event.button !== 0) return;
+    if (effectiveTool === "pen") {
+      // The second press of the double-click added a point near the first.
+      if (pen !== null) finishPen(false, withoutDoubleClickPoint(pen.points));
+      return;
+    }
+    if (effectiveTool !== "select" || editing !== null || readOnly) return;
+    // A text or note inside a slide or frame is edited in place, whatever was selected.
+    const target = event.target === event.currentTarget ? pressedTarget.current : event.target;
+    const node = textNodeAt(target, index);
+    if (node === null) return;
+    if (selection.length !== 1 || selection[0] !== node.id) onSelectionChange([node.id]);
+    setEditing({ node, isNew: false });
+  };
+
+  const finishPen = (closed: boolean, points: readonly Point[] = pen?.points ?? []) => {
     setPen(null);
     const result = createPenNode({ page, index }, points, closed);
     if (result !== null && commit([result.operation])) {
@@ -656,7 +691,11 @@ export function DesignCanvas(props: DesignCanvasProps) {
   };
 
   const onKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
-    if (event.target !== event.currentTarget) return;
+    if (!shouldCanvasHandleKey(event, event.currentTarget, keyScope(event.currentTarget))) return;
+    handleKey(event);
+  };
+
+  const handleKey = (event: CanvasKeyEvent) => {
     const mod = event.metaKey || event.ctrlKey;
     const key = event.key;
     let handled = true;
@@ -771,6 +810,33 @@ export function DesignCanvas(props: DesignCanvasProps) {
     if (event.key === " ") setSpaceDown(false);
   };
 
+  // After a toolbar or panel click focus leaves the canvas; its shortcuts still work from
+  // the rest of the editor, never from typing fields, menus or dialogs.
+  const keyHandler = useRef(handleKey);
+  useLayoutEffect(() => {
+    keyHandler.current = handleKey;
+  });
+  useEffect(() => trackCanvasPresses(document), []);
+  useEffect(() => {
+    const onDocumentKeyDown = (event: KeyboardEvent) => {
+      const viewport = viewportRef.current;
+      if (viewport === null) return;
+      // Keys inside the canvas already went through its own handler.
+      if (event.target instanceof Node && viewport.contains(event.target)) return;
+      if (!shouldCanvasHandleKey(event, viewport, keyScope(viewport))) return;
+      keyHandler.current(event);
+    };
+    const onDocumentKeyUp = (event: KeyboardEvent) => {
+      if (event.key === " ") setSpaceDown(false);
+    };
+    document.addEventListener("keydown", onDocumentKeyDown);
+    document.addEventListener("keyup", onDocumentKeyUp);
+    return () => {
+      document.removeEventListener("keydown", onDocumentKeyDown);
+      document.removeEventListener("keyup", onDocumentKeyUp);
+    };
+  }, []);
+
   const zoomTo = (target: "fit" | "selection") =>
     zoomToContent(camera, page, target === "selection" ? selection : []);
 
@@ -873,11 +939,15 @@ export function DesignCanvas(props: DesignCanvasProps) {
       data-testid="design-canvas"
       className="relative min-h-0 flex-1 touch-none overflow-hidden outline-none select-none focus-visible:ring-2 focus-visible:ring-ring/45 focus-visible:ring-inset"
       style={{ cursor, background: CANVAS_GROUND }}
+      onPointerDownCapture={(event) => {
+        pressedTarget.current = event.target;
+      }}
       onPointerDown={onPointerDown}
       onPointerMove={onPointerMove}
       onPointerUp={onPointerUp}
       onPointerCancel={onPointerUp}
       onPointerLeave={() => setHover(null)}
+      onDoubleClick={onDoubleClick}
       onKeyDown={onKeyDown}
       onKeyUp={onKeyUp}
       onBlur={() => setSpaceDown(false)}
@@ -972,6 +1042,11 @@ export function DesignCanvas(props: DesignCanvasProps) {
       )}
     </div>
   );
+}
+
+/** The editor around the canvas, or the canvas alone when it is shown without one. */
+function keyScope(canvas: HTMLElement): Element {
+  return canvas.closest(CANVAS_KEY_SCOPE) ?? canvas;
 }
 
 /** A quiet neutral a step off the app background, in light and dark and any palette. */

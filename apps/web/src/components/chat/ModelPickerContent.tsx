@@ -161,10 +161,17 @@ function ModelListSeparator() {
   return <div className="h-0.5" />;
 }
 
+export type ModelStateHeader = {
+  title: string;
+  detail: string;
+  back: { label: string; onClick: () => void; disabledReason: string | null } | null;
+};
+
 export const ModelPickerContent = memo(function ModelPickerContent(props: {
   /** The instance currently selected in the composer (combobox "value"). */
   activeInstanceId: ProviderInstanceId;
   model: string;
+  stateHeader?: ModelStateHeader | null;
   selectedModels?: ReadonlyArray<{ instanceId: ProviderInstanceId; model: string }>;
   onToggleModel?: (instanceId: ProviderInstanceId, model: string) => void;
   /**
@@ -203,6 +210,8 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
    * keeps its place and shortcut, and says why.
    */
   usage?: ModelPickerUsage;
+  /** A footer button that swaps the list for the host's second view. */
+  secondaryAction?: { readonly label: string; readonly onOpen: () => void };
   onInstanceModelChange: (instanceId: ProviderInstanceId, model: string) => void;
 }) {
   const {
@@ -1011,6 +1020,33 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
               showSidebar && "border-l border-border/70",
             )}
           >
+            {props.stateHeader ? (
+              <div
+                role="status"
+                className="shrink-0 border-b border-warning/30 bg-warning/9 px-2.5 py-2 text-xs"
+              >
+                <p className="font-medium text-foreground">{props.stateHeader.title}</p>
+                <p className="mt-0.5 text-muted-foreground">{props.stateHeader.detail}</p>
+                {props.stateHeader.back ? (
+                  <div className="mt-1.5 flex flex-wrap items-center gap-2">
+                    <button
+                      type="button"
+                      className="rounded border border-border px-2 py-1 text-foreground disabled:opacity-50"
+                      disabled={props.stateHeader.back.disabledReason !== null}
+                      title={props.stateHeader.back.disabledReason ?? undefined}
+                      onClick={props.stateHeader.back.onClick}
+                    >
+                      {props.stateHeader.back.label}
+                    </button>
+                    {props.stateHeader.back.disabledReason ? (
+                      <span className="text-muted-foreground">
+                        {props.stateHeader.back.disabledReason}
+                      </span>
+                    ) : null}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
             <ComboboxSearchInput
               ref={searchInputRef}
               placeholder="Search models..."
@@ -1295,19 +1331,33 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
               </div>
             ) : null}
             {runningNote}
-            {props.onManageProviders ? (
-              <div className="shrink-0 border-t border-border/70 p-2">
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  className="w-full justify-start"
-                  onClick={() => {
-                    props.onRequestClose?.();
-                    props.onManageProviders?.();
-                  }}
-                >
-                  Add or manage providers
-                </Button>
+            {props.onManageProviders || props.secondaryAction ? (
+              // Two actions don't fit one row at the menu's width: they stack.
+              <div className="flex shrink-0 flex-col border-t border-border/70 p-2">
+                {props.onManageProviders ? (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="w-full justify-start"
+                    onClick={() => {
+                      props.onRequestClose?.();
+                      props.onManageProviders?.();
+                    }}
+                  >
+                    Add or manage providers
+                  </Button>
+                ) : null}
+                {props.secondaryAction ? (
+                  <Button
+                    variant="ghost"
+                    size="sm"
+                    className="w-full justify-start"
+                    data-model-picker-secondary-action=""
+                    onClick={props.secondaryAction.onOpen}
+                  >
+                    {props.secondaryAction.label}
+                  </Button>
+                ) : null}
               </div>
             ) : null}
           </div>

@@ -158,6 +158,14 @@ describe("compactThreadPlan", () => {
     expect(compactThreadPlan(null, null)).toBeNull();
   });
 
+  it("names a provider checklist as the agent's, never as an increment", () => {
+    const compact = compactThreadPlan(null, { completed: 3, total: 5, current: null, next: null })!;
+    expect(compact).toMatchObject({ source: "todo", label: null });
+    expect(describeThreadPlan(compact)).toBe(
+      "The agent's checklist, not an increment: 3 of 5 steps done.",
+    );
+  });
+
   it("still names a bound increment with no tasks yet, as 0/0", () => {
     const empty = increment({ incrementId: "0996-connect-launches", tasks: [] });
     const compact = compactThreadPlan(empty, {

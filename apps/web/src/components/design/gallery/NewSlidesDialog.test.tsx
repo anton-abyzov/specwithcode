@@ -74,6 +74,8 @@ describe("Slides in Make something new (AC-01)", () => {
       owner: { kind: "playground" },
       title: "Untitled slides",
       designSystem: null,
+      designSystemName: null,
+      found: null,
     });
   });
 

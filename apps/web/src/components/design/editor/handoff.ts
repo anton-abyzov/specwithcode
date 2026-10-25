@@ -3,10 +3,12 @@ import type {
   DesignNode,
   DesignPage,
   DesignSystem,
+  DesignThreadBinding,
 } from "@specweave-studio/contracts";
 import { designSubtreeIds } from "@specweave-studio/shared/designOps";
 import { designPageBounds, designTokenValue } from "@specweave-studio/shared/designRender";
 import { indexNodes, pageRect, unionRect } from "../canvas/geometry";
+import type { DesignEditorBackend, DesignImage, DesignMessage } from "./backend";
 import { labelFor } from "./PropertiesPanel";
 
 /** Token names a set of nodes references, in first-use order. */
@@ -98,8 +100,11 @@ export function implementFrameMessage(input: {
   system: DesignSystem | null;
   mode: string;
   designKey: string;
+  /** Why the frame's PNG could not be rendered; the message then goes without one. */
+  pngProblem?: string | null;
 }): { title: string; text: string } {
   const { document, page, frame, system, mode } = input;
+  const pngProblem = input.pngProblem?.trim().replace(/[.!]+$/, "") ?? null;
   const nodes = frameNodes(page, frame.id);
   const tokens = usedTokens(nodes);
   const components = matchingComponents(nodes, system);
@@ -107,7 +112,9 @@ export function implementFrameMessage(input: {
   const lines = [
     `Implement the frame "${name}" from the design "${document.title}" (${input.designKey}, page "${page.name}", revision ${document.revision}) in this codebase.`,
     "",
-    "The attached PNG is the frame as rendered. Match it with the project's existing components and tokens; do not hard-code values that a token below already names.",
+    pngProblem === null
+      ? "The attached PNG is the frame as rendered. Match it with the project's existing components and tokens; do not hard-code values that a token below already names."
+      : `No PNG is attached: the frame could not be rendered${pngProblem === "" ? "" : ` (${pngProblem})`}. Build it from the frame JSON below with the project's existing components and tokens; do not hard-code values that a token below already names.`,
     "",
     `## Tokens used (${tokens.length})`,
     tokens.length === 0
@@ -141,6 +148,90 @@ export function implementFrameMessage(input: {
     "```",
   ];
   return { title: `Implement ${name}`, text: lines.join("\n") };
+}
+
+/** Where "Implement this frame" sends the frame. */
+export type ImplementTarget = { kind: "new" } | { kind: "existing"; binding: DesignThreadBinding };
+
+const NO_CODING_PROJECT = "This design has no project to start a coding thread in.";
+
+/** What "Implement this frame" needs from the editor's session and backend. */
+export interface FrameHandoffDeps {
+  /** Saves every pending edit; false while a conflict or a failed save holds one back. */
+  readonly settle: () => Promise<boolean>;
+  /** The last saved document, and whether anything is still unsaved. */
+  readonly saved: () => { readonly document: DesignDocument; readonly saveState: string };
+  /** The frame's PNG; throws when it cannot be rendered. */
+  readonly render: (frame: DesignNode) => Promise<DesignImage[]>;
+  readonly startCodingThread: DesignEditorBackend["startCodingThread"];
+  readonly sendToThread: DesignEditorBackend["sendToThread"];
+}
+
+export interface FrameHandoffResult {
+  readonly thread: DesignThreadBinding;
+  readonly frameName: string;
+  /** The new thread was created with no turn, the handoff waiting in its composer. */
+  readonly waiting: boolean;
+  /** Why no PNG went with the frame (no closing period; may be empty), or null when one did. */
+  readonly pngProblem: string | null;
+}
+
+/**
+ * "Implement this frame": saves every edit first and refuses while one is
+ * unsaved, so the handoff names a revision the coding thread can read. The
+ * frame goes from that saved revision, with its PNG, or with a line saying
+ * why it has none.
+ */
+export async function sendFrameHandoff(
+  deps: FrameHandoffDeps,
+  input: {
+    readonly pageId: string;
+    readonly frameId: string;
+    readonly system: DesignSystem | null;
+    readonly mode: string;
+    readonly designKey: string;
+    readonly target: ImplementTarget;
+  },
+): Promise<FrameHandoffResult> {
+  const { target } = input;
+  const startCodingThread = deps.startCodingThread;
+  if (target.kind === "new" && startCodingThread === null) throw new Error(NO_CODING_PROJECT);
+  if (!(await deps.settle()) || deps.saved().saveState !== "saved")
+    throw new Error(
+      "Your changes are not saved yet, so the frame was not sent. Try again once they are saved.",
+    );
+  const document = deps.saved().document;
+  const page = document.pages.find((candidate) => candidate.id === input.pageId);
+  const frame = page?.nodes.find((node) => node.id === input.frameId);
+  if (page === undefined || frame === undefined)
+    throw new Error("This frame is not in the saved design any more.");
+  let images: DesignImage[] = [];
+  let pngProblem: string | null = null;
+  try {
+    images = await deps.render(frame);
+  } catch (cause) {
+    pngProblem = (cause instanceof Error ? cause.message : String(cause))
+      .trim()
+      .replace(/[.!]+$/, "");
+  }
+  const { title, text } = implementFrameMessage({
+    document,
+    page,
+    frame,
+    system: input.system,
+    mode: input.mode,
+    designKey: input.designKey,
+    pngProblem,
+  });
+  const message: DesignMessage = { text, images };
+  const frameName = frame.name ?? "the frame";
+  if (target.kind === "existing") {
+    await deps.sendToThread(target.binding, message);
+    return { thread: target.binding, frameName, waiting: false, pngProblem };
+  }
+  if (startCodingThread === null) throw new Error(NO_CODING_PROJECT);
+  const { waiting, ...thread } = await startCodingThread(message, title);
+  return { thread, frameName, waiting: waiting === true, pngProblem };
 }
 
 /** Short description of the selection for "Ask agent". */

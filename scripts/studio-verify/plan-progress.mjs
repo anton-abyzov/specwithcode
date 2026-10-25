@@ -86,8 +86,36 @@ try {
     await page.getByRole("button", { name: "Open folder" }).waitFor();
     assert.match(await page.locator("main").textContent(), /~\/Projects\/github\/specweave-umb/);
 
-    const todo = page.locator('[data-thread-plan-card="todo"]');
+    // A linked increment reads by its number, a provider todo list as the agent's checklist.
+    assert.equal(
+      (await card.locator("[data-plan-source-label]").textContent())?.trim(),
+      "Increment 0930",
+    );
+    // A bound increment keeps its name while the agent's checklist stands in for its tasks.
+    const unreadable = page.getByTestId("unreadable-card");
+    assert.equal(
+      (await unreadable.locator("[data-plan-source-label]").textContent())?.trim(),
+      "Increment 0996",
+    );
+    assert.match(
+      (await unreadable.locator("[data-plan-checklist-note]").textContent()) ?? "",
+      /could not be read/,
+    );
+    assert.equal(
+      (await unreadable.locator("[data-plan-count]").textContent())?.trim(),
+      "Checklist 3/5",
+    );
+    assert.doesNotMatch(
+      (await unreadable.locator("section").textContent()) ?? "",
+      /not a SpecWeave increment/,
+    );
+    const todo = page.getByTestId("todo-card").locator('[data-thread-plan-card="todo"]');
     assert.equal((await todo.locator("[data-plan-count]").textContent())?.trim(), "3/5");
+    assert.equal(
+      (await todo.locator("[data-plan-source-label]").textContent())?.trim(),
+      "Checklist",
+    );
+    assert.equal(await todo.getAttribute("aria-label"), "Agent checklist progress");
     assert.equal(await todo.getAttribute("data-thread-plan-card"), "todo");
     // Without an editor the spec still opens in the viewer; a bound increment
     // with no tasks says so instead of hiding.
@@ -118,20 +146,27 @@ try {
     const chips = page.locator("[data-plan-progress]");
     assert.deepEqual(
       await chips.evaluateAll((nodes) => nodes.map((node) => node.dataset.planProgress)),
-      ["2/5", "0/0", "3/5"],
+      ["2/5", "0/0", "3/5", "4/4"],
     );
     assert.deepEqual(
       await chips.evaluateAll((nodes) =>
         nodes.map((node) => node.querySelector("[aria-hidden]:not(svg)")?.textContent),
       ),
-      ["0930 · 2/5", "0996", "3/5"],
+      ["0930 · 2/5", "0996", "Checklist 3/5", "Checklist 4/4"],
     );
+    // A finished checklist beside "No increment" says whose list it is.
+    const both = page.getByTestId("checklist-unplanned-row");
+    assert.match(
+      (await both.locator("[data-plan-progress] .sr-only").textContent()) ?? "",
+      /^The agent's checklist, not an increment: 4 of 4 steps done\./,
+    );
+    assert.equal(await both.locator("[data-thread-unplanned]").count(), 1);
     const filter = page.locator("[data-unplanned-filter]");
     assert.equal(
       (await filter.textContent())?.trim(),
       "2 threads changed code without an increment",
     );
-    assert.equal(await page.locator("[data-thread-unplanned]").count(), 1);
+    assert.equal(await page.locator("[data-thread-unplanned]").count(), 2);
     await page.screenshot({ path: join(output, `plan-progress-${theme}.png`), fullPage: true });
 
     await filter.click();
@@ -140,13 +175,17 @@ try {
     await todo.getByRole("button", { expanded: false }).click();
     await todo.getByRole("button", { name: "Link increment" }).waitFor();
     assert.equal(await todo.getByRole("button", { name: "Unlink" }).count(), 0);
+    assert.match(
+      (await todo.locator("[data-plan-checklist-note]").textContent()) ?? "",
+      /not a SpecWeave increment/,
+    );
     await page.screenshot({
       path: join(output, `plan-progress-${theme}-expanded.png`),
       fullPage: true,
     });
 
     // Increments are recommended, not required: the notice reads as
-    // information, can be hidden for good, and comes back from the menu.
+    // information and can be dismissed or turned off.
     const notice = page.locator("[data-unplanned-notice]");
     await filter.click();
     await page.mouse.move(0, 0);
@@ -161,35 +200,113 @@ try {
       return value;
     });
     assert.equal(color, muted, "the notice uses the muted text color, not a warning color");
-    assert.equal(
-      (await page.locator("[data-thread-unplanned]").textContent())?.trim(),
-      "No increment",
-    );
+    // Each row shows the muted code glyph; its name is for screen readers and the tooltip.
+    const rowChips = page.locator("[data-thread-unplanned]");
+    assert.equal(await rowChips.count(), 2);
+    for (const rowTag of await rowChips.all()) {
+      assert.equal(await rowTag.locator("[data-unplanned-glyph]").count(), 1);
+      assert.equal(
+        (await rowTag.textContent())?.trim(),
+        "No increment: changed code without an increment",
+      );
+      assert.equal(
+        await rowTag.evaluate((tag) => getComputedStyle(tag).color),
+        muted,
+        "the row glyph is muted, not a warning color",
+      );
+    }
+    // Dismissing acknowledges the threads counted now: the notice goes, the
+    // per-thread glyphs stay, and only a thread it has not counted brings it back.
     await page.locator("[data-unplanned-hide]").click();
     assert.equal(await notice.count(), 0);
-    assert.equal(await page.locator("[data-thread-unplanned]").count(), 0);
+    assert.equal(await rowChips.count(), 2, "dismissing keeps each thread's glyph");
     await page.reload();
     await page.locator('[data-thread-plan-card="increment"]').first().waitFor();
-    assert.equal(await notice.count(), 0, "hiding persists across a reload");
-    assert.equal(await page.locator("[data-thread-unplanned]").count(), 0);
+    assert.equal(await notice.count(), 0, "dismissing persists across a reload");
+    assert.equal(await rowChips.count(), 2);
+    await page.screenshot({
+      path: join(output, `plan-progress-${theme}-dismissed.png`),
+      fullPage: true,
+    });
+    await page.goto(`${origin}/?theme=${theme}&another=1`);
+    await notice.waitFor();
+    assert.equal(
+      (await filter.textContent())?.trim(),
+      "1 thread changed code without an increment",
+      "a thread the notice had not counted brings it back, counted alone",
+    );
+    assert.equal(await rowChips.count(), 3);
+    await page.screenshot({
+      path: join(output, `plan-progress-${theme}-another.png`),
+      fullPage: true,
+    });
+
+    // The sort menu switch turns the notice and the glyphs off for good, and
+    // turning it back on counts every unplanned thread again.
+    await page.getByRole("button", { name: "Sort threads" }).click();
+    const toggle = page.locator("[data-unplanned-notice-toggle]");
+    assert.equal(await toggle.getAttribute("aria-checked"), "true");
+    await toggle.click();
+    await page.keyboard.press("Escape");
+    assert.equal(await notice.count(), 0);
+    assert.equal(await rowChips.count(), 0);
+    await page.reload();
+    await page.locator('[data-thread-plan-card="increment"]').first().waitFor();
+    assert.equal(await notice.count(), 0, "turning it off persists across a reload");
+    assert.equal(await rowChips.count(), 0);
     await page.screenshot({
       path: join(output, `plan-progress-${theme}-hidden.png`),
       fullPage: true,
     });
     await page.getByRole("button", { name: "Sort threads" }).click();
-    const toggle = page.locator("[data-unplanned-notice-toggle]");
     assert.equal(await toggle.getAttribute("aria-checked"), "false");
     await page.screenshot({ path: join(output, `plan-progress-${theme}-menu.png`) });
     await toggle.click();
     await notice.waitFor();
-    assert.equal(await page.locator("[data-thread-unplanned]").count(), 1);
     await page.keyboard.press("Escape");
+    assert.equal(
+      (await filter.textContent())?.trim(),
+      "3 threads changed code without an increment",
+      "turning it back on clears the acknowledgments",
+    );
+    assert.equal(await rowChips.count(), 3);
     await page.reload();
     await notice.waitFor({ timeout: 5000 });
-    assert.equal(
-      await page.locator("[data-thread-unplanned]").count(),
-      1,
-      "showing again persists too",
+    assert.equal(await rowChips.count(), 3, "showing again persists too");
+
+    // A stored value this version cannot read is dropped, so Dismiss and the
+    // switch still write.
+    await page.evaluate(() => {
+      localStorage.setItem("studio:unplanned-acknowledged:v1", '{"broken":"not a list"}');
+      localStorage.setItem("studio:unplanned-notice-hidden:v1", '"not a list"');
+    });
+    await page.reload();
+    await notice.waitFor();
+    await page.locator("[data-unplanned-hide]").click();
+    assert.equal(await notice.count(), 0, "Dismiss writes past an unreadable stored value");
+    assert.equal(await rowChips.count(), 3);
+    await page.getByRole("button", { name: "Sort threads" }).click();
+    await toggle.click();
+    await page.keyboard.press("Escape");
+    assert.equal(await rowChips.count(), 0, "the switch writes past an unreadable stored value");
+    await page.reload();
+    await page.locator('[data-thread-plan-card="increment"]').first().waitFor();
+    assert.equal(await rowChips.count(), 0);
+    assert.deepEqual(
+      await page.evaluate(() => [
+        localStorage.getItem("studio:unplanned-acknowledged:v1"),
+        localStorage.getItem("studio:unplanned-notice-hidden:v1"),
+      ]),
+      [
+        JSON.stringify({
+          "env-fixture:project-fixture": [
+            "thread-billing-export",
+            "thread-login-redirect",
+            "thread-export-timeout",
+          ],
+        }),
+        JSON.stringify(["env-fixture:project-fixture"]),
+      ],
     );
     await page.close();
   }

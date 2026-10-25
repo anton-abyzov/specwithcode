@@ -64,7 +64,7 @@ export const DESIGN_SYSTEM_TOOL_NAMES = ["design_system_scan", "design_system_pr
 export const DesignSystemsToolkit = Toolkit.make(
   Tool.make("design_system_scan", {
     ...shared,
-    description: `Find the design tokens and components in this thread's project code (CSS custom properties, DTCG or Figma variable exports, Weave tokens.json, TypeScript theme objects, React component folders) and propose a design system from them. Returns the candidate files, the suggested systems with their paths, and a proposal for the suggestion you pick (key), the paths you pass, or the first suggestion. Reads only inside the project checkout. ${REVIEW}`,
+    description: `Find the design tokens and components in this thread's project code (CSS custom properties, DTCG or Figma variable exports, Weave tokens.json, TypeScript theme objects, React component folders) and propose a design system from them. Returns the candidate files, the suggested systems strongest first (most tokens and components; copies and duplicate checkouts folded in), and a proposal for the suggestion you pick (key), the paths you pass, or the strongest suggestion. Reads only inside the project checkout. ${REVIEW}`,
     parameters: Schema.Struct({
       owner,
       suggestion: Schema.optional(Schema.String.check(Schema.isMaxLength(200))).annotate({

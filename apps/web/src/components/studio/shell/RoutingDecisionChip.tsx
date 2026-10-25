@@ -15,7 +15,8 @@ import { TASK_CLASS_LABELS, TIER_LABELS } from "@specweave-studio/shared/taskRou
 import { RouteIcon } from "lucide-react";
 import { useState } from "react";
 
-import { useEnvironmentSettings } from "../../../hooks/useSettings";
+import { useEnvironmentSettings, useProjectOverrideWriteMode } from "../../../hooks/useSettings";
+import { projectSettingsOverrideChangesPatch } from "@specweave-studio/shared/projectSettings";
 import type { ProviderInstanceEntry } from "../../../providerInstances";
 import { useEnvironments } from "../../../state/environments";
 import { serverEnvironment } from "../../../state/server";
@@ -68,12 +69,14 @@ export function RoutingDecisionChip(props: {
   const targetEnvironmentId = props.environmentId ?? primaryId;
   const fallbackId = (targetEnvironmentId ?? "default") as EnvironmentId;
   const settings = useEnvironmentSettings(fallbackId);
+  // Unknown until the environment's config loads; feedback waits for it.
+  const writeMode = useProjectOverrideWriteMode(fallbackId);
 
   if (!decision) return null;
   const chosen = selectionLabel(props.entries, decision.selection);
 
   const handleFeedback = async (kind: "prefer" | "avoid" | "complex" | "routine") => {
-    if (!props.projectId || !targetEnvironmentId) return;
+    if (!props.projectId || !targetEnvironmentId || writeMode === null) return;
     setSavingFeedback(true);
     try {
       const overrides = settings.projectSettingsOverrides[props.projectId] ?? {};
@@ -94,14 +97,11 @@ export function RoutingDecisionChip(props: {
       await save({
         environmentId: targetEnvironmentId,
         input: {
-          patch: {
-            projectSettingsOverrides: {
-              [props.projectId]: {
-                ...overrides,
-                learnedModelPreferences: updated,
-              },
-            },
-          },
+          patch: projectSettingsOverrideChangesPatch(
+            settings,
+            { [props.projectId]: { set: { learnedModelPreferences: updated } } },
+            writeMode === "per-key",
+          ),
         },
       });
       setFeedbackSaved(true);
@@ -199,14 +199,16 @@ export function RoutingDecisionChip(props: {
                 Teach this project:
               </div>
               {feedbackSaved ? (
-                <div className="text-xs text-success-foreground font-medium">Learned preference saved!</div>
+                <div className="text-xs text-success-foreground font-medium">
+                  Learned preference saved!
+                </div>
               ) : (
                 <div className="flex flex-wrap gap-1.5">
                   <Button
                     size="xs"
                     variant="outline"
                     onClick={() => handleFeedback("prefer")}
-                    disabled={savingFeedback}
+                    disabled={savingFeedback || writeMode === null}
                   >
                     Prefer this model
                   </Button>
@@ -214,7 +216,7 @@ export function RoutingDecisionChip(props: {
                     size="xs"
                     variant="outline"
                     onClick={() => handleFeedback("avoid")}
-                    disabled={savingFeedback}
+                    disabled={savingFeedback || writeMode === null}
                   >
                     Avoid this model
                   </Button>
@@ -223,7 +225,7 @@ export function RoutingDecisionChip(props: {
                       size="xs"
                       variant="outline"
                       onClick={() => handleFeedback("complex")}
-                      disabled={savingFeedback}
+                      disabled={savingFeedback || writeMode === null}
                     >
                       Treat as Complex
                     </Button>
@@ -233,7 +235,7 @@ export function RoutingDecisionChip(props: {
                       size="xs"
                       variant="outline"
                       onClick={() => handleFeedback("routine")}
-                      disabled={savingFeedback}
+                      disabled={savingFeedback || writeMode === null}
                     >
                       Treat as Routine
                     </Button>

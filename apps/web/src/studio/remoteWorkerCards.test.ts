@@ -44,7 +44,7 @@ describe("remote worker cards", () => {
     const held = { ...worker, lastStatus: "waiting_on_you" };
     expect(remoteWorkerCardStatus(held)).toEqual({
       tone: "waiting",
-      label: "Waiting on you on M1",
+      label: "Last observed: waiting on you on M1",
     });
     // Out of touch, its last word is stale: it says the machine is unreachable instead.
     expect(remoteWorkerCardStatus({ ...held, reachable: false }).label).toContain("unreachable");
@@ -58,4 +58,13 @@ describe("remote worker cards", () => {
       ),
     ).toEqual(["rwt:1", "rwt:2"]);
   });
+});
+
+it("deduplicates only equivalent loaded aliases, retaining caller-side auth actions", () => {
+  const loaded = [{ environmentId: worker.environmentId, id: worker.remoteThreadId! }];
+  expect(visibleRemoteWorkers([worker], loaded)).toEqual([]);
+  expect(visibleRemoteWorkers([{ ...worker, state: "paused_auth" }], loaded)).toHaveLength(1);
+  expect(
+    visibleRemoteWorkers([worker], [{ environmentId: "another-host", id: worker.remoteThreadId! }]),
+  ).toHaveLength(1);
 });

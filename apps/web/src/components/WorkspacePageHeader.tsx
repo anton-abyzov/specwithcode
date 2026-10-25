@@ -1,4 +1,4 @@
-import type { ComponentPropsWithoutRef } from "react";
+import type { ComponentProps } from "react";
 
 import { cn } from "../lib/utils";
 import { COLLAPSED_SIDEBAR_TITLEBAR_INSET_CLASS } from "../workspaceTitlebar";
@@ -9,7 +9,7 @@ export function WorkspacePageHeader({
   reserveNativeControls = electron,
   className,
   ...props
-}: ComponentPropsWithoutRef<"header"> & {
+}: ComponentProps<"header"> & {
   readonly electron?: boolean;
   readonly reserveNativeControls?: boolean;
 }) {

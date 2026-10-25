@@ -65,7 +65,11 @@ const fleetAtom = Atom.family((environmentId: EnvironmentId) =>
         return Effect.succeed(null);
       return requestFleet(prepared);
     })
-    .pipe(Atom.setIdleTTL(30_000), Atom.withLabel(`studio-fleet:${environmentId}`)),
+    .pipe(
+      Atom.withRefresh(10_000),
+      Atom.setIdleTTL(30_000),
+      Atom.withLabel(`studio-fleet:${environmentId}`),
+    ),
 );
 // Null stands for "no primary machine yet", so pages can call the hook unconditionally.
 const workGrantsAtom = Atom.family((environmentId: EnvironmentId | null) =>
@@ -114,7 +118,11 @@ const remoteWorkersAtom = Atom.family((key: string) => {
         return Effect.succeed(null);
       return requestRemoteWorkers(prepared, projectId);
     })
-    .pipe(Atom.setIdleTTL(30_000), Atom.withLabel(`studio-remote-workers:${key}`));
+    .pipe(
+      Atom.withRefresh(10_000),
+      Atom.setIdleTTL(30_000),
+      Atom.withLabel(`studio-remote-workers:${key}`),
+    );
 });
 
 /** How often the project page re-reads workers it started on other machines. */
@@ -286,7 +294,11 @@ export class FleetInviteFailure extends Error {
  */
 export async function inviteStudioFleetMachine(
   environmentId: EnvironmentId,
-  input: { readonly label?: string; readonly days?: number } = {},
+  input: {
+    readonly coordinatorEnvironmentId: EnvironmentId;
+    readonly label?: string;
+    readonly days?: number;
+  },
 ): Promise<StudioFleetInviteResult> {
   const prepared = readPreparedConnection(environmentId);
   if (
@@ -302,6 +314,7 @@ export async function inviteStudioFleetMachine(
   const label = input.label?.trim();
   const action = connectionAtomRuntime.atom(
     requestFleetInvite(prepared, {
+      coordinatorEnvironmentId: input.coordinatorEnvironmentId,
       ...(label ? { label } : {}),
       ...(input.days !== undefined ? { days: input.days } : {}),
     }),
@@ -509,3 +522,20 @@ export async function removeStudioFleetMachine(
     );
   return result.value;
 }
+
+/** Read-only project attention coverage. A missing follower result cannot prove an all-clear. */
+export const projectRemoteAttentionAtom = Atom.family((key: string) =>
+  Atom.make((get) => {
+    const { environmentId } = JSON.parse(key) as { environmentId: EnvironmentId };
+    const fleet = get(fleetAtom(environmentId));
+    const snapshot = Option.getOrNull(AsyncResult.value(fleet));
+    if (snapshot && fleet._tag !== "Failure" && !fleet.waiting && !fleetRunsWorkers(snapshot))
+      return { workers: [], complete: true };
+    const remote = get(remoteWorkersAtom(key));
+    const result = Option.getOrNull(AsyncResult.value(remote));
+    return {
+      workers: result?.workers ?? [],
+      complete: result !== null && remote._tag !== "Failure" && !remote.waiting,
+    };
+  }),
+);

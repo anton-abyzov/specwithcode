@@ -4,13 +4,17 @@ import {
   type ProviderDriverKind,
   type ResolvedKeybindingsConfig,
 } from "@specweave-studio/contracts";
-import { memo, useEffect, useMemo, useState } from "react";
+import { memo, type ReactNode, useEffect, useMemo, useState } from "react";
 import { Badge } from "../ui/badge";
 import { Popover, PopoverPopup, PopoverTrigger } from "../ui/popover";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { cn } from "~/lib/utils";
 import type { ProviderQuickSetup } from "~/hooks/useProviderQuickSetup";
-import { ModelPickerContent, resolveModelPickerSelectedModel } from "./ModelPickerContent";
+import {
+  ModelPickerContent,
+  resolveModelPickerSelectedModel,
+  type ModelStateHeader,
+} from "./ModelPickerContent";
 import { ChatGptSharingControl } from "./ChatGptSharingControl";
 import { ProviderInstanceIcon } from "./ProviderInstanceIcon";
 import {
@@ -27,6 +31,8 @@ import {
 import { useComposerMenuProps } from "./composerEventScope";
 import { shortcutLabelForCommand } from "../../keybindings";
 import { ModelUsageMeter, useModelPickerUsage, type ModelPickerUsageConfig } from "./ModelUsage";
+
+import { ModelStateTag, ModelStateTip, modelStateText, type ModelState } from "./ModelStateTag";
 
 export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   /**
@@ -59,6 +65,10 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   /** Provider mark for the active execution label, independent of the next-send menu selection. */
   triggerInstanceId?: ProviderInstanceId;
   triggerModel?: string;
+  triggerState?: ModelState | null;
+  triggerStateDetail?: string | null | undefined;
+  triggerParts?: { provider: string; model: string };
+  stateHeader?: ModelStateHeader | null;
   /** Nothing is chosen yet, so `activeInstanceId` only says where the list opens. */
   unset?: boolean;
   triggerAriaLabel?: string;
@@ -77,6 +87,14 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   usage?: ModelPickerUsageConfig;
   /** Classes that hide the trigger's usage number when the composer is narrow. */
   usageValueHiddenClassName?: string;
+  /**
+   * A second view of the menu, opened from its footer: the coordinator's limits on
+   * every machine. `back` returns to the models, `close` closes the menu.
+   */
+  secondaryView?: {
+    readonly label: string;
+    readonly render: (actions: { back: () => void; close: () => void }) => ReactNode;
+  };
   onInstanceModelChange: (instanceId: ProviderInstanceId, model: string) => void;
 }) {
   const composerFloatingLayerProps = useComposerMenuProps();
@@ -135,7 +153,10 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
       : null;
   const selectedUsageText = selectedUsageCopy?.long ?? null;
 
+  const [showingSecondary, setShowingSecondary] = useState(false);
   const setIsMenuOpen = (open: boolean) => {
+    // Every opening starts on the models.
+    if (!open) setShowingSecondary(false);
     props.onOpenChange?.(open);
     if (props.open === undefined) {
       setUncontrolledIsMenuOpen(open);
@@ -232,6 +253,20 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
     props.triggerLabel ??
     allModelNames ??
     (activeText ? `${activeText}. Next message: ${triggerLabel}` : triggerLabel);
+  const state =
+    props.triggerState?.kind === "fallback" && props.triggerStateDetail
+      ? { ...props.triggerState, detail: props.triggerStateDetail }
+      : props.triggerState;
+  const stateCopy = state ? modelStateText(state) : null;
+  const stateAria = stateCopy?.aria.replace(
+    "(usage limit)",
+    state?.kind === "fallback" && props.triggerStateDetail?.match(/resets (?:at )?([^.;]+)/)?.[1]
+      ? `(usage limit, resets ${props.triggerStateDetail.match(/resets (?:at )?([^.;]+)/)![1]})`
+      : "(usage limit)",
+  );
+  const parts =
+    props.triggerLabel === undefined && !selectedEntries ? props.triggerParts : undefined;
+  const currentLabel = parts ? `${parts.provider} · ${parts.model}` : (activeText ?? triggerLabel);
   const triggerTooltipContent = shortcutLabel ? `${triggerName} · ${shortcutLabel}` : triggerName;
 
   return (
@@ -250,17 +285,22 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
           <ComposerControl
             aria-label={
               props.triggerAriaLabel ??
+              (stateCopy
+                ? `Model: ${currentLabel}${stateAria}.${selectedUsageText ? ` ${selectedUsageText.replace(/\.$/, "")}.` : ""} Change model`
+                : undefined) ??
               allModelNames ??
               (selectedUsageText ? `${triggerName}. ${selectedUsageText}` : undefined)
             }
             size={size}
             data-chat-provider-model-picker="true"
+            data-model-state={state?.kind}
             className={cn(
               "min-w-0 shrink justify-between whitespace-nowrap",
               props.compact
                 ? "max-w-42 shrink-0"
                 : !props.isComposerOwned && "max-w-48 sm:max-w-56",
               props.triggerClassName,
+              parts && "w-max shrink-0",
             )}
             disabled={props.disabled}
           />
@@ -314,15 +354,44 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
             <TooltipTrigger
               render={
                 <span
-                  className="min-w-0 flex-1 overflow-hidden truncate"
+                  className={cn(
+                    "flex flex-[0_1_auto] items-center gap-1 overflow-hidden",
+                    parts ? "min-w-max shrink-0" : "min-w-0",
+                  )}
                   data-chat-provider-model-picker-label="true"
                 />
               }
             >
-              {props.triggerLabel ?? multipleLabel ?? props.triggerText ?? triggerTitle}
+              {parts ? (
+                <>
+                  <span
+                    className="shrink-0 font-normal text-muted-foreground @max-[439px]/composer-surface:sr-only"
+                    data-picker-provider
+                  >
+                    {parts.provider}
+                    <span aria-hidden> ·</span>
+                  </span>
+                  <span
+                    className="min-w-[7ch] shrink-0 truncate font-medium text-foreground"
+                    data-picker-model
+                  >
+                    {parts.model}
+                  </span>
+                </>
+              ) : (
+                <span className="truncate">
+                  {props.triggerLabel ?? multipleLabel ?? props.triggerText ?? triggerTitle}
+                </span>
+              )}
             </TooltipTrigger>
             <TooltipPopup side="top">
-              {selectedUsageText ? (
+              {state ? (
+                <ModelStateTip
+                  current={currentLabel}
+                  currentNote={selectedUsageText ? ` · ${selectedUsageText}` : null}
+                  state={state}
+                />
+              ) : selectedUsageText ? (
                 <span className="flex max-w-72 flex-col gap-0.5">
                   <span>{triggerTooltipContent}</span>
                   <span className="text-muted-foreground">{selectedUsageText}</span>
@@ -332,6 +401,13 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
               )}
             </TooltipPopup>
           </Tooltip>
+          {state ? (
+            <ModelStateTag
+              state={state}
+              className="text-xs"
+              tierClassName="@max-[639px]/composer-surface:[&_.sws-model-state-full]:hidden @max-[639px]/composer-surface:[&_.sws-model-state-short]:inline! @max-[479px]/composer-surface:[&_.sws-model-state-short]:hidden!"
+            />
+          ) : null}
           {selectedUsage && selectedUsageCopy ? (
             <ModelUsageMeter
               state={selectedUsage}
@@ -350,7 +426,7 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
             </Badge>
           ) : null}
         </span>
-        <span aria-hidden="true" className="flex items-center">
+        <span aria-hidden="true" className="flex shrink-0 items-center">
           <ComposerControlChevron size={size} />
         </span>
       </PopoverTrigger>
@@ -360,47 +436,67 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
         className="before:hidden"
         padding="none"
       >
-        <ModelPickerContent
-          activeInstanceId={activeInstanceId}
-          model={props.model}
-          {...(props.selectedModels !== undefined ? { selectedModels: props.selectedModels } : {})}
-          {...(props.onToggleModel
-            ? {
-                onToggleModel: (instanceId: ProviderInstanceId, model: string) => {
-                  if (!props.disabled) props.onToggleModel?.(instanceId, model);
-                },
-              }
-            : {})}
-          lockedProvider={props.lockedProvider}
-          lockedContinuationGroupKey={props.lockedContinuationGroupKey ?? null}
-          instanceEntries={props.instanceEntries}
-          {...(props.keybindings ? { keybindings: props.keybindings } : {})}
-          modelOptionsByInstance={props.modelOptionsByInstance}
-          terminalOpen={props.terminalOpen ?? false}
-          onRequestClose={() => setIsMenuOpen(false)}
-          {...(props.onOpenProviderSetup
-            ? {
-                onOpenProviderSetup: (instanceId: ProviderInstanceId) => {
-                  if (!props.disabled) props.onOpenProviderSetup?.(instanceId);
-                },
-              }
-            : {})}
-          {...(props.onManageProviders || props.onOpenProviderSetup
-            ? {
-                onManageProviders: () => {
-                  if (props.disabled) return;
-                  if (props.onManageProviders) props.onManageProviders();
-                  else props.onOpenProviderSetup?.(activeInstanceId);
-                },
-              }
-            : {})}
-          {...(props.getModelDisabledReason
-            ? { getModelDisabledReason: props.getModelDisabledReason }
-            : {})}
-          {...(props.quickSetup && !props.disabled ? { quickSetup: props.quickSetup } : {})}
-          {...(usage ? { usage } : {})}
-          onInstanceModelChange={handleInstanceModelChange}
-        />
+        {showingSecondary && props.secondaryView ? (
+          <div className="w-screen max-w-90 p-3" data-model-picker-secondary="">
+            {props.secondaryView.render({
+              back: () => setShowingSecondary(false),
+              close: () => setIsMenuOpen(false),
+            })}
+          </div>
+        ) : (
+          <ModelPickerContent
+            stateHeader={props.stateHeader ?? null}
+            activeInstanceId={activeInstanceId}
+            model={props.model}
+            {...(props.selectedModels !== undefined
+              ? { selectedModels: props.selectedModels }
+              : {})}
+            {...(props.onToggleModel
+              ? {
+                  onToggleModel: (instanceId: ProviderInstanceId, model: string) => {
+                    if (!props.disabled) props.onToggleModel?.(instanceId, model);
+                  },
+                }
+              : {})}
+            lockedProvider={props.lockedProvider}
+            lockedContinuationGroupKey={props.lockedContinuationGroupKey ?? null}
+            instanceEntries={props.instanceEntries}
+            {...(props.keybindings ? { keybindings: props.keybindings } : {})}
+            modelOptionsByInstance={props.modelOptionsByInstance}
+            terminalOpen={props.terminalOpen ?? false}
+            onRequestClose={() => setIsMenuOpen(false)}
+            {...(props.onOpenProviderSetup
+              ? {
+                  onOpenProviderSetup: (instanceId: ProviderInstanceId) => {
+                    if (!props.disabled) props.onOpenProviderSetup?.(instanceId);
+                  },
+                }
+              : {})}
+            {...(props.onManageProviders || props.onOpenProviderSetup
+              ? {
+                  onManageProviders: () => {
+                    if (props.disabled) return;
+                    if (props.onManageProviders) props.onManageProviders();
+                    else props.onOpenProviderSetup?.(activeInstanceId);
+                  },
+                }
+              : {})}
+            {...(props.getModelDisabledReason
+              ? { getModelDisabledReason: props.getModelDisabledReason }
+              : {})}
+            {...(props.quickSetup && !props.disabled ? { quickSetup: props.quickSetup } : {})}
+            {...(usage ? { usage } : {})}
+            {...(props.secondaryView
+              ? {
+                  secondaryAction: {
+                    label: props.secondaryView.label,
+                    onOpen: () => setShowingSecondary(true),
+                  },
+                }
+              : {})}
+            onInstanceModelChange={handleInstanceModelChange}
+          />
+        )}
         {props.selectedModels === undefined && !props.unset ? (
           <ChatGptSharingControl provider={activeEntry?.snapshot ?? null} />
         ) : null}

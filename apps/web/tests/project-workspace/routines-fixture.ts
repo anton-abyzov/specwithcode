@@ -41,8 +41,10 @@ const household = [
   },
 ];
 
-/* `?routines=coordinator`: a code project's coordinator routines, mostly paused,
-   with a long name and a failed run, the way a busy project's Routines tab looks. */
+/* `?routines=coordinator`: a code project's routines, mostly paused, with a long name
+   and a failed run, the way a busy project's Routines tab looks. As the host reports
+   them, each has a thread of its own (started or not yet), except one that continues
+   the worker thread it was set up from; none runs in the coordinator. */
 const soon = new Date(Date.now() + 3 * 3_600_000).toISOString();
 const watch = { type: "interval", everyMs: 30 * 60_000 };
 const coordinatorRoutines = [
@@ -51,7 +53,8 @@ const coordinatorRoutines = [
     title: "Error-rate repair watch",
     enabled: true,
     schedule: watch,
-    threadId: null,
+    ownThread: true,
+    threadId: "idle",
     lastRunAt: new Date(Date.now() - 27 * 60_000).toISOString(),
     lastRunStatus: "succeeded",
     nextRunAt: soon,
@@ -61,6 +64,7 @@ const coordinatorRoutines = [
     title: "Final matchday results",
     enabled: false,
     schedule: { type: "fixed_time", timeOfDay: "22:30", weekdays: [6, 0] },
+    ownThread: true,
     threadId: null,
     nextRunAt: null,
   },
@@ -69,7 +73,7 @@ const coordinatorRoutines = [
     title: "Watch the mobile club release",
     enabled: false,
     schedule: daily,
-    threadId: null,
+    threadId: "skills",
     lastRunAt: "2026-10-18T13:00:00Z",
     lastRunStatus: "failed",
     lastRunError: "The release check could not reach the store listing.",
@@ -81,6 +85,7 @@ const coordinatorRoutines = [
       "Publish approved named highlight clips to every connected channel after the editor signs off on captions and thumbnails",
     enabled: false,
     schedule: { type: "monthly", dayOfMonth: 1, timeOfDay: "08:00" },
+    ownThread: true,
     threadId: null,
     nextRunAt: null,
   },
@@ -105,6 +110,7 @@ export function managerRoutines(): ReadonlyArray<Record<string, unknown>> {
       title: "Deploy preview on push",
       enabled: true,
       schedule: { type: "webhook", signature: null },
+      ownThread: true,
       threadId: null,
       lastRunStatus: "succeeded",
       lastRunAt: new Date(Date.now() - 26 * 3_600_000).toISOString(),

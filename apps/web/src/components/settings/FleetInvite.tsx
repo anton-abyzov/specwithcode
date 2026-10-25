@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { CheckIcon, CopyIcon } from "lucide-react";
-import type { EnvironmentId } from "@specweave-studio/contracts";
+import { EnvironmentId } from "@specweave-studio/contracts";
 import type {
   StudioFleetInviteResult,
   StudioFleetTailscaleStatus,
@@ -82,6 +82,9 @@ export function fleetInviteValidity(expiresAt: string, now: number = Date.now())
 
 export interface FleetInviteController {
   readonly name: string;
+  readonly ownEnvironmentId: EnvironmentId | null;
+  readonly coordinatorEnvironmentId: string;
+  readonly setCoordinatorEnvironmentId: (id: string) => void;
   readonly setName: (name: string) => void;
   readonly pending: "create" | "revoke" | null;
   readonly invitation: StudioFleetInviteResult | null;
@@ -95,17 +98,21 @@ export interface FleetInviteController {
 
 export function useFleetInvite(environmentId: EnvironmentId | null): FleetInviteController {
   const [name, setName] = useState("");
+  const [coordinatorEnvironmentId, setCoordinatorEnvironmentId] = useState("");
   const [pending, setPending] = useState<"create" | "revoke" | null>(null);
   const [invitation, setInvitation] = useState<StudioFleetInviteResult | null>(null);
   const [revoked, setRevoked] = useState(false);
   const [problem, setProblem] = useState<FleetInviteProblemView | null>(null);
   async function create() {
-    if (pending || !environmentId) return null;
+    if (pending || !environmentId || !coordinatorEnvironmentId.trim()) return null;
     setPending("create");
     setProblem(null);
     setRevoked(false);
     try {
-      const made = await inviteStudioFleetMachine(environmentId, { label: name });
+      const made = await inviteStudioFleetMachine(environmentId, {
+        label: name,
+        coordinatorEnvironmentId: EnvironmentId.make(coordinatorEnvironmentId.trim()),
+      });
       setInvitation(made);
       return made;
     } catch (failure) {
@@ -142,8 +149,22 @@ export function useFleetInvite(environmentId: EnvironmentId | null): FleetInvite
     setRevoked(false);
     setProblem(null);
     setName("");
+    setCoordinatorEnvironmentId("");
   }
-  return { name, setName, pending, invitation, revoked, problem, create, revoke, reset };
+  return {
+    ownEnvironmentId: environmentId,
+    name,
+    setName,
+    coordinatorEnvironmentId,
+    setCoordinatorEnvironmentId,
+    pending,
+    invitation,
+    revoked,
+    problem,
+    create,
+    revoke,
+    reset,
+  };
 }
 
 /** The name field, the line once made, and plain-words problems. Layout belongs to the caller. */
@@ -158,7 +179,17 @@ export function FleetInvitePanel({
 }: {
   readonly controller: Pick<
     FleetInviteController,
-    "name" | "setName" | "pending" | "invitation" | "revoked" | "problem" | "create" | "revoke"
+    | "ownEnvironmentId"
+    | "coordinatorEnvironmentId"
+    | "setCoordinatorEnvironmentId"
+    | "name"
+    | "setName"
+    | "pending"
+    | "invitation"
+    | "revoked"
+    | "problem"
+    | "create"
+    | "revoke"
   >;
   /** This machine's own name, used when the field is left empty. */
   readonly defaultName: string | null;
@@ -172,6 +203,12 @@ export function FleetInvitePanel({
   const { name, setName, pending, invitation, revoked, problem } = controller;
   return (
     <div className="flex min-w-0 flex-col gap-3">
+      {controller.ownEnvironmentId ? (
+        <p className="text-xs text-muted-foreground">
+          This machine’s environment ID:{" "}
+          <code className="select-all">{controller.ownEnvironmentId}</code>
+        </p>
+      ) : null}
       {invitation ? (
         <>
           <div className="flex min-w-0 gap-2">
@@ -209,6 +246,21 @@ export function FleetInvitePanel({
         <>
           <label className="block">
             <span className="mb-1.5 block text-xs font-medium text-foreground">
+              Main machine environment ID
+            </span>
+            <Input
+              value={controller.coordinatorEnvironmentId}
+              autoComplete="off"
+              disabled={pending !== null || !canManage}
+              onChange={(event) => controller.setCoordinatorEnvironmentId(event.target.value)}
+            />
+            <span className="text-xs text-muted-foreground">
+              Approve this main machine to manage access. Copy its environment ID from Settings &gt;
+              Connections on that machine.
+            </span>
+          </label>
+          <label className="block">
+            <span className="mb-1.5 block text-xs font-medium text-foreground">
               Name on the main machine (optional)
             </span>
             <Input
@@ -228,7 +280,12 @@ export function FleetInvitePanel({
           <div>
             <Button
               size="sm"
-              disabled={pending !== null || !canManage || blocked}
+              disabled={
+                pending !== null ||
+                !canManage ||
+                blocked ||
+                !controller.coordinatorEnvironmentId.trim()
+              }
               onClick={() => void controller.create()}
             >
               {pending === "create"

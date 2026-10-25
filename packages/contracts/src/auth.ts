@@ -366,7 +366,15 @@ export const AuthClientMetadata = Schema.Struct({
 });
 export type AuthClientMetadata = typeof AuthClientMetadata.Type;
 
+/** Established by the approving server, never by a device's display name. */
+export const AuthPrincipal = Schema.Union([
+  Schema.Struct({ kind: Schema.Literal("device"), id: TrimmedNonEmptyString }),
+  Schema.Struct({ kind: Schema.Literal("coordinator"), environmentId: EnvironmentId }),
+]);
+export type AuthPrincipal = typeof AuthPrincipal.Type;
+
 export const AuthClientSession = Schema.Struct({
+  principal: Schema.optionalKey(AuthPrincipal),
   sessionId: AuthSessionId,
   subject: TrimmedNonEmptyString,
   ...authScopeResponseFields,
@@ -468,6 +476,8 @@ export const AuthRevokeClientSessionInput = Schema.Struct({
 export type AuthRevokeClientSessionInput = typeof AuthRevokeClientSessionInput.Type;
 
 export const AuthCreatePairingCredentialInput = Schema.Struct({
+  /** An access manager explicitly approves this machine, independently of its label. */
+  coordinatorEnvironmentId: Schema.optionalKey(EnvironmentId),
   label: Schema.optionalKey(TrimmedNonEmptyString),
   scopes: Schema.optionalKey(AuthGrantScopes),
 });
@@ -475,6 +485,8 @@ export type AuthCreatePairingCredentialInput = typeof AuthCreatePairingCredentia
 
 export const AuthSessionState = Schema.Struct({
   authenticated: Schema.Boolean,
+  reapprovalRequired: Schema.optionalKey(Schema.Boolean),
+  message: Schema.optionalKey(Schema.String),
   auth: ServerAuthDescriptor,
   scopes: Schema.optionalKey(AuthEnvironmentScopes),
   permissions: authScopeResponseFields.permissions,

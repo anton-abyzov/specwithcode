@@ -1012,9 +1012,13 @@ it.effect("admits provider and OAuth client credentials and points only clients 
         Layer.provide(
           Layer.succeed(McpHttpServer.McpClientAuthenticator, {
             authenticate: (request) =>
-              Effect.succeed(
-                request.headers.authorization === `Bearer ${clientToken}` ? clientScope : undefined,
-              ),
+              request.headers.authorization === "Bearer legacy-device.credential"
+                ? Effect.fail(new McpHttpServer.McpDeviceReapprovalRequired({}))
+                : Effect.succeed(
+                    request.headers.authorization === `Bearer ${clientToken}`
+                      ? clientScope
+                      : undefined,
+                  ),
           }),
         ),
       );
@@ -1062,6 +1066,11 @@ it.effect("admits provider and OAuth client credentials and points only clients 
         /^Bearer resource_metadata="http:\/\/[^"]+\/\.well-known\/oauth-protected-resource\/mcp"$/,
       );
 
+      const legacy = yield* call("legacy-device.credential");
+      expect(legacy.status).toBe(401);
+      expect(yield* legacy.json).toMatchObject({
+        message: expect.stringContaining("Approve this device again"),
+      });
       const expiredClient = yield* call("stale-payload.stale-signature");
       expect(expiredClient.headers["www-authenticate"]).toContain("resource_metadata=");
       expect(expiredClient.headers["www-authenticate"]).toContain('error="invalid_token"');

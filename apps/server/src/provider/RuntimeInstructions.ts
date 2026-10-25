@@ -59,6 +59,33 @@ export function withSpecweaveAgentEnvironment(
   return { ...environment, ...specweaveAgentEnvironment(identity) };
 }
 
+/** A TOML basic string: Codex parses each `-c` value as TOML. */
+function tomlString(value: string): string {
+  return `"${value.replace(/["\\\u0000-\u001f\u007f]/gu, (char) =>
+    char === '"' || char === "\\"
+      ? `\\${char}`
+      : `\\u${char.charCodeAt(0).toString(16).padStart(4, "0")}`,
+  )}"`;
+}
+
+/**
+ * Codex `-c` overrides that hand specweaveAgentEnvironment to its shell
+ * commands. Codex builds each command's environment from
+ * `shell_environment_policy`, so under `inherit = "core"` the process
+ * variables never reach a `specweave` run from the model's shell, its `!`
+ * shell or a `spawn_agent` child. `set` entries are applied after inheritance
+ * and the default excludes, and each dotted key merges into the user's own
+ * `[shell_environment_policy.set]`, keeping `inherit` and their entries. A
+ * user `include_only` list still filters them afterwards; it is left alone,
+ * since an array override would replace the user's list rather than extend it.
+ */
+export function codexShellEnvironmentArgs(identity: SpecweaveAgentIdentity): string[] {
+  return Object.entries(specweaveAgentEnvironment(identity)).flatMap(([name, value]) => [
+    "-c",
+    `shell_environment_policy.set.${name}=${tomlString(value)}`,
+  ]);
+}
+
 /**
  * Child-process `env`/`extendEnv` options with the headless variables applied.
  * Without an explicit environment the child inherits the server's, so the
@@ -101,7 +128,7 @@ export const STUDIO_WRITING_INSTRUCTIONS = `<writing>
 - Take a position and say why; hedge only real uncertainty.
 - Be specific: a number, file or command, not an adverb.
 - Cut puffery, praise, closing offers, chatbot phrases ("Certainly!") and stock -ing tails ("ensuring...").
-- Avoid em dashes; use a period or comma. Concise means fewer sentences, not dropped articles or verbs.
+- Avoid em dashes; use a period or comma. Concise means fewer sentences, not dropped articles, verbs or spaces.
 - Before sending, ask what makes this look machine-generated, and fix it.
 </writing>`;
 

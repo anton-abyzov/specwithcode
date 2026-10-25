@@ -1,5 +1,7 @@
 # Install SpecWithCode
 
+Replace `<main-machine-environment-id>` with the environment ID from Settings > Connections on your main machine. This explicitly approves that machine to manage access here.
+
 SpecWithCode runs coding agents on your computer and lets you control them from its
 desktop or web app. Set up the machine where the agents will work first.
 
@@ -84,7 +86,7 @@ To add this machine to the ones you already use, run the installer with `--join`
 later):
 
 ```bash
-curl -fsSL https://github.com/anton-abyzov/specwithcode/releases/latest/download/install.sh | bash -s -- --join
+curl -fsSL https://github.com/anton-abyzov/specwithcode/releases/latest/download/install.sh | bash -s -- --join --coordinator '<main-machine-environment-id>'
 ```
 
 1. It sets up [Tailscale](https://tailscale.com/download) first. If Tailscale is missing, it asks
@@ -92,13 +94,13 @@ curl -fsSL https://github.com/anton-abyzov/specwithcode/releases/latest/download
    ask for your password). If Tailscale is signed out, it opens the sign-in page in your
    browser and waits. Sign in with the account your main machine uses. Add `--yes` to install
    Tailscale without the question.
-2. It installs and starts SpecWithCode as above, then runs `specwithcode fleet invite`, which
+2. It installs and starts SpecWithCode as above, then runs `specwithcode fleet invite --coordinator '<main-machine-environment-id>'`, which
    publishes this machine on its Tailscale name and prints one line starting with `swc-machine-`.
    On a machine that already runs SpecWithCode, it only prints that line. Treat it like a password.
 3. On your main machine, run the `specwithcode fleet add <line>` it shows, or paste the line into
    **Settings > Connections > Add a machine**.
 
-Later you can print a new line with `specwithcode fleet invite` on its own. Every other way to
+Later you can print a new line with `specwithcode fleet invite --coordinator '<main-machine-environment-id>'` on its own. Every other way to
 join, the Tailscale settings both machines need and troubleshooting are in
 [Add a machine](./add-a-machine.md).
 
@@ -111,8 +113,8 @@ npm i -g specwithcode
 ```
 
 Then start it with `specwithcode serve`, or make a line for your main machine with
-`specwithcode fleet invite` ([Add a machine](./add-a-machine.md#with-npm)). On a Mac that already
-runs the desktop app, do not start a second server: run only `specwithcode fleet invite`, which
+`specwithcode fleet invite --coordinator '<main-machine-environment-id>'` ([Add a machine](./add-a-machine.md#with-npm)). On a Mac that already
+runs the desktop app, do not start a second server: run only `specwithcode fleet invite --coordinator '<main-machine-environment-id>'`, which
 uses the server the app is running. To keep an npm install running after you close
 Terminal or restart, run `specwithcode service install` (1.0.46 and later): the service pins a
 copy of the installed package under `~/.specwithcode/runtime/versions/<version>` and runs it with

@@ -18,7 +18,7 @@ import { Atom } from "effect/reactivity";
 import { useEffect, useMemo, useRef } from "react";
 
 import { useEnvironmentQuery } from "../state/query";
-import { useEnvironmentScope } from "../state/session";
+import { useEnvironmentScope, useEnvironmentScopeAccess } from "../state/session";
 import { projectWorkspace } from "./projectWorkspace";
 
 const REFRESH_MS = 15_000;
@@ -37,8 +37,24 @@ export interface ThreadIncrementState {
   readonly progress: ReadonlyMap<string, ThreadIncrementProgress>;
   /** Threads that changed code with no increment, small fix or "No increment needed". */
   readonly unplanned: ReadonlySet<string>;
+  /**
+   * False while the read for the current thread list has not answered: a new
+   * thread or an archived one starts a new read, and until it answers the empty
+   * sets mean "not known yet", not "none". Also false while the session cannot
+   * say whether this browser may read at all.
+   */
+  readonly answered: boolean;
 }
-const EMPTY_STATE: ThreadIncrementState = { progress: EMPTY, unplanned: NO_THREADS };
+const EMPTY_STATE: ThreadIncrementState = {
+  progress: EMPTY,
+  unplanned: NO_THREADS,
+  answered: true,
+};
+const PENDING_STATE: ThreadIncrementState = {
+  progress: EMPTY,
+  unplanned: NO_THREADS,
+  answered: false,
+};
 
 /**
  * When to refresh one progress query. A busy thread moves many times a
@@ -122,16 +138,22 @@ export function useThreadIncrementState(input: ThreadIncrementQueryInput): Threa
     [input.threadIds],
   );
   const idsKey = threadIds.join(",");
+  const wantsRead =
+    input.environmentId !== null && input.projectId !== null && threadIds.length > 0;
+  // A session that failed to refresh or has not loaded withholds the scope
+  // without denying it, so its empty answer is not known yet either.
+  const accessUnknown =
+    useEnvironmentScopeAccess(input.environmentId, AuthFilesystemReadScope) === "unknown";
   const atom = useMemo(
     () =>
-      canRead && input.environmentId !== null && input.projectId !== null && threadIds.length > 0
+      canRead && wantsRead
         ? projectWorkspace.threadIncrementProgress({
             environmentId: input.environmentId,
             input: { projectId: input.projectId, threadIds },
           })
         : null,
     // Keyed by the joined ids, so a new array with the same ids keeps the query.
-    [canRead, input.environmentId, input.projectId, idsKey],
+    [canRead, wantsRead, input.environmentId, input.projectId, idsKey],
   );
   const query = useEnvironmentQuery(atom);
   const { refresh, isPending } = query;
@@ -162,7 +184,9 @@ export function useThreadIncrementState(input: ThreadIncrementQueryInput): Threa
     else if (previous.activityKey !== activityKey) gate.activity();
   }, [gate, activityKey, linkRevision]);
 
+  const answered = atom === null ? !(wantsRead && !canRead && accessUnknown) : query.data !== null;
   return useMemo(() => {
+    if (!answered) return PENDING_STATE;
     const threads = query.data?.threads ?? [];
     const unplanned = query.data?.unplanned ?? [];
     if (threads.length === 0 && unplanned.length === 0) return EMPTY_STATE;
@@ -170,8 +194,9 @@ export function useThreadIncrementState(input: ThreadIncrementQueryInput): Threa
       progress:
         threads.length === 0 ? EMPTY : new Map(threads.map((entry) => [entry.threadId, entry])),
       unplanned: unplanned.length === 0 ? NO_THREADS : new Set<string>(unplanned),
+      answered: true,
     };
-  }, [query.data]);
+  }, [answered, query.data]);
 }
 
 /**

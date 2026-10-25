@@ -107,6 +107,11 @@ function summarizeDeltaItem(item: OrchestrationV2TurnItem): string | null {
       return `- User: ${compactText(item.text)}`;
     case "assistant_message":
       return `- Assistant: ${compactText(item.text)}`;
+    // An answer's message holds only the person's words; the question it answers is here.
+    case "user_input_request":
+      return item.questions.length === 0
+        ? null
+        : `- Assistant asked: ${compactText(item.questions.map((question) => question.question).join(" / "))}`;
     case "command_execution":
       return `- Command: ${compactText(item.input)}`;
     case "file_change":

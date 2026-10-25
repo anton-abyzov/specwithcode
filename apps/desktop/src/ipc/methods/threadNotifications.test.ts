@@ -79,7 +79,7 @@ function harness({
   return { center, created, deliver, revealFallback, onRefused, advance };
 }
 
-const target = { environmentId: "env-1", threadId: "thread-1" };
+const target = { environmentId: "env-1", threadId: "thread-1", projectId: "project-1" };
 const input = { tag: "env-1:thread-1", title: "Input needed", body: "Fix the login form", target };
 
 describe("thread notification center", () => {

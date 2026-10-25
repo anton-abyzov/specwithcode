@@ -47,7 +47,40 @@ const png = (name, color) => ({
     blue: "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==",
   }[color],
 });
-const receipt = { headless: true, checks: [], screenshots: [], videos: [] };
+const REFUSED = "The thread is handing off to another machine. Send it again shortly.";
+const receipt = {
+  headless: true,
+  env: { PWDEBUG: process.env.PWDEBUG, PLAYWRIGHT_HTML_OPEN: process.env.PLAYWRIGHT_HTML_OPEN },
+  checks: [],
+  screenshots: [],
+  videos: [],
+};
+// Where the answer error sits: against the composer form, never in the thread.
+const answerProblemPlacement = (page) =>
+  page.evaluate(() => {
+    const banner = document.querySelector("[data-chat-composer-answer-problem]");
+    const form = document.querySelector("[data-chat-composer-form]");
+    if (!banner || !form) return null;
+    const a = banner.getBoundingClientRect();
+    const b = form.getBoundingClientRect();
+    // The box starts at its first thumbnail, or at the text when it holds none.
+    const boxTop = Math.min(
+      ...[
+        form.querySelector('[contenteditable="true"]'),
+        ...form.querySelectorAll("[data-chat-composer-expanded-image]"),
+      ].map((node) => node.getBoundingClientRect().top),
+    );
+    const alert = banner.querySelector("[role='alert']");
+    return {
+      text: alert?.textContent ?? null,
+      inThread: Boolean(banner.closest("[data-fixture-timeline]")),
+      inForm: form.contains(banner),
+      gapToBox: Math.round(boxTop - a.bottom),
+      inside: a.left >= b.left - 1 && a.right <= b.right + 1,
+      clipped: alert ? alert.scrollWidth > alert.clientWidth + 1 : true,
+      overflow: document.documentElement.scrollWidth - window.innerWidth,
+    };
+  });
 const check = (name, ok, detail) => {
   receipt.checks.push({ name, ok, ...(detail === undefined ? {} : { detail }) });
   NodeAssert.ok(ok, `${name}${detail === undefined ? "" : `: ${JSON.stringify(detail)}`}`);
@@ -152,12 +185,58 @@ try {
     );
     await shot("card-with-images");
 
+    // AC-04: a refused answer says why against the composer and keeps the draft and files.
+    const live = page.locator("[data-question-live-status]");
+    check(
+      `${theme}: a polite live status waits beside the composer`,
+      (await live.getAttribute("role")) === "status" &&
+        (await live.getAttribute("aria-live")) === "polite" &&
+        (await live.textContent()) === "",
+    );
+    await page.evaluate(() => (window.__fixture.next = "refused"));
+    await editor.click();
+    await page.keyboard.press("End");
+    await page.keyboard.press("Enter");
+    await page.waitForSelector("[data-chat-composer-answer-problem] [role='alert']");
+    const placement = await answerProblemPlacement(page);
+    await shot("answer-refused-beside-composer");
+    check(`${theme}: the exact error shows`, placement?.text === REFUSED, placement);
+    check(
+      `${theme}: the error sits against the composer, not in the thread`,
+      placement !== null &&
+        !placement.inThread &&
+        placement.inForm &&
+        placement.inside &&
+        placement.gapToBox >= 0 &&
+        placement.gapToBox <= 32,
+      placement,
+    );
+    check(
+      `${theme}: the refused answer keeps its words and every image`,
+      (await draft())?.prompt.includes("Use the compact layout, like these") === true &&
+        (await draft())?.images === 3,
+      await draft(),
+    );
+    check(`${theme}: nothing is announced as sent`, (await live.textContent()) === "");
+    // The error closes by keyboard.
+    await page.getByRole("button", { name: "Dismiss this error", exact: true }).focus();
+    await page.keyboard.press("Enter");
+    await page.waitForFunction(
+      () => !document.querySelector("[data-chat-composer-answer-problem]"),
+    );
+    check(
+      `${theme}: closing the error by keyboard returns focus to the kept draft`,
+      await editor.evaluate(
+        (node) => node === document.activeElement || node.contains(document.activeElement),
+      ),
+    );
+
     // AC-02: sending answers the card with the text and every image.
     await editor.click();
     await page.keyboard.press("End");
     await page.keyboard.press("Enter");
     await page.waitForSelector("[data-decision-card]");
-    const [response] = await page.evaluate(() => window.__fixture.responses);
+    const [, response] = await page.evaluate(() => window.__fixture.responses);
     check(
       `${theme}: the answer carries the typed text`,
       response?.answers?.q1 === "Use the compact layout, like these",
@@ -182,6 +261,14 @@ try {
       (await draft()) === null,
       await draft(),
     );
+    check(
+      `${theme}: a screen reader hears the answer was sent`,
+      (await live.textContent()) === "Answer sent.",
+    );
+    check(
+      `${theme}: the resend leaves no error behind`,
+      (await page.locator("[data-chat-composer-answer-problem]").count()) === 0,
+    );
     await shot("answered-in-chat");
     check(`${theme}: no page errors`, errors.length === 0, errors);
     const video = page.video();
@@ -191,6 +278,42 @@ try {
       await NodeFSP.rename(await video.path(), file);
       receipt.videos.push(file);
     }
+
+    // AC-04, AC-06: at 360 px the error stays readable against the composer.
+    const narrow = await browser.newContext({
+      viewport: { width: 360, height: 780 },
+      colorScheme: theme,
+    });
+    const phone = await narrow.newPage();
+    await phone.route("**/*", (route) =>
+      route.request().url().startsWith(origin) ? route.continue() : route.abort(),
+    );
+    await phone.goto(`${origin}/?theme=${theme}`);
+    await phone.waitForSelector("body[data-fixture-ready]");
+    // A phone shows the card over a folded composer; writing an answer unfolds it.
+    const unfold = phone.getByRole("button", { name: "Write custom answer", exact: true });
+    if ((await unfold.count()) > 0) await unfold.click();
+    await phone.locator('[data-chat-composer-form] [contenteditable="true"]').first().click();
+    await phone.keyboard.type("Compact, please");
+    await phone.evaluate(() => (window.__fixture.next = "refused"));
+    await phone.keyboard.press("Enter");
+    await phone.waitForSelector("[data-chat-composer-answer-problem] [role='alert']");
+    const small = await answerProblemPlacement(phone);
+    check(
+      `${theme} 360: the error fits against the composer with no horizontal scroll`,
+      small !== null &&
+        small.text === REFUSED &&
+        !small.inThread &&
+        small.inForm &&
+        small.inside &&
+        !small.clipped &&
+        small.overflow <= 0,
+      small,
+    );
+    const phoneShot = NodePath.join(output, `answer-refused-beside-composer-${theme}-360.png`);
+    await phone.screenshot({ path: phoneShot });
+    receipt.screenshots.push(phoneShot);
+    await narrow.close();
   }
 } finally {
   await NodeFSP.writeFile(

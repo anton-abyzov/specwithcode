@@ -21,6 +21,8 @@ import * as IdAllocator from "./IdAllocator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import { makeProviderFailure, makeProviderFailureTurnItem } from "./ProviderFailure.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
+import { openNativeSubagentWork } from "./SubagentSettlement.ts";
+import { LIVE_SILENT_RUN_REASON } from "./systemInterruptReasons.ts";
 
 /**
  * A running run whose provider session is gone and that nothing in this
@@ -41,13 +43,32 @@ export const ORPHANED_RUN_UNOBSERVED_QUIET = Duration.minutes(10);
  */
 export const ORPHANED_RUN_ENDED_SESSION_IDLE = Duration.minutes(5);
 
-export type OrphanedRunKind = "session_ended" | "unobserved";
+/**
+ * A running run whose live, observed session sent nothing for this long while
+ * the turn waits on nothing (no open tool, subagent, request or thread wait).
+ * The provider is alive but stuck: the run is interrupted so the queue drains.
+ */
+export const LIVE_SILENT_RUN_QUIET = Duration.minutes(45);
+
+/**
+ * A run stays `waiting` while its finished turn's checkpoint is captured. One
+ * still waiting this long after its provider turn ended is settled, so a hung
+ * capture cannot hold the thread's queue forever.
+ */
+export const WAITING_RUN_CHECKPOINT_DEADLINE = Duration.minutes(10);
+
+/**
+ * `live_silent` is not settled like the others: the watchdog interrupts it
+ * with `LIVE_SILENT_RUN_REASON`, the way Stop would, through its live session.
+ */
+export type OrphanedRunKind = "session_ended" | "unobserved" | "live_silent";
 
 export const ORPHANED_RUN_MESSAGES: Record<OrphanedRunKind, string> = {
   session_ended:
     "The provider session ended before this turn finished, so it was closed. Send a message to continue.",
   unobserved:
     "SpecWithCode stopped receiving updates from the provider for this turn, so it was closed. Send a message to continue.",
+  live_silent: LIVE_SILENT_RUN_REASON,
 };
 
 export interface OrphanedRunLiveState {
@@ -55,6 +76,17 @@ export interface OrphanedRunLiveState {
   readonly ingesting: boolean;
   /** The run's provider session is still open in this process. */
   readonly sessionLive: boolean;
+  /**
+   * The run names a session and this process holds it open. `sessionLive` is
+   * also true for a run with no recorded session, which proves nothing.
+   */
+  readonly sessionConfirmed?: boolean;
+  /**
+   * The session's process still runs background work for the run's provider
+   * thread: subagents an earlier run launched, shells. Undefined when the
+   * adapter cannot tell; then any open native subagent there counts as live.
+   */
+  readonly backgroundWorkLive?: boolean;
 }
 
 export type OrphanedRunProjection = Pick<
@@ -64,6 +96,56 @@ export type OrphanedRunProjection = Pick<
 
 const isOpen = (status: string) =>
   status === "pending" || status === "running" || status === "waiting";
+
+const toMillis = (value: DateTime.Utc | null | undefined): number =>
+  value == null ? Number.NEGATIVE_INFINITY : DateTime.toEpochMillis(value);
+
+/**
+ * When the run last showed provider activity: its start, or the newest change
+ * to one of its items or subagents. `thread.updatedAt` is not used: every
+ * message queued behind the run (another thread's report, a scheduled task)
+ * bumps it without the provider doing anything.
+ */
+export function runActivityAtMs(
+  projection: Pick<OrchestrationV2ThreadProjection, "turnItems" | "subagents">,
+  run: OrchestrationV2Run,
+): number {
+  let latest = toMillis(run.startedAt ?? run.requestedAt);
+  for (const item of projection.turnItems) {
+    if (item.runId === run.id) latest = Math.max(latest, toMillis(item.updatedAt));
+  }
+  for (const subagent of projection.subagents) {
+    if (subagent.runId === run.id) latest = Math.max(latest, toMillis(subagent.updatedAt));
+  }
+  return latest;
+}
+
+/** Whether the run waits on something that legitimately keeps it quiet. */
+function runWaitsOnSomething(projection: OrphanedRunProjection, run: OrchestrationV2Run): boolean {
+  return (
+    projection.turnItems.some((item) => item.runId === run.id && isOpen(item.status)) ||
+    projection.runtimeRequests.some((request) => request.status === "pending") ||
+    projection.subagents.some((subagent) => subagent.runId === run.id && isOpen(subagent.status))
+  );
+}
+
+/**
+ * Whether work an earlier run left in the same provider process may still be
+ * running. Native subagents outlive their run, and the interrupt that ends a
+ * silent run closes the process they run in.
+ */
+function processRunsEarlierWork(
+  projection: OrphanedRunProjection,
+  run: OrchestrationV2Run,
+  live: OrphanedRunLiveState,
+): boolean {
+  if (live.backgroundWorkLive !== undefined) return live.backgroundWorkLive;
+  if (run.providerThreadId === null) return false;
+  const open = openNativeSubagentWork(projection, {
+    providerThreadIds: new Set([run.providerThreadId]),
+  });
+  return open.items.length > 0 || open.rows.length > 0;
+}
 
 /** The thread's running run, if any. */
 export function latestRunningRun(
@@ -84,31 +166,59 @@ export function orphanedRunKind(
   now: DateTime.Utc,
 ): OrphanedRunKind | null {
   if (run.status !== "running") return null;
-  let lastActivityMs = Math.max(
-    DateTime.toEpochMillis(projection.thread.updatedAt),
-    DateTime.toEpochMillis(run.startedAt ?? run.requestedAt),
-  );
-  let openItem = false;
-  for (const item of projection.turnItems) {
-    if (item.runId !== run.id) continue;
-    lastActivityMs = Math.max(lastActivityMs, DateTime.toEpochMillis(item.updatedAt));
-    if (isOpen(item.status)) openItem = true;
-  }
-  const quietMs = DateTime.toEpochMillis(now) - lastActivityMs;
+  const quietMs = DateTime.toEpochMillis(now) - runActivityAtMs(projection, run);
   if (!live.sessionLive) {
     if (!live.ingesting && quietMs >= Duration.toMillis(ORPHANED_RUN_SESSION_ENDED_QUIET)) {
       return "session_ended";
     }
-    const waitsOnSomething =
-      openItem ||
-      projection.runtimeRequests.some((request) => request.status === "pending") ||
-      projection.subagents.some((subagent) => subagent.runId === run.id && isOpen(subagent.status));
-    return !waitsOnSomething && quietMs >= Duration.toMillis(ORPHANED_RUN_ENDED_SESSION_IDLE)
+    return !runWaitsOnSomething(projection, run) &&
+      quietMs >= Duration.toMillis(ORPHANED_RUN_ENDED_SESSION_IDLE)
       ? "session_ended"
       : null;
   }
-  if (live.ingesting) return null;
+  if (live.ingesting) {
+    // Alive and read, yet silent with nothing open: the provider is stuck.
+    return live.sessionConfirmed === true &&
+      !runWaitsOnSomething(projection, run) &&
+      quietMs >= Duration.toMillis(LIVE_SILENT_RUN_QUIET) &&
+      !processRunsEarlierWork(projection, run, live)
+      ? "live_silent"
+      : null;
+  }
   return quietMs >= Duration.toMillis(ORPHANED_RUN_UNOBSERVED_QUIET) ? "unobserved" : null;
+}
+
+/**
+ * The run stuck in `waiting` past its checkpoint deadline, with the status it
+ * settles to, or null. Only a run whose provider turn has ended is stuck on
+ * its checkpoint; the deadline counts from that end (or its last activity).
+ */
+export function stuckWaitingRun(
+  projection: Pick<
+    OrchestrationV2ThreadProjection,
+    "runs" | "providerTurns" | "turnItems" | "subagents"
+  >,
+  now: DateTime.Utc,
+  deadline: Duration.Duration = WAITING_RUN_CHECKPOINT_DEADLINE,
+): {
+  readonly run: OrchestrationV2Run;
+  readonly status: "completed" | "failed" | "interrupted";
+} | null {
+  const run = projection.runs.findLast((candidate) => candidate.status === "waiting");
+  if (run === undefined || run.activeAttemptId === null) return null;
+  const providerTurn = latestProviderTurnForAttempt(projection.providerTurns, run.activeAttemptId);
+  if (providerTurn === undefined || isOpen(providerTurn.status)) return null;
+  const endedAt = Math.max(toMillis(providerTurn.completedAt), runActivityAtMs(projection, run));
+  if (DateTime.toEpochMillis(now) - endedAt < Duration.toMillis(deadline)) return null;
+  return {
+    run,
+    status:
+      providerTurn.status === "completed"
+        ? "completed"
+        : providerTurn.status === "failed"
+          ? "failed"
+          : "interrupted",
+  };
 }
 
 /** An app-owned delegated child settles itself and reports to its parent. */
@@ -386,5 +496,70 @@ export const makeSettler = Effect.gen(function* () {
     return true;
   });
 
-  return { settle };
+  /**
+   * Ends a run stuck in `waiting` (see `stuckWaitingRun`): its provider turn
+   * already ended, only the checkpoint never landed. The run keeps no
+   * checkpoint, like one whose capture failed, and the queue behind it drains.
+   */
+  const settleWaiting = Effect.fn("OrphanedRuns.settleWaiting")(function* (input: {
+    readonly threadId: ThreadId;
+    readonly runId: RunId;
+    readonly status: "completed" | "failed" | "interrupted";
+  }) {
+    const projection = yield* projections.getRuntimeRecoveryProjection(input.threadId);
+    const run = projection.runs.find((candidate) => candidate.id === input.runId);
+    if (run === undefined || run.status !== "waiting" || run.activeAttemptId === null) {
+      return false;
+    }
+    const now = yield* DateTime.now;
+    const commandId = CommandId.make(`command:waiting-run-deadline:${run.id}`);
+    const allocateEventId = () => ids.allocate.event({ threadId: input.threadId, commandId });
+    const base = {
+      threadId: input.threadId,
+      runId: run.id,
+      providerInstanceId: run.providerInstanceId,
+      occurredAt: now,
+    };
+    const events: Array<OrchestrationV2DomainEvent> = [];
+    const { delegatedCompletion: _delegatedCompletion, ...runWithoutDelegatedCompletion } = run;
+    events.push({
+      ...base,
+      id: yield* allocateEventId(),
+      type: "run.updated",
+      ...(run.rootNodeId === null ? {} : { nodeId: run.rootNodeId }),
+      payload: {
+        ...runWithoutDelegatedCompletion,
+        status: input.status,
+        queuePosition: null,
+        completedAt: now,
+      },
+    });
+    for (const node of projection.nodes) {
+      if (node.runId !== run.id || !isOpen(node.status)) continue;
+      events.push({
+        ...base,
+        id: yield* allocateEventId(),
+        type: "node.updated",
+        nodeId: node.id,
+        payload: { ...node, status: input.status, completedAt: now },
+      });
+    }
+    const result = yield* eventSink.writeIfRunCurrent({
+      commandId,
+      threadId: input.threadId,
+      runId: run.id,
+      activeAttemptId: run.activeAttemptId,
+      expectedStatus: "waiting",
+      events,
+    });
+    if (!result.committed) return false;
+    yield* Effect.logWarning("Settled a run stuck saving its checkpoint", {
+      threadId: input.threadId,
+      runId: run.id,
+      status: input.status,
+    });
+    return true;
+  });
+
+  return { settle, settleWaiting };
 });

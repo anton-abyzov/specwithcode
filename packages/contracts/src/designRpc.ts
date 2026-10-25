@@ -17,8 +17,11 @@ import {
   DesignGetResult,
   DesignHistoryInput,
   DesignHistoryResult,
+  DesignImportDeckInput,
+  DesignImportDeckResult,
   DesignListInput,
   DesignListResult,
+  DesignMoveInput,
   DesignRestoreInput,
   DesignSaveVersionInput,
   DesignSystemAddress,
@@ -42,6 +45,10 @@ export const DESIGN_RPC_METHODS = {
   designSaveVersion: "design.saveVersion",
   designRestore: "design.restore",
   designCopy: "design.copy",
+  /** Gated by the `designMove` capability. */
+  designMove: "design.move",
+  /** Gated by the `designDeckImport` capability; a person's action, not an agent tool. */
+  designImportDeck: "design.importDeck",
   designDelete: "design.delete",
   designAssetPut: "design.assetPut",
   designExport: "design.export",
@@ -97,6 +104,16 @@ export const designRpcs = [
   Rpc.make(DESIGN_RPC_METHODS.designCopy, {
     payload: DesignCopyInput,
     success: DesignGetResult,
+    error,
+  }),
+  Rpc.make(DESIGN_RPC_METHODS.designMove, {
+    payload: DesignMoveInput,
+    success: DesignGetResult,
+    error,
+  }),
+  Rpc.make(DESIGN_RPC_METHODS.designImportDeck, {
+    payload: DesignImportDeckInput,
+    success: DesignImportDeckResult,
     error,
   }),
   Rpc.make(DESIGN_RPC_METHODS.designDelete, {

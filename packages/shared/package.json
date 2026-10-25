@@ -23,6 +23,10 @@
       "types": "./src/designOps.ts",
       "import": "./src/designOps.ts"
     },
+    "./designSystemOps": {
+      "types": "./src/designSystemOps.ts",
+      "import": "./src/designSystemOps.ts"
+    },
     "./designRender": {
       "types": "./src/designRender.ts",
       "import": "./src/designRender.ts"
@@ -514,6 +518,10 @@
     "./threadModelIdentity": {
       "types": "./src/threadModelIdentity.ts",
       "import": "./src/threadModelIdentity.ts"
+    },
+    "./projectAttention": {
+      "types": "./src/projectAttention.ts",
+      "default": "./src/projectAttention.ts"
     }
   },
   "scripts": {

@@ -15,6 +15,7 @@ import type { AuthenticatedSession } from "../auth/EnvironmentAuth.ts";
 import { RpcInstrumentation } from "../observability/RpcInstrumentation.ts";
 import * as PreviewBrowser from "../preview/PreviewBrowser.ts";
 import { DesignService, layerWithRender, type DesignCaller } from "./DesignService.ts";
+import { importDeck } from "./import/DesignImport.ts";
 import * as DesignSystemRpc from "./systems/DesignSystemRpc.ts";
 import { DesignSystemProposals, discardProposalsForSystem } from "./systems/DesignSystemService.ts";
 import * as DesignSystems from "./systems/adapters.ts";
@@ -30,7 +31,7 @@ import { DesignWsHandlers } from "../project/ProjectWorkspaceRpc.ts";
 const OWNER_SESSION_SUBJECTS: ReadonlySet<string> = new Set([
   "desktop-bootstrap",
   "administrative-bootstrap",
-  "cli-issued-session",
+  "local-cli-owner",
   "reusable-dev-token",
   "reusable-dev-token-child",
 ]);
@@ -73,6 +74,8 @@ export const layerRpcHandlers = (session: Pick<AuthenticatedSession, "subject" |
         [WS_METHODS.designSaveVersion]: (input) => designs.saveVersion(caller, input),
         [WS_METHODS.designRestore]: (input) => designs.restore(caller, input),
         [WS_METHODS.designCopy]: (input) => designs.copy(caller, input),
+        [WS_METHODS.designMove]: (input) => designs.move(caller, input),
+        [WS_METHODS.designImportDeck]: (input) => importDeck(designs, caller, input),
         [WS_METHODS.designDelete]: (input) => designs.remove(caller, input),
         [WS_METHODS.designAssetPut]: (input) => designs.putAsset(caller, input),
         [WS_METHODS.designExport]: (input) => designs.export(caller, input),
@@ -134,7 +137,7 @@ export const makeWsLayers = Effect.gen(function* () {
       Layer.merge(
         layerRpcHandlers(session),
         DesignSystemRpc.layerRpcHandlers(designCallerForSession(session)).pipe(
-          Layer.provide(DesignSystems.layer),
+          Layer.provide(Layer.merge(DesignSystems.layer, DesignSystems.layerEditing)),
         ),
       ).pipe(
         Layer.provide(Layer.succeed(DesignSystemProposals, proposals)),

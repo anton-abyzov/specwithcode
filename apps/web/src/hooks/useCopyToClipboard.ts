@@ -209,12 +209,15 @@ export function useCopyToClipboard<TContext = void>({
   onCopy,
   onError,
   extraFlavors,
+  preserveBytes = false,
 }: {
   timeout?: number;
   target?: string;
   onCopy?: (ctx: TContext) => void;
   onError?: (error: Error, ctx: TContext) => void;
   extraFlavors?: Readonly<Record<string, string>>;
+  /** Copy the value byte for byte, invisible characters and trailing whitespace included. */
+  preserveBytes?: boolean;
 } = {}): { copyToClipboard: (value: string, ctx: TContext) => void; isCopied: boolean } {
   const [isCopied, setIsCopied] = React.useState(false);
   const timeoutIdRef = React.useRef<NodeJS.Timeout | null>(null);
@@ -226,12 +229,16 @@ export function useCopyToClipboard<TContext = void>({
   onCopyRef.current = onCopy;
   onErrorRef.current = onError;
   const extraFlavorsRef = React.useRef(extraFlavors);
+  const preserveBytesRef = React.useRef(preserveBytes);
+  preserveBytesRef.current = preserveBytes;
   targetRef.current = target;
   timeoutRef.current = timeout;
   extraFlavorsRef.current = extraFlavors;
 
   const copyToClipboard = React.useCallback((value: string, ctx: TContext): void => {
-    void writeTextToClipboard(value, targetRef.current, extraFlavorsRef.current).then(
+    void writeTextToClipboard(value, targetRef.current, extraFlavorsRef.current, {
+      preserveBytes: preserveBytesRef.current,
+    }).then(
       (didCopy) => {
         if (!didCopy) return;
         if (timeoutIdRef.current) {

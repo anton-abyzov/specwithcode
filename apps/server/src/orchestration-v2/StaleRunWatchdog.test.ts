@@ -36,12 +36,35 @@ it("returns a running run whose final answer went quiet", () => {
   assert.strictEqual(staleFinishedRun(projection(), NOW)?.id, "run-1");
 });
 
-it("leaves a thread with recent activity alone", () => {
+it("leaves a run with recent activity alone", () => {
   assert.isNull(
+    staleFinishedRun(
+      projection({
+        turnItems: [
+          {
+            runId: "run-1",
+            type: "assistant_message",
+            status: "completed",
+            streaming: false,
+            updatedAt: OLD,
+          },
+          { runId: "run-1", type: "reasoning", status: "completed", updatedAt: RECENT },
+        ],
+      } as unknown as Partial<Projection>),
+      NOW,
+    ),
+  );
+});
+
+it("does not let messages queued behind the run reset its quiet clock", () => {
+  // Thirteen child reports queued in the last minutes bumped the thread; the
+  // run itself has been silent for six hours.
+  assert.strictEqual(
     staleFinishedRun(
       projection({ thread: { updatedAt: RECENT } } as unknown as Partial<Projection>),
       NOW,
-    ),
+    )?.id,
+    "run-1",
   );
 });
 

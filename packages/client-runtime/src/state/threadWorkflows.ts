@@ -5,6 +5,10 @@ import type {
   OrchestrationV2ThreadProjection,
 } from "@specweave-studio/contracts";
 import { copySorted } from "@specweave-studio/shared/Array";
+import {
+  latestExecutedRun,
+  usageLimitBlockedRun,
+} from "@specweave-studio/shared/orchestrationV2ThreadError";
 
 type Projection = OrchestrationV2ThreadProjection;
 type Run = Projection["runs"][number];
@@ -19,6 +23,27 @@ const MERGE_BACK_BLOCKING_RUN_STATUSES = new Set<Run["status"]>([
   "running",
 ]);
 
+/*
+ * Who decides whether a message queues, steers or starts
+ * ------------------------------------------------------
+ * The server decides, never the drawer. When a message arrives:
+ * - The thread is idle: it starts a new turn at once.
+ * - A turn is running and its provider can take a message mid-turn (a running
+ *   provider turn on a live session that supports steering): a person's send,
+ *   or an agent's `studio_thread_send` in `auto` mode, is steered into it.
+ * - Otherwise (the turn is still starting, saving its checkpoint, between
+ *   provider turns, or its provider cannot steer) the message is queued and
+ *   starts as the next turn. Coordinator, scheduled, Telegram and worker sends
+ *   always queue, as do automatic deliveries (a delegated task's result, a
+ *   monitor or worker notification).
+ * The queue drains one message per turn, automatic deliveries first, and only
+ * while nothing holds it: Stop holds it until the person resumes, a failure
+ * the next message would repeat holds it, and a usage limit keeps it until
+ * the limit resets or the person continues. Steer now asks the server to move
+ * a queued message into the running turn; the row stays queued until the
+ * provider accepts it and comes back if the steer fails.
+ */
+
 export interface QueuedThreadRun {
   readonly run: Run;
   readonly text: string;
@@ -31,7 +56,29 @@ export interface QueuedThreadRun {
   readonly createdBy?: Message["createdBy"];
   /** A notification's own one-line summary (a worker report, a scheduled run). */
   readonly summary?: string;
+  /**
+   * A delegated task's result or a notification the server delivers by itself:
+   * shown read-only, never edited, steered, removed or moved.
+   */
+  readonly automatic?: boolean;
+  /** Steer now was accepted by the server and the provider has not taken it yet. */
+  readonly steering?: boolean;
 }
+
+/** Why the queue is not draining right now. */
+export type ThreadQueueWaitReason =
+  /** A turn is running; the queue starts after it. */
+  | "turn"
+  /** A person's Stop holds the queue until they resume it. */
+  | "stopped"
+  /** The last turn failed in a way the next message would repeat. */
+  | "failure"
+  /** The provider's usage limit stopped the thread. */
+  | "usage_limit"
+  /** A server restart holds the queue until its own continuation runs. */
+  | "restart"
+  /** Nothing blocks it: the next message is about to start. */
+  | "starting";
 
 export interface ThreadQueueWorkflowState {
   readonly activeRun: Run | null;
@@ -39,6 +86,10 @@ export interface ThreadQueueWorkflowState {
   readonly isHeld: boolean;
   readonly canReorder: boolean;
   readonly canPromoteToSteer: boolean;
+  /** Why the queue waits. Absent from older callers' fixtures. */
+  readonly waitReason?: ThreadQueueWaitReason;
+  /** Why Steer now is unavailable, in words for its tooltip; null when it is available. */
+  readonly steerUnavailableReason?: string | null;
 }
 
 export function resolveActiveThreadRun(projection: Pick<Projection, "runs">): Run | null {
@@ -151,21 +202,74 @@ export function threadSupportsProviderHandoff(
   );
 }
 
+function isAutomaticDelivery(message: Message | undefined): boolean {
+  return message?.delegatedCompletion !== undefined || message?.notification !== undefined;
+}
+
 /** Automatic completion/notification runs are not messages in the user's queue. */
 export function getUserQueuedThreadRuns(
   projection: Pick<Projection, "runs" | "messages">,
 ): ReadonlyArray<Run> {
   const automaticCompletionMessageIds = new Set(
-    projection.messages
-      .filter(
-        (message) =>
-          message.delegatedCompletion !== undefined || message.notification !== undefined,
-      )
-      .map((message) => message.id),
+    projection.messages.filter(isAutomaticDelivery).map((message) => message.id),
   );
   return projection.runs.filter(
     (run) => run.status === "queued" && !automaticCompletionMessageIds.has(run.userMessageId),
   );
+}
+
+/**
+ * A queued run whose message Steer now already moved into the running turn:
+ * the server keeps the row until the provider accepts the steer, then removes
+ * it. When the steer fails the turn ends and the row starts as usual.
+ */
+export function isQueuedRunSteering(
+  projection: Pick<Projection, "runs">,
+  run: Run,
+  message: Pick<Message, "runId"> | undefined,
+): boolean {
+  if (message === undefined || message.runId === null || message.runId === run.id) return false;
+  const target = projection.runs.find((candidate) => candidate.id === message.runId);
+  return target !== undefined && ACTIVE_RUN_STATUSES.has(target.status);
+}
+
+function queueWaitReason(projection: Projection, activeRun: Run | null): ThreadQueueWaitReason {
+  const turnItems = projection.turnItems ?? [];
+  const sessionError =
+    projection.providerSessions
+      ?.filter((session) => session.providerInstanceId === projection.thread.providerInstanceId)
+      .at(-1)?.lastError ?? null;
+  if (activeRun === null && usageLimitBlockedRun(projection.runs, turnItems, sessionError) !== null)
+    return "usage_limit";
+  const held = projection.runs.filter((run) => run.status === "queued" && run.queueHeld === true);
+  if (held.length > 0) {
+    if (held.every((run) => run.queueHeldForRestart === true)) return "restart";
+    if (usageLimitBlockedRun(projection.runs, turnItems, sessionError) !== null)
+      return "usage_limit";
+    return latestExecutedRun(projection.runs)?.status === "failed" ? "failure" : "stopped";
+  }
+  return activeRun === null ? "starting" : "turn";
+}
+
+function steerUnavailableReason(input: {
+  readonly activeRun: Run | null;
+  readonly hasRunningProviderTurn: boolean;
+  readonly session: ProviderSession | null;
+}): string | null {
+  const { activeRun, session } = input;
+  if (activeRun === null) return "No turn is running to steer into.";
+  if (activeRun.status === "preparing" || activeRun.status === "starting")
+    return "The turn is still starting. It can be steered once the provider is running it.";
+  if (activeRun.status === "waiting")
+    return "The turn has finished and is saving its checkpoint. This message starts next.";
+  if (!input.hasRunningProviderTurn)
+    return "No provider turn is running right now, so there is nothing to steer into.";
+  if (session === null || session.status === "stopped" || session.status === "error")
+    return "The provider session is not live, so it cannot take a message mid-turn.";
+  const turns = session.capabilities.turns;
+  if (!turns.supportsActiveSteering && !turns.supportsSteeringByInterruptRestart)
+    return "This provider cannot take a message in the middle of a turn.";
+  return null;
 }
 
 export function deriveThreadQueueWorkflowState(projection: Projection): ThreadQueueWorkflowState {
@@ -178,13 +282,19 @@ export function deriveThreadQueueWorkflowState(projection: Projection): ThreadQu
     projection.providerTurns.some(
       (turn) => turn.runAttemptId === activeRun.activeAttemptId && turn.status === "running",
     );
+  const messagesById = new Map(projection.messages.map((message) => [message.id, message]));
+  // The server's delivery order: delegated results first, then by position.
   const queuedRuns = copySorted(
-    getUserQueuedThreadRuns(projection),
+    projection.runs.filter((run) => run.status === "queued"),
     (left, right) =>
+      Number(messagesById.get(right.userMessageId)?.delegatedCompletion !== undefined) -
+        Number(messagesById.get(left.userMessageId)?.delegatedCompletion !== undefined) ||
       (left.queuePosition ?? left.ordinal) - (right.queuePosition ?? right.ordinal) ||
       left.ordinal - right.ordinal,
-  ).map((run) => {
-    const message = projection.messages.find((candidate) => candidate.id === run.userMessageId);
+  ).map((run): QueuedThreadRun => {
+    const message = messagesById.get(run.userMessageId);
+    const automatic = isAutomaticDelivery(message);
+    const steering = isQueuedRunSteering(projection, run, message);
     return {
       run,
       text: message?.text ?? "Queued message",
@@ -194,7 +304,14 @@ export function deriveThreadQueueWorkflowState(projection: Projection): ThreadQu
       ...(message?.senderThreadId ? { senderThreadId: message.senderThreadId } : {}),
       ...(message ? { createdBy: message.createdBy } : {}),
       ...(message?.notification ? { summary: message.notification.summary } : {}),
+      ...(automatic ? { automatic } : {}),
+      ...(steering ? { steering } : {}),
     };
+  });
+  const unavailable = steerUnavailableReason({
+    activeRun,
+    hasRunningProviderTurn: hasSteerableProviderTurn,
+    session,
   });
 
   return {
@@ -202,10 +319,9 @@ export function deriveThreadQueueWorkflowState(projection: Projection): ThreadQu
     queuedRuns,
     isHeld: projection.runs.some((run) => run.status === "queued" && run.queueHeld === true),
     canReorder: capabilities?.supportsQueuedMessages === true,
-    canPromoteToSteer:
-      hasSteerableProviderTurn &&
-      (capabilities?.supportsActiveSteering === true ||
-        capabilities?.supportsSteeringByInterruptRestart === true),
+    canPromoteToSteer: unavailable === null,
+    waitReason: queueWaitReason(projection, activeRun),
+    steerUnavailableReason: unavailable,
   };
 }
 

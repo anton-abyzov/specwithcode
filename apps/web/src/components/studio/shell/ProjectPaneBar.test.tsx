@@ -13,7 +13,10 @@ let root: Root;
 const props = (overrides: Partial<ProjectPaneBarProps> = {}): ProjectPaneBarProps => ({
   tab: "threads",
   onTabChange: vi.fn(),
-  counts: { threads: { value: 2, label: "waiting on you", tone: "waiting" } },
+  counts: {
+    threads: { value: 2, label: "waiting on you", tone: "waiting" },
+    designs: { value: 1, label: "designs" },
+  },
   onNewThread: vi.fn(),
   onOpenPlan: vi.fn(),
   onOpenUsage: vi.fn(),
@@ -43,7 +46,7 @@ describe("the project panel's header row", () => {
     expect(rows).toHaveLength(1);
     const row = rows[0]!;
     expect([...row.querySelectorAll('[role="tab"]')].map((tab) => tab.textContent?.trim())).toEqual(
-      ["Threads2 waiting on you", "Library", "PRs", "Routines"],
+      ["Threads2 waiting on you", "Designs1 designs", "Library", "PRs", "Routines"],
     );
     for (const label of ["New", "Find a thread", "Expand panel", "Hide overview"])
       expect(row.querySelector(`[aria-label="${label}"]`)).not.toBeNull();
@@ -63,6 +66,23 @@ describe("the project panel's header row", () => {
       selected.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true })),
     );
     expect(bar.onTabChange).toHaveBeenCalledWith("scheduled");
+  });
+  it("puts Designs right after Threads with a neutral count", async () => {
+    const bar = props();
+    await render(bar);
+    const designs = container.querySelector<HTMLButtonElement>('[data-tab="designs"]')!;
+    expect(designs.querySelector(".sws-count")?.classList.contains("sws-count-waiting")).toBe(
+      false,
+    );
+    const threads = container.querySelector<HTMLButtonElement>('[data-tab="threads"]')!;
+    await act(async () =>
+      threads.dispatchEvent(new KeyboardEvent("keydown", { key: "ArrowRight", bubbles: true })),
+    );
+    expect(bar.onTabChange).toHaveBeenCalledWith("designs");
+  });
+  it("names the expand state", async () => {
+    const bar = props({ tab: "prs", expanded: true });
+    await render(bar);
     const restore = container.querySelector<HTMLButtonElement>('[aria-label="Restore panel"]')!;
     expect(restore.getAttribute("aria-pressed")).toBe("true");
     await act(async () => restore.click());

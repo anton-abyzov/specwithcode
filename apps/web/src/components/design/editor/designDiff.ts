@@ -18,6 +18,7 @@ export function designDiff(from: DesignDocument, to: DesignDocument): DesignOper
   if (from.designSystem !== to.designSystem)
     ops.push({ op: "set_design_system", systemId: to.designSystem });
   if (!sameValue(from.thread, to.thread)) ops.push({ op: "set_thread", thread: to.thread ?? null });
+  if (!sameValue(from.reuse, to.reuse)) ops.push({ op: "set_reuse", reuse: to.reuse ?? null });
   if (!sameValue(from.access, to.access)) {
     const access = to.access ?? DESIGN_DEFAULT_ACCESS;
     ops.push({ op: "set_access", members: access.members, agents: access.agents });
@@ -141,7 +142,7 @@ export function nodePatch(from: DesignNode, to: DesignNode): Record<string, unkn
   return Object.keys(patch).length === 0 ? null : patch;
 }
 
-function sameValue(a: unknown, b: unknown): boolean {
+export function sameValue(a: unknown, b: unknown): boolean {
   if (a === b) return true;
   if (typeof a !== "object" || typeof b !== "object" || a === null || b === null) return false;
   return JSON.stringify(a) === JSON.stringify(b);

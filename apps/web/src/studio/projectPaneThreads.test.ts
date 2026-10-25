@@ -158,6 +158,15 @@ describe("parseProjectWorkspaceSearch", () => {
     expect(parseProjectWorkspaceSearch({ thread: "a\nb" })).toEqual({});
     expect(parseProjectWorkspaceSearch({ thread: "x".repeat(513) })).toEqual({});
   });
+  it("keeps a known pane tab and drops an unknown one", () => {
+    expect(parseProjectWorkspaceSearch({ pane: "designs" })).toEqual({ pane: "designs" });
+    expect(parseProjectWorkspaceSearch({ pane: "library", thread: "t1" })).toEqual({
+      pane: "library",
+      thread: "t1",
+    });
+    expect(parseProjectWorkspaceSearch({ pane: "gallery" })).toEqual({});
+    expect(parseProjectWorkspaceSearch({ pane: 3 })).toEqual({});
+  });
 });
 
 describe("projectPaneTargetForChat", () => {
