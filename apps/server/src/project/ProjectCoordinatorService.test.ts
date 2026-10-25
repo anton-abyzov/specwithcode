@@ -69,7 +69,11 @@ const fixture = (afterCoordinatorLaunch: Effect.Effect<void> = Effect.void) => {
   const sends: Parameters<Threads.ThreadManagementService["Service"]["sendToThread"]>[0][] = [];
   const receipts = new Set<string>();
   const runs: OrchestrationV2Run[] = [];
-  const turnItems: Array<{ type: string; failure?: { class: string } }> = [];
+  const turnItems: Array<{
+    type: string;
+    text?: string;
+    failure?: { class: string; message?: string };
+  }> = [];
   const updates: Projects.ProjectUpdateInput[] = [];
   let sendFailure: unknown = null;
   const dependencies = Layer.mergeAll(
@@ -1001,6 +1005,61 @@ it.effect("checks an existing coordinator again when its provider is signed out"
       );
       expect(result._tag).toBe("Failure");
       expect(f.sends).toEqual([]);
+    }).pipe(Effect.provide(Coordinator.layer.pipe(Layer.provideMerge(f.dependencies))));
+  }),
+);
+
+it.effect("returns a coordinator to its saved Claude once that login bills API credits", () =>
+  Effect.gen(function* () {
+    const f = fixture();
+    const fallback = { instanceId: ProviderInstanceId.make("codex"), model: "codex-model" };
+    f.setProject({
+      workspaceSettings: {
+        ...DEFAULT_PROJECT_WORKSPACE_SETTINGS,
+        coordinatorModelSelection: model,
+      },
+    });
+    // Signed in to the Claude Console: ready, billed to API credits, no usage read.
+    const claudeApi: ServerProvider = {
+      ...provider(model.instanceId, "claudeAgent"),
+      auth: { status: "authenticated", type: "apiKey", apiKeyBilling: true },
+    };
+    yield* Effect.gen(function* () {
+      const service = yield* Coordinator.ProjectCoordinatorService;
+      const { threadId } = yield* service.start({ projectId: id, commandId });
+      f.shells.set(threadId, { ...f.shells.get(threadId)!, modelSelection: fallback });
+      f.setProviders([claudeApi, readyWithUsage("codex", "codex", 20)]);
+      f.runs.push({
+        providerInstanceId: model.instanceId,
+        ordinal: 1,
+        status: "failed",
+        completedAt: DateTime.makeUnsafe("2098-12-31T00:00:00Z"),
+      } as OrchestrationV2Run);
+      // An API rate limit on the same instance still keeps the coordinator away.
+      f.turnItems.push({
+        type: "error",
+        failure: {
+          class: "usage_limit",
+          message: "Claude API rate limit reached. Try again later.",
+        },
+      });
+      yield* service.send({
+        projectId: id,
+        commandId: CommandId.make("request:api-rate-limit"),
+        prompt: "Next",
+      });
+      expect(f.sends.at(-1)?.modelSelection).toEqual(fallback);
+      // The stop was the subscription's session limit: the Console login is past it.
+      f.turnItems.push({
+        type: "assistant_message",
+        text: "You've hit your session limit · resets 11:40am (America/New_York)",
+      });
+      yield* service.send({
+        projectId: id,
+        commandId: CommandId.make("request:plan-limit-outlived"),
+        prompt: "Next",
+      });
+      expect(f.sends.at(-1)?.modelSelection).toEqual(model);
     }).pipe(Effect.provide(Coordinator.layer.pipe(Layer.provideMerge(f.dependencies))));
   }),
 );

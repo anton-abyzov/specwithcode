@@ -1458,3 +1458,92 @@ describe("the holds the coordinator reads", () => {
     }),
   );
 });
+
+describe("a Claude plan-limit stop after the CLI moved to API credits", () => {
+  // October 22, 2026: the stop said "You've hit your session limit"; the CLI
+  // was then signed in to the Claude Console, so the instance bills API credits.
+  const claudeApi: ServerProvider = {
+    ...claudeAt(100),
+    auth: { status: "authenticated", type: "apiKey", apiKeyBilling: true },
+    usageLimits: undefined,
+  };
+  const item = (type: string, fields: object) =>
+    ({
+      type,
+      id: `r1-${type}`,
+      status: "completed",
+      runId: r1.id,
+      nodeId: r1.rootNodeId,
+      ordinal: 1,
+      updatedAt: r1.completedAt,
+      ...fields,
+    }) as unknown as OrchestrationV2TurnItem;
+  const apiError = item("error", {
+    failure: {
+      class: "usage_limit",
+      message: "Claude API rate limit reached. Try again later.",
+      code: "api_error_429",
+      retryable: true,
+    },
+  });
+  const planText = item("assistant_message", {
+    messageId: "m1-reply",
+    text: "You've hit your session limit · resets 11:40am (America/New_York)",
+    streaming: false,
+  });
+
+  itEffect.effect("continues the run on the same instance instead of switching", () =>
+    Effect.gen(function* () {
+      const { state, sweep } = yield* harness(settings);
+      state.providers = [claudeApi, copilotCheckedAt(stoppedAt), codexAt(30)];
+      state.threads = [onClaude];
+      state.runs.set("t1", [r1]);
+      state.turnItems.set("t1", [planText, apiError]);
+      yield* sweep();
+      expect(state.dispatched).toHaveLength(1);
+      expect(state.dispatched[0]).toMatchObject({
+        type: "message.dispatch",
+        commandId: "limit-billing:t1:r1",
+        manualContinuationOfRunId: "r1",
+        modelSelection: { instanceId: claudeId, model: opus },
+      });
+    }),
+  );
+
+  itEffect.effect("resumes on API credits once per stop, then switches", () =>
+    Effect.gen(function* () {
+      const { state, sweep } = yield* harness(settings);
+      // The run that stopped again was this step's own resume: a stale billing read.
+      const resumed = run({
+        id: "r1",
+        ordinal: 2,
+        instanceId: claudeId,
+        model: opus,
+        message: "limit-billing:t1:r0",
+        status: "failed",
+        completedAt: stoppedAt,
+      });
+      state.providers = [claudeApi, copilotCheckedAt(stoppedAt), codexAt(30)];
+      state.threads = [onClaude];
+      state.runs.set("t1", [resumed]);
+      state.turnItems.set("t1", [planText, apiError]);
+      yield* sweep();
+      expect(state.dispatched).toHaveLength(1);
+      expect(state.dispatched[0]?.commandId).toBe("limit-fallback:t1:r1");
+    }),
+  );
+
+  itEffect.effect("switches as before when the stop was not a plan limit", () =>
+    Effect.gen(function* () {
+      const { state, sweep } = yield* harness(settings);
+      state.providers = [claudeApi, copilotCheckedAt(stoppedAt), codexAt(30)];
+      state.threads = [onClaude];
+      state.runs.set("t1", [r1]);
+      state.turnItems.set("t1", [apiError]);
+      yield* sweep();
+      expect(state.dispatched).toHaveLength(1);
+      expect(state.dispatched[0]?.commandId).toBe("limit-fallback:t1:r1");
+      expect(target(state.dispatched[0])).not.toBe(claudeId);
+    }),
+  );
+});
