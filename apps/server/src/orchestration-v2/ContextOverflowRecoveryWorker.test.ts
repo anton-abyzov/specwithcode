@@ -949,3 +949,53 @@ describe("ContextOverflowRecoveryWorker sweep, around other runs", () => {
     }),
   );
 });
+
+describe("a person's steer of a continuation of a failed /compact", () => {
+  // The steer ran the person's message, not the /compact, so it ends the recovery.
+  const r1 = run({ id: "r1", ordinal: 1, message: "m1", status: "failed", completedAt: failedAt });
+  it.effect.each([
+    ["provider-ready retry", "provider-retry:t1:r2", "completed", []],
+    ["provider fallback", "provider-fallback:t1:r2", "completed", []],
+    ["provider-ready retry", "provider-retry:t1:r2", "overflowed", ["context-compact:t1:r3"]],
+    ["provider fallback", "provider-fallback:t1:r2", "overflowed", ["context-compact:t1:r3"]],
+  ] as const)("%s (%s), %s", ([, continuation, outcome, expected]) =>
+    Effect.gen(function* () {
+      const { state, sweep } = yield* harness();
+      state.messages = [
+        message("m1", "Refactor the parser"),
+        message("message:web:steer", "Never mind, write the changelog instead"),
+      ];
+      const r2 = run({
+        id: "r2",
+        ordinal: 2,
+        message: "context-compact:t1:r1",
+        status: "failed",
+        completedAt: failedAt + 30_000,
+      });
+      const r3 = {
+        ...run({
+          id: "r3",
+          ordinal: 3,
+          message: "message:web:steer",
+          status: outcome === "completed" ? "completed" : "failed",
+          completedAt: failedAt + 60_000,
+        }),
+        startMessageId: continuation as never,
+      };
+      state.turnItems = [
+        errorItem(r1, overflow),
+        errorItem(r2, {
+          class: "provider_error",
+          code: "provider_open_failed",
+          message: "No session",
+          retryable: null,
+        }),
+        ...(outcome === "overflowed" ? [errorItem(r3 as never, overflow)] : []),
+      ];
+      state.runs = [r1, r2];
+      settle(state, r3 as never);
+      yield* sweep();
+      expect(state.dispatched.map((command) => command.commandId)).toEqual(expected);
+    }),
+  );
+});

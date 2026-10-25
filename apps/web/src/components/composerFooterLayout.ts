@@ -1,3 +1,5 @@
+import type { ModelChipFit, ModelChipFitWidths } from "./chat/modelChipFit";
+
 export const COMPOSER_FOOTER_COMPACT_BREAKPOINT_PX = 620;
 export const COMPOSER_FOOTER_WIDE_ACTIONS_COMPACT_BREAKPOINT_PX = 780;
 const RESTING_COMPOSER_IMAGE_THUMBNAIL_LIMIT = 3;
@@ -131,6 +133,8 @@ export interface RestingComposerControlsMeasurement {
   blockWidths: readonly number[];
   overflowWidth: number;
   iconOnlyBlockWidths?: readonly number[];
+  /** The model chip's width at every fit (with the separator), when the picker is a chip. */
+  pickerFitWidths?: ModelChipFitWidths;
 }
 
 function restingComposerControlsWidth(
@@ -177,50 +181,104 @@ export function resolveRestingComposerControlsNaturalWidth(
  * then move trailing blocks into overflow. Resting and expanded share this
  * decision, including the slack needed to safely restore controls.
  *
- * Trailing blocks compact before the model picker shrinks. Once they are all in
- * the overflow menu, the picker may contract to its minimum readable width;
- * below that the whole cluster hides rather than clipping.
+ * A model chip gives up room in steps of its own (modelChipFit.ts): its provider
+ * name and state words go after the trailing labels and before any block moves
+ * into overflow, its state shrinks to a glyph once every block is in the overflow
+ * menu, then its usage ring goes, and only then does its model name go. A picker that is not a chip may
+ * contract to its minimum readable width instead. Below the last step the whole
+ * cluster hides rather than clipping.
  */
 const RESTING_CONTROLS_SLACK_PX = 1;
+
+type RestingControlsStep = {
+  readonly hiddenCount: number;
+  readonly iconOnlyCount: number;
+  readonly pickerFit: ModelChipFit | null;
+};
+
+function restingControlsSteps(
+  input: RestingComposerControlsMeasurement,
+): readonly RestingControlsStep[] {
+  const blockCount = input.blockWidths.length;
+  const iconSteps = input.iconOnlyBlockWidths ? blockCount : 0;
+  const chip = input.pickerFitWidths !== undefined;
+  const steps: RestingControlsStep[] = [];
+  for (let iconOnlyCount = 0; iconOnlyCount <= iconSteps; iconOnlyCount += 1) {
+    steps.push({ hiddenCount: 0, iconOnlyCount, pickerFit: chip ? "full" : null });
+  }
+  if (chip) steps.push({ hiddenCount: 0, iconOnlyCount: iconSteps, pickerFit: "model" });
+  for (let hiddenCount = 1; hiddenCount <= blockCount; hiddenCount += 1) {
+    steps.push({ hiddenCount, iconOnlyCount: iconSteps, pickerFit: chip ? "model" : null });
+  }
+  if (chip) {
+    for (const pickerFit of ["short", "name", "icon"] as const) {
+      steps.push({ hiddenCount: blockCount, iconOnlyCount: iconSteps, pickerFit });
+    }
+  }
+  return steps;
+}
 
 export function resolveRestingComposerControlsLayout(
   input: RestingComposerControlsMeasurement & {
     hostWidth: number;
-    previous?: { hiddenCount: number; iconOnlyCount?: number; visible: boolean };
+    previous?: {
+      hiddenCount: number;
+      iconOnlyCount?: number;
+      visible: boolean;
+      pickerFit?: ModelChipFit;
+    };
   },
-): { hiddenCount: number; iconOnlyCount?: number; visible: boolean } {
+): { hiddenCount: number; iconOnlyCount?: number; visible: boolean; pickerFit?: ModelChipFit } {
   const { blockWidths, hostWidth, previous } = input;
+  const steps = restingControlsSteps(input);
   const iconSteps = input.iconOnlyBlockWidths ? blockWidths.length : 0;
+  const previousExact = previous
+    ? steps.findIndex(
+        (candidate) =>
+          candidate.hiddenCount === previous.hiddenCount &&
+          candidate.iconOnlyCount === Math.min(previous.iconOnlyCount ?? 0, iconSteps) &&
+          (candidate.pickerFit === null || candidate.pickerFit === previous.pickerFit),
+      )
+    : -1;
   const previousStep = previous
-    ? previous.hiddenCount > 0
-      ? iconSteps + Math.min(previous.hiddenCount, blockWidths.length)
-      : Math.min(previous.iconOnlyCount ?? 0, iconSteps)
+    ? previousExact >= 0
+      ? previousExact
+      : steps.findIndex(
+          (candidate) =>
+            candidate.hiddenCount === Math.min(previous.hiddenCount, blockWidths.length) &&
+            (previous.hiddenCount > 0 ||
+              candidate.iconOnlyCount === Math.min(previous.iconOnlyCount ?? 0, iconSteps)),
+        )
     : 0;
-  let step = 0;
-  const widthAtStep = (candidate: number, fixedWidth = input.naturalFixedWidth) =>
-    restingComposerControlsWidth(
-      input,
-      Math.max(0, candidate - iconSteps),
-      fixedWidth,
-      Math.min(candidate, iconSteps),
-    );
+  const widthAtStep = (
+    candidate: RestingControlsStep,
+    fixedWidth = candidate.pickerFit
+      ? input.pickerFitWidths![candidate.pickerFit]
+      : input.naturalFixedWidth,
+  ) =>
+    restingComposerControlsWidth(input, candidate.hiddenCount, fixedWidth, candidate.iconOnlyCount);
   // Promotions need a pixel of slack: recovering a flexible picker's natural
   // width can jitter by a fraction of a pixel across renders. Demotions are
   // immediate so a threshold cannot clip or flip React between layouts.
+  let index = 0;
   while (
-    step < iconSteps + blockWidths.length &&
-    widthAtStep(step) > hostWidth - (step < previousStep ? RESTING_CONTROLS_SLACK_PX : 0)
+    index < steps.length - 1 &&
+    widthAtStep(steps[index]!) > hostWidth - (index < previousStep ? RESTING_CONTROLS_SLACK_PX : 0)
   ) {
-    step += 1;
+    index += 1;
   }
-  const hiddenCount = Math.max(0, step - iconSteps);
-  const iconOnlyCount = Math.min(step, iconSteps);
+  const step = steps[index]!;
   const minimumWidth = widthAtStep(step, input.minimumFixedWidth);
   const visible =
     previous && !previous.visible
       ? minimumWidth <= hostWidth - RESTING_CONTROLS_SLACK_PX
       : minimumWidth <= hostWidth;
-  return { hiddenCount, ...(input.iconOnlyBlockWidths ? { iconOnlyCount } : {}), visible };
+  return {
+    hiddenCount: step.hiddenCount,
+    ...(input.iconOnlyBlockWidths ? { iconOnlyCount: step.iconOnlyCount } : {}),
+    visible,
+    ...(step.pickerFit ? { pickerFit: step.pickerFit } : {}),
+  };
 }
 
 export function resolveScrollToEndClearance(input: {

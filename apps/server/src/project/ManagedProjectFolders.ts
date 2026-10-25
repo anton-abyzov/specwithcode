@@ -279,18 +279,35 @@ const make = Effect.gen(function* () {
     }
   });
 
+  // When Git cannot run (a fresh Linux desktop without it), a `.git` entry in
+  // the data dir or any parent still marks a checkout. A failed stat counts as one.
+  // The real path, so a data dir linked into a dotfiles checkout is seen inside it.
+  const insideCheckoutOnDisk = Effect.fnUntraced(function* (start: string) {
+    for (let dir = yield* fileSystem.realPath(start); ; dir = path.dirname(dir)) {
+      if (yield* fileSystem.exists(path.join(dir, ".git"))) return true;
+      if (path.dirname(dir) === dir) return false;
+    }
+  });
+
   // Inside a checkout (a dev worktree's .specwithcode, a dotfiles home) the folder would
   // inherit the repo's git status and checkpoints, so Scratch is offered only
-  // when the data dir is outside any work tree. Probed once; detection
-  // failures hide Scratch rather than failing callers. An interrupted probe
-  // invalidates the cache so the next caller probes again.
+  // when the data dir is outside any work tree. Probed once; when Git detection
+  // fails the disk walk decides, and its failures hide Scratch rather than
+  // failing callers. An interrupted probe invalidates the cache so the next
+  // caller probes again.
   const [probe, invalidate] = yield* Effect.cachedInvalidateWithTTL(
     gitWorkflow.isRepository(config.baseDir).pipe(
+      Effect.catchCause((cause) =>
+        Cause.hasInterrupts(cause)
+          ? Effect.interrupt
+          : insideCheckoutOnDisk(config.baseDir).pipe(
+              Effect.catchCause((walkCause) =>
+                Cause.hasInterrupts(walkCause) ? Effect.interrupt : Effect.succeed(true),
+              ),
+            ),
+      ),
       Effect.map((isRepository) =>
         isRepository ? Option.none<string>() : Option.some(path.resolve(config.baseDir, "scratch")),
-      ),
-      Effect.catchCause((cause) =>
-        Cause.hasInterrupts(cause) ? Effect.interrupt : Effect.succeed(Option.none<string>()),
       ),
     ),
     Duration.infinity,

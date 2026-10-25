@@ -1,3 +1,4 @@
+import { assertPersonalChatBoundary } from "../../personalChatBoundary.ts";
 import {
   MessageId,
   ThreadId,
@@ -299,6 +300,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
           });
         }
         const projectId = scratchProjectId ?? (yield* resolveProjectId(context, input.projectId));
+        yield* assertPersonalChatBoundary(caller?.projectId, projectId);
         const readProject = Project.ProjectService.pipe(
           Effect.flatMap((projects) => projects.getById(projectId)),
           Effect.mapError(unavailable),

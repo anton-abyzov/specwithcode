@@ -49,6 +49,7 @@ export const ThreadErrorBanner = memo(function ThreadErrorBanner({
   onDismiss,
   onContinue,
   continueBusy = false,
+  onSwitchModel,
   errorClass,
   chatGptUsageLimit = false,
   contextLimitRecovery,
@@ -62,6 +63,8 @@ export const ThreadErrorBanner = memo(function ThreadErrorBanner({
    */
   onContinue?: (() => void) | undefined;
   continueBusy?: boolean;
+  /** Opens the composer's model picker so the next message runs on another model. */
+  onSwitchModel?: (() => void) | undefined;
   chatGptUsageLimit?: boolean;
   contextLimitRecovery?: ContextLimitRecoveryActions | undefined;
 }) {
@@ -75,6 +78,9 @@ export const ThreadErrorBanner = memo(function ThreadErrorBanner({
   // Limits and full contexts have their own recovery; Continue would fail again.
   const showContinue =
     onContinue !== undefined && !chatGptUsageLimit && errorClass !== "usage_limit" && !contextLimit;
+  // Limits have their own way home; every other failure can move to another model.
+  const showSwitchModel =
+    onSwitchModel !== undefined && !chatGptUsageLimit && errorClass !== "usage_limit";
   return (
     <div className="pointer-events-auto mx-auto w-fit max-w-[min(48rem,calc(100%-2rem))] pt-3">
       <Alert variant={variant} surface="lane" controlAlignment="first-line" data-variant={variant}>
@@ -114,12 +120,17 @@ export const ThreadErrorBanner = memo(function ThreadErrorBanner({
           )}
           {contextLimit ? <ContextLimitRecovery recovery={contextLimitRecovery} /> : null}
         </AlertDescription>
-        {(chatGptUsageLimit || showContinue || onDismiss) && (
+        {(chatGptUsageLimit || showContinue || showSwitchModel || onDismiss) && (
           <AlertAction>
             {chatGptUsageLimit ? <ChatGptUsageButton variant="default" size="sm" /> : null}
             {showContinue ? (
               <Button variant="outline" size="xs" disabled={continueBusy} onClick={onContinue}>
                 Continue
+              </Button>
+            ) : null}
+            {showSwitchModel ? (
+              <Button variant="outline" size="xs" onClick={onSwitchModel}>
+                Switch model
               </Button>
             ) : null}
             {onDismiss ? (

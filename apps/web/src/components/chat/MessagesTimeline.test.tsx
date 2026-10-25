@@ -2329,7 +2329,15 @@ describe("MessagesTimeline", () => {
 
   describe("failed turns", () => {
     const failedRunId = RunId.make("run-failed");
-    const failureEntries = (createdAt: string, message: string) => {
+    const failureEntries = (
+      createdAt: string,
+      message: string,
+      failure: {
+        readonly class: string;
+        readonly code: string;
+        readonly retryable: boolean | null;
+      } = { class: "validation_error", code: "workspace_preparation_failed", retryable: false },
+    ) => {
       const item = {
         id: "workspace-failure",
         threadId: "thread-1",
@@ -2346,12 +2354,7 @@ describe("MessagesTimeline", () => {
         completedAt: {},
         updatedAt: {},
         type: "error",
-        failure: {
-          class: "validation_error",
-          message,
-          code: "workspace_preparation_failed",
-          retryable: false,
-        },
+        failure: { ...failure, message },
       } as const;
       return [
         {
@@ -2423,17 +2426,134 @@ describe("MessagesTimeline", () => {
       expect(markup).not.toContain("Retry");
     });
 
-    it("shows a days-old failure as quiet history", () => {
+    // October 24, 2026: a Codex relogin failed the latest run, and five hours
+    // later the row was a quiet "earlier turn" with no way to continue.
+    const codexAuthChanged =
+      "Your access token could not be refreshed because you have since logged out or signed in to another account. Please sign in again.";
+    const codexAuthFailure = { class: "provider_error", code: "unauthorized", retryable: null };
+    const fiveHoursAgo = () => new Date(Date.now() - 5 * 60 * 60_000).toISOString();
+    const recovery = (overrides: Record<string, unknown> = {}) => ({
+      failureItemId: "workspace-failure",
+      continueRunId: failedRunId,
+      onContinue: () => {},
+      onSwitchModel: () => {},
+      ...overrides,
+    });
+
+    it("keeps the latest run's old failure current with Continue and Switch model", () => {
+      activityTestState.expanded = false;
+      const createdAt = fiveHoursAgo();
+      const markup = renderToStaticMarkup(
+        <MessagesTimeline
+          {...buildProps()}
+          latestRun={failedRun(createdAt)}
+          failureRecovery={recovery()}
+          timelineEntries={failureEntries(createdAt, codexAuthChanged, codexAuthFailure)}
+        />,
+      );
+      expect(markup).not.toContain('data-v2-error-history="true"');
+      expect(markup).not.toContain("earlier turn");
+      expect(markup).toContain("signed in to another account");
+      expect(markup).toContain("data-failure-recovery");
+      expect(markup).toContain(">Continue<");
+      expect(markup).toContain("Switch model");
+    });
+
+    it("offers Switch model without Continue when the run cannot continue", () => {
+      activityTestState.expanded = false;
+      const createdAt = fiveHoursAgo();
+      const markup = renderToStaticMarkup(
+        <MessagesTimeline
+          {...buildProps()}
+          latestRun={failedRun(createdAt)}
+          failureRecovery={recovery({ continueRunId: null })}
+          timelineEntries={failureEntries(createdAt, codexAuthChanged, codexAuthFailure)}
+        />,
+      );
+      expect(markup).not.toContain(">Continue<");
+      expect(markup).toContain("Switch model");
+    });
+
+    it("shows a superseded failure as quiet history without recovery", () => {
       activityTestState.expanded = false;
       const markup = renderToStaticMarkup(
         <MessagesTimeline
           {...buildProps()}
-          latestRun={failedRun(MESSAGE_CREATED_AT)}
+          latestRun={{ ...failedRun(MESSAGE_CREATED_AT), runId: RunId.make("run-newer") }}
+          failureRecovery={recovery()}
           timelineEntries={failureEntries(MESSAGE_CREATED_AT, "Provider turn failed.")}
         />,
       );
       expect(markup).toContain('data-v2-error-history="true"');
       expect(markup).not.toContain("Provider turn failed.");
+      expect(markup).not.toContain("data-failure-recovery");
+    });
+
+    it("offers recovery only on the run's root failure", () => {
+      activityTestState.expanded = false;
+      const createdAt = fiveHoursAgo();
+      const markup = renderToStaticMarkup(
+        <MessagesTimeline
+          {...buildProps()}
+          latestRun={failedRun(createdAt)}
+          failureRecovery={recovery({ failureItemId: "another-root-failure" })}
+          timelineEntries={failureEntries(createdAt, codexAuthChanged, codexAuthFailure)}
+        />,
+      );
+      expect(markup).toContain("signed in to another account");
+      expect(markup).not.toContain("data-failure-recovery");
+    });
+
+    it("ages out a failed item of a run that went on", () => {
+      activityTestState.expanded = false;
+      const createdAt = fiveHoursAgo();
+      const markup = renderToStaticMarkup(
+        <MessagesTimeline
+          {...buildProps()}
+          latestRun={{ ...failedRun(createdAt), status: "completed" as const }}
+          failureRecovery={recovery()}
+          timelineEntries={failureEntries(createdAt, codexAuthChanged, codexAuthFailure)}
+        />,
+      );
+      expect(markup).toContain('data-v2-error-history="true"');
+      expect(markup).not.toContain("data-failure-recovery");
+    });
+
+    it("keeps a worktree failure on Retry without Switch model", () => {
+      activityTestState.expanded = false;
+      const createdAt = new Date().toISOString();
+      const markup = renderToStaticMarkup(
+        <MessagesTimeline
+          {...buildProps()}
+          latestRun={failedRun(createdAt)}
+          retryableWorkspacePreparationRunIds={new Set([failedRunId])}
+          onRetryWorkspacePreparation={() => {}}
+          failureRecovery={recovery()}
+          timelineEntries={failureEntries(createdAt, "git worktree add failed: invalid reference")}
+        />,
+      );
+      expect(markup).toContain("Retry");
+      expect(markup).not.toContain("Switch model");
+      expect(markup).not.toContain(">Continue<");
+    });
+
+    it("offers Switch model but not Continue for a full context", () => {
+      activityTestState.expanded = false;
+      const createdAt = new Date().toISOString();
+      const markup = renderToStaticMarkup(
+        <MessagesTimeline
+          {...buildProps()}
+          latestRun={failedRun(createdAt)}
+          failureRecovery={recovery()}
+          timelineEntries={failureEntries(
+            createdAt,
+            "prompt is too long: 210000 tokens > 200000 maximum",
+            codexAuthFailure,
+          )}
+        />,
+      );
+      expect(markup).toContain("Switch model");
+      expect(markup).not.toContain(">Continue<");
     });
 
     it("explains a legacy generic failure by its class", () => {

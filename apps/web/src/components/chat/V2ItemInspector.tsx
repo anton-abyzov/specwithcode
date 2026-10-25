@@ -18,6 +18,11 @@ import { memo, Suspense, use, useMemo } from "react";
 
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { useTheme } from "../../hooks/useTheme";
+import {
+  rawToolOutputText,
+  toolOutputContext,
+  type OutputLanguageContext,
+} from "../../lib/outputLanguage";
 import { cn } from "../../lib/utils";
 import { resolveDiffThemeName } from "../../lib/diffRendering";
 import { getSyntaxHighlighterPromise } from "../../lib/syntaxHighlighting";
@@ -139,7 +144,8 @@ function useFetchedTurnItem(
   return {
     item,
     output: {
-      output: turnItemOutputText(item),
+      output: rawToolOutputText(item) ?? turnItemOutputText(item),
+      context: toolOutputContext(item),
       images: turnItemOutputImages(item),
       environmentId,
       pending: item === wireItem && detail.isPending,
@@ -155,6 +161,7 @@ function useFetchedTurnItem(
 }
 
 interface ToolOutputState {
+  readonly context?: OutputLanguageContext;
   readonly output: string | null;
   readonly images: ReturnType<typeof turnItemOutputImages>;
   readonly environmentId: EnvironmentId;
@@ -176,7 +183,7 @@ function ToolOutput(props: ToolOutputState) {
     />
   ));
   const text = props.output ? (
-    <ToolCodePanel label="Output" text={props.output} />
+    <ToolCodePanel label="Output" text={props.output} context={props.context} />
   ) : props.pending ? (
     <div className="text-muted-foreground italic">Loading output…</div>
   ) : props.error ? (

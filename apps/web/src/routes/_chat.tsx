@@ -38,7 +38,7 @@ function ChatRouteGlobalShortcuts() {
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
   const legacySidebarEnabled = useLegacySidebarEnabled();
   const primaryEnvironmentId = usePrimaryEnvironmentId();
-  const { scratchEnvironmentId, startScratchThread } = useScratchProject();
+  const { scratchEnvironmentId, startScratchThread, reportNoChatMachine } = useScratchProject();
   const terminalOpen = useTerminalUiStateStore((state) =>
     routeThreadRef
       ? selectThreadTerminalUiState(state.terminalUiStateByThreadKey, routeThreadRef).terminalOpen
@@ -115,7 +115,8 @@ function ChatRouteGlobalShortcuts() {
           const environmentId = scratchEnvironmentId(
             activeThread?.environmentId ?? activeDraftThread?.environmentId ?? primaryEnvironmentId,
           );
-          if (environmentId !== null) void startScratchThread(environmentId);
+          if (environmentId === null) reportNoChatMachine();
+          else void startScratchThread(environmentId);
           return;
         }
         void startNewThreadFromContext({
@@ -190,6 +191,7 @@ function ChatRouteGlobalShortcuts() {
     scratchEnvironmentId,
     selectedThreadKeysSize,
     startScratchThread,
+    reportNoChatMachine,
     legacySidebarEnabled,
     terminalOpen,
   ]);

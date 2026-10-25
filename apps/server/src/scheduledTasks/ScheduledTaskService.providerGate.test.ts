@@ -9,6 +9,8 @@ import * as Effect from "effect/Effect";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
 import * as Sqlite from "../persistence/Sqlite.ts";
+import { followOccurrence } from "./ScheduledTaskOccurrence.ts";
+import { fallbackOrigin, readRouteState } from "./ScheduledTaskProviderRoute.ts";
 import {
   START,
   THREAD,
@@ -1025,5 +1027,91 @@ it.effect("moves only when a provider_open_failed repeats, never on one transien
         assert.deepEqual(state.sent[1], { threadId: THREAD, instanceId: "codex" });
       }),
     );
+  }).pipe(Effect.provide(Sqlite.layerMemory)),
+);
+
+it.effect("finds the way back through a fallback continuation a steer restarted", () =>
+  Effect.gen(function* () {
+    yield* insertRun({
+      runId: "run-limit",
+      ordinal: 1,
+      instanceId: "claudeAgent",
+      model: "claude-opus-5-5",
+      status: "failed",
+      completedAt: "2026-10-21T06:44:16.000Z",
+      userMessageId: "user-message-1",
+      failure: { class: "usage_limit", message: "Claude usage limit reached.", retryable: false },
+    });
+    // The steer restarted the continuation under its own message.
+    yield* insertRun({
+      runId: "run-fallback",
+      ordinal: 2,
+      instanceId: "codex",
+      model: "gpt-6",
+      status: "completed",
+      completedAt: "2026-10-21T06:50:00.000Z",
+      userMessageId: "message:web:steer",
+      startMessageId: `limit-fallback:${THREAD}:run-limit`,
+    });
+    const state = yield* readRouteState({ id: "task" } as never, THREAD, START);
+    assert.equal(state.runs[0]?.userMessageId, `limit-fallback:${THREAD}:run-limit`);
+    assert.equal(fallbackOrigin(THREAD, "codex", state.runs)?.selection.instanceId, "claudeAgent");
+  }).pipe(Effect.provide(Sqlite.layerMemory)),
+);
+
+it.effect("follows a routine's run into a fallback continuation a steer restarted", () =>
+  Effect.gen(function* () {
+    const occurrence = {
+      kind: "scheduled-occurrence",
+      state: "dispatched",
+      fireKey: "fire-1",
+      threadId: THREAD,
+      messageId: "scheduled:fire-1",
+      runId: null,
+      dispatchedAt: "2026-10-21T06:44:00.000Z",
+      reason: null,
+    };
+    const nowMs = Date.parse("2026-10-21T06:55:00.000Z");
+    yield* insertRun({
+      runId: "run-limit",
+      ordinal: 1,
+      instanceId: "claudeAgent",
+      status: "failed",
+      completedAt: "2026-10-21T06:44:16.000Z",
+      userMessageId: "scheduled:fire-1",
+      startedAt: "2026-10-21T06:44:01.000Z",
+      failure: { class: "usage_limit", message: "Claude usage limit reached.", retryable: false },
+    });
+    yield* insertRun({
+      runId: "run-fallback",
+      ordinal: 2,
+      instanceId: "codex",
+      model: "gpt-6",
+      status: "completed",
+      completedAt: "2026-10-21T06:50:00.000Z",
+      startedAt: "2026-10-21T06:45:00.000Z",
+      userMessageId: "message:web:steer",
+      startMessageId: `limit-fallback:${THREAD}:run-limit`,
+    });
+    const outcome = yield* followOccurrence(occurrence as never, nowMs);
+    assert.deepInclude(outcome, { type: "succeeded", runId: "run-fallback" });
+
+    // A steer into the routine's own run still finds it by the fire's message.
+    yield* insertRun({
+      runId: "run-own",
+      threadId: "thread:steered-own",
+      ordinal: 1,
+      instanceId: "claudeAgent",
+      status: "completed",
+      completedAt: "2026-10-21T06:50:00.000Z",
+      startedAt: "2026-10-21T06:45:00.000Z",
+      userMessageId: "message:web:steer-own",
+      startMessageId: "scheduled:fire-2",
+    });
+    const own = yield* followOccurrence(
+      { ...occurrence, threadId: "thread:steered-own", messageId: "scheduled:fire-2" } as never,
+      nowMs,
+    );
+    assert.deepInclude(own, { type: "succeeded", runId: "run-own" });
   }).pipe(Effect.provide(Sqlite.layerMemory)),
 );

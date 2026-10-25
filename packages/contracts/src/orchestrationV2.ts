@@ -640,6 +640,13 @@ export const OrchestrationV2Run = Schema.Struct({
   /** Links server-generated restart continuations to the interrupted run. */
   restartContinuationOfRunId: Schema.optional(RunId),
   /**
+   * The message that started the run, kept when a steer restarts it under the
+   * steering message (`userMessageId` then names that one). A limit-fallback
+   * continuation keeps its way home through this. Read it through
+   * orchestrationV2RunStartMessageId.
+   */
+  startMessageId: Schema.optional(MessageId),
+  /**
    * Set on wake runs (background notifications, delegated task results,
    * restart continuations): when the work they continue started. Read it
    * through orchestrationV2RunWorkStartedAt.
@@ -672,6 +679,27 @@ export function orchestrationV2RunWorkStartedAt(
   run: Pick<OrchestrationV2Run, "workStartedAt" | "startedAt" | "requestedAt">,
 ): OrchestrationV2Run["requestedAt"] {
   return run.workStartedAt ?? run.startedAt ?? run.requestedAt;
+}
+
+/**
+ * The start id a steer restart keeps: the run's own, while the steer stays on
+ * the run's instance. A steer that moves the run to another instance is the
+ * person's move, not the fallback's, so it starts its own chain.
+ */
+export function orchestrationV2SteeredStartMessageId(
+  run: Pick<OrchestrationV2Run, "startMessageId" | "userMessageId" | "providerInstanceId">,
+  nextInstanceId: OrchestrationV2Run["providerInstanceId"],
+): OrchestrationV2Run["userMessageId"] | undefined {
+  return nextInstanceId === run.providerInstanceId
+    ? orchestrationV2RunStartMessageId(run)
+    : undefined;
+}
+
+/** The message that started a run, even after a steer restarted it under another. */
+export function orchestrationV2RunStartMessageId(
+  run: Pick<OrchestrationV2Run, "startMessageId" | "userMessageId">,
+): OrchestrationV2Run["userMessageId"] {
+  return run.startMessageId ?? run.userMessageId;
 }
 
 export const OrchestrationV2RunAttempt = Schema.Struct({

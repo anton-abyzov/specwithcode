@@ -1407,6 +1407,22 @@ export function assertNoAcpClientFileOrTerminalRequests(transcript: ProviderRepl
   );
 }
 
+/**
+ * A steer restarts the run under the steering message; the run still names
+ * the message that started it, so a limit-fallback continuation keeps its
+ * way home.
+ */
+export function assertSteerKeepsStartMessage(projection: OrchestrationV2ThreadProjection) {
+  const message = (prompt: string) =>
+    projection.turnItems.find((item) => item.type === "user_message" && item.text.includes(prompt));
+  const initial = message(MESSAGE_STEERING_INITIAL_PROMPT);
+  const steer = message(MESSAGE_STEERING_STEER_PROMPT);
+  assert.isTrue(initial?.type === "user_message" && steer?.type === "user_message");
+  if (initial?.type !== "user_message" || steer?.type !== "user_message") return;
+  assert.equal(projection.runs[0]?.userMessageId, steer.messageId);
+  assert.equal(projection.runs[0]?.startMessageId, initial.messageId);
+}
+
 export function assertUserMessagesInclude(
   projection: OrchestrationV2ThreadProjection,
   expectedTexts: ReadonlyArray<string>,

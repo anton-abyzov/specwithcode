@@ -199,8 +199,9 @@ export function modelStateText(state: ModelState): ModelStateCopy {
  * The suffix. A fallback shows its glyph alone unless `fit` asks for words. For the
  * other kinds the host decides how much shows by width: `.sws-model-state-full` by
  * default, `.sws-model-state-short` on a narrower line (`data-fit="short"` or a
- * container rule), the glyph alone at the narrowest (`data-fit="glyph"`). The
- * sentence for screen readers is present at every width.
+ * container rule), the glyph alone at the narrowest (`data-fit="glyph"`). Inside a
+ * model chip (`chip`) the words are chip parts and the chip's fit decides instead
+ * (modelChipFit.ts). The sentence for screen readers is present at every width.
  */
 export function ModelStateTag(props: {
   state: ModelState;
@@ -209,6 +210,8 @@ export function ModelStateTag(props: {
   tierClassName?: string;
   /** Fix the width tier instead of leaving it to the host's container rules. */
   fit?: "full" | "short" | "glyph";
+  /** The words are parts of an enclosing model chip, which picks what shows. */
+  chip?: boolean;
 }) {
   const text = modelStateText(props.state);
   const kind = props.state.kind;
@@ -232,10 +235,18 @@ export function ModelStateTag(props: {
       )}
       {textual ? (
         <>
-          <span className="sws-model-state-full" aria-hidden>
+          <span
+            className="sws-model-state-full"
+            aria-hidden
+            {...(props.chip ? { "data-model-chip-part": "state-full" } : {})}
+          >
             {text.label}
           </span>
-          <span className="sws-model-state-short" aria-hidden>
+          <span
+            className="sws-model-state-short"
+            aria-hidden
+            {...(props.chip ? { "data-model-chip-part": "state-short" } : {})}
+          >
             {text.short}
           </span>
         </>

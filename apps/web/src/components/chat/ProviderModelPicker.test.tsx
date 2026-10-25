@@ -11,6 +11,7 @@ import type { ModelPickerContent } from "./ModelPickerContent";
 
 import { deriveProviderInstanceEntries } from "../../providerInstances";
 import { ProviderModelPicker } from "./ProviderModelPicker";
+import { MODEL_CHIP_FITS, ModelChipFitContext } from "./modelChipFit";
 import type { ModelEsque } from "./providerIconUtils";
 
 const contentState = vi.hoisted(() => ({
@@ -282,4 +283,101 @@ it("keeps fallback state inside the running model trigger and names the original
   );
   expect(markup).toContain("fallback for Claude Code · Opus 5.5 (usage limit, resets 3:40 PM)");
   expect(contentState.props?.stateHeader).toBe(header);
+});
+
+describe("model chip", () => {
+  const instanceId = ProviderInstanceId.make("codex");
+  const chip = (extra: Partial<ComponentProps<typeof ProviderModelPicker>> = {}) => (
+    <ProviderModelPicker
+      activeInstanceId={instanceId}
+      model="gpt-6.1-sol"
+      lockedProvider={null}
+      instanceEntries={[providerEntry("codex", "codex")]}
+      modelOptionsByInstance={
+        new Map([[instanceId, [{ slug: "gpt-6.1-sol", name: "GPT-6.1-Sol" }]]])
+      }
+      onInstanceModelChange={() => {}}
+      triggerParts={{ provider: "Codex", model: "GPT-6.1-Sol" }}
+      {...extra}
+    />
+  );
+  const button = (markup: string) => markup.match(/<button[^>]*>/)![0];
+
+  it("keeps the provider, the model and the state in the accessible name at every fit", () => {
+    for (const fit of MODEL_CHIP_FITS) {
+      const markup = renderToStaticMarkup(
+        chip({
+          fit,
+          triggerState: { kind: "next", pick: "Claude Code · Opus 5.5", pickModel: "Opus 5.5" },
+        }),
+      );
+      expect(button(markup)).toContain(`data-model-fit="${fit}"`);
+      expect(button(markup)).toContain(
+        'aria-label="Model: Codex · GPT-6.1-Sol, next message uses Claude Code · Opus 5.5. Change model"',
+      );
+      // Every part stays mounted, so the next measurement can read it.
+      expect(markup).toMatch(/data-model-chip-part="provider"[^>]*>Codex/);
+      expect(markup).toMatch(/data-model-chip-part="model"[^>]*>GPT-6.1-Sol/);
+      expect(markup).toMatch(/data-model-chip-part="state-full"[^>]*>next: Opus 5.5/);
+      expect(markup).toMatch(/data-model-chip-part="state-short"[^>]*>next</);
+    }
+  });
+
+  it("names the provider beside the model when there is no state", () => {
+    const markup = renderToStaticMarkup(chip({ fit: "icon" }));
+    expect(button(markup)).toContain('aria-label="Model: Codex · GPT-6.1-Sol. Change model"');
+  });
+
+  it("follows the fit its host passes down", () => {
+    const markup = renderToStaticMarkup(
+      <ModelChipFitContext value="name">{chip()}</ModelChipFitContext>,
+    );
+    expect(button(markup)).toContain('data-model-fit="name"');
+    expect(button(markup)).toContain("data-model-chip");
+  });
+
+  it("opens its tooltip from the whole control, so keyboard focus shows it", () => {
+    const markup = renderToStaticMarkup(chip({ fit: "full" }));
+    expect(button(markup)).toContain('data-slot="tooltip-trigger"');
+    expect(button(markup)).toContain("data-chat-provider-model-picker");
+  });
+
+  it("gives way only at `name`, where a long model name ends in an ellipsis", () => {
+    for (const fit of MODEL_CHIP_FITS) {
+      const classes = button(renderToStaticMarkup(chip({ fit }))).match(/class="([^"]*)"/)![1]!;
+      const tokens = classes.split(" ");
+      if (fit === "name") {
+        expect(tokens).toEqual(expect.arrayContaining(["w-auto", "shrink"]));
+        expect(tokens).not.toContain("shrink-0");
+      } else {
+        expect(tokens).toEqual(expect.arrayContaining(["w-max", "shrink-0"]));
+      }
+    }
+  });
+
+  it("keeps the width tiers of a plain picker's state, as while the catalog loads", () => {
+    const tiers = "@max-[639px]/composer-surface:[&amp;_.sws-model-state-full]:hidden";
+    const state = { kind: "next", pick: "Claude Code · Opus 5.5" } as const;
+    const plain = renderToStaticMarkup(
+      <ProviderModelPicker
+        activeInstanceId={instanceId}
+        model="gpt-6.1-sol"
+        lockedProvider={null}
+        instanceEntries={[providerEntry("codex", "codex")]}
+        modelOptionsByInstance={
+          new Map([[instanceId, [{ slug: "gpt-6.1-sol", name: "GPT-6.1-Sol" }]]])
+        }
+        onInstanceModelChange={() => {}}
+        triggerState={state}
+      />,
+    );
+    expect(plain).toContain(tiers);
+    expect(renderToStaticMarkup(chip({ fit: "full", triggerState: state }))).not.toContain(tiers);
+  });
+
+  it("leaves a picker without provider and model parts as it was", () => {
+    const markup = renderToStaticMarkup(chip({ triggerLabel: "Mixed values" }));
+    expect(button(markup)).not.toContain("data-model-fit");
+    expect(markup).not.toContain("data-model-chip-part");
+  });
 });

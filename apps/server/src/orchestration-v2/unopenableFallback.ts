@@ -6,6 +6,7 @@ import {
   type OrchestrationV2ConversationMessage,
   type OrchestrationV2ProviderFailure,
   type OrchestrationV2Run,
+  orchestrationV2RunStartMessageId,
   type OrchestrationV2ServerCommand,
   type OrchestrationV2ThreadShell,
   type OrchestrationV2TurnItem,
@@ -153,7 +154,7 @@ export function latestOpenFailure(
     instanceId: run.providerInstanceId,
     selection: run.modelSelection,
     failedAtMs: epochMs(run.completedAt ?? thread.latestRunCompletedAt),
-    userMessageId: run.userMessageId,
+    userMessageId: orchestrationV2RunStartMessageId(run),
     failure,
   };
 }
@@ -188,9 +189,9 @@ function chainRun(
   const prefix = `${PROVIDER_RETRY_MESSAGE_PREFIX}${threadId}:`;
   const seen = new Set<string>();
   let current = run;
-  while (current.userMessageId.startsWith(prefix) && !seen.has(current.id)) {
+  while (orchestrationV2RunStartMessageId(current).startsWith(prefix) && !seen.has(current.id)) {
     seen.add(current.id);
-    const retriedId = current.userMessageId.slice(prefix.length);
+    const retriedId = orchestrationV2RunStartMessageId(current).slice(prefix.length);
     const retried = runs.find((candidate) => candidate.id === retriedId);
     if (retried === undefined) break;
     current = retried;
@@ -226,7 +227,7 @@ export function unopenableStop(
   )
     return null;
   const chain = chainRun(thread.id, run, runs);
-  const continued = fallbackMove(thread.id, chain.userMessageId);
+  const continued = fallbackMove(thread.id, orchestrationV2RunStartMessageId(chain));
   const origin =
     continued === null ? undefined : runs.find((candidate) => candidate.id === continued.runId);
   if (origin !== undefined && continued !== null)
@@ -259,7 +260,8 @@ export function limitChainOnInstance(
   );
   if (found === null) return null;
   const mover = runs.find((candidate) => candidate.id === found.continuedByRunId);
-  const move = mover === undefined ? null : fallbackMove(threadId, mover.userMessageId);
+  const move =
+    mover === undefined ? null : fallbackMove(threadId, orchestrationV2RunStartMessageId(mover));
   if (move === null) return null;
   return { originRunId: found.stoppedRunId, nextHop: move.hop + 1 };
 }
@@ -317,6 +319,7 @@ export function unopenableFallbackCommand(
     providers,
     currentInstanceId: thread.providerInstanceId,
     currentModel: thread.modelSelection.model,
+    currentOptions: thread.modelSelection.options,
     rule,
     nowMs,
     belowPercent: rule.providerLimitSwitchAtPercent ?? 100,

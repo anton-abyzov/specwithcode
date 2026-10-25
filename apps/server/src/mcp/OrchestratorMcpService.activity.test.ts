@@ -2,6 +2,7 @@ import {
   EnvironmentId,
   MessageId,
   NodeId,
+  type OrchestratorMcpFailure,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2ThreadShell,
   ProjectId,
@@ -360,6 +361,9 @@ it("readThread and sendToThread reach threads in other projects", async () => {
   ];
   const foreignProjectId = ProjectId.make("project-mcp-orchestrator-foreign");
   let foreignPaused = false;
+  let sourcePersonal = false;
+  let targetPersonal = false;
+  let sends = 0;
   const foreignThreadId = ThreadId.make("thread-mcp-orchestrator-foreign");
   const parentProjection = {
     thread: baseThread({
@@ -445,22 +449,30 @@ it("readThread and sendToThread reach threads in other projects", async () => {
                     threadId: input.threadId,
                   }),
                 ),
-          sendToThread: () =>
-            Effect.succeed({
+          sendToThread: () => {
+            sends += 1;
+            return Effect.succeed({
               run: { id: "run-foreign", status: "queued" },
               projection: { runs: [] },
               delivery: "started",
-            } as unknown as ThreadManagementService.ThreadManagementSendResult),
+            } as unknown as ThreadManagementService.ThreadManagementSendResult);
+          },
         } satisfies Partial<ThreadManagementService.ThreadManagementService["Service"]>),
         Layer.mock(ProviderRegistry.ProviderRegistry)({
           getProviders: Effect.succeed([]),
         } satisfies Partial<ProviderRegistry.ProviderRegistry["Service"]>),
         Layer.mock(ProjectService.ProjectService)({
-          getById: () =>
+          getById: (id) =>
             Effect.succeed(
-              foreignPaused
-                ? Option.some({ workspaceSettings: { paused: true, archived: false } } as never)
-                : Option.none(),
+              Option.some({
+                workspaceSettings: {
+                  paused: id === foreignProjectId && foreignPaused,
+                  archived: false,
+                  kind: (id === foreignProjectId ? targetPersonal : sourcePersonal)
+                    ? "personal"
+                    : "code",
+                },
+              } as never),
             ),
         }),
         Layer.mock(SecretRequests.SecretRequests)({}),
@@ -471,6 +483,8 @@ it("readThread and sendToThread reach threads in other projects", async () => {
                 {
                   id: "task-foreign",
                   projectId: foreignProjectId,
+                  threadId: null,
+                  webhook: { url: "https://example.invalid/fixture-trigger" },
                   runtimeMode: "approval-required",
                   interactionMode: "default",
                 } as never,
@@ -497,6 +511,73 @@ it("readThread and sendToThread reach threads in other projects", async () => {
       message: "hi",
     });
     expect(sent.threadId).toBe(foreignThreadId);
+
+    // Neither a project worker nor coordinator can push unsolicited text into Aide.
+    targetPersonal = true;
+    for (const input of [
+      { message: "A project worker finished." },
+      { forwardMessageId: MessageId.make("old-user-request") },
+    ]) {
+      const refused = yield* service
+        .sendToThread(makeScope(), { threadId: foreignThreadId, ...input })
+        .pipe(Effect.flip);
+      expect(refused.code).toBe("capability_denied");
+      expect(refused.message).toContain("cannot send messages into the personal assistant");
+    }
+    expect(sends).toBe(1);
+    // On-demand report reads remain available; no send or new run is created.
+    yield* service.readThread(makeScope(), { threadId: foreignThreadId });
+    targetPersonal = false;
+    sourcePersonal = true;
+    const bypass = yield* service
+      .sendToThread(makeScope(), { threadId: foreignThreadId, message: "Do work" })
+      .pipe(Effect.flip);
+    expect(bypass.code).toBe("capability_denied");
+    expect(bypass.message).toContain("studio_project_route");
+    yield* service.readThread(makeScope(), { threadId: foreignThreadId });
+    expect(sends).toBe(1);
+    sourcePersonal = false;
+
+    for (const direction of ["incoming", "outgoing"]) {
+      targetPersonal = direction === "incoming";
+      sourcePersonal = direction === "outgoing";
+      const routines = yield* service.listScheduledTasks(makeScope(), {
+        projectId: foreignProjectId,
+      });
+      expect(routines.tasks).toHaveLength(1);
+      expect(routines.tasks[0]?.webhookUrl).toBeUndefined();
+      const actions: ReadonlyArray<Effect.Effect<void, OrchestratorMcpFailure>> = [
+        service.stopAllThreads(makeScope(), { projectId: foreignProjectId }).pipe(Effect.asVoid),
+        service
+          .continueAllThreads(makeScope(), { projectId: foreignProjectId })
+          .pipe(Effect.asVoid),
+        service
+          .scheduleTask(makeScope(), {
+            projectId: foreignProjectId,
+            prompt: "Push a project report",
+            schedule: { type: "interval", everyMs: 3_600_000 },
+            ownThread: true,
+          })
+          .pipe(Effect.asVoid),
+        service
+          .updateScheduledTask(makeScope(), {
+            scheduledTaskId: ScheduledTaskId.make("task-foreign"),
+            prompt: "Replace a personal routine",
+          })
+          .pipe(Effect.asVoid),
+        service
+          .deleteScheduledTask(makeScope(), {
+            scheduledTaskId: ScheduledTaskId.make("task-foreign"),
+          })
+          .pipe(Effect.asVoid),
+      ];
+      for (const action of actions) {
+        const refused = yield* action.pipe(Effect.flip);
+        expect(refused.code).toBe("capability_denied");
+      }
+    }
+    sourcePersonal = false;
+    targetPersonal = false;
 
     // A paused project's threads take no new agent-sent work until the user resumes it.
     foreignPaused = true;

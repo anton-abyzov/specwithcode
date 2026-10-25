@@ -4,15 +4,24 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import { afterEach, describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
+import { vi } from "vite-plus/test";
 import { ProjectId } from "@specweave-studio/contracts";
 import { ACTIVE_COPY_WARNING, makeFolderCopyManifest } from "../folderCopyPreparation.ts";
 import { DEFAULT_SELECTION } from "./classify.ts";
+import * as Durable from "./durable.ts";
 import { runGit } from "./git.ts";
 import { readManifestFile } from "./manifest.ts";
 import { SourceTransfers } from "./sourceService.ts";
 
+// Passes through; the close test holds one record write open to make its race deterministic.
+vi.mock("./durable.ts", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("./durable.ts")>();
+  return { ...actual, writeJson: vi.fn(actual.writeJson) };
+});
+
 const folders: Array<string> = [];
 afterEach(() => {
+  vi.mocked(Durable.writeJson).mockReset();
   for (const folder of folders.splice(0)) NodeFS.rmSync(folder, { recursive: true, force: true });
 });
 const projectId = ProjectId.make("source-project");
@@ -295,4 +304,51 @@ describe("terminal source snapshot cleanup", () => {
       ).toBe(false);
     },
   );
+});
+
+describe("closing the source service", () => {
+  it("waits for the scanned record's durable write so its state folder can be removed", async () => {
+    const base = NodeFS.realpathSync(
+      NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "swc-copy-close-")),
+    );
+    folders.push(base);
+    const folder = NodePath.join(base, "project");
+    const state = NodePath.join(base, "state");
+    NodeFS.mkdirSync(folder);
+    NodeFS.writeFileSync(NodePath.join(folder, "notes.txt"), "notes\n");
+    const actual = await vi.importActual<typeof import("./durable.ts")>("./durable.ts");
+    let openWrite!: () => void;
+    const writeHeld = new Promise<void>((resolve) => {
+      openWrite = resolve;
+    });
+    // Hold the durable "scanned" write, as a slow Windows fsync and rename would.
+    vi.mocked(Durable.writeJson).mockImplementation(async (file, value) => {
+      if ((value as { state?: string }).state === "scanned") await writeHeld;
+      return actual.writeJson(file, value);
+    });
+    const sources = new SourceTransfers(state);
+    await sources.offer({
+      operationId,
+      projectId,
+      folder,
+      mode: "copy-only",
+      destinationEnvironmentId: "destination",
+    });
+    // "scanned" is published in memory before operation.json is rewritten.
+    for (let attempt = 0; attempt < 400; attempt += 1) {
+      if ((await sources.read(operationId))?.state !== "scanning") break;
+      await new Promise((resolve) => setTimeout(resolve, 5));
+    }
+    expect((await sources.read(operationId))?.state).toBe("scanned");
+    setTimeout(openWrite, 50);
+    await sources.close();
+    const directory = NodePath.join(state, "folder-sources", operationId);
+    expect(NodeFS.readdirSync(directory).filter((name) => name.endsWith(".tmp"))).toEqual([]);
+    const persisted = JSON.parse(
+      NodeFS.readFileSync(NodePath.join(directory, "operation.json"), "utf8"),
+    );
+    expect(persisted.state).toBe("scanned");
+    NodeFS.rmSync(state, { recursive: true });
+    expect(NodeFS.existsSync(state)).toBe(false);
+  });
 });

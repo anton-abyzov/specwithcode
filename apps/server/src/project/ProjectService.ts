@@ -241,8 +241,19 @@ export class ProjectRequestDeniedError extends Schema.TaggedError<ProjectRequest
   }
 }
 
+/** A missing imported folder is an expected refusal, not an internal failure. */
+export function isMissingProjectFolder(cause: unknown): boolean {
+  return (
+    Schema.is(ProjectOperationError)(cause) &&
+    cause.operation === "normalize-workspace" &&
+    Schema.is(WorkspacePaths.WorkspaceRootNotExistsError)(cause.cause)
+  );
+}
+
 /** Return only reviewed messages; unexpected operational details stay private. */
 export function projectMutationErrorMessage(cause: unknown): string {
+  if (isMissingProjectFolder(cause))
+    return "The project folder does not exist. Choose an existing folder or create it before importing.";
   return Schema.is(ProjectRequestDeniedError)(cause) ||
     Schema.is(ProjectNotEmptyError)(cause) ||
     Schema.is(ProjectFolderChangeError)(cause) ||

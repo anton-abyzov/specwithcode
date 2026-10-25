@@ -69,6 +69,25 @@ export function routeStateRefusal(
   return null;
 }
 
+/** The words alone, lowercased and space-separated, so punctuation and quote styles never matter. */
+function comparable(text: string): string {
+  return ` ${(text.toLowerCase().match(/[\p{L}\p{N}]+/gu) ?? []).join(" ")} `;
+}
+
+/**
+ * True when `quote` is words the user actually wrote in one of `texts`: the
+ * provenance of the quoted request. This does not classify intent: the assistant
+ * must still distinguish a request for action from discussion or a report.
+ */
+export function userAskedIn(quote: string, texts: ReadonlyArray<string>): boolean {
+  const wanted = comparable(quote);
+  if (wanted.trim() === "") return false;
+  return texts.some((text) => comparable(text).includes(wanted));
+}
+
+export const ROUTE_NOT_ASKED_MESSAGE =
+  "The personal assistant's chat stays separate from project chats. Route only when the user's own words ask to start, change, stop or steer work in that project, and pass those words, copied exactly, as userAsked. Answer anything else here. When the user asks how a project is doing, read it with studio_thread_list and studio_thread_read and report here, without posting into the project.";
+
 export function routeRefusalMessage(
   refusal: RouteRefusal,
   names: { readonly assistant: string; readonly target: string },

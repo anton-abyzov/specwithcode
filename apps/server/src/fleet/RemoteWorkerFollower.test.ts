@@ -2,6 +2,8 @@ import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "@effect/vitest";
 import { ThreadId } from "@specweave-studio/contracts";
 import * as Effect from "effect/Effect";
+import * as Exit from "effect/Exit";
+import * as Fiber from "effect/Fiber";
 
 import type { FakeToolHandler } from "./fakeStudioMcp.testkit.ts";
 import * as RemoteStudioMcpClient from "./RemoteStudioMcpClient.ts";
@@ -102,47 +104,71 @@ describe("RemoteWorkerFollower", () => {
   });
 
   it.live("settles a launch cut off mid-call instead of leaving it launching", () => {
+    // Latches, not timers: the launch reaches the other machine, is cut off
+    // here, and only then finishes over there, before the stale sweep reads
+    // the other machine's thread list.
     let launched = false;
+    let received: () => void = () => {};
+    const launchReceived = new Promise<void>((resolve) => {
+      received = resolve;
+    });
+    let finishLaunch: () => void = () => {};
+    const launchFinishes = new Promise<void>((resolve) => {
+      finishLaunch = resolve;
+    });
+    let listed: () => void = () => {};
+    const launchListed = new Promise<void>((resolve) => {
+      listed = resolve;
+    });
     const { world, layer } = setup(
       {
         studio_thread_launch: async () => {
-          await Effect.runPromise(Effect.sleep(300));
+          received();
+          await launchFinishes;
           launched = true; // The other machine created and started the thread anyway.
+          listed();
           return { result: launchAnswer };
         },
-        studio_thread_list: () => ({
-          result: {
-            projectId: "remote-project",
-            currentThreadId: null,
-            threads: launched
-              ? [
-                  {
-                    threadId: "b-thread-1",
-                    title: "Fix the flaky test",
-                    createdBy: "agent",
-                    creationSource: "mcp",
-                    status: "running",
-                    latestRunId: "b-run-1",
-                    createdAt: DateTime.formatIso(DateTime.nowUnsafe()),
-                  },
-                ]
-              : [],
-            nextCursor: null,
-            total: launched ? 1 : 0,
-          },
-        }),
+        studio_thread_list: async () => {
+          // Asked only once the call was cut off: the other machine finishes the launch first.
+          finishLaunch();
+          await launchListed;
+          return {
+            result: {
+              projectId: "remote-project",
+              currentThreadId: null,
+              threads: launched
+                ? [
+                    {
+                      threadId: "b-thread-1",
+                      title: "Fix the flaky test",
+                      createdBy: "agent",
+                      creationSource: "mcp",
+                      status: "running",
+                      latestRunId: "b-run-1",
+                      createdAt: DateTime.formatIso(DateTime.nowUnsafe()),
+                    },
+                  ]
+                : [],
+              nextCursor: null,
+              total: launched ? 1 : 0,
+            },
+          };
+        },
       },
-      // Settled once the other machine has had time to finish the launch.
-      { launchStaleMs: 600 },
+      // No periodic sweep: the reconcile that settles it is the one the cut-off starts.
+      { launchStaleMs: 50, authPollMs: 60_000 },
     );
     return Effect.gen(function* () {
       yield* allow();
       const workers = yield* RemoteWorkers.RemoteWorkers;
+      const launch = yield* Effect.forkChild(workers.launch(launchInput()));
+      yield* Effect.promise(() => launchReceived);
       // The coordinator's MCP client cancels the call (tool timeout, user Stop).
-      const outcome = yield* workers
-        .launch(launchInput())
-        .pipe(Effect.timeout("150 millis"), Effect.result);
-      expect(outcome._tag).toBe("Failure");
+      const [cutOff] = yield* rows;
+      expect(cutOff?.state).toBe("launching");
+      yield* Fiber.interrupt(launch);
+      expect(Exit.hasInterrupts(yield* Fiber.await(launch))).toBe(true);
       const [row] = yield* eventually(rows, (current) => current[0]?.state === "idle");
       expect(row?.remoteThreadId).toBe("b-thread-1");
       expect(world.wakes).toHaveLength(1);

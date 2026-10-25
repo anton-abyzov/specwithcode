@@ -197,7 +197,7 @@ export default function StudioSidebar() {
   const providerEntries = useProviderEntriesByEnvironment();
   const { isMobile, setOpenMobile } = useSidebar();
   const keybindings = useAtomValue(primaryServerKeybindingsAtom);
-  const { scratchEnvironmentId, startScratchThread } = useScratchProject();
+  const { scratchEnvironmentId, startScratchThread, reportNoChatMachine } = useScratchProject();
   const actions = useThreadActions();
   const now = nowFromMinute(useNowMinute());
   const onOverview = useLocation({ select: (location) => location.pathname === "/" });
@@ -510,7 +510,8 @@ export default function StudioSidebar() {
     const environmentId = scratchEnvironmentId(
       (currentEnvironment ?? primaryEnvironmentId) as EnvironmentId | null,
     );
-    if (environmentId !== null) void startScratchThread(environmentId);
+    if (environmentId === null) reportNoChatMachine();
+    else void startScratchThread(environmentId);
   };
   const openChat = (thread: EnvironmentThreadShell) => {
     closeMobile();
@@ -948,7 +949,19 @@ export default function StudioSidebar() {
             {chatPlanLoaders}
             <div className="sws-side-heading">
               <h2 id="sws-side-chats">Chats</h2>
-              {chatTools}
+              <div className="sws-side-heading-tools">
+                {chatTools}
+                <Tip label="New chat">
+                  <button
+                    type="button"
+                    className="sws-icon-button"
+                    aria-label="New chat"
+                    onClick={newChat}
+                  >
+                    <PlusIcon aria-hidden />
+                  </button>
+                </Tip>
+              </div>
             </div>
             {chatTotal === 0 ? (
               <p className="sws-side-empty" role="status">

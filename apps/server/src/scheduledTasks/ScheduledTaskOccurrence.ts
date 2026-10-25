@@ -284,11 +284,17 @@ export const followOccurrence = Effect.fn("ScheduledTaskService.followOccurrence
   const threadId = occurrence.threadId;
   const columns = sql`run.run_id, run.ordinal, run.status, run.completed_at,
     json_extract(run.payload_json, '$.startedAt') AS started_at,
-    json_extract(run.payload_json, '$.userMessageId') AS user_message_id`;
+    COALESCE(
+      json_extract(run.payload_json, '$.startMessageId'),
+      json_extract(run.payload_json, '$.userMessageId')
+    ) AS user_message_id`;
   const [first] = yield* sql<FollowedRun>`
     SELECT ${columns} FROM orchestration_v2_projection_runs run
     WHERE run.thread_id = ${threadId}
-      AND json_extract(run.payload_json, '$.userMessageId') = ${occurrence.messageId}
+      AND ${occurrence.messageId} IN (
+        json_extract(run.payload_json, '$.userMessageId'),
+        json_extract(run.payload_json, '$.startMessageId')
+      )
     LIMIT 1
   `;
   if (first === undefined) {

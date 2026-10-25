@@ -62,6 +62,8 @@ const layerEnrichment = ProjectEnrichmentService.layer.pipe(
 const layerRealGit = GitVcsDriver.layer.pipe(Layer.provide(VcsProcess.layer));
 
 interface HarnessOptions {
+  /** A Git workflow for detection failures real git cannot produce on demand. */
+  readonly gitWorkflow?: Layer.Layer<GitWorkflow.GitWorkflowService>;
   /** A git driver for failures real git cannot produce on demand. */
   readonly git?: Layer.Layer<GitVcsDriver.GitVcsDriver>;
   /** Wraps the real ProjectService, for failures it cannot produce on demand. */
@@ -87,7 +89,7 @@ const layer = (baseDir: string, options?: HarnessOptions) =>
     Layer.provideMerge(RuntimeLayer.layerProjectService),
     Layer.provideMerge(layerEnrichment),
     Layer.provideMerge(WorkspacePaths.layer),
-    Layer.provideMerge(layerGitWorkflow),
+    Layer.provideMerge(options?.gitWorkflow ?? layerGitWorkflow),
     Layer.provideMerge(options?.git ?? layerRealGit),
     Layer.provideMerge(SqlitePersistence.layerMemory),
     Layer.provideMerge(ServerConfig.layerTest(baseDir, baseDir)),
@@ -150,6 +152,64 @@ it.effect("offers nothing when the data dir sits inside a Git checkout", () =>
       const failure = yield* Effect.flip(scratch.ensureScratchProject);
       assert.equal(failure._tag, "ScratchUnavailableError");
     }).pipe(Effect.provide(layer(baseDir)));
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+// A fresh Linux desktop without Git: the probe cannot run at all.
+const layerGitMissing = Layer.mock(GitWorkflow.GitWorkflowService)({
+  isRepository: (cwd) =>
+    Effect.fail(
+      new GitCommandError({
+        operation: "GitWorkflowService.isRepository",
+        command: "git rev-parse --is-inside-work-tree",
+        cwd,
+        detail: "spawn git ENOENT",
+      }),
+    ),
+});
+
+it.effect("offers a Scratch folder when Git cannot run and no parent holds .git", () =>
+  withScratch(
+    ({ baseDir }) =>
+      Effect.gen(function* () {
+        const path = yield* Path.Path;
+        assert.equal(yield* requireRoot, path.resolve(baseDir, "scratch"));
+        yield* (yield* ManagedProjectFolders.ManagedProjectFolders).ensureScratchProject;
+      }),
+    { gitWorkflow: layerGitMissing },
+  ),
+);
+
+it.effect("offers nothing when Git cannot run and a parent holds .git", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const checkout = yield* fileSystem.makeTempDirectoryScoped({ prefix: "studio-scratch-nogit-" });
+    yield* fileSystem.makeDirectory(path.join(checkout, ".git"));
+    const baseDir = path.join(checkout, "home", ".specwithcode");
+    yield* fileSystem.makeDirectory(baseDir, { recursive: true });
+    yield* Effect.gen(function* () {
+      const scratch = yield* ManagedProjectFolders.ManagedProjectFolders;
+      assert.isTrue(Option.isNone(yield* scratch.scratchRoot));
+    }).pipe(Effect.provide(layer(baseDir, { gitWorkflow: layerGitMissing })));
+  }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+);
+
+it.effect("offers nothing when Git cannot run and the data dir links into a checkout", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const dotfiles = yield* fileSystem.makeTempDirectoryScoped({ prefix: "studio-scratch-dots-" });
+    yield* fileSystem.makeDirectory(path.join(dotfiles, ".git"));
+    const target = path.join(dotfiles, "specwithcode");
+    yield* fileSystem.makeDirectory(target);
+    const home = yield* fileSystem.makeTempDirectoryScoped({ prefix: "studio-scratch-home-" });
+    const baseDir = path.join(home, ".specwithcode");
+    yield* fileSystem.symlink(target, baseDir);
+    yield* Effect.gen(function* () {
+      const scratch = yield* ManagedProjectFolders.ManagedProjectFolders;
+      assert.isTrue(Option.isNone(yield* scratch.scratchRoot));
+    }).pipe(Effect.provide(layer(baseDir, { gitWorkflow: layerGitMissing })));
   }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
 );
 

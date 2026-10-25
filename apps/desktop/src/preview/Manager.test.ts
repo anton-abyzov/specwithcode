@@ -594,7 +594,7 @@ describe("PreviewManager", () => {
         ).toHaveBeenCalledWith(true);
         const beforeInput = preview.listeners.get("before-input-event")!;
         for (const control of [false, true]) {
-          for (const key of ["k", ",", "w", "j", "q", "+"]) {
+          for (const key of ["k", ",", "w", "j", "q"]) {
             for (const type of ["keyDown", "keyUp"]) {
               const preventDefault = vi.fn();
               beforeInput(
@@ -780,6 +780,52 @@ describe("PreviewManager", () => {
         }
       }),
     ),
+  );
+
+  effectIt.effect.each(["darwin", "win32", "linux"] as const)(
+    "allows app zoom only from the focused embedded preview on %s",
+    (platform) =>
+      withManager(
+        (manager) =>
+          Effect.gen(function* () {
+            const preview = makeFaviconWebContents();
+            fromId.mockReturnValue(preview.webContents);
+            yield* manager.createTab("tab_app_zoom");
+            yield* manager.registerWebview("tab_app_zoom", 42);
+            const popup = makeFaviconWebContents({ id: 43 });
+            preview.listeners.get("did-create-window")!({
+              webContents: popup.webContents,
+            } as never);
+            const previewContents = preview.webContents as Electron.WebContents;
+            const popupContents = popup.webContents as Electron.WebContents;
+            const beforeInput = preview.listeners.get("before-input-event")!;
+            for (const key of ["=", "+", "-", "0"]) {
+              const input = {
+                type: "keyDown",
+                key,
+                meta: platform === "darwin",
+                control: platform !== "darwin",
+                shift: key === "+",
+                alt: false,
+              };
+              const preventDefault = vi.fn();
+              getFocusedWebContents.mockReturnValue(preview.webContents as never);
+              beforeInput({ preventDefault } as never, input as never);
+              expect(previewContents.setIgnoreMenuShortcuts).toHaveBeenLastCalledWith(false);
+              expect(preventDefault).not.toHaveBeenCalled();
+              getFocusedWebContents.mockReturnValue(null);
+              beforeInput({ preventDefault } as never, input as never);
+              expect(previewContents.setIgnoreMenuShortcuts).toHaveBeenLastCalledWith(true);
+              getFocusedWebContents.mockReturnValue(popup.webContents as never);
+              popup.listeners.get("before-input-event")!(
+                { preventDefault } as never,
+                input as never,
+              );
+              expect(popupContents.setIgnoreMenuShortcuts).toHaveBeenLastCalledWith(true);
+            }
+          }),
+        platform,
+      ),
   );
 
   effectIt.effect("rejects a destroyed webview during registration", () =>
@@ -4246,7 +4292,9 @@ describe("PreviewManager", () => {
   effectIt.effect("reveals only files inside the configured browser artifact directory", () =>
     withManager((manager) =>
       Effect.gen(function* () {
-        yield* manager.revealArtifact("/tmp/studio/dev/browser-artifacts/browser-screenshot-test.png");
+        yield* manager.revealArtifact(
+          "/tmp/studio/dev/browser-artifacts/browser-screenshot-test.png",
+        );
 
         expect(showItemInFolder).toHaveBeenCalledWith(
           "/tmp/studio/dev/browser-artifacts/browser-screenshot-test.png",

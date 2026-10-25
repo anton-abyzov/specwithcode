@@ -41,9 +41,17 @@ button.sws-handoff-action {
   cursor: not-allowed;
   color: var(--muted-foreground);
 }
+/* On hover it steps aside for Resolve over the row's end, where the age hides and the
+   line keeps its hover reserve (shell.css), so the row's text keeps its width and its
+   model fit (rowModelFit.ts) stays put. A narrow list's Resolve is its icon alone. */
 @media (hover: hover) {
   .sws-thread-row:is(:hover, :has(.sws-thread-action:focus-visible)) .sws-thread-handoff-action {
-    margin-right: 96px;
+    translate: -88px 0;
+  }
+  @container threadlist (width < 420px) {
+    .sws-thread-row:is(:hover, :has(.sws-thread-action:focus-visible)) .sws-thread-handoff-action {
+      translate: -40px 0;
+    }
   }
 }
 /* A thread bound to a design links back to it; quieter than a handoff action. */

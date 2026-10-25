@@ -294,7 +294,7 @@ function Fixture() {
                   next: null,
                 }}
               />
-              {noticeShown ? <UnplannedThreadChip /> : null}
+              {noticeShown ? <UnplannedThreadChip canAct /> : null}
             </span>
           </span>
         </div>
@@ -306,7 +306,7 @@ function Fixture() {
               <span className="sws-model">GPT-5.4</span>
             </span>
             <span className="sws-thread-meta-rest">
-              {noticeShown ? <UnplannedThreadChip /> : null}
+              {noticeShown ? <UnplannedThreadChip canAct /> : null}
             </span>
           </span>
         </div>
@@ -322,7 +322,7 @@ function Fixture() {
                 <span className="sws-model">Opus 5.5</span>
               </span>
               <span className="sws-thread-meta-rest">
-                {noticeShown ? <UnplannedThreadChip /> : null}
+                {noticeShown ? <UnplannedThreadChip canAct /> : null}
               </span>
             </span>
           </div>

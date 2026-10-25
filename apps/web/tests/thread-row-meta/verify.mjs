@@ -107,6 +107,8 @@ const readRows = () =>
             full: shown(".sws-model-state-full"),
             short: shown(".sws-model-state-short"),
             aria: state.querySelector(".sr-only")?.textContent,
+            // Words or parts after the glyph: none for a fallback.
+            parts: state.querySelectorAll("[data-row-part]").length,
             iconWidth: state.querySelector("svg")?.getBoundingClientRect().width ?? 0,
             color: getComputedStyle(state).color,
             muted: getComputedStyle(meta).color,
@@ -177,6 +179,7 @@ try {
             const words = row.state.kind !== "fallback";
             NodeAssert.equal(row.state.full, words && row.metaWidth >= 480);
             NodeAssert.equal(row.state.short, words && row.metaWidth < 480 && row.metaWidth >= 340);
+            NodeAssert.equal(row.state.parts, 0, JSON.stringify(row.state));
           });
           if (row.state.kind === "preferred")
             check(`${theme} ${width}px: preferred stays muted`, () =>
@@ -207,8 +210,24 @@ try {
           await page.locator("[data-slot='tooltip-popup']").textContent(),
           /Fallback for your pick/,
         );
-        await page.locator("h2").click();
+        await page.locator("h2").first().click();
       }
+      const disk = rows.find((row) => row.id === "diskaudit");
+      check(
+        `${theme} ${width}px: disk audit fallback is a glyph beside GPT-6-Astra, no pill`,
+        () => {
+          NodeAssert.equal(disk?.state?.kind, "fallback");
+          NodeAssert.equal(disk.state.full || disk.state.short, false);
+          NodeAssert.equal(disk.state.border, 0);
+          NodeAssert.ok(disk.state.iconWidth >= 13 && disk.state.iconWidth <= 15);
+          NodeAssert.equal(disk.modelCut, false);
+          NodeAssert.match(disk.state.aria, /fallback for Claude Code · Opus 5\.5/);
+        },
+      );
+      await page
+        .locator(".sws-thread-row[data-thread-id=diskaudit]")
+        .screenshot({ path: NodePath.join(output, `disk-audit-row-${width}-${theme}.png`) });
+      receipt.screenshots.push(NodePath.join(output, `disk-audit-row-${width}-${theme}.png`));
       const file = NodePath.join(output, `thread-rows-${width}-${theme}.png`);
       await page.locator("[data-fixture-pane]").screenshot({ path: file });
       receipt.screenshots.push(file);

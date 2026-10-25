@@ -59,6 +59,9 @@ const model = { instanceId: ProviderInstanceId.make("claude"), model: "claude-op
 function world(
   options: {
     readonly callerRuntimeMode?: RuntimeMode;
+    /** The user's reply that started the turn, after the request it answers. */
+    readonly turnReply?: string;
+    readonly agentStartedTurn?: boolean;
     readonly callerInteractionMode?: "default" | "plan";
   } = {},
 ) {
@@ -166,6 +169,12 @@ function world(
 
   const requestId = MessageId.make("message:user-request");
   const agentId = MessageId.make("message:agent-note");
+  const replyId = MessageId.make("message:user-reply");
+  const turnMessageId = options.agentStartedTurn
+    ? agentId
+    : options.turnReply === undefined
+      ? requestId
+      : replyId;
   const config = { attachmentsDir: "" };
   const message = (
     id: MessageId,
@@ -256,7 +265,7 @@ function world(
           messages: (messages.get(threadId) ?? []).filter(
             (entry) => !filter?.messageIds || filter.messageIds.includes(entry.id),
           ),
-          runs: threadId === aideCoordinator ? [{ id: turnRun, userMessageId: requestId }] : [],
+          runs: threadId === aideCoordinator ? [{ id: turnRun, userMessageId: turnMessageId }] : [],
         }))) as never,
       sendToThread: (input) =>
         Effect.sync(() => {
@@ -361,6 +370,7 @@ function world(
     messages.set(aideCoordinator, [
       message(requestId, words, "user", [screenshot]),
       message(agentId, "A worker's report.", "agent"),
+      ...(options.turnReply === undefined ? [] : [message(replyId, options.turnReply, "user")]),
     ]);
   });
 
@@ -400,6 +410,8 @@ function world(
     specweaveCoordinator,
   };
 }
+
+const ASKED = "fix the typo in the SpecWeave docs";
 
 const run = <A, E>(
   w: ReturnType<typeof world>,
@@ -469,6 +481,7 @@ it.effect(
         const toEasyChamp = yield* w.call("studio_project_route", {
           projectId: "easychamp",
           note: "Yours: the signup audit.",
+          userAsked: "Audit EasyChamp's signup flow",
         });
         expect(toEasyChamp).toMatchObject({
           projectTitle: "EasyChamp",
@@ -512,6 +525,7 @@ it.effect(
         yield* w.call("studio_project_route", {
           projectId: "easychamp",
           note: "Yours: the signup audit.",
+          userAsked: "Audit EasyChamp's signup flow",
         });
         expect([...NodeFS.readFileSync(NodePath.join(w.config.attachmentsDir, planted))]).toEqual([
           0x89, 0x50, 0x4e, 0x47,
@@ -525,6 +539,7 @@ it.effect(
         const retried = yield* w.call("studio_project_route", {
           projectId: "easychamp",
           note: "Yours: the signup audit.",
+          userAsked: "Audit EasyChamp's signup flow",
         });
         expect(retried).toMatchObject({
           coordinatorCreated: false,
@@ -537,6 +552,7 @@ it.effect(
           projectId: "specweave",
           forwardMessageId: w.requestId,
           note: "Yours: the docs typo.",
+          userAsked: "fix the typo in the SpecWeave docs",
         });
         expect(toSpecweave).toMatchObject({
           coordinatorThreadId: w.specweaveCoordinator,
@@ -559,14 +575,23 @@ it.effect(
       w,
       Effect.gen(function* () {
         yield* w.seed;
-        const outside = yield* w.call("studio_project_route", { projectId: "outside" });
+        const outside = yield* w.call("studio_project_route", {
+          projectId: "outside",
+          userAsked: ASKED,
+        });
         expect(outside).toMatchObject({ code: "invalid_request" });
         expect(String(outside.message)).toContain("The user can add that folder");
-        const archived = yield* w.call("studio_project_route", { projectId: "old" });
+        const archived = yield* w.call("studio_project_route", {
+          projectId: "old",
+          userAsked: ASKED,
+        });
         expect(String(archived.message)).toContain("archived");
-        const self = yield* w.call("studio_project_route", { projectId: "aide" });
+        const self = yield* w.call("studio_project_route", { projectId: "aide", userAsked: ASKED });
         expect(String(self.message)).toContain("own project");
-        const missing = yield* w.call("studio_project_route", { projectId: "nope" });
+        const missing = yield* w.call("studio_project_route", {
+          projectId: "nope",
+          userAsked: ASKED,
+        });
         expect(missing).toMatchObject({ code: "invalid_request" });
         // Aide's approvals are unchanged: routing never grants itself a folder.
         expect(
@@ -588,6 +613,7 @@ it.effect("routes only what the user wrote", () => {
       const agentWritten = yield* w.call("studio_project_route", {
         projectId: "specweave",
         forwardMessageId: w.agentId,
+        userAsked: ASKED,
       });
       expect(agentWritten).toMatchObject({ code: "invalid_request" });
       expect(w.sends).toHaveLength(0);
@@ -601,7 +627,10 @@ it.effect("never hands work to a coordinator running in broader modes than Aide"
     w,
     Effect.gen(function* () {
       yield* w.seed;
-      const escalated = yield* w.call("studio_project_route", { projectId: "specweave" });
+      const escalated = yield* w.call("studio_project_route", {
+        projectId: "specweave",
+        userAsked: ASKED,
+      });
       expect(escalated).toMatchObject({ code: "runtime_mode_escalation_denied" });
       expect(w.sends).toHaveLength(0);
     }),
@@ -622,7 +651,10 @@ it.effect("is not a tool for project coordinators or other threads", () => {
       });
       const denied = yield* w.call("studio_route_targets", {});
       expect(denied).toMatchObject({ code: "capability_denied" });
-      const routed = yield* w.call("studio_project_route", { projectId: "specweave" });
+      const routed = yield* w.call("studio_project_route", {
+        projectId: "specweave",
+        userAsked: ASKED,
+      });
       expect(routed).toMatchObject({ code: "capability_denied" });
       expect(w.sends).toHaveLength(0);
     }),
@@ -635,7 +667,10 @@ it.effect("reports an interaction-mode escalation as one", () => {
     w,
     Effect.gen(function* () {
       yield* w.seed;
-      const escalated = yield* w.call("studio_project_route", { projectId: "specweave" });
+      const escalated = yield* w.call("studio_project_route", {
+        projectId: "specweave",
+        userAsked: ASKED,
+      });
       expect(escalated).toMatchObject({ code: "interaction_mode_escalation_denied" });
       expect(w.sends).toHaveLength(0);
     }),
@@ -682,6 +717,76 @@ it.effect("never lets an agent widen the folders, repositories or kind routing t
         workspaceSettings: { expectedRevision: 0, kind: "personal" },
       });
       expect(String(promoted.message)).toContain("A project's kind is fixed when it is created");
+    }),
+  );
+});
+
+it.effect("posts into a project only when the user's own words ask for it", () => {
+  const w = world();
+  return run(
+    w,
+    Effect.gen(function* () {
+      yield* w.seed;
+      // Words the user never wrote, such as work the assistant added on its own.
+      const invented = yield* w.call("studio_project_route", {
+        projectId: "easychamp",
+        userAsked: "patch the PHP servers",
+      });
+      expect(invented).toMatchObject({ code: "invalid_request" });
+      expect(String(invented.message)).toContain("stays separate from project chats");
+      const blank = yield* w.call("studio_project_route", {
+        projectId: "easychamp",
+        userAsked: " … ",
+      });
+      expect(blank).toMatchObject({ code: "invalid_request" });
+      expect(w.sends).toHaveLength(0);
+      expect(w.launches).toHaveLength(0);
+
+      // The user's words, whatever the quote marks and spacing, are enough.
+      const routed = yield* w.call("studio_project_route", {
+        projectId: "easychamp",
+        userAsked: "“audit  easychamp’s SIGNUP flow”",
+      });
+      expect(routed).toMatchObject({ projectTitle: "EasyChamp" });
+      expect(w.sends).toHaveLength(1);
+    }),
+  );
+});
+
+it.effect("routes an earlier request when the user's reply in this turn says to", () => {
+  const w = world({ turnReply: "Yes, send it to SpecWeave." });
+  return run(
+    w,
+    Effect.gen(function* () {
+      yield* w.seed;
+      // Without forwardMessageId the reply itself would be routed; the request is.
+      const routed = yield* w.call("studio_project_route", {
+        projectId: "specweave",
+        forwardMessageId: w.requestId,
+        userAsked: "send it to SpecWeave",
+      });
+      expect(routed).toMatchObject({ coordinatorThreadId: w.specweaveCoordinator });
+      expect(w.sends).toHaveLength(1);
+      expect(parseRoutedMessage(w.sends[0]!.text)?.words).toBe(w.words);
+    }),
+  );
+});
+
+it.effect("refuses to replay an old user request from an agent-triggered turn", () => {
+  const w = world({ agentStartedTurn: true });
+  return run(
+    w,
+    Effect.gen(function* () {
+      yield* w.seed;
+      const routed = yield* w.call("studio_project_route", {
+        projectId: "easychamp",
+        forwardMessageId: w.requestId,
+        userAsked: ASKED,
+      });
+      expect(routed).toMatchObject({ code: "invalid_request" });
+      expect(String(routed.message)).toContain("stays separate from project chats");
+      expect(w.sends).toHaveLength(0);
+      expect(w.launches).toHaveLength(0);
     }),
   );
 });

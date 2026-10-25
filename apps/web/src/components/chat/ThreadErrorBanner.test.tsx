@@ -204,4 +204,25 @@ describe("ThreadErrorBanner", () => {
       ),
     ).not.toContain(">Continue</button>");
   });
+
+  it("offers Switch model for a sign-in failure but not for a usage limit", () => {
+    const signIn = renderToStaticMarkup(
+      <ThreadErrorBanner
+        error="Your access token could not be refreshed because you have since logged out or signed in to another account. Please sign in again."
+        errorClass="permission_error"
+        onSwitchModel={() => {}}
+      />,
+    );
+    expect(signIn).toContain(">Switch model</button>");
+    expect(signIn).not.toContain(">Continue</button>");
+    expect(
+      renderToStaticMarkup(
+        <ThreadErrorBanner
+          error="Limit reached."
+          errorClass="usage_limit"
+          onSwitchModel={() => {}}
+        />,
+      ),
+    ).not.toContain("Switch model");
+  });
 });

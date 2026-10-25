@@ -157,6 +157,16 @@ cost money: it
 takes a thread only as the **Fallback model** you chose, as the project's recommended model, or through
 **Use API credits first**.
 
+A thread on its fallback names the model it runs on, then a small amber fallback mark, in the
+thread list, the thread header and the model picker. The mark takes no words; hover over it (or,
+in the thread header and the model picker, focus it with the keyboard) to see that the model is a
+fallback, the model it stands in for, why it switched and how to switch back. On a narrow line the
+provider's name goes first (its icon stays), before the PR and plan chips lose their room. On the
+narrowest lines those chips can still wrap away (in the thread header they then leave the Tab
+order too), and the running model's name stays whole, except beside the longest status, "Approval
+requested", in a pane about 320 px wide, where it shortens. A screen reader always hears the
+running provider, the model and the pick it stands in for.
+
 In a project, a thread the coordinator starts runs on the project's **Recommended model for
 threads** while that provider has room. When it has none (it is past **Switch before the limit** or
 refuses new usage), the thread starts on the same model from another provider that serves it, in

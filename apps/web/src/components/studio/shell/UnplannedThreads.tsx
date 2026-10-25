@@ -13,9 +13,11 @@ import { cn } from "~/lib/utils";
 import { Tip } from "./Tip";
 
 /**
- * Code with no plan around it: the brackets of changed code. 16px grid, the same
- * 1.75px weight as the fallback glyph; distinct from the increment's list, and no
- * warning mark, since an increment is recommended, not required.
+ * Finding the way without a map: a compass needle, its leading half a faint tint like
+ * the fallback detour's cut road. 16px grid, the same 1.75px weight as the fallback
+ * glyph, and a silhouette apart from the plan's list and the pull request's branch on
+ * the same line. Calm, with no warning mark, since an increment is recommended, not
+ * required.
  */
 export function UnplannedGlyph({ className, ...props }: Omit<SVGProps<SVGSVGElement>, "ref">) {
   return (
@@ -32,8 +34,14 @@ export function UnplannedGlyph({ className, ...props }: Omit<SVGProps<SVGSVGElem
       data-unplanned-glyph=""
       {...props}
     >
-      <path d="M5 4.5 1.75 8 5 11.5M11 4.5 14.25 8 11 11.5" />
-      <path d="M9.25 3.5 6.75 12.5" />
+      <path
+        d="M12.75 3.25 9.75 9.75 6.25 6.25Z"
+        fill="currentColor"
+        fillOpacity={0.35}
+        stroke="none"
+      />
+      <path d="M12.75 3.25 9.75 9.75 3.25 12.75 6.25 6.25Z" />
+      <path d="M6.25 6.25 9.75 9.75" />
     </svg>
   );
 }
@@ -86,10 +94,16 @@ export function UnplannedThreadsFilter({
 
 /**
  * Not a button: it sits inside the row's open button, like the progress chip. The
- * glyph alone keeps the meta line short; hover and focus name it, a screen reader
- * hears it, and on touch the thread's plan bar says "No increment" in full.
+ * glyph alone keeps the meta line short. Hover names it; keyboard focus lands on the
+ * row, whose accessible name carries the same words; a tap opens the thread, whose
+ * plan bar says "No increment" in full. Only a viewer who can change the thread is told
+ * where to act: a read-only viewer's plan bar has no "Link increment" or "No increment
+ * needed".
  */
-export function UnplannedThreadChip() {
+export function UnplannedThreadChip(props: { canAct: boolean }) {
+  const action = props.canAct
+    ? "Open the thread to link an increment or mark it not needed."
+    : null;
   return (
     <Tip
       label={
@@ -98,13 +112,16 @@ export function UnplannedThreadChip() {
           <span className="sws-model-state-tip-detail">
             Changed code without an increment. Increments are recommended, not required.
           </span>
+          {action ? <span className="sws-model-state-tip-detail">{action}</span> : null}
         </span>
       }
       side="top"
     >
       <span className="sws-thread-unplanned" data-thread-unplanned>
         <UnplannedGlyph />
-        <span className="sr-only">No increment: changed code without an increment</span>
+        <span className="sr-only">
+          {`No increment: changed code without an increment.${action ? ` ${action}` : ""}`}
+        </span>
       </span>
     </Tip>
   );

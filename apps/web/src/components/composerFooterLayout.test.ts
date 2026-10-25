@@ -572,3 +572,85 @@ describe("progressive composer controls", () => {
     }
   });
 });
+
+describe("resolveRestingComposerControlsLayout with a model chip", () => {
+  // Chip widths at each fit (separator included), traits 60 (icon-only 24), mode 140
+  // (icon-only 40), overflow 24, gap 4.
+  const base = {
+    gap: 4,
+    naturalFixedWidth: 260,
+    minimumFixedWidth: 70,
+    blockWidths: [60, 140],
+    iconOnlyBlockWidths: [24, 40],
+    overflowWidth: 24,
+    pickerFitWidths: { full: 260, model: 180, short: 150, name: 130, icon: 70 },
+  } as const;
+  const at = (
+    hostWidth: number,
+    previous?: Parameters<typeof resolveRestingComposerControlsLayout>[0]["previous"],
+  ) =>
+    resolveRestingComposerControlsLayout({ ...base, hostWidth, ...(previous ? { previous } : {}) });
+
+  it("shows the full chip and every labelled block when the host has room", () => {
+    // 260 + 60 + 140 + 4 * 2 = 468
+    expect(at(468)).toEqual({ hiddenCount: 0, iconOnlyCount: 0, visible: true, pickerFit: "full" });
+  });
+
+  it("turns trailing labels into icons before the chip gives up anything", () => {
+    // 260 + 24 + 40 + 8 = 332
+    expect(at(332)).toEqual({ hiddenCount: 0, iconOnlyCount: 2, visible: true, pickerFit: "full" });
+  });
+
+  it("drops the provider's name before moving any block into overflow", () => {
+    // 180 + 24 + 40 + 8 = 252
+    expect(at(331)).toEqual({
+      hiddenCount: 0,
+      iconOnlyCount: 2,
+      visible: true,
+      pickerFit: "model",
+    });
+    expect(at(252)).toEqual({
+      hiddenCount: 0,
+      iconOnlyCount: 2,
+      visible: true,
+      pickerFit: "model",
+    });
+    // 180 + 24 + 24 + 8 = 236: the mode moves into overflow
+    expect(at(251)).toEqual({
+      hiddenCount: 1,
+      iconOnlyCount: 2,
+      visible: true,
+      pickerFit: "model",
+    });
+  });
+
+  it("shortens the chip only once every block is in the overflow menu", () => {
+    // 180 + 24 + 4 = 208
+    expect(at(208)).toEqual({
+      hiddenCount: 2,
+      iconOnlyCount: 2,
+      visible: true,
+      pickerFit: "model",
+    });
+    // 150 + 28 = 178, then 130 + 28 = 158, then 70 + 28 = 98
+    expect(at(207).pickerFit).toBe("short");
+    expect(at(178).pickerFit).toBe("short");
+    expect(at(177).pickerFit).toBe("name");
+    expect(at(158).pickerFit).toBe("name");
+    expect(at(157).pickerFit).toBe("icon");
+    expect(at(98)).toEqual({ hiddenCount: 2, iconOnlyCount: 2, visible: true, pickerFit: "icon" });
+  });
+
+  it("hides the cluster only below the icon fit", () => {
+    expect(at(97)).toEqual({ hiddenCount: 2, iconOnlyCount: 2, visible: false, pickerFit: "icon" });
+  });
+
+  it("needs a pixel of slack to give the chip back its words", () => {
+    const shrunk = at(177);
+    expect(shrunk.pickerFit).toBe("name");
+    expect(at(178, shrunk).pickerFit).toBe("name");
+    expect(at(179, shrunk).pickerFit).toBe("short");
+    // Settled layouts stay put on the same width.
+    expect(at(178, at(178))).toEqual(at(178));
+  });
+});

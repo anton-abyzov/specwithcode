@@ -1239,6 +1239,35 @@ describe("workers and their coordinator", () => {
     });
   });
 
+  it("starts a worker on the coordinator's same-driver model with its options", () => {
+    const high = [{ id: "effort", value: "high" }];
+    const stale = {
+      ...provider("claudeAgent-2", "claudeAgent", 10),
+      usageLimits: {
+        ...provider("claudeAgent-2", "claudeAgent", 10).usageLimits!,
+        checkedAt: DateTime.formatIso(DateTime.makeUnsafe(now - 6 * 60_000)),
+      },
+    };
+    const start = (coordinator: { instanceId: ProviderInstanceId; model: string }) =>
+      launch({
+        preferred: { ...claudeSelection, options: high },
+        coordinator,
+        providers: [spentClaude, stale, copilot],
+      });
+    expect(start({ instanceId: stale.instanceId, model: claudeSelection.model })).toEqual({
+      selection: { instanceId: stale.instanceId, model: claudeSelection.model, options: high },
+      reason: "coordinator",
+    });
+    expect(start({ instanceId: stale.instanceId, model: "claudeAgent-small" })).toEqual({
+      selection: { instanceId: stale.instanceId, model: "claudeAgent-small" },
+      reason: "coordinator",
+    });
+    expect(start({ instanceId: copilot.instanceId, model: claudeSelection.model })).toEqual({
+      selection: { instanceId: copilot.instanceId, model: claudeSelection.model },
+      reason: "coordinator",
+    });
+  });
+
   it("starts a worker where the coordinator runs when the worker model is spent", () => {
     expect(launch({})).toEqual({ selection: copilotSelection, reason: "coordinator" });
     const denied = {
@@ -1282,6 +1311,21 @@ describe("workers and their coordinator", () => {
     });
   });
 
+  it("keeps the worker's effort on a second account of the same driver with no usage read", () => {
+    const high = [{ id: "effort", value: "high" }];
+    const unread = provider("claudeAgent-2", "claudeAgent", null);
+    expect(
+      launch({
+        preferred: { ...claudeSelection, options: high },
+        coordinator: null,
+        providers: [spentClaude, unread],
+      }),
+    ).toEqual({
+      selection: { instanceId: unread.instanceId, model: claudeSelection.model, options: high },
+      reason: "same-model",
+    });
+  });
+
   it("offers the coordinator's model to a stopped worker without a usage read", () => {
     const pick = (proven: typeof copilotSelection | null, limited?: ReadonlySet<string>) =>
       resolveProviderFallback({
@@ -1311,6 +1355,42 @@ describe("workers and their coordinator", () => {
         proven: copilotSelection,
       }),
     ).toBeNull();
+  });
+
+  it("keeps the worker's options on the coordinator's same-driver model", () => {
+    const high = [{ id: "effort", value: "high" }];
+    const stale = {
+      ...provider("claudeAgent-2", "claudeAgent", 10),
+      usageLimits: {
+        ...provider("claudeAgent-2", "claudeAgent", 10).usageLimits!,
+        checkedAt: DateTime.formatIso(DateTime.makeUnsafe(now - 6 * 60_000)),
+      },
+    };
+    const pick = (proven: { instanceId: ProviderInstanceId; model: string }) =>
+      resolveProviderFallback({
+        providers: [spentClaude, stale, copilot],
+        currentInstanceId: claudeSelection.instanceId,
+        currentModel: claudeSelection.model,
+        currentOptions: high,
+        rule,
+        nowMs: now,
+        belowPercent: 95,
+        proven,
+      });
+    expect(pick({ instanceId: stale.instanceId, model: claudeSelection.model })).toEqual({
+      instanceId: stale.instanceId,
+      model: claudeSelection.model,
+      options: high,
+    });
+    expect(pick({ instanceId: stale.instanceId, model: "claudeAgent-small" })).toEqual({
+      instanceId: stale.instanceId,
+      model: "claudeAgent-small",
+    });
+    // Another driver serving the same model gets its own defaults.
+    expect(pick({ instanceId: copilot.instanceId, model: claudeSelection.model })).toEqual({
+      instanceId: copilot.instanceId,
+      model: claudeSelection.model,
+    });
   });
 
   it("treats the coordinator as proven only while it is not stopped on the limit", () => {
@@ -1617,7 +1697,9 @@ describe("agents whose billing is unknown", () => {
   ];
   const registryIcon = (agent: string) =>
     `https://cdn.agentclientprotocol.com/registry/v1/latest/${agent}.svg`;
-  const spentClaude = provider("claudeAgent", "claudeAgent", 100, { models: opus("claude-opus-5-5") });
+  const spentClaude = provider("claudeAgent", "claudeAgent", 100, {
+    models: opus("claude-opus-5-5"),
+  });
   const copilot = provider("acpRegistry_copilot", "acpRegistry", null, {
     iconUrl: registryIcon("github-copilot-cli"),
     models: opus("claude-opus-5.5"),
@@ -1666,7 +1748,10 @@ describe("agents whose billing is unknown", () => {
     const limited = new Set([copilot.instanceId]);
     const named = { instanceId: devin.instanceId, model: "claude-opus-5-5-medium" };
     expect(
-      fallback({ limitedInstanceIds: limited, rule: { ...switchRule, providerLimitFallbackModels: [named] } }),
+      fallback({
+        limitedInstanceIds: limited,
+        rule: { ...switchRule, providerLimitFallbackModels: [named] },
+      }),
     ).toEqual(named);
     expect(
       fallback({
@@ -1687,10 +1772,12 @@ describe("agents whose billing is unknown", () => {
 
   it("preserves a configured project default", () => {
     const named = { instanceId: devin.instanceId, model: "claude-opus-5-5-medium" };
-    expect(fallback({
-      providers: [spentClaude, devin],
-      rule: { ...switchRule, defaultModelSelection: named },
-    })).toEqual(named);
+    expect(
+      fallback({
+        providers: [spentClaude, devin],
+        rule: { ...switchRule, defaultModelSelection: named },
+      }),
+    ).toEqual(named);
   });
 
   it("does not inherit an unknown-billing coordinator after the preferred plan is spent", () => {
@@ -1699,16 +1786,129 @@ describe("agents whose billing is unknown", () => {
       preferred,
       coordinator: { instanceId: devin.instanceId, model: "claude-opus-5-5-medium" },
       providers: [spentClaude, devin],
-      rule: { ...switchRule, providerLimitAction: "switch", providerLimitSwitchAtPercent: 100, providerLimitWaitUnderMinutes: 0 },
+      rule: {
+        ...switchRule,
+        providerLimitAction: "switch",
+        providerLimitSwitchAtPercent: 100,
+        providerLimitWaitUnderMinutes: 0,
+      },
       nowMs: now,
     });
     expect(result).toEqual({ selection: preferred, reason: "no-room" });
   });
 
+  describe("a coordinator already on Devin (1039 reproduction)", () => {
+    const saved = { instanceId: spentClaude.instanceId, model: "claude-opus-5-5" };
+    const onDevin = { instanceId: devin.instanceId, model: "claude-opus-5-5-medium" };
+    const coordinatorRule = (action: "wait" | "ask" | "switch") => ({
+      ...switchRule,
+      providerLimitAction: action,
+      providerLimitSwitchAtPercent: 100,
+      providerLimitWaitUnderMinutes: 0,
+      defaultModelSelection: saved,
+      defaultModelProviders: [],
+    });
+
+    it.each(["wait", "ask", "switch"] as const)(
+      "does not stay on an unnamed Devin under %s",
+      (action) => {
+        const result = resolveCoordinatorTurnSelection({
+          saved,
+          thread: onDevin,
+          providers: [spentClaude, devin],
+          rule: coordinatorRule(action),
+          nowMs: now,
+        });
+        expect(result.reason).not.toBe("staying-on-fallback");
+        expect(result.selection).toEqual(saved);
+      },
+    );
+
+    it("moves to Copilot under switch instead of staying on an unnamed Devin", () => {
+      const result = resolveCoordinatorTurnSelection({
+        saved,
+        thread: onDevin,
+        providers: [spentClaude, copilot, devin],
+        rule: coordinatorRule("switch"),
+        nowMs: now,
+      });
+      expect(result).toEqual({
+        selection: { instanceId: copilot.instanceId, model: "claude-opus-5.5" },
+        reason: "fallback",
+      });
+    });
+
+    it.each([
+      ["the fallback order", { providerLimitFallbackModels: [onDevin] }],
+      ["the provider order", { defaultModelProviders: [devin.instanceId] }],
+      ["the legacy fallback model", { providerLimitFallbackModelSelection: onDevin }],
+    ] as const)("stays on Devin when the person named it in %s", (_where, named) => {
+      for (const action of ["wait", "ask", "switch"] as const) {
+        expect(
+          resolveCoordinatorTurnSelection({
+            saved,
+            thread: onDevin,
+            providers: [spentClaude, devin],
+            rule: { ...coordinatorRule(action), ...named },
+            nowMs: now,
+          }),
+        ).toEqual({ selection: onDevin, reason: "staying-on-fallback" });
+      }
+    });
+
+    it("keeps Devin when the person picked it as the coordinator model", () => {
+      for (const action of ["wait", "ask", "switch"] as const) {
+        expect(
+          resolveCoordinatorTurnSelection({
+            saved: onDevin,
+            thread: onDevin,
+            providers: [spentClaude, devin],
+            rule: coordinatorRule(action),
+            nowMs: now,
+          }),
+        ).toEqual({ selection: onDevin, reason: "saved" });
+      }
+    });
+
+    it("keeps the coordinator's effort on a second account of the same driver", () => {
+      const high = [{ id: "effort", value: "high" }];
+      const second = provider("claudeAgent-2", "claudeAgent", 10, {
+        models: opus("claude-opus-5-5"),
+      });
+      expect(
+        resolveCoordinatorTurnSelection({
+          saved: { ...saved, options: high },
+          thread: null,
+          providers: [spentClaude, second],
+          rule: coordinatorRule("switch"),
+          nowMs: now,
+        }),
+      ).toEqual({
+        selection: { instanceId: second.instanceId, model: "claude-opus-5-5", options: high },
+        reason: "fallback",
+      });
+    });
+
+    it("still stays on Copilot, whose billing is known", () => {
+      const onCopilot = { instanceId: copilot.instanceId, model: "claude-opus-5.5" };
+      expect(
+        resolveCoordinatorTurnSelection({
+          saved,
+          thread: onCopilot,
+          providers: [spentClaude, copilot, devin],
+          rule: coordinatorRule("wait"),
+          nowMs: now,
+        }),
+      ).toEqual({ selection: onCopilot, reason: "staying-on-fallback" });
+    });
+  });
+
   it.each([undefined, "subscription", "local"] as const)(
     "never automatically selects an explicitly disabled provider with %s billing",
     (billing) => {
-      const disabled = { ...devin, enabled: false,
+      const disabled = {
+        ...devin,
+        enabled: false,
         models: devin.models.map((model) => ({ ...model, ...(billing ? { billing } : {}) })),
       };
       const named = { instanceId: disabled.instanceId, model: "claude-opus-5-5-medium" };
@@ -1721,16 +1921,22 @@ describe("agents whose billing is unknown", () => {
       ]) {
         expect(fallback({ providers: [spentClaude, disabled], ...overrides })).toBeNull();
       }
-      expect(resolveWorkerLaunchSelection({
-        preferred: { instanceId: spentClaude.instanceId, model: "claude-opus-5-5" },
-        coordinator: named,
-        providers: [spentClaude, disabled],
-        rule: { ...switchRule, providerLimitAction: "switch", providerLimitSwitchAtPercent: 100,
-          providerLimitWaitUnderMinutes: 0, providerLimitFallbackModels: [named],
-          defaultModelProviders: [disabled.instanceId] },
-        nowMs: now,
-      }).reason).toBe("no-room");
+      expect(
+        resolveWorkerLaunchSelection({
+          preferred: { instanceId: spentClaude.instanceId, model: "claude-opus-5-5" },
+          coordinator: named,
+          providers: [spentClaude, disabled],
+          rule: {
+            ...switchRule,
+            providerLimitAction: "switch",
+            providerLimitSwitchAtPercent: 100,
+            providerLimitWaitUnderMinutes: 0,
+            providerLimitFallbackModels: [named],
+            defaultModelProviders: [disabled.instanceId],
+          },
+          nowMs: now,
+        }).reason,
+      ).toBe("no-room");
     },
   );
-
 });

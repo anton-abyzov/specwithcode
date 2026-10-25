@@ -94,8 +94,13 @@ try {
                   right: name.getBoundingClientRect().right,
                 }
               : null,
+            // Parts the chip's fit leaves out stay mounted, invisible, for measuring.
             triggerParts: [...trigger.firstElementChild.children]
-              .filter((x) => x.getBoundingClientRect().width > 0)
+              .filter(
+                (x) =>
+                  x.getBoundingClientRect().width > 0 &&
+                  getComputedStyle(x).visibility !== "hidden",
+              )
               .map((x) => {
                 const box = x.getBoundingClientRect();
                 return { left: box.left, right: box.right };

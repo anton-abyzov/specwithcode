@@ -4,6 +4,7 @@ import {
   ORCHESTRATION_V2_PROVIDER_UNAVAILABLE_FAILURE_CODE,
   type OrchestrationV2ProviderFailure,
   type OrchestrationV2Run,
+  orchestrationV2RunStartMessageId,
   type OrchestrationV2ThreadShell,
   type OrchestrationV2TurnItem,
 } from "@specweave-studio/contracts";
@@ -149,7 +150,12 @@ export function apiCreditOrigin(
   runs: ReadonlyArray<
     Pick<
       OrchestrationV2Run,
-      "id" | "ordinal" | "providerInstanceId" | "modelSelection" | "userMessageId"
+      | "id"
+      | "ordinal"
+      | "providerInstanceId"
+      | "modelSelection"
+      | "userMessageId"
+      | "startMessageId"
     >
   >,
   messagePrefix: string = API_CREDIT_MESSAGE_PREFIX,
@@ -157,23 +163,26 @@ export function apiCreditOrigin(
 ): ApiCreditOrigin | null {
   const prefix = `${messagePrefix}${thread.id}:`;
   const latestFirst = runs.toSorted((a, b) => b.ordinal - a.ordinal);
+  // A steer into the continuation restarts the run under its own message;
+  // the message that started it still names the move.
+  const started = orchestrationV2RunStartMessageId;
   for (const run of latestFirst) {
     if (run.providerInstanceId !== thread.providerInstanceId) return null;
-    if (!run.userMessageId.startsWith(prefix)) continue;
+    if (!started(run).startsWith(prefix)) continue;
     // A continuation that itself stopped and was continued again leads back
     // through each one to the subscription run the first of them continued.
     let stopped = runs.find(
-      (candidate) => candidate.id === continuedRun(run.userMessageId, prefix)?.runId,
+      (candidate) => candidate.id === continuedRun(started(run), prefix)?.runId,
     );
     const seen = new Set<string>();
     while (
       stopped !== undefined &&
       stopped.providerInstanceId === thread.providerInstanceId &&
-      stopped.userMessageId.startsWith(prefix) &&
+      started(stopped).startsWith(prefix) &&
       !seen.has(stopped.id)
     ) {
       seen.add(stopped.id);
-      const earlier = continuedRun(stopped.userMessageId, prefix)?.runId;
+      const earlier = continuedRun(started(stopped), prefix)?.runId;
       stopped = runs.find((candidate) => candidate.id === earlier);
     }
     if (stopped === undefined || stopped.providerInstanceId === thread.providerInstanceId)

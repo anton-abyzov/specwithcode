@@ -10,6 +10,7 @@ import {
 import { formatDisplayDates } from "../../lib/displayDates";
 import { FailureDetail } from "./FailureDetail";
 import { ContextLimitRecovery, type ContextLimitRecoveryActions } from "./ContextLimitRecovery";
+import { FailureRecovery, type FailureRecoveryActions } from "./FailureRecovery";
 import {
   isContextLimitError,
   providerFailureDisplayMessage,
@@ -446,6 +447,7 @@ interface TimelineRowSharedState {
   retryableWorkspacePreparationRunIds: ReadonlySet<RunId>;
   onRetryWorkspacePreparation: ((runId: RunId) => void) | null;
   contextLimitRecovery: ContextLimitRecoveryActions | undefined;
+  failureRecovery: FailureRecoveryActions | undefined;
   onWorktreeSetupWorkLocally: (() => void) | null;
   onOpenWorktreeSetupTerminal: ((terminalId: string) => void) | null;
   workGroupViewState: WorkGroupViewState;
@@ -465,6 +467,8 @@ interface TimelineRowActivityState {
   activeTurnInProgress: boolean;
   isPreparingWorktree: boolean;
   latestRunId: RunId | null;
+  /** Whether the latest run failed; its failure then stays current at any age. */
+  latestRunFailed: boolean;
   /** A resolved thread shows its failed turns as quiet history. */
   threadSettled: boolean;
   recoveryRuns: ReadonlyArray<UsageRecoveryRun>;
@@ -601,6 +605,8 @@ interface MessagesTimelineProps {
   retryableWorkspacePreparationRunIds?: ReadonlySet<RunId>;
   onRetryWorkspacePreparation?: (runId: RunId) => void;
   contextLimitRecovery?: ContextLimitRecoveryActions | undefined;
+  /** Continue and Switch model for the latest failed turn. */
+  failureRecovery?: FailureRecoveryActions | undefined;
   /** Whether the thread is resolved; its failed turns then read as history. */
   threadSettled?: boolean;
   onWorktreeSetupWorkLocally?: () => void;
@@ -702,6 +708,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   retryableWorkspacePreparationRunIds = EMPTY_RUN_IDS,
   onRetryWorkspacePreparation,
   contextLimitRecovery,
+  failureRecovery,
   threadSettled = false,
   onWorktreeSetupWorkLocally,
   onOpenWorktreeSetupTerminal,
@@ -1433,6 +1440,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       retryableWorkspacePreparationRunIds,
       onRetryWorkspacePreparation: onRetryWorkspacePreparation ?? null,
       contextLimitRecovery,
+      failureRecovery,
       onWorktreeSetupWorkLocally: onWorktreeSetupWorkLocally ?? null,
       onOpenWorktreeSetupTerminal: onOpenWorktreeSetupTerminal ?? null,
       workGroupViewState,
@@ -1475,6 +1483,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       retryableWorkspacePreparationRunIds,
       onRetryWorkspacePreparation,
       contextLimitRecovery,
+      failureRecovery,
       onWorktreeSetupWorkLocally,
       onOpenWorktreeSetupTerminal,
       workGroupViewState,
@@ -1516,6 +1525,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       activeTurnInProgress,
       isPreparingWorktree,
       latestRunId: latestRun?.runId ?? null,
+      latestRunFailed: latestRun?.status === "failed",
       threadSettled,
       recoveryRuns,
       recoveryItems,
@@ -1538,6 +1548,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       isRevertingCheckpoint,
       isWorking,
       latestRun?.runId,
+      latestRun?.status,
       threadSettled,
       recoveryRuns,
       recoveryItems,
@@ -6030,8 +6041,12 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
   const { workEntry, workspaceRoot, displayLabel } = props;
   const ctx = use(TimelineRowCtx);
   const { threadRef, onImageExpand, timestampFormat } = ctx;
-  const { retryableWorkspacePreparationRunIds, onRetryWorkspacePreparation, contextLimitRecovery } =
-    ctx;
+  const {
+    retryableWorkspacePreparationRunIds,
+    onRetryWorkspacePreparation,
+    contextLimitRecovery,
+    failureRecovery,
+  } = ctx;
   const createdThread =
     workEntry.projectedItem?.item.type === "thread_created"
       ? workEntry.projectedItem.item
@@ -6067,19 +6082,22 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
     recoveryRuns: warningRecoveryRuns,
     recoveryItems: warningRecoveryItems,
     latestRunId: failureLatestRunId,
+    latestRunFailed: failureLatestRunFailed,
     threadSettled,
   } = use(TimelineRowActivityCtx);
   const failureItem = workEntry.projectedItem?.item;
   if (failureItem?.type === "error" && failureItem.status === "failed") {
     const warning = failureItem.failure.class === "usage_limit";
     const failureMessage = providerFailureDisplayMessage(failureItem.failure);
-    // A turn a later run superseded, an old one, or one on a resolved thread is
-    // history: a quiet line that opens to its cause, with no retry.
+    // A turn a later run superseded, one on a resolved thread, or an old item
+    // of a run that did not fail is history: a quiet line that opens to its
+    // cause, with no retry.
     if (
       !warning &&
       timelineFailureIsHistory({
         runId: failureItem.runId,
         latestRunId: failureLatestRunId,
+        latestRunFailed: failureLatestRunFailed,
         occurredAt: workEntry.createdAt,
         settled: threadSettled,
         nowMs: Date.now(),
@@ -6176,6 +6194,18 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
         contextLimitRecovery?.failureItemId === failureItem.id ? (
           <div className="ms-7 py-1">
             <ContextLimitRecovery recovery={contextLimitRecovery} />
+          </div>
+        ) : null}
+        {/* A worktree failure has its own Retry; another model cannot fix it. */}
+        {!warning &&
+        failureItem.failure.code !== ORCHESTRATION_V2_WORKSPACE_PREPARATION_FAILURE_CODE ? (
+          <div className="ms-7 pb-1 empty:hidden">
+            <FailureRecovery
+              recovery={failureRecovery}
+              itemId={failureItem.id}
+              runId={failureItem.runId}
+              allowContinue={!isContextLimitError(failureItem.failure.message)}
+            />
           </div>
         ) : null}
         {retryRunId !== null && onRetryWorkspacePreparation ? (

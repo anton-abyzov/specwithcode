@@ -183,19 +183,24 @@ export function threadErrorIsLive(input: {
 
 /**
  * Whether a failed turn's timeline entry is history rather than the thread's
- * current problem: a newer run superseded it, the thread is resolved, or it
- * is older than the live window.
+ * current problem: a newer run superseded it, the thread is resolved, or it is
+ * older than the live window. A failure of the latest run that itself failed
+ * stays current however old it is, so a person who comes back later still
+ * finds its recovery actions; a failed item inside a run that went on ages out.
  */
 export function timelineFailureIsHistory(input: {
   readonly runId: string | null;
   readonly latestRunId: string | null;
+  /** Whether the latest run ended failed. */
+  readonly latestRunFailed?: boolean;
   readonly occurredAt: string | DateTime.DateTime | null | undefined;
   readonly settled: boolean;
   readonly nowMs: number;
 }): boolean {
   if (input.settled) return true;
-  if (input.runId !== null && input.latestRunId !== null && input.runId !== input.latestRunId) {
-    return true;
+  if (input.runId !== null && input.latestRunId !== null) {
+    if (input.runId !== input.latestRunId) return true;
+    if (input.latestRunFailed === true) return false;
   }
   const occurredAt = epochMillis(input.occurredAt);
   return occurredAt !== null && input.nowMs - occurredAt > LIVE_THREAD_ERROR_WINDOW_MS;

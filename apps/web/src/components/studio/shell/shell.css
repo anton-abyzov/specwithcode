@@ -357,6 +357,70 @@ html.dark[data-theme-id=""] [data-app-sidebar] {
 .sws-model-state-tip-detail {
   opacity: 0.72;
 }
+/* The model chip (modelChipFit.ts): provider mark, provider, model, state and usage in
+   one row that never wraps. data-model-fit says how much shows; a part it leaves out
+   stays mounted out of flow and invisible, so the next measurement still reads its
+   width. Hidden parts hang from the chip's end edge: overflow toward the start is never
+   scrollable, so they cannot widen a scrolling toolbar. */
+[data-model-chip] [data-model-chip-part] {
+  display: inline;
+  flex: none;
+  white-space: nowrap;
+}
+/* The ring and the number sit in the chip's row as parts of their own. */
+[data-model-chip] [data-model-usage-meter] {
+  display: contents;
+}
+[data-model-chip][data-model-fit="full"] [data-model-chip-part="state-short"],
+[data-model-chip][data-model-fit="model"]
+  :is(
+    [data-model-chip-part="provider"],
+    [data-model-chip-part="state-full"],
+    [data-model-chip-part="usage-value"]
+  ),
+[data-model-chip][data-model-fit="short"]
+  :is(
+    [data-model-chip-part="provider"],
+    [data-model-chip-part="state-full"],
+    [data-model-chip-part="state-short"],
+    [data-model-chip-part="usage-value"]
+  ),
+[data-model-chip][data-model-fit="name"]
+  :is(
+    [data-model-chip-part="provider"],
+    [data-model-chip-part="state-full"],
+    [data-model-chip-part="state-short"],
+    [data-model-chip-part="usage-ring"],
+    [data-model-chip-part="usage-value"]
+  ),
+[data-model-chip][data-model-fit="icon"]
+  :is(
+    [data-model-chip-part="provider"],
+    [data-model-chip-part="model"],
+    [data-model-chip-part="state-full"],
+    [data-model-chip-part="state-short"],
+    [data-model-chip-part="usage-value"]
+  ) {
+  position: absolute;
+  inset-inline-end: 0;
+  top: 0;
+  visibility: hidden;
+  pointer-events: none;
+}
+/* A list line's model unit (rowModelFit.ts): data-row-fit says how much shows. A part it
+   leaves out stays mounted out of flow and invisible, so the next measurement still
+   reads its width; the unit clips it. */
+.sws-model:has([data-row-part]) {
+  position: relative;
+}
+.sws-model[data-row-fit="model"] [data-row-part="provider"] {
+  position: absolute;
+  inset-inline-end: 0;
+  top: 0;
+  white-space: nowrap;
+  visibility: hidden;
+  pointer-events: none;
+}
 .sws-model-chip {
   height: 26px;
   padding: 0 9px;
@@ -475,6 +539,11 @@ html.dark[data-theme-id=""] [data-app-sidebar] {
   display: flex;
   align-items: center;
   justify-content: space-between;
+}
+.sws-side-heading-tools {
+  display: flex;
+  align-items: center;
+  gap: 2px;
 }
 .sws-side-heading :is(h2, h3) {
   min-width: 0;
@@ -890,6 +959,8 @@ html.dark[data-theme-id=""] [data-app-sidebar] {
 .sws-model-pick {
   flex: 0 1 auto;
   min-width: 0;
+  /* In a column (the details pane's toolbar) the group still trims to its width. */
+  max-width: 100%;
   height: 28px;
   display: inline-flex;
   align-items: center;
@@ -902,7 +973,8 @@ html.dark[data-theme-id=""] [data-app-sidebar] {
 }
 .sws-model-pick .sws-model-trigger {
   height: 28px;
-  max-width: 220px;
+  /* The model chip picks its fit from the room it has (modelChipFit.ts). */
+  max-width: 100%;
   padding: 0 7px;
   border: 0;
   border-radius: 7px;
@@ -927,6 +999,11 @@ html.dark[data-theme-id=""] [data-app-sidebar] {
 .sws-model-pick .sws-effort-trigger {
   min-width: 0;
   flex-shrink: 3;
+}
+/* Once a long model name trims (modelChipFit.ts, fit `name`), the room for the effort is
+   already set aside, so the effort keeps its word. */
+.sws-model-pick:has(> [data-model-chip][data-model-fit="name"]) .sws-effort-trigger {
+  flex-shrink: 0;
 }
 .sws-model-pick .sws-effort-trigger > [data-composer-control-label] {
   min-width: 0;
@@ -1017,11 +1094,6 @@ html.dark[data-theme-id=""] [data-app-sidebar] {
   font-weight: 550;
   color: var(--primary);
   cursor: pointer;
-}
-@media (max-width: 520px) {
-  .sws-model-pick .sws-model-trigger {
-    max-width: 130px;
-  }
 }
 
 /* Centre: the coordinator -------------------------------------------------- */
@@ -2138,6 +2210,7 @@ html.dark[data-theme-id=""] [data-app-sidebar] {
   color: var(--shell-failed);
 }
 .sws-thread-list {
+  container: threadlist / inline-size;
   display: flex;
   flex-direction: column;
   gap: 1px;
@@ -2300,14 +2373,15 @@ html.dark[data-theme-id=""] [data-app-sidebar] {
     display: none;
   }
 }
-@container rowmeta (width < 300px) {
-  .sws-model-provider,
-  .sws-model-sep {
-    position: absolute;
-    width: 1px;
-    height: 1px;
-    overflow: hidden;
-    clip-path: inset(50%);
+/* A phone-width line keeps the status word and the model whole: the dot between them
+   becomes a plain gap. The status word's colour and the provider mark still set the two
+   apart. */
+@container rowmeta (width < 240px) {
+  .sws-thread-meta-lead > * + *::before {
+    display: none;
+  }
+  .sws-thread-meta-lead > * + * {
+    margin-inline-start: 6px;
   }
 }
 @container headchips (width < 480px) {
@@ -2414,10 +2488,32 @@ html.dark[data-theme-id=""] [data-app-sidebar] {
   cursor: not-allowed;
   color: var(--muted-foreground);
 }
-/* Resolve takes the age's place; the title and meta end before it, not under it. */
+/* Resolve takes the age's place; the title and meta end before it, not under it. On
+   hover the meta line's end is kept clear by a spacer inside the line, so the line's
+   width (and every container rule on it) stays put; a chip past the spacer wraps away
+   whole. rowModelFit.ts fits the model unit within the reserve too, so hovering never
+   refits it or slides anything under the pointer. */
 @media (hover: hover) {
-  .sws-thread-row:is(:hover, :has(.sws-thread-action:focus-visible)) .sws-thread-text {
-    margin-right: 48px;
+  .sws-thread-row .sws-thread-text {
+    --sws-row-action-reserve: 48px;
+  }
+  .sws-thread-row:is(:hover, :has(.sws-thread-action:focus-visible)) .sws-thread-text > strong {
+    margin-right: var(--sws-row-action-reserve);
+  }
+  .sws-thread-row:is(:hover, :has(.sws-thread-action:focus-visible)) .sws-thread-meta::after {
+    content: "";
+    flex: none;
+    width: var(--sws-row-action-reserve);
+  }
+}
+/* A narrow list has no room to keep clear: Resolve is its icon alone, in the age's place,
+   and keeps its name in aria-label. */
+@container threadlist (width < 420px) {
+  .sws-thread-row .sws-thread-text {
+    --sws-row-action-reserve: 0px;
+  }
+  .sws-thread-action span {
+    display: none;
   }
 }
 .sws-thread-row:hover .sws-thread-age,

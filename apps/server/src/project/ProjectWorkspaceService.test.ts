@@ -581,6 +581,12 @@ it("makes the personal assistant route owned work and every other coordinator ac
   assert.include(assistant, "studio_project_route");
   assert.include(assistant, "ask the user once with ask_user");
   assert.include(assistant, "route it once to each owning project");
+  // Its chat stays apart from project chats unless the user asks.
+  assert.include(assistant, "This conversation is separate from their project chats");
+  assert.include(assistant, "studio_project_route {projectId, userAsked}");
+  assert.include(assistant, "read it without posting there");
+  assert.include(assistant, "send it only after the user says yes");
+  assert.notInclude(assistant, "When a request is about a product");
   assert.include(assistant, "Never add approved folders");
   // Repeating work becomes a routine that runs when asked and only prepares.
   assert.include(assistant, "{type:'manual'} and a brief");

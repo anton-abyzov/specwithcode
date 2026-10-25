@@ -26,3 +26,11 @@ it("caches the recovered text highlighter for unsupported languages", async () =
   expect(second).toBe(first);
   expect(getSharedHighlighter).toHaveBeenCalledTimes(2);
 });
+
+import { readableSyntaxColor } from "./syntaxHighlighting";
+it("strengthens low contrast Pierre tokens while keeping readable colors", () => {
+  expect(readableSyntaxColor("#199f43", "light")).not.toBe("#199f43");
+  expect(readableSyntaxColor("#0a0a0a", "light")).toBe("#0a0a0a");
+  expect(readableSyntaxColor("#555555", "dark")).not.toBe("#555555");
+  expect(readableSyntaxColor("#eeeeee", "dark")).toBe("#eeeeee");
+});

@@ -26,6 +26,8 @@ export const failProjectMutation = Effect.fn("environment.projects.failMutation"
     | ProjectFolderCheckError
     | ServerRuntimeStartup.ServerRuntimeStartupError,
 ) {
+  if (ProjectService.isMissingProjectFolder(cause))
+    return yield* failEnvironmentInvalidRequest("project_folder_missing");
   if (cause._tag === "ProjectRequestDeniedError") {
     const reason = {
       settings_conflict: "project_settings_conflict",

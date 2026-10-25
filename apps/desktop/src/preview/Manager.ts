@@ -5,6 +5,7 @@
  * elements live in the renderer; we only attach listeners and forward state
  * here). Single layer-scoped browser session partition.
  */
+import { isAppZoomShortcut } from "../window/zoomShortcut.ts";
 import {
   createDesktopBrowserWindow,
   desktopBrowserWindowOptions,
@@ -1507,13 +1508,19 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
         }).pipe(Effect.ignore),
       );
     };
-    const syncMenuShortcuts = (contents: Electron.WebContents, input: Electron.Input): void => {
+    const syncMenuShortcuts = (
+      contents: Electron.WebContents,
+      input: Electron.Input,
+      allowAppZoom = false,
+    ): void => {
       if (input.type !== "keyDown") return;
-      // Native editing roles must remain available after the page handles the key.
+      // Editing roles and app zoom must remain available for the focused guest.
       // Background automation must not edit whichever other renderer has focus.
       contents.setIgnoreMenuShortcuts(
-        !isPreviewEditingShortcut(input, hostPlatform) ||
-          webContents.getFocusedWebContents() !== contents,
+        !(
+          isPreviewEditingShortcut(input, hostPlatform) ||
+          (allowAppZoom && isAppZoomShortcut(input, hostPlatform))
+        ) || webContents.getFocusedWebContents() !== contents,
       );
     };
     // A popup opens with Electron's default handler, so the page inside it could
@@ -1527,7 +1534,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
       });
     };
     const beforeInput = (event: Electron.Event, input: Electron.Input): void => {
-      syncMenuShortcuts(wc, input);
+      syncMenuShortcuts(wc, input, true);
       const host = wc.hostWebContents;
       const forwarded =
         input.type === "keyDown" &&
@@ -1593,7 +1600,7 @@ const makeNativeOperations = Effect.fn("PreviewManager.makeOperations")(function
     );
     const install = Effect.fn("PreviewManager.installWebContentsListeners")(function* () {
       yield* attempt({ operation: "attachListeners", tabId, webContentsId: wc.id }, () => {
-        // Only focused native editing shortcuts may reach the application menu.
+        // Only focused native editing and app zoom shortcuts reach the menu.
         // Other preview input, including CDP keys, belongs to the page.
         wc.setIgnoreMenuShortcuts(true);
         wc.on("did-start-navigation", navigationStarted);

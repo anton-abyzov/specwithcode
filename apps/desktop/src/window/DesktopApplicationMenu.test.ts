@@ -222,7 +222,12 @@ describe("DesktopApplicationMenu", () => {
   // Zoom must route through DesktopWindow.zoomMain instead of the Electron
   // zoom roles: the roles zoom whichever webContents has focus, which breaks
   // app zoom while an embedded preview WebContentsView holds focus.
-  it.effect("routes View menu zoom to the main window instead of zoom roles", () =>
+  it.effect.each([
+    ["CmdOrCtrl+=", "in"],
+    ["CmdOrCtrl+Plus", "in"],
+    ["CmdOrCtrl+-", "out"],
+    ["CmdOrCtrl+0", "reset"],
+  ] as const)("routes %s to main-window zoom", ([accelerator, direction]) =>
     Effect.gen(function* () {
       const selectedAction = yield* Deferred.make<string>();
       const applicationMenuTemplate =
@@ -241,15 +246,15 @@ describe("DesktopApplicationMenu", () => {
         viewMenu.submenu.find((item) => item.role?.toLowerCase().includes("zoom")),
       );
 
-      const zoomIn = viewMenu.submenu.find((item) => item.label === "Zoom In");
-      assert.isDefined(zoomIn);
-      assert.equal(zoomIn.accelerator, "CmdOrCtrl+=");
-      if (typeof zoomIn.click !== "function") {
-        throw new Error("Expected Zoom In menu item to have a click handler.");
+      const zoomItem = viewMenu.submenu.find((item) => item.accelerator === accelerator);
+      assert.isDefined(zoomItem);
+      assert.equal(zoomItem.accelerator, accelerator);
+      if (typeof zoomItem.click !== "function") {
+        throw new Error("Expected the zoom menu item to have a click handler.");
       }
 
-      zoomIn.click({} as Electron.MenuItem, {} as Electron.BrowserWindow, {} as KeyboardEvent);
-      assert.equal(yield* Deferred.await(selectedAction), "zoom-in");
+      zoomItem.click({} as Electron.MenuItem, {} as Electron.BrowserWindow, {} as KeyboardEvent);
+      assert.equal(yield* Deferred.await(selectedAction), `zoom-${direction}`);
     }),
   );
 });

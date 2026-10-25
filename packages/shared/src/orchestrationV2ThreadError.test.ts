@@ -95,8 +95,28 @@ describe("timelineFailureIsHistory", () => {
     ).toBe(true);
   });
 
-  it("treats an old failure as history", () => {
-    expect(timelineFailureIsHistory({ ...base, occurredAt: minutesAgo(3 * 24 * 60) })).toBe(true);
+  it("keeps a failed latest run's failure current however old it is", () => {
+    const failed = { ...base, latestRunFailed: true };
+    expect(timelineFailureIsHistory({ ...failed, occurredAt: minutesAgo(5 * 60) })).toBe(false);
+    expect(timelineFailureIsHistory({ ...failed, occurredAt: minutesAgo(3 * 24 * 60) })).toBe(
+      false,
+    );
+  });
+
+  it("ages out a failed item of a latest run that went on", () => {
+    expect(timelineFailureIsHistory({ ...base, occurredAt: minutesAgo(5 * 60) })).toBe(true);
+    expect(
+      timelineFailureIsHistory({ ...base, latestRunFailed: false, occurredAt: minutesAgo(5) }),
+    ).toBe(false);
+  });
+
+  it("treats an old failure as history when its run is unknown", () => {
+    expect(
+      timelineFailureIsHistory({ ...base, runId: null, occurredAt: minutesAgo(3 * 24 * 60) }),
+    ).toBe(true);
+    expect(
+      timelineFailureIsHistory({ ...base, latestRunId: null, occurredAt: minutesAgo(3 * 24 * 60) }),
+    ).toBe(true);
   });
 
   it("treats every failure on a resolved thread as history", () => {

@@ -338,7 +338,7 @@ const RouteTargetsTool = Tool.make("studio_route_targets", {
 const ProjectRouteTool = Tool.make("studio_project_route", {
   ...shared,
   description:
-    "Personal assistant coordinators only. Hand one message the user wrote in this conversation to the coordinator of the project that owns it; that coordinator starts or reuses its own workers. The user's message that started this turn is routed (or pass forwardMessageId for an earlier one): their words and files arrive unchanged, shown as theirs and routed by you. The project must be one studio_route_targets lists; nothing here grants a folder or account. Routing the same message to the same project again delivers it once. For a request that spans projects, route it once to each, with a note naming that project's part. Answer the user in one line with the returned coordinatorLink copied verbatim.",
+    "Personal assistant coordinators only. Only when the user's words ask to start, change, stop or steer work in a project, hand one message the user wrote in this conversation to the coordinator of the project that owns it; that coordinator starts or reuses its own workers. A question, a review or a status request is answered in the assistant's own chat instead, and it is refused here unless userAsked quotes the user asking for that project's work. The user's message that started this turn is routed (or pass forwardMessageId for an earlier one): their words and files arrive unchanged, shown as theirs and routed by you. The project must be one studio_route_targets lists; nothing here grants a folder or account. Routing the same message to the same project again delivers it once. For a request that spans projects, route it once to each, with a note naming that project's part. Answer the user in one line with the returned coordinatorLink copied verbatim.",
   parameters: Schema.Struct({
     projectId: ProjectId,
     forwardMessageId: Schema.optional(
@@ -350,9 +350,13 @@ const ProjectRouteTool = Tool.make("studio_project_route", {
     note: Schema.optional(
       Schema.String.check(Schema.isMaxLength(500)).annotate({
         description:
-          "One line from you for the target coordinator, such as which part of a multi-project request is theirs. Never restate the user's words.",
+          "One line from you for the target coordinator, such as which part of a multi-project request is theirs. Never restate the user's words or add work they did not ask for.",
       }),
     ),
+    userAsked: Schema.String.check(Schema.isMaxLength(500)).annotate({
+      description:
+        "The user's own words, copied exactly from the routed message or from their reply that started this turn, that ask for this project's work (for example 'fix the signup bug in EasyChamp' or 'yes, send it'). Routing is refused when these words are not in what the user wrote.",
+    }),
   }),
   success: Schema.Struct({
     projectId: ProjectId,

@@ -391,15 +391,26 @@
 
 /* An opened thread's header ------------------------------------------------ */
 
-/* The chips follow the title in the one header row and give way before it. */
+/* The chips follow the title in the one header row and give way before it. Like a
+   thread row's meta line, they keep one line: the running model's name stays whole, and
+   a chip that no longer fits after it (routing, PR) wraps away whole onto the hidden
+   second line instead of clipping the model. rowModelFit.ts marks it, and it leaves
+   sight, the Tab order and the accessibility tree; `clip`, unlike `hidden`, never lets
+   focus scroll the line. */
 .sws-thread-head-chips {
   container: headchips / inline-size;
   flex: 0 1 440px;
   min-width: 0;
+  height: 26px;
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 4px;
-  overflow: hidden;
+  align-content: flex-start;
+  gap: 0 4px;
+  overflow: clip;
+}
+.sws-thread-head-chips > [data-row-wrapped] {
+  visibility: hidden;
 }
 .sws-chip {
   flex: none;

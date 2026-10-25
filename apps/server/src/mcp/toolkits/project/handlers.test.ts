@@ -62,6 +62,8 @@ it.effect("attributes a launched thread's first message to the calling thread", 
       deletedAt: null,
     } as OrchestrationV2ThreadShell;
     let launchedSender: ThreadId | undefined;
+    let personalProjectId: ProjectId | undefined;
+    let launchCount = 0;
     const layerDependencies = Layer.mergeAll(
       NodeCrypto.layer,
       Layer.succeed(McpInvocationContext.McpInvocationContext, {
@@ -81,6 +83,7 @@ it.effect("attributes a launched thread's first message to the calling thread", 
       }),
       Layer.mock(ThreadLaunch.ThreadLaunchService)({
         launch: (input) => {
+          launchCount += 1;
           launchedSender = input.initialMessage?.senderThreadId;
           return Effect.succeed({
             threadId: input.threadId,
@@ -93,7 +96,16 @@ it.effect("attributes a launched thread's first message to the calling thread", 
         },
       }),
       Layer.mock(Project.ProjectService)({
-        getById: (id) => Effect.succeed(Option.some(projectFixture(id))),
+        getById: (id) =>
+          Effect.succeed(
+            Option.some({
+              ...projectFixture(id),
+              workspaceSettings: {
+                ...DEFAULT_PROJECT_WORKSPACE_SETTINGS,
+                kind: id === personalProjectId ? "personal" : "code",
+              },
+            }),
+          ),
       }),
       Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/projects" }),
       Layer.mock(GitVcsDriver.GitVcsDriver)({}),
@@ -120,6 +132,19 @@ it.effect("attributes a launched thread's first message to the calling thread", 
       `[Audit](studio://thread/${encodeURIComponent(launchedResult.threadId)})`,
     );
     expect(launchedSender).toBe(sourceThreadId);
+    const foreignId = ProjectId.make("foreign-project");
+    for (const personalId of [projectId, foreignId]) {
+      personalProjectId = personalId;
+      const refused = yield* toolkit
+        .handle("studio_thread_launch", {
+          projectId: foreignId,
+          title: "Unrequested work",
+          message: "Push a project report",
+        })
+        .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(layerDependencies));
+      expect(refused.at(-1)?.result).toMatchObject({ code: "capability_denied" });
+    }
+    expect(launchCount).toBe(1);
   }),
 );
 

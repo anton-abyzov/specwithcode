@@ -32,8 +32,10 @@ import {
   assistantFolders,
   grantingFolder,
   routeRefusalMessage,
+  ROUTE_NOT_ASKED_MESSAGE,
   routeStateRefusal,
   type RouteRefusal,
+  userAskedIn,
 } from "../../../project/projectRouting.ts";
 import { workerFollowUpText } from "../../../project/workerFollowUp.ts";
 import {
@@ -298,6 +300,7 @@ export const routeToProject = Effect.fn("mcp.route.toProject")(function* (input:
   readonly projectId: ProjectId;
   readonly forwardMessageId?: MessageId | undefined;
   readonly note?: string | undefined;
+  readonly userAsked: string;
 }) {
   const context = yield* loadCaller();
   const { caller, assistant } = yield* requireAssistant(context);
@@ -318,19 +321,26 @@ export const routeToProject = Effect.fn("mcp.route.toProject")(function* (input:
 
   // Only what the user wrote here is routed as theirs. Omitted: the message
   // that started this turn, the one the assistant is answering.
-  const forwardMessageId =
-    input.forwardMessageId ??
-    (yield* turnMessageId(context.threads, caller.id, caller.activeRunId));
+  const turnMessage = yield* turnMessageId(context.threads, caller.id, caller.activeRunId);
+  const forwardMessageId = input.forwardMessageId ?? turnMessage;
   if (forwardMessageId === undefined)
     return yield* failure(
       "invalid_request",
       "This turn did not start from a message the user wrote. Pass forwardMessageId.",
     );
   const { messages } = yield* context.threads
-    .getThreadRecords(caller.id, ["messages"], { messageIds: [forwardMessageId] })
+    .getThreadRecords(caller.id, ["messages"], {
+      messageIds: turnMessage === undefined ? [forwardMessageId] : [forwardMessageId, turnMessage],
+    })
     .pipe(Effect.mapError(unavailable));
-  const message = messages.find((candidate) => candidate.id === forwardMessageId);
-  if (message === undefined || message.role !== "user" || message.createdBy !== "user")
+  const userWrote = (id: MessageId | undefined) => {
+    const found = messages.find((candidate) => candidate.id === id);
+    return found !== undefined && found.role === "user" && found.createdBy === "user"
+      ? found
+      : undefined;
+  };
+  const message = userWrote(forwardMessageId);
+  if (message === undefined)
     return yield* failure(
       "invalid_request",
       `Message ${forwardMessageId} is not a message the user wrote in this conversation.`,
@@ -338,6 +348,13 @@ export const routeToProject = Effect.fn("mcp.route.toProject")(function* (input:
   const words = (workerFollowUpText(message) ?? message.text).trim();
   if (words === "" && message.attachments.length === 0)
     return yield* failure("invalid_request", "That message has nothing to route.");
+  // The assistant's chat stays apart from project chats: it posts into one only
+  // when the user asked, in the routed message or in the reply that started this
+  // turn (a yes to an offer to send it).
+  const reply = userWrote(turnMessage);
+  const asked = [words, ...(reply === undefined ? [] : [workerFollowUpText(reply) ?? reply.text])];
+  if (reply === undefined || !userAskedIn(input.userAsked, asked))
+    return yield* failure("invalid_request", ROUTE_NOT_ASKED_MESSAGE);
 
   const coordinator = yield* ProjectCoordinator.ProjectCoordinatorService;
   const modes = yield* coordinator

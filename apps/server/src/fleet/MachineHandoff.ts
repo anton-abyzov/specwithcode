@@ -436,6 +436,17 @@ const make = Effect.gen(function* () {
     register: (record) => runPromise(registerCopy(record)),
   });
   yield* Effect.addFinalizer(() => Effect.promise(() => copies.close()));
+  yield* Effect.addFinalizer(() =>
+    Effect.promise(() => sources.close()).pipe(
+      Effect.flatMap((pending) =>
+        pending.length === 0
+          ? Effect.void
+          : Effect.logWarning("machine-handoff.folder-source.close-bound-exceeded", {
+              operations: pending,
+            }),
+      ),
+    ),
+  );
   // Interrupted copies continue (or replay their Apply journal) once the service is up.
   yield* Effect.promise(() => copies.resume().catch(() => undefined)).pipe(Effect.forkScoped);
   const privateUrl = Effect.gen(function* () {

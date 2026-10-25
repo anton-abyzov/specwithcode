@@ -77,6 +77,7 @@ import {
   type OrchestrationV2TurnItem,
   latestProviderTurnForAttempt,
   orchestrationV2RunWorkStartedAt,
+  orchestrationV2SteeredStartMessageId,
   ProviderInstanceId,
   ProviderInteractionMode,
   type ProviderSessionId,
@@ -4987,6 +4988,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         rootNodeId: nextRootNodeId,
         activeAttemptId: nextAttemptId,
         userMessageId: input.messageId,
+        startMessageId: orchestrationV2SteeredStartMessageId(
+          targetRun,
+          input.modelSelection.instanceId,
+        ),
         status: "starting",
         contextHandoffId: restartHandoff?.id ?? targetRun.contextHandoffId,
       };
