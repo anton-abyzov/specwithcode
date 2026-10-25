@@ -698,6 +698,43 @@ describe("Claude API credits", () => {
     ).toBeNull();
   });
 
+  it("applies model exclusions to API-credit continuation and rotation", () => {
+    const stopped = { ...limited, usageLimitResetAt: resetsAt };
+    const excluded = [{ instanceId: apiId, model: "opus" }];
+    const options = { resetAttempted: false };
+    expect(providerLimitStep(stopped, [claudeFull, api], allow, now, options)?.type).toBe(
+      "api-credits",
+    );
+    expect(
+      providerLimitStep(
+        stopped,
+        [claudeFull, api],
+        { ...allow, providerLimitExcludedModels: excluded },
+        now,
+        options,
+      ),
+    ).toBeNull();
+    const second = { ...api, instanceId: ProviderInstanceId.make("claudeApi2") };
+    const rotating = {
+      ...stopped,
+      providerInstanceId: apiId,
+      modelSelection: { instanceId: apiId, model: "opus" },
+      lastError: "Credit balance is too low",
+    };
+    expect(providerLimitStep(rotating, [api, second], allow, now, options)?.type).toBe(
+      "api-credits",
+    );
+    expect(
+      providerLimitStep(
+        rotating,
+        [api, second],
+        { ...allow, providerLimitExcludedModels: [{ model: "opus" }] },
+        now,
+        options,
+      ),
+    ).toBeNull();
+  });
+
   it("stays off without the rule, without an API-key instance, once tried, and while simulated", () => {
     const providers = [claudeFull, codexFree, api];
     expect(

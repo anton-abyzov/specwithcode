@@ -1304,6 +1304,7 @@ const make = Effect.gen(function* () {
                   providerLimitAction: "ask" as const,
                   providerLimitFallbackModelSelection: null,
                   providerLimitFallbackModels: [],
+                  providerLimitExcludedModels: resolved.providerLimitExcludedModels,
                   providerLimitSwitchAtPercent: resolved.providerLimitSwitchAtPercent,
                   providerLimitWaitUnderMinutes: resolved.providerLimitWaitUnderMinutes,
                   providerLimitRedeemResets: false,

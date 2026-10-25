@@ -98,6 +98,7 @@ export function canSelectManualFallback(
     unavailable === "limited" ||
     unavailable === "full" ||
     unavailable === "per-token" ||
+    unavailable === "excluded" ||
     (unavailable === "not-ready" && provider.status === "warning")
   );
 }
@@ -130,6 +131,8 @@ export function fallbackUnavailableReason(
       return "usage not read yet";
     case "not-ready":
       return manuallySelectable ? "provider warning" : "not set up on this machine";
+    case "excluded":
+      return "excluded from automatic fallback";
   }
 }
 

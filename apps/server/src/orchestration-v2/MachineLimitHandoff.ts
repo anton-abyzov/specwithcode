@@ -434,6 +434,7 @@ export const make = Effect.gen(function* () {
           thresholdPercent: input.rule.providerLimitSwitchAtPercent,
           unknownUsageEligible: input.rule.providerLimitUnknownUsageEligible,
           nowMs: input.nowMs,
+          excludedModels: input.rule.providerLimitExcludedModels,
         });
         // A personal assistant's threads never continue on another machine.
         if (Option.isSome(project) && isPersonalAssistantProject(project.value))

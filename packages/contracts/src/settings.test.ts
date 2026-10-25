@@ -52,6 +52,28 @@ describe("ServerSettings response streaming", () => {
   });
 });
 
+describe("ServerSettings excluded fallback models", () => {
+  it("defaults to none and round-trips globally and per project", () => {
+    expect(decodeServerSettings({}).providerLimitExcludedModels).toEqual([]);
+    const providerLimitExcludedModels = [
+      { model: "grok-4.7" },
+      { model: "claude-opus-5.5", instanceId: "copilot" },
+    ];
+    const input = {
+      providerLimitExcludedModels,
+      projectSettingsOverrides: { project: { providerLimitExcludedModels } },
+    };
+    expect(encodeServerSettings(decodeServerSettings(input))).toMatchObject(input);
+    expect(decodeServerSettingsPatch(input)).toEqual(input);
+  });
+
+  it("rejects an empty model and more than 64 entries", () => {
+    expect(() => decodeServerSettings({ providerLimitExcludedModels: [{ model: "" }] })).toThrow();
+    const many = Array.from({ length: 65 }, (_, index) => ({ model: `model-${index}` }));
+    expect(() => decodeServerSettingsPatch({ providerLimitExcludedModels: many })).toThrow();
+  });
+});
+
 describe("storage cleanup settings", () => {
   it("keeps cleanup disabled for existing installations, except rotated logs", () => {
     expect(decodeServerSettings({}).worktreeCleanup).toBeNull();
