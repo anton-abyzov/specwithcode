@@ -194,6 +194,9 @@ export const OrchestrationV2ContextTransfer = Schema.Struct({
   sourceProviderInstanceId: Schema.NullOr(ProviderInstanceId),
   targetProviderInstanceId: Schema.NullOr(ProviderInstanceId),
   targetRunId: Schema.NullOr(RunId),
+  /** Native child receipt revision and the exact prompt attempt that carried it. */
+  sourceRevision: Schema.optional(Schema.String),
+  targetRunAttemptId: Schema.optional(RunAttemptId),
   status: Schema.Literals([
     "pending",
     "resolved_native",

@@ -1,3 +1,4 @@
+import { childHandoffInstructions } from "../orchestration-v2/ChildMachineHandoff.ts";
 /**
  * Pure rules for moving a thread: the per-thread preflight wording the user
  * reads ("Minis: no .env.local"), whether the destination resumes the turn,
@@ -129,7 +130,7 @@ export function handoffSeed(input: {
   readonly reason: string;
   readonly checkpoint: Pick<
     HandoffCheckpoint,
-    "note" | "branch" | "commit" | "sideEffects" | "runEnding" | "skipped"
+    "note" | "branch" | "commit" | "sideEffects" | "runEnding" | "skipped" | "children"
   >;
   readonly lastMessages: ReadonlyArray<{ readonly role: string; readonly text: string }>;
 }): string {
@@ -152,7 +153,7 @@ export function handoffSeed(input: {
   }
   if (checkpoint.sideEffects.length > 0) {
     lines.push("", "Do not repeat these; they are already done:");
-    for (const effect of checkpoint.sideEffects.slice(-20)) {
+    for (const effect of checkpoint.sideEffects) {
       lines.push(`- ${effect.kind} ${effect.target}${effect.result ? ` (${effect.result})` : ""}`);
     }
   }
@@ -165,6 +166,8 @@ export function handoffSeed(input: {
         .join(", ")}.`,
     );
   }
+  const children = childHandoffInstructions(checkpoint.children ?? []);
+  if (children !== "") lines.push("", children);
   const head = lines.join("\n");
   const budget = HANDOFF_SEED_MAX_CHARS - head.length - 40;
   const tail: Array<string> = [];
@@ -177,5 +180,5 @@ export function handoffSeed(input: {
     used += line.length + 2;
   }
   const out = tail.length === 0 ? head : `${head}\n\nLast messages:\n${tail.join("\n\n")}`;
-  return out.length > HANDOFF_SEED_MAX_CHARS ? `${out.slice(0, HANDOFF_SEED_MAX_CHARS - 1)}…` : out;
+  return out;
 }

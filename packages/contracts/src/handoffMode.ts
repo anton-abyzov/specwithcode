@@ -165,6 +165,21 @@ export const HandoffCheckpointReason = Schema.Literals([
 ]);
 export type HandoffCheckpointReason = typeof HandoffCheckpointReason.Type;
 
+/** Child execution stays on its acknowledged owner, or is already terminal. */
+export const HandoffChildDisposition = Schema.Struct({
+  taskId: Schema.String,
+  parentThreadId: ThreadId,
+  childThreadId: Schema.NullOr(ThreadId),
+  sourceEnvironmentId: EnvironmentId,
+  ownerEpoch: NonNegativeInt,
+  origin: Schema.Literals(["provider_native", "app_owned"]),
+  providerThreadId: Schema.NullOr(Schema.String),
+  status: Schema.String,
+  disposition: Schema.Literals(["settled", "leased", "unknown"]),
+  context: Schema.String,
+});
+export type HandoffChildDisposition = typeof HandoffChildDisposition.Type;
+
 export const HandoffCheckpoint = Schema.Struct({
   sequence: NonNegativeInt,
   commit: sha,
@@ -194,6 +209,7 @@ export const HandoffCheckpoint = Schema.Struct({
   /** Side effects already done under this thread's turns, so none repeats. */
   sideEffects: Schema.Array(ThreadSideEffect).check(Schema.isMaxLength(200)),
   sourceRoot: ThreadSourceRoot,
+  children: Schema.optional(Schema.Array(HandoffChildDisposition).check(Schema.isMaxLength(200))),
 });
 export type HandoffCheckpoint = typeof HandoffCheckpoint.Type;
 

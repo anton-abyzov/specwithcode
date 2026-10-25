@@ -991,8 +991,10 @@ html.dark[data-theme-id=""] [data-app-sidebar] {
   font-weight: 400;
   color: var(--muted-foreground);
 }
-/* The effort meter carries meaning; only a generic icon is dropped here. */
-.sws-model-pick .sws-effort-trigger svg[data-composer-control-icon]:not([data-effort-glyph]) {
+/* The effort meter and the Fast tier bolt carry meaning; only a generic icon is dropped. */
+.sws-model-pick
+  .sws-effort-trigger
+  svg[data-composer-control-icon]:not([data-effort-glyph], [data-composer-control-speed] > svg) {
   display: none;
 }
 /* In a narrow column the effort gives way first and trims, so the model stays readable. */

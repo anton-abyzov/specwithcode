@@ -1,5 +1,7 @@
+import { nativeChildTerminalReceipt } from "../NativeChildTerminalReceipt.ts";
 import { stringifyJson } from "../../json.ts";
 import { makeProjectContextHooks } from "../../project/ProjectContextHooks.ts";
+import { makeSubagentLaunchHooks } from "./ClaudeSubagentLaunchHook.ts";
 import { makeProviderTextDeltaCoalescer } from "./ProviderTextDeltaCoalescer.ts";
 import { outageProgress } from "../SubagentSettlement.ts";
 import {
@@ -160,6 +162,7 @@ import {
 } from "../ProviderAdapterDriver.ts";
 import { type BackgroundWorkReport, backgroundWorkNotification } from "../Notification.ts";
 import * as ProviderContinuationRequests from "../ProviderContinuationRequests.ts";
+import * as SubagentLaunchCheckpoints from "../SubagentLaunchCheckpoints.ts";
 import {
   makeSubagentChildThread,
   makeSubagentConversationArtifacts,
@@ -3363,6 +3366,11 @@ export interface ClaudeAdapterV2Options {
       request: ProviderContinuationRequests.ProviderContinuationRequest,
     ) => Effect.Effect<void>;
   };
+  /** Handoff checkpoints awaited before an Agent launch; defaults to none. */
+  readonly launchCheckpoints?: Pick<
+    SubagentLaunchCheckpoints.SubagentLaunchCheckpointsShape,
+    "checkpoint"
+  >;
 }
 
 export function makeClaudeAdapterV2(
@@ -3372,6 +3380,9 @@ export function makeClaudeAdapterV2(
   const continuationRequests = adapterOptions.continuationRequests ?? {
     offer: () => Effect.void,
   };
+  const subagentLaunchHooks = makeSubagentLaunchHooks(
+    adapterOptions.launchCheckpoints?.checkpoint ?? (() => Effect.void),
+  );
 
   // Re-scan on every send: skills are added and switched off mid-session, and
   // the scan is a few directory reads. A skill switched off via skillOverrides,
@@ -4500,6 +4511,14 @@ export function makeClaudeAdapterV2(
           if (existingSubagent === undefined && input.status !== "running") {
             return;
           }
+          if (
+            existingSubagent !== undefined &&
+            input.status !== "running" &&
+            existingSubagent.task.status === input.status &&
+            input.result !== undefined &&
+            existingSubagent.task.result === input.result
+          )
+            return;
           // Status is monotone with one exception: task_started for a known
           // task id is an authoritative CLI lifecycle event (SendMessage to a
           // completed subagent resumes it and re-emits task_started with the
@@ -4571,7 +4590,7 @@ export function makeClaudeAdapterV2(
               createdBy: "agent" as const,
               driver: CLAUDE_PROVIDER,
               providerInstanceId: input.context.input.modelSelection.instanceId,
-              providerThreadId: null,
+              providerThreadId: input.context.input.providerThread.id,
               childThreadId,
               nativeTaskRef: {
                 driver: CLAUDE_PROVIDER,
@@ -5737,6 +5756,26 @@ export function makeClaudeAdapterV2(
               outcome: claudeTaskOutcome(message.status),
               childThreadId: registered?.childThreadId,
             });
+          }
+          // Terminal receipts must outlive a failed wake/reopen or model switch.
+          // Use the owning task's identity, never the current parent's run.
+          if (isNotification && !isPendingTaskNotification) {
+            const child = (yield* Ref.get(sessionSubagentsByTaskId)).get(message.task_id);
+            if (child !== undefined && child.task.status === "running") {
+              const receipt = nativeChildTerminalReceipt({
+                ...child,
+                status:
+                  message.status === "completed"
+                    ? "completed"
+                    : message.status === "stopped"
+                      ? "cancelled"
+                      : "failed",
+                result: message.summary,
+                now: yield* DateTime.now,
+              });
+              for (const event of receipt.events) yield* emitProviderEvent(event);
+              child.task = receipt.task;
+            }
           }
           yield* Ref.update(wakeBuffers, (current) => {
             const existing = current.get(wakeInput.nativeThreadId);
@@ -7904,7 +7943,10 @@ export function makeClaudeAdapterV2(
               providerSessionId: input.providerSessionId,
               options: {
                 ...queryOptions,
-                hooks: projectContextHooks.hooks(nativeThreadId, queryOptions.hooks),
+                hooks: subagentLaunchHooks(
+                  turnInput.threadId,
+                  projectContextHooks.hooks(nativeThreadId, queryOptions.hooks),
+                ),
               },
             })
             .pipe(
@@ -8485,13 +8527,17 @@ export function makeClaudeAdapterV2(
               }
             }
             const buffers = yield* Ref.get(wakeBuffers);
+            const registered = yield* Ref.get(sessionSubagentsByTaskId);
             for (const entry of buffers.values()) {
               if (
                 entry.messages.some(
                   (message) =>
                     message.type === "user" ||
                     message.type === "assistant" ||
-                    message.type === "result",
+                    message.type === "result" ||
+                    (message.type === "system" &&
+                      message.subtype === "task_notification" &&
+                      registered.has(message.task_id)),
                 )
               ) {
                 return true;
@@ -8823,6 +8869,7 @@ export const createClaudeAdapterV2 = Effect.fn("ClaudeAdapterV2Driver.create")(
     const queryRunner = yield* ClaudeAgentSdkQueryRunner;
     const serverConfig = yield* ServerConfig.ServerConfig;
     const continuationRequests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
+    const launchCheckpoints = yield* SubagentLaunchCheckpoints.SubagentLaunchCheckpoints;
     const baseEnvironment = mergeNativeSubscriptionEnvironment(
       environment,
       hostEnvironment,
@@ -8863,6 +8910,7 @@ export const createClaudeAdapterV2 = Effect.fn("ClaudeAdapterV2Driver.create")(
       idAllocator,
       queryRunner,
       continuationRequests,
+      launchCheckpoints,
       ...hooks,
     });
   },
@@ -8899,6 +8947,7 @@ const makeDefaultClaudeAdapterV2 = Effect.fn("ClaudeAdapterV2.layer")(function* 
   const queryRunner = yield* ClaudeAgentSdkQueryRunner;
   const serverConfig = yield* ServerConfig.ServerConfig;
   const continuationRequests = yield* ProviderContinuationRequests.ProviderContinuationRequests;
+  const launchCheckpoints = yield* SubagentLaunchCheckpoints.SubagentLaunchCheckpoints;
   // Claude Code's own file tools only; see the driver above and AgentProtectedPaths.ts.
   const agentSecretDeny = yield* claudeAgentSecretDenyForConfig({
     fileSystem,
@@ -8924,6 +8973,7 @@ const makeDefaultClaudeAdapterV2 = Effect.fn("ClaudeAdapterV2.layer")(function* 
     idAllocator,
     queryRunner,
     continuationRequests,
+    launchCheckpoints,
   });
 });
 

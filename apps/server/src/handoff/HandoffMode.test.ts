@@ -23,7 +23,10 @@ import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as TextGeneration from "../textGeneration/TextGeneration.ts";
+import { makeSubagentLaunchHooks } from "../orchestration-v2/Adapters/ClaudeSubagentLaunchHook.ts";
+import * as SubagentLaunchCheckpoints from "../orchestration-v2/SubagentLaunchCheckpoints.ts";
 import * as HandoffMode from "./HandoffMode.ts";
+import { launchCheckpoint } from "./HandoffModeReactor.ts";
 import * as HandoffModeStore from "./HandoffModeStore.ts";
 import { fenceRecord, emptyThreadRecord } from "./handoffState.ts";
 
@@ -105,6 +108,7 @@ function layerFor(root: string, fixture: Fixture) {
           ],
           runs: [{ id: fixture.latestRunId, status: fixture.runStatus }],
           turnItems: [],
+          subagents: [],
         }),
     } as unknown as ProjectionStore.ProjectionStoreV2["Service"]),
     Layer.succeed(
@@ -328,4 +332,70 @@ describe("HandoffMode", () => {
       });
     }).pipe(Effect.provide(layerFor(root, fixture)));
   });
+
+  it.effect(
+    "checkpoints before Claude launches a subagent, once per launch, only in handoff mode",
+    () => {
+      const fixture: Fixture = { runStatus: "running", activeRunId: "run-1", latestRunId: "run-1" };
+      const root = repository();
+      return Effect.gen(function* () {
+        const handoff = yield* HandoffMode.HandoffMode;
+        const launches = yield* SubagentLaunchCheckpoints.SubagentLaunchCheckpoints;
+        yield* launches.serve(launchCheckpoint(handoff));
+        const hooks = makeSubagentLaunchHooks(launches.checkpoint)(threadId, undefined);
+        const agentLaunch = (toolUseId: string) =>
+          Effect.promise(() =>
+            hooks.PreToolUse![0]!.hooks[0]!(
+              {
+                hook_event_name: "PreToolUse",
+                tool_name: "Agent",
+                tool_use_id: toolUseId,
+              } as never,
+              toolUseId,
+              { signal: new AbortController().signal },
+            ),
+          );
+        const checkpoints = handoff.snapshot.pipe(
+          Effect.map((snapshot) => snapshot.threads.flatMap((thread) => thread.checkpoint ?? [])),
+        );
+        yield* handoff.updateConfig({ pushToOrigin: false });
+
+        // Handoff mode off: the launch goes ahead and nothing is written.
+        expect(yield* agentLaunch("toolu_off")).toEqual({});
+        expect(yield* checkpoints).toEqual([]);
+
+        yield* handoff.setProjectMode({ projectId, mode: "on" });
+        expect(yield* agentLaunch("toolu_on")).toEqual({});
+        // Written by the time the hook lets the Agent tool run.
+        expect(yield* checkpoints).toMatchObject([{ sequence: 1, reason: "interval" }]);
+        NodeFS.writeFileSync(NodePath.join(root, "app.ts"), "export const a = 3;\n");
+        yield* agentLaunch("toolu_on");
+        expect((yield* checkpoints)[0]?.sequence).toBe(1);
+        yield* agentLaunch("toolu_next");
+        expect((yield* checkpoints)[0]?.sequence).toBe(2);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(Layer.merge(layerFor(root, fixture), SubagentLaunchCheckpoints.layer)),
+      );
+    },
+  );
+
+  it.effect("shares one launch-checkpoint server between the adapters and handoff mode", () =>
+    Effect.gen(function* () {
+      const served: Array<string> = [];
+      const reader = (label: string) =>
+        Layer.effectDiscard(
+          Effect.gen(function* () {
+            const launches = yield* SubagentLaunchCheckpoints.SubagentLaunchCheckpoints;
+            if (label === "reactor")
+              yield* launches.serve((id) => Effect.sync(() => served.push(id)));
+            else yield* launches.checkpoint(threadId);
+          }),
+        ).pipe(Layer.provide(SubagentLaunchCheckpoints.layer));
+      yield* Layer.build(
+        Layer.mergeAll(reader("reactor"), Layer.unwrap(Effect.succeed(reader("adapter")))),
+      );
+      expect(served).toEqual([threadId]);
+    }).pipe(Effect.scoped),
+  );
 });

@@ -141,6 +141,19 @@ export function handoffBudget(input: {
   );
 }
 
+/**
+ * Room the target session has for continuation text beside the current
+ * request: its measured window and compaction boundary, less what it already
+ * holds and the work reserve. Not capped like imported history, but never
+ * above the byte cap. Context only; a provider's quota percentage never
+ * enters it.
+ */
+export function continuationHeadroom(
+  input: Omit<Parameters<typeof handoffBudget>[0], "tokenCap">,
+): number {
+  return handoffBudget({ ...input, tokenCap: HANDOFF_BYTE_CAP });
+}
+
 export function historicalMessage(
   item: OrchestrationV2TurnItem,
 ): OrchestrationV2HistoricalMessage | null {

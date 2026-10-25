@@ -1,8 +1,8 @@
 import {
   formatProviderSubagentStatus,
+  providerSubagentWorkActive,
   type ProviderSubagentStatus,
 } from "@specweave-studio/client-runtime/state/thread-execution";
-import { isOrchestrationV2WorkActive } from "@specweave-studio/contracts";
 
 /** Which glyph the subagent bar shows beside its status. */
 export type ProviderSubagentStatusTone =
@@ -11,14 +11,17 @@ export type ProviderSubagentStatusTone =
   | "live"
   | "done"
   | "failed"
-  | "stopped";
+  | "stopped"
+  | "unknown";
 
 export function providerSubagentStatusTone(
   status: ProviderSubagentStatus | null,
 ): ProviderSubagentStatusTone {
   if (status === null) return "starting";
-  if (isOrchestrationV2WorkActive(status.status)) return "live";
+  if (providerSubagentWorkActive(status)) return "live";
   switch (status.status) {
+    case "unknown":
+      return "unknown";
     case "completed":
       return "done";
     case "failed":

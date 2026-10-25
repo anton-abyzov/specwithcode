@@ -75,7 +75,7 @@ export function assertClaudeSubagentOutput(
     assert.equal(subagent.driver, "claudeAgent");
     assert.equal(subagent.status, "completed");
     assert.equal(subagent.progress, expectedProgress);
-    assert.isNull(subagent.providerThreadId);
+    assert.equal(subagent.providerThreadId, projection.runs[0]!.providerThreadId);
     assert.isNotNull(subagent.childThreadId);
     assert.isNotNull(subagent.nativeTaskRef);
     assert.isNotNull(subagent.completedAt);

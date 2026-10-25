@@ -100,6 +100,7 @@ const scenario = (
     readonly signedIn?: boolean;
     readonly sourceMembers?: boolean;
     readonly sourcePersonal?: boolean;
+    readonly children?: HandoffCheckpoint["children"];
   } = {},
 ) =>
   Effect.gen(function* () {
@@ -144,6 +145,7 @@ const scenario = (
             fixture.sequence += 1;
             const record = target.document.threads[threadId] ?? emptyThreadRecord(sourceProject);
             const checkpoint: HandoffCheckpoint = {
+              ...(options.children === undefined ? {} : { children: options.children }),
               sequence: fixture.sequence,
               commit: written.commit,
               baseCommit: written.baseCommit,
@@ -903,5 +905,42 @@ describe("handoff between two machines", () => {
         ),
       ).toMatchObject({ state: "current", sequence: 2 });
     }),
+  );
+  it.effect.each(["leased", "settled", "unknown"] as const)(
+    "carries child dispositions across two hosts: %s",
+    (disposition) =>
+      Effect.gen(function* () {
+        const children = [
+          {
+            taskId: "child-1",
+            parentThreadId: threadId,
+            childThreadId: ThreadId.make("child-thread"),
+            sourceEnvironmentId: m4,
+            ownerEpoch: 4,
+            origin: "app_owned" as const,
+            providerThreadId: null,
+            status: disposition === "settled" ? "completed" : "running",
+            disposition,
+            context:
+              "Original brief: audit mail receipts. Never replay sent mail. Result revision: receipt-1.",
+          },
+        ];
+        const { moves, source, destination, destinationRoot } = yield* scenario({ children });
+        NodeFS.writeFileSync(NodePath.join(destinationRoot, ".env.local"), "TOKEN=minis\n");
+        if (disposition === "unknown") {
+          const failure = yield* handOff(moves).pipe(Effect.flip);
+          expect(failure.message).toContain("owning process or machine");
+          expect(destination.launches).toHaveLength(0);
+          expect(source.document.threads[threadId]?.continuedOn).toBeNull();
+          return;
+        }
+        const moved = yield* handOff(moves);
+        expect(destination.launches).toHaveLength(1);
+        expect(destination.launches[0]?.initialMessage?.text).toContain("receipt-1");
+        expect(destination.launches[0]?.initialMessage?.text).toContain(`owner ${m4}; epoch 4`);
+        const again = yield* handOff(moves);
+        expect(again.threadId).toBe(moved.threadId);
+        expect(destination.launches).toHaveLength(1);
+      }),
   );
 });

@@ -46,6 +46,7 @@ import {
   effortLevelLabel,
 } from "./EffortGlyph";
 import { useComposerMenuState } from "./useComposerMenuState";
+import { getTraitsSpeedDisplay, TraitsSpeedIcon } from "./TraitsSpeed";
 
 type ProviderOptions = ReadonlyArray<ProviderOptionSelection>;
 
@@ -450,6 +451,20 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
                 {descriptor.options.map((option) => {
                   const isEffort = descriptor.id === effortDescriptorId;
                   const showGlyph = isEffort && effortGlyphLevel(option.id) !== null;
+                  const optionSpeed = isEffort
+                    ? null
+                    : (getTraitsSpeedDisplay(provider, {
+                        ...descriptor,
+                        currentValue: option.id,
+                      })?.speedIcon ?? null);
+                  // Standard lines up with the bolted tiers beside it.
+                  const speedGroup =
+                    !isEffort &&
+                    descriptor.options.some(
+                      ({ id }) =>
+                        getTraitsSpeedDisplay(provider, { ...descriptor, currentValue: id })
+                          ?.speedIcon,
+                    );
                   const description =
                     (isEffort ? effortLevelDescription(option.id) : null) ?? option.description;
                   return (
@@ -470,6 +485,21 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
                             value={option.id}
                             className="mt-0.5 size-4 text-muted-foreground in-data-checked:text-foreground"
                           />
+                        ) : optionSpeed ? (
+                          <span
+                            data-trait-speed-glyph={optionSpeed}
+                            className="mt-0.5 inline-flex shrink-0"
+                          >
+                            <TraitsSpeedIcon
+                              announce={false}
+                              provider={provider}
+                              speedIcon={optionSpeed}
+                              className="text-muted-foreground in-data-checked:text-foreground"
+                            />
+                          </span>
+                        ) : speedGroup ? (
+                          // Menu icons sit in 12px (size-4 with -mx-0.5), so the spacer matches.
+                          <span aria-hidden className="w-3 shrink-0" />
                         ) : null}
                         <span className="flex w-full min-w-0 flex-col">
                           <span className="flex w-full min-w-0 items-center justify-between gap-3">
@@ -522,7 +552,22 @@ export const TraitsMenuContent = memo(function TraitsMenuContentImpl({
               >
                 {(["on", "off"] as const).map((value) => (
                   <MenuRadioItem key={value} value={value} hideIndicator closeOnClick>
-                    <span className="flex w-full min-w-0 items-center justify-between gap-3">
+                    <span className="flex w-full min-w-0 items-center gap-2">
+                      {descriptor.id === "fastMode" ? (
+                        value === "on" ? (
+                          <span data-trait-speed-glyph="fast" className="inline-flex shrink-0">
+                            <TraitsSpeedIcon
+                              announce={false}
+                              provider={provider}
+                              speedIcon="fast"
+                              className="text-muted-foreground in-data-checked:text-foreground"
+                            />
+                          </span>
+                        ) : (
+                          // Menu icons sit in 12px (size-4 with -mx-0.5), so the spacer matches.
+                          <span aria-hidden className="w-3 shrink-0" />
+                        )
+                      ) : null}
                       <span>{value === "on" ? "On" : "Off"}</span>
                     </span>
                   </MenuRadioItem>
@@ -623,8 +668,35 @@ export interface TraitsTriggerParts {
   readonly label: string;
   /** The effort level, shown with its meter and kept visible in a narrow composer. */
   readonly effort: { readonly value: string; readonly label: string } | null;
-  /** Context window, thinking and speed, shortened; hidden first when space runs out. */
+  /** Context window and thinking, shortened; hidden first when space runs out. */
   readonly details: string;
+  /** A faster speed than standard, drawn as a bolt; its words go in the tooltip and name. */
+  readonly speed: { readonly icon: "fast" | "ultrafast"; readonly label: string } | null;
+}
+
+/** The selected faster speed, named the way the menu names it. */
+function triggerSpeed(
+  provider: ProviderDriverKind,
+  descriptors: ReadonlyArray<ProviderOptionDescriptor>,
+): TraitsTriggerParts["speed"] {
+  for (const descriptor of descriptors) {
+    const display = getTraitsSpeedDisplay(provider, descriptor);
+    if (!display?.speedIcon) continue;
+    return {
+      icon: display.speedIcon,
+      label: descriptor.id === "fastMode" ? "Fast mode" : `${display.label} service tier`,
+    };
+  }
+  return null;
+}
+
+/** The trigger's tooltip and accessible name: effort, the other traits, then speed in words. */
+export function traitsTriggerDescription(parts: TraitsTriggerParts): string {
+  // Without an effort level the label already names the speed ("1M · Fast").
+  if (!parts.effort) return parts.label;
+  return [`${parts.effort.label} effort`, parts.details, parts.speed?.label]
+    .filter(Boolean)
+    .join(" · ");
 }
 
 /** Split the trigger into the effort level and a compact summary of the other traits. */
@@ -632,6 +704,7 @@ export function buildTraitsTriggerParts(
   input: Parameters<typeof buildTraitsTriggerDisplay>[0],
 ): TraitsTriggerParts {
   const { label } = buildTraitsTriggerDisplay(input);
+  const speed = triggerSpeed(input.provider, input.descriptors);
   const descriptor = findEffortDescriptor(input.descriptors);
   const ultrathink =
     input.ultrathinkPromptControlled && descriptor?.id === input.primarySelectDescriptorId;
@@ -654,14 +727,15 @@ export function buildTraitsTriggerParts(
           input.reportedModelSelection,
         );
   if (!descriptor || typeof value !== "string" || !effortLabel || !effortGlyphLevel(value)) {
-    return { label, effort: null, details: "" };
+    return { label, effort: null, details: "", speed };
   }
   const details: Array<string> = [];
   for (const other of input.descriptors) {
     if (other.id === descriptor.id) continue;
     if (other.type === "boolean") {
+      // A faster speed is drawn as a bolt, not a word.
       if (other.id === "fastMode") {
-        if (other.currentValue === true) details.push("Fast");
+        if (other.currentValue === true && !speed) details.push("Fast");
       } else if (other.id === "thinking") {
         details.push(other.currentValue === true ? "Thinking" : "No thinking");
       } else {
@@ -682,12 +756,20 @@ export function buildTraitsTriggerParts(
       input.modelSelection,
       input.reportedModelSelection,
     );
+    if (
+      other.id === "serviceTier" &&
+      speed &&
+      getTraitsSpeedDisplay(input.provider, other)?.speedIcon
+    ) {
+      continue;
+    }
     if (typeof otherLabel === "string" && otherLabel.length > 0) details.push(otherLabel);
   }
   return {
     label,
     effort: { value, label: effortLevelLabel(value, effortLabel) },
     details: details.join(" · "),
+    speed,
   };
 }
 
@@ -743,11 +825,7 @@ export const TraitsPicker = memo(function TraitsPicker({
     return null;
   }
 
-  const {
-    label: triggerLabel,
-    effort: triggerEffort,
-    details: triggerDetails,
-  } = buildTraitsTriggerParts({
+  const triggerParts = buildTraitsTriggerParts({
     provider,
     descriptors,
     primarySelectDescriptorId: primarySelectDescriptor?.id ?? null,
@@ -755,6 +833,25 @@ export const TraitsPicker = memo(function TraitsPicker({
     modelSelection: instanceId && model ? { instanceId, model, options: modelOptions ?? [] } : null,
     reportedModelSelection,
   });
+  const {
+    label: triggerLabel,
+    effort: triggerEffort,
+    details: triggerDetails,
+    speed: triggerSpeedPart,
+  } = triggerParts;
+  const triggerDescription = traitsTriggerDescription(triggerParts);
+  const speedIcon = triggerSpeedPart ? (
+    <span data-composer-control-speed className="inline-flex shrink-0">
+      <TraitsSpeedIcon
+        announce={false}
+        provider={provider}
+        speedIcon={triggerSpeedPart.icon}
+        size={size}
+        // Neutral, so it never reads as the amber fallback mark beside it.
+        className="text-foreground"
+      />
+    </span>
+  ) : null;
   const isCodexStyle = provider === "codex";
 
   return (
@@ -773,8 +870,8 @@ export const TraitsPicker = memo(function TraitsPicker({
                   disabled={disabled}
                   aria-label={
                     triggerAriaLabelPrefix
-                      ? `${triggerAriaLabelPrefix}: ${triggerLabel}`
-                      : triggerLabel
+                      ? `${triggerAriaLabelPrefix}: ${triggerDescription}`
+                      : triggerDescription
                   }
                   data-composer-shortcut={isComposerOwned ? "composer.effort" : undefined}
                   size={size}
@@ -808,6 +905,7 @@ export const TraitsPicker = memo(function TraitsPicker({
                   <span data-composer-control-effort className="shrink-0">
                     {triggerEffort.label}
                   </span>
+                  {speedIcon}
                   {triggerDetails ? (
                     <span
                       data-composer-control-label
@@ -827,6 +925,7 @@ export const TraitsPicker = memo(function TraitsPicker({
                   <span data-composer-control-label className="min-w-0 truncate">
                     {triggerLabel}
                   </span>
+                  {speedIcon}
                 </>
               )}
               <ComposerControlChevron size={size} />
@@ -839,6 +938,7 @@ export const TraitsPicker = memo(function TraitsPicker({
                 data-composer-control-icon
               />
               <span data-composer-control-effort>{triggerEffort.label}</span>
+              {speedIcon}
               {triggerDetails ? (
                 <span data-composer-control-label className="font-normal text-muted-foreground">
                   {triggerDetails}
@@ -854,15 +954,12 @@ export const TraitsPicker = memo(function TraitsPicker({
                 data-composer-control-icon
               />
               <span data-composer-control-label>{triggerLabel}</span>
+              {speedIcon}
               <ComposerControlChevron size={size} />
             </>
           )}
         </TooltipTrigger>
-        <TooltipPopup side="top">
-          {triggerEffort
-            ? [`${triggerEffort.label} effort`, triggerDetails].filter(Boolean).join(" · ")
-            : triggerLabel}
-        </TooltipPopup>
+        <TooltipPopup side="top">{triggerDescription}</TooltipPopup>
       </Tooltip>
       <MenuPopup align="start" {...(isComposerOwned ? composerFloatingLayerProps : {})}>
         <TraitsMenuContent

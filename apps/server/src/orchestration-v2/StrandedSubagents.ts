@@ -1,3 +1,5 @@
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import { localChildOwnership } from "./ChildMachineHandoff.ts";
 import {
   CommandId,
   isProviderNativeSubagentThread,
@@ -101,6 +103,10 @@ function childRootStatus(status: string): SubagentSettlementStatus | "completed"
 
 export const make = Effect.gen(function* () {
   const projections = yield* ProjectionStore.ProjectionStoreV2;
+  const environment = yield* Effect.serviceOption(ServerEnvironment.ServerEnvironment);
+  const environmentId = Option.isNone(environment)
+    ? null
+    : yield* environment.value.getEnvironmentId;
   const sessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
   const eventSink = yield* EventSink.EventSinkV2;
   const ids = yield* IdAllocator.IdAllocatorV2;
@@ -181,7 +187,11 @@ export const make = Effect.gen(function* () {
   ) {
     const child = yield* projections.getRuntimeRecoveryProjection(childThreadId);
     const roots = child.nodes.filter(
-      (node) => node.kind === "root_turn" && node.runId === null && isOpenWorkStatus(node.status),
+      (node) =>
+        node.kind === "root_turn" &&
+        node.runId === null &&
+        (isOpenWorkStatus(node.status) ||
+          child.turnItems.some((item) => item.nodeId === node.id && isOpenWorkStatus(item.status))),
     );
     if (roots.length === 0) return false;
     const now = yield* DateTime.now;
@@ -214,19 +224,41 @@ export const make = Effect.gen(function* () {
     suspected: Map<ThreadId, string>,
   ) {
     const threadId = projection.thread.id;
-    const open = openNativeSubagentWork(projection);
-    const { runs, providerThreads } = yield* projections.getThreadRecords(threadId, [
-      "runs",
-      "providerThreads",
-    ]);
-    const workProviderThreadIds = new Set([
-      ...open.items.map((item) => item.providerThreadId ?? null),
-      ...open.rows.map((row) => subagentProviderThreadId(projection, row)),
-    ]);
-    for (const providerThreadId of workProviderThreadIds) {
-      const providerThread = providerThreads.find((candidate) => candidate.id === providerThreadId);
-      if (providerThread !== undefined && (yield* providerThreadLive(providerThread))) return false;
+    const owned = yield* projections.getThreadRecords(threadId, ["runs", "providerThreads"]);
+    const runs = [...owned.runs];
+    const providerThreads = [...owned.providerThreads];
+    // Native descendants execute in their nearest non-native owner's process.
+    // An independently delegated ancestor is an execution boundary.
+    let ancestor = projection;
+    const seen = new Set<ThreadId>([threadId]);
+    for (let depth = 0; isProviderNativeSubagentThread(ancestor.thread); depth += 1) {
+      const parent = ancestor.thread.lineage.parentThreadId;
+      if (parent === null || seen.has(parent) || depth >= 16) return false;
+      seen.add(parent);
+      ancestor = yield* projections.getRuntimeRecoveryProjection(parent);
+      if (!localChildOwnership(ancestor.thread, environmentId)) return false;
+      runs.push(...ancestor.runs);
+      for (const candidate of ancestor.providerThreads) {
+        if (!providerThreads.some((known) => known.id === candidate.id))
+          providerThreads.push(candidate);
+      }
     }
+    // A replacement run owns only its own session. A live process on B must
+    // not shield A's retired work (including A -> B -> A).
+    const deadThreads = new Set<OrchestrationV2ProviderThread["id"]>();
+    for (const providerThread of providerThreads) {
+      if (
+        runs.some(
+          (run) =>
+            run.providerThreadId === providerThread.id && BLOCKING_RUN_STATUSES.has(run.status),
+        )
+      )
+        continue;
+      if (!(yield* providerThreadLive(providerThread))) deadThreads.add(providerThread.id);
+    }
+    const scope = { providerThreadIds: deadThreads };
+    const open = openNativeSubagentWork(projection, scope);
+    if (open.items.length === 0 && open.rows.length === 0) return false;
     const subagentIds = [
       ...open.items.map((item) => item.subagentId),
       ...open.rows.map((row) => row.id),
@@ -236,19 +268,24 @@ export const make = Effect.gen(function* () {
       suspected.set(threadId, verdict);
       return false;
     }
-    const cause = yield* settlementCause(threadId, runs, providerThreads);
+    const cause = yield* settlementCause(
+      ancestor.thread.id,
+      runs.filter((run) => run.providerThreadId !== null && deadThreads.has(run.providerThreadId)),
+      providerThreads,
+    );
     const now = yield* DateTime.now;
     const commandId = CommandId.make(`command:stranded-subagents:${threadId}:${digest(verdict)}`);
     const allocateEventId = () => ids.allocate.event({ threadId, commandId });
     const settlement = yield* settleNativeSubagents({
       projection,
+      scope,
       status: cause.status,
       progress: cause.progress,
       now,
       allocateEventId,
     });
     const notes = yield* lostWorkNoteEvents({
-      projection: { thread: projection.thread, runs },
+      projection: { thread: ancestor.thread, runs: ancestor.runs },
       lostWork: settlement.lostWork,
       now,
       allocateEventId,
@@ -263,7 +300,12 @@ export const make = Effect.gen(function* () {
     });
     if (!result.committed) return false;
     for (const childThreadId of settlement.childThreadIds) {
-      yield* settleChild(childThreadId, cause.status).pipe(
+      // A valid receipt may only close the item, with no row event at all.
+      // Carry its validated outcome instead of re-reading the old projection.
+      yield* settleChild(
+        childThreadId,
+        settlement.childStatuses.get(childThreadId) ?? cause.status,
+      ).pipe(
         Effect.catchCause((failure) =>
           Effect.logWarning("Could not settle a stranded subagent's own thread", {
             threadId: childThreadId,
@@ -295,10 +337,18 @@ export const make = Effect.gen(function* () {
       return false;
     }
     const roots = projection.nodes.filter(
-      (node) => node.kind === "root_turn" && node.runId === null && isOpenWorkStatus(node.status),
+      (node) =>
+        node.kind === "root_turn" &&
+        node.runId === null &&
+        (isOpenWorkStatus(node.status) ||
+          projection.turnItems.some(
+            (item) => item.nodeId === node.id && isOpenWorkStatus(item.status),
+          )),
     );
     if (roots.length === 0) return false;
-    const { subagents } = yield* projections.getThreadRecords(parentThreadId, ["subagents"]);
+    const owner = yield* projections.getRuntimeRecoveryProjection(parentThreadId);
+    if (!localChildOwnership(owner.thread, environmentId)) return false;
+    const { subagents } = owner;
     const row = subagents.find((candidate) => candidate.childThreadId === threadId);
     if (row !== undefined && isOpenWorkStatus(row.status)) return false;
     const verdict = `child:${roots.map((node) => node.id).join(",")}`;
@@ -318,9 +368,11 @@ export const make = Effect.gen(function* () {
     suspected: Map<ThreadId, string>,
   ) {
     const projection = yield* projections.getRuntimeRecoveryProjection(threadId);
-    if (projection.thread.deletedAt !== null) return false;
-    // A run in progress owns its subagents; its own end settles them.
-    if (projection.runs.some((run) => BLOCKING_RUN_STATUSES.has(run.status))) return false;
+    if (
+      projection.thread.deletedAt !== null ||
+      !localChildOwnership(projection.thread, environmentId)
+    )
+      return false;
     const open = openNativeSubagentWork(projection);
     if (open.items.length > 0 || open.rows.length > 0) {
       return yield* sweepParent(projection, previous, suspected);

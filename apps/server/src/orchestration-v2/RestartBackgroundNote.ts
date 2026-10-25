@@ -235,10 +235,10 @@ export function pendingRestartCancelledBackgroundWork(input: {
   const providerThreadId = input.run.providerThreadId;
   const deliveredAttemptIds = new Set(
     input.providerTurns
-      .filter((turn) => turn.providerThreadId === providerThreadId && turn.status === "completed")
+      .filter((turn) => turn.status === "completed")
       .map((turn) => turn.runAttemptId),
   );
-  const sameThread = input.runs.filter((run) => run.providerThreadId === providerThreadId);
+  const sameThread = input.runs;
   const prompted = sameThread.filter(
     (candidate) =>
       candidate.id !== input.run.id &&
@@ -262,15 +262,21 @@ export function pendingRestartCancelledBackgroundWork(input: {
   );
   if (alreadyDelivered) return [];
   return sameThread
-    .filter(
-      (source) =>
-        runRanAfter(input.run, source) &&
-        (source.restartCancelledBackgroundWork?.length ?? 0) > 0 &&
-        !prompted.some((later) => runRanAfter(later, source)),
-    )
+    .filter((source) => runRanAfter(input.run, source))
     .reduce<ReadonlyArray<Work>>(
       (work, source) =>
-        mergeRestartCancelledBackgroundWork(work, source.restartCancelledBackgroundWork ?? []),
+        mergeRestartCancelledBackgroundWork(
+          work,
+          (source.restartCancelledBackgroundWork ?? []).filter((entry) => {
+            const portable = entry.kind === "subagent" && entry.id !== undefined;
+            if (!portable && source.providerThreadId !== providerThreadId) return false;
+            return !prompted.some(
+              (later) =>
+                runRanAfter(later, source) &&
+                (portable || later.providerThreadId === source.providerThreadId),
+            );
+          }),
+        ),
       [],
     );
 }

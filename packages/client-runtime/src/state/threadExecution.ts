@@ -13,6 +13,7 @@ import {
   type OrchestrationV2ProviderGoal,
   type ServerProviderModel,
   type OrchestrationV2ExecutionNode,
+  type OrchestrationV2Subagent,
   type OrchestrationV2ThreadProjection,
   orchestrationV2RunWorkStartedAt,
   type ThreadId,
@@ -29,6 +30,7 @@ import { formatDuration } from "@specweave-studio/shared/orchestrationTiming";
 import * as DateTime from "effect/DateTime";
 
 import {
+  subagentExecutionStatus,
   threadRuntimeIsActive,
   type ThreadRunSummary,
   type ThreadRuntimeSummary,
@@ -121,29 +123,89 @@ export function deriveThreadActivityRun(
  */
 export function deriveRunlessWorkStartedAt(
   projection: OrchestrationV2ThreadProjection,
+  parentRecords: ReadonlyArray<OrchestrationV2Subagent> = [],
+  execution?: ProviderSubagentExecution,
 ): string | null {
-  const status = deriveProviderSubagentStatus(projection);
-  return status !== null && isOrchestrationV2WorkActive(status.status) ? status.startedAt : null;
+  const status = deriveProviderSubagentStatus(projection, parentRecords, execution);
+  return providerSubagentWorkActive(status) ? status!.startedAt : null;
+}
+
+function isoOrNull(value: DateTime.Utc | null): string | null {
+  return value === null ? null : DateTime.formatIso(value);
 }
 
 export interface ProviderSubagentStatus {
-  readonly status: OrchestrationV2ExecutionNode["status"];
+  /** `unknown`: its machine does not answer, so it is neither working nor ended. */
+  readonly status: OrchestrationV2ExecutionNode["status"] | "unknown";
   readonly startedAt: string | null;
   readonly completedAt: string | null;
+}
+
+/** The child's and parent's shells and the hosts that do not answer, as the list reads them. */
+export interface ProviderSubagentExecution {
+  readonly thread: Parameters<typeof subagentExecutionStatus>[0]["thread"];
+  readonly parent?: Parameters<typeof subagentExecutionStatus>[0]["parent"];
+  readonly unreachable?: ReadonlySet<string> | undefined;
+}
+
+export function providerSubagentWorkActive(status: ProviderSubagentStatus | null): boolean {
+  return (
+    status !== null && status.status !== "unknown" && isOrchestrationV2WorkActive(status.status)
+  );
 }
 
 /**
  * Status of a provider-native subagent thread (see
  * isProviderNativeSubagentThread), read from its runless root turn. Null
- * until that root turn arrives, and for every other thread.
+ * until that root turn arrives, and for every other thread. `parentRecords`
+ * are the parent's subagent records when loaded: a terminal record is the
+ * child's receipt and outranks a root turn left running, as in the list.
  */
 export function deriveProviderSubagentStatus(
   projection: OrchestrationV2ThreadProjection,
+  parentRecords: ReadonlyArray<OrchestrationV2Subagent> = [],
+  execution?: ProviderSubagentExecution,
 ): ProviderSubagentStatus | null {
   if (!isProviderNativeSubagentThread(projection.thread)) return null;
   const node = projection.nodes.findLast(
     (candidate) => candidate.kind === "root_turn" && candidate.runId === null,
   );
+  const record = parentRecords.find(
+    (candidate) => candidate.childThreadId === projection.thread.id,
+  );
+  if (
+    record !== undefined &&
+    !isOrchestrationV2WorkActive(record.status) &&
+    record.status !== "idle"
+  )
+    return {
+      status: record.status,
+      startedAt: isoOrNull(record.startedAt ?? node?.startedAt ?? null),
+      completedAt: isoOrNull(record.completedAt ?? node?.completedAt ?? null),
+    };
+  // The list's verdict on placement: an unreachable host is unknown, and a
+  // root its parent no longer runs is not working.
+  const verdict =
+    execution?.thread == null
+      ? null
+      : subagentExecutionStatus({
+          record,
+          thread: execution.thread,
+          parent: execution.parent,
+          unreachable: execution.unreachable,
+        });
+  if (
+    verdict === "unknown" ||
+    (verdict !== null &&
+      node !== undefined &&
+      isOrchestrationV2WorkActive(node.status) &&
+      !isOrchestrationV2WorkActive(verdict))
+  )
+    return {
+      status: verdict,
+      startedAt: isoOrNull(record?.startedAt ?? node?.startedAt ?? null),
+      completedAt: verdict === "unknown" ? null : isoOrNull(record?.completedAt ?? null),
+    };
   if (node === undefined) return null;
   return {
     status: node.status,
@@ -191,15 +253,16 @@ export function formatModelSelectionEffort(
   return null;
 }
 
-const SUBAGENT_STATUS_LABELS: Record<OrchestrationV2ExecutionNode["status"], string> = {
+const SUBAGENT_STATUS_LABELS: Record<ProviderSubagentStatus["status"], string> = {
+  unknown: "Unknown (machine unreachable)",
   idle: "Idle",
   pending: "Working",
   running: "Working",
   waiting: "Waiting",
   completed: "Completed",
-  interrupted: "Interrupted",
+  interrupted: "Interrupted, rerun pending",
   failed: "Failed",
-  cancelled: "Cancelled",
+  cancelled: "Stopped",
   rolled_back: "Cancelled",
 };
 
@@ -213,7 +276,7 @@ export function formatProviderSubagentStatus(
 ): string {
   if (status === null) return "Starting";
   const label = SUBAGENT_STATUS_LABELS[status.status];
-  const live = isOrchestrationV2WorkActive(status.status);
+  const live = providerSubagentWorkActive(status);
   if (!live && status.status !== "completed") return label;
   const start = status.startedAt === null ? Number.NaN : Date.parse(status.startedAt);
   const end = live

@@ -17,6 +17,7 @@ import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import {
+  continuationHeadroom,
   contextUsageForHandoff,
   handoffBudget,
   historyCost,
@@ -262,6 +263,68 @@ describe("handoff budget", () => {
       );
     }
     assert.equal(handoffBudget({ ...base, tokenCap: 2_000 }), 2_000);
+  });
+
+  it("measures continuation room from the session's compaction boundary, not a 95% rule", () => {
+    // The installed Claude queries compact at 400K on a 1M model: the reserve is 100K.
+    const measured = (usedTokens: number) =>
+      continuationHeadroom({
+        userText: "Continue",
+        attachments: [],
+        modelContextWindow: 1_000_000,
+        nativeContextEstimate: 0,
+        providerThread: {
+          ...providerThread,
+          contextUsage: { usedTokens, maxTokens: 1_000_000, autoCompactThreshold: 400_000 },
+        },
+      });
+    // Room for briefs is not limited to the 16K history cap...
+    assert.equal(measured(200_000), 64_000);
+    assert.isAbove(
+      measured(200_000),
+      handoffBudget({
+        tokenCap: 16_000,
+        userText: "Continue",
+        attachments: [],
+        modelContextWindow: 1_000_000,
+        nativeContextEstimate: 0,
+        providerThread,
+      }),
+    );
+    // ...and runs out near 300K, long before 95% of the model window (950K).
+    assert.isAbove(measured(260_000), 30_000);
+    assert.equal(measured(300_000), 0);
+    assert.equal(measured(950_000), 0);
+  });
+
+  it("gives a new account or session generation its own measurement", () => {
+    const old = { usedTokens: 370_000, maxTokens: 1_000_000, autoCompactThreshold: 400_000 };
+    // A subscription switch starts a new native session: the old occupancy does not carry.
+    const carried = contextUsageForHandoff({
+      sameNativeThread: false,
+      sameSelection: true,
+      reuseTelemetry: true,
+      previousUsage: old,
+    });
+    assert.isNull(carried);
+    const fresh = continuationHeadroom({
+      userText: "Continue",
+      attachments: [],
+      modelContextWindow: 200_000,
+      nativeContextEstimate: 12_000,
+      providerThread: { ...providerThread, contextUsage: carried },
+    });
+    const stale = continuationHeadroom({
+      userText: "Continue",
+      attachments: [],
+      modelContextWindow: 200_000,
+      nativeContextEstimate: 12_000,
+      providerThread: { ...providerThread, contextUsage: old },
+    });
+    // A small destination window keeps its own reserve; unknown occupancy uses the estimate.
+    assert.equal(stale, 0);
+    assert.isAbove(fresh, 60_000);
+    assert.isAtMost(fresh, 200_000 - 12_000 - 50_000);
   });
 
   it("keeps measured occupancy across a model change", () => {

@@ -8,7 +8,11 @@
  */
 import type { EnvironmentThreadShell } from "@specweave-studio/client-runtime/state/shell";
 import { threadRuntimeIsActive } from "@specweave-studio/client-runtime/state/shell";
-import { threadAwaitingPerson } from "@specweave-studio/client-runtime/state/models";
+import {
+  subagentExecutionStatus,
+  threadAwaitingPerson,
+  type SubagentExecutionStatus,
+} from "@specweave-studio/client-runtime/state/models";
 import type {
   OrchestrationV2PendingBackgroundTask,
   OrchestrationV2Subagent,
@@ -95,7 +99,7 @@ export function subagentDescendants<
   return result;
 }
 
-export type SubagentEntryStatus = OrchestrationV2Subagent["status"];
+export type SubagentEntryStatus = SubagentExecutionStatus;
 
 /** One row of a thread's subagent popover. */
 export interface SubagentEntry {
@@ -145,36 +149,6 @@ function iso(value: DateTime.Utc | null): string | null {
   return value === null ? null : DateTime.formatIso(value);
 }
 
-function shellStatus(thread: EnvironmentThreadShell): SubagentEntryStatus {
-  if (threadRuntimeIsActive(thread.runtime)) return "running";
-  const run = thread.latestRun?.status;
-  if (run === "failed") return "failed";
-  if (run === "cancelled") return "cancelled";
-  if (run === "interrupted") return "interrupted";
-  return "completed";
-}
-
-const TERMINAL_RUN_STATUSES = new Set(["completed", "failed", "cancelled", "interrupted"]);
-
-/**
- * What a row shows. The parent's record can lag behind the child: a process
- * that died, a person's Stop or a usage limit can end the child's own run
- * while the parent still says it runs. A child whose own run has ended and
- * holds no live runtime wins over that stale record. A provider's own subagent
- * has no run to read, so its record stands.
- */
-function entryStatus(
-  agent: Pick<ProjectedSubagent, "status"> | undefined,
-  thread: EnvironmentThreadShell,
-): SubagentEntryStatus {
-  if (!agent) return shellStatus(thread);
-  if (!isOrchestrationV2WorkActive(agent.status)) return agent.status;
-  const run = thread.latestRun?.status;
-  if (run === undefined || !TERMINAL_RUN_STATUSES.has(run)) return agent.status;
-  if (threadRuntimeIsActive(thread.runtime)) return agent.status;
-  return shellStatus(thread);
-}
-
 /**
  * The subagents a thread started, from its own records (title, model, result)
  * and from the backing threads the client has loaded, so a row shows while the
@@ -185,6 +159,8 @@ export function threadSubagentEntries(input: {
   readonly projected: readonly ProjectedSubagent[];
   readonly shells: readonly EnvironmentThreadShell[];
   readonly coordinatorIds?: ReadonlySet<string>;
+  /** Hosts that do not answer now; their children read unknown. */
+  readonly unreachable?: ReadonlySet<string> | undefined;
 }): SubagentEntry[] {
   const coordinatorIds = input.coordinatorIds ?? EMPTY_IDS;
   const byChild = new Map(
@@ -194,12 +170,22 @@ export function threadSubagentEntries(input: {
   );
   const entries: SubagentEntry[] = [];
   const listed = new Set<string>();
+  const sameHost = new Map(
+    input.shells
+      .filter((shell) => shell.environmentId === input.parent.environmentId)
+      .map((shell) => [String(shell.id), shell]),
+  );
   for (const { thread, depth } of subagentDescendants(input.shells, input.parent, coordinatorIds)) {
     const agent = byChild.get(thread.id);
     listed.add(thread.id);
-    const status = entryStatus(agent, thread);
+    const status = subagentExecutionStatus({
+      record: agent,
+      thread,
+      parent: sameHost.get(String(thread.lineage.parentThreadId)),
+      unreachable: input.unreachable,
+    });
     // A run blocked on an approval or a question waits on the person, not on its work.
-    const awaitingPerson = isOrchestrationV2WorkActive(status) ? awaitingPersonOf(thread) : null;
+    const awaitingPerson = isSubagentEntryActive({ status }) ? awaitingPersonOf(thread) : null;
     entries.push({
       key: thread.id,
       childThreadId: thread.id,
@@ -227,7 +213,7 @@ export function threadSubagentEntries(input: {
       key: agent.id,
       childThreadId: null,
       title: agent.title?.trim() || firstLine(agent.prompt) || "Subagent",
-      status: agent.status,
+      status: subagentExecutionStatus({ record: agent }),
       origin: agent.origin,
       providerInstanceId: agent.providerInstanceId,
       model: agent.model,
@@ -242,18 +228,67 @@ export function threadSubagentEntries(input: {
 }
 
 export function isSubagentEntryActive(entry: Pick<SubagentEntry, "status">): boolean {
-  return isOrchestrationV2WorkActive(entry.status);
+  return entry.status !== "unknown" && isOrchestrationV2WorkActive(entry.status);
 }
 
-/** How many of a thread's subagents are still working, from loaded shells alone. */
+/** Rows that count toward "Working · N subagents": at work, not waiting on the person. */
+export function workingSubagentEntryCount(entries: readonly SubagentEntry[]): number {
+  return entries.filter(
+    (entry) =>
+      entry.kind !== "workflow" &&
+      entry.awaitingPerson === undefined &&
+      isSubagentEntryActive(entry),
+  ).length;
+}
+
+/**
+ * How many of a thread's subagents are still working. Same verdict as its
+ * popover rows; `projected` is the parent's own records when its detail is
+ * loaded, so a completed record outranks a stale running child root.
+ */
 export function runningSubagentCount(
   shells: readonly EnvironmentThreadShell[],
   parent: Pick<EnvironmentThreadShell, "id" | "environmentId">,
   coordinatorIds: ReadonlySet<string> = EMPTY_IDS,
+  projected: readonly ProjectedSubagent[] = [],
+  unreachable?: ReadonlySet<string>,
 ): number {
-  return subagentDescendants(shells, parent, coordinatorIds).filter(
-    ({ thread }) => threadRuntimeIsActive(thread.runtime) && awaitingPersonOf(thread) === null,
-  ).length;
+  return workingSubagentEntryCount(
+    threadSubagentEntries({
+      parent,
+      shells,
+      coordinatorIds,
+      unreachable,
+      // Records without a loaded backing thread are counted by the popover, not the list.
+      projected: projected.filter((agent) => agent.childThreadId !== null),
+    }).filter((entry) => entry.childThreadId !== null),
+  );
+}
+
+/**
+ * "Working · N" for every listed thread. The open thread counts from its
+ * popover rows; the others from their shells. Both read the parent's shell,
+ * so a parent's count does not change with which thread is open.
+ */
+export function listedRunningSubagents(input: {
+  readonly threads: readonly Pick<EnvironmentThreadShell, "id" | "environmentId">[];
+  readonly shells: readonly EnvironmentThreadShell[];
+  readonly coordinatorIds: ReadonlySet<string>;
+  readonly unreachable?: ReadonlySet<string> | undefined;
+  readonly selected: Pick<EnvironmentThreadShell, "id" | "environmentId"> | null;
+  readonly selectedEntries: readonly SubagentEntry[];
+}): Map<string, number> {
+  const counts = new Map<string, number>();
+  for (const thread of input.threads) {
+    const running =
+      input.selected !== null &&
+      thread.environmentId === input.selected.environmentId &&
+      thread.id === input.selected.id
+        ? workingSubagentEntryCount(input.selectedEntries)
+        : runningSubagentCount(input.shells, thread, input.coordinatorIds, [], input.unreachable);
+    if (running > 0) counts.set(`${thread.environmentId}:${thread.id}`, running);
+  }
+  return counts;
 }
 
 /** "Working · 2 subagents": the parent's status word with its working subagents. */
@@ -282,7 +317,8 @@ export const SUBAGENT_STATUS_LABELS: Record<SubagentEntryStatus, string> = {
   completed: "Done",
   failed: "Failed",
   cancelled: "Stopped",
-  interrupted: "Interrupted",
+  interrupted: "Interrupted, rerun pending",
+  unknown: "Unknown (machine unreachable)",
 };
 
 const AWAITING_PERSON_LABELS: Record<SubagentAwaitingPerson, string> = {

@@ -7,6 +7,7 @@ import {
   BotIcon,
   CheckIcon,
   CircleAlertIcon,
+  CircleHelpIcon,
   CirclePauseIcon,
   CircleSlashIcon,
   LoaderCircleIcon,
@@ -54,6 +55,14 @@ function StatusGlyph({ tone }: { tone: ProviderSubagentStatusTone }) {
         <CircleSlashIcon
           aria-hidden
           data-subagent-status-glyph="stopped"
+          className="size-3.5 shrink-0 text-muted-foreground"
+        />
+      );
+    case "unknown":
+      return (
+        <CircleHelpIcon
+          aria-hidden
+          data-subagent-status-glyph="unknown"
           className="size-3.5 shrink-0 text-muted-foreground"
         />
       );

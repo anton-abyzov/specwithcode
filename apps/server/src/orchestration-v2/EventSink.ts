@@ -1,7 +1,10 @@
 import {
   CommandId,
   EventId,
+  type OrchestrationV2ExecutionNode,
   type OrchestrationV2Run,
+  type OrchestrationV2Subagent,
+  type OrchestrationV2TurnItem,
   OrchestrationV2DomainEvent,
   OrchestrationV2StoredEvent,
   ProviderThreadId,
@@ -32,6 +35,7 @@ import * as EffectOutbox from "./EffectOutbox.ts";
 import * as EventStore from "./EventStore.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProjectStore from "./ProjectStore.ts";
+import { fenceReceiptWrite, receiptsInWrite } from "./SubagentSettlement.ts";
 import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
 
 /**
@@ -440,15 +444,55 @@ const layerBase: Layer.Layer<
         return settlements.length === 0 ? events : [...events, ...settlements];
       });
 
+    // A subagent receipt and the child closes built from it were read before
+    // this transaction; recheck them against the rows and roots stored now
+    // (see fenceReceiptWrite). Every write takes this, so no writer skips it.
+    const fenceSubagentReceipts = (events: ReadonlyArray<OrchestrationV2DomainEvent>) =>
+      Effect.gen(function* () {
+        const receipts = receiptsInWrite(events);
+        if (receipts.length === 0) return events;
+        const storedRows = new Map<string, OrchestrationV2Subagent>();
+        const childNodes = new Map<string, OrchestrationV2ExecutionNode>();
+        const childItems = new Map<string, OrchestrationV2TurnItem>();
+        const records = <K extends ProjectionStore.ProjectionRecordField>(
+          threadId: ThreadId,
+          fields: ReadonlyArray<K>,
+        ) =>
+          projectionStore
+            .getThreadRecords(threadId, fields)
+            .pipe(
+              Effect.catchTags({ ProjectionStoreThreadNotFoundError: () => Effect.succeed(null) }),
+            );
+        for (const receipt of receipts) {
+          const parent = yield* records(receipt.threadId, ["subagents"]);
+          for (const row of parent?.subagents ?? [])
+            storedRows.set(`${row.threadId}:${row.id}`, row);
+          const childThreadId = receipt.childThreadId;
+          const childWrites = events.filter((event) => event.threadId === childThreadId);
+          if (childThreadId === null || childWrites.length === 0) continue;
+          const child = yield* records(childThreadId, ["nodes"]);
+          for (const node of child?.nodes ?? []) childNodes.set(node.id, node);
+          for (const event of childWrites) {
+            if (event.type !== "turn-item.updated") continue;
+            const item = yield* projectionStore.getTurnItem({
+              threadId: childThreadId,
+              itemId: event.payload.id,
+            });
+            if (item !== null) childItems.set(item.id, item);
+          }
+        }
+        return fenceReceiptWrite({ events, storedRows, childNodes, childItems });
+      });
+
     const guardProviderEvents = (input: {
       readonly guardPendingUserInputCancellations?: boolean;
       readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
     }) =>
-      input.guardPendingUserInputCancellations === true
-        ? guardUserInputCancellations(input.events).pipe(
-            Effect.flatMap(settleArtifactsOfSettledRequests),
-          )
-        : Effect.succeed(input.events);
+      Effect.gen(function* () {
+        const events = yield* fenceSubagentReceipts(input.events);
+        if (input.guardPendingUserInputCancellations !== true) return events;
+        return yield* settleArtifactsOfSettledRequests(yield* guardUserInputCancellations(events));
+      });
 
     const normalizeEvents = (events: ReadonlyArray<OrchestrationV2DomainEvent>) => {
       const runOrdinals = new Map(

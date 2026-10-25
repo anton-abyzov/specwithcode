@@ -2,6 +2,7 @@ import {
   PROVIDER_DISPLAY_NAMES,
   type EventId,
   type OrchestrationV2DomainEvent,
+  type OrchestrationV2ExecutionNode,
   type OrchestrationV2RestartCancelledBackgroundWork,
   type OrchestrationV2RunInterruptCause,
   type OrchestrationV2Subagent,
@@ -12,7 +13,7 @@ import {
   type ThreadId,
 } from "@specweave-studio/contracts";
 import { runRanAfter } from "@specweave-studio/shared/orchestrationV2ThreadError";
-import type * as DateTime from "effect/DateTime";
+import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 
 import {
@@ -195,7 +196,8 @@ function staleItemProviderInstanceId(
 
 interface SettlementInput<E> {
   readonly projection: SubagentSettlementProjection;
-  readonly status: SubagentSettlementStatus;
+  readonly status: SubagentSettlementStatus | "completed";
+  readonly result?: string | null;
   /** Shown on settled subagent rows and items; omitted leaves their progress. */
   readonly progress?: string | undefined;
   readonly now: DateTime.Utc;
@@ -240,7 +242,12 @@ export const settleStaleBackgroundItems = <E>(
           status: input.status,
           completedAt: now,
           updatedAt: now,
-          ...(item.type === "subagent" ? withProgress(input.progress) : {}),
+          ...(item.type === "subagent"
+            ? {
+                ...withProgress(input.progress),
+                ...(input.result === undefined ? {} : { result: input.result }),
+              }
+            : {}),
         },
       });
       if (item.nodeId !== null && item.nodeId !== undefined) {
@@ -283,6 +290,7 @@ export const settleStaleBackgroundItems = <E>(
             ...subagent,
             status: input.status,
             ...withProgress(input.progress),
+            ...(input.result === undefined ? {} : { result: input.result }),
             completedAt: now,
             updatedAt: now,
           },
@@ -330,6 +338,7 @@ export const settleOpenSubagentRows = <E>(
           ...row,
           status: input.status,
           ...withProgress(input.progress),
+          ...(input.result === undefined ? {} : { result: input.result }),
           completedAt: now,
           updatedAt: now,
         },
@@ -418,6 +427,149 @@ export const settleRunlessRootTurns = <E>(
     return events;
   });
 
+/** The status a native subagent's terminal row (its receipt) gives its child's root. */
+export function nativeReceiptStatus(
+  receipt: Pick<OrchestrationV2Subagent, "origin" | "childThreadId" | "status">,
+): SubagentSettlementStatus | "completed" | null {
+  if (receipt.origin !== "provider_native" || receipt.childThreadId === null) return null;
+  switch (receipt.status) {
+    case "completed":
+    case "failed":
+    case "cancelled":
+    case "interrupted":
+      return receipt.status;
+    default:
+      return null;
+  }
+}
+
+/**
+ * The open runless roots of a native child that its receipt ends, so the
+ * child's shell stops showing it working. A receipt ends the run of the
+ * child it started at. A row stored for a later run makes the receipt late,
+ * and a root opened after the receipt's run ended belongs to a resumed run:
+ * neither is closed.
+ */
+export function receiptChildRoots(input: {
+  readonly receipt: OrchestrationV2Subagent;
+  /** The parent's row before this receipt lands. */
+  readonly stored: OrchestrationV2Subagent | undefined;
+  readonly nodes: ReadonlyArray<OrchestrationV2ExecutionNode>;
+}): ReadonlyArray<OrchestrationV2ExecutionNode> {
+  const { receipt, stored } = input;
+  if (nativeReceiptStatus(receipt) === null || receipt.startedAt === null) return [];
+  const started = DateTime.toEpochMillis(receipt.startedAt);
+  if (stored?.startedAt != null && DateTime.toEpochMillis(stored.startedAt) > started) return [];
+  const ended = DateTime.toEpochMillis(receipt.completedAt ?? receipt.updatedAt);
+  return input.nodes.filter(
+    (node) =>
+      node.threadId === receipt.childThreadId &&
+      node.kind === "root_turn" &&
+      node.runId === null &&
+      isOpenWorkStatus(node.status) &&
+      node.startedAt !== null &&
+      DateTime.toEpochMillis(node.startedAt) <= ended,
+  );
+}
+
+/** The native terminal rows (receipts) in a write; the write fence reads their state. */
+export function receiptsInWrite(
+  events: ReadonlyArray<OrchestrationV2DomainEvent>,
+): ReadonlyArray<OrchestrationV2Subagent> {
+  return events.flatMap((event) =>
+    event.type === "subagent.updated" && nativeReceiptStatus(event.payload) !== null
+      ? [event.payload]
+      : [],
+  );
+}
+
+const startedMillis = (at: DateTime.Utc | null) =>
+  at === null ? null : DateTime.toEpochMillis(at);
+
+/**
+ * The write-time fence for a receipt and the child closes built from it.
+ * Normalization reads the parent row and child root before the write, so a
+ * resume or a second receipt can commit in between. Inside the write
+ * transaction, with the state read there:
+ * - a receipt older than the stored row (a resumed run) is dropped with all
+ *   of its child closes, so a late result never completes the new run;
+ * - a child close whose root is no longer open, or now has another start
+ *   (a newer generation of the same node), is dropped with its items, while
+ *   the receipt itself still lands;
+ * - an item close whose item is no longer open, or whose root is open with
+ *   no close kept in this write, is dropped.
+ * Nothing is closed here that normalization did not choose.
+ */
+export function fenceReceiptWrite(input: {
+  readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
+  /** The parent's stored row for each receipt, by `threadId:subagentId`. */
+  readonly storedRows: ReadonlyMap<string, OrchestrationV2Subagent>;
+  readonly childNodes: ReadonlyMap<string, OrchestrationV2ExecutionNode>;
+  readonly childItems: ReadonlyMap<string, OrchestrationV2TurnItem>;
+}): ReadonlyArray<OrchestrationV2DomainEvent> {
+  const fenced = new Set<string>();
+  const stale = new Set<OrchestrationV2DomainEvent>();
+  const staleChildren = new Set<string>();
+  for (const event of input.events) {
+    if (event.type !== "subagent.updated") continue;
+    const receipt = event.payload;
+    if (nativeReceiptStatus(receipt) === null || receipt.childThreadId === null) continue;
+    fenced.add(receipt.childThreadId);
+    const stored = input.storedRows.get(`${receipt.threadId}:${receipt.id}`);
+    const storedStart = startedMillis(stored?.startedAt ?? null);
+    const receiptStart = startedMillis(receipt.startedAt);
+    if (storedStart !== null && receiptStart !== null && storedStart > receiptStart) {
+      stale.add(event);
+      staleChildren.add(receipt.childThreadId);
+    }
+  }
+  if (fenced.size === 0) return input.events;
+  const droppedNodes = new Set<string>();
+  const closedNodes = new Set<string>();
+  const kept: Array<OrchestrationV2DomainEvent> = [];
+  for (const event of input.events) {
+    if (stale.has(event)) continue;
+    const closes =
+      fenced.has(event.threadId) &&
+      (event.type === "node.updated" || event.type === "turn-item.updated") &&
+      !isOpenWorkStatus(event.payload.status);
+    if (!closes) {
+      kept.push(event);
+      continue;
+    }
+    if (staleChildren.has(event.threadId)) continue;
+    if (event.type === "node.updated") {
+      const current = input.childNodes.get(event.payload.id);
+      if (
+        current !== undefined &&
+        (!isOpenWorkStatus(current.status) ||
+          startedMillis(current.startedAt) !== startedMillis(event.payload.startedAt))
+      ) {
+        droppedNodes.add(event.payload.id);
+        continue;
+      }
+      closedNodes.add(event.payload.id);
+    } else {
+      const current = input.childItems.get(event.payload.id);
+      const nodeId = event.payload.nodeId;
+      const node = nodeId === null ? undefined : input.childNodes.get(nodeId);
+      if (
+        (nodeId !== null && droppedNodes.has(nodeId)) ||
+        // An item of a root that reopened since normalization belongs to its new run.
+        (nodeId !== null &&
+          node !== undefined &&
+          isOpenWorkStatus(node.status) &&
+          !closedNodes.has(nodeId)) ||
+        (current !== undefined && !isOpenWorkStatus(current.status))
+      ) {
+        continue;
+      }
+    }
+    kept.push(event);
+  }
+  return kept;
+}
+
 /** Which open native subagent work a settlement may end. */
 export interface NativeSubagentScope {
   /** Only work of runs up to this ordinal, plus work with no run. */
@@ -488,6 +640,8 @@ export interface NativeSubagentSettlement {
   readonly lostWork: ReadonlyMap<ProviderThreadId, ReadonlyArray<Work>>;
   /** Child threads whose runless root turns now need settling too. */
   readonly childThreadIds: ReadonlyArray<ThreadId>;
+  /** Validated outcome, including receipts that only close a turn item. */
+  readonly childStatuses: ReadonlyMap<ThreadId, SubagentSettlementStatus | "completed">;
 }
 
 /**
@@ -503,7 +657,62 @@ export const settleNativeSubagents = <E>(
 ): Effect.Effect<NativeSubagentSettlement, E> =>
   Effect.gen(function* () {
     const settledNodeIds = input.settledNodeIds ?? new Set<string>();
-    const open = openNativeSubagentWork(input.projection, input.scope);
+    const candidates = openNativeSubagentWork(input.projection, input.scope);
+    const receiptEvents: Array<OrchestrationV2DomainEvent> = [];
+    const receipted = new Set<string>();
+    const receiptChildren: Array<ThreadId> = [];
+    const childStatuses = new Map<ThreadId, SubagentSettlementStatus | "completed">();
+    // A durable terminal row/item is stronger than absence of its old process.
+    // Reconcile it before any outage settlement can overwrite the result.
+    for (const row of input.projection.subagents) {
+      const item = input.projection.turnItems.find(
+        (candidate): candidate is SubagentTurnItem =>
+          candidate.type === "subagent" && candidate.subagentId === row.id,
+      );
+      const generations = [row, item].flatMap((candidate) => {
+        const started = startedMillis(candidate?.startedAt ?? null);
+        return started === null ? [] : [started];
+      });
+      const latestGeneration = generations.length === 0 ? null : Math.max(...generations);
+      const receipt = [row, item].find(
+        (candidate) =>
+          candidate !== undefined &&
+          (candidate.status === "completed" || candidate.status === "failed") &&
+          // A crash can persist only the first half of a native resume.
+          // Its older sibling receipt must never complete the new generation.
+          (latestGeneration === null ||
+            startedMillis(candidate.startedAt ?? null) === latestGeneration),
+      );
+      if (
+        receipt === undefined ||
+        (!candidates.rows.some((candidate) => candidate.id === row.id) &&
+          !candidates.items.some((candidate) => candidate.subagentId === row.id))
+      )
+        continue;
+      receipted.add(row.id);
+      if (row.childThreadId !== null) {
+        receiptChildren.push(row.childThreadId);
+        childStatuses.set(row.childThreadId, receipt.status as "completed" | "failed");
+      }
+      const receiptInput = {
+        ...input,
+        status: receipt.status as "completed" | "failed",
+        result: receipt.result,
+        progress: undefined,
+        settledNodeIds,
+      };
+      if (item !== undefined && isOpenWorkStatus(item.status)) {
+        receiptEvents.push(
+          ...(yield* settleStaleBackgroundItems({ ...receiptInput, items: [item] })).events,
+        );
+      } else if (isOpenWorkStatus(row.status)) {
+        receiptEvents.push(...(yield* settleOpenSubagentRows({ ...receiptInput, rows: [row] })));
+      }
+    }
+    const open = {
+      items: candidates.items.filter((item) => !receipted.has(item.subagentId)),
+      rows: candidates.rows.filter((row) => !receipted.has(row.id)),
+    };
     const fromItems = yield* settleStaleBackgroundItems({
       ...input,
       settledNodeIds,
@@ -511,7 +720,7 @@ export const settleNativeSubagents = <E>(
     });
     const fromRows = yield* settleOpenSubagentRows({ ...input, settledNodeIds, rows: open.rows });
     const lostWork = new Map<ProviderThreadId, ReadonlyArray<Work>>();
-    const childThreadIds = new Set<ThreadId>();
+    const childThreadIds = new Set<ThreadId>(receiptChildren);
     const settled = [
       ...open.items.map((item) => ({
         id: item.subagentId,
@@ -544,9 +753,10 @@ export const settleNativeSubagents = <E>(
       if (subagent.childThreadId !== null) childThreadIds.add(subagent.childThreadId);
     }
     return {
-      events: [...fromItems.events, ...fromRows],
+      events: [...receiptEvents, ...fromItems.events, ...fromRows],
       lostWork,
       childThreadIds: [...childThreadIds],
+      childStatuses,
     };
   });
 

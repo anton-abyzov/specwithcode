@@ -72,6 +72,9 @@ const base = {
   slashCommands: [],
   skills: [],
 } as const;
+// `?tier=fast` or `?tier=standard` adds Codex's Service Tier at Medium effort, as the
+// October 25 report shows it.
+const tier = params.get("tier");
 const reasoning = {
   optionDescriptors: [
     {
@@ -83,8 +86,22 @@ const reasoning = {
         { id: "medium", label: "Medium", isDefault: true },
         { id: "high", label: "High" },
       ],
-      currentValue: "low",
+      currentValue: tier ? "medium" : "low",
     },
+    ...(tier
+      ? [
+          {
+            id: "serviceTier",
+            label: "Service Tier",
+            type: "select",
+            options: [
+              { id: "default", label: "Standard", isDefault: true },
+              { id: "priority", label: "Fast", description: "2x speed, increased usage" },
+            ],
+            currentValue: tier === "fast" ? "priority" : "default",
+          },
+        ]
+      : []),
   ],
 };
 const providers = [
@@ -149,7 +166,12 @@ const opus = { instanceId: claude, model: "claude-opus-5-5" } as ModelSelection;
 const sol = {
   instanceId: codex,
   model: "gpt-6.1-sol",
-  options: [{ id: "reasoningEffort", value: "low" }],
+  options: tier
+    ? [
+        { id: "reasoningEffort", value: "medium" },
+        { id: "serviceTier", value: tier === "fast" ? "priority" : "default" },
+      ]
+    : [{ id: "reasoningEffort", value: "low" }],
 } as ModelSelection;
 const long = { ...sol, model: LONG_MODEL } as ModelSelection;
 
@@ -390,20 +412,22 @@ function coordinatorRunning() {
 }
 
 function FixtureCoordinatorModelPicker() {
+  // Holds picks, so switching the Fast tier re-renders the control.
+  const [value, setValue] = useState<ModelSelection>(
+    scenarioName === "fallback" || scenarioName === "running"
+      ? opus
+      : scenarioName === "long"
+        ? long
+        : sol,
+  );
   return (
     <CoordinatorModelPicker
       environmentId={environmentId}
-      value={
-        scenarioName === "fallback" || scenarioName === "running"
-          ? opus
-          : scenarioName === "long"
-            ? long
-            : sol
-      }
+      value={value}
       running={coordinatorRunning()}
       disabled={false}
       saving={false}
-      onChange={() => {}}
+      onChange={setValue}
       onOpenSettings={() => {}}
     />
   );

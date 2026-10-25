@@ -1,8 +1,8 @@
 import {
   formatProviderSubagentStatus,
+  providerSubagentWorkActive,
   type ProviderSubagentStatus,
 } from "@specweave-studio/client-runtime/state/thread-execution";
-import { isOrchestrationV2WorkActive } from "@specweave-studio/contracts";
 import { useEffect, useState } from "react";
 import { View } from "react-native";
 
@@ -25,7 +25,7 @@ export function ProviderSubagentBar(props: {
   readonly status: ProviderSubagentStatus | null;
   readonly onOpenParent: (() => void) | null;
 }) {
-  const live = props.status !== null && isOrchestrationV2WorkActive(props.status.status);
+  const live = providerSubagentWorkActive(props.status);
   const [nowMs, setNowMs] = useState(() => Date.now());
   useEffect(() => {
     if (!live) return;
@@ -52,7 +52,10 @@ export function ProviderSubagentBar(props: {
               size={16}
             />
           ) : null}
-          <Text numberOfLines={1} className="min-w-0 shrink font-studio-bold text-sm text-foreground">
+          <Text
+            numberOfLines={1}
+            className="min-w-0 shrink font-studio-bold text-sm text-foreground"
+          >
             {props.modelLabel}
           </Text>
           {props.effortLabel === null ? null : (

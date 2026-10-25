@@ -24,6 +24,7 @@ import {
   resumeQueueWithProjectModel,
 } from "../studio/coordinatorContinuation";
 import { latestWorkStep } from "../studio/coordinatorProgress";
+import { useUnreachableHosts } from "../studio/unreachableHosts";
 import { threadBlocker } from "../studio/projectWorkspaceModel";
 import { useMachineNicknames } from "../studio/machineNickname";
 import { threadHandoffState, useHandoffModeSnapshot } from "../studio/handoffMode";
@@ -138,7 +139,6 @@ import {
   type ChatFileAttachment,
   CommandId,
   DEFAULT_MODEL,
-  isOrchestrationV2WorkActive,
   isProviderNativeSubagentThread,
   type ChatAttachment as ContractChatAttachment,
   EnvironmentAuthorizationError,
@@ -183,6 +183,7 @@ import {
 import { useAcknowledgeThreadWoke, useThreadActions } from "../hooks/useThreadActions";
 import {
   deriveProviderSubagentStatus,
+  providerSubagentWorkActive,
   deriveReportedModelSelection,
   formatModelSelectionEffort,
   deriveRunlessWorkStartedAt,
@@ -556,6 +557,7 @@ import {
   projectCloneDisplayName,
   projectCloneProgressSummary,
   projectCloneSendBlockReason as projectCloneSendBlockReasonOf,
+  type OrchestrationV2Subagent,
 } from "@specweave-studio/contracts";
 import { useEnvironments, usePrimaryEnvironment } from "../state/environments";
 import {
@@ -801,6 +803,7 @@ const EMPTY_FEEDBACK_SUBMISSIONS: ReadonlyArray<CodexFeedbackSubmission> = [];
 // watermark per interval is plenty.
 const VISIT_DISPATCH_THROTTLE_MS = 10_000;
 const EMPTY_PROVIDER_SKILLS: ServerProvider["skills"] = [];
+const NO_SUBAGENT_RECORDS: ReadonlyArray<OrchestrationV2Subagent> = [];
 const EMPTY_PENDING_USER_INPUT_ANSWERS: Record<string, PendingUserInputDraftAnswer> = {};
 const EMPTY_REVIEW_OPTIMISTIC_MESSAGES: ReadonlyArray<never> = [];
 function useDraftHeroLayoutTransition(
@@ -2019,6 +2022,27 @@ function useChatViewState(props: ChatViewProps) {
   });
   const serverThreadProjection = useThreadProjection(routeThreadDetailTarget);
   const serverProjection = serverThreadProjection?.projection ?? null;
+  // A subagent's bar reads its parent's record too, so it says what the parent's list says.
+  const subagentParentId =
+    serverThread?.lineage.relationshipToParent === "subagent"
+      ? serverThread.lineage.parentThreadId
+      : null;
+  const subagentParentRef = useMemo(
+    () =>
+      serverThread === null || subagentParentId === null
+        ? null
+        : scopeThreadRef(serverThread.environmentId, subagentParentId),
+    [serverThread?.environmentId, subagentParentId],
+  );
+  const subagentParentRecords =
+    useThreadProjection(subagentParentRef)?.projection.subagents ?? NO_SUBAGENT_RECORDS;
+  // Placement as the list reads it: the parent's shell and the hosts that do not answer.
+  const subagentParentShell = useThreadShell(subagentParentRef);
+  const unreachableHosts = useUnreachableHosts();
+  const subagentExecution = useMemo(
+    () => ({ thread: serverThread, parent: subagentParentShell, unreachable: unreachableHosts }),
+    [serverThread, subagentParentShell, unreachableHosts],
+  );
   const reportedModelSelection = serverProjection
     ? deriveReportedModelSelection(serverProjection)
     : null;
@@ -2475,18 +2499,22 @@ function useChatViewState(props: ChatViewProps) {
     [serverProjection],
   );
   const runlessWorkStartedAt = useMemo(
-    () => (serverProjection === null ? null : deriveRunlessWorkStartedAt(serverProjection)),
-    [serverProjection],
+    () =>
+      serverProjection === null
+        ? null
+        : deriveRunlessWorkStartedAt(serverProjection, subagentParentRecords, subagentExecution),
+    [serverProjection, subagentParentRecords, subagentExecution],
   );
   const providerSubagentStatus = useMemo(
-    () => (serverProjection === null ? null : deriveProviderSubagentStatus(serverProjection)),
-    [serverProjection],
+    () =>
+      serverProjection === null
+        ? null
+        : deriveProviderSubagentStatus(serverProjection, subagentParentRecords, subagentExecution),
+    [serverProjection, subagentParentRecords, subagentExecution],
   );
   const providerSubagentStep = useMemo(
     () =>
-      serverProjection === null ||
-      providerSubagentStatus === null ||
-      !isOrchestrationV2WorkActive(providerSubagentStatus.status)
+      serverProjection === null || !providerSubagentWorkActive(providerSubagentStatus)
         ? null
         : latestWorkStep(serverProjection.turnItems),
     [serverProjection, providerSubagentStatus],

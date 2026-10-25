@@ -29,6 +29,7 @@ export function useThreadSubagents(input: {
   readonly thread: Pick<EnvironmentThreadShell, "id" | "environmentId"> | null;
   readonly shells: readonly EnvironmentThreadShell[];
   readonly coordinatorIds: ReadonlySet<string>;
+  readonly unreachable?: ReadonlySet<string> | undefined;
 }): SubagentEntry[] {
   const environmentId = input.thread?.environmentId ?? null;
   const threadId = input.thread?.id ?? null;
@@ -48,6 +49,7 @@ export function useThreadSubagents(input: {
       projected: projected ?? [],
       shells: input.shells,
       coordinatorIds: input.coordinatorIds,
+      unreachable: input.unreachable,
     });
     // Workflows are this thread's own work too: they list here, never as threads.
     const workflows = threadWorkflowEntries({
@@ -69,6 +71,7 @@ export function useThreadSubagents(input: {
     providerThreads,
     input.shells,
     input.coordinatorIds,
+    input.unreachable,
   ]);
 }
 
@@ -138,7 +141,8 @@ export function SubagentsChip(props: {
                           model={entry.model}
                         />
                       ) : null}
-                      {entry.startedAt ? (
+                      {/* An unreachable child's clock would only count since it was last heard. */}
+                      {entry.startedAt && entry.status !== "unknown" ? (
                         <AgentElapsed
                           agent={{
                             status: entry.status,

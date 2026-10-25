@@ -10,6 +10,7 @@ import {
   ThreadId,
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2RunStatus,
+  type OrchestrationV2Subagent,
 } from "@specweave-studio/contracts";
 import * as DateTime from "effect/DateTime";
 import { usageLimitBlockedRun } from "@specweave-studio/shared/orchestrationV2ThreadError";
@@ -454,8 +455,104 @@ describe("deriveProviderSubagentStatus", () => {
         { status: "cancelled", startedAt, completedAt: "2026-07-28T10:00:34.000Z" },
         0,
       ),
-    ).toBe("Cancelled");
+    ).toBe("Stopped");
+    expect(
+      formatProviderSubagentStatus({ status: "interrupted", startedAt, completedAt: null }, 0),
+    ).toBe("Interrupted, rerun pending");
     expect(formatProviderSubagentStatus(null, 0)).toBe("Starting");
+  });
+
+  it("lets the parent's completed record outrank a root turn left running (CMS)", () => {
+    const stale = {
+      ...child("provider"),
+      nodes: [{ ...root, status: "running" as const, completedAt: null }],
+    };
+    const record = {
+      childThreadId: stale.thread.id,
+      status: "completed",
+      startedAt: now,
+      completedAt: DateTime.makeUnsafe("2026-07-28T10:00:34.000Z"),
+    } as unknown as OrchestrationV2Subagent;
+    expect(deriveProviderSubagentStatus(stale)?.status).toBe("running");
+    expect(deriveProviderSubagentStatus(stale, [record])).toEqual({
+      status: "completed",
+      startedAt: "2026-07-28T10:00:00.000Z",
+      completedAt: "2026-07-28T10:00:34.000Z",
+    });
+    expect(deriveRunlessWorkStartedAt(stale, [record])).toBeNull();
+    // A record that still runs is no receipt: the live root decides.
+    const open = { ...record, status: "running" } as OrchestrationV2Subagent;
+    expect(deriveProviderSubagentStatus(stale, [open])?.status).toBe("running");
+  });
+
+  it("says Unknown, with no Working clock, for a remote child whose host does not answer", () => {
+    const stale = {
+      ...child("provider"),
+      nodes: [{ ...root, status: "running" as const, completedAt: null }],
+    };
+    const running = {
+      childThreadId: stale.thread.id,
+      status: "running",
+      startedAt: now,
+      completedAt: null,
+    } as unknown as OrchestrationV2Subagent;
+    // The cached child shell still has its running root; its machine is remote.
+    const thread = {
+      id: stale.thread.id,
+      environmentId: "m4",
+      executionMachineId: "m3",
+      runtime: { status: "running" },
+      latestRun: null,
+      source: { creationSource: "provider" },
+    } as never;
+    const execution = { thread, unreachable: new Set(["m3"]) };
+    const status = deriveProviderSubagentStatus(stale, [running], execution);
+    expect(status).toEqual({
+      status: "unknown",
+      startedAt: "2026-07-28T10:00:00.000Z",
+      completedAt: null,
+    });
+    expect(formatProviderSubagentStatus(status, Date.parse("2026-07-28T10:05:00.000Z"))).toBe(
+      "Unknown (machine unreachable)",
+    );
+    expect(deriveRunlessWorkStartedAt(stale, [running], execution)).toBeNull();
+    // A terminal receipt still outranks the unreachable host, as in the list.
+    const done = { ...running, status: "completed" } as OrchestrationV2Subagent;
+    expect(deriveProviderSubagentStatus(stale, [done], execution)?.status).toBe("completed");
+    // Negative control: the host answers, so the live root is Working.
+    expect(
+      deriveProviderSubagentStatus(stale, [running], { thread, unreachable: new Set() })?.status,
+    ).toBe("running");
+  });
+
+  it("stops the clock on a root its parent no longer runs, and keeps it while the parent works", () => {
+    const stale = {
+      ...child("provider"),
+      nodes: [{ ...root, status: "running" as const, completedAt: null }],
+    };
+    const thread = {
+      id: stale.thread.id,
+      environmentId: "m4",
+      runtime: { status: "running" },
+      latestRun: null,
+      source: { creationSource: "provider" },
+    } as never;
+    const idleParent = { runtime: null, pendingBackgroundTasks: [] } as never;
+    expect(deriveProviderSubagentStatus(stale, [], { thread, parent: idleParent })?.status).toBe(
+      "completed",
+    );
+    expect(deriveRunlessWorkStartedAt(stale, [], { thread, parent: idleParent })).toBeNull();
+    const liveParent = { runtime: { status: "running" }, pendingBackgroundTasks: [] } as never;
+    expect(deriveProviderSubagentStatus(stale, [], { thread, parent: liveParent })?.status).toBe(
+      "running",
+    );
+    const background = {
+      runtime: { status: "idle" },
+      pendingBackgroundTasks: [{ kind: "subagent", taskId: "t", childThreadId: stale.thread.id }],
+    } as never;
+    expect(deriveProviderSubagentStatus(stale, [], { thread, parent: background })?.status).toBe(
+      "running",
+    );
   });
 
   it("leaves Studio delegated tasks and ordinary threads alone", () => {

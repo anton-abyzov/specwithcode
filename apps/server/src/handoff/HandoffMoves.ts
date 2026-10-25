@@ -669,6 +669,14 @@ export const make = Effect.gen(function* () {
         checkpoint = again.checkpoint;
       }
 
+      if (checkpoint.children?.some((child) => child.disposition === "unknown")) {
+        yield* releaseHold(input.threadId, null);
+        return yield* failed(
+          "failed",
+          "A child's owning process or machine has not settled its work. Keep it unknown and reconcile it on the owning host before handing off.",
+        );
+      }
+
       // 3. The destination takes over at the next epoch.
       const request: TakeoverRequest = {
         sourceEnvironmentId: self,

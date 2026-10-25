@@ -43,10 +43,15 @@ export function TraitsSpeedIcon({
   provider,
   speedIcon,
   size = "sm",
+  className,
+  announce = true,
 }: {
   provider: ProviderDriverKind;
   speedIcon: "fast" | "ultrafast";
   size?: ComposerControlSize;
+  className?: string;
+  /** Off where the surrounding control or row already names the speed. */
+  announce?: boolean;
 }) {
   return (
     <>
@@ -60,11 +65,14 @@ export function TraitsSpeedIcon({
             : provider === "claudeAgent"
               ? "text-[#d97757]"
               : "text-foreground",
+          className,
         )}
       />
-      <span className="sr-only">
-        {speedIcon === "ultrafast" ? "Ultrafast mode on" : "Fast mode on"}
-      </span>
+      {announce ? (
+        <span className="sr-only">
+          {speedIcon === "ultrafast" ? "Ultrafast mode on" : "Fast mode on"}
+        </span>
+      ) : null}
     </>
   );
 }
