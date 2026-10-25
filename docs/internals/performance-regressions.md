@@ -102,3 +102,31 @@ continuous traffic during an outage.
 Focused coverage: `ProjectionSettlement.test.ts`, `ThreadSettlementService.test.ts`,
 `runtimeLayer.test.ts`, `AgentAwarenessRelay.test.ts`, `GitVcsDriverCore.test.ts`,
 `ThreadStatusIndicators.subscriptions.test.tsx`, and `desktopLocal.test.ts`.
+
+## Load benchmark across versions
+
+`vp run bench:load` measures one build end to end: it seeds a throwaway state directory under
+`.artifacts/load-bench/` (never `~/.specwithcode`) with a deterministic fixture
+(`apps/server/integration/fixtures/loadBenchFixture.ts`: hundreds of threads and one big thread
+with thousands of items and some large tool outputs), starts the server on a free port and
+drives headless Chromium through a counting proxy. For each profile (`fast`, and `3g` at 300 ms
+round trip, 1.6 Mbps down, 750 kbps up) it reports the median of N fresh-browser runs of
+`cold_connect_ms`, `big_thread_open_ms` and `reconnect_ms`, with wire bytes and client-parsed
+JSON bytes for each phase, in `bench-results/load/<version>-<sha>-<profile>.json`
+(`loadBench.v1`). Build the web app first. Options are listed at the top of
+`apps/web/tests/load-bench/run.mjs`; `--app-root <checkout>` measures another built checkout,
+such as an older release worktree, with the same method.
+
+```bash
+vp run bench:load --runs 5
+vp run bench:load:compare bench-results/load/<base>.json bench-results/load/<head>.json
+```
+
+The comparison flags a regression when a median is worse by more than 10% and by more than
+50 ms, 5 KiB or 2 requests. The proxy, not CDP, throttles `3g` by default, so HTTP and
+WebSocket traffic share one shaped link and every round trip pays the latency. CDP throttling
+(`--shaper cdp`, a cross-check) also slows WebSocket frames in current Chromium, but it adds
+its latency per request; in one check it reported faster opens and reconnects than the proxy.
+Timings are only comparable on the same idle machine: each result records the load average,
+and the comparison warns when it was high. The `Load benchmark` workflow runs the fast profile
+on demand or for pull requests labelled `load-bench`, as a report that never blocks a merge.

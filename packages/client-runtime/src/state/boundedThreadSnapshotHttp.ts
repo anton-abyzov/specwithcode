@@ -13,6 +13,7 @@ import {
   executeAuthenticatedEnvironmentHttpRequest,
   withOrchestrationProtocolHeader,
 } from "./environmentHttpAuth.ts";
+import { withWindowTurnStart } from "./threadHistoryMerge.ts";
 import * as ThreadSnapshotLoader from "./threadSnapshotHttp.ts";
 
 // Same cold-open budget as the full snapshot path; bounded payloads should fit.
@@ -29,6 +30,7 @@ export const fetchEnvironmentBoundedThreadSnapshot = Effect.fn(
     RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization["Service"]
   >;
   readonly timeoutMs?: number;
+  readonly boundLongTurns?: boolean | undefined;
 }) {
   return yield* executeAuthenticatedEnvironmentHttpRequest({
     ...input,
@@ -40,6 +42,7 @@ export const fetchEnvironmentBoundedThreadSnapshot = Effect.fn(
     request: ({ client, headers }) =>
       client.threadBoundedSnapshot({
         params: { threadId: input.threadId },
+        query: input.boundLongTurns === true ? { boundLongTurns: "1" } : {},
         headers: withOrchestrationProtocolHeader(headers),
       }),
   });
@@ -66,7 +69,11 @@ export const layer: Layer.Layer<
       RemoteEnvironmentAuthorization.RemoteEnvironmentAuthorization,
     );
     return ThreadSnapshotLoader.ThreadSnapshotLoader.of({
-      load: (prepared: PreparedConnection, threadId: ThreadId) => {
+      load: (
+        prepared: PreparedConnection,
+        threadId: ThreadId,
+        options?: ThreadSnapshotLoader.ThreadSnapshotLoadOptions,
+      ) => {
         const loadFullFallback = ThreadSnapshotLoader.fetchEnvironmentThreadSnapshot({
           prepared,
           threadId,
@@ -106,20 +113,25 @@ export const layer: Layer.Layer<
           threadId,
           signer,
           remoteAuthorization,
+          boundLongTurns: options?.boundLongTurns,
         }).pipe(
-          Effect.map((bounded): ThreadSnapshotLoader.ThreadSnapshotLoadResult => ({
-            _tag: "present",
-            snapshot: {
-              snapshotSequence: bounded.snapshotSequence,
-              projection: bounded.projection,
-              latestLocalTurnOrdinal: bounded.latestLocalTurnOrdinal,
-            },
-            history: {
-              historyCursor: bounded.historyCursor,
-              hasMoreHistory: bounded.hasMoreHistory,
-              latestLocalTurnOrdinal: bounded.latestLocalTurnOrdinal,
-            },
-          })),
+          Effect.map((bounded): ThreadSnapshotLoader.ThreadSnapshotLoadResult => {
+            const windowed = withWindowTurnStart(bounded.projection, bounded.windowTurnStart);
+            return {
+              _tag: "present",
+              snapshot: {
+                snapshotSequence: bounded.snapshotSequence,
+                projection: windowed.projection,
+                latestLocalTurnOrdinal: bounded.latestLocalTurnOrdinal,
+              },
+              history: {
+                historyCursor: bounded.historyCursor,
+                hasMoreHistory: bounded.hasMoreHistory,
+                latestLocalTurnOrdinal: bounded.latestLocalTurnOrdinal,
+                ...(windowed.key === null ? {} : { windowTurnStartKey: windowed.key }),
+              },
+            };
+          }),
           Effect.provideService(HttpClient.HttpClient, httpClient),
           Effect.catchTags({
             EnvironmentResourceNotFoundError: () =>

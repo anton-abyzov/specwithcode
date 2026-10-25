@@ -134,7 +134,7 @@ export function StatusDayBars({
         tabIndex={0}
         aria-label={`${label}: daily status for the last ${days.length} days. Use the arrow keys to read a day.`}
         aria-describedby={activeDay ? tooltipId : undefined}
-        className="flex h-8 items-stretch gap-[2px] rounded-sm outline-none focus-visible:ring-2 focus-visible:ring-ring"
+        className="flex h-8 min-w-0 items-stretch gap-px rounded-sm sm:gap-0.5 outline-none focus-visible:ring-2 focus-visible:ring-ring"
         onKeyDown={onKeyDown}
         onBlur={() => setActive(null)}
         onMouseLeave={() => setActive(null)}
@@ -146,7 +146,7 @@ export function StatusDayBars({
             data-level={day.level}
             onMouseEnter={() => setActive(index)}
             className={cn(
-              "min-w-[2px] flex-1 rounded-[2px] transition-opacity",
+              "min-w-0 flex-1 rounded-[2px] transition-opacity",
               STATUS_LEVEL_STYLES[day.level].bar,
               active !== null && active !== index && "opacity-60",
             )}
@@ -158,8 +158,12 @@ export function StatusDayBars({
           id={tooltipId}
           role="tooltip"
           data-testid="status-day-popover"
-          className="pointer-events-none absolute bottom-full z-20 mb-2 w-72 -translate-x-1/2 rounded-lg border bg-popover p-3 text-popover-foreground text-xs shadow-lg"
-          style={{ left: `clamp(9rem, ${position * 100}%, calc(100% - 9rem))` }}
+          className="pointer-events-none absolute bottom-full z-20 mb-2 w-72 max-w-full -translate-x-1/2 rounded-lg border bg-popover p-3 text-popover-foreground text-xs shadow-lg"
+          // Centred on the day, kept inside the strip even when the strip is
+          // narrower than the popover.
+          style={{
+            left: `clamp(min(9rem, 50%), ${position * 100}%, max(calc(100% - 9rem), 50%))`,
+          }}
         >
           <div className="flex items-center justify-between gap-2">
             <span className="font-medium text-sm">{formatStatusDate(activeDay.date)}</span>
@@ -310,8 +314,10 @@ function GroupSection({
   const [open, setOpen] = useState(true);
   const panelId = useId();
   return (
+    // No overflow-hidden here: it would clip a day popover rising above the
+    // group's first row. The header rounds its own top corners instead.
     <section
-      className="overflow-hidden rounded-xl border bg-card text-card-foreground"
+      className="rounded-xl border bg-card text-card-foreground"
       data-testid="status-group"
       data-group-id={group.id}
     >
@@ -320,7 +326,10 @@ function GroupSection({
         aria-expanded={open}
         aria-controls={panelId}
         onClick={() => setOpen((value) => !value)}
-        className="flex w-full items-center gap-3 border-b bg-muted/30 px-4 py-3 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset sm:px-5"
+        className={cn(
+          "flex w-full items-center gap-3 border-b bg-muted/30 px-4 py-3 text-left outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-inset sm:px-5",
+          open ? "rounded-t-xl" : "rounded-xl",
+        )}
       >
         <ChevronRightIcon
           aria-hidden

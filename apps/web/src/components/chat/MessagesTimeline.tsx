@@ -233,6 +233,7 @@ import { ChangedFilesCard, type OpenTurnDiffHandler } from "./ChangedFilesTree";
 import { DiffStatLabel } from "./DiffStatLabel";
 import { MiddleTruncate } from "../ui/middle-truncate";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
+import { useLatestRef } from "../../hooks/useLatestRef";
 import { useFileContextMenuHandler } from "../../fileContextMenu";
 import type { ThreadLinkTarget } from "@specweave-studio/client-runtime/state/threads";
 import { useProject, useThreadLinkTargets, useThreadShell } from "../../state/entities";
@@ -257,6 +258,7 @@ import { useAssistantCitationTarget, type CitationHistoryPage } from "./useAssis
 import {
   computeStableMessagesTimelineRows,
   deriveMessagesTimelineRowsWithState,
+  withHistoryGapRow,
   type MessagesTimelineRowsProjection,
   liveWorkEntryLabel,
   resolveAssistantMessageCopyState,
@@ -464,6 +466,8 @@ interface TimelineRowSharedState {
     readonly scopeId: string;
   }) => void;
   onToggleTurnFold: (runId: RunId) => void;
+  /** Loads the next older history page; a no-op when nothing is left. */
+  onLoadEarlierHistory: () => void;
   /** Folds an open turn from its end, keeping the row below it in place. */
   onCollapseTurnFoldFromEnd: (runId: RunId, anchorRowId: string | null) => void;
   onToggleAttemptFold: (attemptId: RunAttemptId) => void;
@@ -630,6 +634,11 @@ export interface MessagesTimelineHistoryControls {
   readonly loading: boolean;
   readonly error: string | null;
   readonly onLoadEarlier: () => void;
+  /**
+   * Set when the thread opened inside one long turn: the prompt row with this
+   * key leads the list and the earlier steps load below it.
+   */
+  readonly windowTurnStartKey?: string | null;
 }
 
 interface MessagesTimelineProps {
@@ -1101,7 +1110,27 @@ export const MessagesTimeline = memo(function MessagesTimeline({
     worktreeSetup,
     timelineDetail,
   });
-  const rows = useStableRows(rawRows, listIdentityKey);
+  const stableRows = useStableRows(rawRows, listIdentityKey);
+  const historyGapKey =
+    historyControls?.hasMoreHistory === true ? (historyControls.windowTurnStartKey ?? null) : null;
+  const historyGapLoading = historyControls?.loading ?? false;
+  const historyGapError = historyControls?.error ?? null;
+  const rows = useMemo(
+    () =>
+      withHistoryGapRow(
+        stableRows,
+        historyGapKey === null
+          ? null
+          : { turnStartKey: historyGapKey, loading: historyGapLoading, error: historyGapError },
+      ),
+    [historyGapError, historyGapKey, historyGapLoading, stableRows],
+  );
+  const hasHistoryGapRow = rows !== stableRows;
+  // Row context stays stable while history loads; the row reads the latest controls.
+  const historyControlsRef = useLatestRef(historyControls);
+  const onLoadEarlierHistory = useCallback(() => {
+    historyControlsRef.current?.onLoadEarlier();
+  }, [historyControlsRef]);
   // Run status/timestamps churn on every stream event; the shared row context
   // must not change with them or every timeline row re-renders per event.
   const runs = useStableHandoffRuns(runsProp);
@@ -1516,6 +1545,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onForkFromRun,
       onRollbackCheckpoint,
       onToggleTurnFold,
+      onLoadEarlierHistory,
       onCollapseTurnFoldFromEnd,
       onToggleAttemptFold,
       onToggleWorkGroup,
@@ -1565,6 +1595,7 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onForkFromRun,
       onRollbackCheckpoint,
       onToggleTurnFold,
+      onLoadEarlierHistory,
       onCollapseTurnFoldFromEnd,
       onToggleAttemptFold,
       onToggleWorkGroup,
@@ -1653,10 +1684,12 @@ export const MessagesTimeline = memo(function MessagesTimeline({
           <div aria-hidden data-timeline-banner-inset style={{ height: contentInsetStart }} />
         ) : null}
         {topFadeEnabled ? TIMELINE_LIST_FADE_HEADER : TIMELINE_LIST_HEADER}
-        {historyControls ? <TimelineHistoryControl {...historyControls} /> : null}
+        {historyControls && !hasHistoryGapRow ? (
+          <TimelineHistoryControl {...historyControls} />
+        ) : null}
       </>
     ),
-    [contentInsetStart, historyControls, topFadeEnabled],
+    [contentInsetStart, hasHistoryGapRow, historyControls, topFadeEnabled],
   );
 
   const canvas = useChatCanvas();
@@ -2174,7 +2207,10 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
         // they sit closer to the work that follows them.
         isWorkLogRow || isSubagentGroup
           ? undefined
-          : row.kind === "turn-fold" || row.kind === "turn-fold-end" || row.kind === "working"
+          : row.kind === "turn-fold" ||
+              row.kind === "turn-fold-end" ||
+              row.kind === "working" ||
+              row.kind === "history-gap"
             ? "pb-1.5"
             : (row.kind === "message" &&
                   row.message.role === "assistant" &&
@@ -2223,6 +2259,7 @@ const TimelineRowContent = memo(function TimelineRowContent({ row }: { row: Time
           {row.kind === "thinking" ? <ThinkingTimelineRow row={row} /> : null}
         </WorkLogBlock>
       ) : null}
+      {row.kind === "history-gap" ? <HistoryGapTimelineRow row={row} /> : null}
       {row.kind === "turn-fold" ? <TurnFoldTimelineRow row={row} /> : null}
       {row.kind === "turn-fold-end" ? <TurnFoldEndTimelineRow row={row} /> : null}
       {row.kind === "attempt-fold" ? <AttemptFoldTimelineRow row={row} /> : null}
@@ -2913,6 +2950,35 @@ function TimelineRowTimestamp({
       </TooltipTrigger>
       <TooltipPopup>{formatChatTimestampTooltip(createdAt, timestampFormat)}</TooltipPopup>
     </Tooltip>
+  );
+}
+
+/** Earlier steps of a turn the thread opened inside, still on the server. */
+function HistoryGapTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "history-gap" }> }) {
+  const ctx = use(TimelineRowCtx);
+
+  return (
+    <div className="flex flex-col gap-1.5">
+      <button
+        type="button"
+        disabled={row.loading}
+        aria-label="Load earlier steps"
+        data-scroll-anchor-ignore
+        onClick={() => {
+          // Steps load into the turn's fold; open it so they show.
+          if (row.expandsFoldRunId !== null) ctx.onToggleTurnFold(row.expandsFoldRunId);
+          ctx.onLoadEarlierHistory();
+        }}
+        className="w-full py-1.5 text-xs text-muted-foreground hover:text-foreground disabled:cursor-default"
+      >
+        {row.loading ? "Loading earlier steps…" : "Load earlier steps"}
+      </button>
+      {row.error !== null ? (
+        <p role="status" className="text-center text-muted-foreground text-xs">
+          {row.error}
+        </p>
+      ) : null}
+    </div>
   );
 }
 

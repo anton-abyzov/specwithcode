@@ -4066,7 +4066,9 @@ describe("AcpAdapterV2", () => {
         if (event.type === "turn.terminal") terminal = true;
       }
 
-      assert.deepEqual(statuses, ["running", "running", "completed"]);
+      // The agent reports the same update twice; the repeat changes nothing but
+      // its time, so only one running snapshot is stored.
+      assert.deepEqual(statuses, ["running", "completed"]);
       assert.deepEqual(completedStartedAt, runningStartedAt);
       assert.isNotNull(completedAt);
       assert.equal(completedInput, "true");

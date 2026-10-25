@@ -708,6 +708,19 @@ export interface TurnSubagentReference {
 
 type MessagesTimelineRowContent =
   | {
+      /**
+       * The thread opened inside one long turn: its earlier steps are still on
+       * the server, between the turn's prompt and the loaded steps.
+       */
+      kind: "history-gap";
+      id: string;
+      createdAt: string;
+      loading: boolean;
+      error: string | null;
+      /** The collapsed fold the loaded steps land in; loading opens it first. */
+      expandsFoldRunId: RunId | null;
+    }
+  | {
       kind: "worktree-setup";
       id: string;
       createdAt: string | null;
@@ -2379,6 +2392,62 @@ export function withTurnFoldEnds(
   return out;
 }
 
+/**
+ * Puts the "Load earlier steps" row below the prompt of a turn the server sent
+ * only the tail of, past that turn's header: "Working for …" while it runs,
+ * "Worked for …" once it settles. Loaded steps land right below the row; when
+ * the fold is closed the row opens it, so they show. Returns `rows` itself
+ * when there is no such prompt.
+ */
+export function withHistoryGapRow(
+  rows: ReadonlyArray<MessagesTimelineRow>,
+  gap: {
+    readonly turnStartKey: string;
+    readonly loading: boolean;
+    readonly error: string | null;
+  } | null,
+): ReadonlyArray<MessagesTimelineRow> {
+  if (gap === null) return rows;
+  const index = rows.findIndex(
+    (row) =>
+      row.kind === "message" &&
+      row.message.role === "user" &&
+      row.projectedItem !== undefined &&
+      `${row.projectedItem.sourceThreadId}:${row.projectedItem.sourceItemId}` === gap.turnStartKey,
+  );
+  if (index < 0) return rows;
+  const prompt = rows[index]!;
+  // The turn's header can sit below other rows spliced in after the prompt,
+  // such as a finished worktree setup, so find it by run, not by position.
+  // No header found puts the gap directly under the prompt.
+  const promptRunId = prompt.kind === "message" ? prompt.projectedItem?.item.runId : undefined;
+  const isPrompt = (row: MessagesTimelineRow) =>
+    row.kind === "message" && row.message.role === "user";
+  const nextPrompt = rows.findIndex((row, at) => at > index && isPrompt(row));
+  const turnRows = rows.slice(index + 1, nextPrompt < 0 ? rows.length : nextPrompt);
+  // With a run on the prompt, only that run's fold is its header: another
+  // run under the same prompt, such as a background wake, is not. Without
+  // one, the first header below the prompt stands in.
+  const offset =
+    promptRunId !== undefined
+      ? turnRows.findIndex((row) => row.kind === "turn-fold" && row.runId === promptRunId)
+      : turnRows.findIndex((row) => row.kind === "turn-fold" || row.kind === "working");
+  const header = offset >= 0 ? turnRows[offset] : undefined;
+  const at = offset >= 0 ? index + 1 + offset + 1 : index + 1;
+  return [
+    ...rows.slice(0, at),
+    {
+      kind: "history-gap",
+      id: `history-gap:${gap.turnStartKey}`,
+      createdAt: prompt.createdAt ?? "",
+      loading: gap.loading,
+      error: gap.error,
+      expandsFoldRunId: header?.kind === "turn-fold" && !header.expanded ? header.runId : null,
+    },
+    ...rows.slice(at),
+  ];
+}
+
 /** Narration this long, or with code, is content rather than a step note. */
 const TOOL_ACTIVITY_NOTE_MAX_LENGTH = 500;
 
@@ -2715,6 +2784,14 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
   if (a.withinToolActivity !== b.withinToolActivity) return false;
 
   switch (a.kind) {
+    case "history-gap": {
+      const bg = b as typeof a;
+      return (
+        a.loading === bg.loading &&
+        a.error === bg.error &&
+        a.expandsFoldRunId === bg.expandsFoldRunId
+      );
+    }
     case "working":
       return a.createdAt === (b as typeof a).createdAt;
     case "thinking": {

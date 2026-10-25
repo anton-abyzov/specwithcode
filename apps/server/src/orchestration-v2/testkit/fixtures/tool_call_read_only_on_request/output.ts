@@ -5,6 +5,7 @@ import type {
 } from "@specweave-studio/contracts";
 
 import type { OrchestratorV2ScenarioResult } from "../../OrchestratorScenario.ts";
+import { fileChangePatchText } from "../../../fileChangePatches.ts";
 import {
   assertBaseProjection,
   assertNoAcpClientFileOrTerminalRequests,
@@ -104,7 +105,7 @@ function writtenContent(item: OrchestrationV2TurnItem): string | undefined {
     case "command_execution":
       return item.input;
     case "file_change":
-      return item.newStr ?? item.diffStr;
+      return item.newStr ?? fileChangePatchText(item);
     default:
       return undefined;
   }

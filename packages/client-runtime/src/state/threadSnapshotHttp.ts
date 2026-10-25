@@ -21,12 +21,19 @@ import {
 // cold-open load. Older turn pages wait for this deadline.
 const DEFAULT_THREAD_SNAPSHOT_TIMEOUT_MS = 20_000;
 
+export type ThreadSnapshotLoadOptions = {
+  /** Ask a bounded loader to cut a long user turn into pages. */
+  readonly boundLongTurns?: boolean | undefined;
+};
+
 /** Progressive history metadata returned by a bounded snapshot loader. */
 export type ThreadSnapshotHistoryMeta = {
   readonly historyCursor: string | null;
   readonly hasMoreHistory: boolean;
   /** Max local turn ordinal from the full projection; optional on older servers. */
   readonly latestLocalTurnOrdinal?: number | null;
+  /** Key of the window turn start placed at the head of the projection. */
+  readonly windowTurnStartKey?: string | null;
 };
 
 /**
@@ -92,6 +99,7 @@ export class ThreadSnapshotLoader extends Context.Service<
     readonly load: (
       prepared: PreparedConnection,
       threadId: ThreadId,
+      options?: ThreadSnapshotLoadOptions,
     ) => Effect.Effect<ThreadSnapshotLoadResult>;
   }
 >()("@specweave-studio/client-runtime/state/threadSnapshotHttp/ThreadSnapshotLoader") {}

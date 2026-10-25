@@ -1000,6 +1000,7 @@ describe("orchestration V2 contracts", () => {
       historyCursor: "older-page",
       hasMoreHistory: true,
       latestLocalTurnOrdinal: 1,
+      // Older servers still send this flag; clients drop it.
       payloadBudgetExceeded: false,
     });
     expect(boundedSnapshot).toMatchObject({
@@ -1007,8 +1008,9 @@ describe("orchestration V2 contracts", () => {
       historyCursor: "older-page",
       hasMoreHistory: true,
       latestLocalTurnOrdinal: 1,
-      payloadBudgetExceeded: false,
     });
+    expect(boundedSnapshot).not.toHaveProperty("payloadBudgetExceeded");
+    expect(boundedSnapshot).not.toHaveProperty("windowTurnStart");
   });
 
   it("decodes orchestration lifecycle turn items for compaction, handoff, and fork UI", () => {

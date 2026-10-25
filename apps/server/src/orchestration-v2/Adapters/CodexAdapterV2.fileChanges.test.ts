@@ -452,7 +452,7 @@ describe("Codex adapter structured file approval evidence", () => {
         expect(result.evidenceAtApproval).toHaveLength(1);
         const evidence = result.evidenceAtApproval[0]!;
         expect(evidence.changes).toEqual(expectedChanges);
-        expect(evidence.diffStr).toBe(projectedChanges.diffStr);
+        expect(evidence).not.toHaveProperty("diffStr");
         expect(evidence.status).toBe("running");
         const approval = result.events.find((event) => event.type === "runtime_request.updated");
         expect(approval).toMatchObject({

@@ -60,6 +60,16 @@ const ANSI_PATTERN =
 const GH_LOG_PREFIX = /^[^\t\n]*\t[^\t\n]*\t/;
 /** The runner's own timestamp, often behind a byte-order mark. */
 const RUNNER_TIMESTAMP = /^﻿?\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z ?/;
+const SECRET_ASSIGNMENT_KEY =
+  "(?:token|access[_-]?token|api[_-]?key|authorization|client[_-]?secret|password|secret)";
+const QUOTED_SECRET_VALUE = String.raw`(?:"[^"\n]*"|'[^'\n]*')`;
+const SECRET_SCHEME_PREFIX = String.raw`(?:(?:Bearer|Basic|token)[ \t]+)+`;
+// Query values stop at URL separators, while plain assignments can contain them.
+// Match empty query values too, so the plain alternative cannot eat the next field.
+const SECRET_ASSIGNMENTS = new RegExp(
+  String.raw`([?&]${SECRET_ASSIGNMENT_KEY}=[ \t]*)(${QUOTED_SECRET_VALUE}|${SECRET_SCHEME_PREFIX}(?:${QUOTED_SECRET_VALUE}|[^&#\s]+)|[^&#\s]+)?|(\b${SECRET_ASSIGNMENT_KEY}\b\s*[:=]\s*)(${QUOTED_SECRET_VALUE}|${SECRET_SCHEME_PREFIX}(?:${QUOTED_SECRET_VALUE}|[^\s,;]+)|[^\s,;]+)`,
+  "gi",
+);
 const CREDENTIAL_TOKEN_PATTERNS: ReadonlyArray<readonly [RegExp, string]> = [
   [/\b(?:gh[pousr]_[A-Za-z0-9]+|github_pat_[A-Za-z0-9_]{20,})\b/g, "[redacted]"],
   [/\b(?:sk-[A-Za-z0-9][A-Za-z0-9_-]{7,}|xox[a-zA-Z]-[A-Za-z0-9-]+)\b/g, "[redacted]"],
@@ -68,11 +78,6 @@ const CREDENTIAL_TOKEN_PATTERNS: ReadonlyArray<readonly [RegExp, string]> = [
 const SECRET_PATTERNS: ReadonlyArray<readonly [RegExp, string]> = [
   ...CREDENTIAL_TOKEN_PATTERNS,
   [/\b(Bearer|Basic|token)\s+[A-Za-z0-9._~+/=-]{16,}/gi, "$1 [redacted]"],
-  [/(https?:\/\/)[^\s/:@]+:[^\s/@]+@/gi, "$1[redacted]@"],
-  [
-    /(\b(?:access[_-]?token|api[_-]?key|authorization|client[_-]?secret|password|secret)\b\s*[:=]\s*)(?:"[^"\n]*"|'[^'\n]*'|[^\s,;]+)/gi,
-    "$1[redacted]",
-  ],
 ];
 
 /** Token shapes only, preserving each caller's header and excerpt formatting. */
@@ -83,16 +88,45 @@ export function scrubCredentialTokens(text: string): string {
   return text;
 }
 
+function scrubAssignedSecrets(text: string, deferMarkers: boolean): string {
+  return text.replace(
+    SECRET_ASSIGNMENTS,
+    (
+      match,
+      queryPrefix: string | undefined,
+      queryValue: string | undefined,
+      assignmentPrefix: string | undefined,
+      assignmentValue: string | undefined,
+    ) => {
+      const value = queryValue ?? assignmentValue;
+      // A scheme or flag can introduce another credential outside this match.
+      // Leave its marker visible to the whitespace redactor before the final pass.
+      if (
+        deferMarkers &&
+        value &&
+        (/^(?:(?:Bearer|Basic|token)(?:\s|$)|-{1,2}\S*token(?:\s|$))/i.test(value) ||
+          (assignmentPrefix && /\b(?:Bearer|Basic|token)$/i.test(value)))
+      )
+        return match;
+      return `${queryPrefix ?? assignmentPrefix}${value ? "[redacted]" : ""}`;
+    },
+  );
+}
+
 /** Removes credential shapes, and any exact secret the caller knows about, from log text. */
 export function scrubLogSecrets(text: string, known: ReadonlyArray<string> = []): string {
   let result = text;
   for (const secret of known) {
     if (secret.length >= 8) result = result.split(secret).join("[redacted]");
   }
+  result = result.replace(/(https?:\/\/)[^\s/:@]+:[^\s/@]+@/gi, "$1[redacted]@");
+  // Scrub labeled values before whitespace authorization markers: a value ending
+  // in "-token" must not consume the diagnostic word that follows it.
+  result = scrubAssignedSecrets(result, true);
   for (const [pattern, replacement] of SECRET_PATTERNS) {
     result = result.replace(pattern, replacement);
   }
-  return result;
+  return scrubAssignedSecrets(result, false);
 }
 
 /** One log line without colour codes, `gh`'s job/step columns or the runner's timestamp. */

@@ -78,6 +78,7 @@ import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
@@ -96,6 +97,8 @@ import {
   isThreadHistoryUserTurn,
   isThreadHistoryTurnStart,
   THREAD_HISTORY_MAX_RAW_TURNS,
+  THREAD_HISTORY_PAGE_POLICY,
+  THREAD_HISTORY_TURN_SNAPSHOT_ROW_LIMIT,
 } from "./threadHistoryPaging.ts";
 
 export class ProjectionStoreApplyEventError extends Schema.TaggedError<ProjectionStoreApplyEventError>()(
@@ -500,6 +503,22 @@ export interface ProjectionStoreV2Shape {
     requestId: TurnItemId,
     resultId: TurnItemId,
   ) => Effect.Effect<boolean, ProjectionStoreV2Error>;
+  /**
+   * Whether the projection already holds exactly this node. Adapters resend an
+   * unchanged node with every tool or text update; storing it again only grows
+   * the event log.
+   */
+  readonly isNodeStored: (
+    node: OrchestrationV2ExecutionNode,
+  ) => Effect.Effect<boolean, ProjectionStoreV2Error>;
+  /**
+   * The stored `updatedAt` (epoch milliseconds) of this item when the projection already holds it
+   * with nothing else different (its ordinal is the one the position table
+   * would give it again); null when anything else changed or it is new.
+   */
+  readonly getUnchangedTurnItemUpdatedAtMillis: (
+    item: OrchestrationV2TurnItem,
+  ) => Effect.Effect<number | null, ProjectionStoreV2Error>;
   readonly getRuntimeRequest: (
     threadId: ThreadId,
     requestId: RuntimeRequestId,
@@ -564,12 +583,24 @@ export interface ProjectionStoreV2Shape {
       readonly anchorItemId?: TurnItemId | undefined;
       readonly anchorThreadId?: ThreadId | undefined;
       readonly requiredRunId?: RunId | undefined;
+      /**
+       * Cut a user turn longer than the turn row budget into pages. Without
+       * it user turns stay whole, as older clients expect.
+       */
+      readonly boundLongTurns?: boolean | undefined;
     },
   ) => Effect.Effect<
     {
       readonly schemaVersion: number;
       readonly snapshotSequence: number;
       readonly projection: OrchestrationV2ThreadProjection;
+      /**
+       * The thread's newest user turn start, set only for a bounded window
+       * without an anchor whose rows hold none (the inside of one long turn).
+       */
+      readonly latestUserTurnStart?: OrchestrationV2ProjectedTurnItem | null | undefined;
+      /** Rows older than the window's first row stay in the store. */
+      readonly olderRowsUnloaded?: boolean | undefined;
     },
     ProjectionStoreV2Error
   >;
@@ -1042,6 +1073,25 @@ function applyToProjectionReplayState(
   return true;
 }
 
+/** Facts the window query reports beside its rows. */
+type ThreadWindowReport = {
+  /** Some segment left eligible rows older than its window in the store. */
+  olderRowsUnloaded: boolean;
+  /** The prompt of the newest user turn when that turn is longer than the window. */
+  latestUserTurnStart: OrchestrationV2TurnItem | null;
+  /** Rows loaded as dependencies of the window, outside its range. */
+  readonly dependencyItemIds: Set<string>;
+};
+
+type WindowPayloadRow = {
+  readonly payload_json: string | null;
+  /** 0 window row, 1 newest long turn's prompt, 2 older rows remain. */
+  readonly row_kind: number;
+  readonly turn_item_id: string | null;
+  /** 1 for an interrupt request kept only for a visible result's sake. */
+  readonly dependency_only: number;
+};
+
 type PayloadRow = {
   readonly payload_json: string;
 };
@@ -1210,6 +1260,26 @@ const decodeContextTransferPayload = Schema.decodeUnknownEffect(
 
 const isProjectionStoreThreadNotFoundError = Schema.is(ProjectionStoreThreadNotFoundError);
 const isProjectionStoreReadError = Schema.is(ProjectionStoreReadError);
+
+/**
+ * The stored item's `updatedAt` in epoch milliseconds when two encoded items
+ * differ in nothing else, or null. Encoded timestamps have one length, so a length mismatch
+ * settles most changes without parsing either payload.
+ */
+function storedUpdatedAtIfOnlyTimeChanged(storedJson: string, nextJson: string): number | null {
+  if (storedJson.length !== nextJson.length) return null;
+  const stored = parseEncodedPayload(storedJson);
+  const storedUpdatedAt = typeof stored.updatedAt === "string" ? stored.updatedAt : null;
+  if (storedUpdatedAt === null) return null;
+  if (storedJson !== nextJson) {
+    const next = parseEncodedPayload(nextJson);
+    stored.updatedAt = null;
+    next.updatedAt = null;
+    if (JSON.stringify(stored) !== JSON.stringify(next)) return null;
+  }
+  const parsed = DateTime.make(storedUpdatedAt);
+  return Option.isSome(parsed) ? DateTime.toEpochMillis(parsed.value) : null;
+}
 
 function parseEncodedPayload(json: string): Record<string, unknown> {
   return JSON.parse(json) as Record<string, unknown>;
@@ -2987,6 +3057,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         readonly anchorItemId?: TurnItemId | undefined;
         readonly requiredRunId?: RunId | undefined;
         readonly suppressLocal?: boolean | undefined;
+        readonly boundLongTurns?: boolean | undefined;
+        readonly report?: ThreadWindowReport | undefined;
       },
       fields?: ReadonlyArray<ProjectionRecordField>,
       filter?: ProjectionRecordFilter,
@@ -3018,7 +3090,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   ${filter?.turnItemRunIds === undefined ? sql`` : sql`AND (run_id IN (SELECT value FROM json_each(${encodeIdList(filter.turnItemRunIds.filter((id): id is RunId => id !== null))})) OR (${filter.turnItemRunIds.includes(null) ? 1 : 0} = 1 AND run_id IS NULL))`}
                 ORDER BY ordinal ASC, turn_item_id ASC
               `
-              : yield* sql<PayloadRow>`
+              : yield* sql<WindowPayloadRow>`
                 WITH eligible AS NOT MATERIALIZED (
                   SELECT item.payload_json, item.ordinal, item.turn_item_id,
                     item.run_id, item.node_id, item.type
@@ -3105,6 +3177,17 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                     ELSE 0
                   END AS ordinal
                   FROM user_anchors
+                ), latest_user_turn AS (
+                  -- Mirrors selectOlderTimelinePage: whole turns while the
+                  -- newest user turn fits the turn row budget; otherwise the
+                  -- window pages from inside that turn with the row limit.
+                  SELECT COUNT(*) AS row_count
+                  FROM (
+                    SELECT 1
+                    FROM eligible
+                    WHERE ordinal >= (SELECT MAX(ordinal) FROM user_anchors)
+                    LIMIT ${THREAD_HISTORY_PAGE_POLICY.maxTurnItems + 1}
+                  )
                 ), selected AS (
                   SELECT payload_json, ordinal, turn_item_id, run_id, type
                   FROM eligible
@@ -3112,21 +3195,36 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   ORDER BY ordinal DESC, turn_item_id DESC
                   LIMIT CASE
                     WHEN ${window.rowLimit} = 0 THEN 0
-                    WHEN (SELECT COUNT(*) FROM user_anchors) > 0 THEN -1
+                    -- Older clients keep whole user turns.
+                    WHEN ${window.boundLongTurns === true ? 0 : 1} = 1
+                      AND (SELECT COUNT(*) FROM user_anchors) > 0 THEN -1
+                    WHEN (SELECT row_count FROM latest_user_turn)
+                      BETWEEN 1 AND ${THREAD_HISTORY_PAGE_POLICY.maxTurnItems}
+                      THEN ${THREAD_HISTORY_TURN_SNAPSHOT_ROW_LIMIT}
                     ELSE ${window.rowLimit}
                   END
+                ), oldest_selected AS (
+                  SELECT ordinal, turn_item_id
+                  FROM selected
+                  ORDER BY ordinal ASC, turn_item_id ASC
+                  LIMIT 1
                 ), retained AS (
-                  SELECT payload_json, ordinal, turn_item_id FROM selected
+                  SELECT payload_json, ordinal, turn_item_id, 0 AS dependency_only
+                  FROM selected
                   UNION
-                  SELECT request.payload_json, request.ordinal, request.turn_item_id
+                  -- A visible result needs its run's requests, which can sit
+                  -- far outside the window. They are turn items only, never
+                  -- window rows, so paging still starts at the window's edge.
+                  SELECT request.payload_json, request.ordinal, request.turn_item_id, 1
                   FROM orchestration_v2_projection_turn_items AS request
                   WHERE request.run_id IN (
                       SELECT run_id FROM selected
                       WHERE type = 'run_interrupt_result' AND run_id IS NOT NULL
                     )
                     AND request.type = 'run_interrupt_request'
+                    AND request.turn_item_id NOT IN (SELECT turn_item_id FROM selected)
                   UNION
-                  SELECT latest.payload_json, latest.ordinal, latest.turn_item_id
+                  SELECT latest.payload_json, latest.ordinal, latest.turn_item_id, 0
                   FROM (
                     SELECT payload_json, ordinal, turn_item_id
                     FROM orchestration_v2_projection_turn_items
@@ -3137,13 +3235,51 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                     LIMIT 1
                   ) AS latest
                 )
-                SELECT payload_json
+                SELECT payload_json, 0 AS row_kind, ordinal, turn_item_id, dependency_only
                 FROM retained
-                ORDER BY ordinal ASC, turn_item_id ASC
+                UNION ALL
+                -- The prompt of a newest user turn too long for the window,
+                -- found by the anchor walk above rather than a second one.
+                SELECT payload_json, 1, ordinal, turn_item_id, 0
+                FROM (
+                  SELECT payload_json, ordinal, NULL AS turn_item_id
+                  FROM turn_anchors
+                  WHERE ${window.boundLongTurns === true ? 1 : 0} = 1
+                    AND ${window.anchorItemId ?? null} IS NULL
+                    AND ${window.requiredRunId ?? null} IS NULL
+                    AND ordinal = (SELECT MAX(ordinal) FROM user_anchors)
+                    AND json_extract(payload_json, '$.createdBy') = 'user'
+                    AND (SELECT row_count FROM latest_user_turn)
+                      > ${THREAD_HISTORY_PAGE_POLICY.maxTurnItems}
+                  LIMIT 1
+                )
+                UNION ALL
+                -- Eligible rows older than the window stay in the store.
+                SELECT NULL, 2, NULL, NULL, 0
+                WHERE EXISTS (
+                  SELECT 1
+                  FROM eligible
+                  WHERE (ordinal, turn_item_id) < (SELECT ordinal, turn_item_id FROM oldest_selected)
+                )
+                ORDER BY row_kind ASC, ordinal ASC, turn_item_id ASC
               `;
+        const windowTurnItemRows: PayloadRow[] = [];
+        for (const row of boundedTurnItemRows as ReadonlyArray<Partial<WindowPayloadRow>>) {
+          if (row.row_kind === undefined || row.row_kind === 0) {
+            windowTurnItemRows.push(row as PayloadRow);
+            if (row.dependency_only === 1 && window?.report && row.turn_item_id != null) {
+              window.report.dependencyItemIds.add(row.turn_item_id);
+            }
+          } else if (row.row_kind === 1 && row.payload_json != null && window?.report) {
+            const item = yield* decodeTurnItemPayload(row.payload_json);
+            if (isThreadHistoryUserTurn(item)) window.report.latestUserTurnStart = item;
+          } else if (row.row_kind === 2 && window?.report) {
+            window.report.olderRowsUnloaded = true;
+          }
+        }
         // Reuse the decoded items for cohort IDs and the resulting projection.
         // Parsing these rows separately duplicates every retained tool output.
-        const turnItems = yield* decodeRows(decodeTurnItemPayload, threadId)(boundedTurnItemRows);
+        const turnItems = yield* decodeRows(decodeTurnItemPayload, threadId)(windowTurnItemRows);
         const cohortJson = (field: string) =>
           JSON.stringify(
             turnItems.flatMap((payload) => {
@@ -3568,6 +3704,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         readonly anchorItemId?: TurnItemId | undefined;
         readonly requiredRunId?: RunId | undefined;
         readonly suppressLocal?: boolean | undefined;
+        readonly boundLongTurns?: boolean | undefined;
+        readonly report?: ThreadWindowReport | undefined;
         readonly historyAnchor?:
           | { readonly threadId: ThreadId; readonly itemId: TurnItemId }
           | undefined;
@@ -3594,6 +3732,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           projection.turnItems.length >= localWindow.rowLimit &&
           !projection.turnItems.some(isThreadHistoryUserTurn)
         ) {
+          // The source's rows wait behind this segment's cursor.
+          if (window.report) window.report.olderRowsUnloaded = true;
           return withLocalVisibleTurnItems(projection);
         }
 
@@ -3673,6 +3813,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 return {
                   rowLimit: window.rowLimit,
                   userTurnLimit: window.userTurnLimit,
+                  boundLongTurns: window.boundLongTurns,
+                  report: window.report,
                   requiredRunId: forkedFrom.runId,
                   suppressLocal: anchor === undefined || anchorIsInDescendant,
                   ...(anchor === undefined || anchorIsInDescendant
@@ -4726,6 +4868,36 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           return rows[0]?.pending === 1;
         }).pipe(Effect.mapError(controlReadError(threadId)));
 
+    const getUnchangedTurnItemUpdatedAtMillis: ProjectionStoreV2Shape["getUnchangedTurnItemUpdatedAtMillis"] =
+      (item) =>
+        Effect.gen(function* () {
+          const rows = yield* sql<{
+            readonly payload_json: string;
+            readonly ordinal: number;
+            readonly position: number | null;
+          }>`
+          SELECT item.payload_json, item.ordinal, position.ordinal AS position
+          FROM orchestration_v2_projection_turn_items AS item
+          LEFT JOIN orchestration_v2_turn_item_positions AS position
+            ON position.thread_id = item.thread_id AND position.turn_item_id = item.turn_item_id
+          WHERE item.turn_item_id = ${item.id} AND item.thread_id = ${item.threadId}
+        `;
+          const row = rows[0];
+          if (row === undefined || row.position === null || row.position !== row.ordinal)
+            return null;
+          const payloadJson = yield* encodeTurnItemPayload({ ...item, ordinal: row.ordinal });
+          return storedUpdatedAtIfOnlyTimeChanged(row.payload_json, payloadJson);
+        }).pipe(Effect.mapError(controlReadError(item.threadId)));
+
+    const isNodeStored: ProjectionStoreV2Shape["isNodeStored"] = (node) =>
+      Effect.gen(function* () {
+        const payloadJson = yield* encodeNodePayload(node);
+        const rows = yield* sql<PayloadRow>`
+          SELECT payload_json FROM orchestration_v2_projection_nodes WHERE node_id = ${node.id}
+        `;
+        return rows[0]?.payload_json === payloadJson;
+      }).pipe(Effect.mapError(controlReadError(node.threadId)));
+
     const getRuntimeRequest: ProjectionStoreV2Shape["getRuntimeRequest"] = (threadId, requestId) =>
       sql
         .withTransaction(
@@ -5369,14 +5541,35 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                       `).map((row) => ThreadId.make(row.thread_id))[0] ??
                       threadId,
                   };
-            const projection = yield* readProjection(threadId, new Set(), {
+            const report: ThreadWindowReport = {
+              olderRowsUnloaded: false,
+              latestUserTurnStart: null,
+              dependencyItemIds: new Set(),
+            };
+            const boundLongTurns = options.boundLongTurns === true;
+            const windowProjection = yield* readProjection(threadId, new Set(), {
               rowLimit: options.rowLimit,
               userTurnLimit: options.userTurnLimit,
+              boundLongTurns,
+              report,
               ...(historyAnchor?.threadId === threadId
                 ? { anchorItemId: historyAnchor.itemId }
                 : {}),
               ...(historyAnchor === undefined ? {} : { historyAnchor }),
             });
+            // Dependencies stay in turnItems but out of the paged rows, whose
+            // first row is where the next page starts.
+            const projection =
+              report.dependencyItemIds.size === 0
+                ? windowProjection
+                : {
+                    ...windowProjection,
+                    visibleTurnItems: windowProjection.visibleTurnItems
+                      .filter((row) => !report.dependencyItemIds.has(String(row.sourceItemId)))
+                      .map((row, position) =>
+                        row.position === position ? row : { ...row, position },
+                      ),
+                  };
             const rows = yield* sql<{ readonly snapshot_sequence: number | null }>`
               SELECT MAX(sequence) AS snapshot_sequence
               FROM orchestration_events
@@ -5384,10 +5577,28 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 AND aggregate_kind = 'thread'
                 AND stream_id = ${threadId}
             `;
+            const turnStart = report.latestUserTurnStart;
+            const latestUserTurnStart =
+              boundLongTurns &&
+              historyAnchor === undefined &&
+              options.userTurnLimit !== undefined &&
+              !projection.visibleTurnItems.some((row) => isThreadHistoryUserTurn(row.item))
+                ? turnStart === null
+                  ? null
+                  : ({
+                      position: 0,
+                      visibility: "local",
+                      sourceThreadId: threadId,
+                      sourceItemId: turnStart.id,
+                      item: turnStart,
+                    } satisfies OrchestrationV2ProjectedTurnItem)
+                : undefined;
             return {
               schemaVersion: ORCHESTRATION_V2_PROJECTION_SCHEMA_VERSION,
               snapshotSequence: rows[0]?.snapshot_sequence ?? 0,
               projection,
+              olderRowsUnloaded: report.olderRowsUnloaded,
+              ...(latestUserTurnStart === undefined ? {} : { latestUserTurnStart }),
             };
           }),
         )
@@ -6459,6 +6670,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       canStartQueuedRun,
       getPendingNativeUserInputs,
       hasUnpairedRunInterruptRequest,
+      isNodeStored,
+      getUnchangedTurnItemUpdatedAtMillis,
       getMessageCount,
       getNextTurnItemOrdinal,
       getTurnItem,
@@ -6722,6 +6935,33 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
             !projection.turnItems.some((item) => item.id === resultId)
           );
         }),
+      isNodeStored: (node) =>
+        Effect.gen(function* () {
+          const stored = (yield* Ref.get(replayState)).projections
+            .get(node.threadId)
+            ?.nodes.find((candidate) => candidate.id === node.id);
+          if (stored === undefined) return false;
+          return (yield* encodeNodePayload(stored)) === (yield* encodeNodePayload(node));
+        }).pipe(
+          Effect.mapError(
+            (cause) => new ProjectionStoreReadError({ threadId: node.threadId, cause }),
+          ),
+        ),
+      getUnchangedTurnItemUpdatedAtMillis: (item) =>
+        Effect.gen(function* () {
+          const stored = (yield* Ref.get(replayState)).projections
+            .get(item.threadId)
+            ?.turnItems.find((candidate) => candidate.id === item.id);
+          if (stored === undefined) return null;
+          return storedUpdatedAtIfOnlyTimeChanged(
+            yield* encodeTurnItemPayload(stored),
+            yield* encodeTurnItemPayload({ ...item, ordinal: stored.ordinal }),
+          );
+        }).pipe(
+          Effect.mapError(
+            (cause) => new ProjectionStoreReadError({ threadId: item.threadId, cause }),
+          ),
+        ),
       getMessageCount: (threadId) =>
         Ref.get(replayState).pipe(
           Effect.map((state) => state.projections.get(threadId)?.messages.length ?? 0),
@@ -7095,10 +7335,35 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
                   ? rawStart
                   : anchors.at(-anchorLimit)!
                 : Math.max(0, anchorIndex - options.rowLimit);
-            const visibleTurnItems = candidates.slice(start);
+            // Mirrors the SQL window: whole turns for older clients; with
+            // bounded long turns, whole turns while the newest user turn fits
+            // the turn row budget, otherwise the row limit.
+            const boundLongTurns = options.boundLongTurns === true;
+            const latestTurnRows = anchors.length > 0 ? anchorIndex - anchors.at(-1)! : 0;
+            const rowLimit =
+              !boundLongTurns && anchors.length > 0
+                ? candidates.length
+                : options.rowLimit > 0 &&
+                    latestTurnRows > 0 &&
+                    latestTurnRows <= THREAD_HISTORY_PAGE_POLICY.maxTurnItems
+                  ? THREAD_HISTORY_TURN_SNAPSHOT_ROW_LIMIT
+                  : options.rowLimit;
+            const sliceStart = Math.max(start, anchorIndex - Math.max(0, rowLimit));
+            const visibleTurnItems = candidates.slice(sliceStart);
+            const latestUserTurnStart =
+              boundLongTurns &&
+              options.anchorItemId === undefined &&
+              options.userTurnLimit !== undefined &&
+              !visibleTurnItems.some((row) => isThreadHistoryUserTurn(row.item))
+                ? (snapshot.projection.visibleTurnItems.findLast(
+                    (row) => row.sourceThreadId === threadId && isThreadHistoryUserTurn(row.item),
+                  ) ?? null)
+                : undefined;
             return {
               ...snapshot,
               projection: { ...snapshot.projection, visibleTurnItems },
+              olderRowsUnloaded: sliceStart > 0,
+              ...(latestUserTurnStart === undefined ? {} : { latestUserTurnStart }),
             };
           }),
         ),

@@ -2107,6 +2107,7 @@ function useChatViewState(props: ChatViewProps) {
       hasMoreHistory: serverThreadHistory.hasMoreHistory,
       loading: serverThreadHistory.loading,
       error: serverThreadHistory.error,
+      windowTurnStartKey: serverThreadHistory.windowTurnStartKey,
       onLoadEarlier: () => {
         void loadEarlierThreadHistory({
           environmentId: routeThreadDetailTarget.environmentId,

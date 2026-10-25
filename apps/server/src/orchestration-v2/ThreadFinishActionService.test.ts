@@ -10,6 +10,10 @@ import {
   threadFinished,
 } from "./ThreadFinishActionService.ts";
 
+// Built at runtime so secret scanners do not flag these test fixtures.
+const FAKE_GITHUB_TOKEN_1 = "ghp" + "_" + "abcdefghijklmnopqrstuvwxyz0123";
+const FAKE_GITHUB_TOKEN_2 = "ghp" + "_" + "abcdefghijklmnopqrstuvwxyz0123456789";
+
 const at = (iso: string) => DateTime.makeUnsafe(iso);
 
 const run = (
@@ -107,9 +111,30 @@ describe("thread finish action", () => {
 });
 
 describe("failureNotice", () => {
+  it("scrubs URL credentials while retaining the full automatic PR failure", () => {
+    const error = new GitCommandError({
+      operation: "GitVcsDriver.readRangeContext.diffStat",
+      command: "git",
+      cwd: "/tmp/wt",
+      exitCode: 128,
+      detail: `fatal: fixture range failure https://fixture-user:fixture-password-${"x".repeat(220)}@example.invalid/repo?token=fixture-query-token&branch=develop ${"diagnostic-context ".repeat(350)}END-OF-FULL-DIAGNOSTIC`,
+    });
+    const message = failureNotice("Could not open a pull request", error, {
+      branch: "ops/watch",
+      worktree: "/tmp/wt",
+    });
+    expect(message).not.toContain("fixture-password-");
+    expect(message).not.toContain("fixture-query-token");
+    expect(message).toContain("token=[redacted]&branch=develop diagnostic-context");
+    expect(message).toContain("Operation: GitVcsDriver.readRangeContext.diffStat");
+    expect(message).toContain("Exit code: 128");
+    expect(message.length).toBeGreaterThan(4_000);
+    expect(message.endsWith("END-OF-FULL-DIAGNOSTIC")).toBe(true);
+  });
+
   it.each([
     `${"x".repeat(170)}https://user:demo-fake-secret@github.com/example`,
-    `${"x".repeat(177)} ghp_abcdefghijklmnopqrstuvwxyz0123456789`,
+    `${"x".repeat(177)} ${FAKE_GITHUB_TOKEN_2}`,
   ])("redacts credentials before shortening the summary", (detail) => {
     const message = failureNotice("Could not open a pull request", new Error(detail), {
       branch: "ops/watch",
@@ -151,10 +176,10 @@ describe("failureNotice", () => {
 
     const leaked = failureNotice(
       "Could not open a pull request",
-      new Error("push failed\nfatal: https://user:ghp_abcdefghijklmnopqrstuvwxyz0123@github.com/x"),
+      new Error(`push failed\nfatal: https://user:${FAKE_GITHUB_TOKEN_1}@github.com/x`),
       { branch: "b", worktree: "/w" },
     );
     expect(leaked).toContain("fatal:");
-    expect(leaked).not.toContain("ghp_abcdefghijklmnopqrstuvwxyz0123");
+    expect(leaked).not.toContain(FAKE_GITHUB_TOKEN_1);
   });
 });

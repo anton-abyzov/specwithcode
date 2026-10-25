@@ -174,6 +174,7 @@ import {
   buildBoundedThreadProjection,
   THREAD_HISTORY_PAGE_POLICY,
   THREAD_HISTORY_SNAPSHOT_ROW_LIMIT,
+  WHOLE_TURN_THREAD_HISTORY_PAGE_POLICY,
 } from "./orchestration-v2/threadHistoryPaging.ts";
 import {
   projectDomainEventForWire,
@@ -818,6 +819,7 @@ export const subscribeOrchestrationV2Thread = Effect.fn("ws.orchestrationV2.subs
     readonly afterSequence?: number;
     readonly requestCompletionMarker?: boolean;
     readonly acceptBoundedSnapshot?: boolean;
+    readonly boundLongTurns?: boolean;
   }) {
     const threadManagement = yield* ThreadManagementService.ThreadManagementService;
     const applicationEvents = yield* OrchestrationEventStore.OrchestrationEventStore;
@@ -897,6 +899,7 @@ export const subscribeOrchestrationV2Thread = Effect.fn("ws.orchestrationV2.subs
           ? threadManagement.getThreadSnapshotWindow(input.threadId, {
               rowLimit: THREAD_HISTORY_SNAPSHOT_ROW_LIMIT,
               userTurnLimit: THREAD_HISTORY_PAGE_POLICY.maxUserTurns,
+              boundLongTurns: input.boundLongTurns === true,
             })
           : threadManagement.getThreadSnapshot(input.threadId)
       ).pipe(
@@ -911,7 +914,10 @@ export const subscribeOrchestrationV2Thread = Effect.fn("ws.orchestrationV2.subs
       );
       const { snapshotSequence } = snapshot;
       const snapshotItem = useBoundedSnapshot
-        ? buildBoundedThreadStreamSnapshot(snapshot)
+        ? buildBoundedThreadStreamSnapshot({
+            ...snapshot,
+            boundLongTurns: input.boundLongTurns === true,
+          })
         : {
             kind: "snapshot" as const,
             snapshotSequence,
@@ -2030,13 +2036,15 @@ const layerWsRpc = (
                   rowLimit: THREAD_HISTORY_SNAPSHOT_ROW_LIMIT,
                 })
                 .pipe(
-                  Effect.map((snapshot) =>
-                    projectThreadProjectionForWire(
+                  // Bound the wire form so the byte budget counts what ships.
+                  Effect.map(
+                    (snapshot) =>
                       buildBoundedThreadProjection({
-                        projection: snapshot.projection,
+                        projection: projectThreadProjectionForWire(snapshot.projection),
                         snapshotSequence: snapshot.snapshotSequence,
+                        olderRowsUnloaded: snapshot.olderRowsUnloaded,
+                        policy: WHOLE_TURN_THREAD_HISTORY_PAGE_POLICY,
                       }).projection,
-                    ),
                   ),
                   Effect.mapError(
                     (cause) =>

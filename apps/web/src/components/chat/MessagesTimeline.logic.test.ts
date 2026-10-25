@@ -34,6 +34,7 @@ import {
   workEntryDisplayLabel,
   workEntryReadOutput,
   workEntryIsVisibleInGroup,
+  withHistoryGapRow,
   withTurnFoldEnds,
   workingStepLabel,
 } from "./MessagesTimeline.logic";
@@ -5444,6 +5445,145 @@ describe("withTurnFoldEnds", () => {
     expect(ids(withTurnFoldEnds(folded, new Map([[run, "final"]])))).toEqual(ids(folded));
     const short = [fold(true), plain("a"), plain("b"), plain("final")];
     expect(ids(withTurnFoldEnds(short, new Map([[run, "final"]])))).toEqual(ids(short));
+  });
+});
+
+describe("withHistoryGapRow", () => {
+  const prompt = {
+    kind: "message",
+    id: "prompt",
+    createdAt: "2026-10-12T00:00:00Z",
+    message: { role: "user" },
+    projectedItem: { sourceThreadId: "thread-1", sourceItemId: "item-1", item: {} },
+  } as unknown as MessagesTimelineRow;
+  const plain = (id: string) =>
+    ({ kind: "event", id, createdAt: "2026-10-12T00:00:01Z" }) as unknown as MessagesTimelineRow;
+  const fold = {
+    kind: "turn-fold",
+    id: "turn-fold:run-1",
+    createdAt: "2026-10-12T00:00:00Z",
+    runId: "run-1",
+    label: "Worked for 2h",
+    expanded: false,
+  } as unknown as MessagesTimelineRow;
+  const gap = { turnStartKey: "thread-1:item-1", loading: false, error: null };
+  const ids = (rows: ReadonlyArray<MessagesTimelineRow>) => rows.map((row) => row.id);
+
+  it("puts the gap below the turn header, running or settled", () => {
+    const working = {
+      kind: "working",
+      id: "working-indicator-row",
+      createdAt: "2026-10-12T00:00:00Z",
+    } as unknown as MessagesTimelineRow;
+    expect(ids(withHistoryGapRow([prompt, working, plain("a")], gap))).toEqual([
+      "prompt",
+      "working-indicator-row",
+      "history-gap:thread-1:item-1",
+      "a",
+    ]);
+    expect(withHistoryGapRow([prompt, working], gap)[2]).toMatchObject({
+      expandsFoldRunId: null,
+    });
+  });
+
+  it("finds the turn's fold by run below a row spliced in after the prompt", () => {
+    const runPrompt = {
+      ...prompt,
+      projectedItem: {
+        sourceThreadId: "thread-1",
+        sourceItemId: "item-1",
+        item: { runId: "run-1" },
+      },
+    } as unknown as MessagesTimelineRow;
+    const setup = plain("worktree-setup");
+    const otherFold = { ...fold, id: "turn-fold:run-0", runId: "run-0" } as MessagesTimelineRow;
+    const rows = withHistoryGapRow([runPrompt, setup, otherFold, fold, plain("a")], gap);
+    expect(ids(rows)).toEqual([
+      "prompt",
+      "worktree-setup",
+      "turn-fold:run-0",
+      "turn-fold:run-1",
+      "history-gap:thread-1:item-1",
+      "a",
+    ]);
+    expect(rows[4]).toMatchObject({ kind: "history-gap", expandsFoldRunId: "run-1" });
+    // Without a run on the prompt, the first header below it still counts.
+    expect(withHistoryGapRow([prompt, setup, fold, plain("a")], gap)[3]).toMatchObject({
+      kind: "history-gap",
+      expandsFoldRunId: "run-1",
+    });
+    // A later turn's fold is not this turn's header.
+    const nextPrompt = {
+      ...prompt,
+      id: "prompt-2",
+      projectedItem: undefined,
+    } as unknown as MessagesTimelineRow;
+    expect(ids(withHistoryGapRow([prompt, setup, nextPrompt, fold], gap))).toEqual([
+      "prompt",
+      "history-gap:thread-1:item-1",
+      "worktree-setup",
+      "prompt-2",
+      "turn-fold:run-1",
+    ]);
+  });
+
+  it("keeps the gap under the prompt when only another run's fold shows", () => {
+    // R1 was interrupted and left no fold; a background wake run R2 follows.
+    const runPrompt = {
+      ...prompt,
+      projectedItem: {
+        sourceThreadId: "thread-1",
+        sourceItemId: "item-1",
+        item: { runId: "run-1" },
+      },
+    } as unknown as MessagesTimelineRow;
+    const wakeFold = { ...fold, id: "turn-fold:run-2", runId: "run-2" } as MessagesTimelineRow;
+    const rows = withHistoryGapRow([runPrompt, plain("a"), wakeFold, plain("b")], gap);
+    expect(ids(rows)).toEqual([
+      "prompt",
+      "history-gap:thread-1:item-1",
+      "a",
+      "turn-fold:run-2",
+      "b",
+    ]);
+    expect(rows[1]).toMatchObject({ kind: "history-gap", expandsFoldRunId: null });
+  });
+
+  it("opens a closed fold so loaded steps show, and leaves an open one", () => {
+    expect(withHistoryGapRow([prompt, fold, plain("a")], gap)[2]).toMatchObject({
+      kind: "history-gap",
+      expandsFoldRunId: "run-1",
+    });
+    const open = { ...fold, expanded: true } as MessagesTimelineRow;
+    expect(withHistoryGapRow([prompt, open, plain("a")], gap)[2]).toMatchObject({
+      kind: "history-gap",
+      expandsFoldRunId: null,
+    });
+  });
+
+  it("puts the gap below the prompt, past its turn fold", () => {
+    expect(ids(withHistoryGapRow([prompt, plain("a")], gap))).toEqual([
+      "prompt",
+      "history-gap:thread-1:item-1",
+      "a",
+    ]);
+    expect(ids(withHistoryGapRow([prompt, fold, plain("a")], gap))).toEqual([
+      "prompt",
+      "turn-fold:run-1",
+      "history-gap:thread-1:item-1",
+      "a",
+    ]);
+    expect(withHistoryGapRow([prompt], { ...gap, loading: true })[1]).toMatchObject({
+      kind: "history-gap",
+      loading: true,
+      error: null,
+    });
+  });
+
+  it("returns the same rows without a gap or a matching prompt", () => {
+    const rows = [prompt, plain("a")];
+    expect(withHistoryGapRow(rows, null)).toBe(rows);
+    expect(withHistoryGapRow(rows, { ...gap, turnStartKey: "thread-1:other" })).toBe(rows);
   });
 });
 

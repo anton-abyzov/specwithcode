@@ -38,6 +38,9 @@ import {
   decodeThreadHistoryCursor,
   selectHistoryPageFromCursor,
   THREAD_HISTORY_PAGE_POLICY,
+  THREAD_HISTORY_SNAPSHOT_ROW_LIMIT,
+  THREAD_HISTORY_TURN_SNAPSHOT_ROW_LIMIT,
+  threadHistoryCursorBoundsLongTurns,
 } from "./threadHistoryPaging.ts";
 
 const layerTest = Layer.mergeAll(
@@ -490,7 +493,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
     }),
   );
 
-  it.effect("pages complete user turns through SQL regardless of tool count or payload size", () =>
+  it.effect("pages user turns through SQL within the row and byte budgets", () =>
     Effect.gen(function* () {
       const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
       const sql = yield* SqlClient.SqlClient;
@@ -592,7 +595,11 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         Effect.sync(() => vi.spyOn(JSON, "parse")),
         (parse) =>
           projectionStore
-            .getThreadSnapshotWindow(threadId, { rowLimit: 77, userTurnLimit: 10 })
+            .getThreadSnapshotWindow(threadId, {
+              rowLimit: 77,
+              userTurnLimit: 10,
+              boundLongTurns: true,
+            })
             .pipe(
               Effect.tap(() =>
                 Effect.sync(() => {
@@ -606,35 +613,219 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
             ),
         (parse) => Effect.sync(() => parse.mockRestore()),
       );
-      // Only the selected turn cohort and two lookahead anchors are decoded.
-      assert.lengthOf(initial.projection.turnItems, 12 * 102);
+      // Ten 102-row turns no longer load whole: the query stops at the turn row budget.
+      assert.lengthOf(initial.projection.turnItems, THREAD_HISTORY_TURN_SNAPSHOT_ROW_LIMIT);
       const bounded = buildBoundedThreadProjection({
         projection: initial.projection,
         snapshotSequence: 0,
+        olderRowsUnloaded: initial.olderRowsUnloaded,
       });
-      assert.lengthOf(bounded.projection.visibleTurnItems, 10 * 102);
-      assert.strictEqual(bounded.projection.visibleTurnItems[0]?.sourceItemId, allIds[35 * 102]);
+      assert.isAtMost(
+        bounded.projection.visibleTurnItems.length,
+        THREAD_HISTORY_PAGE_POLICY.maxTurnItems,
+      );
+      assert.isAtMost(
+        Buffer.byteLength(JSON.stringify(bounded.projection), "utf8"),
+        THREAD_HISTORY_PAGE_POLICY.maxEncodedBytes,
+      );
+      assert.strictEqual(bounded.projection.visibleTurnItems.at(-1)?.sourceItemId, allIds.at(-1));
       const loaded = bounded.projection.visibleTurnItems.map((row) => String(row.sourceItemId));
       let cursor = bounded.historyCursor;
-      for (const turns of [20, 15]) {
-        assert.isNotNull(cursor);
-        const anchor = decodeThreadHistoryCursor(cursor!);
+      for (let pages = 0; cursor !== null; pages += 1) {
+        assert.isBelow(pages, allIds.length);
+        const anchor = decodeThreadHistoryCursor(cursor);
         const snapshot = yield* projectionStore.getThreadSnapshotWindow(threadId, {
           rowLimit: 77,
           userTurnLimit: 20,
           anchorItemId: TurnItemId.make(anchor.si),
           anchorThreadId: ThreadId.make(anchor.st),
+          boundLongTurns: threadHistoryCursorBoundsLongTurns(anchor),
         });
+        assert.isAtMost(
+          snapshot.projection.visibleTurnItems.length,
+          THREAD_HISTORY_TURN_SNAPSHOT_ROW_LIMIT,
+        );
         const page = selectHistoryPageFromCursor({
           items: snapshot.projection.visibleTurnItems,
-          cursor: cursor!,
+          cursor,
           snapshotSequence: 0,
+          olderRowsUnloaded: snapshot.olderRowsUnloaded,
         });
-        assert.lengthOf(page.items, turns * 102);
+        assert.isAbove(page.items.length, 0);
+        assert.isAtMost(page.items.length, THREAD_HISTORY_PAGE_POLICY.maxTurnItems);
+        assert.isAtMost(
+          Buffer.byteLength(JSON.stringify(page.items), "utf8"),
+          THREAD_HISTORY_PAGE_POLICY.maxEncodedBytes,
+        );
         loaded.unshift(...page.items.map((row) => String(row.sourceItemId)));
         cursor = page.nextCursor;
       }
-      assert.isNull(cursor);
+      assert.deepEqual(loaded, allIds);
+    }),
+  );
+
+  it.effect("bounds one 5,000-item user turn in SQL and pages back to its first item", () =>
+    Effect.gen(function* () {
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const sql = yield* SqlClient.SqlClient;
+      const now = yield* DateTime.now;
+      const nowIso = DateTime.formatIso(now);
+      const threadId = ThreadId.make("thread:long-user-turn");
+      yield* projectionStore.apply({
+        id: EventId.make("event:long-user-turn:thread"),
+        type: "thread.created",
+        threadId,
+        occurredAt: now,
+        payload: {
+          createdBy: "user",
+          creationSource: "web",
+          id: threadId,
+          projectId: ProjectId.make("project:long-user-turn"),
+          title: "One long turn",
+          providerInstanceId,
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+          activeProviderThreadId: null,
+          lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
+          forkedFrom: null,
+          createdAt: now,
+          updatedAt: now,
+          archivedAt: null,
+          settledOverride: null,
+          settledAt: null,
+          lastVisitedAt: null,
+          deletedAt: null,
+        },
+      });
+      const allIds = Array.from(
+        { length: 5_000 },
+        (_, index) => `item:long-user-turn:${index + 1}`,
+      );
+      const rows = allIds.map((id, index) => {
+        const base = {
+          id,
+          threadId,
+          runId: null,
+          nodeId: null,
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: index + 1,
+          status: "completed",
+          title: null,
+          startedAt: nowIso,
+          completedAt: nowIso,
+          updatedAt: nowIso,
+        };
+        const item =
+          index === 0
+            ? {
+                ...base,
+                type: "user_message",
+                createdBy: "user",
+                creationSource: "web",
+                messageId: `message:${id}`,
+                inputIntent: "turn_start",
+                text: "Run the whole audit",
+                attachments: [],
+              }
+            : {
+                ...base,
+                type: "command_execution",
+                input: `step ${index}`,
+                output: "x".repeat(2048),
+                exitCode: 0,
+              };
+        return {
+          turn_item_id: id,
+          thread_id: threadId,
+          run_id: null,
+          node_id: null,
+          provider_thread_id: null,
+          provider_turn_id: null,
+          parent_item_id: null,
+          ordinal: index + 1,
+          type: item.type,
+          status: "completed",
+          updated_at: nowIso,
+          payload_json: encodeUnknownJsonString(item),
+        };
+      });
+      for (let start = 0; start < rows.length; start += 500) {
+        yield* sql`INSERT INTO orchestration_v2_projection_turn_items ${sql.insert(rows.slice(start, start + 500))}`;
+      }
+
+      const initial = yield* projectionStore.getThreadSnapshotWindow(threadId, {
+        rowLimit: THREAD_HISTORY_SNAPSHOT_ROW_LIMIT,
+        userTurnLimit: THREAD_HISTORY_PAGE_POLICY.maxUserTurns,
+        boundLongTurns: true,
+      });
+      // The query decodes the turn's tail, not all 5,000 rows.
+      assert.lengthOf(initial.projection.turnItems, THREAD_HISTORY_SNAPSHOT_ROW_LIMIT);
+      assert.strictEqual(initial.latestUserTurnStart?.sourceItemId, allIds[0]);
+      const bounded = buildBoundedThreadProjection({
+        projection: initial.projection,
+        snapshotSequence: initial.snapshotSequence,
+        latestUserTurnStart: initial.latestUserTurnStart,
+        olderRowsUnloaded: initial.olderRowsUnloaded,
+      });
+      const wire = {
+        snapshotSequence: initial.snapshotSequence,
+        projection: bounded.projection,
+        historyCursor: bounded.historyCursor,
+        hasMoreHistory: bounded.hasMoreHistory,
+        latestLocalTurnOrdinal: bounded.latestLocalTurnOrdinal,
+        windowTurnStart: bounded.windowTurnStart,
+      };
+      assert.isAtMost(
+        Buffer.byteLength(JSON.stringify(wire), "utf8"),
+        THREAD_HISTORY_PAGE_POLICY.maxEncodedBytes,
+      );
+      assert.isAtMost(
+        bounded.projection.visibleTurnItems.length,
+        THREAD_HISTORY_PAGE_POLICY.maxTurnItems,
+      );
+      assert.strictEqual(bounded.windowTurnStart?.sourceItemId, allIds[0]);
+      assert.isTrue(bounded.hasMoreHistory);
+
+      const loaded = bounded.projection.visibleTurnItems.map((row) => String(row.sourceItemId));
+      let cursor = bounded.historyCursor;
+      for (let pages = 0; cursor !== null; pages += 1) {
+        assert.isBelow(pages, allIds.length);
+        const anchor = decodeThreadHistoryCursor(cursor);
+        const snapshot = yield* projectionStore.getThreadSnapshotWindow(threadId, {
+          rowLimit: THREAD_HISTORY_SNAPSHOT_ROW_LIMIT,
+          userTurnLimit: 20,
+          anchorItemId: TurnItemId.make(anchor.si),
+          anchorThreadId: ThreadId.make(anchor.st),
+          boundLongTurns: threadHistoryCursorBoundsLongTurns(anchor),
+        });
+        assert.isUndefined(snapshot.latestUserTurnStart);
+        assert.isAtMost(
+          snapshot.projection.visibleTurnItems.length,
+          THREAD_HISTORY_TURN_SNAPSHOT_ROW_LIMIT,
+        );
+        const page = selectHistoryPageFromCursor({
+          items: snapshot.projection.visibleTurnItems,
+          cursor,
+          snapshotSequence: 0,
+          olderRowsUnloaded: snapshot.olderRowsUnloaded,
+        });
+        assert.isAbove(page.items.length, 0);
+        assert.isAtMost(page.items.length, THREAD_HISTORY_PAGE_POLICY.maxTurnItems);
+        assert.isAtMost(
+          Buffer.byteLength(JSON.stringify(page.items), "utf8"),
+          THREAD_HISTORY_PAGE_POLICY.maxEncodedBytes,
+        );
+        loaded.unshift(...page.items.map((row) => String(row.sourceItemId)));
+        cursor = page.nextCursor;
+      }
+      assert.strictEqual(loaded[0], allIds[0]);
+      assert.strictEqual(new Set(loaded).size, loaded.length);
       assert.deepEqual(loaded, allIds);
     }),
   );

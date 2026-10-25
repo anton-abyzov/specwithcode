@@ -54,13 +54,13 @@ export function useEnvironments() {
     environments: environments.map((e) => ({
       environmentId: e.environmentId,
       entry: null,
-      connection: { phase: mode === "offline" ? "disconnected" : "connected" },
+      connection: { phase: mode === "offline" ? "offline" : "connected" },
     })),
   };
 }
 export function useEnvironment() {
   useFixture();
-  return { connection: { phase: mode === "offline" ? "disconnected" : "connected" } };
+  return { connection: { phase: mode === "offline" ? "offline" : "connected" } };
 }
 export function useEnvironmentScope() {
   useFixture();

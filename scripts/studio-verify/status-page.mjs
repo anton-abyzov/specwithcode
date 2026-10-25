@@ -134,6 +134,26 @@ try {
     await m3.scrollIntoViewIfNeeded();
     await page.screenshot({ path: join(output, `status-page-${theme}-hover.png`) });
 
+    // A group's first row: today's Claude popover (with related incidents)
+    // rises above the group's edge and must not be clipped by the group card.
+    const firstRowBars = claude.getByTestId("status-day-bars");
+    await firstRowBars.evaluate((node) => node.scrollIntoView({ block: "center" }));
+    await firstRowBars.locator("span").last().hover();
+    const topVisible = await popover.evaluate((node) => {
+      // The popover ignores the pointer; let the hit test see it.
+      node.style.pointerEvents = "auto";
+      const box = node.getBoundingClientRect();
+      const hit = document.elementFromPoint(box.left + box.width / 2, box.top + 4);
+      node.style.pointerEvents = "";
+      const group = node.closest('[data-testid="status-group"]').getBoundingClientRect();
+      // Only meaningful while the popover actually rises past the card's top.
+      if (box.top >= group.top) throw new Error("popover no longer crosses the group's edge");
+      return hit !== null && node.contains(hit);
+    });
+    assert.equal(topVisible, true, "day popover is clipped above the group's first row");
+    await page.screenshot({ path: join(output, `status-page-${theme}-first-row-hover.png`) });
+    await page.mouse.move(0, 0);
+
     // Keyboard: the strip is focusable and arrows move the day.
     await claude.getByTestId("status-day-bars").focus();
     await page.keyboard.press("End");
@@ -144,6 +164,39 @@ try {
     assert.equal(await page.locator('[data-service-id="provider:claude"]').count(), 0);
     await page.close();
   }
+
+  // Narrow window: all 90 bars stay inside each card and the page never
+  // scrolls sideways.
+  const narrow = await browser.newPage({ viewport: { width: 340, height: 900 } });
+  narrow.on("pageerror", (error) => errors.push(String(error)));
+  await narrow.goto(`${origin}/?theme=light`);
+  await narrow.getByTestId("status-banner").waitFor();
+  const overflow = await narrow.evaluate(() => {
+    const spill = [...document.querySelectorAll('[data-testid="status-day-bars"]')].filter(
+      (strip) => {
+        const card = strip.closest('[data-testid="status-group"]').getBoundingClientRect();
+        return strip.lastElementChild.getBoundingClientRect().right > card.right;
+      },
+    ).length;
+    return { spill };
+  });
+  assert.deepEqual(overflow, { spill: 0 });
+  // Reading today's bar must not scroll any container sideways, and its
+  // popover must stay inside the window.
+  await narrow.getByTestId("status-day-bars").last().locator("span").last().hover();
+  const reading = await narrow.evaluate(() => {
+    const strips = document.querySelectorAll('[data-testid="status-day-bars"]');
+    const scrolled = [];
+    for (let node = strips[strips.length - 1]; node; node = node.parentElement)
+      if (node.scrollLeft !== 0) scrolled.push(node.id || node.tagName);
+    const box = document
+      .querySelector('[data-testid="status-day-popover"]')
+      .getBoundingClientRect();
+    return { scrolled, inside: box.left >= 0 && box.right <= window.innerWidth };
+  });
+  assert.deepEqual(reading, { scrolled: [], inside: true });
+  await narrow.screenshot({ path: join(output, "status-page-narrow.png"), fullPage: true });
+  await narrow.close();
 
   const page = await browser.newPage({ viewport: { width: 900, height: 600 } });
   page.on("pageerror", (error) => errors.push(String(error)));

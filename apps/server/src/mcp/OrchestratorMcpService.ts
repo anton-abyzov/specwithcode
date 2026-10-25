@@ -914,7 +914,7 @@ function turnItemText(item: OrchestrationV2TurnItem): string | null {
         item.additions === undefined && item.deletions === undefined
           ? undefined
           : `+${item.additions ?? 0} -${item.deletions ?? 0}`,
-        item.diffStr ?? item.newStr,
+        fileChangePatchText(item) ?? item.newStr,
       ]
         .filter((line): line is string => line !== undefined)
         .join("\n");
@@ -1024,6 +1024,7 @@ import {
 } from "../project/launchIncrement.ts";
 import { writeLaunchBinding } from "../project/ThreadIncrementProgress.ts";
 import { deriveDelegatedTaskThread } from "../orchestration-v2/IdAllocator.ts";
+import { fileChangePatchText } from "../orchestration-v2/fileChangePatches.ts";
 
 const effortField = (selection: Pick<ModelSelection, "options"> | undefined) => {
   const effort = modelSelectionEffortValue(selection);

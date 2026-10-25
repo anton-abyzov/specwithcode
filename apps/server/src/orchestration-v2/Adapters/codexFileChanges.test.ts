@@ -102,7 +102,6 @@ describe("Codex file change projection", () => {
     const projected = projectCodexFileChanges([nativeChanges[0]!]);
     expect(projected).toEqual({
       fileName: "/workspace/case.mjs",
-      diffStr: projected!.changes![0]!.diffStr,
       changes: [
         {
           operation: "update",
@@ -159,7 +158,7 @@ describe("Codex file change projection", () => {
     ]);
   });
 
-  it("keeps every operation and joins the headed patches into one splittable item patch", () => {
+  it("keeps every operation with its own headed patch, stored once", () => {
     const projected = projectCodexFileChanges(nativeChanges);
     expect(
       projected?.changes?.map(({ operation, path, oldPath }) => ({ operation, path, oldPath })),
@@ -169,8 +168,10 @@ describe("Codex file change projection", () => {
       { operation: "delete", path: "/workspace/removed.mjs", oldPath: undefined },
       { operation: "move", path: "/workspace/after.mjs", oldPath: "/workspace/before.mjs" },
     ]);
-    expect(projected?.diffStr).toBe(projected?.changes?.map((change) => change.diffStr).join(""));
-    expect(splitPatchByFile(projected!.diffStr!)).toEqual(
+    // The patches are stored once, on the changes; joined they still split by file.
+    expect(projected).not.toHaveProperty("diffStr");
+    const joined = projected!.changes!.map((change) => change.diffStr).join("");
+    expect(splitPatchByFile(joined)).toEqual(
       projected!.changes!.map((change) => ({
         oldPath: change.operation === "add" ? null : (change.oldPath ?? change.path),
         newPath: change.operation === "delete" ? null : change.path,

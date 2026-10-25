@@ -386,11 +386,7 @@ export interface OrchestratorV2Shape {
     threadId: ThreadId,
     options: Parameters<ProjectionStoreV2["Service"]["getThreadSnapshotWindow"]>[1],
   ) => Effect.Effect<
-    {
-      readonly schemaVersion: number;
-      readonly snapshotSequence: number;
-      readonly projection: OrchestrationV2ThreadProjection;
-    },
+    Effect.Success<ReturnType<ProjectionStoreV2["Service"]["getThreadSnapshotWindow"]>>,
     OrchestratorV2Error
   >;
   readonly withProjectPermissionUpdate: <A, E, R>(
