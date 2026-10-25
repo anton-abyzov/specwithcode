@@ -120,7 +120,24 @@ def widened_tables(db, structure, widen_from):
                           'typed': {'count': len(rows), 'sha256': typed_rows_hash(rows)},
                           'legacy': {'count': len(rows), 'sha256': legacy_rows_hash(rows)},
                           'filledRows': db.execute('SELECT count(*) FROM ' + identifier(table) + ' WHERE ' + filled).fetchone()[0]}
+        if any(column[4] is not None for column in new[len(old):]):
+            # A column with a default holds it in every earlier row: count the rows that differ.
+            # Without one, these are the filled rows, and the capture stays as releases before made it.
+            changed = ' OR '.join('NOT ' + at_default(column) for column in new[len(old):])
+            widened[table]['changedRows'] = db.execute('SELECT count(*) FROM ' + identifier(table) + ' WHERE ' + changed).fetchone()[0]
     return widened
+
+
+def at_default(column):
+    """SQL true where an added column's cell holds what `ADD COLUMN` gives every earlier row:
+    NULL without a default, or the integer a `DEFAULT n` names, stored as an integer. Any other
+    default counts every row as changed."""
+    name, default = identifier(column[1]), column[4]
+    if default is None:
+        return '(' + name + ' IS NULL)'
+    if isinstance(default, str) and re.fullmatch('-?[0-9]{1,18}', default):
+        return "(typeof(" + name + ")='integer' AND " + name + '=' + str(int(default)) + ')'
+    return '(0)'
 
 
 def capture_connection(db, widen_from=None, *, visit=None, prefixes=None, keep=None):
