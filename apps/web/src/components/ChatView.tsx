@@ -10695,6 +10695,7 @@ export default function ChatView(props: ChatViewProps) {
             : "provider",
           autoContinuing: accountChangeAutoContinues({
             driver: accountChangedProvider?.driver,
+            autoApprove: limitRule.autoApproveSubscriptionChange !== false,
             runId: activeThreadShell.latestRun.runId,
             limitRecovery: activeThreadShell.limitRecovery,
             settledOverride: activeThreadShell.settledOverride,

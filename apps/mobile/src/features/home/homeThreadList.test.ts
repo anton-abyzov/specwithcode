@@ -2,10 +2,20 @@ import type {
   EnvironmentProject,
   EnvironmentThreadShell,
 } from "@specweave-studio/client-runtime/state/shell";
-import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@specweave-studio/contracts";
+import {
+  DEFAULT_PROJECT_WORKSPACE_SETTINGS,
+  EnvironmentId,
+  ProjectId,
+  ProviderInstanceId,
+  ThreadId,
+} from "@specweave-studio/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
-import { buildHomeProjectScopes, sortHomeProjectScopes } from "./homeThreadList";
+import {
+  buildHomeProjectScopes,
+  homeProjectPickerScopes,
+  sortHomeProjectScopes,
+} from "./homeThreadList";
 import { makeThreadShellFixture } from "../../test-fixtures";
 
 function makeProject(
@@ -281,5 +291,54 @@ describe("home project scopes", () => {
         projectGroupingMode: "repository",
       }),
     ).toHaveLength(2);
+  });
+});
+
+describe("mobile home and sidebar project dropdowns", () => {
+  it("offers active scopes, preserves selected excluded context, and leaves the history unchanged", () => {
+    const environmentId = EnvironmentId.make("machine");
+    const projects = [
+      makeProject({ environmentId, id: ProjectId.make("active"), title: "Active" }),
+      makeProject({
+        environmentId,
+        id: ProjectId.make("old"),
+        title: "Old",
+        workspaceSettings: { ...DEFAULT_PROJECT_WORKSPACE_SETTINGS, archived: true },
+      }),
+      makeProject({
+        environmentId,
+        id: ProjectId.make("auto"),
+        title: "Auto",
+        workspaceSettings: { ...DEFAULT_PROJECT_WORKSPACE_SETTINGS, origin: "automated" },
+      }),
+      makeProject({
+        environmentId,
+        id: ProjectId.make("scratch"),
+        title: "No project",
+        workspaceRoot: "/scratch",
+      }),
+      makeProject({
+        environmentId,
+        id: ProjectId.make("inferred"),
+        title: "Check",
+        workspaceRoot: "/work/fixtures/demo",
+      }),
+    ];
+    const scopes = buildHomeProjectScopes({
+      projects,
+      environmentId: null,
+      projectGroupingMode: "separate",
+    });
+    expect(homeProjectPickerScopes(scopes, () => "/scratch").map((s) => s.title)).toEqual([
+      "Active",
+    ]);
+    for (const scope of scopes.slice(1)) {
+      const choices = homeProjectPickerScopes(scopes, () => "/scratch", scope.key);
+      expect(choices.map((s) => s.title)).toEqual(["Active", `${scope.title} · Unavailable`]);
+    }
+    expect(
+      homeProjectPickerScopes(scopes, () => "/scratch", "deleted").map((s) => s.title),
+    ).toEqual(["Active"]);
+    expect(scopes).toHaveLength(5);
   });
 });

@@ -3784,6 +3784,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 AND (
                   json_extract(t.payload_json, '$.limitRecovery.autoResume') = 1
                   OR json_extract(t.payload_json, '$.limitRecovery.checkNow') = 1
+                  -- Auto-continue off: still watched for a new subscription
+                  -- (no resume) while the old limit's reset is ahead.
+                  OR julianday(json_extract(t.payload_json, '$.limitRecovery.resetAt')) > julianday(${DateTime.formatIso(options.now)})
                 )
                 AND (
                   json_extract(t.payload_json, '$.snoozedUntil') IS NULL
@@ -6655,7 +6658,10 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
                   return options.autoResume || (options.snooze && resetMs > nowMs);
                 }
                 return (
-                  (thread.limitRecovery.autoResume || thread.limitRecovery.checkNow === true) &&
+                  (thread.limitRecovery.autoResume ||
+                    thread.limitRecovery.checkNow === true ||
+                    // Auto-continue off: watched for a new subscription only.
+                    Date.parse(thread.limitRecovery.resetAt ?? "") > nowMs) &&
                   (thread.snoozedUntil == null ||
                     DateTime.toEpochMillis(thread.snoozedUntil) <= nowMs ||
                     (thread.limitRecovery.snooze === true &&

@@ -1443,6 +1443,7 @@ export const PROJECT_SCOPED_SERVER_SETTING_KEYS = [
   "providerLimitSwitchAtPercent",
   "providerLimitWaitUnderMinutes",
   "providerLimitRedeemResets",
+  "autoApproveSubscriptionChange",
   "providerLimitSpendCredits",
   "providerLimitUseApiCredits",
   "providerLimitMachineTargets",
@@ -1495,6 +1496,7 @@ export const ProjectSettingsOverrides = Schema.Struct({
   providerLimitSwitchAtPercent: Schema.optionalKey(Schema.NullOr(ProviderLimitSwitchAtPercent)),
   providerLimitWaitUnderMinutes: Schema.optionalKey(ProviderLimitWaitUnderMinutes),
   providerLimitRedeemResets: Schema.optionalKey(Schema.Boolean),
+  autoApproveSubscriptionChange: Schema.optionalKey(Schema.Boolean),
   providerLimitSpendCredits: Schema.optionalKey(Schema.Boolean),
   providerLimitUseApiCredits: Schema.optionalKey(Schema.Boolean),
   providerLimitMachineTargets: Schema.optionalKey(ProviderLimitMachineTargets),
@@ -1724,6 +1726,14 @@ export const ServerSettings = Schema.Struct({
    * and Codex both grant them) and continue on the same provider.
    */
   providerLimitRedeemResets: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(false))),
+  /**
+   * When the CLI a limit-held thread runs on is signed in to another
+   * subscription with room, continue the thread there without asking. Off
+   * asks first. It never adds an API key or changes provider or model.
+   */
+  autoApproveSubscriptionChange: Schema.Boolean.pipe(
+    Schema.withDecodingDefault(Effect.succeed(true)),
+  ),
   /**
    * Before falling back, continue a limited Codex turn on the account's paid
    * credits. Spending consent, so it is off until a person turns it on.
@@ -2190,6 +2200,7 @@ export const ServerSettingsPatch = Schema.Struct({
   providerLimitSwitchAtPercent: Schema.optionalKey(Schema.NullOr(ProviderLimitSwitchAtPercent)),
   providerLimitWaitUnderMinutes: Schema.optionalKey(ProviderLimitWaitUnderMinutes),
   providerLimitRedeemResets: Schema.optionalKey(Schema.Boolean),
+  autoApproveSubscriptionChange: Schema.optionalKey(Schema.Boolean),
   providerLimitSpendCredits: Schema.optionalKey(Schema.Boolean),
   providerLimitUseApiCredits: Schema.optionalKey(Schema.Boolean),
   providerLimitMachineTargets: Schema.optionalKey(ProviderLimitMachineTargets),

@@ -563,6 +563,14 @@ export interface ProviderAdapterV2SessionRuntime {
    */
   readonly restartRequired?: Effect.Effect<string | null>;
   /**
+   * Why this native process should be replaced before its next turn although
+   * it can still serve turns (for example Codex after the CLI was signed in to
+   * another subscription outside it), or null. The session manager replaces it
+   * on the next open once no turn or background work runs on it, and keeps it
+   * serving while something does.
+   */
+  readonly replaceWhenIdle?: Effect.Effect<string | null>;
+  /**
    * Per-provider-thread pending work for root-run ingestion stop gates. When
    * present, RunExecutionService uses only this probe (never the session-wide
    * hasPendingBackgroundWork) so sibling native threads cannot pin an

@@ -27,13 +27,23 @@ import * as ProjectionStore from "./ProjectionStore.ts";
 const modelSelection = { instanceId: ProviderInstanceId.make("codex"), model: "gpt-5.4" };
 const driver = ProviderDriverKind.make("codex");
 
-type Pending = "message-question" | "approval" | "approval-on-no-run";
+type Pending = "message-question" | "approval" | "approval-on-no-run" | "none";
 
-const limitedThread = (pending: Pending) =>
+const limitedThread = (
+  pending: Pending,
+  options: {
+    /** A recovery armed for this stop with auto-continue set as given. */
+    readonly recovery?: { readonly autoResume: boolean };
+    /** When the candidates are read, in hours after the stop. */
+    readonly readAfterHours?: number;
+    readonly name?: string;
+  } = {},
+) =>
   Effect.gen(function* () {
     const store = yield* ProjectionStore.ProjectionStoreV2;
     const now = yield* DateTime.now;
-    const threadId = ThreadId.make(`limit-candidate:${pending}`);
+    const resetAt = DateTime.formatIso(DateTime.add(now, { hours: 1 }));
+    const threadId = ThreadId.make(`limit-candidate:${options.name ?? pending}`);
     const runId = RunId.make(`limit-candidate:${pending}:run`);
     const rootNodeId = NodeId.make(`limit-candidate:${pending}:root`);
     const event = (key: string) => EventId.make(`limit-candidate:${pending}:${key}`);
@@ -81,6 +91,9 @@ const limitedThread = (pending: Pending) =>
         settledAt: null,
         lastVisitedAt: null,
         deletedAt: null,
+        ...(options.recovery
+          ? { limitRecovery: { runId, resetAt, autoResume: options.recovery.autoResume } }
+          : {}),
       },
     });
     yield* store.apply({
@@ -123,27 +136,28 @@ const limitedThread = (pending: Pending) =>
           completedAt: null,
         },
       });
-    yield* store.apply({
-      id: event("request"),
-      type: "runtime-request.updated",
-      threadId,
-      nodeId: requestNodeId,
-      occurredAt: now,
-      payload: {
-        id: RuntimeRequestId.make(`limit-candidate:${pending}:request`),
+    if (pending !== "none")
+      yield* store.apply({
+        id: event("request"),
+        type: "runtime-request.updated",
+        threadId,
         nodeId: requestNodeId,
-        providerTurnId: null,
-        nativeRequestRef: null,
-        kind: pending === "message-question" ? "user_input" : "command",
-        status: "pending",
-        responseCapability:
-          pending === "message-question"
-            ? { type: "message" }
-            : { type: "live", providerSessionId: ProviderSessionId.make("session:limit") },
-        createdAt: now,
-        resolvedAt: null,
-      },
-    });
+        occurredAt: now,
+        payload: {
+          id: RuntimeRequestId.make(`limit-candidate:${pending}:request`),
+          nodeId: requestNodeId,
+          providerTurnId: null,
+          nativeRequestRef: null,
+          kind: pending === "message-question" ? "user_input" : "command",
+          status: "pending",
+          responseCapability:
+            pending === "message-question"
+              ? { type: "message" }
+              : { type: "live", providerSessionId: ProviderSessionId.make("session:limit") },
+          createdAt: now,
+          resolvedAt: null,
+        },
+      });
     yield* store.apply({
       id: event("failed"),
       type: "run.updated",
@@ -183,12 +197,12 @@ const limitedThread = (pending: Pending) =>
           message: "Plan limit reached.",
           code: "usageLimitExceeded",
           retryable: null,
-          resetAt: DateTime.formatIso(DateTime.add(now, { hours: 1 })),
+          resetAt,
         },
       },
     });
     const candidates = yield* store.getLimitRecoveryCandidates({
-      now,
+      now: DateTime.add(now, { hours: options.readAfterHours ?? 0 }),
       autoResume: true,
       snooze: false,
     });
@@ -221,4 +235,23 @@ it.effect.each([
   Effect.gen(function* () {
     assert.isUndefined((yield* limitedThread(pending)).candidate);
   }).pipe(Effect.provide(layers[name])),
+);
+
+it.effect.each(["memory", "SQL"] as const)(
+  "%s: a stop armed with auto-continue off is watched only until its reset",
+  (name) =>
+    Effect.gen(function* () {
+      const off = { recovery: { autoResume: false } };
+      assert.isDefined((yield* limitedThread("none", { ...off, name: "off-before" })).candidate);
+      assert.isUndefined(
+        (yield* limitedThread("none", { ...off, name: "off-after", readAfterHours: 2 })).candidate,
+      );
+      assert.isDefined(
+        (yield* limitedThread("none", {
+          recovery: { autoResume: true },
+          name: "on-after",
+          readAfterHours: 2,
+        })).candidate,
+      );
+    }).pipe(Effect.provide(layers[name])),
 );

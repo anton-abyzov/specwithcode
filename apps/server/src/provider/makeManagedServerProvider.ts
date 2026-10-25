@@ -19,16 +19,23 @@ import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { applyUsageLimitsUpdate, resolveUsageLimitsAfterProbe } from "./providerUsageLimits.ts";
 import type { ServerProviderShape } from "./ServerProvider.ts";
+import {
+  identitiesDiffer,
+  nextIdentity,
+  signedInIdentity,
+  type SubscriptionIdentity,
+  type SubscriptionMemory,
+} from "./subscriptionIdentity.ts";
 
 interface ProviderSnapshotState {
   readonly snapshot: ServerProvider;
   readonly enrichmentGeneration: number;
-  /** The account the last signed-in probe reported. */
-  readonly accountEmail?: string | undefined;
+  /** The subscription the last signed-in probe reported (see `subscriptionIdentity.ts`). */
+  readonly accountIdentity?: SubscriptionIdentity | undefined;
   /**
-   * When that account replaced a different one. Kept here, not only on the
-   * published usage, so a sign-out (whose read carries no mark) followed by
-   * signing in to the same account still publishes it.
+   * When that subscription replaced a different one. Kept here, not only on
+   * the published usage, so a sign-out (whose read carries no mark) followed
+   * by signing in to the same subscription still publishes it.
    */
   readonly accountChangedAt?: string | undefined;
 }
@@ -44,20 +51,15 @@ function withUsageLimits(
   return usageLimits ? { ...rest, usageLimits } : rest;
 }
 
-function loginEmail(snapshot: ServerProvider): string | undefined {
-  return snapshot.auth.email?.trim().toLowerCase() || undefined;
-}
-
 /**
- * True when the probe is signed in as someone other than the account the
- * published usage belongs to. Usage, denials and credits describe one login,
- * so none of it carries over to the next.
+ * True when the probe is signed in to another subscription than the one the
+ * published usage belongs to. Usage, denials and credits describe one
+ * subscription, so none of it carries over to the next.
  */
 function loginChanged(published: ServerProvider, probed: ServerProvider): boolean {
-  const before = loginEmail(published);
-  return (
-    before !== undefined && probed.auth.status === "authenticated" && loginEmail(probed) !== before
-  );
+  const before = signedInIdentity(published);
+  const after = signedInIdentity(probed);
+  return before !== undefined && after !== undefined && identitiesDiffer(before, after);
 }
 
 /**
@@ -92,6 +94,8 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
   readonly refreshInterval?: Duration.Input;
   readonly refreshOnInterval?: boolean;
   readonly checkProviderOnSettingsChange?: (previous: Settings, next: Settings) => boolean;
+  /** Keeps the signed-in subscription across restarts, so a change during one is noticed. */
+  readonly subscriptionMemory?: SubscriptionMemory;
 }): Effect.fn.Return<
   ServerProviderShape,
   ServerSettingsError,
@@ -106,11 +110,12 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
   );
   const initialSettings = yield* input.getSettings;
   const initialSnapshot = yield* input.initialSnapshot(initialSettings);
+  const remembered = input.subscriptionMemory ? yield* input.subscriptionMemory.load : undefined;
   const snapshotStateRef = yield* Ref.make<ProviderSnapshotState>({
     snapshot: initialSnapshot,
     enrichmentGeneration: 0,
-    accountEmail:
-      initialSnapshot.auth.status === "authenticated" ? loginEmail(initialSnapshot) : undefined,
+    accountIdentity: remembered?.identity ?? signedInIdentity(initialSnapshot),
+    accountChangedAt: remembered?.changedAt,
   });
   const settingsRef = yield* Ref.make(initialSettings);
   const enrichmentFiberRef = yield* Ref.make<Fiber.Fiber<void, unknown> | null>(null);
@@ -191,51 +196,63 @@ export const makeManagedServerProvider = Effect.fn("makeManagedServerProvider")(
     }
 
     const probedSnapshot = yield* input.checkProvider;
-    const { snapshot: nextSnapshot, generation: nextGeneration } = yield* Ref.modify(
-      snapshotStateRef,
-      (state) => {
-        const generation = input.enrichSnapshot
-          ? state.enrichmentGeneration + 1
-          : state.enrichmentGeneration;
-        // The last account seen signed in, so a sign-out between two accounts
-        // still counts as a switch.
-        const probedEmail =
-          probedSnapshot.auth.status === "authenticated" ? loginEmail(probedSnapshot) : undefined;
-        const switched =
-          probedEmail !== undefined &&
-          state.accountEmail !== undefined &&
-          probedEmail !== state.accountEmail;
-        // A different signed-in account stamps this probe's read; the same
-        // account keeps the earlier stamp, also after a sign-out in between.
-        const accountChangedAt = switched
-          ? (probedSnapshot.usageLimits?.checkedAt ?? probedSnapshot.checkedAt)
-          : state.accountChangedAt;
-        const snapshot = withUsageLimits(
-          probedSnapshot,
-          withAccountChange(
-            switched || loginChanged(state.snapshot, probedSnapshot)
-              ? probedSnapshot.usageLimits
-              : resolveUsageLimitsAfterProbe({
-                  driver: probedSnapshot.driver,
-                  published: state.snapshot.usageLimits,
-                  probed: probedSnapshot.usageLimits,
-                }),
-            switched || (probedEmail !== undefined && probedEmail === state.accountEmail)
-              ? accountChangedAt
+    const {
+      snapshot: nextSnapshot,
+      generation: nextGeneration,
+      remember,
+    } = yield* Ref.modify(snapshotStateRef, (state) => {
+      const generation = input.enrichSnapshot
+        ? state.enrichmentGeneration + 1
+        : state.enrichmentGeneration;
+      // The last subscription seen signed in, so a sign-out or an unreadable
+      // read between two subscriptions still counts as a switch.
+      const probedIdentity = signedInIdentity(probedSnapshot);
+      const switched =
+        probedIdentity !== undefined &&
+        state.accountIdentity !== undefined &&
+        identitiesDiffer(probedIdentity, state.accountIdentity);
+      const sameAccount =
+        probedIdentity !== undefined && state.accountIdentity !== undefined && !switched;
+      // A different signed-in subscription stamps this probe's read; the
+      // same one keeps the earlier stamp, also after a sign-out in between.
+      const accountChangedAt = switched
+        ? (probedSnapshot.usageLimits?.checkedAt ?? probedSnapshot.checkedAt)
+        : state.accountChangedAt;
+      const snapshot = withUsageLimits(
+        probedSnapshot,
+        withAccountChange(
+          switched || loginChanged(state.snapshot, probedSnapshot)
+            ? probedSnapshot.usageLimits
+            : resolveUsageLimitsAfterProbe({
+                driver: probedSnapshot.driver,
+                published: state.snapshot.usageLimits,
+                probed: probedSnapshot.usageLimits,
+              }),
+          switched || sameAccount ? accountChangedAt : undefined,
+        ),
+      );
+      const accountIdentity = nextIdentity(state.accountIdentity, probedIdentity);
+      const changed =
+        accountChangedAt !== state.accountChangedAt ||
+        JSON.stringify(accountIdentity) !== JSON.stringify(state.accountIdentity);
+      return [
+        {
+          snapshot,
+          generation,
+          remember:
+            changed && accountIdentity !== undefined
+              ? { identity: accountIdentity, changedAt: accountChangedAt }
               : undefined,
-          ),
-        );
-        return [
-          { snapshot, generation },
-          {
-            snapshot,
-            enrichmentGeneration: generation,
-            accountEmail: probedEmail ?? state.accountEmail,
-            accountChangedAt,
-          },
-        ] as const;
-      },
-    );
+        },
+        {
+          snapshot,
+          enrichmentGeneration: generation,
+          accountIdentity,
+          accountChangedAt,
+        },
+      ] as const;
+    });
+    if (remember && input.subscriptionMemory) yield* input.subscriptionMemory.save(remember);
     yield* Ref.set(settingsRef, nextSettings);
     yield* PubSub.publish(changesPubSub, nextSnapshot);
     yield* restartSnapshotEnrichment(nextSettings, nextSnapshot, nextGeneration);

@@ -175,7 +175,7 @@ it("keeps an archived current project in the heading without offering it as a de
   ).toHaveLength(1);
 });
 
-it("offers no automated project and keeps No project as its own item", async () => {
+it("offers only active project rows and keeps No project outside the dropdown", async () => {
   const check = project(m1, "check", "Acceptance check");
   runtime.projects.push(
     { ...check, workspaceSettings: { archived: false, origin: "automated" } },
@@ -184,7 +184,7 @@ it("offers no automated project and keeps No project as its own item", async () 
   );
   await render();
   const rows = [...container.querySelectorAll("button")].map((node) => node.textContent);
-  expect(rows).toContain("No project");
+  expect(rows).not.toContain("No project");
   expect(rows).toContain("App");
   expect(document.body.textContent).not.toContain("Acceptance check");
   expect(document.body.textContent).not.toContain("Scratch");

@@ -1,3 +1,4 @@
+import { projectPickerMembers } from "@specweave-studio/client-runtime/state/project-picker";
 import { useNavigation } from "@react-navigation/native";
 import type { EnvironmentThreadSearchMatch } from "@specweave-studio/client-runtime/state/thread-search";
 import { THREAD_JUMP_KEYBINDING_COMMANDS } from "@specweave-studio/contracts";
@@ -24,7 +25,12 @@ import { SymbolView, type AppSymbolName } from "../../components/AppSymbol";
 import { cn } from "../../lib/cn";
 import { scopedProjectKey, scopedThreadKey } from "../../lib/scopedEntities";
 import { StudioKeyboardCommands } from "../../native/StudioKeyboardCommands";
-import { useProjects, useThreadShell, useThreadShells } from "../../state/entities";
+import {
+  useProjects,
+  useServerConfigs,
+  useThreadShell,
+  useThreadShells,
+} from "../../state/entities";
 import { useThreadSearch } from "../../state/queries";
 import { useWorkspaceEnvironments } from "../../state/workspace";
 import { useSavedRemoteConnections } from "../../state/use-remote-environment-registry";
@@ -141,7 +147,16 @@ export function CommandPalette(props: {
   const { themeVariables } = useAppearancePreferences();
   const { selectThread } = useAdaptiveWorkspaceLayout();
   const runCommand = props.onCommand;
-  const projects = useProjects();
+  const allProjects = useProjects();
+  const serverConfigs = useServerConfigs();
+  const projects = useMemo(
+    () =>
+      projectPickerMembers(
+        allProjects,
+        (environmentId) => serverConfigs.get(environmentId)?.scratchWorkspaceRoot,
+      ),
+    [allProjects, serverConfigs],
+  );
   const threads = useThreadShells();
   const activeThreadRef = useMemo(() => parseActiveThreadPath(props.pathname), [props.pathname]);
   const activeThread = useThreadShell(activeThreadRef);

@@ -211,6 +211,12 @@ export interface ProviderSessionManagerV2Shape {
    * provider failure; the caller settles it (a service update marks it stopped
    * for the update, which continues it after the restart).
    */
+  /**
+   * Whether a live runtime of this instance waits to be replaced
+   * (`replaceWhenIdle`) but cannot be yet, because a turn or background work
+   * still runs on it. A new turn opened now would still run on it.
+   */
+  readonly replacementPending?: (instanceId: ProviderInstanceId) => Effect.Effect<boolean>;
   readonly releaseIdle: (input: {
     readonly detail: string;
     readonly includeBusy?: boolean;
@@ -2074,9 +2080,24 @@ export const layerWithOptions = (
           return exits.filter(Exit.isSuccess).length;
         });
 
+      const entryBusy = (entry: LiveSessionEntry) =>
+        entry.busyTurns.size > 0
+          ? Effect.succeed(true)
+          : (entry.runtime.hasPendingBackgroundWork ?? Effect.succeed(false));
+      const replacementPending = (instanceId: ProviderInstanceId) =>
+        Effect.gen(function* () {
+          for (const entry of (yield* Ref.get(sessions)).values()) {
+            if (entry.runtime.instanceId !== instanceId || !entry.runtime.replaceWhenIdle) continue;
+            if ((yield* entry.runtime.replaceWhenIdle) !== null && (yield* entryBusy(entry)))
+              return true;
+          }
+          return false;
+        });
+
       return ProviderSessionManagerV2.of({
         shutdown,
         releaseIdle,
+        replacementPending,
         open: (input) =>
           sessionOpen.withLock(
             input.providerSessionId,
@@ -2123,6 +2144,22 @@ export const layerWithOptions = (
                     providerSessionId: input.providerSessionId,
                     cause: `${restartReason} SpecWithCode restarts it when the turns and background work still running on it finish. Send this message again then.`,
                   });
+              }
+              // A process still serving the previous subscription is replaced
+              // when nothing runs on it; while something does, it keeps serving.
+              const replaceReason =
+                existing?.runtime.replaceWhenIdle === undefined
+                  ? null
+                  : yield* existing.runtime.replaceWhenIdle;
+              if (existing && replaceReason !== null && !(yield* entryBusy(existing))) {
+                yield* releaseEntry({
+                  providerSessionId: input.providerSessionId,
+                  reason: "manual_shutdown",
+                  detail: replaceReason,
+                  onlyIfIdleGeneration: existing.idleGeneration,
+                  gracefulSubscribers: true,
+                });
+                existing = (yield* Ref.get(sessions)).get(key);
               }
               // A provider that applies the access mode per turn (Codex, OpenCode 2)
               // takes the new mode on its next turn; only one that fixes it for the

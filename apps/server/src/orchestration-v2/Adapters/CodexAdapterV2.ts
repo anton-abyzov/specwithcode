@@ -1151,6 +1151,35 @@ export const CODEX_AUTH_CHANGED_RESTART_REASON =
   "Codex was signed in to another account outside SpecWithCode, and its running process still holds the old sign-in.";
 export const CODEX_AUTH_CHANGED_FAILURE_MESSAGE = `${CODEX_AUTH_CHANGED_RESTART_REASON} SpecWithCode restarts Codex for the next message, so send this one again. If it fails again, sign in to Codex again.`;
 
+export interface CodexSubscriptionRead {
+  readonly key?: string | undefined;
+  readonly changedAt?: string | undefined;
+}
+
+/**
+ * Why an idle Codex process must be replaced before its next turn, or null.
+ * One opened on a known subscription is replaced when another is read. One
+ * opened before any read named it is replaced when a sign-in change is seen
+ * after it started, since nothing says which subscription it holds.
+ */
+export function codexSubscriptionReplacement(
+  opened: CodexSubscriptionRead,
+  openedAtMs: number,
+  current: CodexSubscriptionRead,
+): string | null {
+  if (opened.key !== undefined)
+    return current.key !== undefined && current.key !== opened.key
+      ? CODEX_SUBSCRIPTION_CHANGED_REASON
+      : null;
+  const changedMs = Date.parse(current.changedAt ?? "");
+  return Number.isFinite(changedMs) && changedMs > openedAtMs
+    ? CODEX_SUBSCRIPTION_CHANGED_REASON
+    : null;
+}
+
+export const CODEX_SUBSCRIPTION_CHANGED_REASON =
+  "Codex was signed in to another subscription outside SpecWithCode; its process is replaced before the next turn.";
+
 export function isCodexAuthChangedMessage(message: string | null | undefined): boolean {
   return message != null && CODEX_AUTH_CHANGED_PATTERN.test(message);
 }
@@ -1647,7 +1676,7 @@ export type CodexAdapterV2DriverEnv =
 
 export const createCodexAdapterV2 = (
   { instanceId, environment, enabled, config }: ProviderAdapterDriverCreateInput<CodexSettings>,
-  hooks: Pick<CodexAdapterV2Options, "onUsageLimits" | "resolveRuntime"> = {},
+  hooks: Pick<CodexAdapterV2Options, "onUsageLimits" | "resolveRuntime" | "subscriptionKey"> = {},
 ) =>
   Effect.gen(function* () {
     const clientFactory = yield* CodexAppServerClientFactory;
@@ -1738,6 +1767,12 @@ export interface CodexAdapterV2Options {
   readonly clientFactory: CodexAppServerClientFactoryShape;
   readonly onUsageLimits?: ServerProviderShape["applyUsageLimits"];
   /**
+   * The subscription the instance's latest usage read names, and when the
+   * server last saw its sign-in change. A process opened on one subscription
+   * is replaced, once idle, after the CLI is signed in to another outside it.
+   */
+  readonly subscriptionKey?: Effect.Effect<CodexSubscriptionRead>;
+  /**
    * Resolves launch settings when each session opens, replacing `settings` and
    * `environment`. Managed ChatGPT sign-in uses it to launch the Studio-installed
    * Codex with a current access token.
@@ -1769,6 +1804,12 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
     openSession: (input) =>
       Effect.gen(function* () {
         const scope = yield* Scope.Scope;
+        // The subscription this process starts on, as the last usage read named it.
+        const openedSubscription =
+          adapterOptions.subscriptionKey === undefined
+            ? undefined
+            : yield* adapterOptions.subscriptionKey;
+        const openedAtMs = yield* Clock.currentTimeMillis;
         const resolvedRuntime =
           adapterOptions.resolveRuntime === undefined
             ? undefined
@@ -6410,6 +6451,15 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
           restartRequired: Effect.sync(() =>
             authChanged ? CODEX_AUTH_CHANGED_RESTART_REASON : null,
           ),
+          ...(adapterOptions.subscriptionKey === undefined || openedSubscription === undefined
+            ? {}
+            : {
+                replaceWhenIdle: adapterOptions.subscriptionKey.pipe(
+                  Effect.map((current) =>
+                    codexSubscriptionReplacement(openedSubscription, openedAtMs, current),
+                  ),
+                ),
+              }),
           // Known gap: a subagent that Codex resumes later reads as completed
           // (not pending) between turns, so idle release can win the race
           // against a long-delayed resume. Codex emits no resume-expected

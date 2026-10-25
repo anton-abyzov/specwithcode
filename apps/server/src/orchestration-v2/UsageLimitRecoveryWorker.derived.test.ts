@@ -76,15 +76,17 @@ it.effect("continues a stop without a reset time once a read after it shows room
     assert.equal(state.commands[0]?.type, "thread.metadata.update");
     assert.isTrue(state.current.limitRecovery?.autoResume);
     yield* sweep;
-    assert.equal(state.refreshes, 0, "nothing is read before the first wait is over");
+    // The subscription watch's fresh reads are its own; these count the derived wait's.
+    const derivedReads = () => state.refreshes - state.freshRefreshes;
+    assert.equal(derivedReads(), 0, "nothing is read before the first wait is over");
     yield* TestClock.adjust("5 minutes");
     yield* sweep;
     yield* sweep;
-    assert.equal(state.refreshes, 1, "one read per check interval");
+    assert.equal(derivedReads(), 1, "one read per check interval");
     assert.deepEqual(resumes(state.commands), []);
     yield* TestClock.adjust("5 minutes");
     yield* sweep;
-    assert.equal(state.refreshes, 2);
+    assert.equal(derivedReads(), 2);
     assert.deepEqual(resumes(state.commands), []);
     yield* TestClock.adjust("20 minutes");
     yield* sweep;
@@ -117,11 +119,14 @@ it.effect("waits for a reset the provider still reports before reading it again"
     yield* sweep;
     yield* TestClock.adjust("119 minutes");
     yield* sweep;
-    assert.equal(state.refreshes, 0);
+    // The subscription watch reads the instance (once per 2 minutes), but
+    // the same account's reset still decides: nothing resumes before it.
+    assert.equal(state.refreshes - state.freshRefreshes, 0);
+    assert.isAtMost(state.freshRefreshes, 2);
     assert.deepEqual(resumes(state.commands), []);
     yield* TestClock.adjust("2 minutes");
     yield* sweep;
-    assert.equal(state.refreshes, 1);
+    assert.isAtMost(state.refreshes - state.freshRefreshes, 1);
     assert.lengthOf(resumes(state.commands), 1);
   }),
 );

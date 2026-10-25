@@ -14,6 +14,7 @@ import { useProjects, useServerConfigs } from "../../state/entities";
 import {
   createDraft,
   scheduledTaskDefaultModel,
+  scheduledTaskProjectForScope,
   hasScheduledTaskDraftChanges,
   type ScheduledTaskDraft,
 } from "./scheduledTaskDraft";
@@ -51,22 +52,18 @@ export function ScheduledTaskEditorProvider({ children }: { readonly children: R
   )[0];
   const draftForEnvironment = useCallback(
     (environmentId: EnvironmentId) => {
-      const environmentProjects = projects.filter(
-        (project) => project.environmentId === environmentId,
+      const project = scheduledTaskProjectForScope(
+        projects,
+        environmentId,
+        selectedProjectKey === null ? null : selectedGroup,
+        (id) => configs.get(id)?.scratchWorkspaceRoot,
       );
-      const project =
-        environmentProjects.find((project) =>
-          selectedGroup?.members.some(
-            (member) =>
-              member.project.environmentId === environmentId && member.project.id === project.id,
-          ),
-        ) ?? environmentProjects[0];
       return createDraft(
         project?.id ?? null,
         scheduledTaskDefaultModel(configs.get(environmentId) ?? null, project ?? null),
       );
     },
-    [configs, projects, selectedGroup],
+    [configs, projects, selectedGroup, selectedProjectKey],
   );
   // Direct links can open the new-task form before environments have connected.
   const defaultEditor = useMemo(

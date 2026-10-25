@@ -1,4 +1,8 @@
-import { EnvironmentId, ProjectId } from "@specweave-studio/contracts";
+import {
+  DEFAULT_PROJECT_WORKSPACE_SETTINGS,
+  EnvironmentId,
+  ProjectId,
+} from "@specweave-studio/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import type { EnvironmentProject } from "@specweave-studio/client-runtime/state/shell";
@@ -8,6 +12,10 @@ import {
   getProjectScopeSelectionTarget,
   resolveDraftProjectSelection,
   resolveEnvironmentProjectMatch,
+  newTaskDestinationProjects,
+  newTaskProjectUnavailableReason,
+  resolveNewTaskEnvironment,
+  retainNewTaskProjectContext,
 } from "./new-task-project-selection";
 
 function makeProject(
@@ -110,15 +118,16 @@ describe("resolveEnvironmentProjectMatch", () => {
     const unindexed = makeProject("unindexed", "server", { workspaceRoot: "/srv/studio" });
     expect(resolveEnvironmentProjectMatch([fork, unindexed], selected)).toBe(unindexed);
     // Without any weaker match the fork is still the first-project fallback.
-    expect(resolveEnvironmentProjectMatch([fork], selected)).toBe(fork);
+    expect(resolveEnvironmentProjectMatch([fork], selected)).toBeNull();
   });
 
-  it("falls back to the first project on the target so the draft has a key to carry over to", () => {
+  it("refuses unrelated targets while a project is selected", () => {
     const selected = makeProject("studio", "mac", {
       repositoryKey: "github.com/studiotools/studio",
     });
     const target = [makeProject("unrelated", "server"), makeProject("also-unrelated", "server")];
-    expect(resolveEnvironmentProjectMatch(target, selected)).toBe(target[0]);
+    expect(resolveEnvironmentProjectMatch(target, selected)).toBeNull();
+    expect(resolveEnvironmentProjectMatch(target, null)).toBe(target[0]);
     expect(resolveEnvironmentProjectMatch([], selected)).toBeNull();
   });
 });
@@ -147,13 +156,14 @@ describe("resolveDraftProjectSelection", () => {
     });
   });
 
-  it("does not preserve a project key that is missing from the catalog", () => {
-    const project = makeProject("studio");
+  it("keeps a missing explicit project unavailable instead of adopting the sole active scope", () => {
+    const billing = makeProject("billing");
     expect(
-      resolveDraftProjectSelection("environment:removed", [project], [makeScope([project])]),
-    ).toEqual({
+      resolveDraftProjectSelection("environment:removed", [billing], [makeScope([billing])]),
+    ).toEqual({ kind: "unavailable" });
+    expect(resolveDraftProjectSelection(null, [billing], [makeScope([billing])])).toEqual({
       kind: "select",
-      project,
+      project: billing,
     });
   });
 });
@@ -183,5 +193,131 @@ describe("filterProjectScopes", () => {
     expect(matches[0]).toBe(code);
     expect(getProjectScopeSelectionTarget(matches[0]!, EnvironmentId.make("mac"))).toBe(mac);
     expect(code.projects).toEqual([mac, server]);
+  });
+});
+
+describe("new task destination eligibility", () => {
+  it.each([{ archived: true }, { origin: "automated" as const }, { temporarySessionId: "check" }])(
+    "does not retarget a draft to Billing when its matching App is excluded: %o",
+    (settings) => {
+      const current = makeProject("app-a", "a", { repositoryKey: "github.com/example/app" });
+      const archivedApp = {
+        ...makeProject("app-b", "b", { repositoryKey: "github.com/example/app" }),
+        workspaceSettings: { ...DEFAULT_PROJECT_WORKSPACE_SETTINGS, ...settings },
+      };
+      const billing = makeProject("billing-b", "b", {
+        repositoryKey: "github.com/example/billing",
+      });
+      const choices = newTaskDestinationProjects(
+        [current, archivedApp, billing],
+        current,
+        () => null,
+      );
+      expect(choices).toEqual([current]);
+      expect(
+        resolveEnvironmentProjectMatch(
+          choices.filter((p) => p.environmentId === billing.environmentId),
+          current,
+        ),
+      ).toBeNull();
+      expect(newTaskProjectUnavailableReason(archivedApp, () => null)).toMatch(
+        /Choose an active project/,
+      );
+      expect(archivedApp.title).toBe("app-b");
+    },
+  );
+  it("ranks a known repository above an earlier eligible weak basename match", () => {
+    const selected = makeProject("app-a", "a", {
+      workspaceRoot: "/work/app",
+      repositoryKey: "github.com/example/app",
+    });
+    const unindexed = makeProject("unindexed-b", "b", { workspaceRoot: "/other/app" });
+    const exact = makeProject("app-b", "b", {
+      workspaceRoot: "/srv/app",
+      repositoryKey: "github.com/example/app",
+    });
+    const eligible = newTaskDestinationProjects([unindexed, exact], selected, () => null);
+    expect(eligible).toEqual([unindexed, exact]);
+    expect(resolveEnvironmentProjectMatch(eligible, selected)).toBe(exact);
+  });
+  it("keeps the draft on its selected project after classification changes and exposes why Start is disabled", () => {
+    const selected = makeProject("app", "a");
+    expect(newTaskProjectUnavailableReason(selected, () => null)).toBeNull();
+    const excluded = {
+      ...selected,
+      workspaceSettings: { ...DEFAULT_PROJECT_WORKSPACE_SETTINGS, archived: true },
+    };
+    expect(newTaskProjectUnavailableReason(excluded, () => null)).toBe(
+      "This project is archived. Choose an active project to start this task.",
+    );
+    expect(newTaskProjectUnavailableReason(null, () => null)).toMatch(/Choose an active project/);
+    expect(
+      newTaskProjectUnavailableReason({ ...selected, workspaceRoot: "/scratch" }, () => "/scratch"),
+    ).toBeNull();
+  });
+});
+
+describe("missing native draft project recovery", () => {
+  it("retains a resumed draft's last live context while blocking a new task there", () => {
+    const app = makeProject("app", "a");
+    const key = "a:app";
+    expect(retainNewTaskProjectContext(key, app, null)).toBe(app);
+    const retained = retainNewTaskProjectContext(key, undefined, app);
+    expect(retained).toBe(app);
+    expect(newTaskProjectUnavailableReason(retained, () => null, true)).toBe(
+      "This project is no longer available. Choose an active project to start this task.",
+    );
+    const billing = makeProject("billing", "a");
+    expect(resolveDraftProjectSelection(key, [billing], [makeScope([billing])])).toEqual({
+      kind: "unavailable",
+    });
+    expect(retainNewTaskProjectContext("a:billing", billing, app)).toBe(billing);
+    expect(retainNewTaskProjectContext("a:billing", undefined, app)).toBeNull();
+    expect(retainNewTaskProjectContext(null, undefined, app)).toBeNull();
+  });
+});
+
+describe("missing draft machine context", () => {
+  it("keeps A/App on Desktop A when A loses its final project, with B an explicit replacement", () => {
+    const appA = makeProject("app-a", "a", { repositoryKey: "github.com/example/app" });
+    const appB = makeProject("app-b", "b", { repositoryKey: "github.com/example/app" });
+    const labels: Record<string, string> = { a: "Desktop A", b: "Desktop B" };
+    const before = resolveNewTaskEnvironment([appA, appB], appA.environmentId, (id) => labels[id]);
+    const after = resolveNewTaskEnvironment([appB], appA.environmentId, (id) => labels[id]);
+    expect(after).toEqual(before);
+    expect(after).toEqual({ environmentId: appA.environmentId, environmentLabel: "Desktop A" });
+    const retained = retainNewTaskProjectContext("a:app-a", undefined, appA);
+    expect(retained?.environmentId).toBe(after.environmentId);
+    expect(newTaskProjectUnavailableReason(retained, () => null, true)).toMatch(
+      /no longer available/,
+    );
+    const destinations = newTaskDestinationProjects([appB], retained, () => null);
+    // The sole replacement differs from current context, so opening the machine
+    // picker and switching to B must reach the ranked retarget path.
+    expect(destinations.some((p) => p.environmentId !== after.environmentId)).toBe(true);
+    const replacement = resolveEnvironmentProjectMatch(destinations, retained);
+    expect(replacement).toBe(appB);
+    expect(
+      resolveNewTaskEnvironment([appB], replacement!.environmentId, (id) => labels[id]),
+    ).toEqual({
+      environmentId: appB.environmentId,
+      environmentLabel: "Desktop B",
+    });
+  });
+
+  it("uses machine identity when its connection label is absent and defaults only blank context", () => {
+    const appB = makeProject("app-b", "b");
+    expect(resolveNewTaskEnvironment([appB], EnvironmentId.make("a"), () => undefined)).toEqual({
+      environmentId: "a",
+      environmentLabel: "a",
+    });
+    expect(resolveNewTaskEnvironment([appB], null, () => "Desktop B")).toEqual({
+      environmentId: "b",
+      environmentLabel: "Desktop B",
+    });
+    expect(resolveNewTaskEnvironment([], null, () => undefined)).toEqual({
+      environmentId: null,
+      environmentLabel: "Environment",
+    });
   });
 });

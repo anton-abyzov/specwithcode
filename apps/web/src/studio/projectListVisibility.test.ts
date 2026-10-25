@@ -187,6 +187,23 @@ describe("project pickers", () => {
     ]);
   });
 
+  it("rejects mixed groups when no one checkout satisfies the whole eligibility rule", () => {
+    const mixed = group(
+      "mixed",
+      member("host", "old", "/work/old", { archived: true }),
+      member("remote", "auto", "/work/auto", { origin: "automated" }),
+    );
+    expect(projectPickerGroups([mixed], scratchRootFor)).toEqual([]);
+    expect(ineligibleSelectedGroup([mixed], "mixed", scratchRootFor)?.reason).toBe("archived");
+    const wrongKinds = group(
+      "kinds",
+      member("host", "personal", "/work/a", { kind: "personal" }),
+      member("remote", "old-code", "/work/code", { kind: "code", archived: true }),
+    );
+    expect(projectPickerGroups([wrongKinds], scratchRootFor, { purpose: "code" })).toEqual([]);
+    expect(projectPickerGroups([wrongKinds], scratchRootFor)).toEqual([wrongKinds]);
+  });
+
   it("never offers an archived or automated selection; describes it apart instead", () => {
     const describeGroup = (key: string | null) => {
       const selection = ineligibleSelectedGroup(pickerGroups, key, scratchRootFor);

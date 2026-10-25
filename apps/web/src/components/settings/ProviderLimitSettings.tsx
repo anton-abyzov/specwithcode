@@ -105,6 +105,7 @@ export function ProviderLimitSettings() {
   const mixedSwitchAt = useScopedSettingsMixed(["providerLimitSwitchAtPercent"]);
   const mixedWaitUnder = useScopedSettingsMixed(["providerLimitWaitUnderMinutes"]);
   const mixedRedeem = useScopedSettingsMixed(["providerLimitRedeemResets"]);
+  const mixedSubscriptionChange = useScopedSettingsMixed(["autoApproveSubscriptionChange"]);
   const mixedSpend = useScopedSettingsMixed(["providerLimitSpendCredits"]);
   const mixedApiCredits = useScopedSettingsMixed(["providerLimitUseApiCredits"]);
   // The server takes the first ready one that lists the thread's model.
@@ -301,6 +302,35 @@ export function ProviderLimitSettings() {
               ))}
             </SelectPopup>
           </Select>
+        }
+      />
+      <SettingsRow
+        serverScoped
+        settingKeys={["autoApproveSubscriptionChange"]}
+        mixed={mixedSubscriptionChange}
+        id="provider-limit-auto-approve-subscription-change"
+        title="Continue on a new subscription automatically"
+        description="When a thread with auto-continue on is waiting on a limit and its CLI is signed in to another subscription that has room, continue the thread there without asking. Off, or with auto-continue off: the thread shows the change and waits for you to confirm it. The provider and model stay the same."
+        resetAction={
+          settings.autoApproveSubscriptionChange === false ? (
+            <SettingResetButton
+              label="subscription change approval"
+              tooltip="Continue on a new subscription automatically"
+              onClick={() => updateSettings({ autoApproveSubscriptionChange: true })}
+            />
+          ) : null
+        }
+        control={
+          <Switch
+            aria-label="Continue on a new subscription automatically"
+            mixed={mixedSubscriptionChange}
+            checked={
+              mixedSubscriptionChange ? false : settings.autoApproveSubscriptionChange !== false
+            }
+            onCheckedChange={(enabled) =>
+              updateSettings({ autoApproveSubscriptionChange: Boolean(enabled) })
+            }
+          />
         }
       />
       <SettingsRow

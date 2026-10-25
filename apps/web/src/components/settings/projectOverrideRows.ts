@@ -45,6 +45,7 @@ export const PROJECT_OVERRIDE_LABELS: Readonly<
   providerLimitSwitchAtPercent: { label: "Switch at usage", page: "Providers" },
   providerLimitWaitUnderMinutes: { label: "Wait when reset is under", page: "Providers" },
   providerLimitRedeemResets: { label: "Redeem resets", page: "Providers" },
+  autoApproveSubscriptionChange: { label: "Approve subscription changes", page: "Providers" },
   providerLimitSpendCredits: { label: "Spend credits", page: "Providers" },
   providerLimitUseApiCredits: { label: "Use API credits", page: "Providers" },
   providerLimitMachineTargets: { label: "Other machines", page: "Providers" },

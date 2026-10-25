@@ -21,6 +21,7 @@ import * as Providers from "../provider/ProviderRegistry.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
+import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
 import * as Availability from "./UsageLimitAvailability.ts";
 import { MachineLimitHandoff } from "./MachineLimitHandoff.ts";
@@ -28,6 +29,8 @@ import { isBlockingRuntimeRequest, withPendingRequestDetail } from "./blockingRu
 import {
   LIMIT_CHECK_INTERVAL_MS,
   LIMIT_REARM_MAX,
+  LIMIT_REARM_MAX_DELAY_MS,
+  SUBSCRIPTION_CHECK_INTERVAL_MS,
   accountChangeMark,
   accountChangeShowsRoom,
   derivedLimitResumeAt,
@@ -111,12 +114,20 @@ export function limitRecoveryCommand(
   if (
     !recovery.autoResume ||
     (!early && !waited) ||
-    (recovery.availability !== undefined && !permitted) ||
+    // A Codex availability check binds the old account's pool; another
+    // subscription with room is proof of its own.
+    (recovery.availability !== undefined && !permitted && !accountChanged) ||
     recoverySnoozeBlocks(thread, nowMs, early)
   )
     return null;
   // Its own id, so a refused early resume never blocks the one at the reset.
-  const mark = !permitted && !waited && accountChanged ? accountChangeMark(accountChangedMs) : "";
+  // A Codex stop whose availability check saw the old pool keeps the mark
+  // after the reset too: the change is its only permission, and the
+  // orchestrator refuses a plain id there, spending it for good.
+  const mark =
+    !permitted && accountChanged && (!waited || recovery.availability !== undefined)
+      ? accountChangeMark(accountChangedMs)
+      : "";
   const deliveryIdentity = `${identity}${mark}:${recovery.requestId ?? "legacy"}`;
   const base = {
     type: "message.dispatch",
@@ -193,6 +204,8 @@ export const makeSweep = Effect.gen(function* () {
   const machineHandoff = yield* MachineLimitHandoff;
   // Optional, so a sweep built without the registry keeps to reported resets.
   const registry = yield* Effect.serviceOption(Providers.ProviderRegistry);
+  // Optional too: tells whether a Codex process still holds the old subscription.
+  const sessionManager = yield* Effect.serviceOption(ProviderSessionManagerV2);
   // When a derived resume last refreshed each thread's instance.
   const refreshedAt = yield* Ref.make<ReadonlyMap<ThreadId, number>>(new Map());
   // A summary that hides whether a pending request blocks is filled in from
@@ -290,10 +303,15 @@ export const makeSweep = Effect.gen(function* () {
         limitReadShowsRoom(own(refreshed.value), stopMs, yield* Clock.currentTimeMillis) === "room"
       );
     });
+  // When each instance was last read for a subscription change.
+  const subscriptionCheckedAt = yield* Ref.make<ReadonlyMap<string, number>>(new Map());
   /**
-   * When the stopped thread's instance changed to an account with room, or
-   * null. A read older than LIMIT_CHECK_INTERVAL_MS is refreshed, at most once
-   * per interval per thread, before it can count.
+   * When the stopped thread's instance changed to a subscription with room,
+   * or null. This is the watch Anton asked for: while a thread waits on a
+   * limit, its instance is read at most once per SUBSCRIPTION_CHECK_INTERVAL_MS
+   * (shared by every thread there), so a sign-in to another subscription in
+   * the same CLI is noticed without the old account's reset. The login-file
+   * watcher still re-reads at once when it sees the change.
    */
   const accountChange = (thread: ProjectionStore.ProjectionLimitRecoveryCandidate) =>
     Effect.gen(function* () {
@@ -301,35 +319,40 @@ export const makeSweep = Effect.gen(function* () {
       const stopMs = limitStopMs(thread);
       const own = (providers: ReadonlyArray<ServerProvider>) =>
         providers.find((provider) => provider.instanceId === thread.providerInstanceId);
-      const cached = own(yield* registry.value.getProviders);
-      const changedMs = Date.parse(cached?.usageLimits?.accountChangedAt ?? "");
-      if (!Number.isFinite(changedMs) || changedMs <= stopMs) return null;
+      const withRoom = (provider: ServerProvider | undefined, atMs: number) => {
+        const changedMs = Date.parse(provider?.usageLimits?.accountChangedAt ?? "");
+        return Number.isFinite(changedMs) && accountChangeShowsRoom(provider, stopMs, atMs)
+          ? changedMs
+          : null;
+      };
       const nowMs = yield* Clock.currentTimeMillis;
-      if (accountChangeShowsRoom(cached, stopMs, nowMs)) return changedMs;
-      const readMs = Date.parse(cached?.usageLimits?.checkedAt ?? "");
-      if (Number.isFinite(readMs) && nowMs - readMs <= LIMIT_CHECK_INTERVAL_MS) return null;
-      const last = (yield* Ref.get(refreshedAt)).get(thread.id);
-      if (last !== undefined && nowMs - last >= 0 && nowMs - last < LIMIT_CHECK_INTERVAL_MS)
+      const cached = own(yield* registry.value.getProviders);
+      const known = withRoom(cached, nowMs);
+      if (known !== null) return known;
+      // Paced by this watch's own reads, not the snapshot's `checkedAt`: rate
+      // limit events from turns still running on the instance move that
+      // forward without asking the CLI who is signed in.
+      const instance = String(thread.providerInstanceId);
+      const last = (yield* Ref.get(subscriptionCheckedAt)).get(instance);
+      if (last !== undefined && nowMs - last >= 0 && nowMs - last < SUBSCRIPTION_CHECK_INTERVAL_MS)
         return null;
       yield* Ref.update(
-        refreshedAt,
+        subscriptionCheckedAt,
         (previous) =>
           new Map([
-            ...[...previous].filter(([, at]) => nowMs - at < LIMIT_CHECK_INTERVAL_MS),
-            [thread.id, nowMs],
+            ...[...previous].filter(([, at]) => nowMs - at < SUBSCRIPTION_CHECK_INTERVAL_MS),
+            [instance, nowMs],
           ]),
       );
-      const refreshed = yield* registry.value.refreshInstance(thread.providerInstanceId).pipe(
-        Effect.timeoutOption("20 seconds"),
-        Effect.catchCause(() => Effect.succeed(Option.none<ReadonlyArray<ServerProvider>>())),
-      );
+      // Fresh: a cached probe would report the old sign-in for minutes.
+      const refreshed = yield* registry.value
+        .refreshInstance(thread.providerInstanceId, { fresh: true })
+        .pipe(
+          Effect.timeoutOption("20 seconds"),
+          Effect.catchCause(() => Effect.succeed(Option.none<ReadonlyArray<ServerProvider>>())),
+        );
       if (Option.isNone(refreshed)) return null;
-      const fresh = own(refreshed.value);
-      const freshChangedMs = Date.parse(fresh?.usageLimits?.accountChangedAt ?? "");
-      return Number.isFinite(freshChangedMs) &&
-        accountChangeShowsRoom(fresh, stopMs, yield* Clock.currentTimeMillis)
-        ? freshChangedMs
-        : null;
+      return withRoom(own(refreshed.value), yield* Clock.currentTimeMillis);
     });
   // When each instance last sent a resume for an account change. Paused
   // threads follow one at a time, so a new account that fills up stops the
@@ -449,14 +472,35 @@ export const makeSweep = Effect.gen(function* () {
         }
         if (
           thread.limitRecovery?.runId !== thread.latestRunId ||
-          thread.limitRecovery.resetAt !== (thread.usageLimitResetAt ?? null)
-        )
+          thread.limitRecovery.resetAt !== (thread.usageLimitResetAt ?? null) ||
+          (!thread.limitRecovery.autoResume && !thread.limitRecovery.checkNow)
+        ) {
+          // Nothing resumes by itself, but the read still lets the thread
+          // show the new subscription and ask the person to confirm it, while
+          // the old limit still holds it: before its reset, or for a stop with
+          // no reset, within the longest wait a re-arm would take.
+          const resetMs = Date.parse(thread.usageLimitResetAt ?? "");
+          const limitHolds = Number.isFinite(resetMs)
+            ? resetMs > nowMs
+            : nowMs - limitStopMs(thread) < LIMIT_REARM_MAX_DELAY_MS;
+          if (limitHolds && !recoverySnoozeBlocks(thread, nowMs, true))
+            yield* accountChange(thread);
           return;
-        if (!thread.limitRecovery.autoResume && !thread.limitRecovery.checkNow) return;
+        }
         if (recoverySnoozeBlocks(thread, nowMs, true)) return;
         const checked = yield* availability.check(thread);
         const room = !checked.codex && (yield* derivedRoom(thread));
-        const changedMs = checked.codex ? null : yield* accountChange(thread);
+        // Codex too: a sign-in to another ChatGPT subscription moves its pool.
+        // Watched until the longest re-arm wait past the reset (or the stop,
+        // without one): a Codex stop bound to the old pool can still need
+        // the change after its reset, but a stop nothing resumes is not read
+        // every 2 minutes for days.
+        const watchFromMs = Math.max(
+          limitStopMs(thread),
+          Date.parse(thread.usageLimitResetAt ?? "") || 0,
+        );
+        const changedMs =
+          nowMs - watchFromMs < LIMIT_REARM_MAX_DELAY_MS ? yield* accountChange(thread) : null;
         if (checked.observation) {
           yield* send({
             type: "thread.metadata.update",
@@ -498,15 +542,22 @@ export const makeSweep = Effect.gen(function* () {
                 const current = yield* readShell(thread.id);
                 if (!current || current.projectId !== shell.projectId) return null;
                 const at = DateTime.toEpochMillis(yield* DateTime.now);
-                if (
-                  checked.codex &&
-                  (checked.mayResume !== true || !hasFreshLimitPermission(current, at))
-                )
-                  return null;
                 const currentRule = resolveProjectSettings(
                   currentSettings,
                   shell.projectId,
                 ).settings;
+                // Another subscription is the person's to approve unless the
+                // project approves it by itself (the default).
+                const subscriptionChangeMs =
+                  changedMs !== null && currentRule.autoApproveSubscriptionChange !== false
+                    ? changedMs
+                    : null;
+                if (
+                  checked.codex &&
+                  subscriptionChangeMs === null &&
+                  (checked.mayResume !== true || !hasFreshLimitPermission(current, at))
+                )
+                  return null;
                 const next = limitRecoveryCommand(
                   current,
                   autoResumeByDefault(
@@ -521,7 +572,7 @@ export const makeSweep = Effect.gen(function* () {
                     current.providerInstanceId === thread.providerInstanceId,
                   current.latestRunId === thread.latestRunId &&
                     current.providerInstanceId === thread.providerInstanceId
-                    ? changedMs
+                    ? subscriptionChangeMs
                     : null,
                 );
                 // The observed stop may have changed during the probe. Any new
@@ -562,6 +613,12 @@ export const makeSweep = Effect.gen(function* () {
                 at - lastAt < ACCOUNT_RESUME_SPACING_MS
               )
                 return;
+              // A process still busy on the previous subscription would run the
+              // resume there; wait until it is replaced (see replaceWhenIdle).
+              const pending = Option.isSome(sessionManager)
+                ? sessionManager.value.replacementPending
+                : undefined;
+              if (pending && (yield* pending(thread.providerInstanceId))) return;
             }
             // Persisted recovery remains authoritative; never hold the settings
             // lock across continuation admission or provider work.

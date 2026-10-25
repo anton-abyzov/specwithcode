@@ -29,26 +29,22 @@ function distinguishTitles<Project extends FilterProject>(
   );
 }
 
-/** One choice per repository per server, retaining the selected checkout for saved scopes. */
+/** One choice per environment/project identity, with labels for distinct checkouts. */
 export function pullRequestFilterProjects<Project extends FilterProject>(
   projects: ReadonlyArray<Project>,
   environmentLabels: ReadonlyMap<EnvironmentId, string>,
   selectedProject?: Pick<AssignableProject, "id" | "environmentId">,
 ) {
-  const byRepository = new Map<string, Project>();
+  const byIdentity = new Map<string, Project>();
   for (const project of projects) {
-    const repository = project.repositoryIdentity?.canonicalKey?.toLowerCase();
-    const key = JSON.stringify([
-      project.environmentId,
-      repository ? ["repository", repository] : ["project", project.id],
-    ]);
+    const key = JSON.stringify([project.environmentId, project.id]);
     const selected =
       project.id === selectedProject?.id && project.environmentId === selectedProject.environmentId;
-    if (!byRepository.has(key) || selected) byRepository.set(key, project);
+    if (!byIdentity.has(key) || selected) byIdentity.set(key, project);
   }
 
   const byServer = distinguishTitles(
-    [...byRepository.values()],
+    [...byIdentity.values()],
     (project) => environmentLabels.get(project.environmentId) ?? project.environmentId,
   );
   const byPath = distinguishTitles(byServer, (project) => project.workspaceRoot);
@@ -60,7 +56,7 @@ export function pullRequestFilterProjects<Project extends FilterProject>(
 }
 
 /**
- * The project filter's rows: the person's own projects only, then the scope the list is
+ * The project filter's rows: the person's own code projects only, then the scope the list is
  * narrowed to when that project was since archived or made by a check. The menus show
  * that last row as one that cannot be chosen, with `unavailable.reason` as why.
  */
@@ -73,11 +69,24 @@ export function pullRequestScopeFilterProjects<Project extends FilterProject & P
   readonly projects: Project[];
   readonly unavailable: IneligibleProjectSelection<Project> | null;
 } {
-  const unavailable = ineligibleSelectedMember(projects, scopedProject, scratchRootFor);
-  const own = pullRequestFilterProjects(
-    projectPickerMembers(projects, scratchRootFor),
+  const unavailable = ineligibleSelectedMember(projects, scopedProject, scratchRootFor, "code");
+  const eligible = projectPickerMembers(projects, scratchRootFor, { purpose: "code" });
+  // Decorate the retained context together with the choices, so a same-name
+  // unavailable checkout receives its machine/path label too.
+  const decorated = pullRequestFilterProjects(
+    unavailable ? [...eligible, unavailable.project] : eligible,
     environmentLabels,
     scopedProject,
   );
-  return { projects: unavailable ? [...own, unavailable.project] : own, unavailable };
+  if (!unavailable) return { projects: decorated, unavailable: null };
+  const current =
+    decorated.find(
+      (project) =>
+        project.environmentId === unavailable.project.environmentId &&
+        project.id === unavailable.project.id,
+    ) ?? unavailable.project;
+  return {
+    projects: [...decorated.filter((project) => project !== current), current],
+    unavailable: { project: current, reason: unavailable.reason },
+  };
 }

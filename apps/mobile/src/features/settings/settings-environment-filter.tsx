@@ -5,7 +5,10 @@ import { createContext, useContext, useMemo, useState, type ReactNode } from "re
 import { useEnvironments, type EnvironmentPresentation } from "../../state/environments";
 import { useProjects } from "../../state/entities";
 import { useMobileProjectGroupingSettings } from "../../state/project-grouping";
-import { toggleSettingsEnvironment } from "./settings-environment-filter.logic";
+import {
+  toggleSettingsEnvironment,
+  settingsProjectChoices,
+} from "./settings-environment-filter.logic";
 
 export type SettingsTarget = EnvironmentPresentation & {
   readonly serverConfig: NonNullable<EnvironmentPresentation["serverConfig"]>;
@@ -25,6 +28,7 @@ const SettingsEnvironmentFilterContext = createContext<{
   readonly projectGroups: ReturnType<typeof buildProjectGroups>;
   readonly selectableProjectGroups: ReturnType<typeof buildProjectGroups>;
   readonly selectedProjectKey: string | null;
+  readonly unavailableProjectKeys: ReadonlySet<string>;
   readonly selectProject: (projectKey: string | null) => void;
   readonly selectAll: () => void;
   readonly toggleEnvironment: (environmentId: EnvironmentId) => void;
@@ -53,14 +57,17 @@ export function SettingsEnvironmentFilterProvider(props: { readonly children: Re
       ),
     [availableTargets, selectedIds],
   );
-  const selectableProjectGroups = useMemo(
+  const { choices: selectableProjectGroups, unavailable: unavailableProjectKeys } = useMemo(
     () =>
-      projectGroups.filter((group) =>
-        group.members.some((member) =>
-          selectedTargets.some((target) => target.environmentId === member.project.environmentId),
-        ),
+      settingsProjectChoices(
+        projectGroups,
+        new Set(selectedTargets.map((target) => target.environmentId)),
+        (environmentId) =>
+          environments.find((entry) => entry.environmentId === environmentId)?.serverConfig
+            ?.scratchWorkspaceRoot,
+        selectedProjectKey,
       ),
-    [projectGroups, selectedTargets],
+    [projectGroups, selectedTargets, environments, selectedProjectKey],
   );
   const value = useMemo(
     () => ({
@@ -70,7 +77,10 @@ export function SettingsEnvironmentFilterProvider(props: { readonly children: Re
       projectGroups,
       selectableProjectGroups,
       selectedProjectKey,
-      selectProject: setSelectedProjectKey,
+      unavailableProjectKeys,
+      selectProject: (key: string | null) => {
+        if (key === null || !unavailableProjectKeys.has(key)) setSelectedProjectKey(key);
+      },
       selectAll: () => setSelectedIds(null),
       toggleEnvironment: (environmentId: EnvironmentId) =>
         setSelectedIds((current) =>
@@ -84,6 +94,7 @@ export function SettingsEnvironmentFilterProvider(props: { readonly children: Re
       projectGroups,
       selectableProjectGroups,
       selectedProjectKey,
+      unavailableProjectKeys,
     ],
   );
   return (

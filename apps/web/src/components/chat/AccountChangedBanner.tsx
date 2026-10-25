@@ -32,17 +32,24 @@ export function accountChangedWithRoom(
   );
 }
 
+/** The CLIs whose sign-in the server watches for a change of subscription. */
+const SUBSCRIPTION_CHANGE_DRIVERS = new Set(["claudeAgent", "codex"]);
+
 /**
- * Whether the server will continue this stop by itself on the new account, so
- * the notice may say "continues shortly". Only Claude has the early resume on
- * an account change (UsageLimitRecoveryWorker), and it keeps the same gates as
- * the reset-time resume: recovery armed for this stop with auto-continue on,
- * not settled, not snoozed, no approval or question waiting on the person
- * (the server refuses the resume while one blocks), and a project that is
- * neither paused nor archived. Anything else gets "Continue now".
+ * Whether the server will continue this stop by itself on the new
+ * subscription, so the notice may say "continues shortly". The early resume
+ * (UsageLimitRecoveryWorker) needs the project to approve subscription changes
+ * by itself (`autoApproveSubscriptionChange`, on by default) and keeps the
+ * same gates as the reset-time resume: recovery armed for this stop with
+ * auto-continue on, not settled, not snoozed, no approval or question waiting
+ * on the person (the server refuses the resume while one blocks), and a
+ * project that is neither paused nor archived. Anything else asks the person
+ * to confirm.
  */
 export function accountChangeAutoContinues(input: {
   readonly driver: string | undefined;
+  /** The project's `autoApproveSubscriptionChange`. */
+  readonly autoApprove: boolean;
   readonly runId: RunId;
   readonly limitRecovery:
     | { readonly runId: RunId; readonly autoResume: boolean }
@@ -56,7 +63,9 @@ export function accountChangeAutoContinues(input: {
   readonly nowMs: number;
 }): boolean {
   return (
-    input.driver === "claudeAgent" &&
+    input.driver !== undefined &&
+    SUBSCRIPTION_CHANGE_DRIVERS.has(input.driver) &&
+    input.autoApprove &&
     input.limitRecovery?.runId === input.runId &&
     input.limitRecovery.autoResume &&
     input.settledOverride !== "settled" &&
@@ -78,28 +87,30 @@ interface AccountChangedProps {
 
 /**
  * Replaces the usage-limit notice of a stop whose limit belonged to the
- * account the CLI was signed in to before. It says only what the snapshot
- * shows: another account, with room. Nothing about cost or cached context.
+ * subscription the same CLI was signed in to before. It says only what the
+ * snapshot shows: another subscription, with room. Nothing about cost, API
+ * keys, cached context or another provider or model.
  */
 export function accountChangedBannerItem(props: AccountChangedProps): ComposerBannerStackItem {
+  const detected = `We detected a sign-in to another subscription in the same ${props.providerName} CLI. The limit was on the previous one, and the new one has room.`;
   return {
     id: `account-changed:${props.runId}`,
     variant: "info",
     priority: "urgent",
     icon: <UserRoundCheckIcon />,
-    title: `${props.providerName} account changed`,
+    title: `${props.providerName} subscription changed`,
     description: props.autoContinuing
-      ? "The limit was on the previous account. This thread continues on the new one shortly."
-      : "The limit was on the previous account, and the new one has room.",
-    actions: props.autoContinuing ? null : <ContinueNow onContinue={props.onContinue} />,
+      ? `${detected} This thread continues on the new subscription shortly.`
+      : detected,
+    actions: props.autoContinuing ? null : <ConfirmAndContinue onContinue={props.onContinue} />,
     // The text wraps under the title on a phone instead of hiding behind a details button.
     actionsLayout: "wrap-below",
-    dismissLabel: "Dismiss account change notice",
+    dismissLabel: "Dismiss subscription change notice",
     onDismiss: props.onDismiss,
   };
 }
 
-function ContinueNow({ onContinue }: { readonly onContinue: () => Promise<void> }) {
+function ConfirmAndContinue({ onContinue }: { readonly onContinue: () => Promise<void> }) {
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   return (
@@ -119,7 +130,7 @@ function ContinueNow({ onContinue }: { readonly onContinue: () => Promise<void> 
           setPending(false);
         }}
       >
-        {pending ? "Continuing..." : "Continue now"}
+        {pending ? "Continuing..." : "Confirm and continue"}
       </Button>
       {error ? (
         <span role="alert" className="text-xs text-destructive-foreground">

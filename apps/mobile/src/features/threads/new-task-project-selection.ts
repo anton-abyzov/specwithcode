@@ -1,11 +1,73 @@
+import {
+  projectChoiceIneligibleReason,
+  projectPickerMembers,
+  type ScratchRootLookup,
+} from "@specweave-studio/client-runtime/state/project-picker";
 import type { EnvironmentProject } from "@specweave-studio/client-runtime/state/shell";
 import { repositoryGroupingKeyOf, type EnvironmentId } from "@specweave-studio/contracts";
 
 import { scopedProjectKey } from "../../lib/scopedEntities";
 import type { HomeProjectScope } from "../home/homeThreadList";
 
+/** An explicit machine remains draft context even after its last project disappears. */
+export function resolveNewTaskEnvironment(
+  projects: readonly EnvironmentProject[],
+  selectedEnvironmentId: EnvironmentId | null,
+  labelFor: (environmentId: EnvironmentId) => string | undefined,
+): { environmentId: EnvironmentId | null; environmentLabel: string } {
+  const environmentId = selectedEnvironmentId ?? projects[0]?.environmentId ?? null;
+  return {
+    environmentId,
+    environmentLabel:
+      environmentId === null ? "Environment" : (labelFor(environmentId) ?? environmentId),
+  };
+}
+
+/** Both machine choices and execution use this same eligible matching catalog. */
+export function newTaskDestinationProjects(
+  projects: readonly EnvironmentProject[],
+  selected: EnvironmentProject | null,
+  scratchRootFor: ScratchRootLookup,
+): EnvironmentProject[] {
+  return projectPickerMembers(projects, scratchRootFor).filter(
+    (project) => resolveEnvironmentProjectMatch([project], selected) !== null,
+  );
+}
+
+/** A saved draft remains visible while its project is unavailable for new work. */
+export function newTaskProjectUnavailableReason(
+  project: EnvironmentProject | null,
+  scratchRootFor: ScratchRootLookup,
+  missingFromCatalog = false,
+): string | null {
+  if (missingFromCatalog)
+    return "This project is no longer available. Choose an active project to start this task.";
+  if (project === null) return "Choose an active project to start this task.";
+  const reason = projectChoiceIneligibleReason(project, scratchRootFor);
+  // Starting without a project is a separate, explicit action in the task flow.
+  if (reason === null || reason === "scratch") return null;
+  return reason === "archived"
+    ? "This project is archived. Choose an active project to start this task."
+    : "This project is automated. Choose an active project to start this task.";
+}
+
+/** Last live metadata is display context only; its identity must match the explicit key. */
+export function retainNewTaskProjectContext(
+  selectedProjectKey: string | null,
+  live: EnvironmentProject | undefined,
+  retained: EnvironmentProject | null,
+): EnvironmentProject | null {
+  if (live) return live;
+  return selectedProjectKey !== null &&
+    retained !== null &&
+    scopedProjectKey(retained.environmentId, retained.id) === selectedProjectKey
+    ? retained
+    : null;
+}
+
 type DraftProjectSelectionResolution =
   | { readonly kind: "preserve" }
+  | { readonly kind: "unavailable" }
   | { readonly kind: "select"; readonly project: EnvironmentProject }
   | { readonly kind: "pick" };
 
@@ -47,10 +109,8 @@ function getOnlySelectableProject(
  * Picks the project on a target environment that corresponds to the project
  * currently selected in the new-task flow, so switching computers follows the
  * same repo. Repository identity is preferred; projects without one (e.g. not
- * yet indexed) fall back to workspace basename, then title. When nothing
- * matches, the first project on the target stands in — the same fallback the
- * render path applies when no key is selected — so the draft always has a
- * concrete key to carry over to.
+ * yet indexed) fall back to workspace basename, then title. A selected draft
+ * never falls through to an unrelated project on another machine.
  */
 export function resolveEnvironmentProjectMatch(
   projectsOnTarget: ReadonlyArray<EnvironmentProject>,
@@ -92,7 +152,7 @@ export function resolveEnvironmentProjectMatch(
           (project) => !isKnownMismatch(project) && project.title === selectedProject.title,
         )
       : undefined) ??
-    projectsOnTarget[0] ??
+    (selectedProject === null ? projectsOnTarget[0] : null) ??
     null
   );
 }
@@ -107,8 +167,10 @@ export function resolveDraftProjectSelection(
     projects.some(
       (project) => scopedProjectKey(project.environmentId, project.id) === selectedProjectKey,
     );
-  if (hasExplicitProjectSelection) {
-    return { kind: "preserve" };
+  if (selectedProjectKey !== null) {
+    // A missing explicit choice owns its draft until the user replaces it.
+    // Only a genuinely blank task can adopt the sole eligible project.
+    return { kind: hasExplicitProjectSelection ? "preserve" : "unavailable" };
   }
 
   const onlyProject = getOnlySelectableProject(projectScopes);

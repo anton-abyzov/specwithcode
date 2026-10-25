@@ -222,6 +222,34 @@ it.layer(NodeServices.layer)("native subscription status corroboration", (it) =>
     }),
   );
 
+  it.effect("keys a complete subscription read by email, organization and plan", () =>
+    Effect.gen(function* () {
+      const usage = {
+        rate_limits_available: true,
+        rate_limits: {
+          five_hour: { utilization: 12, resets_at: "2026-10-25T06:50:00Z" },
+          seven_day: { utilization: 18, resets_at: "2026-10-30T08:59:00Z" },
+        },
+      };
+      const read = (extra: Record<string, unknown>) =>
+        checkNative({
+          capabilities: { usage, organization: "Personal", ...extra } as Partial<
+            typeof nativeCapabilities
+          >,
+        });
+      const personal = yield* read({});
+      const team = yield* read({ organization: "Team" });
+      const apiKey = yield* read({
+        subscriptionType: undefined,
+        apiKeySource: "ANTHROPIC_API_KEY",
+      });
+      expect(personal.usageLimits?.subscriptionKey).toMatch(/^claude:sha256:[a-f0-9]{64}$/);
+      expect(team.usageLimits?.subscriptionKey).toMatch(/^claude:sha256:[a-f0-9]{64}$/);
+      expect(team.usageLimits?.subscriptionKey).not.toBe(personal.usageLimits?.subscriptionKey);
+      expect(apiKey.usageLimits?.subscriptionKey).toBeUndefined();
+    }),
+  );
+
   it.effect("rejects native auth output from a failed command", () =>
     Effect.gen(function* () {
       const status = yield* checkNative({ code: 1 });

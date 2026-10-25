@@ -1,0 +1,40 @@
+@import "../../src/index.css";
+@source "../../src";
+body {
+  margin: 0;
+  background: var(--background);
+  color: var(--foreground);
+}
+.fixture {
+  padding: 32px;
+  max-width: 960px;
+  margin: auto;
+}
+.fixture h1 {
+  font-size: 24px;
+  font-weight: 650;
+  margin-bottom: 16px;
+}
+.fixture p {
+  color: var(--muted-foreground);
+  margin: 16px 0;
+}
+.fixture-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.narrow-controls {
+  display: none;
+}
+@media (max-width: 600px) {
+  .fixture {
+    padding: 20px;
+  }
+  .wide-controls {
+    display: none;
+  }
+  .narrow-controls {
+    display: block;
+  }
+}

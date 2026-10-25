@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vite-plus/test";
 import {
+  DEFAULT_PROJECT_WORKSPACE_SETTINGS,
   DEFAULT_SERVER_SETTINGS,
+  type ProjectWorkspaceSettings,
+  EnvironmentId,
   type ServerConfig,
   ProviderInstanceId,
   ProjectId,
@@ -9,6 +12,7 @@ import {
 } from "@specweave-studio/contracts";
 import {
   scheduledTaskDefaultModel,
+  scheduledTaskProjectForScope,
   createDraft,
   editDraft,
   DEFAULT_SCHEDULE,
@@ -363,5 +367,51 @@ describe("scheduled task model defaults", () => {
         null,
       ),
     ).toBeNull();
+  });
+});
+
+describe("routine project defaults within retained Settings scope", () => {
+  const environmentId = EnvironmentId.make("a");
+  const makeProject = (id: string, workspaceSettings: Partial<ProjectWorkspaceSettings> = {}) => ({
+    environmentId,
+    id: ProjectId.make(id),
+    title: id,
+    workspaceRoot: `/work/${id}`,
+    workspaceSettings: { ...DEFAULT_PROJECT_WORKSPACE_SETTINGS, ...workspaceSettings },
+    repositoryIdentity: null,
+    defaultModelSelection: null,
+    scripts: [],
+    createdAt: "2026-10-25T00:00:00Z",
+    updatedAt: "2026-10-25T00:00:00Z",
+  });
+  it.each([{ archived: true }, { origin: "automated" }, { temporarySessionId: "check" }])(
+    "retains inactive App rather than defaulting its scoped routine to Billing: %o",
+    (settings) => {
+      const app = makeProject("app", settings);
+      const billing = makeProject("billing");
+      const scope = { members: [{ project: app }] };
+      expect(scheduledTaskProjectForScope([app, billing], environmentId, scope, () => null)).toBe(
+        app,
+      );
+      expect(scheduledTaskProjectForScope([app, billing], environmentId, null, () => null)).toBe(
+        billing,
+      );
+      expect(scheduledTaskProjectForScope([billing], environmentId, scope, () => null)).toBeNull();
+      expect(
+        scheduledTaskProjectForScope([billing], environmentId, undefined, () => null),
+      ).toBeNull();
+    },
+  );
+  it("prefers an eligible member in the selected scope over an inactive member", () => {
+    const old = makeProject("old", { archived: true });
+    const live = makeProject("live");
+    expect(
+      scheduledTaskProjectForScope(
+        [old, live],
+        environmentId,
+        { members: [{ project: old }, { project: live }] },
+        () => null,
+      ),
+    ).toBe(live);
   });
 });

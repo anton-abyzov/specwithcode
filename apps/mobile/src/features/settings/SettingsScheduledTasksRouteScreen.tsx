@@ -1,3 +1,4 @@
+import { projectPickerMembers } from "@specweave-studio/client-runtime/state/project-picker";
 import { useAtomValue } from "@effect/atom-react";
 import { AuthOrchestrationOperateScope } from "@specweave-studio/contracts";
 import { readEnvironmentScope } from "../../state/session";
@@ -587,8 +588,12 @@ function TaskForm({
   const tasks = useEnvironmentQuery(
     serverEnvironment.scheduledTasksLive({ environmentId, input: {} }),
   );
-  const projects = useProjects().filter((project) => project.environmentId === environmentId);
+  const catalog = useProjects().filter((project) => project.environmentId === environmentId);
   const config = useEnvironmentServerConfig(environmentId);
+  const projects = projectPickerMembers(catalog, () => config?.scratchWorkspaceRoot);
+  const currentProject = catalog.find((project) => project.id === draft.projectId);
+  const currentUnavailable =
+    currentProject !== undefined && !projects.some((project) => project.id === currentProject.id);
   const modelOptions = useMemo(() => buildModelOptions(config, null), [config]);
   const canOperate = useAtomValue(
     serverEnvironment.upsertScheduledTask.permissionAtom(environmentId),
@@ -754,14 +759,31 @@ function TaskForm({
         <SelectRow
           label="Project"
           value={
-            projects.find((project) => project.id === draft.projectId)?.title ??
-            (projects.length ? "Choose project" : "No projects available")
+            currentProject
+              ? `${currentProject.title}${currentUnavailable ? " · Unavailable" : ""}`
+              : draft.projectId
+                ? "Unavailable project"
+                : projects.length
+                  ? "Choose project"
+                  : "No projects available"
           }
-          actions={projects.map((project) => ({
-            id: project.id,
-            title: project.title,
-            state: project.id === draft.projectId ? "on" : undefined,
-          }))}
+          actions={[
+            ...projects.map((project) => ({
+              id: project.id,
+              title: project.title,
+              state: project.id === draft.projectId ? ("on" as const) : undefined,
+            })),
+            ...(currentUnavailable && currentProject
+              ? [
+                  {
+                    id: currentProject.id,
+                    title: `${currentProject.title} · Unavailable`,
+                    state: "on" as const,
+                    attributes: { disabled: true },
+                  },
+                ]
+              : []),
+          ]}
           onSelect={(id) => {
             const project = projects.find((item) => item.id === id);
             if (project)

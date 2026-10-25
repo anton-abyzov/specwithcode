@@ -25,6 +25,7 @@ export function SettingsEnvironmentFilterHeader(props: {
     selectAll,
     toggleEnvironment,
     selectableProjectGroups,
+    unavailableProjectKeys,
     selectedProjectKey,
     selectProject,
   } = useSettingsEnvironmentFilter();
@@ -44,7 +45,11 @@ export function SettingsEnvironmentFilterHeader(props: {
       resolveEnvironmentMachineKind(entry.serverConfig),
     ]),
     project: selectedProjectKey,
-    projects: selectableProjectGroups.map((group) => [group.key, group.label]),
+    projects: selectableProjectGroups.map((group) => [
+      group.key,
+      group.label,
+      unavailableProjectKeys.has(group.key),
+    ]),
     trailingItems: props.trailingItems,
   });
 
@@ -107,7 +112,10 @@ export function SettingsEnvironmentFilterHeader(props: {
                     },
                     ...selectableProjectGroups.map((group) => ({
                       type: "action" as const,
-                      label: group.label,
+                      label: unavailableProjectKeys.has(group.key)
+                        ? `${group.label} · Unavailable`
+                        : group.label,
+                      disabled: unavailableProjectKeys.has(group.key),
                       state: selectedProjectKey === group.key ? ("on" as const) : undefined,
                       onPress: () => selectProject(group.key),
                     })),
@@ -142,6 +150,7 @@ export function AndroidSettingsEnvironmentFilter() {
     selectAll,
     toggleEnvironment,
     selectableProjectGroups,
+    unavailableProjectKeys,
     selectedProjectKey,
     selectProject,
   } = useSettingsEnvironmentFilter();
@@ -179,7 +188,8 @@ export function AndroidSettingsEnvironmentFilter() {
         },
         ...selectableProjectGroups.map((group) => ({
           id: `project:${group.key}`,
-          title: `Project · ${group.label}`,
+          title: `Project · ${group.label}${unavailableProjectKeys.has(group.key) ? " · Unavailable" : ""}`,
+          attributes: { disabled: unavailableProjectKeys.has(group.key) },
           state: selectedProjectKey === group.key ? ("on" as const) : ("off" as const),
         })),
       ]}
