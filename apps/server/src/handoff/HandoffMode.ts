@@ -1,3 +1,7 @@
+import {
+  childHandoffDisposition,
+  localChildOwnership,
+} from "../orchestration-v2/ChildMachineHandoff.ts";
 /**
  * Handoff mode (0967): checkpoints a thread's work after every turn and on an
  * interval, keeps one lease per thread with a growing epoch, and fences a
@@ -11,6 +15,7 @@ import {
   type HandOffMachineInput,
   type HandOffResult,
   type HandoffCheckpoint,
+  type HandoffChildDisposition,
   type HandoffCheckpointReason,
   type HandoffConfigPatch,
   type HandoffContinueHereInput,
@@ -461,6 +466,93 @@ export const make = Effect.gen(function* () {
             pushCheckpointRef(written.root, written.ref).catch(() => false),
           )
         : false;
+      const children: Array<HandoffChildDisposition> = [];
+      const seen = new Set<ThreadId>();
+      const visit = (id: ThreadId, depth: number): Effect.Effect<void, HandoffModeError> =>
+        Effect.gen(function* () {
+          if (seen.has(id) || depth > 16)
+            return yield* new HandoffModeError({
+              code: "invalid",
+              message:
+                "Child ownership contains a cycle or exceeds 16 levels. Reconcile it before handing off.",
+            });
+          seen.add(id);
+          const state = yield* projections.getThreadRecords(id, ["subagents"]).pipe(
+            Effect.mapError(
+              () =>
+                new HandoffModeError({
+                  code: "failed",
+                  message: "Could not read child ownership for the handoff checkpoint.",
+                }),
+            ),
+          );
+          for (const child of state.subagents) {
+            if (children.length >= 200)
+              return yield* new HandoffModeError({
+                code: "invalid",
+                message: "The child roster exceeds 200 entries. Reconcile it before handing off.",
+              });
+            const childState =
+              child.childThreadId === null
+                ? null
+                : yield* projections
+                    .getThreadRecords(child.childThreadId, ["subagents"])
+                    .pipe(Effect.orElseSucceed(() => null));
+            let childRecord =
+              child.childThreadId === null ? undefined : document.threads[child.childThreadId];
+            const remote =
+              childState === null ||
+              !localChildOwnership(childState.thread, environmentId) ||
+              (childRecord?.lease != null &&
+                childRecord.lease.holderEnvironmentId !== environmentId);
+            // An app-owned child stays on its existing source executor. The receiver
+            // gets this lease reference and must never re-launch its original brief.
+            if (
+              !remote &&
+              child.origin === "app_owned" &&
+              child.childThreadId !== null &&
+              childRecord?.lease == null
+            ) {
+              const childId = child.childThreadId;
+              childRecord = yield* updateThread(childId, shell.projectId, (current) => ({
+                ...current,
+                lease:
+                  current.lease ??
+                  acquireLease(
+                    null,
+                    { environmentId, label: machineLabel, threadId: childId },
+                    createdAt,
+                  ),
+              }));
+            }
+            const owner =
+              childRecord?.lease?.holderEnvironmentId ??
+              childState?.thread.execution?.executionMachineId ??
+              environmentId;
+            const effects = [...record.sideEffects, ...(childRecord?.sideEffects ?? [])].map(
+              (effect) => ({
+                id: `${effect.turnKey}:${effect.kind}:${effect.epoch}`,
+                target: effect.target,
+                outcome: `committed; ${effect.result ?? "consult its receipt"}`,
+              }),
+            );
+            children.push(
+              childHandoffDisposition({
+                child,
+                sourceEnvironmentId: owner,
+                ownerEpoch: childRecord?.lease?.epoch ?? 0,
+                parentInstructions:
+                  messages.findLast((message) => message.role === "user")?.text ??
+                  "Preserve the original scope and current thread instructions.",
+                remote,
+                effects,
+              }),
+            );
+            if (!remote && child.childThreadId !== null && childState!.subagents.length > 0)
+              yield* visit(child.childThreadId, depth + 1);
+          }
+        });
+      yield* visit(threadId, 0);
       const checkpoint: HandoffCheckpoint = {
         sequence: (previous?.sequence ?? 0) + 1,
         commit: written.commit,
@@ -480,6 +572,7 @@ export const make = Effect.gen(function* () {
         turnKey: shell.latestRunId === null ? null : threadTurnKey(threadId, shell.latestRunId),
         runEnding,
         sideEffects: record.sideEffects,
+        children,
         sourceRoot: {
           environmentId,
           machineLabel,

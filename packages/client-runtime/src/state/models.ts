@@ -13,6 +13,7 @@ import type {
   OrchestrationV2ProviderGoal,
   OrchestrationV2RunStatus,
   OrchestrationV2ProviderFailureClass,
+  OrchestrationV2Subagent,
   OrchestrationV2ThreadProjection,
   OrchestrationV2ThreadProjectMoveLink,
   OrchestrationV2ThreadShell,
@@ -22,6 +23,7 @@ import type {
   RunId,
   ThreadId,
 } from "@specweave-studio/contracts";
+import { isOrchestrationV2WorkActive } from "@specweave-studio/contracts";
 import * as DateTime from "effect/DateTime";
 
 import { formatSubagentDisplayTitle } from "./subagentDisplay.ts";
@@ -71,6 +73,80 @@ export interface ThreadRuntimeSummary {
 
 export function threadRuntimeIsActive(runtime: ThreadRuntimeSummary | null | undefined): boolean {
   return runtime !== null && runtime !== undefined && threadRunStatusIsActive(runtime.status);
+}
+
+/** What a subagent row, its parent's count, the header chip and the peek all show. */
+export type SubagentExecutionStatus = OrchestrationV2Subagent["status"] | "unknown";
+
+const TERMINAL_SUBAGENT_STATUSES: ReadonlySet<string> = new Set([
+  "completed",
+  "failed",
+  "cancelled",
+  "interrupted",
+]);
+
+/**
+ * One verdict on whether a subagent works, from the parent's record and the
+ * backing thread's shell. "Working" needs a live turn. A terminal record is a
+ * receipt and outranks a stale running child root. A child on a machine that
+ * does not answer is unknown, never working and never dead. A record still
+ * running with no live turn and no ended run of its own was cut off.
+ */
+export function subagentExecutionStatus(input: {
+  readonly record?: Pick<OrchestrationV2Subagent, "status"> | null | undefined;
+  readonly thread?: SubagentThreadShell | null | undefined;
+  /** The parent's shell: a provider-native child works only inside its parent's session. */
+  readonly parent?: NativeChildParent | null | undefined;
+  readonly unreachable?: ReadonlySet<string> | undefined;
+}): SubagentExecutionStatus {
+  const record = input.record?.status ?? null;
+  if (record !== null && TERMINAL_SUBAGENT_STATUSES.has(record)) return record;
+  const thread = input.thread ?? null;
+  if (thread === null) return record ?? "pending";
+  const machine = thread.executionMachineId ?? thread.environmentId;
+  if (
+    thread.executionState === "unknown" ||
+    input.unreachable?.has(thread.environmentId) === true ||
+    input.unreachable?.has(machine) === true
+  )
+    return "unknown";
+  if (threadRuntimeIsActive(thread.runtime) && !nativeChildOutlivedParent(thread, input.parent))
+    return record !== null && isOrchestrationV2WorkActive(record) ? record : "running";
+  const run = thread.latestRun?.status;
+  if (run === "failed" || run === "cancelled" || run === "interrupted") return run;
+  if (run !== undefined && terminalRunStatus(run)) return "completed";
+  if (record === "running" || record === "waiting") return "interrupted";
+  return record ?? "completed";
+}
+
+type SubagentThreadShell = Pick<
+  EnvironmentThreadShell,
+  "environmentId" | "runtime" | "latestRun" | "executionMachineId" | "executionState"
+> &
+  Partial<Pick<EnvironmentThreadShell, "id" | "source">>;
+type NativeChildParent = Pick<EnvironmentThreadShell, "runtime" | "pendingBackgroundTasks">;
+
+/**
+ * A provider-native child has no app run: it works inside its parent's
+ * provider session, during the parent's live turn or as one of its pending
+ * background subagents. Once the parent shell shows neither, the parent has
+ * its terminal record and the child's root left running is stale. Every
+ * listed parent's shell is loaded, so this reads the same whether or not the
+ * parent is open.
+ */
+function nativeChildOutlivedParent(
+  thread: SubagentThreadShell,
+  parent: NativeChildParent | null | undefined,
+): boolean {
+  if (parent == null || thread.id === undefined) return false;
+  if (thread.latestRun !== null || thread.source?.creationSource !== "provider") return false;
+  if (threadRuntimeIsActive(parent.runtime)) return false;
+  // A background subagent without a thread id could be this child.
+  return !(parent.pendingBackgroundTasks ?? []).some(
+    (task) =>
+      task.kind === "subagent" &&
+      ("childThreadId" in task ? (task.childThreadId ?? thread.id) : thread.id) === thread.id,
+  );
 }
 
 /** Archiving may discard queued work, but it must not detach a provider that

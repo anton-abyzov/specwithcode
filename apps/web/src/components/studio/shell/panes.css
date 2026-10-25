@@ -548,7 +548,7 @@ button.sws-subagent-row:focus-visible {
   color: var(--shell-working);
 }
 .sws-subagent-meta [data-tone="failed"] {
-  color: var(--destructive);
+  color: var(--destructive-foreground);
 }
 .sws-subagent-result {
   font-size: 11.5px;

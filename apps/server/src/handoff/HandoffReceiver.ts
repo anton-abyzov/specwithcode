@@ -61,6 +61,7 @@ import { refComponent } from "./checkpointGit.ts";
 import { HandoffMode } from "./HandoffMode.ts";
 import {
   handoffSeed,
+  HANDOFF_SEED_MAX_CHARS,
   type PreflightProvider,
   preflightFailures,
   shouldResume,
@@ -496,6 +497,32 @@ export const make = Effect.gen(function* () {
       const project = yield* requireProject(caller, detail.sourceProjectId);
       const root = yield* repositoryRoot(project, detail.repositoryPath);
       const checkpoint = replica.checkpoint;
+      if (checkpoint.children?.some((child) => child.disposition === "unknown")) {
+        return yield* refuse(
+          409,
+          "invalid",
+          at(
+            "A child still has unknown execution ownership. Reconcile it on its owning host before takeover.",
+          ),
+          "checkpoint",
+        );
+      }
+      const seed = handoffSeed({
+        sourceLabel: replica.sourceLabel,
+        reason: request.reason,
+        checkpoint,
+        lastMessages: detail.transcript,
+      });
+      if (seed.length > HANDOFF_SEED_MAX_CHARS) {
+        return yield* refuse(
+          409,
+          "invalid",
+          at(
+            "The child context and irreversible-effect receipts exceed the handoff envelope. Keep the source paused and reduce optional context before retrying.",
+          ),
+          "checkpoint",
+        );
+      }
       const held = yield* Effect.promise(() =>
         refCommit(root, incomingRef(caller.sourceEnvironmentId, request.sourceThreadId)),
       );
@@ -555,12 +582,7 @@ export const make = Effect.gen(function* () {
           ...(resume
             ? {
                 initialMessage: {
-                  text: handoffSeed({
-                    sourceLabel: replica.sourceLabel,
-                    reason: request.reason,
-                    checkpoint,
-                    lastMessages: detail.transcript,
-                  }),
+                  text: seed,
                   attachments: [],
                 },
               }

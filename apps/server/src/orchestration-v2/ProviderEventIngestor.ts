@@ -30,7 +30,12 @@ import { getModelSelectionStringOptionValue } from "@specweave-studio/shared/mod
 import * as AnalyticsService from "../telemetry/AnalyticsService.ts";
 import * as EventSink from "./EventSink.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
-import { lostWorkNoteEvents } from "./SubagentSettlement.ts";
+import {
+  lostWorkNoteEvents,
+  nativeReceiptStatus,
+  receiptChildRoots,
+  settleRunlessRootTurns,
+} from "./SubagentSettlement.ts";
 import * as IdAllocator from "./IdAllocator.ts";
 import { ProviderAdapterV2Event } from "./ProviderAdapter.ts";
 import { makeProviderFailureTurnItem } from "./ProviderFailure.ts";
@@ -400,6 +405,54 @@ export const layer: Layer.Layer<
       },
     );
 
+    /**
+     * A native subagent's terminal row is its receipt. Its child's runless
+     * root closes in the same write, for every provider, so the streamed
+     * child shell stops showing it working (see receiptChildRoots for the
+     * fence against a resumed child). These reads precede the write, so the
+     * sink rechecks the receipt and each close against the state stored when
+     * it writes (fenceReceiptWrite). Reading the child never fails the
+     * receipt: the stranded sweep still settles whatever is left.
+     */
+    const receiptChildEvents = Effect.fn("ProviderEventIngestor.receiptChildEvents")(
+      function* (input: ProviderEventIngestInput, receipt: OrchestrationV2Subagent) {
+        const status = nativeReceiptStatus(receipt);
+        const childThreadId = receipt.childThreadId;
+        if (status === null || childThreadId === null) return [];
+        const [{ subagents }, child] = yield* Effect.all([
+          projections.getThreadRecords(receipt.threadId, ["subagents"]),
+          projections.getRuntimeRecoveryProjection(childThreadId),
+        ]);
+        const roots = receiptChildRoots({
+          receipt,
+          stored: subagents.find((row) => row.id === receipt.id),
+          nodes: child.nodes,
+        });
+        if (roots.length === 0) return [];
+        return yield* settleRunlessRootTurns({
+          projection: { ...child, nodes: roots },
+          status,
+          now: yield* DateTime.now,
+          allocateEventId: () =>
+            idAllocator.allocate.event({
+              threadId: childThreadId,
+              providerSessionId: input.providerSessionId,
+            }),
+          settledNodeIds: new Set(),
+          settledItemIds: new Set(),
+        });
+      },
+      (effect, _input, receipt) =>
+        effect.pipe(
+          Effect.catchCause((cause) =>
+            Effect.logWarning("Could not close a finished subagent's own thread with its result", {
+              threadId: receipt.childThreadId,
+              cause,
+            }).pipe(Effect.as([] as ReadonlyArray<OrchestrationV2DomainEvent>)),
+          ),
+        ),
+    );
+
     const normalize: ProviderEventIngestorV2Shape["normalize"] = (input) =>
       Effect.gen(function* () {
         switch (input.event.type) {
@@ -463,6 +516,7 @@ export const layer: Layer.Layer<
                 runId: input.event.subagent.runId,
                 nodeId: input.event.subagent.id,
               }),
+              ...(yield* receiptChildEvents(input, input.event.subagent)),
             ];
           case "message.updated":
             return [

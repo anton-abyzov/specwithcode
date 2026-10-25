@@ -87,7 +87,7 @@ export function SubagentPeek(props: {
               projectId={thread.projectId}
               environmentId={thread.environmentId}
             />
-            {entry?.startedAt && status ? (
+            {entry?.startedAt && status && status !== "unknown" ? (
               <AgentElapsed
                 agent={{ status, startedAt: entry.startedAt, completedAt: entry.completedAt }}
               />

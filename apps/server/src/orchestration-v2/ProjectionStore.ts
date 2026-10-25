@@ -4202,7 +4202,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             `.pipe(Effect.flatMap(decodeRows(decodeNodePayload, threadId)));
             const subagents = yield* sql<PayloadRow>`
               SELECT payload_json FROM orchestration_v2_projection_subagents
-              WHERE thread_id = ${threadId} AND status NOT IN ('interrupted','failed','cancelled') ORDER BY subagent_id ASC
+              WHERE thread_id = ${threadId} ORDER BY subagent_id ASC
             `.pipe(Effect.flatMap(decodeRows(decodeSubagentPayload, threadId)));
             const providerThreads = yield* sql<PayloadRow>`
               SELECT payload_json FROM orchestration_v2_projection_provider_threads

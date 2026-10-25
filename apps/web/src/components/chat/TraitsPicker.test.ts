@@ -8,6 +8,7 @@ import { COORDINATOR_RECOMMENDED_TRAITS } from "../../studio/shellModel";
 import {
   buildTraitsTriggerDisplay,
   buildTraitsTriggerParts,
+  traitsTriggerDescription,
   buildUnavailableModelOptionDescriptors,
   traitOptionBadges,
 } from "./TraitsPicker";
@@ -386,11 +387,12 @@ describe("buildTraitsTriggerParts", () => {
       parts([CONTEXT_WINDOW, CLAUDE_EFFORT, thinking(true), fastModeDescriptor(true)]),
     ).toMatchObject({
       effort: { value: "high", label: "High" },
-      details: "1M · Thinking · Fast",
+      details: "1M · Thinking",
+      speed: { icon: "fast", label: "Fast mode" },
     });
     expect(
       parts([CONTEXT_WINDOW, CLAUDE_EFFORT, thinking(false), fastModeDescriptor(false)]),
-    ).toMatchObject({ details: "1M · No thinking" });
+    ).toMatchObject({ details: "1M · No thinking", speed: null });
   });
 
   it("capitalizes a level whose provider label is its raw id", () => {
@@ -430,8 +432,29 @@ describe("buildTraitsTriggerParts", () => {
         primarySelectDescriptorId: "reasoningEffort",
         ultrathinkPromptControlled: false,
       });
-    expect(codex("default")).toMatchObject({ effort: { label: "High" }, details: "" });
-    expect(codex("priority")).toMatchObject({ effort: { label: "High" }, details: "Fast" });
+    expect(codex("default")).toMatchObject({
+      effort: { label: "High" },
+      details: "",
+      speed: null,
+    });
+    expect(codex("priority")).toMatchObject({
+      effort: { label: "High" },
+      details: "",
+      speed: { icon: "fast", label: "Fast service tier" },
+    });
+    expect(traitsTriggerDescription(codex("priority"))).toBe("High effort · Fast service tier");
+    expect(traitsTriggerDescription(codex("default"))).toBe("High effort");
+  });
+
+  it("draws Ultrafast with its own bolt and names it", () => {
+    const parts = buildTraitsTriggerParts({
+      provider: CODEX,
+      descriptors: [EFFORT, serviceTierDescriptor("ultrafast")],
+      primarySelectDescriptorId: "reasoningEffort",
+      ultrathinkPromptControlled: false,
+    });
+    expect(parts.speed).toEqual({ icon: "ultrafast", label: "Ultrafast service tier" });
+    expect(traitsTriggerDescription(parts)).toBe("High effort · Ultrafast service tier");
   });
 
   it("falls back to the plain label without an effort setting", () => {
@@ -439,6 +462,7 @@ describe("buildTraitsTriggerParts", () => {
       label: "1M · Fast",
       effort: null,
       details: "",
+      speed: { icon: "fast", label: "Fast mode" },
     });
   });
 });

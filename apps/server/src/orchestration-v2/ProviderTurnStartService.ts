@@ -1,3 +1,13 @@
+import * as HandoffMode from "../handoff/HandoffMode.ts";
+import {
+  childContinuationContext,
+  childContinuationPointer,
+  childResultRevision,
+  deliveredChildResults,
+  fitChildContinuations,
+  pendingChildResults,
+  needsPortableChildContext,
+} from "./ChildContinuationContext.ts";
 import * as Path from "effect/Path";
 import { makeEnvironmentRuntime } from "../project/ProjectEnvironmentRuntime.ts";
 import * as ProjectContextDelivery from "../project/ProjectContextDelivery.ts";
@@ -40,6 +50,7 @@ import * as ContextHandoffService from "./ContextHandoffService.ts";
 import {
   DEFAULT_HANDOFF_TOKEN_CAP,
   handoffTokenCapConfig,
+  continuationHeadroom,
   handoffBudget,
   attachmentTokenAllowance,
   contextUsageForHandoff,
@@ -223,6 +234,7 @@ export const layer: Layer.Layer<
     );
     // Finds this machine's native transcripts for handoff pointers; optional.
     const agentSessions = yield* Effect.serviceOption(AgentSessionScanner.AgentSessionScanner);
+    const handoffMode = yield* Effect.serviceOption(HandoffMode.HandoffMode);
 
     // These callbacks outlive startup while a run drains background work. Build
     // them outside start's scope so they cannot retain its full thread history.
@@ -1412,12 +1424,99 @@ export const layer: Layer.Layer<
             run: { ...currentRun, restartContinuationOfRunId: undefined },
             attempts: current.attempts,
           });
+          const receipts =
+            compact || isPromptlessContinuation(turnInput.message)
+              ? []
+              : pendingChildResults({
+                  subagents: current.subagents,
+                  runs: current.runs,
+                  providerTurns: current.providerTurns,
+                  currentRunId: run.id,
+                  transfers: current.contextTransfers,
+                  target: runningAttempt,
+                  attempts: current.attempts,
+                }).filter((child) =>
+                  needsPortableChildContext({
+                    child,
+                    runs: current.runs,
+                    targetProviderThreadId: runningProviderThread.id,
+                    sameNativeThread,
+                    sameSelection,
+                    attempts: current.attempts,
+                    targetNativeThreadId: runningAttempt.nativeThreadId,
+                  }),
+                );
+          const unfinished = lost.flatMap((work) =>
+            current.subagents.filter(
+              (child) =>
+                child.id === work.id &&
+                child.status === "interrupted" &&
+                needsPortableChildContext({
+                  child,
+                  runs: current.runs,
+                  targetProviderThreadId: runningProviderThread.id,
+                  sameNativeThread,
+                  sameSelection,
+                  attempts: current.attempts,
+                  targetNativeThreadId: runningAttempt.nativeThreadId,
+                }),
+            ),
+          );
+          const journal = Option.isNone(handoffMode)
+            ? []
+            : ((yield* handoffMode.value.document).threads[input.threadId]?.sideEffects ?? []);
+          const effects = journal.map((effect) => ({
+            id: `${effect.turnKey}:${effect.kind}:${effect.epoch}`,
+            target: effect.target,
+            outcome: `committed; ${effect.result ?? "read the operation receipt"}`,
+          }));
           const providerUserText =
             noteContinuation && lost.length > 0
               ? restartCancelledBackgroundWorkNote(lost)
               : userText;
           const restartNote =
             noteContinuation || lost.length === 0 ? "" : restartCancelledBackgroundWorkNote(lost);
+          const children = [...receipts, ...unfinished];
+          // Child briefs take at most half the room this session measures, so
+          // history still fits; a brief that does not fit goes as its pointer.
+          const childFit =
+            children.length === 0
+              ? null
+              : fitChildContinuations({
+                  children: children.map((child) => ({
+                    id: child.id,
+                    revision: childResultRevision(child),
+                    full: childContinuationContext({
+                      child,
+                      parentInstructions: userText,
+                      progress: child.progress,
+                      effects,
+                      evidence:
+                        child.childThreadId === null
+                          ? []
+                          : [
+                              `Thread ${child.childThreadId}; receipt revision ${DateTime.formatIso(child.updatedAt)}`,
+                            ],
+                    }),
+                    pointer: childContinuationPointer({
+                      child,
+                      effectIds: effects.map((effect) => effect.id),
+                    }),
+                  })),
+                  budget: Math.floor(
+                    continuationHeadroom({
+                      modelContextWindow,
+                      userText: [restartNote, providerUserText].filter(Boolean).join("\n\n"),
+                      attachments: message.attachments,
+                      providerThread: budgetProviderThread,
+                      nativeContextEstimate:
+                        budgetProviderThread.contextUsage?.usedTokens === undefined
+                          ? yield* nativeContextEstimate
+                          : 0,
+                    }) / 2,
+                  ),
+                });
+          const childContext = childFit?.text ?? "";
           // A failed turn/start can leave the requested turn absent from
           // native history even when its preceding handoff was injected.
           const retryHandoff =
@@ -1468,8 +1567,9 @@ export const layer: Layer.Layer<
                 tokenCap,
                 modelContextWindow,
                 // The note is sent with the user text, so it spends the same allowance.
-                userText:
-                  restartNote === "" ? providerUserText : `${restartNote}\n\n${providerUserText}`,
+                userText: [restartNote, childContext, providerUserText]
+                  .filter(Boolean)
+                  .join("\n\n"),
                 attachments: message.attachments,
                 providerThread: budgetProviderThread,
                 nativeContextEstimate:
@@ -1510,8 +1610,47 @@ export const layer: Layer.Layer<
               }),
           });
           if (!(yield* isCurrentAttemptInStatus("running"))) return;
+          const receiptEvents: Array<OrchestrationV2DomainEvent> = [];
+          // Only a result this envelope carries, in full or as its retrieval
+          // pointer, is delivered; a counted omission stays pending.
+          for (const child of deliveredChildResults(receipts, childFit?.included ?? [])) {
+            if (child.childThreadId === null) continue;
+            const now = yield* DateTime.now;
+            receiptEvents.push({
+              id: yield* idAllocator.allocate.event({ threadId: input.threadId }),
+              type: "context-transfer.updated",
+              threadId: input.threadId,
+              providerInstanceId: run.providerInstanceId,
+              occurredAt: now,
+              payload: {
+                id: yield* idAllocator.allocate.contextTransfer({
+                  sourceThreadId: child.childThreadId,
+                  targetThreadId: input.threadId,
+                  type: "subagent_result",
+                }),
+                type: "subagent_result",
+                sourceThreadId: child.childThreadId,
+                targetThreadId: input.threadId,
+                sourcePoint: { threadId: child.childThreadId },
+                basePoint: null,
+                sourceRevision: childResultRevision(child),
+                targetRunAttemptId: attempt.id,
+                sourceProviderInstanceId: child.providerInstanceId,
+                targetProviderInstanceId: run.providerInstanceId,
+                targetRunId: run.id,
+                status: "resolved_portable",
+                resolution: null,
+                createdBy: "system",
+                error: null,
+                createdAt: now,
+                updatedAt: now,
+                consumedAt: null,
+              },
+            });
+          }
+          if (receiptEvents.length > 0) yield* eventSink.write({ events: receiptEvents });
           const start = compact ? contextSession.compactThread! : contextSession.startTurn;
-          const context = [delivery.context, restartNote]
+          const context = [delivery.context, restartNote, childContext]
             .filter((part) => part !== "")
             .join("\n\n");
           // A note continuation has no turn to resume; its text is the prompt.
@@ -1568,6 +1707,7 @@ export const layer: Layer.Layer<
         effectiveHandoffs.length === 0 &&
         missedItems.length === 0 &&
         restartNote === "" &&
+        !projection.subagents.some((child) => child.origin === "provider_native") &&
         session.prepareTurn === undefined &&
         !noteContinuation
           ? contextSession

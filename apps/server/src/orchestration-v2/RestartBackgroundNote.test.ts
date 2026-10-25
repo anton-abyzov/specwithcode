@@ -262,3 +262,22 @@ it("AC-03 includes adapter-discovered loss associated with its source work", () 
     "the parent's next provider turn must learn which child it lost",
   );
 });
+
+it("delivers an identified native loss to the current parent once across A to B to A", () => {
+  const work = [
+    { kind: "subagent" as const, id: "native-child", label: "Review payment receipts" },
+  ];
+  const first = run(1, claudeThread, { restartCancelledBackgroundWork: work });
+  const switched = run(2, codexThread);
+  const returned = run(3, claudeThread);
+  const pending = (target: OrchestrationV2Run, turns: ReadonlyArray<ReturnType<typeof turnFor>>) =>
+    pendingRestartCancelledBackgroundWork({
+      runs: [first, switched, returned],
+      providerTurns: turns,
+      compactionMessageIds: new Set(),
+      run: target,
+      attempts: [],
+    });
+  assert.deepEqual(pending(switched, [turnFor(first)]), work);
+  assert.deepEqual(pending(returned, [turnFor(first), turnFor(switched)]), []);
+});

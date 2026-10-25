@@ -42,6 +42,12 @@ describe("formatProviderSubagentShortStatus", () => {
 });
 
 describe("providerSubagentStatusTone", () => {
+  it("shows an unreachable child as Unknown, never a ticking Working", () => {
+    const unknown = { status: "unknown", startedAt: START, completedAt: null } as const;
+    expect(providerSubagentStatusTone(unknown)).toBe("unknown");
+    expect(formatProviderSubagentShortStatus(unknown, NOW)).toBe("Unknown (machine unreachable)");
+  });
+
   it("maps each status to a glyph", () => {
     const tone = (status: Parameters<typeof providerSubagentStatusTone>[0]) =>
       providerSubagentStatusTone(status);

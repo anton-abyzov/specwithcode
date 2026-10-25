@@ -8680,9 +8680,9 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       ),
   );
 
-  it.effect(
-    "does not opaque-misclassify a buffered subagent notification across model/policy query replacement",
-    () =>
+  it.effect.each([false, true])(
+    "persists a buffered subagent receipt across replacement (open failure: %s)",
+    (failReplacement) =>
       Effect.scoped(
         Effect.gen(function* () {
           const SUBAGENT_TASK_ID = "task-buffer-replace-subagent";
@@ -8742,6 +8742,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           const processQueues: Array<Queue.Queue<SDKMessage>> = [];
           const events: Array<ProviderAdapterV2Event> = [];
           const continuationRequests: Array<ProviderContinuationRequest> = [];
+          let openCount = 0;
           const adapter = ClaudeAdapterV2.makeClaudeAdapterV2({
             instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
             settings: DEFAULT_CLAUDE_SETTINGS,
@@ -8761,6 +8762,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               allocateSessionId: Effect.succeed(WAKE_NATIVE_SESSION),
               open: () =>
                 Effect.gen(function* () {
+                  if (++openCount === 2 && failReplacement)
+                    return yield* new ClaudeAdapterV2.ClaudeAgentSdkQueryRunnerError({
+                      method: "open",
+                      cause: "forced replacement open failure",
+                    });
                   const sdkMessages = yield* Queue.unbounded<SDKMessage>();
                   processQueues.push(sdkMessages);
                   return {
@@ -8845,6 +8851,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           yield* Queue.offer(firstProcess, subagentNotification);
           yield* awaitUntil(() => continuationRequests.length === 1, "continuation after notify");
           assert.equal(continuationRequests[0]?.detail, SUBAGENT_SUMMARY);
+          yield* awaitUntil(
+            () => subagentEvents().at(-1)?.subagent.status === "completed",
+            "durable terminal receipt before wake",
+          );
+          assert.equal(subagentEvents().at(-1)?.subagent.result, SUBAGENT_SUMMARY);
 
           // Model-changing user turn replaces the query while continuation stays
           // queued. Process reset must not invent opaque classification for the
@@ -8853,7 +8864,7 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             ...CLAUDE_TEST_MODEL_SELECTION,
             model: "claude-haiku-4-5-20251001",
           } satisfies ModelSelection;
-          yield* runtime.startTurn(
+          const replacement = runtime.startTurn(
             makeClaudeTestTurnInput({
               threadId,
               providerThread: { ...providerThread, status: "active" },
@@ -8865,6 +8876,17 @@ describe("ClaudeAdapterV2 background wake turns", () => {
               modelSelection: alternateModel,
             }),
           );
+          if (failReplacement) {
+            assert.isTrue(Exit.isFailure(yield* replacement.pipe(Effect.exit)));
+            assert.equal(subagentEvents().at(-1)?.subagent.status, "completed");
+            assert.equal(subagentEvents().at(-1)?.subagent.result, SUBAGENT_SUMMARY);
+            assert.lengthOf(
+              subagentEvents().filter((event) => event.subagent.status === "completed"),
+              1,
+            );
+            return;
+          }
+          yield* replacement;
           assert.equal(processQueues.length, 2);
           const secondProcess = processQueues[1]!;
           yield* Queue.offer(

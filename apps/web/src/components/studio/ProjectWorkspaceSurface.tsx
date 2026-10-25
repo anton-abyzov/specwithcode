@@ -141,7 +141,7 @@ import {
   PROJECT_PANE_TABS,
   type ProjectPaneTab,
 } from "../../studio/projectPaneModel";
-import { runningSubagentCount } from "../../studio/threadSubagents";
+import { listedRunningSubagents } from "../../studio/threadSubagents";
 import { useThreadSubagents } from "./shell/SubagentsChip";
 import { useOpenLink } from "../../browser/useOpenLink";
 import { ProjectWorkerPane } from "./ProjectWorkerPane";
@@ -156,6 +156,7 @@ import { CoordinatorConversation } from "./CoordinatorConversation";
 import { ProjectOrchestratorSwitcher } from "./OrchestratorSwitcher";
 import type { OrchestratorCopy } from "../../studio/projectCoordinatorMachine";
 import { useMachineNickname } from "../../studio/machineNickname";
+import { useUnreachableHosts } from "../../studio/unreachableHosts";
 import { isThisMachineTarget } from "../../connection/desktopLocal";
 import {
   environmentWaitsForReconnectGrace,
@@ -1186,7 +1187,13 @@ export function ProjectWorkspaceSurface({
       if (member.coordinatorThreadId) ids.add(member.coordinatorThreadId);
     return ids;
   }, [paneScope]);
-  const subagents = useThreadSubagents({ thread: selectedThread, shells, coordinatorIds });
+  const unreachableHosts = useUnreachableHosts();
+  const subagents = useThreadSubagents({
+    thread: selectedThread,
+    shells,
+    coordinatorIds,
+    unreachable: unreachableHosts,
+  });
   const peekedSubagent =
     selectedThread !== null && subagentPeek?.hostId === selectedThread.id
       ? (shells.find(
@@ -1197,14 +1204,18 @@ export function ProjectWorkspaceSurface({
       : null;
   const closeSubagentPeek = useCallback(() => setSubagentPeek(null), []);
   // Working subagents keep their thread's row busy: "Working · 2 subagents".
-  const runningSubagents = useMemo(() => {
-    const counts = new Map<string, number>();
-    for (const worker of workers) {
-      const running = runningSubagentCount(shells, worker, coordinatorIds);
-      if (running > 0) counts.set(`${worker.environmentId}:${worker.id}`, running);
-    }
-    return counts;
-  }, [coordinatorIds, shells, workers]);
+  const runningSubagents = useMemo(
+    () =>
+      listedRunningSubagents({
+        threads: workers,
+        shells,
+        coordinatorIds,
+        unreachable: unreachableHosts,
+        selected: selectedThread,
+        selectedEntries: subagents,
+      }),
+    [coordinatorIds, selectedThread, shells, subagents, unreachableHosts, workers],
+  );
   const paneBar: ProjectPaneBarProps = {
     tab: paneTab,
     onTabChange: setPaneTab,
