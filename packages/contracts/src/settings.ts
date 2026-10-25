@@ -1384,6 +1384,21 @@ export const ProviderLimitFallbackModels = Schema.Array(ModelSelection).check(
 export type ProviderLimitFallbackModels = typeof ProviderLimitFallbackModels.Type;
 
 /**
+ * Models a limited thread never continues on automatically. `model` is
+ * matched on its normalized slug (`grok-4.7` = `grok-4-7`); without
+ * `instanceId` it applies on every provider. A manual pick is not blocked.
+ */
+export const ProviderLimitExcludedModel = Schema.Struct({
+  model: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(200)),
+  instanceId: Schema.optionalKey(ProviderInstanceId),
+});
+export type ProviderLimitExcludedModel = typeof ProviderLimitExcludedModel.Type;
+export const ProviderLimitExcludedModels = Schema.Array(ProviderLimitExcludedModel).check(
+  Schema.isMaxLength(64),
+);
+export type ProviderLimitExcludedModels = typeof ProviderLimitExcludedModels.Type;
+
+/**
  * A model on another paired machine a limited thread may hand off to:
  * "Minis · Claude · Opus 5.5". `label` is the machine's name when the
  * target was saved, shown while the machine is offline.
@@ -1440,6 +1455,7 @@ export const PROJECT_SCOPED_SERVER_SETTING_KEYS = [
   "providerLimitAction",
   "providerLimitFallbackModelSelection",
   "providerLimitFallbackModels",
+  "providerLimitExcludedModels",
   "providerLimitSwitchAtPercent",
   "providerLimitWaitUnderMinutes",
   "providerLimitRedeemResets",
@@ -1493,6 +1509,7 @@ export const ProjectSettingsOverrides = Schema.Struct({
   providerLimitAction: Schema.optionalKey(ProviderLimitAction),
   providerLimitFallbackModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
   providerLimitFallbackModels: Schema.optionalKey(ProviderLimitFallbackModels),
+  providerLimitExcludedModels: Schema.optionalKey(ProviderLimitExcludedModels),
   providerLimitSwitchAtPercent: Schema.optionalKey(Schema.NullOr(ProviderLimitSwitchAtPercent)),
   providerLimitWaitUnderMinutes: Schema.optionalKey(ProviderLimitWaitUnderMinutes),
   providerLimitRedeemResets: Schema.optionalKey(Schema.Boolean),
@@ -1711,6 +1728,10 @@ export const ServerSettings = Schema.Struct({
   ),
   /** Tried in order before any other fallback; empty uses the single model above. */
   providerLimitFallbackModels: ProviderLimitFallbackModels.pipe(
+    Schema.withDecodingDefault(Effect.succeed([])),
+  ),
+  /** Never continued on automatically; see `ProviderLimitExcludedModel`. */
+  providerLimitExcludedModels: ProviderLimitExcludedModels.pipe(
     Schema.withDecodingDefault(Effect.succeed([])),
   ),
   /** `null` never switches early; the stopped turn still continues under `switch`. */
@@ -2197,6 +2218,7 @@ export const ServerSettingsPatch = Schema.Struct({
   providerLimitAction: Schema.optionalKey(ProviderLimitAction),
   providerLimitFallbackModelSelection: Schema.optionalKey(Schema.NullOr(ModelSelection)),
   providerLimitFallbackModels: Schema.optionalKey(ProviderLimitFallbackModels),
+  providerLimitExcludedModels: Schema.optionalKey(ProviderLimitExcludedModels),
   providerLimitSwitchAtPercent: Schema.optionalKey(Schema.NullOr(ProviderLimitSwitchAtPercent)),
   providerLimitWaitUnderMinutes: Schema.optionalKey(ProviderLimitWaitUnderMinutes),
   providerLimitRedeemResets: Schema.optionalKey(Schema.Boolean),

@@ -19,6 +19,8 @@ import {
   type ProviderLimitTargetOrder,
 } from "@specweave-studio/contracts";
 
+import { type ExcludedFallbackModel, isExcludedFallbackModel } from "./providerFallback.ts";
+
 /** Usage read longer ago than this counts as unknown. Matches the fleet capacity snapshot. */
 export const MACHINE_USAGE_MAX_AGE_MS = 15 * 60_000;
 
@@ -80,6 +82,11 @@ export function judgeMachineCandidate(input: {
   readonly thresholdPercent: number | null;
   readonly unknownUsageEligible: boolean;
   readonly nowMs: number;
+  /**
+   * The user's excluded fallback models. Only entries without an instance
+   * apply: an instance id names an account on this machine, not the target's.
+   */
+  readonly excludedModels?: ReadonlyArray<ExcludedFallbackModel> | undefined;
 }): MachineCandidateVerdict {
   const { target, machine, source } = input;
   const label = targetMachineLabel(target, machine);
@@ -137,6 +144,17 @@ export function judgeMachineCandidate(input: {
     return verdict("model_missing", `${name} has no ${target.modelLabel ?? selection.model}`);
   // Never eligible, whatever the unknown-usage policy says. An existing reason
   // keeps older clients able to decode the verdict.
+  if (
+    isExcludedFallbackModel(
+      input.excludedModels?.filter((entry) => entry.instanceId === undefined),
+      selection.instanceId,
+      selection.model,
+    )
+  )
+    return verdict(
+      "unavailable",
+      `${target.modelLabel ?? selection.model} is excluded from automatic fallback`,
+    );
   if (provider.paidModels?.includes(selection.model))
     return verdict("unavailable", `${target.modelLabel ?? selection.model} is billed per token`);
 

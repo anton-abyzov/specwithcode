@@ -227,6 +227,10 @@
       "types": "./src/taskRouting.ts",
       "import": "./src/taskRouting.ts"
     },
+    "./fallbackOptions": {
+      "types": "./src/fallbackOptions.ts",
+      "import": "./src/fallbackOptions.ts"
+    },
     "./modelLanes": {
       "types": "./src/modelLanes.ts",
       "import": "./src/modelLanes.ts"

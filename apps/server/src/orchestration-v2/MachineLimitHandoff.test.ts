@@ -412,6 +412,28 @@ describe("limit handoff in the fallback sweep", () => {
     }),
   );
 
+  itEffect.effect("never hands off to a model the user excluded from fallback", () =>
+    Effect.gen(function* () {
+      const result = yield* run(
+        {
+          settings: { providerLimitExcludedModels: [{ model: "opus" }] },
+          machines: [machine(minis, "Minis"), machine(m3, "M3")],
+        },
+        2,
+      );
+      expect(result.requests).toEqual([]);
+      expect(result.shown?.candidates.map((row) => [row.eligible, row.reason])).toEqual([
+        [false, "unavailable"],
+        [false, "unavailable"],
+      ]);
+      // It continues here on the same-machine fallback model instead.
+      expect(result.dispatched[0]).toMatchObject({
+        type: "message.dispatch",
+        modelSelection: { instanceId: codexId, model: "gpt-6" },
+      });
+    }),
+  );
+
   itEffect.effect("never hands a personal assistant's thread to another machine", () =>
     Effect.gen(function* () {
       const result = yield* run(

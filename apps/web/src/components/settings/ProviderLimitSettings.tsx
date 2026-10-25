@@ -9,6 +9,10 @@ import {
   fallbackModelOrder,
   isDirectClaudeApiKeyProvider,
 } from "@specweave-studio/shared/providerFallback";
+import {
+  describeFallbackOptions,
+  toggleExcludedModel,
+} from "@specweave-studio/shared/fallbackOptions";
 import { useState } from "react";
 
 import { getCustomModelOptionsByInstance } from "../../modelSelection";
@@ -34,6 +38,7 @@ import { Button } from "../ui/button";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
 import { AddApiCreditAccountDialog } from "./AddApiCreditAccountDialog";
+import { FallbackOptionsPanel } from "./FallbackOptionsPanel";
 import { addFallbackEntry, FallbackOrderList, MAX_FALLBACK_MODELS } from "./FallbackOrderList";
 import { MachineFallbackSettings } from "./MachineFallbackSettings";
 import { useSettingsScope } from "./SettingsScopeContext";
@@ -103,6 +108,14 @@ export function ProviderLimitSettings() {
     "providerLimitFallbackModelSelection",
   ]);
   const mixedSwitchAt = useScopedSettingsMixed(["providerLimitSwitchAtPercent"]);
+  const mixedExcluded = useScopedSettingsMixed(["providerLimitExcludedModels"]);
+  const excludedModels = settings.providerLimitExcludedModels;
+  const fallbackOptions = describeFallbackOptions({
+    providers,
+    rule: settings,
+    nowMs: Date.now(),
+    belowPercent: settings.providerLimitSwitchAtPercent ?? 100,
+  });
   const mixedWaitUnder = useScopedSettingsMixed(["providerLimitWaitUnderMinutes"]);
   const mixedRedeem = useScopedSettingsMixed(["providerLimitRedeemResets"]);
   const mixedSubscriptionChange = useScopedSettingsMixed(["autoApproveSubscriptionChange"]);
@@ -210,6 +223,39 @@ export function ProviderLimitSettings() {
           order={fallbackOrder}
           providers={providers}
           onChange={saveFallbackOrder}
+        />
+      </SettingsRow>
+      <SettingsRow
+        serverScoped
+        settingKeys={["providerLimitExcludedModels"]}
+        mixed={mixedExcluded}
+        id="provider-limit-options"
+        title="Where a limited thread can continue"
+        description="Every model on this machine, by family, with whether it can take a limited thread now and what access backs it. Exclude a model to keep it out of automatic fallback; to set a family's minimum, exclude the models below it."
+        status={
+          excludedModels.length === 0 && !mixedExcluded
+            ? "Nothing excluded"
+            : `${excludedModels.length} excluded`
+        }
+        resetAction={
+          excludedModels.length > 0 ? (
+            <SettingResetButton
+              label="excluded models"
+              onClick={() => updateSettings({ providerLimitExcludedModels: [] })}
+            />
+          ) : null
+        }
+      >
+        <FallbackOptionsPanel
+          groups={fallbackOptions}
+          disabled={mixedExcluded}
+          onToggleExcluded={(model, instanceId) =>
+            updateSettings({
+              providerLimitExcludedModels: [
+                ...toggleExcludedModel(excludedModels, model, instanceId),
+              ],
+            })
+          }
         />
       </SettingsRow>
       <MachineFallbackSettings />

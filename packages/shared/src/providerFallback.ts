@@ -27,6 +27,8 @@ export interface ProviderFallbackRule {
   readonly providerLimitFallbackModelSelection: ModelSelection | null;
   /** The models to continue on, best first; empty uses the single model above. */
   readonly providerLimitFallbackModels?: ReadonlyArray<ModelSelection> | undefined;
+  /** Models never continued on automatically (see `isExcludedFallbackModel`). */
+  readonly providerLimitExcludedModels?: ReadonlyArray<ExcludedFallbackModel> | undefined;
   readonly providerLimitSwitchAtPercent: number | null;
   /**
    * Minutes: a reset this close is waited for instead of switching,
@@ -47,6 +49,41 @@ export interface ProviderFallbackRule {
    * tries every provider that lists it.
    */
   readonly defaultModelProviders?: ReadonlyArray<ProviderInstanceId> | undefined;
+}
+
+/** A model the user keeps out of automatic limit continuation. */
+export interface ExcludedFallbackModel {
+  readonly model: string;
+  /** Only on this instance; absent excludes the model on every provider. */
+  readonly instanceId?: ProviderInstanceId;
+}
+
+/**
+ * A model slug in the form every provider spells alike: lowercase, with
+ * `.`, `_` and spaces read as `-`, so Copilot's `claude-opus-5.5` and
+ * Claude's `claude-opus-5-5`, or `grok-4.7` and `grok-4-7`, are one model.
+ */
+export function normalizeModelKey(model: string): string {
+  return model
+    .trim()
+    .toLowerCase()
+    .replace(/[\s._]+/g, "-")
+    .replace(/-+/g, "-");
+}
+
+/** Whether the user excluded `model` on `instanceId` from automatic fallback. */
+export function isExcludedFallbackModel(
+  excluded: ReadonlyArray<ExcludedFallbackModel> | undefined,
+  instanceId: ProviderInstanceId,
+  model: string | undefined,
+): boolean {
+  if (model === undefined || excluded === undefined || excluded.length === 0) return false;
+  const key = normalizeModelKey(model);
+  return excluded.some(
+    (entry) =>
+      normalizeModelKey(entry.model) === key &&
+      (entry.instanceId === undefined || entry.instanceId === instanceId),
+  );
 }
 
 /**
@@ -146,7 +183,10 @@ export function isPerTokenProvider(provider: ServerProvider | undefined): boolea
  * API (OpenRouter on Pi). The same check as `isPaidModel` in modelBilling.ts,
  * which cannot be imported here without a cycle.
  */
-function isPaidModelOn(provider: ServerProvider | undefined, model: string | undefined): boolean {
+export function isPaidModelOn(
+  provider: ServerProvider | undefined,
+  model: string | undefined,
+): boolean {
   return isPerTokenProvider(provider) || isPaidModelBilling(providerModelBilling(provider, model));
 }
 
@@ -335,6 +375,8 @@ export function resolveSameModelElsewhere(input: {
   readonly limitedInstanceIds?: ReadonlySet<string> | undefined;
   /** Selections already tried for this stop (`fallbackSelectionKey`), skipped. */
   readonly excludedSelections?: ReadonlySet<string> | undefined;
+  /** Models the user keeps out of automatic fallback, skipped. */
+  readonly excludedModels?: ReadonlyArray<ExcludedFallbackModel> | undefined;
   /** Only candidates whose window holds the thread (see `contextFits`). */
   readonly contextFit?: ContextFitRequirement | undefined;
   /** Skip providers that report no usage: only verified room counts. */
@@ -355,6 +397,7 @@ export function resolveSameModelElsewhere(input: {
     if (slug === undefined) return [];
     const key = fallbackSelectionKey({ instanceId: provider.instanceId, model: slug });
     if (input.excludedSelections?.has(key)) return [];
+    if (isExcludedFallbackModel(input.excludedModels, provider.instanceId, slug)) return [];
     if (!fitsContext(input.contextFit, { instanceId: provider.instanceId, model: slug })) return [];
     const room = roomOn(provider, slug, {
       nowMs: input.nowMs,
@@ -432,6 +475,7 @@ export function isApiCreditProvider(provider: ServerProvider | undefined): boole
  * API accounts.
  */
 export function resolveApiCreditSelections(input: {
+  readonly excludedModels?: ReadonlyArray<ExcludedFallbackModel> | undefined;
   readonly providers: ReadonlyArray<ServerProvider>;
   readonly current: ModelSelection;
 }): ReadonlyArray<ModelSelection> {
@@ -445,6 +489,8 @@ export function resolveApiCreditSelections(input: {
   for (const provider of input.providers) {
     if (provider.instanceId === current.instanceId || provider.driver !== current.driver) continue;
     if (!isApiCreditProvider(provider) || !canTakeTurn(provider)) continue;
+    if (isExcludedFallbackModel(input.excludedModels, provider.instanceId, input.current.model))
+      continue;
     if (provider.models.some((model) => model.slug === input.current.model))
       selections.push({ ...input.current, instanceId: provider.instanceId });
   }
@@ -461,6 +507,7 @@ export function resolveApiCreditSelections(input: {
  * such instance, or the thread is on neither.
  */
 export function resolveApiCreditSelection(input: {
+  readonly excludedModels?: ReadonlyArray<ExcludedFallbackModel> | undefined;
   readonly providers: ReadonlyArray<ServerProvider>;
   readonly current: ModelSelection;
   readonly rotate?: boolean;
@@ -527,7 +574,9 @@ export type FallbackOrderUnavailable =
   /** Installed but its usage is unknown: the user may still choose it. */
   | "unverified"
   /** Not installed, not prepared or not ready on this machine: nothing can run on it. */
-  | "not-ready";
+  | "not-ready"
+  /** The user keeps this model out of automatic fallback; a manual pick may still use it. */
+  | "excluded";
 
 export interface FallbackOrderEntry {
   readonly selection: ModelSelection;
@@ -548,7 +597,9 @@ export function describeFallbackOrder(input: {
   readonly currentInstanceId: ProviderInstanceId;
   readonly rule: Pick<
     ProviderFallbackRule,
-    "providerLimitFallbackModels" | "providerLimitFallbackModelSelection"
+    | "providerLimitFallbackModels"
+    | "providerLimitFallbackModelSelection"
+    | "providerLimitExcludedModels"
   >;
   readonly nowMs: number;
   readonly belowPercent?: number | null | undefined;
@@ -582,6 +633,16 @@ export function describeFallbackOrder(input: {
       // ready) can't open a session; offering it only leads to a failed turn.
       return entry("not-ready");
     }
+    // After the hard checks: an excluded entry stays a manual choice, so it
+    // must still be one that can open a turn here.
+    if (
+      isExcludedFallbackModel(
+        input.rule.providerLimitExcludedModels,
+        selection.instanceId,
+        selection.model,
+      )
+    )
+      return entry("excluded");
     if (reportsNoUsage(provider)) return entry(null);
     const used = providerUsedPercent(provider, input.nowMs, selection.model);
     const threshold = input.belowPercent ?? 100;
@@ -626,6 +687,7 @@ function resolveProviderFallbackPass(input: {
     ProviderFallbackRule,
     | "providerLimitFallbackModelSelection"
     | "providerLimitFallbackModels"
+    | "providerLimitExcludedModels"
     | "defaultModelSelection"
     | "defaultModelProviders"
   >;
@@ -662,6 +724,7 @@ function resolveProviderFallbackPass(input: {
   const excluded = (instanceId: ProviderInstanceId, model: string | undefined) =>
     model !== undefined &&
     ((input.excludedSelections?.has(fallbackSelectionKey({ instanceId, model })) ?? false) ||
+      isExcludedFallbackModel(input.rule.providerLimitExcludedModels, instanceId, model) ||
       !fitsContext(input.contextFit, { instanceId, model }));
   const usable = (
     provider: ServerProvider | undefined,
@@ -740,6 +803,7 @@ function resolveProviderFallbackPass(input: {
           belowPercent: input.belowPercent,
           limitedInstanceIds: input.limitedInstanceIds,
           excludedSelections: input.excludedSelections,
+          excludedModels: input.rule.providerLimitExcludedModels,
           contextFit: input.contextFit,
           verifiedOnly,
         });
@@ -827,10 +891,25 @@ function resolveProviderFallbackPass(input: {
   const sameModel = (provider: ServerProvider) =>
     provider.driver === driver &&
     input.currentModel !== undefined &&
+    // Only the user's exclusion moves on to another model of this account; one
+    // this stop already tried there rules the whole account out below.
+    !isExcludedFallbackModel(
+      input.rule.providerLimitExcludedModels,
+      provider.instanceId,
+      input.currentModel,
+    ) &&
     provider.models.some((model) => model.slug === input.currentModel && !model.isCustom);
   // Lower is cheaper: the same model elsewhere, the same driver, then headroom.
-  const candidateModel = (provider: ServerProvider) =>
-    sameModel(provider) ? input.currentModel : defaultModel(provider);
+  // Its default model, or, when the user excluded that one, its first listed
+  // model still allowed: excluding GPT-6.1 Sol must not rule out Codex.
+  const candidateModel = (provider: ServerProvider) => {
+    if (sameModel(provider)) return input.currentModel;
+    const preferred = defaultModel(provider);
+    const allowed = (slug: string | undefined) =>
+      !isExcludedFallbackModel(input.rule.providerLimitExcludedModels, provider.instanceId, slug);
+    if (preferred === undefined || allowed(preferred)) return preferred;
+    return provider.models.find((model) => !model.isCustom && allowed(model.slug))?.slug;
+  };
   const rank = (provider: ServerProvider): [number, number] => [
     sameModel(provider) ? 0 : provider.driver === driver ? 1 : 2,
     providerUsedPercent(provider, input.nowMs, candidateModel(provider)) ?? 101,
@@ -954,6 +1033,7 @@ export function resolveWorkerLaunchSelection(input: {
     // A provider that reports no usage only gets the worker once nothing
     // with verified room does (see resolveProviderFallback).
     verifiedOnly: true,
+    excludedModels: input.rule.providerLimitExcludedModels,
   });
   if (same !== null) return { selection: same, reason: "same-model" };
   const coordinator = input.coordinator;
@@ -964,7 +1044,12 @@ export function resolveWorkerLaunchSelection(input: {
       canTakeTurn(provider) &&
       !isPaidModelOn(provider, coordinator.model) &&
       !isUnknownBillingAgent(provider) &&
-      !full(provider, coordinator.model)
+      !full(provider, coordinator.model) &&
+      !isExcludedFallbackModel(
+        input.rule.providerLimitExcludedModels,
+        coordinator.instanceId,
+        coordinator.model,
+      )
     )
       return {
         selection: {
@@ -988,6 +1073,7 @@ export function resolveWorkerLaunchSelection(input: {
     rule: {
       providerLimitFallbackModelSelection: input.rule.providerLimitFallbackModelSelection,
       providerLimitFallbackModels: input.rule.providerLimitFallbackModels,
+      providerLimitExcludedModels: input.rule.providerLimitExcludedModels,
       defaultModelSelection: null,
       defaultModelProviders: input.rule.defaultModelProviders,
     },
@@ -1261,7 +1347,17 @@ export function resolveCoordinatorTurnSelection(input: {
       isPaidModelBilling(providerModelBilling(current, thread.model)) ||
       (isPerTokenProvider(current) && input.rule.providerLimitUseApiCredits !== true) ||
       (isUnknownBillingAgent(current) && !ruleNamesInstance(input.rule, thread.instanceId));
-    if (current !== undefined && !paid && canTakeTurn(current) && !full(current, thread.model))
+    if (
+      current !== undefined &&
+      !paid &&
+      canTakeTurn(current) &&
+      !full(current, thread.model) &&
+      !isExcludedFallbackModel(
+        input.rule.providerLimitExcludedModels,
+        thread.instanceId,
+        thread.model,
+      )
+    )
       return { selection: thread, reason: "staying-on-fallback" };
   }
   if (input.rule.providerLimitAction !== "switch")

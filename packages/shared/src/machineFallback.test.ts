@@ -13,6 +13,7 @@ import {
   type MachineView,
   orderFallbackCandidates,
 } from "./machineFallback.ts";
+import type { ExcludedFallbackModel } from "./providerFallback.ts";
 
 const now = Date.parse("2026-10-20T14:00:00.000Z");
 const fresh = "2026-10-20T13:58:00.000Z";
@@ -94,6 +95,28 @@ describe("judgeMachineCandidate", () => {
     });
     expect(judge(machine({}, {}, { paidModels: ["claude-opus-5-5"] }), true).eligible).toBe(false);
     expect(judge(machine({}, null, { paidModels: ["other"] }), true).eligible).toBe(true);
+  });
+
+  it("never hands off to a model the user excluded on every provider", () => {
+    const judgeExcluding = (excludedModels: ReadonlyArray<ExcludedFallbackModel>) =>
+      judgeMachineCandidate({
+        target,
+        machine: machine(),
+        source,
+        projectTitle: "EasyChamp",
+        thresholdPercent: 95,
+        unknownUsageEligible: true,
+        nowMs: now,
+        excludedModels,
+      });
+    expect(judgeExcluding([{ model: "claude-opus-5.5" }])).toMatchObject({
+      eligible: false,
+      reason: "unavailable",
+    });
+    // An instance id names an account on this machine, never the target's.
+    const scoped = [{ model: "claude-opus-5-5", instanceId: target.modelSelection.instanceId }];
+    expect(judgeExcluding(scoped).eligible).toBe(true);
+    expect(judgeExcluding([{ model: "grok-4.7" }]).eligible).toBe(true);
   });
 
   it("accepts a machine on another account with room", () => {

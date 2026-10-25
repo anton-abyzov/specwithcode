@@ -613,6 +613,7 @@ it.each<[FallbackOrderUnavailable | null, boolean]>([
   ["limited", true],
   ["full", true],
   ["per-token", true],
+  ["excluded", true],
   ["current", false],
   ["missing", false],
   ["signed-out", false],
@@ -639,6 +640,10 @@ it.each<Partial<ServerProvider>>([
       }),
     ).toBe(false);
   }
+});
+
+it("names an excluded model as kept out of automatic fallback only", () => {
+  expect(fallbackUnavailableReason("excluded", null)).toBe("excluded from automatic fallback");
 });
 
 it("requires a provider snapshot and permits a runnable warning", () => {

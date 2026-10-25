@@ -573,7 +573,12 @@ export function providerLimitStep(
       nowMs,
       rule.snoozeLimitedThreads === true,
     )
-      ? resolveApiCreditSelection({ providers, current: thread.modelSelection, rotate })
+      ? resolveApiCreditSelection({
+          providers,
+          current: thread.modelSelection,
+          rotate,
+          excludedModels: rule.providerLimitExcludedModels,
+        })
       : null;
   if (apiCredits !== null && current !== undefined) {
     return {

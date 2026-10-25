@@ -3236,6 +3236,7 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         const cursorId = ProviderInstanceId.make("cursor_disposing");
         const cursorStore = yield* ProviderCredentialStore.make("cursor", cursorId);
         const lateWrite = yield* Deferred.make<void>();
+        const signInsCleared = yield* Deferred.make<void>();
         // Stands in for the registry: disposing the removed instance's driver
         // writes its token back, as a refresh finishing during shutdown would.
         const mutator = ProviderInstanceRegistryMutator.ProviderInstanceRegistryMutator.of({
@@ -3257,7 +3258,17 @@ it.layer(NodeServices.layer)("server settings", (it) => {
               ),
             ),
             Layer.provide(
-              Layer.succeed(ServerSettingsModule.ServerSettingsService, serverSettings),
+              Layer.succeed(ServerSettingsModule.ServerSettingsService, {
+                ...serverSettings,
+                clearRemovedInstanceSignIns: (runningInstanceIds) =>
+                  Effect.gen(function* () {
+                    const running = [...runningInstanceIds];
+                    const afterDisposal = yield* Deferred.isDone(lateWrite);
+                    yield* serverSettings.clearRemovedInstanceSignIns!(running);
+                    if (afterDisposal && !running.includes(cursorId))
+                      yield* Deferred.succeed(signInsCleared, undefined);
+                  }),
+              }),
             ),
           ),
         );
@@ -3270,10 +3281,8 @@ it.layer(NodeServices.layer)("server settings", (it) => {
         yield* cursorStore.set(signIn);
         yield* serverSettings.updateProviderInstance({ operation: "remove", instanceId: cursorId });
         yield* Deferred.await(lateWrite).pipe(Effect.timeout("10 seconds"));
-        for (let attempt = 0; attempt < 100; attempt++) {
-          if (!(yield* fileSystem.exists(tombstones))) break;
-          yield* Effect.sleep("50 millis");
-        }
+        // Observe the completed cleanup, not the file while Windows is deleting it.
+        yield* Deferred.await(signInsCleared).pipe(Effect.timeout("10 seconds"));
         assert.isFalse(yield* fileSystem.exists(tombstones));
         assert.isTrue(Option.isNone(yield* cursorStore.get));
       }),
