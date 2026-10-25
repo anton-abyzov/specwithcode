@@ -1,4 +1,9 @@
-import { DesignId, ProjectId, type DesignOwnerInput } from "@specweave-studio/contracts";
+import {
+  DesignId,
+  ProjectId,
+  type DesignOwnerInput,
+  type DesignSystemId,
+} from "@specweave-studio/contracts";
 import * as Schema from "effect/Schema";
 
 /**
@@ -27,4 +32,19 @@ export function decodeDesignKey(
   const designId = rest.slice(dot + 1);
   if (!isDesignId(designId) || projectId.trim() === "") return null;
   return { owner: { kind: "project", projectId: ProjectId.make(projectId) }, designId };
+}
+
+/**
+ * The `/design/systems/$systemKey` route parameter, encoded like a design key:
+ * `p.<projectId>.<systemId>` or `pg.<systemId>`.
+ */
+export function encodeSystemKey(owner: DesignOwnerInput, systemId: DesignSystemId): string {
+  return encodeDesignKey(owner, systemId);
+}
+
+export function decodeSystemKey(
+  key: string,
+): { readonly owner: DesignOwnerInput; readonly systemId: DesignSystemId } | null {
+  const decoded = decodeDesignKey(key);
+  return decoded === null ? null : { owner: decoded.owner, systemId: decoded.designId };
 }

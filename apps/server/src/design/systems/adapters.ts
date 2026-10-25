@@ -18,6 +18,7 @@ import * as Layer from "effect/Layer";
 
 import { DesignService, PLAYGROUND_DESIGN_DIR } from "../DesignService.ts";
 import * as Store from "../DesignStore.ts";
+import * as DesignSystemEditing from "./DesignSystemEditing.ts";
 import {
   type DesignSystemCaller,
   DesignSystemFiles,
@@ -94,3 +95,10 @@ export const layerFiles = Layer.succeed(
  */
 export const layer: Layer.Layer<DesignSystemService, never, DesignService | DesignSystemProposals> =
   layerDesignSystemService.pipe(Layer.provide(Layer.merge(layerRoots, layerFiles)));
+
+/** Hand editing and stored files over a design service. Needs `DesignService`. */
+export const layerEditing: Layer.Layer<
+  DesignSystemEditing.DesignSystemEditing,
+  never,
+  DesignService
+> = DesignSystemEditing.layer.pipe(Layer.provide(layerRoots));

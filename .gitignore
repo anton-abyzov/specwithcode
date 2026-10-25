@@ -54,3 +54,6 @@ node_modules/
 
 __pycache__/
 *.pyc
+
+# Vite cache of the project-workspace headless fixture (tests/project-workspace/serve.mjs)
+/.cache/

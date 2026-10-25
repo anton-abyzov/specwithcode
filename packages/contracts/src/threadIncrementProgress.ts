@@ -139,6 +139,12 @@ export const ThreadIncrementProgressSnapshot = Schema.Struct({
    * Absent from older servers and outside SpecWeave projects.
    */
   unplanned: Schema.optional(Schema.Array(ThreadId)),
+  /**
+   * Threads in the same position whose only changes were reports,
+   * specifications or other documents, so they are not counted as code.
+   * Absent from older servers and outside SpecWeave projects.
+   */
+  documentation: Schema.optional(Schema.Array(ThreadId)),
   /** Whether the project plans with SpecWeave; absent from older servers. */
   specweave: Schema.optional(Schema.Boolean),
 });

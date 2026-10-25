@@ -17,6 +17,7 @@ import {
   ProviderAdapterTurnStartError,
   type ProviderAdapterV2SessionRuntime,
   type ProviderAdapterV2TurnInput,
+  type ProviderAdapterV2Event,
 } from "../orchestration-v2/ProviderAdapter.ts";
 import { resolveProjectEnvironment } from "./ProjectEnvironmentPaths.ts";
 
@@ -28,7 +29,7 @@ export const makeEnvironmentRuntime = Effect.gen(function* () {
     session: ProviderAdapterV2SessionRuntime,
     read: (projectId: ProjectId) => Effect.Effect<Option.Option<Project>, E>,
   ): ProviderAdapterV2SessionRuntime => {
-    const start = (input: ProviderAdapterV2TurnInput, compact = false) =>
+    const start = (input: ProviderAdapterV2TurnInput, compact = false, prepare = false) =>
       Effect.gen(function* () {
         const found = yield* read(input.appThread.projectId);
         if (Option.isNone(found))
@@ -42,9 +43,11 @@ export const makeEnvironmentRuntime = Effect.gen(function* () {
         const environment = project.workspaceSettings?.environment ?? DEFAULT_PROJECT_ENVIRONMENT;
         // Empty legacy environments retain existing provider behavior and need no filesystem probe.
         if (environment.additionalFolders.length === 0 && environment.repositories.length === 0)
-          return yield* compact && session.compactThread
-            ? session.compactThread(input)
-            : session.startTurn(input);
+          return yield* prepare
+            ? session.prepareTurn!(input)
+            : compact && session.compactThread
+              ? session.compactThread(input)
+              : session.startTurn(input);
         const resolved = yield* resolveProjectEnvironment(
           project.id,
           project.workspaceRoot,
@@ -93,9 +96,11 @@ export const makeEnvironmentRuntime = Effect.gen(function* () {
                 }
               : input.message,
         };
-        return yield* compact && session.compactThread
-          ? session.compactThread(next)
-          : session.startTurn(next);
+        return yield* prepare
+          ? session.prepareTurn!(next)
+          : compact && session.compactThread
+            ? session.compactThread(next)
+            : session.startTurn(next);
       }).pipe(
         Effect.mapError((cause) =>
           Schema.is(ProviderAdapterTurnStartError)(cause)
@@ -111,9 +116,20 @@ export const makeEnvironmentRuntime = Effect.gen(function* () {
       );
     return {
       ...session,
-      startTurn: (input) => start(input),
+      startTurn: (input) => start(input).pipe(Effect.asVoid),
+      ...(session.prepareTurn === undefined
+        ? {}
+        : {
+            prepareTurn: (input: ProviderAdapterV2TurnInput) =>
+              start(input, false, true).pipe(
+                Effect.map((events): ReadonlyArray<ProviderAdapterV2Event> => events ?? []),
+              ),
+          }),
       ...(session.compactThread
-        ? { compactThread: (input: ProviderAdapterV2TurnInput) => start(input, true) }
+        ? {
+            compactThread: (input: ProviderAdapterV2TurnInput) =>
+              start(input, true).pipe(Effect.asVoid),
+          }
         : {}),
     };
   };

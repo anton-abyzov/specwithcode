@@ -46,3 +46,22 @@ button.sws-handoff-action {
     margin-right: 96px;
   }
 }
+/* A thread bound to a design links back to it; quieter than a handoff action. */
+.sws-thread-design-action {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border-color: var(--border);
+  color: var(--muted-foreground);
+  transition:
+    color 120ms var(--ease-out-quint, ease-out),
+    border-color 120ms var(--ease-out-quint, ease-out);
+}
+.sws-thread-design-action:hover {
+  border-color: var(--input);
+  color: var(--foreground);
+}
+.sws-thread-design-action svg {
+  width: 12px;
+  height: 12px;
+}

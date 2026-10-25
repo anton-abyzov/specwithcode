@@ -21,6 +21,7 @@ import {
   CANDIDATE_KIND_LABELS,
   formatBytes,
   lineageText,
+  offeredProjects,
   SKIP_REASON_LABELS,
   type OwnerProject,
 } from "./reviewModel";
@@ -95,7 +96,7 @@ function CandidateRow({
 }
 
 export function ScanFromCode({
-  projects,
+  projects: allProjects,
   onScan,
   onPropose,
 }: {
@@ -105,6 +106,8 @@ export function ScanFromCode({
   onPropose: (input: DesignSystemProposeInput) => Promise<string | null>;
 }) {
   const id = useId();
+  // Only the person's own code projects have code to scan.
+  const projects = offeredProjects(allProjects, "code");
   const [projectId, setProjectId] = useState<ProjectId | null>(projects[0]?.id ?? null);
   const [result, setResult] = useState<DesignSystemScanResult | null>(null);
   const [selection, setSelection] = useState<Record<string, string[]>>({});
@@ -115,7 +118,7 @@ export function ScanFromCode({
   if (projects.length === 0)
     return (
       <p className="text-sm text-muted-foreground">
-        Add a project first. The Playground has no code to scan, so this needs a project.
+        Add a code project first. The Playground has no code to scan, so this needs a project.
       </p>
     );
 

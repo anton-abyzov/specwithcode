@@ -1,5 +1,9 @@
 import type { DesignDocument, DesignNode, DesignPage } from "@specweave-studio/contracts";
-import type { DesignHtmlTarget } from "@specweave-studio/shared/designRender";
+import {
+  renderDesignHtml,
+  type DesignHtmlTarget,
+  type DesignRenderContext,
+} from "@specweave-studio/shared/designRender";
 
 /** Top-level visible frames of a page. */
 export const designFrames = (page: DesignPage): ReadonlyArray<DesignNode> =>
@@ -28,4 +32,34 @@ export function exportSheets(document: DesignDocument): ReadonlyArray<DesignShee
       const chosen = document.kind === "slides" ? frames.slice(0, 1) : frames;
       return chosen.map((frame) => ({ page, target: { pageId: page.id, frameId: frame.id } }));
     });
+}
+
+/** A part of an export drawn by the shared renderer and placed as an image. */
+export interface RasterJob {
+  readonly html: string;
+  readonly width: number;
+  readonly height: number;
+}
+
+/**
+ * `node` alone as a standalone page, without its opacity and rotation (the
+ * export applies those) and, unless `withChildren`, without its children.
+ */
+export function rasterJob(
+  document: DesignDocument,
+  page: DesignPage,
+  node: DesignNode,
+  withChildren: boolean,
+  context: DesignRenderContext,
+): RasterJob {
+  const { opacity: _opacity, rotation: _rotation, ...flat } = node;
+  const nodes = page.nodes
+    .filter((candidate) => withChildren || candidate.parentId !== node.id)
+    .map((candidate) => (candidate.id === node.id ? (flat as DesignNode) : candidate));
+  const rendered = renderDesignHtml(
+    { ...document, pages: [{ ...page, nodes }] },
+    { pageId: page.id, frameId: node.id },
+    context,
+  );
+  return { html: rendered.html, width: rendered.width, height: rendered.height };
 }

@@ -556,12 +556,29 @@ export interface ProviderAdapterV2SessionRuntime {
    */
   readonly hasPendingBackgroundWork?: Effect.Effect<boolean>;
   /**
+   * Why this native process can serve no more turns (for example Codex after
+   * its account changed outside it), or null while it can. The session
+   * manager then starts no new turn on it and replaces it once no turn or
+   * background work runs on it.
+   */
+  readonly restartRequired?: Effect.Effect<string | null>;
+  /**
    * Per-provider-thread pending work for root-run ingestion stop gates. When
    * present, RunExecutionService uses only this probe (never the session-wide
    * hasPendingBackgroundWork) so sibling native threads cannot pin an
    * unrelated root subscription open.
    */
   readonly hasPendingBackgroundWorkForThread?: (
+    providerThread: OrchestrationV2ProviderThread,
+  ) => Effect.Effect<boolean>;
+  /**
+   * Whether a live provider process still runs background work (subagents,
+   * shells) for this provider thread. False once that process is gone, or
+   * when only work no process will report on is left. Reconcilers settle a
+   * thread's open subagents only when this is false; without it they wait for
+   * the session to close.
+   */
+  readonly liveBackgroundWork?: (
     providerThread: OrchestrationV2ProviderThread,
   ) => Effect.Effect<boolean>;
   /**
@@ -590,8 +607,18 @@ export interface ProviderAdapterV2SessionRuntime {
   readonly injectHistory?: (
     input: ProviderAdapterV2HistoricalContext & {
       readonly providerThread: OrchestrationV2ProviderThread;
+      /** The turn the history precedes, for a native thread that must be reloaded first. */
+      readonly turn?: Pick<
+        ProviderAdapterV2TurnInput,
+        "threadId" | "modelSelection" | "runtimePolicy"
+      >;
     },
   ) => Effect.Effect<boolean, ProviderAdapterV2Error>;
+  /** Opens/reuses the process without offering a prompt. Returned earlier-process
+   * settlements must be persisted before startTurn composes the prompt. */
+  readonly prepareTurn?: (
+    input: ProviderAdapterV2TurnInput,
+  ) => Effect.Effect<ReadonlyArray<ProviderAdapterV2Event>, ProviderAdapterV2Error>;
   readonly startTurn: (
     input: ProviderAdapterV2TurnInput,
   ) => Effect.Effect<void, ProviderAdapterV2Error>;

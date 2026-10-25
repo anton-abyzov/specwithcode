@@ -1,6 +1,7 @@
 import type { DesignDocument, DesignPage } from "@specweave-studio/contracts";
 import { applyDesignOperations, newDesignDocument } from "@specweave-studio/shared/designOps";
 import { describe, expect, it } from "vite-plus/test";
+import { DesignSession, type DesignTransport } from "../editor/designSession";
 import {
   alignOperations,
   distributeOperations,
@@ -15,7 +16,9 @@ import {
   zoomAt,
 } from "./geometry";
 import {
+  COMPONENT_SIZE,
   createBoxNode,
+  createComponentNode,
   createLineNode,
   createPenNode,
   duplicateOperations,
@@ -147,6 +150,72 @@ describe("tools", () => {
       ],
     });
     expect(run(doc, [pen!.operation]).pages[0]!.nodes.at(-1)!.type).toBe("path");
+  });
+
+  it("inserts a component centred inside the frame under the point, relative to it", () => {
+    const doc = documentWith();
+    const page = doc.pages[0]!;
+    const frame = page.nodes[0]!;
+    const longName = "Score pill ".repeat(30);
+    const { operation, node } = createComponentNode(
+      { page, index: indexNodes(page) },
+      { id: "html:Score-pill", name: longName },
+      { x: 300, y: 250 },
+    );
+    expect(node).toMatchObject({
+      parentId: frame.id,
+      type: "component",
+      componentId: "html:Score-pill",
+      x: 300 - 100 - COMPONENT_SIZE.width / 2,
+      y: 250 - 100 - COMPONENT_SIZE.height / 2,
+      width: COMPONENT_SIZE.width,
+      height: COMPONENT_SIZE.height,
+    });
+    expect(node.name).toBe(longName.slice(0, 180));
+    const next = run(doc, [operation]);
+    const placed = next.pages[0]!.nodes.find((candidate) => candidate.id === node.id)!;
+    expect(placed.type).toBe("component");
+    expect(pageRect(indexNodes(next.pages[0]!), placed)).toEqual({
+      x: 300 - COMPONENT_SIZE.width / 2,
+      y: 250 - COMPONENT_SIZE.height / 2,
+      ...COMPONENT_SIZE,
+    });
+  });
+
+  it("puts a component on the page itself outside every frame", () => {
+    const doc = documentWith();
+    const page = doc.pages[0]!;
+    const { operation, node } = createComponentNode(
+      { page, index: indexNodes(page) },
+      { id: "wv-btn", name: "Button" },
+      { x: -900, y: -900 },
+    );
+    expect(node).toMatchObject({ parentId: null, x: -1060, y: -960, name: "Button" });
+    expect(run(doc, [operation]).pages[0]!.nodes.at(-1)!.id).toBe(node.id);
+  });
+
+  it("undoes and redoes an inserted component as one step", () => {
+    const doc = documentWith();
+    const page = doc.pages[0]!;
+    const transport: DesignTransport = {
+      apply: async () => ({ ok: false, reason: "error", detail: "offline" }),
+      get: async () => doc,
+    };
+    const session = new DesignSession(doc, transport, 60_000);
+    const { operation, node } = createComponentNode(
+      { page, index: indexNodes(page) },
+      { id: "wv-btn", name: "Button" },
+      { x: 300, y: 250 },
+    );
+    const count = () =>
+      session.document.pages[0]!.nodes.filter((candidate) => candidate.id === node.id).length;
+    expect(session.commit([operation]).ok).toBe(true);
+    expect(count()).toBe(1);
+    expect(session.undo().ok).toBe(true);
+    expect(count()).toBe(0);
+    expect(session.redo().ok).toBe(true);
+    expect(count()).toBe(1);
+    void session.close();
   });
 
   it("duplicates a frame with its children under new ids", () => {

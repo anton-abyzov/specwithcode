@@ -29,6 +29,7 @@ function environment(
     loaded?: boolean;
     settings?: Partial<ServerSettings>;
     projectOverrides?: boolean;
+    overrideChanges?: boolean;
   } = {},
 ) {
   return {
@@ -43,7 +44,10 @@ function environment(
         : {
             settings: { ...DEFAULT_SERVER_SETTINGS, ...options.settings },
             environment: {
-              capabilities: { projectSettingsOverrides: options.projectOverrides !== false },
+              capabilities: {
+                projectSettingsOverrides: options.projectOverrides !== false,
+                ...(options.overrideChanges ? { projectSettingsOverrideChanges: true } : {}),
+              },
             },
           },
   };
@@ -424,6 +428,129 @@ describe("scoped settings writes", () => {
       third.label,
     ]);
     expect(persistServer).toHaveBeenCalledTimes(4);
+  });
+});
+
+describe("per-key project override saves", () => {
+  const snapshot = environment("Server", {
+    overrideChanges: true,
+    settings: {
+      projectSettingsOverrides: {
+        [projectId]: { enableAgentBrowserAccess: false, defaultModelSelection: null },
+      },
+    },
+  });
+  const save = (
+    plans: readonly {
+      serverWrites: readonly { patch: Parameters<typeof applyServerSettingsPatch>[1] }[];
+    }[],
+    from = snapshot.serverConfig!.settings,
+  ) =>
+    plans
+      .flatMap((plan) => plan.serverWrites)
+      .reduce((settings, write) => applyServerSettingsPatch(settings, write.patch), from)
+      .projectSettingsOverrides[projectId];
+
+  it("keeps both edits when two saves are planned from the same snapshot", () => {
+    const first = planScopedSettingsPatch(checkout, [laptop, snapshot], { defaultAutoPull: true });
+    const second = planScopedSettingsPatch(checkout, [laptop, snapshot], {
+      removeAgentCreditsOnMerge: true,
+    });
+    expect(first.serverWrites).toEqual([
+      {
+        environmentId: server.environmentId,
+        label: server.label,
+        patch: {
+          projectSettingsOverrideChanges: { [projectId]: { set: { defaultAutoPull: true } } },
+        },
+      },
+    ]);
+    expect(save([first, second])).toEqual({
+      enableAgentBrowserAccess: false,
+      defaultModelSelection: null,
+      defaultAutoPull: true,
+      removeAgentCreditsOnMerge: true,
+    });
+    expect(save([second, first])).toEqual(save([first, second]));
+  });
+
+  it("lets a reset and an edit from the same snapshot both land in either order", () => {
+    const reset = planScopedSettingsClear(
+      checkout,
+      [laptop, snapshot],
+      ["enableAgentBrowserAccess"],
+    );
+    const edit = planScopedSettingsPatch(checkout, [laptop, snapshot], { defaultAutoPull: true });
+    expect(reset.serverWrites[0]?.patch).toEqual({
+      projectSettingsOverrideChanges: { [projectId]: { clear: ["enableAgentBrowserAccess"] } },
+    });
+    const expected = { defaultModelSelection: null, defaultAutoPull: true };
+    expect(save([reset, edit])).toEqual(expected);
+    expect(save([edit, reset])).toEqual(expected);
+  });
+
+  it("stores null for nullable keys and clears the override for the others", () => {
+    const withMode = environment("Server", {
+      overrideChanges: true,
+      settings: {
+        projectSettingsOverrides: {
+          [projectId]: {
+            ...snapshot.serverConfig!.settings.projectSettingsOverrides[projectId],
+            defaultThreadEnvMode: "worktree",
+          },
+        },
+      },
+    });
+    const plan = planScopedSettingsPatch(checkout, [laptop, withMode], {
+      sourceControlWriterModelSelection: null,
+      defaultThreadEnvMode: null,
+    });
+    expect(plan.serverWrites[0]?.patch).toEqual({
+      projectSettingsOverrideChanges: {
+        [projectId]: {
+          set: { sourceControlWriterModelSelection: null },
+          clear: ["defaultThreadEnvMode"],
+        },
+      },
+    });
+    expect(save([plan], withMode.serverConfig!.settings)).toEqual({
+      enableAgentBrowserAccess: false,
+      defaultModelSelection: null,
+      sourceControlWriterModelSelection: null,
+    });
+    const inherit = planScopedSettingsClear(
+      checkout,
+      [laptop, snapshot],
+      ["defaultModelSelection"],
+    );
+    expect(save([inherit])).toEqual({ enableAgentBrowserAccess: false });
+  });
+
+  it("clears listed project overrides key by key from the environment row", () => {
+    const plan = planProjectOverridesClear(
+      [snapshot],
+      [{ environmentId: snapshot.environmentId, projectId }],
+      ["enableAgentBrowserAccess"],
+    );
+    expect(plan.serverWrites[0]?.patch).toEqual({
+      projectSettingsOverrideChanges: { [projectId]: { clear: ["enableAgentBrowserAccess"] } },
+    });
+  });
+
+  it("still replaces the whole entry on a server without per-key saves", () => {
+    const older = environment("Server", {
+      settings: snapshot.serverConfig!.settings,
+    });
+    const first = planScopedSettingsPatch(checkout, [laptop, older], { defaultAutoPull: true });
+    expect(first.serverWrites[0]?.patch).toEqual({
+      projectSettingsOverrides: {
+        [projectId]: {
+          enableAgentBrowserAccess: false,
+          defaultModelSelection: null,
+          defaultAutoPull: true,
+        },
+      },
+    });
   });
 });
 

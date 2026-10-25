@@ -11,7 +11,7 @@
  * Machines reach each other by their own Tailscale names, so none of them
  * depends on another being on the same network.
  */
-import { PortSchema } from "@specweave-studio/contracts";
+import { EnvironmentId, PortSchema } from "@specweave-studio/contracts";
 import { DEFAULT_TAILSCALE_SERVE_PORT } from "@specweave-studio/tailscale";
 import * as Config from "effect/Config";
 import * as Console from "effect/Console";
@@ -86,6 +86,10 @@ const labelFlag = Flag.String("label").pipe(
 );
 
 const inviteCommand = Command.make("invite", {
+  coordinator: Flag.String("coordinator").pipe(
+    Flag.withSchema(EnvironmentId),
+    Flag.withDescription("Environment ID of the main machine you approve to manage this machine."),
+  ),
   baseDir: baseDirFlag,
   label: labelFlag,
   ttl: Flag.String("ttl").pipe(
@@ -111,6 +115,7 @@ const inviteCommand = Command.make("invite", {
       const config = yield* makePairServerConfig({ target, logLevel });
       const { invitation, notes } = yield* issueFleetInvitation({
         environmentId: target.descriptor.environmentId,
+        coordinatorEnvironmentId: flags.coordinator,
         ownLabel: target.descriptor.label,
         state: target.state,
         servePort: flags.tailscaleServePort,
@@ -205,7 +210,7 @@ const listCommand = Command.make("list", { baseDir: baseDirFlag }).pipe(
       });
       if (config === null || config.machines.length === 0) {
         yield* Console.log(
-          `No other machines are configured. Run \`${cliName()} fleet invite\` on one, then \`fleet add\` here.\n`,
+          `No other machines are configured. Run \`${cliName()} fleet invite --coordinator '<main-machine-environment-id>'\` on one. Replace <main-machine-environment-id> with the environment ID from Settings > Connections on your main machine. This explicitly approves that machine to manage access here. Then \`fleet add\` here.\n`,
         );
         return;
       }

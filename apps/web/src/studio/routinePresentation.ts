@@ -101,14 +101,16 @@ export function routineRunTimeLabel(
 }
 
 /**
- * Where a routine's runs land, in a few words, or null for the coordinator:
- * that is where every other routine goes, so a list names only the exceptions.
+ * Where a routine's runs land, in a few words. Every routine has a thread of
+ * its own unless it continues a worker thread it was bound to; a host from
+ * before own threads still sends a threadless routine to its coordinator.
  */
 export function routineDestinationLabel(
   task: Pick<ScheduledTask, "threadId"> & { readonly ownThread?: boolean | undefined },
-): string | null {
-  if (task.ownThread) return task.threadId ? "Its own thread" : "Own thread from the first run";
-  return task.threadId ? "Continues its thread" : null;
+): string {
+  // Not started yet: its first run starts it.
+  if (task.ownThread) return task.threadId ? "Its own thread" : "Own thread";
+  return task.threadId ? "Continues a worker's thread" : "Coordinator";
 }
 
 /** "1 active · 4 paused" for a list header; counts states that are present only. */

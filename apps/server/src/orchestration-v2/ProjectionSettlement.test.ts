@@ -518,8 +518,9 @@ it.effect("shell failure lookups stay on the thread's own turn items", () =>
     );
     // A failed run's root node is often null, and every runless item shares that
     // node_id, so a node_ordinal lookup walks the whole history once per thread.
+    // The third lookup is the active run's newest item (active_run_activity_at).
     const itemLookups = plan.filter((row) => row.detail.startsWith("SEARCH item "));
-    assert.lengthOf(itemLookups, 2);
+    assert.lengthOf(itemLookups, 3);
     assert.isTrue(itemLookups.every((row) => row.detail.includes("turn_items_thread_run_idx")));
     // The pending secret request lookup is bounded the same way.
     const secretLookups = plan.filter((row) => row.detail.startsWith("SEARCH secret "));

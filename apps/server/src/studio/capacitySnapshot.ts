@@ -25,6 +25,7 @@ import {
   windowAppliesToModel,
   windowModelScope,
 } from "@specweave-studio/shared/usageWindows";
+import { isClaudeApiKeyProvider } from "@specweave-studio/shared/providerFallback";
 import * as Schema from "effect/Schema";
 import * as Option from "effect/Option";
 
@@ -289,7 +290,7 @@ export function claudeApiBillingAuthorized(
 ): boolean {
   if (provider?.driver !== "claudeAgent" || !freshlyAuthenticated(provider, now)) return false;
   const type = provider.auth.type?.toLowerCase().replace(/[\s_.-]+/g, "");
-  return type === "apikey" || provider.auth.apiKeyBilling === true;
+  return type === "apikey" || isClaudeApiKeyProvider(provider);
 }
 export function nativeSnapshotAuthorized(
   provider: ServerProvider | undefined,

@@ -25,6 +25,18 @@ export type ConnectionRouteKind = "relay" | "loopback" | "lan" | "tailnet" | "pu
 /** An environment has at most one Studio Connect route, so it needs no per-route id. */
 export const RELAY_ROUTE_ID = "relay";
 
+/** A stored bearer can travel over TLS or local loopback, never learned LAN HTTP. */
+export function isSecureBearerEndpoint(httpBaseUrl: string): boolean {
+  try {
+    const url = new URL(httpBaseUrl);
+    return (
+      url.protocol === "https:" || (url.protocol === "http:" && isLocalLoopbackHost(url.hostname))
+    );
+  } catch {
+    return false;
+  }
+}
+
 export function connectionRouteId(target: ConnectionTarget): string {
   switch (target._tag) {
     case "PrimaryConnectionTarget":
@@ -219,7 +231,7 @@ export function mergeLearnedRoutes(input: {
   readonly entry: ConnectionCatalogEntry;
   readonly activeRoute: ConnectionRoute;
   readonly reported: ReadonlyArray<{ readonly httpBaseUrl: string }>;
-  /** Plain HTTP routes are unusable from an HTTPS page (mixed content). */
+  /** Mixed-content allowance for proof-bound routes; it does not authorize bearer transport. */
   readonly allowInsecure: boolean;
 }): ReadonlyArray<ConnectionRoute> | null {
   const { entry } = input;
@@ -267,6 +279,13 @@ export function mergeLearnedRoutes(input: {
   );
   const kept = saved.filter((route) => {
     if (!isLearned(route)) return true;
+    const profile = Option.getOrNull(route.profile);
+    if (
+      profile?._tag === "BearerConnectionProfile" &&
+      profile.authorization !== "studio-connect" &&
+      !isSecureBearerEndpoint(profile.httpBaseUrl)
+    )
+      return false;
     const url = routeHttpBaseUrl(route);
     if (url === null || !reported.has(normalized(url)) || known.has(normalized(url))) return false;
     known.add(normalized(url));
@@ -275,6 +294,8 @@ export function mergeLearnedRoutes(input: {
   let next: ReadonlyArray<ConnectionRoute> = kept;
   for (const url of reported.values()) {
     if (known.has(url.origin)) continue;
+    // A new route borrowing the paired bearer must not carry it over plain HTTP.
+    if (authorization === undefined && !isSecureBearerEndpoint(url.origin)) continue;
     const httpBaseUrl = `${url.origin}/`;
     const connectionId = learnedConnectionId(
       entry.target.environmentId,

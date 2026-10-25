@@ -70,17 +70,23 @@ try {
   const page = await context.newPage();
   const errors = [];
   page.on("pageerror", (e) => errors.push(e.message));
-  await page.goto("http://127.0.0.1:5788");
+  await page.goto(`http://127.0.0.1:${process.env.PROJECT_UI_PORT ?? 5788}`);
   await page.waitForLoadState("networkidle");
 
-  // The usage chip: a row per machine above the pooled providers.
-  await page.getByRole("button", { name: /^Subscription usage:/ }).click();
+  // Limits live with the coordinator's model: the picker's footer, or beside the chip
+  // when nothing can run the coordinator on this host (this fixture's host).
+  const openLimits = async () => {
+    const picker = page.getByRole("button", { name: /^Coordinator model:/ });
+    if (await picker.count()) await picker.click();
+    await page.getByRole("button", { name: "Limits by machine" }).click();
+  };
+  await openLimits();
   const grid = page.getByRole("region", { name: "Limits by machine" });
   await grid.waitFor();
   const gridText = await grid.innerText();
   assert.match(gridText, /Development Mac[\s\S]*M3[\s\S]*M1/);
   assert.match(gridText, /3h ago/);
-  await shot(page, "usage-chip-by-machine.png");
+  await shot(page, "picker-limits-by-machine.png");
   await page.keyboard.press("Escape");
 
   await page.getByLabel("Project settings", { exact: true }).click();
@@ -133,9 +139,9 @@ try {
   await page.evaluate(() => document.documentElement.classList.add("dark"));
   await shot(page, "usage-settings-by-machine-dark.png");
   await page.keyboard.press("Escape");
-  await page.getByRole("button", { name: /^Subscription usage:/ }).click();
+  await openLimits();
   await grid.waitFor();
-  await shot(page, "usage-chip-by-machine-dark.png");
+  await shot(page, "picker-limits-by-machine-dark.png");
   await page.keyboard.press("Escape");
   await page.evaluate(() => document.documentElement.classList.remove("dark"));
 

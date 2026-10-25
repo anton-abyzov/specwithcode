@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
-import { act, type ComponentProps } from "react";
+import { act, type ComponentProps, type ReactElement } from "react";
+import { ModelStateTag, type ModelState } from "../../chat/ModelStateTag";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
@@ -58,6 +59,8 @@ vi.mock("../../../providerInstances", () => ({
 vi.mock("../../chat/ProviderModelPicker", () => ({
   ProviderModelPicker: (props: {
     triggerLabel: string;
+    triggerParts?: { provider: string; model: string };
+    triggerState?: ModelState | null;
     triggerAriaLabel: string;
     activeInstanceId: string;
     onInstanceModelChange: (id: string, model: string) => void;
@@ -68,9 +71,13 @@ vi.mock("../../chat/ProviderModelPicker", () => ({
         type="button"
         aria-label={props.triggerAriaLabel}
         data-instance={props.activeInstanceId}
+        data-chat-provider-model-picker=""
         onClick={() => props.onInstanceModelChange("codex", "gpt-6")}
       >
-        {props.triggerLabel}
+        {props.triggerParts
+          ? `${props.triggerParts.provider} · ${props.triggerParts.model}`
+          : props.triggerLabel}
+        {props.triggerState ? <ModelStateTag state={props.triggerState} /> : null}
       </button>
     );
   },
@@ -81,7 +88,11 @@ vi.mock("../../chat/TraitsPicker", () => ({
     return null;
   },
 }));
-vi.mock("./ModelBadge", () => ({ ModelBadge: () => null, ModelBadgeMark: () => null }));
+vi.mock("./ModelBadge", () => ({
+  ModelBadge: (props: { state?: ModelState | null }) => (
+    <span className="sws-model">{props.state ? <ModelStateTag state={props.state} /> : null}</span>
+  ),
+}));
 
 import { CoordinatorModelPicker } from "./CoordinatorModelPicker";
 import { MODELS_LOADING_LIMIT_MS } from "./useCoordinatorModelsLoading";
@@ -158,6 +169,31 @@ describe("CoordinatorModelPicker provider recovery", () => {
     expect(onChange).not.toHaveBeenCalled();
     expect(onOpenSettings).not.toHaveBeenCalled();
     expect(state.navigate).not.toHaveBeenCalled();
+  });
+
+  it("opens limits by machine from the model menu instead of a separate usage chip", async () => {
+    state.entries = [entry("codex", true)];
+    const onOpenProjectUsage = vi.fn();
+    await mount(false, {
+      value: { instanceId: "codex", model: "gpt-6" } as never,
+      onOpenProjectUsage,
+    });
+    const view = state.pickerProps?.secondaryView as {
+      label: string;
+      render: (actions: { back: () => void; close: () => void }) => ReactElement<{
+        projectEnvironmentId: string;
+        coordinatorInstanceId: string;
+        onOpenProjectUsage?: () => void;
+      }>;
+    };
+    expect(view.label).toBe("Limits by machine");
+    const close = vi.fn();
+    const panel = view.render({ back: () => {}, close });
+    expect(panel.props.projectEnvironmentId).toBe("env");
+    expect(panel.props.coordinatorInstanceId).toBe("codex");
+    panel.props.onOpenProjectUsage?.();
+    expect(close).toHaveBeenCalledOnce();
+    expect(onOpenProjectUsage).toHaveBeenCalledOnce();
   });
 
   it("keeps a custom instance distinct from the default provider", async () => {
@@ -721,19 +757,141 @@ describe("CoordinatorModelPicker limit fallback", () => {
     state.options.set("copilot", [{ slug: "gpt-6", name: "GPT-6" }]);
     const { onChange } = await mount(false, { value: saved, running });
     expect(state.pickerProps).toMatchObject({ activeInstanceId: "copilot", model: "gpt-6" });
-    expect(String(state.pickerProps!.triggerLabel)).toMatch(/^Copilot · /);
-    // The chip names what runs; the tag beside it says that is not the saved pick.
-    const tag = container.querySelector('[data-model-state="fallback"]');
-    expect(tag?.textContent).toBe("Fallback for GPT-6");
-    expect(tag?.getAttribute("aria-label")).toContain("instead of your pick");
-    expect(tag?.getAttribute("aria-label")).toContain("back to Codex after its reset");
-    expect(container.querySelector(".sws-model-pick")?.hasAttribute("data-off-pick")).toBe(true);
+    expect(state.pickerProps!.triggerParts).toMatchObject({ provider: "Copilot" });
+    const trigger = container.querySelector("[data-chat-provider-model-picker]");
+    const tag = trigger?.querySelector('[data-model-state="fallback"]');
+    expect(tag).not.toBeNull();
+    expect(container.querySelectorAll('[data-model-state="fallback"]')).toHaveLength(1);
+    expect(state.pickerProps!.triggerState).toMatchObject({
+      kind: "fallback",
+      pick: "Codex · GPT-6",
+      reason: "usage limit",
+    });
+    expect(state.pickerProps!.stateHeader).toMatchObject({
+      title: "Fallback for Codex · GPT-6",
+      back: null,
+    });
+    expect(state.pickerProps!.triggerStateDetail).toContain("goes back to Codex on its own");
     const pick = state.pickerProps!.onInstanceModelChange as (id: string, model: string) => void;
     await act(async () => pick("copilot", "gpt-6"));
     expect(onChange).toHaveBeenCalledExactlyOnceWith({ instanceId: "copilot", model: "gpt-6" });
-    // The saved model is still the saved one: choosing it again changes nothing.
+    // Without a way back the saved row says why instead of swallowing the click.
+    const reason = state.pickerProps!.getModelDisabledReason as (id: string, m: string) => string;
+    expect(reason("codex", "gpt-6")).toBe("Switching back isn't available here");
+    // Not a provider problem: no provider recovery is offered for it.
+    expect(state.refresh).not.toHaveBeenCalled();
+    expect(container.textContent).not.toContain("Check again");
     await act(async () => pick("codex", "gpt-6"));
     expect(onChange).toHaveBeenCalledOnce();
+  });
+
+  it("switches back when the saved model is picked from the list during a fallback", async () => {
+    state.entries = [entry("codex", true), entry("copilot", true)];
+    state.options.set("copilot", [{ slug: "gpt-6", name: "GPT-6" }]);
+    const onSwitchBack = vi.fn();
+    const { onChange } = await mount(false, {
+      value: saved,
+      running: { ...running, reason: "Codex weekly limit at 96% used.", onSwitchBack },
+    });
+    const reason = state.pickerProps!.getModelDisabledReason as (id: string, m: string) => unknown;
+    // Low remaining room is advisory: the saved row stays selectable.
+    expect(reason("codex", "gpt-6")).toBeNull();
+    const pick = state.pickerProps!.onInstanceModelChange as (id: string, model: string) => void;
+    await act(async () => pick("codex", "gpt-6"));
+    expect(onSwitchBack).toHaveBeenCalledOnce();
+    // The same supported action as the header button: no new save, no other provider.
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("switches back to a saved model whose limit is spent, and keeps the automatic return separate", async () => {
+    state.entries = [entry("codex", true), entry("copilot", true)];
+    state.options.set("copilot", [{ slug: "gpt-6", name: "GPT-6" }]);
+    const onSwitchBack = vi.fn();
+    const { onChange } = await mount(false, {
+      value: saved,
+      running: { ...running, reason: "Weekly limit reached, resets in 5d", onSwitchBack },
+    });
+    // A deliberate choice is the user's; the host still checks limits before the next turn.
+    await act(async () =>
+      (state.pickerProps!.onInstanceModelChange as (id: string, model: string) => void)(
+        "codex",
+        "gpt-6",
+      ),
+    );
+    expect(onSwitchBack).toHaveBeenCalledOnce();
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("does not switch back twice while a switch is in flight or a save is pending", async () => {
+    state.entries = [entry("codex", true), entry("copilot", true)];
+    state.options.set("copilot", [{ slug: "gpt-6", name: "GPT-6" }]);
+    const onSwitchBack = vi.fn();
+    await mount(false, { value: saved, running: { ...running, onSwitchBack, switching: true } });
+    const reason = state.pickerProps!.getModelDisabledReason as (id: string, m: string) => unknown;
+    expect(reason("codex", "gpt-6")).toBe("Switching models…");
+    expect(reason("copilot", "gpt-6")).toBeNull();
+    await act(async () =>
+      (state.pickerProps!.onInstanceModelChange as (id: string, model: string) => void)(
+        "codex",
+        "gpt-6",
+      ),
+    );
+    expect(onSwitchBack).not.toHaveBeenCalled();
+    await mount(false, { value: saved, running: { ...running, onSwitchBack }, saving: true });
+    await act(async () =>
+      (state.pickerProps!.onInstanceModelChange as (id: string, model: string) => void)(
+        "codex",
+        "gpt-6",
+      ),
+    );
+    expect(onSwitchBack).not.toHaveBeenCalled();
+  });
+
+  it("keeps picking the saved model a no-op when no fallback runs", async () => {
+    state.entries = [entry("codex", true), entry("copilot", true)];
+    state.options.set("copilot", [{ slug: "gpt-6", name: "GPT-6" }]);
+    const onSwitchBack = vi.fn();
+    const { onChange } = await mount(false, {
+      value: saved,
+      running: { ...running, offPick: false, onSwitchBack },
+    });
+    const pick = state.pickerProps!.onInstanceModelChange as (id: string, model: string) => void;
+    await act(async () => pick("codex", "gpt-6"));
+    expect(onSwitchBack).not.toHaveBeenCalled();
+    expect(onChange).not.toHaveBeenCalled();
+  });
+
+  it("offers the existing switch-back action inside the picker header", async () => {
+    state.entries = [entry("codex", true), entry("copilot", true)];
+    state.options.set("copilot", [{ slug: "gpt-6", name: "GPT-6" }]);
+    const onSwitchBack = vi.fn();
+    await mount(false, {
+      value: saved,
+      running: { ...running, reason: "Usage has reset.", onSwitchBack },
+    });
+    const header = state.pickerProps!.stateHeader as {
+      title: string;
+      detail: string;
+      back: { label: string; onClick: () => void; disabledReason: string | null };
+    };
+    // Both run GPT-6, so the way back names the pick's provider, not the model twice.
+    expect(header.title).toBe("Fallback for Codex · GPT-6");
+    expect(header.back.label).toBe("Back to Codex");
+    expect(header.detail).toContain("Usage has reset.");
+    expect(header.back.disabledReason).toBeNull();
+    await act(async () => header.back.onClick());
+    expect(onSwitchBack).toHaveBeenCalledOnce();
+  });
+
+  it("keeps fallback inside the model unit when controls are unavailable", async () => {
+    state.entries = [entry("codex", true), entry("copilot", true)];
+    await mount(true, { value: saved, running });
+    const badge = container.querySelector(".sws-model-pick-static .sws-model");
+    expect(badge?.querySelector('[data-model-state="fallback"]')).not.toBeNull();
+    expect(container.querySelector('[role="img"]')?.getAttribute("aria-label")).toContain(
+      "fallback for Codex · GPT-6",
+    );
+    expect(state.pickerProps).toBeNull();
   });
 
   it("shows the saved model without a fallback", async () => {
@@ -756,7 +914,8 @@ describe("CoordinatorModelPicker limit fallback", () => {
     // Off the saved pick without a known limit: still tagged, no reset claimed.
     const tag = container.querySelector('[data-model-state="fallback"]');
     expect(tag).not.toBeNull();
-    expect(tag?.getAttribute("aria-label")).not.toContain("reset");
+    expect(state.pickerProps!.triggerState).toMatchObject({ reason: null });
+    expect(state.pickerProps!.triggerStateDetail).toBeUndefined();
     expect(state.traitsProps).toBeNull();
     const pick = state.pickerProps!.onInstanceModelChange as (id: string, model: string) => void;
     await act(async () => pick("codex", "gpt-6"));

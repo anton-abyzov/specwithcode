@@ -305,12 +305,15 @@ export function useCoordinatorAttachments(input: {
     [draft],
   );
 
-  /** After a confirmed send: forget what went out, keep anything added meanwhile. */
+  /**
+   * After a confirmed send: forget what went out, keep anything added meanwhile.
+   * Uploads an answer still to be sent will carry are kept on the host.
+   */
   const clearSent = useCallback(
-    (sent: ReadonlyArray<CoordinatorAttachment>) => {
+    (sent: ReadonlyArray<CoordinatorAttachment>, options?: { readonly keepUploads?: boolean }) => {
       const ids = new Set(sent.map((image) => image.id));
       for (const attachment of sent) {
-        releaseDraftAttachment(attachment);
+        if (options?.keepUploads !== true) releaseDraftAttachment(attachment);
         if (isImage(attachment)) URL.revokeObjectURL(attachment.previewUrl);
       }
       setAttachments((current) => current.filter((image) => !ids.has(image.id)));

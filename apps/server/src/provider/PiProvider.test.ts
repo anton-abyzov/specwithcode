@@ -214,6 +214,81 @@ describe("PiProvider", () => {
     });
   });
 
+  describe("inventory billing precedence", () => {
+    const loopback = "http://127.0.0.1:4000/v1";
+    const free = { input: 0, output: 0 };
+    const inputPrice = { input: 3, output: 0 };
+    const outputPrice = { input: 0, output: 3 };
+
+    it.each([
+      { provider: "ollama", cost: inputPrice, label: "positive input price" },
+      { provider: "ollama", cost: outputPrice, label: "positive output price" },
+      { provider: "lmstudio", cost: inputPrice, label: "positive input price" },
+      { provider: "lmstudio", cost: outputPrice, label: "positive output price" },
+      { provider: "anthropic", cost: inputPrice, label: "positive price" },
+      { provider: "anthropic", cost: free, label: "zero price" },
+      { provider: "anthropic", cost: undefined, label: "absent price" },
+      { provider: "openai", cost: free, label: "zero price" },
+      { provider: "openai", cost: undefined, label: "absent price" },
+      { provider: "google", cost: free, label: "zero price" },
+    ])("classifies loopback $provider with $label as api", ({ provider, cost }) => {
+      const [model] = parseDiscoveredModels(
+        { models: [{ provider, id: "gpt-5.4-mini", baseUrl: loopback, cost }] },
+        "medium",
+      );
+      assert.equal(model?.billing, "api");
+    });
+
+    it.each([
+      { provider: "ollama", baseUrl: loopback, cost: free, billing: "local" },
+      { provider: "lmstudio", baseUrl: loopback, cost: free, billing: "local" },
+      { provider: "ollama", baseUrl: loopback, cost: undefined, billing: "local" },
+      { provider: "lmstudio", baseUrl: loopback, cost: undefined, billing: "local" },
+      { provider: "custom", baseUrl: loopback, cost: free, billing: "unknown" },
+      { provider: "custom", baseUrl: loopback, cost: inputPrice, billing: "unknown" },
+      { provider: "openai", baseUrl: loopback, cost: inputPrice, billing: "api" },
+      { provider: "openrouter", baseUrl: loopback, cost: free, billing: "paid-router" },
+      { provider: "openrouter", baseUrl: loopback, cost: inputPrice, billing: "paid-router" },
+      {
+        provider: "ollama",
+        baseUrl: "https://openrouter.ai/api/v1",
+        cost: inputPrice,
+        billing: "paid-router",
+      },
+      {
+        provider: "anthropic",
+        baseUrl: "https://api.anthropic.com",
+        cost: inputPrice,
+        billing: "unknown",
+      },
+      {
+        provider: "anthropic",
+        baseUrl: "https://api.anthropic.com",
+        cost: free,
+        billing: "unknown",
+      },
+      {
+        provider: "openai",
+        baseUrl: "https://api.openai.com/v1",
+        cost: inputPrice,
+        billing: "api",
+      },
+      {
+        provider: "openai",
+        baseUrl: "https://api.openai.com/v1",
+        cost: free,
+        billing: "unknown",
+      },
+      { provider: "opencode-go", baseUrl: loopback, cost: inputPrice, billing: "subscription" },
+    ])("preserves $provider at $baseUrl with $cost as $billing", ({ billing, ...input }) => {
+      const [model] = parseDiscoveredModels(
+        { models: [{ ...input, id: "gpt-5.4-mini" }] },
+        "medium",
+      );
+      assert.equal(model?.billing, billing);
+    });
+  });
+
   describe("the default model", () => {
     const openRouterModel = {
       id: "anthropic/claude-sonnet-5",

@@ -139,6 +139,8 @@ try {
     const invited = await fleetCli(
       inviter,
       "invite",
+      "--coordinator",
+      adder.environmentId,
       "--label",
       inviter.label,
       "--tailscale-serve-port",

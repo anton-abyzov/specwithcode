@@ -6,7 +6,7 @@ import {
   CircleXIcon,
   InfoIcon,
 } from "lucide-react";
-import type { ReactNode } from "react";
+import { Fragment, type ReactNode } from "react";
 
 import { cn } from "~/lib/utils";
 import {
@@ -19,6 +19,7 @@ import {
   parseJsonData,
   parseKeyValueBlock,
   parseStatusBlock,
+  pathBreakSegments,
   tableColumns,
   type JsonData,
   type KeyValueGroup,
@@ -53,6 +54,43 @@ function formatDateTime(date: Date): string {
 const MAX_DEPTH = 3;
 const MAX_TABLE_ROWS = 200;
 
+/**
+ * A field grid: keys take their own width between 7rem and 16rem and wrap at their spaces
+ * and separators, inside a word only when nothing else fits. On a card under 22rem wide
+ * each key sits above its value; the card around a grid is the `kv` container.
+ */
+const FIELD_GRID_CLASS_NAME =
+  "grid grid-cols-[minmax(7rem,max-content)_minmax(0,1fr)] gap-x-4 gap-y-1 text-sm @max-[22rem]/kv:grid-cols-1 @max-[22rem]/kv:gap-y-0";
+const FIELD_KEY_CLASS_NAME =
+  "max-w-[16rem] break-words [word-break:normal] text-muted-foreground hyphens-none";
+/** A stacked key after the first leaves room above it, so each pair reads as one. */
+const FIELD_KEY_AFTER_FIRST_CLASS_NAME = "@max-[22rem]/kv:mt-1.5";
+/**
+ * A card that holds field grids. An inline-size container is sized as if empty inside a
+ * bubble or popover that fits its content, so it claims 32rem there instead of nothing.
+ */
+const FIELD_CARD_CLASS_NAME = "@container/kv [contain-intrinsic-inline-size:32rem]";
+
+/**
+ * Text that may wrap after path and ID separators, as `<wbr>`: copying, `textContent` and
+ * screen readers see the original text, with no zero-width characters added. A segment
+ * wider than its column still breaks where it must.
+ */
+function BreakableText({ text }: { text: string }) {
+  const segments = pathBreakSegments(text);
+  if (segments.length === 1) return <>{text}</>;
+  return (
+    <>
+      {segments.map((segment, index) => (
+        <Fragment key={index}>
+          {index > 0 ? <wbr /> : null}
+          {segment}
+        </Fragment>
+      ))}
+    </>
+  );
+}
+
 function ScalarValue({ value, name }: { value: unknown; name?: string | undefined }) {
   if (value === null || value === undefined) {
     return <span className="text-muted-foreground">—</span>;
@@ -79,7 +117,9 @@ function ScalarValue({ value, name }: { value: unknown; name?: string | undefine
   return text.length === 0 ? (
     <span className="text-muted-foreground">empty</span>
   ) : (
-    <span className="break-words whitespace-pre-wrap">{text}</span>
+    <span className="break-words whitespace-pre-wrap" data-path-wrap="">
+      <BreakableText text={text} />
+    </span>
   );
 }
 
@@ -144,13 +184,13 @@ function DataTable({
 function ObjectGrid({ value, depth }: { value: Record<string, unknown>; depth: number }) {
   const entries = Object.entries(value);
   return (
-    <dl className="grid grid-cols-[minmax(7rem,max-content)_1fr] gap-x-4 gap-y-1 text-sm">
-      {entries.map(([key, entry]) => {
+    <dl className={FIELD_GRID_CLASS_NAME}>
+      {entries.map(([key, entry], entryIndex) => {
         const nested = isPlainObject(entry) && depth < MAX_DEPTH && Object.keys(entry).length > 0;
         const columns = Array.isArray(entry) && depth < MAX_DEPTH ? tableColumns(entry) : null;
         if (nested || columns !== null) {
           return (
-            <div key={key} className="col-span-2 mt-1.5 first:mt-0" data-structured-group={key}>
+            <div key={key} className="col-span-full mt-1.5 first:mt-0" data-structured-group={key}>
               <dt className="mb-1 text-xs font-medium text-muted-foreground">{humanizeKey(key)}</dt>
               <dd className="border-s border-border/70 ps-3">
                 {columns !== null ? (
@@ -164,7 +204,14 @@ function ObjectGrid({ value, depth }: { value: Record<string, unknown>; depth: n
         }
         return (
           <div key={key} className="contents">
-            <dt className="text-muted-foreground">{humanizeKey(key)}</dt>
+            <dt
+              className={cn(
+                FIELD_KEY_CLASS_NAME,
+                entryIndex > 0 && FIELD_KEY_AFTER_FIRST_CLASS_NAME,
+              )}
+            >
+              {humanizeKey(key)}
+            </dt>
             <dd className="min-w-0">
               <CompactValue value={entry} name={key} />
             </dd>
@@ -182,7 +229,7 @@ export function JsonDataView({ data }: { data: JsonData }) {
     if (columns !== null) return <DataTable rows={data} columns={columns} />;
     if (data.every(isScalar)) return <CompactValue value={data} />;
     return (
-      <div className="flex flex-col gap-2">
+      <div className={cn(FIELD_CARD_CLASS_NAME, "flex flex-col gap-2")}>
         {data.slice(0, MAX_TABLE_ROWS).map((entry, index) => (
           <div key={index} className="border-s border-border/70 ps-3">
             {isPlainObject(entry) ? (
@@ -200,7 +247,11 @@ export function JsonDataView({ data }: { data: JsonData }) {
       </div>
     );
   }
-  return <ObjectGrid value={data as Record<string, unknown>} depth={0} />;
+  return (
+    <div className={FIELD_CARD_CLASS_NAME}>
+      <ObjectGrid value={data as Record<string, unknown>} depth={0} />
+    </div>
+  );
 }
 
 const STATUS_PRESENTATION: Record<StatusState, { icon: ReactNode; label: string }> = {
@@ -255,7 +306,10 @@ export function StatusBlockCard({ block }: { block: StatusBlock }) {
 export function KeyValueBlockCard({ groups }: { groups: ReadonlyArray<KeyValueGroup> }) {
   return (
     <div
-      className="flex flex-col gap-2.5 rounded-lg border border-border/70 bg-card/40 px-3 py-2"
+      className={cn(
+        FIELD_CARD_CLASS_NAME,
+        "flex flex-col gap-2.5 rounded-lg border border-border/70 bg-card/40 px-3 py-2",
+      )}
       data-structured-kv=""
     >
       {groups.map((group, index) => (
@@ -263,12 +317,23 @@ export function KeyValueBlockCard({ groups }: { groups: ReadonlyArray<KeyValueGr
           {group.heading ? (
             <p className="mb-1 text-xs font-medium text-muted-foreground">{group.heading}</p>
           ) : null}
-          <dl className="grid grid-cols-[minmax(7rem,max-content)_1fr] gap-x-4 gap-y-1 text-sm">
+          <dl className={FIELD_GRID_CLASS_NAME}>
             {group.entries.map((entry, entryIndex) => (
               <div key={entryIndex} className="contents">
-                <dt className="text-muted-foreground">{entry.key}</dt>
-                <dd className="min-w-0 break-words">
-                  {entry.value || <span className="text-muted-foreground">—</span>}
+                <dt
+                  className={cn(
+                    FIELD_KEY_CLASS_NAME,
+                    entryIndex > 0 && FIELD_KEY_AFTER_FIRST_CLASS_NAME,
+                  )}
+                >
+                  <BreakableText text={entry.key} />
+                </dt>
+                <dd className="min-w-0 break-words" data-path-wrap="">
+                  {entry.value ? (
+                    <BreakableText text={entry.value} />
+                  ) : (
+                    <span className="text-muted-foreground">—</span>
+                  )}
                 </dd>
               </div>
             ))}

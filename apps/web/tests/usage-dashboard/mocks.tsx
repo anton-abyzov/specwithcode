@@ -62,7 +62,35 @@ export const SidebarInset = ({ children, className, ...props }: any) => (
     {children}
   </main>
 );
-export const UsageLimitsSection = () => <p>Limits fixture</p>;
+const LIMIT_ROWS = [
+  ["Fixture M4", "Claude", "Weekly", 67],
+  ["Fixture M4", "Codex", "Weekly", 10],
+  ["Fixture Pro", "Codex", "Weekly", 10],
+  ["Fixture M1", "Claude", "5-hour", 100],
+] as const;
+// Synthetic rows standing in for the real Limits section, which reads live sign-ins.
+export const UsageLimitsSection = () => (
+  <section className="flex flex-col gap-2" data-testid="limits-fixture">
+    <p className="text-sm text-muted-foreground">Limits fixture (synthetic rows)</p>
+    {LIMIT_ROWS.map(([machine, provider, window, left]) => (
+      <div
+        key={`${machine}:${provider}`}
+        className="grid grid-cols-[12rem_6rem_6rem_1fr_5rem] items-center gap-3 rounded-lg border px-4 py-3 text-sm"
+      >
+        <span className="text-foreground">{machine}</span>
+        <span>{provider}</span>
+        <span className="text-muted-foreground">{window}</span>
+        <span className="h-1.5 rounded-full bg-muted">
+          <span
+            className="block h-full rounded-full bg-foreground/70"
+            style={{ width: `${left}%` }}
+          />
+        </span>
+        <span className="text-right tabular-nums">{left}% left</span>
+      </div>
+    ))}
+  </section>
+);
 export const UsagePriceOverrides = () => null;
 export const ensureLocalApi = () => ({ shell: { openExternal: () => {} } });
 export const useNavigate = () => () => {};

@@ -8,7 +8,10 @@ interface ParsedSemver {
 const SEMVER_NUMBER_SEGMENT = /^\d+$/;
 
 export function normalizeSemverVersion(version: string): string {
-  const [main, prerelease] = version.trim().split("-", 2);
+  const precedence = version.trim().split("+", 1)[0] ?? "";
+  const separator = precedence.indexOf("-");
+  const main = separator === -1 ? precedence : precedence.slice(0, separator);
+  const prerelease = separator === -1 ? undefined : precedence.slice(separator + 1);
   const segments: string[] = [];
   for (const segment of (main ?? "").split(".")) {
     const trimmed = segment.trim();
@@ -31,7 +34,9 @@ export function normalizeSemverVersion(version: string): string {
 
 export function parseSemver(value: string): ParsedSemver | null {
   const normalized = normalizeSemverVersion(value).replace(/^v/, "");
-  const [main = "", prerelease] = normalized.split("-", 2);
+  const separator = normalized.indexOf("-");
+  const main = separator === -1 ? normalized : normalized.slice(0, separator);
+  const prerelease = separator === -1 ? undefined : normalized.slice(separator + 1);
   const segments = main.split(".");
   if (segments.length !== 3) {
     return null;
@@ -83,7 +88,12 @@ function comparePrereleaseIdentifier(left: string, right: string): number {
   const rightNumeric = SEMVER_NUMBER_SEGMENT.test(right);
 
   if (leftNumeric && rightNumeric) {
-    return Number.parseInt(left, 10) - Number.parseInt(right, 10);
+    const leftDigits = left.replace(/^0+(?=\d)/, "");
+    const rightDigits = right.replace(/^0+(?=\d)/, "");
+    return (
+      leftDigits.length - rightDigits.length ||
+      (leftDigits < rightDigits ? -1 : leftDigits > rightDigits ? 1 : 0)
+    );
   }
   if (leftNumeric) {
     return -1;
@@ -91,7 +101,7 @@ function comparePrereleaseIdentifier(left: string, right: string): number {
   if (rightNumeric) {
     return 1;
   }
-  return left.localeCompare(right);
+  return left < right ? -1 : left > right ? 1 : 0;
 }
 
 export function compareSemverVersions(left: string, right: string): number {
@@ -154,7 +164,7 @@ export const satisfiesSemverRange: (rawVersion: string, range: string) => boolea
   function satisfiesSemverRange(rawVersion, range) {
     const normalizedVersion = String(rawVersion).trim().replace(/^v/, "");
     const versionMatch = normalizedVersion.match(
-      /^(\d+)(?:\.(\d+))?(?:\.(\d+))?(?:-[0-9A-Za-z.-]+)?$/,
+      /^(\d+)(?:\.(\d+))?(?:\.(\d+))?(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/,
     );
     if (!versionMatch) {
       return false;

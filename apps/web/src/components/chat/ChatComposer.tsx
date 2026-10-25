@@ -5,6 +5,7 @@ import {
   type CreditSendContext,
 } from "./explicitCreditSend";
 import { routesViaCoordinator, useProjectMessageRouting } from "../../studio/projectMessageRouting";
+import { questionAskerLabel } from "../../studio/coordinatorQuestionAnswers";
 import { DESKTOP_PASTE_AS_TEXT_EVENT } from "../../lib/desktopPasteAsText";
 import { runtimeModeConfig, runtimeModeOptions as runtimeModes } from "./runtimeModeConfig";
 import { isLocalEnvironmentDisabled } from "../../localEnvironment";
@@ -274,7 +275,8 @@ import {
 import { useEnvironmentQuery } from "~/state/query";
 import { useDebouncedValue } from "~/state/queries";
 import { ProviderModelPicker } from "./ProviderModelPicker";
-import { ModelStateTag } from "./ModelStateTag";
+import type { ModelStateHeader } from "./ModelPickerContent";
+import { fallbackModelState } from "./ModelStateTag";
 import { modelLabel } from "../../studio/shellModel";
 import { resolveModelPickerSelectedModel } from "./ModelPickerContent";
 import {
@@ -1163,6 +1165,7 @@ import { useAtomCommand } from "../../state/use-atom-command";
 import { readEnvironmentScope } from "../../state/session";
 import { serverEnvironment } from "../../state/server";
 import type { ReviewCommentContext } from "../../reviewCommentContext";
+import { isAppSheetOpen } from "../ui/appSheetState";
 
 const WORKSPACE_SNAPSHOT_RETRY_COOLDOWN_MS = 10_000;
 
@@ -1577,6 +1580,9 @@ export interface ChatComposerProps {
   sendDisabledReason: string | null;
   isPreparingWorktree: boolean;
   bannerItems: readonly ComposerBannerStackItem[];
+  /** Why the answer to the waiting question was not sent; shown against the box. */
+  answerProblem?: string | null | undefined;
+  onDismissAnswerProblem?: (() => void) | undefined;
   /** Picking /usage-limits from the menu is the action itself; the draft keeps nothing of it. */
   onUsageLimitsCommand?: (() => void) | undefined;
   /** Runs `/stop`, `/continue`, `/stop-all`, `/continue-all` and `/status` in the app; absent hides them. */
@@ -1628,6 +1634,7 @@ export interface ChatComposerProps {
   reportedModelSelection?: ModelSelection | null;
   /** The picked model a usage-limit fallback runs instead of; null when none. */
   limitFallbackFrom?: { readonly instanceId: string; readonly model: string } | null;
+  modelStateHeader?: ModelStateHeader | null;
 
   // Context window
   activeContextWindow: ContextWindowSnapshot | null;
@@ -2483,6 +2490,9 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       selection.instanceId,
       selection.model,
     );
+  const composerInstanceName = (instanceId: string) =>
+    providerInstanceEntries.find((entry) => entry.instanceId === instanceId)?.displayName ??
+    instanceId;
   const displayedIdentity =
     props.activeThreadShell?.modelIdentity ??
     threadModelIdentity({
@@ -2510,13 +2520,32 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     preferredLabel === null
       ? null
       : displayedIdentity.kind === "fallback"
-        ? {
-            kind: "fallback" as const,
-            pick: preferredLabel.full,
-            pickModel: preferredLabel.model,
+        ? fallbackModelState({
+            pick: {
+              ...preferredLabel,
+              instance: composerInstanceName(displayedIdentity.preferred!.instanceId),
+            },
+            running: {
+              ...composerModelLabel(displayedModel),
+              instance: composerInstanceName(displayedModel.instanceId),
+            },
             reason: "usage limit",
-          }
+            launched: displayedIdentity.launched === true,
+          })
         : { kind: "preferred" as const, pick: preferredLabel.full };
+
+  const pickerTriggerState = providerCatalogPending
+    ? null
+    : pendingNextLabel
+      ? {
+          kind: "next" as const,
+          pick: pendingNextLabel,
+          pickModel: composerModelLabel({
+            instanceId: selectedInstanceId,
+            model: selectedModelForPickerWithCustomFallback,
+          }).model,
+        }
+      : composerModelStateValue;
 
   // ------------------------------------------------------------------
   // Context window
@@ -3031,6 +3060,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const replyToPendingQuestionInChat = useCallback(() => {
     composerEditorRef.current?.focusAtEnd();
   }, []);
+  // The card names the agent that asked, so the question never reads as the person's.
+  const pendingQuestionAsker =
+    activeThreadId === null
+      ? undefined
+      : questionAskerLabel({
+          threadId: activeThreadId,
+          title: activeThread?.title,
+          isCoordinator: projectRouting?.coordinatorThreadId === activeThreadId,
+        });
   const isChoiceOnlyPendingQuestion =
     activePendingProgress?.activeQuestion?.allowCustomAnswer === false;
   const showComposerTopDrawer =
@@ -5643,15 +5681,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         keybindings={keybindings}
         modelOptionsByInstance={modelOptionsByInstance}
         size={composerControlsCollapsed ? "xs" : "sm"}
-        triggerClassName={
-          composerControlsCollapsed
-            ? cn(
-                "min-w-13 shrink text-xs!",
-                !showInlineRestingControls &&
-                  "@max-[640px]/composer-surface:[&_[data-chat-provider-model-picker-label]]:w-0 @max-[640px]/composer-surface:[&_[data-chat-provider-model-picker-label]]:flex-none",
-              )
-            : "-ms-2.5 min-w-13"
-        }
+        triggerState={pickerTriggerState}
+        triggerStateDetail={props.modelStateHeader?.detail ?? null}
+        stateHeader={props.modelStateHeader ?? null}
+        triggerClassName={cn(
+          composerControlsCollapsed ? "shrink text-xs!" : "-ms-2.5",
+          pickerTriggerState
+            ? "min-w-[15rem] @max-[479px]/composer-surface:min-w-[11rem]"
+            : "min-w-[11rem]",
+        )}
         terminalOpen={terminalOpen}
         open={isComposerModelPickerOpen}
         instanceIndicatorBackground={
@@ -5670,7 +5708,12 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
           : {})}
         onOpenChange={setIsComposerModelPickerOpen}
         {...(!providerCatalogPending && (activeThreadModelSelection || composerModelStateValue)
-          ? { triggerText: composerModelLabel(displayedModel).full }
+          ? {
+              triggerParts: {
+                provider: composerModelLabel(displayedModel).provider,
+                model: composerModelLabel(displayedModel).model,
+              },
+            }
           : {})}
         getModelDisabledReason={getModelDisabledReason}
         {...(routesProjectMessage ? {} : { usage: modelPickerUsage })}
@@ -5682,15 +5725,6 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         onOpenProviderSetup={onOpenProviderSetup}
         quickSetup={providerQuickSetup}
       />
-      {pendingNextLabel && !providerCatalogPending ? (
-        <ModelStateTag state={{ kind: "next", pick: pendingNextLabel }} />
-      ) : null}
-      {composerModelStateValue && !providerCatalogPending ? (
-        <ModelStateTag
-          state={composerModelStateValue}
-          className="@max-[400px]/composer-surface:hidden"
-        />
-      ) : null}
 
       <>
         {restingBlockDefs.map((def, index) => {
@@ -5815,7 +5849,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       // even when the composer is in a state that can't stash.
       event.preventDefault();
       event.stopPropagation();
-      if (isCommandPaletteOpen() || isRevertingCheckpoint) {
+      // A sheet over the app hides this composer; never stash a draft out of sight.
+      if (isCommandPaletteOpen() || isRevertingCheckpoint || isAppSheetOpen()) {
         return;
       }
       if (pendingUserInputs.length > 0 && !isComposerApprovalState) {
@@ -6946,6 +6981,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     onPrevious={onPreviousActivePendingUserInputQuestion}
                     onDismiss={onDismissActivePendingUserInput}
                     onReplyInChat={replyToPendingQuestionInChat}
+                    askedBy={pendingQuestionAsker}
                     renderText={renderPendingQuestionText}
                   />
                 ) : !isComposerCollapsedMobile && showPlanFollowUpPrompt && activeProposedPlan ? (
@@ -6970,6 +7006,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                       onPrevious={onPreviousActivePendingUserInputQuestion}
                       onDismiss={onDismissActivePendingUserInput}
                       onReplyInChat={replyToPendingQuestionInChat}
+                      askedBy={pendingQuestionAsker}
                       renderText={renderPendingQuestionText}
                     />
                     {!isChoiceOnlyPendingQuestion ? (
@@ -6998,6 +7035,33 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                     ) : null}
                   </div>
                 ) : null}
+              </ComposerBanner.Root>
+            </ComposerBanner.Attachment>
+          ) : null}
+          {props.answerProblem ? (
+            // Why the answer was not sent, against the box that still holds it.
+            <ComposerBanner.Attachment>
+              <ComposerBanner.Root variant="error" data-chat-composer-answer-problem="true">
+                <ComposerBanner.Row>
+                  <ComposerBanner.Icon>
+                    <CircleAlertIcon />
+                  </ComposerBanner.Icon>
+                  <ComposerBanner.Content role="alert">
+                    {props.answerProblem}
+                  </ComposerBanner.Content>
+                  {props.onDismissAnswerProblem ? (
+                    <ComposerBanner.Actions>
+                      <ComposerBanner.Dismiss
+                        aria-label="Dismiss this error"
+                        onClick={() => {
+                          props.onDismissAnswerProblem?.();
+                          // The button goes with the banner: keep focus on the kept draft.
+                          focusComposer();
+                        }}
+                      />
+                    </ComposerBanner.Actions>
+                  ) : null}
+                </ComposerBanner.Row>
               </ComposerBanner.Root>
             </ComposerBanner.Attachment>
           ) : null}

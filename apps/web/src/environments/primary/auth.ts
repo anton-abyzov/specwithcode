@@ -1,4 +1,5 @@
 import type {
+  EnvironmentId,
   AuthBrowserSessionResult,
   AuthClientMetadata,
   AuthEnvironmentScope,
@@ -323,6 +324,9 @@ async function bootstrapServerAuth(urlCredential: string | null): Promise<Server
     return {
       status: "requires-auth",
       auth: currentSession.auth,
+      ...(currentSession.reapprovalRequired
+        ? { errorMessage: currentSession.message ?? "Approve this device again in SpecWithCode." }
+        : {}),
     };
   }
 
@@ -357,6 +361,7 @@ export async function submitServerAuthCredential(credential: string): Promise<vo
 }
 
 export async function createServerPairingCredential(input?: {
+  readonly coordinatorEnvironmentId?: EnvironmentId;
   readonly label?: string;
   readonly scopes?: ReadonlyArray<AuthGrantScope>;
 }): Promise<AuthPairingCredentialResult> {
@@ -369,6 +374,9 @@ export async function createServerPairingCredential(input?: {
             headers: {},
             payload: {
               ...(trimmedLabel ? { label: trimmedLabel } : {}),
+              ...(input?.coordinatorEnvironmentId
+                ? { coordinatorEnvironmentId: input.coordinatorEnvironmentId }
+                : {}),
               ...(input?.scopes ? { scopes: input.scopes } : {}),
             },
           }),

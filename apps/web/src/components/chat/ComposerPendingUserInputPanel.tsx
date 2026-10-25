@@ -49,6 +49,8 @@ interface PendingUserInputPanelProps {
   onDismiss: (requestId: RuntimeRequestId) => void;
   /** Moves focus to where a free-text answer is typed. Hidden when absent. */
   onReplyInChat?: (() => void) | undefined;
+  /** Who asked: the coordinator, or the thread's title. Named on the card when given. */
+  askedBy?: string | undefined;
   renderText?: QuestionTextRenderer | undefined;
 }
 
@@ -63,6 +65,7 @@ export const ComposerPendingUserInputPanel = memo(function ComposerPendingUserIn
   onPrevious,
   onDismiss,
   onReplyInChat,
+  askedBy,
   renderText = renderPlainQuestionText,
 }: PendingUserInputPanelProps) {
   if (pendingUserInputs.length === 0) return null;
@@ -83,6 +86,7 @@ export const ComposerPendingUserInputPanel = memo(function ComposerPendingUserIn
       onPrevious={onPrevious}
       onDismiss={onDismiss}
       onReplyInChat={onReplyInChat}
+      askedBy={askedBy}
       renderText={renderText}
     />
   );
@@ -100,6 +104,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   onPrevious,
   onDismiss,
   onReplyInChat,
+  askedBy,
   renderText,
 }: {
   prompt: PendingUserInput;
@@ -114,6 +119,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   onPrevious: (() => void) | undefined;
   onDismiss: (requestId: RuntimeRequestId) => void;
   onReplyInChat: (() => void) | undefined;
+  askedBy: string | undefined;
   renderText: QuestionTextRenderer;
 }) {
   // Message-mode requests remain answerable after their provider turn ends.
@@ -329,7 +335,27 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
       >
         <ComposerBanner.Icon />
         <ComposerBanner.Content>
-          <span className="shrink-0 font-medium text-muted-foreground">
+          {askedBy ? (
+            // The agent asked this, not the person: its name leads the card.
+            <>
+              <span
+                data-question-asker
+                className="min-w-0 max-w-[65%] shrink truncate text-muted-foreground"
+              >
+                {`${askedBy} asks`}
+              </span>
+              <span aria-hidden className="shrink-0 text-muted-foreground">
+                ·
+              </span>
+            </>
+          ) : null}
+          <span
+            className={cn(
+              "font-medium text-muted-foreground",
+              // Beside a long asker name, the header gives way too.
+              askedBy ? "min-w-0 shrink truncate" : "shrink-0",
+            )}
+          >
             {activeQuestion.header}
           </span>
           {isCollapsed ? (

@@ -204,15 +204,23 @@ const makeHandler = (browser: ServerBrowser.ServerBrowser["Service"]) =>
     );
   });
 
-/** Which host setup a launch failure is missing, and the command that fixes it. */
+/**
+ * Which host setup a launch failure is missing, and the command that fixes it.
+ * A GPU process that cannot start inside an outer sandbox is that sandbox
+ * blocking Chrome's own, and its next step is the operator's sandbox opt-out.
+ * Once the opt-out is set there is no command left, so it is an ordinary failure.
+ */
 const hostSetup = (cause: unknown): PreviewStreamHostSetup | undefined =>
   isSandboxError(cause)
     ? { need: "sandbox", command: cause.setupCommand }
     : isLibrariesError(cause)
       ? { need: "libraries", command: cause.setupCommand }
-      : undefined;
+      : isGpuError(cause) && !cause.sandboxOff
+        ? { need: "gpu", command: PreviewBrowserHost.SANDBOX_OPT_OUT }
+        : undefined;
 const isSandboxError = Schema.is(PreviewBrowserHost.PreviewBrowserSandboxError);
 const isLibrariesError = Schema.is(PreviewBrowserHost.PreviewBrowserLibrariesError);
+const isGpuError = Schema.is(PreviewBrowserHost.PreviewBrowserGpuError);
 const encodeHostSetup = Schema.encodeSync(Schema.fromJsonString(PreviewStreamHostSetup));
 
 /** `GET /api/preview-stream/download?threadId&tabId&id`: a file a server tab downloaded. */

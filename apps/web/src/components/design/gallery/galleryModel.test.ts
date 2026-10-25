@@ -5,11 +5,17 @@ import {
   availableCreationKinds,
   editedAgo,
   filterDesigns,
-  galleryFilterFromSearch,
   gallerySearchFor,
+  groupByOwner,
   newDesignPresetFromSearch,
+  ownerChips,
   parseDesignGallerySearch,
+  resolveScope,
+  scopeLabel,
+  searchForScope,
+  showsSections,
   withoutNewDesignSearch,
+  type GalleryScope,
 } from "./galleryModel";
 
 const NOW = Date.parse("2026-10-20T15:00:00Z");
@@ -43,37 +49,84 @@ const designs = [
   summary("d3", "Status emails", api, 600, "API"),
 ];
 
+const ALL: GalleryScope = { kind: "all" };
+const ids = (list: readonly DesignSummary[]) => list.map((design) => design.ref.designId);
+
 describe("filterDesigns", () => {
   it("lists every owner newest first on All", () => {
-    const shown = filterDesigns(designs, { tab: "all", projectId: null, query: "" });
-    expect(shown.map((design) => design.ref.designId)).toEqual(["d2", "d1", "d3"]);
+    expect(ids(filterDesigns(designs, { scope: ALL, query: "" }))).toEqual(["d2", "d1", "d3"]);
   });
 
-  it("splits Playground and Projects and filters one project", () => {
+  it("scopes to the Playground, every project, or one project", () => {
+    expect(ids(filterDesigns(designs, { scope: { kind: "playground" }, query: "" }))).toEqual([
+      "d2",
+    ]);
+    expect(ids(filterDesigns(designs, { scope: { kind: "projects" }, query: "" }))).toEqual([
+      "d1",
+      "d3",
+    ]);
     expect(
-      filterDesigns(designs, { tab: "playground", projectId: null, query: "" }).map(
-        (design) => design.ref.designId,
-      ),
-    ).toEqual(["d2"]);
-    expect(
-      filterDesigns(designs, { tab: "projects", projectId: null, query: "" }).map(
-        (design) => design.ref.designId,
-      ),
-    ).toEqual(["d1", "d3"]);
-    expect(
-      filterDesigns(designs, { tab: "projects", projectId: "api" as never, query: "" }).map(
-        (design) => design.ref.designId,
+      ids(
+        filterDesigns(designs, {
+          scope: { kind: "project", projectId: "api" as never },
+          query: "",
+        }),
       ),
     ).toEqual(["d3"]);
   });
 
-  it("searches titles and owner labels", () => {
+  it("searches titles and owner labels inside the scope", () => {
+    expect(ids(filterDesigns(designs, { scope: ALL, query: "web" }))).toEqual(["d1"]);
+    expect(filterDesigns(designs, { scope: ALL, query: "nothing" })).toEqual([]);
     expect(
-      filterDesigns(designs, { tab: "all", projectId: null, query: "web" }).map(
-        (design) => design.ref.designId,
-      ),
-    ).toEqual(["d1"]);
-    expect(filterDesigns(designs, { tab: "all", projectId: null, query: "nothing" })).toEqual([]);
+      filterDesigns(designs, {
+        scope: { kind: "project", projectId: "api" as never },
+        query: "pricing",
+      }),
+    ).toEqual([]);
+  });
+});
+
+describe("owner chips and sections", () => {
+  const projects = [
+    { id: "web", title: "Web app" },
+    { id: "api", title: "API" },
+  ] as never as { id: never; title: string }[];
+  const more = [...designs, summary("d4", "Errors", api, 1, "API")];
+
+  it("counts the Playground and orders projects by their latest edit", () => {
+    const chips = ownerChips(more, projects);
+    expect(chips.playground).toBe(1);
+    expect(chips.projects.map((chip) => [chip.label, chip.count])).toEqual([
+      ["API", 2],
+      ["Web app", 1],
+    ]);
+  });
+
+  it("leaves out projects with no designs", () => {
+    const chips = ownerChips([designs[1]!], projects);
+    expect(chips.projects).toEqual([]);
+  });
+
+  it("groups by project, newest project first, Playground last", () => {
+    const sections = groupByOwner(more, projects);
+    expect(sections.map((section) => section.label)).toEqual(["API", "Web app", "Playground"]);
+    expect(ids(sections[0]!.designs)).toEqual(["d4", "d3"]);
+  });
+
+  it("shows sections only on All with two or more owners, unless Recent is chosen", () => {
+    expect(showsSections(ALL, "project", 2)).toBe(true);
+    expect(showsSections(ALL, "project", 1)).toBe(false);
+    expect(showsSections(ALL, "recent", 3)).toBe(false);
+    expect(showsSections({ kind: "playground" }, "project", 3)).toBe(false);
+  });
+
+  it("names the scope from the window's projects, then the server's label", () => {
+    expect(scopeLabel({ kind: "project", projectId: "web" as never }, projects)).toBe("Web app");
+    expect(scopeLabel({ kind: "project", projectId: "gone" as never }, projects, designs)).toBe(
+      "Project",
+    );
+    expect(scopeLabel({ kind: "playground" }, projects)).toBe("Playground");
   });
 });
 
@@ -139,31 +192,39 @@ describe("the /design URL filter", () => {
     ).toEqual({});
   });
 
-  it("?project= implies the Projects tab", () => {
-    expect(galleryFilterFromSearch({ project: "api" as never }, projects)).toEqual({
-      tab: "projects",
-      projectId: "api",
-    });
-    expect(galleryFilterFromSearch({ tab: "all", project: "api" as never }, projects).tab).toBe(
-      "projects",
-    );
+  it("keeps a grouping choice", () => {
+    expect(parseDesignGallerySearch({ group: "recent" })).toEqual({ group: "recent" });
+    expect(parseDesignGallerySearch({ group: "owner" })).toEqual({});
   });
 
-  it("an unknown project falls back to all projects", () => {
-    expect(galleryFilterFromSearch({ project: "gone" as never }, projects)).toEqual({
-      tab: "projects",
-      projectId: null,
-    });
+  it("?project= names one project on any tab, so old links still work", () => {
+    const easy = { kind: "project", projectId: "api" };
+    expect(resolveScope({ project: "api" as never })).toEqual(easy);
+    expect(resolveScope({ tab: "projects", project: "api" as never })).toEqual(easy);
+    expect(resolveScope({ tab: "playground", project: "api" as never })).toEqual(easy);
+    expect(resolveScope({ tab: "all", project: "api" as never })).toEqual(easy);
   });
 
-  it("defaults to All and round-trips a filter", () => {
-    expect(galleryFilterFromSearch({}, projects)).toEqual({ tab: "all", projectId: null });
-    expect(gallerySearchFor({ tab: "all", projectId: null })).toEqual({});
-    expect(gallerySearchFor({ tab: "playground", projectId: null })).toEqual({ tab: "playground" });
-    expect(gallerySearchFor({ tab: "projects", projectId: null })).toEqual({ tab: "projects" });
+  it("?tab= alone keeps its meaning", () => {
+    expect(resolveScope({})).toEqual({ kind: "all" });
+    expect(resolveScope({ tab: "playground" })).toEqual({ kind: "playground" });
+    expect(resolveScope({ tab: "projects" })).toEqual({ kind: "projects" });
+  });
+
+  it("round-trips a scope and keeps the grouping", () => {
+    for (const scope of [
+      { kind: "all" },
+      { kind: "playground" },
+      { kind: "projects" },
+      { kind: "project", projectId: "web" },
+    ] as GalleryScope[])
+      expect(resolveScope(searchForScope(scope))).toEqual(scope);
+    expect(searchForScope({ kind: "all" })).toEqual({});
+    expect(searchForScope({ kind: "all" }, "recent")).toEqual({ group: "recent" });
     expect(gallerySearchFor({ tab: "projects", projectId: "web" as never })).toEqual({
       project: "web",
     });
+    expect(gallerySearchFor({ tab: "projects", projectId: null })).toEqual({ tab: "projects" });
   });
 
   it("?new=design preselects a known owner and the system, once", () => {

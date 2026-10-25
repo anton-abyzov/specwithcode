@@ -271,7 +271,7 @@ export function LinkIncrementDialog({
             {filter.trim() === "" && status === null
               ? [
                   option({ type: "auto" }, "Automatic", "ledger writes, title or branch"),
-                  option({ type: "none" }, "No increment", "the agent's todo list only"),
+                  option({ type: "none" }, "No increment", "the agent's checklist only"),
                 ]
               : null}
             {increments.map((increment) =>

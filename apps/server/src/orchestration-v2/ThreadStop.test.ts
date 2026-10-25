@@ -216,6 +216,78 @@ it.effect("Stop ends watches, holds queues, and stops the delegated tasks under 
   }).pipe(Effect.provide(layerTest)),
 );
 
+it.effect("Stop turns off a delegated task's automatic resume after its usage limit", () =>
+  Effect.gen(function* () {
+    const orchestrator = yield* Orchestrator.OrchestratorV2;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const threads = yield* ThreadManagementService.ThreadManagementService;
+    const parentThreadId = ThreadId.make("thread:stop-limit-parent");
+    yield* createWatchingThread(parentThreadId, 7);
+    yield* send(parentThreadId, "limit parent", "start_immediately");
+    const childThreadId = yield* delegate(parentThreadId, "limited child task");
+    const childRun = (yield* orchestrator.getThreadProjection(childThreadId)).runs.at(-1)!;
+    const now = yield* DateTime.now;
+    const resetAt = DateTime.formatIso(DateTime.add(now, { hours: 1 }));
+    yield* projections.apply({
+      id: EventId.make("event:stop-limit-child:run-failed"),
+      type: "run.updated",
+      threadId: childThreadId,
+      runId: childRun.id,
+      occurredAt: now,
+      payload: { ...childRun, status: "failed", completedAt: now },
+    });
+    yield* projections.apply({
+      id: EventId.make("event:stop-limit-child:error"),
+      type: "turn-item.updated",
+      threadId: childThreadId,
+      runId: childRun.id,
+      occurredAt: now,
+      payload: {
+        id: TurnItemId.make("turn-item:stop-limit-child:error"),
+        type: "error",
+        threadId: childThreadId,
+        runId: childRun.id,
+        nodeId: childRun.rootNodeId,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: 2,
+        status: "failed",
+        title: "Usage limit reached",
+        startedAt: now,
+        completedAt: now,
+        updatedAt: now,
+        failure: {
+          class: "usage_limit",
+          message: "Plan limit reached.",
+          code: "usageLimitExceeded",
+          retryable: null,
+          resetAt,
+        },
+      },
+    });
+
+    const stopCommandId = CommandId.make("stop-limit-parent");
+    yield* threads.stopDelegatedTasks({ threadId: parentThreadId, commandId: stopCommandId });
+    const disarmed = (yield* orchestrator.getThreadProjection(childThreadId)).thread.limitRecovery;
+    assert.deepEqual(
+      { runId: disarmed?.runId, resetAt: disarmed?.resetAt, autoResume: disarmed?.autoResume },
+      { runId: childRun.id, resetAt, autoResume: false },
+    );
+    // Settled too: provider fallback skips settled threads, so it cannot
+    // continue the stopped task on another provider.
+    const stopped = (yield* orchestrator.getThreadProjection(childThreadId)).thread;
+    assert.equal(stopped.settledOverride, "settled");
+    // A retried effect writes nothing new.
+    yield* threads.stopDelegatedTasks({ threadId: parentThreadId, commandId: stopCommandId });
+    const retried = (yield* orchestrator.getThreadProjection(childThreadId)).thread;
+    assert.equal(retried.limitRecovery?.autoResume, false);
+    assert.equal(retried.settledOverride, "settled");
+    assert.equal(DateTime.formatIso(retried.updatedAt), DateTime.formatIso(stopped.updatedAt));
+  }).pipe(Effect.provide(layerTest)),
+);
+
 it.effect(
   "thread.stop ends an idle thread's watches and accepts a thread with nothing to stop",
   () =>

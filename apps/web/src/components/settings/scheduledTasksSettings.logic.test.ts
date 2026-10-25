@@ -6,6 +6,7 @@ import {
   ProviderInstanceId,
   ScheduledTaskId,
   type ScheduledTask,
+  ThreadId,
 } from "@specweave-studio/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -18,6 +19,7 @@ import { resolveSettingsScope, type SettingsScopeSearch } from "./settingsScope"
 import { deriveProviderInstanceEntries } from "../../providerInstances";
 import {
   defaultOnceAt,
+  morningBriefingDraft,
   onceAtIso,
   scheduledTaskDefaultModel,
   matchesScheduledTaskScope,
@@ -213,6 +215,24 @@ const legacyTask: ScheduledTask = {
   lastRunError: null,
   runCount: 0,
 };
+
+describe("where a routine's runs land", () => {
+  it("gives every routine its own thread unless it continues a worker's", () => {
+    expect(taskToDraft(legacyTask).ownThread).toBe(true);
+    const own = taskToDraft({ ...legacyTask, threadId: ThreadId.make("t-own"), ownThread: true });
+    expect(own).toMatchObject({ threadId: "t-own", ownThread: true });
+    const worker = taskToDraft({ ...legacyTask, threadId: ThreadId.make("t-worker") });
+    expect(worker).toMatchObject({ threadId: "t-worker", ownThread: false });
+  });
+
+  it("starts the morning briefing in its own thread, not the coordinator's", () => {
+    const draft = morningBriefingDraft(taskToDraft(legacyTask), {
+      id: ProjectId.make("aide"),
+      coordinatorModelSelection: null,
+    });
+    expect(draft).toMatchObject({ threadId: "", ownThread: true, projectId: "aide" });
+  });
+});
 
 describe("editing scheduled task branch settings", () => {
   it("keeps an omitted origin flag on the local base branch", () => {

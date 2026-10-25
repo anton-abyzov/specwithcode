@@ -393,18 +393,13 @@
 
 /* The chips follow the title in the one header row and give way before it. */
 .sws-thread-head-chips {
-  flex: 0 9999 auto;
+  container: headchips / inline-size;
+  flex: 0 1 440px;
   min-width: 0;
   display: flex;
   align-items: center;
   gap: 4px;
   overflow: hidden;
-}
-/* A narrow panel keeps the title and drops the model name first. */
-@container (max-width: 420px) {
-  .sws-thread-head-chips .sws-model {
-    display: none;
-  }
 }
 .sws-chip {
   flex: none;

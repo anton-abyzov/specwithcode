@@ -141,6 +141,11 @@ export interface EnvironmentThreadShell {
   readonly pendingBackgroundTasks: ReadonlyArray<
     NonNullable<OrchestrationV2ThreadShell["pendingBackgroundTasks"]>[number]
   >;
+  /**
+   * The running turn's latest provider activity; absent from older servers.
+   * Messages queued behind the turn do not move it, unlike `updatedAt`.
+   */
+  readonly activeRunActivityAt?: string | null;
   /** What the running turn waits on: its newest unfinished command or subagent. */
   readonly activeWork?:
     | {
@@ -349,6 +354,9 @@ export function presentThreadShell(
     ...(thread.heldQueuedCount ? { heldQueuedCount: thread.heldQueuedCount } : {}),
     planProgress: thread.planProgress ?? null,
     pendingBackgroundTasks: thread.pendingBackgroundTasks ?? [],
+    ...(thread.activeRunActivityAt == null
+      ? {}
+      : { activeRunActivityAt: iso(thread.activeRunActivityAt) }),
     // Absent (a server older than this field) differs from null (nothing in flight).
     activeWork:
       thread.activeWork === undefined
@@ -472,11 +480,18 @@ export function threadAwaitingPerson(
  */
 export function threadRunHealth(
   thread: Pick<EnvironmentThreadShell, "runtime" | "updatedAt" | "activeWork"> &
+    Partial<Pick<EnvironmentThreadShell, "activeRunActivityAt">> &
     Parameters<typeof threadAwaitingPerson>[0],
   nowMs: number,
 ): RunHealth | null {
   const status = thread.runtime?.status;
-  const lastActivityMs = Date.parse(thread.updatedAt);
+  // The run's own activity when the server reports it: every message queued
+  // behind a stalled turn bumps `updatedAt` and would hide the stall.
+  const runActivityMs =
+    thread.activeRunActivityAt == null ? Number.NaN : Date.parse(thread.activeRunActivityAt);
+  const lastActivityMs = Number.isFinite(runActivityMs)
+    ? runActivityMs
+    : Date.parse(thread.updatedAt);
   if (!Number.isFinite(lastActivityMs)) return null;
   const startedAtMs =
     thread.activeWork == null ? Number.NaN : Date.parse(thread.activeWork.startedAt);

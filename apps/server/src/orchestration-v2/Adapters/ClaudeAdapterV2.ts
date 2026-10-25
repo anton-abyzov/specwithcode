@@ -1,6 +1,7 @@
 import { stringifyJson } from "../../json.ts";
 import { makeProjectContextHooks } from "../../project/ProjectContextHooks.ts";
 import { makeProviderTextDeltaCoalescer } from "./ProviderTextDeltaCoalescer.ts";
+import { outageProgress } from "../SubagentSettlement.ts";
 import {
   dynamicToolTitle,
   formatReadToolLabel,
@@ -431,10 +432,20 @@ export class ClaudeAgentSdkQueryRunnerError extends Schema.TaggedError<ClaudeAge
 
 export class ClaudeBackgroundWorkBlocksQueryReplacementError extends Schema.TaggedError<ClaudeBackgroundWorkBlocksQueryReplacementError>()(
   "ClaudeBackgroundWorkBlocksQueryReplacementError",
-  {},
+  {
+    // What needs a new process: the thread's model selection, or its
+    // folders, permissions or tools (a project folder removed, a mode change).
+    change: Schema.optional(Schema.Literals(["model", "settings", "model_and_settings"])),
+  },
 ) {
   override get message(): string {
-    return "Claude is still running background agents or commands, and this model or setting change would end them. Wait for them to finish, or press Stop, then send the message again.";
+    const change =
+      this.change === "settings"
+        ? "folder or permission change"
+        : this.change === "model_and_settings"
+          ? "model, folder or permission change"
+          : "model change";
+    return `Claude is still running background agents or commands, and this ${change} would end them. Wait for them to finish, or press Stop, then send the message again.`;
   }
 }
 
@@ -3095,6 +3106,13 @@ interface ActiveClaudeSubagent {
   // message id. A completion result equal to it is already on screen.
   lastAssistantText: string | null;
   lastAssistantMessageId: string | null;
+  // Whether that message ended the subagent's turn (stop_reason end_turn):
+  // its final answer, which stands for its result if its process dies.
+  lastAssistantFinal?: boolean;
+  // Where the subagent's turn item was last emitted, so a settlement emitted
+  // from another turn keeps it there.
+  itemProviderThreadId?: OrchestrationV2ProviderThread["id"];
+  itemProviderTurnId?: OrchestrationV2ProviderTurn["id"];
 }
 
 interface ClaudeLiveQueryContext {
@@ -3104,6 +3122,11 @@ interface ClaudeLiveQueryContext {
   // queryPolicyKey without the launch context (saved agent instructions,
   // workflow mode, subagent prompt file): what a running process cannot keep.
   readonly queryCoreKey: string;
+  // queryCoreKey without the approved project folders, and those folders.
+  // A process running background work keeps its folders when only new ones
+  // were approved: it then has less access than granted, never more.
+  readonly queryCoreBaseKey: string;
+  readonly projectAdditionalDirectories: ReadonlyArray<string>;
   readonly selectionKey: string;
   readonly closed: Deferred.Deferred<void, never>;
   // Whether this CLI process echoes a prompt's uuid on the first frame of
@@ -3396,6 +3419,9 @@ export function makeClaudeAdapterV2(
         // that arrives without `resetsAt` reuses it, so the stop keeps a reset.
         const knownLimitResets = new Map<string, number>();
         const queryContext = yield* Ref.make<ClaudeLiveQueryContext | null>(null);
+        // The failure class of the latest finalized turn (null when it did not
+        // fail): what most likely ended a process that later turns find gone.
+        const lastTurnFailureClass = yield* Ref.make<string | null>(null);
         const openedNativeThreads = yield* Ref.make(new Set<string>());
         const latestPlanByKind = yield* Ref.make(new Map<string, OrchestrationV2PlanArtifact>());
         const planIdsByNativeItem = yield* Ref.make(
@@ -3639,8 +3665,23 @@ export function makeClaudeAdapterV2(
         const runtimeContext = yield* Effect.context<never>();
         const runPromise = Effect.runPromiseWith(runtimeContext);
 
+        // Retain only open runless items. They belong to native child threads
+        // and must end with the child when its process disappears (1048 F-06).
+        const openChildItems = new Map<OrchestrationV2TurnItem["id"], OrchestrationV2TurnItem>();
         const emitProviderEvent = (event: ProviderAdapter.ProviderAdapterV2Event) =>
-          Queue.offer(events, event).pipe(Effect.asVoid);
+          Effect.sync(() => {
+            if (event.type !== "turn_item.updated" || event.turnItem.runId !== null) return;
+            const item = event.turnItem;
+            if (
+              item.status === "running" ||
+              item.status === "pending" ||
+              item.status === "waiting"
+            ) {
+              openChildItems.set(item.id, item);
+            } else {
+              openChildItems.delete(item.id);
+            }
+          }).pipe(Effect.andThen(Queue.offer(events, event)), Effect.asVoid);
 
         // Claude emits retry progress but no recovered frame; the next
         // assistant message is the first reliable evidence of recovery.
@@ -4585,6 +4626,10 @@ export function makeClaudeAdapterV2(
               input.reopen === true ? null : (existingSubagent?.lastAssistantText ?? null),
             lastAssistantMessageId:
               input.reopen === true ? null : (existingSubagent?.lastAssistantMessageId ?? null),
+            lastAssistantFinal:
+              input.reopen === true ? false : (existingSubagent?.lastAssistantFinal ?? false),
+            itemProviderThreadId: input.context.input.providerThread.id,
+            itemProviderTurnId: input.context.providerTurnId,
           } satisfies ActiveClaudeSubagent;
           input.context.subagentsByTaskId.set(input.taskId, subagent);
           if (input.toolUseId !== undefined) {
@@ -5237,8 +5282,15 @@ export function makeClaudeAdapterV2(
             return;
           }
           input.context.finalizing = true;
+          yield* Ref.set(
+            lastTurnFailureClass,
+            input.status === "failed" ? (input.failure?.class ?? null) : null,
+          );
           yield* reasoningDeltas.flushTurn(input.context.nativeTurnId);
           for (const toolCall of input.context.toolCalls.values()) {
+            // A completed parent can leave its native child working in this
+            // process. Its runless items end with the child, not this turn.
+            if (toolCall.runId === null && input.status === "completed") continue;
             const artifacts = buildToolCallArtifacts({
               context: input.context,
               nativeItemId: toolCall.nativeItemId,
@@ -6726,6 +6778,9 @@ export function makeClaudeAdapterV2(
                 ? `${subagent.lastAssistantText ?? ""}\n${assistantText.text}`
                 : assistantText.text;
             subagent.lastAssistantMessageId = nativeMessageId;
+            subagent.lastAssistantFinal =
+              message.type === "assistant" &&
+              Reflect.get(message.message, "stop_reason") === "end_turn";
             const artifacts = makeSubagentConversationArtifacts({
               messageId: idAllocator.derive.messageFromProviderItem({
                 driver: CLAUDE_PROVIDER,
@@ -7445,10 +7500,177 @@ export function makeClaudeAdapterV2(
           return false;
         });
 
+        // Subagents still running in the registry when a new process opens ran
+        // in the process that is gone, which never reports their end. Each is
+        // settled now, with its original run, so the run still ingesting for
+        // it (or the new run that inherited its item) stores it: completed with
+        // its final answer when that was already streamed, otherwise
+        // interrupted as an outage. One whose completion is buffered is done
+        // and left to its wake turn.
+        const settleSubagentsFromEarlierProcesses = Effect.fnUntraced(function* (
+          live: ClaudeLiveQueryContext,
+          emitSettlement: typeof emitProviderEvent = emitProviderEvent,
+        ) {
+          if (live.subagentsFromEarlierProcesses.size === 0) return;
+          const buffered = new Set<string>();
+          for (const entry of (yield* Ref.get(wakeBuffers)).values()) {
+            for (const message of entry.messages) {
+              if (message.type === "system" && message.subtype === "task_notification") {
+                buffered.add(message.task_id);
+              }
+            }
+          }
+          const progress = outageProgress({
+            driver: CLAUDE_PROVIDER,
+            failureClass: yield* Ref.get(lastTurnFailureClass),
+          });
+          const now = yield* DateTime.now;
+          for (const [taskId, subagent] of yield* Ref.get(sessionSubagentsByTaskId)) {
+            if (
+              !live.subagentsFromEarlierProcesses.has(subagent) ||
+              subagent.task.status !== "running" ||
+              buffered.has(taskId)
+            ) {
+              continue;
+            }
+            const answer =
+              subagent.lastAssistantFinal === true ? (subagent.lastAssistantText ?? "") : "";
+            const task: OrchestrationV2Subagent =
+              answer.trim().length > 0
+                ? {
+                    ...subagent.task,
+                    status: "completed",
+                    result: answer,
+                    completedAt: now,
+                    updatedAt: now,
+                  }
+                : {
+                    ...subagent.task,
+                    status: "interrupted",
+                    progress,
+                    completedAt: now,
+                    updatedAt: now,
+                  };
+            // In place: the registry entry and its membership in the earlier
+            // set stay, and the entry no longer counts as live work.
+            subagent.task = task;
+            const status = task.status === "completed" ? "completed" : "interrupted";
+            yield* emitSettlement({
+              type: "node.updated",
+              driver: CLAUDE_PROVIDER,
+              node: {
+                id: task.id,
+                threadId: task.threadId,
+                runId: task.runId,
+                parentNodeId: task.parentNodeId,
+                rootNodeId: subagent.rootNodeId,
+                kind: "subagent",
+                status,
+                countsForRun: false,
+                providerThreadId: subagent.itemProviderThreadId ?? null,
+                providerTurnId: subagent.itemProviderTurnId ?? null,
+                nativeItemRef: task.nativeTaskRef,
+                runtimeRequestId: null,
+                checkpointScopeId: null,
+                startedAt: task.startedAt,
+                completedAt: task.completedAt,
+              },
+            });
+            yield* emitSettlement({
+              type: "node.updated",
+              driver: CLAUDE_PROVIDER,
+              node: {
+                id: subagent.childRootNodeId,
+                threadId: subagent.childThreadId,
+                runId: null,
+                parentNodeId: null,
+                rootNodeId: subagent.childRootNodeId,
+                kind: "root_turn",
+                status,
+                countsForRun: false,
+                providerThreadId: null,
+                providerTurnId: null,
+                nativeItemRef: task.nativeTaskRef,
+                runtimeRequestId: null,
+                checkpointScopeId: null,
+                startedAt: task.startedAt,
+                completedAt: task.completedAt,
+              },
+            });
+            for (const item of openChildItems.values()) {
+              if (item.threadId !== subagent.childThreadId) continue;
+              yield* emitSettlement({
+                type: "turn_item.updated",
+                driver: CLAUDE_PROVIDER,
+                turnItem: {
+                  ...item,
+                  status,
+                  completedAt: now,
+                  updatedAt: now,
+                  ...(item.type === "assistant_message" || item.type === "reasoning"
+                    ? { streaming: false }
+                    : {}),
+                },
+              });
+            }
+            yield* emitSettlement({
+              type: "subagent.updated",
+              driver: CLAUDE_PROVIDER,
+              subagent: task,
+            });
+            yield* emitSettlement({
+              type: "turn_item.updated",
+              driver: CLAUDE_PROVIDER,
+              turnItem: {
+                id: subagent.turnItemId,
+                threadId: task.threadId,
+                runId: task.runId,
+                nodeId: task.id,
+                providerThreadId: subagent.itemProviderThreadId ?? null,
+                providerTurnId: subagent.itemProviderTurnId ?? null,
+                nativeItemRef: task.nativeTaskRef,
+                parentItemId: null,
+                ordinal: subagent.turnItemOrdinal,
+                status,
+                title: task.title,
+                startedAt: task.startedAt,
+                completedAt: task.completedAt,
+                updatedAt: task.updatedAt,
+                type: "subagent",
+                subagentId: task.id,
+                origin: task.origin,
+                driver: task.driver,
+                providerInstanceId: task.providerInstanceId,
+                childThreadId: task.childThreadId,
+                prompt: task.prompt,
+                ...(task.progress === undefined ? {} : { progress: task.progress }),
+                result: task.result,
+              },
+            });
+          }
+        });
+
+        // A Stop closes the process on purpose: its subagents end with it, and
+        // the orchestrator settles them with the Stop's cause. The next process
+        // must not report them as lost.
+        const retireRunningSubagents = Effect.fnUntraced(function* () {
+          const now = yield* DateTime.now;
+          for (const subagent of (yield* Ref.get(sessionSubagentsByTaskId)).values()) {
+            if (subagent.task.status !== "running") continue;
+            subagent.task = {
+              ...subagent.task,
+              status: "cancelled",
+              completedAt: now,
+              updatedAt: now,
+            };
+          }
+        });
+
         const projectContextHooks = makeProjectContextHooks();
         const openQuery = Effect.fnUntraced(function* (
           turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
           nativeThreadId: string,
+          emitSettlement: typeof emitProviderEvent = emitProviderEvent,
         ) {
           projectContextHooks.register(nativeThreadId, turnInput);
           const existing = yield* Ref.get(queryContext);
@@ -7506,9 +7728,13 @@ export function makeClaudeAdapterV2(
             claudeInChromeDefault,
             hideClaudeInChrome,
           ]);
+          const projectAdditionalDirectories = turnInput.projectAdditionalDirectories ?? [];
+          const queryCoreBaseKey = stringifyJson(
+            claudeEffectiveQueryPolicyKey(queryPolicy, mcpOverrides),
+          );
           const queryCoreKey = stringifyJson([
             claudeEffectiveQueryPolicyKey(queryPolicy, mcpOverrides),
-            turnInput.projectAdditionalDirectories ?? [],
+            projectAdditionalDirectories,
           ]);
           const catalog = adapterOptions.modelCatalog?.() ?? BUNDLED_CLAUDE_MODEL_CATALOG;
           const compiledSelection = compileClaudeModelSelection(turnInput.modelSelection, catalog);
@@ -7570,12 +7796,28 @@ export function makeClaudeAdapterV2(
             // Saved agent instructions, the workflow mode and the subagent
             // prompt file are launch context: a running process keeps the
             // ones it started with, and the next process opened once the
-            // background work is done uses the saved ones. Only a model,
-            // permission, tool or directory change needs a new process now.
+            // background work is done uses the saved ones. Newly approved
+            // project folders wait the same way (the process keeps less
+            // access than granted). Only a model, permission, tool or removed
+            // folder change needs a new process now.
+            const onlyFoldersAdded =
+              existing.queryCoreKey !== queryCoreKey &&
+              existing.queryCoreBaseKey === queryCoreBaseKey &&
+              existing.projectAdditionalDirectories.every((directory) =>
+                projectAdditionalDirectories.includes(directory),
+              );
             if (
-              existing.queryCoreKey === queryCoreKey &&
+              (existing.queryCoreKey === queryCoreKey || onlyFoldersAdded) &&
               existing.selectionKey === compiledSelection.queryIdentity
             ) {
+              if (onlyFoldersAdded) {
+                yield* Effect.logInfo("claude.query.folder-grant-deferred", {
+                  threadId: turnInput.threadId,
+                  addedFolders: projectAdditionalDirectories.filter(
+                    (directory) => !existing.projectAdditionalDirectories.includes(directory),
+                  ).length,
+                });
+              }
               if (existing.permissionMode !== existing.openedPermissionMode) {
                 yield* existing.query.setPermissionMode(existing.openedPermissionMode);
                 existing.permissionMode = existing.openedPermissionMode;
@@ -7583,7 +7825,11 @@ export function makeClaudeAdapterV2(
               yield* reconnectStudioMcp(existing);
               return existing;
             }
-            return yield* new ClaudeBackgroundWorkBlocksQueryReplacementError();
+            const modelChanged = existing.selectionKey !== compiledSelection.queryIdentity;
+            const settingsChanged = existing.queryCoreKey !== queryCoreKey && !onlyFoldersAdded;
+            return yield* new ClaudeBackgroundWorkBlocksQueryReplacementError({
+              change: !modelChanged ? "settings" : settingsChanged ? "model_and_settings" : "model",
+            });
           }
 
           // openQuery owns one live process. Closing it for another native
@@ -7705,6 +7951,8 @@ export function makeClaudeAdapterV2(
             query: querySession,
             queryPolicyKey,
             queryCoreKey,
+            queryCoreBaseKey,
+            projectAdditionalDirectories,
             selectionKey: compiledSelection.queryIdentity,
             closed,
             promptEchoMode: "unknown",
@@ -7718,6 +7966,7 @@ export function makeClaudeAdapterV2(
             ),
           };
           yield* Ref.set(queryContext, context);
+          yield* settleSubagentsFromEarlierProcesses(context, emitSettlement);
           yield* querySession.messages.pipe(
             Stream.runForEach((message) => {
               if (
@@ -7759,6 +8008,38 @@ export function makeClaudeAdapterV2(
           return context;
         });
 
+        // Retained until a prompt is accepted: storage failure between process
+        // preparation and prompt submission must not erase the lost-work events.
+        const preparedProcessEvents = new Map<string, ProviderAdapter.ProviderAdapterV2Event[]>();
+        const prepareTurn = Effect.fn("ClaudeAdapterV2.prepareTurn")(function* (
+          turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
+        ) {
+          const currentTurn = yield* Ref.get(activeTurn);
+          if (currentTurn !== null) {
+            return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+              driver: CLAUDE_PROVIDER,
+              detail: `Claude provider turn ${currentTurn.providerTurnId} is still active.`,
+              payload: { previousTurnActive: { providerTurnId: currentTurn.providerTurnId } },
+            });
+          }
+          const nativeThreadId = yield* getNativeThreadId(turnInput.providerThread);
+          yield* Ref.update(lastTurnRouteByNativeThread, (current) =>
+            new Map(current).set(nativeThreadId, {
+              threadId: turnInput.threadId,
+              providerThreadId: turnInput.providerThread.id,
+            }),
+          );
+          yield* rememberProviderThread(turnInput.providerThread);
+          const pending = preparedProcessEvents.get(nativeThreadId) ?? [];
+          preparedProcessEvents.set(nativeThreadId, pending);
+          yield* openQuery(turnInput, nativeThreadId, (event) =>
+            Effect.sync(() => {
+              pending.push(event);
+            }),
+          );
+          return pending;
+        });
+
         const startTurn = Effect.fn("ClaudeAdapterV2.startTurn")(
           function* (turnInput: ProviderAdapter.ProviderAdapterV2TurnInput) {
             const startedAt = yield* DateTime.now;
@@ -7779,6 +8060,8 @@ export function makeClaudeAdapterV2(
               return yield* new ProviderAdapter.ProviderAdapterProtocolError({
                 driver: CLAUDE_PROVIDER,
                 detail: `Claude provider turn ${currentTurn.providerTurnId} is still active.`,
+                // Read by previousActiveProviderTurn: nothing was offered yet.
+                payload: { previousTurnActive: { providerTurnId: currentTurn.providerTurnId } },
               });
             }
             yield* Ref.update(lastTurnRouteByNativeThread, (current) => {
@@ -7874,6 +8157,7 @@ export function makeClaudeAdapterV2(
               // Counted only here, so a turn that failed to start does not age reports.
               yield* startUserTurnForWakeReports(nativeThreadId);
               yield* querySession.query.offer(userMessage);
+              preparedProcessEvents.delete(nativeThreadId);
               return;
             }
             const drained = yield* Ref.modify(wakeBuffers, (current) => {
@@ -8003,6 +8287,7 @@ export function makeClaudeAdapterV2(
               // The background shells belong to the CLI process, so closing
               // its query is what stops them.
               yield* closeLiveQueryForNativeThread(nativeThreadId);
+              yield* retireRunningSubagents();
               // A turn started while the close was pending may have opened a
               // replacement process. Its Waiting and wake state are its own.
               const current = yield* Ref.get(queryContext);
@@ -8044,6 +8329,7 @@ export function makeClaudeAdapterV2(
               });
             }
             yield* existing.query.close.pipe(Effect.ignore);
+            yield* retireRunningSubagents();
             const closed = yield* Deferred.await(existing.closed).pipe(
               Effect.timeoutOption("10 seconds"),
             );
@@ -8213,6 +8499,23 @@ export function makeClaudeAdapterV2(
             }
             return false;
           }),
+          liveBackgroundWork: (providerThread) =>
+            Effect.gen(function* () {
+              const live = yield* Ref.get(queryContext);
+              const nativeThreadId = providerThread.nativeThreadRef?.nativeId;
+              // Only this native thread's live process runs its work; any
+              // other process opened since ended it.
+              if (
+                live === null ||
+                live.stopping ||
+                nativeThreadId === undefined ||
+                nativeThreadId === null ||
+                live.nativeThreadId !== nativeThreadId
+              ) {
+                return false;
+              }
+              return yield* liveProcessRunsBackgroundWork(live);
+            }),
           hasPendingBackgroundWorkForThread: (providerThread) =>
             Effect.gen(function* () {
               const nativeThreadId = providerThread.nativeThreadRef?.nativeId;
@@ -8276,6 +8579,19 @@ export function makeClaudeAdapterV2(
                 ),
               ),
           ),
+          prepareTurn: (input) =>
+            prepareTurn(input).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProviderAdapter.ProviderAdapterTurnStartError({
+                    driver: CLAUDE_PROVIDER,
+                    threadId: input.threadId,
+                    providerThreadId: input.providerThread.id,
+                    runId: input.runId,
+                    cause,
+                  }),
+              ),
+            ),
           startTurn,
           compactThread: (turnInput) =>
             startTurn({

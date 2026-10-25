@@ -1,10 +1,11 @@
 /**
- * Exports a design as standalone HTML, a PNG of one frame or page, or a PDF
- * or PPTX with one sheet per slide (or per frame of a design) of every page
- * that is not skipped. Every format starts from `renderDesignHtml`, so
- * exports match the canvas, and images are inlined so the file stands alone.
- * PNG, PDF and the PPTX's rendered parts go through the same headless Chrome
- * as `html_render`.
+ * Exports a design as standalone HTML, a PNG or native SVG of one frame or
+ * page, or a PDF or PPTX with one sheet per slide (or per frame of a design)
+ * of every page that is not skipped. HTML, PNG and PDF are `renderDesignHtml`;
+ * SVG and PPTX are drawn from the node tree with the same styles. Images are
+ * inlined so the file stands alone. PNG, PDF, the SVG's text measurement and
+ * the rendered parts of SVG and PPTX go through the same headless Chrome as
+ * `html_render`.
  */
 import {
   DesignError,
@@ -21,6 +22,7 @@ import type * as HtmlRender from "../htmlRender/HtmlRender.ts";
 import { MAX_FIXED_CAPTURE_EDGE } from "../htmlRender/headlessChrome.ts";
 import { exportPptx, PPTX_MIME_TYPE } from "./export/pptx.ts";
 import { exportSheets, type DesignSheet } from "./export/sheets.ts";
+import { exportSvg } from "./export/svg.ts";
 
 /** A transparent pixel stands in for an image file that is missing. */
 const MISSING_IMAGE =
@@ -105,16 +107,24 @@ export const exportDesign = Effect.fn("DesignExport.exportDesign")(function* (
   if (input.frameId !== undefined && !page.nodes.some((node) => node.id === input.frameId)) {
     return yield* failure("not_found", `No frame ${input.frameId} on that page.`);
   }
-  const rendered = renderDesignHtml(
-    document,
-    input.frameId === undefined ? { pageId: page.id } : { pageId: page.id, frameId: input.frameId },
-    context,
-  );
+  const target =
+    input.frameId === undefined ? { pageId: page.id } : { pageId: page.id, frameId: input.frameId };
   const frameName =
     input.frameId === undefined
       ? page.name
       : (page.nodes.find((node) => node.id === input.frameId)?.name ?? input.frameId);
   const name = `${base}-${slug(frameName)}`;
+  if (input.format === "svg") {
+    const svg = yield* exportSvg({ document, target, context, render: source.render });
+    return {
+      fileName: `${name}.svg`,
+      mimeType: "image/svg+xml",
+      data: Buffer.from(svg.text, "utf8").toString("base64"),
+      width: svg.width,
+      height: svg.height,
+    } satisfies DesignExportResult;
+  }
+  const rendered = renderDesignHtml(document, target, context);
   if (input.format === "html") {
     return {
       fileName: `${name}.html`,

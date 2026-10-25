@@ -40,6 +40,7 @@ import * as Layer from "effect/Layer";
 import * as Fiber from "effect/Fiber";
 import * as Option from "effect/Option";
 import * as Ref from "effect/Ref";
+import * as Stream from "effect/Stream";
 import * as ProviderInstances from "../provider/ProviderInstanceRegistry.ts";
 import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import * as Scheduler from "../scheduling/Scheduler.ts";
@@ -49,6 +50,7 @@ import * as Projects from "../project/ProjectService.ts";
 import * as ProjectAdmission from "../project/ProjectAdmission.ts";
 import { SIMULATED_USAGE_LIMIT_MESSAGE, simulatedUsageLimitInstances } from "./ProviderFailure.ts";
 import { limitHandoffTrigger, MachineLimitHandoff } from "./MachineLimitHandoff.ts";
+import * as EventSink from "./EventSink.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import { SWEEP_SHELL_SNAPSHOT_MAX_AGE_MS } from "./ShellSnapshotCache.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
@@ -519,6 +521,10 @@ export const makeSweep = Effect.gen(function* () {
   const env = yield* ProviderFallbackEnv;
   const machineHandoff = yield* MachineLimitHandoff;
   const lastRunAt = yield* Ref.make(0);
+  // Set when a run fails: it may have stopped on a limit, and the next tick
+  // sweeps at once on a fresh read. Without it each provider in the fallback
+  // order cost up to a full interval of silence before the next was tried.
+  const woken = yield* Ref.make(false);
   // A user who switches back keeps their choice: each command is sent once.
   const sent = yield* Ref.make(new Set<string>());
   const markSent = (id: string) => Ref.update(sent, (current) => new Set(current).add(id));
@@ -1214,9 +1220,10 @@ export const makeSweep = Effect.gen(function* () {
       }),
     );
   });
-  return Effect.fn("ProviderFallbackWorker.sweep")(function* () {
+  const sweep = Effect.fn("ProviderFallbackWorker.sweep")(function* () {
     const now = DateTime.toEpochMillis(yield* DateTime.now);
-    if (now - (yield* Ref.get(lastRunAt)) < PROVIDER_FALLBACK_SWEEP_INTERVAL_MS) return;
+    const wake = yield* Ref.getAndSet(woken, false);
+    if (!wake && now - (yield* Ref.get(lastRunAt)) < PROVIDER_FALLBACK_SWEEP_INTERVAL_MS) return;
     yield* Ref.set(lastRunAt, now);
     const preferences = yield* settings.getSettings;
     let providers = withSimulatedUsage(yield* registry.getProviders, now, env);
@@ -1229,10 +1236,11 @@ export const makeSweep = Effect.gen(function* () {
     const simulated = simulatedUsageLimitInstances(env).length > 0;
     // Only active threads are swept (`snapshot.threads`), so this shares the
     // other sweeps' active read.
+    // A wake must see the failure that caused it; a cached snapshot may predate it.
     const snapshot = yield* projections.getShellSnapshot({
       location: "active",
       unsettledOnly: true,
-      maxAgeMs: SWEEP_SHELL_SNAPSHOT_MAX_AGE_MS,
+      maxAgeMs: wake ? 0 : SWEEP_SHELL_SNAPSHOT_MAX_AGE_MS,
     });
     requestDetails.retain(snapshot.threads.map((thread) => thread.id));
     const held = unreportedLimitStops(
@@ -1628,12 +1636,34 @@ export const makeSweep = Effect.gen(function* () {
       );
     }
   });
+  return Object.assign(sweep, { wake: Ref.set(woken, true) });
 });
+
+/** Wake the sweep for each run that fails from now on. */
+export const wakeOnFailedRuns = (wake: Effect.Effect<void>) =>
+  Effect.gen(function* () {
+    const eventSink = yield* EventSink.EventSinkV2;
+    const afterSequence = yield* eventSink.latestSequence();
+    yield* eventSink.stream({ afterSequence, eventType: "run.updated" }).pipe(
+      Stream.filter(
+        (stored) => stored.event.type === "run.updated" && stored.event.payload.status === "failed",
+      ),
+      Stream.runForEach(() => wake),
+    );
+  }).pipe(
+    Effect.catchCause((cause) =>
+      Cause.hasInterruptsOnly(cause)
+        ? Effect.void
+        : Effect.logWarning("orchestration-v2.provider-fallback.wake-stream-failed", { cause }),
+    ),
+  );
 
 export const layer = Layer.effectDiscard(
   Effect.gen(function* () {
     const sweep = yield* makeSweep;
     const scheduler = yield* Scheduler.Scheduler;
+    // Without the wake the sweep still runs on its interval.
+    yield* Effect.forkScoped(wakeOnFailedRuns(sweep.wake));
     yield* scheduler.register("provider-fallback", sweep());
   }),
 ).pipe(

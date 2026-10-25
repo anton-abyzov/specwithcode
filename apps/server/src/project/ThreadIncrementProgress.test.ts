@@ -1,4 +1,5 @@
 // @effect-diagnostics nodeBuiltinImport:off globalDate:off
+import * as NodeChildProcess from "node:child_process";
 import * as NodeFSP from "node:fs/promises";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -9,10 +10,12 @@ import { specweaveStudioCheckpointPath } from "../orchestration-v2/SpecweaveChec
 import {
   criteriaWithState,
   isSpecweaveProject,
+  linkedIncrementRoot,
   listProjectIncrements,
   readRequireIncrementMode,
   readThreadIncrementProgress,
   resolveIncrementRef,
+  resolveRegisteredIncrementRef,
   specweaveStudioThreadBindingPath,
   specweaveThreadSessionPath,
   threadDeclaredSmallFix,
@@ -69,6 +72,51 @@ const LEDGER = [
   line({ t: "T-02", e: "claim", by: "claude@m4", at: "2026-10-15T11:30:00Z" }),
   line({ t: "T-04", e: "skip", by: "claude@m4", at: "2026-10-15T11:00:00Z", note: "Out of scope" }),
 ].join("");
+
+/** Runs Git with no user or system configuration, so the machine's settings never leak in. */
+function git(cwd: string, ...args: string[]): void {
+  NodeChildProcess.execFileSync("git", args, {
+    cwd,
+    stdio: "ignore",
+    env: {
+      PATH: process.env.PATH ?? "",
+      HOME: cwd,
+      GIT_CONFIG_NOSYSTEM: "1",
+      GIT_CONFIG_GLOBAL: "/dev/null",
+      GIT_AUTHOR_NAME: "Test",
+      GIT_AUTHOR_EMAIL: "test@example.invalid",
+      GIT_COMMITTER_NAME: "Test",
+      GIT_COMMITTER_EMAIL: "test@example.invalid",
+    },
+  });
+}
+
+/** A Git repository at `folder` with one commit, and a linked worktree of it at each of `linked`. */
+async function gitCheckouts(folder: string, ...linked: string[]) {
+  await NodeFSP.mkdir(folder, { recursive: true });
+  git(folder, "init", "-q", "-b", "main");
+  await NodeFSP.writeFile(NodePath.join(folder, ".gitignore"), ".specweave/\n");
+  git(folder, "add", ".gitignore");
+  git(folder, "commit", "-q", "-m", "init");
+  linked.forEach((path, index) => git(folder, "worktree", "add", "-q", "-b", `wt-${index}`, path));
+}
+
+async function writeClaim(home: string, threadId: string, root: string, incrementId: string) {
+  const file = specweaveStudioThreadBindingPath(threadId, home);
+  await NodeFSP.mkdir(NodePath.dirname(file), { recursive: true });
+  await NodeFSP.writeFile(
+    file,
+    JSON.stringify({
+      version: 1,
+      threadId,
+      incrementId,
+      root,
+      taskId: "T-02",
+      event: "claim",
+      at: "2026-10-15T11:30:00Z",
+    }),
+  );
+}
 
 afterEach(async () => {
   await Promise.all(
@@ -343,6 +391,145 @@ describe("readThreadIncrementProgress", () => {
       NOW,
     );
     expect(progress).toMatchObject({ readable: false, tasks: [] });
+  });
+});
+
+describe("registered checkouts of the project's repository", () => {
+  it("accepts a claim in a linked worktree of the project and refuses an unrelated sibling", async () => {
+    const base = await NodeFSP.realpath(await temp("studio-plan-registered-"));
+    const project = NodePath.join(base, "project");
+    const audit = NodePath.join(base, "worktrees", "audit");
+    await gitCheckouts(project, audit);
+    const home = await temp("studio-plan-home-");
+    await increment(project, "0930-studio-plan-card", "");
+    await increment(audit, "1001-audit", LEDGER);
+    const sibling = NodePath.join(base, "worktrees", "sibling");
+    await increment(sibling, "1001-audit", LEDGER);
+    const source = { threadId: "t1", title: "Audit", branch: null, worktreePath: null, home };
+
+    // The thread has no registered app worktree; Git registered the audit checkout.
+    await writeClaim(home, "t1", audit, "1001-audit");
+    const [claimed] = await readThreadIncrementProgress(project, [source], NOW);
+    expect(claimed).toMatchObject({
+      incrementId: "1001-audit",
+      binding: "claim",
+      boundTaskId: "T-02",
+      incrementPath: NodePath.join(audit, ".specweave/increments/1001-audit"),
+    });
+
+    // The same increment in a folder Git never registered stays refused.
+    await writeClaim(home, "t1", sibling, "1001-audit");
+    expect(await readThreadIncrementProgress(project, [source], NOW)).toEqual([]);
+
+    // A forged .git file naming the audit's admin entry proves nothing.
+    await NodeFSP.writeFile(
+      NodePath.join(sibling, ".git"),
+      `gitdir: ${NodePath.join(project, ".git/worktrees/audit")}\n`,
+    );
+    expect(await readThreadIncrementProgress(project, [source], NOW)).toEqual([]);
+  });
+
+  it("refuses a linked worktree of the umbrella above a member repository", async () => {
+    const base = await NodeFSP.realpath(await temp("studio-plan-registered-"));
+    const umbrella = NodePath.join(base, "umb");
+    const umbrellaTree = NodePath.join(base, "umb-tree");
+    await gitCheckouts(umbrella, umbrellaTree);
+    await NodeFSP.mkdir(NodePath.join(umbrella, ".specweave/increments"), { recursive: true });
+    await NodeFSP.writeFile(NodePath.join(umbrella, ".specweave/config.json"), "{}");
+    const member = NodePath.join(umbrella, "repositories", "app");
+    await gitCheckouts(member);
+    await increment(umbrellaTree, "1050-umbrella-plan", LEDGER);
+    const home = await temp("studio-plan-home-");
+    await writeClaim(home, "t2", umbrellaTree, "1050-umbrella-plan");
+    const source = { threadId: "t2", title: null, branch: null, worktreePath: null, home };
+    // Only the project's own repository counts: the umbrella's other checkouts do not.
+    expect(await readThreadIncrementProgress(member, [source], NOW)).toEqual([]);
+    expect(await linkedIncrementRoot(member, null, "1050-umbrella-plan")).toBeNull();
+
+    // The umbrella's main checkout, which plans for the member, still binds.
+    await increment(umbrella, "1050-umbrella-plan", LEDGER);
+    await writeClaim(home, "t2", umbrella, "1050-umbrella-plan");
+    const [claimed] = await readThreadIncrementProgress(member, [source], NOW);
+    expect(claimed).toMatchObject({ incrementId: "1050-umbrella-plan", binding: "claim" });
+  });
+
+  it("resolves a link made by hand in the registered checkout with the newest ledger", async () => {
+    const base = await NodeFSP.realpath(await temp("studio-plan-registered-"));
+    const project = NodePath.join(base, "project");
+    const older = NodePath.join(base, "older");
+    const newer = NodePath.join(base, "newer");
+    await gitCheckouts(project, older, newer);
+    await NodeFSP.mkdir(NodePath.join(project, ".specweave/increments"), { recursive: true });
+    await increment(older, "1009-shared", "");
+    await increment(newer, "1009-shared", LEDGER);
+    await NodeFSP.utimes(
+      NodePath.join(older, ".specweave/increments/1009-shared/ledger.jsonl"),
+      new Date("2026-10-01T00:00:00Z"),
+      new Date("2026-10-01T00:00:00Z"),
+    );
+    const unrelated = NodePath.join(base, "unrelated");
+    await increment(unrelated, "1010-elsewhere", "");
+
+    expect(await linkedIncrementRoot(project, null, "1009-shared")).toBe(newer);
+    expect(await linkedIncrementRoot(project, null, "1010-elsewhere")).toBeNull();
+    const [linked] = await readThreadIncrementProgress(
+      project,
+      [
+        {
+          threadId: "t3",
+          title: null,
+          branch: null,
+          worktreePath: null,
+          link: { incrementId: "1009-shared" },
+        },
+      ],
+      NOW,
+    );
+    expect(linked).toMatchObject({
+      incrementId: "1009-shared",
+      binding: "manual",
+      incrementPath: NodePath.join(newer, ".specweave/increments/1009-shared"),
+    });
+
+    // A launch ref by number finds it too; a number naming two folders is ambiguous.
+    expect(await resolveRegisteredIncrementRef(project, null, "1009")).toMatchObject({
+      kind: "found",
+      root: newer,
+      incrementId: "1009-shared",
+    });
+    // Completed in the copy with the newest ledger: closed, even though an older branch has it open.
+    await NodeFSP.writeFile(
+      NodePath.join(newer, ".specweave/increments/1009-shared/metadata.json"),
+      JSON.stringify({ status: "completed", title: "Plan card" }),
+    );
+    expect(await resolveRegisteredIncrementRef(project, null, "1009")).toMatchObject({
+      kind: "closed",
+      incrementId: "1009-shared",
+      status: "completed",
+    });
+    // A checkout with no increments of its own never answers from an umbrella above it.
+    const nested = NodePath.join(base, "foreign-umb");
+    await NodeFSP.mkdir(NodePath.join(nested, ".specweave/increments"), { recursive: true });
+    await NodeFSP.writeFile(NodePath.join(nested, ".specweave/config.json"), "{}");
+    await increment(nested, "1009-foreign", "");
+    await NodeFSP.writeFile(
+      NodePath.join(nested, ".specweave/increments/1009-foreign/metadata.json"),
+      JSON.stringify({ status: "completed", title: "Foreign" }),
+    );
+    const bare = NodePath.join(nested, "bare");
+    git(project, "worktree", "add", "-q", "-b", "wt-bare", bare);
+    expect(await resolveRegisteredIncrementRef(project, null, "1009")).toMatchObject({
+      kind: "closed",
+      incrementId: "1009-shared",
+    });
+    await increment(older, "1009-other", "");
+    expect(await resolveRegisteredIncrementRef(project, null, "1009")).toMatchObject({
+      kind: "ambiguous",
+    });
+    expect(await resolveRegisteredIncrementRef(project, null, "1010")).toMatchObject({
+      kind: "not_found",
+      root: project,
+    });
   });
 });
 

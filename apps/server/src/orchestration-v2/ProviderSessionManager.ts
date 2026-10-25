@@ -2096,6 +2096,34 @@ export const layerWithOptions = (
               }
               const key = sessionKey(input.providerSessionId);
               let existing = (yield* Ref.get(sessions)).get(key);
+              // A process that can serve no more turns (Codex after a sign-in
+              // to another account outside it) starts none; it is replaced
+              // once nothing runs on it, so other threads' work is not cut.
+              const restartReason =
+                existing?.runtime.restartRequired === undefined
+                  ? null
+                  : yield* existing.runtime.restartRequired;
+              if (existing && restartReason !== null) {
+                const busy =
+                  existing.busyTurns.size > 0 ||
+                  (existing.runtime.hasPendingBackgroundWork !== undefined &&
+                    (yield* existing.runtime.hasPendingBackgroundWork));
+                if (!busy)
+                  yield* releaseEntry({
+                    providerSessionId: input.providerSessionId,
+                    reason: "manual_shutdown",
+                    detail: restartReason,
+                    onlyIfIdleGeneration: existing.idleGeneration,
+                    gracefulSubscribers: true,
+                  });
+                existing = (yield* Ref.get(sessions)).get(key);
+                if (existing)
+                  return yield* new ProviderSessionOpenError({
+                    instanceId: input.modelSelection.instanceId,
+                    providerSessionId: input.providerSessionId,
+                    cause: `${restartReason} SpecWithCode restarts it when the turns and background work still running on it finish. Send this message again then.`,
+                  });
+              }
               // A provider that applies the access mode per turn (Codex, OpenCode 2)
               // takes the new mode on its next turn; only one that fixes it for the
               // whole session is restarted to pick it up.

@@ -66,18 +66,18 @@ export const PROJECT_SETTINGS_SEARCH_ROWS: readonly ProjectSettingsSearchRow[] =
     searchTerms: ["default worker subagent provider reasoning"],
   },
   {
+    id: "project-usage-limits",
+    title: "When a model runs out",
+    tab: "general",
+    anchors: ["When a model runs out"],
+    searchTerms: ["usage limits fallback provider runs out quota"],
+  },
+  {
     id: "project-recommended-model-providers",
     title: "Also served by",
     tab: "general",
     anchors: ["Also served by"],
     searchTerms: ["provider order copilot same model fallback"],
-  },
-  {
-    id: "project-worker-machine",
-    title: "Worker machine",
-    tab: "general",
-    anchors: ["Worker machine"],
-    searchTerms: ["host remote fleet"],
   },
   {
     id: "project-auto-resume",
@@ -87,11 +87,11 @@ export const PROJECT_SETTINGS_SEARCH_ROWS: readonly ProjectSettingsSearchRow[] =
     searchTerms: ["resume quota limit stop"],
   },
   {
-    id: "project-usage-limits",
-    title: "Usage limits",
+    id: "project-worker-machine",
+    title: "Worker machine",
     tab: "general",
-    anchors: ["Usage limits"],
-    searchTerms: ["fallback provider runs out quota"],
+    anchors: ["Worker machine"],
+    searchTerms: ["host remote fleet"],
   },
   {
     id: "project-overrides",

@@ -8,6 +8,7 @@ import {
   type AuthAccessTokenResult,
   type AuthBrowserSessionResult,
   type AuthClientMetadata,
+  type AuthPrincipal,
   type AuthClientSession,
   type AuthCreatePairingCredentialInput,
   type AuthEnvironmentScope,
@@ -38,6 +39,11 @@ import * as HttpServerRequest from "effect/http/HttpServerRequest";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as ServerConfig from "../config.ts";
 import * as EnvironmentAuthPolicy from "./EnvironmentAuthPolicy.ts";
+import {
+  principalApproval,
+  principalRevocations,
+  type PrincipalApproval,
+} from "./principalApproval.ts";
 import * as PairingGrantStore from "./PairingGrantStore.ts";
 import * as ServerSecretStore from "./ServerSecretStore.ts";
 import * as SessionStore from "./SessionStore.ts";
@@ -46,7 +52,7 @@ import { verifyRequestDpopProof } from "./dpop.ts";
 import { capacityMutationOriginAllowed, mutationTrustedOrigins } from "./requestOrigin.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 
-const DEFAULT_SESSION_SUBJECT = "cli-issued-session";
+const DEFAULT_SESSION_SUBJECT = "local-cli-owner";
 export const INTERNAL_ADMINISTRATIVE_BOOTSTRAP_SUBJECT = "administrative-bootstrap";
 
 export interface IssuedPairingLink {
@@ -88,13 +94,13 @@ export const mcpClientScopes = (
     ? [AuthOrchestrationReadScope]
     : [AuthOrchestrationReadScope, AuthOrchestrationOperateScope];
 
-export interface McpClientSession {
+export interface McpClientSession extends PrincipalApproval {
   readonly sessionId: AuthSessionId;
   readonly label: string;
   readonly access: AuthMcpClientAccess;
 }
 
-export interface AuthenticatedSession {
+export interface AuthenticatedSession extends PrincipalApproval {
   readonly sessionId: AuthSessionId;
   readonly subject: string;
   readonly method: ServerAuthSessionMethod;
@@ -388,7 +394,9 @@ export class ServerAuthInvalidCredentialError extends Schema.TaggedError<ServerA
   },
 ) {
   override get message(): string {
-    return "Server authentication credential is invalid.";
+    return this.diagnostic === "device_reapproval_required"
+      ? "Approve this device again in SpecWithCode."
+      : "Server authentication credential is invalid.";
   }
 }
 
@@ -400,8 +408,12 @@ export type ServerAuthCredentialError = typeof ServerAuthCredentialError.Type;
 export const isServerAuthCredentialError = Schema.is(ServerAuthCredentialError);
 export const serverAuthCredentialReason = (
   error: ServerAuthCredentialError,
-): "missing_credential" | "invalid_credential" =>
-  error._tag === "ServerAuthMissingCredentialError" ? "missing_credential" : "invalid_credential";
+): "missing_credential" | "invalid_credential" | "device_reapproval_required" =>
+  error._tag === "ServerAuthMissingCredentialError"
+    ? "missing_credential"
+    : error.diagnostic === "device_reapproval_required"
+      ? "device_reapproval_required"
+      : "invalid_credential";
 
 export const serverAuthDpopFailureReason = (
   error: ServerAuthCredentialError,
@@ -439,14 +451,23 @@ export const serverAuthInvalidRequestReason = (
 
 export class ServerAuthMcpApprovalCodeError extends Schema.TaggedError<ServerAuthMcpApprovalCodeError>()(
   "ServerAuthMcpApprovalCodeError",
-  { reason: Schema.Literals(["unknown_or_used", "not_a_pairing_code", "insufficient_scope"]) },
+  {
+    reason: Schema.Literals([
+      "unknown_or_used",
+      "not_a_pairing_code",
+      "insufficient_scope",
+      "reapproval_required",
+    ]),
+  },
 ) {
   override get message(): string {
-    return this.reason === "insufficient_scope"
-      ? "That pairing code cannot grant this access, and it is now used up. Create one with the standard scopes, or choose Read only with a new code."
-      : this.reason === "not_a_pairing_code"
-        ? "That is not a one-time pairing code."
-        : "That pairing code is unknown, expired, or already used.";
+    return this.reason === "reapproval_required"
+      ? "Approve this device again with a new pairing code from this machine."
+      : this.reason === "insufficient_scope"
+        ? "That pairing code cannot grant this access, and it is now used up. Create one with the standard scopes, or choose Read only with a new code."
+        : this.reason === "not_a_pairing_code"
+          ? "That is not a one-time pairing code."
+          : "That pairing code is unknown, expired, or already used.";
   }
 }
 
@@ -462,6 +483,13 @@ export class ServerAuthForbiddenOperationError extends Schema.TaggedError<Server
 export class EnvironmentAuth extends Context.Service<
   EnvironmentAuth,
   {
+    readonly onPrincipalRevoked: (
+      listener: (principal: AuthPrincipal) => Effect.Effect<void>,
+    ) => Effect.Effect<() => void>;
+    readonly setPrincipalRevoked: (
+      principal: AuthPrincipal,
+      revoked: boolean,
+    ) => Effect.Effect<void, ServerAuthInternalError>;
     readonly getDescriptor: () => Effect.Effect<ServerAuthDescriptor>;
     readonly getSessionState: (
       request: HttpServerRequest.HttpServerRequest,
@@ -494,12 +522,16 @@ export class EnvironmentAuth extends Context.Service<
       readonly ttl?: Duration.Duration;
       readonly label?: string;
       readonly scopes?: ReadonlyArray<AuthEnvironmentScope>;
+      readonly principal?: AuthPrincipal;
+      readonly principalGeneration?: number | undefined;
       readonly subject?: string;
       readonly proofKeyThumbprint?: string;
       readonly purpose?: "startup";
     }) => Effect.Effect<IssuedPairingLink, ServerAuthInternalError>;
     readonly issuePairingCredential: (
-      input?: AuthCreatePairingCredentialInput,
+      input?: AuthCreatePairingCredentialInput & {
+        readonly principalGeneration?: number | undefined;
+      },
     ) => Effect.Effect<AuthPairingCredentialResult, ServerAuthInternalError>;
     readonly issueStartupPairingCredential: () => Effect.Effect<
       AuthPairingCredentialResult,
@@ -510,6 +542,7 @@ export class EnvironmentAuth extends Context.Service<
     }) => Effect.Effect<ReadonlyArray<AuthPairingLink>, ServerAuthInternalError>;
     readonly revokePairingLink: (id: string) => Effect.Effect<boolean, ServerAuthInternalError>;
     readonly issueSession: (input?: {
+      readonly principal?: AuthPrincipal;
       readonly ttl?: Duration.Duration;
       readonly subject?: string;
       readonly scopes?: ReadonlyArray<AuthEnvironmentScope>;
@@ -572,6 +605,8 @@ export class EnvironmentAuth extends Context.Service<
       request: HttpServerRequest.HttpServerRequest,
     ) => Effect.Effect<McpClientSession, ServerAuthCredentialError | ServerAuthInternalError>;
     readonly issueMcpClientSession: (input: {
+      readonly principal?: AuthPrincipal;
+      readonly principalGeneration?: number | undefined;
       readonly label: string;
       readonly access: AuthMcpClientAccess;
       readonly client: AuthClientMetadata;
@@ -588,7 +623,10 @@ export class EnvironmentAuth extends Context.Service<
     readonly consumeMcpApprovalCode: (
       code: string,
       access: AuthMcpClientAccess,
-    ) => Effect.Effect<void, ServerAuthMcpApprovalCodeError | ServerAuthInternalError>;
+    ) => Effect.Effect<
+      { readonly principal?: AuthPrincipal; readonly principalGeneration?: number | undefined },
+      ServerAuthMcpApprovalCodeError | ServerAuthInternalError
+    >;
     /** A browser cookie session only; a bearer header never counts as one. */
     readonly authenticateBrowserSession: (
       request: HttpServerRequest.HttpServerRequest,
@@ -646,7 +684,12 @@ const mapSessionVerificationErrors = <A, R>(
   effect.pipe(
     Effect.mapError((cause) =>
       SessionStore.isSessionCredentialInvalidError(cause)
-        ? new ServerAuthInvalidCredentialError({ cause })
+        ? new ServerAuthInvalidCredentialError({
+            cause,
+            ...(cause._tag === "DeviceReapprovalRequiredError"
+              ? { diagnostic: "device_reapproval_required" }
+              : {}),
+          })
         : new ServerAuthSessionCredentialValidationError({ cause }),
     ),
   );
@@ -734,6 +777,7 @@ export const make = Effect.gen(function* () {
       Effect.flatMap(rejectMcpClientAudience),
       Effect.map((session) => ({
         sessionId: session.sessionId,
+        ...principalApproval(session),
         subject: session.subject,
         method: session.method,
         scopes: session.scopes,
@@ -858,9 +902,12 @@ export const make = Effect.gen(function* () {
             ...(session.expiresAt ? { expiresAt: DateTime.toUtc(session.expiresAt) } : {}),
           }) satisfies AuthSessionState,
       ),
-      Effect.catchIf(isServerAuthCredentialError, () =>
+      Effect.catchIf(isServerAuthCredentialError, (error) =>
         Effect.succeed({
           authenticated: false,
+          ...(serverAuthCredentialReason(error) === "device_reapproval_required"
+            ? { reapprovalRequired: true, message: error.message }
+            : {}),
           auth: descriptor,
         } satisfies AuthSessionState),
       ),
@@ -904,9 +951,19 @@ export const make = Effect.gen(function* () {
     const grant = yield* bootstrapCredentials
       .consume(credential)
       .pipe(Effect.mapError(toBootstrapExchangeError));
+    if (
+      grant.method === "one-time-token" &&
+      !grant.principal &&
+      grant.subject !== INTERNAL_ADMINISTRATIVE_BOOTSTRAP_SUBJECT
+    ) {
+      return yield* new ServerAuthInvalidCredentialError({
+        diagnostic: "device_reapproval_required",
+      });
+    }
     const session = yield* sessions
       .issue({
         method: "browser-session-cookie",
+        ...principalApproval(grant),
         subject: grant.subject,
         scopes: grant.scopes,
         ...(previousSession?.method === "browser-session-cookie"
@@ -931,7 +988,7 @@ export const make = Effect.gen(function* () {
 
   type ResolvedBootstrapGrant = Pick<
     PairingGrantStore.BootstrapGrant,
-    "scopes" | "subject" | "label"
+    "scopes" | "subject" | "label" | "principal" | "principalGeneration"
   > & {
     readonly method: PairingGrantStore.BootstrapGrant["method"] | "reusable-dev-token";
   };
@@ -977,6 +1034,15 @@ export const make = Effect.gen(function* () {
       }).pipe(
         Effect.flatMap((grant) =>
           Effect.gen(function* () {
+            if (
+              grant.method === "one-time-token" &&
+              !grant.principal &&
+              grant.subject !== INTERNAL_ADMINISTRATIVE_BOOTSTRAP_SUBJECT
+            ) {
+              return yield* new ServerAuthInvalidCredentialError({
+                diagnostic: "device_reapproval_required",
+              });
+            }
             const grantedScopes =
               requestedScopes === undefined
                 ? grant.scopes
@@ -987,6 +1053,7 @@ export const make = Effect.gen(function* () {
             return yield* sessions
               .issue({
                 method: input?.proofKeyThumbprint ? "dpop-access-token" : "bearer-access-token",
+                ...principalApproval(grant),
                 subject: grant.subject,
                 scopes: grantedScopes,
                 ...(input?.proofKeyThumbprint
@@ -1036,12 +1103,15 @@ export const make = Effect.gen(function* () {
   const issuePairingCredentialForSubject = (input: {
     readonly scopes: ReadonlyArray<AuthEnvironmentScope>;
     readonly subject: string;
+    readonly principal?: AuthPrincipal;
+    readonly principalGeneration?: number | undefined;
     readonly label?: string;
     readonly purpose?: "startup";
   }) =>
     createPairingLink({
       scopes: input.scopes,
       subject: input.subject,
+      ...principalApproval(input),
       ...(input.label ? { label: input.label } : {}),
       ...(input.purpose ? { purpose: input.purpose } : {}),
     }).pipe(
@@ -1064,6 +1134,7 @@ export const make = Effect.gen(function* () {
       const issued = yield* bootstrapCredentials.issueOneTimeToken({
         scopes: input?.scopes ?? AuthStandardClientScopes,
         subject: input?.subject ?? "one-time-token",
+        ...principalApproval(input ?? {}),
         ...(input?.ttl ? { ttl: input.ttl } : {}),
         ...(input?.label ? { label: input.label } : {}),
         ...(input?.proofKeyThumbprint ? { proofKeyThumbprint: input.proofKeyThumbprint } : {}),
@@ -1109,6 +1180,7 @@ export const make = Effect.gen(function* () {
     sessions
       .issue({
         subject: input?.subject ?? DEFAULT_SESSION_SUBJECT,
+        ...(input?.principal ? { principal: input.principal } : {}),
         method: "bearer-access-token",
         scopes: input?.scopes ?? AuthAdministrativeScopes,
         client: {
@@ -1159,6 +1231,15 @@ export const make = Effect.gen(function* () {
     issuePairingCredentialForSubject({
       scopes: input?.scopes ?? AuthStandardClientScopes,
       subject: "one-time-token",
+      principalGeneration: input?.principalGeneration,
+      ...(input?.coordinatorEnvironmentId
+        ? {
+            principal: {
+              kind: "coordinator" as const,
+              environmentId: input.coordinatorEnvironmentId,
+            },
+          }
+        : {}),
       ...(input?.label ? { label: input.label } : {}),
     }).pipe(Effect.withSpan("EnvironmentAuth.issuePairingCredential"));
 
@@ -1262,6 +1343,7 @@ export const make = Effect.gen(function* () {
             Effect.flatMap(rejectMcpClientAudience),
             Effect.map((session) => ({
               sessionId: session.sessionId,
+              ...principalApproval(session),
               subject: session.subject,
               method: session.method,
               scopes: session.scopes,
@@ -1274,14 +1356,9 @@ export const make = Effect.gen(function* () {
       return yield* authenticateSameOriginRequest(request);
     });
 
-  // Only a browser cookie session (including the legacy and dev cookies)
-  // ends its sockets at expiry: the browser re-pairs, which replaces the old
-  // session, and an expired cookie cannot reconnect. Token clients would be
-  // cut off while still holding valid access: relay, mobile and hosted clients
-  // exchange their hourly DPoP token for a new session, and the desktop app
-  // keeps one cached bearer (a service-attached Mac reuses a stored one with
-  // as little as a day left). Their sockets end on revoke or replacement, and
-  // a new connection still needs an unexpired token.
+  // Browser-cookie sockets end at expiry because re-pairing replaces the session.
+  // Relay/mobile/hosted clients renew hourly DPoP tokens, and desktop clients cache
+  // bearers. Their sockets end on revoke or replacement; reconnect needs a valid token.
   const watchSessionEnd: EnvironmentAuth["Service"]["watchSessionEnd"] = (session) =>
     sessions.watchEnd({
       sessionId: session.sessionId,
@@ -1297,6 +1374,7 @@ export const make = Effect.gen(function* () {
         session.subject === MCP_CLIENT_SUBJECT && session.method === "bearer-access-token"
           ? Effect.succeed({
               sessionId: session.sessionId,
+              ...principalApproval(session),
               label: session.client.label ?? "MCP client",
               access: session.scopes.includes(AuthOrchestrationOperateScope)
                 ? (session.runtimeModeCeiling ?? "approval-required")
@@ -1315,6 +1393,7 @@ export const make = Effect.gen(function* () {
   const issueMcpClientSession: EnvironmentAuth["Service"]["issueMcpClientSession"] = (input) =>
     sessions
       .issue({
+        ...principalApproval(input),
         subject: MCP_CLIENT_SUBJECT,
         method: "bearer-access-token",
         scopes: mcpClientScopes(input.access),
@@ -1358,16 +1437,25 @@ export const make = Effect.gen(function* () {
           Effect.fail(new ServerAuthMcpApprovalCodeError({ reason: "insufficient_scope" })),
       }),
       Effect.flatMap((grant) =>
-        grant.method !== "one-time-token" && grant.method !== "reusable-dev-token"
-          ? Effect.fail(new ServerAuthMcpApprovalCodeError({ reason: "not_a_pairing_code" }))
-          : mcpClientScopes(access).every((scope) => grant.scopes.includes(scope))
-            ? Effect.void
-            : Effect.fail(new ServerAuthMcpApprovalCodeError({ reason: "insufficient_scope" })),
+        grant.method === "one-time-token" && !grant.principal
+          ? Effect.fail(new ServerAuthMcpApprovalCodeError({ reason: "reapproval_required" }))
+          : grant.method !== "one-time-token" && grant.method !== "reusable-dev-token"
+            ? Effect.fail(new ServerAuthMcpApprovalCodeError({ reason: "not_a_pairing_code" }))
+            : mcpClientScopes(access).every((scope) => grant.scopes.includes(scope))
+              ? Effect.succeed(principalApproval(grant))
+              : Effect.fail(new ServerAuthMcpApprovalCodeError({ reason: "insufficient_scope" })),
       ),
       Effect.withSpan("EnvironmentAuth.consumeMcpApprovalCode"),
     );
 
+  const revocations = principalRevocations();
   return EnvironmentAuth.of({
+    onPrincipalRevoked: revocations.listen,
+    setPrincipalRevoked: (principal, revoked) =>
+      sessions.setPrincipalRevoked(principal, revoked).pipe(
+        Effect.tap(() => (revoked ? revocations.notify(principal) : Effect.void)),
+        Effect.mapError((cause) => new ServerAuthSessionRevocationError({ cause })),
+      ),
     getDescriptor: () =>
       Effect.succeed(descriptor).pipe(Effect.withSpan("EnvironmentAuth.getDescriptor")),
     getSessionState,

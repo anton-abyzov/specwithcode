@@ -583,7 +583,7 @@ it("makes the personal assistant route owned work and every other coordinator ac
   assert.include(assistant, "route it once to each owning project");
   assert.include(assistant, "Never add approved folders");
   // Repeating work becomes a routine that runs when asked and only prepares.
-  assert.include(assistant, "{type:'manual'}, ownThread true");
+  assert.include(assistant, "{type:'manual'} and a brief");
   assert.include(assistant, "Turn on a cadence (monthly, daily) only when the user asks");
   assert.include(assistant, "A routine run never takes such an action");
   assert.notInclude(assistant, "Routed from personal assistant");

@@ -13,7 +13,7 @@ import * as Effect from "effect/Effect";
 import * as Schedule from "effect/Schedule";
 
 import { createModelCapabilities } from "@specweave-studio/shared/model";
-import { classifyBaseUrlBilling } from "@specweave-studio/shared/modelBilling";
+import { classifyBaseUrlBilling, isLoopbackBaseUrl } from "@specweave-studio/shared/modelBilling";
 import { compareSemverVersions } from "@specweave-studio/shared/semver";
 import {
   buildServerProvider,
@@ -232,6 +232,8 @@ function stringSetting(settings: unknown, key: string): string | undefined {
  * cloud API reads as `api` only when the model has a price: OpenCode's Claude
  * Pro/Max and ChatGPT sign-ins zero every model's cost under the same
  * provider id, and a subscription must not be taken for a paid model.
+ * A loopback proxy under a keyed API id still bills upstream, and positive
+ * prices cannot be treated as free local inference.
  */
 function openCodeModelBilling(input: {
   readonly providerID: string;
@@ -240,7 +242,10 @@ function openCodeModelBilling(input: {
 }): ModelBilling {
   if (input.providerID === "opencode-go") return "subscription";
   const billing = classifyBaseUrlBilling(input.baseUrl, input.providerID);
-  return billing === "api" && !input.priced ? "unknown" : billing;
+  if (billing === "local" && input.priced) return "api";
+  return billing === "api" && !input.priced && !isLoopbackBaseUrl(input.baseUrl)
+    ? "unknown"
+    : billing;
 }
 
 /** CLI inventories and older servers may omit any of these fields. */

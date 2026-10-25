@@ -1018,20 +1018,20 @@ export const OrchestratorMcpScheduleTaskInput = Schema.Struct({
     Schema.Boolean.annotate({ description: "Whether the schedule starts enabled; defaults true." }),
   ),
   /**
-   * When true (the default), the scheduled task fires into the calling thread
-   * on each run instead of launching a fresh thread. This is the recurring
-   * "wake up in this thread" behaviour reserved for agent-created tasks.
+   * For a worker caller, true (the default) fires each run into the calling
+   * thread: the "wake up in this thread" behaviour. A coordinator caller is
+   * never bound; its routines always get a thread of their own.
    */
   bindToCurrentThread: Schema.optional(
     Schema.Boolean.annotate({
       description:
-        "True (default) posts each run into this thread; false creates a fresh top-level thread per run.",
+        "From a worker thread, true (default) posts each run into this thread; false gives the routine its own thread. Ignored from a coordinator, whose routines always get their own thread.",
     }),
   ),
   ownThread: Schema.optional(
     Schema.Boolean.annotate({
       description:
-        "Give the routine a thread of its own, titled after it: the first run starts it and later runs continue it. Implies bindToCurrentThread false. Use for reusable work such as a monthly report.",
+        "Give the routine a thread of its own, titled after it: the first run starts it and later runs continue it. Every routine not bound to a worker thread has one; true also implies bindToCurrentThread false.",
     }),
   ),
   brief: Schema.optional(ScheduledTaskBrief).annotate({
@@ -1238,12 +1238,10 @@ export const OrchestratorMcpModelPreferenceInput = Schema.Struct({
     }),
   ),
   keywords: Schema.optional(
-    Schema.Array(PreferenceKeyword)
-      .check(Schema.isMaxLength(6))
-      .annotate({
-        description:
-          "Words or short phrases that trigger this rule, e.g. ['database', 'migration']. Up to 6.",
-      }),
+    Schema.Array(PreferenceKeyword).check(Schema.isMaxLength(6)).annotate({
+      description:
+        "Words or short phrases that trigger this rule, e.g. ['database', 'migration']. Up to 6.",
+    }),
   ),
   taskClass: Schema.optional(
     OrchestratorMcpTaskClassHint.annotate({

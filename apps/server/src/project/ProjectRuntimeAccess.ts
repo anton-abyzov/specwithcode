@@ -35,9 +35,20 @@ export const make = Effect.gen(function* () {
             ? settings.updateSettings(patch)
             : settings.updateProviderInstance(mutation, patch);
           // A global default remains a default. Only an explicit project save changes existing chats.
-          const projects = Object.entries(patch.projectSettingsOverrides ?? {})
-            .filter(([, value]) => value === null || Object.hasOwn(value, "defaultRuntimeMode"))
-            .map(([id]) => ProjectId.make(id));
+          const projects = [
+            ...new Set([
+              ...Object.entries(patch.projectSettingsOverrides ?? {})
+                .filter(([, value]) => value === null || Object.hasOwn(value, "defaultRuntimeMode"))
+                .map(([id]) => id),
+              ...Object.entries(patch.projectSettingsOverrideChanges ?? {})
+                .filter(
+                  ([, change]) =>
+                    Object.hasOwn(change.set ?? {}, "defaultRuntimeMode") ||
+                    (change.clear ?? []).includes("defaultRuntimeMode"),
+                )
+                .map(([id]) => id),
+            ]),
+          ].map((id) => ProjectId.make(id));
           if (projects.length === 0) return saved;
           const batchId = NodeCrypto.randomUUID();
           yield* Effect.gen(function* () {

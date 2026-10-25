@@ -18,6 +18,31 @@ const item = (ordinal: number, type: string, toolName?: string, runId = "run-1")
 });
 
 describe("coordinatorProgress", () => {
+  it("names an automatic continuation after a limit instead of a new message", () => {
+    const continued = (status: string, userMessageId: string) =>
+      coordinatorProgress({ runs: [{ ...run(status), userMessageId }] })?.label;
+    expect(continued("queued", "limit-fallback:coordinator:run-0")).toBe(
+      "Usage limit reached, continuing on the next model",
+    );
+    expect(continued("running", "limit-fallback:coordinator:run-0")).toBe(
+      "Usage limit reached, continuing on the next model",
+    );
+    expect(continued("starting", "provider-fallback:coordinator:run-0")).toBe(
+      "Provider could not start, continuing on the next model",
+    );
+    expect(continued("starting", "limit-return:coordinator:run-0")).toBe(
+      "Usage limit reset, continuing",
+    );
+    expect(continued("starting", "message:typed")).toBe("Starting the coordinator");
+    // Once the provider works, its own step says more.
+    expect(
+      coordinatorProgress({
+        runs: [{ ...run("running"), userMessageId: "limit-fallback:coordinator:run-0" }],
+        turnItems: [item(2, "reasoning")],
+      })?.label,
+    ).toBe("Thinking");
+  });
+
   it("says nothing while the coordinator is idle", () => {
     expect(coordinatorProgress({ runs: [] })).toBeNull();
     expect(coordinatorProgress({ runs: [run("completed")] })).toBeNull();

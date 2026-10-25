@@ -102,11 +102,11 @@ npm i -g specwithcode
 specwithcode --version
 \`\`\`
 
-Add this machine to your existing SpecWithCode machines over Tailscale:
+Add this machine to your existing SpecWithCode machines over Tailscale. Replace <main-machine-environment-id> with the environment ID from Settings > Connections on your main machine. This explicitly approves that machine to manage access here.
 
 \`\`\`sh
 specwithcode service install   # run the server in the background
-specwithcode fleet invite      # publish it on this machine's Tailscale name and print a join line
+specwithcode fleet invite --coordinator '<main-machine-environment-id>'  # publish it on this machine's Tailscale name and print a join line
 \`\`\`
 
 On your main machine, paste the line into Settings > Connections > Add a machine, or run

@@ -52,6 +52,7 @@ export const ComposerPendingApprovalActions = memo(function ComposerPendingAppro
             key={option.decision}
             size="xs"
             variant={option.decision === "accept" ? "default" : "outline"}
+            data-approval-decision={option.decision}
             disabled={disabled || isResponding || !canRespond}
             aria-description={option.warning}
             onClick={() => {

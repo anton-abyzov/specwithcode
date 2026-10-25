@@ -18,6 +18,7 @@ import ChatView from "../../ChatView";
 import { ModelBadge, useProviderEntriesByEnvironment } from "./ModelBadge";
 import { RoutingDecisionChip } from "./RoutingDecisionChip";
 import { Tip } from "./Tip";
+import { isAppSheetOpen } from "../../ui/appSheetState";
 
 export function SubagentPeek(props: {
   readonly thread: EnvironmentThreadShell;
@@ -35,6 +36,8 @@ export function SubagentPeek(props: {
   useEffect(() => {
     const onKey = (event: KeyboardEvent) => {
       if (event.key !== "Escape" || event.defaultPrevented) return;
+      // A sheet over the app (Usage) and its menus close first; the peek behind it stays.
+      if (isAppSheetOpen()) return;
       event.stopPropagation();
       onClose();
     };
@@ -78,7 +81,12 @@ export function SubagentPeek(props: {
               instanceId={instanceId}
               model={model}
             />
-            <RoutingDecisionChip routing={thread.routing} entries={providerEntries} projectId={thread.projectId} environmentId={thread.environmentId} />
+            <RoutingDecisionChip
+              routing={thread.routing}
+              entries={providerEntries}
+              projectId={thread.projectId}
+              environmentId={thread.environmentId}
+            />
             {entry?.startedAt && status ? (
               <AgentElapsed
                 agent={{ status, startedAt: entry.startedAt, completedAt: entry.completedAt }}

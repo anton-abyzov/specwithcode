@@ -8,6 +8,38 @@ import {
 } from "./semver.ts";
 
 describe("semver helpers", () => {
+  it("preserves hyphenated prerelease identifiers in normalization and parsing", () => {
+    expect(normalizeSemverVersion("1.0.0-rc-1+build-2")).toBe("1.0.0-rc-1");
+    expect(parseSemver("1.0.0-rc-1+build-2")?.prerelease).toEqual(["rc-1"]);
+    expect(compareSemverVersions("1.0.0-rc-1", "1.0.0-rc-2")).toBeLessThan(0);
+  });
+
+  it("ignores build metadata in precedence and runtime range checks", () => {
+    expect(compareSemverVersions("1.0.0+a", "1.0.0+b")).toBe(0);
+    expect(compareSemverVersions("1.0.0-rc.1+a", "1.0.0-rc.1+b")).toBe(0);
+    expect(satisfiesSemverRange("24.10.0+build-1", ">=24.10")).toBe(true);
+  });
+
+  it("orders prerelease identifiers by ASCII and exact numeric magnitude", () => {
+    expect(compareSemverVersions("1.0.0-Z", "1.0.0-a")).toBeLessThan(0);
+    expect(compareSemverVersions("1.0.0-9007199254740992", "1.0.0-9007199254740993")).toBeLessThan(
+      0,
+    );
+    const versions = [
+      "1.0.0-alpha",
+      "1.0.0-alpha.1",
+      "1.0.0-alpha.beta",
+      "1.0.0-beta",
+      "1.0.0-beta.2",
+      "1.0.0-beta.11",
+      "1.0.0-rc.1",
+      "1.0.0",
+    ];
+    for (let index = 1; index < versions.length; index++) {
+      expect(compareSemverVersions(versions[index - 1]!, versions[index]!)).toBeLessThan(0);
+    }
+  });
+
   it("matches supported range groups", () => {
     const range = "^22.16 || ^23.11 || >=24.10";
 

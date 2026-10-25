@@ -169,3 +169,145 @@ it("keeps a wrap-below notice's title out of the actions' column", async () => {
   ).toHaveLength(1);
   expect(renderer.root.findAllByProps({ "data-composer-banner-wrap": "true" })).toEqual([]);
 });
+
+const notice = (
+  id: string,
+  variant: "default" | "error" | "info" | "warning",
+  priority?: "urgent" | "activity" | "notice",
+) => ({
+  id,
+  variant,
+  ...(priority ? { priority } : {}),
+  icon: null,
+  title: id,
+  onDismiss: () => {},
+});
+
+const surfaces = () =>
+  renderer.root.findAll(
+    (node) => typeof node.type === "string" && node.props["data-composer-banner-surface"],
+  );
+const titles = () =>
+  surfaces()
+    .filter((node) => node.props["data-composer-banner-surface"] === "floating")
+    .map(
+      (node) =>
+        node.findAll(
+          (child) => child.type === "span" && child.props.className?.includes("font-medium"),
+        )[0]?.props.children,
+    );
+
+it("puts a limit ahead of a running watcher, and every notice floats whole", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  await act(() => {
+    renderer = create(
+      <ComposerBannerStack
+        items={[
+          notice("watching #662", "default", "activity"),
+          notice("limit", "warning", "urgent"),
+        ]}
+      />,
+    );
+  });
+  expect(titles()).toEqual(["limit", "watching #662"]);
+  expect(surfaces().map((node) => node.props["data-composer-banner-surface"])).toEqual([
+    "floating",
+    "floating",
+  ]);
+});
+
+it("orders an account change or limit, then errors, warnings, running work and the rest", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  await act(() => {
+    renderer = create(
+      <ComposerBannerStack
+        items={[
+          notice("info", "info"),
+          notice("watcher", "default", "activity"),
+          notice("warning", "warning"),
+          notice("error", "error"),
+          notice("account", "info", "urgent"),
+        ]}
+      />,
+    );
+  });
+  const toggle = renderer.root.findByProps({ "aria-expanded": false });
+  expect(toggle.props.children[1]).toBe("3 more notices");
+  await act(() => toggle.props.onClick());
+  expect(titles()).toEqual(["account", "error", "warning", "watcher", "info"]);
+});
+
+it("folds notices past two into a button that names how many, and Escape folds them back", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  await act(() => {
+    renderer = create(
+      <ComposerBannerStack
+        items={[
+          notice("a", "warning", "urgent"),
+          notice("b", "error"),
+          notice("c", "default", "activity"),
+          notice("d", "info"),
+        ]}
+      />,
+      { createNodeMock: () => ({ focus: () => {} }) },
+    );
+  });
+  const toggle = () =>
+    renderer.root.find((node) => node.type === "button" && "aria-expanded" in node.props);
+  expect(titles()).toEqual(["a", "b"]);
+  expect(toggle().props["aria-expanded"]).toBe(false);
+  expect(toggle().props.children[1]).toBe("2 more notices");
+  const list = renderer.root.findByProps({ "aria-label": "Notices" });
+  expect(toggle().props["aria-controls"]).toBe(list.props.id);
+  await act(() => toggle().props.onClick());
+  expect(titles()).toEqual(["a", "b", "c", "d"]);
+  expect(toggle().props.children[1]).toBe("Show fewer notices");
+  const stack = renderer.root.find((node) => node.props["data-composer-notice-stack"] === "true");
+  await act(() =>
+    stack.props.onKeyDown({ key: "Escape", preventDefault: () => {}, stopPropagation: () => {} }),
+  );
+  expect(titles()).toEqual(["a", "b"]);
+  expect(toggle().props["aria-expanded"]).toBe(false);
+});
+
+it("interrupts screen readers only for limits, errors and warnings", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  await act(() => {
+    renderer = create(
+      <ComposerBannerStack
+        items={[notice("limit", "warning", "urgent"), notice("watcher", "default", "activity")]}
+      />,
+    );
+  });
+  expect(
+    renderer.root
+      .findAll(
+        (node) =>
+          typeof node.type === "string" &&
+          (node.props.role === "alert" || node.props.role === "status"),
+      )
+      .map((node) => node.props.role),
+  ).toEqual(["alert", "status"]);
+  expect(renderer.root.findAllByProps({ "aria-label": "Dismiss notice" }).length).toBeGreaterThan(
+    0,
+  );
+});
+
+it("keeps the composer's own drawer attached below the queue", async () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  await act(() => {
+    renderer = create(
+      <ComposerBannerStack
+        items={[
+          { id: "composer-activity", variant: "default", priority: "activity", content: "Syncing" },
+          notice("limit", "warning", "urgent"),
+        ]}
+        attachedAbove={<div data-testid="queue" />}
+      />,
+    );
+  });
+  expect(surfaces().map((node) => node.props["data-composer-banner-surface"])).toEqual([
+    "floating",
+    "attached",
+  ]);
+});

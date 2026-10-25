@@ -1,5 +1,6 @@
 import {
   CommandId,
+  isProjectCoordinatorThreadId,
   type RunId,
   isPaidModelBilling,
   isProviderAvailable,
@@ -151,6 +152,27 @@ export interface WorkerRoutingOptions {
 
 interface ResolvedTarget {
   readonly modelSelection: ModelSelection;
+  /** The model an inheriting worker stands in for, because its parent stands in for it. */
+  readonly launchFallbackFrom?: ModelSelection | null;
+}
+
+/**
+ * The model a new worker stands in for: the project worker model the room
+ * check moved it off, while the worker starts where that launch put it, else
+ * the one its parent stands in for when it inherits the parent's model.
+ */
+function workerLaunchFallbackFrom(
+  launch: WorkerLaunch | null,
+  launchApplied: boolean,
+  target: ResolvedTarget,
+): ModelSelection | null {
+  if (
+    launch?.fallbackFrom != null &&
+    launchApplied &&
+    sameRunModel(target.modelSelection, launch.selection)
+  )
+    return launch.fallbackFrom;
+  return target.launchFallbackFrom ?? null;
 }
 
 type TerminalTaskStatus = Extract<
@@ -311,6 +333,17 @@ function errorMessage(error: unknown): string {
  * post into the existing thread (the strategy is unused, keep root); unbound
  * runs launch a fresh worktree per run.
  */
+/** Whether the calling thread is the routine project's coordinator. */
+function callerIsCoordinator(
+  parent: { readonly thread: { readonly id: string } } | undefined,
+  project: {
+    readonly id: string;
+    readonly workspaceSettings?: { readonly coordinatorThreadId?: string | null } | undefined;
+  },
+): boolean {
+  return parent !== undefined && isProjectCoordinatorThreadId(parent.thread.id, project);
+}
+
 function scheduledTaskWorkspaceStrategy(
   boundToThread: boolean,
 ): ScheduledTask["workspaceStrategy"] {
@@ -964,7 +997,7 @@ import {
   projectWorkerDefault,
   needsExplicitWorkerTarget,
 } from "../project/ProjectDelegation.ts";
-import { workerLaunchWithRoom } from "../project/WorkerLaunchRoom.ts";
+import { type WorkerLaunch, workerLaunchWithRoom } from "../project/WorkerLaunchRoom.ts";
 import {
   autoRoutingApplies,
   promptWithRoutingNote,
@@ -975,6 +1008,7 @@ import {
 } from "../project/TaskRouting.ts";
 import type { TaskClassificationInput } from "@specweave-studio/shared/taskRouting";
 import { defaultWorkerModelSelection } from "@specweave-studio/shared/coordinatorDefault";
+import { limitFallbackPairing, sameRunModel } from "@specweave-studio/shared/threadModelIdentity";
 import {
   modelSelectionEffortValue,
   resolveEffort,
@@ -1446,7 +1480,8 @@ const make = Effect.gen(function* () {
   };
 
   const resolveTarget = (input: {
-    readonly parent: Pick<OrchestrationV2ThreadProjection, "thread">;
+    readonly parent: Pick<OrchestrationV2ThreadProjection, "thread"> &
+      Partial<Pick<OrchestrationV2ThreadProjection, "messages" | "runs">>;
     readonly target: OrchestratorMcpTarget | undefined;
     readonly providers: ReadonlyArray<ServerProvider>;
   }): Effect.Effect<ResolvedTarget, OrchestratorMcpFailure> =>
@@ -1569,6 +1604,18 @@ const make = Effect.gen(function* () {
         );
       }
 
+      // A worker that inherits its parent's model stands in for what the parent
+      // stands in for; one whose caller named a provider, driver or model does not.
+      const parentStandsInFor =
+        !(input.target?.providerInstanceId || input.target?.driverKind || input.target?.model) &&
+        sameModelAsParent
+          ? ((limitFallbackPairing(
+              input.parent.messages ?? [],
+              input.parent.runs ?? [],
+              inheritedSelection,
+              input.parent.thread.launchFallbackFrom,
+            )?.original as ModelSelection | undefined) ?? null)
+          : null;
       return {
         modelSelection:
           sameModelAsParent && options === undefined
@@ -1576,6 +1623,7 @@ const make = Effect.gen(function* () {
             : options === undefined
               ? { instanceId, model }
               : { instanceId, model, options },
+        ...(parentStandsInFor === null ? {} : { launchFallbackFrom: parentStandsInFor }),
       };
     });
 
@@ -1954,10 +2002,12 @@ const make = Effect.gen(function* () {
         yield* assertLiveCallerForOtherProject(scope, parent, projectId);
         const project = yield* requireProject(projectId);
         yield* assertCheckAllowed(input.check, [limits]);
-        // Binding means "wake this thread", which only a thread caller in that project has.
-        // An own-thread routine starts its own thread on its first run.
+        // Binding means "wake this thread", which only a worker in that project
+        // has. Every other routine, and every routine a coordinator makes,
+        // starts a thread of its own on its first run: the coordinator never
+        // takes a routine's runs.
         const bindToCurrentThread =
-          input.ownThread === true
+          input.ownThread === true || callerIsCoordinator(parent, project)
             ? false
             : (input.bindToCurrentThread ??
               (parent !== undefined && parent.thread.projectId === projectId));
@@ -1997,7 +2047,7 @@ const make = Effect.gen(function* () {
           modelPinned: input.modelSelection !== undefined,
           ...(input.check === undefined ? {} : { check: input.check }),
           ...(input.brief === undefined ? {} : { brief: input.brief }),
-          ...(input.ownThread === undefined ? {} : { ownThread: input.ownThread }),
+          ...(bindToCurrentThread ? {} : { ownThread: true }),
           // Scope the idempotency key by provider session so two callers
           // reusing the same clientRequestId cannot collide on one task row.
           ...(input.clientRequestId === undefined
@@ -2043,8 +2093,14 @@ const make = Effect.gen(function* () {
         const existing = yield* loadScheduledTask(input.scheduledTaskId, limits);
         yield* assertLiveCallerForOtherProject(scope, parent, existing.projectId);
         yield* assertCheckAllowed(input.check, [limits, existing]);
-        if (
+        // A coordinator cannot bind a routine to itself; it keeps its own thread.
+        const bindToCurrentThread =
           input.bindToCurrentThread === true &&
+          callerIsCoordinator(parent, yield* requireProject(existing.projectId))
+            ? undefined
+            : input.bindToCurrentThread;
+        if (
+          bindToCurrentThread === true &&
           (parent === undefined || parent.thread.projectId !== existing.projectId)
         ) {
           return yield* failure(
@@ -2057,18 +2113,18 @@ const make = Effect.gen(function* () {
         const threadId =
           input.ownThread === true && !existing.ownThread
             ? null
-            : input.bindToCurrentThread === undefined
+            : bindToCurrentThread === undefined
               ? existing.threadId
-              : input.bindToCurrentThread && parent !== undefined
+              : bindToCurrentThread && parent !== undefined
                 ? parent.thread.id
                 : null;
         // Rebinding changes where runs execute, so the workspace strategy must
         // follow: unbinding a root-strategy task would otherwise run loose
         // prompts in the shared project checkout.
         const workspaceStrategy =
-          input.bindToCurrentThread === undefined
+          bindToCurrentThread === undefined
             ? existing.workspaceStrategy
-            : scheduledTaskWorkspaceStrategy(input.bindToCurrentThread);
+            : scheduledTaskWorkspaceStrategy(bindToCurrentThread);
         const upsertInput: ScheduledTaskUpsertInput = {
           id: existing.id,
           title: input.title ?? existing.title,
@@ -2375,6 +2431,19 @@ const make = Effect.gen(function* () {
             "invalid_request",
             "Choose a project worker model or pass an explicit target.",
           );
+        const launch = yield* coordinatorWorkerLaunch(
+          project,
+          parent.thread,
+          providers,
+          hostDefault,
+        );
+        const delegationTarget = projectDelegationTarget(
+          project,
+          parent.thread.id,
+          input.target,
+          hostDefault,
+          launch?.selection,
+        );
         const { target, routing } = yield* routeResolvedTarget({
           project,
           parent,
@@ -2386,16 +2455,15 @@ const make = Effect.gen(function* () {
           options,
           baseline: yield* resolveTargetRechecking({
             parent,
-            target: projectDelegationTarget(
-              project,
-              parent.thread.id,
-              input.target,
-              hostDefault,
-              yield* coordinatorWorkerLaunch(project, parent.thread, providers, hostDefault),
-            ),
+            target: delegationTarget,
             providers,
           }),
         });
+        const launchFallbackFrom = workerLaunchFallbackFrom(
+          launch,
+          delegationTarget !== input.target,
+          target,
+        );
         const runtimeMode = yield* resolveRuntimeMode(parent.thread.runtimeMode, input.runtimeMode);
         const interactionMode = yield* resolveInteractionMode(
           parent.thread.interactionMode,
@@ -2438,6 +2506,7 @@ const make = Effect.gen(function* () {
             ...(input.title === undefined ? {} : { title: input.title }),
             modelSelection: target.modelSelection,
             ...(routing === null ? {} : { routing }),
+            ...(launchFallbackFrom === null ? {} : { launchFallbackFrom }),
             runtimeMode,
             interactionMode,
             // Async delegations wake the parent on every child terminal; wait
@@ -2704,6 +2773,19 @@ const make = Effect.gen(function* () {
                   "invalid_request",
                   "Choose a project worker model or pass an explicit target.",
                 );
+              const launch = yield* coordinatorWorkerLaunch(
+                latest,
+                parent.thread,
+                providers,
+                hostDefault,
+              );
+              const delegationTarget = projectDelegationTarget(
+                latest,
+                parent.thread.id,
+                request.target,
+                hostDefault,
+                launch?.selection,
+              );
               const { target, routing } = yield* routeResolvedTarget({
                 project: latest,
                 parent,
@@ -2715,16 +2797,15 @@ const make = Effect.gen(function* () {
                 options,
                 baseline: yield* resolveTargetRechecking({
                   parent,
-                  target: projectDelegationTarget(
-                    latest,
-                    parent.thread.id,
-                    request.target,
-                    hostDefault,
-                    yield* coordinatorWorkerLaunch(latest, parent.thread, providers, hostDefault),
-                  ),
+                  target: delegationTarget,
                   providers,
                 }),
               });
+              const launchFallbackFrom = workerLaunchFallbackFrom(
+                launch,
+                delegationTarget !== request.target,
+                target,
+              );
               const runtimeMode = yield* resolveRuntimeMode(
                 parent.thread.runtimeMode,
                 request.runtimeMode,
@@ -2765,6 +2846,7 @@ const make = Effect.gen(function* () {
                   title,
                   modelSelection: target.modelSelection,
                   ...(routing === null ? {} : { routing }),
+                  ...(launchFallbackFrom === null ? {} : { launchFallbackFrom }),
                   runtimeMode,
                   interactionMode,
                   branch: parent.thread.branch,

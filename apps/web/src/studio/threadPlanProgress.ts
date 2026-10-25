@@ -190,6 +190,12 @@ export function compactThreadPlan(
   return null;
 }
 
+/**
+ * What lists and the plan card call an agent's own todo list. The provider
+ * keeps it, not SpecWeave, so it never reads as an increment's tasks.
+ */
+export const CHECKLIST_LABEL = "Checklist";
+
 export const BINDING_LABELS: Record<ThreadIncrementProgress["binding"], string> = {
   manual: "linked by hand",
   claim: "bound by SpecWeave for this thread",
@@ -198,14 +204,17 @@ export const BINDING_LABELS: Record<ThreadIncrementProgress["binding"], string> 
   name: "matched by title or branch",
 };
 
-/** One sentence for a tooltip or screen reader: "Increment 0920: 3 of 5 done. Now: …. Next: …". */
+/**
+ * One sentence for a tooltip or screen reader: "Increment 0920: 3 of 5 tasks
+ * done. Now: …. Next: …", or the agent's checklist named as not an increment.
+ */
 export function describeThreadPlan(plan: ThreadPlanCompact): string {
   const head =
     plan.source === "increment" && plan.label !== null
       ? plan.total === 0
         ? `Increment ${plan.label}: no tasks yet.`
         : `Increment ${plan.label}: ${plan.completed} of ${plan.total} tasks done.`
-      : `Plan: ${plan.completed} of ${plan.total} steps done.`;
+      : `The agent's checklist, not an increment: ${plan.completed} of ${plan.total} steps done.`;
   return [
     head,
     plan.current ? `Now: ${plan.current}.` : null,

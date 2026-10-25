@@ -14,7 +14,6 @@ import {
   type OrchestrationV2ProviderThread,
   type OrchestrationV2Run,
   type OrchestrationV2RunAttempt,
-  type OrchestrationV2RunInterruptCause,
   type OrchestrationV2Subagent,
   type OrchestrationV2TurnItem,
   ProviderDriverKind,
@@ -59,6 +58,7 @@ import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
 import * as RunExecutionService from "./RunExecutionService.ts";
 import * as RunFinalizationService from "./RunFinalizationService.ts";
 import * as RunLiveness from "./RunLiveness.ts";
+import { LIVE_SILENT_RUN_REASON } from "./systemInterruptReasons.ts";
 
 const driver = ProviderDriverKind.make("codex");
 
@@ -3392,7 +3392,8 @@ it.effect.each([
     const { written } = yield* captureRootRunTermination({
       key: `interrupt-label:${cause}`,
       shouldFinalizeRun: () => Effect.succeed(true),
-      runInterruptCause: () => Effect.succeed(cause),
+      runInterruptRequest: () =>
+        Effect.succeed(cause === null ? null : { cause, message: "Interrupt requested" }),
     });
     assert.deepEqual(
       written.map((item) =>
@@ -3403,13 +3404,73 @@ it.effect.each([
   }),
 );
 
+// 1048 review F-01: a run the watchdog interrupted settles the subagents it
+// leaves as an outage the parent is told about; only a person's Stop is final.
+it.each([
+  ["system", "interrupted", "Stopped when the provider session ended", true],
+  ["service_update", "interrupted", "Stopped when SpecWithCode restarted for an update", true],
+  ["person", "cancelled", "Stopped by you", false],
+  ["agent", "cancelled", "Stopped by an agent", false],
+] as const)(
+  "settles an interrupted run's subagents by who stopped it (%s)",
+  (intent, status, progress, outage) => {
+    const ids = backgroundScenarioIds(`subagent-settlement:${intent}`);
+    const terminal = rootTerminalEvent(ids, "interrupted") as Extract<
+      ProviderAdapterV2Event,
+      { readonly type: "turn.terminal" }
+    >;
+    assert.deepEqual(RunExecutionService.runSubagentSettlement(terminal, intent), {
+      status,
+      progress,
+      outage,
+    });
+  },
+);
+
+it.effect.each([
+  [LIVE_SILENT_RUN_REASON, "interrupted", "Stopped when the provider session ended"],
+  ["Interrupt requested", "cancelled", "Stopped by you"],
+] as const)(
+  "ends a stopped run's open subagent by its Stop request (%s)",
+  ([message, status, progress]) =>
+    Effect.gen(function* () {
+      const { written } = yield* captureRootRunTermination({
+        key: `subagent-stop-request:${status}`,
+        shouldFinalizeRun: () => Effect.succeed(true),
+        seedOpenSubagent: true,
+        runInterruptRequest: () => Effect.succeed({ message }),
+      });
+      assert.deepEqual(
+        written.flatMap((item) =>
+          item.type === "subagent" && item.status !== "running"
+            ? [[item.status, item.progress]]
+            : [],
+        ),
+        [[status, progress]],
+      );
+    }),
+);
+
+it("keeps an interrupted run's own status for subagents nobody asked to stop", () => {
+  const ids = backgroundScenarioIds("subagent-settlement:none");
+  const terminal = rootTerminalEvent(ids, "interrupted") as Extract<
+    ProviderAdapterV2Event,
+    { readonly type: "turn.terminal" }
+  >;
+  assert.deepEqual(RunExecutionService.runSubagentSettlement(terminal, null), {
+    status: "interrupted",
+    outage: false,
+  });
+});
+
 it.effect("labels a superseded attempt's Stop result by its cause", () =>
   Effect.gen(function* () {
     const { written } = yield* captureRootRunTermination({
       key: "interrupt-label-superseded",
       shouldFinalizeRun: () => Effect.succeed(false),
       hasUnpairedRunInterruptRequest: () => Effect.succeed(true),
-      runInterruptCause: () => Effect.succeed("service_update"),
+      runInterruptRequest: () =>
+        Effect.succeed({ cause: "service_update", message: "Interrupt requested" }),
     });
     assert.deepEqual(
       written.map((item) => (item.type === "run_interrupt_result" ? item.message : item.type)),
@@ -3675,7 +3736,10 @@ function captureRootRunTermination(input: {
   readonly shouldFinalizeRun: () => Effect.Effect<boolean, ProjectionStore.ProjectionStoreV2Error>;
   readonly rejectTerminalWrite?: boolean;
   readonly hasUnpairedRunInterruptRequest?: () => Effect.Effect<boolean, never>;
-  readonly runInterruptCause?: () => Effect.Effect<OrchestrationV2RunInterruptCause | null, never>;
+  readonly runInterruptRequest?: () => Effect.Effect<
+    RunExecutionService.RunInterruptRequest | null,
+    never
+  >;
   readonly shouldStartProviderTurn?: () => Effect.Effect<
     boolean,
     ProjectionStore.ProjectionStoreV2Error
@@ -3835,9 +3899,9 @@ function captureRootRunTermination(input: {
           : {
               hasUnpairedRunInterruptRequest: input.hasUnpairedRunInterruptRequest,
             }),
-        ...(input.runInterruptCause === undefined
+        ...(input.runInterruptRequest === undefined
           ? {}
-          : { runInterruptCause: input.runInterruptCause }),
+          : { runInterruptRequest: input.runInterruptRequest }),
         message: {
           messageId: MessageId.make(`message:${input.key}`),
           text: "interrupt projection",
@@ -4339,3 +4403,15 @@ it.effect("releases ingestion after idle subagent rows and items settle", () =>
     ]);
   }),
 );
+
+// A watchdog request must never arm the person's final-Stop paths.
+it("keeps a watchdog interrupt out of person-only Stop classification", () => {
+  const runId = RunId.make("run:system-stop-classification");
+  const request = {
+    type: "run_interrupt_request",
+    runId,
+    message: LIVE_SILENT_RUN_REASON,
+  } as OrchestrationV2TurnItem;
+  assert.isUndefined(RunExecutionService.userInterruptRequest([request], runId));
+  assert.isNull(RunExecutionService.runInterruptRequestCause([request], runId));
+});

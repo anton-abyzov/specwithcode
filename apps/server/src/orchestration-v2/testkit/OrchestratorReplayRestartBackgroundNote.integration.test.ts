@@ -32,7 +32,7 @@ const SESSION_ID = "cca274e4-25ae-4171-b972-bbb31118517e";
 const FIRST_AFTER_RESTART = "Is the background subagent done yet?";
 const SECOND_AFTER_RESTART = "Thanks. Anything else?";
 const NOTE = [
-  "Note: the SpecWithCode server restarted, and this background work was cancelled before it finished. It will not report back:",
+  "Note: this background work was interrupted before it finished (a SpecWithCode server restart, a usage limit or a provider failure ended it). It will not report back. Rerun or finish it yourself if it is still needed:",
   "- subagent: Background subagent test",
 ].join("\n");
 
@@ -210,7 +210,7 @@ const runRestart = Effect.fn("runRestart")(function* (input: {
     recovered.runs.map((run) => run.status),
     ["completed"],
   );
-  assert.equal(recovered.subagents[0]?.status, "cancelled");
+  assert.equal(recovered.subagents[0]?.status, "interrupted");
   assert.equal(recovered.runs[0]?.restartCancelledBackgroundWork?.[0]?.kind, "subagent");
 
   const after = yield* Effect.scoped(
@@ -222,7 +222,7 @@ const runRestart = Effect.fn("runRestart")(function* (input: {
   // The replay runner rejects any prompt frame that differs from the transcript.
   yield* assertComplete;
   const projection = projectionFor(after, SCENARIO);
-  assert.equal(projection.subagents[0]?.status, "cancelled");
+  assert.equal(projection.subagents[0]?.status, "interrupted");
   return projection;
 });
 

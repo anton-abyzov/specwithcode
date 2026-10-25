@@ -2,6 +2,7 @@ import {
   MessageId,
   ProjectId,
   RunId,
+  ScheduledTaskId,
   ThreadId,
   type OrchestrationV2ConversationMessage,
   type OrchestrationV2DomainEvent,
@@ -242,6 +243,70 @@ it.effect("pairs the chat that sends the code, then forwards and answers", () =>
           } as unknown as OrchestrationV2DomainEvent);
           assert.strictEqual((yield* Queue.take(harness.sent)).text, "Here is your week.");
           assert.include((yield* Queue.take(harness.sent)).text, "“Book flights” in Errands");
+          assert.strictEqual(yield* Queue.size(harness.sent), 0);
+
+          // A routine's run in its own thread goes back, headed by the thread's
+          // title, even when the routine was made at a desk; a worker's run does not.
+          const ROUTINE_THREAD = ThreadId.make("thread-routine");
+          harness.messages.push(
+            conversationMessage({
+              id: MessageId.make("routine-fire"),
+              runId: RunId.make("run-routine"),
+              role: "user",
+              createdBy: "user",
+              creationSource: "web",
+              scheduledTaskId: ScheduledTaskId.make("task-seo"),
+            }),
+            conversationMessage({
+              id: MessageId.make("answer-routine"),
+              runId: RunId.make("run-routine"),
+              role: "assistant",
+              text: "Search traffic is steady.",
+            }),
+            conversationMessage({
+              id: MessageId.make("worker-ask"),
+              runId: RunId.make("run-worker"),
+              role: "user",
+              createdBy: "agent",
+              creationSource: "mcp",
+            }),
+            conversationMessage({
+              id: MessageId.make("answer-worker"),
+              runId: RunId.make("run-worker"),
+              role: "assistant",
+              text: "Worker detail",
+            }),
+          );
+          const threadRunEvent = (payload: OrchestrationV2Run) =>
+            ({
+              type: "run.updated",
+              threadId: payload.threadId,
+              payload,
+            }) as OrchestrationV2DomainEvent;
+          yield* Queue.offer(
+            harness.events,
+            threadRunEvent(
+              run({
+                id: RunId.make("run-worker"),
+                threadId: ROUTINE_THREAD,
+                userMessageId: MessageId.make("worker-ask"),
+              }),
+            ),
+          );
+          yield* Queue.offer(
+            harness.events,
+            threadRunEvent(
+              run({
+                id: RunId.make("run-routine"),
+                threadId: ROUTINE_THREAD,
+                userMessageId: MessageId.make("routine-fire"),
+              }),
+            ),
+          );
+          assert.strictEqual(
+            (yield* Queue.take(harness.sent)).text,
+            "“Book flights”\n\nSearch traffic is steady.",
+          );
           assert.strictEqual(yield* Queue.size(harness.sent), 0);
 
           const unpaired = yield* channel.unpair;

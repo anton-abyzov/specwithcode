@@ -6,6 +6,7 @@ import { ThreadId } from "@specweave-studio/contracts";
 import type { EnvironmentThreadShell } from "@specweave-studio/client-runtime/state/shell";
 
 import { isOrchestratorThreadId, projectCoordinatorRole } from "./projectCoordinatorThreads";
+import { PROJECT_PANE_TABS, type ProjectPaneTab } from "./projectPaneModel";
 
 type PaneShell = Pick<
   EnvironmentThreadShell,
@@ -167,6 +168,11 @@ export interface ProjectWorkspaceSearch {
   readonly threadEnvironment?: string;
   /** Exact checkout for a link; never changes the saved coordinator machine. */
   readonly checkout?: string;
+  /**
+   * A one-shot request to open the right panel on a tab, as the Share dialog's
+   * owner chip asks for `designs`. The page takes it once and drops it.
+   */
+  readonly pane?: ProjectPaneTab;
 }
 
 const MAX_THREAD_ID_LENGTH = 512;
@@ -184,12 +190,14 @@ export function parseProjectWorkspaceSearch(raw: Record<string, unknown>): Proje
   const thread = valid(raw.thread, MAX_THREAD_ID_LENGTH);
   const checkout = valid(raw.checkout, 1024);
   const threadEnvironment = valid(raw.threadEnvironment, 512);
+  const pane = PROJECT_PANE_TABS.find((tab) => tab === raw.pane);
   return {
     ...(thread && raw.restoreThread === true ? { restoreThread: true } : {}),
     ...(thread
       ? { thread: ThreadId.make(thread), ...(threadEnvironment ? { threadEnvironment } : {}) }
       : {}),
     ...(checkout && checkout.includes(":") ? { checkout } : {}),
+    ...(pane ? { pane } : {}),
   };
 }
 

@@ -6,6 +6,7 @@ import {
   PROJECT_SCOPED_SERVER_SETTING_KEYS,
   type ProjectId,
   type ProjectScopedServerSettingKey,
+  type ProjectSettingsOverrideChange,
   type ProjectSettingsOverrides,
   ServerSettings,
   type StudioProjectFile,
@@ -13,7 +14,7 @@ import {
 } from "@specweave-studio/contracts";
 import type { EnvironmentConnectionPhase } from "@specweave-studio/client-runtime/connection";
 import {
-  clearProjectSettingsOverrides,
+  projectSettingsOverrideChangesPatch,
   resolveProjectSettings,
   resolveWorktreeCleanup,
   type ProjectSettingSource,
@@ -31,7 +32,10 @@ interface ScopedSettingsEnvironment {
   readonly serverConfig: {
     readonly settings: ServerSettings;
     readonly environment?: {
-      readonly capabilities: { readonly projectSettingsOverrides?: boolean | undefined };
+      readonly capabilities: {
+        readonly projectSettingsOverrides?: boolean | undefined;
+        readonly projectSettingsOverrideChanges?: boolean | undefined;
+      };
     };
   } | null;
 }
@@ -167,41 +171,57 @@ interface ScopedServerWrite {
   readonly patch: ServerSettingsPatch;
 }
 
+/**
+ * One write per environment carrying only the keys each project edit names,
+ * so a save planned from an older snapshot cannot undo another saved since.
+ */
+function projectOverrideChangeWrites(
+  environments: readonly ScopedSettingsEnvironment[],
+  targets: readonly { readonly environmentId: EnvironmentId; readonly projectId: ProjectId }[],
+  change: (settings: ServerSettings, projectId: ProjectId) => ProjectSettingsOverrideChange,
+): ScopedServerWrite[] {
+  const byId = new Map(environments.map((environment) => [environment.environmentId, environment]));
+  const changes = new Map<EnvironmentId, Record<ProjectId, ProjectSettingsOverrideChange>>();
+  for (const { environmentId, projectId } of targets) {
+    const settings = byId.get(environmentId)?.serverConfig?.settings;
+    if (!settings) continue;
+    const entries = changes.get(environmentId) ?? {};
+    entries[projectId] = change(settings, projectId);
+    changes.set(environmentId, entries);
+  }
+  return [...changes].flatMap(([environmentId, entries]) => {
+    const environment = byId.get(environmentId);
+    if (!environment?.serverConfig) return [];
+    return [
+      {
+        environmentId,
+        label: environment.label,
+        patch: projectSettingsOverrideChangesPatch(
+          environment.serverConfig.settings,
+          entries,
+          environment.serverConfig.environment?.capabilities.projectSettingsOverrideChanges ===
+            true,
+        ),
+      },
+    ];
+  });
+}
+
 function projectOverrideWrites(
   scope: Extract<ResolvedSettingsScope, { kind: "project" | "checkout" }>,
   environments: readonly ScopedSettingsEnvironment[],
-  update: (
-    current: ProjectSettingsOverrides,
-    settings: ServerSettings,
-    projectId: ProjectId,
-  ) => ProjectSettingsOverrides | null,
+  change: (settings: ServerSettings, projectId: ProjectId) => ProjectSettingsOverrideChange,
 ): ScopedServerWrite[] {
   const byId = new Map(environments.map((environment) => [environment.environmentId, environment]));
-  const writes = new Map<EnvironmentId, ScopedServerWrite>();
-  for (const member of scope.members) {
+  const targets = scope.members.flatMap((member) => {
     const environment = byId.get(member.environmentId);
-    if (
-      !environment?.serverConfig ||
-      environment.connection.phase !== "connected" ||
-      environment.serverConfig.environment?.capabilities.projectSettingsOverrides !== true
-    ) {
-      continue;
-    }
-    const settings = environment.serverConfig.settings;
-    const entry = update(settings.projectSettingsOverrides[member.id] ?? {}, settings, member.id);
-    const existing = writes.get(member.environmentId);
-    writes.set(member.environmentId, {
-      environmentId: member.environmentId,
-      label: environment.label,
-      patch: {
-        projectSettingsOverrides: {
-          ...existing?.patch.projectSettingsOverrides,
-          [member.id]: entry,
-        },
-      },
-    });
-  }
-  return [...writes.values()];
+    return environment?.serverConfig &&
+      environment.connection.phase === "connected" &&
+      environment.serverConfig.environment?.capabilities.projectSettingsOverrides === true
+      ? [{ environmentId: member.environmentId, projectId: member.id }]
+      : [];
+  });
+  return projectOverrideChangeWrites(environments, targets, change);
 }
 
 /**
@@ -232,15 +252,17 @@ export function planScopedSettingsPatch(
       : isProjectScope
         ? unscopableKeys.length > 0
           ? []
-          : projectOverrideWrites(scope, environments, (current, settings, projectId) => {
+          : projectOverrideWrites(scope, environments, (settings, projectId) => {
               // Object-valued keys arrive as partial patches (the writing style
               // rows send one field); an override entry stores the whole value,
               // so complete the patch from the target's effective value.
               const effective = resolveProjectSettings(settings, projectId).settings;
-              const next: Record<string, unknown> = { ...current };
+              const set: Record<string, unknown> = {};
+              const clear: string[] = [];
               for (const [key, value] of Object.entries(serverPatch)) {
+                if (value === undefined) continue;
                 if (key === "worktreeCleanup" && serverPatch.worktreeCleanup?.mode === "custom") {
-                  next[key] = {
+                  set[key] = {
                     mode: "custom",
                     rules: {
                       ...resolveWorktreeCleanup(settings, projectId),
@@ -255,14 +277,17 @@ export function planScopedSettingsPatch(
                   value === null &&
                   !isNullableProjectSettingsOverride(key as ProjectScopedServerSettingKey)
                 ) {
-                  delete next[key];
+                  clear.push(key);
                   continue;
                 }
                 const base = effective[key as keyof ServerSettings];
-                next[key] =
+                set[key] =
                   isPlainObject(value) && isPlainObject(base) ? { ...base, ...value } : value;
               }
-              return next as ProjectSettingsOverrides;
+              return {
+                ...(Object.keys(set).length > 0 ? { set: set as ProjectSettingsOverrides } : {}),
+                ...(clear.length > 0 ? { clear } : {}),
+              };
             })
         : scope.kind === "all" || scope.kind === "environment"
           ? connectedEnvironments.map((environment) => ({
@@ -312,9 +337,7 @@ export function planScopedSettingsClear(
 ) {
   const serverWrites =
     scope.kind === "project" || scope.kind === "checkout"
-      ? projectOverrideWrites(scope, environments, (_current, settings, projectId) =>
-          clearProjectSettingsOverrides(settings, projectId, keys),
-        )
+      ? projectOverrideWrites(scope, environments, () => ({ clear: [...keys] }))
       : [];
   return {
     clientPatch: {} as ClientSettingsPatch,
@@ -360,25 +383,16 @@ export function planProjectOverridesClear(
   entries: readonly ProjectOverrideEntry[],
   keys: readonly ProjectScopedServerSettingKey[],
 ) {
-  const byId = new Map(environments.map((environment) => [environment.environmentId, environment]));
-  const writes = new Map<EnvironmentId, ScopedServerWrite>();
-  for (const { environmentId, projectId } of entries) {
-    const environment = byId.get(environmentId);
-    if (!environment?.serverConfig || environment.connection.phase !== "connected") continue;
-    const settings = environment.serverConfig.settings;
-    const existing = writes.get(environmentId);
-    writes.set(environmentId, {
-      environmentId,
-      label: environment.label,
-      patch: {
-        projectSettingsOverrides: {
-          ...existing?.patch.projectSettingsOverrides,
-          [projectId]: clearProjectSettingsOverrides(settings, projectId, keys),
-        },
-      },
-    });
-  }
-  const serverWrites = [...writes.values()];
+  const connected = new Set(
+    environments
+      .filter((environment) => environment.connection.phase === "connected")
+      .map((environment) => environment.environmentId),
+  );
+  const serverWrites = projectOverrideChangeWrites(
+    environments,
+    entries.filter((entry) => connected.has(entry.environmentId)),
+    () => ({ clear: [...keys] }),
+  );
   return {
     clientPatch: {} as ClientSettingsPatch,
     hasClientWrite: false,

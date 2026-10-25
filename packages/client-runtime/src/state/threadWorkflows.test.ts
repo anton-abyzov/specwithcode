@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 import type { OrchestrationV2ThreadProjection } from "@specweave-studio/contracts";
+import * as DateTime from "effect/DateTime";
 
 import {
   canDetachThreadProviderSession,
@@ -8,6 +9,8 @@ import {
   resolveLatestMergeBackRun,
   threadSupportsProviderHandoff,
 } from "./threadWorkflows.ts";
+
+const DateTimeUtc = (iso: string) => DateTime.makeUnsafe(iso);
 
 const capabilities = (input?: {
   readonly queued?: boolean;
@@ -254,7 +257,7 @@ describe("thread workflows", () => {
     }
   });
 
-  it("hides automatic completion delivery from the visible queue", () => {
+  it("shows automatic deliveries as read-only rows in delivery order", () => {
     const state = deriveThreadQueueWorkflowState({
       thread: { id: "thread", activeProviderThreadId: null },
       runs: [
@@ -306,8 +309,18 @@ describe("thread workflows", () => {
       providerSessions: [],
     } as never);
 
-    expect(state.queuedRuns.map(({ run, text }) => [run.id, text])).toEqual([
-      ["visible", "Visible queued message"],
+    // Delegated results go first, as the server delivers them; a notification
+    // keeps its position among the person's messages.
+    expect(
+      state.queuedRuns.map(({ run, automatic, summary }) => [
+        run.id,
+        automatic === true,
+        summary ?? null,
+      ]),
+    ).toEqual([
+      ["automatic", true, null],
+      ["visible", false, null],
+      ["provider-wake", true, "Monitor updated"],
     ]);
   });
 
@@ -520,4 +533,152 @@ describe("thread workflows", () => {
       expect(resolveLatestMergeBackRun(projection)).toBeNull();
     },
   );
+
+  const steeringProjection = (overrides: Record<string, unknown> = {}) =>
+    ({
+      thread: {
+        id: "thread",
+        activeProviderThreadId: "provider-thread",
+        providerInstanceId: "claude",
+      },
+      runs: [
+        {
+          id: "active",
+          status: "running",
+          providerThreadId: "provider-thread",
+          activeAttemptId: "attempt-active",
+          ordinal: 1,
+        },
+        { id: "queued", status: "queued", userMessageId: "message", ordinal: 2 },
+      ],
+      messages: [{ id: "message", text: "Queued", runId: "queued" }],
+      providerTurns: [{ id: "turn", runAttemptId: "attempt-active", status: "running" }],
+      providerThreads: [
+        { id: "provider-thread", appThreadId: "thread", providerSessionId: "provider-session" },
+      ],
+      providerSessions: [
+        {
+          id: "provider-session",
+          providerInstanceId: "claude",
+          status: "running",
+          capabilities: capabilities({ queued: true, steer: true }),
+        },
+      ],
+      turnItems: [],
+      ...overrides,
+    }) as never;
+
+  it("names why Steer now is unavailable", () => {
+    const steerable = deriveThreadQueueWorkflowState(steeringProjection());
+    expect(steerable.canPromoteToSteer).toBe(true);
+    expect(steerable.steerUnavailableReason).toBeNull();
+    expect(steerable.waitReason).toBe("turn");
+
+    const noTurn = deriveThreadQueueWorkflowState(steeringProjection({ providerTurns: [] }));
+    expect(noTurn.canPromoteToSteer).toBe(false);
+    expect(noTurn.steerUnavailableReason).toMatch(/No provider turn is running/);
+
+    const deadSession = deriveThreadQueueWorkflowState(
+      steeringProjection({
+        providerSessions: [
+          {
+            id: "provider-session",
+            providerInstanceId: "claude",
+            status: "stopped",
+            capabilities: capabilities({ queued: true, steer: true }),
+          },
+        ],
+      }),
+    );
+    expect(deadSession.canPromoteToSteer).toBe(false);
+    expect(deadSession.steerUnavailableReason).toMatch(/session is not live/);
+
+    const cannotSteer = deriveThreadQueueWorkflowState(
+      steeringProjection({
+        providerSessions: [
+          {
+            id: "provider-session",
+            providerInstanceId: "claude",
+            status: "running",
+            capabilities: capabilities({ queued: true }),
+          },
+        ],
+      }),
+    );
+    expect(cannotSteer.steerUnavailableReason).toMatch(/cannot take a message/);
+
+    const idle = deriveThreadQueueWorkflowState(
+      steeringProjection({
+        runs: [{ id: "queued", status: "queued", userMessageId: "message", ordinal: 2 }],
+      }),
+    );
+    expect(idle.steerUnavailableReason).toMatch(/No turn is running/);
+  });
+
+  it("marks a row whose message is being steered into the running turn", () => {
+    const state = deriveThreadQueueWorkflowState(
+      steeringProjection({ messages: [{ id: "message", text: "Queued", runId: "active" }] }),
+    );
+    expect(state.queuedRuns.map(({ run, steering }) => [run.id, steering === true])).toEqual([
+      ["queued", true],
+    ]);
+    // Once that turn ends the row is an ordinary queued message again.
+    const ended = deriveThreadQueueWorkflowState(
+      steeringProjection({
+        runs: [
+          { id: "active", status: "completed", ordinal: 1 },
+          { id: "queued", status: "queued", userMessageId: "message", ordinal: 2 },
+        ],
+        messages: [{ id: "message", text: "Queued", runId: "active" }],
+      }),
+    );
+    expect(ended.queuedRuns[0]?.steering).toBeUndefined();
+  });
+
+  it.each([
+    ["stopped", "interrupted", undefined, undefined],
+    ["failure", "failed", undefined, undefined],
+    ["restart", "interrupted", true, undefined],
+    ["usage_limit", "failed", undefined, "usage_limit"],
+  ] as const)("says the queue is held: %s", (reason, lastStatus, forRestart, failureClass) => {
+    const state = deriveThreadQueueWorkflowState(
+      steeringProjection({
+        runs: [
+          {
+            id: "last",
+            status: lastStatus,
+            ordinal: 1,
+            startedAt: "2026-10-24T01:00:00.000Z",
+            completedAt: DateTimeUtc("2026-10-24T01:05:00.000Z"),
+            rootNodeId: "node-last",
+          },
+          {
+            id: "queued",
+            status: "queued",
+            userMessageId: "message",
+            ordinal: 2,
+            queueHeld: true,
+            ...(forRestart ? { queueHeldForRestart: true } : {}),
+          },
+        ],
+        turnItems:
+          failureClass === undefined
+            ? []
+            : [
+                {
+                  id: "error",
+                  runId: "last",
+                  nodeId: "node-last",
+                  type: "error",
+                  status: "failed",
+                  ordinal: 5,
+                  updatedAt: DateTimeUtc("2026-10-24T01:05:00.000Z"),
+                  failure: { class: failureClass, message: "You've hit your limit" },
+                },
+              ],
+      }),
+    );
+    expect(state.waitReason).toBe(reason);
+    expect(state.isHeld).toBe(true);
+  });
 });

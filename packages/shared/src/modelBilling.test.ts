@@ -109,8 +109,27 @@ describe("classifyBaseUrlBilling", () => {
     expect(classifyBaseUrlBilling("https://api.z.ai/api/paas/v4", "zai")).toBe("api");
   });
 
-  it("reads a loopback base URL as local even under a cloud provider id", () => {
-    expect(classifyBaseUrlBilling("http://localhost:11434/v1", "openai")).toBe("local");
+  it("requires a known local runtime before treating loopback as free", () => {
+    const ids = [
+      "anthropic",
+      "openai",
+      "google",
+      "ollama",
+      "lmstudio",
+      "custom",
+      undefined,
+      "openrouter",
+    ];
+    expect(ids.map((id) => classifyBaseUrlBilling("http://127.0.0.1:4000/v1", id))).toEqual([
+      "api",
+      "api",
+      "api",
+      "local",
+      "local",
+      "unknown",
+      "unknown",
+      "paid-router",
+    ]);
   });
 
   it("reads OpenRouter by id or host as paid-router, even behind a loopback proxy", () => {

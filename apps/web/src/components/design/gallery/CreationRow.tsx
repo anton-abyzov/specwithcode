@@ -1,6 +1,33 @@
-import type { ReactNode } from "react";
+import {
+  CodeXmlIcon,
+  PaletteIcon,
+  PlusIcon,
+  PresentationIcon,
+  SwatchBookIcon,
+  UploadIcon,
+} from "lucide-react";
+import { useRef, type ReactElement, type ReactNode } from "react";
 
+import { cn } from "~/lib/utils";
+
+import { Tooltip, TooltipPopup, TooltipTrigger } from "../../ui/tooltip";
+import { PPTX_ACCEPT } from "./deckImport";
 import { CREATION_DESCRIPTIONS, CREATION_LABELS, type CreationKind } from "./galleryModel";
+
+function Tip({
+  label,
+  children,
+}: {
+  label: string;
+  children: ReactElement<Record<string, unknown>>;
+}) {
+  return (
+    <Tooltip>
+      <TooltipTrigger render={children} />
+      <TooltipPopup side="bottom">{label}</TooltipPopup>
+    </Tooltip>
+  );
+}
 
 /** Small line drawings, one per kind, drawn in the app's own ink and accent. */
 const ART: Record<CreationKind, ReactNode> = {
@@ -69,27 +96,137 @@ const ART: Record<CreationKind, ReactNode> = {
   ),
 };
 
-/** "Make something new": one entry per kind that works in this build. */
+const COMPACT_ICONS: Record<CreationKind, ReactNode> = {
+  design: <PaletteIcon aria-hidden />,
+  "design-from-code": <CodeXmlIcon aria-hidden />,
+  slides: <PresentationIcon aria-hidden />,
+  "design-system": <SwatchBookIcon aria-hidden />,
+};
+
+/**
+ * "Make something new": one entry per kind that works in this build. An
+ * empty scope shows the illustrated tiles; once the scope has designs it
+ * folds to one row of buttons so the designs stay near the top.
+ */
 export function CreationRow({
   kinds,
   disabledReason,
   onCreate,
+  compact = false,
+  designLabel,
+  designDescription,
+  onImportSlides = null,
 }: {
   kinds: readonly CreationKind[];
   /** Why a kind can't be made in this window, or null when it can. */
   disabledReason: (kind: CreationKind) => string | null;
   onCreate: (kind: CreationKind) => void;
+  compact?: boolean;
+  /** The Design entry's name when the gallery is scoped, "New design in EasyChamp". */
+  designLabel?: string;
+  /** The Design entry's description when the gallery is scoped to one project. */
+  designDescription?: string;
+  /** "Import PowerPoint…" next to Slides, with the picked .pptx; absent when the server cannot import. */
+  onImportSlides?: ((file: File) => void) | null;
 }) {
+  const fileInput = useRef<HTMLInputElement>(null);
+  const importReason = kinds.includes("slides") ? disabledReason("slides") : null;
+  const importEntry =
+    onImportSlides === null || !kinds.includes("slides") ? null : (
+      <>
+        <input
+          ref={fileInput}
+          type="file"
+          accept={PPTX_ACCEPT}
+          hidden
+          data-testid="design-import-pptx-input"
+          onChange={(event) => {
+            const picked = event.target.files?.[0] ?? null;
+            event.target.value = "";
+            if (picked !== null) onImportSlides(picked);
+          }}
+        />
+        <button
+          type="button"
+          disabled={importReason !== null}
+          data-testid="design-import-pptx"
+          onClick={() => fileInput.current?.click()}
+          className={cn(
+            "inline-flex items-center gap-1.5 rounded-md text-[13px] font-medium outline-none transition-colors duration-[120ms] ease-out-quint focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-(--disabled-opacity) motion-reduce:transition-none [&_svg]:size-3.5",
+            compact
+              ? "h-8 border border-border/80 px-2.5 text-foreground/80 hover:border-foreground/20 hover:bg-accent hover:text-foreground"
+              : "self-start px-0.5 text-muted-foreground hover:text-foreground",
+          )}
+        >
+          <UploadIcon aria-hidden />
+          Import PowerPoint…
+          {importReason ? <span className="sr-only">: {importReason}</span> : null}
+        </button>
+      </>
+    );
+  const label = (kind: CreationKind) =>
+    kind === "design" && designLabel !== undefined ? designLabel : CREATION_LABELS[kind];
+  const description = (kind: CreationKind) =>
+    kind === "design" && designDescription !== undefined
+      ? designDescription
+      : CREATION_DESCRIPTIONS[kind];
+  if (compact) {
+    // The plain design comes first; it is the one people reach for.
+    const ordered = [
+      ...kinds.filter((kind) => kind === "design"),
+      ...kinds.filter((kind) => kind !== "design"),
+    ];
+    return (
+      <section aria-label="Make something new" className="flex flex-wrap items-center gap-1.5">
+        {ordered.map((kind) => {
+          const reason = disabledReason(kind);
+          const primary = kind === "design";
+          const button = (
+            <button
+              type="button"
+              disabled={reason !== null}
+              data-testid="design-create"
+              data-kind={kind}
+              onClick={() => onCreate(kind)}
+              className={cn(
+                "inline-flex h-8 items-center gap-1.5 rounded-md px-2.5 text-[13px] font-medium outline-none transition-[background-color,border-color,color] duration-[120ms] ease-out-quint focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-(--disabled-opacity) motion-reduce:transition-none [&_svg]:size-3.5",
+                primary
+                  ? "bg-primary text-primary-foreground hover:bg-primary/90"
+                  : "border border-border/80 text-foreground/80 hover:border-foreground/20 hover:bg-accent hover:text-foreground",
+              )}
+            >
+              {primary ? <PlusIcon aria-hidden /> : COMPACT_ICONS[kind]}
+              {label(kind)}
+              {reason ? <span className="sr-only">: {reason}</span> : null}
+            </button>
+          );
+          const tip = (
+            <Tip key={kind} label={reason ?? description(kind)}>
+              {button}
+            </Tip>
+          );
+          return kind === "slides" && importEntry !== null ? (
+            <span key={kind} className="contents">
+              {tip}
+              {importEntry}
+            </span>
+          ) : (
+            tip
+          );
+        })}
+      </section>
+    );
+  }
   return (
     <section aria-labelledby="design-make-new" className="flex flex-col gap-2.5">
-      <h2 id="design-make-new" className="text-muted-foreground text-sm">
+      <h2 id="design-make-new" className="text-sm text-muted-foreground">
         Make something new
       </h2>
       <ul className="flex flex-wrap gap-3">
         {kinds.map((kind) => {
           const reason = disabledReason(kind);
           return (
-            <li key={kind}>
+            <li key={kind} className="flex flex-col gap-1.5">
               <button
                 type="button"
                 disabled={reason !== null}
@@ -98,16 +235,17 @@ export function CreationRow({
                 onClick={() => onCreate(kind)}
                 className="group flex w-40 flex-col gap-2 rounded-lg text-left outline-none focus-visible:ring-2 focus-visible:ring-ring disabled:cursor-not-allowed disabled:opacity-(--disabled-opacity)"
               >
-                <span className="block h-22 w-full rounded-lg bg-muted/70 p-2 ring-1 ring-border/70 transition-colors group-hover:bg-accent group-disabled:group-hover:bg-muted/70">
+                <span className="block h-22 w-full rounded-lg bg-muted/70 p-2 ring-1 ring-border/70 transition-colors duration-150 ease-out-quint group-hover:bg-accent group-disabled:group-hover:bg-muted/70">
                   {ART[kind]}
                 </span>
                 <span className="flex flex-col px-0.5">
-                  <span className="font-medium text-sm">{CREATION_LABELS[kind]}</span>
-                  <span className="text-muted-foreground text-xs leading-snug">
-                    {reason ?? CREATION_DESCRIPTIONS[kind]}
+                  <span className="text-sm font-medium">{label(kind)}</span>
+                  <span className="text-xs leading-snug text-muted-foreground">
+                    {reason ?? description(kind)}
                   </span>
                 </span>
               </button>
+              {kind === "slides" ? importEntry : null}
             </li>
           );
         })}

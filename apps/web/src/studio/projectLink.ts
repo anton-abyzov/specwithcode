@@ -6,7 +6,8 @@ import {
 import type { EnvironmentProject } from "@specweave-studio/client-runtime/state/shell";
 import {
   compareFingerprints,
-  keepBothNoteName,
+  allocateNoteName,
+  ProjectLinkError,
   logicalProjectMemberKey,
   type LogicalProjectMember,
   type ProjectLinkNote,
@@ -315,6 +316,25 @@ export function noteMergeComplete(
   return rows.every((row) => row.kind !== "conflict" || choices[row.name] !== undefined);
 }
 
+/** Adds a kept-both copy under the first name that holds nothing else, never replacing a note. */
+function pushKeptBoth(
+  writes: ProjectLinkNoteWrite[],
+  taken: Map<string, string>,
+  base: string,
+  content: string,
+  machine: string,
+): void {
+  const name = allocateNoteName({ base, suffix: machine, content, taken });
+  if (name === null)
+    throw new ProjectLinkError({
+      code: "too_large",
+      detail: `Too many copies of "${base}" already exist.`,
+    });
+  // The same text already lands there in this batch.
+  if (writes.some((write) => write.name === name)) return;
+  writes.push({ name, content, expectedRevision: null, createOnly: true });
+}
+
 /** The notes to write into the kept copy. The joining copy keeps its own notes as they were. */
 export function noteWrites(
   rows: ReadonlyArray<NoteMergeRow>,
@@ -326,23 +346,19 @@ export function noteWrites(
   for (const row of rows) {
     if (row.kind === "copy" && row.joining)
       writes.push({ name: row.name, content: row.joining.content, expectedRevision: null });
-    if (row.kind !== "conflict" || !row.joining || !row.kept) continue;
-    const choice = choices[row.name];
-    if (choice === "joining")
+    if (row.kind === "conflict" && row.joining && row.kept && choices[row.name] === "joining")
       writes.push({
         name: row.name,
         content: row.joining.content,
         expectedRevision: row.kept.revision,
       });
-    if (choice === "both") {
-      const name = keepBothNoteName(row.name, joiningMachine);
-      writes.push({
-        name,
-        content: row.joining.content,
-        expectedRevision: keptNotes.find((note) => note.name === name)?.revision ?? null,
-      });
-    }
   }
+  // Every name the kept copy holds once these writes land, with its text.
+  const taken = new Map(keptNotes.map((note) => [note.name, note.content]));
+  for (const write of writes) taken.set(write.name, write.content);
+  for (const row of rows)
+    if (row.kind === "conflict" && row.joining && row.kept && choices[row.name] === "both")
+      pushKeptBoth(writes, taken, row.name, row.joining.content, joiningMachine);
   return writes;
 }
 
@@ -356,17 +372,15 @@ export function unlinkNoteWrites(
   keptMachine: string,
 ): ProjectLinkNoteWrite[] {
   const writes: ProjectLinkNoteWrite[] = [];
+  for (const note of kept)
+    if (!member.some((candidate) => candidate.name === note.name))
+      writes.push({ name: note.name, content: note.content, expectedRevision: null });
+  const taken = new Map(member.map((note) => [note.name, note.content]));
+  for (const write of writes) taken.set(write.name, write.content);
   for (const note of kept) {
     const own = member.find((candidate) => candidate.name === note.name);
-    if (!own) writes.push({ name: note.name, content: note.content, expectedRevision: null });
-    else if (own.content !== note.content) {
-      const name = keepBothNoteName(note.name, keptMachine);
-      writes.push({
-        name,
-        content: note.content,
-        expectedRevision: member.find((candidate) => candidate.name === name)?.revision ?? null,
-      });
-    }
+    if (own && own.content !== note.content)
+      pushKeptBoth(writes, taken, note.name, note.content, keptMachine);
   }
   return writes;
 }

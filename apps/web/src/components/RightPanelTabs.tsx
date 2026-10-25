@@ -24,6 +24,7 @@ import {
   Globe2,
   Plus,
   TerminalSquare,
+  X,
 } from "lucide-react";
 import { Volume2, VolumeOff } from "lucide";
 import {
@@ -34,6 +35,7 @@ import {
   useCallback,
   useEffect,
   useEffectEvent,
+  useLayoutEffect,
   useMemo,
   useRef,
   useState,
@@ -42,6 +44,7 @@ import {
 import { isElectron } from "~/env";
 import type { DesktopPreviewOverlay } from "~/previewStateStore";
 import type { RightPanelSurface } from "~/rightPanelStore";
+import { takeFileSurfaceOpener } from "~/lib/openInFront";
 import { cn } from "~/lib/utils";
 import { resolveShortcutCommand, type ShortcutMatchContext } from "~/keybindings";
 import { readLocalApi } from "~/localApi";
@@ -167,6 +170,7 @@ const SURFACE_DISABLED_REASONS = {
 
 /** Overlays that must win over the launcher's letter shortcuts. */
 const LAUNCHER_SHORTCUT_BLOCKING_LAYERS = [
+  '[role="dialog"][aria-modal="true"]',
   '[data-slot="dialog-popup"]',
   '[data-slot="alert-dialog-popup"]',
   '[data-slot="command-dialog-popup"]',
@@ -276,6 +280,36 @@ export function surfaceShortcutTargetsTypingContext(
     null
   );
 }
+
+/**
+ * Something in the file reader that answers Escape itself first, as in the
+ * viewer overlay: a field or editor, an open menu or list, a dialog, a
+ * combobox showing suggestions.
+ */
+const READER_OWNS_ESCAPE =
+  '[role="menu"], [role="listbox"], [role="dialog"], [role="alertdialog"], [data-viewer-escape="own"]';
+
+function elementKeepsEscape(target: Element, reader: Element): boolean {
+  if (surfaceShortcutTargetsTypingContext(target)) return true;
+  if (target.getAttribute("aria-activedescendant")) return true;
+  if (target.getAttribute("aria-expanded") === "true") return true;
+  const owner = target.closest(READER_OWNS_ESCAPE);
+  // A dialog around the whole panel is not one inside the reader.
+  return owner !== null && !owner.contains(reader);
+}
+
+/**
+ * The file editor's field sits in a shadow root, where `event.target` names
+ * only its host, so the element the key was pressed in is asked too.
+ */
+function fileReaderKeepsEscape(event: Event, reader: Element): boolean {
+  return [event.composedPath()[0], event.target].some(
+    (target) => target instanceof Element && elementKeepsEscape(target, reader),
+  );
+}
+
+/** What a page that carries the app's bootstrap posts for an Escape nothing in it took. */
+const FRAME_ESCAPE_METHOD = "ui/notifications/report-escape";
 
 function DisabledReasonTooltip(props: { reason: string; trigger: ReactElement }) {
   return (
@@ -798,6 +832,9 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
   const browserProfiles = useBrowserDefaults().profiles;
   const { resolvedTheme } = useTheme();
   const tabListRef = useRef<HTMLDivElement>(null);
+  const contentRef = useRef<HTMLDivElement>(null);
+  // The link each file tab was opened from, for focus to go back to on close.
+  const readerOrigins = useRef(new Map<string, HTMLElement>());
   const addSurfaceTriggerRef = useRef<HTMLButtonElement>(null);
   const [renamingDevice, setRenamingDevice] = useState<string | null>(null);
   const [addSurfaceMenuOpen, setAddSurfaceMenuOpen] = useState(false);
@@ -830,6 +867,83 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
     document.addEventListener("keydown", onNewSurfaceKeyDown, true);
     return () => document.removeEventListener("keydown", onNewSurfaceKeyDown, true);
   }, [props.open]);
+
+  const activeSurface = props.surfaces.find((surface) => surface.id === props.activeSurfaceId);
+  const activeFile = activeSurface?.kind === "file" ? activeSurface : null;
+  const activeFileTitle = activeFile
+    ? surfaceTitle(activeFile, props.previewSessions, props.terminalLabelsById)
+    : null;
+  // The sheet is a dialog over the conversation: it takes focus, answers
+  // Escape and hands focus back itself.
+  const readerHandlesEscape = activeFile !== null && props.mode !== "sheet";
+
+  // A link that opens a file hands focus to it, so Escape closes it from there.
+  useLayoutEffect(() => {
+    if (activeFile === null) return;
+    const origin = takeFileSurfaceOpener(activeFile);
+    if (origin === undefined) return;
+    readerOrigins.current.delete(activeFile.id);
+    if (props.mode === "sheet" || !origin.isConnected) return;
+    readerOrigins.current.set(activeFile.id, origin);
+    contentRef.current?.focus({ preventScroll: true });
+  }, [activeFile, props.mode]);
+
+  useEffect(() => {
+    for (const id of readerOrigins.current.keys()) {
+      if (!props.surfaces.some((surface) => surface.id === id)) readerOrigins.current.delete(id);
+    }
+  }, [props.surfaces]);
+
+  const onCloseSurface = props.onCloseSurface;
+  const closeSurface = useCallback(
+    (surface: RightPanelSurface) => {
+      const origin = readerOrigins.current.get(surface.id);
+      readerOrigins.current.delete(surface.id);
+      const panel = contentRef.current?.parentElement ?? null;
+      onCloseSurface(surface);
+      if (origin === undefined) return;
+      // Back to the link, unless a long transcript dropped it from the page
+      // or focus has gone somewhere else meanwhile.
+      requestAnimationFrame(() => {
+        const focused = document.activeElement;
+        const elsewhere =
+          focused !== null && focused !== document.body && !(panel?.contains(focused) ?? false);
+        if (origin.isConnected && !elsewhere) origin.focus({ preventScroll: true });
+      });
+    },
+    [onCloseSurface],
+  );
+
+  // A stray Escape never drops a write in flight; the labeled Close still can.
+  const escapeCloses = readerHandlesEscape && !props.pendingSurfaceIds.has(activeFile.id);
+
+  const handleReaderKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    if (!escapeCloses || activeFile === null) return;
+    if (event.key !== "Escape" || event.defaultPrevented || event.nativeEvent.isComposing) return;
+    // A modified Escape is a shortcut, such as stopping the thread.
+    if (event.metaKey || event.ctrlKey || event.altKey || event.shiftKey) return;
+    if (fileReaderKeepsEscape(event.nativeEvent, event.currentTarget)) return;
+    event.preventDefault();
+    event.stopPropagation();
+    closeSurface(activeFile);
+  };
+
+  // A page in a frame keeps the keys pressed in it. One that carries the
+  // app's bootstrap posts an Escape it left alone, as in the viewer overlay.
+  const closeOnFrameEscape = useEffectEvent((event: MessageEvent) => {
+    if (!escapeCloses || activeFile === null) return;
+    const frame = document.activeElement;
+    if (!(frame instanceof HTMLIFrameElement) || event.source !== frame.contentWindow) return;
+    if (!contentRef.current?.contains(frame)) return;
+    const data = event.data as { jsonrpc?: unknown; method?: unknown } | null;
+    if (data?.jsonrpc !== "2.0" || data.method !== FRAME_ESCAPE_METHOD) return;
+    closeSurface(activeFile);
+  });
+  useEffect(() => {
+    if (!readerHandlesEscape) return;
+    window.addEventListener("message", closeOnFrameEscape);
+    return () => window.removeEventListener("message", closeOnFrameEscape);
+  }, [readerHandlesEscape]);
 
   const updateTabScrollState = useCallback(() => {
     const viewport = tabScrollViewport(tabListRef.current);
@@ -1008,7 +1122,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
           break;
         }
         case "close":
-          props.onCloseSurface(surface);
+          closeSurface(surface);
           break;
         case "close-others":
           props.onCloseOtherSurfaces(surface);
@@ -1023,7 +1137,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
           break;
       }
     },
-    [props],
+    [closeSurface, props],
   );
   const handleTabMouseDown = useCallback((event: ReactMouseEvent) => {
     if (event.button !== 1) return;
@@ -1034,9 +1148,9 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       if (event.button !== 1) return;
       event.preventDefault();
       event.stopPropagation();
-      props.onCloseSurface(surface);
+      closeSurface(surface);
     },
-    [props],
+    [closeSurface],
   );
 
   useEffect(() => {
@@ -1095,7 +1209,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
     >
       <div
         className={cn(
-          "flex h-[var(--workspace-topbar-height)] min-h-[var(--workspace-topbar-height)] shrink-0 items-center gap-1 pl-2",
+          "@container/tabbar flex h-[var(--workspace-topbar-height)] min-h-[var(--workspace-topbar-height)] shrink-0 items-center gap-1 pl-2",
           // The sheet overlays from the viewport top, so its tab bar keeps
           // the titlebar's height: a compact row re-centers the layout
           // controls a few pixels higher and the cluster jumps on open.
@@ -1145,7 +1259,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
                 >
                   <PanelTabCloseButton
                     label={`Close ${title}`}
-                    onClick={() => props.onCloseSurface(surface)}
+                    onClick={() => closeSurface(surface)}
                   >
                     <SurfaceIcon
                       surface={surface}
@@ -1378,6 +1492,38 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             </Tooltip>
           </div>
         ) : null}
+        {activeFile ? (
+          // The file reader's own Close, always in sight: the tab's X shows
+          // only under the pointer or keyboard focus.
+          <Tooltip>
+            <TooltipTrigger
+              render={
+                <Button
+                  type="button"
+                  size="xs"
+                  variant="ghost"
+                  className="shrink-0 [-webkit-app-region:no-drag]"
+                  aria-label={`Close ${activeFileTitle}`}
+                  aria-keyshortcuts={readerHandlesEscape ? "Escape" : undefined}
+                  data-file-reader-close=""
+                  onClick={() => closeSurface(activeFile)}
+                />
+              }
+            >
+              <X aria-hidden />
+              Close
+              {readerHandlesEscape ? (
+                <Kbd
+                  aria-hidden
+                  className="h-4 min-w-4 px-1 text-[0.625rem] @max-[420px]/tabbar:hidden"
+                >
+                  Esc
+                </Kbd>
+              ) : null}
+            </TooltipTrigger>
+            <TooltipPopup>{readerHandlesEscape ? "Close (Esc)" : "Close"}</TooltipPopup>
+          </Tooltip>
+        ) : null}
         {props.layoutControls}
         {ownsDesktopTitleBar && !props.layoutControls ? (
           // Keeps the tabs clear of the window controls when the layout toggles live elsewhere.
@@ -1390,7 +1536,14 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
           />
         ) : null}
       </div>
-      <div className="flex min-h-0 flex-1 flex-col" data-right-panel-surface-content>
+      <div
+        ref={contentRef}
+        className={cn("flex min-h-0 flex-1 flex-col", readerHandlesEscape && "outline-none")}
+        data-right-panel-surface-content
+        // A file reader holds focus wherever it is clicked, so Escape reaches it.
+        tabIndex={readerHandlesEscape ? -1 : undefined}
+        onKeyDown={handleReaderKeyDown}
+      >
         {props.activeSurfaceId === null ? (
           <RightPanelEmptyState
             onAddBrowser={props.onAddBrowser}

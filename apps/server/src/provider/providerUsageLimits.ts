@@ -160,6 +160,9 @@ export function applyUsageLimitsUpdate(input: {
     ...(previous?.nativeRouteObservedAt !== undefined
       ? { nativeRouteObservedAt: previous.nativeRouteObservedAt }
       : {}),
+    ...(previous?.accountChangedAt !== undefined
+      ? { accountChangedAt: previous.accountChangedAt }
+      : {}),
     ...(negative
       ? {
           nativeDenialObservedAt: input.checkedAt,

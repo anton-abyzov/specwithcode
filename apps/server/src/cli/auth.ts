@@ -1,6 +1,7 @@
 import {
   AuthAdministrativeScopes,
   AuthSessionId,
+  EnvironmentId,
   AuthStandardClientScopes,
 } from "@specweave-studio/contracts";
 import * as Console from "effect/Console";
@@ -87,6 +88,12 @@ const pairingCreateCommand = Command.make("create", {
   scopes: authScopesFlag(AuthStandardClientScopes),
   ttl: ttlFlag,
   label: labelFlag,
+  coordinator: Flag.String("coordinator").pipe(
+    Flag.withDescription(
+      "Explicitly approve this coordinator environment ID for fleet work and renewal.",
+    ),
+    Flag.optional,
+  ),
   baseUrl: baseUrlFlag,
   json: jsonFlag,
 }).pipe(
@@ -99,6 +106,14 @@ const pairingCreateCommand = Command.make("create", {
           const issued = yield* environmentAuth.createPairingLink({
             scopes: flags.scopes,
             subject: "one-time-token",
+            ...(Option.isSome(flags.coordinator)
+              ? {
+                  principal: {
+                    kind: "coordinator" as const,
+                    environmentId: EnvironmentId.make(flags.coordinator.value),
+                  },
+                }
+              : {}),
             ...(Option.isSome(flags.ttl) ? { ttl: flags.ttl.value } : {}),
             ...(Option.isSome(flags.label) ? { label: flags.label.value } : {}),
           });

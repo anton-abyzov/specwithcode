@@ -14,7 +14,10 @@ window.addEventListener("message", (event) => {
   if (event.source === document.querySelector("iframe")?.contentWindow)
     Object.assign(window, event.data);
 });
-const dark = new URLSearchParams(location.search).get("theme") === "dark";
+const search = new URLSearchParams(location.search);
+const dark = search.get("theme") === "dark";
+// `&evidence`: the reply's own thread and folder, which evidence links open in.
+const evidence = search.has("evidence");
 document.documentElement.classList.toggle("dark", dark);
 function Root() {
   return (
@@ -34,6 +37,12 @@ function Root() {
                 width: 728,
               } as never
             }
+            {...(evidence
+              ? {
+                  threadRef: { environmentId: "fixture", threadId: "fixture-thread" } as never,
+                  cwd: "/Users/fixture/work/atlas",
+                }
+              : {})}
           />
           <p style={{ marginTop: 24 }}>The conversation continues here.</p>
           <textarea
@@ -61,6 +70,17 @@ Object.assign(window, {
   fixtureState: () => ({
     overlay: useViewerOverlayStore.getState().active?.title ?? null,
     collapsed: useViewerOverlayStore.getState().threadCollapsed,
+    linked: (() => {
+      const linked = useViewerOverlayStore.getState().linked;
+      return linked?.kind === "file"
+        ? {
+            path: linked.file.path,
+            line: linked.file.line ?? null,
+            environmentId: linked.file.threadRef.environmentId,
+            threadId: linked.file.threadRef.threadId,
+          }
+        : null;
+    })(),
   }),
 });
 createRoot(document.getElementById("root")!).render(<RouterProvider router={router} />);

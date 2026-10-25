@@ -1,9 +1,21 @@
 import { describe, expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 
+import type {
+  OrchestrationV2ProviderFailure,
+  OrchestrationV2Run,
+  OrchestrationV2TurnItem,
+} from "@specweave-studio/contracts";
+
 import {
+  CONTEXT_HANDOFF_TOO_LARGE_MESSAGE,
   LEGACY_GENERIC_PROVIDER_FAILURE_MESSAGE,
   LIVE_THREAD_ERROR_WINDOW_MS,
+  LOCAL_STORAGE_FAILURE_CODE,
+  LOCAL_STORAGE_FAILURE_MESSAGE,
+  PREVIOUS_TURN_ACTIVE_FAILURE_CODE,
+  PREVIOUS_TURN_ACTIVE_FAILURE_MESSAGE,
+  resumableRunId,
   providerFailureDisplayMessage,
   providerFailureFallbackMessage,
   threadErrorIsLive,
@@ -123,5 +135,102 @@ describe("providerFailureDisplayMessage", () => {
         LEGACY_GENERIC_PROVIDER_FAILURE_MESSAGE,
       );
     }
+  });
+});
+
+describe("resumableRunId", () => {
+  const at = (minutes: number) => DateTime.makeUnsafe(NOW - minutes * 60_000);
+  const run = (status: OrchestrationV2Run["status"]) =>
+    ({
+      id: "run:29",
+      ordinal: 29,
+      status,
+      rootNodeId: "node:29",
+      startedAt: at(20),
+      completedAt: status === "running" ? null : at(5),
+    }) as unknown as OrchestrationV2Run;
+  const failed = (failure: Pick<OrchestrationV2ProviderFailure, "class" | "code" | "message">) => ({
+    runs: [run("failed")],
+    turnItems: [
+      {
+        id: "turn-item:error",
+        type: "error",
+        status: "failed",
+        runId: "run:29",
+        nodeId: "node:29",
+        ordinal: 1,
+        updatedAt: at(5),
+        failure: { retryable: null, ...failure },
+      } as unknown as OrchestrationV2TurnItem,
+    ],
+  });
+
+  it("continues a run the disk or a busy provider turn stopped", () => {
+    expect(
+      resumableRunId({
+        ...failed({
+          class: "unknown",
+          code: LOCAL_STORAGE_FAILURE_CODE,
+          message: LOCAL_STORAGE_FAILURE_MESSAGE,
+        }),
+        lastErrorClass: "unknown",
+      }),
+    ).toBe("run:29");
+    expect(
+      resumableRunId({
+        ...failed({
+          class: "provider_error",
+          code: PREVIOUS_TURN_ACTIVE_FAILURE_CODE,
+          message: PREVIOUS_TURN_ACTIVE_FAILURE_MESSAGE,
+        }),
+        lastErrorClass: "provider_error",
+      }),
+    ).toBe("run:29");
+  });
+
+  it("continues provider errors and unclassified failures", () => {
+    for (const failureClass of ["provider_error", "unknown"] as const) {
+      expect(
+        resumableRunId({
+          ...failed({
+            class: failureClass,
+            code: null,
+            message: "The provider could not start this turn.",
+          }),
+          lastErrorClass: failureClass,
+        }),
+      ).toBe("run:29");
+    }
+  });
+
+  it("offers no Continue where it would only fail again", () => {
+    for (const failure of [
+      { class: "validation_error", code: null, message: "Bad model." },
+      { class: "permission_error", code: null, message: "Sign in again." },
+      {
+        class: "provider_error",
+        code: null,
+        message: "prompt is too long: 210000 tokens > 200000 maximum",
+      },
+      {
+        class: "provider_error",
+        code: "context_handoff_budget",
+        message: CONTEXT_HANDOFF_TOO_LARGE_MESSAGE,
+      },
+    ] as const) {
+      expect(resumableRunId({ ...failed(failure), lastErrorClass: failure.class })).toBeNull();
+    }
+  });
+
+  it("keeps stopped and usage-limited runs resumable as before", () => {
+    expect(
+      resumableRunId({ runs: [run("interrupted")], turnItems: [], lastErrorClass: null }),
+    ).toBe("run:29");
+    const limited = failed({ class: "usage_limit", code: null, message: "Limit reached." });
+    expect(resumableRunId({ ...limited, lastErrorClass: "usage_limit" })).toBe("run:29");
+    expect(resumableRunId({ ...limited, lastErrorClass: null })).toBeNull();
+    expect(
+      resumableRunId({ runs: [run("running")], turnItems: [], lastErrorClass: null }),
+    ).toBeNull();
   });
 });

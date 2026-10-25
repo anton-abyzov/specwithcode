@@ -5,6 +5,8 @@ import {
   DESIGN_DOCUMENT_SCHEMA,
   DESIGN_NODE_TYPES,
   DesignDocument,
+  DesignError,
+  DesignMoveInput,
   DesignNode,
   DesignOperation,
   DesignSystem,
@@ -111,6 +113,26 @@ describe("design contracts", () => {
     expect(JSON.parse(JSON.stringify(encoded))).toEqual(JSON.parse(JSON.stringify(document)));
   });
 
+  it("threads a reply by parentId and still reads documents from before replies", () => {
+    const reply = { ...document.comments[0], id: "c_2", text: "Agreed", parentId: "c_1" };
+    const threaded = { ...document, comments: [...document.comments, reply] };
+    const decoded = Schema.decodeUnknownSync(DesignDocument)(threaded);
+    expect(decoded.comments[1]?.parentId).toBe("c_1");
+    expect(JSON.parse(JSON.stringify(Schema.encodeSync(DesignDocument)(decoded)))).toEqual(
+      JSON.parse(JSON.stringify(threaded)),
+    );
+    const older = Schema.encodeSync(DesignDocument)(
+      Schema.decodeUnknownSync(DesignDocument)(document),
+    );
+    expect(older.comments[0]).not.toHaveProperty("parentId");
+    expect(() =>
+      Schema.decodeUnknownSync(DesignDocument)({
+        ...document,
+        comments: [{ ...reply, parentId: "../c_1" }],
+      }),
+    ).toThrow();
+  });
+
   it("rejects unknown node types", () => {
     expect(() =>
       Schema.decodeUnknownSync(DesignNode)({ ...base, id: "x", type: "video", src: "a.mp4" }),
@@ -211,5 +233,56 @@ describe("design read permissions", () => {
       expect(clientRpcRequiredScopes(tag, {})).toEqual(["filesystem:read"]);
     }
     expect(clientRpcRequiredScopes(WS_METHODS.designWatch, {})).toEqual(["filesystem:read"]);
+  });
+});
+
+describe("design move contracts (1046)", () => {
+  it("decodes a move into a project and refuses a bad target or revision", () => {
+    const input = Schema.decodeUnknownSync(DesignMoveInput)({
+      owner: { kind: "playground" },
+      designId: "d_abc",
+      to: { kind: "project", projectId: "project-a" },
+      expectedRevision: 3,
+    });
+    expect(input).toEqual({
+      owner: { kind: "playground" },
+      designId: "d_abc",
+      to: { kind: "project", projectId: "project-a" },
+      expectedRevision: 3,
+    });
+    for (const bad of [
+      { ...input, to: { kind: "elsewhere" } },
+      { ...input, expectedRevision: -1 },
+      { ...input, designId: "../d_abc" },
+    ]) {
+      expect(() => Schema.decodeUnknownSync(DesignMoveInput)(bad)).toThrow();
+    }
+  });
+
+  it("decodes a design error with and without movedTo", () => {
+    const decode = Schema.decodeUnknownSync(DesignError);
+    const plain = decode({ _tag: "DesignError", code: "not_found", detail: "No design d_abc." });
+    expect(plain.movedTo).toBeUndefined();
+    const moved = decode({
+      _tag: "DesignError",
+      code: "not_found",
+      detail: "Moved to Alpha.",
+      movedTo: { owner: { kind: "project", projectId: "project-a" }, designId: "d_abc" },
+    });
+    expect(moved.movedTo).toEqual({
+      owner: { kind: "project", projectId: "project-a" },
+      designId: "d_abc",
+    });
+    expect(Schema.encodeSync(DesignError)(moved)).toMatchObject({
+      movedTo: { designId: "d_abc" },
+    });
+    expect(() =>
+      decode({
+        _tag: "DesignError",
+        code: "not_found",
+        detail: "Moved.",
+        movedTo: { owner: { kind: "project" }, designId: "d_abc" },
+      }),
+    ).toThrow();
   });
 });

@@ -33,7 +33,10 @@ const modelSelection = {
 } satisfies ModelSelection;
 const driver = ProviderDriverKind.make("codex");
 
-const createThread = Effect.fn("createThread")(function* (suffix: string) {
+const createThread = Effect.fn("createThread")(function* (
+  suffix: string,
+  launch?: { readonly modelSelection: ModelSelection; readonly launchFallbackFrom: ModelSelection },
+) {
   const store = yield* ProjectionStore.ProjectionStoreV2;
   const now = yield* DateTime.now;
   const threadId = ThreadId.make(`thread:${suffix}`);
@@ -48,8 +51,9 @@ const createThread = Effect.fn("createThread")(function* (suffix: string) {
       id: threadId,
       projectId: ProjectId.make("project:shell-cache"),
       title: `Thread ${suffix}`,
-      providerInstanceId: modelSelection.instanceId,
-      modelSelection,
+      providerInstanceId: (launch?.modelSelection ?? modelSelection).instanceId,
+      modelSelection: launch?.modelSelection ?? modelSelection,
+      ...(launch === undefined ? {} : { launchFallbackFrom: launch.launchFallbackFrom }),
       runtimeMode: "full-access",
       interactionMode: "default",
       branch: null,
@@ -195,5 +199,194 @@ it.layer(layerTest)("thread model identity", (it) => {
         // Returning home clears the old pairing even after a later manual provider switch.
         yield* check({ current: gemini, preferred: null, kind: null });
       }),
+  );
+
+  it.effect("marks a fallback to another model on the same provider, not a variant of one", () =>
+    Effect.gen(function* () {
+      const store = yield* ProjectionStore.ProjectionStoreV2;
+      const sql = yield* SqlClient.SqlClient;
+      const now = yield* DateTime.now;
+      const threadId = yield* createThread("same-provider-fallback");
+      const astra = { instanceId: modelSelection.instanceId, model: "gpt-6-astra" };
+      const variant = { instanceId: modelSelection.instanceId, model: "gpt-5.4[1m]" };
+      const addRun = (ordinal: number, selection: ModelSelection) =>
+        Effect.gen(function* () {
+          const id = RunId.make(`run:same:${ordinal}`);
+          yield* store.apply({
+            id: EventId.make(`e:same:run:${ordinal}`),
+            type: "run.created",
+            threadId,
+            runId: id,
+            occurredAt: now,
+            payload: {
+              id,
+              threadId,
+              ordinal,
+              providerInstanceId: selection.instanceId,
+              modelSelection: selection,
+              providerThreadId: null,
+              userMessageId: MessageId.make(`message:same:${ordinal}`),
+              rootNodeId: NodeId.make(`node:same:${ordinal}`),
+              activeAttemptId: null,
+              status: "completed",
+              requestedAt: now,
+              startedAt: now,
+              completedAt: now,
+              checkpointId: null,
+              contextHandoffId: null,
+            },
+          });
+          return id;
+        });
+      const setThread = (selection: ModelSelection) =>
+        Effect.gen(function* () {
+          const encoded = yield* Schema.encodeEffect(Schema.fromJsonString(ModelSelectionSchema))(
+            selection,
+          );
+          yield* sql`UPDATE orchestration_v2_projection_threads SET payload_json = json_set(payload_json, '$.modelSelection', json(${encoded})) WHERE thread_id = ${threadId}`;
+        });
+      const check = (expected: unknown) =>
+        Effect.gen(function* () {
+          const detail = ProjectionStore.threadShellFromProjection(
+            yield* store.getThreadProjection(threadId),
+          );
+          const shell = (yield* store.getShellSnapshot()).threads.find((t) => t.id === threadId)!;
+          assert.deepEqual(shell.modelIdentity, expected);
+          assert.deepEqual(detail.modelIdentity, shell.modelIdentity);
+        });
+      const stopped = yield* addRun(1, modelSelection);
+      const fallback = yield* addRun(2, astra);
+      yield* setThread(astra);
+      yield* store.apply({
+        id: EventId.make("e:same:fallback"),
+        type: "message.updated",
+        threadId,
+        occurredAt: now,
+        payload: {
+          createdBy: "system",
+          creationSource: "server",
+          id: MessageId.make(`limit-fallback:${threadId}:${stopped}`),
+          threadId,
+          runId: fallback,
+          nodeId: null,
+          role: "user",
+          text: "Continue",
+          attachments: [],
+          streaming: false,
+          createdAt: now,
+          updatedAt: now,
+        },
+      });
+      // GPT-6-Astra on the same Codex sign-in still stands in for the picked model.
+      yield* check({ current: astra, preferred: modelSelection, kind: "fallback" });
+      // The same model under a variant slug is home, not a fallback.
+      yield* setThread(variant);
+      yield* check({ current: variant, preferred: null, kind: null });
+      // A later run back on the picked model ends the pairing.
+      yield* setThread(astra);
+      yield* addRun(3, variant);
+      yield* setThread(astra);
+      yield* check({ current: astra, preferred: null, kind: null });
+    }),
+  );
+
+  it.effect("pairs a thread launched on a stand-in with the model it stands in for", () =>
+    Effect.gen(function* () {
+      const store = yield* ProjectionStore.ProjectionStoreV2;
+      const sql = yield* SqlClient.SqlClient;
+      const now = yield* DateTime.now;
+      const threadId = yield* createThread("launch-fallback", {
+        modelSelection: gemini,
+        launchFallbackFrom: modelSelection,
+      });
+      const addRun = (ordinal: number, selection: ModelSelection) =>
+        store.apply({
+          id: EventId.make(`e:launch:run:${ordinal}`),
+          type: "run.created",
+          threadId,
+          runId: RunId.make(`run:launch:${ordinal}`),
+          occurredAt: now,
+          payload: {
+            id: RunId.make(`run:launch:${ordinal}`),
+            threadId,
+            ordinal,
+            providerInstanceId: selection.instanceId,
+            modelSelection: selection,
+            providerThreadId: null,
+            userMessageId: MessageId.make(`message:launch:${ordinal}`),
+            rootNodeId: NodeId.make(`node:launch:${ordinal}`),
+            activeAttemptId: null,
+            status: "completed",
+            requestedAt: now,
+            startedAt: now,
+            completedAt: now,
+            checkpointId: null,
+            contextHandoffId: null,
+          },
+        });
+      const setThread = (selection: ModelSelection) =>
+        Effect.gen(function* () {
+          const encoded = yield* Schema.encodeEffect(Schema.fromJsonString(ModelSelectionSchema))(
+            selection,
+          );
+          yield* sql`UPDATE orchestration_v2_projection_threads SET payload_json = json_set(payload_json, '$.modelSelection', json(${encoded})) WHERE thread_id = ${threadId}`;
+        });
+      // What the orchestrator writes: a pick by hand clears the field, a server move keeps it.
+      const setLaunchFallbackFrom = (selection: ModelSelection | null) =>
+        Effect.gen(function* () {
+          const encoded = yield* Schema.encodeEffect(
+            Schema.fromJsonString(Schema.NullOr(ModelSelectionSchema)),
+          )(selection);
+          yield* sql`UPDATE orchestration_v2_projection_threads SET payload_json = json_set(payload_json, '$.launchFallbackFrom', json(${encoded})) WHERE thread_id = ${threadId}`;
+        });
+      const check = (expected: unknown) =>
+        Effect.gen(function* () {
+          const detail = ProjectionStore.threadShellFromProjection(
+            yield* store.getThreadProjection(threadId),
+          );
+          const shell = (yield* store.getShellSnapshot()).threads.find((t) => t.id === threadId)!;
+          assert.deepEqual(shell.modelIdentity, expected);
+          assert.deepEqual(detail.modelIdentity, shell.modelIdentity);
+        });
+      const standIn = {
+        current: gemini,
+        preferred: modelSelection,
+        kind: "fallback",
+        launched: true,
+      };
+      yield* check(standIn);
+      yield* addRun(1, gemini);
+      yield* check(standIn);
+      // The next turn set back on the original model: nothing stands in.
+      yield* setThread({ ...modelSelection, model: "gpt-5.4[1m]" });
+      yield* check({
+        current: { ...modelSelection, model: "gpt-5.4[1m]" },
+        preferred: null,
+        kind: null,
+      });
+      yield* setThread(gemini);
+      yield* check(standIn);
+      // A server move to a third model (a usage pre-switch) keeps the stand-in...
+      const picked = {
+        instanceId: ProviderInstanceId.make("claudeAgent"),
+        model: "claude-opus-5-5",
+      };
+      yield* setThread(picked);
+      yield* check({ ...standIn, current: picked });
+      yield* setThread(gemini);
+      yield* check(standIn);
+      // ...a pick of it by hand clears the field and ends it...
+      yield* setThread(picked);
+      yield* setLaunchFallbackFrom(null);
+      yield* check({ current: picked, preferred: null, kind: null });
+      // ...and picking the launch model back does not bring it back.
+      yield* setThread(gemini);
+      yield* check({ current: gemini, preferred: null, kind: null });
+      // Once a run went to the original model, the launch pairing is over.
+      yield* setLaunchFallbackFrom(modelSelection);
+      yield* check(standIn);
+      yield* addRun(2, modelSelection);
+      yield* check({ current: gemini, preferred: null, kind: null });
+    }),
   );
 });

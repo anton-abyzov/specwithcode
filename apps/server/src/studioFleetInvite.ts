@@ -4,7 +4,11 @@
  * machine accepts. `specweave-studio fleet invite` and Settings > Connections
  * both end here, so the two never disagree about what the line holds.
  */
-import { AuthAccessWriteScope, AuthStandardClientScopes } from "@specweave-studio/contracts";
+import {
+  EnvironmentId,
+  AuthAccessWriteScope,
+  AuthStandardClientScopes,
+} from "@specweave-studio/contracts";
 import type {
   StudioFleetInviteProblem,
   StudioFleetInviteResult,
@@ -44,6 +48,22 @@ export const DEFAULT_FLEET_INVITE_TTL = Duration.days(365);
 export const fleetInviteLabel = (requested: string | undefined, own: string): string =>
   (requested?.trim() || own).trim().slice(0, 80).trim();
 
+/** Called only after the local owner explicitly approves the receiving coordinator. */
+export const issueFleetManagementSession = Effect.fnUntraced(function* (
+  coordinatorEnvironmentId: EnvironmentId,
+  ttl?: Duration.Duration,
+) {
+  const environmentAuth = yield* EnvironmentAuth.EnvironmentAuth;
+  const issued = yield* environmentAuth.issueSession({
+    subject: "fleet-invitation",
+    principal: { kind: "coordinator", environmentId: coordinatorEnvironmentId },
+    scopes: [...FLEET_INVITE_SCOPES],
+    label: FLEET_INVITE_SESSION_LABEL,
+    ttl: ttl ?? DEFAULT_FLEET_INVITE_TTL,
+  });
+  return issued;
+});
+
 /**
  * Publishes this server on its Tailscale name, then issues the management
  * session the line carries. Publishing comes first so a failure leaves no
@@ -51,6 +71,7 @@ export const fleetInviteLabel = (requested: string | undefined, own: string): st
  */
 export const issueFleetInvitation = Effect.fnUntraced(function* (input: {
   readonly environmentId: string;
+  readonly coordinatorEnvironmentId: EnvironmentId;
   readonly ownLabel: string;
   readonly state: Pick<PersistedServerRuntimeState, "devUrl" | "host" | "port">;
   readonly servePort: number;
@@ -62,12 +83,7 @@ export const issueFleetInvitation = Effect.fnUntraced(function* (input: {
     state: input.state,
     servePort: input.servePort,
   });
-  const environmentAuth = yield* EnvironmentAuth.EnvironmentAuth;
-  const issued = yield* environmentAuth.issueSession({
-    scopes: [...FLEET_INVITE_SCOPES],
-    label: FLEET_INVITE_SESSION_LABEL,
-    ttl: input.ttl ?? DEFAULT_FLEET_INVITE_TTL,
-  });
+  const issued = yield* issueFleetManagementSession(input.coordinatorEnvironmentId, input.ttl);
   const url = new URL(served.baseUrl).origin;
   const label = fleetInviteLabel(input.label, input.ownLabel) || "Machine";
   const invitation: StudioFleetInviteResult = {
@@ -128,7 +144,7 @@ export function fleetInviteProblem(error: TailscalePublishError): {
     case "ServePortOccupiedError":
       return {
         reason: "port_occupied",
-        message: `HTTPS port ${String(error.servePort)} on this machine's Tailscale name is already used by another app, and the app will not replace it. Choose another port under Tailscale HTTPS in Settings > Connections, or run \`specwithcode fleet invite --tailscale-serve-port 8443\` in a terminal.`,
+        message: `HTTPS port ${String(error.servePort)} on this machine's Tailscale name is already used by another app, and the app will not replace it. Choose another port under Tailscale HTTPS in Settings > Connections, or run \`specwithcode fleet invite --coordinator '<main-machine-environment-id>' --tailscale-serve-port 8443\` in a terminal. Replace <main-machine-environment-id> with the environment ID from Settings > Connections on your main machine. This explicitly approves that machine to manage access here.`,
       };
     case "TailscaleServeFailedError":
       return {

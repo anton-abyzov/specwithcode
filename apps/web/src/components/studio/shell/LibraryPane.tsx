@@ -15,7 +15,6 @@ import {
   type ProjectLibrarySnapshot,
 } from "@specweave-studio/contracts";
 import { squashAtomCommandFailure } from "@specweave-studio/client-runtime/state/runtime";
-import { useRouter } from "@tanstack/react-router";
 import * as Schema from "effect/Schema";
 import {
   ChevronDownIcon,
@@ -43,7 +42,6 @@ import { useEnvironmentScope } from "../../../state/session";
 import { useLocalStorage } from "../../../hooks/useLocalStorage";
 import { useEnvironmentQuery } from "../../../state/query";
 import { useAtomCommand } from "../../../state/use-atom-command";
-import { design } from "../../../studio/design";
 import { projectWorkspace } from "../../../studio/projectWorkspace";
 import {
   formatLibraryDate,
@@ -56,10 +54,9 @@ import {
   LIBRARY_TYPE_FILTERS,
   type LibraryTypeFilter,
 } from "../../../studio/projectPaneModel";
-import { designRoute } from "../../design/gallery/designLinks";
 import { LibraryDesignMenu } from "../../design/gallery/LibraryDesignMenu";
+import { useProjectDesigns } from "../../design/useProjectDesigns";
 import { useDirectoryEntries } from "../../files/useDirectoryEntries";
-import { toastManager } from "../../ui/toast";
 import { LibraryFileViewer, type LibraryViewerFile } from "./LibraryFileViewer";
 import {
   Menu,
@@ -73,6 +70,7 @@ import {
 } from "../../ui/menu";
 import { ProjectPaneBar, type ProjectPaneBarProps } from "./ProjectPaneBar";
 import { Tip } from "./Tip";
+import { designFile, useProjectDesignActions } from "./useProjectDesignActions";
 import { CharacterCount } from "../../ui/character-count";
 
 const VIEW_STORAGE_KEY = "studio:project-library-view:v1";
@@ -136,11 +134,9 @@ export function LibraryPane({
     projectWorkspace.library({ environmentId, input: { projectId } }),
   );
   const addArtifact = useAtomCommand(projectWorkspace.libraryAddArtifact);
-  const designs = useEnvironmentQuery(
-    design.list({ environmentId, input: { filter: { kind: "project", projectId } } }),
-  );
-  const copyDesign = useAtomCommand(design.copy, { reportFailure: false });
-  const router = useRouter();
+  // The same cached list as the Designs tab and the header button.
+  const designs = useProjectDesigns(environmentId, projectId, true);
+  const designActions = useProjectDesignActions(environmentId, projectId);
   const directory = useDirectoryEntries(environmentId, workspaceRoot, { details: true });
   const openLink = useOpenLink(null);
   // Adding writes the hub file, so it needs filesystem write, not only operate.
@@ -197,10 +193,8 @@ export function LibraryPane({
         if (entry.kind === "directory" && open) childrenOf(entry.path, depth + 1);
       }
     };
-    if (!data) return result;
-    const projectDesigns = (designs.data?.designs ?? []).toSorted((a, b) =>
-      b.updatedAt.localeCompare(a.updatedAt),
-    );
+    // Designs come from their own list, so a slow or failed Library still shows them.
+    const projectDesigns = designs.designs;
     if (projectDesigns.length > 0) {
       const designsOpen = expanded.has(DESIGNS_ROW);
       result.push({
@@ -230,6 +224,7 @@ export function LibraryPane({
         }
       }
     }
+    if (!data) return result;
     const usesSpecWeave = data.specweave || data.hub !== null || data.folders.length > 0;
     if (!usesSpecWeave) {
       childrenOf("", 0);
@@ -279,7 +274,7 @@ export function LibraryPane({
       if (open) childrenOf(folder.path, 1);
     }
     return result;
-  }, [data, designs.data, directory.directories, expanded]);
+  }, [data, designs.designs, directory.directories, expanded]);
 
   const needle = query.trim().toLowerCase();
   const visible = rows.filter(
@@ -289,43 +284,8 @@ export function LibraryPane({
       (needle === "" || row.kind === "directory" || row.name.toLowerCase().includes(needle)),
   );
 
-  const openDesign = (summary: DesignSummary) =>
-    void router.navigate(designRoute({ kind: "project", projectId }, summary.ref.designId));
-  /** The design's own file, opened in the Library viewer. */
-  const showDesignFile = (summary: DesignSummary) => {
-    const path = summary.ref.path.endsWith(".json")
-      ? summary.ref.path
-      : `${summary.ref.path.replace(/\/+$/, "")}/design.json`;
-    setOpened({ path, name: libraryBaseName(path), modifiedAt: summary.updatedAt });
-  };
-  const copyToPlayground = async (summary: DesignSummary) => {
-    const result = await copyDesign({
-      environmentId,
-      input: {
-        owner: { kind: "project", projectId },
-        designId: summary.ref.designId,
-        to: { kind: "playground" },
-      },
-    });
-    if (result._tag === "Failure") {
-      const error = squashAtomCommandFailure(result);
-      toastManager.add({
-        type: "error",
-        title: "Could not copy the design",
-        description: error instanceof Error ? error.message : "Nothing was copied.",
-      });
-      return;
-    }
-    const copy = result.value;
-    toastManager.add({
-      type: "success",
-      title: "Copied to your Playground",
-      actionProps: {
-        children: "Open copy",
-        onClick: () => void router.navigate(designRoute({ kind: "playground" }, copy.ref.designId)),
-      },
-    });
-  };
+  const { openDesign, copyToPlayground } = designActions;
+  const showDesignFile = (summary: DesignSummary) => setOpened(designFile(summary));
   const designMenu = (summary: DesignSummary) => (
     <LibraryDesignMenu
       title={summary.title || "Untitled"}
@@ -545,7 +505,14 @@ export function LibraryPane({
             {directory.error}
           </p>
         ) : null}
-        {!data ? (
+        {!data && visible.length > 0 ? (
+          <p className="sws-empty" role="status">
+            {library.isPending
+              ? "Loading the rest of the Library…"
+              : "The rest of the Library is unavailable."}
+          </p>
+        ) : null}
+        {!data && visible.length === 0 ? (
           <p className="sws-empty" role="status">
             {library.isPending ? "Loading the Library…" : "The Library is unavailable."}
           </p>

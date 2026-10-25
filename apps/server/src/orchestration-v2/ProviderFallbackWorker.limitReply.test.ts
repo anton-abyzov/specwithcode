@@ -11,6 +11,7 @@ import {
   ThreadId,
 } from "@specweave-studio/contracts";
 import { it } from "@effect/vitest";
+import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -386,6 +387,50 @@ describe("a Copilot quota reply in the fallback chain", () => {
             command.type === "message.dispatch" && command.modelSelection?.instanceId === codexId,
         ),
       ).toHaveLength(1);
+    }),
+  );
+
+  // October 23, 2026, EasyChamp coordinator: Claude (credits too low), then
+  // two Copilot quota replies, then Codex. Each try failed within seconds,
+  // yet each next one started 26 s later, on the sweep's half-minute clock.
+  it.effect("tries the next provider seconds after each failed run, not a sweep interval", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(now);
+      const siblingId = ProviderInstanceId.make("copilot-0889");
+      const sibling: ServerProvider = { ...copilot, instanceId: siblingId };
+      const codexReady = withWindow(provider(codexId, "codex", now), model, 20);
+      const { dispatched, sweep, setThreads } = yield* harness([copilot, sibling, codexReady]);
+      const failure = usageLimitReplyFailure(COPILOT_QUOTA_REPLY)!;
+      const failOn = (instanceId: ProviderInstanceId, runId: string) =>
+        Effect.gen(function* () {
+          const completedAt = DateTime.makeUnsafe(yield* Clock.currentTimeMillis);
+          setThreads([
+            {
+              ...stopped(coordinatorId, instanceId, runId, null, failure.message),
+              latestRunCompletedAt: completedAt,
+            },
+          ]);
+        });
+
+      yield* failOn(copilotId, "run:copilot-quota");
+      yield* sweep();
+      expect(dispatched).toEqual([
+        expect.objectContaining({ modelSelection: { instanceId: siblingId, model } }),
+      ]);
+
+      // The sibling fails five seconds later: without a wake the sweep waits.
+      yield* TestClock.adjust("5 seconds");
+      yield* failOn(siblingId, "run:sibling-quota");
+      yield* sweep();
+      expect(dispatched).toHaveLength(1);
+      // The failed run woke it: the next tick moves the thread on.
+      yield* sweep.wake;
+      yield* sweep();
+      expect(dispatched).toHaveLength(2);
+      expect(dispatched[1]).toMatchObject({
+        commandId: `limit-fallback:${coordinatorId}:run:sibling-quota`,
+        modelSelection: { instanceId: codexId, model },
+      });
     }),
   );
 

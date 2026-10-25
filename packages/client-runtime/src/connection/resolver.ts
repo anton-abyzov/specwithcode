@@ -44,7 +44,7 @@ import {
   appendOrchestrationProtocol,
   orchestrationProtocolCompatibilityError,
 } from "./compatibility.ts";
-import { credentialConnectionId } from "./routes.ts";
+import { credentialConnectionId, isSecureBearerEndpoint } from "./routes.ts";
 import { fetchRemoteEnvironmentDescriptor } from "../environment/descriptor.ts";
 import { LOOPBACK_SETUP_REQUEST_TIMEOUT_MS } from "./thisMachine.ts";
 
@@ -186,6 +186,13 @@ const makeBearerBroker = Effect.fn("clientRuntime.connection.broker.makeBearer")
         directEndpoint: { httpBaseUrl: profile.httpBaseUrl, wsBaseUrl: profile.wsBaseUrl },
       });
       return brokered(authorized, target);
+    }
+    // Recheck persisted routes before even handing their token to authorization.
+    if (profile.learned && !isSecureBearerEndpoint(profile.httpBaseUrl)) {
+      return yield* new ConnectionBlockedError({
+        reason: "configuration",
+        detail: "A learned route needs HTTPS or loopback to use a paired bearer token.",
+      });
     }
     // A learned route borrows the credential of the route it was learned from.
     const credential = yield* credentials.get(credentialConnectionId(target.connectionId)).pipe(

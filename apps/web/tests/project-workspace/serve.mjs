@@ -13,6 +13,7 @@ const stubs = [
   "assets/assetUrls",
   "components/files/AttachmentFilePreview",
   "state/entities",
+  "state/shell",
   "state/environments",
   "state/session",
   "state/query",
@@ -49,6 +50,8 @@ const server = await createServer({
       resolveId(source, importer) {
         if (source === "@tanstack/react-router") return mocks;
         if (!importer) return;
+        if (source === "./fleet" && importer.endsWith("/studio/useProjectAttention.ts"))
+          return mocks;
         // Stubs are matched by file, whether imported relatively or through the "~" alias.
         const target = source.startsWith("~/")
           ? NodePath.join(app, "src", source.slice(2))

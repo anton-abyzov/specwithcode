@@ -4,11 +4,13 @@ import {
   type EnvironmentId,
   type ProjectId,
   type ProjectScopedServerSettingKey,
+  type ProjectSettingsOverrideChange,
+  type ProjectSettingsOverrides,
   type ServerSettings,
   type ServerSettingsPatch,
 } from "@specweave-studio/contracts";
 import {
-  clearProjectSettingsOverrides,
+  projectSettingsOverrideChangesPatch,
   resolveProjectSettings,
 } from "@specweave-studio/shared/projectSettings";
 
@@ -61,35 +63,56 @@ export function planMobileScopedSettingsPatch(
     )
   )
     return [];
-  const writes = new Map<EnvironmentId, Record<string, unknown>>();
+  const set: Record<string, unknown> = {};
+  const clear: string[] = [];
+  for (const [key, value] of Object.entries(patch)) {
+    if (value === undefined) continue;
+    // A picker's "Inherit" sends null; for keys whose override cannot
+    // store null that means remove the override.
+    if (value === null && !isNullableProjectSettingsOverride(key as ProjectScopedServerSettingKey))
+      clear.push(key);
+    else set[key] = value;
+  }
+  return planMobileProjectOverrideChanges(targets, {
+    ...(Object.keys(set).length > 0 ? { set: set as ProjectSettingsOverrides } : {}),
+    ...(clear.length > 0 ? { clear } : {}),
+  });
+}
+
+/**
+ * Sends only the keys the edit names, so a save planned from an older
+ * snapshot cannot undo another one saved since; servers without per-key
+ * edits get the snapshot entry with the edit applied.
+ */
+function planMobileProjectOverrideChanges(
+  targets: readonly ScopedMobileSettingsTarget[],
+  change: ProjectSettingsOverrideChange,
+) {
+  const writes = new Map<
+    EnvironmentId,
+    {
+      target: ScopedMobileSettingsTarget;
+      changes: Record<ProjectId, ProjectSettingsOverrideChange>;
+    }
+  >();
   for (const target of targets) {
     if (
       target.projectId === null ||
       target.environment.serverConfig.environment.capabilities.projectSettingsOverrides !== true
     )
       continue;
-    const current =
-      target.environment.serverConfig.settings.projectSettingsOverrides[target.projectId] ?? {};
-    const next: Record<string, unknown> = { ...current };
-    for (const [key, value] of Object.entries(patch)) {
-      // A picker's "Inherit" sends null; for keys whose override cannot
-      // store null that means remove the override.
-      if (
-        value === null &&
-        !isNullableProjectSettingsOverride(key as ProjectScopedServerSettingKey)
-      ) {
-        delete next[key];
-      } else {
-        next[key] = value;
-      }
-    }
-    const overrides = writes.get(target.environment.environmentId) ?? {};
-    overrides[target.projectId] = next;
-    writes.set(target.environment.environmentId, overrides);
+    const write = writes.get(target.environment.environmentId) ?? { target, changes: {} };
+    write.changes[target.projectId] = change;
+    writes.set(target.environment.environmentId, write);
   }
-  return [...writes].map(([environmentId, projectSettingsOverrides]) => ({
+  return [...writes].map(([environmentId, { target, changes }]) => ({
     environmentId,
-    patch: { projectSettingsOverrides } as ServerSettingsPatch,
+    patch: projectSettingsOverrideChangesPatch(
+      target.environment.serverConfig.settings,
+      changes,
+      target.environment.serverConfig.environment.capabilities.projectSettingsOverrideChanges ===
+        true,
+    ),
   }));
 }
 
@@ -108,23 +131,5 @@ export function planMobileScopedSettingsClear(
   targets: readonly ScopedMobileSettingsTarget[],
   keys: readonly ProjectScopedServerSettingKey[],
 ) {
-  const writes = new Map<EnvironmentId, Record<string, unknown>>();
-  for (const target of targets) {
-    if (
-      target.projectId === null ||
-      target.environment.serverConfig.environment.capabilities.projectSettingsOverrides !== true
-    )
-      continue;
-    const overrides = writes.get(target.environment.environmentId) ?? {};
-    overrides[target.projectId] = clearProjectSettingsOverrides(
-      target.environment.serverConfig.settings,
-      target.projectId,
-      keys,
-    );
-    writes.set(target.environment.environmentId, overrides);
-  }
-  return [...writes].map(([environmentId, projectSettingsOverrides]) => ({
-    environmentId,
-    patch: { projectSettingsOverrides } as ServerSettingsPatch,
-  }));
+  return planMobileProjectOverrideChanges(targets, { clear: [...keys] });
 }

@@ -5,11 +5,15 @@ import { afterEach, beforeEach, expect, it, vi } from "vite-plus/test";
 import { EnvironmentId, ThreadId, RuntimeRequestId } from "@specweave-studio/contracts";
 import { scopeThreadRef } from "@specweave-studio/client-runtime/environment";
 import { derivePendingUserInputProgress } from "../../pendingUserInput";
+import type { PendingUserInput } from "../../session-logic";
+import { getProjectCoordinatorComposer } from "../../studio/projectCoordinatorComposer";
 import {
   ProjectMessageRoutingContext,
   type ProjectMessageRouting,
 } from "../../studio/projectMessageRouting";
-import { CoordinatorNativeControls } from "./CoordinatorNativeControls";
+import { CoordinatorNativeControls, firstRequestAction } from "./CoordinatorNativeControls";
+import type { CoordinatorQuestionRecoveryContext } from "./CoordinatorQuestionCard";
+import type { CoordinatorQuestion } from "./useCoordinatorQuestion";
 const markdown = vi.hoisted(() => ({ props: null as Record<string, unknown> | null }));
 vi.mock("../ChatMarkdown", () => ({
   default: (props: Record<string, unknown>) => {
@@ -43,7 +47,6 @@ beforeEach(() => {
     progress: null,
     respondingQuestions: [],
     onOption: vi.fn(),
-    onCustomAnswer: vi.fn(),
     onPrevious: vi.fn(),
     onAdvance: vi.fn(),
     onDismiss: vi.fn(),
@@ -77,6 +80,15 @@ it("responds with the native request identity and provider decision", async () =
   await act(async () => button("Approve").click());
   expect(props.onApproval).toHaveBeenCalledExactlyOnceWith("a", "accept");
 });
+it("lands keyboard focus on Decline, never Approve, whatever the provider's order", async () => {
+  // The provider lists Approve first: a stray Enter must not approve.
+  props.approvals = [approval];
+  await render();
+  expect(firstRequestAction(container)).toBe(button("Decline"));
+  props.approvals = [{ ...approval, options: [{ decision: "accept", label: "Approve" }] }];
+  await render();
+  expect(firstRequestAction(container)).toBeNull();
+});
 it.each(["permission", "responding", "not_resumable"])(
   "prevents decisions when %s blocks the request",
   async (condition) => {
@@ -91,41 +103,161 @@ it.each(["permission", "responding", "not_resumable"])(
     expect(props.onApproval).not.toHaveBeenCalled();
   },
 );
-it("retains native question answers, with a labeled answer field and explicit submit", async () => {
-  props.questions = [
+const destination: PendingUserInput = {
+  requestId: RuntimeRequestId.make("q"),
+  responseCapability: "live",
+  createdAt: "2026-10-13T12:00:00Z",
+  dismissible: true,
+  questions: [
     {
-      requestId: RuntimeRequestId.make("q"),
-      responseCapability: "live",
-      createdAt: "2026-10-13T12:00:00Z",
-      dismissible: true,
-      questions: [
-        {
-          id: "q1",
-          header: "Destination",
-          question: "Where should this run?",
-          options: [],
-          multiSelect: false,
-        },
-      ],
+      id: "q1",
+      header: "Destination",
+      question: "Where should this run?",
+      options: [{ label: "Local host", description: "This Mac" }],
+      multiSelect: false,
+      allowCustomAnswer: true,
     },
-  ];
-  props.answers = { q1: { customAnswer: "Local host" } };
-  props.progress = derivePendingUserInputProgress(props.questions[0]!.questions, props.answers, 0);
+  ],
+} as PendingUserInput;
+it("outside the project page a question keeps its options and no second answer box", async () => {
+  props.questions = [destination];
+  props.answers = { q1: { selectedOptionValues: ["Local host"] } };
+  props.progress = derivePendingUserInputProgress(destination.questions, props.answers, 0);
   await render();
-  expect(container.querySelector("label > span")!.textContent).toBe("Your answer");
-  const textarea = container.querySelector("textarea")!;
-  expect(textarea.value).toBe("Local host");
-  await act(async () => {
-    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(
-      textarea,
-      "Other host",
-    );
-    textarea.dispatchEvent(new Event("input", { bubbles: true }));
-  });
-  expect(props.onCustomAnswer).toHaveBeenCalledWith("q1", "Other host");
+  expect(container.querySelector("textarea")).toBeNull();
+  expect(container.textContent).not.toContain("Your answer");
   await act(async () => button("Send answer").click());
   expect(props.onAdvance).toHaveBeenCalledOnce();
 });
+
+const recoveryFor = (composerCanAnswer: boolean) => {
+  const composer = getProjectCoordinatorComposer("host", `project-${composerCanAnswer}`);
+  composer.setPrompt("Use the Mac mini");
+  const question = {
+    requests: [destination],
+    active: destination,
+    askedBy: "Coordinator",
+    answers: {},
+    questionIndex: 0,
+    progress: derivePendingUserInputProgress(destination.questions, {}, 0),
+    respondingRequestIds: [],
+    disabled: false,
+    composerCanAnswer,
+    toggleOption: vi.fn(),
+    advance: vi.fn(),
+    previous: vi.fn(),
+    dismiss: vi.fn(),
+    answerFromDraft: vi.fn(async () => ({ keepUploads: false })),
+  } satisfies CoordinatorQuestion;
+  const recovery: CoordinatorQuestionRecoveryContext = {
+    question,
+    composer,
+    environmentId: EnvironmentId.make("host"),
+    cwd: "/scratch/atlas",
+    uploadsSupported: true,
+    canAttach: true,
+    maxFileBytes: null,
+    composerProblem: composerCanAnswer ? null : "Choose a model for the coordinator first.",
+  };
+  return { composer, question, recovery };
+};
+const renderRecovery = (recovery: CoordinatorQuestionRecoveryContext) => {
+  const close = vi.fn();
+  const routing = {
+    coordinatorQuestion: recovery,
+    closeCoordinatorRequests: close,
+  } as unknown as ProjectMessageRouting;
+  props.questions = [destination];
+  return {
+    close,
+    done: act(async () =>
+      root.render(
+        <ProjectMessageRoutingContext value={routing}>
+          <CoordinatorNativeControls {...props} />
+        </ProjectMessageRoutingContext>,
+      ),
+    ),
+  };
+};
+
+it("points to the message box while it can answer, and closes onto it", async () => {
+  const prompt = document.createElement("textarea");
+  prompt.id = "project-prompt";
+  document.body.append(prompt);
+  const { recovery } = recoveryFor(true);
+  const { close, done } = renderRecovery(recovery);
+  await done;
+  expect(container.textContent).toContain("Coordinator asks");
+  expect(container.querySelector("textarea")).toBeNull();
+  await act(async () => button("Answer in chat").click());
+  expect(close).toHaveBeenCalledExactlyOnceWith(prompt);
+  prompt.remove();
+});
+
+it("answers from the same draft only when the message box cannot send", async () => {
+  const { composer, question, recovery } = recoveryFor(false);
+  const { done } = renderRecovery(recovery);
+  await done;
+  const textarea = container.querySelector<HTMLTextAreaElement>(
+    "[data-coordinator-draft-answer] textarea",
+  )!;
+  expect(container.querySelector("[data-recovery-reason]")!.textContent).toContain(
+    "Choose a model for the coordinator first.",
+  );
+  // The box is the page's draft: what was typed below is here, and edits go back to it.
+  expect(textarea.value).toBe("Use the Mac mini");
+  await act(async () => {
+    Object.getOwnPropertyDescriptor(HTMLTextAreaElement.prototype, "value")!.set!.call(
+      textarea,
+      "Use the Mac mini, not the server",
+    );
+    textarea.dispatchEvent(new Event("input", { bubbles: true }));
+  });
+  expect(composer.getSnapshot().prompt).toBe("Use the Mac mini, not the server");
+  await act(async () => button("Send answer").click());
+  expect(question.answerFromDraft).toHaveBeenCalledExactlyOnceWith(
+    "Use the Mac mini, not the server",
+    undefined,
+  );
+  expect(composer.getSnapshot().prompt).toBe("");
+});
+
+it.each([true, false])(
+  "puts the first focus on the question's own way to answer (message box can send: %s)",
+  async (composerCanAnswer) => {
+    const { recovery } = recoveryFor(composerCanAnswer);
+    const { done } = renderRecovery(recovery);
+    await done;
+    const first = firstRequestAction(container)!;
+    expect(
+      composerCanAnswer
+        ? first.hasAttribute("data-answer-in-chat")
+        : first.closest("[data-coordinator-draft-answer]") !== null && first.tagName === "TEXTAREA",
+    ).toBe(true);
+  },
+);
+
+it("shows held messages instead of saying nothing needs a response", async () => {
+  props.heldQueue = <p>Held: update the release notes</p>;
+  await render();
+  expect(container.querySelector("[data-coordinator-held]")!.textContent).toContain(
+    "Held: update the release notes",
+  );
+  expect(container.textContent).not.toContain("No requests need your response.");
+});
+
+it("keeps the draft and says why when the recovery answer is refused", async () => {
+  const { composer, question, recovery } = recoveryFor(false);
+  question.answerFromDraft.mockRejectedValueOnce(new Error("Runtime request q is resolved."));
+  const { done } = renderRecovery(recovery);
+  await done;
+  await act(async () => button("Send answer").click());
+  expect(container.querySelector("[role='alert']")!.textContent).toBe(
+    "Runtime request q is resolved.",
+  );
+  expect(composer.getSnapshot().prompt).toBe("Use the Mac mini");
+});
+
 it("starts an approved plan once and disables the action while awaiting the host", async () => {
   props.planMarkdown = "# Plan\nUpdate the report.";
   let finish!: (value: boolean) => void;

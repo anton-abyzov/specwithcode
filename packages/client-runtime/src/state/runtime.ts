@@ -667,6 +667,39 @@ export function createEnvironmentCommand<R, ER, Input, A, E>(
   });
 }
 
+/** Checks each protected call against the grant of the session it is sent to. */
+export function commandPermissionGuard<R, ER>(
+  runtime: Atom.AtomRuntime<EnvironmentRegistry.EnvironmentRegistry | R, ER>,
+  registry: AtomRegistry.AtomRegistry,
+): (typeof RpcPermissionGuard)["Service"] {
+  return {
+    authorize: (id, method, payload) =>
+      createCommandPermissions(runtime, method).authorize(registry, id, payload),
+  };
+}
+
+/**
+ * A command that sends protected calls itself (streams, retries): every call is
+ * checked against the destination session. Without this boundary they are denied.
+ */
+export function createEnvironmentGuardedCommand<R, ER, Input, A, E>(
+  runtime: Atom.AtomRuntime<EnvironmentRegistry.EnvironmentRegistry | R, ER>,
+  options: EnvironmentCommandAtomOptions<
+    Input,
+    A,
+    E,
+    EnvironmentSupervisor.EnvironmentSupervisor | EnvironmentRegistry.EnvironmentRegistry | R
+  >,
+) {
+  return createEnvironmentCommand(runtime, {
+    ...options,
+    execute: (input, registry, environmentId) =>
+      options
+        .execute(input, registry, environmentId)
+        .pipe(Effect.provideService(RpcPermissionGuard, commandPermissionGuard(runtime, registry))),
+  });
+}
+
 /** Protected reads use the same destination-session gate as commands. */
 export function createEnvironmentGuardedRpcQueryAtomFamily<
   R,
@@ -687,10 +720,7 @@ export function createEnvironmentGuardedRpcQueryAtomFamily<
       Effect.gen(function* () {
         const registry = yield* AtomRegistry.AtomRegistry;
         return yield* requestGuarded(options.tag, input).pipe(
-          Effect.provideService(RpcPermissionGuard, {
-            authorize: (id, method, payload) =>
-              createCommandPermissions(runtime, method).authorize(registry, id, payload),
-          }),
+          Effect.provideService(RpcPermissionGuard, commandPermissionGuard(runtime, registry)),
         );
       }),
   });
@@ -826,10 +856,7 @@ export function createEnvironmentRpcCommand<
       // The transport check below deliberately checks the destination again.
       return permissions.authorize(registry, environmentId, input).pipe(
         Effect.andThen(() => options.execute?.(input) ?? requestGuarded(options.tag, input)),
-        Effect.provideService(RpcPermissionGuard, {
-          authorize: (id, method, payload) =>
-            createCommandPermissions(runtime, method).authorize(registry, id, payload),
-        }),
+        Effect.provideService(RpcPermissionGuard, commandPermissionGuard(runtime, registry)),
         Effect.tap(() => options.onSuccess?.(target, registry) ?? Effect.void),
         Effect.ensuring(options.onSettled?.(target, registry) ?? Effect.void),
       );

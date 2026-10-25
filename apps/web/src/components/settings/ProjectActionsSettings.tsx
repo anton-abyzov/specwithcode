@@ -82,6 +82,9 @@ export function ProjectActionsSettings() {
           // extended, not derived from already-resolved values.
           settings: environment.serverConfig.settings,
           keybindings: environment.serverConfig.keybindings,
+          perKeyOverrides:
+            environment.serverConfig.environment?.capabilities.projectSettingsOverrideChanges ===
+            true,
           ...(member ? { project: member } : {}),
         },
       ];

@@ -64,11 +64,16 @@ it.layer(NodeServices.layer)("project folder runtime boundary", (it) => {
             driver: ProviderDriverKind.make("acpRegistry"),
             startTurn: called,
             compactThread: called,
+            prepareTurn: () => called().pipe(Effect.as([])),
           } as unknown as ProviderAdapterV2SessionRuntime,
           () => Effect.succeed(Option.some(project)),
         );
         const input = { ...turn(), runtimePolicy: { ...turn().runtimePolicy, cwd: main } };
-        for (const operation of [runtime.startTurn(input), runtime.compactThread!(input)]) {
+        for (const operation of [
+          runtime.startTurn(input),
+          runtime.compactThread!(input),
+          runtime.prepareTurn!(input),
+        ]) {
           const error = yield* operation.pipe(Effect.flip);
           assert.equal(error._tag, "ProviderAdapterTurnStartError");
           assert.include(
@@ -110,16 +115,22 @@ it.layer(NodeServices.layer)("project folder runtime boundary", (it) => {
               Effect.sync(() => {
                 received.push(input);
               }),
+            prepareTurn: (input: ProviderAdapterV2TurnInput) =>
+              Effect.sync(() => {
+                received.push(input);
+                return [];
+              }),
             compactThread: (input: ProviderAdapterV2TurnInput) =>
               Effect.sync(() => {
                 received.push(input);
               }),
           } as unknown as ProviderAdapterV2SessionRuntime;
           const runtime = wrap(session, () => Effect.succeed(Option.some(project)));
+          yield* runtime.prepareTurn!(turn());
           yield* runtime.startTurn(turn());
           yield* runtime.compactThread!(turn());
         }
-        assert.equal(received.length, 4);
+        assert.equal(received.length, 6);
         for (const input of received)
           assert.deepEqual(input.projectAdditionalDirectories, [main, extra]);
         project = {
@@ -139,7 +150,7 @@ it.layer(NodeServices.layer)("project folder runtime boundary", (it) => {
           } as unknown as ProviderAdapterV2SessionRuntime,
           () => Effect.succeed(Option.some(project)),
         ).startTurn(turn());
-        assert.isUndefined(received[4]?.projectAdditionalDirectories);
+        assert.isUndefined(received[6]?.projectAdditionalDirectories);
       }),
   );
   it.effect(

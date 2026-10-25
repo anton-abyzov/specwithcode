@@ -3,14 +3,16 @@ import type {
   DesignSystemSummary,
   DesignDocument,
   DesignExportResult,
+  DesignHistoryEntry,
   DesignOperation,
   DesignSystem,
   EnvironmentId,
   ProjectId,
   ThreadId,
+  DesignReuse,
 } from "@specweave-studio/contracts";
 import { applyDesignOperations, newDesignDocument } from "@specweave-studio/shared/designOps";
-import { renderDesignHtml } from "@specweave-studio/shared/designRender";
+import { escapeHtml, renderDesignHtml } from "@specweave-studio/shared/designRender";
 import type {
   DesignEditorBackend,
   DesignExportRequest,
@@ -326,8 +328,17 @@ export function createFakeServer(options: {
   latencyMs: number;
   /** Open as a paired device with this level instead of as the owner. */
   member?: "edit" | "comment" | "view";
+  /** Refuse every thread binding from this window, as a server that takes it for a member. */
+  refuseBinding?: boolean;
+  /** Open a design that reuses a system found in its repository instead of an imported one. */
+  reuse?: DesignReuse;
+  /** Act as an older server that does not thread comment replies. */
+  noReplies?: boolean;
+  /** Act as an older server that cannot write SVG. */
+  noSvgExport?: boolean;
 }) {
   let head = seedDocument(options.nodes, options.thread);
+  if (options.reuse !== undefined) head = { ...head, designSystem: null, reuse: options.reuse };
   if (options.member !== undefined) {
     const outcome = applyDesignOperations(head, [{ op: "set_access", members: options.member }]);
     if (outcome.ok) head = outcome.document;
@@ -353,6 +364,25 @@ export function createFakeServer(options: {
     return null;
   };
   const system = fixtureSystem();
+  const firstRevision = head.revision;
+  const named: { revision: number; name: string; savedAt: string }[] = [];
+  const restored: number[] = [];
+  const versionEntries = (): DesignHistoryEntry[] => [
+    ...[...new Set([firstRevision, ...applied, head.revision])].map((revision) => ({
+      kind: "revision" as const,
+      revision,
+      name: null,
+      savedAt: head.updatedAt,
+      actor: { kind: "user" as const },
+    })),
+    ...named.map((entry) => ({
+      kind: "version" as const,
+      revision: entry.revision,
+      name: entry.name,
+      savedAt: entry.savedAt,
+      actor: { kind: "user" as const },
+    })),
+  ];
 
   const exportFile = async (request: DesignExportRequest): Promise<DesignExportResult> => {
     await wait();
@@ -381,7 +411,17 @@ export function createFakeServer(options: {
         },
         context,
       );
-      if (request.format === "html") {
+      if (request.format === "svg") {
+        const { width, height } = rendered;
+        const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="${width}" height="${height}" viewBox="0 0 ${width} ${height}"><title>${escapeHtml(head.title)}</title><rect width="${width}" height="${height}" fill="#fff"/></svg>`;
+        result = {
+          fileName: `${head.title}.svg`,
+          mimeType: "image/svg+xml",
+          data: btoa(unescape(encodeURIComponent(svg))),
+          width,
+          height,
+        };
+      } else if (request.format === "html") {
         result = {
           fileName: `${head.title}.html`,
           mimeType: "text/html",
@@ -440,11 +480,20 @@ export function createFakeServer(options: {
     environmentId: ENV,
     address: { owner: { kind: "playground" }, designId: "d_fixture" },
     audience: options.member === undefined ? "owner" : "member",
+    commentReplies: options.noReplies !== true,
+    svgExport: options.noSvgExport !== true,
     transport: {
       apply: async (expectedRevision, operations): Promise<DesignApplyResponse> => {
         await wait();
         if (expectedRevision !== head.revision)
           return { ok: false, reason: "conflict", currentRevision: head.revision };
+        if (options.refuseBinding === true && operations.some((op) => op.op === "set_thread"))
+          return {
+            ok: false,
+            reason: "error",
+            code: "forbidden",
+            detail: "Only the owner on this machine can change which thread a design is bound to.",
+          };
         const error = commit(operations);
         if (error !== null) return { ok: false, reason: "error", detail: error };
         const document = head;
@@ -479,9 +528,10 @@ export function createFakeServer(options: {
       sent.push({ threadId: thread.threadId, text: message.text, images: message.images.length });
       window.dispatchEvent(new CustomEvent("fixture-sent"));
     },
-    startThread: async (first) => {
+    newThreadId: () => "thread-started" as ThreadId,
+    startThread: async (first, { threadId }) => {
       await wait();
-      const binding = { environmentId: ENV, threadId: "thread-started" as ThreadId };
+      const binding = { environmentId: ENV, threadId };
       sent.push({
         threadId: binding.threadId,
         text: first?.text ?? "(design brief)",
@@ -521,6 +571,27 @@ export function createFakeServer(options: {
       machines: ["Mac mini (studio)"],
       link: `${location.origin}/design/pg.d_fixture`,
     },
+    // Version history: every applied revision is an autosave; Save version names the head.
+    versions: {
+      list: async () => {
+        await wait();
+        return versionEntries();
+      },
+      save: async (name) => {
+        await wait();
+        named.push({ revision: head.revision, name, savedAt: new Date().toISOString() });
+        return versionEntries();
+      },
+      restore: async (revision, expectedRevision) => {
+        await wait();
+        if (expectedRevision !== head.revision) throw new Error("The design changed. Try again.");
+        head = { ...head, revision: head.revision + 1, updatedAt: new Date().toISOString() };
+        applied.push(head.revision);
+        restored.push(revision);
+        queueMicrotask(push);
+        return head;
+      },
+    },
     designSystems: {
       systems,
       projects: [{ id: "p_marina" as ProjectId, title: "Marina" }],
@@ -541,6 +612,7 @@ export function createFakeServer(options: {
 
   return {
     backend,
+    restored,
     system,
     assets,
     sent,

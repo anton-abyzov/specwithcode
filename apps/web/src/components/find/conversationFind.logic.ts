@@ -2,6 +2,11 @@ import { noteReaderScroll, noteReaderScrollAround } from "../../lib/readerScroll
 
 export const FIND_SCOPE_ATTRIBUTE = "data-conversation-find-scope";
 export const FIND_IGNORE_ATTRIBUTE = "data-conversation-find-ignore";
+/**
+ * Text under this attribute is one run, though `<wbr>` splits it into several text nodes:
+ * `report-final` matches a wrapped value split after `report-`.
+ */
+export const FIND_JOINED_TEXT_ATTRIBUTE = "data-path-wrap";
 export const FIND_HIGHLIGHT = "studio-find";
 export const FIND_CURRENT_HIGHLIGHT = "studio-find-current";
 /** Past this many hits the count stops growing; nobody steps through more. */
@@ -69,6 +74,43 @@ function isRendered(element: Element): boolean {
   return check.call(element, { visibilityProperty: true });
 }
 
+/** The outermost joined-text element holding `element`, below `root`. */
+function joinedTextOwner(
+  element: Element,
+  root: Element,
+  cache: Map<Element, Element | null>,
+): Element | null {
+  const cached = cache.get(element);
+  if (cached !== undefined) return cached;
+  const above =
+    element === root || !element.parentElement
+      ? null
+      : joinedTextOwner(element.parentElement, root, cache);
+  const owner = above ?? (element.hasAttribute(FIND_JOINED_TEXT_ATTRIBUTE) ? element : null);
+  cache.set(element, owner);
+  return owner;
+}
+
+interface TextRun {
+  readonly nodes: ReadonlyArray<Text>;
+  /** Where each node starts in `text`. */
+  readonly starts: ReadonlyArray<number>;
+  readonly text: string;
+}
+
+/** The node and offset at `position` in the run; an end position stays in the node it ends. */
+function runPosition(run: TextRun, position: number, isEnd: boolean): [Text, number] {
+  let index = run.nodes.length - 1;
+  for (let candidate = 0; candidate < run.nodes.length; candidate += 1) {
+    const end = run.starts[candidate]! + run.nodes[candidate]!.length;
+    if (isEnd ? position <= end : position < end) {
+      index = candidate;
+      break;
+    }
+  }
+  return [run.nodes[index]!, position - run.starts[index]!];
+}
+
 /** Ranges for every visible occurrence of `query` under `root`, in reading (top-to-bottom) order. */
 export function collectFindRanges(
   root: Element,
@@ -81,19 +123,42 @@ export function collectFindRanges(
   const walker = doc.createTreeWalker(root, NodeFilter.SHOW_TEXT);
   const searchable = new Map<Element, boolean>();
   const visible = new Map<Element, boolean>();
+  const owners = new Map<Element, Element | null>();
+  const joined = new Set<Element>();
   const ranges: Range[] = [];
   let capped = false;
   for (let node = walker.nextNode(); node; node = walker.nextNode()) {
-    const text = node.nodeValue ?? "";
-    if (text.length < needle.length) continue;
     const parent = node.parentElement;
-    if (!parent || !isElementSearchable(parent, searchable)) continue;
-    const offsets = findTextOffsets(text, needle, limit - ranges.length + 1);
+    if (!parent) continue;
+    const owner = joinedTextOwner(parent, root, owners);
+    if (owner !== null && joined.has(owner)) continue;
+    let run: TextRun;
+    if (owner === null) {
+      run = { nodes: [node as Text], starts: [0], text: node.nodeValue ?? "" };
+    } else {
+      joined.add(owner);
+      const nodes: Text[] = [];
+      const starts: number[] = [];
+      let text = "";
+      const inner = doc.createTreeWalker(owner, NodeFilter.SHOW_TEXT);
+      for (let part = inner.nextNode(); part; part = inner.nextNode()) {
+        if (!part.parentElement || !isElementSearchable(part.parentElement, searchable)) continue;
+        nodes.push(part as Text);
+        starts.push(text.length);
+        text += part.nodeValue ?? "";
+      }
+      if (nodes.length === 0) continue;
+      run = { nodes, starts, text };
+    }
+    if (run.text.length < needle.length) continue;
+    const scopeElement = owner ?? parent;
+    if (!isElementSearchable(scopeElement, searchable)) continue;
+    const offsets = findTextOffsets(run.text, needle, limit - ranges.length + 1);
     if (offsets.length === 0) continue;
-    let shown = visible.get(parent);
+    let shown = visible.get(scopeElement);
     if (shown === undefined) {
-      shown = isRendered(parent);
-      visible.set(parent, shown);
+      shown = isRendered(scopeElement);
+      visible.set(scopeElement, shown);
     }
     if (!shown) continue;
     for (const offset of offsets) {
@@ -102,8 +167,8 @@ export function collectFindRanges(
         break;
       }
       const range = doc.createRange();
-      range.setStart(node, offset);
-      range.setEnd(node, offset + needle.length);
+      range.setStart(...runPosition(run, offset, false));
+      range.setEnd(...runPosition(run, offset + needle.length, true));
       ranges.push(range);
     }
     if (capped) break;

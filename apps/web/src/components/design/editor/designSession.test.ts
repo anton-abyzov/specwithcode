@@ -156,6 +156,32 @@ describe("DesignSession", () => {
     expect(server.head.revision).toBe(2);
   });
 
+  it("settles a save in flight before a caller replaces the document", async () => {
+    const doc = baseDocument();
+    const server = fakeServer(doc);
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => (release = resolve));
+    const slow: DesignTransport = {
+      ...server.transport,
+      apply: async (expected, operations) => {
+        await gate;
+        return server.transport.apply(expected, operations);
+      },
+    };
+    const session = new DesignSession(doc, slow, 60_000);
+    const page = pageOf(doc).id;
+    const frame = frameOf(doc).id;
+    session.commit([{ op: "update_node", pageId: page, id: frame, patch: { x: 7 } }]);
+    void session.flush();
+    session.commit([{ op: "update_node", pageId: page, id: frame, patch: { y: 9 } }]);
+    const settled = session.settle();
+    release();
+    expect(await settled).toBe(true);
+    expect(server.head.revision).toBe(2);
+    expect(session.getSnapshot().base.revision).toBe(2);
+    expect(frameOf(server.head)).toMatchObject({ x: 7, y: 9 });
+  });
+
   it("retries after a revision conflict without losing either edit", async () => {
     const doc = baseDocument();
     const server = fakeServer(doc);
@@ -361,6 +387,33 @@ describe("DesignSession lifecycle and undo scope", () => {
     expect(session.document.title).toBe("Theirs");
   });
 
+  it("reports a conflict, not a silent loss, for a reply whose thread was deleted meanwhile", () => {
+    const start = baseDocument();
+    const comment = (id: string, parentId?: string): DesignOperation => ({
+      op: "add_comment",
+      comment: {
+        id,
+        pageId: pageOf(start).id,
+        nodeId: null,
+        x: 0,
+        y: 0,
+        text: id,
+        author: { kind: "user" },
+        createdAt: "2026-10-20T00:00:00.000Z",
+        resolved: false,
+        ...(parentId === undefined ? {} : { parentId }),
+      },
+    });
+    const doc = apply(start, [comment("c_root")]);
+    const server = fakeServer(doc);
+    const session = new DesignSession(doc, server.transport, 60_000);
+    session.commit([comment("c_reply", "c_root")]);
+    expect(session.document.comments.map((c) => c.parentId)).toEqual([undefined, "c_root"]);
+    session.receive(server.agentEdit([{ op: "delete_comment", commentId: "c_root" }]));
+    expect(session.getSnapshot().conflict?.keys).toEqual(["document"]);
+    expect(session.getSnapshot().saveState).toBe("conflict");
+  });
+
   it("after Keep mine, Cmd+Z returns the kept field to the agent's value", () => {
     const doc = baseDocument();
     const server = fakeServer(doc);
@@ -377,6 +430,95 @@ describe("DesignSession lifecycle and undo scope", () => {
     expect(frameOf(session.document)).toMatchObject({ x: 7, y: 9 });
     session.undo();
     expect(frameOf(session.document)).toMatchObject({ x: frameOf(doc).x, y: frameOf(doc).y });
+  });
+
+  /** A design on system `sys_a` whose frame fills with a token. */
+  function tokenDesign() {
+    const start = baseDocument();
+    return apply(start, [
+      { op: "set_design_system", systemId: "sys_a" },
+      {
+        op: "update_node",
+        pageId: pageOf(start).id,
+        id: frameOf(start).id,
+        patch: { fill: { token: "wv-ink" } },
+      },
+    ]);
+  }
+  const fillOf = (doc: DesignDocument) => (frameOf(doc) as { readonly fill?: unknown }).fill;
+  /** Setting None: the frame's token baked to the color it shows, then no system. */
+  const setNone = (doc: DesignDocument): DesignOperation[] => [
+    {
+      op: "update_node",
+      pageId: pageOf(doc).id,
+      id: frameOf(doc).id,
+      patch: { fill: "#241523" },
+    },
+    { op: "set_design_system", systemId: null },
+  ];
+
+  it("undoes setting the system to None in one step, token references and system both", async () => {
+    const doc = tokenDesign();
+    const server = fakeServer(doc);
+    const session = new DesignSession(doc, server.transport, 60_000);
+    session.commit(setNone(doc));
+    expect(session.document.designSystem).toBeNull();
+    expect(fillOf(session.document)).toBe("#241523");
+    session.undo();
+    expect(session.document.designSystem).toBe("sys_a");
+    expect(fillOf(session.document)).toEqual({ token: "wv-ink" });
+    expect(session.getSnapshot().canUndo).toBe(false);
+    session.redo();
+    expect(session.document.designSystem).toBeNull();
+    expect(fillOf(session.document)).toBe("#241523");
+    session.undo();
+    await session.flush();
+    expect(server.head.designSystem).toBe("sys_a");
+    expect(fillOf(server.head)).toEqual({ token: "wv-ink" });
+  });
+
+  it("undo leaves a system someone else chose since in place", async () => {
+    const doc = tokenDesign();
+    const server = fakeServer(doc);
+    const session = new DesignSession(doc, server.transport, 60_000);
+    session.commit(setNone(doc));
+    await session.flush();
+    session.receive(server.agentEdit([{ op: "set_design_system", systemId: "sys_b" }]));
+    session.undo();
+    expect(session.document.designSystem).toBe("sys_b");
+    expect(fillOf(session.document)).toEqual({ token: "wv-ink" });
+    // Redo re-applies the bake and leaves that system alone too.
+    session.redo();
+    expect(fillOf(session.document)).toBe("#241523");
+    expect(session.document.designSystem).toBe("sys_b");
+  });
+
+  it("undoing None restores the reuse record it cleared, unless it changed since", async () => {
+    const reuse = {
+      name: "EC UI kit",
+      paths: ["src/theme.css"],
+      tokens: 12,
+      components: 3,
+      modes: ["light"],
+      foundAt: "2026-10-24T09:00:00.000Z",
+    };
+    const doc = apply(tokenDesign(), [{ op: "set_reuse", reuse }]);
+    const server = fakeServer(doc);
+    const session = new DesignSession(doc, server.transport, 60_000);
+    session.commit([...setNone(doc), { op: "set_reuse", reuse: null }]);
+    expect(session.document.reuse).toBeUndefined();
+    session.undo();
+    expect(session.document.designSystem).toBe("sys_a");
+    expect(session.document.reuse).toEqual(reuse);
+    session.redo();
+    expect(session.document.reuse).toBeUndefined();
+    await session.flush();
+    // A record found again elsewhere since stays.
+    const found = { ...reuse, name: "EC UI kit 2" };
+    session.receive(server.agentEdit([{ op: "set_reuse", reuse: found }]));
+    session.undo();
+    expect(session.document.designSystem).toBe("sys_a");
+    expect(session.document.reuse).toEqual(found);
   });
 
   it("backs off and stops with an error when the server keeps refusing a stale revision", async () => {
@@ -430,5 +572,94 @@ describe("DesignSession reorders", () => {
     session.commit([{ op: "move_node", pageId: page, id: "a", index: 3 }]);
     session.receive(server.agentEdit([{ op: "move_node", pageId: page, id: "c", index: 1 }]));
     expect(session.getSnapshot().conflict).toBeNull();
+  });
+});
+
+describe("DesignSession.applyAlone", () => {
+  const thread = { environmentId: "host", threadId: "thread-1" } as never;
+
+  it("never lets a refused binding hold back canvas edits (AC-01b)", async () => {
+    const server = fakeServer(baseDocument());
+    const refusing: DesignTransport = {
+      apply: async (expected, operations) =>
+        operations.some((operation) => operation.op === "set_thread")
+          ? {
+              ok: false,
+              reason: "error",
+              code: "forbidden",
+              detail:
+                "Only the owner on this machine can change which thread a design is bound to.",
+            }
+          : server.transport.apply(expected, operations),
+      get: server.transport.get,
+    };
+    const session = new DesignSession(server.head, refusing, 0);
+    const frame = frameOf(server.head);
+    session.commit([
+      { op: "update_node", pageId: pageOf(server.head).id, id: frame.id, patch: { name: "Hero" } },
+    ]);
+    const bound = await session.applyAlone([{ op: "set_thread", thread }]);
+    expect(bound).toMatchObject({ ok: false, code: "forbidden" });
+    await session.flush();
+    // The canvas edit saved on its own; the refusal never entered the autosave batch.
+    expect(frameOf(server.head).name).toBe("Hero");
+    expect(server.head.thread).toBeUndefined();
+    expect(session.getSnapshot()).toMatchObject({ saveState: "saved", error: null });
+    session.commit([
+      {
+        op: "update_node",
+        pageId: pageOf(server.head).id,
+        id: frame.id,
+        patch: { name: "Hero 2" },
+      },
+    ]);
+    await session.flush();
+    expect(frameOf(server.head).name).toBe("Hero 2");
+  });
+
+  it("binds in a write of its own and rebases unsaved edits onto it", async () => {
+    const server = fakeServer(baseDocument());
+    const session = new DesignSession(server.head, server.transport, 60_000);
+    const frame = frameOf(server.head);
+    session.commit([
+      { op: "update_node", pageId: pageOf(server.head).id, id: frame.id, patch: { name: "Mine" } },
+    ]);
+    expect(await session.applyAlone([{ op: "set_thread", thread }])).toEqual({ ok: true });
+    expect(server.calls).toEqual([[{ op: "set_thread", thread }]]);
+    expect(session.getSnapshot().document.thread).toEqual(thread);
+    expect(frameOf(session.getSnapshot().document).name).toBe("Mine");
+    await session.flush();
+    expect(server.head).toMatchObject({ revision: 2, thread });
+    expect(frameOf(server.head).name).toBe("Mine");
+  });
+
+  it("applies an agent edit that arrived while a refused binding was in flight", async () => {
+    const server = fakeServer(baseDocument());
+    let session!: DesignSession;
+    const refusing: DesignTransport = {
+      apply: async (expected, operations) => {
+        if (!operations.some((operation) => operation.op === "set_thread"))
+          return server.transport.apply(expected, operations);
+        session.receive(server.agentEdit([{ op: "set_title", title: "From the agent" }]));
+        return { ok: false, reason: "error", code: "forbidden", detail: "Not the owner." };
+      },
+      get: server.transport.get,
+    };
+    session = new DesignSession(server.head, refusing, 60_000);
+    expect(await session.applyAlone([{ op: "set_thread", thread }])).toMatchObject({
+      ok: false,
+      code: "forbidden",
+    });
+    expect(session.getSnapshot().document.title).toBe("From the agent");
+    expect(session.getSnapshot().base.revision).toBe(server.head.revision);
+  });
+
+  it("retries on a newer revision instead of failing", async () => {
+    const server = fakeServer(baseDocument());
+    const session = new DesignSession(server.head, server.transport, 60_000);
+    server.agentEdit([{ op: "set_title", title: "From the agent" }]);
+    expect(await session.applyAlone([{ op: "set_thread", thread }])).toEqual({ ok: true });
+    expect(session.getSnapshot().document).toMatchObject({ title: "From the agent", thread });
+    expect(session.getSnapshot().base.revision).toBe(2);
   });
 });

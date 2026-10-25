@@ -2489,28 +2489,11 @@ export function GeneralSettingsPanel() {
         <NotificationSettings />
         <SettingsRow
           {...searchableSetting("input-needed-alerts")}
-          description={
-            isElectron
-              ? "Show a system notification when a thread stops for your answer or approval, even with thread notifications off. Clicking it opens that thread."
-              : "Show a browser notification when a thread stops for your answer or approval, once this browser allows notifications. Clicking it opens that thread."
-          }
+          description="Notify when a thread needs your answer or approval. Connect notifications above first. Disconnect overrides this switch on this device."
           control={
             <Switch
               checked={settings.inputNeededAlertsEnabled}
-              onCheckedChange={(checked) => {
-                updateSettings({ inputNeededAlertsEnabled: checked });
-                // A browser shows nothing until notifications are allowed.
-                if (
-                  checked &&
-                  !isElectron &&
-                  typeof Notification !== "undefined" &&
-                  window.isSecureContext &&
-                  Notification.permission === "default"
-                ) {
-                  // Older Safari returns nothing and only takes a callback.
-                  void Promise.resolve(Notification.requestPermission()).catch(() => undefined);
-                }
-              }}
+              onCheckedChange={(checked) => updateSettings({ inputNeededAlertsEnabled: checked })}
               aria-label="Alert when a thread needs you"
             />
           }

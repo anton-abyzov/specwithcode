@@ -132,7 +132,7 @@ describe("starter tasks in a project with no threads", () => {
     expect(cards("list")[1]!.textContent).toContain("Good first step");
     const pane = container.querySelector('[aria-label="Project threads"]')!;
     expect(pane.querySelector(".sws-threads-head p")!.textContent).toBe(
-      "No threads yet. Pick a first task, or ask the coordinator for one.",
+      "Nothing is waiting on you.",
     );
     // No empty groups under the ideas: there is nothing to group yet.
     expect(pane.querySelector(".sws-group-bar")).toBeNull();

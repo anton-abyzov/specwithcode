@@ -16,12 +16,9 @@ import {
   type PreviewStreamPointer,
   type PreviewStreamViewport,
   previewStreamHostSetupMessage,
+  type PreviewHostSetupNotice,
 } from "@specweave-studio/client-runtime/preview/server-browser-stream";
-import type {
-  EnvironmentId,
-  PreviewStreamHostSetup,
-  PreviewViewportSetting,
-} from "@specweave-studio/contracts";
+import type { EnvironmentId, PreviewViewportSetting } from "@specweave-studio/contracts";
 import {
   type FormEvent,
   type KeyboardEvent,
@@ -198,7 +195,7 @@ export function ServerBrowserSurface(props: {
   };
   const unauthorizedRef = useRef(0);
   const [accessDenied, setAccessDenied] = useState(false);
-  const [hostSetup, setHostSetup] = useState<PreviewStreamHostSetup | null>(null);
+  const [hostSetup, setHostSetup] = useState<PreviewHostSetupNotice | null>(null);
   const pendingMoveRef = useRef<MouseInput | null>(null);
   const pendingWheelRef = useRef<WheelInput | null>(null);
   const inputFrameRef = useRef<number | null>(null);

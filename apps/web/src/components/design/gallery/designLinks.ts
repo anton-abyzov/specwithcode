@@ -1,6 +1,6 @@
 import type { DesignOwnerInput } from "@specweave-studio/contracts";
 
-import { readPrimaryEnvironmentTarget } from "~/environments/primary/target";
+import { isLoopbackHostname, readPrimaryEnvironmentTarget } from "~/environments/primary/target";
 
 import { encodeDesignKey } from "../designKey";
 
@@ -28,4 +28,28 @@ export function designLink(owner: DesignOwnerInput, designId: string): string {
     // The page's own origin is the server in the browser.
   }
   return new URL(designPath(owner, designId), origin).toString();
+}
+
+/**
+ * Where a copied design link opens. A loopback link (127.0.0.1, localhost)
+ * reaches the server only from the computer it runs on: on a paired device the
+ * same address names that device itself, so the link must not promise it.
+ */
+export function designLinkReach(link: string): {
+  readonly loopback: boolean;
+  readonly text: string;
+} {
+  let hostname = "";
+  try {
+    hostname = new URL(link).hostname;
+  } catch {
+    // Not a URL: treat it like a loopback link and promise nothing beyond this computer.
+    hostname = "localhost";
+  }
+  return isLoopbackHostname(hostname)
+    ? {
+        loopback: true,
+        text: "This link opens on this computer only. On a paired device, open the design from SpecWithCode there.",
+      }
+    : { loopback: false, text: "Works on this Mac and your paired devices." };
 }

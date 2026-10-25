@@ -705,6 +705,62 @@ it.layer(layerTest)("checkOpenCodeProviderStatus", (it) => {
     }),
   );
 
+  for (const version of [1, 2]) {
+    it.effect(`refuses free loopback proxies in OpenCode ${version} inventories`, () =>
+      Effect.gen(function* () {
+        const cases = [
+          { providerID: "anthropic", id: "priced", input: 3, output: 15, billing: "api" },
+          { providerID: "anthropic", id: "zero", input: 0, output: 0, billing: "api" },
+          { providerID: "ollama", id: "free", input: 0, output: 0, billing: "local" },
+          { providerID: "ollama", id: "priced-input", input: 1, output: 0, billing: "api" },
+          { providerID: "lmstudio", id: "priced-output", input: 0, output: 1, billing: "api" },
+          { providerID: "custom", id: "compatible", input: 0, output: 0, billing: "unknown" },
+          { providerID: "openrouter", id: "routed", input: 0, output: 0, billing: "paid-router" },
+        ];
+        const baseURL = "http://127.0.0.1:4000/v1";
+        runtimeMock.state.versionStdout =
+          version === 1 ? DEFAULT_VERSION_STDOUT : "opencode 2.0.18\n";
+        runtimeMock.state.inventory = {
+          providerList: {
+            connected: cases.map((entry) => entry.providerID),
+            all: cases.map(({ providerID, id, input, output }) => ({
+              id: providerID,
+              name: providerID,
+              options: { baseURL },
+              models: { [id]: { id, name: id, cost: { input, output } } },
+            })),
+            default: {},
+          },
+          agents: [],
+          skills: [],
+        };
+        const snapshot = yield* checkProvider(
+          makeOpenCodeSettings(),
+          process.cwd(),
+          undefined,
+          undefined,
+          Effect.succeed(
+            cases.map(({ providerID, id, input, output }) => ({
+              providerID,
+              id,
+              name: id,
+              settings: { baseURL },
+              variants: [],
+              cost: [{ input, output }],
+            })),
+          ),
+        );
+        NodeAssert.deepEqual(
+          cases.map(
+            ({ providerID, id }) =>
+              snapshot.models.find((model) => model.slug === `${providerID}/${id}`)?.billing,
+          ),
+          cases.map(({ billing }) => billing),
+        );
+      }),
+    );
+  }
+
   it.effect("keeps the effort ladder for an OpenCode model that does not report reasoning", () =>
     Effect.gen(function* () {
       runtimeMock.state.inventory = {

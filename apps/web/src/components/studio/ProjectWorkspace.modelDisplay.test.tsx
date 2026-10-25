@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { DEFAULT_SERVER_SETTINGS } from "@specweave-studio/contracts";
+import { act } from "react";
 import { describe, expect, it } from "vite-plus/test";
 import { container, render, shell, state } from "./ProjectWorkspace.test-fixtures";
 
@@ -68,24 +69,22 @@ describe("ProjectWorkspace actual coordinator picker", () => {
       await render();
       expect(modelButton()?.getAttribute("aria-label")).toContain("Copilot");
       expect(modelButton()?.getAttribute("aria-label")).toContain("back to Codex after reset");
-      expect(container.querySelector('[data-model-state="fallback"]')?.textContent).toBe(
-        "Fallback for GPT-6.1 Sol",
-      );
-      expect(container.querySelector("[data-model-now]")?.textContent).toContain("Running now on");
-      expect(container.querySelector("[data-model-pick]")?.textContent).toContain(
-        "session limit reached",
-      );
+      // The suffix is the glyph alone; the sentence is for screen readers and the tooltip.
+      const suffix = container.querySelector('.sws-model-state[data-model-state="fallback"]');
+      expect(suffix?.querySelector("[data-fallback-glyph]")).not.toBeNull();
+      expect(suffix?.textContent).toBe(", fallback for Codex · GPT-6.1 Sol (usage limit)");
+      // While the limit holds, the chip says it once; no line repeats it.
+      expect(container.querySelector("p[data-model-fallback]")).toBeNull();
 
       // Codex reads as having room again, but the turn still runs on Copilot: the
-      // chip and the line keep naming it, and only the limit reason goes.
+      // chip keeps naming it, and one line offers the way back.
       state.providers = [provider("codex", "codex", 20), provider("copilot", "copilot")];
       await render();
       expect(modelButton()?.getAttribute("aria-label")).toContain("running on");
       expect(modelButton()?.textContent).toContain("Copilot");
       expect(modelButton()?.textContent).toContain("GPT-6 Astra");
-      expect(container.querySelector("[data-model-now]")?.textContent).toContain("GPT-6 Astra");
-      expect(container.querySelector("[data-model-pick]")?.textContent).toBe(
-        "Your pick: Codex · GPT-6.1 Sol.",
+      expect(container.querySelector("p[data-model-fallback]")?.textContent).toContain(
+        "Your pick, Codex · GPT-6.1 Sol, has room again.",
       );
       expect(container.querySelector('[data-model-state="fallback"]')).not.toBeNull();
       expect(modelButton()?.getAttribute("aria-label")).not.toContain("after reset");
@@ -97,7 +96,7 @@ describe("ProjectWorkspace actual coordinator picker", () => {
       expect(modelButton()?.textContent).toContain("Codex");
       expect(modelButton()?.textContent).toContain("GPT-6.1 Sol");
       expect(modelButton()?.getAttribute("aria-label")).not.toContain("running on");
-      expect(container.querySelector("[data-model-fallback]")).toBeNull();
+      expect(container.querySelector("p[data-model-fallback]")).toBeNull();
       expect(container.querySelector('[data-model-state="fallback"]')).toBeNull();
     } finally {
       Object.assign(state.project, { workspaceSettings: undefined });
@@ -126,6 +125,32 @@ describe("ProjectWorkspace actual coordinator picker", () => {
       expect(modelButton()?.getAttribute("aria-label")).not.toContain("after reset");
       expect(state.coordinatorModel).toEqual(preference);
       expect(state.send).not.toHaveBeenCalled();
+    } finally {
+      Object.assign(state.project, { workspaceSettings: undefined });
+    }
+  });
+});
+
+describe("ProjectWorkspace coordinator picker wiring", () => {
+  it("passes the limit reason and the way back to the picker while the limit holds", async () => {
+    setup(running);
+    state.realCoordinatorModelPicker = false;
+    try {
+      state.providers = [provider("codex", "codex", 100), provider("copilot", "copilot")];
+      await render();
+      const picker = container.querySelector("[data-coordinator-model]");
+      expect(picker?.getAttribute("data-returns-to")).toBe("Codex");
+      expect(picker?.getAttribute("data-fallback-reason")).toMatch(/resets in/);
+      // The composer line stays hidden while the limit holds, so the picker is the way back.
+      expect(container.querySelector("p[data-model-fallback]")).toBeNull();
+      const back = container.querySelector<HTMLButtonElement>("[data-coordinator-switch-back]");
+      expect(back).not.toBeNull();
+      await act(async () => back!.click());
+      expect(state.send).toHaveBeenCalledWith(
+        expect.objectContaining({
+          input: expect.objectContaining({ threadId: "coord", modelSelection: saved }),
+        }),
+      );
     } finally {
       Object.assign(state.project, { workspaceSettings: undefined });
     }

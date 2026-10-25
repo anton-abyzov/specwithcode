@@ -16,6 +16,7 @@
  *   yet is `not_on_this_machine` naming the member that has it.
  */
 import * as NodeFS from "node:fs";
+import * as NodePath from "node:path";
 
 import {
   DesignError,
@@ -33,7 +34,9 @@ import {
   type DesignGetResult,
   type DesignHistoryResult,
   type DesignListInput,
+  type DesignListProblem,
   type DesignListResult,
+  type DesignMoveInput,
   type DesignOperation,
   type DesignOwner,
   type DesignOwnerFilter,
@@ -76,7 +79,9 @@ import * as HtmlRender from "../htmlRender/HtmlRender.ts";
 import * as ProjectStore from "../orchestration-v2/ProjectStore.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import { exportDesign } from "./DesignExport.ts";
+import * as Move from "./DesignMove.ts";
 import * as Store from "./DesignStore.ts";
+import * as SystemFiles from "./systems/SystemFilesStore.ts";
 
 /** The Playground's folder below the app's private state directory. */
 export const PLAYGROUND_DESIGN_DIR = "design/playground";
@@ -97,6 +102,15 @@ export interface DesignCaller {
 }
 
 export const ownerCaller: DesignCaller = { actor: { kind: "user" }, audience: "owner" };
+
+/** Who a list problem is about: the label people read and the owner clients match on. */
+const problemOwner = (resolved: { readonly owner: DesignOwner; readonly label: string }) => ({
+  ownerLabel: resolved.label,
+  owner:
+    resolved.owner.kind === "project"
+      ? ({ kind: "project", projectId: resolved.owner.projectId } as const)
+      : ({ kind: "playground" } as const),
+});
 
 interface ResolvedOwner {
   readonly owner: DesignOwner;
@@ -119,7 +133,7 @@ export class DesignService extends Context.Service<
     ) => Effect.Effect<DesignGetResult, DesignError>;
     readonly create: (
       caller: DesignCaller,
-      input: DesignCreateInput & { readonly thread?: DesignThreadBinding | undefined },
+      input: DesignCreateInput,
     ) => Effect.Effect<DesignGetResult, DesignError>;
     readonly apply: (
       caller: DesignCaller,
@@ -140,6 +154,15 @@ export class DesignService extends Context.Service<
     readonly copy: (
       caller: DesignCaller,
       input: DesignCopyInput,
+    ) => Effect.Effect<DesignGetResult, DesignError>;
+    /**
+     * Moves a Playground design into a project here, keeping its id, history,
+     * thread and access. Owner only. The old address then answers `not_found`
+     * with `movedTo`.
+     */
+    readonly move: (
+      caller: DesignCaller,
+      input: DesignMoveInput,
     ) => Effect.Effect<DesignGetResult, DesignError>;
     readonly remove: (
       caller: DesignCaller,
@@ -215,7 +238,9 @@ export class DesignService extends Context.Service<
 
 const isDesignError = Schema.is(DesignError);
 
-const toDesignError = (cause: unknown): DesignError => {
+type FileOperation = "read" | "save";
+
+const toDesignError = (cause: unknown, operation?: FileOperation): DesignError => {
   if (isDesignError(cause)) return cause;
   if (cause instanceof Store.DesignStoreProblem) {
     return new DesignError({
@@ -224,13 +249,51 @@ const toDesignError = (cause: unknown): DesignError => {
       ...(cause.currentRevision === undefined ? {} : { currentRevision: cause.currentRevision }),
     });
   }
-  return new DesignError({
-    code: "operation_failed",
-    detail: "The design could not be read or saved. Try again.",
-  });
+  return new DesignError({ code: "operation_failed", detail: fileFailureDetail(cause, operation) });
 };
 
-const attempt = <A>(run: () => Promise<A>) => Effect.tryPromise({ try: run, catch: toDesignError });
+/**
+ * System calls that only read, for callers that do not say what they were doing. `open` is
+ * not here: reads and writes both fail in it.
+ */
+const READ_CALLS = new Set(["read", "readlink", "lstat", "stat", "realpath", "access", "scandir"]);
+const FOLDER_CALLS = new Set(["mkdir", "rmdir", "scandir", "opendir"]);
+
+/**
+ * A file failure in plain words, naming the cause and the folder:
+ * "The design could not be saved: SpecWithCode may not write to /work/app/.specweave/design."
+ */
+export function fileFailureDetail(cause: unknown, operation?: FileOperation): string {
+  const error = cause as NodeJS.ErrnoException | undefined;
+  const code = typeof error?.code === "string" ? error.code : null;
+  const path = typeof error?.path === "string" ? error.path : null;
+  const syscall = typeof error?.syscall === "string" ? error.syscall : "";
+  const reading = operation === undefined ? READ_CALLS.has(syscall) : operation === "read";
+  if (code === null || path === null)
+    return `The design could not be ${reading ? "read" : "saved"}. Try again.`;
+  const folder = FOLDER_CALLS.has(syscall) ? path : NodePath.dirname(path);
+  const failed = `The design could not be ${reading ? "read" : "saved"}`;
+  switch (code) {
+    case "EACCES":
+    case "EPERM":
+      return `${failed}: SpecWithCode may not ${reading ? "read" : "write to"} ${folder}.`;
+    case "EROFS":
+      return `${failed}: ${folder} is on a read-only disk.`;
+    case "ENOSPC":
+    case "EDQUOT":
+      return `${failed}: the disk holding ${folder} is full.`;
+    case "ENOENT":
+      return `${failed}: ${folder} is missing.`;
+    default:
+      return `${failed} in ${folder} (${code}). Try again.`;
+  }
+}
+
+const attempt = <A>(run: () => Promise<A>) =>
+  Effect.tryPromise({ try: run, catch: (cause) => toDesignError(cause) });
+/** Like `attempt`, for work that only reads: its failures say "could not be read". */
+const attemptRead = <A>(run: () => Promise<A>) =>
+  Effect.tryPromise({ try: run, catch: (cause) => toDesignError(cause, "read") });
 
 const forbidden = (detail: string) => new DesignError({ code: "forbidden", detail });
 
@@ -317,6 +380,22 @@ const sameDesignOwner = (left: DesignOwner, right: DesignOwner) =>
   (left.kind === "playground" || (right.kind === "project" && left.projectId === right.projectId));
 
 /**
+ * The newest of `systems` copied from `systemId` of `from`: the copy of the
+ * highest source revision, the latest made among those.
+ */
+const newestCopyOf = (systems: readonly DesignSystem[], systemId: string, from: DesignOwner) =>
+  systems
+    .filter(
+      (system) =>
+        system.copiedFrom?.id === systemId && sameDesignOwner(system.copiedFrom.owner, from),
+    )
+    .toSorted(
+      (left, right) =>
+        right.copiedFrom!.revision - left.copiedFrom!.revision ||
+        right.copiedFrom!.copiedAt.localeCompare(left.copiedFrom!.copiedAt),
+    )[0];
+
+/**
  * The id a copy should use for `systemId` of `from` in the target root: the
  * same system when the target has it, else the newest copy the target made of it.
  */
@@ -324,11 +403,17 @@ const systemInTarget = async (systemId: string, from: DesignOwner, targetRoot: s
   const same = await Store.readDesignSystem(targetRoot, systemId).catch(() => null);
   if (same !== null) return same.id;
   const { systems } = await Store.listDesignSystems(targetRoot);
-  const copy = systems.find(
-    (system) =>
-      system.copiedFrom?.id === systemId && sameDesignOwner(system.copiedFrom.owner, from),
-  );
-  return copy?.id ?? null;
+  return newestCopyOf(systems, systemId, from)?.id ?? null;
+};
+
+/** `name`, or "name 2", "name 3"… when the target already has a system by that name. */
+export const freeSystemName = (name: string, taken: readonly string[]): string => {
+  const used = new Set(taken.map((entry) => entry.trim().toLowerCase()));
+  if (!used.has(name.trim().toLowerCase())) return name;
+  const numbered = (n: number) => `${name.slice(0, 170).trimEnd()} ${n}`;
+  let n = 2;
+  while (used.has(numbered(n).toLowerCase())) n += 1;
+  return numbered(n);
 };
 
 const refPath = (resolved: ResolvedOwner, id: string, file: string) =>
@@ -483,11 +568,73 @@ const make = Effect.gen(function* () {
       ),
     );
 
+  /** Where a Playground design went: its record and the project root holding it, or null. */
+  const placedForward = (playground: string, designId: string) =>
+    Effect.gen(function* () {
+      const forward = yield* attemptRead(() => Move.readForward(playground, designId));
+      if (forward === null) return null;
+      const target = yield* resolveOwner(ownerCaller, forward.to);
+      const root = yield* rootOf(target, false);
+      if (root === null || !(yield* attemptRead(() => Move.designPlaced(root, designId))))
+        return null;
+      return { forward, target, root };
+    }).pipe(Effect.orElseSucceed(() => null));
+
+  /**
+   * The `not_found` for a Playground design that moved into a project, with
+   * `movedTo` when the caller may open it there. It counts as moved once its
+   * forward record names a project that holds it, even while the old folder
+   * is still being removed, so the two copies are never both editable.
+   */
+  const movedAway = (
+    caller: DesignCaller,
+    input: {
+      readonly owner: DesignOwnerInput;
+      readonly designId: string;
+      readonly environmentId?: EnvironmentId | undefined;
+    },
+  ) =>
+    Effect.gen(function* () {
+      if (input.owner.kind !== "playground") return undefined;
+      const here = yield* localEnvironment;
+      if (input.environmentId !== undefined && input.environmentId !== here) return undefined;
+      const playground = yield* attempt(() =>
+        Store.resolveDesignRoot(config.stateDir, PLAYGROUND_DESIGN_DIR, { create: false }),
+      );
+      if (playground === null) return undefined;
+      const moved = yield* placedForward(playground, input.designId);
+      if (moved === null) return undefined;
+      const { forward, target } = moved;
+      const allowed = yield* Effect.isSuccess(resolveOwner(caller, forward.to));
+      return allowed
+        ? new DesignError({
+            code: "not_found",
+            detail: `Moved to ${target.label}.`,
+            movedTo: { owner: forward.to, designId: input.designId },
+          })
+        : new DesignError({ code: "not_found", detail: "This design moved to a project." });
+    }).pipe(Effect.orElseSucceed(() => undefined));
+
   const address = Effect.fn("DesignService.address")(function* (
     caller: DesignCaller,
-    input: { readonly owner: DesignOwnerInput; readonly environmentId?: EnvironmentId | undefined },
+    input: {
+      readonly owner: DesignOwnerInput;
+      readonly environmentId?: EnvironmentId | undefined;
+      readonly designId?: string | undefined;
+    },
   ) {
-    const resolved = yield* resolveOwner(caller, input.owner, input.environmentId);
+    const scoped = yield* resolveOwner(caller, input.owner, input.environmentId).pipe(
+      Effect.result,
+    );
+    if (input.designId !== undefined) {
+      const moved = yield* movedAway(caller, { ...input, designId: input.designId });
+      // A caller outside the Playground's scope hears of a move only when it may open the target.
+      if (moved !== undefined && (scoped._tag === "Success" || moved.movedTo !== undefined)) {
+        return yield* moved;
+      }
+    }
+    if (scoped._tag === "Failure") return yield* scoped.failure;
+    const resolved = scoped.success;
     return { resolved, root: yield* existingRoot(resolved) };
   });
 
@@ -518,8 +665,10 @@ const make = Effect.gen(function* () {
   const get: DesignService["Service"]["get"] = (caller, input) =>
     Effect.gen(function* () {
       const { resolved, root } = yield* address(caller, input);
-      const document = yield* attempt(() => Store.readDesign(root, input.designId, input.revision));
-      return { ref: designRef(resolved, document.id), document };
+      const document = yield* attemptRead(() =>
+        Store.readDesign(root, input.designId, input.revision),
+      );
+      return { ref: designRef(resolved, document.id), document, audience: caller.audience };
     }).pipe(Effect.catch(missingHere(input)), Effect.withSpan("DesignService.get"));
 
   const listOwners = Effect.fn("DesignService.listOwners")(function* (
@@ -560,28 +709,45 @@ const make = Effect.gen(function* () {
   const list: DesignService["Service"]["list"] = (caller, input) =>
     Effect.gen(function* () {
       const designs: DesignSummary[] = [];
-      const problems: Array<{ ownerLabel: string; detail: string }> = [];
+      const problems: Array<DesignListProblem> = [];
       for (const owner of yield* listOwners(caller, input.filter)) {
         const resolved = yield* resolveOwner(caller, owner).pipe(Effect.option);
         if (Option.isNone(resolved)) continue;
-        const listed = yield* rootOf(resolved.value, false).pipe(
+        const located = yield* rootOf(resolved.value, false).pipe(
           Effect.flatMap((root) =>
             root === null
-              ? Effect.succeed({ documents: [], problems: [] })
-              : attempt(() => Store.listDesigns(root)),
+              ? Effect.succeed(null)
+              : attemptRead(() => Store.listDesigns(root)).pipe(
+                  Effect.map((listing) => ({ root, listing })),
+                ),
           ),
           Effect.result,
         );
-        if (listed._tag === "Failure") {
-          problems.push({ ownerLabel: resolved.value.label, detail: listed.failure.detail });
+        if (located._tag === "Failure") {
+          problems.push({ ...problemOwner(resolved.value), detail: located.failure.detail });
           continue;
         }
-        designs.push(
-          ...listed.success.documents.map((document) => summaryOf(resolved.value, document)),
-        );
+        // No folder yet: nothing to list.
+        if (located.success === null) continue;
+        const { root, listing } = located.success;
+        let documents: ReadonlyArray<DesignDocument> = listing.documents;
+        if (resolved.value.owner.kind === "playground") {
+          // A move that stopped after placing the design: hide the copy and finish removing it.
+          const kept: DesignDocument[] = [];
+          for (const document of documents) {
+            const moved = yield* placedForward(root, document.id);
+            if (moved === null) kept.push(document);
+            else
+              yield* attempt(() => Move.removeMovedSource(root, document.id, moved.root)).pipe(
+                Effect.ignore,
+              );
+          }
+          documents = kept;
+        }
+        designs.push(...documents.map((document) => summaryOf(resolved.value, document)));
         problems.push(
-          ...listed.success.problems.map((problem) => ({
-            ownerLabel: resolved.value.label,
+          ...listing.problems.map((problem) => ({
+            ...problemOwner(resolved.value),
             detail: `${problem.id}: ${problem.detail}`,
           })),
         );
@@ -615,6 +781,15 @@ const make = Effect.gen(function* () {
       if (systemId !== null) {
         yield* attempt(() => checkSystems(root, [{ op: "set_design_system", systemId }]));
       }
+      // Binding on creation is held to the set_thread rule, before anything is written.
+      if (input.thread !== undefined) {
+        const here = yield* localEnvironment;
+        yield* Effect.try({
+          try: () =>
+            assertThreadBinding(caller, {}, [{ op: "set_thread", thread: input.thread! }], here),
+          catch: toDesignError,
+        });
+      }
       const document = newDesignDocument({
         id: designId("d"),
         kind: input.kind,
@@ -626,7 +801,11 @@ const make = Effect.gen(function* () {
       const stored = yield* attempt(() =>
         Store.createDesign(
           root,
-          input.thread === undefined ? document : { ...document, thread: input.thread },
+          {
+            ...document,
+            ...(input.thread === undefined ? {} : { thread: input.thread }),
+            ...(input.reuse === undefined ? {} : { reuse: input.reuse }),
+          },
           caller.actor,
         ),
       );
@@ -667,7 +846,7 @@ const make = Effect.gen(function* () {
   const history: DesignService["Service"]["history"] = (caller, input) =>
     Effect.gen(function* () {
       const { root } = yield* address(caller, input);
-      return { entries: yield* attempt(() => Store.designHistory(root, input.designId)) };
+      return { entries: yield* attemptRead(() => Store.designHistory(root, input.designId)) };
     }).pipe(Effect.withSpan("DesignService.history"));
 
   const saveVersion: DesignService["Service"]["saveVersion"] = (caller, input) =>
@@ -680,7 +859,7 @@ const make = Effect.gen(function* () {
           check: (current) => assertDesignAccess(caller, current, "edit"),
         }),
       );
-      return { entries: yield* attempt(() => Store.designHistory(root, input.designId)) };
+      return { entries: yield* attemptRead(() => Store.designHistory(root, input.designId)) };
     }).pipe(Effect.withSpan("DesignService.saveVersion"));
 
   const restore: DesignService["Service"]["restore"] = (caller, input) =>
@@ -716,7 +895,7 @@ const make = Effect.gen(function* () {
         );
       }
       const source = yield* address(caller, input);
-      const original = yield* attempt(() => Store.readDesign(source.root, input.designId));
+      const original = yield* attemptRead(() => Store.readDesign(source.root, input.designId));
       yield* attempt(async () => assertDesignAccess(caller, original, "edit"));
       const target = yield* resolveOwner(caller, input.to);
       const targetRoot = yield* rootOf(target, true);
@@ -757,12 +936,87 @@ const make = Effect.gen(function* () {
       return { ref: designRef(target, stored.id), document: stored };
     }).pipe(Effect.withSpan("DesignService.copy"));
 
+  // The source is read without the forward check, so a retry finishes a move that stopped part way.
+  const move: DesignService["Service"]["move"] = (caller, input) =>
+    Effect.gen(function* () {
+      if (caller.audience !== "owner") {
+        return yield* forbidden(
+          "Only the owner on this machine can move a design into a project. Ask the user to do it.",
+        );
+      }
+      if (input.owner.kind !== "playground" || input.to.kind !== "project") {
+        return yield* new DesignError({
+          code: "invalid",
+          detail: "Only a Playground design moves, and only into a project.",
+        });
+      }
+      if (yield* folders.isScratch(input.to.projectId)) {
+        return yield* new DesignError({
+          code: "invalid",
+          detail: "The Scratch project keeps its designs in the Playground. Pick another project.",
+        });
+      }
+      const source = yield* resolveOwner(caller, input.owner);
+      const playgroundRoot = yield* existingRoot(source);
+      const target = yield* resolveOwner(caller, input.to);
+      const targetRoot = yield* rootOf(target, true);
+      if (targetRoot === null)
+        return yield* new DesignError({ code: "operation_failed", detail: "" });
+      const now = DateTime.formatIso(yield* DateTime.now);
+      // A record naming another project: that project is looked up here, and checked under the lock.
+      const earlier = yield* attemptRead(() => Move.readForward(playgroundRoot, input.designId));
+      const to = input.to;
+      const elsewhere =
+        earlier === null || (earlier.to.kind === "project" && earlier.to.projectId === to.projectId)
+          ? null
+          : yield* resolveOwner(ownerCaller, earlier.to).pipe(
+              Effect.flatMap((other) =>
+                rootOf(other, false).pipe(
+                  Effect.map((root) => ({ to: earlier.to, root, label: other.label })),
+                ),
+              ),
+              // A project no longer on this machine holds nothing; any other failure might.
+              Effect.catch((error) =>
+                Effect.succeed({
+                  to: earlier.to,
+                  root: null,
+                  label: "another project",
+                  gone: error.code === "not_found",
+                }),
+              ),
+            );
+      const document = yield* attempt(() =>
+        Move.moveDesign({
+          playgroundRoot,
+          designId: input.designId,
+          targetRoot,
+          to: input.to,
+          elsewhere,
+          expectedRevision: input.expectedRevision,
+          actor: caller.actor,
+          movedAt: now,
+          // The system it names comes along under the same id, so its tokens keep resolving.
+          prepare: async (current) => {
+            if (current.designSystem === null) return;
+            await Move.copySystemForMove({
+              from: { root: playgroundRoot, owner: source.owner },
+              targetRoot,
+              systemId: current.designSystem,
+              actor: caller.actor,
+              now,
+            });
+          },
+        }),
+      );
+      return { ref: designRef(target, document.id), document, audience: caller.audience };
+    }).pipe(Effect.withSpan("DesignService.move"));
+
   // Reading the design first applies the same owner and scope checks as design.get.
   const assetFile: DesignService["Service"]["assetFile"] = (caller, input) =>
     Effect.gen(function* () {
       const { root } = yield* address(caller, input);
-      yield* attempt(() => Store.readDesign(root, input.designId));
-      return yield* attempt(() => Store.designAssetFile(root, input.designId, input.asset));
+      yield* attemptRead(() => Store.readDesign(root, input.designId));
+      return yield* attemptRead(() => Store.designAssetFile(root, input.designId, input.asset));
     }).pipe(Effect.withSpan("DesignService.assetFile"));
 
   const putAsset: DesignService["Service"]["putAsset"] = (caller, input) =>
@@ -783,11 +1037,11 @@ const make = Effect.gen(function* () {
   const exportOne: DesignService["Service"]["export"] = (caller, input) =>
     Effect.gen(function* () {
       const { root } = yield* address(caller, input);
-      const document = yield* attempt(() => Store.readDesign(root, input.designId));
+      const document = yield* attemptRead(() => Store.readDesign(root, input.designId));
       const system =
         document.designSystem === null
           ? null
-          : yield* attempt(() => Store.readDesignSystem(root, document.designSystem!)).pipe(
+          : yield* attemptRead(() => Store.readDesignSystem(root, document.designSystem!)).pipe(
               Effect.orElseSucceed(() => null),
             );
       return yield* exportDesign({
@@ -804,7 +1058,7 @@ const make = Effect.gen(function* () {
       Effect.gen(function* () {
         const { resolved, root } = yield* address(caller, input);
         const folder = Store.designFolder(root, input.designId);
-        const first = yield* attempt(() => Store.readDesign(root, input.designId));
+        const first = yield* attemptRead(() => Store.readDesign(root, input.designId));
         return Stream.callback<DesignGetResult, DesignError>((queue) =>
           Effect.acquireRelease(
             Effect.sync(() => {
@@ -869,6 +1123,15 @@ const make = Effect.gen(function* () {
           ),
         );
       }).pipe(Effect.catch(missingHere(input))),
+    ).pipe(
+      // A design that moved while watched ends with where it went.
+      Stream.catch((error) =>
+        error.code !== "not_found" || error.movedTo !== undefined
+          ? Stream.fail(error)
+          : Stream.unwrap(
+              Effect.map(movedAway(caller, input), (moved) => Stream.fail(moved ?? error)),
+            ),
+      ),
     );
 
   const systemRef = (resolved: ResolvedOwner, id: string) => ({
@@ -880,7 +1143,7 @@ const make = Effect.gen(function* () {
   const systemList: DesignService["Service"]["systemList"] = (caller, input) =>
     Effect.gen(function* () {
       const systems: DesignSystemListResult["systems"][number][] = [];
-      const problems: Array<{ ownerLabel: string; detail: string }> = [];
+      const problems: Array<DesignListProblem> = [];
       for (const owner of yield* listOwners(caller, input.filter)) {
         const resolved = yield* resolveOwner(caller, owner).pipe(Effect.option);
         if (Option.isNone(resolved)) continue;
@@ -888,12 +1151,12 @@ const make = Effect.gen(function* () {
           Effect.flatMap((root) =>
             root === null
               ? Effect.succeed({ systems: [] as DesignSystem[], problems: [] })
-              : attempt(() => Store.listDesignSystems(root)),
+              : attemptRead(() => Store.listDesignSystems(root)),
           ),
           Effect.result,
         );
         if (listed._tag === "Failure") {
-          problems.push({ ownerLabel: resolved.value.label, detail: listed.failure.detail });
+          problems.push({ ...problemOwner(resolved.value), detail: listed.failure.detail });
           continue;
         }
         for (const system of listed.success.systems) {
@@ -906,11 +1169,12 @@ const make = Effect.gen(function* () {
             componentCount: system.components.length,
             sources: system.sources,
             ownerLabel: resolved.value.label,
+            ...(system.copiedFrom !== null ? { copiedFrom: system.copiedFrom } : {}),
           });
         }
         problems.push(
           ...listed.success.problems.map((problem) => ({
-            ownerLabel: resolved.value.label,
+            ...problemOwner(resolved.value),
             detail: `${problem.id}: ${problem.detail}`,
           })),
         );
@@ -921,7 +1185,7 @@ const make = Effect.gen(function* () {
   const systemGet: DesignService["Service"]["systemGet"] = (caller, input) =>
     Effect.gen(function* () {
       const { resolved, root } = yield* address(caller, input);
-      const system = yield* attempt(() => Store.readDesignSystem(root, input.systemId));
+      const system = yield* attemptRead(() => Store.readDesignSystem(root, input.systemId));
       return { ref: systemRef(resolved, system.id), system };
     }).pipe(Effect.withSpan("DesignService.systemGet"));
 
@@ -931,17 +1195,35 @@ const make = Effect.gen(function* () {
         return yield* forbidden("Agents cannot copy design systems between owners.");
       }
       const source = yield* address(caller, input);
-      const original = yield* attempt(() => Store.readDesignSystem(source.root, input.systemId));
+      const original = yield* attemptRead(() =>
+        Store.readDesignSystem(source.root, input.systemId),
+      );
       const target = yield* resolveOwner(caller, input.to);
       const targetRoot = yield* rootOf(target, true);
       if (targetRoot === null)
         return yield* new DesignError({ code: "operation_failed", detail: "" });
       const now = DateTime.formatIso(yield* DateTime.now);
-      const stored = yield* attempt(() =>
-        Store.writeDesignSystem(
+      const stored = yield* attempt(async () => {
+        // A target that already holds a copy of this system gets its newest copy back, not
+        // another; a fresh copy is made only when that one predates the source's revision.
+        // A copy into the system's own owner is a duplicate, always a new system.
+        const { systems: present } = await Store.listDesignSystems(targetRoot);
+        const existing = sameDesignOwner(target.owner, source.resolved.owner)
+          ? undefined
+          : newestCopyOf(present, original.id, source.resolved.owner);
+        if (
+          existing !== undefined &&
+          (input.fresh !== true || existing.copiedFrom!.revision >= original.revision)
+        )
+          return existing;
+        const created = await Store.writeDesignSystem(
           targetRoot,
           {
             ...original,
+            name: freeSystemName(
+              original.name,
+              present.map((system) => system.name),
+            ),
             id: designId("s"),
             revision: 0,
             createdAt: now,
@@ -954,8 +1236,17 @@ const make = Effect.gen(function* () {
             },
           },
           { expectedRevision: null, actor: caller.actor, now },
-        ),
-      );
+        );
+        // Its stored files (README, fonts, asset sets) go with it, or the copy is undone.
+        await SystemFiles.copySystemFiles(
+          { root: source.root, systemId: original.id },
+          { root: targetRoot, systemId: created.id },
+        ).catch(async (error: unknown) => {
+          await Store.deleteDesignSystem(targetRoot, created.id).catch(() => undefined);
+          throw error;
+        });
+        return created;
+      });
       return { ref: systemRef(target, stored.id), system: stored };
     }).pipe(Effect.withSpan("DesignService.systemCopy"));
 
@@ -969,7 +1260,7 @@ const make = Effect.gen(function* () {
         return yield* new DesignError({ code: "invalid", detail: "A design system needs a name." });
       }
       const { resolved, root } = yield* address(caller, input);
-      const current = yield* attempt(() => Store.readDesignSystem(root, input.systemId));
+      const current = yield* attemptRead(() => Store.readDesignSystem(root, input.systemId));
       if (current.revision !== input.expectedRevision) {
         return yield* new DesignError({
           code: "conflict",
@@ -1007,7 +1298,7 @@ const make = Effect.gen(function* () {
       const resolved = yield* resolveOwner(caller, input.owner);
       const root = yield* rootOf(resolved, false);
       if (root === null) return { designs: 0 };
-      const { documents } = yield* attempt(() => Store.listDesigns(root));
+      const { documents } = yield* attemptRead(() => Store.listDesigns(root));
       return {
         designs: documents.filter((document) => document.designSystem === input.systemId).length,
       };
@@ -1016,7 +1307,9 @@ const make = Effect.gen(function* () {
   const findOwnerRoot: DesignService["Service"]["findOwnerRoot"] = (caller, owner) =>
     Effect.gen(function* () {
       const resolved = yield* resolveOwner(caller, owner);
-      const found = yield* attempt(() => Store.locateDesignRoot(resolved.base, resolved.relative));
+      const found = yield* attemptRead(() =>
+        Store.locateDesignRoot(resolved.base, resolved.relative),
+      );
       return { owner: resolved.owner, ...found };
     }).pipe(Effect.withSpan("DesignService.findOwnerRoot"));
 
@@ -1037,6 +1330,7 @@ const make = Effect.gen(function* () {
     saveVersion,
     restore,
     copy,
+    move,
     remove,
     putAsset,
     assetFile,

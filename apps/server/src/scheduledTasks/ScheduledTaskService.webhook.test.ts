@@ -14,6 +14,7 @@ import * as Metric from "effect/Metric";
 import * as Queue from "effect/Queue";
 import * as EffectScheduler from "effect/Scheduler";
 import * as Schema from "effect/Schema";
+import * as SqlClient from "effect/sql/SqlClient";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as ThreadLaunchService from "../orchestration-v2/ThreadLaunchService.ts";
@@ -62,8 +63,10 @@ const requestFor = (
 });
 
 /**
- * Runs `body` against a service whose launches are pushed to `launches`;
- * `gate`, when given, holds each launch until the test releases it.
+ * Runs `body` against a service whose dispatches are pushed to `launches`:
+ * the hook's first run launches its own thread, and later runs are sent into
+ * that thread, recorded in the same shape. `gate`, when given, holds each
+ * dispatch until the test releases it.
  */
 const withService = <A, E>(
   body: (input: {
@@ -75,6 +78,7 @@ const withService = <A, E>(
   options: { readonly gate?: Deferred.Deferred<void>; readonly relayHookBaseUrl?: string } = {},
 ) =>
   Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
     const launches = yield* Queue.unbounded<LaunchInput>();
     const secretsByRef = new Map<string, string>();
     const layerDependencies = Layer.mergeAll(
@@ -85,10 +89,25 @@ const withService = <A, E>(
         launch: (input) =>
           Queue.offer(launches, input).pipe(
             Effect.andThen(options.gate ? Deferred.await(options.gate) : Effect.void),
+            Effect.andThen(
+              sql`INSERT OR IGNORE INTO orchestration_v2_projection_threads ${sql.insert({ thread_id: "thread-1", project_id: input.projectId, title: input.title ?? "", default_provider: "codex", runtime_mode: "full-access", interaction_mode: "default", created_at: "2026-10-01T00:00:00Z", updated_at: "2026-10-01T00:00:00Z", deleted_at: null, payload_json: "{}" })}`.pipe(
+                Effect.orDie,
+              ),
+            ),
             Effect.as({ threadId: "thread-1", resumed: false } as never),
           ),
       }),
-      Layer.mock(ThreadManagementService.ThreadManagementService)({}),
+      Layer.mock(ThreadManagementService.ThreadManagementService)({
+        sendToThread: (input) =>
+          Queue.offer(launches, {
+            commandId: input.commandId,
+            projectId: input.projectId,
+            initialMessage: { messageId: input.messageId, text: input.text },
+          } as unknown as LaunchInput).pipe(
+            Effect.andThen(options.gate ? Deferred.await(options.gate) : Effect.void),
+            Effect.as({} as never),
+          ),
+      }),
       Layer.mock(SecretRequests.SecretRequests)({
         consume: ({ ref }) => {
           const value = secretsByRef.get(ref);
@@ -126,9 +145,15 @@ it.effect("dispatches exactly the rendered prompt and logs the delivery", () =>
         launched.initialMessage?.text,
         "Review this PR: https://github.com/org/repo/pull/45",
       );
+      // The hook's first run starts its own thread, carrying this delivery's message.
       assert.equal(
         launched.commandId,
-        `scheduled-task:${task.id}:webhook:${result._tag === "accepted" ? result.deliveryId : ""}`,
+        `scheduled-task:${task.id}:own-thread:${task.createdAt}:first`,
+      );
+      assert.equal(launched.title, "Review PRs");
+      assert.equal(
+        launched.initialMessage?.messageId,
+        `scheduled-task-message:${task.id}:webhook:${result._tag === "accepted" ? result.deliveryId : ""}`,
       );
 
       const { deliveries } = yield* service.listWebhookDeliveries({ id: task.id });
@@ -590,7 +615,7 @@ it.effect("a held request whose sender hung up mid-request still runs", () =>
         // Logged and run exactly once, whether or not the first attempt got through.
         yield* service.getWebhookDelivery({ id: task.id, deliveryId: deliveryId! });
         const launch = yield* Queue.take(launches);
-        assert.include(launch.commandId, `hung-up-${step}`);
+        assert.include(launch.initialMessage?.messageId ?? "", `hung-up-${step}`);
         // Keep each step in a fresh rate-limit window.
         yield* TestClock.adjust("61 seconds");
       }

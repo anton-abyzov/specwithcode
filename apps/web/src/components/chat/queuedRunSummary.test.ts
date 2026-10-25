@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { queuedAgeLabel, queuedRunOneLine } from "./queuedRunSummary";
+import {
+  queuedAgeLabel,
+  queuedRunActionsUnavailableReason,
+  queuedRunOneLine,
+} from "./queuedRunSummary";
 
 describe("queuedRunOneLine", () => {
   it("prefers the notification's own summary", () => {
@@ -35,5 +39,42 @@ describe("queuedAgeLabel", () => {
   });
   it("is null without a time", () => {
     expect(queuedAgeLabel(null, now)).toBeNull();
+  });
+});
+
+describe("queuedRunActionsUnavailableReason", () => {
+  it("is null when the viewer can operate a connected thread", () => {
+    expect(
+      queuedRunActionsUnavailableReason({
+        canOperateThread: true,
+        environmentUnavailable: false,
+        environmentLabel: "M4",
+      }),
+    ).toBeNull();
+  });
+  it("names a connection that cannot change threads first", () => {
+    expect(
+      queuedRunActionsUnavailableReason({
+        canOperateThread: false,
+        environmentUnavailable: true,
+        environmentLabel: "M4",
+      }),
+    ).toBe("This connection cannot change threads.");
+  });
+  it("names the disconnected machine, or a generic one without a label", () => {
+    expect(
+      queuedRunActionsUnavailableReason({
+        canOperateThread: true,
+        environmentUnavailable: true,
+        environmentLabel: "M4",
+      }),
+    ).toBe("M4 is not connected.");
+    expect(
+      queuedRunActionsUnavailableReason({
+        canOperateThread: true,
+        environmentUnavailable: true,
+        environmentLabel: null,
+      }),
+    ).toBe("This machine is not connected.");
   });
 });

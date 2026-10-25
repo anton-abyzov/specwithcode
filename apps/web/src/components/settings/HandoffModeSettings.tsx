@@ -1,4 +1,3 @@
-import { isPersonalAssistantProject } from "@specweave-studio/shared/personalAssistant";
 import type {
   EnvironmentId,
   HandoffConfig,
@@ -8,7 +7,7 @@ import type {
 } from "@specweave-studio/contracts";
 import { useState } from "react";
 
-import { useProjects } from "../../state/entities";
+import { useProjects, useServerConfigs } from "../../state/entities";
 import { handoffMode, runHandoffMode, useHandoffModeSnapshot } from "../../studio/handoffMode";
 import { requestHandOffMachine } from "../handoff/HandOffMachineDialog";
 import type { HandoffDestination } from "../handoff/HandoffResults";
@@ -16,6 +15,8 @@ import { useHandoffDestinations } from "../handoff/useHandoffDestinations";
 import { Button } from "../ui/button";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
+import { ArchivedDisclosure } from "./ArchivedDisclosure";
+import { partitionHandoffModeProjects } from "./handoffModeSettings.logic";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 
@@ -27,10 +28,17 @@ const NOTE_LABELS: Record<HandoffConfig["noteModel"], string> = {
 const TAKEOVER_MINUTES = [0, 5, 15, 30, 60] as const;
 const takeoverLabel = (minutes: number) => (minutes === 0 ? "Off" : `After ${minutes} min`);
 
+interface HandoffModeProjectRow {
+  readonly id: ProjectId;
+  readonly title: string;
+}
+
 export interface HandoffModeSettingsViewProps {
   snapshot: HandoffModeSnapshot;
   destinations: readonly HandoffDestination[];
-  projects: ReadonlyArray<{ readonly id: ProjectId; readonly title: string }>;
+  projects: ReadonlyArray<HandoffModeProjectRow>;
+  /** Folded under "Show archived", for the rare change to an archived project. */
+  archivedProjects?: ReadonlyArray<HandoffModeProjectRow>;
   pending: boolean;
   error: string | null;
   onConfig: (patch: HandoffConfigPatch) => void;
@@ -42,6 +50,31 @@ export interface HandoffModeSettingsViewProps {
 export function HandoffModeSettingsView(props: HandoffModeSettingsViewProps) {
   const { config } = props.snapshot;
   const sleepTarget = props.destinations.find((item) => item.environmentId === config.sleepTarget);
+  const archivedProjects = props.archivedProjects ?? [];
+  const projectRow = (project: HandoffModeProjectRow) => {
+    const mode = props.snapshot.projectModes[project.id] ?? null;
+    return (
+      <li key={project.id} className="flex items-center justify-between gap-3 text-sm">
+        <span className="min-w-0 truncate">{project.title}</span>
+        <Select
+          value={mode ?? "default"}
+          disabled={props.pending}
+          onValueChange={(value) =>
+            props.onProjectMode(project.id, value === "on" || value === "off" ? value : null)
+          }
+        >
+          <SelectTrigger size="sm" aria-label={`Handoff mode for ${project.title}`}>
+            <SelectValue>{mode === null ? "Default" : mode === "on" ? "On" : "Off"}</SelectValue>
+          </SelectTrigger>
+          <SelectPopup align="end" alignItemWithTrigger={false}>
+            <SelectItem value="default">Default</SelectItem>
+            <SelectItem value="on">On</SelectItem>
+            <SelectItem value="off">Off</SelectItem>
+          </SelectPopup>
+        </Select>
+      </li>
+    );
+  };
   return (
     <SettingsSection
       {...searchableSetting("handoff-mode")}
@@ -72,42 +105,15 @@ export function HandoffModeSettingsView(props: HandoffModeSettingsViewProps) {
           </Select>
         }
       />
-      {props.projects.length > 0 ? (
+      {props.projects.length + archivedProjects.length > 0 ? (
         <SettingsRow
           title="Projects"
           description="A project setting wins over the default; a thread's own setting wins over both."
         >
-          <ul className="mt-2 flex flex-col gap-1.5">
-            {props.projects.map((project) => {
-              const mode = props.snapshot.projectModes[project.id] ?? null;
-              return (
-                <li key={project.id} className="flex items-center justify-between gap-3 text-sm">
-                  <span className="min-w-0 truncate">{project.title}</span>
-                  <Select
-                    value={mode ?? "default"}
-                    disabled={props.pending}
-                    onValueChange={(value) =>
-                      props.onProjectMode(
-                        project.id,
-                        value === "on" || value === "off" ? value : null,
-                      )
-                    }
-                  >
-                    <SelectTrigger size="sm" aria-label={`Handoff mode for ${project.title}`}>
-                      <SelectValue>
-                        {mode === null ? "Default" : mode === "on" ? "On" : "Off"}
-                      </SelectValue>
-                    </SelectTrigger>
-                    <SelectPopup align="end" alignItemWithTrigger={false}>
-                      <SelectItem value="default">Default</SelectItem>
-                      <SelectItem value="on">On</SelectItem>
-                      <SelectItem value="off">Off</SelectItem>
-                    </SelectPopup>
-                  </Select>
-                </li>
-              );
-            })}
-          </ul>
+          <ul className="mt-2 flex flex-col gap-1.5">{props.projects.map(projectRow)}</ul>
+          <ArchivedDisclosure count={archivedProjects.length} className="mt-1">
+            <ul className="flex flex-col gap-1.5">{archivedProjects.map(projectRow)}</ul>
+          </ArchivedDisclosure>
         </SettingsRow>
       ) : null}
       <SettingsRow
@@ -209,10 +215,13 @@ export function HandoffModeSettingsView(props: HandoffModeSettingsViewProps) {
 export function HandoffModeSettings({ environmentId }: { environmentId: EnvironmentId }) {
   const { snapshot } = useHandoffModeSnapshot(environmentId);
   const destinations = useHandoffDestinations(environmentId, false);
-  // A personal assistant stays on its machine, so it has no handoff mode to set.
-  const projects = useProjects().filter(
-    (project) => project.environmentId === environmentId && !isPersonalAssistantProject(project),
+  const scratchRoot = useServerConfigs().get(environmentId)?.scratchWorkspaceRoot ?? null;
+  const { active, archived } = partitionHandoffModeProjects(
+    useProjects(),
+    environmentId,
+    () => scratchRoot,
   );
+  const row = (project: (typeof active)[number]) => ({ id: project.id, title: project.title });
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // A server without handoff mode shows nothing rather than a broken section.
@@ -227,7 +236,8 @@ export function HandoffModeSettings({ environmentId }: { environmentId: Environm
     <HandoffModeSettingsView
       snapshot={snapshot}
       destinations={destinations}
-      projects={projects.map((project) => ({ id: project.id, title: project.title }))}
+      projects={active.map(row)}
+      archivedProjects={archived.map(row)}
       pending={pending}
       error={error}
       onConfig={(patch) =>

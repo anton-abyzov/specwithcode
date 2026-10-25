@@ -56,8 +56,8 @@ import {
 } from "../../state/environments";
 import { EMPTY_SERVER_PROVIDERS, serverEnvironment } from "../../state/server";
 import { useEnvironmentSessionState } from "../../state/session";
-import { useProjects } from "../../state/entities";
-import { isArchivedMember } from "../../studio/projectListVisibility";
+import { useProjects, useServerConfigs } from "../../state/entities";
+import { projectPickerMembers } from "../../studio/projectListVisibility";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { getRelativeTimeState } from "../../timestampFormat";
 import {
@@ -646,9 +646,12 @@ export function EnvironmentProviderSettings({
   const updateClientSettings = useUpdateClientSettings();
   const serverProviders =
     useAtomValue(serverEnvironment.providersValueAtom(environmentId)) ?? EMPTY_SERVER_PROVIDERS;
-  // An archived project takes no new work, so its sessions are not offered to resume.
-  const projects = useProjects().filter(
-    (project) => project.environmentId === environmentId && !isArchivedMember(project),
+  // Only the person's own projects: an archived one takes no new work, and neither a check's
+  // project nor the "No project" folder has sessions worth resuming.
+  const scratchRoot = useServerConfigs().get(environmentId)?.scratchWorkspaceRoot ?? null;
+  const projects = projectPickerMembers(
+    useProjects().filter((project) => project.environmentId === environmentId),
+    () => scratchRoot,
   );
   const refreshServerProviders = useAtomCommand(serverEnvironment.refreshProviders, {
     reportFailure: false,

@@ -2,13 +2,15 @@ import type {
   DesignDocument,
   DesignSystemId,
   EnvironmentId,
+  RunId,
   ThreadId,
 } from "@specweave-studio/contracts";
 import { newDesignDocument } from "@specweave-studio/shared/designOps";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vite-plus/test";
 import { DesignSystemPickerView } from "../systems/DesignSystemPicker";
-import { BoundThreadPane } from "./BoundThreadPane";
+import { NO_PROVIDER_THREAD_NOTICE, WAITING_FOR_PROVIDER_NOTICE } from "../projectThread";
+import { BoundThreadPane, threadHasStarted, threadNotice } from "./BoundThreadPane";
 import { CommentsPanel, commentDraftAnchor, type CommentDraft } from "./CommentsPanel";
 import { MiniToolbar } from "./MiniToolbar";
 
@@ -48,6 +50,7 @@ describe("comment drafts", () => {
         draft={{ ...draftOnGone, pageId: doc().pages[0]!.id }}
         activeId={null}
         canComment
+        canReply
         onCommit={noop}
         onCancelDraft={noop}
         onOpen={noop}
@@ -108,6 +111,84 @@ describe("access gating", () => {
     expect(pane(false, "none")).not.toContain(">Start a thread<");
     expect(pane(false, "other")).not.toContain("Start a thread here");
     expect(pane(false, "other")).toContain("Open there");
+  });
+});
+
+describe("bound thread notice", () => {
+  const here = { environmentId: env, threadId: "t" as ThreadId };
+
+  it("says why a thread on this machine cannot run without a ready provider", () => {
+    const notice = (started: boolean | undefined, providerReady?: boolean) =>
+      threadNotice({
+        binding: here,
+        selfBinding: null,
+        ...(providerReady === undefined ? {} : { providerReady }),
+        started,
+      });
+    // Only a thread with no messages or runs has its first message waiting in the composer.
+    expect(notice(false, false)).toBe(WAITING_FOR_PROVIDER_NOTICE);
+    expect(notice(true, false)).toBe(NO_PROVIDER_THREAD_NOTICE);
+    expect(notice(undefined, false)).toBe(NO_PROVIDER_THREAD_NOTICE);
+    expect(NO_PROVIDER_THREAD_NOTICE).not.toContain("no turn has started");
+    expect(notice(false, true)).toBeNull();
+    expect(notice(true)).toBeNull();
+  });
+
+  it("knows a thread has started from its shell's messages or runs", () => {
+    const shell = { latestRun: null, latestUserMessageAt: null, itemCount: 0 };
+    expect(threadHasStarted(shell)).toBe(false);
+    expect(threadHasStarted({ ...shell, itemCount: 3 })).toBe(true);
+    expect(threadHasStarted({ ...shell, latestUserMessageAt: "2026-10-24T10:00:00.000Z" })).toBe(
+      true,
+    );
+    expect(
+      threadHasStarted({
+        ...shell,
+        latestRun: {
+          runId: "r_1" as RunId,
+          status: "failed",
+          requestedAt: null,
+          startedAt: null,
+          completedAt: null,
+          assistantMessageId: null,
+        },
+      }),
+    ).toBe(true);
+    expect(threadHasStarted(undefined)).toBeUndefined();
+  });
+
+  it("says the agent attaches a thread this window could not bind", () => {
+    const notice = threadNotice({
+      binding: null,
+      selfBinding: { reason: "Members may not bind threads" },
+      providerReady: false,
+    });
+    expect(notice).toContain("could not attach it to the design. Members may not bind threads.");
+    expect(threadNotice({ binding: null, selfBinding: null, providerReady: false })).toBeNull();
+  });
+
+  it("shows the notice above the thread", () => {
+    const html = renderToStaticMarkup(
+      <BoundThreadPane
+        binding={here}
+        environmentId={env}
+        machine={() => null}
+        renderChat={() => <div data-testid="chat" />}
+        onStartThread={async () => undefined}
+        onOpenThere={noop}
+        canStart
+        notice={threadNotice({
+          binding: here,
+          selfBinding: null,
+          providerReady: false,
+          started: false,
+        })}
+      />,
+    );
+    expect(html).toContain('data-testid="bound-thread-notice"');
+    expect(html).toContain("No provider is ready on this machine");
+    expect(html).toContain("Settings &gt; Providers, then press Send.");
+    expect(html).toContain('data-testid="chat"');
   });
 });
 

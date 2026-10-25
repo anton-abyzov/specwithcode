@@ -69,6 +69,37 @@ export function isoDateTime(value: unknown): Date | null {
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
+/** Past these a value keeps the browser's own wrapping: each break is a DOM node. */
+const MAX_BREAKABLE_CHARS = 4096;
+const MAX_PATH_BREAKS = 512;
+
+// After a run of slashes that does not open a word, unless a space, another slash or a
+// character that joins the one before it (a mark, joiner or skin tone) follows. After
+// `-`, `_`, `.` or `:` only between letters and digits with a letter on one side, so
+// `0.75`, `2026-10-24`, `08:11:52` and `192.168.0.1` stay whole.
+const PATH_BREAK =
+  /(?<=[^\s/\\])[/\\]+(?=[^\s/\\\p{M}\p{Grapheme_Extend}\p{Emoji_Modifier}\u200d])|(?<=\p{L})[-_.:](?=[\p{L}\p{N}])|(?<=\p{N})[-_.:](?=\p{L})/gu;
+
+/**
+ * Where a long path, URL or ID may wrap, so a line never ends inside a name:
+ * `/Users/example/.specweave/1049-files` → `/Users/`, `example/`, `.specweave/`, `1049-`,
+ * `files`. `/.specweave` keeps its dot, and `https://` and `C:\` keep their colons. The
+ * segments always join back to the text exactly.
+ */
+export function pathBreakSegments(text: string): ReadonlyArray<string> {
+  if (text.length > MAX_BREAKABLE_CHARS) return [text];
+  const segments: string[] = [];
+  let start = 0;
+  for (const match of text.matchAll(PATH_BREAK)) {
+    const end = match.index + match[0].length;
+    segments.push(text.slice(start, end));
+    start = end;
+    if (segments.length > MAX_PATH_BREAKS) return [text];
+  }
+  segments.push(text.slice(start));
+  return segments;
+}
+
 /** 1534 → "25m 34s"; for numbers whose key says they are seconds. */
 export function formatSeconds(seconds: number): string {
   if (!Number.isFinite(seconds) || seconds < 0) return String(seconds);

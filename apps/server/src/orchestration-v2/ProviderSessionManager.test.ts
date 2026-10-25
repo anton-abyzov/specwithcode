@@ -338,6 +338,7 @@ function makeProviderAdapter(
       readonly initialProviderItemIdentityVersion?: 2;
     }) => Effect.Effect<void>;
     readonly hasPendingBackgroundWork?: Effect.Effect<boolean>;
+    readonly restartRequired?: Effect.Effect<string | null>;
     readonly hangSessionScopeClose?: boolean;
     readonly startTurn?: Effect.Effect<void>;
     readonly onStartInvocation?: () => void;
@@ -427,6 +428,9 @@ function makeProviderAdapter(
           ...(options.hasPendingBackgroundWork === undefined
             ? {}
             : { hasPendingBackgroundWork: options.hasPendingBackgroundWork }),
+          ...(options.restartRequired === undefined
+            ? {}
+            : { restartRequired: options.restartRequired }),
           ensureThread: () => unimplemented("ensureThread unused in test"),
           resumeThread: (threadInput) =>
             Ref.update(state, (current) => ({
@@ -502,6 +506,7 @@ function layerTest(input: {
     readonly paused: Deferred.Deferred<void>;
   };
   readonly hasPendingBackgroundWork?: Effect.Effect<boolean>;
+  readonly restartRequired?: Effect.Effect<string | null>;
   readonly hangSessionScopeClose?: boolean;
   readonly startTurn?: Effect.Effect<void>;
   readonly onStartInvocation?: () => void;
@@ -536,6 +541,7 @@ function layerTest(input: {
       ...(input.hasPendingBackgroundWork === undefined
         ? {}
         : { hasPendingBackgroundWork: input.hasPendingBackgroundWork }),
+      ...(input.restartRequired === undefined ? {} : { restartRequired: input.restartRequired }),
       ...(input.hangSessionScopeClose === undefined
         ? {}
         : { hangSessionScopeClose: input.hangSessionScopeClose }),
@@ -5335,6 +5341,142 @@ it.effect(
             state,
             idleTimeoutMs: 1000,
             capabilities: SessionModeCapabilities,
+            startTurn: Deferred.succeed(startTurnReached, undefined).pipe(
+              Effect.andThen(Effect.never),
+            ),
+          }),
+        ),
+      );
+    }),
+);
+
+const SIGN_IN_CHANGED = "Codex was signed in to another account outside SpecWithCode.";
+
+it.effect(
+  "ProviderSessionManagerV2 replaces a process that needs a restart once its background work ends",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const restartReason = yield* Ref.make<string | null>(null);
+      const backgroundWork = yield* Ref.make(false);
+      yield* Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make("restart-required-idle");
+        const providerSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+        yield* eventSink.write({
+          events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+        });
+        const open = manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
+        yield* open;
+        yield* open;
+        assert.equal((yield* Ref.get(state)).openCount, 1);
+
+        yield* Ref.set(restartReason, SIGN_IN_CHANGED);
+        yield* Ref.set(backgroundWork, true);
+        const refused = yield* Effect.exit(open);
+        assert.equal(refused._tag, "Failure");
+        assert.include(String(Exit.isFailure(refused) ? refused.cause : ""), SIGN_IN_CHANGED);
+        assert.equal((yield* Ref.get(state)).closeCount, 0);
+        assert.isTrue(Option.isSome(yield* manager.get(providerSessionId)));
+
+        yield* Ref.set(backgroundWork, false);
+        yield* open;
+        assert.equal((yield* Ref.get(state)).closeCount, 1);
+        assert.equal((yield* Ref.get(state)).openCount, 2);
+
+        // The fresh process reads the new sign-in and is kept.
+        yield* Ref.set(restartReason, null);
+        yield* open;
+        assert.equal((yield* Ref.get(state)).openCount, 2);
+      }).pipe(
+        Effect.provide(
+          layerTest({
+            state,
+            idleTimeoutMs: 60_000,
+            restartRequired: Ref.get(restartReason),
+            hasPendingBackgroundWork: Ref.get(backgroundWork),
+          }),
+        ),
+      );
+    }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 starts no turn on a process that needs a restart while another turn runs",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const startTurnReached = yield* Deferred.make<void>();
+      const restartReason = yield* Ref.make<string | null>(null);
+      yield* Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make("restart-required-busy");
+        const providerSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+        yield* eventSink.write({
+          events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+        });
+        const runtime = yield* manager.open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        const runId = idAllocator.derive.run({ threadId, ordinal: 1 });
+        const running = yield* runtime
+          .startTurn({
+            appThread: (yield* projectionStore.getThreadProjection(threadId)).thread,
+            threadId,
+            runId,
+            runOrdinal: 1,
+            providerTurnOrdinal: 1,
+            attemptId: idAllocator.derive.runAttempt({ runId, attemptOrdinal: 1 }),
+            rootNodeId: idAllocator.derive.rootNode({ runId }),
+            providerThread: makeProviderThread({ idAllocator, threadId, providerSessionId, now }),
+            message: {
+              createdBy: "user",
+              creationSource: "web",
+              messageId: yield* idAllocator.allocate.message({ threadId, ordinal: 1 }),
+              text: "a turn another thread is still running",
+              attachments: [],
+            },
+            modelSelection,
+            runtimePolicy,
+          })
+          .pipe(Effect.forkChild);
+        yield* Deferred.await(startTurnReached);
+
+        yield* Ref.set(restartReason, SIGN_IN_CHANGED);
+        const refused = yield* Effect.exit(
+          manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy }),
+        );
+        assert.equal(refused._tag, "Failure");
+        assert.equal((yield* Ref.get(state)).closeCount, 0);
+        assert.equal((yield* Ref.get(state)).interruptCount, 0);
+        assert.equal((yield* Ref.get(state)).openCount, 1);
+
+        yield* Fiber.interrupt(running);
+        yield* manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
+        assert.equal((yield* Ref.get(state)).closeCount, 1);
+        assert.equal((yield* Ref.get(state)).openCount, 2);
+      }).pipe(
+        Effect.provide(
+          layerTest({
+            state,
+            idleTimeoutMs: 60_000,
+            restartRequired: Ref.get(restartReason),
             startTurn: Deferred.succeed(startTurnReached, undefined).pipe(
               Effect.andThen(Effect.never),
             ),

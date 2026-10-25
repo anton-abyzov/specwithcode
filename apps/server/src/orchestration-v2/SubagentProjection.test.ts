@@ -115,6 +115,27 @@ it("keeps a subagent child awake when its parent thread is snoozed", () => {
   });
 });
 
+it("never carries a marked parent's launch stand-in into a child on its own model", () => {
+  const parentThread: OrchestrationV2AppThread = {
+    ...makeParentThread(),
+    launchFallbackFrom: childModelSelection,
+  };
+  const childThread = makeSubagentChildThread({
+    parentThread,
+    childThreadId,
+    parentNodeId: NodeId.make("node:subagent-parent"),
+    activeProviderThreadId: null,
+    providerInstanceId: childProviderInstanceId,
+    modelSelection: { instanceId: childProviderInstanceId, model: "claude-sonnet-5" },
+    title: "Explicit model child",
+    now: childCreatedAt,
+    createdBy: "agent",
+    creationSource: "provider",
+  });
+
+  assert.isNull(childThread.launchFallbackFrom);
+});
+
 it("attributes native subagent prompts to their parent thread", () => {
   for (const role of ["user", "assistant"] as const) {
     const artifacts = makeSubagentConversationArtifacts({

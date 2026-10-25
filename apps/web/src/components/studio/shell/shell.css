@@ -246,24 +246,116 @@ html.dark[data-theme-id=""] [data-app-sidebar] {
   justify-content: center;
 }
 .sws-model-provider {
-  /* Gives way only after the model name beside it has gone. */
-  flex: 0 1 auto;
+  /* The provider word gives way before the running model. */
+  flex: 0 1000 auto;
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
-  font-weight: 600;
-  color: var(--foreground);
+  font-weight: 400;
+  color: var(--muted-foreground);
 }
 .sws-model-sep {
   flex: none;
   color: var(--muted-foreground);
 }
 .sws-model-name {
-  flex: 0 9999 auto;
+  flex: 0 1 auto;
+  min-width: 7ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-weight: 500;
+  color: var(--foreground);
+}
+/* The model's state rides inside the model unit as a quiet suffix (ModelStateTag):
+   never a pill, never louder than the name. Hosts pick a width tier with data-fit
+   or container rules; the glyph always stays. */
+.sws-model-state {
+  flex: none;
+  min-width: 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 11.5px;
+  font-weight: 400;
+  line-height: inherit;
+  white-space: nowrap;
+}
+.sws-model-state[data-tone="warning"] {
+  color: var(--warning-foreground, var(--warning));
+}
+.sws-model-state[data-tone="muted"] {
+  color: var(--muted-foreground);
+}
+.sws-model-state svg {
+  flex: none;
+  width: 12px;
+  height: 12px;
+  stroke-width: 2;
+  forced-color-adjust: auto;
+}
+/* The fallback glyph sits beside the 14px provider mark at the mark's size. */
+.sws-model-state svg.sws-model-state-glyph {
+  width: 14px;
+  height: 14px;
+}
+.sws-model-state-dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  margin: 0 3px;
+  border-radius: 50%;
+  background: var(--success);
+}
+.sws-model-state-dot[data-pulse] {
+  animation: sws-model-state-pulse 1.6s ease-in-out infinite;
+}
+@keyframes sws-model-state-pulse {
+  50% {
+    opacity: 0.4;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .sws-model-state-dot[data-pulse] {
+    animation: none;
+  }
+}
+.sws-model-state-full,
+.sws-model-state-short {
   min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
-  color: var(--muted-foreground);
+}
+.sws-model-state-short,
+.sws-model-state[data-fit="short"] .sws-model-state-full,
+.sws-model-state[data-fit="glyph"] .sws-model-state-full {
+  display: none;
+}
+.sws-model-state[data-fit="short"] .sws-model-state-short {
+  display: inline;
+}
+/* The three tooltip lines: running model, the state beside its glyph, why. */
+.sws-model-state-tip {
+  max-width: 20rem;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  text-align: left;
+}
+.sws-model-state-tip-line {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.sws-model-state-tip-line[data-tone="warning"] svg {
+  color: var(--warning-foreground);
+}
+.sws-model-state-tip-line svg {
+  flex: none;
+  width: 12px;
+  height: 12px;
+}
+.sws-model-state-tip-detail {
+  opacity: 0.72;
 }
 .sws-model-chip {
   height: 26px;
@@ -855,16 +947,17 @@ html.dark[data-theme-id=""] [data-app-sidebar] {
 .sws-model-pick-unset .sws-model-trigger:is(:hover, [data-popup-open]) {
   color: var(--foreground);
 }
-/* The limit rule moved the coordinator: a row of its own, above the controls. */
+/* Room again and exhausted fallback are the only coordinator banner states. */
 .sws-model-fallback {
   order: -1;
   flex: 1 0 100%;
   min-width: 0;
+  min-height: 28px;
   margin: 0 0 4px;
-  padding: 5px 6px 5px 9px;
+  padding: 2px 6px 2px 9px;
   display: flex;
   align-items: center;
-  gap: 7px;
+  gap: 6px;
   border-radius: 8px;
   background: color-mix(in srgb, var(--warning) 12%, transparent);
   font-size: 12.5px;
@@ -875,18 +968,17 @@ html.dark[data-theme-id=""] [data-app-sidebar] {
   flex: none;
   width: 14px;
   height: 14px;
-  color: var(--warning);
+  color: var(--muted-foreground);
+}
+.sws-model-fallback[data-model-fallback-spent] > svg {
+  color: var(--warning-foreground);
 }
 .sws-model-fallback-text {
-  /* Wraps rather than cutting off which model runs now. */
   min-width: 0;
   flex: 1 1 auto;
-}
-.sws-model-fallback-text strong {
-  font-weight: 600;
-}
-.sws-model-fallback-note {
-  color: var(--muted-foreground);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 .sws-model-fallback-back {
   flex: none;
@@ -908,33 +1000,6 @@ html.dark[data-theme-id=""] [data-app-sidebar] {
 .sws-model-fallback-back:focus-visible {
   outline: 2px solid var(--ring);
   outline-offset: 1px;
-}
-.sws-model-fallback-label {
-  color: var(--muted-foreground);
-}
-.sws-model-fallback-now strong {
-  color: var(--foreground);
-}
-.sws-model-fallback[data-model-fallback-live] > svg {
-  animation: sws-model-live 1.6s ease-in-out infinite;
-}
-@keyframes sws-model-live {
-  50% {
-    opacity: 0.35;
-  }
-}
-@media (prefers-reduced-motion: reduce) {
-  .sws-model-fallback[data-model-fallback-live] > svg {
-    animation: none;
-  }
-}
-/* The chip names the model that runs now; an amber ring says it is not the saved pick. */
-.sws-model-pick[data-off-pick] {
-  gap: 4px;
-}
-.sws-model-pick[data-off-pick] .sws-model-trigger:not(.sws-effort-trigger) {
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--warning) 55%, transparent);
-  background: color-mix(in srgb, var(--warning) 8%, transparent);
 }
 
 .sws-model-pick-loading {
@@ -1010,6 +1075,7 @@ html.dark[data-theme-id=""] [data-app-sidebar] {
   margin: 12px 22px 0;
 }
 .sws-coordinator .project-conversation {
+  container-type: inline-size;
   padding: 16px 24px 12px;
 }
 .sws-coordinator .project-conversation > * {
@@ -1039,6 +1105,10 @@ html.dark[data-theme-id=""] [data-app-sidebar] {
   clip-path: inset(50%);
   white-space: nowrap;
 }
+/* An answered question rests as its decision card, beside the reply typed in chat. */
+.sws-coordinator .project-decision {
+  margin-bottom: 20px;
+}
 .sws-coordinator .project-message-user {
   width: fit-content;
   max-width: min(640px, 70%);
@@ -1048,6 +1118,13 @@ html.dark[data-theme-id=""] [data-app-sidebar] {
   border-radius: 22px;
   background: var(--message-surface);
   color: var(--message-foreground);
+}
+/* A phone-width pane, in any window, gives a person's or worker's message more
+   of the row, so a short one still has room for its "Sent by" line. */
+@container (max-width: 480px) {
+  .sws-coordinator .project-message-user {
+    max-width: 88%;
+  }
 }
 .sws-turn-separator {
   margin: 4px auto 20px;
@@ -2091,27 +2168,28 @@ html.dark[data-theme-id=""] [data-app-sidebar] {
   cursor: pointer;
   touch-action: manipulation;
 }
-.sws-thread-meta > .sws-thread-pr {
+.sws-thread-meta-rest > .sws-thread-pr {
   flex: none;
   display: inline-flex;
   align-items: center;
   font-variant-numeric: tabular-nums;
 }
-.sws-thread-meta > .sws-thread-plan {
+.sws-thread-meta-rest > .sws-thread-plan {
   flex: none;
 }
-.sws-thread-meta > .sws-thread-unplanned {
+.sws-thread-meta-rest > .sws-thread-unplanned {
   flex: none;
   display: inline-flex;
   align-items: center;
 }
-.sws-thread-unplanned > span {
-  padding: 0 6px;
-  border-radius: 999px;
-  font-size: 11px;
-  line-height: 16px;
+/* A muted glyph, like the fallback suffix: no pill, the words on hover. Information,
+   never a warning: increments are recommended, not required. */
+.sws-thread-unplanned {
   color: var(--muted-foreground);
-  box-shadow: inset 0 0 0 1px var(--border);
+}
+.sws-thread-unplanned > svg {
+  width: 14px;
+  height: 14px;
 }
 .sws-thread-pr svg {
   width: 12px;
@@ -2133,10 +2211,9 @@ html.dark[data-theme-id=""] [data-app-sidebar] {
   font-weight: 500;
   line-height: 1.35;
 }
-/* One quiet line under the title: state, who runs it, where, what went wrong.
-   Everything sits on one baseline and gives way with an ellipsis, never a wrap,
-   so the row keeps its height at any pane width. */
+/* Keep primary identity intact; secondary items wrap whole onto the hidden line. */
 .sws-thread-meta {
+  container: rowmeta / inline-size;
   min-width: 0;
   height: 18px;
   overflow: hidden;
@@ -2147,10 +2224,46 @@ html.dark[data-theme-id=""] [data-app-sidebar] {
   white-space: nowrap;
   color: var(--muted-foreground);
 }
-.sws-thread-meta > * {
+.sws-thread-meta-lead {
+  flex: 0 1 auto;
   min-width: 0;
+  display: flex;
+  align-items: center;
 }
-.sws-thread-meta > * + *::before {
+.sws-thread-meta-lead > .sws-thread-status {
+  flex: none;
+}
+.sws-thread-meta-lead > .sws-model {
+  flex: 0 1 auto;
+  min-width: 0;
+  font-size: inherit;
+  line-height: inherit;
+}
+.sws-thread-meta-rest {
+  flex: 1 1 0;
+  min-width: 0;
+  height: 18px;
+  overflow: hidden;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  align-content: flex-start;
+}
+.sws-thread-meta-rest::before {
+  content: "";
+  flex: 0 0 0;
+  height: 18px;
+}
+.sws-thread-meta-rest > * {
+  flex: none;
+  height: 18px;
+}
+.sws-thread-meta-rest > .sws-thread-error {
+  flex: 1 1 0;
+  min-width: 6ch;
+}
+.sws-thread-meta-lead > * + *::before,
+.sws-thread-meta-rest > *::before {
   content: "";
   width: 3px;
   height: 3px;
@@ -2162,16 +2275,82 @@ html.dark[data-theme-id=""] [data-app-sidebar] {
   background: var(--muted-foreground);
   opacity: 0.55;
 }
-.sws-thread-meta > .sws-model {
-  /* Only the model name gives way here; the mark and harness stay. */
-  flex: 0 1 auto;
-  font-size: inherit;
-  line-height: inherit;
+.sws-thread-meta-lead:empty + .sws-thread-meta-rest > :first-child::before {
+  display: none;
+}
+@container rowmeta (width < 480px) {
+  .sws-model-state-full {
+    display: none;
+  }
+  .sws-model-state-short {
+    display: inline;
+  }
+}
+@container rowmeta (width < 360px) {
+  .sws-thread-plan-id {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+}
+@container rowmeta (width < 340px) {
+  .sws-model-state-short {
+    display: none;
+  }
+}
+@container rowmeta (width < 300px) {
+  .sws-model-provider,
+  .sws-model-sep {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+}
+@container headchips (width < 480px) {
+  .sws-model-state-full {
+    display: none;
+  }
+  .sws-model-state-short {
+    display: inline;
+  }
+}
+@container headchips (width < 340px) {
+  .sws-model-state-short {
+    display: none;
+  }
+}
+@container sessmeta (width < 480px) {
+  .sws-model-state-full {
+    display: none;
+  }
+  .sws-model-state-short {
+    display: inline;
+  }
+}
+@container sessmeta (width < 340px) {
+  .sws-model-state-short {
+    display: none;
+  }
+}
+@container sessmeta (width < 300px) {
+  .sws-model-provider,
+  .sws-model-sep {
+    display: none;
+  }
+}
+.sws-model-chip[data-model-state="fallback"] {
+  border-color: color-mix(in srgb, var(--warning) 40%, var(--border));
 }
 .sws-thread-machine {
   /* Low emphasis, and it gives way before the model does. */
-  flex: 0 1000 auto;
-  max-width: 14em;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  max-width: none;
   overflow: hidden;
   text-overflow: ellipsis;
   opacity: 0.85;
@@ -2365,6 +2544,13 @@ html.dark[data-theme-id=""] [data-app-sidebar] {
   }
 }
 @media (forced-colors: active) {
+  .sws-model-state,
+  .sws-model-state-tip-line {
+    color: CanvasText;
+  }
+  .sws-model-state-dot {
+    background: CanvasText;
+  }
   .sws-dot,
   .sws-filter-flag {
     border: 1px solid CanvasText;

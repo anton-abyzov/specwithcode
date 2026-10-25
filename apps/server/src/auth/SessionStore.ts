@@ -1,5 +1,6 @@
 import {
   AuthSessionId,
+  type AuthPrincipal,
   AuthOrchestrationReadScope,
   AuthOrchestrationOperateScope,
   type AuthWorkerGrantRenewalRequest,
@@ -63,6 +64,8 @@ export interface IssuedSession {
 }
 
 export interface VerifiedSession {
+  readonly principal?: AuthPrincipal;
+  readonly principalGeneration?: number | undefined;
   readonly sessionId: AuthSessionId;
   readonly token: string;
   readonly method: ServerAuthSessionMethod;
@@ -113,6 +116,32 @@ export class InvalidSessionTokenPayloadError extends Schema.TaggedError<InvalidS
     return "Invalid session token payload.";
   }
 }
+
+export class DeviceReapprovalRequiredError extends Schema.TaggedError<DeviceReapprovalRequiredError>()(
+  "DeviceReapprovalRequiredError",
+  {},
+) {
+  override get message(): string {
+    return "Approve this device again in SpecWithCode.";
+  }
+}
+
+/** NULL is deliberate: old display names are not trustworthy issuance provenance. */
+const checkPrincipal = (row: AuthSessions.AuthSessionRecord) =>
+  (row.subject !== "cli-issued-session" &&
+    (row.subject !== "fleet-invitation" || row.principal?.kind === "coordinator") &&
+    row.principal) ||
+  [
+    "desktop-bootstrap",
+    "administrative-bootstrap",
+    "local-cli-owner",
+    "reusable-dev-token",
+    "reusable-dev-token-child",
+    "managed-relay-bootstrap",
+    "cloud-connect",
+  ].includes(row.subject)
+    ? Effect.void
+    : Effect.fail(new DeviceReapprovalRequiredError({}));
 
 export class SessionTokenExpiredError extends Schema.TaggedError<SessionTokenExpiredError>()(
   "SessionTokenExpiredError",
@@ -241,6 +270,7 @@ export class WebSocketSessionRevokedError extends Schema.TaggedError<WebSocketSe
 }
 
 export const SessionCredentialInvalidError = Schema.Union([
+  DeviceReapprovalRequiredError,
   MalformedSessionTokenError,
   InvalidSessionTokenSignatureError,
   InvalidSessionTokenPayloadError,
@@ -324,6 +354,11 @@ export class WebSocketTokenVerificationError extends Schema.TaggedError<WebSocke
   }
 }
 
+export class PrincipalRevocationError extends Schema.TaggedError<PrincipalRevocationError>()(
+  "PrincipalRevocationError",
+  { cause: Schema.Defect() },
+) {}
+
 export class ActiveSessionsListError extends Schema.TaggedError<ActiveSessionsListError>()(
   "ActiveSessionsListError",
   {
@@ -360,6 +395,7 @@ export class OtherSessionsRevocationError extends Schema.TaggedError<OtherSessio
 }
 
 export const SessionCredentialInternalError = Schema.Union([
+  PrincipalRevocationError,
   SessionClaimsEncodingError,
   SessionCredentialIssueError,
   SessionCredentialVerificationError,
@@ -379,16 +415,25 @@ export type SessionCredentialError = typeof SessionCredentialError.Type;
 
 export class WorkerGrantRenewalError extends Schema.TaggedError<WorkerGrantRenewalError>()(
   "WorkerGrantRenewalError",
-  { code: Schema.Literals(["grant_invalid", "grant_missing", "grant_revoked"]) },
+  {
+    code: Schema.Literals(["grant_invalid", "grant_missing", "grant_revoked"]),
+    reapprovalRequired: Schema.optionalKey(Schema.Boolean),
+  },
 ) {
   override get message(): string {
-    return "The original worker grant cannot be renewed.";
+    return this.reapprovalRequired
+      ? "Approve this device again in SpecWithCode with a new pairing code."
+      : "The original worker grant cannot be renewed.";
   }
 }
 
 export class SessionStore extends Context.Service<
   SessionStore,
   {
+    readonly setPrincipalRevoked: (
+      principal: AuthPrincipal,
+      revoked: boolean,
+    ) => Effect.Effect<void, SessionCredentialInternalError>;
     readonly cookieName: string;
     readonly legacyCookieName: string | undefined;
     /**
@@ -400,6 +445,8 @@ export class SessionStore extends Context.Service<
     ) => LegacySessionCookie | undefined;
     readonly issue: (input?: {
       readonly ttl?: Duration.Duration;
+      readonly principal?: AuthPrincipal;
+      readonly principalGeneration?: number | undefined;
       readonly subject?: string;
       readonly method?: ServerAuthSessionMethod;
       readonly scopes?: ReadonlyArray<AuthEnvironmentScope>;
@@ -632,6 +679,9 @@ export const make = Effect.gen(function* () {
       return Option.some(
         toAuthClientSession({
           sessionId: row.value.sessionId,
+          ...(row.value.principal
+            ? { principal: row.value.principal, principalGeneration: row.value.principalGeneration }
+            : {}),
           subject: row.value.subject,
           scopes: row.value.scopes,
           method: row.value.method,
@@ -729,6 +779,13 @@ export const make = Effect.gen(function* () {
   const encodeClaims = Schema.encodeEffect(Schema.fromJsonString(SessionClaims));
   const issue: SessionStore["Service"]["issue"] = Effect.fn("SessionStore.issue")(
     function* (input) {
+      const principalGeneration =
+        input?.principalGeneration ??
+        (input?.principal
+          ? yield* authSessions
+              .currentPrincipalGeneration(input.principal)
+              .pipe(Effect.mapError((cause) => new SessionCredentialIssueError({ cause })))
+          : 0);
       const sessionId = AuthSessionId.make(
         yield* crypto.randomUUIDv4.pipe(
           Effect.mapError((cause) => new SessionCredentialIssueError({ cause })),
@@ -769,6 +826,8 @@ export const make = Effect.gen(function* () {
       const client = input?.client ?? createDefaultClientMetadata();
       const sessionRecord = {
         sessionId,
+        principal: input?.principal ?? { kind: "device", id: sessionId },
+        principalGeneration,
         subject: claims.sub,
         scopes: claims.scopes,
         method: claims.method,
@@ -867,6 +926,9 @@ export const make = Effect.gen(function* () {
           method: row.value.method,
           client: toClientMetadata(row.value.client),
           expiresAt: row.value.expiresAt,
+          ...(row.value.principal
+            ? { principal: row.value.principal, principalGeneration: row.value.principalGeneration }
+            : {}),
           subject: row.value.subject,
           scopes: row.value.scopes,
         } satisfies VerifiedSession;
@@ -918,7 +980,11 @@ export const make = Effect.gen(function* () {
         });
       }
 
+      yield* checkPrincipal(row.value);
       return {
+        ...(row.value.principal
+          ? { principal: row.value.principal, principalGeneration: row.value.principalGeneration }
+          : {}),
         sessionId: claims.sid,
         token,
         method: claims.method,
@@ -984,10 +1050,16 @@ export const make = Effect.gen(function* () {
         ),
       );
     const original = yield* getOriginal();
+    if (!original.principal)
+      return yield* new WorkerGrantRenewalError({
+        code: "grant_invalid",
+        reapprovalRequired: true,
+      });
     if (
       original.subject !== claims.sub ||
       original.method !== claims.method ||
-      original.client.label !== label ||
+      original.principal?.kind !== "coordinator" ||
+      original.principal.environmentId !== input.coordinatorEnvironmentId ||
       original.issuedAt.epochMilliseconds !== claims.iat ||
       original.scopes.length !== claims.scopes.length ||
       original.scopes.some((scope, index) => scope !== claims.scopes[index])
@@ -1012,7 +1084,7 @@ export const make = Effect.gen(function* () {
         subject: "mcp-client",
         method: "bearer-access-token",
         scopes: claims.scopes,
-        label,
+        principal: original.principal,
         issuedAt: DateTime.toUtc(issuedAt.value),
         expiresAt,
       })
@@ -1137,7 +1209,11 @@ export const make = Effect.gen(function* () {
       });
     }
 
+    yield* checkPrincipal(row.value);
     return {
+      ...(row.value.principal
+        ? { principal: row.value.principal, principalGeneration: row.value.principalGeneration }
+        : {}),
       sessionId: row.value.sessionId,
       token,
       method: row.value.method,
@@ -1160,6 +1236,9 @@ export const make = Effect.gen(function* () {
       return rows.map((row) =>
         toAuthClientSession({
           sessionId: row.sessionId,
+          ...(row.principal
+            ? { principal: row.principal, principalGeneration: row.principalGeneration }
+            : {}),
           subject: row.subject,
           scopes: row.scopes,
           method: row.method,
@@ -1232,6 +1311,16 @@ export const make = Effect.gen(function* () {
     },
   );
 
+  const setPrincipalRevoked: SessionStore["Service"]["setPrincipalRevoked"] = (
+    principal,
+    revoked,
+  ) =>
+    DateTime.now.pipe(
+      Effect.flatMap((now) => authSessions.setPrincipalRevoked(principal, revoked ? now : null)),
+      Effect.mapError((cause) => new PrincipalRevocationError({ cause })),
+      Effect.flatMap((ids) => Effect.forEach(ids, emitRemoved, { discard: true })),
+    );
+
   const revoke: SessionStore["Service"]["revoke"] = Effect.fn("SessionStore.revoke")(
     function* (sessionId) {
       const revokedAt = yield* DateTime.now;
@@ -1288,6 +1377,7 @@ export const make = Effect.gen(function* () {
   });
 
   return SessionStore.of({
+    setPrincipalRevoked,
     cookieName,
     legacyCookieName,
     findLegacyCookie,

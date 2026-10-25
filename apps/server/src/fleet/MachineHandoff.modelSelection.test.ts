@@ -387,9 +387,9 @@ for (const choice of [laterChoice, null])
             // the one failure meant for the handoff's own settings write.
             const seedsFinishActionOnly =
               Object.keys(patch).length === 1 &&
-              patch.projectSettingsOverrides !== undefined &&
-              Object.values(patch.projectSettingsOverrides).every(
-                (entry) => entry != null && "threadFinishAction" in entry,
+              patch.projectSettingsOverrideChanges !== undefined &&
+              Object.values(patch.projectSettingsOverrideChanges).every(
+                (change) => change.set !== undefined && "threadFinishAction" in change.set,
               );
             if (failSettings && !seedsFinishActionOnly) {
               failSettings = false;

@@ -93,7 +93,7 @@ import {
   writePullRequestListPreferences,
 } from "../components/pullRequest/pullRequestListPreferences";
 import { assignProjectsToEnvironments } from "../components/pullRequest/pullRequestProjectAssignment.logic";
-import { pullRequestFilterProjects } from "../components/pullRequest/pullRequestProjectFilter.logic";
+import { pullRequestScopeFilterProjects } from "../components/pullRequest/pullRequestProjectFilter.logic";
 import { environmentMachineIcon } from "../components/EnvironmentMachineIcon";
 import { PullRequestDetailPanel } from "../components/pullRequest/PullRequestDetailPanel";
 import {
@@ -146,7 +146,7 @@ import {
   useProjects,
   useServerConfigs,
 } from "../state/entities";
-import { isArchivedMember, projectPickerMembers } from "../studio/projectListVisibility";
+import { ineligibleProjectLabel, isArchivedMember } from "../studio/projectListVisibility";
 import { useEnvironments } from "../state/environments";
 import {
   pullRequestEnvironment,
@@ -396,17 +396,14 @@ function PullRequestsRouteView() {
     () => findScopedProject(projects, scopedEnvironmentId, scopedProjectId),
     [projects, scopedEnvironmentId, scopedProjectId],
   );
-  // The filter offers neither a machine's "No project" folder nor an archived project,
-  // except the one the list is scoped to.
+  // The filter offers neither a machine's "No project" folder, an archived nor an automated
+  // project; a scope that is one of those stays in the menus as a row that cannot be chosen.
   const serverConfigs = useServerConfigs();
-  const scopedProjects = useMemo(
+  const { projects: scopedProjects, unavailable: unavailableScope } = useMemo(
     () =>
-      pullRequestFilterProjects(
-        projectPickerMembers(
-          projects,
-          (environmentId) => serverConfigs.get(environmentId)?.scratchWorkspaceRoot ?? null,
-          scopedProject ?? null,
-        ),
+      pullRequestScopeFilterProjects(
+        projects,
+        (environmentId) => serverConfigs.get(environmentId)?.scratchWorkspaceRoot ?? null,
         environmentLabels,
         scopedProject,
       ),
@@ -1793,16 +1790,24 @@ function PullRequestsRouteView() {
   /** Reported per project rather than as a count, so the reader can see which one it was. */
   const unavailableProjects = useMemo(
     () =>
-      new Map(
-        listErrors.map(
+      new Map([
+        ...listErrors.map(
           (error) =>
             [
               pullRequestProjectKey({ id: error.projectId, environmentId: error.environmentId }),
               error.message,
             ] as const,
         ),
-      ),
-    [listErrors],
+        ...(unavailableScope
+          ? [
+              [
+                pullRequestProjectKey(unavailableScope.project),
+                ineligibleProjectLabel(unavailableScope.reason),
+              ] as const,
+            ]
+          : []),
+      ]),
+    [listErrors, unavailableScope],
   );
 
   // Stable so the memoized rows can skip re-rendering when the list around them changes.
@@ -2042,6 +2047,9 @@ function PullRequestsRouteView() {
       value: pullRequestProjectKey(project),
       label: project.title,
       Icon: FolderIcon,
+      ...(project === unavailableScope?.project
+        ? { unavailable: ineligibleProjectLabel(unavailableScope.reason) }
+        : {}),
     })),
   ];
   const listControls = (

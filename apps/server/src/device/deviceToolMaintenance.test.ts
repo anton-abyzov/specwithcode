@@ -158,3 +158,42 @@ it("serializes competing maintenance processes after reclaiming a stale lock", a
     await NodeFSP.rm(root, { recursive: true, force: true, maxRetries: 10 });
   }
 });
+
+it("reclaims a stale lock when another contender is already deleting its owner file", async () => {
+  const root = await NodeFSP.mkdtemp(NodePath.join(NodeOS.tmpdir(), "studio-tool-reclaim-race-"));
+  try {
+    const lock = NodePath.join(root, ".maintenance-lock");
+    await NodeFSP.mkdir(lock);
+    await NodeFSP.writeFile(
+      NodePath.join(lock, "stale-owner.json"),
+      JSON.stringify({ pid: 2147483647, identity: "dead" }),
+    );
+    // Windows run 40144248208: a second reclaimer unlinked the same stale owner
+    // file while a third still read it, so this unlink saw EPERM (delete pending).
+    const script =
+      deviceToolMaintenanceScript +
+      `
+const realUnlink = maintenanceFs.unlinkSync;
+let raced = false;
+maintenanceFs.unlinkSync = (file) => {
+  if (!raced && maintenancePath.basename(String(file)) === 'stale-owner.json') {
+    raced = true;
+    realUnlink(file);
+    throw Object.assign(new Error('EPERM: operation not permitted, unlink'), { code: 'EPERM' });
+  }
+  return realUnlink(file);
+};
+(async () => {
+  const root = ${JSON.stringify(root)};
+  await withToolMaintenance(root, () => {
+    maintenanceFs.writeFileSync(maintenancePath.join(root, 'ran'), 'yes');
+  });
+  if (!raced) throw Error('The stale owner file was never reclaimed');
+})().catch(error => { console.error(error); process.exitCode = 1; });`;
+    await exec(process.execPath, ["-e", script]);
+    expect(await NodeFSP.readFile(NodePath.join(root, "ran"), "utf8")).toBe("yes");
+    await expect(NodeFSP.stat(lock)).rejects.toThrow();
+  } finally {
+    await NodeFSP.rm(root, { recursive: true, force: true, maxRetries: 10 });
+  }
+});

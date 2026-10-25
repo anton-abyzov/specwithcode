@@ -48,7 +48,8 @@ import { resolveProjectSettings } from "@specweave-studio/shared/projectSettings
 import { readEnvironmentScope } from "~/state/session";
 import { toastManager } from "../ui/toast";
 import {
-  isArchivedMember,
+  ineligibleProjectLabel,
+  projectChoiceIneligibleReason,
   projectDestinationUnavailableReason,
 } from "~/studio/projectListVisibility";
 import {
@@ -142,16 +143,21 @@ export function DraftHeroHeadline({
       ),
     [environments],
   );
+  // A machine's "No project" folder stays, as its own item; archived projects and projects
+  // a check or agent made for itself are not destinations.
   const projectPickerEntries = useMemo(
     () =>
       buildSidebarProjectPickerEntries({
         groups: projectGroups.map((group) => ({
           ...group,
-          memberProjects: group.memberProjects.filter((project) => !isArchivedMember(project)),
+          memberProjects: group.memberProjects.filter((project) => {
+            const reason = projectChoiceIneligibleReason(project, scratchWorkspaceRootFor);
+            return reason === null || reason === "scratch";
+          }),
         })),
         preferredProjectRef: activeProjectRef,
       }),
-    [activeProjectRef, projectGroups],
+    [activeProjectRef, projectGroups, scratchWorkspaceRootFor],
   );
   const projectEntryByKey = useMemo(
     () => new Map(projectPickerEntries.map((entry) => [entry.group.projectKey, entry] as const)),
@@ -190,6 +196,14 @@ export function DraftHeroHeadline({
   const scratchWorkspaceRoot = scratchWorkspaceRootFor(scratchTargetEnvironmentId);
   const isScratchDraft =
     activeProject !== null && isScratchProject(activeProject, scratchWorkspaceRoot);
+  // A draft whose project was since archived or made by a check keeps it in the heading;
+  // the menu shows it as the current context, never as a destination.
+  const unavailableReason =
+    activeProject !== null &&
+    !isScratchDraft &&
+    !menuEntries.some(({ group }) => group.projectKey === activeProjectKey)
+      ? projectChoiceIneligibleReason(activeProject, scratchWorkspaceRootFor)
+      : null;
 
   // The picker can change the draft's target while the no-project home is
   // still being opened; a stale continuation must not retarget it again.
@@ -367,6 +381,19 @@ export function DraftHeroHeadline({
               </span>
             </MenuRadioItem>
           )}
+          {unavailableReason && activeProjectGroup ? (
+            <MenuRadioItem value={activeProjectKey} disabled>
+              <span className="flex min-w-0 items-center gap-2">
+                <ProjectFavicon project={activeProjectGroup} className="size-4 shrink-0" />
+                <span className="flex min-w-0 flex-col">
+                  <span className="truncate">{activeProjectGroup.displayName}</span>
+                  <span className="truncate text-muted-foreground text-xs">
+                    {ineligibleProjectLabel(unavailableReason)}
+                  </span>
+                </span>
+              </span>
+            </MenuRadioItem>
+          ) : null}
           {menuEntries.map(({ group }) => {
             return (
               <MenuRadioItem key={group.projectKey} value={group.projectKey} closeOnClick>

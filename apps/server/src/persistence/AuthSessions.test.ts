@@ -1,4 +1,4 @@
-import { AuthSessionId } from "@specweave-studio/contracts";
+import { AuthSessionId, EnvironmentId } from "@specweave-studio/contracts";
 import { expect, it } from "@effect/vitest";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -13,6 +13,7 @@ const expiresAt = DateTime.makeUnsafe("2026-02-01T00:00:00.000Z");
 const renewedUntil = DateTime.makeUnsafe("2026-11-01T00:00:00.000Z");
 const original = {
   sessionId: AuthSessionId.make("original-worker"),
+  principal: { kind: "coordinator", environmentId: EnvironmentId.make("coordinator") },
   subject: "mcp-client",
   method: "bearer-access-token",
   scopes: ["orchestration:read", "orchestration:operate"],
@@ -27,7 +28,7 @@ const original = {
   issuedAt,
   expiresAt,
 } as const;
-const renewal = { ...original, label: original.client.label, expiresAt: renewedUntil };
+const renewal = { ...original, expiresAt: renewedUntil };
 const layer = AuthSessions.layer.pipe(Layer.provideMerge(SqlitePersistence.layerMemory));
 
 it.layer(Layer.empty)("conditional worker session renewal", (it) => {
@@ -53,7 +54,9 @@ it.layer(Layer.empty)("conditional worker session renewal", (it) => {
         yield* repository.create(original);
         for (const change of [
           { sessionId: AuthSessionId.make("other") },
-          { label: "SpecWithCode workers · other" },
+          {
+            principal: { kind: "coordinator", environmentId: EnvironmentId.make("other") } as const,
+          },
           { scopes: ["orchestration:read"] as const },
           { issuedAt: DateTime.add(issuedAt, { seconds: 1 }) },
         ])

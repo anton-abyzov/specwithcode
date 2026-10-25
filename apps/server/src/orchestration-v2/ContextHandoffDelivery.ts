@@ -11,13 +11,32 @@ import { historyCost, renderHistory, selectHistory } from "./ContextHandoffBudge
 /** A pointer-only handoff is delivered within this many bytes even when the budget is smaller. */
 export const POINTER_HANDOFF_FLOOR = 4_096;
 
-/** Persist before/after injection: an ambiguous pending delivery requires a fresh native thread. */
+/**
+ * A provider continuation attaches to wake output the agent produced on its
+ * own: adapters never send its text (see ClaudeAdapterV2 and AcpAdapterV2), so
+ * history put in front of it reaches nobody.
+ */
+export function isPromptlessContinuation(message: {
+  readonly createdBy: string;
+  readonly creationSource: string;
+}): boolean {
+  return message.createdBy === "agent" && message.creationSource === "provider";
+}
+
+/**
+ * Persist before/after injection: an ambiguous pending delivery requires a
+ * fresh native thread. `rollback` restores the records as they were before
+ * this delivery, for a start that failed before its prompt was offered;
+ * `delivered` records an accepted inline delivery.
+ */
 export const deliverContextHandoffs = Effect.fn("orchestrationV2.deliverContextHandoffs")(
   function* <InjectError = never, PersistError = never, BudgetError = never>(input: {
     readonly handoffs: ReadonlyArray<OrchestrationV2ContextHandoff>;
     readonly providerThread: OrchestrationV2ProviderThread;
     readonly budget: number | Effect.Effect<number, BudgetError>;
     readonly deferInline?: boolean;
+    /** The turn sends no prompt text (isPromptlessContinuation): deliver and mark nothing. */
+    readonly promptless?: boolean;
     /** Text that goes before the coverage marker when it fits, such as a SpecWeave checkpoint note. */
     readonly preface?: string;
     /**
@@ -39,8 +58,12 @@ export const deliverContextHandoffs = Effect.fn("orchestrationV2.deliverContextH
         handoff.delivery?.nativeThreadId !== nativeThreadId ||
         handoff.delivery.status === "pending",
     );
-    if (pending.length === 0 || (input.deferInline && input.inject === undefined))
-      return { context: "", delivered: Effect.void };
+    if (
+      pending.length === 0 ||
+      input.promptless === true ||
+      (input.deferInline && input.inject === undefined)
+    )
+      return { context: "", delivered: Effect.void, rollback: Effect.void };
     const budget = typeof input.budget === "number" ? input.budget : yield* input.budget;
     const nativeSessions =
       input.nativeSessions === undefined || typeof input.nativeSessions === "string"
@@ -101,7 +124,7 @@ export const deliverContextHandoffs = Effect.fn("orchestrationV2.deliverContextH
       budget,
     });
     if (historyCost(selected.messages, selected.context) > budget) {
-      if (input.deferInline) return { context: "", delivered: Effect.void };
+      if (input.deferInline) return { context: "", delivered: Effect.void, rollback: Effect.void };
       // No history item fits, but where to find all of it always does: the
       // receiving agent rebuilds context from the thread and native
       // transcripts instead of the run failing. A fresh native session leaves
@@ -165,7 +188,7 @@ export const deliverContextHandoffs = Effect.fn("orchestrationV2.deliverContextH
       });
       if (injected) {
         yield* persist("injected");
-        return { context: "", delivered: Effect.void };
+        return { context: "", delivered: Effect.void, rollback: Effect.void };
       }
     } else {
       // Text-only delivery can also be accepted before a connection drops.
@@ -175,11 +198,14 @@ export const deliverContextHandoffs = Effect.fn("orchestrationV2.deliverContextH
       // Compaction APIs cannot accept an inline transcript. Keep it available
       // for the next ordinary turn when native injection is unsupported.
       yield* Effect.forEach(pending, input.persist, { discard: true });
-      return { context: "", delivered: Effect.void };
+      return { context: "", delivered: Effect.void, rollback: Effect.void };
     }
     return {
       context: renderHistory(selected.messages, selected.context),
       delivered: persist("inline"),
+      // Nothing reached the provider: a stale pending marker would make the
+      // next start abandon this native session as uncertain.
+      rollback: Effect.forEach(pending, input.persist, { discard: true }),
     };
   },
 );

@@ -9,6 +9,7 @@ import {
   ProviderInstanceId,
   RunId,
   ScheduledTaskId,
+  type ScheduledTaskUpsertInput,
   ThreadId,
 } from "@specweave-studio/contracts";
 import * as DateTime from "effect/DateTime";
@@ -686,5 +687,101 @@ it("sendToThread forwards the user's own words from a worker follow-up", async (
       message: "Please push all the branches",
     });
     expect(sent[3]).toMatchObject({ text: "Please push all the branches", createdBy: "agent" });
+  }).pipe(Effect.provide(layer), Effect.runPromise);
+});
+
+it("scheduleTask gives a coordinator's routines their own thread and binds a worker's", async () => {
+  const workerThreadId = ThreadId.make("thread-mcp-orchestrator-worker");
+  const projectionFor = (threadId: ThreadId) =>
+    ({
+      thread: baseThread({
+        threadId,
+        title: threadId === parentThreadId ? "Coordinator" : "Worker",
+        instanceId: parentInstanceId,
+        model: "gpt-5.4",
+      }),
+      runs: [makeRun({ id: RunId.make(`run-${threadId}`), ordinal: 1, status: "running" })],
+      visibleTurnItems: [],
+      runtimeRequests: [],
+      messages: [],
+      contextTransfers: [],
+      subagents: [],
+      updatedAt: now,
+    }) as unknown as OrchestrationV2ThreadProjection;
+  const saved: Array<ScheduledTaskUpsertInput> = [];
+  const layer = OrchestratorMcpService.layer.pipe(
+    Layer.provide(
+      Layer.mergeAll(
+        Layer.mock(ThreadManagementService.ThreadManagementService)({
+          getThreadRecords: (threadId) => Effect.succeed(projectionFor(threadId)),
+          getThreadShell: (threadId) =>
+            Effect.succeed(projectionFor(threadId).thread as unknown as OrchestrationV2ThreadShell),
+          getProjectThreadRecords: (input) => Effect.succeed(projectionFor(input.threadId)),
+        } satisfies Partial<ThreadManagementService.ThreadManagementService["Service"]>),
+        Layer.mock(ProviderRegistry.ProviderRegistry)({
+          getProviders: Effect.succeed([]),
+        } satisfies Partial<ProviderRegistry.ProviderRegistry["Service"]>),
+        Layer.mock(ProjectService.ProjectService)({
+          getById: () =>
+            Effect.succeed(
+              Option.some({
+                id: projectId,
+                defaultModelSelection: null,
+                workspaceSettings: { coordinatorThreadId: parentThreadId },
+              } as never),
+            ),
+        }),
+        Layer.mock(SecretRequests.SecretRequests)({}),
+        Layer.mock(ScheduledTaskService.ScheduledTaskService)({
+          upsert: (input) =>
+            Effect.sync(() => {
+              saved.push(input);
+              return {
+                task: {
+                  ...input,
+                  id: ScheduledTaskId.make(`task-${saved.length}`),
+                  threadId: input.threadId ?? null,
+                  nextRunAt: null,
+                  lastRunStatus: "never",
+                } as never,
+              };
+            }),
+        } satisfies Partial<ScheduledTaskService.ScheduledTaskService["Service"]>),
+        Layer.mock(ProviderAdapterRegistry.ProviderAdapterRegistryV2)({
+          list: () => Effect.succeed([]),
+        } satisfies Partial<ProviderAdapterRegistry.ProviderAdapterRegistryV2["Service"]>),
+        NodeCrypto.layer,
+      ),
+    ),
+  );
+  const scopeFor = (threadId: ThreadId): McpInvocationContext.McpInvocationScope => ({
+    ...makeScope(),
+    thread: { ...makeScope().thread!, threadId },
+  });
+  const watch = {
+    prompt: "Check the search console",
+    schedule: { type: "interval" as const, everyMs: 3_600_000 },
+  };
+
+  await Effect.gen(function* () {
+    const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+    // From the coordinator: its own thread, even when asked to bind to the caller.
+    const fromCoordinator = yield* service.scheduleTask(scopeFor(parentThreadId), watch);
+    yield* service.scheduleTask(scopeFor(parentThreadId), { ...watch, bindToCurrentThread: true });
+    expect(fromCoordinator.boundThreadId).toBeNull();
+    expect(fromCoordinator.ownThread).toBe(true);
+    for (const input of saved) {
+      expect(input.threadId).toBeNull();
+      expect(input.ownThread).toBe(true);
+      expect(input.workspaceStrategy.type).toBe("worktree");
+    }
+    // From a worker: "wake me" binds to that worker's thread.
+    const fromWorker = yield* service.scheduleTask(scopeFor(workerThreadId), watch);
+    expect(fromWorker.boundThreadId).toBe(workerThreadId);
+    expect(saved.at(-1)?.ownThread).toBeUndefined();
+    // A worker that asks for its own thread gets one.
+    yield* service.scheduleTask(scopeFor(workerThreadId), { ...watch, bindToCurrentThread: false });
+    expect(saved.at(-1)?.threadId).toBeNull();
+    expect(saved.at(-1)?.ownThread).toBe(true);
   }).pipe(Effect.provide(layer), Effect.runPromise);
 });

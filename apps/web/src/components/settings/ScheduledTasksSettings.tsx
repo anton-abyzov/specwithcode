@@ -42,7 +42,12 @@ import {
   type EnvironmentPresentation,
 } from "../../state/environments";
 import { useProjects, useServerConfigs } from "../../state/entities";
-import { isArchivedMember, projectPickerMembers } from "../../studio/projectListVisibility";
+import {
+  ineligibleProjectLabel,
+  ineligibleSelectedMember,
+  isArchivedMember,
+  projectPickerMembers,
+} from "../../studio/projectListVisibility";
 import { useEnvironmentQuery } from "../../state/query";
 import { EMPTY_SERVER_PROVIDERS, serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -121,6 +126,7 @@ const EMPTY_DRAFT: DraftState = {
   weekdays: new Set([1, 2, 3, 4, 5]),
   projectId: "",
   threadId: "",
+  ownThread: true,
   workspaceMode: "worktree",
   baseRef: "main",
   startFromOrigin: true,
@@ -211,7 +217,6 @@ export function ScheduledTasksSettings(target: {
             task: null,
             preset: morningBriefingDraft(EMPTY_DRAFT, {
               id: templateProject.id,
-              coordinatorThreadId: templateProject.workspaceSettings?.coordinatorThreadId ?? null,
               coordinatorModelSelection:
                 templateProject.workspaceSettings?.coordinatorModelSelection ?? null,
             }),
@@ -538,20 +543,24 @@ function ScheduledTaskEditorDialog({
   );
   const allProjects = useProjects();
   const configs = useServerConfigs();
-  // The task's own project stays a choice even once archived, so editing keeps it.
-  const keptProjectId = task?.projectId ?? (preset?.projectId || null);
-  const projects = useMemo(
+  const scopedProjects = useMemo(
     () =>
-      projectPickerMembers(
-        allProjects.filter(
-          (project) =>
-            project.environmentId === environmentId &&
-            matchesScheduledTaskScope(scope, environmentId, project.id),
-        ),
-        (id) => configs.get(id)?.scratchWorkspaceRoot ?? null,
-        keptProjectId === null ? null : { environmentId, id: keptProjectId as ProjectId },
+      allProjects.filter(
+        (project) =>
+          project.environmentId === environmentId &&
+          matchesScheduledTaskScope(scope, environmentId, project.id),
       ),
-    [allProjects, configs, environmentId, keptProjectId, scope],
+    [allProjects, environmentId, scope],
+  );
+  const scratchRootFor = useCallback(
+    (id: EnvironmentId) => configs.get(id)?.scratchWorkspaceRoot ?? null,
+    [configs],
+  );
+  // Only the person's own projects are choices. A task whose project was since archived or
+  // made by a check shows it apart (unavailableProject below), and saving needs another.
+  const projects = useMemo(
+    () => projectPickerMembers(scopedProjects, scratchRootFor),
+    [scopedProjects, scratchRootFor],
   );
   const settings = useEnvironmentSettings(environmentId);
   const providers =
@@ -585,6 +594,11 @@ function ScheduledTaskEditorDialog({
     : task;
   const selectedProjectId = draft.projectId || projects[0]?.id || "";
   const selectedProject = projects.find((project) => project.id === selectedProjectId);
+  const unavailableProject = ineligibleSelectedMember(
+    scopedProjects,
+    selectedProjectId ? { environmentId, id: selectedProjectId as ProjectId } : null,
+    scratchRootFor,
+  );
 
   // The real model picker is keyed by a `${instanceId}:${model}` string, which
   // is exactly how the draft stores its selection.
@@ -625,6 +639,13 @@ function ScheduledTaskEditorDialog({
       reportFailure(
         "No provider can run this task",
         "Install or sign in to a provider in Settings > Providers, then save again.",
+      );
+      return;
+    }
+    if (unavailableProject) {
+      reportFailure(
+        "Choose another project",
+        `${unavailableProject.project.title}: ${ineligibleProjectLabel(unavailableProject.reason)}.`,
       );
       return;
     }
@@ -701,6 +722,7 @@ function ScheduledTaskEditorDialog({
       schedule,
       projectId: selectedProjectId as ProjectId,
       threadId: draft.threadId ? (draft.threadId as ThreadId) : null,
+      ...(draft.ownThread ? { ownThread: true } : {}),
       workspaceStrategy,
       modelSelection,
       modelPinned: draft.modelPinned,
@@ -818,17 +840,25 @@ function ScheduledTaskEditorDialog({
                     setDraft((current) => ({
                       ...current,
                       projectId: projectId ?? "",
-                      // A template's coordinator thread belongs to the project it was made for.
-                      ...(current.editingId === null ? { threadId: "" } : {}),
+                      // A new routine's thread belongs to the project it was made for.
+                      ...(current.editingId === null ? { threadId: "", ownThread: true } : {}),
                     }))
                   }
                 >
                   <SelectTrigger size="sm" id="scheduled-task-project">
                     <SelectValue placeholder="Select a project">
-                      {selectedProject?.title}
+                      {selectedProject?.title ?? unavailableProject?.project.title}
                     </SelectValue>
                   </SelectTrigger>
                   <SelectPopup>
+                    {unavailableProject ? (
+                      <SelectItem value={unavailableProject.project.id} disabled>
+                        {unavailableProject.project.title}
+                        <span className="ms-2 text-muted-foreground text-xs">
+                          {ineligibleProjectLabel(unavailableProject.reason)}
+                        </span>
+                      </SelectItem>
+                    ) : null}
                     {projects.map((project) => (
                       <SelectItem key={project.id} value={project.id}>
                         {project.title}
@@ -856,19 +886,13 @@ function ScheduledTaskEditorDialog({
                 </Select>
               </Field>
             </div>
-            {draft.threadId ? (
-              draft.editingId === null ? (
-                <p className="text-muted-foreground text-xs">
-                  Runs in this project&apos;s coordinator thread, so the answer shows up where you
-                  already talk to it.
-                </p>
-              ) : null
-            ) : (
-              <p className="text-muted-foreground text-xs">
-                Each run goes to this project&apos;s coordinator, which answers it or starts the
-                threads it needs in this workspace.
-              </p>
-            )}
+            <p className="text-muted-foreground text-xs" data-routine-destination>
+              {draft.ownThread
+                ? draft.threadId
+                  ? "Runs in its own thread, which keeps this routine's history apart from the coordinator."
+                  : "Runs in a thread of its own, named after the routine: the first run starts it in this workspace and later runs continue it."
+                : "Continues the worker thread it was set up from."}
+            </p>
 
             {draft.workspaceMode === "worktree" ? (
               <Field label="Base branch" htmlFor="scheduled-task-base-ref">
@@ -921,8 +945,8 @@ function ScheduledTaskEditorDialog({
                   <Label htmlFor="scheduled-task-model-pinned">Use a specific model</Label>
                   <p className="text-sm text-muted-foreground">
                     {draft.modelPinned
-                      ? "Every run uses this model instead of the coordinator's."
-                      : "Runs use the coordinator's model, and threads use the project's recommended model, switching to a provider with room when one runs out."}
+                      ? "Every run uses this model."
+                      : "The routine's thread starts on this model, then each run uses what its next turn would, switching to a provider with room when one runs out."}
                   </p>
                 </div>
                 <Switch

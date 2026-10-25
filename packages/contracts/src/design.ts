@@ -281,6 +281,11 @@ export const DesignComment = Schema.Struct({
   author: DesignActor,
   createdAt: Schema.String,
   resolved: Schema.Boolean,
+  /**
+   * The first comment of the thread this replies to; absent on a thread's first
+   * comment. Older servers drop it and show the reply as its own comment.
+   */
+  parentId: Schema.optionalKey(Id),
 });
 export type DesignComment = typeof DesignComment.Type;
 
@@ -290,6 +295,27 @@ export const DesignThreadBinding = Schema.Struct({
   threadId: ThreadId,
 });
 export type DesignThreadBinding = typeof DesignThreadBinding.Type;
+
+/**
+ * A design system found in the owner's repository that a design follows before
+ * anyone imports it: what was reused and where it came from, so the person and
+ * the agent see it. Informational; the canvas still draws tokens from
+ * `designSystem` once the system is imported.
+ */
+export const DesignReuse = Schema.Struct({
+  name: Name,
+  /** Root-relative files the system was read from. */
+  paths: Schema.Array(Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(500))).check(
+    Schema.isMaxLength(24),
+  ),
+  tokens: NonNegativeInt,
+  components: NonNegativeInt,
+  modes: Schema.Array(Schema.String.check(Schema.isMaxLength(120))).check(Schema.isMaxLength(12)),
+  /** The import proposal waiting for review in Settings > Design systems, if one was made. */
+  proposalId: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(80))),
+  foundAt: Schema.String,
+});
+export type DesignReuse = typeof DesignReuse.Type;
 
 /**
  * What each audience may do with a design. `members` are people on the
@@ -328,6 +354,7 @@ export const DesignDocument = Schema.Struct({
   copiedFrom: Schema.NullOr(DesignCopySource),
   thread: Schema.optionalKey(DesignThreadBinding),
   access: Schema.optionalKey(DesignAccess),
+  reuse: Schema.optionalKey(DesignReuse),
 });
 export type DesignDocument = typeof DesignDocument.Type;
 
@@ -387,6 +414,7 @@ export const DesignOperation = Schema.Union([
   }),
   Schema.Struct({ op: Schema.Literal("delete_comment"), commentId: Id }),
   Schema.Struct({ op: Schema.Literal("set_thread"), thread: Schema.NullOr(DesignThreadBinding) }),
+  Schema.Struct({ op: Schema.Literal("set_reuse"), reuse: Schema.NullOr(DesignReuse) }),
   Schema.Struct({
     op: Schema.Literal("set_access"),
     members: Schema.optionalKey(DesignAccessLevel),
@@ -533,6 +561,8 @@ export const DesignSystemSummary = Schema.Struct({
   componentCount: NonNegativeInt,
   sources: Schema.Array(DesignSystemSource),
   ownerLabel: Name,
+  /** The system this one was copied from, so a picker can offer the copy instead of another. */
+  copiedFrom: Schema.optionalKey(DesignCopySource),
 });
 export type DesignSystemSummary = typeof DesignSystemSummary.Type;
 
@@ -562,11 +592,22 @@ export const DesignOwnerInput = Schema.Union([
 ]);
 export type DesignOwnerInput = typeof DesignOwnerInput.Type;
 
+/**
+ * An owner that could not be read, or a file in it that could not. `owner` names the
+ * project exactly (titles repeat across clones); servers before it send only the label.
+ */
+export const DesignListProblem = Schema.Struct({
+  ownerLabel: Name,
+  detail: Schema.String,
+  owner: Schema.optionalKey(DesignOwnerInput),
+});
+export type DesignListProblem = typeof DesignListProblem.Type;
+
 export const DesignListInput = Schema.Struct({ filter: DesignOwnerFilter });
 export const DesignListResult = Schema.Struct({
   designs: Schema.Array(DesignSummary),
   /** Owners that could not be read (folder missing, not on this machine), with the reason. */
-  problems: Schema.Array(Schema.Struct({ ownerLabel: Name, detail: Schema.String })),
+  problems: Schema.Array(DesignListProblem),
 });
 export type DesignListResult = typeof DesignListResult.Type;
 
@@ -586,7 +627,16 @@ export const DesignGetInput = Schema.Struct({
 });
 export type DesignGetInput = typeof DesignGetInput.Type;
 
-export const DesignGetResult = Schema.Struct({ ref: DesignRef, document: DesignDocument });
+/** Who the server takes the caller for: the owner on this machine, a member, or an agent. */
+export const DesignAudience = Schema.Literals(["owner", "members", "agents"]);
+export type DesignAudience = typeof DesignAudience.Type;
+
+export const DesignGetResult = Schema.Struct({
+  ref: DesignRef,
+  document: DesignDocument,
+  /** Set by `design.get`, so a client knows what it may do instead of guessing. */
+  audience: Schema.optionalKey(DesignAudience),
+});
 export type DesignGetResult = typeof DesignGetResult.Type;
 
 export const DesignCreateInput = Schema.Struct({
@@ -594,6 +644,12 @@ export const DesignCreateInput = Schema.Struct({
   kind: DesignKind,
   title: Name,
   designSystem: Schema.optionalKey(Schema.NullOr(DesignSystemId)),
+  /**
+   * The thread to bind on creation, checked like `set_thread`: creating and
+   * binding is one write, so a refused binding leaves no design behind.
+   */
+  thread: Schema.optionalKey(DesignThreadBinding),
+  reuse: Schema.optionalKey(DesignReuse),
 });
 export type DesignCreateInput = typeof DesignCreateInput.Type;
 
@@ -627,6 +683,52 @@ export const DesignCopyInput = Schema.Struct({
 });
 export type DesignCopyInput = typeof DesignCopyInput.Type;
 
+/**
+ * Moves a Playground design into a project on the same machine. Unlike a
+ * copy it keeps the design id, revision, history, versions, comments, assets,
+ * access and thread binding; the old address then answers `not_found` with
+ * `movedTo`. Gated by the `designMove` capability.
+ */
+export const DesignMoveInput = Schema.Struct({
+  ...DesignAddress.fields,
+  to: DesignOwnerInput,
+  expectedRevision: NonNegativeInt,
+});
+export type DesignMoveInput = typeof DesignMoveInput.Type;
+
+/** The largest PowerPoint file `design.importDeck` reads. */
+export const DESIGN_DECK_IMPORT_MAX_BYTES = 50 * 1024 * 1024;
+
+/**
+ * Imports a PowerPoint deck (.pptx) as a new slides document. A person's
+ * action from the app, not an agent tool. Gated by the `designDeckImport`
+ * capability.
+ */
+export const DesignImportDeckInput = Schema.Struct({
+  owner: DesignOwnerInput,
+  title: Name,
+  designSystem: Schema.NullOr(DesignSystemId),
+  /** Base64 .pptx bytes, at most 50 MB decoded. */
+  data: Schema.String.check(
+    Schema.isMinLength(1),
+    Schema.isMaxLength(Math.ceil(DESIGN_DECK_IMPORT_MAX_BYTES / 3) * 4),
+  ),
+});
+export type DesignImportDeckInput = typeof DesignImportDeckInput.Type;
+
+/** What the import could not keep on one slide (1-based), in plain words. */
+export const DesignImportSkipped = Schema.Struct({
+  slide: NonNegativeInt,
+  items: Schema.Array(Schema.String.check(Schema.isMaxLength(300))),
+});
+export type DesignImportSkipped = typeof DesignImportSkipped.Type;
+
+export const DesignImportDeckResult = Schema.Struct({
+  ref: DesignRef,
+  notImported: Schema.Array(DesignImportSkipped),
+});
+export type DesignImportDeckResult = typeof DesignImportDeckResult.Type;
+
 export const DesignDeleteInput = DesignAddress;
 export const DesignDeleteResult = Schema.Struct({ deleted: Schema.Boolean });
 
@@ -648,9 +750,10 @@ export const DesignAssetPutResult = Schema.Struct({ asset: Schema.String });
 export const DesignExportInput = Schema.Struct({
   ...DesignAddress.fields,
   pageId: Id,
-  /** One frame; the whole page when absent. PDF and PPTX ignore it and export every page that is not skipped: one sheet per slide of a deck, or per top-level frame of a design. */
+  /** One frame; the whole page when absent (PNG, SVG and HTML). PDF and PPTX ignore it and export every page that is not skipped: one sheet per slide of a deck, or per top-level frame of a design. */
   frameId: Schema.optionalKey(DesignNodeId),
-  format: Schema.Literals(["png", "html", "pdf", "pptx"]),
+  /** `svg` only reaches servers that advertise `designSvgExport`; older ones refuse it. */
+  format: Schema.Literals(["png", "svg", "html", "pdf", "pptx"]),
   /** PNG only: device scale factor. */
   scale: Schema.optionalKey(Schema.Literals([1, 2])),
   /** Mode to resolve tokens in; the system's first mode when absent. */
@@ -662,6 +765,7 @@ export const DesignExportResult = Schema.Struct({
   fileName: Schema.String.check(Schema.isMaxLength(255)),
   mimeType: Schema.Literals([
     "image/png",
+    "image/svg+xml",
     "text/html",
     "application/pdf",
     "application/vnd.openxmlformats-officedocument.presentationml.presentation",
@@ -676,7 +780,7 @@ export type DesignExportResult = typeof DesignExportResult.Type;
 export const DesignSystemListInput = Schema.Struct({ filter: DesignOwnerFilter });
 export const DesignSystemListResult = Schema.Struct({
   systems: Schema.Array(DesignSystemSummary),
-  problems: Schema.Array(Schema.Struct({ ownerLabel: Name, detail: Schema.String })),
+  problems: Schema.Array(DesignListProblem),
 });
 export type DesignSystemListResult = typeof DesignSystemListResult.Type;
 
@@ -691,6 +795,12 @@ export type DesignSystemGetResult = typeof DesignSystemGetResult.Type;
 export const DesignSystemCopyInput = Schema.Struct({
   ...DesignSystemAddress.fields,
   to: DesignOwnerInput,
+  /**
+   * Copy again when the target's newest copy of the system predates its current
+   * revision. A copy already at that revision comes back instead, so a retry adds
+   * none. Without it, any existing copy comes back.
+   */
+  fresh: Schema.optionalKey(Schema.Boolean),
 });
 export type DesignSystemCopyInput = typeof DesignSystemCopyInput.Type;
 
@@ -731,6 +841,8 @@ export class DesignError extends Schema.TaggedError<DesignError>()("DesignError"
   currentRevision: Schema.optionalKey(NonNegativeInt),
   /** `not_on_this_machine` only: the logical-project member that has the design. */
   member: Schema.optionalKey(Schema.Struct({ environmentId: EnvironmentId, projectId: ProjectId })),
+  /** `not_found` only: the design moved here, and the caller may open it there. */
+  movedTo: Schema.optionalKey(Schema.Struct({ owner: DesignOwnerInput, designId: DesignId })),
 }) {
   override get message(): string {
     return this.detail;

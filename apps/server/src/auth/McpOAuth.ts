@@ -1,4 +1,5 @@
 import {
+  type AuthPrincipal,
   AuthAccessWriteScope,
   type AuthMcpApprovalDecision,
   type AuthMcpAuthorizationRequest,
@@ -29,6 +30,7 @@ import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as McpHttpServer from "../mcp/McpHttpServer.ts";
 import type * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
 import * as EnvironmentAuth from "./EnvironmentAuth.ts";
+import { coordinatorOfWorkerLabel } from "../fleet/workGrantPolicy.ts";
 import * as WorkGrants from "../fleet/WorkGrants.ts";
 import * as ServerSecretStore from "./ServerSecretStore.ts";
 import {
@@ -199,6 +201,8 @@ interface PendingCode {
   readonly codeChallenge: string;
   readonly resource: string;
   readonly access: AuthMcpClientAccess;
+  readonly principal?: AuthPrincipal;
+  readonly principalGeneration?: number | undefined;
   readonly expiresAtMs: number;
 }
 
@@ -224,7 +228,12 @@ export class McpOAuth extends Context.Service<
       request: HttpServerRequest.HttpServerRequest,
       authorization: AuthorizationRequest,
     ) => Effect.Effect<
-      | { readonly csrfToken: string; readonly scopes: ReadonlyArray<AuthEnvironmentScope> }
+      | {
+          readonly csrfToken: string;
+          readonly scopes: ReadonlyArray<AuthEnvironmentScope>;
+          readonly principal?: AuthPrincipal;
+          readonly principalGeneration?: number | undefined;
+        }
       | undefined
     >;
     /** Approves and returns the URL to send the browser to. */
@@ -267,6 +276,20 @@ const make = Effect.gen(function* () {
     .getOrCreateRandom(SIGNING_SECRET_NAME, 32)
     .pipe(Effect.orDie);
   const codes = yield* Ref.make<ReadonlyMap<string, PendingCode>>(new Map());
+  yield* Effect.acquireRelease(
+    environmentAuth.onPrincipalRevoked((principal) =>
+      Ref.update(
+        codes,
+        (current) =>
+          new Map(
+            [...current].filter(
+              ([, pending]) => JSON.stringify(pending.principal) !== JSON.stringify(principal),
+            ),
+          ),
+      ),
+    ),
+    (remove) => Effect.sync(remove),
+  );
 
   const sign = (domain: string, payload: string) => signPayload(`${domain}.${payload}`, signingKey);
 
@@ -400,13 +423,24 @@ const make = Effect.gen(function* () {
         // Approving manages access, and a session may only hand out scopes it holds.
         session.scopes.includes(AuthAccessWriteScope) &&
         session.scopes.includes(AuthOrchestrationReadScope)
-          ? { csrfToken: csrfToken(session.sessionId, authorization), scopes: session.scopes }
+          ? {
+              csrfToken: csrfToken(session.sessionId, authorization),
+              scopes: session.scopes,
+              ...(session.principal
+                ? { principal: session.principal, principalGeneration: session.principalGeneration }
+                : {}),
+            }
           : undefined,
       ),
       Effect.orElseSucceed(() => undefined),
     );
 
-  const mintCode = (authorization: AuthorizationRequest, access: AuthMcpClientAccess) =>
+  const mintCode = (
+    authorization: AuthorizationRequest,
+    access: AuthMcpClientAccess,
+    principal?: AuthPrincipal,
+    principalGeneration?: number,
+  ) =>
     Effect.gen(function* () {
       const now = yield* Clock.currentTimeMillis;
       const code = Buffer.from(yield* crypto.randomBytes(32).pipe(Effect.orDie)).toString(
@@ -423,6 +457,7 @@ const make = Effect.gen(function* () {
           codeChallenge: authorization.codeChallenge,
           resource: authorization.resource,
           access,
+          ...(principal ? { principal, principalGeneration } : {}),
           expiresAtMs: now + AUTHORIZATION_CODE_TTL_MS,
         });
         return next;
@@ -433,20 +468,26 @@ const make = Effect.gen(function* () {
   const approve: McpOAuth["Service"]["approve"] = (input) =>
     Effect.gen(function* () {
       const { decision } = input;
+      let principal: AuthPrincipal | undefined;
+      let principalGeneration: number | undefined;
       if (decision._tag === "pairing-code") {
-        yield* environmentAuth.consumeMcpApprovalCode(decision.code, decision.access).pipe(
-          Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (cause) =>
-            Effect.logError("MCP approval code check failed.", { cause }).pipe(
-              Effect.andThen(
-                Effect.fail(
-                  new McpOAuthPageError({
-                    description: "The code could not be checked. Try again.",
-                  }),
+        const approval = yield* environmentAuth
+          .consumeMcpApprovalCode(decision.code, decision.access)
+          .pipe(
+            Effect.catchIf(EnvironmentAuth.isServerAuthInternalError, (cause) =>
+              Effect.logError("MCP approval code check failed.", { cause }).pipe(
+                Effect.andThen(
+                  Effect.fail(
+                    new McpOAuthPageError({
+                      description: "The code could not be checked. Try again.",
+                    }),
+                  ),
                 ),
               ),
             ),
-          ),
-        );
+          );
+        principal = approval.principal;
+        principalGeneration = approval.principalGeneration;
       } else {
         const session = yield* approvingBrowserSession(input.request, input.authorization);
         if (
@@ -460,8 +501,25 @@ const make = Effect.gen(function* () {
             description: "Your session cannot approve this request. Enter a pairing code instead.",
           });
         }
+        principal = session.principal;
+        principalGeneration = session.principalGeneration;
       }
-      const code = yield* mintCode(input.authorization, decision.access);
+      const claimed = coordinatorOfWorkerLabel(input.authorization.client.name);
+      if (
+        claimed !== undefined &&
+        (principal?.kind !== "coordinator" || principal.environmentId !== claimed)
+      ) {
+        return yield* new McpOAuthPageError({
+          description:
+            "This worker name does not match the approved machine. Approve this device again with a code for that machine.",
+        });
+      }
+      const code = yield* mintCode(
+        input.authorization,
+        decision.access,
+        principal,
+        principalGeneration,
+      );
       yield* Effect.logInfo("Approved an MCP client sign-in.", {
         client: input.authorization.client.name,
         access: decision.access,
@@ -521,6 +579,9 @@ const make = Effect.gen(function* () {
       }
       const issued = yield* environmentAuth
         .issueMcpClientSession({
+          ...(pending.principal
+            ? { principal: pending.principal, principalGeneration: pending.principalGeneration }
+            : {}),
           label: pending.clientName,
           access: pending.access,
           client: deriveAuthClientMetadata({ request }),
@@ -592,6 +653,7 @@ export const layerMcpClientAuthenticator = Layer.effect(
                 thread: undefined,
                 client: {
                   sessionId: client.sessionId,
+                  ...(client.principal ? { principal: client.principal } : {}),
                   label: client.label,
                   access: client.access,
                 },
@@ -605,10 +667,13 @@ export const layerMcpClientAuthenticator = Layer.effect(
             ),
           ),
           Effect.catch((error) =>
-            (EnvironmentAuth.isServerAuthCredentialError(error)
-              ? Effect.void
-              : Effect.logWarning("MCP client authentication failed.", { cause: error })
-            ).pipe(Effect.as(undefined)),
+            EnvironmentAuth.isServerAuthCredentialError(error) &&
+            EnvironmentAuth.serverAuthCredentialReason(error) === "device_reapproval_required"
+              ? Effect.fail(new McpHttpServer.McpDeviceReapprovalRequired({}))
+              : (EnvironmentAuth.isServerAuthCredentialError(error)
+                  ? Effect.void
+                  : Effect.logWarning("MCP client authentication failed.", { cause: error })
+                ).pipe(Effect.as(undefined)),
           ),
         ),
     });

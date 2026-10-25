@@ -1,3 +1,5 @@
+import * as DateTime from "effect/DateTime";
+import { currentPrincipalGeneration } from "./authPrincipalGeneration.ts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -10,6 +12,7 @@ import {
   AuthClientMetadataDeviceType,
   AuthEnvironmentScopes,
   AuthSessionId,
+  AuthPrincipal,
   ClientSurface,
   ServerAuthSessionMethod,
 } from "@specweave-studio/contracts";
@@ -33,6 +36,8 @@ export type AuthSessionClientMetadataRecord = typeof AuthSessionClientMetadataRe
 
 export const AuthSessionRecord = Schema.Struct({
   sessionId: AuthSessionId,
+  principal: Schema.optionalKey(Schema.NullOr(AuthPrincipal)),
+  principalGeneration: Schema.optionalKey(Schema.Number),
   subject: Schema.String,
   scopes: AuthEnvironmentScopes,
   method: ServerAuthSessionMethod,
@@ -46,6 +51,8 @@ export type AuthSessionRecord = typeof AuthSessionRecord.Type;
 
 export const CreateAuthSessionInput = Schema.Struct({
   sessionId: AuthSessionId,
+  principal: Schema.optionalKey(Schema.NullOr(AuthPrincipal)),
+  principalGeneration: Schema.optionalKey(Schema.Number),
   subject: Schema.String,
   scopes: AuthEnvironmentScopes,
   method: ServerAuthSessionMethod,
@@ -69,7 +76,7 @@ export const RenewWorkerAuthSessionInput = Schema.Struct({
   subject: Schema.Literal("mcp-client"),
   method: Schema.Literal("bearer-access-token"),
   scopes: AuthEnvironmentScopes,
-  label: Schema.String,
+  principal: AuthPrincipal,
   issuedAt: Schema.DateTimeUtcFromString,
   expiresAt: Schema.DateTimeUtcFromString,
 });
@@ -114,6 +121,13 @@ export type SetAuthSessionClientConnectionInput = typeof SetAuthSessionClientCon
 export class AuthSessionRepository extends Context.Service<
   AuthSessionRepository,
   {
+    readonly setPrincipalRevoked: (
+      principal: typeof AuthPrincipal.Type,
+      revokedAt: import("effect/DateTime").Utc | null,
+    ) => Effect.Effect<ReadonlyArray<AuthSessionId>, AuthSessionRepositoryError>;
+    readonly currentPrincipalGeneration: (
+      principal: typeof AuthPrincipal.Type,
+    ) => Effect.Effect<number, AuthSessionRepositoryError>;
     readonly create: (
       input: CreateAuthSessionInput,
     ) => Effect.Effect<void, AuthSessionRepositoryError>;
@@ -148,6 +162,8 @@ export class AuthSessionRepository extends Context.Service<
 >()("specweave-studio/persistence/AuthSessions/AuthSessionRepository") {}
 
 const AuthSessionDbRow = Schema.Struct({
+  principal: Schema.NullOr(Schema.fromJsonString(AuthPrincipal)),
+  principalGeneration: Schema.Number,
   sessionId: AuthSessionId,
   subject: Schema.String,
   scopes: Schema.fromJsonString(AuthEnvironmentScopes),
@@ -165,6 +181,8 @@ const AuthSessionDbRow = Schema.Struct({
 });
 
 const AuthSessionRawDbRow = Schema.Struct({
+  principal: Schema.Unknown,
+  principalGeneration: Schema.Unknown,
   sessionId: Schema.String,
   subject: Schema.Unknown,
   scopes: Schema.Unknown,
@@ -186,6 +204,8 @@ const decodeAuthSessionDbRow = Schema.decodeUnknownEffect(AuthSessionDbRow);
 function toAuthSessionRecord(row: typeof AuthSessionDbRow.Type): AuthSessionRecord {
   return {
     sessionId: row.sessionId,
+    principal: row.principal,
+    principalGeneration: row.principalGeneration,
     subject: row.subject,
     scopes: row.scopes,
     method: row.method,
@@ -229,6 +249,8 @@ export const make = Effect.gen(function* () {
       execute: (input) =>
         sql`
         INSERT INTO auth_sessions (
+          principal,
+          principal_generation,
           session_id,
           subject,
           scopes,
@@ -244,6 +266,8 @@ export const make = Effect.gen(function* () {
           revoked_at
         )
         VALUES (
+          ${input.principal ? JSON.stringify(input.principal) : null},
+          ${input.principalGeneration ?? 0},
           ${input.sessionId},
           ${input.subject},
           ${JSON.stringify(input.scopes)},
@@ -261,6 +285,42 @@ export const make = Effect.gen(function* () {
         ${ignoreExisting ? sql`ON CONFLICT(session_id) DO NOTHING` : sql``}
       `,
     });
+  const setPrincipalRevoked: AuthSessionRepository["Service"]["setPrincipalRevoked"] = (
+    principal,
+    revokedAt,
+  ) => {
+    const key = JSON.stringify(principal);
+    return sql
+      .withTransaction(
+        Effect.gen(function* () {
+          // Restore also tombstones sessions/codes issued while the principal was revoked.
+          const previous = yield* sql<{
+            revoked_at: string | null;
+          }>`SELECT revoked_at FROM auth_principal_revocations WHERE principal = ${key}`;
+          const tombstone =
+            revokedAt === null ? previous[0]?.revoked_at : DateTime.formatIso(revokedAt);
+          const rows =
+            tombstone == null
+              ? []
+              : yield* sql<{
+                  sessionId: AuthSessionId;
+                }>`UPDATE auth_sessions SET revoked_at = ${tombstone} WHERE principal = ${key} AND revoked_at IS NULL RETURNING session_id AS "sessionId"`;
+          if (tombstone != null)
+            yield* sql`UPDATE auth_pairing_links SET revoked_at = ${tombstone} WHERE principal = ${key} AND revoked_at IS NULL`;
+          yield* sql`INSERT INTO auth_principal_revocations (principal, revoked_at, generation) VALUES (${key}, ${revokedAt === null ? null : DateTime.formatIso(revokedAt)}, ${revokedAt === null ? 0 : 1}) ON CONFLICT(principal) DO UPDATE SET revoked_at = excluded.revoked_at, generation = generation + ${revokedAt === null ? 0 : 1}`;
+          return rows.map((row) => row.sessionId);
+        }),
+      )
+      .pipe(
+        Effect.mapError(
+          (cause) =>
+            new PersistenceSqlError({
+              operation: "AuthSessionRepository.setPrincipalRevoked",
+              cause,
+            }),
+        ),
+      );
+  };
   const createSessionRow = insertSessionRow(false);
   const createSessionRowIfAbsent = insertSessionRow(true);
 
@@ -270,6 +330,8 @@ export const make = Effect.gen(function* () {
     execute: ({ sessionId }) =>
       sql`
         SELECT
+          principal AS "principal",
+          principal_generation AS "principalGeneration",
           session_id AS "sessionId",
           subject AS "subject",
           scopes AS "scopes",
@@ -283,7 +345,7 @@ export const make = Effect.gen(function* () {
           issued_at AS "issuedAt",
           expires_at AS "expiresAt",
           last_connected_at AS "lastConnectedAt",
-          revoked_at AS "revokedAt"
+          COALESCE(revoked_at, (SELECT revoked_at FROM auth_principal_revocations WHERE principal = auth_sessions.principal)) AS "revokedAt"
         FROM auth_sessions
         WHERE session_id = ${sessionId}
       `,
@@ -318,7 +380,7 @@ export const make = Effect.gen(function* () {
         AND subject = ${input.subject}
         AND method = ${input.method}
         AND scopes = ${JSON.stringify(input.scopes)}
-        AND client_label = ${input.label}
+        AND principal = ${JSON.stringify(input.principal)}
         AND issued_at = ${input.issuedAt}
         AND revoked_at IS NULL
       RETURNING session_id AS "sessionId"
@@ -331,6 +393,8 @@ export const make = Effect.gen(function* () {
     execute: ({ now, connectedSessionIds = [] }) =>
       sql`
         SELECT
+          principal AS "principal",
+          principal_generation AS "principalGeneration",
           session_id AS "sessionId",
           subject AS "subject",
           scopes AS "scopes",
@@ -344,7 +408,7 @@ export const make = Effect.gen(function* () {
           issued_at AS "issuedAt",
           expires_at AS "expiresAt",
           last_connected_at AS "lastConnectedAt",
-          revoked_at AS "revokedAt"
+          COALESCE(revoked_at, (SELECT revoked_at FROM auth_principal_revocations WHERE principal = auth_sessions.principal)) AS "revokedAt"
         FROM auth_sessions
         WHERE revoked_at IS NULL
           AND (expires_at > ${now} OR ${sql.in("session_id", connectedSessionIds)})
@@ -558,6 +622,8 @@ export const make = Effect.gen(function* () {
     );
 
   return {
+    currentPrincipalGeneration: (principal) => currentPrincipalGeneration(sql, principal),
+    setPrincipalRevoked,
     create,
     createReplacingActive,
     createIfAbsent,

@@ -25,29 +25,34 @@ import { Tip } from "./shell/Tip";
 
 type Attached = ReturnType<typeof useCoordinatorAttachments>;
 
+/** Sends a coordinator draft; an answer to an earlier question may keep its uploads. */
+export type CoordinatorDraftSend = (
+  text: string,
+  attachments: ReadonlyArray<ChatAttachment> | undefined,
+) => Promise<void | { readonly keepUploads: boolean }>;
+
 /**
  * Sends the draft the composer holds. Outside the component: the React Compiler
  * cannot compile a `try` with a `finally`, and one would leave the composer, and
- * every keystroke in it, unoptimized.
+ * every keystroke in it, unoptimized. On failure the text and files stay and the
+ * reason shows beside the box.
  */
-async function submitCoordinatorDraft(input: {
+export async function submitCoordinatorDraft(input: {
   readonly composer: ProjectCoordinatorComposer;
   readonly attached: Attached;
   readonly onAppCommand: CoordinatorSlashMenuInput["onAppCommand"];
-  readonly onSend: (
-    text: string,
-    attachments: ReadonlyArray<ChatAttachment> | undefined,
-  ) => Promise<void>;
+  readonly onSend: CoordinatorDraftSend;
   readonly onError: (message: string | null) => void;
 }): Promise<void> {
   const { composer, attached, onAppCommand, onSend, onError } = input;
   const { prompt: text, promptRevision, attachments: images, submitting } = composer.getSnapshot();
   if (submitting || (!text.trim() && images.length === 0)) return;
-  const appCommand = images.length === 0 ? parseComposerAppCommand(text) : null;
-  if (appCommand !== null) {
+  const appCommand =
+    images.length === 0 && onAppCommand !== null ? parseComposerAppCommand(text) : null;
+  if (appCommand !== null && onAppCommand !== null) {
     // The app runs it; nothing goes to the coordinator.
     composer.setPrompt("");
-    if (onAppCommand) void onAppCommand(appCommand);
+    void onAppCommand(appCommand);
     return;
   }
   composer.setSubmitting(true);
@@ -57,10 +62,10 @@ async function submitCoordinatorDraft(input: {
   try {
     const attachments = await attached.prepare(images);
     release = attached.hold(images);
-    await onSend(text, attachments.length ? attachments : undefined);
+    const sent = await onSend(text, attachments.length ? attachments : undefined);
     release();
     composer.clearSentPrompt(promptRevision);
-    attached.clearSent(images);
+    attached.clearSent(images, { keepUploads: sent?.keepUploads === true });
   } catch (e) {
     onError(e instanceof Error ? e.message : "Message not sent.");
   } finally {
@@ -109,15 +114,16 @@ function CoordinatorComposerForm(props: {
   readonly sendShortcut: ClientSettings["sendShortcut"];
   readonly onAppCommand: CoordinatorSlashMenuInput["onAppCommand"];
   readonly provider: CoordinatorSlashMenuInput["provider"];
-  readonly onSend: (
-    text: string,
-    attachments: ReadonlyArray<ChatAttachment> | undefined,
-  ) => Promise<void>;
+  readonly onSend: CoordinatorDraftSend;
   readonly onError: (message: string | null) => void;
   /** Above the attachment notice: why the host is blocked, the last error. */
   readonly status: ReactNode;
   /** Below the attachment notice: the send receipt and the voice call bar. */
   readonly notices: ReactNode;
+  /** The coordinator's open question, right above the message box that answers it. */
+  readonly question?: ReactNode;
+  /** The message box's label: it says when a send answers a question. */
+  readonly promptLabel?: string;
   /** The composer foot's controls after the attach button. */
   readonly meta: ReactNode;
   readonly controls: ReactNode;
@@ -178,6 +184,7 @@ function CoordinatorComposerForm(props: {
       {props.status}
       <CoordinatorAttachmentNotice problem={attached.problem} onDismiss={attached.dismissProblem} />
       {props.notices}
+      {props.question}
       <div
         className="sws-composer-card"
         onDragOver={(e) => {
@@ -202,7 +209,7 @@ function CoordinatorComposerForm(props: {
           }}
         />
         <label className="sr-only" htmlFor="project-prompt">
-          Message the project coordinator
+          {props.promptLabel ?? "Message the project coordinator"}
         </label>
         <textarea
           id="project-prompt"

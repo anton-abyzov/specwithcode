@@ -78,6 +78,72 @@ describe("connection routes", () => {
 });
 
 describe("learned routes", () => {
+  it("does not learn plain HTTP routes that would borrow a paired bearer", () => {
+    const paired = { ...relayOnly, target: PUBLIC.target, profile: PUBLIC.profile };
+    expect(
+      mergeLearnedRoutes({
+        entry: paired,
+        activeRoute: PUBLIC,
+        reported: [{ httpBaseUrl: "http://192.168.1.10:8319/" }],
+        allowInsecure: true,
+      }),
+    ).toBeNull();
+  });
+
+  it("prunes previously learned insecure bearer routes while retaining the paired route", () => {
+    const profile = new BearerConnectionProfile({
+      connectionId: "lan",
+      environmentId: ENVIRONMENT_ID,
+      label: "Desk",
+      httpBaseUrl: "http://192.168.1.10:8319/",
+      wsBaseUrl: "ws://192.168.1.10:8319/",
+      learned: true,
+    });
+    const stale = { ...LAN, profile: Option.some(profile) };
+    const paired = {
+      ...relayOnly,
+      target: PUBLIC.target,
+      profile: PUBLIC.profile,
+      alternateRoutes: [stale],
+    };
+    expect(
+      mergeLearnedRoutes({
+        entry: paired,
+        activeRoute: PUBLIC,
+        reported: [{ httpBaseUrl: profile.httpBaseUrl }],
+        allowInsecure: true,
+      }),
+    ).toEqual([PUBLIC]);
+  });
+
+  it("keeps a learned SpecWithCode Connect route on plain HTTP while connected over the paired bearer", () => {
+    const proofBound = new BearerConnectionProfile({
+      connectionId: "lan",
+      environmentId: ENVIRONMENT_ID,
+      label: "Desk",
+      httpBaseUrl: "http://192.168.1.10:8319/",
+      wsBaseUrl: "ws://192.168.1.10:8319/",
+      learned: true,
+      authorization: "studio-connect",
+    });
+    const lan = { ...LAN, profile: Option.some(proofBound) };
+    const paired = {
+      ...relayOnly,
+      target: PUBLIC.target,
+      profile: PUBLIC.profile,
+      alternateRoutes: [lan, RELAY],
+    };
+    // No bearer crosses HTTP here, so nothing is pruned and nothing changes.
+    expect(
+      mergeLearnedRoutes({
+        entry: paired,
+        activeRoute: PUBLIC,
+        reported: [{ httpBaseUrl: proofBound.httpBaseUrl }],
+        allowInsecure: true,
+      }),
+    ).toBeNull();
+  });
+
   const relayOnly: ConnectionCatalogEntry = {
     target: RELAY.target,
     profile: RELAY.profile,

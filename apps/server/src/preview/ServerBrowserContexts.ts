@@ -17,8 +17,11 @@ interface Options {
   readonly profilesDir: string;
   /** The shared headless browser's executable, installing it on first use. */
   readonly executable: () => Promise<string>;
-  /** Replaces a failed launch's error with the host setup it is missing, if any. */
-  readonly diagnose?: (executable: string, cause: unknown) => Promise<unknown>;
+  /**
+   * Replaces a failed launch's error with the host setup it is missing, if any.
+   * `sandboxOff` says the browser already ran without Chrome's sandbox.
+   */
+  readonly diagnose?: (executable: string, cause: unknown, sandboxOff: boolean) => Promise<unknown>;
   readonly env?: NodeJS.ProcessEnv;
   readonly onContextClose?: (context: BrowserContext) => void;
   /** How long an idle close waits for the browser to exit before letting new work proceed. */
@@ -69,11 +72,17 @@ export class ServerBrowserContexts {
     };
   }
 
-  private async launch<A>(options: { readonly executablePath: string }, start: () => Promise<A>) {
+  private async launch<A>(
+    options: { readonly executablePath: string; readonly chromiumSandbox: boolean },
+    start: () => Promise<A>,
+  ) {
     try {
       return await start();
     } catch (cause) {
-      throw (await this.options.diagnose?.(options.executablePath, cause)) ?? cause;
+      throw (
+        (await this.options.diagnose?.(options.executablePath, cause, !options.chromiumSandbox)) ??
+        cause
+      );
     }
   }
 

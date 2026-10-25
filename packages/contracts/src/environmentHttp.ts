@@ -154,6 +154,7 @@ export type EnvironmentRequestInvalidReason = typeof EnvironmentRequestInvalidRe
 export const EnvironmentAuthInvalidReason = Schema.Literals([
   "missing_credential",
   "invalid_credential",
+  "device_reapproval_required",
 ]);
 export type EnvironmentAuthInvalidReason = typeof EnvironmentAuthInvalidReason.Type;
 
@@ -238,7 +239,9 @@ export class EnvironmentAuthInvalidError extends Schema.TaggedError<EnvironmentA
   }
 
   override get message(): string {
-    return `The environment rejected this client's credentials (${this.reason}).`;
+    return this.reason === "device_reapproval_required"
+      ? "Approve this device again in SpecWithCode. Create a new pairing code on the receiving machine and sign in again."
+      : `The environment rejected this client's credentials (${this.reason}).`;
   }
 }
 
@@ -479,6 +482,8 @@ const EnvironmentProjectMutationErrors = [
 ] as const;
 
 export interface EnvironmentSessionPrincipalShape {
+  readonly principalGeneration?: number | undefined;
+  readonly principal?: import("./auth.ts").AuthPrincipal;
   readonly sessionId: AuthSessionId;
   readonly subject: string;
   readonly method: ServerAuthSessionMethod;

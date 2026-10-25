@@ -117,18 +117,82 @@ describe("notes", () => {
       content: "joining plan",
       expectedRevision: 3,
     });
-    // Keep both writes a second, named note, guarded by that note's own revision.
-    expect(noteWrites(rows, { "plan.md": "both" }, "M4", kept)).toContainEqual({
-      name: "plan-m4.md",
-      content: "joining plan",
-      expectedRevision: 7,
-    });
+    // Keep both writes a second, named note beside the kept one it never replaces.
+    expect(noteWrites(rows, { "plan.md": "both" }, "M4", kept)).toEqual([
+      { name: "new.md", content: "new", expectedRevision: null },
+      { name: "plan-m4-2.md", content: "joining plan", expectedRevision: null, createOnly: true },
+    ]);
+  });
+
+  it("never lands a kept-both copy on a note the user chose to keep", () => {
+    const keptNotes = [note("plan.md", "KEEP ORIGINAL", 3), note("plan-m4.md", "KEEP THIS TOO", 7)];
+    const joiningNotes = [
+      note("plan.md", "JOINING PLAN", 1),
+      note("plan-m4.md", "OTHER GENERATED NOTE", 2),
+    ];
+    const rows = noteMergeRows(keptNotes, joiningNotes);
+    const writes = noteWrites(rows, { "plan.md": "both", "plan-m4.md": "kept" }, "M4", keptNotes);
+    expect(writes).toEqual([
+      { name: "plan-m4-2.md", content: "JOINING PLAN", expectedRevision: null, createOnly: true },
+    ]);
+    // Taking the joining text for plan-m4.md still overwrites it on purpose.
+    expect(
+      noteWrites(rows, { "plan.md": "both", "plan-m4.md": "joining" }, "M4", keptNotes),
+    ).toEqual([
+      { name: "plan-m4.md", content: "OTHER GENERATED NOTE", expectedRevision: 7 },
+      { name: "plan-m4-2.md", content: "JOINING PLAN", expectedRevision: null, createOnly: true },
+    ]);
+  });
+
+  it("gives competing kept-both copies and copied notes their own names", () => {
+    const keptNotes = [note("plan.md", "kept plan", 3), note("plan-m4.md", "kept copy", 4)];
+    const joiningNotes = [
+      note("plan.md", "joining plan"),
+      note("plan-m4.md", "joining copy"),
+      // Copied as is; its name is reserved before any kept-both copy is named.
+      note("plan-m4-2.md", "copied note"),
+    ];
+    const rows = noteMergeRows(keptNotes, joiningNotes);
+    const writes = noteWrites(rows, { "plan.md": "both", "plan-m4.md": "both" }, "M4", keptNotes);
+    expect(writes).toEqual([
+      { name: "plan-m4-2.md", content: "copied note", expectedRevision: null },
+      { name: "plan-m4-m4.md", content: "joining copy", expectedRevision: null, createOnly: true },
+      { name: "plan-m4-3.md", content: "joining plan", expectedRevision: null, createOnly: true },
+    ]);
+    expect(new Set(writes.map((write) => write.name)).size).toBe(writes.length);
+  });
+
+  it("gives two kept-both copies that trim to one name different names", () => {
+    const [a, b] = [`${"n".repeat(124)}a.md`, `${"n".repeat(124)}b.md`];
+    const keptNotes = [note(a, "kept a"), note(b, "kept b")];
+    const rows = noteMergeRows(keptNotes, [note(a, "joining a"), note(b, "joining b")]);
+    const writes = noteWrites(rows, { [a]: "both", [b]: "both" }, "M4", keptNotes);
+    expect(writes.map((write) => [write.name, write.content])).toEqual([
+      [`${"n".repeat(124)}.md`, "joining a"],
+      [`${"n".repeat(122)}-2.md`, "joining b"],
+    ]);
+  });
+
+  it("names a retried kept-both copy as its first attempt did", () => {
+    const keptNotes = [note("plan.md", "KEEP ORIGINAL", 3), note("plan-m4.md", "KEEP THIS TOO", 7)];
+    const joiningNotes = [note("plan.md", "JOINING PLAN", 1)];
+    const choices = { "plan.md": "both" } as const;
+    const [first] = noteWrites(noteMergeRows(keptNotes, joiningNotes), choices, "M4", keptNotes);
+    expect(first?.name).toBe("plan-m4-2.md");
+    // The first commit wrote it; a retry previews it and targets the same name.
+    const landed = [...keptNotes, note("plan-m4-2.md", "JOINING PLAN", 1)];
+    expect(noteWrites(noteMergeRows(landed, joiningNotes), choices, "M4", landed)).toEqual([first]);
   });
 
   it("gives an unlinking copy the kept notes without replacing its own", () => {
     expect(unlinkNoteWrites(kept, joining, "M3")).toEqual([
-      { name: "plan-m3.md", content: "kept plan", expectedRevision: null },
       { name: "plan-m4.md", content: "older copy", expectedRevision: null },
+      { name: "plan-m3.md", content: "kept plan", expectedRevision: null, createOnly: true },
+    ]);
+    // Its own note under the kept-both name stays; the copy takes the next name.
+    const member = [note("plan.md", "member plan", 2), note("plan-m4.md", "member copy", 5)];
+    expect(unlinkNoteWrites([note("plan.md", "COORDINATOR", 1)], member, "M4")).toEqual([
+      { name: "plan-m4-2.md", content: "COORDINATOR", expectedRevision: null, createOnly: true },
     ]);
   });
 });

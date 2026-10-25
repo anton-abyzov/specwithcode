@@ -341,7 +341,7 @@ import {
 } from "./V2LifecycleRow";
 import { ThinkingMark } from "./ThinkingMark";
 import { SecretRequestCard } from "./SecretRequestCard";
-import { DecisionCard } from "./DecisionCard";
+import { ThreadDecisionCard } from "./ThreadDecisionCard";
 import { linkifyQuestionPaths } from "./questionCard.logic";
 
 import { SkillChipIcon, SkillInlineText } from "./SkillInlineText";
@@ -3170,6 +3170,7 @@ function HtmlRenderTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "htm
         environmentId={ctx.activeThreadEnvironmentId}
         htmlRender={row.htmlRender}
         threadRef={ctx.threadRef}
+        cwd={ctx.markdownCwd}
       />
     </div>
   );
@@ -3266,8 +3267,9 @@ function V2EventTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "event"
   }
   if (isAnsweredQuestionItem(item)) {
     return (
-      <DecisionCard
+      <ThreadDecisionCard
         item={item}
+        environmentId={ctx.activeThreadEnvironmentId}
         renderText={(text) => (
           <ChatMarkdown
             text={linkifyQuestionPaths(text)}

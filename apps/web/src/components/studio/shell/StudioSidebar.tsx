@@ -1,3 +1,9 @@
+import { aggregateProjectAttention } from "@specweave-studio/client-runtime/state/projectAttention";
+import {
+  useAttentionMembers,
+  projectAttentionRoots,
+  expandAttentionProjects,
+} from "../../../studio/useProjectAttention";
 /**
  * The default sidebar: the personal assistant under Overview, then projects, then a
  * separate Chats section. A project
@@ -84,7 +90,6 @@ import {
 } from "../../../studio/projectListVisibility";
 import { chooseCoordinatorView } from "../../../studio/projectCoordinatorMachine";
 import { useMachineNicknames } from "../../../studio/machineNickname";
-import { projectCoordinatorRole } from "../../../studio/projectCoordinatorThreads";
 import {
   arrangeProjects,
   moveProject,
@@ -97,11 +102,9 @@ import {
 import { useSidebarProjectOrder } from "../../../studio/useSidebarProjectOrder";
 import {
   currentSidebarChatKey,
-  isAgentOwnedProjectThread,
   isProjectOwnedChat,
   parseProjectWorkspaceSearch,
 } from "../../../studio/projectPaneThreads";
-import { projectThreadGroup } from "../../../studio/projectWorkspaceModel";
 import { checkProjectName, renameTargets, type NamedProject } from "../../../studio/projectRename";
 import { useUnreachableHosts } from "../../../studio/unreachableHosts";
 import { useProjectPaneThreadParam } from "../../../studio/useProjectPaneThreadParam";
@@ -295,37 +298,53 @@ export default function StudioSidebar() {
       }),
     [openChatTarget],
   );
-  const waitingByProject = useMemo(() => {
-    const counts = new Map<string, number>();
-    for (const thread of threads) {
-      if (
-        thread.deletedAt !== null ||
-        projectThreadGroup(thread, unreachable.has(thread.environmentId)) !== "Waiting on you"
-      )
-        continue;
-      const group = projectByMember.get(`${thread.environmentId}:${thread.projectId}`);
-      const member = group?.memberProjects.find(
-        (project) =>
-          project.environmentId === thread.environmentId && project.id === thread.projectId,
-      );
-      if (!group || !member) continue;
-      const coordinatorThreadId = member.workspaceSettings?.coordinatorThreadId ?? null;
-      const coordinatorRole = projectCoordinatorRole(thread.id, {
-        projectId: member.id,
-        coordinatorThreadId,
-      });
-      if (coordinatorRole === "previous") continue;
-      if (
-        coordinatorRole !== "current" &&
-        !isAgentOwnedProjectThread(thread, coordinatorThreadId, (id) =>
-          threadByKey.get(`${thread.environmentId}:${id}`),
-        )
-      )
-        continue;
-      counts.set(group.projectKey, (counts.get(group.projectKey) ?? 0) + 1);
-    }
-    return counts;
-  }, [projectByMember, threadByKey, threads, unreachable]);
+  const attentionScopes = useMemo(
+    () =>
+      new Map(
+        projectGroups.map((group) => {
+          const displayed = displayedCheckouts.get(group.projectKey) ?? group.memberProjects[0];
+          const logicalId = displayed?.workspaceSettings?.logicalProject?.id;
+          return [
+            group.projectKey,
+            logicalId
+              ? group.memberProjects.filter(
+                  (member) => member.workspaceSettings?.logicalProject?.id === logicalId,
+                )
+              : displayed
+                ? [displayed]
+                : [],
+          ];
+        }),
+      ),
+    [projectGroups, displayedCheckouts],
+  );
+  const attentionProjects = useMemo(() => [...attentionScopes.values()].flat(), [attentionScopes]);
+  const attentionMembers = useAttentionMembers(attentionProjects);
+  const attentionByProject = useMemo(
+    () =>
+      new Map(
+        projectGroups.map((group) => {
+          const members = attentionMembers.filter((member) =>
+            expandAttentionProjects(attentionScopes.get(group.projectKey) ?? []).some(
+              (p) => p.environmentId === member.environmentId && p.id === member.projectId,
+            ),
+          );
+          return [
+            group.projectKey,
+            aggregateProjectAttention({
+              members,
+              roots: projectAttentionRoots(threads, members),
+              threads,
+            }),
+          ];
+        }),
+      ),
+    [projectGroups, attentionScopes, attentionMembers, threads],
+  );
+  const waitingByProject = useMemo(
+    () => new Map([...attentionByProject].map(([key, attention]) => [key, attention.count])),
+    [attentionByProject],
+  );
   // The machines' "No project" folders are not projects. Archived projects are listed
   // only under Archived, even while open, and never carry a waiting count: the
   // person archived them, so nothing in them asks for attention here.
@@ -727,6 +746,8 @@ export default function StudioSidebar() {
                     displayedProject={displayedCheckouts.get(group.projectKey)}
                     archived={isArchivedGroup(group, scratchRootFor)}
                     waiting={waitingByProject.get(group.projectKey) ?? 0}
+                    attentionLabel={attentionByProject.get(group.projectKey)?.label}
+                    attentionComplete={attentionByProject.get(group.projectKey)?.complete}
                     current={group.projectKey === activeProjectKey}
                     hint={assistantHint(group)}
                     onOpen={closeMobile}
@@ -795,6 +816,8 @@ export default function StudioSidebar() {
                   displayedProject: displayedCheckouts.get(group.projectKey),
                   archived: isArchivedGroup(group, scratchRootFor),
                   waiting: waitingByProject.get(group.projectKey) ?? 0,
+                  attentionLabel: attentionByProject.get(group.projectKey)?.label,
+                  attentionComplete: attentionByProject.get(group.projectKey)?.complete,
                   current: group.projectKey === activeProjectKey,
                   hint: nameHints.get(group.projectKey),
                   rename: renameFor(group),
@@ -863,6 +886,8 @@ export default function StudioSidebar() {
                         archived={isArchivedGroup(group, scratchRootFor)}
                         automated
                         waiting={waitingByProject.get(group.projectKey) ?? 0}
+                        attentionLabel={attentionByProject.get(group.projectKey)?.label}
+                        attentionComplete={attentionByProject.get(group.projectKey)?.complete}
                         current={group.projectKey === activeProjectKey}
                         onOpen={closeMobile}
                         onArchive={(archived) => void setGroupArchived(group, archived)}
@@ -967,15 +992,30 @@ export default function StudioSidebar() {
                         const key = scopedThreadKey(
                           scopeThreadRef(thread.environmentId, thread.id),
                         );
+                        const currentModel = thread.modelIdentity?.current ?? thread.modelSelection;
                         const entry =
-                          providerEntries
-                            .get(thread.environmentId)
-                            ?.get(thread.modelSelection.instanceId) ?? null;
+                          providerEntries.get(thread.environmentId)?.get(currentModel.instanceId) ??
+                          null;
                         const label = modelLabel(
                           entry,
-                          thread.modelSelection.instanceId,
-                          thread.modelSelection.model,
+                          currentModel.instanceId,
+                          currentModel.model,
                         );
+                        const preferred = thread.modelIdentity?.preferred;
+                        const preferredLabel = preferred
+                          ? modelLabel(
+                              providerEntries
+                                .get(thread.environmentId)
+                                ?.get(preferred.instanceId) ?? null,
+                              preferred.instanceId,
+                              preferred.model,
+                            ).full
+                          : null;
+                        const stateDescription = preferredLabel
+                          ? thread.modelIdentity?.kind === "fallback"
+                            ? `, fallback for ${preferredLabel} (${thread.modelIdentity.launched ? "no room at launch" : "usage limit"})`
+                            : `, saved model ${preferredLabel}`
+                          : "";
                         // This machine is never offline (see isEnvironmentUnreachable);
                         // the check here keeps its chats from ever showing it.
                         const hostOffline =
@@ -1021,12 +1061,12 @@ export default function StudioSidebar() {
                             key={key}
                             title={thread.title}
                             tone={tone}
-                            tip={`${title} · ${label.full}${project ? ` · ${project.displayName}` : ""}${machineNote ? ` · ${machineNote}` : ""} · ${compactAge(sessionStateSince(thread), now)}${plan ? ` · ${describeThreadPlan(plan)}` : ""}`}
+                            tip={`${title} · ${label.full}${stateDescription}${project ? ` · ${project.displayName}` : ""}${machineNote ? ` · ${machineNote}` : ""} · ${compactAge(sessionStateSince(thread), now)}${plan ? ` · ${describeThreadPlan(plan)}` : ""}`}
                             current={currentChatKey === key}
                             icon={
                               <ModelBadgeMark
                                 entry={entry}
-                                instanceId={thread.modelSelection.instanceId}
+                                instanceId={currentModel.instanceId}
                                 provider={label.provider}
                               />
                             }
@@ -1074,7 +1114,8 @@ export default function StudioSidebar() {
                               <LaptopIcon className="sws-row-machine" aria-hidden />
                             ) : null}
                             <span className="sr-only">
-                              , {label.full}, {THREAD_TONE_LABELS[tone]}
+                              , {label.full}
+                              {stateDescription}, {THREAD_TONE_LABELS[tone]}
                               {machineNote ? `, ${machineNote}` : ""}
                             </span>
                             {tone === "waiting" || tone === "working" || tone === "failed" ? (

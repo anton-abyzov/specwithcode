@@ -3,12 +3,13 @@ import {
   previewStreamControlAction,
   previewStreamControlLabel,
   previewStreamHostSetupMessage,
+  type PreviewHostSetupNotice,
   type PreviewStreamControl,
   type PreviewStreamDownload,
   type PreviewStreamFileChooser,
   type PreviewStreamInput,
 } from "@specweave-studio/client-runtime/preview/server-browser-stream";
-import type { EnvironmentId, PreviewStreamHostSetup } from "@specweave-studio/contracts";
+import type { EnvironmentId } from "@specweave-studio/contracts";
 import {
   useEffect,
   useEffectEvent,
@@ -254,7 +255,7 @@ function PreviewStreamDocumentView({
   const [status, setStatus] = useState<"connecting" | "streaming" | "error">("connecting");
   const [error, setError] = useState<string | null>(null);
   const [gone, setGone] = useState(false);
-  const [hostSetup, setHostSetup] = useState<PreviewStreamHostSetup | null>(null);
+  const [hostSetup, setHostSetup] = useState<PreviewHostSetupNotice | null>(null);
   const [started, setStarted] = useState(false);
   const [control, setControl] = useState<PreviewStreamControl | null>(null);
   const [promptText, setPromptText] = useState("");

@@ -25,6 +25,7 @@ import {
   ProjectMessageRoutingContext,
   type ProjectMessageRouting,
 } from "../../studio/projectMessageRouting";
+import { firstRequestAction } from "./CoordinatorNativeControls";
 
 /** Requests and tool output are overlays on the existing conversation, never another chat. */
 export function ProjectCoordinatorDetails({
@@ -48,6 +49,7 @@ export function ProjectCoordinatorDetails({
     document.activeElement instanceof HTMLElement ? document.activeElement : null,
   );
   const close = useRef<HTMLButtonElement>(null);
+  const panel = useRef<HTMLDivElement>(null);
   useEffect(
     () => () => {
       if (previous.current instanceof HTMLElement && previous.current.isConnected)
@@ -76,7 +78,10 @@ export function ProjectCoordinatorDetails({
       <DialogPopup
         className="max-w-2xl"
         showCloseButton={false}
-        initialFocus={close}
+        // The request's own action first; Close only when there is nothing to act on.
+        initialFocus={() =>
+          (view === "requests" ? firstRequestAction(panel.current) : null) ?? close.current
+        }
         finalFocus={previous}
       >
         <DialogHeader>
@@ -89,7 +94,7 @@ export function ProjectCoordinatorDetails({
               : "Respond to an approval, question, or proposed plan."}
           </DialogDescription>
         </DialogHeader>
-        <DialogPanel>
+        <DialogPanel ref={panel}>
           {error ? (
             <p className="text-sm text-destructive-foreground" role="alert">
               {error}
@@ -97,7 +102,15 @@ export function ProjectCoordinatorDetails({
           ) : null}
           {view === "requests" ? (
             <ProjectMessageRoutingContext
-              value={{ ...routing, onCoordinatorRequestsResolved: error ? undefined : onClose }}
+              value={{
+                ...routing,
+                // Settled everywhere means settled here: a page error stays beside the composer.
+                onCoordinatorRequestsResolved: onClose,
+                closeCoordinatorRequests: (focus) => {
+                  if (focus) previous.current = focus;
+                  onClose();
+                },
+              }}
             >
               <ChatView
                 key={`${environmentId}:${threadId}`}

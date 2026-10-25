@@ -6,6 +6,7 @@ import { createPortal } from "react-dom";
 
 import { openCommandPalette, isCommandPaletteOpen } from "../../commandPaletteBus";
 import { isTerminalFocused } from "../../lib/terminalFocus";
+import { isAppSheetOpen } from "../ui/appSheetState";
 import { useThreadShells } from "../../state/entities";
 import { buildThreadRouteParams } from "../../threadRoutes";
 import { searchSidebarThreads } from "../Sidebar.logic";
@@ -134,6 +135,8 @@ export function ConversationFindBar() {
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.defaultPrevented || event.isComposing) return;
+      // The conversations sit under a sheet over the app (Usage); leave its keys alone.
+      if (isAppSheetOpen()) return;
       if (isFindShortcut(event)) {
         if (isTerminalFocused() || isCommandPaletteOpen()) return;
         const target = pickFindScope(document, lastInteractionRef.current);

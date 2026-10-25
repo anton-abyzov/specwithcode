@@ -2,11 +2,17 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { beforeEach, afterEach, it, expect, vi } from "vite-plus/test";
-import { DEFAULT_SERVER_SETTINGS } from "@specweave-studio/contracts";
+import { DEFAULT_SERVER_SETTINGS, type ServerSettings } from "@specweave-studio/contracts";
 import { CoordinatorAccessPicker, CoordinatorComposerControls } from "./CoordinatorAccessPicker";
-const mocks = vi.hoisted(() => ({ allowed: true, save: vi.fn() }));
+const mocks = vi.hoisted(() => ({
+  allowed: true,
+  save: vi.fn(),
+  writeMode: "entry" as "per-key" | "entry" | null,
+  settings: null as ServerSettings | null,
+}));
 vi.mock("../../hooks/useSettings", () => ({
-  useEnvironmentSettings: () => DEFAULT_SERVER_SETTINGS,
+  useEnvironmentSettings: () => mocks.settings ?? DEFAULT_SERVER_SETTINGS,
+  useProjectOverrideWriteMode: () => mocks.writeMode,
 }));
 vi.mock("../../state/session", () => ({ useEnvironmentScope: () => mocks.allowed }));
 vi.mock("../../state/server", () => ({ serverEnvironment: { updateSettings: {} } }));
@@ -15,6 +21,8 @@ let root: Root, container: HTMLDivElement;
 beforeEach(() => {
   (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
   mocks.allowed = true;
+  mocks.writeMode = "entry";
+  mocks.settings = null;
   mocks.save.mockReset().mockResolvedValue({ _tag: "Success" });
   container = document.createElement("div");
   document.body.append(container);
@@ -45,6 +53,54 @@ it("writes the project permission setting without changing models or global defa
       patch: { projectSettingsOverrides: { project: { defaultRuntimeMode: "full-access" } } },
     },
   });
+});
+it("saves only the permission key, keeping the project's other overrides", async () => {
+  mocks.settings = {
+    ...DEFAULT_SERVER_SETTINGS,
+    projectSettingsOverrides: {
+      ["project" as never]: { defaultAutoPull: true, defaultModelSelection: null },
+    },
+  };
+  mocks.writeMode = "per-key";
+  await mount();
+  await choose();
+  expect(mocks.save).toHaveBeenLastCalledWith({
+    environmentId: "host",
+    input: {
+      patch: {
+        projectSettingsOverrideChanges: { project: { set: { defaultRuntimeMode: "full-access" } } },
+      },
+    },
+  });
+  // An older server replaces whole entries: send the saved entry with the new mode.
+  mocks.writeMode = "entry";
+  await mount();
+  await act(async () => {
+    const select = container.querySelector("select")!;
+    select.value = "approval-required";
+    select.dispatchEvent(new Event("change", { bubbles: true }));
+  });
+  expect(mocks.save).toHaveBeenLastCalledWith({
+    environmentId: "host",
+    input: {
+      patch: {
+        projectSettingsOverrides: {
+          project: {
+            defaultAutoPull: true,
+            defaultModelSelection: null,
+            defaultRuntimeMode: "approval-required",
+          },
+        },
+      },
+    },
+  });
+});
+it("saves nothing until the machine's settings load, so defaults never replace saved overrides", async () => {
+  mocks.writeMode = null;
+  await mount();
+  expect(container.querySelector("select")!.disabled).toBe(true);
+  await choose();
+  expect(mocks.save).not.toHaveBeenCalled();
 });
 it("retries the attempted choice after a failed save, even when settings stayed old", async () => {
   mocks.save.mockResolvedValueOnce({ _tag: "Failure" });
@@ -108,53 +164,93 @@ it("keeps access in the controls row, right after the model and effort", async (
   expect(access?.querySelector("select")?.getAttribute("aria-label")).toBe("Project permissions");
 });
 
-it("names the model running now first, then the pick and why it is out", async () => {
+it("shows only actionable room news or an exhausted coordinator warning", async () => {
   const label = (provider: string, model: string) => ({
     provider,
     model,
     full: `${provider} · ${model}`,
   });
-  const render = (over: { spent?: boolean; live?: boolean; reason?: string | null }) =>
+  const onSwitchBack = vi.fn();
+  const render = (
+    over: { spent?: boolean; onSwitchBack?: (() => void) | null; switching?: boolean } = {},
+  ) =>
     act(async () =>
       root.render(
         <CoordinatorComposerControls
           project={{ environmentId: "host" as never, id: "project" as never }}
           fallback={{
-            saved: label("Codex", "GPT-6.1-Sol"),
-            now: label(
-              over.spent ? "Copilot" : "Claude Code",
-              over.spent ? "GPT-6.1-Sol" : "Opus 5.5",
-            ),
-            reason: "reason" in over ? over.reason! : "weekly limit reached, resets in 5d 8h",
-            spent: over.spent ?? false,
-            live: over.live ?? false,
+            saved: label("Claude Code", "Opus 5.5"),
+            now: label("Codex", "GPT-6.1-Sol"),
+            reason: "weekly limit reached",
+            ...over,
           }}
         >
           <span />
         </CoordinatorComposerControls>,
       ),
     );
-  const line = () => container.querySelector("[data-model-fallback]")!;
-  await render({});
-  expect(line().querySelector("[data-model-now]")?.textContent).toBe(
-    "Now on Claude Code · Opus 5.5.",
+  await render();
+  expect(container.querySelector("[data-model-fallback]")).toBeNull();
+  await render({ onSwitchBack });
+  expect(container.querySelector("[data-model-fallback]")?.textContent).toContain(
+    "Your pick, Claude Code · Opus 5.5, has room again.",
   );
-  expect(line().querySelector("[data-model-pick]")?.textContent).toBe(
-    "Your pick: Codex · GPT-6.1-Sol, weekly limit reached, resets in 5d 8h.",
+  const back = container.querySelector<HTMLButtonElement>(".sws-model-fallback-back")!;
+  expect(back.textContent).toBe("Switch back to Claude Code");
+  await act(async () => back.click());
+  expect(onSwitchBack).toHaveBeenCalledOnce();
+  await render({ onSwitchBack, switching: true });
+  expect(container.querySelector<HTMLButtonElement>(".sws-model-fallback-back")?.disabled).toBe(
+    true,
   );
-  await render({ live: true });
-  expect(line().querySelector("[data-model-now]")?.textContent).toBe(
-    "Running now on Claude Code · Opus 5.5.",
-  );
-  expect(line().hasAttribute("data-model-fallback-live")).toBe(true);
   await render({ spent: true });
-  expect(line().querySelector("[data-model-now]")?.textContent).toBe(
-    "Now on Copilot · GPT-6.1-Sol, which is out of usage too.",
+  expect(container.querySelector("[data-model-fallback]")?.textContent).toBe(
+    "Codex · GPT-6.1-Sol is out of usage too; nothing else can run the coordinator yet.",
   );
-  // A reason the client cannot read is left out, never invented.
-  await render({ reason: null });
-  expect(line().querySelector("[data-model-pick]")?.textContent).toBe(
-    "Your pick: Codex · GPT-6.1-Sol.",
+  expect(container.textContent).not.toContain("Now on");
+  expect(container.textContent).not.toContain("goes back");
+});
+
+it("names the model to switch back to when the provider is the same", async () => {
+  const label = (provider: string, model: string) => ({
+    provider,
+    model,
+    full: `${provider} · ${model}`,
+  });
+  await act(async () =>
+    root.render(
+      <CoordinatorComposerControls
+        project={{ environmentId: "host" as never, id: "project" as never }}
+        fallback={{
+          saved: label("Codex", "GPT-6.1 Sol"),
+          now: label("Codex", "GPT-6 Astra"),
+          reason: null,
+          onSwitchBack: () => {},
+        }}
+      >
+        <span />
+      </CoordinatorComposerControls>,
+    ),
   );
-  expect(line().textContent).not.toContain("goes back");
+  expect(container.querySelector(".sws-model-fallback-back")?.textContent).toBe(
+    "Switch back to GPT-6.1 Sol",
+  );
+});
+
+it("names the whole pick to switch back to when harness and model both match", async () => {
+  const label = { provider: "Codex", model: "GPT-6.1 Sol", full: "Codex · GPT-6.1 Sol" };
+  await act(async () =>
+    root.render(
+      <CoordinatorComposerControls
+        project={{ environmentId: "host" as never, id: "project" as never }}
+        // Two Codex accounts on the same model: only the instance differs.
+        fallback={{ saved: label, now: label, reason: null, onSwitchBack: () => {} }}
+      >
+        <span />
+      </CoordinatorComposerControls>,
+    ),
+  );
+  expect(container.querySelector(".sws-model-fallback-back")?.textContent).toBe(
+    "Switch back to Codex · GPT-6.1 Sol",
+  );
 });

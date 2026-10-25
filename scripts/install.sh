@@ -6,7 +6,7 @@
 #
 # Pass --join to also set up Tailscale (installing it and opening its sign-in page when needed) and print the line that adds this machine to your main one:
 #
-#   curl -fsSL https://github.com/anton-abyzov/specwithcode/releases/latest/download/install.sh | bash -s -- --join
+#   curl -fsSL https://github.com/anton-abyzov/specwithcode/releases/latest/download/install.sh | bash -s -- --join --coordinator '<main-machine-environment-id>'
 #
 # The release's server archive is JavaScript plus native modules for Node.js 22. It is checked
 # against the release's SHA256SUMS and unpacked into $STUDIO_HOME/runtime/versions/<version>,
@@ -24,7 +24,7 @@ node_version="22.20.0"
 
 usage() {
   cat <<'EOF'
-Usage: install.sh [--join] [--no-service] [--standalone] [--dry-run] [--version V]
+Usage: install.sh [--join --coordinator ID] [--no-service] [--standalone] [--dry-run] [--version V]
                   [--node PATH]
 
 Installs SpecWithCode from its GitHub release, puts `specwithcode` (and its other name,
@@ -33,8 +33,10 @@ new machine as a worker (git, Tailscale, gh, Claude Code, Codex and this service
 pinned, checksum-verified versions), run `specwithcode provision` afterwards.
 
   --join          after installing, set up Tailscale (installing it and opening its sign-in
-                  page if needed) and run `specwithcode fleet invite`, which prints the line
+                  page if needed) and print the invitation for the explicitly approved main machine
                   to paste on your main machine
+  --coordinator ID  environment ID of the main machine you approve to manage this machine;
+                    required with --join. Copy it from Settings > Connections on your main machine
   -y, --yes       install Tailscale for --join without asking
   --no-service    set up the command only; leave the background service alone
   --standalone    install the command-line build even when the desktop app is on this Mac
@@ -67,14 +69,36 @@ shell_quote() {
   printf "'%s'" "$(printf '%s' "$1" | sed "s/'/'\\\\''/g")"
 }
 
+# Render the selected enrollment executable without evaluating paths or the approved ID.
+# The optional second argument is the desktop app's bundled CLI entrypoint.
+build_invite_command() {
+  invite_executable="$1"
+  case "$invite_executable" in /*) ;; *) invite_executable="${PWD}/${invite_executable}" ;; esac
+  if [ "$#" -eq 2 ]; then
+    printf 'ELECTRON_RUN_AS_NODE=1 STUDIO_CLI_NAME=specwithcode '
+  fi
+  printf '%s ' "$(shell_quote "$invite_executable")"
+  if [ "$#" -eq 2 ]; then printf '%s ' "$(shell_quote "$2")"; fi
+  printf 'fleet invite --coordinator %s' "$(shell_quote "${coordinator:-<main-machine-environment-id>}")"
+}
+
+# Match EnvironmentId's ECMAScript trim whitespace, including Unicode spaces and BOM.
+# Byte-mode alternatives preserve non-whitespace Unicode IDs on both macOS and Linux.
+is_environment_id() {
+  id_whitespace="$(printf '[[:space:]]|\302\240|\341\232\200|\342\200\200|\342\200\201|\342\200\202|\342\200\203|\342\200\204|\342\200\205|\342\200\206|\342\200\207|\342\200\210|\342\200\211|\342\200\212|\342\200\250|\342\200\251|\342\200\257|\342\201\237|\343\200\200|\357\273\277')"
+  [ -n "$(printf '%s' "$1" | LC_ALL=C sed -E "s/${id_whitespace}//g")" ]
+}
+
 main() {
-  join=false service=true dry_run=false assume_yes=false
+  join=false service=true dry_run=false assume_yes=false coordinator=
   case "${STUDIO_INSTALL_STANDALONE:-}" in 1 | true) standalone=true ;; *) standalone=false ;; esac
   version="${STUDIO_VERSION:-}"
   explicit_node="${STUDIO_NODE:-}"
   while [ $# -gt 0 ]; do
     case "$1" in
       --join) join=true ;;
+      --coordinator) [ $# -ge 2 ] || fail "--coordinator needs the environment ID from Settings > Connections on your main machine"; coordinator="$2"; shift ;;
+      --coordinator=*) coordinator="${1#*=}" ;;
       --no-service) service=false ;;
       --standalone) standalone=true ;;
       --dry-run) dry_run=true ;;
@@ -88,6 +112,11 @@ main() {
     esac
     shift
   done
+  coordinator_help="Replace <main-machine-environment-id> with the environment ID from Settings > Connections on your main machine. This explicitly approves that machine to manage access here."
+  # EnvironmentId is a trimmed, nonblank string, not a UUID. The CLI trims the value.
+  if "$join" || [ -n "$coordinator" ]; then
+    is_environment_id "$coordinator" || fail "--join requires --coordinator with a nonblank environment ID. ${coordinator_help}"
+  fi
   version_explicit=false
   [ -z "$version" ] || version_explicit=true
 
@@ -115,6 +144,7 @@ main() {
   [ "$studio_home" = / ] || studio_home="${studio_home%/}"
   case "$studio_home" in /*) ;; *) fail "STUDIO_HOME must be an absolute path" ;; esac
   bin_dir="${STUDIO_INSTALL_BIN_DIR:-$HOME/.local/bin}"
+  invite_command="$(build_invite_command "${bin_dir}/specwithcode")"
   versions_dir="${studio_home}/runtime/versions"
 
   setup_output
@@ -458,6 +488,12 @@ existing_command() {
 }
 
 use_existing_install() {
+  if [ "$existing" = desktop ]; then
+    invite_command="$(build_invite_command "${existing_app}/Contents/MacOS/SpecWithCode" \
+      "${existing_app}/Contents/Resources/app.asar/apps/server/dist/bin.mjs")"
+  elif [ -n "$existing_cli" ]; then
+    invite_command="$(build_invite_command "$existing_cli")"
+  fi
   clear_line
   if "$dry_run"; then printf 'Dry run: nothing was installed or changed.\n'; fi
   printf '  Nothing to install: %s.\n' "$existing_reason" >&2
@@ -466,18 +502,14 @@ use_existing_install() {
     printf '  the command-line build next to it.\n' >&2
   fi
   if ! "$join"; then
-    if [ "$existing" = desktop ]; then
-      printf '  To add this Mac to your main machine, run this again with --join.\n\n' >&2
-    else
-      printf '  To add this machine to your main one, run %sspecwithcode fleet invite%s.\n\n' "$bold" "$reset" >&2
-    fi
+    printf '  To add this machine to your main one, run %s%s%s.\n  %s\n\n' "$bold" "$invite_command" "$reset" "$coordinator_help" >&2
     return 0
   fi
   if [ "$existing" = managed ] && [ -z "$existing_cli" ]; then
-    fail "no specwithcode command for that install was found in ${bin_dir}; run its own \`specwithcode fleet invite\`"
+    fail "no specwithcode command for that install was found in ${bin_dir}; run its own \`${invite_command}\`. ${coordinator_help}"
   fi
   if "$dry_run"; then
-    printf '  Join:      %sspecwithcode fleet invite\n' "${tailscale_plan:+${tailscale_plan}; then }"
+    printf '  Join:      %s%s\n' "${tailscale_plan:+${tailscale_plan}; then }" "$invite_command"
     return 0
   fi
   scratch="$(mktemp -d "${TMPDIR:-/tmp}/specwithcode-install.XXXXXX")"
@@ -691,7 +723,7 @@ print_plan() {
   else
     printf '  Service:   specwithcode service install\n'
   fi
-  if "$join"; then printf '  Join:      %sspecwithcode fleet invite\n' "${tailscale_plan:+${tailscale_plan}; then }"; fi
+  if "$join"; then printf '  Join:      %s%s\n' "${tailscale_plan:+${tailscale_plan}; then }" "$invite_command"; fi
 }
 
 install_node() {
@@ -853,7 +885,7 @@ run_invite() {
   step "Publishing this machine on your tailnet..."
   tries=0
   while :; do
-    if "$@" fleet invite > "${scratch}/invite.out" 2> "${scratch}/invite.err"; then
+    if "$@" fleet invite --coordinator "$coordinator" > "${scratch}/invite.out" 2> "${scratch}/invite.err"; then
       clear_line
       printf '\n' >&2
       cat "${scratch}/invite.out"
@@ -864,7 +896,7 @@ run_invite() {
       [ "$tries" -ge "$attempts" ]; then
       clear_line
       cat "${scratch}/invite.out" "${scratch}/invite.err" >&2
-      fail "\`specwithcode fleet invite\` did not finish; fix the problem above, then run \`specwithcode fleet invite\`"
+      fail "\`${invite_command}\` did not finish; fix the problem above, then run \`${invite_command}\`. ${coordinator_help}"
     fi
     sleep 2
   done
@@ -898,7 +930,7 @@ print_next_steps() {
     print_join_next_step
   elif [ "$service_state" = installed ]; then
     printf '  SpecWithCode runs in the background; check it with %sspecwithcode service status%s.\n' "$bold" "$reset" >&2
-    printf '  To add this machine to your main one, sign in to Tailscale and run %sspecwithcode fleet invite%s.\n\n' "$bold" "$reset" >&2
+    printf '  To add this machine to your main one, sign in to Tailscale and run %s%s%s.\n  %s\n\n' "$bold" "$invite_command" "$reset" "$coordinator_help" >&2
   else
     printf '  Run %sspecwithcode%s to start it, or %sspecwithcode service install%s to keep it running.\n\n' "$bold" "$reset" "$bold" "$reset" >&2
   fi

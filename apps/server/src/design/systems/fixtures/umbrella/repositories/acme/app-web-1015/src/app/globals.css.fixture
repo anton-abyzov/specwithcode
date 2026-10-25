@@ -1,0 +1,15 @@
+/* The customer app's own page styles. */
+:root {
+  --hero-from: #0ea5e9;
+  --hero-to: #6366f1;
+  --hero-ink: #ffffff;
+  --page-max: 1200px;
+  --page-gutter: 24px;
+  --nav-height: 64px;
+  --footer-bg: #0f172a;
+  --footer-ink: #cbd5e1;
+  --card-shadow: 0 1px 2px rgb(0 0 0 / 8%);
+  --card-radius: 12px;
+  --pricing-highlight: #fde68a;
+  --pricing-ink: #78350f;
+}

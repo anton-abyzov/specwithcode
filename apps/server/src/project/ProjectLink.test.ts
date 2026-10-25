@@ -68,6 +68,8 @@ function machine(environment: string) {
   const receipts = new Map<string, Result.Result<Project, ProjectService.ProjectOperationError>>();
   const busy = new Set<string>();
   const ownershipModes: string[] = [];
+  /** Note names whose next write fails, as a storage failure would. */
+  const failingWrites = new Set<string>();
   /** Coordinator runs by thread: when each was requested and what it asked. */
   const runs = new Map<string, Array<{ id: string; requestedAt: string; text: string }>>();
   const replicas = new Map<string, ProjectCoordinatorReplica>();
@@ -179,6 +181,7 @@ function machine(environment: string) {
             expectedRevision: number | null;
           }) =>
             Effect.suspend(() => {
+              if (failingWrites.delete(input.name)) return Effect.fail({ code: "storage_failed" });
               const existing = notesOf(input.projectId).get(input.name);
               if ((existing?.revision ?? null) !== input.expectedRevision)
                 return Effect.fail({ code: "conflict" });
@@ -265,6 +268,7 @@ function machine(environment: string) {
     environmentId,
     projects,
     notes: notesOf,
+    failingWrites,
     busy,
     ownershipModes,
     runs,
@@ -616,6 +620,39 @@ describe("ProjectLink", () => {
     ).toBe(0);
   });
 
+  it("refuses a kept-both write onto a note that holds other text, writing nothing", async () => {
+    const pair = legacyPair();
+    const kept = pair.m4.notes(pair.kept.projectId);
+    kept.set("plan-m4.md", { content: "KEEP THIS TOO", revision: 7 });
+    const { prepared } = await link(pair);
+    const commit = (notes: Parameters<ProjectLink.ProjectLink["Service"]["commit"]>[0]["notes"]) =>
+      pair.m4.run((service) =>
+        service.commit({
+          operationId,
+          projectId: prepared.kept.projectId,
+          joining: pair.joining,
+          notes,
+        }),
+      );
+    // Even with plan-m4.md's current revision, a kept-both copy may not replace it.
+    const refused = await pair.m4.fails(
+      commit([
+        { name: "new.md", content: "new", expectedRevision: null },
+        { name: "plan-m4.md", content: "JOINING PLAN", expectedRevision: 7, createOnly: true },
+      ]),
+    );
+    expect(refused.code).toBe("notes_changed");
+    expect(kept.get("plan-m4.md")).toEqual({ content: "KEEP THIS TOO", revision: 7 });
+    expect(kept.has("new.md")).toBe(false);
+    // A create-only copy whose name already holds that text is not written twice.
+    kept.set("plan-m4-2.md", { content: "JOINING PLAN", revision: 1 });
+    const written = await commit([
+      { name: "plan-m4-2.md", content: "JOINING PLAN", expectedRevision: null, createOnly: true },
+    ]);
+    expect(written.notesWritten).toBe(0);
+    expect(kept.get("plan-m4-2.md")?.revision).toBe(1);
+  });
+
   it("unlinks a member to a fresh active coordinator and drops it from the kept copy", async () => {
     const pair = legacyPair();
     pair.m3.notes(pair.joining.projectId).set("decisions.md", { content: "M3", revision: 1 });
@@ -864,6 +901,106 @@ describe("ProjectLink", () => {
         service.takeover({ operationId: takeoverId, projectId: pair.joining.projectId }),
       );
       expect(retried.replayed).toBe(true);
+    });
+
+    it("keeps every earlier takeover backup and replays onto its own backup", async () => {
+      const { pair, replica } = await linkedWithReplica();
+      await pair.m3.run((service) =>
+        service.replicate({ projectId: pair.joining.projectId, replica }),
+      );
+      const notes = pair.m3.notes(pair.joining.projectId);
+      notes.set("decisions.md", { content: "Old plan", revision: 4 });
+      notes.set("decisions-before-takeover.md", { content: "Earlier backup", revision: 2 });
+      const taken = await pair.m3.run((service) =>
+        service.takeover({ operationId: takeoverId, projectId: pair.joining.projectId }),
+      );
+      expect(taken.notesWritten).toBe(2);
+      expect(notes.get("decisions-before-takeover.md")).toEqual({
+        content: "Earlier backup",
+        revision: 2,
+      });
+      expect(notes.get("decisions-before-takeover-2.md")?.content).toBe("Old plan");
+      expect(notes.get("decisions.md")?.content).toBe("Ship 2.0");
+    });
+
+    it("saves the backup before replacing a note, so a takeover stopped partway loses nothing", async () => {
+      const { pair, replica } = await linkedWithReplica();
+      await pair.m3.run((service) =>
+        service.replicate({ projectId: pair.joining.projectId, replica }),
+      );
+      const notes = pair.m3.notes(pair.joining.projectId);
+      notes.set("decisions.md", { content: "Old plan", revision: 4 });
+      notes.set("decisions-before-takeover.md", { content: "Earlier backup", revision: 2 });
+      // The first attempt stops at the replacement, after the backup was saved.
+      pair.m3.failingWrites.add("decisions.md");
+      expect(
+        (
+          await pair.m3.fails(
+            pair.m3.run((service) =>
+              service.takeover({ operationId: takeoverId, projectId: pair.joining.projectId }),
+            ),
+          )
+        ).code,
+      ).toBe("storage_failed");
+      expect(notes.get("decisions.md")?.content).toBe("Old plan");
+      expect(notes.get("decisions-before-takeover-2.md")).toEqual({
+        content: "Old plan",
+        revision: 1,
+      });
+      // The retry finds that backup instead of making another.
+      const taken = await pair.m3.run((service) =>
+        service.takeover({ operationId: takeoverId, projectId: pair.joining.projectId }),
+      );
+      expect(taken.notesWritten).toBe(1);
+      expect([...notes.keys()].filter((name) => name.includes("before-takeover")).sort()).toEqual([
+        "decisions-before-takeover-2.md",
+        "decisions-before-takeover.md",
+      ]);
+      expect(notes.get("decisions-before-takeover-2.md")?.revision).toBe(1);
+      expect(notes.get("decisions-before-takeover.md")?.content).toBe("Earlier backup");
+      expect(notes.get("decisions.md")?.content).toBe("Ship 2.0");
+    });
+
+    it("never puts a backup on a name the replica itself writes", async () => {
+      const pair = legacyPair();
+      const { prepared } = await link(pair);
+      const owner = pair.m4.notes(pair.kept.projectId);
+      owner.set("decisions.md", { content: "Ship 2.0", revision: 3 });
+      owner.set("decisions-before-takeover.md", { content: "Old plan", revision: 1 });
+      const ownerNotes = await pair.m4.run((service) =>
+        service.preview({ projectId: pair.kept.projectId }),
+      );
+      const ownerDigest = await pair.m4.run((service) =>
+        service.digest({ projectId: pair.kept.projectId }),
+      );
+      await pair.m3.run((service) =>
+        service.replicate({
+          projectId: pair.joining.projectId,
+          replica: {
+            from: pair.kept,
+            logicalProjectId: prepared.logicalProject.id,
+            digest: ownerDigest.digest,
+            replicatedAt: "2026-10-19T12:00:00.000Z",
+            goal: ownerNotes.goal,
+            instructions: ownerNotes.instructions,
+            notes: ownerNotes.notes,
+            notesTruncated: ownerNotes.notesTruncated,
+          },
+        }),
+      );
+      const notes = pair.m3.notes(pair.joining.projectId);
+      notes.set("decisions.md", { content: "Old plan", revision: 4 });
+      notes.set("decisions-before-takeover.md", { content: "Local backup B", revision: 2 });
+      const taken = await pair.m3.run((service) =>
+        service.takeover({ operationId: takeoverId, projectId: pair.joining.projectId }),
+      );
+      expect(taken.notesWritten).toBe(4);
+      expect(notes.get("decisions.md")?.content).toBe("Ship 2.0");
+      expect(notes.get("decisions-before-takeover.md")?.content).toBe("Old plan");
+      expect(notes.get("decisions-before-takeover-2.md")?.content).toBe("Old plan");
+      expect(notes.get("decisions-before-takeover-before-takeover.md")?.content).toBe(
+        "Local backup B",
+      );
     });
 
     it("demotes the returning coordinator and lists the turns it ran while disconnected", async () => {

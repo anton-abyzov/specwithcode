@@ -1,3 +1,5 @@
+import { setNotificationsConnected } from "../notificationConnection";
+import { __resetNotificationHistoryForTests } from "../notificationHistory";
 import { EnvironmentId } from "@specweave-studio/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
@@ -148,6 +150,7 @@ async function render() {
 }
 
 beforeEach(() => {
+  __resetNotificationHistoryForTests();
   vi.clearAllMocks();
   state.mode = "notifications";
   state.inApp = false;
@@ -161,6 +164,7 @@ beforeEach(() => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("Notification", TestNotification);
   vi.stubGlobal("window", Object.assign(new EventTarget(), { focus: vi.fn() }));
+  setNotificationsConnected(true);
   vi.stubGlobal(
     "document",
     Object.assign(new EventTarget(), {
@@ -205,7 +209,7 @@ it("does not badge old completions on first load or reconnect", async () => {
   await render();
   state.shells.set("one", { status: "connecting", snapshot: Option.none() });
   await render();
-  complete("one", "2026-09-13T08:01:00Z");
+  complete();
   await render();
   expect(TestNotification.sent).toHaveLength(0);
   expect(state.badge.mock.calls.every(([count]) => count === 0)).toBe(true);

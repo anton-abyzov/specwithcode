@@ -1,4 +1,5 @@
 import {
+  type AuthPrincipal,
   AuthAdministrativeScopes,
   AuthStandardClientScopes,
   type AuthEnvironmentScope,
@@ -28,6 +29,8 @@ export interface BootstrapGrant {
   readonly method: ServerAuthBootstrapMethod;
   readonly scopes: ReadonlyArray<AuthEnvironmentScope>;
   readonly subject: string;
+  readonly principal?: AuthPrincipal;
+  readonly principalGeneration?: number | undefined;
   readonly label?: string;
   readonly proofKeyThumbprint?: string;
   readonly expiresAt: DateTime.DateTime;
@@ -211,6 +214,8 @@ export class PairingGrantStore extends Context.Service<
     readonly issueOneTimeToken: (input?: {
       readonly ttl?: Duration.Duration;
       readonly scopes?: ReadonlyArray<AuthEnvironmentScope>;
+      readonly principal?: AuthPrincipal;
+      readonly principalGeneration?: number | undefined;
       readonly subject?: string;
       readonly label?: string;
       readonly proofKeyThumbprint?: string;
@@ -403,6 +408,20 @@ export const make = Effect.gen(function* () {
         (cause) => new PairingCredentialRandomGenerationError({ operation: "generate-id", cause }),
       ),
     );
+    const principalGeneration =
+      input?.principalGeneration ??
+      (input?.principal
+        ? yield* pairingLinks.currentPrincipalGeneration(input.principal).pipe(
+            Effect.mapError(
+              (cause) =>
+                new PairingCredentialIssueError({
+                  pairingLinkId: id,
+                  subject: input?.subject ?? "one-time-token",
+                  cause,
+                }),
+            ),
+          )
+        : 0);
     const credential = yield* generatePairingToken;
     const isDevStartupToken = config.devUrl !== undefined && input?.purpose === "startup";
     const ttl =
@@ -425,6 +444,8 @@ export const make = Effect.gen(function* () {
         method: "one-time-token",
         scopes: input?.scopes ?? AuthStandardClientScopes,
         subject,
+        principal: input?.principal ?? { kind: "device", id },
+        principalGeneration,
         label: input?.label ?? null,
         proofKeyThumbprint: input?.proofKeyThumbprint ?? null,
         createdAt: now,
@@ -577,6 +598,12 @@ export const make = Effect.gen(function* () {
           method: consumed.value.method,
           scopes: consumed.value.scopes,
           subject: consumed.value.subject,
+          ...(consumed.value.principal
+            ? {
+                principal: consumed.value.principal,
+                principalGeneration: consumed.value.principalGeneration,
+              }
+            : {}),
           ...(consumed.value.label ? { label: consumed.value.label } : {}),
           ...(consumed.value.proofKeyThumbprint
             ? { proofKeyThumbprint: consumed.value.proofKeyThumbprint }

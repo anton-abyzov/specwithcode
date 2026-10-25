@@ -57,9 +57,9 @@ describe("Project thread lifecycle", () => {
       const failed = thread({
         runtime: { status: "failed", lastErrorClass } as EnvironmentThreadShell["runtime"],
       });
-      expect(projectThreadGroup(failed)).toBe("Waiting on you");
+      expect(projectThreadGroup(failed)).toBe("Idle");
       expect(projectThreadGroup({ ...failed, settledOverride: "settled" })).toBe("Resolved");
-      expect(projectThreadGroup({ ...failed, settledOverride: "active" })).toBe("Waiting on you");
+      expect(projectThreadGroup({ ...failed, settledOverride: "active" })).toBe("Idle");
     },
   );
   it("waits on the user while a quiet thread holds queued messages", () => {
@@ -79,10 +79,10 @@ describe("Project thread lifecycle", () => {
     expect(threadHeldQueue(working)).toBeNull();
     expect(threadHeldQueue(thread())).toBeNull();
   });
-  it("prioritizes real attention above resolution and runtime", () => {
+  it("suppresses legacy flags after resolution but preserves current actions", () => {
     expect(
       projectThreadGroup(thread({ settledOverride: "settled", hasPendingApprovals: true })),
-    ).toBe("Waiting on you");
+    ).toBe("Resolved");
     expect(projectThreadGroup(thread({ hasPendingUserInput: true }))).toBe("Waiting on you");
     expect(projectThreadGroup(thread({ hasActionableProposedPlan: true }))).toBe("Waiting on you");
     expect(
@@ -801,5 +801,37 @@ describe("remoteOrchestratorOfflineLabel", () => {
     expect(remoteOrchestratorOfflineLabel("Minis", null, now)).toBe(
       "Minis unreachable · last synced: Unknown · read-only",
     );
+  });
+});
+
+describe("attention project scope", () => {
+  it("retains explicit logical-project user roots and excludes independent chats otherwise", async () => {
+    const { projectAttentionRoots } = await import("./useProjectAttention");
+    const user = thread({ createdBy: "user" });
+    const member = {
+      environmentId: "host-1",
+      projectId: "project-1",
+      coordinatorThreadId: "coord",
+      freshness: "live" as const,
+    };
+    expect(projectAttentionRoots([user], [member])).toEqual([]);
+    expect(projectAttentionRoots([user], [{ ...member, includeUserRoots: true }])).toEqual([user]);
+  });
+  it("retains unloaded explicit members without joining similarly named projects", async () => {
+    const { expandAttentionProjects } = await import("./useProjectAttention");
+    const project = {
+      environmentId: "local",
+      id: "p",
+      workspaceSettings: {
+        logicalProject: {
+          members: [{ environmentId: "remote", projectId: "q", coordinatorThreadId: "c" }],
+        },
+      },
+    };
+    expect(expandAttentionProjects([project]).map((p) => [p.environmentId, p.id])).toEqual([
+      ["local", "p"],
+      ["remote", "q"],
+    ]);
+    expect(expandAttentionProjects([{ environmentId: "local", id: "p" }])).toHaveLength(1);
   });
 });

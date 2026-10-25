@@ -134,6 +134,19 @@ export function ToolRail({
   );
 }
 
+/** The `move_page` operations that move a page one place up or down; null at either end. */
+export function pageMoves(
+  document: DesignDocument,
+  pageId: string,
+): { readonly up: DesignOperation | null; readonly down: DesignOperation | null } {
+  const index = document.pages.findIndex((page) => page.id === pageId);
+  if (index < 0) return { up: null, down: null };
+  return {
+    up: index > 0 ? { op: "move_page", pageId, index: index - 1 } : null,
+    down: index < document.pages.length - 1 ? { op: "move_page", pageId, index: index + 1 } : null,
+  };
+}
+
 export function PageMenu({
   document,
   pageId,
@@ -149,6 +162,7 @@ export function PageMenu({
 }) {
   const [renaming, setRenaming] = useState(false);
   const page = document.pages.find((candidate) => candidate.id === pageId) ?? document.pages[0]!;
+  const moves = pageMoves(document, page.id);
   const addPage = () => {
     const id = designId("p");
     const name = `Page ${document.pages.length + 1}`;
@@ -183,6 +197,24 @@ export function PageMenu({
               <MenuSeparator />
               <MenuItem onClick={addPage}>Add page</MenuItem>
               <MenuItem onClick={() => setRenaming(true)}>Rename page</MenuItem>
+              {document.pages.length > 1 && (
+                <>
+                  <MenuItem
+                    disabled={moves.up === null}
+                    onClick={() => moves.up !== null && onCommit([moves.up])}
+                    data-testid="page-move-up"
+                  >
+                    Move up
+                  </MenuItem>
+                  <MenuItem
+                    disabled={moves.down === null}
+                    onClick={() => moves.down !== null && onCommit([moves.down])}
+                    data-testid="page-move-down"
+                  >
+                    Move down
+                  </MenuItem>
+                </>
+              )}
               {document.pages.length > 1 && (
                 <MenuItem
                   variant="destructive"

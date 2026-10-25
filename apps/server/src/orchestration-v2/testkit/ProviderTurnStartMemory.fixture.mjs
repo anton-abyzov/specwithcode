@@ -196,9 +196,11 @@ await Effect.runPromise(
       current = { ...current, runs: [{ ...liveRun, status: "completed" }] };
       NodeAssert.equal(yield* controls.shouldFinalizeRun(), false);
       NodeAssert.deepEqual(yield* controls.loadInheritedBackgroundTurnItems(), []);
-      NodeAssert.equal(fullReads, i + 1);
+      // Handoff delivery rereads durable loss notes immediately before the prompt.
+      // The regular path has no delivery wrapper; neither path may retain history.
+      NodeAssert.equal(fullReads, (i + 1) * (withHandoff ? 2 : 1));
       NodeAssert.equal(yield* controls.hasUnpairedRunInterruptRequest(), false);
-      NodeAssert.equal(fullReads, i + 1);
+      NodeAssert.equal(fullReads, (i + 1) * (withHandoff ? 2 : 1));
       current = null;
       if (i === Math.floor(count / 2) - 1 || i === count - 1) {
         yield* Effect.promise(async () => {

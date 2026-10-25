@@ -245,3 +245,20 @@ it("retains a cancelled native workflow in the restart note", () => {
     { kind: "task", id: "wf-context", label: "Context audit (id wf-context)" },
   );
 });
+
+it("AC-03 includes adapter-discovered loss associated with its source work", () => {
+  const previous = run(1, claudeThread, { restartCancelledBackgroundWork: lost });
+  const next = run(2, claudeThread, { status: "running" });
+  // Pre-prompt settlement records loss on the original subagent run.
+  assert.deepEqual(
+    pendingRestartCancelledBackgroundWork({
+      runs: [previous, next],
+      providerTurns: [turnFor(previous)],
+      compactionMessageIds: new Set(),
+      run: next,
+      attempts: [{ id: next.activeAttemptId!, runId: next.id }],
+    }),
+    lost,
+    "the parent's next provider turn must learn which child it lost",
+  );
+});

@@ -3,7 +3,7 @@ import {
   CommandId,
   compareFingerprints,
   DEFAULT_PROJECT_WORKSPACE_SETTINGS,
-  keepBothNoteName,
+  noteNameCandidates,
   LOGICAL_PROJECT_MEMBER_ROOT_MAX_LENGTH,
   logicalProjectMemberKey,
   type LogicalProject,
@@ -262,11 +262,14 @@ const make = Effect.gen(function* () {
           .readMemory({ projectId, name: note.name })
           .pipe(Effect.option);
         if (Option.isSome(current) && current.value.content === note.content) continue;
+        // A kept-both copy never replaces a note that holds other text.
+        if (note.createOnly && Option.isSome(current))
+          return yield* fail("notes_changed", `"${note.name}" already holds another note.`);
         if ((Option.isSome(current) ? current.value.revision : null) !== note.expectedRevision)
           return yield* fail("notes_changed", `"${note.name}" changed.`);
         pending.push(note);
       }
-      for (const note of pending)
+      for (const { createOnly: _createOnly, ...note } of pending)
         yield* workspace
           .writeMemory({ projectId, ...note })
           .pipe(
@@ -685,30 +688,58 @@ const make = Effect.gen(function* () {
       }),
     );
 
-  /** Writes the replica's notes; a local note with other text is kept beside it. */
+  /**
+   * Writes the replica's notes; a local note with other text is kept beside it under
+   * a new `-before-takeover` name. Earlier backups are never replaced, and replaying
+   * a takeover finds its own backup instead of making another.
+   */
   const applyReplicaNotes = (projectId: ProjectId, replica: ProjectCoordinatorReplica) =>
     Effect.gen(function* () {
-      const writes: ProjectLinkNoteWrite[] = [];
+      // The replica writes its own names; a backup never goes there.
+      const replicaNames = new Set(replica.notes.map((note) => note.name));
+      // Backup names chosen in this batch, with their text; others are read from disk.
+      const taken = new Map<string, string>();
+      const heldText = (name: string) =>
+        taken.has(name)
+          ? Effect.succeed(taken.get(name))
+          : workspace.readMemory({ projectId, name }).pipe(
+              Effect.option,
+              Effect.map((held) => (Option.isSome(held) ? held.value.content : undefined)),
+            );
+      const replicaWrites: ProjectLinkNoteWrite[] = [];
+      const replaced: Array<{ readonly name: string; readonly content: string }> = [];
       for (const note of replica.notes) {
         const current = yield* workspace
           .readMemory({ projectId, name: note.name })
           .pipe(Effect.option);
         if (Option.isSome(current) && current.value.content === note.content) continue;
-        if (Option.isSome(current)) {
-          const name = keepBothNoteName(note.name, "before takeover");
-          const kept = yield* workspace.readMemory({ projectId, name }).pipe(Effect.option);
-          writes.push({
-            name,
-            content: current.value.content,
-            expectedRevision: Option.isSome(kept) ? kept.value.revision : null,
-          });
-        }
-        writes.push({
+        if (Option.isSome(current))
+          replaced.push({ name: note.name, content: current.value.content });
+        replicaWrites.push({
           name: note.name,
           content: note.content,
           expectedRevision: Option.isSome(current) ? current.value.revision : null,
         });
       }
+      // Backups go first: a takeover stopped partway never loses a note it replaces.
+      const writes: ProjectLinkNoteWrite[] = [];
+      for (const note of replaced) {
+        let name: string | undefined;
+        for (const candidate of noteNameCandidates(note.name, "before takeover")) {
+          if (replicaNames.has(candidate)) continue;
+          const held = yield* heldText(candidate);
+          if (held === undefined || held === note.content) {
+            name = candidate;
+            break;
+          }
+        }
+        if (name === undefined)
+          return yield* fail("too_large", `Too many earlier copies of "${note.name}".`);
+        taken.set(name, note.content);
+        if (!writes.some((write) => write.name === name))
+          writes.push({ name, content: note.content, expectedRevision: null, createOnly: true });
+      }
+      writes.push(...replicaWrites);
       return yield* writeNotes(projectId, writes);
     });
 

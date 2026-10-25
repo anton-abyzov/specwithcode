@@ -1,0 +1,9 @@
+:root {
+  --status-up: #16a34a;
+  --status-down: #dc2626;
+  --status-gap: 12px;
+}
+
+.status-row {
+  color: var(--status-up);
+}

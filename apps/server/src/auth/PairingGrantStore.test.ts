@@ -54,6 +54,7 @@ const layerPairingGrantStoreTest = (
       Layer.succeed(
         AuthPairingLinks.AuthPairingLinkRepository,
         AuthPairingLinks.AuthPairingLinkRepository.of({
+          currentPrincipalGeneration: () => Effect.succeed(0),
           create: () => Effect.void,
           consumeAvailable: () => Effect.succeedNone,
           listActive: () => Effect.succeed([]),

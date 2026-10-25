@@ -21,7 +21,19 @@ export type QuestionChatReply =
  * thread draft, text and files, becomes the answer to the active question.
  */
 export function planQuestionChatReply(input: {
-  readonly draft: ComposerThreadDraftState | null | undefined;
+  readonly draft:
+    | Pick<
+        ComposerThreadDraftState,
+        | "prompt"
+        | "images"
+        | "files"
+        | "terminalContexts"
+        | "previewAnnotations"
+        | "reviewComments"
+        | "threadContexts"
+      >
+    | null
+    | undefined;
   readonly allowCustomAnswer: boolean | undefined;
   readonly supportsQuestionAttachments: boolean;
 }): QuestionChatReply {

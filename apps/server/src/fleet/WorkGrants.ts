@@ -23,6 +23,7 @@ import * as Semaphore from "effect/Semaphore";
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import * as ServerConfig from "../config.ts";
 import {
+  coordinatorOfPrincipal,
   coordinatorOfWorkerLabel,
   type EffectiveWorkGrant,
   newGrantDefaults,
@@ -80,13 +81,15 @@ const decodeStoreFile = Schema.decodeUnknownEffect(StoreFileJson);
 const encodeStoreFile = Schema.encodeEffect(StoreFileJson);
 
 export class WorkGrantsError extends Schema.TaggedError<WorkGrantsError>()("WorkGrantsError", {
-  reason: Schema.Literals(["storage", "unknown_grant"]),
+  reason: Schema.Literals(["storage", "unknown_grant", "reapproval_required"]),
   cause: Schema.optional(Schema.Defect()),
 }) {
   override get message(): string {
-    return this.reason === "unknown_grant"
-      ? "No machine with that id may run work here."
-      : "This machine could not read or save who may run work on it.";
+    return this.reason === "reapproval_required"
+      ? "Approve this device again in SpecWithCode."
+      : this.reason === "unknown_grant"
+        ? "No machine with that id may run work here."
+        : "This machine could not read or save who may run work on it.";
   }
 }
 
@@ -99,6 +102,7 @@ export interface WorkGrantsShape {
   readonly forClient: (
     client:
       | {
+          readonly principal?: import("@specweave-studio/contracts").AuthPrincipal;
           readonly label: string;
           readonly access: string;
         }
@@ -192,7 +196,7 @@ export const make = Effect.gen(function* () {
           sessions
             .filter((session) => session.subject === EnvironmentAuth.MCP_CLIENT_SUBJECT)
             .flatMap((session) => {
-              const id = coordinatorOfWorkerLabel(session.client.label ?? undefined);
+              const id = coordinatorOfPrincipal(session.principal);
               return id === undefined ? [] : [id as string];
             }),
         ),
@@ -303,7 +307,15 @@ export const make = Effect.gen(function* () {
     ).pipe(Effect.map(effectiveGrant));
 
   const forClient: WorkGrantsShape["forClient"] = (client) => {
-    const coordinator = coordinatorOfWorkerLabel(client?.label);
+    if (
+      client &&
+      (!client.principal ||
+        (coordinatorOfWorkerLabel(client.label) !== undefined &&
+          client.principal.kind !== "coordinator"))
+    ) {
+      return Effect.fail(new WorkGrantsError({ reason: "reapproval_required" }));
+    }
+    const coordinator = coordinatorOfPrincipal(client?.principal);
     if (client === undefined || coordinator === undefined) return Effect.succeed(undefined);
     const cap = decodeWorkerAccess(client.access);
     return modify((file, now) =>
@@ -386,23 +398,6 @@ export const make = Effect.gen(function* () {
       ),
     );
 
-  const revokeSessions = (coordinatorEnvironmentId: EnvironmentId) =>
-    auth.listSessions().pipe(
-      Effect.flatMap((sessions) =>
-        Effect.forEach(
-          sessions.filter(
-            (session) =>
-              session.subject === EnvironmentAuth.MCP_CLIENT_SUBJECT &&
-              coordinatorOfWorkerLabel(session.client.label ?? undefined) ===
-                coordinatorEnvironmentId,
-          ),
-          (session) => auth.revokeSession(session.sessionId),
-          { discard: true },
-        ),
-      ),
-      Effect.mapError(storageError),
-    );
-
   const revoke: WorkGrantsShape["revoke"] = (coordinatorEnvironmentId) =>
     Effect.gen(function* () {
       const record = yield* modify((file, now) => {
@@ -421,7 +416,9 @@ export const make = Effect.gen(function* () {
       });
       if (record === undefined) return yield* new WorkGrantsError({ reason: "unknown_grant" });
       // The policy refuses it first, so a session minted meanwhile is refused too.
-      yield* revokeSessions(coordinatorEnvironmentId);
+      yield* auth
+        .setPrincipalRevoked({ kind: "coordinator", environmentId: coordinatorEnvironmentId }, true)
+        .pipe(Effect.mapError(storageError));
       return record;
     });
 
@@ -439,7 +436,12 @@ export const make = Effect.gen(function* () {
       Effect.flatMap((record) =>
         record === undefined
           ? Effect.fail(new WorkGrantsError({ reason: "unknown_grant" }))
-          : Effect.succeed(record),
+          : auth
+              .setPrincipalRevoked(
+                { kind: "coordinator", environmentId: coordinatorEnvironmentId },
+                false,
+              )
+              .pipe(Effect.mapError(storageError), Effect.as(record)),
       ),
     );
 

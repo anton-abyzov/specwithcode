@@ -265,6 +265,8 @@ export const HTML_RENDER_LAYOUT_GUIDE = [
   "Use readable sans-serif body text (15-16px), a restrained 24-30px heading, and short measured lines. Use the injected theme tokens, never a hard-coded black canvas. Keep the outer page fluid without another card or banner.",
   "For states or decisions, use a small semantic HTML or inline SVG flow with labels and a text alternative. For numerical comparisons use a chart plus its data table. Do not invent data or add a diagram merely as decoration. Markdown already supports Mermaid; HTML should be self-contained without a CDN dependency where practical.",
   "Keep controls keyboard accessible, show focus, respect reduced motion, and check light/dark at 390px and desktop widths with html_preview. Preserve all evidence and links; disclose long detail progressively.",
+  'Link local evidence with a labeled anchor whose href is the absolute path (<a href="/Users/me/run/login.png">Login screenshot</a>); SpecWithCode shows it as a compact chip that opens the file in the app and copies its path. Do not print long paths as inline code.',
+
   "Give charts fixed heights. Let content set page height; avoid 100vh or height:100% on html/body because the frame grows to fit content.",
 ].join(" ");
 
@@ -305,6 +307,148 @@ export function htmlRenderResult(id: string | number) {
   return { jsonrpc: "2.0", id, result: {} } as const;
 }
 
+// App-namespaced requests: a local file is not a `ui/open-link` URL, which an
+// MCP Apps host would hand to the system browser.
+export const HTML_RENDER_OPEN_FILE_METHOD = "specwithcode/open-file";
+export const HTML_RENDER_COPY_PATH_METHOD = "specwithcode/copy-path";
+const EVIDENCE_PATH_MAX_LENGTH = 4096;
+
+export type HtmlRenderErrorMessage =
+  | "Invalid path"
+  | "Policy violation"
+  | "Not allowed here"
+  | "Copy failed";
+
+/** The error a client sends back when it refuses or cannot do a render's request. */
+export function htmlRenderError(id: string | number, message: HtmlRenderErrorMessage) {
+  return { jsonrpc: "2.0", id, error: { code: -32000, message } } as const;
+}
+
+export interface EvidencePath {
+  readonly path: string;
+  readonly kind: "posix" | "windows" | "home";
+}
+
+/**
+ * An absolute local path a report links as evidence, or undefined. Relative,
+ * URL-like, encoded, traversing, control-character and oversized strings are
+ * refused, and so are network (UNC) paths: opening `\\host\share` makes the
+ * machine connect, and sign in, to a host the page chose. Whether the file
+ * may be read stays the server's decision.
+ */
+export function normalizeEvidencePath(raw: unknown): EvidencePath | undefined {
+  if (typeof raw !== "string" || raw.length === 0 || raw.length > EVIDENCE_PATH_MAX_LENGTH)
+    return undefined;
+  if (!plainPathCharacters(raw)) return undefined;
+  const kind: EvidencePath["kind"] | undefined = raw.startsWith("~/")
+    ? "home"
+    : /^\/(?!\/)/.test(raw)
+      ? "posix"
+      : /^[A-Za-z]:[\\/]/.test(raw)
+        ? "windows"
+        : undefined;
+  if (kind === undefined) return undefined;
+  const windows = kind === "windows";
+  if (!windows && raw.includes("\\")) return undefined;
+  const rest = raw.slice(kind === "posix" ? 1 : kind === "windows" ? 3 : 2);
+  const segments = rest.split(windows ? /[\\/]/ : "/");
+  if (segments.some((segment) => segment === "" || segment === "." || segment === ".."))
+    return undefined;
+  return { path: raw, kind };
+}
+
+// Controls, format characters (bidirectional marks among them), lone
+// surrogates, line and paragraph separators, characters that render as
+// nothing (zero-width, tags, variation selectors, fillers) and `%`.
+const UNPLAIN_PATH_CHARACTER = /[%\p{Cc}\p{Cf}\p{Cs}\p{Zl}\p{Zp}\p{Default_Ignorable_Code_Point}]/u;
+
+// Scripts whose letters a zero-width joiner or non-joiner visibly reshapes.
+const JOINING_LETTER =
+  "[\\p{Script=Arabic}\\p{Script=Syriac}\\p{Script=Devanagari}\\p{Script=Bengali}\\p{Script=Gurmukhi}\\p{Script=Gujarati}\\p{Script=Oriya}\\p{Script=Tamil}\\p{Script=Telugu}\\p{Script=Kannada}\\p{Script=Malayalam}\\p{Script=Sinhala}]";
+
+// Invisible characters that are part of a visible glyph: an emoji's
+// presentation selector, the joiner inside an emoji sequence or between
+// letters of a joining script, and the tags of a subdivision flag up to its
+// closing tag.
+const GLYPH_PART = new RegExp(
+  [
+    "(?<=\\p{Extended_Pictographic})[\\uFE0E\\uFE0F]",
+    "(?<=[#*0-9])\\uFE0F(?=\\u20E3)",
+    "(?<=\\p{Extended_Pictographic}(?:\\p{Emoji_Modifier}|\\uFE0F)?)\\u200D(?=\\p{Extended_Pictographic})",
+    `(?<=(?=\\p{L})${JOINING_LETTER}\\p{M}*)[\\u200C\\u200D](?=(?=\\p{L})${JOINING_LETTER})`,
+    "(?<=\\u{1F3F4}[\\u{E0020}-\\u{E007E}]*)[\\u{E0020}-\\u{E007E}](?=[\\u{E0020}-\\u{E007E}]*\\u{E007F})",
+    "(?<=\\u{1F3F4}[\\u{E0020}-\\u{E007E}]+)\\u{E007F}",
+  ].join("|"),
+  "gu",
+);
+
+/**
+ * No control, bidirectional or invisible character, no percent sign (an
+ * undecoded or double-encoded URL) and no lone surrogate: what the reader is
+ * shown is the path that opens. Emoji and joining scripts keep the invisible
+ * characters that form their visible glyphs.
+ */
+function plainPathCharacters(value: string): boolean {
+  return !UNPLAIN_PATH_CHARACTER.test(value.replace(GLYPH_PART, ""));
+}
+
+export interface HtmlRenderFileRequest {
+  readonly id: string | number;
+  readonly method: "open-file" | "copy-path";
+  readonly path: string;
+  readonly line?: number;
+}
+
+/**
+ * A render's request to open or copy a local evidence file. Only `path` and
+ * `line` are read: where the file lives (machine, thread, folder) comes from
+ * the frame showing the page, never from the page.
+ */
+export function readHtmlRenderFileRequest(data: unknown): HtmlRenderFileRequest | undefined {
+  if (typeof data !== "object" || data === null) return undefined;
+  const { jsonrpc, id, method, params } = data as Record<string, unknown>;
+  if (jsonrpc !== "2.0") return undefined;
+  if (method !== HTML_RENDER_OPEN_FILE_METHOD && method !== HTML_RENDER_COPY_PATH_METHOD)
+    return undefined;
+  if (!((typeof id === "string" && id.length <= 128) || Number.isSafeInteger(id))) return undefined;
+  if (typeof params !== "object" || params === null) return undefined;
+  const { path, line } = params as { path?: unknown; line?: unknown };
+  const evidence = normalizeEvidencePath(path);
+  if (evidence === undefined) return undefined;
+  if (line !== undefined && !(Number.isSafeInteger(line) && (line as number) > 0)) return undefined;
+  return method === HTML_RENDER_OPEN_FILE_METHOD
+    ? {
+        id: id as string | number,
+        method: "open-file",
+        path: evidence.path,
+        ...(line === undefined ? {} : { line: line as number }),
+      }
+    : { id: id as string | number, method: "copy-path", path: evidence.path };
+}
+
+// Top-level folders a local path starts with; the app's own pages never do.
+const LEGACY_LOCAL_ROOT = /^\/(?:Users|home|root|tmp|private|var|Volumes|opt|mnt|srv)\//;
+
+/**
+ * The local path a report published before evidence links asked to open: its
+ * bootstrap resolved `/Users/…` against the page's own server and sent that
+ * as a `ui/open-link` URL. A URL on the frame's own origin under a filesystem
+ * root names a path; anything else, the app's own pages included, is an
+ * ordinary link.
+ */
+export function legacyLocalPathFromOpenLink(url: string, frameSrc: string): string | undefined {
+  try {
+    const target = new URL(url);
+    // A frame's `src` property is always an absolute URL.
+    const frame = new URL(frameSrc);
+    if (target.origin !== frame.origin || !LEGACY_LOCAL_ROOT.test(target.pathname))
+      return undefined;
+    return normalizeEvidencePath(decodeURIComponent(target.pathname))?.path;
+  } catch {
+    return undefined;
+  }
+}
+
 const THEME_FRAGMENT_KEY = "studio-theme";
 
 /** URL fragment that hands a render its theme before first paint. */
@@ -321,11 +465,60 @@ export function htmlRenderThemeMessage(theme: HtmlRenderTheme) {
   } as const;
 }
 
+// Evidence links: a compact labeled chip whose dot and tint say what kind of
+// file it opens, a copy button, and the full path on hover or focus.
+const EVIDENCE_LINK_CSS =
+  ".studio-evidence-wrap{position:relative;display:inline-flex;align-items:center;gap:2px;max-width:100%;vertical-align:bottom}" +
+  "a.studio-evidence{--evidence:var(--muted-foreground);display:inline-block;min-width:0;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;padding:0 .55em;border:1px solid color-mix(in srgb,var(--evidence) 40%,transparent);border-radius:999px;background:color-mix(in srgb,var(--evidence) 10%,transparent);color:var(--foreground);font-size:.92em;line-height:1.7;text-decoration:none;cursor:pointer}" +
+  'a.studio-evidence::before{content:"";display:inline-block;width:.5em;height:.5em;margin-right:.4em;border-radius:50%;background:var(--evidence);vertical-align:.06em}' +
+  "a.studio-evidence[data-kind=image],a.studio-evidence[data-kind=video]{--evidence:var(--info)}a.studio-evidence[data-kind=report]{--evidence:var(--accent)}" +
+  "a.studio-evidence[data-evidence-state=denied],a.studio-evidence[data-evidence-state=unavailable]{--evidence:var(--warning)}" +
+  "a.studio-evidence:hover{background:color-mix(in srgb,var(--evidence) 20%,transparent);border-color:color-mix(in srgb,var(--evidence) 70%,transparent)}" +
+  "a.studio-evidence:focus-visible,.studio-evidence-copy:focus-visible{outline:2px solid var(--ring);outline-offset:2px}" +
+  ".studio-evidence-copy{display:inline-grid;place-items:center;flex:none;width:1.75em;height:1.75em;padding:0;border:0;border-radius:6px;background:transparent;color:var(--muted-foreground);font:inherit;cursor:pointer}" +
+  ".studio-evidence-copy:hover{background:color-mix(in srgb,var(--foreground) 9%,transparent);color:var(--foreground)}.studio-evidence-copy svg{width:1em;height:1em}" +
+  ".studio-evidence-path{display:none;position:absolute;left:0;top:100%;z-index:20;box-sizing:border-box;width:max-content;max-width:min(36rem,calc(100vw - 1rem));padding:.35em .55em;border:1px solid var(--border);border-radius:6px;background:var(--popover);color:var(--popover-foreground);font:12px/1.45 var(--font-mono);white-space:normal;overflow-wrap:anywhere;user-select:text;box-shadow:0 4px 14px rgb(0 0 0/.16)}" +
+  ".studio-evidence-wrap[data-open]>.studio-evidence-path{display:block}" +
+  ".studio-evidence-status{position:absolute;width:1px;height:1px;overflow:hidden;clip-path:inset(50%);white-space:nowrap}" +
+  "@media (prefers-reduced-motion:no-preference){a.studio-evidence{transition:background-color .12s,border-color .12s}}";
+
+// The frame decorates explicit anchors whose href is an absolute local path
+// (`/…`, `~/…`, `C:\…`, `\\host\…`, `file:` without a host); text and code
+// are never turned into links. Activating one asks the client to open the file
+// with `specwithcode/open-file`, and its copy button asks for
+// `specwithcode/copy-path`; the client decides, so a page can only ask. The
+// request carries the href at the moment of the click, never the label. A
+// page outside a client (a download) keeps the path to copy.
+const COPY_ICON =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><rect width="14" height="14" x="8" y="8" rx="2"/><path d="M4 16c-1.1 0-2-.9-2-2V4c0-1.1.9-2 2-2h10c1.1 0 2 .9 2 2"/></svg>';
+const CHECK_ICON =
+  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M20 6 9 17l-5-5"/></svg>';
+const EVIDENCE_LINK_SCRIPT = String.raw`(function(){var O=${JSON.stringify("specwithcode/open-file")},C=${JSON.stringify("specwithcode/copy-path")},CI=${JSON.stringify(COPY_ICON)},KI=${JSON.stringify(CHECK_ICON)},framed=window.parent!==window,seq=0,wait={},live=null;
+function local(href){if(typeof href!=="string")return null;var h=href.trim(),p,hash="",i,m,line;if(/^file:/i.test(h)){try{var u=new URL(h);if(u.hostname&&u.hostname!=="localhost")return null;p=decodeURIComponent(u.pathname);if(/^\/[A-Za-z]:\//.test(p))p=p.slice(1);hash=u.hash;}catch(e){return null;}}else if(/^\/(?!\/)/.test(h)||/^~\//.test(h)){i=h.indexOf("#");if(i>=0){hash=h.slice(i);h=h.slice(0,i);}i=h.indexOf("?");if(i>=0)h=h.slice(0,i);try{p=decodeURIComponent(h);}catch(e){return null;}}else if(/^[A-Za-z]:[\\\/]/.test(h)){p=h;}else return null;m=/^#L(\d+)/.exec(hash);if(m)line=Number(m[1]);else{m=/^(.*[^:\\\/]):(\d+)(?::\d+)?$/.exec(p);if(m&&!/^[A-Za-z]$/.test(m[1])){p=m[1];line=Number(m[2]);}}if(!p||/[\u0000-\u001f\u007f]/.test(p))return null;return{p:p,line:line};}
+function kind(p){var e=(/\.([A-Za-z0-9]+)$/.exec(p)||[])[1];e=e?e.toLowerCase():"";return /^(png|jpe?g|gif|webp|svg|avif|bmp|heic)$/.test(e)?"image":/^(mp4|mov|webm|m4v|mkv)$/.test(e)?"video":/^(md|html?|pdf)$/.test(e)?"report":/^(log|txt|out|err|jsonl)$/.test(e)?"log":"file";}
+function base(p){var parts=p.split(/[\\\/]/);return parts[parts.length-1]||p;}
+function say(text){if(!live){live=document.createElement("span");live.className="studio-evidence-status";live.setAttribute("role","status");(document.body||document.documentElement).appendChild(live);}live.textContent="";setTimeout(function(){live.textContent=text;},30);}
+function mark(el,state,note){if(!el)return;el.setAttribute("data-evidence-state",state);clearTimeout(el.__studioEvidenceTimer);el.__studioEvidenceTimer=setTimeout(function(){el.removeAttribute("data-evidence-state");if(el.classList.contains("studio-evidence-copy"))el.innerHTML=CI;},2500);if(state==="copied"&&el.classList.contains("studio-evidence-copy"))el.innerHTML=KI;say(state==="copied"?"Path copied":state==="opened"?"Opened in SpecWithCode":"Not available"+(note?": "+note:""));}
+function anchorOf(w){return w&&w.querySelector("a.studio-evidence");}
+function decorate(a){var t=a.closest("[data-no-evidence]")?null:local(a.getAttribute("href")),cur=a.getAttribute("data-studio-evidence"),w=a.parentElement;if(!t){if(cur!==null){a.removeAttribute("data-studio-evidence");a.classList.remove("studio-evidence");}return;}if(cur===t.p)return;a.setAttribute("data-studio-evidence",t.p);a.classList.add("studio-evidence");a.setAttribute("data-kind",kind(t.p));a.title=t.p;var label=(a.textContent||"").trim();if(!label||label===t.p||label===a.getAttribute("href")||a.getAttribute("data-studio-evidence-label")==="path"){a.textContent=base(t.p);a.setAttribute("data-studio-evidence-label","path");}if(!w||!w.classList.contains("studio-evidence-wrap")){w=document.createElement("span");w.className="studio-evidence-wrap";a.parentNode.insertBefore(w,a);w.appendChild(a);var b=document.createElement("button");b.type="button";b.className="studio-evidence-copy";b.innerHTML=CI;w.appendChild(b);var r=document.createElement("span");r.className="studio-evidence-path";r.id="studio-evidence-path-"+(++seq);r.setAttribute("role","tooltip");w.appendChild(r);a.setAttribute("aria-describedby",((a.getAttribute("aria-describedby")||"")+" "+r.id).trim());}w.querySelector(".studio-evidence-path").textContent=t.p;w.querySelector(".studio-evidence-copy").setAttribute("aria-label","Copy path "+t.p);}
+var queued=false;function scan(){queued=false;var all=document.querySelectorAll("a[href],a[data-studio-evidence]");for(var i=0;i<all.length;i++)decorate(all[i]);}function later(){if(!queued){queued=true;setTimeout(scan,0);}}
+function show(w,open){if(!w)return;if(!open){w.removeAttribute("data-open");return;}w.setAttribute("data-open","");var tip=w.querySelector(".studio-evidence-path");if(!tip)return;tip.style.left="0px";var r=tip.getBoundingClientRect(),over=r.right-(document.documentElement.clientWidth-8);if(over>0)tip.style.left=Math.max(-w.getBoundingClientRect().left+8,-over)+"px";}
+function wrapOf(t){return t&&t.closest?t.closest(".studio-evidence-wrap"):null;}
+document.addEventListener("mouseover",function(e){show(wrapOf(e.target),true);});document.addEventListener("mouseout",function(e){var w=wrapOf(e.target);if(w&&!w.contains(e.relatedTarget)&&!w.contains(document.activeElement))show(w,false);});document.addEventListener("focusin",function(e){show(wrapOf(e.target),true);});document.addEventListener("focusout",function(e){var w=wrapOf(e.target);if(w&&!w.contains(e.relatedTarget))show(w,false);});
+document.addEventListener("keydown",function(e){var w=wrapOf(e.target);if(e.key==="Escape"&&w&&w.hasAttribute("data-open")){show(w,false);e.preventDefault();}});
+function copyHere(path){var c=navigator.clipboard;try{var a=document.createElement("textarea");a.value=path;a.setAttribute("readonly","");a.style.position="fixed";a.style.opacity="0";document.body.appendChild(a);a.select();var ok=document.execCommand("copy");a.remove();if(ok)return true;}catch(e){}if(c&&c.writeText){c.writeText(path).catch(function(){});return true;}return false;}
+function ask(method,params,el){var id="studio-file-"+(++seq);wait[id]={el:el,method:method,path:params.path};window.parent.postMessage({jsonrpc:"2.0",id:id,method:method,params:params},"*");setTimeout(function(){var w=wait[id];if(!w)return;delete wait[id];if(method===C&&copyHere(w.path))mark(el,"copied");else mark(el,"unavailable");},2000);}
+window.addEventListener("message",function(e){var d=e.data,w;if(e.source!==window.parent||!d||d.jsonrpc!=="2.0"||typeof d.id!=="string"||!(w=wait[d.id]))return;delete wait[d.id];if(d.error)mark(w.el,"denied",d.error&&typeof d.error.message==="string"?d.error.message:"");else mark(w.el,w.method===C?"copied":"opened");});
+function activate(e){var el=e.composedPath().find(function(t){return t&&t.matches&&t.matches("a[href],.studio-evidence-copy");}),t;if(!el)return;if(el.classList.contains("studio-evidence-copy")){var a=anchorOf(wrapOf(el));t=a&&local(a.getAttribute("href"));e.preventDefault();if(!t||!e.isTrusted)return;if(framed)ask(C,{path:t.p},el);else mark(el,copyHere(t.p)?"copied":"unavailable");return;}if(el.closest("[data-no-evidence]"))return;t=local(el.getAttribute("href"));if(!t)return;e.preventDefault();if(!e.isTrusted||e.type!=="click")return;if(!framed){mark(el,"unavailable","open it in SpecWithCode");return;}var params={path:t.p};if(t.line)params.line=t.line;ask(O,params,el);}
+window.addEventListener("click",activate,true);window.addEventListener("auxclick",activate,true);
+new MutationObserver(later).observe(document.documentElement,{childList:true,subtree:true,attributes:true,attributeFilter:["href","data-no-evidence"]});document.addEventListener("DOMContentLoaded",scan);later();})();`;
+
 // The frame scrolls a page taller than itself, but a scrollbar inside the
 // reply reads as a box within the thread, so it stays hidden.
 const BASE_CSS =
   "html{background:var(--background);color:var(--foreground);font-family:var(--font-sans);font-size:14px;line-height:1.5;-webkit-font-smoothing:antialiased;-webkit-text-size-adjust:100%;scrollbar-width:none}" +
-  "html::-webkit-scrollbar{display:none}body{margin:0}code,kbd,pre,samp{font-family:var(--font-mono)}";
+  "html::-webkit-scrollbar{display:none}body{margin:0}code,kbd,pre,samp{font-family:var(--font-mono)}" +
+  EVIDENCE_LINK_CSS;
 
 function rootRule(theme: HtmlRenderTheme): string {
   const declarations = Object.entries(theme.variables)
@@ -343,7 +536,7 @@ function rootRule(theme: HtmlRenderTheme): string {
 // opens it as a new window, which the client sends to the browser. A framed
 // page also reports its content height, measured as the server measures it,
 // so its client can fit the frame to the page.
-const BOOTSTRAP_SCRIPT = `(function(){var s=document.getElementById("studio-theme"),n=0;if(!s)return;var b=${JSON.stringify(BASE_CSS)};function a(t){if(!t||typeof t!=="object"||!t.variables||typeof t.variables!=="object")return;var c=":root{color-scheme:"+(t.appearance==="light"?"light":"dark")+";";for(var k in t.variables){if(/^--[a-z0-9-]+$/.test(k))c+=k+":"+String(t.variables[k]).replace(/[;{}<>]/g,"")+";";}s.textContent=c+"}"+b;}try{var m=/[#&]${THEME_FRAGMENT_KEY}=([^&]*)/.exec(location.hash);if(m){a(JSON.parse(decodeURIComponent(m[1])));history.replaceState(history.state,"",location.pathname+location.search);}}catch(e){}window.addEventListener("message",function(e){var d=e.data,p=d&&d.params;if(d&&d.jsonrpc==="2.0"&&d.method===${JSON.stringify(HOST_CONTEXT_CHANGED_METHOD)}&&p&&p.styles)a({appearance:p.theme,variables:p.styles.variables});});document.addEventListener("click",function(e){var l=e.isTrusted?e.composedPath().find(function(t){return t&&t.matches&&t.matches("a[href]");}):null,u;if(!l)return;try{u=new URL(l.getAttribute("href"),document.baseURI);}catch(x){return;}if(!/^https?:$/.test(u.protocol)||u.href.split("#")[0]===location.href.split("#")[0])return;if(window.parent!==window){e.preventDefault();window.parent.postMessage({jsonrpc:"2.0",id:"studio-link-"+(++n),method:${JSON.stringify(OPEN_LINK_METHOD)},params:{url:u.href}},"*");}else{l.setAttribute("target","_blank");l.setAttribute("rel","noopener");}},true);if(window.parent!==window){var h,o,z=function(){var r=document.documentElement,v=Math.ceil(r.scrollHeight>r.clientHeight?r.scrollHeight:r.getBoundingClientRect().height);if(v===h)return;h=v;window.parent.postMessage({jsonrpc:"2.0",method:${JSON.stringify(SIZE_CHANGED_METHOD)},params:{height:v}},"*");};if(window.ResizeObserver){o=new ResizeObserver(z);o.observe(document.documentElement);}document.addEventListener("DOMContentLoaded",function(){if(o&&document.body)o.observe(document.body);z();});window.addEventListener("load",z);document.addEventListener("keydown",function(e){if(e.isTrusted&&e.key==="Escape"&&!e.defaultPrevented&&!e.isComposing&&!e.ctrlKey&&!e.metaKey&&!e.altKey&&!e.shiftKey){var owns=Array.from(document.querySelectorAll("dialog[open], [role=dialog], [role=menu], [role=listbox], [aria-expanded=true]")).some(function(el){return el.getClientRects().length>0&&!el.closest("[hidden], [aria-hidden=true]");});if(!owns)setTimeout(function(){if(!e.defaultPrevented)window.parent.postMessage({jsonrpc:"2.0",method:"ui/notifications/report-escape"},"*");},0);}});}})();`;
+const BOOTSTRAP_SCRIPT = `(function(){var s=document.getElementById("studio-theme"),n=0;if(!s)return;var b=${JSON.stringify(BASE_CSS)};function a(t){if(!t||typeof t!=="object"||!t.variables||typeof t.variables!=="object")return;var c=":root{color-scheme:"+(t.appearance==="light"?"light":"dark")+";";for(var k in t.variables){if(/^--[a-z0-9-]+$/.test(k))c+=k+":"+String(t.variables[k]).replace(/[;{}<>]/g,"")+";";}s.textContent=c+"}"+b;}try{var m=/[#&]${THEME_FRAGMENT_KEY}=([^&]*)/.exec(location.hash);if(m){a(JSON.parse(decodeURIComponent(m[1])));history.replaceState(history.state,"",location.pathname+location.search);}}catch(e){}window.addEventListener("message",function(e){var d=e.data,p=d&&d.params;if(d&&d.jsonrpc==="2.0"&&d.method===${JSON.stringify(HOST_CONTEXT_CHANGED_METHOD)}&&p&&p.styles)a({appearance:p.theme,variables:p.styles.variables});});document.addEventListener("click",function(e){var l=e.isTrusted?e.composedPath().find(function(t){return t&&t.matches&&t.matches("a[href]");}):null,u;if(!l||e.defaultPrevented)return;try{u=new URL(l.getAttribute("href"),document.baseURI);}catch(x){return;}if(!/^https?:$/.test(u.protocol)||u.href.split("#")[0]===location.href.split("#")[0])return;if(window.parent!==window){e.preventDefault();window.parent.postMessage({jsonrpc:"2.0",id:"studio-link-"+(++n),method:${JSON.stringify(OPEN_LINK_METHOD)},params:{url:u.href}},"*");}else{l.setAttribute("target","_blank");l.setAttribute("rel","noopener");}},true);if(window.parent!==window){var h,o,z=function(){var r=document.documentElement,v=Math.ceil(r.scrollHeight>r.clientHeight?r.scrollHeight:r.getBoundingClientRect().height);if(v===h)return;h=v;window.parent.postMessage({jsonrpc:"2.0",method:${JSON.stringify(SIZE_CHANGED_METHOD)},params:{height:v}},"*");};if(window.ResizeObserver){o=new ResizeObserver(z);o.observe(document.documentElement);}document.addEventListener("DOMContentLoaded",function(){if(o&&document.body)o.observe(document.body);z();});window.addEventListener("load",z);document.addEventListener("keydown",function(e){if(e.isTrusted&&e.key==="Escape"&&!e.defaultPrevented&&!e.isComposing&&!e.ctrlKey&&!e.metaKey&&!e.altKey&&!e.shiftKey){var owns=Array.from(document.querySelectorAll("dialog[open], [role=dialog], [role=menu], [role=listbox], [aria-expanded=true]")).some(function(el){return el.getClientRects().length>0&&!el.closest("[hidden], [aria-hidden=true]");});if(!owns)setTimeout(function(){if(!e.defaultPrevented)window.parent.postMessage({jsonrpc:"2.0",method:"ui/notifications/report-escape"},"*");},0);}});}})();`;
 
 // A page's Copy buttons and selections put exactly the text shown on the
 // clipboard: no newline a textarea or <pre> ends with, no trailing spaces, no
@@ -369,7 +562,7 @@ function bootstrapMarkup(markup: string, appearance?: ThemeAppearance): string {
       ? ""
       : '<meta name="viewport" content="width=device-width, initial-scale=1">',
     `<style id="studio-theme">${defaultCss}</style>`,
-    `<script>${BOOTSTRAP_SCRIPT}${HTML_RENDER_EXACT_COPY_SCRIPT}</script>`,
+    `<script>${BOOTSTRAP_SCRIPT}${HTML_RENDER_EXACT_COPY_SCRIPT}${EVIDENCE_LINK_SCRIPT}</script>`,
   ].join("");
 }
 

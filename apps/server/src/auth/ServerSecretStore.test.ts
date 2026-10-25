@@ -388,3 +388,78 @@ it.layer(NodeServices.layer)("ServerSecretStore.layer", (it) => {
     }).pipe(Effect.provide(layerServerSecretStore())),
   );
 });
+
+// The retry waits on the real clock, so these run outside the TestClock block.
+// Windows run 40144248208: replacing fleet-worker-grant-m1.bin failed once with EPERM.
+const windowsReplaceError = (from: string, to: string, code: "EPERM" | "EBUSY") =>
+  PlatformError.systemError({
+    _tag: code === "EBUSY" ? "Busy" : "Unknown",
+    module: "FileSystem",
+    method: "rename",
+    pathOrDescriptor: from,
+    syscall: "rename",
+    cause: Object.assign(new Error(`${code}: rename '${from}' -> '${to}'`), { code }),
+  });
+
+const storeWithRefusedRenames = (refusals: Array<"EPERM" | "EBUSY"> | "always") =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const attempts = { count: 0 };
+    const secretStore = yield* ServerSecretStore.make.pipe(
+      Effect.provideService(FileSystem.FileSystem, {
+        ...fileSystem,
+        // Counted per run, not per call: a retry re-runs the same rename effect.
+        rename: (from, to) =>
+          Effect.suspend(() => {
+            attempts.count += 1;
+            const refusal = refusals === "always" ? "EPERM" : refusals.shift();
+            return refusal === undefined
+              ? fileSystem.rename(from, to)
+              : Effect.fail(windowsReplaceError(from, to, refusal));
+          }),
+      }),
+    );
+    return { secretStore, attempts };
+  });
+
+it.live("replaces a secret after transient Windows EPERM and EBUSY rename refusals", () =>
+  Effect.gen(function* () {
+    const real = yield* ServerSecretStore.make;
+    yield* real.set("fleet-worker-grant-m1", Uint8Array.from([1]));
+    const { secretStore, attempts } = yield* storeWithRefusedRenames(["EPERM", "EBUSY"]);
+
+    yield* secretStore.set("fleet-worker-grant-m1", Uint8Array.from([2]));
+
+    assert.equal(attempts.count, 3);
+    assert.deepEqual(
+      Option.getOrThrow(yield* secretStore.get("fleet-worker-grant-m1")),
+      Uint8Array.from([2]),
+    );
+    const { secretsDir } = yield* ServerConfig.ServerConfig;
+    const fileSystem = yield* FileSystem.FileSystem;
+    assert.deepEqual(yield* fileSystem.readDirectory(secretsDir), ["fleet-worker-grant-m1.bin"]);
+  }).pipe(Effect.provide(layerServerConfig().pipe(Layer.provideMerge(NodeServices.layer)))),
+);
+
+it.live("fails closed and keeps the previous secret when the replacement stays refused", () =>
+  Effect.gen(function* () {
+    const real = yield* ServerSecretStore.make;
+    yield* real.set("fleet-worker-grant-m1", Uint8Array.from([1]));
+    const { secretStore, attempts } = yield* storeWithRefusedRenames("always");
+
+    const error = yield* Effect.flip(
+      secretStore.set("fleet-worker-grant-m1", Uint8Array.from([2])),
+    );
+
+    assert.instanceOf(error, ServerSecretStore.SecretStorePersistError);
+    assert.equal((error.cause as PlatformError.PlatformError).reason._tag, "Unknown");
+    assert.equal(attempts.count, 7); // The first try and six bounded retries.
+    assert.deepEqual(
+      Option.getOrThrow(yield* real.get("fleet-worker-grant-m1")),
+      Uint8Array.from([1]),
+    );
+    const { secretsDir } = yield* ServerConfig.ServerConfig;
+    const fileSystem = yield* FileSystem.FileSystem;
+    assert.deepEqual(yield* fileSystem.readDirectory(secretsDir), ["fleet-worker-grant-m1.bin"]);
+  }).pipe(Effect.provide(layerServerConfig().pipe(Layer.provideMerge(NodeServices.layer)))),
+);

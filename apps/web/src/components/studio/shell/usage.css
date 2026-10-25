@@ -1,65 +1,24 @@
-/* The subscription usage indicator. */
+/* Subscription usage: the limits view in the coordinator's model picker and the Usage tab summary. */
 
-.sws-usage-chip:focus-visible,
 .sws-usage-link:focus-visible {
   outline: 2px solid var(--ring);
   outline-offset: 1px;
 }
-
-/* The chip under the composer: one ring per provider. */
-.sws-usage-chip {
-  flex: none;
-  height: 24px;
-  padding: 0 7px;
-  display: inline-flex;
-  align-items: center;
-  gap: 10px;
-  border-radius: 7px;
-  font-size: 12px;
-  color: var(--muted-foreground);
-  cursor: pointer;
+/* The picker's second view: back to the models, then every machine. */
+/* Inside the picker it takes the list's height and scrolls; as a popover it sizes itself. */
+[data-model-picker-secondary] .sws-machine-limits {
+  max-height: min(27rem, 70dvh);
+  overflow-y: auto;
 }
-.sws-usage-chip:hover,
-.sws-usage-chip[data-popup-open] {
-  background: var(--accent);
+.sws-machine-limits .sws-machine-limits-back {
+  align-self: flex-start;
+  margin-bottom: 4px;
+}
+.sws-machine-limits-title {
+  margin: 0;
+  font-size: 13px;
+  font-weight: 500;
   color: var(--foreground);
-}
-.sws-usage-chip-item {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  white-space: nowrap;
-}
-.sws-usage-chip-value {
-  font-variant-numeric: tabular-nums;
-}
-.sws-usage-chip-item[data-tone="warn"] .sws-usage-chip-value {
-  color: var(--warning-foreground);
-}
-.sws-usage-chip-item[data-tone="full"] .sws-usage-chip-value {
-  color: var(--destructive-foreground);
-}
-.sws-usage-ring {
-  flex: none;
-  width: 14px;
-  height: 14px;
-}
-.sws-usage-ring circle {
-  fill: none;
-  stroke-width: 2;
-}
-.sws-usage-ring-track {
-  stroke: color-mix(in srgb, currentColor 22%, transparent);
-}
-.sws-usage-ring-value {
-  stroke: currentColor;
-  stroke-linecap: round;
-}
-.sws-usage-ring[data-tone="warn"] .sws-usage-ring-value {
-  stroke: var(--warning);
-}
-.sws-usage-ring[data-tone="full"] .sws-usage-ring-value {
-  stroke: var(--destructive);
 }
 /* The popover: every window of every provider. */
 .sws-usage-popover {

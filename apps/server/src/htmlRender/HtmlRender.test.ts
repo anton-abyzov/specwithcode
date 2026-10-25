@@ -2,13 +2,14 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { describe, expect, it } from "@effect/vitest";
 import { ThreadId } from "@specweave-studio/contracts";
-import { HostProcessEnvironment } from "@specweave-studio/shared/hostProcess";
+import { HostProcessEnvironment, HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
 import {
   HTML_RENDER_MEASURE_FONTS,
   HTML_RENDER_MEASURE_WIDTHS,
   htmlRenderTheme,
 } from "@specweave-studio/shared/htmlRender";
 import { STUDIO_CODE_DARK_THEME_COLORS } from "@specweave-studio/shared/themePalettes";
+import * as Clock from "effect/Clock";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Base64 from "effect/encoding/Base64";
@@ -271,6 +272,73 @@ describe("HtmlRender", () => {
         ),
       );
     }),
+  );
+
+  // A stand-in launcher, a shell script, that prints what the bundled shell
+  // prints when it cannot start, then exits; no real browser starts.
+  const withShell = it.live.skipIf(HostProcessPlatform.defaultValue() === "win32");
+  const crashingBrowser = (stderr: string) =>
+    Effect.gen(function* () {
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const directory = yield* fileSystem.makeTempDirectoryScoped({
+        prefix: "studio-html-crash-",
+      });
+      const executable = path.join(directory, "chrome-headless-shell");
+      yield* fileSystem.writeFileString(
+        executable,
+        `#!/bin/sh\ncat >&2 <<'EOF'\n${stderr}\nEOF\nexit 133\n`,
+      );
+      yield* fileSystem.chmod(executable, 0o755);
+      return executable;
+    });
+
+  withShell(
+    "fails within seconds with the next step when the GPU process cannot start",
+    () =>
+      Effect.gen(function* () {
+        const executable = yield* crashingBrowser(
+          [
+            "sandbox initialization failed: Operation not permitted",
+            "[1024/083358.532672:ERROR:content/browser/gpu/gpu_process_host.cc:1130] GPU process exited unexpectedly: exit_code=5",
+            "[1024/083358.532723:FATAL:content/browser/gpu/gpu_data_manager_impl_private.cc:417] GPU process isn't usable. Goodbye.",
+          ].join("\n"),
+        );
+        const startedAt = yield* Clock.currentTimeMillis;
+        const error = yield* Effect.gen(function* () {
+          const htmlRender = yield* HtmlRender.HtmlRender;
+          return yield* htmlRender
+            .capture({ html: "<p>x</p>", width: 100, height: 100, scale: 1, format: "pdf" })
+            .pipe(Effect.flip);
+        }).pipe(Effect.provide(layerHtmlRender(executable)));
+
+        expect((yield* Clock.currentTimeMillis) - startedAt).toBeLessThan(5_000);
+        expect(error._tag).toBe("PreviewBrowserGpuError");
+        expect(error.message).toContain(`(Chrome: "GPU process isn't usable. Goodbye.")`);
+        expect(error.message).toContain("STUDIO_SERVER_BROWSER_SANDBOX=0");
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    15_000,
+  );
+
+  withShell(
+    "names the browser's last error when a launch crash has no known cause",
+    () =>
+      Effect.gen(function* () {
+        const executable = yield* crashingBrowser(
+          "[1024/083358.532672:ERROR:chrome/app/main.cc:12] Something else broke",
+        );
+        const error = yield* Effect.gen(function* () {
+          const htmlRender = yield* HtmlRender.HtmlRender;
+          return yield* htmlRender
+            .capture({ html: "<p>x</p>", width: 100, height: 100, scale: 1, format: "png" })
+            .pipe(Effect.flip);
+        }).pipe(Effect.provide(layerHtmlRender(executable)));
+
+        expect(error.message).toBe(
+          'Headless Chrome could not render the page: the browser exited unexpectedly. Its last error: "Something else broke"',
+        );
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    15_000,
   );
 
   it.live(

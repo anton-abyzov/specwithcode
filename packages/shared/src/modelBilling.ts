@@ -83,6 +83,9 @@ const API_PROVIDER_IDS: ReadonlySet<string> = new Set([
   "huggingface",
 ]);
 
+/** Local runtime ids already used by provider inventories. */
+const LOCAL_RUNTIME_IDS: ReadonlySet<string> = new Set(["ollama", "lmstudio"]);
+
 /** Hosts (and their subdomains) of the same keyed cloud APIs. */
 const API_HOST_DOMAINS: ReadonlyArray<string> = [
   "anthropic.com",
@@ -142,11 +145,17 @@ function isLoopbackHost(host: string): boolean {
   return /^127(\.\d{1,3}){3}$/.test(host) || /^::ffff:7f[0-9a-f]{2}:[0-9a-f]{1,4}$/.test(host);
 }
 
+/** Loopback locates the endpoint; it does not prove free inference. */
+export function isLoopbackBaseUrl(baseUrl: string | null | undefined): boolean {
+  const url = baseUrl ? urlOf(baseUrl) : null;
+  return url !== null && isLoopbackHost(hostOf(url));
+}
+
 /**
  * The billing a provider adapter can prove from where a model is served:
- * OpenRouter (by provider id or host) is `paid-router`, a loopback base URL
- * is `local`, a known keyed cloud API (by host, or by provider id when the
- * base URL is not loopback) is `api`, anything else `unknown`.
+ * OpenRouter (by provider id or host) is `paid-router`. On loopback only a
+ * known local runtime is `local`; keyed API ids stay `api`, and unidentified
+ * proxies are `unknown`. Known cloud APIs elsewhere are `api`.
  *
  * OpenRouter wins over loopback, since a local proxy in front of it still
  * bills per token. A subscription login (OpenCode's Claude Pro/Max sign-in,
@@ -166,7 +175,10 @@ export function classifyBaseUrlBilling(
   if (id === "openrouter" || (host !== null && onDomain(host, "openrouter.ai"))) {
     return "paid-router";
   }
-  if (host !== null && isLoopbackHost(host)) return "local";
+  if (host !== null && isLoopbackHost(host)) {
+    if (API_PROVIDER_IDS.has(id)) return "api";
+    return LOCAL_RUNTIME_IDS.has(id) ? "local" : "unknown";
+  }
   // A coding-plan endpoint (Z.ai's /api/coding/paas/v4, Kimi's /coding) is a
   // flat-rate subscription even under a keyed API's id and host.
   if (url !== null && /\/coding(\/|$)/i.test(url.pathname)) return "unknown";

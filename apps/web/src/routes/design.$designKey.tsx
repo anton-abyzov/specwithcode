@@ -1,14 +1,18 @@
 import type {
   DesignAddress,
+  DesignAudience,
   DesignDocument,
   DesignSystem,
   DesignThreadBinding,
   EnvironmentId,
 } from "@specweave-studio/contracts";
-import { createFileRoute } from "@tanstack/react-router";
+import { createFileRoute, useNavigate } from "@tanstack/react-router";
 import { lazy, Suspense, useCallback, useMemo, type ReactNode } from "react";
 import { decodeDesignKey } from "~/components/design/designKey";
 import { DesignEditor } from "~/components/design/editor/DesignEditor";
+import { MissingDesignDetail } from "~/components/design/gallery/MissingDesignDetail";
+import { useConnectDesign } from "~/components/design/gallery/useConnectDesign";
+import { useMovedDesignRedirect } from "~/components/design/movedDesign";
 import { useDesignAssetUrls } from "~/components/design/editor/designAssets";
 import {
   useAppDesignBackend,
@@ -52,6 +56,8 @@ function DesignRoute() {
     [decoded],
   );
   const loaded = useAppDesignDocument(environmentId, address);
+  // A design that moved into a project answers its old link with where it went.
+  useMovedDesignRedirect(loaded.movedTo);
   const ownerLabel =
     decoded?.owner.kind === "playground" ? "Playground" : (project?.title ?? "Project");
 
@@ -72,10 +78,16 @@ function DesignRoute() {
       ) : (
         <Message title="Connecting">Waiting for this Mac to connect.</Message>
       );
+  else if (loaded.movedTo !== null)
+    body = (
+      <div className="flex flex-1 items-center justify-center" aria-busy="true">
+        <Spinner />
+      </div>
+    );
   else if (loaded.notFound)
     body = (
       <Message title="Design not found">
-        {loaded.notFoundDetail ?? "It may have been deleted or moved."}
+        <MissingDesignDetail detail={loaded.notFoundDetail ?? null} project={project} />
       </Message>
     );
   else if (loaded.error !== null && loaded.initial === null)
@@ -97,6 +109,7 @@ function DesignRoute() {
         initial={loaded.initial}
         live={loaded.live}
         system={loaded.system}
+        audience={loaded.audience}
       />
     );
 
@@ -115,6 +128,7 @@ function LoadedDesign(props: {
   initial: DesignDocument;
   live: DesignDocument | null;
   system: DesignSystem | null;
+  audience: DesignAudience | null;
 }) {
   const backend = useAppDesignBackend({
     environmentId: props.environmentId,
@@ -122,7 +136,29 @@ function LoadedDesign(props: {
     designKey: props.designKey,
     ownerLabel: props.ownerLabel,
     title: (props.live ?? props.initial).title,
+    audience: props.audience,
   });
+  // "Connect to a project" for a Playground design: once it moved, its new address replaces this one.
+  const navigate = useNavigate();
+  const connect = useConnectDesign({
+    environmentId: props.environmentId,
+    owner: backend.audience === "owner",
+    onMoved: ({ route }) => void navigate({ ...route, replace: true }),
+  });
+  const editorBackend =
+    connect.available && props.address.owner.kind === "playground"
+      ? {
+          ...backend,
+          connectToProject: (current: () => DesignDocument) =>
+            connect.request({
+              designId: props.address.designId,
+              title: current().title,
+              hasDesignSystem: current().designSystem !== null,
+              thread: current().thread ?? null,
+              revision: () => current().revision,
+            }),
+        }
+      : backend;
   const assetUrl = useDesignAssetUrls(
     props.environmentId,
     props.address,
@@ -151,12 +187,15 @@ function LoadedDesign(props: {
     [],
   );
   return (
-    <DesignEditor
-      backend={backend}
-      data={data}
-      designKey={props.designKey}
-      renderChat={renderChat}
-    />
+    <>
+      <DesignEditor
+        backend={editorBackend}
+        data={data}
+        designKey={props.designKey}
+        renderChat={renderChat}
+      />
+      {connect.dialog}
+    </>
   );
 }
 

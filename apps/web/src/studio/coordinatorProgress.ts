@@ -7,12 +7,14 @@
  * @module coordinatorProgress
  */
 import { epochMillis } from "./projectThreadMentions";
+import { limitContinuationKind } from "./runIdentity";
 
 type ProgressRun = {
   readonly id: string;
   readonly ordinal: number;
   readonly status: string;
   readonly requestedAt: unknown;
+  readonly userMessageId?: string | null;
 };
 
 export type ProgressItem = {
@@ -113,7 +115,9 @@ export function coordinatorProgress(projection: {
   };
   const since = sinceOf(run);
   const at = (label: string) => ({ label, since, waiting: false });
-  if (run.status === "queued") return at("Starting the coordinator");
+  // A usage limit moved the turn on by itself: say so, not that a new message came in.
+  const continued = startLabelOf(run);
+  if (run.status === "queued") return at(continued ?? "Starting the coordinator");
   if (run.status === "waiting") {
     // A "waiting" run has finished its turn and is saving its checkpoint; the next message
     // starts only after that, so name the hold-up and count from the message that waits on it.
@@ -126,8 +130,26 @@ export function coordinatorProgress(projection: {
     (projection.turnItems ?? []).filter((item) => item.runId === run.id),
   );
   if (latest !== null) return { label: latest, since, waiting: latest === ANSWER_LABEL };
+  if (continued !== null) return at(continued);
   // A turn can be woken by a worker's report as well as by the person, so say neither.
   return at(run.status === "running" ? "Reading the new message" : "Starting the coordinator");
+}
+
+function startLabelOf(run: ProgressRun): string | null {
+  switch (limitContinuationKind(run.userMessageId ?? "")) {
+    case "fallback":
+      return "Usage limit reached, continuing on the next model";
+    case "provider-fallback":
+      return "Provider could not start, continuing on the next model";
+    case "reset":
+    case "return":
+      return "Usage limit reset, continuing";
+    case "credits":
+    case "api":
+      return "Usage limit reached, continuing with credits";
+    case null:
+      return null;
+  }
 }
 
 /** "8s", "1m 05s": short enough to count up beside the label every second. */

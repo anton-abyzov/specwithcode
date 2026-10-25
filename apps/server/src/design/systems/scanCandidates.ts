@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off - Plain promises over files inside one approved root.
+// @effect-diagnostics nodeBuiltinImport:off globalDate:off - Plain promises over files inside one approved root.
 /**
  * Finds design-system sources inside one root, and nothing outside it.
  *
@@ -9,6 +9,12 @@
  * theme or stylesheet sources are opened, to count what they hold, within one
  * read budget per scan. Nothing is read in the background and nothing is
  * cached between scans.
+ *
+ * An umbrella root (nested repositories, such as `repositories/<org>/<repo>`)
+ * is walked one repository at a time, each with its own file cap, plus the
+ * root's own folders; repositories whose package says it is a design system
+ * go first. One wall-clock limit covers the whole scan: past it the scan
+ * returns what it found, marked `truncated`.
  */
 import * as NodeFS from "node:fs/promises";
 import * as NodePath from "node:path";
@@ -32,10 +38,16 @@ import {
   discoverCssClasses,
   discoverFolder,
 } from "./discoverComponents.ts";
-import { countCssCustomProperties } from "./extractCss.ts";
 import { collectDtcg, detectTokenJson } from "./extractDtcg.ts";
 import { loadTypeScript, tsThemeKeys } from "./extractTsTheme.ts";
 import { collectWeave, isWeaveTokens } from "./extractWeave.ts";
+import {
+  type MutableSuggestion,
+  type PackageInfo,
+  type RankedCandidate,
+  looksLikeDesignSystem,
+  rankSuggestions,
+} from "./scanRanking.ts";
 
 const SKIPPED_FOLDERS = new Set([
   "node_modules",
@@ -54,15 +66,29 @@ const SKIPPED_FOLDERS = new Set([
   "Pods",
   "DerivedData",
 ]);
+/** Files one walk looks at: the root's own folders, or one nested repository. */
 const MAX_FILES_SEEN = 60_000;
+/** Wall-clock limit of one scan; past it the scan returns what it found. */
+export const SCAN_TIME_LIMIT_MS = 5_000;
+/** Folders listed at once while walking. */
+const READDIR_BATCH = 16;
+/** Nested repositories walked ahead of the one being counted. */
+const WALK_AHEAD = 2;
 const COMPONENT_FOLDER_NAMES = /^(?:ui|primitives)$/;
+/** The SpecWeave umbrella layout: `repositories/<org>/<repo>`. */
+const UMBRELLA_REPOSITORY = /^repositories\/[^/]+\/[^/]+$/;
 
 export interface ScanOptions {
+  /** Files each walk may look at (the root's own folders, and each nested repository). */
   readonly maxFilesSeen?: number;
   readonly maxCandidates?: number;
   /** Total bytes and files one scan may read. */
   readonly maxReadBytes?: number;
   readonly maxReadFiles?: number;
+  /** Wall-clock limit of the whole scan, `SCAN_TIME_LIMIT_MS` by default. */
+  readonly timeLimitMs?: number;
+  /** Test seam: the clock the time limit reads. */
+  readonly now?: () => number;
 }
 
 export type RootPathProblem =
@@ -213,69 +239,199 @@ export const readInsideRoot = async (
   }
 };
 
+/**
+ * The size and time of one root-relative file, under the rules of
+ * `readInsideRoot` (the same exclusions, no escape through `..` or a link,
+ * the same cap), without reading it: for listing a system's source files.
+ */
+export const statInsideRoot = async (
+  realRoot: string,
+  relative: string,
+  maxBytes = DESIGN_SYSTEM_IMPORT_MAX_FILE_BYTES,
+): Promise<{ readonly size: number; readonly mtime: Date }> => {
+  const normalized = toPosix(NodePath.normalize(relative)).replace(/^\.\//, "");
+  if (
+    NodePath.isAbsolute(relative) ||
+    normalized.startsWith("../") ||
+    normalized === ".." ||
+    normalized.includes("\0")
+  ) {
+    throw new RootPathError("outside-root", relative);
+  }
+  if (isExcludedPath(normalized)) throw new RootPathError("excluded", normalized);
+  let real: string;
+  try {
+    real = await NodeFS.realpath(NodePath.join(realRoot, normalized));
+  } catch {
+    throw new RootPathError("missing", normalized);
+  }
+  if (!isInside(realRoot, real)) throw new RootPathError("symlink-outside-root", normalized);
+  if (isExcludedPath(relativeTo(realRoot, real))) throw new RootPathError("excluded", normalized);
+  const stat = await NodeFS.stat(real).catch(() => null);
+  if (stat === null) throw new RootPathError("missing", normalized);
+  if (!stat.isFile()) throw new RootPathError("not-a-file", normalized);
+  if (stat.size > maxBytes) throw new RootPathError("too-large", normalized);
+  return stat;
+};
+
 interface WalkResult {
   readonly files: string[];
   readonly folders: Map<string, string[]>;
   readonly skipped: DesignSystemScanSkip[];
   readonly truncated: boolean;
+  /** Nested repositories found and left for their own walk (umbrella roots). */
+  readonly repositories: string[];
 }
 
-const walk = async (realRoot: string, maxFiles: number): Promise<WalkResult> => {
+interface WalkOptions {
+  /** Root-relative folder to start from; `""` for the root. */
+  readonly start: string;
+  readonly maxFiles: number;
+  /** True once the scan is out of time (or done); the walk stops, marked truncated. */
+  readonly stop: () => boolean;
+  /** List nested repositories below `start` instead of walking into them. */
+  readonly splitRepositories: boolean;
+  /** Repositories already known, never walked into. */
+  readonly known?: ReadonlySet<string>;
+}
+
+type FolderEntries = Awaited<ReturnType<typeof listFolder>>;
+const listFolder = (realRoot: string, folder: string) =>
+  NodeFS.readdir(NodePath.join(realRoot, folder), { withFileTypes: true });
+
+/** A folder holding its own repository: a `.git` entry, or a package in the umbrella layout. */
+const isNestedRepository = (folder: string, entries: FolderEntries) =>
+  entries.some((entry) => entry.name === ".git") ||
+  (UMBRELLA_REPOSITORY.test(folder) &&
+    entries.some((entry) => entry.name === "package.json" && !entry.isDirectory()));
+
+/** A real folder the walk would enter: not a symlink, not hidden or skipped. */
+const isWalkedFolder = (entry: FolderEntries[number]) =>
+  entry.isDirectory() && !entry.name.startsWith(".") && !SKIPPED_FOLDERS.has(entry.name);
+
+/**
+ * The umbrella's `repositories/<org>/<repo>` checkouts, read two levels deep
+ * before anything else is walked, so they do not wait for the root's own
+ * folders. Folder symlinks are not followed, as in the walk.
+ */
+const umbrellaRepositories = async (realRoot: string): Promise<string[]> => {
+  const top = await listFolder(realRoot, "").catch(() => []);
+  if (!top.some((entry) => entry.name === "repositories" && isWalkedFolder(entry))) return [];
+  const orgs = (await listFolder(realRoot, "repositories").catch(() => [])).filter(isWalkedFolder);
+  const found = await Promise.all(
+    orgs.map(async (org) => {
+      const repos = await listFolder(realRoot, `repositories/${org.name}`).catch(() => []);
+      return Promise.all(
+        repos.filter(isWalkedFolder).map(async (repo) => {
+          const folder = `repositories/${org.name}/${repo.name}`;
+          const entries = await listFolder(realRoot, folder).catch(() => null);
+          return entries && isNestedRepository(folder, entries) ? [folder] : [];
+        }),
+      );
+    }),
+  );
+  return found.flat(2).sort(compareText);
+};
+
+const walk = async (realRoot: string, options: WalkOptions): Promise<WalkResult> => {
   const files: string[] = [];
   const folders = new Map<string, string[]>();
   const skipped: DesignSystemScanSkip[] = [];
+  const repositories: string[] = [];
   let truncated = false;
-  const queue: string[] = [""];
-  while (queue.length > 0) {
-    const folder = queue.shift()!;
-    let entries;
-    try {
-      entries = await NodeFS.readdir(NodePath.join(realRoot, folder), { withFileTypes: true });
-    } catch {
-      skipped.push({ path: folder || ".", reason: "unreadable" });
+  const queue: string[] = [options.start];
+  let next = 0;
+  while (next < queue.length && !truncated) {
+    if (options.stop()) {
+      truncated = true;
+      break;
+    }
+    // Folders are listed a batch at a time and handled in queue order, so the result is the same.
+    const batch = queue.slice(next, next + READDIR_BATCH);
+    next += batch.length;
+    const listed = await Promise.all(
+      batch.map((folder) => listFolder(realRoot, folder).catch(() => null)),
+    );
+    for (const [index, folder] of batch.entries()) {
+      const entries = listed[index];
+      if (!entries) {
+        skipped.push({ path: folder || ".", reason: "unreadable" });
+        continue;
+      }
+      if (
+        options.splitRepositories &&
+        folder !== options.start &&
+        (options.known?.has(folder) || isNestedRepository(folder, entries))
+      ) {
+        repositories.push(folder);
+        continue;
+      }
+      truncated = await walkFolder(realRoot, folder, entries, options.maxFiles, {
+        files,
+        folders,
+        skipped,
+        queue,
+      });
+      if (truncated) break;
+    }
+  }
+  return { files, folders, skipped, truncated, repositories };
+};
+
+/** Adds one folder's files and queues its subfolders; true when the file cap stopped it. */
+const walkFolder = async (
+  realRoot: string,
+  folder: string,
+  entries: FolderEntries,
+  maxFiles: number,
+  into: {
+    readonly files: string[];
+    readonly folders: Map<string, string[]>;
+    readonly skipped: DesignSystemScanSkip[];
+    readonly queue: string[];
+  },
+): Promise<boolean> => {
+  const { files, folders, skipped, queue } = into;
+  let truncated = false;
+  entries.sort((left, right) => compareText(left.name, right.name));
+  const inFolder: string[] = [];
+  for (const entry of entries) {
+    const relative = folder ? `${folder}/${entry.name}` : entry.name;
+    if (entry.isDirectory()) {
+      if (entry.name.startsWith(".") || SKIPPED_FOLDERS.has(entry.name)) continue;
+      queue.push(relative);
       continue;
     }
-    entries.sort((left, right) => compareText(left.name, right.name));
-    const inFolder: string[] = [];
-    for (const entry of entries) {
-      const relative = folder ? `${folder}/${entry.name}` : entry.name;
-      if (entry.isDirectory()) {
-        if (entry.name.startsWith(".") || SKIPPED_FOLDERS.has(entry.name)) continue;
-        queue.push(relative);
-        continue;
-      }
-      if (entry.isSymbolicLink()) {
-        try {
-          const real = await NodeFS.realpath(NodePath.join(realRoot, relative));
-          if (!isInside(realRoot, real)) {
-            if (looksLikeSource(entry.name))
-              skipped.push({ path: relative, reason: "symlink-outside-root" });
-            continue;
-          }
-          if (isExcludedPath(relativeTo(realRoot, real))) {
-            if (looksLikeSource(entry.name)) skipped.push({ path: relative, reason: "excluded" });
-            continue;
-          }
-          const stat = await NodeFS.stat(real);
-          if (!stat.isFile()) continue; // Folder symlinks are never followed.
-        } catch {
+    if (entry.isSymbolicLink()) {
+      try {
+        const real = await NodeFS.realpath(NodePath.join(realRoot, relative));
+        if (!isInside(realRoot, real)) {
+          if (looksLikeSource(entry.name))
+            skipped.push({ path: relative, reason: "symlink-outside-root" });
           continue;
         }
-      } else if (!entry.isFile()) {
+        if (isExcludedPath(relativeTo(realRoot, real))) {
+          if (looksLikeSource(entry.name)) skipped.push({ path: relative, reason: "excluded" });
+          continue;
+        }
+        const stat = await NodeFS.stat(real);
+        if (!stat.isFile()) continue; // Folder symlinks are never followed.
+      } catch {
         continue;
       }
-      if (files.length >= maxFiles) {
-        truncated = true;
-        break;
-      }
-      if (isExcludedPath(relative)) continue;
-      files.push(relative);
-      inFolder.push(relative);
+    } else if (!entry.isFile()) {
+      continue;
     }
-    folders.set(folder, inFolder);
-    if (truncated) break;
+    if (files.length >= maxFiles) {
+      truncated = true;
+      break;
+    }
+    if (isExcludedPath(relative)) continue;
+    files.push(relative);
+    inFolder.push(relative);
   }
-  return { files, folders, skipped, truncated };
+  folders.set(folder, inFolder);
+  return truncated;
 };
 
 /** The `<word>-` prefix shared by at least 80% of names, if any. */
@@ -348,8 +504,10 @@ export const componentReadPlan = (
   limit = 600,
 ): string[] => {
   const paths: string[] = [];
-  for (const [name, files] of [...folders].sort(([left], [right]) => compareText(left, right))) {
-    if (name !== folder && !name.startsWith(`${folder}/`) && folder !== "") continue;
+  const inside = [...folders].filter(
+    ([name]) => folder === "" || name === folder || name.startsWith(`${folder}/`),
+  );
+  for (const [, files] of inside.sort(([left], [right]) => compareText(left, right))) {
     for (const file of files)
       if (/\.(?:tsx?|jsx?)$/.test(file) && !/\.(?:test|spec)\./.test(file)) paths.push(file);
     if (paths.length >= limit) break;
@@ -363,12 +521,17 @@ export const componentReadPlan = (
   return paths.slice(0, limit + 20);
 };
 
-const packageRoot = (folders: ReadonlyMap<string, ReadonlyArray<string>>, path: string): string => {
+/** The nearest folder with a package.json, stopping at a nested repository's folder. */
+const packageRoot = (
+  folders: ReadonlyMap<string, ReadonlyArray<string>>,
+  path: string,
+  repositories: ReadonlySet<string> = new Set(),
+): string => {
   let current = folderOf(path);
   for (;;) {
     if ((folders.get(current) ?? []).includes(current ? `${current}/package.json` : "package.json"))
       return current;
-    if (!current) return "";
+    if (!current || repositories.has(current)) return current;
     current = folderOf(current);
   }
 };
@@ -434,9 +597,16 @@ export const knownSystemFor = (paths: ReadonlyArray<string>) =>
 interface Counted {
   readonly candidate: Omit<DesignSystemCandidate, "suggestion">;
   readonly text?: string;
+  /** A stylesheet's custom-property names. */
+  readonly propertyNames?: ReadonlySet<string>;
   readonly themeKeys?: ReadonlyArray<string>;
   readonly weaveName?: string;
   readonly cssPrefix?: string;
+}
+
+interface PackageManifest {
+  readonly name?: string;
+  readonly description?: string;
 }
 
 export const scanCandidates = async (
@@ -444,16 +614,25 @@ export const scanCandidates = async (
   options: ScanOptions = {},
 ): Promise<DesignSystemScanResult> => {
   const realRoot = await NodeFS.realpath(root);
+  const now = options.now ?? Date.now;
+  const deadline = now() + (options.timeLimitMs ?? SCAN_TIME_LIMIT_MS);
   const budget = new ReadBudget(options.maxReadBytes, options.maxReadFiles);
-  const {
-    files,
-    folders,
-    skipped,
-    truncated: walkTruncated,
-  } = await walk(realRoot, options.maxFilesSeen ?? MAX_FILES_SEEN);
+  const maxFiles = options.maxFilesSeen ?? MAX_FILES_SEEN;
   const maxCandidates = options.maxCandidates ?? DESIGN_SYSTEM_IMPORT_MAX_CANDIDATES;
+  const folders = new Map<string, string[]>();
+  const skipped: DesignSystemScanSkip[] = [];
   const counted: Counted[] = [];
-  let truncated = walkTruncated;
+  let filesSeen = 0;
+  let truncated = false;
+  /** Set once the time limit or the candidate limit ends the scan. */
+  let stopped = false;
+  const mustStop = () => {
+    if (!stopped && (now() > deadline || counted.length >= maxCandidates)) {
+      truncated = true;
+      stopped = true;
+    }
+    return stopped;
+  };
 
   const readCache = new Map<string, SourceText | null>();
   const read = async (path: string) => {
@@ -476,6 +655,34 @@ export const scanCandidates = async (
     }
   };
 
+  const manifests = new Map<string, PackageManifest | null>();
+  const manifestOf = async (packageFolder: string) => {
+    if (!manifests.has(packageFolder)) {
+      let manifest: PackageManifest | null = null;
+      try {
+        const source = await readInsideRoot(
+          realRoot,
+          packageFolder ? `${packageFolder}/package.json` : "package.json",
+          256 * 1024,
+          budget,
+        );
+        const parsed = JSON.parse(source.text) as { name?: unknown; description?: unknown };
+        manifest = {
+          ...(typeof parsed.name === "string" && parsed.name.length > 0
+            ? { name: parsed.name }
+            : {}),
+          ...(typeof parsed.description === "string"
+            ? { description: parsed.description.slice(0, 1_000) }
+            : {}),
+        };
+      } catch {
+        // No readable manifest: the folder name stands in.
+      }
+      manifests.set(packageFolder, manifest);
+    }
+    return manifests.get(packageFolder) ?? null;
+  };
+
   const base = (
     source: SourceText,
     kind: DesignSystemCandidateKind,
@@ -492,46 +699,56 @@ export const scanCandidates = async (
     modes: [...modes],
   });
 
-  for (const path of files) {
-    if (counted.length >= maxCandidates) {
-      truncated = true;
-      break;
-    }
-    const kind = kindByName(path);
-    if (kind === null) continue;
-    // One file that no parser can read is listed as skipped; the scan goes on.
-    try {
-      if (kind === "barrel") {
-        const siblings = (folders.get(folderOf(path)) ?? []).filter((file) => /\.tsx$/.test(file));
-        if (siblings.length < 2) continue;
-        const source = await read(path);
-        if (!source || !/export\s+(?:\*|\{)[^;]{0,4000}?from\s+["']\.\//.test(source.text))
+  /**
+   * Counts what one walked part of the root holds: token files first, then
+   * component barrels, which need the TypeScript parser and take longest.
+   */
+  const countWalked = async (walked: WalkResult) => {
+    const byKind = walked.files.flatMap((path) => {
+      const kind = kindByName(path);
+      return kind === null ? [] : [{ path, kind }];
+    });
+    for (const { path, kind } of [
+      ...byKind.filter((file) => file.kind !== "barrel"),
+      ...byKind.filter((file) => file.kind === "barrel"),
+    ]) {
+      if (mustStop()) return;
+      // One file that no parser can read is listed as skipped; the scan goes on.
+      try {
+        if (kind === "barrel") {
+          const siblings = (folders.get(folderOf(path)) ?? []).filter((file) =>
+            /\.tsx$/.test(file),
+          );
+          if (siblings.length < 2) continue;
+          const source = await read(path);
+          if (!source || !/export\s+(?:\*|\{)[^;]{0,4000}?from\s+["']\.\//.test(source.text))
+            continue;
+          const ts = await loadTypeScript();
+          const reader = await preloadReader(
+            realRoot,
+            folders,
+            componentReadPlan(folders, folderOf(path)),
+            readCache,
+            budget,
+          );
+          const found = discoverBarrel(ts, reader, source).components.length;
+          if (found >= 2) counted.push({ candidate: base(source, "components", 0, found, []) });
           continue;
-        const ts = await loadTypeScript();
-        const reader = await preloadReader(
-          realRoot,
-          folders,
-          componentReadPlan(folders, folderOf(path)),
-          readCache,
-          budget,
-        );
-        const found = discoverBarrel(ts, reader, source).components.length;
-        if (found >= 2) counted.push({ candidate: base(source, "components", 0, found, []) });
-        continue;
-      }
-      const source = await read(path);
-      if (!source) continue;
-      if (kind === "css") {
-        const count = countCssCustomProperties(source.text);
-        if (count < 3) continue;
-        // Class families count as components only in a system stylesheet,
-        // where classes share the custom properties' prefix (`--wv-`, `.wv-`).
-        const propertyPrefix = dominantPrefix(customPropertyNames(source.text));
-        const classes = propertyPrefix
-          ? discoverCssClasses(source, propertyPrefix).components.length
-          : 0;
-        const modes = new Set<string>();
-        if (count >= 3) {
+        }
+        const source = await read(path);
+        if (!source) continue;
+        if (kind === "css") {
+          const names = customPropertyNames(source.text);
+          const propertyNames = new Set(names);
+          const count = propertyNames.size;
+          if (count < 3) continue;
+          // Class families count as components only in a system stylesheet,
+          // where classes share the custom properties' prefix (`--wv-`, `.wv-`).
+          const propertyPrefix = dominantPrefix(names);
+          const classes = propertyPrefix
+            ? discoverCssClasses(source, propertyPrefix).components.length
+            : 0;
+          const modes = new Set<string>();
           if (
             /prefers-color-scheme\s*:\s*dark|\.dark\b|data-theme=["']?dark|@variant\s+dark/.test(
               source.text,
@@ -539,148 +756,214 @@ export const scanCandidates = async (
           )
             modes.add("dark");
           modes.add(modes.has("dark") ? "light" : "default");
-        }
-        counted.push({
-          candidate: base(source, "css", count, classes, [...modes].sort(compareText)),
-          text: source.text,
-          ...(propertyPrefix ? { cssPrefix: propertyPrefix } : {}),
-        });
-      } else if (kind === "json") {
-        if (isWeaveTokens(source.text)) {
-          const collected = collectWeave(source);
-          const name = /"name"\s*:\s*"([^"]{1,180})"/.exec(source.text)?.[1];
           counted.push({
-            candidate: base(
-              source,
-              "weave",
-              collected.tokens.length,
-              0,
-              collected.modes.map((mode) => mode.id),
-            ),
-            ...(name ? { weaveName: name } : {}),
+            candidate: base(source, "css", count, classes, [...modes].sort(compareText)),
+            text: source.text,
+            propertyNames,
+            ...(propertyPrefix ? { cssPrefix: propertyPrefix } : {}),
           });
-        } else {
-          const form = detectTokenJson(source.text);
-          if (form === null) continue;
-          const collected = collectDtcg(source);
-          if (collected.tokens.length === 0) continue;
+        } else if (kind === "json") {
+          if (isWeaveTokens(source.text)) {
+            const collected = collectWeave(source);
+            const name = /"name"\s*:\s*"([^"]{1,180})"/.exec(source.text)?.[1];
+            counted.push({
+              candidate: base(
+                source,
+                "weave",
+                collected.tokens.length,
+                0,
+                collected.modes.map((mode) => mode.id),
+              ),
+              ...(name ? { weaveName: name } : {}),
+            });
+          } else {
+            const form = detectTokenJson(source.text);
+            if (form === null) continue;
+            const collected = collectDtcg(source);
+            if (collected.tokens.length === 0) continue;
+            counted.push({
+              candidate: base(
+                source,
+                form === "dtcg" ? "dtcg" : "token-json",
+                collected.tokens.length,
+                0,
+                collected.modes.map((mode) => mode.id),
+              ),
+            });
+          }
+        } else if (kind === "ts") {
+          const ts = await loadTypeScript();
+          const { keys, modes } = tsThemeKeys(ts, source);
+          if (keys.length < 5) continue;
           counted.push({
-            candidate: base(
-              source,
-              form === "dtcg" ? "dtcg" : "token-json",
-              collected.tokens.length,
-              0,
-              collected.modes.map((mode) => mode.id),
-            ),
+            candidate: base(source, "ts-theme", keys.length, 0, modes),
+            themeKeys: keys,
           });
         }
-      } else if (kind === "ts") {
-        const ts = await loadTypeScript();
-        const { keys, modes } = tsThemeKeys(ts, source);
-        if (keys.length < 5) continue;
-        counted.push({
-          candidate: base(source, "ts-theme", keys.length, 0, modes),
-          themeKeys: keys,
-        });
+      } catch {
+        skipped.push({ path, reason: "unparseable" });
       }
-    } catch {
-      skipped.push({ path, reason: "unparseable" });
     }
-  }
 
-  // Component folders without a barrel (a shadcn-style ui/ folder).
-  for (const [folder, inFolder] of [...folders].sort(([left], [right]) =>
-    compareText(left, right),
-  )) {
-    const name = folder.slice(folder.lastIndexOf("/") + 1);
-    if (!COMPONENT_FOLDER_NAMES.test(name) || counted.length >= maxCandidates) continue;
-    if (inFolder.some((file) => /\/index\.tsx?$/.test(file))) continue;
-    const components = inFolder.filter(
-      (file) => /\.tsx$/.test(file) && !/\.(?:test|spec|stories)\.tsx$/.test(file),
-    );
-    if (components.length < 3) continue;
-    const ts = await loadTypeScript();
-    const reader = await preloadReader(
-      realRoot,
-      folders,
-      componentReadPlan(new Map([[folder, inFolder]]), folder),
-      readCache,
-      budget,
-    );
-    const found = discoverFolder(ts, reader, folder).components.length;
-    if (found < 3) continue;
-    counted.push({
-      candidate: {
-        path: folder,
-        kind: "components",
-        sha256: sourceText(folder, components.join("\n")).sha256,
-        bytes: 0,
-        tokenCount: 0,
-        componentCount: found,
-        modes: [],
-      },
-    });
-  }
-
-  const labels = new Map<string, string>();
-  for (const item of counted) {
-    const packageFolder = packageRoot(folders, item.candidate.path);
-    if (labels.has(packageFolder)) continue;
-    let label = packageFolder
-      ? packageFolder.slice(packageFolder.lastIndexOf("/") + 1)
-      : NodePath.basename(realRoot);
-    try {
-      const manifest = await readInsideRoot(
+    // Component folders without a barrel (a shadcn-style ui/ folder).
+    for (const [folder, inFolder] of [...walked.folders].sort(([left], [right]) =>
+      compareText(left, right),
+    )) {
+      const name = folder.slice(folder.lastIndexOf("/") + 1);
+      if (!COMPONENT_FOLDER_NAMES.test(name)) continue;
+      if (mustStop()) return;
+      if (inFolder.some((file) => /\/index\.tsx?$/.test(file))) continue;
+      const components = inFolder.filter(
+        (file) => /\.tsx$/.test(file) && !/\.(?:test|spec|stories)\.tsx$/.test(file),
+      );
+      if (components.length < 3) continue;
+      const ts = await loadTypeScript();
+      const reader = await preloadReader(
         realRoot,
-        packageFolder ? `${packageFolder}/package.json` : "package.json",
-        256 * 1024,
+        folders,
+        componentReadPlan(new Map([[folder, inFolder]]), folder),
+        readCache,
         budget,
       );
-      const name = (JSON.parse(manifest.text) as { name?: unknown }).name;
-      if (typeof name === "string" && name.length > 0) label = name.replace(/^@[^/]+\//, "");
-    } catch {
-      // No readable manifest: keep the folder name.
+      const found = discoverFolder(ts, reader, folder).components.length;
+      if (found < 3) continue;
+      counted.push({
+        candidate: {
+          path: folder,
+          kind: "components",
+          sha256: sourceText(folder, components.join("\n")).sha256,
+          bytes: 0,
+          tokenCount: 0,
+          componentCount: found,
+          modes: [],
+        },
+      });
     }
-    labels.set(packageFolder, label);
+  };
+
+  const keep = (walked: WalkResult) => {
+    for (const [folder, inFolder] of walked.folders) folders.set(folder, inFolder);
+    skipped.push(...walked.skipped);
+    filesSeen += walked.files.length;
+    if (walked.truncated) truncated = true;
+  };
+
+  // Walk units: the umbrella's repositories, the root's own folders (`""`, which
+  // stops at any other nested repository and adds it), and those repositories.
+  // Repositories whose package says it is a design system go first.
+  const umbrella = await umbrellaRepositories(realRoot);
+  const known = new Set(umbrella);
+  const systems = await Promise.all(
+    umbrella.map(async (repository) => {
+      const manifest = await manifestOf(repository);
+      return looksLikeDesignSystem(manifest?.name, manifest?.description);
+    }),
+  );
+  const order = [
+    ...umbrella.filter((_, index) => systems[index]),
+    "",
+    ...umbrella.filter((_, index) => !systems[index]),
+  ];
+  // Listing folders waits on the disk and counting on the parser, so the next
+  // units are walked while one is counted. Every walk stops with the scan.
+  const walks = new Map<string, Promise<WalkResult>>();
+  const walkOf = (start: string) => {
+    let walking = walks.get(start);
+    if (walking === undefined) {
+      walking = walk(realRoot, {
+        start,
+        maxFiles,
+        stop: mustStop,
+        splitRepositories: start === "",
+        known,
+      });
+      walking.catch(() => undefined);
+      walks.set(start, walking);
+    }
+    return walking;
+  };
+  for (let index = 0; index < order.length; index += 1) {
+    if (mustStop()) break;
+    for (const ahead of order.slice(index + 1, index + 1 + WALK_AHEAD)) void walkOf(ahead);
+    const walked = await walkOf(order[index]!);
+    keep(walked);
+    for (const repository of walked.repositories) {
+      if (known.has(repository)) continue;
+      known.add(repository);
+      order.push(repository);
+    }
+    await countWalked(walked);
+  }
+  // Walks started ahead and not needed stop at their next folder batch.
+  await Promise.allSettled(walks.values());
+
+  // A nested repository is a package boundary even without a package.json.
+  const nested: ReadonlySet<string> = known;
+  const packages = new Map<string, PackageInfo>();
+  for (const item of counted) {
+    const packageFolder = packageRoot(folders, item.candidate.path, nested);
+    if (packages.has(packageFolder)) continue;
+    const manifest = await manifestOf(packageFolder);
+    const label = manifest?.name
+      ? manifest.name.replace(/^@[^/]+\//, "")
+      : packageFolder
+        ? packageFolder.slice(packageFolder.lastIndexOf("/") + 1)
+        : NodePath.basename(realRoot);
+    packages.set(packageFolder, {
+      label: label.slice(0, 180),
+      ...(manifest?.name ? { manifestName: manifest.name } : {}),
+      ...(manifest?.description ? { description: manifest.description } : {}),
+    });
   }
   for (const path of budget.refused) skipped.push({ path, reason: "budget" });
   return group(
     counted,
-    folders,
-    labels,
+    (path) => packageRoot(folders, path, nested),
+    packages,
     skipped,
-    files.length,
+    filesSeen,
     truncated || budget.refused.size > 0,
   );
 };
 
 const group = (
   counted: ReadonlyArray<Counted>,
-  folders: ReadonlyMap<string, ReadonlyArray<string>>,
-  labels: ReadonlyMap<string, string>,
+  packageFolderOf: (path: string) => string,
+  packages: ReadonlyMap<string, PackageInfo>,
   skipped: DesignSystemScanSkip[],
   filesSeen: number,
   truncated: boolean,
 ): DesignSystemScanResult => {
   const suggestionOf = new Map<string, string>();
-  const suggestions = new Map<
-    string,
-    DesignSystemSuggestion & { paths: string[]; copies: string[] }
-  >();
-  const add = (key: string, name: string, extra: Partial<DesignSystemSuggestion> = {}) => {
-    if (!suggestions.has(key))
+  const suggestions = new Map<string, MutableSuggestion>();
+  /** The package each suggestion stands for, for its manifest name and description. */
+  const packageOfKey = new Map<string, string>();
+  const add = (
+    key: string,
+    name: string,
+    packageFolder: string,
+    extra: Partial<DesignSystemSuggestion> = {},
+  ) => {
+    if (!suggestions.has(key)) {
       suggestions.set(key, { key, name, paths: [], copies: [], ...extra } as never);
+      packageOfKey.set(key, packageFolder);
+    }
     return suggestions.get(key)!;
+  };
+  const addPackage = (path: string) => {
+    const packageFolder = packageFolderOf(path);
+    const key = `pkg:${packageFolder}`;
+    return add(key, packages.get(packageFolder)?.label ?? "Project", packageFolder);
   };
   const byPath = new Map(counted.map((item) => [item.candidate.path, item]));
 
-  // Weave-style systems: tokens.json, the stylesheet beside it, and copies elsewhere.
+  // Weave-style systems: tokens.json and the stylesheet beside it. Copies elsewhere fold in ranking.
   for (const item of counted) {
     if (item.candidate.kind !== "weave") continue;
     const folder = folderOf(item.candidate.path);
     const name = item.weaveName ?? (folder.slice(folder.lastIndexOf("/") + 1) || "Design system");
     const key = name.toLowerCase().replace(/[^a-z0-9]+/g, "-");
-    const suggestion = add(key, name);
+    const suggestion = add(key, name, packageFolderOf(item.candidate.path));
     suggestion.paths.push(item.candidate.path);
     suggestionOf.set(item.candidate.path, key);
     const sheet = counted.find(
@@ -689,22 +972,6 @@ const group = (
     if (!sheet?.text) continue;
     suggestion.paths.push(sheet.candidate.path);
     suggestionOf.set(sheet.candidate.path, key);
-    const names = new Set(customPropertyNames(sheet.text));
-    for (const other of counted) {
-      if (
-        other === sheet ||
-        other.candidate.kind !== "css" ||
-        !other.text ||
-        suggestionOf.has(other.candidate.path)
-      )
-        continue;
-      const otherNames = new Set(customPropertyNames(other.text));
-      const shared = [...names].filter((entry) => otherNames.has(entry)).length;
-      if (names.size > 0 && shared / names.size >= 0.8) {
-        suggestion.copies.push(other.candidate.path);
-        suggestionOf.set(other.candidate.path, key);
-      }
-    }
   }
 
   for (const known of KNOWN_SYSTEMS) {
@@ -714,7 +981,7 @@ const group = (
     if (marker === undefined) continue;
     const prefix = marker.slice(0, marker.length - known.marker.length);
     // A label only: whether the owner holds the upstream is the service's to check.
-    const suggestion = add(known.key, known.name, {
+    const suggestion = add(known.key, known.name, packageFolderOf(marker), {
       description: known.description,
       ...(known.upstream ? { derivedFromLabel: known.upstream.name } : {}),
     });
@@ -739,23 +1006,18 @@ const group = (
       suggestions.get(key)!.paths.push(item.candidate.path);
       suggestionOf.set(item.candidate.path, key);
     } else if (reader) {
-      const key = `pkg:${packageRoot(folders, reader.candidate.path)}`;
-      const suggestion = add(
-        key,
-        labels.get(packageRoot(folders, reader.candidate.path)) ?? "Project",
-      );
+      const suggestion = addPackage(reader.candidate.path);
       suggestion.paths.push(item.candidate.path, reader.candidate.path);
-      suggestionOf.set(item.candidate.path, key);
-      suggestionOf.set(reader.candidate.path, key);
+      suggestionOf.set(item.candidate.path, suggestion.key);
+      suggestionOf.set(reader.candidate.path, suggestion.key);
     }
   }
 
   // Everything else groups by its package; only substantial files are preselected.
   for (const item of counted) {
     if (suggestionOf.has(item.candidate.path)) continue;
-    const key = `pkg:${packageRoot(folders, item.candidate.path)}`;
-    const suggestion = add(key, labels.get(packageRoot(folders, item.candidate.path)) ?? "Project");
-    suggestionOf.set(item.candidate.path, key);
+    const suggestion = addPackage(item.candidate.path);
+    suggestionOf.set(item.candidate.path, suggestion.key);
     const substantial =
       item.candidate.kind !== "css" ||
       item.candidate.tokenCount >= 10 ||
@@ -763,18 +1025,30 @@ const group = (
     if (substantial) suggestion.paths.push(item.candidate.path);
   }
 
+  const ranked = new Map<string, RankedCandidate>(
+    counted.map((item) => [
+      item.candidate.path,
+      {
+        ...item.candidate,
+        ...(item.propertyNames ? { propertyNames: item.propertyNames } : {}),
+      },
+    ]),
+  );
+  const ordered = rankSuggestions(suggestions, suggestionOf, ranked, (key) => {
+    const packageFolder = packageOfKey.get(key);
+    return packageFolder === undefined ? undefined : packages.get(packageFolder);
+  });
+
   const candidates = counted
     .map((item) => ({ ...item.candidate, suggestion: suggestionOf.get(item.candidate.path) ?? "" }))
     .sort((left, right) => compareText(left.path, right.path));
   return {
     candidates,
-    suggestions: [...suggestions.values()]
-      .map((suggestion) => ({
-        ...suggestion,
-        paths: [...suggestion.paths].sort(compareText),
-        copies: [...suggestion.copies].sort(compareText),
-      }))
-      .sort((left, right) => compareText(left.key, right.key)),
+    suggestions: ordered.map((suggestion) => ({
+      ...suggestion,
+      paths: [...suggestion.paths].sort(compareText),
+      copies: [...new Set(suggestion.copies)].sort(compareText),
+    })),
     skipped: skipped.sort((left, right) => compareText(left.path, right.path)),
     filesSeen,
     truncated,

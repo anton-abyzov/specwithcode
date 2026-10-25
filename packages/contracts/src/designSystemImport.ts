@@ -70,6 +70,48 @@ export const DesignSystemCandidate = Schema.Struct({
 });
 export type DesignSystemCandidate = typeof DesignSystemCandidate.Type;
 
+/** Most swatches and sources one suggestion preview carries. */
+export const DESIGN_SYSTEM_PREVIEW_MAX_SWATCHES = 8;
+export const DESIGN_SYSTEM_PREVIEW_MAX_SOURCES = 12;
+
+export const DesignSystemPreviewSwatch = Schema.Struct({
+  /** Token name without the leading `--`. */
+  name: Schema.String.check(Schema.isMaxLength(200)),
+  /** CSS color in the light (or only) mode, references resolved. */
+  value: Schema.String.check(Schema.isMaxLength(200)),
+  /** The same color in the dark mode, when the system has one. */
+  darkValue: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(200))),
+});
+export type DesignSystemPreviewSwatch = typeof DesignSystemPreviewSwatch.Type;
+
+export const DesignSystemPreviewSource = Schema.Struct({
+  path: Path,
+  kind: DesignSystemCandidateKind,
+  /** Tokens the scan counted in this file (custom properties, theme keys). */
+  tokens: NonNegativeInt,
+  components: NonNegativeInt,
+});
+export type DesignSystemPreviewSource = typeof DesignSystemPreviewSource.Type;
+
+/**
+ * What a suggestion would import, read in memory without creating a proposal:
+ * tokens extracted from its token files, components counted from its
+ * component sources, a few colors to show, and the biggest sources.
+ */
+export const DesignSystemSuggestionPreview = Schema.Struct({
+  tokens: NonNegativeInt,
+  components: NonNegativeInt,
+  modes: Schema.Array(Schema.String.check(Schema.isMaxLength(120))),
+  swatches: Schema.Array(DesignSystemPreviewSwatch).check(
+    Schema.isMaxLength(DESIGN_SYSTEM_PREVIEW_MAX_SWATCHES),
+  ),
+  sources: Schema.Array(DesignSystemPreviewSource).check(
+    Schema.isMaxLength(DESIGN_SYSTEM_PREVIEW_MAX_SOURCES),
+  ),
+});
+export type DesignSystemSuggestionPreview = typeof DesignSystemSuggestionPreview.Type;
+
+/** Suggestions come strongest first: most tokens and components, then by key. */
 export const DesignSystemSuggestion = Schema.Struct({
   key: Schema.String.check(Schema.isMaxLength(200)),
   name: Schema.String.check(Schema.isMaxLength(180)),
@@ -82,6 +124,8 @@ export const DesignSystemSuggestion = Schema.Struct({
   /** Informational name of the upstream system ("Weave"), never an id. */
   derivedFromLabel: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(200))),
   description: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(1_000))),
+  /** Filled for the top suggestions when the scan asked for `preview`. */
+  preview: Schema.optionalKey(DesignSystemSuggestionPreview),
 });
 export type DesignSystemSuggestion = typeof DesignSystemSuggestion.Type;
 
@@ -103,7 +147,11 @@ export const DesignSystemScanSkip = Schema.Struct({
 });
 export type DesignSystemScanSkip = typeof DesignSystemScanSkip.Type;
 
-export const DesignSystemScanInput = Schema.Struct({ owner: DesignOwnerInput });
+export const DesignSystemScanInput = Schema.Struct({
+  owner: DesignOwnerInput,
+  /** Also preview the top suggestions (counts, modes, swatches); nothing is written. */
+  preview: Schema.optionalKey(Schema.Boolean),
+});
 export type DesignSystemScanInput = typeof DesignSystemScanInput.Type;
 
 export const DesignSystemScanResult = Schema.Struct({

@@ -28,6 +28,8 @@ import { isBlockingRuntimeRequest, withPendingRequestDetail } from "./blockingRu
 import {
   LIMIT_CHECK_INTERVAL_MS,
   LIMIT_REARM_MAX,
+  accountChangeMark,
+  accountChangeShowsRoom,
   derivedLimitResumeAt,
   hasFreshLimitPermission,
   hasValidLimitReset,
@@ -65,6 +67,7 @@ export function limitRecoveryCommand(
   nowMs: number,
   snooze = false,
   derivedRoom = false,
+  accountChangedMs: number | null = null,
 ): OrchestrationV2ServerCommand | null {
   if (!isLimitRecoveryCandidate(thread) || !thread.latestRunId) return null;
   const resetMs = Date.parse(thread.usageLimitResetAt ?? "");
@@ -97,15 +100,24 @@ export function limitRecoveryCommand(
   }
   const permitted = hasFreshLimitPermission(thread, nowMs);
   const derivedAt = derivedLimitResumeAt(thread);
+  const waited =
+    derivedAt === null ? validReset && resetMs <= nowMs : derivedRoom && derivedAt <= nowMs;
+  // Another account with room needs no wait for the reset the old one reported.
+  const accountChanged =
+    accountChangedMs !== null &&
+    accountChangedMs > limitStopMs(thread) &&
+    accountChangedMs <= nowMs;
+  const early = permitted || accountChanged;
   if (
     !recovery.autoResume ||
-    (!permitted &&
-      (derivedAt === null ? !validReset || resetMs > nowMs : !derivedRoom || derivedAt > nowMs)) ||
+    (!early && !waited) ||
     (recovery.availability !== undefined && !permitted) ||
-    recoverySnoozeBlocks(thread, nowMs, permitted)
+    recoverySnoozeBlocks(thread, nowMs, early)
   )
     return null;
-  const deliveryIdentity = `${identity}:${recovery.requestId ?? "legacy"}`;
+  // Its own id, so a refused early resume never blocks the one at the reset.
+  const mark = !permitted && !waited && accountChanged ? accountChangeMark(accountChangedMs) : "";
+  const deliveryIdentity = `${identity}${mark}:${recovery.requestId ?? "legacy"}`;
   const base = {
     type: "message.dispatch",
     commandId: CommandId.make(`limit-resume:${deliveryIdentity}`),
@@ -168,6 +180,9 @@ export function waitRuleArmsResume(
  */
 export const LIMIT_RECOVERY_QUIET_RECHECK_MS = 30_000;
 
+/** The least time between two resumes on one instance after its account changed. */
+export const ACCOUNT_RESUME_SPACING_MS = 5_000;
+
 export const makeSweep = Effect.gen(function* () {
   const admission = yield* ProjectAdmission.ProjectAdmission;
   const projects = yield* ProjectStore.ProjectStoreV2;
@@ -226,15 +241,15 @@ export const makeSweep = Effect.gen(function* () {
   const refused = yield* Ref.make<ReadonlySet<string>>(new Set());
   const send = (command: OrchestrationV2ServerCommand) =>
     Effect.gen(function* () {
-      if ((yield* Ref.get(refused)).has(command.commandId)) return;
-      yield* threads.dispatch(command).pipe(
-        Effect.asVoid,
+      if ((yield* Ref.get(refused)).has(command.commandId)) return false;
+      return yield* threads.dispatch(command).pipe(
+        Effect.as(true),
         Effect.catchTags({
           OrchestratorCommandPreviouslyRejectedError: () =>
             Ref.update(
               refused,
               (previous) => new Set([...[...previous].slice(-255), command.commandId]),
-            ),
+            ).pipe(Effect.as(false)),
         }),
       );
     });
@@ -275,6 +290,51 @@ export const makeSweep = Effect.gen(function* () {
         limitReadShowsRoom(own(refreshed.value), stopMs, yield* Clock.currentTimeMillis) === "room"
       );
     });
+  /**
+   * When the stopped thread's instance changed to an account with room, or
+   * null. A read older than LIMIT_CHECK_INTERVAL_MS is refreshed, at most once
+   * per interval per thread, before it can count.
+   */
+  const accountChange = (thread: ProjectionStore.ProjectionLimitRecoveryCandidate) =>
+    Effect.gen(function* () {
+      if (Option.isNone(registry)) return null;
+      const stopMs = limitStopMs(thread);
+      const own = (providers: ReadonlyArray<ServerProvider>) =>
+        providers.find((provider) => provider.instanceId === thread.providerInstanceId);
+      const cached = own(yield* registry.value.getProviders);
+      const changedMs = Date.parse(cached?.usageLimits?.accountChangedAt ?? "");
+      if (!Number.isFinite(changedMs) || changedMs <= stopMs) return null;
+      const nowMs = yield* Clock.currentTimeMillis;
+      if (accountChangeShowsRoom(cached, stopMs, nowMs)) return changedMs;
+      const readMs = Date.parse(cached?.usageLimits?.checkedAt ?? "");
+      if (Number.isFinite(readMs) && nowMs - readMs <= LIMIT_CHECK_INTERVAL_MS) return null;
+      const last = (yield* Ref.get(refreshedAt)).get(thread.id);
+      if (last !== undefined && nowMs - last >= 0 && nowMs - last < LIMIT_CHECK_INTERVAL_MS)
+        return null;
+      yield* Ref.update(
+        refreshedAt,
+        (previous) =>
+          new Map([
+            ...[...previous].filter(([, at]) => nowMs - at < LIMIT_CHECK_INTERVAL_MS),
+            [thread.id, nowMs],
+          ]),
+      );
+      const refreshed = yield* registry.value.refreshInstance(thread.providerInstanceId).pipe(
+        Effect.timeoutOption("20 seconds"),
+        Effect.catchCause(() => Effect.succeed(Option.none<ReadonlyArray<ServerProvider>>())),
+      );
+      if (Option.isNone(refreshed)) return null;
+      const fresh = own(refreshed.value);
+      const freshChangedMs = Date.parse(fresh?.usageLimits?.accountChangedAt ?? "");
+      return Number.isFinite(freshChangedMs) &&
+        accountChangeShowsRoom(fresh, stopMs, yield* Clock.currentTimeMillis)
+        ? freshChangedMs
+        : null;
+    });
+  // When each instance last sent a resume for an account change. Paused
+  // threads follow one at a time, so a new account that fills up stops the
+  // rest at its next read instead of taking every thread at once.
+  const accountResumedAt = yield* Ref.make<ReadonlyMap<string, number>>(new Map());
   // The last read that found no candidate, and what it was read against.
   const quiet = yield* Ref.make<{
     readonly writeCount: number;
@@ -396,6 +456,7 @@ export const makeSweep = Effect.gen(function* () {
         if (recoverySnoozeBlocks(thread, nowMs, true)) return;
         const checked = yield* availability.check(thread);
         const room = !checked.codex && (yield* derivedRoom(thread));
+        const changedMs = checked.codex ? null : yield* accountChange(thread);
         if (checked.observation) {
           yield* send({
             type: "thread.metadata.update",
@@ -458,6 +519,10 @@ export const makeSweep = Effect.gen(function* () {
                   room &&
                     current.latestRunId === thread.latestRunId &&
                     current.providerInstanceId === thread.providerInstanceId,
+                  current.latestRunId === thread.latestRunId &&
+                    current.providerInstanceId === thread.providerInstanceId
+                    ? changedMs
+                    : null,
                 );
                 // The observed stop may have changed during the probe. Any new
                 // policy arm uses the same settings/commit ordering as above.
@@ -486,9 +551,40 @@ export const makeSweep = Effect.gen(function* () {
             )
               return;
             if (!command) return;
+            const forAccountChange = command.commandId.includes(":acct:");
+            const instance = String(thread.providerInstanceId);
+            if (forAccountChange) {
+              const at = yield* Clock.currentTimeMillis;
+              const lastAt = (yield* Ref.get(accountResumedAt)).get(instance);
+              if (
+                lastAt !== undefined &&
+                at - lastAt >= 0 &&
+                at - lastAt < ACCOUNT_RESUME_SPACING_MS
+              )
+                return;
+            }
             // Persisted recovery remains authoritative; never hold the settings
             // lock across continuation admission or provider work.
-            yield* send(command);
+            const sent = yield* send(command);
+            // Only a resume that started a run uses the instance's slot, so a
+            // thread the orchestrator keeps refusing never starves the others
+            // on it. A refused resume commits too (and replays as committed),
+            // but starts no run for its message. Unreadable records keep the
+            // spacing.
+            if (forAccountChange && sent && command.type === "message.dispatch") {
+              const records = yield* Effect.exit(
+                Effect.suspend(() => projections.getThreadProjection(thread.id)),
+              );
+              const started =
+                Exit.isFailure(records) ||
+                (records.value.runs ?? []).some((run) => run.userMessageId === command.messageId);
+              if (!started) return;
+              const at = yield* Clock.currentTimeMillis;
+              yield* Ref.update(
+                accountResumedAt,
+                (previous) => new Map([...previous, [instance, at]]),
+              );
+            }
           }),
         );
       }).pipe(

@@ -18,7 +18,7 @@ import {
   type FallbackOrderEntry,
   type FallbackOrderUnavailable,
 } from "@specweave-studio/shared/providerFallback";
-import { ChevronDownIcon, GaugeIcon } from "lucide-react";
+import { ChevronDownIcon, GaugeIcon, Undo2Icon } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Button } from "../ui/button";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
@@ -517,50 +517,50 @@ export function limitPairingRoom(
  */
 export function limitFallbackPairingBannerItem(props: {
   id: string;
-  current: string;
   original: string;
+  originalModel: string;
   /** The original model's reset, when its usage reading says. */
   resetAt: number | null;
   /** The original model can take the next turn now. */
   hasRoom: boolean;
   /** The original model can take a turn, but whether its limit lifted is unknown. */
   roomUnknown?: LimitPairingRoomUnknown | undefined;
+  /** The thread stands in from its launch: the original never had room for it, so not "again". */
+  launched?: boolean | undefined;
   onBack: () => void;
   onDismiss: () => void;
-}): ComposerBannerStackItem {
+}): ComposerBannerStackItem | null {
+  if (!props.hasRoom && props.roomUnknown === undefined) return null;
   return {
     id: props.id,
     variant: "info",
+    compact: true,
     priority: "notice",
-    icon: <GaugeIcon />,
-    actionsLayout: "wrap-below",
-    title: `Continuing on ${props.current}`,
-    description: props.hasRoom
-      ? `${props.original} stopped at its limit and has room again.`
-      : props.roomUnknown === "unreported"
-        ? `${props.original} stopped at its limit and reports no usage, so its room is unknown.`
-        : props.roomUnknown === "stale"
-          ? `${props.original} stopped at its limit. Its last usage reading showed room but is out of date; switching back re-checks it.`
-          : props.roomUnknown === "unread"
-            ? `${props.original} stopped at its limit and has no current usage reading, so its room is unknown.`
-            : props.resetAt === null
-              ? `${props.original} stopped at its limit and is still limited.`
-              : `${props.original} stopped at its limit and resets at ${new Date(props.resetAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}.`,
+    icon: <Undo2Icon />,
+    title: props.hasRoom
+      ? `${props.originalModel} has room ${props.launched ? "now" : "again"}.`
+      : props.roomUnknown === "stale"
+        ? `${props.originalModel} may have room ${props.launched ? "now" : "again"}.`
+        : props.roomUnknown === "unread"
+          ? `${props.originalModel} has no current usage reading, so its room is unknown.`
+          : `${props.originalModel} reports no usage, so its room is unknown.`,
     actions: (
       <Button
         size="xs"
         variant="outline"
-        disabled={!props.hasRoom && props.roomUnknown === undefined}
+        aria-label={`Switch back to ${props.original}`}
         title={
-          props.hasRoom
-            ? undefined
-            : props.roomUnknown === undefined
-              ? `${props.original} has no room yet`
-              : `${props.original} may stop at its limit again`
+          props.roomUnknown === "stale"
+            ? "Its last usage reading is out of date; switching back re-checks it."
+            : props.roomUnknown
+              ? props.launched
+                ? `${props.original} may still be at its limit`
+                : `${props.original} may stop at its limit again`
+              : undefined
         }
         onClick={props.onBack}
       >
-        {`Back to ${props.original}`}
+        {props.hasRoom ? "Switch back" : "Try switching back"}
       </Button>
     ),
     dismissLabel: "Hide",

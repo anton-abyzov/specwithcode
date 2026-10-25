@@ -2,9 +2,13 @@
 import * as NodeEvents from "node:events";
 
 import { INCOGNITO_BROWSER_PROFILE_ID } from "@specweave-studio/contracts";
+import { HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
+import * as Effect from "effect/Effect";
+import { ChildProcessSpawner } from "effect/process";
 import { chromium, type Browser, type BrowserContext, type BrowserType } from "playwright-core";
 import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
+import * as PreviewBrowserHost from "./PreviewBrowserHost.ts";
 import { ServerBrowserContexts } from "./ServerBrowserContexts.ts";
 
 const launches = vi.hoisted(() => ({
@@ -216,6 +220,55 @@ describe("ServerBrowserContexts", () => {
     );
     await pool.close();
   });
+
+  it.each([
+    { env: {}, optOut: true },
+    // Once the operator turned the sandbox off, suggesting it again would not help.
+    { env: { STUDIO_SERVER_BROWSER_SANDBOX: "0" }, optOut: false },
+  ])(
+    "names the GPU exit from the browser's stderr in Playwright's launch error (env $env)",
+    async ({ env, optOut }) => {
+      // The fake launcher fails the way Playwright does when Chrome's GPU process cannot start.
+      launches.launch.mockRejectedValue(
+        new Error(
+          [
+            "browserType.launch: Failed to launch the browser process.",
+            "Browser logs:",
+            "",
+            "<launching> /test/chromium --disable-gpu --headless",
+            "<launched> pid=7",
+            "[pid=7][err] [1024/083358.532672:ERROR:content/browser/gpu/gpu_process_host.cc:1130] GPU process exited unexpectedly: exit_code=5",
+            "[pid=7][err] [1024/083358.532723:FATAL:content/browser/gpu/gpu_data_manager_impl_private.cc:417] GPU process isn't usable. Goodbye.",
+          ].join("\n"),
+        ),
+      );
+      const noLdd = ChildProcessSpawner.make(() => Effect.die("ldd runs on Linux only"));
+      const pool = new ServerBrowserContexts({
+        ...options(),
+        env,
+        diagnose: (executable, cause, sandboxOff) =>
+          Effect.runPromise(
+            PreviewBrowserHost.diagnosePlaywrightLaunch({
+              executable,
+              cause,
+              setupCommand: "sudo specweave-studio browser setup",
+              sandboxOff,
+            }).pipe(
+              Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, noLdd),
+              Effect.provideService(HostProcessPlatform, "darwin"),
+            ),
+          ),
+      });
+      const failure = await pool.contextFor("default", "agent").catch((cause: unknown) => cause);
+      expect(failure).toBeInstanceOf(PreviewBrowserHost.PreviewBrowserGpuError);
+      expect((failure as Error).message).toContain(
+        `(Chrome: "GPU process isn't usable. Goodbye.")`,
+      );
+      expect((failure as Error).message.includes(PreviewBrowserHost.SANDBOX_OPT_OUT)).toBe(optOut);
+      expect(failure).toMatchObject({ sandboxOff: !optOut });
+      await pool.close();
+    },
+  );
 
   it("evicts a closed context without closing other agents or relaunching chromium", async () => {
     const browser = makeBrowser();

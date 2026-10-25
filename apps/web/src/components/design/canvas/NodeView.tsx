@@ -86,7 +86,7 @@ export function DesignPageView({
           key={node.id}
           node={node}
           kids={children.get(node.id)}
-          editing={node.id === editingId}
+          editingId={editingId ?? null}
         />
       ))}
     </ChildrenContext>
@@ -96,10 +96,11 @@ export function DesignPageView({
 interface NodeViewProps {
   readonly node: DesignNode;
   readonly kids: readonly DesignNode[] | undefined;
-  readonly editing?: boolean;
+  /** The text being edited in place, at any depth (a title inside a slide too): it hides under its field. */
+  readonly editingId?: string | null;
 }
 
-export const NodeView = memo(function NodeView({ node, kids, editing }: NodeViewProps) {
+export const NodeView = memo(function NodeView({ node, kids, editingId = null }: NodeViewProps) {
   const context = useContext(DesignRenderContextValue);
   const children = useContext(ChildrenContext);
   const style = useMemo(() => reactStyle(designNodeStyle(node, context)), [node, context]);
@@ -109,7 +110,7 @@ export const NodeView = memo(function NodeView({ node, kids, editing }: NodeView
     ...(node.name === undefined ? {} : { "data-name": node.name }),
   };
   const inner = kids?.map((child) => (
-    <NodeView key={child.id} node={child} kids={children.get(child.id)} />
+    <NodeView key={child.id} node={child} kids={children.get(child.id)} editingId={editingId} />
   ));
   switch (node.type) {
     case "frame":
@@ -123,7 +124,7 @@ export const NodeView = memo(function NodeView({ node, kids, editing }: NodeView
     case "text":
     case "note":
       return (
-        <div {...common} style={editing ? { ...style, visibility: "hidden" } : style}>
+        <div {...common} style={node.id === editingId ? { ...style, visibility: "hidden" } : style}>
           {node.text}
         </div>
       );

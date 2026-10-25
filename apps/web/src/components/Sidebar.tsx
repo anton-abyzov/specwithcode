@@ -136,7 +136,6 @@ import { canOpenProjectWindowFor, openProjectWindow } from "../lib/projectWindow
 import { readLocalApi } from "../localApi";
 import { useSidebarPendingFileDropStore } from "../sidebarPendingFileDropStore";
 import { getProjectOrderKey, selectProjectGroupingSettings } from "../logicalProject";
-import { projectPickerGroups } from "../studio/projectListVisibility";
 import { isCoordinatorNamedThread } from "../studio/threadTitles";
 import {
   buildSidebarProjectSnapshots,
@@ -211,6 +210,7 @@ import {
   orderItemsByPreferredIds,
   planSidebarThreadDrop,
   reduceSidebarProjectScopeMenuState,
+  sidebarProjectScopeItems,
   resolveAdjacentThreadId,
   resolveSidebarSweepKeys,
   resolveSidebarDropTarget,
@@ -2617,20 +2617,15 @@ export default function Sidebar() {
   const setProjectScopeKey = useUiStateStore((store) => store.setSidebarProjectScopeKey);
   // {value, label} items let Base UI drive the combobox selection contract
   // while the popup search filters the same collection.
-  // Neither a machine's "No project" folder nor an archived project is a scope
-  // choice; the current scope stays listed so the menu still shows it.
+  // Neither a machine's "No project" folder, an archived nor an automated project is a
+  // scope choice; a current scope that is one stays visible as a row that cannot be chosen.
   const projectScopeItems = useMemo(
-    () => [
-      { value: "all", label: "All projects" },
-      ...projectPickerGroups(
+    () =>
+      sidebarProjectScopeItems(
         projectGroups,
         (environmentId) => serverConfigs.get(environmentId)?.scratchWorkspaceRoot ?? null,
         projectScopeKey,
-      ).map((project) => ({
-        value: project.projectKey,
-        label: project.displayName,
-      })),
-    ],
+      ),
     [projectGroups, projectScopeKey, serverConfigs],
   );
   // Same-named projects on two machines are only told apart by where they
@@ -5187,6 +5182,7 @@ export default function Sidebar() {
                             key={item.value}
                             hideIndicator
                             value={item}
+                            disabled={item.unavailable !== undefined}
                             onContextMenu={(event) => {
                               if (project) handleProjectSettings(event, project);
                             }}
@@ -5196,7 +5192,14 @@ export default function Sidebar() {
                             ) : (
                               <FolderIcon className="size-4 shrink-0" />
                             )}
-                            <span className="min-w-0 flex-1 truncate text-sm">{item.label}</span>
+                            <span className="flex min-w-0 flex-1 flex-col">
+                              <span className="truncate text-sm">{item.label}</span>
+                              {item.unavailable ? (
+                                <span className="truncate text-muted-foreground text-xs">
+                                  {item.unavailable}
+                                </span>
+                              ) : null}
+                            </span>
                             {project && showProjectEnvironments ? (
                               <ProjectEnvironmentBadge
                                 group={project}

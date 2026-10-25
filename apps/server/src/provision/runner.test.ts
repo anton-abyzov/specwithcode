@@ -465,6 +465,16 @@ describe("runProvision", () => {
     expect(readback.userSteps.some((step) => step.id === "join")).toBe(false);
   });
 
+  it("prints an explicit main-machine approval command and tells where to find its ID", async () => {
+    const readback = await runProvision(provisionedLinux(), options());
+    const join = readback.userSteps.find((step) => step.id === "join")!;
+    expect(join.command).toBe(
+      "specwithcode fleet invite --coordinator '<main-machine-environment-id>'",
+    );
+    expect(join.title).toContain("Settings > Connections on your main machine");
+    expect(join.title).toContain("Replace <main-machine-environment-id>");
+  });
+
   it("never grants workers, signs in or turns on billing; lists them as the user's steps", async () => {
     const host = provisionedLinux();
     host.answers.set(`${BIN}/gh auth status`, out("", 1));

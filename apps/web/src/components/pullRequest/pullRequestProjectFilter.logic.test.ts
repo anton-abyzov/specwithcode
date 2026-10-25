@@ -2,7 +2,10 @@ import { EnvironmentId, ProjectId } from "@specweave-studio/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import { findScopedProject } from "./pullRequestList.logic";
-import { pullRequestFilterProjects } from "./pullRequestProjectFilter.logic";
+import {
+  pullRequestFilterProjects,
+  pullRequestScopeFilterProjects,
+} from "./pullRequestProjectFilter.logic";
 
 const cups = EnvironmentId.make("env-cups");
 const nucbox = EnvironmentId.make("env-nucbox");
@@ -154,5 +157,42 @@ describe("pull request project filter choices", () => {
 
     expect(pullRequestFilterProjects([app, tools], labels)).toEqual([tools, app]);
     expect(pullRequestFilterProjects([], labels)).toEqual([]);
+  });
+});
+
+describe("pull request project scope choices", () => {
+  const scoped = (id: string, workspaceRoot: string, workspaceSettings: object = {}) => ({
+    ...project(id, nucbox, `github.com/acme/${id}`),
+    title: id,
+    workspaceRoot,
+    workspaceSettings,
+  });
+  const projects = [
+    scoped("app", "/work/app"),
+    scoped("old", "/work/old", { archived: true }),
+    scoped("check", "/work/check", { origin: "automated" }),
+    scoped("scratch", "/home/.studio/scratch"),
+  ];
+  const scratchRootFor = () => "/home/.studio/scratch";
+
+  it("offers only the person's own projects", () => {
+    const result = pullRequestScopeFilterProjects(projects, scratchRootFor, labels, undefined);
+    expect(result.projects.map((entry) => entry.id)).toEqual(["app"]);
+    expect(result.unavailable).toBeNull();
+  });
+
+  it("keeps an archived or automated scope as the last row, marked as not a choice", () => {
+    for (const [id, reason] of [
+      ["old", "archived"],
+      ["check", "automated"],
+    ] as const) {
+      const current = projects.find((entry) => entry.id === id)!;
+      const result = pullRequestScopeFilterProjects(projects, scratchRootFor, labels, current);
+      expect(result.projects.map((entry) => entry.id)).toEqual(["app", id]);
+      expect(result.unavailable).toEqual({ project: current, reason });
+    }
+    expect(
+      pullRequestScopeFilterProjects(projects, scratchRootFor, labels, projects[0]).unavailable,
+    ).toBeNull();
   });
 });

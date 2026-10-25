@@ -9,6 +9,7 @@ import {
 } from "@specweave-studio/contracts";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
+import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -16,6 +17,7 @@ import * as Schema from "effect/Schema";
 
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderSessionManager from "./ProviderSessionManager.ts";
+import { withAskedQuestions } from "./questionAnswerText.ts";
 
 const yieldToRuntime = Effect.yieldNow.pipe(
   Effect.andThen(
@@ -40,6 +42,13 @@ export class ProviderTurnControlError extends Schema.TaggedError<ProviderTurnCon
 ) {}
 
 const isProviderTurnControlError = Schema.is(ProviderTurnControlError);
+
+/**
+ * How long Stop waits for a live provider session to acknowledge an interrupt.
+ * A hung session never answers; past this the turn is settled here, the way a
+ * Stop on a dead session is, so the run ends and the queue can drain.
+ */
+export const PROVIDER_INTERRUPT_DEADLINE = Duration.seconds(30);
 
 export interface ProviderTurnControlServiceV2Shape {
   readonly interrupt: (input: {
@@ -181,11 +190,27 @@ export const layer: Layer.Layer<
           // whether it still runs work for the thread, and each one either
           // stops it or reports there is nothing left to stop. Background work
           // the projection still shows is settled by the orchestrator after.
-          yield* session.value.interruptTurn({
-            providerThread: loaded.providerThread,
-            providerTurnId: loaded.providerTurn.id,
-            requestRuntimeRestart: true,
-          });
+          const acknowledged = yield* session.value
+            .interruptTurn({
+              providerThread: loaded.providerThread,
+              providerTurnId: loaded.providerTurn.id,
+              requestRuntimeRestart: true,
+            })
+            .pipe(Effect.timeoutOption(PROVIDER_INTERRUPT_DEADLINE));
+          if (Option.isNone(acknowledged)) {
+            // The effect worker follows every interrupt with the background
+            // work settle, which ends a still-running run as interrupted.
+            yield* Effect.logWarning(
+              "Provider did not acknowledge the interrupt in time; settling the turn locally",
+              {
+                threadId: input.threadId,
+                providerSessionId: input.providerSessionId,
+                providerTurnId: input.providerTurnId,
+                deadline: Duration.format(PROVIDER_INTERRUPT_DEADLINE),
+              },
+            );
+            return;
+          }
           // Give native terminal ingestion time to finish before the Stop
           // follow-up repairs a run whose provider no longer reports on it.
           // The wait is real time: ingestion runs on other fibers and never
@@ -314,6 +339,15 @@ export const layer: Layer.Layer<
               cause: "The persisted steering message or target run is missing.",
             });
           }
+          // A steered answer reads, for the agent, with the questions it answers.
+          const steerText = yield* withAskedQuestions(
+            projections,
+            message,
+            projectComposerContextForProvider({
+              text: message.text,
+              records: message.context?.records ?? [],
+            }),
+          );
           yield* loaded.session.value
             .steerTurn({
               threadId: input.threadId,
@@ -322,10 +356,7 @@ export const layer: Layer.Layer<
               providerTurnId: loaded.providerTurn.id,
               message: {
                 messageId: message.id,
-                text: projectComposerContextForProvider({
-                  text: message.text,
-                  records: message.context?.records ?? [],
-                }),
+                text: steerText,
                 attachments: message.attachments,
                 createdBy: message.createdBy,
                 creationSource: message.creationSource,

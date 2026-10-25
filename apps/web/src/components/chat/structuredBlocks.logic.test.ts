@@ -7,6 +7,7 @@ import {
   parseJsonData,
   parseKeyValueBlock,
   parseStatusBlock,
+  pathBreakSegments,
   tableColumns,
 } from "./structuredBlocks.logic";
 
@@ -88,5 +89,85 @@ describe("parseKeyValueBlock", () => {
   });
   it("gives up on prose", () => {
     expect(parseKeyValueBlock("Pending: 1\nnot a pair")).toBeNull();
+  });
+});
+
+describe("pathBreakSegments", () => {
+  const segments = (text: string) => {
+    const result = pathBreakSegments(text);
+    expect(result.join("")).toBe(text);
+    return result;
+  };
+
+  it("breaks a path after each slash and after separators inside names", () => {
+    expect(
+      segments("/Users/example/Projects/specweave-umb/.specweave/increments/1049-files/spec.md"),
+    ).toEqual([
+      "/Users/",
+      "example/",
+      "Projects/",
+      "specweave-",
+      "umb/",
+      ".specweave/",
+      "increments/",
+      "1049-",
+      "files/",
+      "spec.",
+      "md",
+    ]);
+  });
+
+  it("keeps a URL's scheme and a drive letter whole", () => {
+    const url = segments("https://claude.ai/artifact/ExampleArtifact0001");
+    expect(url).toEqual(["https://", "claude.", "ai/", "artifact/", "ExampleArtifact0001"]);
+    expect(url.some((segment) => segment.endsWith(":"))).toBe(false);
+    expect(segments("C:\\Users\\example\\notes.md")).toEqual([
+      "C:\\",
+      "Users\\",
+      "example\\",
+      "notes.",
+      "md",
+    ]);
+  });
+
+  it("breaks identifiers next to a letter only", () => {
+    expect(segments("env:host-1")).toEqual(["env:", "host-", "1"]);
+    expect(segments("snake_case_id")).toEqual(["snake_", "case_", "id"]);
+    expect(segments("build-2026-10-24")).toEqual(["build-", "2026-10-24"]);
+    expect(segments("-flag")).toEqual(["-flag"]);
+    expect(segments("a--b")).toEqual(["a--b"]);
+    expect(segments("end.")).toEqual(["end."]);
+  });
+
+  it("keeps numbers, dates, times and addresses whole", () => {
+    for (const text of ["0.75", "v1.2", "2026-10-24", "08:11:52", "192.168.0.1", "1_000_000"]) {
+      expect(segments(text)).toEqual([text]);
+    }
+  });
+
+  it("never leaves a slash alone at a line end or splits a slash run", () => {
+    expect(segments("/tmp")).toEqual(["/tmp"]);
+    expect(segments("//server/share")).toEqual(["//server/", "share"]);
+    expect(segments("see /tmp/example")).toEqual(["see /tmp/", "example"]);
+    expect(segments("a// b")).toEqual(["a// b"]);
+    expect(segments("dir/")).toEqual(["dir/"]);
+  });
+
+  it("leaves plain text and empty text as one segment", () => {
+    expect(segments("")).toEqual([""]);
+    expect(segments("Done in 2m 10s")).toEqual(["Done in 2m 10s"]);
+  });
+
+  it("keeps graphemes whole", () => {
+    expect(segments("👩‍💻/notes")).toEqual(["👩‍💻/", "notes"]);
+    expect(segments("a/\u0301b")).toEqual(["a/\u0301b"]);
+    expect(segments("a/\u{1F3FD}")).toEqual(["a/\u{1F3FD}"]);
+    expect(segments("𝐀-b")).toEqual(["𝐀-", "b"]);
+  });
+
+  it("gives up on very long text or too many breaks", () => {
+    expect(segments("a/".repeat(3000))).toHaveLength(1);
+    expect(segments("a/".repeat(513))).toHaveLength(513);
+    expect(segments("a/".repeat(514))).toHaveLength(1);
   });
 });

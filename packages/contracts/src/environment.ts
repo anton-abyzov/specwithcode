@@ -132,6 +132,9 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   threadRestartContinuation: Schema.optionalKey(Schema.Boolean),
   /** Server resolves `projectSettingsOverrides`; older servers ignore the key. */
   projectSettingsOverrides: Schema.optionalKey(Schema.Boolean),
+  /** Server applies `projectSettingsOverrideChanges` key by key; older servers
+      drop that key, so clients replace the whole entry there instead. */
+  projectSettingsOverrideChanges: Schema.optionalKey(Schema.Boolean),
   /** Server understands thread.snooze / thread.unsnooze commands. Same
       version-skew contract as threadSettlement. */
   threadSnooze: Schema.optionalKey(Schema.Boolean),
@@ -163,6 +166,16 @@ export const ExecutionEnvironmentCapabilities = Schema.Struct({
   threadTitleRegeneration: Schema.optionalKey(Schema.Boolean),
   /** Accepts `thread.move-to-project`; older servers omit it. */
   threadProjectMove: Schema.optionalKey(Schema.Boolean),
+  /** Accepts `design.move` and answers moved designs with `movedTo`; older servers omit it. */
+  designMove: Schema.optionalKey(Schema.Boolean),
+  /** Accepts `design.importDeck` (PowerPoint import into slides); older servers omit it. */
+  designDeckImport: Schema.optionalKey(Schema.Boolean),
+  /** Accepts `designSystem.create`, `apply` and the `designSystem.file*` methods; older servers omit it. */
+  designSystemEditing: Schema.optionalKey(Schema.Boolean),
+  /** Threads add_comment replies by parentId; older servers omit it and clients hide Reply. */
+  designCommentReplies: Schema.optionalKey(Schema.Boolean),
+  /** Accepts format `svg` on `design.export`; older servers omit it. */
+  designSvgExport: Schema.optionalKey(Schema.Boolean),
   /** Server removes a private machine from its list (`removeFleetMachine`).
       Absent on servers from before 1.0.58, which answer 404: clients keep the
       rest of the private machines list working and say only removal needs an update. */

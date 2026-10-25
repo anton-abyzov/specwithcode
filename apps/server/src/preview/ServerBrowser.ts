@@ -146,6 +146,7 @@ const isHostSetupError = Schema.is(
   Schema.Union([
     PreviewBrowserHost.PreviewBrowserSandboxError,
     PreviewBrowserHost.PreviewBrowserLibrariesError,
+    PreviewBrowserHost.PreviewBrowserGpuError,
   ]),
 );
 
@@ -538,15 +539,14 @@ const make = Effect.gen(function* () {
   const contexts = new ServerBrowserContexts({
     profilesDir: NodePath.join(config.stateDir, "server-browser", "profiles"),
     executable: () => Effect.runPromise(previewBrowser.executable),
-    // Playwright's launch error drops Chrome's own output; its sandbox note survives.
-    diagnose: (executable, cause) =>
+    // Playwright's launch error lists Chrome's last stderr lines, which name the cause.
+    diagnose: (executable, cause, sandboxOff) =>
       Effect.runPromiseWith(launchServices)(
-        PreviewBrowserHost.diagnoseLaunchFailure({
+        PreviewBrowserHost.diagnosePlaywrightLaunch({
           executable,
+          cause,
           setupCommand,
-          output: /sandboxing failed/i.test(String(cause))
-            ? PreviewBrowserHost.NO_SANDBOX_SIGNATURE
-            : "",
+          sandboxOff,
         }),
       ),
     onContextClose: (context) => {

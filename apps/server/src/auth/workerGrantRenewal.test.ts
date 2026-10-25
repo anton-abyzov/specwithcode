@@ -44,6 +44,7 @@ const layerIdentity = Layer.succeed(ServerEnvironment.ServerEnvironmentIdentity,
   getEnvironmentId: Effect.succeed(environmentId),
 });
 const originalInput = {
+  principal: { kind: "coordinator", environmentId: coordinatorEnvironmentId },
   subject: "mcp-client",
   method: "bearer-access-token",
   ttl: Duration.seconds(1),
@@ -99,6 +100,7 @@ it.layer(NodeServices.layer)("worker grant renewal", (it) => {
             yield* repository.getById({ sessionId: original.sessionId }),
           );
           expect(row.expiresAt).toEqual(renewed.expiresAt);
+          expect(row.principal).toEqual(originalInput.principal);
           expect((yield* Effect.flip(sessions.verify(original.token)))._tag).toBe(
             "SessionTokenExpiredError",
           );
@@ -302,7 +304,7 @@ it.layer(NodeServices.layer)("worker grant renewal", (it) => {
           ["subject", "other"],
           ["method", "browser-session-cookie"],
           ["scopes", '["orchestration:read"]'],
-          ["client_label", "other"],
+          ["principal", JSON.stringify({ kind: "coordinator", environmentId: "other" })],
         ] as const) {
           const issued = yield* sessions.issue(originalInput);
           yield* sql`UPDATE auth_sessions SET ${sql(column)} = ${value} WHERE session_id = ${issued.sessionId}`;

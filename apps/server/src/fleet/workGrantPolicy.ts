@@ -1,5 +1,6 @@
 import { isPersonalAssistantProject } from "@specweave-studio/shared/personalAssistant";
 import {
+  type AuthPrincipal,
   EnvironmentId,
   ORCHESTRATOR_MCP_DELEGATION_MAX_PATH,
   type OrchestratorMcpDelegation,
@@ -26,6 +27,9 @@ export function coordinatorOfWorkerLabel(label: string | undefined): Environment
   const id = label.slice(WORKER_CLIENT_LABEL_PREFIX.length).trim();
   return id.length === 0 ? undefined : EnvironmentId.make(id);
 }
+
+export const coordinatorOfPrincipal = (principal: AuthPrincipal | undefined) =>
+  principal?.kind === "coordinator" ? principal.environmentId : undefined;
 
 /** Where a thread's work came from: the machines its launch came through. */
 export interface WorkOrigin {

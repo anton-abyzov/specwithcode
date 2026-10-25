@@ -105,18 +105,28 @@ describe("settings scope project choices", () => {
     group("live", "/work/live"),
     group("old", "/work/old", true),
     group("scratch", "/home/.studio/no-project"),
+    group("check", "/tmp/acceptance-run"),
   ];
   const scratchRootFor = () => "/home/.studio/no-project";
+  const keys = (choices: { choices: ReadonlyArray<{ projectKey: string }> }) =>
+    choices.choices.map((g) => g.projectKey);
 
-  it("leaves out archived projects and the no-project folder", () => {
-    expect(
-      settingsScopeProjectChoices(groups, scratchRootFor, undefined).map((g) => g.projectKey),
-    ).toEqual(["live"]);
+  it("leaves out archived and automated projects and the no-project folder", () => {
+    const result = settingsScopeProjectChoices(groups, scratchRootFor, undefined);
+    expect(keys(result)).toEqual(["live"]);
+    expect(result.unavailable).toBeNull();
+    expect(settingsScopeProjectChoices(groups, scratchRootFor, "live").unavailable).toBeNull();
   });
 
-  it("keeps the selected project listed even when it is archived", () => {
-    expect(
-      settingsScopeProjectChoices(groups, scratchRootFor, "old").map((g) => g.projectKey),
-    ).toEqual(["live", "old"]);
+  it("shows an archived or automated current scope apart, never as a choice", () => {
+    const archived = settingsScopeProjectChoices(groups, scratchRootFor, "old");
+    expect(keys(archived)).toEqual(["live"]);
+    expect(archived.unavailable).toMatchObject({
+      project: { projectKey: "old" },
+      reason: "archived",
+    });
+    const automated = settingsScopeProjectChoices(groups, scratchRootFor, "check");
+    expect(keys(automated)).toEqual(["live"]);
+    expect(automated.unavailable?.reason).toBe("automated");
   });
 });

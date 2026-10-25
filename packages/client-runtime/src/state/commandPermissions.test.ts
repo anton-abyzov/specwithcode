@@ -7,8 +7,10 @@ import type { RpcSession } from "../rpc/session.ts";
 import { describe, expect, it } from "@effect/vitest";
 import { vi } from "vite-plus/test";
 import {
+  AuthEnvironmentMaintainScope,
   AuthOrchestrationOperateScope,
   AuthSourceControlWriteScope,
+  PROVISION_RPC_METHODS,
   ThreadId,
   EnvironmentId,
   ScheduledTaskId,
@@ -23,7 +25,7 @@ import * as TestClock from "effect/testing/TestClock";
 import { Atom, AtomRegistry, AsyncResult } from "effect/reactivity";
 import { EnvironmentRegistry } from "../connection/registry.ts";
 import { createCommandPermissions } from "./commandPermissions.ts";
-import { createEnvironmentRpcCommand } from "./runtime.ts";
+import { createEnvironmentGuardedCommand, createEnvironmentRpcCommand } from "./runtime.ts";
 
 vi.mock("./session.ts", () => ({
   createEnvironmentSessionAtoms: () => ({ sessionStateAtom: sessions }),
@@ -261,3 +263,56 @@ it.effect("rejects protected unary and streamed RPCs outside a guarded command",
     expect(writes).toBe(0);
   }),
 );
+
+it("authorizes a guarded command's streamed call against the destination grant", async () => {
+  let runs = 0;
+  const session = {
+    client: {
+      [PROVISION_RPC_METHODS.provisionRun]: () =>
+        Stream.fromEffect(
+          Effect.sync(() => {
+            runs++;
+          }),
+        ),
+    },
+  } as unknown as RpcSession;
+  const registry = AtomRegistry.make();
+  const unmount = registry.mount(sessions(env));
+  const command = createEnvironmentGuardedCommand(runtime, {
+    label: "test.provision",
+    execute: (input: { readonly resume: boolean }) =>
+      Effect.gen(function* () {
+        const supervisor = {
+          target: { environmentId: env, label: "target" },
+          session: yield* SubscriptionRef.make(Option.some(session)),
+        } as unknown as EnvironmentSupervisor["Service"];
+        return yield* runStreamGuarded(PROVISION_RPC_METHODS.provisionRun, input).pipe(
+          Stream.runDrain,
+          Effect.provideService(EnvironmentSupervisor, supervisor),
+        );
+      }),
+  });
+  const target = { environmentId: env, input: { resume: false } };
+  try {
+    registry.set(sessions(env), AsyncResult.success(grant(true)));
+    const denied = await command.run(registry, target);
+    expect(denied._tag).toBe("Failure");
+    expect(String(denied._tag === "Failure" && Cause.squash(denied.cause))).toContain(
+      "This connection requires environment:maintain.",
+    );
+    expect(runs).toBe(0);
+    registry.set(
+      sessions(env),
+      AsyncResult.success({
+        ...grant(true),
+        scopes: [AuthEnvironmentMaintainScope],
+        permissions: [AuthEnvironmentMaintainScope],
+      }),
+    );
+    expect((await command.run(registry, target))._tag).toBe("Success");
+    expect(runs).toBe(1);
+  } finally {
+    unmount();
+    registry.dispose();
+  }
+});

@@ -5,88 +5,60 @@
 // from the gallery, builds it from layouts, reorders and edits it through the slide rail,
 // writes speaker notes and presents it with the presenter view, in light and dark. Writes
 // screenshots, downloads and report.json to the report folder.
-// Build first: web `vp build`, server `vp pack`.
+// With STUDIO_LIVE_SERVER set (see kit.mjs) it runs against that server and never stops it.
+// Build first: web `vp build`, server `node apps/server/scripts/cli.ts build`.
 // Usage: node apps/web/tests/design-workspace/live/verify-slides.mjs /absolute/report-dir
-import * as NodeChildProcess from "node:child_process";
-import * as NodeCrypto from "node:crypto";
 import * as NodeFS from "node:fs";
-import * as NodeNet from "node:net";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
-import { launch, repoRoot } from "../../design-canvas/serve.mjs";
+import {
+  assert,
+  attachedServer,
+  checker,
+  entrypointSha256,
+  gitHead,
+  initRepository,
+  launchBrowser,
+  requireBuild,
+  saved as savedState,
+  startServer,
+  waitFor,
+  watchErrors,
+} from "./kit.mjs";
 
 if (Number(process.versions.node.split(".")[0]) !== 22) throw new Error("Use Node 22");
 const out = NodePath.resolve(process.argv[2] ?? "/tmp/design-slides-real");
 const shots = NodePath.join(out, "screenshots");
 const downloads = NodePath.join(out, "downloads");
 for (const dir of [out, shots, downloads]) NodeFS.mkdirSync(dir, { recursive: true });
-const entrypoint = NodePath.join(repoRoot, "apps/server/dist/bin.mjs");
-for (const file of [entrypoint, NodePath.join(repoRoot, "apps/web/dist/index.html")])
-  if (!NodeFS.existsSync(file)) throw new Error(`Build first: missing ${file}`);
+requireBuild();
 
-const privateRoot = NodePath.join(
-  NodeOS.homedir(),
-  ".local/share/specweave-studio/verification/design-slides",
-);
+const attached = attachedServer();
+const privateRoot =
+  attached?.scratchRoot ??
+  NodePath.join(NodeOS.homedir(), ".local/share/specweave-studio/verification/design-slides");
 NodeFS.mkdirSync(privateRoot, { recursive: true, mode: 0o700 });
-const scratch = NodeFS.mkdtempSync(NodePath.join(privateRoot, "run-"));
+const scratch = NodeFS.mkdtempSync(NodePath.join(privateRoot, "slides-run-"));
 const data = NodePath.join(scratch, "data");
 const workspace = NodePath.join(scratch, "harbor");
 const results = [];
 const errors = [];
 const report = {
-  source: NodeChildProcess.execFileSync("/usr/bin/git", ["rev-parse", "HEAD"], {
-    cwd: repoRoot,
-    encoding: "utf8",
-  }).trim(),
+  source: gitHead(),
   evidenceKind: "real-isolated-server-headless-chromium",
-  builtEntrypointSha256: NodeCrypto.createHash("sha256")
-    .update(NodeFS.readFileSync(entrypoint))
-    .digest("hex"),
+  attached: attached !== null,
+  builtEntrypointSha256: entrypointSha256(),
   browser: { headless: true, PWDEBUG: "0", PLAYWRIGHT_HTML_OPEN: "never" },
   modelTurns: 0,
   results,
   errors,
 };
 
-function assert(condition, message) {
-  if (!condition) throw new Error(message);
-}
-async function waitFor(predicate, timeout = 5000, label = "condition") {
-  const end = Date.now() + timeout;
-  for (;;) {
-    const value = await predicate();
-    if (value) return value;
-    if (Date.now() > end) throw new Error(`Timed out waiting for ${label}`);
-    await new Promise((resolve) => setTimeout(resolve, 50));
-  }
-}
 let failureShot = null;
-async function check(name, run) {
-  const started = Date.now();
-  try {
-    const detail = await run();
-    results.push({ name, ok: true, ms: Date.now() - started, ...(detail ? { detail } : {}) });
-    console.log(`ok   ${name}${detail ? ` (${JSON.stringify(detail)})` : ""}`);
-  } catch (error) {
-    results.push({
-      name,
-      ok: false,
-      ms: Date.now() - started,
-      error: String(error?.message ?? error),
-    });
-    await failureShot?.(name).catch(() => undefined);
-    console.log(`FAIL ${name}: ${String(error?.message ?? error).split("\n")[0]}`);
-  }
-}
+const check = checker(results, { onFailure: (name) => failureShot?.(name) });
 
 // ---- scratch project with one design system -----------------------------------------------
-NodeFS.mkdirSync(workspace);
-NodeFS.writeFileSync(NodePath.join(workspace, "README.md"), "Synthetic slides check.\n");
-NodeChildProcess.execFileSync("/usr/bin/git", ["init", "-q", "-b", "main"], {
-  cwd: workspace,
-  env: { PATH: "/usr/bin:/bin", GIT_CONFIG_NOSYSTEM: "1", GIT_CONFIG_GLOBAL: "/dev/null" },
-});
+initRepository(workspace, { "README.md": "Synthetic slides check.\n" });
 const systemId = "harbor-deck";
 const token = (name, type, light, dark = light) => {
   const value = (raw, line) => ({
@@ -134,155 +106,27 @@ NodeFS.writeFileSync(
 );
 
 // Launch the browser first, so a missing browser never leaves a server running.
-const browser = await launch();
-
-// ---- isolated server -------------------------------------------------------------------------
-const freePort = () =>
-  new Promise((done, reject) => {
-    const server = NodeNet.createServer();
-    server.once("error", reject);
-    server.listen(0, "127.0.0.1", () => {
-      const value = server.address().port;
-      server.close(() => done(value));
-    });
-  });
-const port = await freePort();
-const origin = `http://127.0.0.1:${port}`;
-NodeFS.mkdirSync(NodePath.join(data, "userdata"), { recursive: true });
-const drivers = [
-  "codex",
-  "claudeAgent",
-  "claude-agent",
-  "cursor",
-  "grok",
-  "pi",
-  "opencode",
-  "opencode2",
-  "antigravity",
-  "copilot",
-  "githubCopilot",
-];
-NodeFS.writeFileSync(
-  NodePath.join(data, "userdata/settings.json"),
-  JSON.stringify({
-    providers: Object.fromEntries(drivers.map((driver) => [driver, { enabled: false }])),
-    providerInstances: Object.fromEntries(
-      drivers.map((driver) => [driver, { driver, enabled: false, config: {} }]),
-    ),
-    cursorKeychainUsageEnabled: false,
-  }),
-);
-const serverLog = NodeFS.createWriteStream(NodePath.join(out, "server.log"));
-const child = NodeChildProcess.spawn(
-  process.execPath,
-  [
-    entrypoint,
-    "serve",
-    "--host",
-    "127.0.0.1",
-    "--port",
-    String(port),
-    "--base-dir",
-    data,
-    "--no-browser",
-  ],
-  {
+const browser = await launchBrowser();
+const server =
+  attached ??
+  (await startServer({
+    home: data,
     cwd: scratch,
-    env: {
-      PATH: `${NodePath.dirname(process.execPath)}:/usr/bin:/bin:/usr/sbin:/sbin`,
-      HOME: scratch,
-      LANG: "en_US.UTF-8",
-      STUDIO_AUTO_BOOTSTRAP_PROJECT_FROM_CWD: "false",
-      STUDIO_DISABLE_AUTO_UPDATE: "true",
-      PWDEBUG: "0",
-      PLAYWRIGHT_HTML_OPEN: "never",
-    },
-    stdio: ["ignore", "pipe", "pipe"],
-  },
-);
-report.serverPid = child.pid;
-const bootstrap = await new Promise((done, reject) => {
-  let buffer = "";
-  const timer = setTimeout(() => reject(new Error("server startup timeout")), 45000);
-  const inspect = (chunk) => {
-    serverLog.write(chunk);
-    buffer = (buffer + chunk).slice(-65536);
-    const found = buffer.match(/(?:^|\n)Token: ([^\s]+)/);
-    if (found) {
-      clearTimeout(timer);
-      done(found[1]);
-    }
-  };
-  child.stdout.on("data", inspect);
-  child.stderr.on("data", inspect);
-  child.once("exit", () => reject(new Error("server exited during startup")));
-});
-let accessToken;
-{
-  const response = await fetch(`${origin}/oauth/token`, {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: new URLSearchParams({
-      grant_type: "urn:ietf:params:oauth:grant-type:token-exchange",
-      subject_token: bootstrap,
-      subject_token_type: "urn:specweave-studio:params:oauth:token-type:environment-bootstrap",
-      requested_token_type: "urn:ietf:params:oauth:token-type:access_token",
-      client_label: "Slides real-server check",
-    }),
-  });
-  assert(response.status === 200, `token exchange ${response.status}`);
-  accessToken = (await response.json()).access_token;
-}
-async function request(path, body) {
-  const response = await fetch(origin + path, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json",
-      Origin: origin,
-      Authorization: `Bearer ${accessToken}`,
-    },
-    ...(body === undefined ? {} : { body: JSON.stringify(body) }),
-  });
-  if (response.status !== 200)
-    throw new Error(`${path}: ${response.status} ${await response.text()}`);
-  return response.json();
-}
-async function rpc(tag, payload) {
-  const { ticket } = await request("/api/auth/websocket-ticket");
-  const url = new URL(origin);
-  url.protocol = "ws:";
-  url.pathname = "/ws";
-  url.searchParams.set("wsTicket", ticket);
-  url.searchParams.set("orchestrationProtocol", "2");
-  return new Promise((done, reject) => {
-    const socket = new WebSocket(url);
-    const timer = setTimeout(() => {
-      socket.close();
-      reject(new Error(`RPC timeout: ${tag}`));
-    }, 20000);
-    socket.addEventListener("open", () =>
-      socket.send(JSON.stringify({ _tag: "Request", id: "1", tag, payload, headers: [] })),
-    );
-    socket.addEventListener("message", (event) => {
-      const values = [JSON.parse(event.data)].flat();
-      for (const value of values)
-        if (value._tag === "Exit" && String(value.requestId) === "1") {
-          clearTimeout(timer);
-          socket.close();
-          if (value.exit?._tag === "Success") done(value.exit.value);
-          else reject(new Error(`RPC ${tag} failed: ${JSON.stringify(value.exit).slice(0, 600)}`));
-        }
-    });
-  });
-}
+    logFile: NodePath.join(out, "server.log"),
+    label: "Slides real-server check",
+  }));
+const { origin, request, rpc } = server;
+report.serverPid = server.pid;
 
-const projectId = NodeCrypto.randomUUID();
+const projectId = crypto.randomUUID();
 await request("/api/projects/mutate", {
   type: "project.create",
-  commandId: NodeCrypto.randomUUID(),
+  commandId: crypto.randomUUID(),
   projectId,
   title: "Harbor",
   workspaceRoot: workspace,
+  // A scratch folder reads as a check's own project, which takes no new designs.
+  origin: "user",
 });
 const owner = { kind: "project", projectId };
 report.project = { projectId, workspace };
@@ -294,53 +138,11 @@ const NARROW_SIZES = [
   { width: 1024, height: 768 },
 ];
 const MIN_CANVAS = 480;
-async function signedInContext(colorScheme) {
-  const context = await browser.newContext({
-    viewport: VIEWPORT,
-    colorScheme,
-    acceptDownloads: true,
-  });
-  const pairing = await request("/api/auth/pairing-token", {
-    label: `Slides ${colorScheme}`,
-    scopes: [
-      "orchestration:read",
-      "orchestration:operate",
-      "filesystem:read",
-      "filesystem:write",
-      "settings:write",
-    ],
-  });
-  const signedIn = await context.request.post(`${origin}/api/auth/browser-session`, {
-    headers: { Origin: origin },
-    data: { credential: pairing.credential },
-  });
-  assert(signedIn.status() === 200, `browser sign-in ${signedIn.status()}`);
-  // Act as the owner (the desktop app) by carrying the startup credential's session.
-  const cookies = await context.cookies(origin);
-  const session = cookies.find((cookie) => cookie.name.startsWith("studio_session"));
-  assert(session, `no session cookie: ${cookies.map((cookie) => cookie.name).join(",")}`);
-  await context.addCookies([{ ...session, value: accessToken }]);
-  return context;
-}
-function watchErrors(page, label) {
-  page.on("pageerror", (error) => errors.push(`${label}: ${error}`));
-  page.on(
-    "console",
-    (message) =>
-      message.type() === "error" &&
-      !(
-        message.location().url === "about:srcdoc" && /Content Security Policy/.test(message.text())
-      ) &&
-      errors.push(`${label}: ${message.text()}`),
-  );
-}
+const signedInContext = (colorScheme) =>
+  server.signedInContext(browser, { colorScheme, viewport: VIEWPORT });
+const watch = (page, label) => watchErrors(page, label, errors);
 const shot = (page, name) => page.screenshot({ path: NodePath.join(shots, `${name}.png`) });
-const saved = (page) =>
-  waitFor(
-    async () => (await page.getByTestId("save-state").textContent())?.trim() === "Saved",
-    8000,
-    "Saved",
-  );
+const saved = (page) => savedState(page, 8000);
 let designId = null;
 const serverDoc = async () => (await rpc("design.get", { owner, designId })).document;
 const rail = (page) => page.getByTestId("slide-rail");
@@ -388,7 +190,7 @@ async function addLayoutSlide(page, layout) {
 try {
   const context = await signedInContext("light");
   const page = await context.newPage();
-  watchErrors(page, "light");
+  watch(page, "light");
   failureShot = (name) => shot(page, `fail-${name.replace(/[^a-z0-9]+/gi, "-").slice(0, 40)}`);
 
   await check(
@@ -402,7 +204,7 @@ try {
       await dialog.getByLabel("Title").fill("Harbor launch");
       await dialog.getByLabel("Save in").click();
       await page.getByRole("option", { name: "Harbor" }).click();
-      await dialog.getByTestId("design-system-picker").getByRole("combobox").click();
+      await dialog.getByTestId("creation-system-trigger").click();
       await page.getByRole("option", { name: /Harbor deck/ }).click();
       await shot(page, "01-new-slides-dialog-light");
       await dialog.getByRole("button", { name: "Create slides" }).click();
@@ -748,49 +550,59 @@ try {
 
   const dark = await signedInContext("dark");
   const darkPage = await dark.newPage();
-  watchErrors(darkPage, "dark");
+  watch(darkPage, "dark");
   failureShot = (name) => shot(darkPage, `fail-${name.replace(/[^a-z0-9]+/gi, "-").slice(0, 40)}`);
-  await check("dark: rail, layouts and presenter view in the system's dark mode", async () => {
-    await darkPage.goto(`${origin}/design/p.${projectId}.${designId}`);
-    await darkPage.getByTestId("design-editor").waitFor({ timeout: 30000 });
-    await rail(darkPage).waitFor();
-    await saved(darkPage);
-    await darkPage.waitForTimeout(400);
-    const frame = (await serverDoc()).pages[0].nodes[0];
-    const background = await canvas(darkPage)
-      .locator(`[data-node="${frame.id}"]`)
-      .evaluate((element) => getComputedStyle(element).backgroundColor);
-    assert(background === "rgb(13, 20, 25)", `dark slide background ${background}`);
-    await shot(darkPage, "07-rail-dark");
-    await darkPage.getByTestId("new-slide").click();
-    await darkPage.locator("[data-testid=slide-layout]").first().waitFor();
-    await darkPage.waitForTimeout(300);
-    await shot(darkPage, "08-layout-picker-dark");
-    await darkPage.keyboard.press("Escape");
-    const document = await serverDoc();
-    await slideItems(darkPage)
-      .nth(document.pages.findIndex((p) => p.notes))
-      .click();
-    await darkPage.getByRole("button", { name: "Presenter view", exact: true }).click();
-    await darkPage.getByTestId("presenter-view").waitFor();
-    await darkPage.waitForTimeout(400);
-    await shot(darkPage, "09-presenter-dark");
-    await darkPage.keyboard.press("Escape");
-    return { background };
-  });
+  // A deck renders in its system's first mode for every viewer (designRenderMode), so the
+  // dark app theme shows the same slides as light, Present and the exports.
+  await check(
+    "dark: rail, layouts and presenter view; the slides keep the deck's colors",
+    async () => {
+      await darkPage.goto(`${origin}/design/p.${projectId}.${designId}`);
+      await darkPage.getByTestId("design-editor").waitFor({ timeout: 30000 });
+      await rail(darkPage).waitFor();
+      await saved(darkPage);
+      await darkPage.waitForTimeout(400);
+      const frame = (await serverDoc()).pages[0].nodes[0];
+      const background = await canvas(darkPage)
+        .locator(`[data-node="${frame.id}"]`)
+        .evaluate((element) => getComputedStyle(element).backgroundColor);
+      assert(
+        background === "rgb(255, 255, 255)",
+        `slide background in the dark theme ${background}`,
+      );
+      await shot(darkPage, "07-rail-dark");
+      await darkPage.getByTestId("new-slide").click();
+      await darkPage.locator("[data-testid=slide-layout]").first().waitFor();
+      await darkPage.waitForTimeout(300);
+      await shot(darkPage, "08-layout-picker-dark");
+      await darkPage.keyboard.press("Escape");
+      const document = await serverDoc();
+      await slideItems(darkPage)
+        .nth(document.pages.findIndex((p) => p.notes))
+        .click();
+      await darkPage.getByRole("button", { name: "Presenter view", exact: true }).click();
+      await darkPage.getByTestId("presenter-view").waitFor();
+      await darkPage.waitForTimeout(400);
+      await shot(darkPage, "09-presenter-dark");
+      await darkPage.keyboard.press("Escape");
+      return { background };
+    },
+  );
   await check("dark: no console errors", async () => {
     assert(errors.length === 0, errors.join("\n"));
   });
   await dark.close();
+} catch (error) {
+  results.push({ name: "fatal", ok: false, error: String(error?.stack ?? error).slice(0, 4000) });
+  console.log(`FATAL ${error?.stack ?? error}`);
 } finally {
   await browser.close().catch(() => undefined);
-  child.kill("SIGTERM");
-  await new Promise((resolve) => setTimeout(resolve, 500));
-  if (child.exitCode === null) child.kill("SIGKILL");
+  report.server = await server.stop();
   const passed = results.filter((r) => r.ok).length;
   report.summary = `${passed}/${results.length} checks passed`;
   NodeFS.writeFileSync(NodePath.join(out, "report.json"), JSON.stringify(report, null, 2) + "\n");
   console.log(report.summary);
-  NodeFS.rmSync(scratch, { recursive: true, force: true });
+  // An attached server still lists the scratch project; its owner removes the folder.
+  if (attached === null) NodeFS.rmSync(scratch, { recursive: true, force: true });
   process.exitCode = passed === results.length ? 0 : 1;
 }

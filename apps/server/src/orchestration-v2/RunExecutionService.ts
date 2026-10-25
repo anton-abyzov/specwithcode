@@ -53,10 +53,30 @@ import type {
 import { ProviderAdapterTurnStartError, providerSetupFailureDetail } from "./ProviderAdapter.ts";
 import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
 import type { ProjectionStoreV2Error } from "./ProjectionStore.ts";
-import { makeProviderFailure, makeProviderFailureTurnItem } from "./ProviderFailure.ts";
+import {
+  isLocalStorageFailure,
+  isPreviousTurnActiveFailure,
+  makeProviderFailure,
+  makeProviderFailureTurnItem,
+  previousActiveProviderTurn,
+  providerFailureDiagnostics,
+} from "./ProviderFailure.ts";
 import { logProviderTurnStartFailure } from "./ProviderTurnStartLogging.ts";
 import * as RunFinalizationService from "./RunFinalizationService.ts";
 import { isolateIngestFailure, retryFinalWrite } from "./RunIngestionGuards.ts";
+import {
+  interruptedSubagentWork,
+  mergeRestartCancelledBackgroundWork,
+} from "./RestartBackgroundNote.ts";
+import {
+  isOutageProgress,
+  outageProgress,
+  settleStaleBackgroundItems,
+  stopIntent,
+  stopSettlement,
+  type StopIntent,
+  type SubagentSettlementProjection,
+} from "./SubagentSettlement.ts";
 import * as RunLiveness from "./RunLiveness.ts";
 import {
   backgroundCapableTurnItemTypes,
@@ -81,6 +101,15 @@ const TRANSIENT_TURN_START_RETRIES = 2;
 const TRANSIENT_TURN_START_RETRY_DELAY = "10 seconds";
 export const isTransientTurnStartFailure = (error: unknown): boolean =>
   /native provider status check (timed out|failed)/u.test(providerSetupFailureDetail(error) ?? "");
+
+// A provider turn no run owns any more is stopped, then the start is retried
+// until the provider lets go of it, within these bounds.
+const ORPHANED_TURN_INTERRUPT_TIMEOUT = "10 seconds";
+const ORPHANED_TURN_CLEAR_POLL = "1 second";
+const ORPHANED_TURN_CLEAR_POLLS = 30;
+// Ingestion that cannot store events stops its provider turn, bounded so the
+// run still settles when the provider does not answer.
+const INGESTION_FAILURE_INTERRUPT_TIMEOUT = "10 seconds";
 
 type ProviderTerminalEvent = Extract<ProviderAdapterV2Event, { readonly type: "turn.terminal" }>;
 
@@ -114,6 +143,9 @@ export function selectInheritedBackgroundTurnItems(input: {
   readonly currentRunOrdinal: number;
   readonly runs: ReadonlyArray<OrchestrationV2Run>;
   readonly turnItems: ReadonlyArray<OrchestrationV2TurnItem>;
+  /** Open rows and nodes; given, each route carries its item's, so the run can settle them. */
+  readonly subagents?: ReadonlyArray<OrchestrationV2Subagent>;
+  readonly nodes?: ReadonlyArray<OrchestrationV2ExecutionNode>;
 }): ReadonlyArray<InheritedBackgroundTurnItemRoute> {
   const settledPriorRunIds = new Set(
     input.runs
@@ -125,16 +157,39 @@ export function selectInheritedBackgroundTurnItems(input: {
       )
       .map((run) => run.id),
   );
-  return input.turnItems.flatMap((turnItem) =>
-    turnItem.threadId === input.threadId &&
-    turnItem.providerThreadId === input.currentProviderThreadId &&
-    turnItem.runId !== null &&
-    settledPriorRunIds.has(turnItem.runId) &&
-    backgroundCapableTurnItemTypes.has(turnItem.type) &&
-    !isSettledTurnItemStatus(turnItem.status)
-      ? [{ id: turnItem.id, runId: turnItem.runId }]
-      : [],
-  );
+  return input.turnItems.flatMap((turnItem) => {
+    if (
+      turnItem.threadId !== input.threadId ||
+      turnItem.providerThreadId !== input.currentProviderThreadId ||
+      turnItem.runId === null ||
+      !settledPriorRunIds.has(turnItem.runId) ||
+      !backgroundCapableTurnItemTypes.has(turnItem.type) ||
+      isSettledTurnItemStatus(turnItem.status)
+    ) {
+      return [];
+    }
+    if (input.subagents === undefined && input.nodes === undefined) {
+      return [{ id: turnItem.id, runId: turnItem.runId }];
+    }
+    const subagentId = turnItem.type === "subagent" ? turnItem.subagentId : null;
+    const subagent = input.subagents?.find(
+      (candidate) => candidate.id === subagentId && isOrchestrationV2WorkActive(candidate.status),
+    );
+    const nodes = (input.nodes ?? []).filter(
+      (node) =>
+        (node.id === turnItem.nodeId || node.id === subagentId) &&
+        isOrchestrationV2WorkActive(node.status),
+    );
+    return [
+      {
+        id: turnItem.id,
+        runId: turnItem.runId,
+        turnItem,
+        ...(subagent === undefined ? {} : { subagent }),
+        ...(nodes.length === 0 ? {} : { nodes }),
+      },
+    ];
+  });
 }
 
 type SubagentTurnItem = Extract<OrchestrationV2TurnItem, { readonly type: "subagent" }>;
@@ -199,6 +254,8 @@ export function cascadeTerminalizeRunOwnedSubagents(input: {
   readonly run: OrchestrationV2Run;
   readonly open: OpenRunOwnedSubagentProjection;
   readonly status: RunOwnedSubagentTerminalStatus;
+  /** Why the subagents ended (see SubagentSettlement); omitted leaves their progress. */
+  readonly progress?: string;
   readonly completedAt: DateTime.Utc;
   readonly allocateEventId: () => Effect.Effect<EventId, IdAllocator.IdAllocatorV2AllocationError>;
 }): Effect.Effect<
@@ -235,6 +292,7 @@ export function cascadeTerminalizeRunOwnedSubagents(input: {
           payload: {
             ...subagent,
             status: input.status,
+            ...(input.progress === undefined ? {} : { progress: input.progress }),
             completedAt: input.completedAt,
             updatedAt: input.completedAt,
           },
@@ -279,6 +337,7 @@ export function cascadeTerminalizeRunOwnedSubagents(input: {
           payload: {
             ...turnItem,
             status: input.status,
+            ...(input.progress === undefined ? {} : { progress: input.progress }),
             completedAt: input.completedAt,
             updatedAt: input.completedAt,
           },
@@ -308,6 +367,42 @@ export function cascadeTerminalizeRunOwnedSubagents(input: {
     }
     return events;
   });
+}
+
+const OUTAGE_FAILURE_CLASSES: ReadonlySet<string> = new Set([
+  "usage_limit",
+  "transport_error",
+  "provider_error",
+]);
+
+/**
+ * How a failed or stopped run settles the subagents it leaves open. A limit
+ * or provider failure is an outage: the subagents are `interrupted`, say why,
+ * and the parent is told it lost them. So is an update's or the server's own
+ * interrupt (watchdog, start timeout). A person's Stop is final: `cancelled`,
+ * "Stopped by you"; an agent's is "Stopped by an agent". Any other end keeps
+ * the run's own status.
+ */
+export function runSubagentSettlement(
+  terminal: ProviderTerminalEvent,
+  intent: StopIntent | null,
+): {
+  readonly status: RunOwnedSubagentTerminalStatus;
+  readonly progress?: string;
+  readonly outage: boolean;
+} | null {
+  if (!isRunOwnedSubagentTerminalStatus(terminal.status)) return null;
+  if (terminal.status === "failed" && OUTAGE_FAILURE_CLASSES.has(terminal.failure.class)) {
+    return {
+      status: "interrupted",
+      progress: outageProgress({ driver: terminal.driver, failureClass: terminal.failure.class }),
+      outage: true,
+    };
+  }
+  if (terminal.status === "interrupted" && intent !== null) {
+    return stopSettlement(intent, terminal.driver);
+  }
+  return { status: terminal.status, outage: false };
 }
 
 export function finalProviderThreadStatus(
@@ -373,10 +468,18 @@ export interface RunExecutionServiceV2StartRootRunInput {
   readonly relatedThreadIds?: ReadonlyArray<ThreadId>;
   readonly relatedProviderThreadIds?: ReadonlyArray<ProviderThreadId>;
   readonly shouldStartProviderTurn?: () => Effect.Effect<boolean, ProjectionStoreV2Error>;
+  /**
+   * Whether a live run other than this one owns a provider turn the provider
+   * reports still active (null when it did not name the turn). Without it, a
+   * busy provider fails the start.
+   */
+  readonly previousTurnOwnedByLiveRun?: (
+    providerTurnId: ProviderTurnId | null,
+  ) => Effect.Effect<boolean | "unknown", never>;
   readonly shouldFinalizeRun?: () => Effect.Effect<boolean, ProjectionStoreV2Error>;
   readonly hasUnpairedRunInterruptRequest?: () => Effect.Effect<boolean, never>;
-  /** Who asked to stop the run: its Stop request's cause, or null with none. */
-  readonly runInterruptCause?: () => Effect.Effect<OrchestrationV2RunInterruptCause | null, never>;
+  /** The run's latest Stop request (who asked, and why), or null with none. */
+  readonly runInterruptRequest?: () => Effect.Effect<RunInterruptRequest | null, never>;
   readonly message: ProviderAdapterV2TurnMessage;
   readonly modelSelection: ModelSelection;
   readonly runtimePolicy: ProviderAdapterV2RuntimePolicy;
@@ -423,11 +526,10 @@ export const layer: Layer.Layer<
       readonly attempt: OrchestrationV2RunAttempt;
       readonly shouldFinalizeRun?: () => Effect.Effect<boolean, ProjectionStoreV2Error>;
       readonly hasUnpairedRunInterruptRequest?: () => Effect.Effect<boolean, never>;
-      readonly runInterruptCause?: () => Effect.Effect<
-        OrchestrationV2RunInterruptCause | null,
-        never
-      >;
+      readonly runInterruptRequest?: () => Effect.Effect<RunInterruptRequest | null, never>;
       readonly openRunOwnedSubagents?: OpenRunOwnedSubagentProjection;
+      /** Earlier runs' subagent items this run delivered and that are still open. */
+      readonly openInheritedSubagents?: ReadonlyArray<InheritedBackgroundTurnItemRoute>;
       readonly terminal: ProviderTerminalEvent;
       readonly failureItemPersisted: boolean;
       readonly refreshAfterTurn: Effect.Effect<void>;
@@ -445,8 +547,18 @@ export const layer: Layer.Layer<
         };
         const shouldFinalizeRun =
           input.shouldFinalizeRun === undefined ? true : yield* input.shouldFinalizeRun();
+        const interruptRequest = () =>
+          input.runInterruptRequest === undefined
+            ? Effect.succeed(null)
+            : input.runInterruptRequest();
         const interruptCause = () =>
-          input.runInterruptCause === undefined ? Effect.succeed(null) : input.runInterruptCause();
+          interruptRequest().pipe(
+            Effect.map((request) =>
+              request === null || stopIntent(request) === "system"
+                ? null
+                : (request.cause ?? "user"),
+            ),
+          );
         if (!shouldFinalizeRun) {
           // Superseded attempt (steer / selection restart). Emit
           // run_interrupt_result only when hard Stop left an unpaired request
@@ -491,15 +603,86 @@ export const layer: Layer.Layer<
           open.turnItems.size > 0 ||
           open.childTurnItems.size > 0 ||
           open.nodes.size > 0;
+        const inherited = (input.openInheritedSubagents ?? []).filter(
+          (route) =>
+            route.turnItem?.type === "subagent" && route.turnItem.origin === "provider_native",
+        );
+        const settlement =
+          hasOpenSubagentProjection || inherited.length > 0
+            ? runSubagentSettlement(
+                input.terminal,
+                input.terminal.status === "interrupted"
+                  ? stopIntent(yield* interruptRequest())
+                  : null,
+              )
+            : null;
         const cascadedSubagentEvents =
-          isRunOwnedSubagentTerminalStatus(input.terminal.status) && hasOpenSubagentProjection
+          settlement !== null && hasOpenSubagentProjection
             ? yield* cascadeTerminalizeRunOwnedSubagents({
                 run: input.run,
                 open,
-                status: input.terminal.status,
+                status: settlement.status,
+                ...(settlement.progress === undefined ? {} : { progress: settlement.progress }),
                 completedAt,
                 allocateEventId,
               })
+            : [];
+        // Subagents an earlier, stopped run launched end with this run too:
+        // nothing is left ingesting for them.
+        const inheritedSettlement =
+          settlement !== null && inherited.length > 0
+            ? yield* settleStaleBackgroundItems({
+                projection: {
+                  thread: {
+                    id: input.run.threadId,
+                    providerInstanceId: input.run.providerInstanceId,
+                  } as SubagentSettlementProjection["thread"],
+                  runs: [input.run],
+                  nodes: inherited.flatMap((route) => route.nodes ?? []),
+                  subagents: inherited.flatMap((route) =>
+                    route.subagent === undefined ? [] : [route.subagent],
+                  ),
+                  turnItems: [],
+                  providerThreads: [input.providerThread],
+                },
+                items: inherited.flatMap((route) =>
+                  route.turnItem === undefined ? [] : [route.turnItem],
+                ),
+                status: settlement.status,
+                progress: settlement.progress,
+                now: completedAt,
+                allocateEventId,
+                settledNodeIds: new Set(),
+              })
+            : { events: [], subagents: [] };
+        const lostWork =
+          settlement?.outage === true
+            ? mergeRestartCancelledBackgroundWork(
+                [...open.subagents.values(), ...open.turnItems.values()].flatMap((subagent) =>
+                  "subagentId" in subagent
+                    ? [
+                        interruptedSubagentWork({
+                          id: subagent.subagentId,
+                          title: subagent.title,
+                          prompt: subagent.prompt,
+                        }),
+                      ]
+                    : subagent.origin === "provider_native"
+                      ? [interruptedSubagentWork(subagent)]
+                      : [],
+                ),
+                inherited.flatMap((route) =>
+                  route.turnItem?.type === "subagent"
+                    ? [
+                        interruptedSubagentWork({
+                          id: route.turnItem.subagentId,
+                          title: route.turnItem.title,
+                          prompt: route.turnItem.prompt,
+                        }),
+                      ]
+                    : [],
+                ),
+              )
             : [];
         const persistedStatus =
           input.terminal.status === "completed" ? "waiting" : input.terminal.status;
@@ -555,6 +738,7 @@ export const layer: Layer.Layer<
             // Terminalize open run-owned subagent rows before the root run
             // settles so projections never keep a forever-running subagent card.
             ...cascadedSubagentEvents,
+            ...inheritedSettlement.events,
             ...(finalizedAttempt === null
               ? []
               : [
@@ -659,6 +843,23 @@ export const layer: Layer.Layer<
           }
         } else {
           yield* eventSink.writeWithEffects(finalization);
+        }
+        if (lostWork.length > 0 && providerEventIngestor.noteLostSubagentWork !== undefined) {
+          // After the run's own write, so its snapshot cannot replace the note.
+          yield* providerEventIngestor
+            .noteLostSubagentWork({
+              threadId: input.run.threadId,
+              providerThreadId: input.providerThread.id,
+              work: lostWork,
+            })
+            .pipe(
+              Effect.catchCause((cause) =>
+                Effect.logWarning("Could not tell the parent which subagents were interrupted", {
+                  runId: input.run.id,
+                  cause: Cause.pretty(cause),
+                }),
+              ),
+            );
         }
         yield* input.refreshAfterTurn;
       });
@@ -838,6 +1039,10 @@ export const layer: Layer.Layer<
               }
               const providerThread = yield* Ref.get(latestProviderThread);
               const openSubagents = yield* Ref.get(openRunOwnedSubagents);
+              const stillOpen = yield* Ref.get(activeBackgroundTurnItems);
+              const openInheritedSubagents = inheritedBackgroundTurnItems.filter((route) =>
+                stillOpen.has(route.id),
+              );
               yield* writeFinalRunEvents({
                 run: input.run,
                 rootNode: input.rootNode,
@@ -860,10 +1065,11 @@ export const layer: Layer.Layer<
                   : {
                       hasUnpairedRunInterruptRequest: input.hasUnpairedRunInterruptRequest,
                     }),
-                ...(input.runInterruptCause === undefined
+                ...(input.runInterruptRequest === undefined
                   ? {}
-                  : { runInterruptCause: input.runInterruptCause }),
+                  : { runInterruptRequest: input.runInterruptRequest }),
                 openRunOwnedSubagents: openSubagents,
+                openInheritedSubagents,
                 terminal,
                 failureItemPersisted,
                 refreshAfterTurn,
@@ -1055,6 +1261,33 @@ export const layer: Layer.Layer<
             }
             return true;
           });
+          // A run whose events cannot be stored is failed, but the provider
+          // would go on working unobserved and hold its session busy, so
+          // every later start would fail (October 24, 2026: disk full).
+          const stopProviderTurnAfterIngestionFailure = (cause: Cause.Cause<unknown>) =>
+            Effect.gen(function* () {
+              if (Cause.hasInterruptsOnly(cause) || (yield* Ref.get(rootTerminalSeen))) return;
+              const providerTurnId = (yield* Ref.get(eventRouting)).rootProviderTurnId;
+              if (providerTurnId === null) return;
+              yield* Effect.logWarning(
+                "orchestration V2 stopping the provider turn of a run whose events could not be stored",
+                { runId: input.run.id, localStorage: isLocalStorageFailure(cause) },
+              );
+              const providerThread = yield* Ref.get(latestProviderThread);
+              yield* input.session
+                .interruptTurn({ providerThread, providerTurnId })
+                .pipe(Effect.timeout(INGESTION_FAILURE_INTERRUPT_TIMEOUT));
+            }).pipe(
+              // Best effort: whatever goes wrong here, the run still settles.
+              Effect.catchCause((interruptCause) =>
+                Cause.hasInterruptsOnly(interruptCause)
+                  ? Effect.interrupt
+                  : Effect.logInfo(
+                      "Could not stop the provider turn of a run whose events could not be stored",
+                      { runId: input.run.id, ...providerFailureDiagnostics(interruptCause) },
+                    ),
+              ),
+            );
           const filterAssistantEvent = makeAssistantStreamingFilter(responseStreamingMode);
           const ingestFailures = yield* Ref.make(0);
           // The run stays live for the liveness watchdog until this fiber ends,
@@ -1153,6 +1386,31 @@ export const layer: Layer.Layer<
                   yield* Ref.set(rootTerminalSeen, true);
                   yield* finalizeRootRun(event, event.status === "failed" && stored);
                 }
+                // An adapter that finds a subagent's process gone settles it
+                // as an outage; its parent is told on its next turn.
+                if (
+                  storedEventCount > 0 &&
+                  event.type === "subagent.updated" &&
+                  event.subagent.status === "interrupted" &&
+                  event.subagent.origin === "provider_native" &&
+                  isOutageProgress(event.subagent.progress) &&
+                  providerEventIngestor.noteLostSubagentWork !== undefined
+                ) {
+                  yield* providerEventIngestor
+                    .noteLostSubagentWork({
+                      threadId: event.subagent.threadId,
+                      providerThreadId: input.providerThread.id,
+                      work: [interruptedSubagentWork(event.subagent)],
+                    })
+                    .pipe(
+                      Effect.catchCause((cause) =>
+                        Effect.logWarning(
+                          "Could not tell the parent which subagents were interrupted",
+                          { runId: input.run.id, cause: Cause.pretty(cause) },
+                        ),
+                      ),
+                    );
+                }
                 yield* trackChildLifecycle(event, deliveredEvent !== null);
               }),
             ),
@@ -1178,7 +1436,8 @@ export const layer: Layer.Layer<
                     Effect.andThen(
                       finalized
                         ? Effect.void
-                        : Ref.get(latestProviderThread).pipe(
+                        : stopProviderTurnAfterIngestionFailure(cause).pipe(
+                            Effect.andThen(Ref.get(latestProviderThread)),
                             Effect.flatMap((providerThread) =>
                               Ref.get(latestTurnItemOrdinal).pipe(
                                 Effect.flatMap((latestItemOrdinal) =>
@@ -1267,6 +1526,147 @@ export const layer: Layer.Layer<
               return;
             }
 
+            const stillWantsProviderTurn =
+              input.shouldStartProviderTurn === undefined
+                ? Effect.succeed(true)
+                : input.shouldStartProviderTurn().pipe(Effect.orElseSucceed(() => false));
+            // The provider is still running an earlier turn. One no live run
+            // owns (its run failed or stopped while the provider went on) is
+            // stopped, and the start retried until the provider lets go;
+            // otherwise the start fails as previous_turn_active.
+            const startAfterOrphanedProviderTurn = <E>(
+              error: E,
+              retryStart: Effect.Effect<void, E>,
+            ) =>
+              Effect.gen(function* () {
+                const providerTurnId = previousActiveProviderTurn(error) ?? null;
+                const owned =
+                  providerTurnId === null || input.previousTurnOwnedByLiveRun === undefined
+                    ? ("unknown" as const)
+                    : yield* input.previousTurnOwnedByLiveRun(providerTurnId);
+                yield* Effect.logWarning(
+                  "orchestration V2 provider is still running a previous turn",
+                  {
+                    runId: input.run.id,
+                    ownedByLiveRun: owned,
+                  },
+                );
+                if (owned === true) {
+                  // No prompt was offered. Release this attempt atomically and
+                  // keep the same message/run at the front of the waiting queue.
+                  // The normal queue reactor observes this queued transition too,
+                  // covering an owner that ended before the requeue committed.
+                  yield* stopIngestion;
+                  const now = yield* DateTime.now;
+                  const nextAttemptId = idAllocator.derive.runAttempt({
+                    runId: input.run.id,
+                    attemptOrdinal: input.attempt.attemptOrdinal + 1,
+                  });
+                  yield* eventSink
+                    .writeIfRunCurrent({
+                      threadId: input.run.threadId,
+                      runId: input.run.id,
+                      activeAttemptId: input.attempt.id,
+                      expectedStatus: "running",
+                      events: [
+                        {
+                          id: yield* idAllocator.allocate.event({ threadId: input.run.threadId }),
+                          type: "run-attempt.updated",
+                          threadId: input.run.threadId,
+                          runId: input.run.id,
+                          occurredAt: now,
+                          payload: { ...input.attempt, status: "cancelled", completedAt: now },
+                        },
+                        {
+                          id: yield* idAllocator.allocate.event({ threadId: input.run.threadId }),
+                          type: "run-attempt.updated",
+                          threadId: input.run.threadId,
+                          runId: input.run.id,
+                          occurredAt: now,
+                          payload: {
+                            ...input.attempt,
+                            id: nextAttemptId,
+                            attemptOrdinal: input.attempt.attemptOrdinal + 1,
+                            status: "pending",
+                            providerTurnId: null,
+                            startedAt: null,
+                            completedAt: null,
+                          },
+                        },
+                        {
+                          id: yield* idAllocator.allocate.event({ threadId: input.run.threadId }),
+                          type: "node.updated",
+                          threadId: input.run.threadId,
+                          runId: input.run.id,
+                          occurredAt: now,
+                          payload: {
+                            ...input.rootNode,
+                            status: "pending",
+                            providerTurnId: null,
+                            startedAt: null,
+                            completedAt: null,
+                          },
+                        },
+                        {
+                          id: yield* idAllocator.allocate.event({ threadId: input.run.threadId }),
+                          type: "run.updated",
+                          threadId: input.run.threadId,
+                          runId: input.run.id,
+                          occurredAt: now,
+                          payload: {
+                            ...input.run,
+                            status: "queued",
+                            queuePosition: 1,
+                            activeAttemptId: nextAttemptId,
+                            startedAt: null,
+                            completedAt: null,
+                          },
+                        },
+                      ],
+                      effects: [],
+                    })
+                    .pipe(
+                      Effect.mapError(
+                        (cause) =>
+                          new RunExecutionStartError({
+                            commandId: input.commandId,
+                            runId: input.run.id,
+                            cause,
+                          }),
+                      ),
+                    );
+                  return;
+                }
+                if (owned !== false || providerTurnId === null) return yield* Effect.fail(error);
+                yield* Effect.suspend(() =>
+                  input.session.interruptTurn({
+                    providerThread: input.providerThread,
+                    providerTurnId,
+                  }),
+                ).pipe(
+                  Effect.timeout(ORPHANED_TURN_INTERRUPT_TIMEOUT),
+                  Effect.catchCause((cause) =>
+                    Cause.hasInterruptsOnly(cause)
+                      ? Effect.interrupt
+                      : Effect.logInfo("Could not stop the provider's previous turn", {
+                          runId: input.run.id,
+                          ...providerFailureDiagnostics(cause),
+                        }),
+                  ),
+                );
+                return yield* retryStart.pipe(
+                  Effect.retry({
+                    times: ORPHANED_TURN_CLEAR_POLLS,
+                    schedule: Schedule.spaced(ORPHANED_TURN_CLEAR_POLL),
+                    // A Stop meanwhile ends the wait.
+                    while: (retryError) =>
+                      isPreviousTurnActiveFailure(retryError)
+                        ? stillWantsProviderTurn
+                        : Effect.succeed(false),
+                  }),
+                );
+              });
+
             // Keep the active turn's MCP credential valid between browser calls.
             yield* McpSessionRegistry.touchActiveMcpThread(input.run.threadId);
             const turnInput = {
@@ -1293,6 +1693,52 @@ export const layer: Layer.Layer<
             const compact =
               input.message.attachments.length === 0 &&
               input.message.text.trim().toLowerCase() === "/compact";
+            const prepareTurn = Effect.gen(function* () {
+              const events = yield* input.session.prepareTurn?.(turnInput) ?? Effect.succeed([]);
+              for (const event of events) {
+                yield* providerEventIngestor.ingestNormalized({
+                  analyticsContext: {
+                    modelSelection: input.modelSelection,
+                    runtimeMode: input.runtimePolicy.runtimeMode,
+                    interactionMode: input.runtimePolicy.interactionMode,
+                  },
+                  providerSessionId: input.providerSessionId,
+                  providerInstanceId: input.run.providerInstanceId,
+                  threadId: input.run.threadId,
+                  runId: input.run.id,
+                  nodeId: input.rootNode.id,
+                  event,
+                });
+                if (
+                  event.type === "subagent.updated" &&
+                  event.subagent.status === "interrupted" &&
+                  isOutageProgress(event.subagent.progress)
+                ) {
+                  yield* (
+                    providerEventIngestor.noteLostSubagentWork?.({
+                      threadId: event.subagent.threadId,
+                      providerThreadId: input.providerThread.id,
+                      work: [interruptedSubagentWork(event.subagent)],
+                      beforeRunId: input.run.id,
+                    }) ?? Effect.void
+                  );
+                }
+              }
+            }).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProviderAdapterTurnStartError({
+                    driver: input.session.driver,
+                    threadId: input.run.threadId,
+                    providerThreadId: input.providerThread.id,
+                    runId: input.run.id,
+                    cause,
+                  }),
+              ),
+            );
+            const preparedStart = prepareTurn.pipe(
+              Effect.andThen(input.session.startTurn(turnInput)),
+            );
             const startTurn = compact
               ? (input.session.compactThread?.(turnInput) ??
                 Effect.fail(
@@ -1304,7 +1750,7 @@ export const layer: Layer.Layer<
                     cause: "This provider does not support context compaction.",
                   }),
                 ))
-              : input.session.startTurn(turnInput).pipe(
+              : preparedStart.pipe(
                   Effect.retry({
                     // A credit submission admits exactly one request, so it is never resent.
                     times:
@@ -1316,10 +1762,11 @@ export const layer: Layer.Layer<
                     while: (error) =>
                       !isTransientTurnStartFailure(error)
                         ? Effect.succeed(false)
-                        : input.shouldStartProviderTurn === undefined
-                          ? Effect.succeed(true)
-                          : input.shouldStartProviderTurn().pipe(Effect.orElseSucceed(() => false)),
+                        : stillWantsProviderTurn,
                   }),
+                  Effect.catchIf(isPreviousTurnActiveFailure, (error) =>
+                    startAfterOrphanedProviderTurn(error, preparedStart),
+                  ),
                 );
             yield* Effect.andThen(shouldStart, startTurn).pipe(
               Effect.catchCause((cause) =>
@@ -1377,6 +1824,12 @@ export const layer: Layer.Layer<
   }),
 );
 
+/** A run's latest Stop request: who asked, and the reason it gave. */
+export type RunInterruptRequest = Pick<
+  Extract<OrchestrationV2TurnItem, { readonly type: "run_interrupt_request" }>,
+  "cause" | "message"
+>;
+
 /**
  * Who asked to stop `runId`, from its latest Stop request: a request with no
  * cause predates causes and was the user's; no request at all is null.
@@ -1385,11 +1838,21 @@ export function runInterruptRequestCause(
   turnItems: ReadonlyArray<OrchestrationV2TurnItem>,
   runId: OrchestrationV2Run["id"],
 ): OrchestrationV2RunInterruptCause | null {
-  const request = turnItems.findLast(
-    (item): item is Extract<OrchestrationV2TurnItem, { type: "run_interrupt_request" }> =>
-      item.type === "run_interrupt_request" && item.runId === runId,
+  const request = latestRunInterruptRequest(turnItems, runId);
+  return request === null || stopIntent(request) === "system" ? null : (request.cause ?? "user");
+}
+
+/** `runId`'s latest Stop request, or null when nobody asked to stop it. */
+export function latestRunInterruptRequest(
+  turnItems: ReadonlyArray<OrchestrationV2TurnItem>,
+  runId: OrchestrationV2Run["id"],
+): Extract<OrchestrationV2TurnItem, { type: "run_interrupt_request" }> | null {
+  return (
+    turnItems.findLast(
+      (item): item is Extract<OrchestrationV2TurnItem, { type: "run_interrupt_request" }> =>
+        item.type === "run_interrupt_request" && item.runId === runId,
+    ) ?? null
   );
-  return request === undefined ? null : (request.cause ?? "user");
 }
 
 /** The run's latest Stop request when a person asked for it (older requests have no cause). */
@@ -1401,7 +1864,7 @@ export function userInterruptRequest(
     (item): item is Extract<OrchestrationV2TurnItem, { type: "run_interrupt_request" }> =>
       item.type === "run_interrupt_request" && item.runId === runId,
   );
-  return request !== undefined && (request.cause ?? "user") === "user" ? request : undefined;
+  return request !== undefined && stopIntent(request) === "person" ? request : undefined;
 }
 
 export function makeInterruptResultTurnItem(input: {

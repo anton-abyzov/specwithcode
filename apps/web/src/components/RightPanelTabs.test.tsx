@@ -1,4 +1,4 @@
-import { EnvironmentId, type ThreadPullRequestLink } from "@specweave-studio/contracts";
+import { EnvironmentId, ThreadId, type ThreadPullRequestLink } from "@specweave-studio/contracts";
 import type { DesktopPreviewFavicon, PreviewSessionSnapshot } from "@specweave-studio/contracts";
 import { renderToStaticMarkup } from "react-dom/server";
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@specweave-studio/shared/keybindings";
@@ -333,5 +333,115 @@ describe("pull request tab snapshots", () => {
         link,
       ),
     ).toBe(newer);
+  });
+});
+
+describe("file reader close (1049 AC-06)", () => {
+  const file = {
+    id: "file:docs/notes.md" as const,
+    kind: "file" as const,
+    relativePath: "docs/notes.md",
+    revealLine: null,
+    revealRequestId: 1,
+  };
+  const terminal = {
+    id: "terminal:t1" as const,
+    kind: "terminal" as const,
+    resourceId: "t1",
+    terminalIds: ["t1"],
+    activeTerminalId: "t1",
+  };
+
+  function renderSurfaces(
+    surfaces: ReadonlyArray<typeof file | typeof terminal | typeof previewSurface>,
+    activeSurfaceId: string,
+    mode: "inline" | "sheet" = "inline",
+  ) {
+    return renderToStaticMarkup(
+      <RightPanelTabs
+        mode={mode}
+        keybindings={DEFAULT_RESOLVED_KEYBINDINGS}
+        getShortcutContext={() => ({
+          terminalFocus: false,
+          terminalOpen: false,
+          previewFocus: false,
+          previewOpen: false,
+          isWeb: true,
+          isDesktop: false,
+        })}
+        surfaces={surfaces}
+        environmentId={null}
+        activeSurfaceId={activeSurfaceId}
+        pendingSurfaceIds={new Set()}
+        previewSessions={sessions}
+        desktopByTabId={{}}
+        terminalLabelsById={new Map()}
+        onActivate={() => undefined}
+        onCloseSurface={() => undefined}
+        onCloseOtherSurfaces={() => undefined}
+        onCloseSurfacesToRight={() => undefined}
+        onCloseAllSurfaces={() => undefined}
+        onCopyFilePath={() => undefined}
+        onAddBrowser={() => undefined}
+        onAddBrowserInProfile={() => undefined}
+        onAddTerminal={() => undefined}
+        onAddPullRequest={() => undefined}
+        onAddPullRequests={() => undefined}
+        onAddDiff={() => undefined}
+        onAddFiles={() => undefined}
+        onAddDevice={() => undefined}
+        browserAvailable
+        terminalAvailable
+        diffAvailable={false}
+        filesAvailable
+        pullRequestAvailable={false}
+        pullRequestsAvailable={false}
+        deviceAvailable={false}
+      >
+        <div>content</div>
+      </RightPanelTabs>,
+    );
+  }
+
+  const readerClose = (html: string) =>
+    /<button[^>]*data-file-reader-close[^>]*>.*?<\/button>/s.exec(html)?.[0] ?? null;
+  const contentRegion = (html: string) =>
+    /<div[^>]*data-right-panel-surface-content[^>]*>/.exec(html)?.[0] ?? "";
+
+  it("shows a labeled Close with its Esc hint for the active file, with no hover", () => {
+    const html = renderSurfaces([previewSurface, file], file.id);
+    const close = readerClose(html);
+    expect(close).not.toBeNull();
+    expect(close).toContain('aria-label="Close notes.md"');
+    expect(close).toContain('aria-keyshortcuts="Escape"');
+    expect(close?.replace(/<[^>]+>/g, "")).toBe("CloseEsc");
+    // A narrow tab bar drops only the hint; the word Close stays.
+    expect(close).toMatch(/<kbd[^>]*@max-\[420px\]\/tabbar:hidden[^>]*>Esc<\/kbd>/);
+    expect(html).toContain("@container/tabbar");
+    expect(contentRegion(html)).toContain('tabindex="-1"');
+  });
+
+  it("keeps the tab's own X behind hover or focus for every surface", () => {
+    const html = renderSurfaces([previewSurface, file, terminal], file.id);
+    const tabCloses = html.match(/<button[^>]*data-panel-tab-close[^>]*>.*?<\/button>/gs) ?? [];
+    expect(tabCloses).toHaveLength(3);
+    for (const close of tabCloses)
+      expect(close).toContain(
+        "hidden size-3 group-hover/tab:block group-focus-visible/close:block",
+      );
+  });
+
+  it("adds no labeled Close for a browser, a terminal or a file tab in the background", () => {
+    for (const active of [previewSurface.id, terminal.id]) {
+      const html = renderSurfaces([previewSurface, file, terminal], active);
+      expect(readerClose(html)).toBeNull();
+      expect(contentRegion(html)).not.toContain("tabindex");
+    }
+  });
+
+  it("drops the Esc hint in the sheet, whose Escape closes the whole sheet", () => {
+    const close = readerClose(renderSurfaces([file], file.id, "sheet"));
+    expect(close?.replace(/<[^>]+>/g, "")).toBe("Close");
+    expect(close).not.toContain("aria-keyshortcuts");
   });
 });

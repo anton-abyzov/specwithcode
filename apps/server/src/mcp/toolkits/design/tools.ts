@@ -101,7 +101,7 @@ export const DesignToolkit = Toolkit.make(
   Tool.make("design_apply", {
     ...shared,
     description:
-      "Apply operations to a design atomically: add_node, update_node (patch; null removes a field), delete_node, move_node, add_page, update_page, delete_page, move_page, set_title, set_design_system, add_comment (the server records you as author), resolve_comment, delete_comment, set_thread (your own thread, or null to clear your own binding). Node x/y are relative to the parent frame. Pass expectedRevision from your last read: if the design changed meanwhile the call fails with the current revision; call design_get, rebuild the operations and apply again. The design's access setting may allow agents only comments or nothing.",
+      "Apply operations to a design atomically: add_node, update_node (patch; null removes a field), delete_node, move_node, add_page, update_page, delete_page, move_page, set_title, set_design_system, add_comment (the server records you as author; set comment.parentId to reply in that comment's thread), resolve_comment, delete_comment, set_thread (your own thread, or null to clear your own binding). Node x/y are relative to the parent frame. Pass expectedRevision from your last read: if the design changed meanwhile the call fails with the current revision; call design_get, rebuild the operations and apply again. The design's access setting may allow agents only comments or nothing.",
     parameters: Schema.Struct({
       designId,
       owner,

@@ -238,6 +238,57 @@ describe("DesignSystemService", () => {
     ).toEqual(["wv-brand-tile"]);
   });
 
+  it("previews the top three suggestions in memory when asked; without it the shape is unchanged", async () => {
+    const { checkout, files, run, write } = await setup();
+    for (const app of ["a", "b", "c"]) {
+      await write(`apps/${app}/package.json`, JSON.stringify({ name: `app-${app}` }));
+      await write(
+        `apps/${app}/${app}.css`,
+        `:root {\n${Array.from({ length: 10 }, (_, index) => `  --${app}-${index}: #00000${index};`).join("\n")}\n}`,
+      );
+    }
+    const plain = await run((service) => service.scan(userCaller, { owner: project }));
+    expect(plain.suggestions.filter((suggestion) => "preview" in suggestion)).toEqual([]);
+
+    const scan = await run((service) =>
+      service.scan(userCaller, { owner: project, preview: true }),
+    );
+    expect(scan.suggestions.map((suggestion) => [suggestion.key, "preview" in suggestion])).toEqual(
+      [
+        ["weave", true],
+        ["pkg:apps/a", true],
+        ["pkg:apps/b", true],
+        ["pkg:apps/c", false],
+      ],
+    );
+    expect(scan.suggestions[1]!.preview).toMatchObject({
+      tokens: 10,
+      components: 0,
+      modes: ["default"],
+      sources: [{ path: "apps/a/a.css", kind: "css", tokens: 10, components: 0 }],
+    });
+    expect(scan.suggestions[1]!.preview!.swatches.map((swatch) => swatch.value)).toEqual(
+      Array.from({ length: 8 }, (_, index) => `#00000${index}`),
+    );
+    // A preview keeps no proposal and writes nothing.
+    expect(
+      (await run((service) => service.proposals(userCaller, { kind: "all" }))).proposals,
+    ).toEqual([]);
+    expect(files.writes).toEqual([]);
+    expect(NodeFS.existsSync(NodePath.join(checkout, ".specweave"))).toBe(false);
+
+    // It counts what a proposal from the same files holds.
+    const weave = scan.suggestions[0]!;
+    const proposal = await run((service) =>
+      service.propose(userCaller, { owner: project, from: { kind: "code", paths: weave.paths } }),
+    );
+    expect(weave.preview).toMatchObject({
+      tokens: proposal.system.tokens.length,
+      components: proposal.system.components.length,
+    });
+    expect(weave.preview!.swatches.length).toBeGreaterThan(0);
+  });
+
   it("links the app theme to Weave only when this owner holds Weave, and never writes a dangling link", async () => {
     const { checkout, files, run, write } = await setup();
     await write("packages/shared/src/themePalettes.ts", APP_THEME);
@@ -467,5 +518,56 @@ describe("DesignSystemService", () => {
     expect(ids.filter((id) => agentIds.includes(id))).toHaveLength(MAX_PROPOSALS_PER_ACTOR);
     expect(ids).not.toContain(agentIds[0]);
     expect(ids).toContain(agentIds.at(-1));
+  });
+
+  it("replaces an open proposal for the same files instead of adding another", async () => {
+    const { run } = await setup();
+    const both = {
+      kind: "code" as const,
+      paths: ["design/weave/tokens.json", "design/weave/weave.css"],
+    };
+    const first = await run((service) =>
+      service.propose(userCaller, { owner: project, from: both }),
+    );
+    const again = await run((service) =>
+      service.propose(userCaller, {
+        owner: project,
+        from: { ...both, paths: both.paths.toReversed() },
+      }),
+    );
+    // Same id and system id: a design that recorded the first proposal still points at it.
+    expect(again).toMatchObject({ id: first.id, system: { id: first.system.id } });
+    const fewer = await run((service) =>
+      service.propose(userCaller, {
+        owner: project,
+        from: { kind: "code", paths: ["design/weave/weave.css"] },
+      }),
+    );
+    expect(fewer.id).not.toBe(first.id);
+    const open = await run((service) => service.proposals(userCaller, { kind: "all" }));
+    expect(open.proposals.map((proposal) => proposal.id).toSorted()).toEqual(
+      [first.id, fewer.id].toSorted(),
+    );
+  });
+
+  it("keeps described proposals apart even when they share a name and location", async () => {
+    const { run } = await setup();
+    const colors = await run((service) =>
+      service.proposeDescribed(agent(project), project, {
+        name: "Brand",
+        tokens: [{ name: "brand", value: "#0a84ff" }],
+      }),
+    );
+    const type = await run((service) =>
+      service.proposeDescribed(agent(project), project, {
+        name: "Brand",
+        tokens: [{ name: "body", value: "16px" }],
+      }),
+    );
+    expect(type.id).not.toBe(colors.id);
+    const open = await run((service) => service.proposals(userCaller, { kind: "all" }));
+    expect(open.proposals.map((proposal) => proposal.id)).toEqual(
+      expect.arrayContaining([colors.id, type.id]),
+    );
   });
 });

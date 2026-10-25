@@ -6,7 +6,8 @@
  * shows. Messages from that chat become user messages in the project's
  * coordinator thread (queued, never steering). When a coordinator run that
  * the person did not start at a desk finishes, its last answer goes back to
- * the chat; so do routine results and notices about waiting approvals.
+ * the chat; so do routine results from each routine's own thread, headed by
+ * its title, and notices about waiting approvals.
  * Approvals themselves are never answered from Telegram.
  *
  * The bot token lives in the server secret store and is never returned to
@@ -490,20 +491,27 @@ const make = Effect.gen(function* () {
     Effect.gen(function* () {
       const active = yield* activeProject;
       if (active === null) return;
-      if (active.project.workspaceSettings?.coordinatorThreadId !== run.threadId) return;
-      if (!announcedRuns(run.id)) return;
+      // The coordinator's runs, and each routine's runs in the routine's own thread.
+      const coordinator = active.project.workspaceSettings?.coordinatorThreadId === run.threadId;
+      const shell = coordinator ? null : yield* threads.getThreadShell(run.threadId);
+      if (!coordinator && shell?.projectId !== active.project.projectId) return;
       const key = { projectId: active.project.projectId, threadId: run.threadId };
       const userMessages = yield* threads.getProjectThreadRecords(key, ["messages"], {
         messageIds: [run.userMessageId],
       });
-      if (!shouldForwardRun(userMessages.messages[0])) return;
+      const userMessage = userMessages.messages[0];
+      if (!coordinator && userMessage?.scheduledTaskId === undefined) return;
+      if (!announcedRuns(run.id)) return;
+      if (!shouldForwardRun(userMessage)) return;
       const answers = yield* threads.getProjectThreadRecords(key, ["messages"], {
         messageRunIds: [run.id],
         messageRoles: ["assistant"],
       });
       const last = answers.messages.at(-1);
       const text = describeFinishedRun(run.status, last?.text ?? null);
-      if (text !== null) yield* send(active.chatId, text);
+      if (text === null) return;
+      const title = shell?.title.trim() ?? "";
+      yield* send(active.chatId, title === "" ? text : `“${title}”\n\n${text}`);
     });
 
   const onPendingRequest = (threadId: ThreadId, requestId: RuntimeRequestId) =>

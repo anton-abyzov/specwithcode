@@ -1,9 +1,52 @@
+import type { EnvironmentThreadShell } from "@specweave-studio/client-runtime/state/shell";
 import type { DesignThreadBinding, EnvironmentId } from "@specweave-studio/contracts";
-import { MessageSquarePlusIcon, MonitorIcon } from "lucide-react";
+import { InfoIcon, MessageSquarePlusIcon, MonitorIcon } from "lucide-react";
 import { useState, type ReactNode } from "react";
 import { Button } from "~/components/ui/button";
 import { Spinner } from "~/components/ui/spinner";
+import { NO_PROVIDER_THREAD_NOTICE, WAITING_FOR_PROVIDER_NOTICE } from "../projectThread";
 import type { DesignMachine } from "./backend";
+
+/** Above the thread when this window could not attach it to the design itself. */
+function attachNotice(reason: string) {
+  const why = reason.trim().replace(/[.!]?$/, ".");
+  return `The thread started, but this window could not attach it to the design. ${why} The agent attaches it itself, and your canvas edits keep saving.`;
+}
+
+/** Whether a thread has messages or runs, from its shell; undefined while the shell is not loaded. */
+export function threadHasStarted(
+  shell:
+    | Pick<EnvironmentThreadShell, "latestRun" | "latestUserMessageAt" | "itemCount">
+    | undefined,
+): boolean | undefined {
+  if (shell === undefined) return undefined;
+  return shell.latestRun !== null || shell.latestUserMessageAt !== null || shell.itemCount > 0;
+}
+
+/**
+ * What the pane says above the thread: that the agent attaches a thread this
+ * window could not bind, or that the design's thread cannot run because no
+ * provider on its machine is ready. Only a thread known to have no messages
+ * or runs is told its first message waits in the composer.
+ */
+export function threadNotice({
+  binding,
+  selfBinding,
+  providerReady,
+  started,
+}: {
+  /** The design's own binding. */
+  binding: DesignThreadBinding | null;
+  /** A thread this window started but could not bind. */
+  selfBinding: { readonly reason: string } | null;
+  providerReady?: boolean | undefined;
+  /** From `threadHasStarted`; undefined when unknown. */
+  started?: boolean | undefined;
+}): string | null {
+  if (binding === null) return selfBinding === null ? null : attachNotice(selfBinding.reason);
+  if (providerReady !== false) return null;
+  return started === false ? WAITING_FOR_PROVIDER_NOTICE : NO_PROVIDER_THREAD_NOTICE;
+}
 
 /**
  * The left side of the editor: the design's agent thread when it runs on
@@ -17,6 +60,7 @@ export function BoundThreadPane({
   onStartThread,
   onOpenThere,
   canStart,
+  notice = null,
 }: {
   binding: DesignThreadBinding | null;
   environmentId: EnvironmentId;
@@ -26,6 +70,8 @@ export function BoundThreadPane({
   onOpenThere: (binding: DesignThreadBinding) => void;
   /** Starting the design's thread binds it, which needs edit access. */
   canStart: boolean;
+  /** Shown above the thread, e.g. when the agent has yet to attach it to the design. */
+  notice?: string | null;
 }) {
   const [starting, setStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -42,8 +88,18 @@ export function BoundThreadPane({
   };
   if (binding !== null && binding.environmentId === environmentId)
     return (
-      <div data-testid="bound-thread" className="project-native-thread">
-        {renderChat(binding)}
+      <div data-testid="bound-thread" className="flex min-h-0 flex-1 flex-col">
+        {notice !== null && (
+          <p
+            role="status"
+            data-testid="bound-thread-notice"
+            className="mx-3 mt-2 flex shrink-0 items-start gap-2 rounded-lg border border-border/70 bg-muted/40 px-3 py-2 text-xs leading-relaxed text-muted-foreground"
+          >
+            <InfoIcon aria-hidden className="mt-0.5 size-3.5 shrink-0" />
+            <span>{notice}</span>
+          </p>
+        )}
+        <div className="project-native-thread">{renderChat(binding)}</div>
       </div>
     );
   const other = binding === null ? null : machine(binding.environmentId);
@@ -92,7 +148,11 @@ export function BoundThreadPane({
           You can view this design. Someone with edit access starts its thread.
         </p>
       )}
-      {error !== null && <p className="max-w-72 text-xs text-destructive-foreground">{error}</p>}
+      {error !== null && (
+        <p role="alert" className="max-w-72 text-xs text-destructive-foreground">
+          The thread did not start: {error.replace(/\.$/, "")}. Nothing on the canvas changed.
+        </p>
+      )}
     </div>
   );
 }

@@ -305,16 +305,32 @@ it.effect.each([
     error: new PreviewBrowserHost.PreviewBrowserSandboxError({
       setupCommand: "sudo specweave-studio browser setup",
     }),
-    need: "sandbox",
+    setup: { need: "sandbox", command: "sudo specweave-studio browser setup" },
   },
   {
     error: new PreviewBrowserHost.PreviewBrowserLibrariesError({
       setupCommand: "sudo specweave-studio browser setup",
       libraries: ["libnss3.so"],
     }),
-    need: "libraries",
+    setup: { need: "libraries", command: "sudo specweave-studio browser setup" },
   },
-])("tells viewers the command that sets up the host ($need)", ({ error, need }) =>
+  {
+    // An outer sandbox that Chrome cannot nest its own in; the opt-out is the next step.
+    error: new PreviewBrowserHost.PreviewBrowserGpuError({
+      lastError: "GPU process isn't usable. Goodbye.",
+      sandboxOff: false,
+    }),
+    setup: { need: "gpu", command: "STUDIO_SERVER_BROWSER_SANDBOX=0" },
+  },
+  {
+    // With the opt-out already set no command is left, so viewers get the ordinary failure.
+    error: new PreviewBrowserHost.PreviewBrowserGpuError({
+      lastError: "GPU process isn't usable. Goodbye.",
+      sandboxOff: true,
+    }),
+    setup: null,
+  },
+])("tells viewers the command that sets up the host ($error._tag)", ({ error, setup }) =>
   Effect.gen(function* () {
     const browser = ServerBrowser.ServerBrowser.of({
       clearProfile: () => Effect.void,
@@ -345,15 +361,18 @@ it.effect.each([
         socket.addEventListener("close", (event) =>
           closed.resolve({ code: event.code, reason: event.reason }),
         );
+        // An ordinary launch failure refuses the upgrade (503), which ends in `error`.
+        socket.addEventListener("error", () => closed.resolve({ code: 1006, reason: "" }));
         return socket;
       }),
       (socket) => Effect.sync(() => socket.close()),
     );
     const { code, reason } = yield* Effect.promise(() => closed.promise);
+    if (setup === null) {
+      expect(code).not.toBe(PREVIEW_STREAM_HOST_SETUP_CLOSE_CODE);
+      return;
+    }
     expect(code).toBe(PREVIEW_STREAM_HOST_SETUP_CLOSE_CODE);
-    expect(yield* decodeHostSetup(reason)).toEqual({
-      need,
-      command: "sudo specweave-studio browser setup",
-    });
+    expect(yield* decodeHostSetup(reason)).toEqual(setup);
   }).pipe(Effect.scoped),
 );

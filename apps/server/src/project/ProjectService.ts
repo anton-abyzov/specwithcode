@@ -573,7 +573,9 @@ export const make = Effect.gen(function* () {
       if (settings.threadFinishAction !== "pull_request" || entry.threadFinishAction !== undefined)
         return;
       yield* serverSettings.value.updateSettings({
-        projectSettingsOverrides: { [projectId]: { ...entry, threadFinishAction: "auto_merge" } },
+        projectSettingsOverrideChanges: {
+          [projectId]: { set: { threadFinishAction: "auto_merge" } },
+        },
       });
     }).pipe(
       // Best effort: a settings store that cannot write (or a test double without

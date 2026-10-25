@@ -57,7 +57,7 @@ export class FleetError extends Error {
         "pairing-unavailable":
           "Pairing is unavailable. Ask the server owner to renew this machine's connection permission.",
         "invitation-limited":
-          "This machine's invitation can manage access but cannot open sessions there, so this machine cannot connect to it. On that machine, update SpecWithCode, choose Invite this machine in Settings > Connections (or run `specwithcode fleet invite`), and add the new line here.",
+          "This machine's invitation can manage access but cannot open sessions there, so this machine cannot connect to it. On that machine, update SpecWithCode, choose Invite this machine in Settings > Connections (or run `specwithcode fleet invite --coordinator '<main-machine-environment-id>'`), and add the new line here. Replace <main-machine-environment-id> with the environment ID from Settings > Connections on your main machine. This explicitly approves that machine to manage access here.",
         forbidden: "This connection cannot pair with that machine.",
       }[kind],
     );

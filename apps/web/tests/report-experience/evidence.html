@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <title>Release check evidence</title>
+    <style>
+      body {
+        padding: 24px;
+        max-width: 720px;
+        font-size: 15px;
+        line-height: 1.6;
+      }
+      h1 {
+        font-size: 26px;
+        margin: 0 0 8px;
+      }
+      ul {
+        padding-left: 1.2em;
+      }
+      li {
+        margin: 6px 0;
+      }
+      code {
+        overflow-wrap: anywhere;
+        background: var(--code-background);
+        color: var(--code-foreground);
+        padding: 0 4px;
+        border-radius: 4px;
+      }
+      button.fixture {
+        margin: 4px 8px 4px 0;
+        padding: 6px 10px;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: var(--card);
+        color: var(--foreground);
+        font: inherit;
+      }
+    </style>
+  </head>
+  <body>
+    <article>
+      <h1>Release check evidence</h1>
+      <p>
+        The release check passed on the exact head. Each item below opens in SpecWithCode; the copy
+        button beside it copies the full path.
+      </p>
+      <ul>
+        <li>
+          <a id="shot" href="/Users/fixture/work/atlas/evidence/login-dark.png"
+            >Login, dark theme</a
+          >
+          and
+          <a id="clip" href="file:///Users/fixture/work/atlas/evidence/sign-in%20flow.mp4"
+            >Sign-in recording</a
+          >
+        </li>
+        <li>
+          <a id="log" href="/Users/fixture/work/atlas/evidence/release-check.log#L12"
+            >Release check log, line 12</a
+          >
+        </li>
+        <li>
+          Full report:
+          <a id="bare" href="/Users/fixture/work/atlas/evidence/report.md"
+            >/Users/fixture/work/atlas/evidence/report.md</a
+          >
+        </li>
+        <li><a id="home" href="~/evidence/notes.txt">Reviewer notes</a></li>
+        <li>
+          <a id="mutating" href="/Users/fixture/work/atlas/evidence/safe.png">Safe screenshot</a>
+          (the page changes this link's target after load)
+        </li>
+      </ul>
+      <p>
+        A path in code stays text:
+        <code id="code">/Users/fixture/work/atlas/evidence/not-a-link.png</code>.
+        <a id="fragment" href="#details">Jump to details</a> stays in the page, and
+        <a id="external" href="https://example.com/docs">external docs</a> open in the browser. A
+        network share, <a id="unc" href="\\files.example\share\run.log">shared run log</a>, stays a
+        plain link.
+      </p>
+      <p data-no-evidence>
+        Kept as the author styled it:
+        <a id="plain" href="/Users/fixture/work/atlas/evidence/plain.txt">plain link</a>.
+      </p>
+      <section id="details">
+        <h2>Hostile requests</h2>
+        <p>These buttons send requests the app must refuse, after a real click.</p>
+        <button type="button" class="fixture" id="hostile">Send hostile requests</button>
+      </section>
+    </article>
+    <script>
+      (function () {
+        const replies = [];
+        const flags = new URLSearchParams(location.search);
+        const post = (data) => parent.postMessage(data, "*");
+        const send = (id, method, params) =>
+          post({ jsonrpc: "2.0", id: id, method: method, params: params });
+        window.addEventListener("message", (event) => {
+          const data = event.data;
+          if (event.source !== parent || !data || data.jsonrpc !== "2.0" || !("id" in data)) return;
+          replies.push({
+            id: data.id,
+            ok: "result" in data,
+            error: data.error && data.error.message,
+          });
+          post({ fixtureReplies: replies.slice() });
+        });
+        // A page can change a link after load; what opens is the href at click time.
+        setTimeout(() => {
+          document
+            .getElementById("mutating")
+            .setAttribute("href", "/Users/fixture/work/atlas/evidence/swapped.png");
+        }, 200);
+        if (flags.has("hostile")) {
+          // Without a click: forged provenance, a script click and a request at load.
+          send("load-forged", "specwithcode/open-file", {
+            path: "/Users/fixture/work/atlas/evidence/login-dark.png",
+            environmentId: "another-machine",
+            threadId: "project-coordinator:another",
+          });
+          document.getElementById("shot").click();
+        }
+        document.getElementById("hostile").addEventListener("click", () => {
+          send("traversal", "specwithcode/open-file", { path: "/Users/fixture/../../etc/passwd" });
+          send("encoded", "specwithcode/open-file", { path: "/Users/%2e%2e/etc/passwd" });
+          send("control", "specwithcode/copy-path", { path: "/Users/fixture/a\u0000.png" });
+          send("url", "specwithcode/open-file", { path: "javascript:alert(1)" });
+          send("forged", "specwithcode/open-file", {
+            path: "/Users/fixture/work/atlas/evidence/forged-target.png",
+            environmentId: "another-machine",
+            threadId: "project-coordinator:another",
+            cwd: "/",
+          });
+          for (let index = 0; index < 20; index++)
+            send("flood-" + index, "specwithcode/open-file", {
+              path: "/Users/fixture/work/atlas/evidence/flood.png",
+            });
+        });
+      })();
+    </script>
+  </body>
+</html>

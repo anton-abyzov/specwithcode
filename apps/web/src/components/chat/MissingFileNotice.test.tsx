@@ -77,6 +77,13 @@ it("says when the folder itself is not there", async () => {
   expect(text()).toContain("report.md was not found: its folder does not exist");
 });
 
+it("explains a file the list knows is missing even when its folder is gone too", async () => {
+  await render("/Users/me/gone/report.md", vi.fn(), null);
+  expect(text()).toContain("report.md was not found: its folder does not exist");
+  expect(text()).toContain("/Users/me/gone/report.md");
+  expect(renderer!.root.findAll((node) => node.props.role === "alert")).toHaveLength(0);
+});
+
 it("keeps the server's words when the file is there but did not read", async () => {
   await render(`${AUDIT}/brief.md`, vi.fn(), "Failed to read file 'x'.");
   expect(text()).toContain("Failed to read file 'x'.");

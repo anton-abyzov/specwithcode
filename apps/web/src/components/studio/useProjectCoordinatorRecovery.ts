@@ -89,7 +89,15 @@ export function useProjectCoordinatorModelControls(input: {
   providers: ReadonlyArray<ServerProvider> | null | undefined;
   model: ModelSelection | null | undefined;
   /** Actual displayed selection; a return hint exists only while the saved provider is limited. */
-  running?: { value: ModelSelection; returnsTo: string | null; offPick?: boolean } | null;
+  running?: {
+    value: ModelSelection;
+    returnsTo: string | null;
+    offPick?: boolean;
+    /** Why the saved pick is out, with its reset time; the picker header names it. */
+    reason?: string | null;
+    onSwitchBack?: (() => void) | null;
+    switching?: boolean;
+  } | null;
   canOperate: boolean;
   connected: boolean;
   revision: number | null;
@@ -98,6 +106,7 @@ export function useProjectCoordinatorModelControls(input: {
   retrying: boolean;
   onChange: (value: ModelSelection) => void;
   onOpenSettings: () => void;
+  onOpenProjectUsage?: () => void;
 }) {
   const defaults = input.environmentSettings
     ? resolveProjectSettings(input.environmentSettings, input.project.id, input.project).settings
@@ -140,6 +149,7 @@ export function useProjectCoordinatorModelControls(input: {
       saving: input.saving,
       onChange: input.onChange,
       onOpenSettings: input.onOpenSettings,
+      ...(input.onOpenProjectUsage ? { onOpenProjectUsage: input.onOpenProjectUsage } : {}),
     }),
   };
 }

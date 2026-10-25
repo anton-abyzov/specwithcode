@@ -17,9 +17,11 @@ import { Tip } from "./shell/Tip";
 export function RemoteWorkerCards({
   environmentId,
   projectId,
+  representedThreads = [],
 }: {
   environmentId: EnvironmentId;
   projectId: ProjectId;
+  representedThreads?: readonly { environmentId: string; id: string }[];
 }) {
   const { workers, available, refresh } = useProjectRemoteWorkers(environmentId, projectId);
   useLiveRefresh(refresh, {
@@ -29,7 +31,7 @@ export function RemoteWorkerCards({
   });
   const threads = useThreadShells();
   const { openThread } = useOpenThread();
-  const visible = visibleRemoteWorkers(workers);
+  const visible = visibleRemoteWorkers(workers, representedThreads);
   if (visible.length === 0) return null;
   return (
     <ul className="sws-thread-cards" aria-label="Workers on other machines">

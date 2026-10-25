@@ -4,6 +4,7 @@ import {
   createPreviewStreamClient,
   previewStreamControlAction,
   previewStreamControlLabel,
+  previewStreamHostSetupMessage,
   type PreviewStreamControl,
 } from "./serverBrowserStream.ts";
 
@@ -223,5 +224,52 @@ describe("preview stream agent pointer", () => {
       y: 50,
       sequence: 2,
     });
+  });
+});
+
+describe("preview stream host setup", () => {
+  beforeEach(() => vi.stubGlobal("WebSocket", FakeSocket));
+  afterEach(() => vi.unstubAllGlobals());
+  const closeWith = (reason: string) => {
+    const onHostSetup = vi.fn();
+    createPreviewStreamClient(target, {
+      onFrame: vi.fn(),
+      onViewport: vi.fn(),
+      onConnectedChange: vi.fn(),
+      onUnauthorized: vi.fn(),
+      onHostSetup,
+    });
+    FakeSocket.current.dispatchEvent(
+      Object.assign(new Event("close"), { code: 4503, reason, wasClean: true }),
+    );
+    return onHostSetup.mock.calls[0]?.[0];
+  };
+
+  it("keeps the server's command for a setup newer than this client", () => {
+    const setup = closeWith(JSON.stringify({ need: "kernel", command: "run-this --once" }));
+    expect(setup).toEqual({ need: "other", command: "run-this --once" });
+    expect(previewStreamHostSetupMessage(setup)).toBe(
+      "This server's browser needs setup on its host. Do this there, then try again:",
+    );
+  });
+
+  it("passes a known setup through and falls back on a malformed reason", () => {
+    expect(
+      closeWith(JSON.stringify({ need: "gpu", command: "STUDIO_SERVER_BROWSER_SANDBOX=0" })),
+    ).toEqual({ need: "gpu", command: "STUDIO_SERVER_BROWSER_SANDBOX=0" });
+    expect(closeWith("not json")).toEqual({
+      need: "sandbox",
+      command: "sudo specweave-studio browser setup",
+    });
+  });
+});
+
+describe("previewStreamHostSetupMessage", () => {
+  it("names the outer sandbox for a GPU process that cannot start", () => {
+    expect(
+      previewStreamHostSetupMessage({ need: "gpu", command: "STUDIO_SERVER_BROWSER_SANDBOX=0" }),
+    ).toBe(
+      "Chrome's GPU process cannot start inside the sandbox this server runs in. Start the server outside it, or restart it with this set in its environment, then try again:",
+    );
   });
 });

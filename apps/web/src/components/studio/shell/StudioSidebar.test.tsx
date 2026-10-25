@@ -45,6 +45,32 @@ const state = vi.hoisted(() => ({
     }>;
   }>,
 }));
+// Attention transport is isolated; root selection and aggregation remain real.
+vi.mock("../../../studio/fleet", () => ({ projectRemoteAttentionAtom: {} }));
+vi.mock("../../../studio/useProjectAttention", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../../../studio/useProjectAttention")>();
+  const { useUnreachableHosts } = await import("../../../studio/unreachableHosts");
+  return {
+    ...actual,
+    useAttentionMembers: (
+      projects: import("../../../studio/useProjectAttention").AttentionProjectMember[],
+    ) => {
+      const unreachable = useUnreachableHosts();
+      return actual.expandAttentionProjects(projects).map((project) => ({
+        environmentId: project.environmentId,
+        projectId: project.id,
+        coordinatorThreadId:
+          project.workspaceSettings?.coordinatorThreadId ?? `project-coordinator:${project.id}`,
+        includeUserRoots: Boolean(project.workspaceSettings?.logicalProject),
+        freshness: unreachable.has(project.environmentId)
+          ? ("offline" as const)
+          : ("live" as const),
+        remoteWorkers: [],
+        remoteWorkersComplete: true,
+      }));
+    },
+  };
+});
 vi.mock("@effect/atom-react", () => ({ useAtomValue: () => state.keybindings }));
 vi.mock("@tanstack/react-router", () => ({
   Link: ({
@@ -270,7 +296,7 @@ describe("projects and chats sidebar", () => {
       "Borealis",
     ]);
     expect(rows.map((row) => row.getAttribute("aria-current"))).toEqual([null, "page"]);
-    expect(rows[1]!.querySelector(".sws-count")?.textContent).toBe("1 waiting on you");
+    expect(rows[1]!.querySelector(".sws-count .sr-only")?.textContent).toBe("1 waiting on you");
     expect(rows[0]!.querySelector(".sws-count")).toBeNull();
   });
   it("groups active chats by date and keeps coordinators and resolved chats out", async () => {
@@ -278,6 +304,40 @@ describe("projects and chats sidebar", () => {
     expect(headings()).toEqual(["Today, 2 chats", "Older, 1 chat"]);
     expect(chats().sort()).toEqual(["Chat ask", "Chat old", "Chat today"]);
     expect(container.querySelectorAll("[data-mark='Codex']")).toHaveLength(3);
+  });
+  it("uses the current fallback mark and explains its saved pick", async () => {
+    state.shells = [
+      shell("fallback", {
+        modelSelection: { instanceId: "claudeAgent", model: "claude-opus-5-5" },
+        modelIdentity: {
+          current: { instanceId: "codex", model: "gpt-6.1-sol" },
+          preferred: { instanceId: "claudeAgent", model: "claude-opus-5-5" },
+          kind: "fallback",
+        },
+      } as unknown as Partial<EnvironmentThreadShell>),
+    ];
+    await render();
+    const row = container.querySelector(".sws-chat-row")!;
+    expect(row.querySelector('[data-mark="Codex"]')).not.toBeNull();
+    expect(row.textContent).toContain("fallback for Claude Code · Opus 5.5 (usage limit)");
+    expect(row.textContent).toContain("GPT-6.1 Sol");
+  });
+  it("says a launch fallback had no room at launch, not a usage limit", async () => {
+    state.shells = [
+      shell("fallback", {
+        modelSelection: { instanceId: "codex", model: "gpt-6.1-sol" },
+        modelIdentity: {
+          current: { instanceId: "codex", model: "gpt-6.1-sol" },
+          preferred: { instanceId: "claudeAgent", model: "claude-opus-5-5" },
+          kind: "fallback",
+          launched: true,
+        },
+      } as unknown as Partial<EnvironmentThreadShell>),
+    ];
+    await render();
+    const row = container.querySelector(".sws-chat-row")!;
+    expect(row.textContent).toContain("fallback for Claude Code · Opus 5.5 (no room at launch)");
+    expect(row.textContent).not.toContain("usage limit");
   });
   it("names another machine's chat and marks it when that machine can't be reached", async () => {
     state.environments = [
@@ -396,7 +456,7 @@ describe("projects and chats sidebar", () => {
     expect(chats()).toEqual(["Chat plain", "Chat mine"]);
     // The project row still counts what its threads need from the person.
     const atlas = container.querySelector('a[href="/projects/host:/a"]')!;
-    expect(atlas.querySelector(".sws-count")?.textContent).toBe("1 waiting on you");
+    expect(atlas.querySelector(".sws-count .sr-only")?.textContent).toBe("1 waiting on you");
     // The person's own chat remains independent even in the same directory.
     const mine = [...container.querySelectorAll<HTMLButtonElement>(".sws-chat-row > button")].find(
       (button) => button.textContent?.includes("Chat mine"),
@@ -747,9 +807,9 @@ describe("projects and chats sidebar", () => {
       shell("worker", { createdBy: "agent", hasPendingUserInput: true }),
     ];
     await render();
-    expect(container.querySelector('a[href="/projects/host:/a"] .sws-count')?.textContent).toBe(
-      "2 waiting on you",
-    );
+    expect(
+      container.querySelector('a[href="/projects/host:/a"] .sws-count .sr-only')?.textContent,
+    ).toBe("2 waiting on you");
     expect(chats()).toContain("Chat mine");
   });
   it.each([false, true])(
@@ -1042,7 +1102,9 @@ describe("cleaning up the projects list", () => {
       // The slot is the row's last part, so a count never moves the name or hint.
       expect(link.lastElementChild?.classList.contains("sws-side-row-end")).toBe(true);
     }
-    const counts = rows.map((row) => row.querySelector(".sws-side-row-end")?.textContent ?? "");
+    const counts = rows.map(
+      (row) => row.querySelector(".sws-side-row-end .sr-only")?.textContent ?? "",
+    );
     expect(counts).toEqual(["1 waiting on you", "", ""]);
   });
 

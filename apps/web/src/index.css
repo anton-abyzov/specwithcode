@@ -1011,6 +1011,22 @@ code {
   }
 }
 
+/* A phone-width window: when the name and the actions do not fit on one row,
+   the actions and Close move to a second row rather than cutting the name. */
+@media (max-width: 30rem) {
+  .viewer-overlay-head {
+    height: auto;
+    min-height: 3rem;
+    flex-wrap: wrap;
+    row-gap: 0.125rem;
+    padding-block: 0.25rem;
+  }
+
+  .viewer-overlay-crumbs {
+    flex: 1 1 auto;
+  }
+}
+
 .report-reader-badge {
   flex-shrink: 0;
   border-radius: 0.25rem;
@@ -1947,6 +1963,19 @@ video.artifact-viewer-media {
 }
 
 @media (prefers-reduced-motion: reduce) {
+  /* Surfaces still fade so their arrival is visible, but never scale or slide. */
+  :is(
+    [data-slot="dialog-popup"],
+    [data-slot="alert-dialog-popup"],
+    [data-slot="select-popup"],
+    [data-slot="menu-popup"],
+    [data-slot="popover-popup"]
+  ) {
+    scale: none;
+    translate: none;
+    transition-duration: 80ms;
+  }
+
   .preview-loading-progress,
   .preview-loading-progress[data-loading="true"] {
     transition: none;
@@ -2218,5 +2247,20 @@ video.artifact-viewer-media {
   }
   .html-report-preview-page {
     padding: 16px;
+  }
+}
+
+/* The editor's save word crossfades in when its state changes. */
+.save-state-label {
+  animation: save-state-in 150ms var(--ease-out-quint);
+}
+@keyframes save-state-in {
+  from {
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .save-state-label {
+    animation: none;
   }
 }

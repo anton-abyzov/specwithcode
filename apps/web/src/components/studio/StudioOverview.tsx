@@ -1,3 +1,5 @@
+import { aggregateProjectAttention } from "@specweave-studio/client-runtime/state/projectAttention";
+import { projectAttentionRoots, useAttentionMembers } from "../../studio/useProjectAttention";
 import { useSettingsProjectGroups } from "../settings/useSettingsProjectGroups";
 import { useNowMinute } from "../../hooks/useNowMinute";
 import {
@@ -122,7 +124,26 @@ export function StudioOverview() {
       );
   }, [projectGroups]);
   const projects = useProjects();
+  const attentionMembers = useAttentionMembers(projects);
+  const currentIds = useMemo(
+    () =>
+      new Set(
+        attentionMembers
+          .filter((member) => member.freshness === "live")
+          .map((member) => member.environmentId),
+      ),
+    [attentionMembers],
+  );
   const allShells = useThreadShells();
+  const attentionComplete = useMemo(
+    () =>
+      aggregateProjectAttention({
+        members: attentionMembers,
+        roots: projectAttentionRoots(allShells, attentionMembers),
+        threads: allShells,
+      }).complete,
+    [attentionMembers, allShells],
+  );
   const configs = useServerConfigs();
   const scratchRootFor = useCallback<ScratchRootLookup>(
     (environmentId) => configs.get(environmentId)?.scratchWorkspaceRoot ?? null,
@@ -175,8 +196,8 @@ export function StudioOverview() {
   // Stalls come from time passing, so the list refreshes each minute.
   const nowMinute = useNowMinute();
   const sessions = useMemo(
-    () => deriveSessions(shells, projects, connectedIds, Date.parse(`${nowMinute}:00Z`)),
-    [shells, projects, connectedIds, nowMinute],
+    () => deriveSessions(shells, projects, currentIds, Date.parse(`${nowMinute}:00Z`)),
+    [shells, projects, currentIds, nowMinute],
   );
   const attention = sessions.filter((s) => s.attention !== null);
   const working = sessions.filter((s) => s.working).length;
@@ -210,8 +231,22 @@ export function StudioOverview() {
   const attentionPages = Math.max(1, Math.ceil(attention.length / ATTENTION_PAGE));
   const currentAttentionPage = Math.min(attentionPage, attentionPages - 1);
   const projectCards = useMemo(
-    () => summarizeProjects(listedGroups, sessions),
-    [listedGroups, sessions],
+    () =>
+      summarizeProjects(listedGroups, sessions).map((card) => ({
+        ...card,
+        complete:
+          attentionComplete &&
+          card.group.memberProjectRefs.every((ref) =>
+            attentionMembers.some(
+              (member) =>
+                member.environmentId === ref.environmentId &&
+                member.projectId === ref.projectId &&
+                member.freshness === "live" &&
+                member.remoteWorkersComplete !== false,
+            ),
+          ),
+      })),
+    [listedGroups, sessions, attentionMembers, attentionComplete],
   );
   const query = projectQuery.trim().toLowerCase();
   const filteredProjects = query
@@ -276,11 +311,13 @@ export function StudioOverview() {
 
   const summary = !bootstrapped
     ? "Reading session state from connected hosts…"
-    : attention.length > 0
-      ? `${attention.length} ${attention.length === 1 ? "session needs" : "sessions need"} your decision. ${working} working across ${listedGroups.length} projects.`
-      : working > 0
-        ? `Nothing needs you. ${working} ${working === 1 ? "session is" : "sessions are"} working.`
-        : "Nothing needs you right now. Start a session or pick up where you left off.";
+    : !attentionComplete
+      ? `${attention.length} sessions with known actions. Partial observations; some hosts are not current.`
+      : attention.length > 0
+        ? `${attention.length} ${attention.length === 1 ? "session needs" : "sessions need"} your decision. ${working} working across ${listedGroups.length} projects.`
+        : working > 0
+          ? `Nothing needs you. ${working} ${working === 1 ? "session is" : "sessions are"} working.`
+          : "Nothing needs you right now. Start a session or pick up where you left off.";
 
   return (
     <SidebarInset className="studio-desk h-dvh min-h-0 overflow-hidden overscroll-y-none">
@@ -322,8 +359,14 @@ export function StudioOverview() {
           <div className="studio-stat-strip" aria-label="Observed workspace status">
             <Stat
               value={bootstrapped ? String(attention.length) : "—"}
-              label="Need attention"
-              hint={attention.length > 0 ? "Review now" : "All clear"}
+              label="Sessions needing action"
+              hint={
+                !attentionComplete
+                  ? "Partial observations"
+                  : attention.length > 0
+                    ? "Review now"
+                    : "All clear"
+              }
               tone={attention.length > 0 ? "amber" : "plain"}
               onClick={() => showSessions("attention")}
             />
@@ -688,6 +731,7 @@ type ProjectCardView = {
   readonly attention: number;
   readonly working: number;
   readonly lastActivity: string | null;
+  readonly complete?: boolean;
 };
 
 /** Projects that need a decision or are running lead, then the most recently active. */
@@ -962,7 +1006,7 @@ function SessionItem({
       />
       <div className="studio-session-main">
         <h3>{s.thread.title || "Untitled session"}</h3>
-        <p>
+        <p style={{ container: "sessmeta / inline-size" }}>
           <span className="studio-session-project">
             {s.project?.title ?? "Project unavailable"}
           </span>
@@ -1011,12 +1055,18 @@ function ProjectCard({
       </div>
       <dl className="studio-project-stats">
         <div className={card.attention > 0 ? "amber" : ""}>
-          <dt>Needs you</dt>
-          <dd>{card.attention}</dd>
+          <dt>Sessions needing action</dt>
+          <dd>
+            {card.complete === false
+              ? card.attention > 0
+                ? `${card.attention}+`
+                : "Unknown"
+              : card.attention}
+          </dd>
         </div>
         <div className={card.working > 0 ? "moss" : ""}>
-          <dt>Working</dt>
-          <dd>{card.working}</dd>
+          <dt>Working sessions</dt>
+          <dd>{card.complete === false ? `${card.working}+` : card.working}</dd>
         </div>
         <div>
           <dt>Sessions</dt>

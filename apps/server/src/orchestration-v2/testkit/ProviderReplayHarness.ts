@@ -52,6 +52,7 @@ import * as RuntimePolicy from "../RuntimePolicy.ts";
 import * as TurnItemPositionStore from "../TurnItemPositionStore.ts";
 import * as RuntimeRequestService from "../RuntimeRequestService.ts";
 import * as ThreadCommandExecutor from "../ThreadCommandExecutor.ts";
+import * as SteersInFlight from "../SteersInFlight.ts";
 import * as ThreadForkService from "../ThreadForkService.ts";
 import {
   runOrchestratorV2Scenario,
@@ -272,7 +273,8 @@ export function layerWithRegistry<Error>(
   | Orchestrator.OrchestratorV2
   | EffectWorker.OrchestrationEffectWorkerV2
   | EventSink.EventSinkV2
-  | ProviderSessionManager.ProviderSessionManagerV2,
+  | ProviderSessionManager.ProviderSessionManagerV2
+  | ProviderTurnStartService.ProviderTurnStartServiceV2,
   Error | MigrationError | PlatformError.PlatformError | SqlError
 > {
   const layerServerConfig = Layer.effect(
@@ -445,6 +447,8 @@ export function layerWithRegistry<Error>(
         layerProviderSwitchServiceProvided,
         layerRunExecutionServiceProvided,
         ThreadForkService.layer,
+        // Shared with the effect executor, as in runtimeLayer.ts.
+        SteersInFlight.layer,
       ),
     ),
   );
@@ -484,6 +488,7 @@ export function layerWithRegistry<Error>(
         layerThreadTitleRegenerationTest,
         layerServerSettings,
         layerThreadManagementProvided,
+        SteersInFlight.layer,
       ),
     ),
   );
@@ -495,6 +500,7 @@ export function layerWithRegistry<Error>(
     layerProviderSessionManagerProvided,
     layerEffectWorkerProvided,
     layerEventSinkProvided,
+    layerProviderTurnStartServiceProvided,
     layerContinuationWorkerProvided,
   ).pipe(
     Layer.provide(ProviderTurnStartServiceTestkit.layer.pipe(Layer.provide(layerDatabase))),

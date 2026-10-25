@@ -1,6 +1,6 @@
 import type { DesignComment, DesignDocument, DesignOperation } from "@specweave-studio/contracts";
-import { designId } from "@specweave-studio/shared/designOps";
-import { CheckIcon, RotateCcwIcon, Trash2Icon, XIcon } from "lucide-react";
+import { designCommentThreads, designId } from "@specweave-studio/shared/designOps";
+import { CheckIcon, ReplyIcon, RotateCcwIcon, Trash2Icon, XIcon } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import { Button } from "~/components/ui/button";
 import { Switch } from "~/components/ui/switch";
@@ -32,12 +32,17 @@ export function commentDraftAnchor(
   return { nodeId: draft.nodeId, x: draft.x, y: draft.y };
 }
 
-/** Comments of the whole design, newest last, with the open draft on top. */
+/**
+ * Comment threads of the whole design, newest last, with the open draft on top.
+ * Replies list under their thread's first comment; Reply shows only where the
+ * server threads replies (`canReply`).
+ */
 export function CommentsPanel({
   document,
   draft,
   activeId,
   canComment,
+  canReply,
   onCommit,
   onCancelDraft,
   onOpen,
@@ -47,6 +52,7 @@ export function CommentsPanel({
   draft: CommentDraft | null;
   activeId: string | null;
   canComment: boolean;
+  canReply: boolean;
   onCommit: (operations: DesignOperation[]) => void;
   onCancelDraft: () => void;
   onOpen: (comment: DesignComment) => void;
@@ -54,7 +60,10 @@ export function CommentsPanel({
 }) {
   const [showResolved, setShowResolved] = useState(false);
   const [text, setText] = useState("");
+  const [replyTo, setReplyTo] = useState<string | null>(null);
+  const [replyText, setReplyText] = useState("");
   const field = useRef<HTMLTextAreaElement>(null);
+  const replyField = useRef<HTMLTextAreaElement>(null);
   const nodes = useMemo(
     () =>
       new Map(document.pages.flatMap((page) => page.nodes.map((node) => [node.id, node] as const))),
@@ -64,12 +73,46 @@ export function CommentsPanel({
     () => new Map(document.pages.map((page) => [page.id, page.name])),
     [document.pages],
   );
-  const comments = document.comments.filter((comment) => showResolved || !comment.resolved);
-  const resolvedCount = document.comments.filter((comment) => comment.resolved).length;
+  const threads = useMemo(() => designCommentThreads(document.comments), [document.comments]);
+  const shown = threads.filter((thread) => showResolved || !thread.root.resolved);
+  const resolvedCount = threads.filter((thread) => thread.root.resolved).length;
+  const replyRoot =
+    replyTo === null ? undefined : threads.find((thread) => thread.root.id === replyTo)?.root;
+  // The form hides while its thread is deleted or resolved, here or elsewhere.
+  const replyOpen = canComment && canReply && replyRoot !== undefined && !replyRoot.resolved;
 
   useEffect(() => {
     if (draft !== null) field.current?.focus();
   }, [draft]);
+  useEffect(() => {
+    if (replyTo !== null) replyField.current?.focus();
+  }, [replyTo]);
+
+  const cancelReply = () => {
+    setReplyTo(null);
+    setReplyText("");
+  };
+  const submitReply = (root: DesignComment) => {
+    if (replyText.trim() === "") return;
+    onCommit([
+      {
+        op: "add_comment",
+        comment: {
+          id: designId("c"),
+          parentId: root.id,
+          pageId: root.pageId,
+          nodeId: root.nodeId,
+          x: root.x,
+          y: root.y,
+          text: replyText.trim(),
+          author: { kind: "user" },
+          createdAt: new Date().toISOString(),
+          resolved: false,
+        },
+      },
+    ]);
+    cancelReply();
+  };
 
   const submit = () => {
     if (draft === null || text.trim() === "") return;
@@ -151,15 +194,16 @@ export function CommentsPanel({
         </form>
       )}
       <ol className="min-h-0 flex-1 overflow-y-auto">
-        {comments.length === 0 && draft === null && (
+        {shown.length === 0 && draft === null && (
           <li className="px-3 py-6 text-xs text-muted-foreground">
-            {document.comments.length === 0
+            {threads.length === 0
               ? "No comments yet. Pick the comment tool (C) and click a layer or the canvas."
               : "Every comment is resolved."}
           </li>
         )}
-        {comments.map((comment) => {
-          const number = document.comments.indexOf(comment) + 1;
+        {shown.map((thread) => {
+          const { root: comment, replies } = thread;
+          const number = threads.indexOf(thread) + 1;
           const node = comment.nodeId === null ? undefined : nodes.get(comment.nodeId);
           return (
             <li
@@ -187,9 +231,7 @@ export function CommentsPanel({
                 </span>
                 <span className="min-w-0 flex-1">
                   <span className="flex items-baseline gap-1.5 text-xs text-muted-foreground">
-                    <span className="font-medium text-foreground">
-                      {comment.author.kind === "agent" ? "Agent" : "You"}
-                    </span>
+                    <span className="font-medium text-foreground">{authorLabel(comment)}</span>
                     <span>
                       {node === undefined
                         ? (pageNames.get(comment.pageId) ?? "Canvas")
@@ -209,20 +251,109 @@ export function CommentsPanel({
                   </span>
                 </span>
               </button>
+              {replies.length > 0 && (
+                <ol aria-label="Replies" className="mt-2 ml-7 flex flex-col gap-2">
+                  {replies.map((reply) => (
+                    <li
+                      key={reply.id}
+                      data-comment={reply.id}
+                      className="group/reply flex items-start gap-1"
+                    >
+                      <div className="min-w-0 flex-1">
+                        <span className="flex items-baseline gap-1.5 text-xs text-muted-foreground">
+                          <span className="font-medium text-foreground">{authorLabel(reply)}</span>
+                          <time dateTime={reply.createdAt} className="ml-auto shrink-0">
+                            {formatTime(reply.createdAt)}
+                          </time>
+                        </span>
+                        <span
+                          className={cn(
+                            "mt-0.5 block whitespace-pre-wrap",
+                            reply.resolved && "text-muted-foreground",
+                          )}
+                        >
+                          {reply.text}
+                        </span>
+                      </div>
+                      {canComment && (
+                        <span className="-mt-1 opacity-70 group-hover/reply:opacity-100 focus-within:opacity-100">
+                          <Button
+                            variant="ghost-destructive"
+                            size="icon-xs"
+                            aria-label="Delete reply"
+                            onClick={() =>
+                              onCommit([{ op: "delete_comment", commentId: reply.id }])
+                            }
+                          >
+                            <Trash2Icon />
+                          </Button>
+                        </span>
+                      )}
+                    </li>
+                  ))}
+                </ol>
+              )}
+              {replyOpen && replyTo === comment.id && (
+                <form
+                  className="mt-2 ml-7 flex flex-col gap-1.5"
+                  onSubmit={(event) => {
+                    event.preventDefault();
+                    submitReply(comment);
+                  }}
+                >
+                  <Textarea
+                    ref={replyField}
+                    size="sm"
+                    aria-label="Reply"
+                    placeholder="Reply…"
+                    value={replyText}
+                    onChange={(event) => setReplyText(event.currentTarget.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === "Enter" && (event.metaKey || event.ctrlKey)) {
+                        event.preventDefault();
+                        submitReply(comment);
+                      }
+                      if (event.key === "Escape") cancelReply();
+                    }}
+                  />
+                  <div className="flex justify-end gap-1.5">
+                    <Button type="button" variant="ghost" size="xs" onClick={cancelReply}>
+                      Cancel
+                    </Button>
+                    <Button type="submit" size="xs" disabled={replyText.trim() === ""}>
+                      Reply
+                    </Button>
+                  </div>
+                </form>
+              )}
               {canComment && (
                 <div className="mt-1 flex justify-end gap-0.5 opacity-70 group-hover:opacity-100 focus-within:opacity-100">
+                  {canReply && !comment.resolved && !(replyOpen && replyTo === comment.id) && (
+                    <Button
+                      variant="ghost"
+                      size="xs"
+                      onClick={() => {
+                        setReplyText("");
+                        setReplyTo(comment.id);
+                      }}
+                    >
+                      <ReplyIcon />
+                      Reply
+                    </Button>
+                  )}
                   <Button
                     variant="ghost"
                     size="xs"
-                    onClick={() =>
+                    onClick={() => {
+                      if (replyTo === comment.id) cancelReply();
                       onCommit([
                         {
                           op: "resolve_comment",
                           commentId: comment.id,
                           resolved: !comment.resolved,
                         },
-                      ])
-                    }
+                      ]);
+                    }}
                   >
                     {comment.resolved ? <RotateCcwIcon /> : <CheckIcon />}
                     {comment.resolved ? "Reopen" : "Resolve"}
@@ -230,7 +361,7 @@ export function CommentsPanel({
                   <Button
                     variant="ghost-destructive"
                     size="icon-xs"
-                    aria-label="Delete comment"
+                    aria-label={replies.length > 0 ? "Delete thread" : "Delete comment"}
                     onClick={() => onCommit([{ op: "delete_comment", commentId: comment.id }])}
                   >
                     <Trash2Icon />
@@ -243,6 +374,10 @@ export function CommentsPanel({
       </ol>
     </div>
   );
+}
+
+function authorLabel(comment: DesignComment) {
+  return comment.author.kind === "agent" ? "Agent" : "You";
 }
 
 const timeFormat = new Intl.DateTimeFormat(undefined, {

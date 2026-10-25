@@ -166,6 +166,22 @@ export class HtmlRender extends Context.Service<
       | PreviewBrowserHost.PreviewBrowserHostError
       | HeadlessChrome.HtmlRenderBrowserError
     >;
+    /**
+     * Where the text of each `[data-node]` element of a self-contained page
+     * breaks into lines, for exports that set text line by line (SVG).
+     */
+    readonly measureTextLines: (input: {
+      readonly html: string;
+      readonly width: number;
+      readonly height: number;
+    }) => Effect.Effect<
+      ReadonlyArray<HeadlessChrome.TextLines>,
+      | PreviewBrowser.PreviewBrowserInstallError
+      | PreviewBrowser.PreviewBrowserInstallingError
+      | PreviewBrowser.PreviewBrowserUnsupportedError
+      | PreviewBrowserHost.PreviewBrowserHostError
+      | HeadlessChrome.HtmlRenderBrowserError
+    >;
   }
 >()("specweave-studio/htmlRender/HtmlRender") {}
 
@@ -418,6 +434,7 @@ const make = Effect.gen(function* () {
                   executable,
                   setupCommand,
                   output: error.output,
+                  sandboxOff: noSandbox,
                 }).pipe(
                   Effect.provideContext(services),
                   Effect.flatMap((hostError) => Effect.fail(hostError ?? error)),
@@ -574,7 +591,20 @@ const make = Effect.gen(function* () {
     );
   });
 
-  return HtmlRender.of({ prepare, publish, preview, capture, captureImages });
+  const measureTextLines = Effect.fn("HtmlRender.measureTextLines")(function* (input: {
+    readonly html: string;
+    readonly width: number;
+    readonly height: number;
+  }) {
+    const executable = yield* previewBrowser.executable;
+    return yield* launching(executable, (noSandbox) =>
+      HeadlessChrome.measureTextLines({ executable, noSandbox, ...input }).pipe(
+        Effect.provideContext(services),
+      ),
+    );
+  });
+
+  return HtmlRender.of({ prepare, publish, preview, capture, captureImages, measureTextLines });
 });
 
 export const layer = Layer.effect(HtmlRender, make);

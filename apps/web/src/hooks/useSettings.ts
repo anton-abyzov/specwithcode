@@ -428,6 +428,22 @@ export function useEnvironmentSettings<T = UnifiedSettings>(
   return useMergedSettings(serverSettings ?? DEFAULT_SERVER_SETTINGS, selector);
 }
 
+/**
+ * How the environment saves project override edits: "per-key" applies only the
+ * named keys; "entry" (older servers) replaces the whole entry from this
+ * client's snapshot. `null` while its config has not loaded: the snapshot is
+ * then the defaults, and any write would erase the project's saved overrides.
+ */
+export function useProjectOverrideWriteMode(
+  environmentId: EnvironmentId,
+): "per-key" | "entry" | null {
+  const config = useAtomValue(serverEnvironment.configValueAtom(environmentId));
+  if (!config) return null;
+  return config.environment.capabilities.projectSettingsOverrideChanges === true
+    ? "per-key"
+    : "entry";
+}
+
 /** Atomically mutate one provider instance against the server's latest settings snapshot. */
 export function usePersistEnvironmentProviderInstanceMutation(environmentId: EnvironmentId) {
   const mutateProviderInstance = useAtomCommand(serverEnvironment.mutateProviderInstance, {

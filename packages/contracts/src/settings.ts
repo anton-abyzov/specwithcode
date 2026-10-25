@@ -1507,6 +1507,20 @@ export const ProjectSettingsOverrides = Schema.Struct({
 export type ProjectSettingsOverrides = typeof ProjectSettingsOverrides.Type;
 
 /**
+ * One project's override edit, applied key by key to the entry the server
+ * holds when it saves: `clear` removes those overrides so the keys inherit
+ * again, then `set` writes each listed value (a nullable key may be set to
+ * `null`). Keys the edit does not name keep their saved value, so two edits
+ * planned from the same snapshot cannot undo each other. `clear` ignores keys
+ * the server does not know, so a newer client can still reset older ones.
+ */
+export const ProjectSettingsOverrideChange = Schema.Struct({
+  set: Schema.optionalKey(ProjectSettingsOverrides),
+  clear: Schema.optionalKey(Schema.Array(TrimmedNonEmptyString)),
+});
+export type ProjectSettingsOverrideChange = typeof ProjectSettingsOverrideChange.Type;
+
+/**
  * Whether `null` is a stored override value for this key rather than "unset".
  * Clients writing a project override treat null for every other key as a
  * request to remove the override, so a picker's "Inherit" item and the row's
@@ -2144,13 +2158,21 @@ export const ServerSettingsPatch = Schema.Struct({
   defaultRuntimeMode: Schema.optionalKey(RuntimeMode),
   /**
    * Per-project entry replacement: each entry replaces that project's whole
-   * override set and `null` removes it. Clearing one override means resending
-   * the entry without that key. Per-key null cannot express "clear" for the
-   * keys whose value type is itself nullable, and clients always hold the
-   * current entry from the last settings snapshot.
+   * override set and `null` removes it. An entry built from a settings
+   * snapshot undoes any other edit saved since, so edits to some keys use
+   * `projectSettingsOverrideChanges`; this stays for seeding a whole entry and
+   * for servers without that capability.
    */
   projectSettingsOverrides: Schema.optionalKey(
     Schema.Record(ProjectId, Schema.NullOr(ProjectSettingsOverrides)),
+  ),
+  /**
+   * Per-key project override edits, applied after `projectSettingsOverrides`.
+   * Send only to servers reporting the `projectSettingsOverrideChanges`
+   * capability; older servers drop the key without saving anything.
+   */
+  projectSettingsOverrideChanges: Schema.optionalKey(
+    Schema.Record(ProjectId, ProjectSettingsOverrideChange),
   ),
   enableAgentDeviceAccess: Schema.optionalKey(Schema.Boolean),
   enableAgentComputerAccess: Schema.optionalKey(Schema.Boolean),

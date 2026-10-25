@@ -1169,7 +1169,8 @@ it.layer(layerTest)("OrchestrationV2LayerLive", (it) => {
         });
       }
       assert.equal(answered.messages.length, 1);
-      assert.equal(answered.messages[0]?.text, "Which color?\nBlue");
+      // Only the person's words; the agent reads its question beside them at turn start.
+      assert.equal(answered.messages[0]?.text, "Blue");
       assert.equal(answered.messages[0]?.role, "user");
       assert.equal(answered.runs.length, 1);
 
@@ -5090,6 +5091,20 @@ it.layer(layerTest)("usage-limit recovery", (it) => {
             .pipe(Effect.exit);
           assert.equal(exit._tag, "Failure");
           assert.lengthOf((yield* orchestrator.getThreadProjection(threadId)).runs, 1);
+          // A person's Continue from the composer does continue it (AC-08).
+          yield* orchestrator.dispatch({
+            type: "message.dispatch",
+            commandId: CommandId.make(`route-escalate:person:${variant}`),
+            threadId,
+            messageId: MessageId.make(`route-escalate:person:${variant}`),
+            manualContinuationOfRunId: source.id,
+            text: "Continue where you left off.",
+            attachments: [],
+            dispatchMode: { type: "start_immediately" },
+            createdBy: "user",
+            creationSource: "web",
+          });
+          assert.lengthOf((yield* orchestrator.getThreadProjection(threadId)).runs, 2);
           return;
         }
         assert.equal(shell.lastErrorClass, "provider_error");

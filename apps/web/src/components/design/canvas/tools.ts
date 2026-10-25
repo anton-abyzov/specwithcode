@@ -1,4 +1,9 @@
-import type { DesignNode, DesignOperation, DesignPage } from "@specweave-studio/contracts";
+import type {
+  DesignNode,
+  DesignOperation,
+  DesignPage,
+  DesignSystemComponent,
+} from "@specweave-studio/contracts";
 import { designId } from "@specweave-studio/shared/designOps";
 import {
   dragRect,
@@ -204,6 +209,35 @@ export function createImageNode(
     fit: "cover",
     x: Math.round(topLeft.x - origin.x),
     y: Math.round(topLeft.y - origin.y),
+    width,
+    height,
+  };
+  return { operation: { op: "add_node", pageId: context.page.id, node }, node };
+}
+
+/** A component preview has no size of its own; this is where an inserted one starts. */
+export const COMPONENT_SIZE = { width: 320, height: 120 } as const;
+
+/**
+ * A layer showing one of the design system's components, centred on `at` inside the
+ * innermost frame there. It keeps the component's name, so it still reads as that
+ * component under a system that lacks it.
+ */
+export function createComponentNode(
+  context: CreateContext,
+  component: Pick<DesignSystemComponent, "id" | "name">,
+  at: Point,
+): { operation: DesignOperation; node: DesignNode } {
+  const { width, height } = COMPONENT_SIZE;
+  const { parentId, origin } = parentFor(context, at);
+  const node: DesignNode = {
+    id: designId("n", context.random),
+    parentId,
+    type: "component",
+    componentId: component.id,
+    name: component.name.slice(0, 180),
+    x: Math.round(at.x - width / 2 - origin.x),
+    y: Math.round(at.y - height / 2 - origin.y),
     width,
     height,
   };

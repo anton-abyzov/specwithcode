@@ -185,5 +185,23 @@ it.effect("a sweep over idle threads takes no lock and re-reads no thread", () =
       settingsSnapshots: 0,
       projectReads: 2,
     });
+
+    // Within the interval the sweep waits, unless a failed run woke it: then
+    // it runs on the next tick and reads past the cache to see that failure.
+    yield* TestClock.adjust("5 seconds");
+    yield* sweep();
+    expect(counts.snapshots).toBe(2);
+    yield* sweep.wake;
+    yield* sweep();
+    expect(counts.snapshots).toBe(3);
+    expect(snapshotOptions.at(-1)).toEqual({
+      location: "active",
+      unsettledOnly: true,
+      maxAgeMs: 0,
+    });
+    // One wake, one early sweep.
+    yield* TestClock.adjust("5 seconds");
+    yield* sweep();
+    expect(counts.snapshots).toBe(3);
   }).pipe(Effect.provide(fallbackPolicyTestLayer(preferences))),
 );

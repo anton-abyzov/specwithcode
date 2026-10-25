@@ -39,10 +39,12 @@ const setup = () => {
     Layer.provideMerge(
       Layer.mergeAll(
         Layer.mock(EnvironmentAuth.EnvironmentAuth)({
+          setPrincipalRevoked: () => Effect.void,
           listSessions: () =>
             Effect.succeed(
               [M4, M1].map((coordinator) => ({
                 sessionId: AuthSessionId.make(`session-${coordinator}`),
+                principal: { kind: "coordinator", environmentId: coordinator },
                 subject: EnvironmentAuth.MCP_CLIENT_SUBJECT,
                 client: { label: workerClientName(coordinator), deviceType: "bot" },
               })) as never,

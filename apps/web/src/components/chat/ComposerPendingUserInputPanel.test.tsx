@@ -158,6 +158,30 @@ describe("ComposerPendingUserInputPanel question card", () => {
   });
 });
 
+describe("ComposerPendingUserInputPanel asker", () => {
+  it("names the agent that asked before the question", () => {
+    const markup = renderToStaticMarkup(
+      <ComposerPendingUserInputPanel
+        pendingUserInputs={[prompt]}
+        respondingRequestIds={[]}
+        answers={{}}
+        questionIndex={0}
+        onToggleOption={() => {}}
+        onAdvance={() => {}}
+        onDismiss={() => {}}
+        onReplyInChat={() => {}}
+        askedBy="Fix the header"
+      />,
+    );
+    expect(markup).toMatch(/data-question-asker[^>]*>Fix the header asks</);
+    expect(markup.indexOf("Fix the header asks")).toBeLessThan(markup.indexOf("Approach"));
+  });
+
+  it("names no one when the asker is not known", () => {
+    expect(renderPanel()).not.toContain("data-question-asker");
+  });
+});
+
 describe("ComposerPendingUserInputPanel multi-select step", () => {
   const multi: PendingUserInput = {
     ...prompt,

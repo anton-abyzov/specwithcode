@@ -25,10 +25,10 @@ export function remoteWorkerCardStatus(worker: StudioFleetRemoteWorker): ThreadC
       return { tone: "working", label: `Starting on ${worker.machineLabel}` };
     case "following":
       if (!worker.reachable)
-        return { tone: "waiting", label: `${worker.machineLabel} unreachable, retrying` };
+        return { tone: "idle", label: `${worker.machineLabel} unreachable, retrying` };
       // Its run asked the person something on that machine; it is not working meanwhile.
       return worker.lastStatus === REMOTE_WORKER_WAITING_ON_YOU
-        ? { tone: "waiting", label: `Waiting on you on ${worker.machineLabel}` }
+        ? { tone: "waiting", label: `Last observed: waiting on you on ${worker.machineLabel}` }
         : { tone: "working", label: "Working" };
     case "wake_pending":
       return { ...(finished ?? { tone: "done", label: "Finished" }) };
@@ -54,6 +54,15 @@ export function remoteWorkerCardStatus(worker: StudioFleetRemoteWorker): ThreadC
  */
 export function visibleRemoteWorkers(
   workers: ReadonlyArray<StudioFleetRemoteWorker>,
+  representedThreads: readonly { environmentId: string; id: string }[] = [],
 ): ReadonlyArray<StudioFleetRemoteWorker> {
-  return workers.filter((worker) => worker.state !== "disposed");
+  return workers.filter(
+    (worker) =>
+      worker.state !== "disposed" &&
+      (worker.state === "paused_auth" ||
+        !representedThreads.some(
+          (thread) =>
+            thread.environmentId === worker.environmentId && thread.id === worker.remoteThreadId,
+        )),
+  );
 }

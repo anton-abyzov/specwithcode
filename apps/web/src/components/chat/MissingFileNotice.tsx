@@ -87,7 +87,8 @@ export function MissingFileNotice(props: {
   if (check.kind === "checking") {
     return <p className="p-4 text-muted-foreground text-sm">Checking where the file is…</p>;
   }
-  if (check.kind === "present" || (check.kind === "folder-missing" && props.error === null)) {
+  // A folder that cannot be listed still leaves the file not found, said with its path.
+  if (check.kind === "present") {
     return (
       <div className="flex flex-col items-start gap-2 p-4 text-sm" role="alert">
         <p className="text-destructive-foreground">{props.error ?? `${name} could not be read.`}</p>

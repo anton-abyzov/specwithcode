@@ -119,6 +119,7 @@ import { ProviderEventLoggers } from "../../provider/ProviderEventLoggers.ts";
 import { codexAppServerArgs, resolveCodexLaunchArgs } from "../../provider/codexLaunchArgs.ts";
 import {
   withHeadlessBrowserEnvironment,
+  codexShellEnvironmentArgs,
   withSpecweaveAgentEnvironment,
 } from "../../provider/RuntimeInstructions.ts";
 import {
@@ -1104,6 +1105,30 @@ function codexErrorInfoCode(value: unknown): string | null {
   return Object.keys(value)[0] ?? null;
 }
 
+/**
+ * Codex keeps the account it started with. After someone signs in to another
+ * account (or out) outside this app-server, `~/.codex/auth.json` no longer
+ * matches it, Codex refuses to refresh its token and fails every turn with
+ * this message until the process restarts and reads the new sign-in.
+ */
+const CODEX_AUTH_CHANGED_PATTERN = /logged out or signed in to another account/iu;
+export const CODEX_AUTH_CHANGED_FAILURE_CODE = "codex_auth_changed";
+export const CODEX_AUTH_CHANGED_RESTART_REASON =
+  "Codex was signed in to another account outside SpecWithCode, and its running process still holds the old sign-in.";
+export const CODEX_AUTH_CHANGED_FAILURE_MESSAGE = `${CODEX_AUTH_CHANGED_RESTART_REASON} SpecWithCode restarts Codex for the next message, so send this one again. If it fails again, sign in to Codex again.`;
+
+export function isCodexAuthChangedMessage(message: string | null | undefined): boolean {
+  return message != null && CODEX_AUTH_CHANGED_PATTERN.test(message);
+}
+
+const codexAuthChangedFailure = () =>
+  makeProviderFailure({
+    message: CODEX_AUTH_CHANGED_FAILURE_MESSAGE,
+    code: CODEX_AUTH_CHANGED_FAILURE_CODE,
+    class: "provider_error",
+    retryable: true,
+  });
+
 interface ActiveCodexTurnContext {
   latestProviderFailure?: {
     readonly nativeMessage: string;
@@ -1296,6 +1321,19 @@ export class CodexAppServerClientFactory extends Context.Service<
  * todo list. Codex layers these above the user's and project's `config.toml`.
  */
 export const CODEX_THREAD_CONFIG = { "tools.update_plan.enabled": true } as const;
+
+const isCodexAppServerRequestError = Schema.is(CodexErrors.CodexAppServerRequestError);
+
+/** Codex no longer holds the thread in memory: `-32600 "thread not found: <id>"`. */
+export function isCodexThreadNotLoaded(
+  error: unknown,
+): error is CodexErrors.CodexAppServerRequestError {
+  return (
+    isCodexAppServerRequestError(error) &&
+    error.code === -32600 &&
+    error.errorMessage.startsWith("thread not found:")
+  );
+}
 
 export function codexThreadRuntimeParams(input: {
   readonly threadId: ThreadId | null;
@@ -1506,20 +1544,27 @@ export const layerAppServerClientFactory: Layer.Layer<
           // SpecWeave hooks read the thread id: inside Studio they save a
           // checkpoint instead of asking the model to hand off. One app-server
           // serves every model the thread switches to, so the model stays "".
+          const identity = { threadId: input.threadId, tool: "codex" };
           const environment = withHeadlessBrowserEnvironment(
             withSpecweaveAgentEnvironment(
               {
                 ...input.environment,
                 ...(input.settings.homePath ? { CODEX_HOME: input.settings.homePath } : {}),
               },
-              { threadId: input.threadId, tool: "codex" },
+              identity,
             ),
           );
           const command = yield* makeCodexAppServerSpawnCommand({
             command: input.settings.binaryPath || "codex",
-            args: codexAppServerArgs(
-              resolveCodexLaunchArgs(input.settings.launchArgs, input.environment),
-            ),
+            // Shell commands get the same identity even when the user's
+            // shell_environment_policy inherits only core variables; last, so
+            // these keys win over launch arguments.
+            args: [
+              ...codexAppServerArgs(
+                resolveCodexLaunchArgs(input.settings.launchArgs, input.environment),
+              ),
+              ...codexShellEnvironmentArgs(identity),
+            ],
             env: environment,
           });
           // Lowered priority; its MCP servers and tool processes are reaped after it closes.
@@ -1774,6 +1819,9 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
             ),
           );
         };
+        // Set when Codex reports that its account changed outside this
+        // process; the session manager then replaces the process.
+        let authChanged = false;
         const initialized = yield* Ref.make(false);
         // Threads share this app-server, and Codex rejects a second
         // `initialize`. Callers wait for an in-flight handshake instead of
@@ -4305,11 +4353,21 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
 
         yield* client.handleServerNotification("error", (payload) =>
           Effect.gen(function* () {
+            const accountChanged =
+              !payload.willRetry && isCodexAuthChangedMessage(payload.error.message);
+            if (accountChanged) authChanged = true;
             const context = yield* awaitActiveTurn(payload.turnId);
             if (context === undefined) {
               return;
             }
             const notificationCode = codexErrorInfoCode(payload.error.codexErrorInfo);
+            if (accountChanged) {
+              context.latestProviderFailure = {
+                nativeMessage: payload.error.message,
+                failure: codexAuthChangedFailure(),
+              };
+              return;
+            }
             if (!payload.willRetry) {
               context.latestProviderFailure = {
                 nativeMessage: payload.error.message,
@@ -5363,12 +5421,17 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
             const terminalStatus = providerTurnStatusToTerminal(input.status);
             if (terminalStatus === "failed") {
               const previousFailure = input.context.latestProviderFailure ?? input.providerRetry;
-              const failure =
-                previousFailure !== undefined &&
-                (input.failureMessage === undefined ||
-                  input.failureMessage === previousFailure.nativeMessage) &&
-                (input.failureCode === undefined ||
-                  input.failureCode === previousFailure.failure.code)
+              const accountChanged =
+                isCodexAuthChangedMessage(input.failureMessage) ||
+                previousFailure?.failure.code === CODEX_AUTH_CHANGED_FAILURE_CODE;
+              if (accountChanged) authChanged = true;
+              const failure = accountChanged
+                ? codexAuthChangedFailure()
+                : previousFailure !== undefined &&
+                    (input.failureMessage === undefined ||
+                      input.failureMessage === previousFailure.nativeMessage) &&
+                    (input.failureCode === undefined ||
+                      input.failureCode === previousFailure.failure.code)
                   ? previousFailure.failure
                   : makeProviderFailure({
                       message: input.failureMessage,
@@ -6030,6 +6093,48 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
           );
         });
 
+        /**
+         * Runs `request` on a loaded native thread. Codex unloads a thread a
+         * minute after it is unsubscribed and says so with `thread/closed`,
+         * which this session does not track; the next request then fails
+         * "thread not found" and failed every later turn the same way. The
+         * thread is resumed, which Codex answers from its saved history, and
+         * the request is sent once more, with the same parameters as
+         * `resumeThread` when the turn is known.
+         */
+        const onLoadedNativeThread = <A, E, R>(
+          nativeThreadId: string,
+          appThreadId: ThreadId | null,
+          request: Effect.Effect<A, E, R>,
+          turn?: Pick<ProviderAdapterV2TurnInput, "threadId" | "modelSelection" | "runtimePolicy">,
+        ) =>
+          request.pipe(
+            Effect.catchIf(
+              (error: E) => isCodexThreadNotLoaded(error),
+              () =>
+                Effect.logWarning("orchestration-v2.codex.thread-reloaded", {
+                  nativeThreadId,
+                }).pipe(
+                  Effect.andThen(
+                    client.raw.request("thread/resume", {
+                      threadId: nativeThreadId,
+                      excludeTurns: true,
+                      ...codexThreadRuntimeParams({
+                        threadId: turn?.threadId ?? appThreadId,
+                        ...(turn?.modelSelection === undefined
+                          ? {}
+                          : { modelSelection: turn.modelSelection }),
+                        ...(turn?.runtimePolicy === undefined
+                          ? {}
+                          : { runtimePolicy: turn.runtimePolicy }),
+                      }),
+                    }),
+                  ),
+                  Effect.andThen(request),
+                ),
+            ),
+          );
+
         /** Starts a native turn with this run's full turn configuration. */
         const startNativeTurn = (
           turnInput: ProviderAdapterV2TurnInput,
@@ -6044,7 +6149,12 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
                 /^\s*\/(?:goal|compact)(?:\s|$)/i.test(turnInput.message.text)
               )
                 return yield* Effect.fail("Credits require one direct native non-goal request.");
-              const currentGoal = yield* client.request("thread/goal/get", { threadId });
+              const currentGoal = yield* onLoadedNativeThread(
+                threadId,
+                turnInput.providerThread.appThreadId ?? null,
+                client.request("thread/goal/get", { threadId }),
+                turnInput,
+              );
               if (
                 currentGoal.goal?.status === "active" ||
                 goalsByNativeThread.get(threadId)?.status === "active" ||
@@ -6107,7 +6217,12 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               else next.delete(threadId);
               return next;
             });
-            const started = yield* client.request("turn/start", turnStartParams);
+            const started = yield* onLoadedNativeThread(
+              threadId,
+              turnInput.providerThread.appThreadId ?? null,
+              client.request("turn/start", turnStartParams),
+              turnInput,
+            );
             if ((codexInput.length > 0 || commandContext) && turnInput.projectContext)
               yield* turnInput.projectContext.accepted;
             yield* registerRootTurn({
@@ -6140,13 +6255,16 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
             const threadId = yield* getNativeThreadId(turnInput.providerThread);
             // Goal notifications during the command belong to this run's snapshot.
             rootProviderThreads.set(threadId, turnInput.providerThread);
-            const readGoal = client
-              .request("thread/goal/get", { threadId })
-              .pipe(
-                Effect.map((response) =>
-                  response.goal == null ? null : providerGoalFromCodex(response.goal),
-                ),
-              );
+            const readGoal = onLoadedNativeThread(
+              threadId,
+              turnInput.providerThread.appThreadId ?? null,
+              client.request("thread/goal/get", { threadId }),
+              turnInput,
+            ).pipe(
+              Effect.map((response) =>
+                response.goal == null ? null : providerGoalFromCodex(response.goal),
+              ),
+            );
             const current = yield* readGoal;
             goalsByNativeThread.set(threadId, current);
             if (command.type === "show") {
@@ -6251,6 +6369,9 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
           providerSession: session,
           events: Stream.fromEffectRepeat(Queue.take(events)),
           canReuseContextUsage: canReuseCodexContextUsage,
+          restartRequired: Effect.sync(() =>
+            authChanged ? CODEX_AUTH_CHANGED_RESTART_REASON : null,
+          ),
           // Known gap: a subagent that Codex resumes later reads as completed
           // (not pending) between turns, so idle release can win the race
           // against a long-delayed resume. Codex emits no resume-expected
@@ -6402,7 +6523,12 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               // must not adopt the native turn that a late turn/started reports.
               if (turnInput.projectContext)
                 projectContextByNativeThread.set(threadId, turnInput.projectContext);
-              yield* client.request("thread/compact/start", { threadId }).pipe(
+              yield* onLoadedNativeThread(
+                threadId,
+                turnInput.providerThread.appThreadId ?? null,
+                client.request("thread/compact/start", { threadId }),
+                turnInput,
+              ).pipe(
                 Effect.onError(() =>
                   Ref.update(pendingRootTurns, (current) => {
                     const next = new Map(current);
@@ -6426,21 +6552,24 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
           injectHistory: (input) =>
             Effect.gen(function* () {
               const threadId = yield* getNativeThreadId(input.providerThread);
-              return yield* client
-                .request("thread/inject_items", {
+              return yield* onLoadedNativeThread(
+                threadId,
+                input.providerThread.appThreadId ?? null,
+                client.request("thread/inject_items", {
                   threadId,
                   items: historyResponseItems(input.messages, input.context),
-                })
-                .pipe(
-                  Effect.as(true),
-                  // Older app servers reject unknown methods before mutating history.
-                  // Transport errors and invalid payloads are ambiguous and must not
-                  // fall through to a second delivery in the current user message.
-                  Effect.catchTags({
-                    CodexAppServerRequestError: (error) =>
-                      error.code === -32601 ? Effect.succeed(false) : Effect.fail(error),
-                  }),
-                );
+                }),
+                input.turn,
+              ).pipe(
+                Effect.as(true),
+                // Older app servers reject unknown methods before mutating history.
+                // Transport errors and invalid payloads are ambiguous and must not
+                // fall through to a second delivery in the current user message.
+                Effect.catchTags({
+                  CodexAppServerRequestError: (error) =>
+                    error.code === -32601 ? Effect.succeed(false) : Effect.fail(error),
+                }),
+              );
             }).pipe(
               Effect.mapError(
                 (cause) =>

@@ -77,6 +77,12 @@ export function coordinatorModelDisplay(input: {
   readonly rule: ProviderFallbackRule | null | undefined;
   readonly nowMs: number;
   readonly limitedInstanceIds?: ReadonlySet<string>;
+  /**
+   * A model picked by hand in this window, and the newest run ordinal when it was
+   * saved. A save never moves the thread, so until a newer run starts the pick is
+   * what the next turn names, not a fallback.
+   */
+  readonly handPick?: { readonly selection: ModelSelection; readonly afterOrdinal: number } | null;
 }): CoordinatorModelDisplay {
   const latest = newestRun(input.runs);
   // Match the shell identity: admitted work precedes queued next-message choices.
@@ -113,6 +119,17 @@ export function coordinatorModelDisplay(input: {
             : { limitedInstanceIds: input.limitedInstanceIds }),
         }
       : null;
+  const pick = input.handPick;
+  // A fresh pick names the next turn, unless this client already reads that the
+  // pick has no room: then the host moves that turn too, so the fallback stays.
+  if (
+    activeSelection === null &&
+    pick &&
+    sameModel(pick.selection, saved) &&
+    (latest?.ordinal ?? 0) <= pick.afterOrdinal &&
+    !(check !== null && now.instanceId !== saved.instanceId && coordinatorOnLimitFallback(check))
+  )
+    return none;
   // What runs is a fact; whether the saved model has room again is only this client's read.
   return {
     shown: now,

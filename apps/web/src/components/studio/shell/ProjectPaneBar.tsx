@@ -1,6 +1,6 @@
 /**
- * The project panel's top bar, as in the Claude desktop app: Threads, Library,
- * PRs and Scheduled tabs, a + menu, then the tab's own tools, expand and close.
+ * The project panel's top bar, as in the Claude desktop app: Threads, Designs,
+ * Library, PRs and Routines tabs, a + menu, then the tab's own tools, expand and close.
  * The panel runs the full window height, so this bar shares the title row with
  * the coordinator's top bar and drags the window like it.
  */
@@ -13,6 +13,7 @@ import {
   MessageSquarePlusIcon,
   MessagesSquareIcon,
   Minimize2Icon,
+  PaletteIcon,
   PlusIcon,
   XIcon,
   type LucideIcon,
@@ -34,6 +35,7 @@ import { Tip } from "./Tip";
 
 const TAB_ICONS: Record<ProjectPaneTab, LucideIcon> = {
   threads: MessagesSquareIcon,
+  designs: PaletteIcon,
   library: FolderOpenIcon,
   prs: PullRequestGlyph.pullRequest,
   scheduled: CalendarClockIcon,

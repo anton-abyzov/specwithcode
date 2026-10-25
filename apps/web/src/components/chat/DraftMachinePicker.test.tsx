@@ -384,6 +384,43 @@ it("hides archived destination projects and explains the missing project checkou
   expect(useComposerDraftStore.getState().getDraftSession(draftId)?.environmentId).toBe(m4);
 });
 
+it("hides automated destination projects and the machine's No project folder", async () => {
+  runtime.projects.push(
+    {
+      id: ProjectId.make("check-m1"),
+      environmentId: m1,
+      title: "Acceptance check",
+      workspaceRoot: "/m1/check",
+      workspaceSettings: { origin: "automated" },
+    },
+    {
+      id: ProjectId.make("run-m1"),
+      environmentId: m1,
+      title: "Verification run",
+      workspaceRoot: "/m1/verification/run-1",
+    },
+    {
+      id: ProjectId.make("scratch-m1"),
+      environmentId: m1,
+      title: "Scratch folder",
+      workspaceRoot: "/scratch/m1",
+    },
+    {
+      id: ProjectId.make("active-m1"),
+      environmentId: m1,
+      title: "Active project",
+      workspaceRoot: "/m1/active",
+    },
+  );
+  await render();
+  await openOther();
+  await click("M1Connected");
+  expect(document.body.textContent).toContain("Active project");
+  expect(document.body.textContent).not.toContain("Acceptance check");
+  expect(document.body.textContent).not.toContain("Verification run");
+  expect(document.body.textContent).not.toContain("Scratch folder");
+});
+
 it("skips an archived logical match and selects its active sibling", async () => {
   runtime.projects.push(
     {

@@ -5,14 +5,19 @@ import {
   type ProjectFileBackedSettingKey,
   type ProjectId,
   type ProjectScopedServerSettingKey,
+  type ProjectSettingsOverrideChange,
   type ProjectSettingsOverrides,
   type ResolvedServerSettings,
   type ServerSettings,
+  type ServerSettingsPatch,
   type StudioProjectFile,
   type ThreadEnvMode,
   type WorktreeCleanupRules,
 } from "@specweave-studio/contracts";
-import { isModelSelectionProviderEnabled } from "./serverSettings.ts";
+import {
+  applyProjectSettingsOverrideChange,
+  isModelSelectionProviderEnabled,
+} from "./serverSettings.ts";
 
 /**
  * Where a project-scoped value came from. The order is the priority order:
@@ -197,6 +202,31 @@ function resolveProjectOverrides(
   return { settings: effective as ServerSettings, sources, overrides };
 }
 
+/**
+ * The patch that saves per-key override edits. A server with the
+ * `projectSettingsOverrideChanges` capability applies each key to the entry it
+ * holds, so edits from the same snapshot keep each other. An older server only
+ * replaces whole entries: the edit is applied to the snapshot entry instead.
+ */
+export function projectSettingsOverrideChangesPatch(
+  settings: Pick<ServerSettings, "projectSettingsOverrides">,
+  changes: Readonly<Record<ProjectId, ProjectSettingsOverrideChange>>,
+  perKey: boolean,
+): ServerSettingsPatch {
+  if (perKey) return { projectSettingsOverrideChanges: changes };
+  return {
+    projectSettingsOverrides: Object.fromEntries(
+      Object.entries(changes).map(([projectId, change]) => [
+        projectId,
+        applyProjectSettingsOverrideChange(
+          settings.projectSettingsOverrides[projectId as ProjectId],
+          change,
+        ),
+      ]),
+    ),
+  };
+}
+
 /** Replace the project's entry, dropping it entirely when nothing is overridden. */
 export function withProjectSettingsOverrides(
   settings: Pick<ServerSettings, "projectSettingsOverrides">,
@@ -205,19 +235,6 @@ export function withProjectSettingsOverrides(
 ): ServerSettings["projectSettingsOverrides"] {
   const { [projectId]: _removed, ...rest } = settings.projectSettingsOverrides;
   return next === null || Object.keys(next).length === 0 ? rest : { ...rest, [projectId]: next };
-}
-
-/** The project's entry with `keys` removed; `null` when that leaves it empty. */
-export function clearProjectSettingsOverrides(
-  settings: Pick<ServerSettings, "projectSettingsOverrides">,
-  projectId: ProjectId,
-  keys: readonly ProjectScopedServerSettingKey[],
-): ProjectSettingsOverrides | null {
-  const current = settings.projectSettingsOverrides[projectId];
-  if (current === undefined) return null;
-  const next = { ...current };
-  for (const key of keys) delete next[key];
-  return Object.keys(next).length === 0 ? null : next;
 }
 
 /** Worktree rules are project-scoped; artifact and log retention stays environment-wide. */

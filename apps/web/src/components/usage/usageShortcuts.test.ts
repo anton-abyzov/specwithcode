@@ -17,6 +17,33 @@ class TestElement extends EventTarget {
 
 afterEach(() => vi.unstubAllGlobals());
 
+class LayerElement extends TestElement {
+  constructor(private readonly layer: { matches: (selector: string) => boolean } | null) {
+    super("BUTTON");
+  }
+
+  override closest() {
+    return this.layer as never;
+  }
+}
+
+describe("Usage shortcuts in the Usage sheet", () => {
+  const press = (target: EventTarget) =>
+    resolveUsageShortcut(
+      { key: "t", metaKey: false, ctrlKey: false, shiftKey: false, altKey: false, target },
+      DEFAULT_RESOLVED_KEYBINDINGS,
+    );
+
+  it("takes letters inside the sheet but not inside a popup or another dialog", () => {
+    vi.stubGlobal("HTMLElement", TestElement);
+    vi.stubGlobal("navigator", { platform: "Linux" });
+    const usageSheet = { matches: (selector: string) => selector === "[data-usage-sheet]" };
+    const otherDialog = { matches: () => false };
+    expect(press(new LayerElement(usageSheet))).toBe("usage.tokens");
+    expect(press(new LayerElement(otherDialog))).toBeNull();
+  });
+});
+
 describe("Usage shortcuts while typing", () => {
   it.each([new TestElement("INPUT"), new TestElement("TEXTAREA"), new TestElement("DIV", true)])(
     "leaves letters to the focused $tagName field",

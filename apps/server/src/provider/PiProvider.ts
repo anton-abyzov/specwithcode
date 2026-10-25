@@ -15,7 +15,7 @@ import {
   type ServerProvider,
   type ServerProviderModel,
 } from "@specweave-studio/contracts";
-import { classifyBaseUrlBilling } from "@specweave-studio/shared/modelBilling";
+import { classifyBaseUrlBilling, isLoopbackBaseUrl } from "@specweave-studio/shared/modelBilling";
 import { causeErrorTag } from "@specweave-studio/shared/observability";
 import { resolveSpawnCommand } from "@specweave-studio/shared/shell";
 import { compareSemverVersions } from "@specweave-studio/shared/semver";
@@ -109,7 +109,7 @@ export function piModelsFromSettings(
 /**
  * Providers Pi signs in to with an account rather than a key. Claude Pro/Max
  * shares the `anthropic` id and base URL with an Anthropic API key, and the
- * RPC does not say which one a model uses, so none of these reads as `api`.
+ * RPC does not say which one a remote model uses, so it stays `unknown`.
  */
 const PI_ACCOUNT_LOGIN_PROVIDERS: ReadonlySet<string> = new Set([
   "anthropic",
@@ -122,14 +122,17 @@ const PI_ACCOUNT_LOGIN_PROVIDERS: ReadonlySet<string> = new Set([
 /**
  * Who pays for a Pi model. OpenCode Go is a subscription. A keyed cloud API
  * reads as `api` only when the model has a price and its provider has no
- * account sign-in; anything else Pi cannot prove stays `unknown`.
+ * account sign-in. Loopback API ids stay `api`, and advertised prices
+ * override local inference, as in the OpenCode inventory.
  */
 function piModelBilling(model: unknown, provider: string): ModelBilling {
   if (provider === "opencode-go") return "subscription";
-  const billing = classifyBaseUrlBilling(recordString(model, "baseUrl"), provider);
-  if (billing !== "api") return billing;
+  const baseUrl = recordString(model, "baseUrl");
+  const billing = classifyBaseUrlBilling(baseUrl, provider);
   const cost = recordField(model, "cost");
   const priced = (recordNumber(cost, "input") ?? 0) > 0 || (recordNumber(cost, "output") ?? 0) > 0;
+  if (billing === "local" && priced) return "api";
+  if (billing !== "api" || isLoopbackBaseUrl(baseUrl)) return billing;
   return priced && !PI_ACCOUNT_LOGIN_PROVIDERS.has(provider) ? "api" : "unknown";
 }
 

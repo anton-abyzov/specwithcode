@@ -177,6 +177,10 @@ export const layer = HttpApiBuilder.group(
             "Approving a device requires an authorized same-origin request.",
             true,
           );
+          if (principal.principal?.kind === "coordinator")
+            return yield* new EnvironmentHttpForbiddenError({
+              message: "Only this machine's owner can approve a device here.",
+            });
           const pending = requests.pendingByCode(payload.code);
           if (!pending) return { status: "not-found" as const };
           const device = {

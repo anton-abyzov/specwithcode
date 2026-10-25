@@ -29,10 +29,11 @@ import { readEnvironmentScope, useEnvironmentScope } from "../../../state/sessio
 import { useAtomCommand } from "../../../state/use-atom-command";
 import { useMachineNickname } from "../../../studio/machineNickname";
 import { COORDINATOR_RECOMMENDED_TRAITS, modelLabel } from "../../../studio/shellModel";
-import { ModelStateTag } from "../../chat/ModelStateTag";
+import { fallbackModelState, modelStateText, type ModelState } from "../../chat/ModelStateTag";
 import { ProviderModelPicker } from "../../chat/ProviderModelPicker";
+import { MachineLimitsButton, MachineLimitsPanel } from "./ProjectUsageIndicator";
 import { TraitsPicker } from "../../chat/TraitsPicker";
-import { ModelBadge, ModelBadgeMark } from "./ModelBadge";
+import { ModelBadge } from "./ModelBadge";
 import { useCoordinatorModelsLoading } from "./useCoordinatorModelsLoading";
 
 function CoordinatorProviderRecovery(props: {
@@ -114,6 +115,9 @@ export function CoordinatorModelPicker(props: {
     returnsTo: string | null;
     /** The coordinator is off its saved pick (not just running before one is saved). */
     offPick?: boolean;
+    reason?: string | null;
+    onSwitchBack?: (() => void) | null;
+    switching?: boolean;
   } | null;
   disabled: boolean;
   saving: boolean;
@@ -122,6 +126,8 @@ export function CoordinatorModelPicker(props: {
   onChange: (value: ModelSelection) => void;
   /** Legacy project-settings callback; provider setup opens its machine-scoped route. */
   onOpenSettings: () => void;
+  /** Opens the project's Usage tab from the menu's limits view. */
+  onOpenProjectUsage?: () => void;
 }) {
   const navigate = useNavigate();
   const environment = useEnvironment(props.environmentId);
@@ -146,18 +152,47 @@ export function CoordinatorModelPicker(props: {
   const shownEntry = shown
     ? (entries.find((entry) => entry.instanceId === shown.instanceId) ?? null)
     : null;
-  // The chip names what runs; the tag says it is not the saved pick, so neither reads as the other.
-  const fallbackHint =
-    running?.offPick && value ? (
-      <ModelStateTag
-        state={{
-          kind: "fallback",
-          pick: modelLabel(active, value.instanceId, value.model).full,
-          pickModel: modelLabel(active, value.instanceId, value.model).model,
-          reason: running.returnsTo ? `back to ${running.returnsTo} after its reset` : null,
-        }}
-      />
-    ) : null;
+  const savedLabel = value ? modelLabel(active, value.instanceId, value.model) : null;
+  const fallbackState: Extract<ModelState, { kind: "fallback" }> | null =
+    running?.offPick && savedLabel
+      ? fallbackModelState({
+          pick: { ...savedLabel, instance: active?.displayName ?? value!.instanceId },
+          running: shown
+            ? {
+                ...modelLabel(shownEntry, shown.instanceId, shown.model),
+                instance: shownEntry?.displayName ?? shown.instanceId,
+              }
+            : null,
+          reason: running.returnsTo ? "usage limit" : null,
+          detail: running.reason ?? null,
+        })
+      : null;
+  // The header names the pick the way the chip's state does, so a twin of the
+  // running model is told apart by its provider or account, never named twice.
+  const fallbackDetail = fallbackState
+    ? [
+        running?.reason,
+        running?.returnsTo
+          ? `The next turn after it has room goes back to ${fallbackState.pickModel} on its own.`
+          : null,
+      ]
+        .filter(Boolean)
+        .join(" ") || undefined
+    : undefined;
+  const stateHeader = fallbackState
+    ? {
+        title: `Fallback for ${fallbackState.pick}`,
+        detail:
+          fallbackDetail ?? "The coordinator is running on a different model from your saved pick.",
+        back: running?.onSwitchBack
+          ? {
+              label: `Back to ${fallbackState.pickModel}`,
+              onClick: running.onSwitchBack,
+              disabledReason: props.saving || running.switching ? "Switching models…" : null,
+            }
+          : null,
+      }
+    : null;
   const available = entries.filter((entry) => entry.enabled && entry.isAvailable);
   const modelsLoading = useCoordinatorModelsLoading(environment?.serverConfig);
   const machineLabel = useMachineNickname(props.environmentId, environment?.label);
@@ -175,7 +210,9 @@ export function CoordinatorModelPicker(props: {
       search: { environmentId: props.environmentId, ...(instanceId ? { instanceId } : {}) },
     });
   };
-  const getModelDisabledReason = (id: ProviderInstanceId, model: string) => {
+  const isSaved = (id: ProviderInstanceId, model: string) =>
+    value !== null && id === value.instanceId && model === value.model;
+  const hostDisabledReason = (id: ProviderInstanceId, model: string) => {
     const entry = entries.find((candidate) => candidate.instanceId === id);
     const compatibility = coordinatorFolderCompatibility(
       props.requiresFolderGrants === true,
@@ -190,9 +227,21 @@ export function CoordinatorModelPicker(props: {
       ? null
       : "Unavailable on this host";
   };
+  const getModelDisabledReason = (id: ProviderInstanceId, model: string) => {
+    const reason = hostDisabledReason(id, model);
+    if (reason || !running?.offPick || !isSaved(id, model)) return reason;
+    // On a fallback the saved row is the way back; say why it cannot be used yet.
+    if (!running.onSwitchBack) return "Switching back isn't available here";
+    return running.switching ? "Switching models…" : null;
+  };
   const changeModel = (id: ProviderInstanceId, model: string) => {
     if (props.disabled || props.saving || getModelDisabledReason(id, model)) return;
-    if (value && id === value.instanceId && model === value.model) return;
+    if (isSaved(id, model)) {
+      // Picking the saved model while a fallback runs is the same explicit switch back as
+      // the header's button; usage is advisory and the host keeps its own limit checks.
+      if (running?.offPick) running.onSwitchBack?.();
+      return;
+    }
     // Effort and other traits belong to the model they were chosen for.
     props.onChange(createModelSelection(id, model));
   };
@@ -264,7 +313,7 @@ export function CoordinatorModelPicker(props: {
     const recovery =
       !props.disabled &&
       value &&
-      getModelDisabledReason(value.instanceId, value.model) &&
+      hostDisabledReason(value.instanceId, value.model) &&
       !coordinatorFolderCompatibility(
         props.requiresFolderGrants === true,
         active?.driverKind,
@@ -283,15 +332,19 @@ export function CoordinatorModelPicker(props: {
       return (
         // Nothing to pick from on this host right now; still say what the coordinator runs on.
         <span className="sws-model-pick sws-model-pick-static">
-          <span role="img" aria-label={`Coordinator model: ${label.full}`}>
+          <span
+            role="img"
+            aria-label={`Coordinator model: ${label.full}${fallbackState ? modelStateText(fallbackState).aria : ""}`}
+          >
             <ModelBadge
               entry={shownEntry}
               instanceId={current.instanceId}
               model={current.model}
               variant="chip"
+              state={fallbackState}
+              tooltip
             />
           </span>
-          {fallbackHint}
           {!props.disabled ? (
             <button
               type="button"
@@ -302,20 +355,19 @@ export function CoordinatorModelPicker(props: {
               Add or manage providers
             </button>
           ) : null}
+          {!props.disabled ? (
+            <MachineLimitsButton
+              className="sws-model-trigger"
+              projectEnvironmentId={props.environmentId}
+              coordinatorInstanceId={current.instanceId}
+              onOpenProjectUsage={props.onOpenProjectUsage}
+            />
+          ) : null}
           {recovery}
         </span>
       );
     return (
-      <span
-        className="sws-model-pick"
-        data-saving={props.saving ? "true" : undefined}
-        data-off-pick={running?.offPick ? "" : undefined}
-      >
-        <ModelBadgeMark
-          entry={shownEntry}
-          instanceId={current.instanceId}
-          provider={label.provider}
-        />
+      <span className="sws-model-pick" data-saving={props.saving ? "true" : undefined}>
         <ProviderModelPicker
           key="model"
           activeInstanceId={current.instanceId}
@@ -325,20 +377,41 @@ export function CoordinatorModelPicker(props: {
           modelOptionsByInstance={options}
           size="sm"
           triggerClassName="sws-model-trigger"
-          triggerLabel={`${label.provider} · ${label.model}`}
+          triggerParts={{ provider: label.provider, model: label.model }}
+          triggerState={fallbackState}
+          triggerStateDetail={fallbackDetail}
+          stateHeader={stateHeader}
           triggerAriaLabel={
             running
-              ? `Coordinator model: running on ${label.full}${running.offPick && value ? ` instead of your pick, ${modelLabel(active, value.instanceId, value.model).full}` : ""}${running.returnsTo ? `, back to ${running.returnsTo} after reset` : ""}. Change model`
+              ? `Coordinator model: running on ${label.full}${fallbackState ? modelStateText(fallbackState).aria : ""}${running.returnsTo ? `, back to ${running.returnsTo} after reset` : ""}. Change model`
               : `Coordinator model: ${label.full}. Change model`
           }
           disabled={props.saving}
           getModelDisabledReason={getModelDisabledReason}
           usage={usage}
+          secondaryView={{
+            label: "Limits by machine",
+            render: ({ back, close }) => (
+              <MachineLimitsPanel
+                projectEnvironmentId={props.environmentId}
+                coordinatorInstanceId={current.instanceId}
+                onBack={back}
+                onClose={close}
+                onOpenProjectUsage={
+                  props.onOpenProjectUsage
+                    ? () => {
+                        close();
+                        props.onOpenProjectUsage?.();
+                      }
+                    : undefined
+                }
+              />
+            ),
+          }}
           onOpenProviderSetup={openProviderSetup}
           onManageProviders={() => openProviderSetup()}
           onInstanceModelChange={changeModel}
         />
-        {fallbackHint}
         {recovery}
         {/* Effort belongs to the saved model, which is not the one running now. */}
         {value && active && !running ? (

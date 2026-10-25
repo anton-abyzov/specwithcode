@@ -1,5 +1,6 @@
 /** One routine in Settings > Routines: state, when it runs next, where it lands, its actions. */
 import { useAtomValue } from "@effect/atom-react";
+import { Link } from "@tanstack/react-router";
 import { InboxIcon, MoreHorizontalIcon, PencilIcon, PlayIcon, Trash2Icon } from "lucide-react";
 import { type ReactNode, useState } from "react";
 import {
@@ -105,13 +106,26 @@ export function ScheduledTaskRow({
   };
   const state = routineState(task);
   const next = task.nextRunAt && state.tone !== "paused" && !isWebhook ? task.nextRunAt : null;
-  const meta = [
+  const destination = routineDestinationLabel(task);
+  const meta: ReadonlyArray<ReactNode> = [
     routineCadenceLabel(task.schedule),
     next ? `Next ${routineRunTimeLabel(next)} (${relativeLabel(next)})` : null,
     task.lastRunAt && !next ? `Last ran ${routineRunTimeLabel(task.lastRunAt)}` : null,
     projectLabel,
-    routineDestinationLabel(task),
-  ].filter((part): part is string => Boolean(part));
+    task.threadId ? (
+      <Link
+        key="thread"
+        to="/$environmentId/$threadId"
+        params={{ environmentId, threadId: task.threadId }}
+        className="underline underline-offset-2 hover:text-foreground"
+        data-routine-thread={task.threadId}
+      >
+        {destination}
+      </Link>
+    ) : (
+      destination
+    ),
+  ].filter((part) => Boolean(part));
   return (
     <SettingsRow
       data-routine-row={task.id}

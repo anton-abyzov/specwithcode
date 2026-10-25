@@ -224,6 +224,63 @@ export function providerFailureFallbackMessage(
 }
 
 /**
+ * The failure code of a turn SpecWithCode could not save: the disk filled up
+ * or SQLite could not open its database. The class stays `unknown`, because
+ * older peers decode the class as a closed set; the code carries the cause.
+ */
+export const LOCAL_STORAGE_FAILURE_CODE = "local_storage";
+export const LOCAL_STORAGE_FAILURE_MESSAGE =
+  "SpecWithCode could not save this turn because the disk is full or the database could not be opened. Free disk space, then press Continue.";
+
+/** The failure code of a start that found the provider still running the previous turn. */
+export const PREVIOUS_TURN_ACTIVE_FAILURE_CODE = "previous_turn_active";
+export const PREVIOUS_TURN_ACTIVE_FAILURE_MESSAGE =
+  "The previous turn is still running in the provider. Wait for it to finish or press Stop, then Continue.";
+
+/**
+ * Whether a person can continue a run that failed this way in the same native
+ * session ("Continue where you left off."). A provider error, an unclassified
+ * failure, a local storage failure or a start that found the previous turn
+ * still running can; a rejected request, a sign-in problem, a usage limit or a
+ * context that no longer fits would only fail again.
+ */
+export function isContinuableProviderFailure(
+  failure: Pick<OrchestrationV2ProviderFailure, "class" | "code" | "message"> | null | undefined,
+): boolean {
+  if (failure == null) return false;
+  if (
+    failure.code === LOCAL_STORAGE_FAILURE_CODE ||
+    failure.code === PREVIOUS_TURN_ACTIVE_FAILURE_CODE
+  ) {
+    return true;
+  }
+  if (failure.class !== "provider_error" && failure.class !== "unknown") return false;
+  const message = unwrapProviderErrorMessage(failure.message);
+  return !isContextLimitError(message) && !isContextHandoffBudgetMessage(message);
+}
+
+/**
+ * The run a person's Continue resumes in place, or null: the latest run that
+ * started, when it was stopped, stopped on a usage limit, or failed in a way
+ * that can continue (see isContinuableProviderFailure).
+ */
+export function resumableRunId(input: {
+  readonly runs: ReadonlyArray<OrchestrationV2Run>;
+  readonly turnItems: ReadonlyArray<OrchestrationV2TurnItem>;
+  readonly lastErrorClass: OrchestrationV2ProviderFailure["class"] | null | undefined;
+}): OrchestrationV2Run["id"] | null {
+  const run = latestExecutedRun(input.runs);
+  if (run === null) return null;
+  if (run.status === "interrupted") return run.id;
+  if (run.status !== "failed") return null;
+  const failure = latestRootProviderFailure(run, input.turnItems);
+  if (failure?.class === "usage_limit") {
+    return input.lastErrorClass === "usage_limit" ? run.id : null;
+  }
+  return isContinuableProviderFailure(failure) ? run.id : null;
+}
+
+/**
  * What a provider handoff that does not fit the target says. History is
  * compacted for every handoff; this is the case where even that does not fit
  * next to the request, so the thread needs a model with a larger window.

@@ -249,7 +249,6 @@ describe("SlideRail (AC-02)", () => {
       "true",
     );
     expect(items()).toHaveLength(3);
-    expect(document.querySelector("[data-testid=slide-more]")).toBeNull();
     expect(document.querySelector("[data-testid=new-slide]")?.getAttribute("aria-label")).toBe(
       "New slide",
     );
@@ -260,6 +259,48 @@ describe("SlideRail (AC-02)", () => {
     act(() => menuItem("Duplicate")!.click());
     await flush();
     expect(state.document.pages).toHaveLength(4);
+  });
+
+  it("the compact strip has a More button on each thumbnail that opens the slide menu", async () => {
+    render(deck(), false, true);
+    const more = [...document.querySelectorAll<HTMLElement>("[data-testid=slide-more]")];
+    expect(more.map((button) => button.getAttribute("aria-label"))).toEqual([
+      "More for slide 1",
+      "More for slide 2",
+      "More for slide 3",
+    ]);
+    for (const item of items()) expect(item.querySelector("button, [role=button]")).toBeNull();
+    // Overlaid on the thumbnail corner: shown on hover and focus, always for the
+    // current slide and on touch screens.
+    const overlay = more[1]!.parentElement!;
+    expect(overlay.className).toContain("group-hover:opacity-100");
+    expect(overlay.className).toContain("group-focus-within:opacity-100");
+    expect(overlay.className).toContain("pointer-coarse:opacity-100");
+    expect(overlay.classList.contains("opacity-0")).toBe(true);
+    expect(more[0]!.parentElement!.classList.contains("opacity-100")).toBe(true);
+
+    act(() => more[1]!.click());
+    await flush();
+    expect(state.pageId).toBe(state.document.pages[1]!.id);
+    const labels = [...document.querySelectorAll('[role="menuitem"]')].map((item) =>
+      item.textContent?.replace(/((Cmd|Ctrl)\+D|Alt\+Up|Alt\+Down|Delete)$/, "").trim(),
+    );
+    expect(labels).toEqual([
+      "Duplicate",
+      "Add slide after",
+      "Move up",
+      "Move down",
+      "Skip slide",
+      "Delete",
+    ]);
+    act(() => menuItem("Skip slide")!.click());
+    await flush();
+    expect(state.document.pages[1]!.skipped).toBe(true);
+  });
+
+  it("read-only compact strips have no More button", () => {
+    render(deck(), true, true);
+    expect(document.querySelector("[data-testid=slide-more]")).toBeNull();
   });
 
   it.each([

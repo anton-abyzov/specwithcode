@@ -5,13 +5,12 @@
 import assert from "node:assert/strict";
 import { spawn, execFileSync } from "node:child_process";
 import { randomUUID, createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, writeFileSync, readFileSync, rmSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync, readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { createServer } from "node:net";
 import { tmpdir, homedir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { DatabaseSync } from "node:sqlite";
 
 assert.equal(Number(process.versions.node.split(".")[0]), 22, "Use the project's Node 22 runtime");
 process.env.PWDEBUG = "0";
@@ -22,14 +21,32 @@ const output = resolve(
 );
 mkdirSync(output, { recursive: true, mode: 0o700 });
 const scratch = mkdtempSync(join(tmpdir(), "two-orchestrators-servers-"));
-const entrypoint = join(root, "apps/server/dist/bin.mjs");
+const entrypoint = resolve(
+  process.env.STUDIO_TEST_ENTRYPOINT ?? join(root, "apps/server/dist/bin.mjs"),
+);
 const agent = join(root, "scripts/studio-logical-projects/link-launch-agent.mjs");
+function existsManifest() {
+  try {
+    const manifest = JSON.parse(
+      readFileSync(join(dirname(entrypoint), "studio-manifest.json"), "utf8"),
+    );
+    return { version: manifest.version, sourceCommit: manifest.sourceCommit };
+  } catch {
+    return { version: "unrecorded", sourceCommit: null };
+  }
+}
 const receipt = {
   source: execFileSync("/usr/bin/git", ["rev-parse", "HEAD"], {
     cwd: root,
     encoding: "utf8",
   }).trim(),
   evidenceKind: "two-real-isolated-servers-one-linked-project",
+  entrypoint,
+  testedRuntime: existsManifest(),
+  scratch,
+  harnessSha256: createHash("sha256")
+    .update(readFileSync(fileURLToPath(import.meta.url)))
+    .digest("hex"),
   builtEntrypointSha256: createHash("sha256").update(readFileSync(entrypoint)).digest("hex"),
   browser: { headless: true, PWDEBUG: "0", PLAYWRIGHT_HTML_OPEN: "never" },
   checks: [],
@@ -216,7 +233,7 @@ const DRIVERS = [
   "antigravity",
 ];
 const ECHO = { instanceId: "fixtureEcho", model: "link-launch" };
-const LOGICAL_ID = "logical-project-two-orchestrators";
+let logicalId;
 const hosts = [];
 let browser;
 let page;
@@ -230,6 +247,13 @@ async function createHost(label) {
   mkdirSync(join(data, "userdata"), { recursive: true });
   mkdirSync(workspace);
   writeFileSync(join(workspace, "README.md"), "Synthetic two-orchestrator verification only.\n");
+  const git = (...args) => execFileSync("/usr/bin/git", args, { cwd: workspace, stdio: "pipe" });
+  git("init", "-b", "main");
+  git("config", "user.name", "Fixture");
+  git("config", "user.email", "fixture@example.invalid");
+  git("add", "README.md");
+  git("commit", "-m", "Fixture");
+  git("remote", "add", "origin", "https://github.com/example/easychamp.git");
   const echoFile = join(dir, "echo.json");
   writeFileSync(
     join(data, "userdata/settings.json"),
@@ -289,10 +313,7 @@ async function createHost(label) {
     title: "EasyChamp",
     workspaceRoot: workspace,
   });
-  for (const [threadId, title] of [
-    [host.coordinatorThreadId, `${label} coordinator`],
-    [host.workerThreadId, `${label} worker`],
-  ])
+  for (const [threadId, title] of [[host.workerThreadId, `${label} worker`]])
     await dispatch(host, {
       type: "thread.create",
       threadId,
@@ -309,110 +330,113 @@ async function createHost(label) {
   return host;
 }
 
-/** Synthetic completed history, so each coordinator has a conversation to show. */
-function seedHistory(db, threadId, text) {
-  const at = "2026-10-20T12:00:00.000Z";
-  const runId = randomUUID();
-  const messageId = randomUUID();
-  const run = {
-    id: runId,
-    threadId,
-    ordinal: 1,
-    providerInstanceId: ECHO.instanceId,
-    modelSelection: ECHO,
-    providerThreadId: null,
-    userMessageId: messageId,
-    rootNodeId: null,
-    activeAttemptId: null,
-    status: "completed",
-    requestedAt: at,
-    startedAt: at,
-    completedAt: at,
-    checkpointId: null,
-    contextHandoffId: null,
-  };
-  const message = {
-    id: messageId,
-    threadId,
-    runId,
-    nodeId: null,
-    role: "user",
-    text,
-    attachments: [],
-    streaming: false,
-    createdBy: "user",
-    creationSource: "web",
-    createdAt: at,
-    updatedAt: at,
-  };
-  const item = {
-    id: randomUUID(),
-    threadId,
-    runId,
-    nodeId: null,
-    providerThreadId: null,
-    providerTurnId: null,
-    nativeItemRef: null,
-    parentItemId: null,
-    ordinal: 1,
-    status: "completed",
-    title: "Synthetic history",
-    startedAt: at,
-    completedAt: at,
-    updatedAt: at,
-    type: "user_message",
-    messageId,
-    inputIntent: "turn_start",
+/** Seed conversation through the same command a user sends, using only the echo agent. */
+async function seedHistory(host, text) {
+  await dispatch(host, {
+    type: "message.dispatch",
+    threadId: host.coordinatorThreadId,
+    messageId: randomUUID(),
     text,
     attachments: [],
     createdBy: "user",
     creationSource: "web",
-  };
-  db.prepare(
-    "INSERT INTO orchestration_v2_projection_runs (run_id,thread_id,ordinal,provider,provider_instance_id,status,requested_at,completed_at,payload_json) VALUES (?,?,?,?,?,?,?,?,?)",
-  ).run(
-    runId,
-    threadId,
-    1,
-    "acpRegistry",
-    ECHO.instanceId,
-    "completed",
-    at,
-    at,
-    JSON.stringify(run),
-  );
-  db.prepare(
-    "INSERT INTO orchestration_v2_projection_messages (message_id,thread_id,run_id,role,streaming,created_at,updated_at,payload_json) VALUES (?,?,?,?,?,?,?,?)",
-  ).run(messageId, threadId, runId, "user", 0, at, at, JSON.stringify(message));
-  db.prepare(
-    "INSERT INTO orchestration_v2_projection_turn_items (turn_item_id,thread_id,run_id,ordinal,type,status,updated_at,payload_json) VALUES (?,?,?,?,?,?,?,?)",
-  ).run(item.id, threadId, runId, 1, "user_message", "completed", at, JSON.stringify(item));
+    dispatchMode: { type: "start_immediately" },
+  });
+  await until(`${host.label} history completed`, async () => {
+    const projection = await rpc(host, "orchestration.getThreadProjection", {
+      threadId: host.coordinatorThreadId,
+    });
+    return projection.runs.some((run) => run.status === "completed");
+  });
+  host.seedEcho = readJson(host.echoFile);
 }
 
-/** What each fixture database holds, read only after its server stopped. */
-function readState(host) {
-  const db = new DatabaseSync(join(host.data, "userdata/statev2.sqlite"), { readOnly: true });
-  try {
-    const settings = JSON.parse(
-      db
-        .prepare("SELECT workspace_settings_json FROM projection_projects WHERE project_id=?")
-        .get(host.projectId).workspace_settings_json,
+/** Fetch the complete project thread inventory through the supported shell stream. */
+async function shellSnapshot(host) {
+  const { ticket } = await request(host, "/api/auth/websocket-ticket");
+  const url = new URL(host.origin);
+  url.protocol = "ws:";
+  url.pathname = "/ws";
+  url.searchParams.set("wsTicket", ticket);
+  url.searchParams.set("orchestrationProtocol", "2");
+  return new Promise((resolve, reject) => {
+    const socket = new WebSocket(url);
+    const finish = (error, value) => {
+      clearTimeout(timer);
+      socket.close();
+      error ? reject(error) : resolve(value);
+    };
+    const timer = setTimeout(() => finish(new Error("Shell snapshot timeout")), 20000);
+    socket.addEventListener("error", () => finish(new Error("Shell snapshot transport failed")));
+    socket.addEventListener("open", () =>
+      socket.send(
+        JSON.stringify({
+          _tag: "Request",
+          id: "1",
+          tag: "orchestration.subscribeShell",
+          payload: {},
+          headers: [],
+        }),
+      ),
     );
-    const threads = db
-      .prepare("SELECT thread_id FROM orchestration_v2_projection_threads WHERE project_id=?")
-      .all(host.projectId)
-      .map((row) => row.thread_id)
-      .sort();
-    const userTexts = db
-      .prepare(
-        "SELECT payload_json FROM orchestration_v2_projection_messages WHERE thread_id=? AND role='user'",
-      )
-      .all(host.coordinatorThreadId)
-      .map((row) => JSON.parse(row.payload_json).text);
-    return { settings, threads, userTexts };
-  } finally {
-    db.close();
-  }
+    socket.addEventListener("message", ({ data }) => {
+      const decoded = JSON.parse(data);
+      for (const item of Array.isArray(decoded) ? decoded : [decoded]) {
+        if (item._tag === "Chunk")
+          for (const value of item.values ?? []) {
+            if (value.kind === "snapshot") finish(null, value.snapshot);
+          }
+        if (item._tag === "Exit" && item.exit?._tag === "Failure")
+          finish(new Error("Shell snapshot refused"));
+      }
+    });
+  });
+}
+
+/** Read assertions through supported RPCs while the isolated service is alive. */
+async function readState(host) {
+  const { settings } = await rpc(host, "projects.workspaceRead", { projectId: host.projectId });
+  const projections = await Promise.all(
+    [host.coordinatorThreadId, host.workerThreadId].map((threadId) =>
+      rpc(host, "orchestration.getThreadProjection", { threadId }),
+    ),
+  );
+  for (const projection of projections) assert.equal(projection.thread.projectId, host.projectId);
+  const shell = await shellSnapshot(host);
+  return {
+    settings,
+    threads: shell.threads
+      .filter((thread) => thread.projectId === host.projectId)
+      .map((thread) => thread.id)
+      .sort(),
+    userTexts: projections[0].messages
+      .filter((message) => message.role === "user")
+      .map((message) => message.text),
+  };
+}
+
+async function link(kept, joining) {
+  const operationId = randomUUID();
+  const preview = await rpc(joining, "projectLink.preview", { projectId: joining.projectId });
+  const prepared = await rpc(kept, "projectLink.prepare", {
+    operationId,
+    projectId: kept.projectId,
+    joining: preview.member,
+  });
+  const accepted = await rpc(joining, "projectLink.accept", {
+    operationId,
+    projectId: joining.projectId,
+    kept: prepared.kept,
+    logicalProject: prepared.logicalProject,
+    coordinatorBinding: prepared.coordinatorBinding,
+    keptFingerprint: prepared.fingerprint,
+  });
+  return rpc(kept, "projectLink.commit", {
+    operationId,
+    projectId: kept.projectId,
+    joining: accepted.member,
+    notes: [],
+  });
 }
 
 function loadPlaywright() {
@@ -441,44 +465,35 @@ async function main() {
   const minis = await createHost("Minis fixture");
   // Both machines are linked, and each runs its own active coordinator. A third
   // member was never synced to this browser: viewing it must say Unknown.
-  const ghost = { environmentId: randomUUID(), projectId: randomUUID() };
-  const members = [
-    ...[m4, minis].map((host) => ({
-      environmentId: host.environmentId,
-      projectId: host.projectId,
-      coordinatorThreadId: host.coordinatorThreadId,
-    })),
-    { ...ghost, coordinatorThreadId: `project-coordinator:${ghost.projectId}` },
-  ];
-  const logicalProject = {
-    id: LOGICAL_ID,
-    title: "EasyChamp",
-    coordinatorId: "logical-coordinator-two",
-    members,
-  };
-  for (const host of [m4, minis]) await stop(host);
+  const ghost = await createHost("Unknown fixture");
+  await link(m4, ghost);
+  const linked = await link(m4, minis);
+  logicalId = linked.logicalProject.id;
+  const members = linked.logicalProject.members;
+  await stop(ghost); // It is never connected to the browser, which must show Unknown.
   for (const host of [m4, minis]) {
-    const db = new DatabaseSync(join(host.data, "userdata/statev2.sqlite"));
-    const row = db
-      .prepare("SELECT workspace_settings_json FROM projection_projects WHERE project_id=?")
-      .get(host.projectId);
-    const settings = {
-      ...JSON.parse(row.workspace_settings_json),
-      logicalProject,
-      coordinatorThreadId: host.coordinatorThreadId,
-      coordinatorBinding: { epoch: 0, state: "active" },
-    };
-    db.prepare("UPDATE projection_projects SET workspace_settings_json=? WHERE project_id=?").run(
-      JSON.stringify(settings),
-      host.projectId,
-    );
-    seedHistory(db, host.coordinatorThreadId, `${host.label} coordinator history`);
-    db.close();
-    await start(host);
+    const { settings } = await rpc(host, "projects.workspaceRead", { projectId: host.projectId });
+    await request(host, "/api/projects/mutate", {
+      type: "project.update",
+      commandId: randomUUID(),
+      projectId: host.projectId,
+      workspaceSettings: { expectedRevision: settings.revision, coordinatorModelSelection: ECHO },
+    });
+    await rpc(host, "projectLink.startCoordinator", {
+      projectId: host.projectId,
+      operationId: randomUUID(),
+    });
+    const started = await rpc(host, "projects.coordinatorStart", {
+      projectId: host.projectId,
+      commandId: randomUUID(),
+    });
+    host.coordinatorThreadId = started.threadId;
+    await seedHistory(host, `${host.label} coordinator history`);
+    host.beforeState = await readState(host);
   }
   const before = {};
   check(
-    "Two isolated servers; one linked project; an active coordinator on each machine; providers off",
+    "Two isolated servers; one linked project; an active coordinator on each machine; only model-free echo provider enabled",
   );
 
   // Each machine's own thread links a pull request on the shared remote.
@@ -668,7 +683,7 @@ async function main() {
   const browserToken = minis.token;
   const errors = [];
   page.on("pageerror", (error) => errors.push(error.message));
-  await page.goto(`${m4.origin}/projects/${encodeURIComponent(`logical-project:${LOGICAL_ID}`)}`);
+  await page.goto(`${m4.origin}/projects/${encodeURIComponent(`logical-project:${logicalId}`)}`);
   const region = page.getByRole("region", { name: "Project coordinator", exact: true });
   await region.waitFor({ timeout: 45000 });
   await region.getByText("M4 fixture coordinator history").waitFor({ timeout: 45000 });
@@ -682,13 +697,20 @@ async function main() {
   };
   const minisKey = `${minis.environmentId}:${minis.projectId}`;
   const m4Key = `${m4.environmentId}:${m4.projectId}`;
+  // Match the host suffix after the switcher removes the possessive owner prefix.
+  const m4ViewLabel = new RegExp(
+    `View .*${m4.selfLabel
+      .split(/\s+/)
+      .at(-1)
+      .replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}'s orchestrator`,
+  );
   await switcher.click();
   const menu = page.getByRole("menu");
   for (const text of [
-    `View ${m4.selfLabel}'s orchestrator`,
+    m4ViewLabel,
     "View Minis fixture's orchestrator",
     "Move coordinator to Minis fixture…",
-    "Migrate threads… (needs thread handoff)",
+    /Migrate .*threads…/,
   ])
     await menu.getByText(text, { exact: false }).first().waitFor({ timeout: 15000 });
   await shot("01-switcher-three-actions.png");
@@ -706,7 +728,7 @@ async function main() {
     const value = readJson(minis.echoFile);
     return value?.text?.includes(liveText) ? value : null;
   });
-  assert.equal(readJson(m4.echoFile), null, "M4's coordinator ran nothing");
+  assert.deepEqual(readJson(m4.echoFile), m4.seedEcho, "M4's coordinator ran no additional turn");
   await region.getByText(`Echo worker ran in ${echo.cwd}`).waitFor({ timeout: 45000 });
   assert.ok(echo.cwd?.startsWith(minis.dir), `The turn ran in Minis's checkout: ${echo.cwd}`);
   writeFileSync(join(output, "02-minis-echo.json"), JSON.stringify(echo, null, 2) + "\n");
@@ -819,7 +841,7 @@ async function main() {
   await unknownPage.waitFor({ timeout: 30000 });
   await unknownPage.getByText("orchestrator: Unknown", { exact: false }).first().waitFor();
   await shot("06-never-synced-unknown.png");
-  await page.getByRole("button", { name: `View ${m4.selfLabel}'s orchestrator` }).click();
+  await page.getByRole("button", { name: m4ViewLabel }).click();
   await region.getByText("M4 fixture coordinator history").waitFor({ timeout: 45000 });
   check("A linked machine never synced reads Unknown, never an empty list or a stand-in");
 
@@ -858,17 +880,15 @@ async function main() {
   assert.deepEqual(errors, [], `Page errors: ${errors.join("\n")}`);
   await browser.close();
   browser = undefined;
-  for (const host of [m4, minis]) await stop(host);
-
   // ── Nothing moved: bindings, thread ownership and coordinator transcripts ──
-  const [m4State, minisState] = [m4, minis].map(readState);
+  const [m4State, minisState] = await Promise.all([m4, minis].map(readState));
   for (const [host, state] of [
     [m4, m4State],
     [minis, minisState],
   ]) {
     assert.deepEqual(
       state.settings.coordinatorBinding,
-      { epoch: 0, state: "active" },
+      host.beforeState.settings.coordinatorBinding,
       `${host.label} binding`,
     );
     assert.equal(state.settings.coordinatorThreadId, host.coordinatorThreadId);
@@ -888,7 +908,7 @@ async function main() {
   }
   assert.deepEqual(m4State.userTexts, ["M4 fixture coordinator history"]);
   assert.ok(minisState.userTexts.includes(liveText), "Minis's coordinator holds the message");
-  check("Viewing moved nothing: both bindings active at epoch 0, threads stayed on their machines");
+  check("Viewing moved nothing: both bindings unchanged, threads stayed on their machines");
   Object.assign(before, {
     m4: m4State.settings.coordinatorBinding,
     minis: minisState.settings.coordinatorBinding,
@@ -911,6 +931,7 @@ try {
     (host) => !host.child || host.child.exitCode !== null || host.child.signalCode !== null,
   );
   save();
-  if (stopped && existsSync(scratch)) rmSync(scratch, { recursive: true, force: true });
+  receipt.fixtureProcessesStopped = stopped;
+  save(); // Retain fixture state; never remove database files directly.
   console.log(receipt.success ? `PASS ${join(output, "receipt.json")}` : `FAIL ${receipt.error}`);
 }
