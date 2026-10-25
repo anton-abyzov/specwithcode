@@ -9,7 +9,8 @@ import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
-export const ORCHESTRATION_CACHE_SCHEMA_VERSION = 3 as const;
+// Older thread caches may hold whole long turns that bypassed the history budgets.
+export const ORCHESTRATION_CACHE_SCHEMA_VERSION = 4 as const;
 
 export const StoredOrchestrationShellSnapshot = Schema.Struct({
   schemaVersion: Schema.Literal(ORCHESTRATION_CACHE_SCHEMA_VERSION),

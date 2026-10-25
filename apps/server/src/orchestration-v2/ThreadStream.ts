@@ -1,10 +1,18 @@
 import type {
+  OrchestrationV2ProjectedTurnItem,
   OrchestrationV2ThreadProjection,
   OrchestrationV2ThreadStreamItem,
 } from "@specweave-studio/contracts";
 
-import { buildBoundedThreadProjection } from "./threadHistoryPaging.ts";
-import { projectThreadProjectionForWire } from "./WireProjection.ts";
+import {
+  buildBoundedThreadProjection,
+  THREAD_HISTORY_PAGE_POLICY,
+  WHOLE_TURN_THREAD_HISTORY_PAGE_POLICY,
+} from "./threadHistoryPaging.ts";
+import {
+  projectProjectedTurnItemForWire,
+  projectThreadProjectionForWire,
+} from "./WireProjection.ts";
 
 /** Maximum number of reducer applications allowed during a thread resume. */
 export const THREAD_RESUME_MAX_REPLAY_EVENTS = 128;
@@ -43,10 +51,20 @@ type ThreadSnapshotStreamItem = Extract<
 export function buildBoundedThreadStreamSnapshot(input: {
   readonly snapshotSequence: number;
   readonly projection: OrchestrationV2ThreadProjection;
+  readonly latestUserTurnStart?: OrchestrationV2ProjectedTurnItem | null | undefined;
+  readonly olderRowsUnloaded?: boolean | undefined;
+  /** The client asked for long turns cut into pages; otherwise turns stay whole. */
+  readonly boundLongTurns?: boolean | undefined;
 }): ThreadSnapshotStreamItem {
   const bounded = buildBoundedThreadProjection({
     snapshotSequence: input.snapshotSequence,
     projection: projectThreadProjectionForWire(input.projection),
+    latestUserTurnStart: projectProjectedTurnItemForWire(input.latestUserTurnStart),
+    olderRowsUnloaded: input.olderRowsUnloaded,
+    policy:
+      input.boundLongTurns === true
+        ? THREAD_HISTORY_PAGE_POLICY
+        : WHOLE_TURN_THREAD_HISTORY_PAGE_POLICY,
   });
   return {
     kind: "snapshot",
@@ -55,7 +73,7 @@ export function buildBoundedThreadStreamSnapshot(input: {
     historyCursor: bounded.historyCursor,
     hasMoreHistory: bounded.hasMoreHistory,
     latestLocalTurnOrdinal: bounded.latestLocalTurnOrdinal,
-    payloadBudgetExceeded: bounded.payloadBudgetExceeded,
+    ...(bounded.windowTurnStart === null ? {} : { windowTurnStart: bounded.windowTurnStart }),
   };
 }
 

@@ -43,6 +43,7 @@ import {
   EMPTY_THREAD_HISTORY_META,
   isActiveHistoryRequestCursor,
   mergeOlderHistoryIntoProjection,
+  withWindowTurnStart,
   type ThreadHistoryMeta,
 } from "./threadHistoryMerge.ts";
 import * as ThreadSnapshotLoader from "./threadSnapshotHttp.ts";
@@ -99,6 +100,7 @@ function historyMetaFromCachedSnapshot(
     // Cache never stores expanded progressive history (load-earlier growth).
     expanded: false,
     latestLocalTurnOrdinal: snapshot.latestLocalTurnOrdinal ?? null,
+    windowTurnStartKey: snapshot.windowTurnStartKey ?? null,
   };
 }
 
@@ -117,6 +119,9 @@ function snapshotToPersist(
       historyCursor: history.historyCursor,
       hasMoreHistory: history.hasMoreHistory,
       latestLocalTurnOrdinal: history.latestLocalTurnOrdinal,
+      ...(history.windowTurnStartKey === null
+        ? {}
+        : { windowTurnStartKey: history.windowTurnStartKey }),
     };
   }
   return { snapshotSequence, projection };
@@ -152,7 +157,10 @@ function matchesThreadSnapshot(
   current: ThreadResumeSnapshot,
   projection: OrchestrationV2ThreadProjection | null,
   sequence: number,
-  history: Pick<ThreadHistoryMeta, "historyCursor" | "hasMoreHistory" | "latestLocalTurnOrdinal">,
+  history: Pick<
+    ThreadHistoryMeta,
+    "historyCursor" | "hasMoreHistory" | "latestLocalTurnOrdinal" | "windowTurnStartKey"
+  >,
 ): boolean {
   if (current.sequence !== sequence || Option.getOrNull(current.state.data) !== projection)
     return false;
@@ -160,6 +168,7 @@ function matchesThreadSnapshot(
   return (
     currentHistory.historyCursor === history.historyCursor &&
     currentHistory.hasMoreHistory === history.hasMoreHistory &&
+    currentHistory.windowTurnStartKey === history.windowTurnStartKey &&
     (!(history.hasMoreHistory || history.historyCursor !== null) ||
       currentHistory.latestLocalTurnOrdinal === history.latestLocalTurnOrdinal)
   );
@@ -244,6 +253,9 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
   // fails. A bounded socket reset retains a cursor so history can be retried.
   const canLoadHistory = Option.isSome(httpClient) && Option.isSome(historyController);
   const acceptsBoundedSocketSnapshots = yield* Ref.make(canLoadHistory);
+  // Only a UI that shows a long turn's earlier steps asks for it in pages.
+  const boundLongTurns =
+    canLoadHistory && Option.isSome(historyController) && historyController.value.boundLongTurns;
   // Seed the resume cursor from the cached snapshot so a warm cache can catch up
   // via `afterSequence` instead of re-downloading the full thread body.
   const initialSequence =
@@ -631,8 +643,11 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
         item.latestLocalTurnOrdinal !== undefined;
       // Bounded socket fallbacks carry their cursor. Legacy-compatible full
       // snapshots omit these fields and still replace progressive state.
+      const windowed = hasProgressiveHistory
+        ? withWindowTurnStart(item.projection, item.windowTurnStart)
+        : { projection: item.projection, key: null };
       yield* setThread(
-        item.projection,
+        windowed.projection,
         hasProgressiveHistory
           ? {
               history: {
@@ -642,6 +657,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
                 error: null,
                 expanded: false,
                 latestLocalTurnOrdinal: item.latestLocalTurnOrdinal ?? null,
+                windowTurnStartKey: windowed.key,
               },
             }
           : { resetHistory: true },
@@ -793,7 +809,11 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
               ];
             }
 
-            const merged = mergeOlderHistoryIntoProjection(latest.data.value, page.items);
+            const merged = mergeOlderHistoryIntoProjection(
+              latest.data.value,
+              page.items,
+              latest.history.windowTurnStartKey,
+            );
             const history = applyHistoryPageMeta(latest.history, page);
             return [
               { _tag: "loaded" },
@@ -979,7 +999,11 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
             ),
           );
           const httpResult: ThreadSnapshotLoader.ThreadSnapshotLoadResult =
-            yield* snapshotLoader.load(prepared, threadId);
+            yield* snapshotLoader.load(
+              prepared,
+              threadId,
+              boundLongTurns ? { boundLongTurns: true } : undefined,
+            );
           switch (httpResult._tag) {
             case "present": {
               if (canLoadHistory && httpResult.history !== undefined) {
@@ -1000,6 +1024,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
                           error: null,
                           expanded: false,
                           latestLocalTurnOrdinal: httpResult.history.latestLocalTurnOrdinal ?? null,
+                          windowTurnStartKey: httpResult.history.windowTurnStartKey ?? null,
                         }
                       : EMPTY_THREAD_HISTORY_META;
                   yield* setThread(httpResult.snapshot.projection, { history });
@@ -1045,6 +1070,7 @@ export const makeEnvironmentThreadState = Effect.fn("EnvironmentThreadState.make
           ...(canResume ? { afterSequence: sequence } : {}),
           ...(supportsCompletionMarker ? { requestCompletionMarker: true as const } : {}),
           ...(acceptBoundedSnapshot ? { acceptBoundedSnapshot: true as const } : {}),
+          ...(acceptBoundedSnapshot && boundLongTurns ? { boundLongTurns: true as const } : {}),
         };
       }),
       {

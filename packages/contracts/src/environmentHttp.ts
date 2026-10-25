@@ -727,6 +727,15 @@ const EnvironmentOrchestrationThreadHistoryQuery = Schema.Struct({
   cursor: TrimmedNonEmptyString,
 });
 
+/**
+ * `boundLongTurns=1` cuts a user turn longer than the turn row budget into
+ * pages and sends its prompt as `windowTurnStart`. Without it user turns stay
+ * whole, as older clients expect; older servers ignore the parameter.
+ */
+const EnvironmentOrchestrationThreadBoundedSnapshotQuery = Schema.Struct({
+  boundLongTurns: Schema.optionalKey(Schema.Literal("1")),
+});
+
 const EnvironmentOrchestrationThreadHistoryErrors = [
   EnvironmentRequestInvalidError,
   EnvironmentScopeRequiredError,
@@ -754,6 +763,7 @@ class EnvironmentOrchestrationHttpApi extends HttpApiGroup.make("orchestration")
     HttpApiEndpoint.get("threadBoundedSnapshot", "/api/orchestration/threads/:threadId/bounded", {
       headers: OrchestrationProtocolHeaders,
       params: EnvironmentOrchestrationThreadSnapshotParams,
+      query: EnvironmentOrchestrationThreadBoundedSnapshotQuery,
       success: OrchestrationV2ThreadBoundedSnapshot,
       error: EnvironmentOrchestrationThreadSnapshotErrors,
     }).middleware(EnvironmentAuthenticatedAuth),

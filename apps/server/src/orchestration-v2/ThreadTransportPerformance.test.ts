@@ -34,7 +34,7 @@ const HISTORICAL_FULL_SNAPSHOT_APPLICATION_BYTES = 10_375_079;
 // snapshot variants. WebSocket framing and compression are intentionally out
 // of scope for this deterministic pre-compression measurement.
 const FULL_SNAPSHOT_RPC_JSON_BYTES = 10_375_121;
-const PRE_OMISSION_BOUNDED_SNAPSHOT_RPC_JSON_BYTES = 1_038_647;
+const PRE_OMISSION_BOUNDED_SNAPSHOT_RPC_JSON_BYTES = 1_038_636;
 // The first payload-omitting projection measured 67,412 bytes.
 const MAX_PROJECTED_BOUNDED_SNAPSHOT_RPC_JSON_BYTES = 131_072;
 const PRE_OMISSION_COMMAND_EVENT_RPC_JSON_BYTES = 8_790;
@@ -173,7 +173,6 @@ describe("thread transport payload budget", () => {
       historyCursor: preOmissionBounded.historyCursor,
       hasMoreHistory: preOmissionBounded.hasMoreHistory,
       latestLocalTurnOrdinal: preOmissionBounded.latestLocalTurnOrdinal,
-      payloadBudgetExceeded: preOmissionBounded.payloadBudgetExceeded,
     };
     const projectedBoundedSnapshot = buildBoundedThreadStreamSnapshot({
       projection,
@@ -197,7 +196,6 @@ describe("thread transport payload budget", () => {
     expect(preOmissionBoundedSnapshot.projection.visibleTurnItems).toHaveLength(60);
     expect(projectedBoundedSnapshot.projection.visibleTurnItems).toHaveLength(75);
     expect(projectedBoundedSnapshot.hasMoreHistory).toBe(true);
-    expect(projectedBoundedSnapshot.payloadBudgetExceeded).toBe(false);
   });
 
   it("omits command output from a live event without changing persisted source data", () => {

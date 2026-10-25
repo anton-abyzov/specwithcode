@@ -43,51 +43,63 @@ export class ThreadHistoryController extends Context.Service<
       environmentId: EnvironmentId,
       threadId: ThreadId,
     ) => Effect.Effect<ThreadHistoryLoadEarlierResult>;
+    /**
+     * The UI can show earlier steps below the prompt of a long turn, so
+     * snapshots may cut that turn into pages. Otherwise turns arrive whole.
+     */
+    readonly boundLongTurns: boolean;
   }
 >()("@specweave-studio/client-runtime/state/threadHistoryController") {}
 
-export const layer: Layer.Layer<ThreadHistoryController> = Layer.effect(
-  ThreadHistoryController,
-  Effect.gen(function* () {
-    const handlers = yield* Ref.make(new Map<string, ThreadHistoryHandler>());
-    return ThreadHistoryController.of({
-      register: (environmentId, threadId, handler) =>
-        Ref.update(handlers, (current) => {
-          const next = new Map(current);
-          next.set(threadKey({ environmentId, threadId }), handler);
-          return next;
-        }).pipe(
-          Effect.as({
-            environmentId,
-            threadId,
-            handler,
-          } satisfies ThreadHistoryRegistration),
-        ),
-      unregister: (registration) =>
-        Ref.update(handlers, (current) => {
-          const key = threadKey({
-            environmentId: registration.environmentId,
-            threadId: registration.threadId,
-          });
-          // Only remove when this registration still owns the slot. An older
-          // fiber finalizer must not delete a newer handler for the same key.
-          if (current.get(key) !== registration.handler) {
-            return current;
-          }
-          const next = new Map(current);
-          next.delete(key);
-          return next;
-        }),
-      loadEarlier: (environmentId, threadId) =>
-        Ref.get(handlers).pipe(
-          Effect.flatMap((current) => {
-            const handler = current.get(threadKey({ environmentId, threadId }));
-            if (handler === undefined) {
-              return Effect.succeed({ _tag: "noop" } satisfies ThreadHistoryLoadEarlierResult);
+const make = (boundLongTurns: boolean): Layer.Layer<ThreadHistoryController> =>
+  Layer.effect(
+    ThreadHistoryController,
+    Effect.gen(function* () {
+      const handlers = yield* Ref.make(new Map<string, ThreadHistoryHandler>());
+      return ThreadHistoryController.of({
+        boundLongTurns,
+        register: (environmentId, threadId, handler) =>
+          Ref.update(handlers, (current) => {
+            const next = new Map(current);
+            next.set(threadKey({ environmentId, threadId }), handler);
+            return next;
+          }).pipe(
+            Effect.as({
+              environmentId,
+              threadId,
+              handler,
+            } satisfies ThreadHistoryRegistration),
+          ),
+        unregister: (registration) =>
+          Ref.update(handlers, (current) => {
+            const key = threadKey({
+              environmentId: registration.environmentId,
+              threadId: registration.threadId,
+            });
+            // Only remove when this registration still owns the slot. An older
+            // fiber finalizer must not delete a newer handler for the same key.
+            if (current.get(key) !== registration.handler) {
+              return current;
             }
-            return handler.loadEarlier();
+            const next = new Map(current);
+            next.delete(key);
+            return next;
           }),
-        ),
-    });
-  }),
-);
+        loadEarlier: (environmentId, threadId) =>
+          Ref.get(handlers).pipe(
+            Effect.flatMap((current) => {
+              const handler = current.get(threadKey({ environmentId, threadId }));
+              if (handler === undefined) {
+                return Effect.succeed({ _tag: "noop" } satisfies ThreadHistoryLoadEarlierResult);
+              }
+              return handler.loadEarlier();
+            }),
+          ),
+      });
+    }),
+  );
+
+export const layer: Layer.Layer<ThreadHistoryController> = make(false);
+
+/** For a UI that shows a long turn's earlier steps below its prompt. */
+export const layerWithLongTurns: Layer.Layer<ThreadHistoryController> = make(true);

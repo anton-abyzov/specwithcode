@@ -830,6 +830,67 @@ describe("MessagesTimeline", () => {
     expect(markup.indexOf("Load earlier turns")).toBeLessThan(markup.indexOf("Recent activity"));
   });
 
+  it("loads a long turn's earlier steps from below its prompt", () => {
+    const prompt = buildUserTimelineEntry("Audit every package");
+    const promptEntry = {
+      ...prompt,
+      projectedItem: {
+        position: 0,
+        visibility: "local",
+        sourceThreadId: "thread-1",
+        sourceItemId: "item-prompt",
+        item: {
+          id: "item-prompt",
+          type: "user_message",
+          threadId: "thread-1",
+          runId: null,
+          nodeId: null,
+          providerThreadId: null,
+          providerTurnId: null,
+          nativeItemRef: null,
+          parentItemId: null,
+          ordinal: 1,
+          status: "completed",
+          title: null,
+          startedAt: null,
+          completedAt: null,
+          updatedAt: MESSAGE_CREATED_AT,
+          messageId: prompt.message.id,
+          inputIntent: "turn_start",
+          createdBy: "user",
+          creationSource: "web",
+          text: "Audit every package",
+          attachments: [],
+        },
+      },
+    } as unknown as ReturnType<typeof buildUserTimelineEntry>;
+    const step = {
+      ...buildAssistantTimelineEntry("Latest step"),
+      id: "entry-2",
+      message: { ...buildAssistantTimelineEntry("Latest step").message, id: MessageId.make("m-2") },
+    };
+    const markup = renderToStaticMarkup(
+      <MessagesTimeline
+        {...buildProps()}
+        timelineEntries={[promptEntry, step]}
+        historyControls={{
+          hasMoreHistory: true,
+          loading: false,
+          error: null,
+          onLoadEarlier: () => {},
+          windowTurnStartKey: "thread-1:item-prompt",
+        }}
+      />,
+    );
+
+    expect(markup).toContain('aria-label="Load earlier steps"');
+    expect(markup).not.toContain("Load earlier turns");
+    expect(markup.indexOf("Audit every package")).toBeLessThan(
+      markup.indexOf("Load earlier steps"),
+    );
+    expect(markup.indexOf("Load earlier steps")).toBeLessThan(markup.indexOf("Latest step"));
+  });
+
   it("keeps an empty bounded timeline actionable while earlier history loads", () => {
     const markup = renderToStaticMarkup(
       <MessagesTimeline

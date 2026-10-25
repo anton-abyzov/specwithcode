@@ -5,24 +5,16 @@ import { headedPatch } from "@specweave-studio/shared/structuredPatch";
 type NativeChange = CodexSchema.V2ItemCompletedNotification__FileUpdateChange;
 type FileChangeItem = Extract<OrchestrationV2TurnItem, { type: "file_change" }>;
 
-/** Joins per-file patches so every file block starts on its own line. */
-function joinFilePatches(patches: ReadonlyArray<string>): string {
-  let joined = "";
-  for (const patch of patches) {
-    if (joined !== "" && !joined.endsWith("\n")) joined += "\n";
-    joined += patch;
-  }
-  return joined;
-}
-
 /**
  * Keep every native operation and its patch; never infer a scope from prose.
  * Codex sends bare hunks (and plain content for adds and deletes), so each
  * patch gets file headers, and counted ranges where its `@@` lines have none.
+ * The patches stay on `changes` only: an item-level `diffStr` joining them
+ * would store every patch twice.
  */
 export function projectCodexFileChanges(
   nativeChanges: ReadonlyArray<NativeChange>,
-): Pick<FileChangeItem, "fileName" | "diffStr" | "changes"> | null {
+): Pick<FileChangeItem, "fileName" | "changes"> | null {
   if (nativeChanges.length === 0) return null;
   const changes = nativeChanges.map((change) => {
     if (!change.path.trim() || typeof change.diff !== "string") {
@@ -52,11 +44,7 @@ export function projectCodexFileChanges(
       ...(headed.synthesizedLineNumbers ? { diffNote: "line_numbers_synthesized" } : {}),
     };
   });
-  return {
-    fileName: changes[0]!.path,
-    diffStr: joinFilePatches(changes.map((change) => change.diffStr)),
-    changes,
-  };
+  return { fileName: changes[0]!.path, changes };
 }
 
 /** Older approvals include the patch themselves, before any item notification. */

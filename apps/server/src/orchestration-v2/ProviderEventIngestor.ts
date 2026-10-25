@@ -30,6 +30,7 @@ import { getModelSelectionStringOptionValue } from "@specweave-studio/shared/mod
 import * as AnalyticsService from "../telemetry/AnalyticsService.ts";
 import * as EventSink from "./EventSink.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
+import { TURN_ITEM_TIME_ONLY_REFRESH_MS } from "./toolItemPersistence.ts";
 import {
   lostWorkNoteEvents,
   nativeReceiptStatus,
@@ -267,6 +268,8 @@ function compactUndefined<T extends Record<string, unknown>>(record: T): T {
 
 const decodeDomainEvent = Schema.decodeUnknownEffect(OrchestrationV2DomainEvent);
 
+export { TURN_ITEM_TIME_ONLY_REFRESH_MS };
+
 export const layer: Layer.Layer<
   ProviderEventIngestorV2,
   never,
@@ -498,6 +501,17 @@ export const layer: Layer.Layer<
               }),
             ];
           case "node.updated":
+            // Adapters resend an unchanged node with each tool or text update.
+            // Compare with the stored node, not the last one sent, because the
+            // server writes nodes too. Replay is unaffected: the event would
+            // not have changed any state.
+            // A failed read only costs the skip; the write reports real errors.
+            if (
+              yield* projections
+                .isNodeStored(input.event.node)
+                .pipe(Effect.orElseSucceed(() => false))
+            )
+              return [];
             return [
               yield* makeDomainEvent(input, {
                 type: "node.updated",
@@ -528,16 +542,29 @@ export const layer: Layer.Layer<
                 nodeId: input.event.message.nodeId,
               }),
             ];
-          case "turn_item.updated":
+          case "turn_item.updated": {
+            const turnItem = input.event.turnItem;
+            // An update that changes nothing but `updatedAt` stores the whole
+            // item again. Keep one now and then, because run liveness reads
+            // item times (OrphanedRuns.runActivityAtMs).
+            const storedAt = yield* projections
+              .getUnchangedTurnItemUpdatedAtMillis(turnItem)
+              .pipe(Effect.orElseSucceed(() => null));
+            if (
+              storedAt !== null &&
+              DateTime.toEpochMillis(turnItem.updatedAt) - storedAt < TURN_ITEM_TIME_ONLY_REFRESH_MS
+            )
+              return [];
             return [
               yield* makeDomainEvent(input, {
                 type: "turn-item.updated",
                 threadId: input.event.turnItem.threadId,
-                payload: input.event.turnItem,
+                payload: turnItem,
                 runId: input.event.turnItem.runId,
                 nodeId: input.event.turnItem.nodeId,
               }),
             ];
+          }
           case "runtime_request.updated":
             return [
               yield* makeDomainEvent(input, {

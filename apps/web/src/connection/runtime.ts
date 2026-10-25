@@ -17,7 +17,7 @@ const layerProvidedConnectionPlatform = ConnectionPlatform.layer.pipe(Layer.prov
 const layerSnapshotLoader = Layer.mergeAll(
   BoundedThreadSnapshotLoader.layer,
   ShellSnapshotLoader.layer,
-  ThreadHistoryController.layer,
+  ThreadHistoryController.layerWithLongTurns,
   PullRequestDiffLoader.layer,
 );
 

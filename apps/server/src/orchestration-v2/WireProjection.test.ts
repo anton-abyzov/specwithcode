@@ -695,6 +695,23 @@ describe("orchestration V2 edit bodies and detail pages", () => {
     ).toBe(error);
   });
 
+  it("reads a Codex edit's whole body from its change patches at read time", () => {
+    const first = codexUpdatePatch("src/a.ts", 2, 3);
+    const second = codexUpdatePatch("src/b.ts", 3_000, 9_000);
+    const item = fileChangeItem({
+      changes: [
+        { operation: "update", path: "src/a.ts", diffStr: first },
+        { operation: "update", path: "src/b.ts", diffStr: second },
+      ],
+    });
+    expect(item).not.toHaveProperty("diffStr");
+    expect(
+      readAllPages(item, { field: "body" })
+        .map((page) => page.text)
+        .join(""),
+    ).toBe(joinPatches([first, second]));
+  });
+
   it("pages structured tool input and output over their compact JSON, without image bytes", () => {
     const output = {
       content: [

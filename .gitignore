@@ -51,6 +51,7 @@ node_modules/
 
 # Generated browser fixtures, screenshots, and coverage evidence.
 /.artifacts/
+/bench-results/
 
 __pycache__/
 *.pyc

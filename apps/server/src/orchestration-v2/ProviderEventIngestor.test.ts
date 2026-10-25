@@ -12,6 +12,7 @@ import {
   type OrchestrationV2ProviderThread,
   type OrchestrationV2Run,
   type OrchestrationV2TurnItem,
+  type OrchestrationV2TurnItemPage,
   ProviderDriverKind,
   ProviderInstanceId,
   PlanId,
@@ -35,7 +36,9 @@ import * as IdAllocator from "./IdAllocator.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ProviderEventIngestor from "./ProviderEventIngestor.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
+import { projectCodexFileChanges } from "./Adapters/codexFileChanges.ts";
 import { makeProviderFailure } from "./ProviderFailure.ts";
+import { projectTurnItemForDetail } from "./WireProjection.ts";
 import {
   makeProviderEventRoutingState,
   type ProviderEventRouteIdentity,
@@ -1597,3 +1600,264 @@ layer("ProviderEventIngestorV2", (it) => {
     }),
   );
 });
+
+layer("ProviderEventIngestorV2 storage growth", (it) => {
+  it.effect("stores no event for a node update identical to the stored node", () =>
+    Effect.gen(function* () {
+      const now = yield* DateTime.now;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const eventStore = yield* EventStore.EventStoreV2;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const ingestor = yield* ProviderEventIngestor.ProviderEventIngestorV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const threadEvent = yield* threadCreatedEvent(now);
+      yield* eventSink.write({ events: [threadEvent] });
+      const providerSessionId = yield* idAllocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId: threadEvent.threadId,
+      });
+      const nodeId = NodeId.make("node:identical-node-update");
+      const node: OrchestrationV2ExecutionNode = {
+        id: nodeId,
+        threadId: threadEvent.threadId,
+        runId: null,
+        parentNodeId: null,
+        rootNodeId: nodeId,
+        kind: "tool_call",
+        status: "running",
+        countsForRun: true,
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        runtimeRequestId: null,
+        checkpointScopeId: null,
+        startedAt: now,
+        completedAt: null,
+      };
+      const ingest = (next: OrchestrationV2ExecutionNode) =>
+        ingestor.ingestNormalized({
+          providerSessionId,
+          providerInstanceId: modelSelection.instanceId,
+          threadId: threadEvent.threadId,
+          event: { type: "node.updated", driver: CODEX_DRIVER, node: next },
+        });
+
+      assert.isFalse(yield* projections.isNodeStored(node));
+      const first = yield* ingest(node);
+      assert.isTrue(yield* projections.isNodeStored(node));
+      const repeated = [];
+      for (let index = 0; index < 50; index += 1) repeated.push(...(yield* ingest({ ...node })));
+      const completed = { ...node, status: "completed" as const, completedAt: now };
+      const changed = yield* ingest(completed);
+      const repeatedCompleted = yield* ingest(completed);
+
+      const stored = Array.from(
+        yield* eventStore.read({ threadId: threadEvent.threadId }).pipe(Stream.runCollect),
+      );
+      assert.equal(first.length, 1);
+      assert.equal(repeated.length, 0);
+      assert.equal(changed.length, 1);
+      assert.equal(repeatedCompleted.length, 0);
+      assert.equal(stored.filter((entry) => entry.event.type === "node.updated").length, 2);
+      const projected = (yield* projections.getThreadProjection(threadEvent.threadId)).nodes.find(
+        (entry) => entry.id === nodeId,
+      );
+      assert.equal(projected?.status, "completed");
+    }),
+  );
+
+  it.effect("stores no event for a turn item update that only moves updatedAt", () =>
+    Effect.gen(function* () {
+      const now = yield* DateTime.now;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const eventStore = yield* EventStore.EventStoreV2;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const ingestor = yield* ProviderEventIngestor.ProviderEventIngestorV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const threadEvent = yield* threadCreatedEvent(now);
+      yield* eventSink.write({ events: [threadEvent] });
+      const providerSessionId = yield* idAllocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId: threadEvent.threadId,
+      });
+      const itemId = TurnItemId.make("turn-item:time-only");
+      // The provider's ordinal differs from the stored position on purpose.
+      const item = {
+        id: itemId,
+        threadId: threadEvent.threadId,
+        runId: null,
+        nodeId: NodeId.make("node:time-only"),
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: 7,
+        status: "running",
+        title: "Run build",
+        startedAt: now,
+        completedAt: null,
+        updatedAt: now,
+        type: "command_execution",
+        input: "build",
+        output: "compiling",
+      } satisfies OrchestrationV2TurnItem;
+      const later = (millis: number) => DateTime.makeUnsafe(DateTime.toEpochMillis(now) + millis);
+      const ingest = (turnItem: OrchestrationV2TurnItem) =>
+        ingestor.ingestNormalized({
+          providerSessionId,
+          providerInstanceId: modelSelection.instanceId,
+          threadId: threadEvent.threadId,
+          event: { type: "turn_item.updated", driver: CODEX_DRIVER, turnItem },
+        });
+
+      const first = yield* ingest(item);
+      const timeOnly = yield* ingest({ ...item, updatedAt: later(1_000) });
+      const identical = yield* ingest(item);
+      const changed = yield* ingest({ ...item, output: "compiled", updatedAt: later(2_000) });
+      // A quiet item still refreshes its time once a minute, for run liveness.
+      const refresh = yield* ingest({
+        ...item,
+        output: "compiled",
+        updatedAt: later(2_000 + ProviderEventIngestor.TURN_ITEM_TIME_ONLY_REFRESH_MS),
+      });
+
+      assert.equal(first.length, 1);
+      assert.equal(timeOnly.length, 0);
+      assert.equal(identical.length, 0);
+      assert.equal(changed.length, 1);
+      assert.equal(refresh.length, 1);
+      const stored = Array.from(
+        yield* eventStore.read({ threadId: threadEvent.threadId }).pipe(Stream.runCollect),
+      );
+      assert.equal(stored.filter((entry) => entry.event.type === "turn-item.updated").length, 3);
+      const projected = (yield* projections.getThreadProjection(
+        threadEvent.threadId,
+      )).turnItems.find((entry) => entry.id === itemId);
+      assert.equal(projected?.type === "command_execution" ? projected.output : null, "compiled");
+      assert.deepEqual(
+        projected?.updatedAt,
+        later(2_000 + ProviderEventIngestor.TURN_ITEM_TIME_ONLY_REFRESH_MS),
+      );
+    }),
+  );
+
+  it.effect("stores a Codex edit's patches once and pages a 300 KB patch back exactly", () =>
+    Effect.gen(function* () {
+      const now = yield* DateTime.now;
+      const eventSink = yield* EventSink.EventSinkV2;
+      const eventStore = yield* EventStore.EventStoreV2;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const ingestor = yield* ProviderEventIngestor.ProviderEventIngestorV2;
+      const idAllocator = yield* IdAllocator.IdAllocatorV2;
+      const threadEvent = yield* threadCreatedEvent(now);
+      yield* eventSink.write({ events: [threadEvent] });
+      const providerSessionId = yield* idAllocator.allocate.providerSession({
+        providerInstanceId: modelSelection.instanceId,
+        threadId: threadEvent.threadId,
+      });
+      const body = `@@ -1,12000 +1,12000 @@\n${Array.from(
+        { length: 12_000 },
+        (_, index) => `-old line ${index}\n+new line ${index}`,
+      ).join("\n")}\n`;
+      const projected = projectCodexFileChanges([
+        { path: "/workspace/big.ts", kind: { type: "update" }, diff: body },
+        { path: "/workspace/small.ts", kind: { type: "add" }, diff: "hello\n" },
+      ])!;
+      const source = projected.changes![0]!.diffStr!;
+      assert.isAbove(Buffer.byteLength(source, "utf8"), 300_000);
+      const itemId = TurnItemId.make("turn-item:codex-big-edit");
+      const turnItem = {
+        id: itemId,
+        threadId: threadEvent.threadId,
+        runId: null,
+        nodeId: NodeId.make("node:codex-big-edit"),
+        providerThreadId: null,
+        providerTurnId: null,
+        nativeItemRef: null,
+        parentItemId: null,
+        ordinal: 1,
+        status: "completed",
+        title: null,
+        startedAt: now,
+        completedAt: now,
+        updatedAt: now,
+        type: "file_change",
+        ...projected,
+      } satisfies OrchestrationV2TurnItem;
+      yield* ingestor.ingestNormalized({
+        providerSessionId,
+        providerInstanceId: modelSelection.instanceId,
+        threadId: threadEvent.threadId,
+        event: { type: "turn_item.updated", driver: CODEX_DRIVER, turnItem },
+      });
+
+      const stored = Array.from(
+        yield* eventStore.read({ threadId: threadEvent.threadId }).pipe(Stream.runCollect),
+      ).find((entry) => entry.event.type === "turn-item.updated");
+      const payload = stored?.event.payload as OrchestrationV2TurnItem | undefined;
+      if (payload?.type !== "file_change") throw new Error("Expected a stored edit");
+      // Each patch is stored once, whole, on its change.
+      assert.notProperty(payload, "diffStr");
+      assert.equal(payload.changes?.[0]?.diffStr, source);
+      assert.equal(payload.changes?.[1]?.diffStr, projected.changes![1]!.diffStr);
+
+      // Read it back the way getTurnItem serves it, one page at a time.
+      const item = yield* projections.getTurnItem({ threadId: threadEvent.threadId, itemId });
+      if (item === null) throw new Error("Expected the projected edit");
+      let text = "";
+      let offset: number | null = 0;
+      let pages = 0;
+      while (offset !== null) {
+        const page: OrchestrationV2TurnItemPage | undefined = projectTurnItemForDetail(item, {
+          field: "body",
+          changeIndex: 0,
+          offset,
+        }).page;
+        if (page === undefined) throw new Error("Expected a body page");
+        text += page.text;
+        offset = page.nextOffset;
+        pages += 1;
+      }
+      assert.isAbove(pages, 1);
+      assert.equal(text, source);
+    }),
+  );
+});
+
+it.effect("the replay store answers isNodeStored from replayed state", () =>
+  Effect.gen(function* () {
+    const now = yield* DateTime.now;
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const idAllocator = yield* IdAllocator.IdAllocatorV2;
+    const threadEvent = yield* threadCreatedEvent(now);
+    yield* projections.apply(threadEvent);
+    const nodeId = NodeId.make("node:replay-identical");
+    const node: OrchestrationV2ExecutionNode = {
+      id: nodeId,
+      threadId: threadEvent.threadId,
+      runId: null,
+      parentNodeId: null,
+      rootNodeId: nodeId,
+      kind: "tool_call",
+      status: "running",
+      countsForRun: true,
+      providerThreadId: null,
+      providerTurnId: null,
+      nativeItemRef: null,
+      runtimeRequestId: null,
+      checkpointScopeId: null,
+      startedAt: now,
+      completedAt: null,
+    };
+    assert.isFalse(yield* projections.isNodeStored(node));
+    yield* projections.apply({
+      id: yield* idAllocator.allocate.event({ threadId: threadEvent.threadId }),
+      type: "node.updated",
+      threadId: threadEvent.threadId,
+      occurredAt: now,
+      payload: node,
+    });
+    assert.isTrue(yield* projections.isNodeStored({ ...node }));
+    assert.isFalse(yield* projections.isNodeStored({ ...node, status: "completed" }));
+  }).pipe(Effect.provide(Layer.merge(ProjectionStore.layerMemory, IdAllocator.layer))),
+);

@@ -3,6 +3,7 @@ import type {
   OrchestrationV2ContextHandoff,
   OrchestrationV2FileChangeDetail,
   OrchestrationV2GetTurnItemInput,
+  OrchestrationV2ProjectedTurnItem,
   OrchestrationV2ThreadProjection,
   OrchestrationV2TurnItem,
   OrchestrationV2TurnItemDetailField,
@@ -10,6 +11,7 @@ import type {
   OrchestrationV2TurnItemPageInfo,
 } from "@specweave-studio/contracts";
 import { countPatchLines } from "@specweave-studio/shared/structuredPatch";
+import { fileChangePatchText } from "./fileChangePatches.ts";
 import {
   compactDynamicToolOutput,
   omitToolOutputImageData,
@@ -360,7 +362,12 @@ function detailFieldText(
       return item.type === "dynamic_tool" ? dynamicValueText(item.input) : null;
     case "body": {
       if (item.type !== "file_change") return null;
-      const body = changeIndex === undefined ? item.diffStr : item.changes?.[changeIndex]?.diffStr;
+      // Without a change index the body is the whole patch; Codex items keep it
+      // only on their changes, so it is joined from them at read time.
+      const body =
+        changeIndex === undefined
+          ? fileChangePatchText(item)
+          : item.changes?.[changeIndex]?.diffStr;
       return body === undefined ? null : { text: body, structured: false };
     }
   }
@@ -451,6 +458,14 @@ export function projectThreadProjectionForWire(
       item: project(row.item),
     })),
   };
+}
+
+/** Wire form of one projected row; passes null and undefined through. */
+export function projectProjectedTurnItemForWire<
+  Row extends OrchestrationV2ProjectedTurnItem | null | undefined,
+>(row: Row): Row {
+  if (row === null || row === undefined) return row;
+  return { ...row, item: projectTurnItemForWire(row.item) };
 }
 
 export function projectDomainEventForWire(

@@ -123,6 +123,8 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
   readonly saveThread?: Persistence.EnvironmentCacheStore["Service"]["saveThread"];
   readonly historyPaging?: "enabled" | "no-http" | "no-controller";
   readonly historyHttpClient?: HttpClient.HttpClient;
+  /** Provide the history controller a UI that pages long turns registers. */
+  readonly longTurns?: boolean;
 }) {
   const inputs = yield* Queue.unbounded<TestThreadInput>();
   const observed = yield* Queue.unbounded<EnvironmentThreadState>();
@@ -133,6 +135,8 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
   const lastSubscribeAfterSequence = yield* Ref.make<number | undefined>(undefined);
   const lastRequestCompletionMarker = yield* Ref.make(false);
   const lastAcceptBoundedSnapshot = yield* Ref.make<true | undefined>(undefined);
+  const lastBoundLongTurns = yield* Ref.make<true | undefined>(undefined);
+  const lastLoaderBoundLongTurns = yield* Ref.make<boolean | undefined>(undefined);
   const wakeups = yield* Queue.unbounded<ConnectionWakeups.ConnectionWakeup>();
   const savedThreads = yield* Ref.make<ReadonlyArray<OrchestrationV2ThreadDetailSnapshot>>([]);
   const removedThreads = yield* Ref.make<ReadonlyArray<ThreadId>>([]);
@@ -154,6 +158,7 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
       readonly afterSequence?: number;
       readonly requestCompletionMarker?: true;
       readonly acceptBoundedSnapshot?: true;
+      readonly boundLongTurns?: true;
     }) =>
       Stream.unwrap(
         Ref.updateAndGet(subscriptionCount, (count) => count + 1).pipe(
@@ -162,6 +167,7 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
             Ref.set(lastRequestCompletionMarker, input.requestCompletionMarker === true),
           ),
           Effect.andThen(Ref.set(lastAcceptBoundedSnapshot, input.acceptBoundedSnapshot)),
+          Effect.andThen(Ref.set(lastBoundLongTurns, input.boundLongTurns)),
           Effect.as(streamFrom(inputs)),
         ),
       ),
@@ -173,8 +179,9 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
     Option.some(PREPARED),
   );
   const snapshotLoader = ThreadSnapshotLoader.ThreadSnapshotLoader.of({
-    load: (_prepared, threadId) =>
+    load: (_prepared, threadId, loadOptions) =>
       Ref.update(loaderCalls, (count) => count + 1).pipe(
+        Effect.andThen(Ref.set(lastLoaderBoundLongTurns, loadOptions?.boundLongTurns)),
         Effect.andThen(() => {
           const configured = options?.httpSnapshot;
           if (threadId !== THREAD_ID || configured === undefined) {
@@ -254,7 +261,11 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
     );
   }
   const historyController = yield* ThreadHistoryController.ThreadHistoryController.pipe(
-    Effect.provide(ThreadHistoryController.layer),
+    Effect.provide(
+      options?.longTurns === true
+        ? ThreadHistoryController.layerWithLongTurns
+        : ThreadHistoryController.layer,
+    ),
   );
   if (options?.historyPaging !== "no-controller") {
     makeThreadState = makeThreadState.pipe(
@@ -281,6 +292,8 @@ const makeHarness = Effect.fn("TestEnvironmentThreads.makeHarness")(function* (o
     lastSubscribeAfterSequence,
     lastRequestCompletionMarker,
     lastAcceptBoundedSnapshot,
+    lastBoundLongTurns,
+    lastLoaderBoundLongTurns,
     supervisorState,
     supervisorSession,
     savedThreads,
@@ -771,6 +784,26 @@ describe("EnvironmentThreads", () => {
     }),
   );
 
+  it.effect("asks for long turns in pages only from a UI that shows their earlier steps", () =>
+    Effect.gen(function* () {
+      for (const longTurns of [true, false]) {
+        const harness = yield* makeHarness({ longTurns });
+        yield* Queue.offer(harness.inputs, {
+          kind: "snapshot",
+          snapshotSequence: 3,
+          projection: BASE_PROJECTION,
+          historyCursor: null,
+          hasMoreHistory: false,
+          latestLocalTurnOrdinal: null,
+        });
+        yield* awaitThreadState(harness.observed, (value) => value.status === "live");
+        expect(yield* Ref.get(harness.lastAcceptBoundedSnapshot)).toBe(true);
+        expect(yield* Ref.get(harness.lastBoundLongTurns)).toBe(longTurns ? true : undefined);
+        expect(yield* Ref.get(harness.lastLoaderBoundLongTurns)).toBe(longTurns ? true : undefined);
+      }
+    }),
+  );
+
   it.effect("keeps progressive history metadata from a bounded socket fallback", () =>
     Effect.gen(function* () {
       const olderItem = {
@@ -824,7 +857,6 @@ describe("EnvironmentThreads", () => {
         historyCursor: "socket-history-cursor",
         hasMoreHistory: true,
         latestLocalTurnOrdinal: 47,
-        payloadBudgetExceeded: false,
       });
 
       const state = yield* awaitThreadState(
@@ -1227,7 +1259,6 @@ describe("EnvironmentThreads", () => {
         historyCursor: "replacement-cursor",
         hasMoreHistory: true,
         latestLocalTurnOrdinal: 9,
-        payloadBudgetExceeded: false,
       });
 
       const state = yield* awaitThreadState(

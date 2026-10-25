@@ -9,6 +9,7 @@ import {
   isActiveHistoryRequestCursor,
   mergeOlderHistoryIntoProjection,
   shouldShowLoadEarlierControl,
+  withWindowTurnStart,
 } from "./threadHistoryMerge.ts";
 import { applyOrchestrationV2ProjectionEvent } from "./orchestrationV2Projection.ts";
 
@@ -43,6 +44,118 @@ function row(index: number): OrchestrationV2ProjectedTurnItem {
     },
   };
 }
+
+function userTurnRow(index: number): OrchestrationV2ProjectedTurnItem {
+  const id = `item-${index}` as never;
+  return {
+    ...row(index),
+    item: {
+      id,
+      type: "user_message",
+      threadId: v2ThreadId,
+      runId: null,
+      nodeId: null,
+      providerThreadId: null,
+      providerTurnId: null,
+      nativeItemRef: null,
+      parentItemId: null,
+      ordinal: index + 1,
+      status: "completed",
+      title: null,
+      startedAt: NOW,
+      completedAt: NOW,
+      updatedAt: NOW,
+      messageId: `message-${index}`,
+      inputIntent: "turn_start",
+      createdBy: "user",
+      creationSource: "web",
+    } as unknown as OrchestrationV2ProjectedTurnItem["item"],
+  };
+}
+
+const ids = (projection: { readonly visibleTurnItems: ReadonlyArray<{ sourceItemId: string }> }) =>
+  projection.visibleTurnItems.map((entry) => entry.sourceItemId);
+
+describe("window turn start", () => {
+  it("leads the window and pages fill the gap below it in order", () => {
+    // Turn start item-10, older turn item-0..item-9, window item-17..item-19.
+    const window = [row(17), row(18), row(19)];
+    const base = {
+      ...v2Projection,
+      turnItems: window.map((entry) => entry.item),
+      visibleTurnItems: window.map((entry, position) => ({ ...entry, position })),
+    };
+    const turnStart = { ...userTurnRow(10), position: 0 };
+    const placed = withWindowTurnStart(base, turnStart);
+    expect(placed.key).toBe(`${v2ThreadId}:item-10`);
+    expect(ids(placed.projection)).toEqual(["item-10", "item-17", "item-18", "item-19"]);
+    expect(placed.projection.turnItems.map((item) => item.id)).toContain("item-10");
+    expect(placed.projection.visibleTurnItems.map((entry) => entry.position)).toEqual([0, 1, 2, 3]);
+
+    const first = mergeOlderHistoryIntoProjection(
+      placed.projection,
+      [row(14), row(15), row(16)],
+      placed.key,
+    );
+    expect(ids(first)).toEqual([
+      "item-10",
+      "item-14",
+      "item-15",
+      "item-16",
+      "item-17",
+      "item-18",
+      "item-19",
+    ]);
+    const firstMeta = applyHistoryPageMeta(
+      { ...EMPTY_META, historyCursor: "c1", hasMoreHistory: true, windowTurnStartKey: placed.key },
+      { nextCursor: "c2", hasMoreHistory: true, items: [row(14), row(15), row(16)] },
+    );
+    expect(firstMeta.windowTurnStartKey).toBe(placed.key);
+
+    // This page reaches the turn start: older rows go above it, the rest below.
+    const reaching = [row(8), row(9), userTurnRow(10), row(11), row(12), row(13)];
+    const second = mergeOlderHistoryIntoProjection(first, reaching, placed.key);
+    expect(ids(second)).toEqual(
+      ["item-8", "item-9", "item-10"].concat(
+        Array.from({ length: 9 }, (_, offset) => `item-${11 + offset}`),
+      ),
+    );
+    const secondMeta = applyHistoryPageMeta(firstMeta, {
+      nextCursor: "c3",
+      hasMoreHistory: true,
+      items: reaching,
+    });
+    expect(secondMeta.windowTurnStartKey).toBeNull();
+
+    // With the gap closed, later pages prepend again.
+    const third = mergeOlderHistoryIntoProjection(second, [row(6), row(7)], null);
+    expect(ids(third).slice(0, 3)).toEqual(["item-6", "item-7", "item-8"]);
+    expect(new Set(ids(third)).size).toBe(ids(third).length);
+  });
+
+  it("is a no-op when the window already holds the turn start", () => {
+    const window = [userTurnRow(10), row(11)];
+    const base = {
+      ...v2Projection,
+      turnItems: window.map((entry) => entry.item),
+      visibleTurnItems: window.map((entry, position) => ({ ...entry, position })),
+    };
+    const placed = withWindowTurnStart(base, userTurnRow(10));
+    expect(placed.key).toBeNull();
+    expect(placed.projection).toBe(base);
+    expect(withWindowTurnStart(base, undefined).projection).toBe(base);
+  });
+});
+
+const EMPTY_META = {
+  historyCursor: null,
+  hasMoreHistory: false,
+  loading: false,
+  error: null,
+  expanded: false,
+  latestLocalTurnOrdinal: null,
+  windowTurnStartKey: null,
+} as const;
 
 describe("threadHistoryMerge", () => {
   it("prepends older rows and dedupes by source identity", () => {
@@ -115,6 +228,7 @@ describe("threadHistoryMerge", () => {
         error: null,
         expanded: false,
         latestLocalTurnOrdinal: 42,
+        windowTurnStartKey: null,
       },
       { nextCursor: "cursor-b", hasMoreHistory: true },
     );
@@ -125,6 +239,7 @@ describe("threadHistoryMerge", () => {
       error: null,
       expanded: true,
       latestLocalTurnOrdinal: 42,
+      windowTurnStartKey: null,
     });
   });
 
@@ -142,6 +257,7 @@ describe("threadHistoryMerge", () => {
       error: null,
       expanded: false,
       latestLocalTurnOrdinal: 10,
+      windowTurnStartKey: null,
     };
     expect(clearActiveHistoryLoading("cursor-a", loading)).toEqual({
       ...loading,
@@ -165,6 +281,7 @@ describe("threadHistoryMerge", () => {
         error: null,
         expanded: false,
         latestLocalTurnOrdinal: null,
+        windowTurnStartKey: null,
       }),
     ).toBe(true);
     expect(
@@ -175,6 +292,7 @@ describe("threadHistoryMerge", () => {
         error: "Could not load earlier activity.",
         expanded: true,
         latestLocalTurnOrdinal: null,
+        windowTurnStartKey: null,
       }),
     ).toBe(true);
     expect(
@@ -185,6 +303,7 @@ describe("threadHistoryMerge", () => {
         error: null,
         expanded: false,
         latestLocalTurnOrdinal: null,
+        windowTurnStartKey: null,
       }),
     ).toBe(false);
   });

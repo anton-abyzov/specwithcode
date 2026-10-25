@@ -28,11 +28,16 @@ import {
   THREAD_HISTORY_SNAPSHOT_ROW_LIMIT,
   THREAD_HISTORY_PAGE_POLICY,
   OLDER_THREAD_USER_TURN_LIMIT,
+  threadHistoryCursorBoundsLongTurns,
+  WHOLE_TURN_THREAD_HISTORY_PAGE_POLICY,
 } from "./threadHistoryPaging.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import { buildActiveShellSnapshot } from "./ShellStream.ts";
-import { projectThreadProjectionForWire } from "./WireProjection.ts";
+import {
+  projectProjectedTurnItemForWire,
+  projectThreadProjectionForWire,
+} from "./WireProjection.ts";
 
 function isThreadNotFound(error: unknown): boolean {
   return (
@@ -140,6 +145,7 @@ export const layer = HttpApiBuilder.group(
         anchorThreadId?: Parameters<
           typeof threadManagement.getThreadSnapshotWindow
         >[1]["anchorThreadId"],
+        boundLongTurns = false,
       ) {
         return yield* threadManagement
           .getThreadSnapshotWindow(threadId, {
@@ -150,11 +156,13 @@ export const layer = HttpApiBuilder.group(
                 : OLDER_THREAD_USER_TURN_LIMIT,
             ...(anchorItemId === undefined ? {} : { anchorItemId }),
             ...(anchorThreadId === undefined ? {} : { anchorThreadId }),
+            boundLongTurns,
           })
           .pipe(
             Effect.map((snapshot) => ({
               ...snapshot,
               projection: projectThreadProjectionForWire(snapshot.projection),
+              latestUserTurnStart: projectProjectedTurnItemForWire(snapshot.latestUserTurnStart),
             })),
             Effect.catch(
               Effect.fnUntraced(function* (error) {
@@ -202,12 +210,21 @@ export const layer = HttpApiBuilder.group(
         Effect.fn("environment.orchestration.threadBoundedSnapshot")(function* (args) {
           yield* annotateEnvironmentRequest(args.endpoint.name);
           yield* requireEnvironmentScope(AuthOrchestrationReadScope);
-          const snapshot = yield* loadThreadSnapshotWindow(args.params.threadId).pipe(
-            traceLocalHandlerWork,
-          );
+          const boundLongTurns = args.query.boundLongTurns === "1";
+          const snapshot = yield* loadThreadSnapshotWindow(
+            args.params.threadId,
+            undefined,
+            undefined,
+            boundLongTurns,
+          ).pipe(traceLocalHandlerWork);
           const bounded = buildBoundedThreadProjection({
             projection: snapshot.projection,
             snapshotSequence: snapshot.snapshotSequence,
+            latestUserTurnStart: snapshot.latestUserTurnStart,
+            olderRowsUnloaded: snapshot.olderRowsUnloaded,
+            policy: boundLongTurns
+              ? THREAD_HISTORY_PAGE_POLICY
+              : WHOLE_TURN_THREAD_HISTORY_PAGE_POLICY,
           });
           return {
             snapshotSequence: snapshot.snapshotSequence,
@@ -215,7 +232,9 @@ export const layer = HttpApiBuilder.group(
             historyCursor: bounded.historyCursor,
             hasMoreHistory: bounded.hasMoreHistory,
             latestLocalTurnOrdinal: bounded.latestLocalTurnOrdinal,
-            payloadBudgetExceeded: bounded.payloadBudgetExceeded,
+            ...(bounded.windowTurnStart === null
+              ? {}
+              : { windowTurnStart: bounded.windowTurnStart }),
           };
         }),
       )
@@ -238,11 +257,13 @@ export const layer = HttpApiBuilder.group(
             args.params.threadId,
             anchorItemId,
             ThreadId.make(decodedCursor.st),
+            threadHistoryCursorBoundsLongTurns(decodedCursor),
           ).pipe(traceLocalHandlerWork);
           const pageOrError = selectHistoryPageFromCursorOrError({
             items: snapshot.projection.visibleTurnItems,
             cursor: args.query.cursor,
             snapshotSequence: snapshot.snapshotSequence,
+            olderRowsUnloaded: snapshot.olderRowsUnloaded,
           });
           if (pageOrError._tag === "invalid_cursor") {
             return yield* failEnvironmentInvalidRequest("invalid_history_cursor");

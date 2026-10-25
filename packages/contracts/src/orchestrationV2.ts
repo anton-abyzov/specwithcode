@@ -3737,6 +3737,13 @@ export const OrchestrationV2SubscribeThreadInput = Schema.Struct({
   requestCompletionMarker: Schema.optionalKey(Schema.Boolean),
   /** Allows snapshot fallbacks to contain a bounded, pageable history window. */
   acceptBoundedSnapshot: Schema.optionalKey(Schema.Boolean),
+  /**
+   * With `acceptBoundedSnapshot`, cuts a user turn longer than the turn row
+   * budget into pages and sends its prompt as `windowTurnStart`. Clients that
+   * cannot show earlier steps below that prompt leave it out and get whole
+   * turns; older servers ignore it.
+   */
+  boundLongTurns: Schema.optionalKey(Schema.Boolean),
 });
 export type OrchestrationV2SubscribeThreadInput = typeof OrchestrationV2SubscribeThreadInput.Type;
 
@@ -3755,8 +3762,23 @@ export const OrchestrationV2ThreadDetailSnapshot = Schema.Struct({
    * time. Optional for backward-compatible warm cache entries.
    */
   latestLocalTurnOrdinal: Schema.optionalKey(Schema.NullOr(NonNegativeInt)),
+  /**
+   * `sourceThreadId:sourceItemId` of a window turn start the client placed at
+   * the head of `visibleTurnItems`. Older pages go below that row until a page
+   * brings it again. Absent when there is no such gap.
+   */
+  windowTurnStartKey: Schema.optionalKey(TrimmedNonEmptyString),
 });
 export type OrchestrationV2ThreadDetailSnapshot = typeof OrchestrationV2ThreadDetailSnapshot.Type;
+
+/**
+ * The user message that opened the turn a bounded window starts inside. Sent
+ * only when the window holds no user turn start, such as the tail of one long
+ * agent turn. It is not in `projection`: clients that know it show it above
+ * the window and merge older pages below it until a page brings this row.
+ * Older clients ignore it and page as usual.
+ */
+const OrchestrationV2WindowTurnStart = Schema.optionalKey(OrchestrationV2ProjectedTurnItem);
 
 /**
  * Progressive cold open: full control-plane projection arrays with only a
@@ -3774,8 +3796,7 @@ export const OrchestrationV2ThreadBoundedSnapshot = Schema.Struct({
    * has no local rows (inherited-only).
    */
   latestLocalTurnOrdinal: Schema.NullOr(NonNegativeInt),
-  /** True when complete turns or required live control state exceed the usual byte budget. */
-  payloadBudgetExceeded: Schema.optional(Schema.Boolean),
+  windowTurnStart: OrchestrationV2WindowTurnStart,
 });
 export type OrchestrationV2ThreadBoundedSnapshot = typeof OrchestrationV2ThreadBoundedSnapshot.Type;
 
@@ -3855,7 +3876,7 @@ export const OrchestrationV2ThreadStreamItem = Schema.Union([
     historyCursor: Schema.optionalKey(Schema.NullOr(TrimmedNonEmptyString)),
     hasMoreHistory: Schema.optionalKey(Schema.Boolean),
     latestLocalTurnOrdinal: Schema.optionalKey(Schema.NullOr(NonNegativeInt)),
-    payloadBudgetExceeded: Schema.optionalKey(Schema.Boolean),
+    windowTurnStart: OrchestrationV2WindowTurnStart,
   }),
   Schema.Struct({
     kind: Schema.Literal("event"),

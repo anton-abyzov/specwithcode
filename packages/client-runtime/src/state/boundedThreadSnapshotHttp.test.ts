@@ -76,7 +76,99 @@ const FULL_SNAPSHOT_BODY = {
   },
 };
 
+const turnItem = (id: string, ordinal: number, fields: Record<string, unknown>) => ({
+  id,
+  threadId: String(THREAD_ID),
+  runId: null,
+  nodeId: null,
+  providerThreadId: null,
+  providerTurnId: null,
+  nativeItemRef: null,
+  parentItemId: null,
+  ordinal,
+  status: "completed",
+  title: null,
+  startedAt: NOW,
+  completedAt: NOW,
+  updatedAt: NOW,
+  ...fields,
+});
+const projectedRow = (item: ReturnType<typeof turnItem>, position: number) => ({
+  position,
+  visibility: "local",
+  sourceThreadId: String(THREAD_ID),
+  sourceItemId: item.id,
+  item,
+});
+
 describe("boundedThreadSnapshotLoader", () => {
+  it.effect("places a window turn start at the head and keeps its key for paging", () => {
+    const prompt = turnItem("item-prompt", 1, {
+      type: "user_message",
+      createdBy: "user",
+      creationSource: "web",
+      messageId: "message-prompt",
+      inputIntent: "turn_start",
+      text: "Run the audit",
+      attachments: [],
+    });
+    const step = turnItem("item-4000", 4000, {
+      type: "command_execution",
+      input: "rg audit",
+      output: "",
+      exitCode: 0,
+    });
+    const body = {
+      ...FULL_SNAPSHOT_BODY,
+      projection: {
+        ...FULL_SNAPSHOT_BODY.projection,
+        turnItems: [step],
+        visibleTurnItems: [projectedRow(step, 0)],
+      },
+      historyCursor: "older-page",
+      hasMoreHistory: true,
+      latestLocalTurnOrdinal: 4000,
+      windowTurnStart: projectedRow(prompt, 0),
+    };
+    const urls: string[] = [];
+    const fetchFn = ((input: RequestInfo | URL) => {
+      urls.push(String(input));
+      return Promise.resolve(
+        new Response(JSON.stringify(body), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        }),
+      );
+    }) satisfies typeof fetch;
+
+    return Effect.gen(function* () {
+      const loader = yield* ThreadSnapshotLoader.ThreadSnapshotLoader;
+      const result = yield* loader.load(PREPARED, THREAD_ID, { boundLongTurns: true });
+      // Only a client that can show earlier steps below the prompt asks for it.
+      expect(new URL(urls[0]!).searchParams.get("boundLongTurns")).toBe("1");
+      yield* loader.load(PREPARED, THREAD_ID);
+      expect(new URL(urls[1]!).searchParams.has("boundLongTurns")).toBe(false);
+      expect(result._tag).toBe("present");
+      if (result._tag !== "present") return;
+      const projection = result.snapshot.projection;
+      expect(projection.visibleTurnItems.map((row) => [row.position, row.sourceItemId])).toEqual([
+        [0, "item-prompt"],
+        [1, "item-4000"],
+      ]);
+      expect(projection.turnItems.map((item) => item.id)).toEqual(["item-prompt", "item-4000"]);
+      expect(result.history).toEqual({
+        historyCursor: "older-page",
+        hasMoreHistory: true,
+        latestLocalTurnOrdinal: 4000,
+        windowTurnStartKey: `${THREAD_ID}:item-prompt`,
+      });
+    }).pipe(
+      Effect.provide(
+        Layer.provide(BoundedThreadSnapshotHttp.layer, RpcHttp.layerRemoteHttpClient(fetchFn)),
+      ),
+    );
+  });
+
   it.effect("falls back to full HTTP snapshot when bounded returns a plain route 404", () => {
     const fetchFn = ((input: RequestInfo | URL) => {
       const url = String(input);

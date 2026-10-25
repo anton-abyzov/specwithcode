@@ -132,6 +132,12 @@ import { makeProviderFailure, makeProviderRetryTurnItem } from "../ProviderFailu
 import { limitReplyTurnFailure } from "./acpLimitReply.ts";
 import { acpSelectionTransition } from "../ProviderSelectionTransition.ts";
 import {
+  decideToolItemPersist,
+  isOpenToolItemStatus,
+  TOOL_ITEM_PERSIST_INTERVAL_MS,
+  turnItemContentKey,
+} from "../toolItemPersistence.ts";
+import {
   isProviderNativeImageAttachment,
   providerMessageTextWithAttachmentPaths,
 } from "../AttachmentPrompt.ts";
@@ -555,6 +561,8 @@ export interface AcpAdapterV2Options {
      */
     readonly onDeferredFinalizeScheduled?: (debounce: Duration.Input) => Effect.Effect<void>;
     readonly afterPromptSettledWithBackgroundWork?: () => Effect.Effect<void>;
+    /** Receives a reader of how many tool items the session tracks for coalescing. */
+    readonly onToolItemPersistTracking?: (trackedCount: () => number) => void;
     readonly afterNativeResponseTransportClosed?: () => Effect.Effect<void>;
     readonly afterHardTeardownTransportDrained?: () => Effect.Effect<void>;
     readonly beforeNativeResponseAdmissionCheck?: (
@@ -3337,6 +3345,131 @@ export function makeAcpAdapterV2(
             return next ?? current;
           });
 
+        // Last stored snapshot of each open tool item, plus the newest update
+        // held back inside the persist interval (see decideToolItemPersist).
+        // An entry goes when its tool ends and when its turn settles, so the
+        // map holds only the tools still streaming in this session.
+        const persistedToolItems = new Map<
+          OrchestrationV2TurnItem["id"],
+          {
+            stored: {
+              readonly item: OrchestrationV2TurnItem;
+              readonly at: number;
+              readonly key: string;
+            };
+            held: {
+              readonly node: OrchestrationV2ExecutionNode;
+              readonly item: OrchestrationV2TurnItem;
+            } | null;
+            flushArmed: boolean;
+          }
+        >();
+        const MAX_PERSISTED_TOOL_ITEMS = 1_000;
+        options.testHooks?.onToolItemPersistTracking?.(() => persistedToolItems.size);
+
+        const storeToolItem = Effect.fnUntraced(function* (
+          node: OrchestrationV2ExecutionNode,
+          item: OrchestrationV2TurnItem,
+          at: number,
+          key = turnItemContentKey(item),
+        ) {
+          const entry = persistedToolItems.get(item.id);
+          if (!isOpenToolItemStatus(item.status)) {
+            // An ended tool is stored as is; nothing is left to coalesce, and
+            // a timer still armed for it finds no entry and does nothing.
+            persistedToolItems.delete(item.id);
+          } else if (entry === undefined) {
+            persistedToolItems.set(item.id, {
+              stored: { item, at, key },
+              held: null,
+              flushArmed: false,
+            });
+            if (persistedToolItems.size > MAX_PERSISTED_TOOL_ITEMS) {
+              for (const [id, candidate] of persistedToolItems) {
+                if (candidate.held !== null) continue;
+                persistedToolItems.delete(id);
+                break;
+              }
+            }
+          } else {
+            entry.stored = { item, at, key };
+            entry.held = null;
+          }
+          yield* emitProviderEvent({ type: "node.updated", driver, node });
+          yield* emitProviderEvent({ type: "turn_item.updated", driver, turnItem: item });
+        });
+
+        const flushHeldToolItem = Effect.fnUntraced(function* (id: OrchestrationV2TurnItem["id"]) {
+          const entry = persistedToolItems.get(id);
+          if (entry === undefined) return;
+          entry.flushArmed = false;
+          const held = entry.held;
+          if (held === null) return;
+          yield* storeToolItem(held.node, held.item, DateTime.toEpochMillis(yield* DateTime.now));
+        });
+
+        /**
+         * Stores every held tool update of a settling run, so it leaves exact
+         * items, then forgets that run's tools: a later update of one starts
+         * afresh and is stored at once.
+         */
+        const flushHeldToolItems = Effect.fnUntraced(function* (
+          runId: ActiveAcpTurn["input"]["runId"],
+        ) {
+          for (const [id, entry] of [...persistedToolItems]) {
+            if (entry.stored.item.runId !== runId) continue;
+            if (entry.held !== null) yield* flushHeldToolItem(id);
+            persistedToolItems.delete(id);
+          }
+        });
+
+        /**
+         * Stores a tool's node and item, coalescing streamed progress: an
+         * update inside the persist interval waits, and only the newest one is
+         * stored when the interval ends. Ends and status changes store at once,
+         * after any progress still held.
+         */
+        const persistToolItem = Effect.fnUntraced(function* (
+          node: OrchestrationV2ExecutionNode,
+          item: OrchestrationV2TurnItem,
+        ) {
+          const now = DateTime.toEpochMillis(yield* DateTime.now);
+          const entry = persistedToolItems.get(item.id);
+          const key = turnItemContentKey(item);
+          const decision = decideToolItemPersist({
+            previous: entry?.stored,
+            next: item,
+            nextKey: key,
+            now,
+          });
+          if (decision === "emit") {
+            // Progress held inside the interval lands before an end or a status
+            // change, so the stored history shows the tool running with it.
+            const held = entry?.held;
+            if (
+              held != null &&
+              (held.item.status !== item.status || held.item.title !== item.title)
+            ) {
+              yield* flushHeldToolItem(item.id);
+            }
+            return yield* storeToolItem(node, item, now, key);
+          }
+          if (entry === undefined) return;
+          if (decision === "skip") {
+            entry.held = null;
+            return;
+          }
+          entry.held = { node, item };
+          if (entry.flushArmed) return;
+          entry.flushArmed = true;
+          const wait = Math.max(0, TOOL_ITEM_PERSIST_INTERVAL_MS - (now - entry.stored.at));
+          yield* Effect.sleep(`${wait} millis`).pipe(
+            Effect.andThen(flushHeldToolItem(item.id)),
+            Effect.forkIn(sessionScope),
+            Effect.asVoid,
+          );
+        });
+
         emitTool = Effect.fnUntraced(function* (
           context: ActiveAcpTurn,
           incoming: AcpToolCallState,
@@ -3491,27 +3624,23 @@ export function makeAcpAdapterV2(
           context.toolStartedAt.set(toolCall.toolCallId, startedAt);
           const completedAt = completedAtForStatus(status, now);
           const title = toolCall.title ?? null;
-          yield* emitProviderEvent({
-            type: "node.updated",
-            driver,
-            node: {
-              id: nodeId,
-              threadId: context.input.threadId,
-              runId: context.input.runId,
-              parentNodeId: context.input.rootNodeId,
-              rootNodeId: context.input.rootNodeId,
-              kind: "tool_call",
-              status: nodeStatus(status),
-              countsForRun: true,
-              providerThreadId: context.input.providerThread.id,
-              providerTurnId: context.providerTurnId,
-              nativeItemRef,
-              runtimeRequestId: null,
-              checkpointScopeId: null,
-              startedAt,
-              completedAt,
-            },
-          });
+          const node: OrchestrationV2ExecutionNode = {
+            id: nodeId,
+            threadId: context.input.threadId,
+            runId: context.input.runId,
+            parentNodeId: context.input.rootNodeId,
+            rootNodeId: context.input.rootNodeId,
+            kind: "tool_call",
+            status: nodeStatus(status),
+            countsForRun: true,
+            providerThreadId: context.input.providerThread.id,
+            providerTurnId: context.providerTurnId,
+            nativeItemRef,
+            runtimeRequestId: null,
+            checkpointScopeId: null,
+            startedAt,
+            completedAt,
+          };
 
           const base = {
             id: turnItemId,
@@ -3621,7 +3750,7 @@ export function makeAcpAdapterV2(
               ...(rawOutput === undefined ? {} : { output: mcpOutput }),
               ...outputKeptTail(mcpOutput),
             };
-            yield* emitProviderEvent({ type: "turn_item.updated", driver, turnItem });
+            yield* persistToolItem(node, turnItem);
             yield* rearmDeferredFinalize(context);
             return;
           } else if (changes.length > 0) {
@@ -3774,7 +3903,7 @@ export function makeAcpAdapterV2(
                 }
             }
           }
-          yield* emitProviderEvent({ type: "turn_item.updated", driver, turnItem });
+          yield* persistToolItem(node, turnItem);
           yield* rearmDeferredFinalize(context);
         });
 
@@ -6738,6 +6867,8 @@ export function makeAcpAdapterV2(
           const settledStatus = context.interrupted ? "interrupted" : status;
           context.finalizedStatus = settledStatus;
           context.finalized = true;
+          // Held tool progress lands before any tool is ended or the turn settles.
+          yield* flushHeldToolItems(context.input.runId);
           const directStopQuarantine = yield* Ref.get(stoppedRunQuarantine);
           if (flavor.subagentsIdleOnTurnCompletion === true) {
             for (const subagent of context.subagents.values()) {
