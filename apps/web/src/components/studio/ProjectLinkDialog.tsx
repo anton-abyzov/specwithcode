@@ -13,8 +13,7 @@ import {
 import { useProjects } from "../../state/entities";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { randomUUID } from "../../lib/utils";
-import { isProjectFolder } from "../../studio/projectMachineFolders";
-import { isArchivedMember } from "../../studio/projectListVisibility";
+import { useScratchProject } from "../../hooks/useScratchProject";
 import {
   defaultKeptSide,
   fingerprintSummary,
@@ -24,6 +23,7 @@ import {
   noteMergeComplete,
   noteMergeRows,
   noteWrites,
+  linkCandidates,
   projectLink,
   projectLinkStorageKey,
   rankCandidates,
@@ -97,6 +97,7 @@ export function ProjectLinkDialog({
 }) {
   const projects = useProjects();
   const machines = useLinkMachines();
+  const { scratchWorkspaceRootFor } = useScratchProject();
   const fingerprint = useAtomCommand(projectLink.fingerprint, { reportFailure: false });
   const preview = useAtomCommand(projectLink.preview, { reportFailure: false });
   const prepare = useAtomCommand(projectLink.prepare, { reportFailure: false });
@@ -116,25 +117,10 @@ export function ProjectLinkDialog({
   const [consent, setConsent] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const running = useRef(false);
-  const ownIdentity = project.workspaceSettings?.logicalProject?.id;
 
   const candidates = useMemo(
-    () =>
-      projects.filter(
-        (item) =>
-          item.environmentId !== project.environmentId &&
-          !isArchivedMember(item) &&
-          isProjectFolder(item.workspaceRoot, item.id) &&
-          (item.workspaceSettings?.kind ?? "code") === "code" &&
-          // A copy already in this project is listed in Machines, not offered again,
-          // unless it is the half-linked copy being finished.
-          (ownIdentity === undefined ||
-            item.workspaceSettings?.logicalProject?.id !== ownIdentity ||
-            (initialCandidate !== null &&
-              item.environmentId === initialCandidate.environmentId &&
-              item.id === initialCandidate.projectId)),
-      ),
-    [projects, project.environmentId, ownIdentity, initialCandidate],
+    () => linkCandidates(projects, project, scratchWorkspaceRootFor, initialCandidate),
+    [projects, project, scratchWorkspaceRootFor, initialCandidate],
   );
   const ranked = rankCandidates(
     candidates.map(

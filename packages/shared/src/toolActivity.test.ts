@@ -73,6 +73,64 @@ describe("toolActivity", () => {
     expect(classifyToolActivity({ title: "Find", data: {} })).toBe("other");
   });
 
+  it("classifies commands from their typed actions before treating them as commands", () => {
+    const command = (commandActions: ReadonlyArray<Record<string, unknown>>) =>
+      classifyToolActivity({
+        itemType: "command_execution",
+        data: { type: "command_execution", input: "sh -c ...", commandActions },
+      });
+    expect(
+      command([
+        { type: "read", command: "cat a.ts", name: "a.ts", path: "/repo/a.ts" },
+        { type: "read", command: "sed -n 1,20p b.ts", name: "b.ts", path: "/repo/b.ts" },
+      ]),
+    ).toBe("read");
+    expect(command([{ type: "search", command: "rg TODO", path: "src", query: "TODO" }])).toBe(
+      "search",
+    );
+    // A listing counts as a search, the class an `ls` tool already gets.
+    expect(command([{ type: "listFiles", command: "ls src", path: "src" }])).toBe("search");
+    expect(
+      command([
+        { type: "listFiles", command: "ls" },
+        { type: "search", command: "rg x", query: "x" },
+      ]),
+    ).toBe("search");
+    // Unknown, unrecognized and mixed kinds stay commands; the shell text is never read.
+    expect(command([{ type: "unknown", command: "cat a.ts" }])).toBe("command");
+    expect(command([{ type: "write", command: "tee a.ts" }])).toBe("command");
+    expect(
+      command([
+        { type: "read", command: "cat a.ts", name: "a.ts", path: "/repo/a.ts" },
+        { type: "search", command: "rg x", query: "x" },
+      ]),
+    ).toBe("command");
+    expect(
+      command([
+        { type: "read", command: "cat a.ts", name: "a.ts", path: "/repo/a.ts" },
+        { type: "unknown", command: "make" },
+      ]),
+    ).toBe("command");
+    expect(command([])).toBe("command");
+    expect(
+      classifyToolActivity({ itemType: "command_execution", data: { input: "cat a.ts" } }),
+    ).toBe("command");
+    // Callers may pass the actions directly, and command request kinds use them too.
+    expect(
+      classifyToolActivity({
+        requestKind: "command",
+        commandActions: [{ type: "read", command: "cat a.ts", name: "a.ts", path: "a.ts" }],
+      }),
+    ).toBe("read");
+    // Actions never reclassify a non-command item.
+    expect(
+      classifyToolActivity({
+        itemType: "file_change",
+        data: { commandActions: [{ type: "read", command: "cat a.ts" }] },
+      }),
+    ).toBe("file_change");
+  });
+
   it("classifies Claude search tools ahead of their broad file-read request kind", () => {
     for (const toolName of ["Glob", "Grep", "LS"]) {
       expect(classifyToolActivity({ requestKind: "file-read", data: { toolName } })).toBe("search");

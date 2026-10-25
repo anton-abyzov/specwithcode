@@ -1,8 +1,10 @@
+import { invalidatesDeferredResolution } from "./DeferredThreadResolution.ts";
 import {
   CommandId,
   EventId,
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2Run,
+  type OrchestrationV2AppThread,
   type OrchestrationV2Subagent,
   type OrchestrationV2TurnItem,
   OrchestrationV2DomainEvent,
@@ -41,6 +43,11 @@ import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
 /**
  * ERRORS
  */
+class DeferredResolutionConflict extends Schema.TaggedError<DeferredResolutionConflict>()(
+  "DeferredResolutionConflict",
+  { message: Schema.String },
+) {}
+
 export class EventSinkWriteError extends Schema.TaggedError<EventSinkWriteError>()(
   "EventSinkWriteError",
   {
@@ -136,6 +143,8 @@ export interface EventSinkV2Shape {
     readonly commandId: CommandId;
     readonly threadId: ThreadId;
     readonly commandType: string;
+    /** Deferred lifecycle decisions must still observe this snapshot at commit. */
+    readonly expectedThreadSequence?: number;
     readonly acceptedAt: DateTime.Utc;
     readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
     readonly effects: ReadonlyArray<EffectOutbox.PendingOrchestrationEffectV2>;
@@ -444,6 +453,58 @@ const layerBase: Layer.Layer<
         return settlements.length === 0 ? events : [...events, ...settlements];
       });
 
+    // All provider ingestion write variants pass here inside their SQL
+    // transaction, after ownership guards. A transient approval/child must
+    // discard intent now, even when it is gone by the terminal-run recheck.
+    const invalidateProviderDeferredResolution = (
+      events: ReadonlyArray<OrchestrationV2DomainEvent>,
+    ) =>
+      Effect.gen(function* () {
+        const relevant = events.filter((event) => invalidatesDeferredResolution(event));
+        const cancellations: Array<OrchestrationV2DomainEvent> = [];
+        for (const threadId of new Set(relevant.map((event) => event.threadId))) {
+          const threadEvents = events.filter((event) => event.threadId === threadId);
+          const created = threadEvents.find((event) => event.type === "thread.created");
+          const storedThread =
+            (yield* projectionStore
+              .getThread(threadId)
+              .pipe(
+                Effect.catchTag("ProjectionStoreThreadNotFoundError", () => Effect.succeed(null)),
+              )) ?? (created?.type === "thread.created" ? created.payload : null);
+          if (storedThread === null) continue;
+          const intent = storedThread.deferredResolution;
+          if (
+            intent == null ||
+            intent.revoked === true ||
+            !relevant.some(
+              (event) =>
+                event.threadId === threadId && invalidatesDeferredResolution(event, intent.runId),
+            )
+          )
+            continue;
+          const lastThreadEvent = [...threadEvents]
+            .reverse()
+            .find((event) => "settledOverride" in event.payload);
+          const thread =
+            lastThreadEvent !== undefined && "settledOverride" in lastThreadEvent.payload
+              ? lastThreadEvent.payload
+              : storedThread;
+          const last = threadEvents.at(-1)!;
+          cancellations.push({
+            id: EventId.make(`${last.id}:invalidate-deferred-resolution`),
+            type: "thread.metadata-updated",
+            threadId,
+            occurredAt: last.occurredAt,
+            payload: {
+              ...thread,
+              deferredResolution: { ...intent, revoked: true },
+              updatedAt: last.occurredAt,
+            },
+          });
+        }
+        return cancellations.length === 0 ? events : [...events, ...cancellations];
+      });
+
     // A subagent receipt and the child closes built from it were read before
     // this transaction; recheck them against the rows and roots stored now
     // (see fenceReceiptWrite). Every write takes this, so no writer skips it.
@@ -491,10 +552,63 @@ const layerBase: Layer.Layer<
       Effect.gen(function* () {
         const events = yield* fenceSubagentReceipts(input.events);
         if (input.guardPendingUserInputCancellations !== true) return events;
-        return yield* settleArtifactsOfSettledRequests(yield* guardUserInputCancellations(events));
+        return yield* guardUserInputCancellations(events).pipe(
+          Effect.flatMap(settleArtifactsOfSettledRequests),
+          Effect.flatMap(invalidateProviderDeferredResolution),
+        );
       });
 
-    const normalizeEvents = (events: ReadonlyArray<OrchestrationV2DomainEvent>) => {
+    // Thread commands and provider metadata carry full snapshots. Once an
+    // intent is revoked, those snapshots must not restore it. Only the
+    // sequence-validated internal request may establish a new intent.
+    const isThreadSnapshot = (
+      event: OrchestrationV2DomainEvent,
+    ): event is Extract<
+      OrchestrationV2DomainEvent,
+      { readonly payload: OrchestrationV2AppThread }
+    > => "settledOverride" in event.payload;
+    const protectDeferredResolutionSnapshots = (
+      events: ReadonlyArray<OrchestrationV2DomainEvent>,
+      allowNewIntent: boolean,
+    ) =>
+      Effect.gen(function* () {
+        const canonical = new Map<ThreadId, OrchestrationV2AppThread["deferredResolution"]>();
+        const protectedEvents: Array<OrchestrationV2DomainEvent> = [];
+        for (const event of events) {
+          if (!isThreadSnapshot(event)) {
+            protectedEvents.push(event);
+            continue;
+          }
+          const incoming = event.payload.deferredResolution;
+          if (!canonical.has(event.threadId)) {
+            const thread = yield* projectionStore
+              .getThread(event.threadId)
+              .pipe(
+                Effect.catchTag("ProjectionStoreThreadNotFoundError", () => Effect.succeed(null)),
+              );
+            canonical.set(event.threadId, thread?.deferredResolution ?? null);
+          }
+          const current = canonical.get(event.threadId) ?? null;
+          const next = allowNewIntent
+            ? (incoming ?? null)
+            : event.type === "thread.settled" && incoming == null
+              ? null
+              : incoming?.revoked === true && incoming.runId === current?.runId
+                ? incoming
+                : current;
+          canonical.set(event.threadId, next);
+          protectedEvents.push({
+            ...event,
+            payload: { ...event.payload, deferredResolution: next },
+          });
+        }
+        return protectedEvents;
+      });
+
+    const normalizeEvents = (
+      events: ReadonlyArray<OrchestrationV2DomainEvent>,
+      allowNewIntent = false,
+    ) => {
       const runOrdinals = new Map(
         events.flatMap((event) =>
           event.type === "run.created" || event.type === "run.updated"
@@ -514,6 +628,10 @@ const layerBase: Layer.Layer<
                 .pipe(Effect.map((payload) => ({ ...event, payload })))
             : Effect.succeed(event),
         { concurrency: 1 },
+      ).pipe(
+        Effect.flatMap((normalized) =>
+          protectDeferredResolutionSnapshots(normalized, allowNewIntent),
+        ),
       );
     };
 
@@ -719,8 +837,46 @@ const layerBase: Layer.Layer<
             return { ...existing, committed: false as const, cancelledEffectIds: [] };
           }
 
+          let eventsForCommit = input.events;
+          let effectsForCommit = input.effects;
+          if (
+            input.expectedThreadSequence !== undefined &&
+            (input.commandType === "thread.deferred-resolution.request" ||
+              input.commandType === "thread.deferred-resolution.finish") &&
+            (yield* eventStore.latestSequence({ threadId: input.threadId })) !==
+              input.expectedThreadSequence
+          ) {
+            if (input.commandType === "thread.deferred-resolution.request") {
+              return yield* Effect.fail(
+                new DeferredResolutionConflict({
+                  message: "The thread changed while deferred resolution was requested.",
+                }),
+              );
+            }
+            // Provider writes do not take the command lock. Revoke a stale
+            // finish inside this transaction and never enqueue its detaches.
+            const thread = yield* projectionStore.getThread(input.threadId);
+            eventsForCommit = [
+              {
+                id: EventId.make(`${input.commandId}:stale-deferred-resolution`),
+                type: "thread.metadata-updated",
+                threadId: input.threadId,
+                occurredAt: input.acceptedAt,
+                payload: {
+                  ...thread,
+                  deferredResolution:
+                    thread.deferredResolution == null
+                      ? null
+                      : { ...thread.deferredResolution, revoked: true },
+                },
+              },
+            ];
+            effectsForCommit = [];
+          }
           const normalized = yield* normalizeEvents(
-            yield* settleArtifactsLeftOpenBySettledRequests(input.events),
+            yield* settleArtifactsLeftOpenBySettledRequests(eventsForCommit),
+            input.commandType === "thread.deferred-resolution.request" &&
+              input.expectedThreadSequence !== undefined,
           );
           const storedEvents = yield* eventStore.append({
             commandId: input.commandId,
@@ -733,7 +889,7 @@ const layerBase: Layer.Layer<
             );
           }
           yield* applyStoredEvents(storedEvents);
-          yield* effectOutbox.enqueue(input.effects);
+          yield* effectOutbox.enqueue(effectsForCommit);
           const receipt: CommandReceiptStore.CommandReceiptV2 = {
             commandId: input.commandId,
             threadId: input.threadId,

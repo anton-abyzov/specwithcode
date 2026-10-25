@@ -10,6 +10,7 @@ import {
   TurnItemId,
   type OrchestrationV2ThreadProjection,
 } from "@specweave-studio/contracts";
+import { TRANSPORT_TRUNCATION_MARKER } from "@specweave-studio/shared/toolOutput";
 import { describe, expect, it } from "vite-plus/test";
 import { v2Now, v2Projection } from "./orchestrationV2TestFixtures.ts";
 import { createQuestionHistoryProjector, derivePendingThreadRequests } from "./threadRequests.ts";
@@ -373,5 +374,47 @@ describe("pending file approval display details", () => {
         runtimeRequests: [{ ...editRequest, kind: "command" }],
       }).approvals[0],
     ).not.toHaveProperty("fileChange");
+  });
+
+  it("keeps every supplied Codex patch, including one the wire bounded", () => {
+    // The wire strips the item body but keeps each change's patch, bounded at 32 KiB.
+    const codex = ProviderDriverKind.make("codex");
+    const largePatch = `@@ -1 +1 @@\n${"-old line\n+new line\n".repeat(4_000)}`;
+    const boundedPatch = `${largePatch.slice(0, 32 * 1024)}${TRANSPORT_TRUNCATION_MARKER}`;
+    const changes = [
+      { operation: "update", path: "/workspace/small.ts", diffStr: "@@ -1 +1 @@\n-a\n+b\n" },
+      {
+        operation: "update",
+        path: "/workspace/large.ts",
+        diffStr: boundedPatch,
+        additions: 4_000,
+        deletions: 4_000,
+      },
+      { operation: "add", path: "/workspace/new.ts", diffStr: "@@ -0,0 +1 @@\n+export {};\n" },
+    ];
+    const approval = {
+      ...editApproval,
+      nativeItemRef: { ...editApproval.nativeItemRef!, driver: codex },
+    };
+    const file = {
+      ...editFile,
+      nativeItemRef: { ...editFile.nativeItemRef!, driver: codex },
+      diffOmitted: true,
+      changes,
+    };
+    const pending = derivePendingThreadRequests({
+      ...editProjection,
+      runtimeRequests: [
+        { ...editRequest, nativeRequestRef: { ...editRequest.nativeRequestRef, driver: codex } },
+      ],
+      turnItems: [approval, file],
+    }).approvals[0];
+    expect(pending?.fileChange).toEqual({ fileName: file.fileName, changes });
+    expect(pending?.fileChange?.changes?.map((change) => change.diffStr)).toEqual(
+      changes.map((change) => change.diffStr),
+    );
+    expect(pending?.fileChange?.changes?.[1]?.diffStr?.endsWith(TRANSPORT_TRUNCATION_MARKER)).toBe(
+      true,
+    );
   });
 });

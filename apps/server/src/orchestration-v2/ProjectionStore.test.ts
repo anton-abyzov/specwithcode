@@ -2914,10 +2914,24 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
             appRunOrdinal: 1,
             ref,
             status: "ready",
-            files: [],
+            files: [{ path: "src/a.ts", kind: "modified", additions: 2, deletions: 1 }],
             capturedAt: now,
+            cwd: "/repo/worktree",
           },
         });
+        // The turn diff filters its patch to these paths and runs in the stamped folder.
+        assert.deepEqual((yield* projectionStore.getCheckpointContext(threadId)).checkpoints, [
+          {
+            scopeId,
+            runId,
+            appRunOrdinal: 1,
+            status: "ready",
+            ref,
+            ordinalWithinScope: 1,
+            cwd: "/repo/worktree",
+            files: [{ path: "src/a.ts" }],
+          },
+        ]);
         // Old transcript shapes must not make a metadata-only diff unreadable.
         yield* sql`
         INSERT INTO orchestration_v2_projection_turn_items (
@@ -2941,7 +2955,18 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         assert.deepEqual(yield* projectionStore.getCheckpointContext(threadId), {
           runs: [{ id: runId, ordinal: 1, status: "completed" }],
           checkpointScopes: [{ id: scopeId, runId, kind: "root_run", cwd: "/repo/worktree" }],
-          checkpoints: [{ scopeId, runId, appRunOrdinal: 1, status: "ready", ref }],
+          // The obsolete file list is left out, so the turn diff is not filtered by it.
+          checkpoints: [
+            {
+              scopeId,
+              runId,
+              appRunOrdinal: 1,
+              status: "ready",
+              ref,
+              ordinalWithinScope: 1,
+              cwd: "/repo/worktree",
+            },
+          ],
         });
         const missing = yield* projectionStore
           .getCheckpointContext(ThreadId.make("thread:checkpoint-context:missing"))

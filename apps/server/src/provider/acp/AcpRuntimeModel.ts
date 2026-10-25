@@ -558,12 +558,12 @@ function extractToolCallCommand(
   return extractCommandFromTitle(title);
 }
 
+/** A non-blank path exactly as sent: edge spaces can be part of a file name. */
 function filePathFromToolValue(value: unknown): string | undefined {
   if (typeof value !== "string") {
     return undefined;
   }
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : undefined;
+  return value.trim().length > 0 ? value : undefined;
 }
 
 function locationsFromToolCallInput(input: {
@@ -628,7 +628,20 @@ function locationsFromToolCallInput(input: {
 // deltas routinely omit `kind`, so there is no reliable way to tell a redrawing terminal
 // from another tool here, and the end is the useful part of any live-growing output.
 const TOOL_CALL_CONTENT_MAX_CHARS = 8_000;
-const TOOL_CALL_CONTENT_TRUNCATION_MARKER = "[Earlier output truncated]\n\n";
+/** Starts every output text that ingestion cut to its tail. */
+export const TOOL_CALL_CONTENT_TRUNCATION_MARKER = "[Earlier output truncated]\n\n";
+
+/**
+ * `data` keys recording that ingestion kept only the last N characters of a
+ * text in `rawOutput` or `content`. Set alongside the field they describe and
+ * cleared when an update replaces that field (see mergeToolCallState).
+ */
+export const ACP_RAW_OUTPUT_KEPT_TAIL_KEY = "rawOutputKeptTailChars";
+export const ACP_CONTENT_KEPT_TAIL_KEY = "contentKeptTailChars";
+const OUTPUT_KEPT_TAIL_KEYS = [
+  ["rawOutput", ACP_RAW_OUTPUT_KEPT_TAIL_KEY],
+  ["content", ACP_CONTENT_KEPT_TAIL_KEY],
+] as const;
 
 function boundToolCallOutputText(text: string): string {
   if (text.length <= TOOL_CALL_CONTENT_MAX_CHARS) {
@@ -638,15 +651,40 @@ function boundToolCallOutputText(text: string): string {
   return `${TOOL_CALL_CONTENT_TRUNCATION_MARKER}${tail}`;
 }
 
+/**
+ * The tail length to report on a turn item whose output came from this tool
+ * call: the kept length recorded for the field the output was read from
+ * (`rawOutput` when present, else `content`). A text output must also be one
+ * the cut produced, so an uncut sibling field (Grok's `output_for_prompt`
+ * beside a cut `stdout`) is not flagged.
+ */
+export function acpToolOutputKeptTailChars(
+  data: Record<string, unknown>,
+  output: unknown,
+): number | undefined {
+  if (output === undefined || output === null) return undefined;
+  if (typeof output === "string" && !output.startsWith(TOOL_CALL_CONTENT_TRUNCATION_MARKER)) {
+    return undefined;
+  }
+  const kept =
+    data.rawOutput === undefined || data.rawOutput === null
+      ? data[ACP_CONTENT_KEPT_TAIL_KEY]
+      : data[ACP_RAW_OUTPUT_KEPT_TAIL_KEY];
+  return typeof kept === "number" && Number.isInteger(kept) && kept >= 0 ? kept : undefined;
+}
+
 const RAW_OUTPUT_TEXT_FIELDS = ["content", "stdout", "stderr", "output"] as const;
 
 // `rawOutput` is provider-defined and, for terminal-shaped tools, mirrors the same
 // cumulative text-growth problem as `content` (see the comment above). Bound its known
 // text-bearing fields the same way so a chatty provider cannot smuggle unbounded output
 // through this field instead.
-function boundToolCallRawOutput(rawOutput: unknown): unknown {
+function boundToolCallRawOutput(rawOutput: unknown): {
+  readonly value: unknown;
+  readonly keptTailChars?: number;
+} {
   if (!isRecord(rawOutput)) {
-    return rawOutput;
+    return { value: rawOutput };
   }
   let changed = false;
   const bounded: Record<string, unknown> = { ...rawOutput };
@@ -657,12 +695,16 @@ function boundToolCallRawOutput(rawOutput: unknown): unknown {
       changed = true;
     }
   }
-  return changed ? bounded : rawOutput;
+  return changed
+    ? { value: bounded, keptTailChars: TOOL_CALL_CONTENT_MAX_CHARS }
+    : { value: rawOutput };
 }
 
 interface ExtractedToolCallContent {
   readonly text: string | undefined;
   readonly content: ReadonlyArray<EffectAcpSchema.ToolCallContent> | undefined;
+  /** Set when a content text was cut to its last TOOL_CALL_CONTENT_MAX_CHARS characters. */
+  readonly keptTailChars?: number;
 }
 
 function toolCallContentText(entry: EffectAcpSchema.ToolCallContent): string | undefined {
@@ -676,10 +718,12 @@ function toolCallContentText(entry: EffectAcpSchema.ToolCallContent): string | u
 // contribute to `chunks` and used to take the early returns with the original array. Bound
 // each text entry independently so those paths cannot persist an unbounded terminal buffer
 // on `toolCall.data.content` / `rawPayload`.
-function boundToolCallContentEntries(
-  content: ReadonlyArray<EffectAcpSchema.ToolCallContent>,
-): ReadonlyArray<EffectAcpSchema.ToolCallContent> {
+function boundToolCallContentEntries(content: ReadonlyArray<EffectAcpSchema.ToolCallContent>): {
+  readonly content: ReadonlyArray<EffectAcpSchema.ToolCallContent>;
+  readonly cut: boolean;
+} {
   let changed = false;
+  let cut = false;
   const bounded = content.map((entry) => {
     const text = toolCallContentText(entry);
     if (text === undefined || text.length <= TOOL_CALL_CONTENT_MAX_CHARS) {
@@ -687,15 +731,30 @@ function boundToolCallContentEntries(
     }
     changed = true;
     const trimmed = text.trim();
+    const kept = trimmed.length > 0 ? trimmed : text;
+    // Trimming alone keeps every character that matters; only a longer text loses its head.
+    if (kept.length > TOOL_CALL_CONTENT_MAX_CHARS) cut = true;
     return {
       type: "content",
       content: {
         type: "text",
-        text: boundToolCallOutputText(trimmed.length > 0 ? trimmed : text),
+        text: boundToolCallOutputText(kept),
       },
     } as const;
   });
-  return changed ? bounded : content;
+  return { content: changed ? bounded : content, cut };
+}
+
+function boundedContentEntries(
+  text: string | undefined,
+  content: ReadonlyArray<EffectAcpSchema.ToolCallContent>,
+): ExtractedToolCallContent {
+  const bounded = boundToolCallContentEntries(content);
+  return {
+    text,
+    content: bounded.content,
+    ...(bounded.cut ? { keptTailChars: TOOL_CALL_CONTENT_MAX_CHARS } : {}),
+  };
 }
 
 function extractTextContentFromToolCallContent(
@@ -712,17 +771,18 @@ function extractTextContentFromToolCallContent(
     }
   }
   if (chunks.length === 0) {
-    return { text: undefined, content: boundToolCallContentEntries(content) };
+    return boundedContentEntries(undefined, content);
   }
   const joined = chunks.join("\n");
   if (joined.length <= TOOL_CALL_CONTENT_MAX_CHARS) {
-    return { text: joined, content: boundToolCallContentEntries(content) };
+    return boundedContentEntries(joined, content);
   }
   const bounded = boundToolCallOutputText(joined);
   const tail = joined.slice(joined.length - TOOL_CALL_CONTENT_MAX_CHARS);
   return {
     text: bounded,
     content: distributeRetainedTailAcrossContent(content, tail),
+    keptTailChars: tail.length,
   };
 }
 
@@ -859,10 +919,17 @@ function makeToolCallState(
     data.meta = input._meta;
   }
   if (input.rawOutput !== undefined) {
-    data.rawOutput = boundToolCallRawOutput(input.rawOutput);
+    const boundedRawOutput = boundToolCallRawOutput(input.rawOutput);
+    data.rawOutput = boundedRawOutput.value;
+    if (boundedRawOutput.keptTailChars !== undefined) {
+      data[ACP_RAW_OUTPUT_KEPT_TAIL_KEY] = boundedRawOutput.keptTailChars;
+    }
   }
   if (input.content != null) {
     data.content = sanitizeAcpToolCallContent(extractedContent.content ?? input.content);
+    if (extractedContent.keptTailChars !== undefined) {
+      data[ACP_CONTENT_KEPT_TAIL_KEY] = extractedContent.keptTailChars;
+    }
   }
   const locations = locationsFromToolCallInput(input);
   if (locations !== undefined) {
@@ -931,7 +998,14 @@ export function mergeToolCallState(
   const status = next.status ?? previous?.status;
   const command = next.command ?? previous?.command;
   const detail = next.detail ?? previous?.detail;
-  const data = mergeToolActivityData(previous?.data, next.data) ?? next.data;
+  let data = mergeToolActivityData(previous?.data, next.data) ?? next.data;
+  // An update that replaces an output field also replaces that field's cut record.
+  for (const [field, key] of OUTPUT_KEPT_TAIL_KEYS) {
+    if (field in next.data && !(key in next.data) && key in data) {
+      const { [key]: _replaced, ...rest } = data;
+      data = rest;
+    }
+  }
   return {
     toolCallId: next.toolCallId,
     ...(kind ? { kind } : {}),

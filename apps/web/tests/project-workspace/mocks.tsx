@@ -34,6 +34,7 @@ import { parseStudioThreadHref } from "@specweave-studio/shared/studioThreadLink
 import { StudioThreadLink } from "../../src/components/StudioThreadLink";
 import { reportKey } from "@specweave-studio/shared/threadReport";
 import { routineTasks } from "./routines-fixture";
+import { ENOSPC_REPORT, MERGE_RECEIPT } from "../agent-messages/payloads";
 import {
   knowledgeLoadedAt,
   knowledgeReindex,
@@ -441,6 +442,58 @@ const payloadProjection = {
   runs: [],
   turnItems: [],
 };
+/**
+ * `?agent-messages`: the coordinator in the October 25, 2026 screenshot, flooded by one
+ * worker's raw receipt (1068). The texts are shared with the thread page fixture.
+ */
+const agentMessagesFixture = new URLSearchParams(window.location.search).has("agent-messages");
+const agentMessagesProjection = {
+  messages: [
+    {
+      id: "a1",
+      role: "user",
+      createdBy: "user",
+      text: "Check the qualification flow and tell me what is left.",
+      createdAt: reportAgo(20),
+      attachments: [],
+    },
+    {
+      id: "a2",
+      role: "user",
+      createdBy: "agent",
+      senderThreadId: "skills",
+      text: ENOSPC_REPORT,
+      createdAt: reportAgo(16),
+      attachments: [],
+    },
+    {
+      id: "a3",
+      role: "assistant",
+      text: "One screenshot failed on a full disk; the rest passed. The runtime cleanup needs its owner.",
+      createdAt: reportAgo(15),
+      attachments: [],
+    },
+    {
+      id: "a4",
+      role: "user",
+      createdBy: "agent",
+      senderThreadId: "build",
+      text: MERGE_RECEIPT,
+      createdAt: reportAgo(6),
+      attachments: [],
+    },
+    {
+      id: "a5",
+      role: "assistant",
+      text: "Both pull requests are merged; nothing is deployed.",
+      createdAt: reportAgo(5),
+      attachments: [],
+    },
+  ],
+  runs: [],
+  turnItems: [],
+};
+Object.assign(window, { agentMessageTexts: { enospc: ENOSPC_REPORT, merge: MERGE_RECEIPT } });
 Object.assign(window, {
   payloadFixtureTexts: {
     dense: PAYLOAD_DENSE,
@@ -999,48 +1052,50 @@ const baseThreadProjection = () => ({
       }
     : reportFixture
       ? reportProjection
-      : payloadFixture
-        ? payloadProjection
-        : activity
-          ? activityProjection
-          : {
-              messages:
-                fresh !== null
-                  ? failedTurn
-                    ? [
-                        {
-                          id: "m-failed",
-                          role: "user",
-                          createdBy: "user",
-                          runId: recoveryFailureId,
-                          text: "Reply with OK",
-                          attachments: [],
-                        },
-                      ]
-                    : []
-                  : turns
-                    ? turnMessages
-                    : followups
-                      ? followUpMessages
-                      : [
+      : agentMessagesFixture
+        ? agentMessagesProjection
+        : payloadFixture
+          ? payloadProjection
+          : activity
+            ? activityProjection
+            : {
+                messages:
+                  fresh !== null
+                    ? failedTurn
+                      ? [
                           {
-                            id: "m1",
+                            id: "m-failed",
                             role: "user",
                             createdBy: "user",
-                            text: "Keep the project moving. Show me the work that needs a decision.",
-                            createdAt: "2026-10-09T00:00:00Z",
+                            runId: recoveryFailureId,
+                            text: "Reply with OK",
                             attachments: [],
                           },
-                          {
-                            id: "m2",
-                            role: "assistant",
-                            text: `Started [Consolidate the skills](studio://thread/skills) and [Record the tutorials](studio://thread/${TUTORIALS_ID}). The memory work is running. [Review the landing page](studio://thread/review) needs your decision before we continue. The old [Draft the launch post](studio://thread/thread%3Adelegated-task%3Acommand%253Amcp%253Afixture-0002) worker is no longer here.\n\nOnboarding is ready for another pass; the pagination fix is resolved and retained for future follow-ups.`,
-                            createdAt: "2026-10-09T00:00:04Z",
-                            updatedAt: "2026-10-09T00:00:05Z",
-                            attachments: [],
-                          },
-                        ],
-            },
+                        ]
+                      : []
+                    : turns
+                      ? turnMessages
+                      : followups
+                        ? followUpMessages
+                        : [
+                            {
+                              id: "m1",
+                              role: "user",
+                              createdBy: "user",
+                              text: "Keep the project moving. Show me the work that needs a decision.",
+                              createdAt: "2026-10-09T00:00:00Z",
+                              attachments: [],
+                            },
+                            {
+                              id: "m2",
+                              role: "assistant",
+                              text: `Started [Consolidate the skills](studio://thread/skills) and [Record the tutorials](studio://thread/${TUTORIALS_ID}). The memory work is running. [Review the landing page](studio://thread/review) needs your decision before we continue. The old [Draft the launch post](studio://thread/thread%3Adelegated-task%3Acommand%253Amcp%253Afixture-0002) worker is no longer here.\n\nOnboarding is ready for another pass; the pagination fix is resolved and retained for future follow-ups.`,
+                              createdAt: "2026-10-09T00:00:04Z",
+                              updatedAt: "2026-10-09T00:00:05Z",
+                              attachments: [],
+                            },
+                          ],
+              },
 });
 /* `?stream`: a long coordinator conversation that the check grows while a
    reader is scrolled up. `window.__streamPush` adds a message and
@@ -1084,7 +1139,7 @@ window.__streamUpdate = (id, text) => {
   streamMessages = streamMessages.map((m) => (m.id === id ? { ...m, text, updatedAt: at } : m));
   publishStream();
 };
-export const useThreadProjection = (ref) => {
+const fixtureThreadProjection = (ref) => {
   // The fixture mode never changes on a page, so the hook order is stable.
   if (streamFixture) return useSyncExternalStore(subscribeStream, () => streamProjection);
   if (fallbackFixture) return { projection: fallbackProjection };
@@ -1099,6 +1154,16 @@ export const useThreadProjection = (ref) => {
         },
       }
     : base;
+};
+// The projections here predate runtime requests in a thread's projection: none are pending.
+const withRequests = new WeakMap();
+export const useThreadProjection = (ref) => {
+  const result = fixtureThreadProjection(ref);
+  const projection = result?.projection;
+  if (!projection || projection.runtimeRequests) return result;
+  if (!withRequests.has(projection))
+    withRequests.set(projection, { runtimeRequests: [], ...projection });
+  return { ...result, projection: withRequests.get(projection) };
 };
 export const useThreadHistory = () => ({ hasMoreHistory: switchFixture, loading: false });
 export const useThreadStatus = () => "ready";
@@ -1272,6 +1337,9 @@ export const useEnvironmentQuery = (q) => ({
                           memory: fresh !== null ? { files: [], totalBytes: 0 } : memory,
                           // Real VCS status atoms land here too: an empty working tree.
                           workingTree: { files: [] },
+                          // And the real design list: a project with no designs.
+                          designs: [],
+                          problems: [],
                         }
                       : q?.kind === "knowledge"
                         ? knowledgeStatus()
@@ -1762,7 +1830,9 @@ export const useRouter = () => ({
   navigate: () => {},
   state: { location: { pathname: "/", search: {}, hash: "" } },
 });
-export const useSearch = () => ({});
+// No search parameters; a selector (such as the pane deep link's) reads the empty set.
+export const useSearch = (options?: { select?: (search: object) => unknown }) =>
+  options?.select ? options.select({}) : {};
 export const useMatch = () => undefined;
 export const useRouterState = () => ({ location: { pathname: "/", search: {}, hash: "" } });
 

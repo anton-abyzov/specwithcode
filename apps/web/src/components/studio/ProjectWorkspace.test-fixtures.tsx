@@ -103,6 +103,8 @@ const state = vi.hoisted(() => ({
   /** Touch is the primary pointer (a phone or tablet), not a mouse or trackpad. */
   coarse: false,
   sendShortcut: "enter",
+  /** The client's timeline detail, which sets how soon worker messages fold. */
+  timelineDetail: "normal" as "concise" | "normal" | "verbose",
   uploadsSupported: true,
   /** The host takes files with a question's answer. */
   questionAttachments: true,
@@ -454,14 +456,14 @@ vi.mock("../../hooks/useSettings", async () => {
       select: (settings: {
         sendShortcut: string;
         projectCoordinatorMachines: Record<string, string>;
-        timelineDetail: "normal";
+        timelineDetail: "concise" | "normal" | "verbose";
         threadTimelineDetail: Record<string, never>;
       }) => unknown,
     ) =>
       select({
         sendShortcut: state.sendShortcut,
         projectCoordinatorMachines: state.savedMachines,
-        timelineDetail: "normal",
+        timelineDetail: state.timelineDetail,
         threadTimelineDetail: {},
       }),
     useClientSettingsHydrationStatus: () => "ready",
@@ -804,6 +806,7 @@ beforeEach(() => {
   state.phone = false;
   state.coarse = false;
   state.sendShortcut = "enter";
+  state.timelineDetail = "normal";
   state.uploadsSupported = true;
   state.questionAttachments = true;
   state.uploadFails = false;

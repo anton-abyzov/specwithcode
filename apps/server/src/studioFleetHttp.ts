@@ -27,6 +27,7 @@ import { requireEnvironmentScope } from "./auth/http.ts";
 import * as Config from "./config.ts";
 import * as FleetWorkerGrants from "./fleet/FleetWorkerGrants.ts";
 import * as RemoteWorkers from "./fleet/RemoteWorkers.ts";
+import * as ManagedProjectFolders from "./project/ManagedProjectFolders.ts";
 import * as ServerEnvironment from "./environment/ServerEnvironment.ts";
 import {
   makePersistedServerRuntimeState,
@@ -159,6 +160,8 @@ export const layer = HttpApiBuilder.group(
       ),
     );
     const directEndpoints = yield* Effect.serviceOption(DirectEndpoints.DirectEndpoints);
+    const managedFolders = yield* Effect.serviceOption(ManagedProjectFolders.ManagedProjectFolders);
+    const isScratch = Option.isSome(managedFolders) ? managedFolders.value.isScratch : undefined;
     const authFailure = () =>
       new EnvironmentHttpInternalServerError({
         message: "Could not read the clients paired with this machine.",
@@ -201,6 +204,7 @@ export const layer = HttpApiBuilder.group(
               machine.label,
             ]),
           ),
+          ...(isScratch === undefined ? {} : { isScratch }),
         }).pipe(
           Effect.provideService(EnvironmentAuth.EnvironmentAuth, environmentAuth),
           Effect.provideService(ThreadManagement.ThreadManagementService, threadManagement),
@@ -438,6 +442,7 @@ export const layer = HttpApiBuilder.group(
                   machine.label,
                 ]),
               ),
+              ...(isScratch === undefined ? {} : { isScratch }),
             }).pipe(
               Effect.provideService(EnvironmentAuth.EnvironmentAuth, environmentAuth),
               Effect.provideService(ThreadManagement.ThreadManagementService, threadManagement),

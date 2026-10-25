@@ -153,6 +153,7 @@ export const ProjectionStoreV2Error = Schema.Union([
 export type ProjectionStoreV2Error = typeof ProjectionStoreV2Error.Type;
 
 export type ProjectionRecoveryKind =
+  | "deferred-resolutions"
   | "queued-runs"
   | "runtime"
   | "subagent-results"
@@ -247,18 +248,51 @@ const ProjectionCheckpointContext = Schema.Struct({
   ),
   checkpoints: Schema.Array(
     OrchestrationV2CheckpointJsonSchema.mapFields(
-      ({ scopeId, runId, appRunOrdinal, status, ref }) => ({
+      ({ scopeId, runId, appRunOrdinal, status, ref, ordinalWithinScope, cwd }) => ({
         scopeId,
         runId,
         appRunOrdinal,
         status,
         ref,
+        // Optional so callers that build a context by hand need not supply them.
+        ordinalWithinScope: Schema.optional(ordinalWithinScope),
+        cwd,
+        // Paths only: the turn diff keeps the patch blocks of the files the card lists.
+        files: Schema.optional(Schema.Array(Schema.Struct({ path: Schema.String }))),
       }),
     ),
   ),
 });
 export type ProjectionCheckpointContext = typeof ProjectionCheckpointContext.Type;
 const decodeCheckpointContext = Schema.decodeUnknownEffect(ProjectionCheckpointContext);
+
+interface CheckpointContextRow {
+  readonly scopeId: string;
+  readonly runId: string | null;
+  readonly appRunOrdinal: number | null;
+  readonly status: string;
+  readonly ordinalWithinScope: number;
+  readonly ref: string;
+  readonly cwd: string | null;
+  readonly filePaths: string | null;
+}
+
+/**
+ * A checkpoint context row. A file list in an older or unexpected shape is left
+ * out rather than read as empty, so the turn diff is never filtered to nothing.
+ */
+function checkpointContextFromRow({ cwd, filePaths, ...row }: CheckpointContextRow) {
+  const paths: unknown = filePaths === null ? null : JSON.parse(filePaths);
+  const files =
+    Array.isArray(paths) && paths.every((path) => typeof path === "string")
+      ? paths.map((path: string) => ({ path }))
+      : undefined;
+  return {
+    ...row,
+    ...(cwd === null ? {} : { cwd }),
+    ...(files === undefined ? {} : { files }),
+  };
+}
 
 /** Durable capture targets, without transcript or checkpoint file payloads. */
 export interface ProjectionCheckpointCaptureContext {
@@ -560,6 +594,11 @@ function needsRecovery(
         !projection.runs.some((run) =>
           ["preparing", "starting", "running", "waiting"].includes(run.status),
         )
+      );
+    case "deferred-resolutions":
+      return (
+        projection.thread.deferredResolution != null &&
+        projection.thread.deferredResolution.revoked !== true
       );
     case "delegated-completions":
       return projection.runs.some((run) => run.delegatedCompletion?.delivery != null);
@@ -3832,6 +3871,12 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       function* (kind: ProjectionRecoveryKind) {
         const candidates = (() => {
           switch (kind) {
+            case "deferred-resolutions":
+              return sql`
+                SELECT thread_id FROM orchestration_v2_projection_threads
+                WHERE json_extract(payload_json, '$.deferredResolution.runId') IS NOT NULL
+                  AND json_extract(payload_json, '$.deferredResolution.revoked') IS NOT 1
+              `;
             case "queued-runs":
               return sql`
                 SELECT thread_id FROM orchestration_v2_projection_runs
@@ -4900,16 +4945,27 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               WHERE thread_id = ${threadId}
               ORDER BY ordinal_within_parent ASC, scope_id ASC
             `,
-              sql`
+              sql<CheckpointContextRow>`
               SELECT scope_id AS "scopeId", run_id AS "runId",
                 app_run_ordinal AS "appRunOrdinal", status,
-                json_extract(payload_json, '$.ref') AS ref
+                ordinal_within_scope AS "ordinalWithinScope",
+                json_extract(payload_json, '$.ref') AS ref,
+                json_extract(payload_json, '$.cwd') AS cwd,
+                CASE WHEN json_type(payload_json, '$.files') = 'array' THEN
+                  (SELECT json_group_array(CASE WHEN file.type = 'object'
+                      THEN json_extract(file.value, '$.path') END)
+                    FROM json_each(payload_json, '$.files') AS file)
+                END AS "filePaths"
               FROM orchestration_v2_projection_checkpoints
               WHERE thread_id = ${threadId}
               ORDER BY scope_id ASC, ordinal_within_scope ASC
             `,
             ]);
-            return yield* decodeCheckpointContext({ runs, checkpointScopes, checkpoints });
+            return yield* decodeCheckpointContext({
+              runs,
+              checkpointScopes,
+              checkpoints: checkpoints.map(checkpointContextFromRow),
+            });
           }),
         )
         .pipe(
@@ -6850,12 +6906,15 @@ export const layerMemory: Layer.Layer<ProjectionStoreV2> = Layer.effect(
               cwd,
             })),
             checkpoints: projection.checkpoints.map(
-              ({ scopeId, runId, appRunOrdinal, status, ref }) => ({
+              ({ scopeId, runId, appRunOrdinal, status, ref, ordinalWithinScope, cwd, files }) => ({
                 scopeId,
                 runId,
                 appRunOrdinal,
                 status,
                 ref,
+                ordinalWithinScope,
+                ...(cwd === undefined ? {} : { cwd }),
+                files: files.map(({ path }) => ({ path })),
               }),
             ),
           };

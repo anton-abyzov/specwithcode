@@ -1263,8 +1263,14 @@ html.dark[data-theme-id=""] [data-app-sidebar] {
 }
 /* Threads named in chat, on the project page and full page alike. One that
    already existed is a blue chip: thread icon, status dot, live title; one the
-   coordinator just started also gets a bordered card under the message. */
+   coordinator just started also gets a bordered card under the message.
+   The text is the link blue drawn toward the text it sits among: the bare blue
+   on its own tint fell under 4.5:1 in a message bubble and on hover.
+   shellThreadLinkContrast.test.ts holds every surface to 4.5:1. */
 .sws-thread-link {
+  --sws-thread-link-ink: color-mix(in srgb, var(--shell-link) 70%, var(--foreground));
+  --sws-thread-link-tint: 12%;
+  --sws-thread-link-tint-hover: 20%;
   display: inline-flex;
   align-items: center;
   gap: 5px;
@@ -1273,8 +1279,8 @@ html.dark[data-theme-id=""] [data-app-sidebar] {
   padding: 1px 7px 1px 6px;
   border: 1px solid color-mix(in srgb, var(--shell-link) 22%, transparent);
   border-radius: 6px;
-  background: color-mix(in srgb, var(--shell-link) 12%, transparent);
-  color: var(--shell-link);
+  background: color-mix(in srgb, var(--shell-link) var(--sws-thread-link-tint), transparent);
+  color: var(--sws-thread-link-ink);
   font: inherit;
   font-weight: 550;
   line-height: 1.45;
@@ -1287,12 +1293,25 @@ html.dark[data-theme-id=""] [data-app-sidebar] {
     transform 120ms ease;
 }
 .sws-thread-link:hover {
-  background: color-mix(in srgb, var(--shell-link) 20%, transparent);
+  background: color-mix(in srgb, var(--shell-link) var(--sws-thread-link-tint-hover), transparent);
   border-color: color-mix(in srgb, var(--shell-link) 40%, transparent);
   transform: translateY(-1px);
 }
 .sws-thread-link:active {
   transform: none;
+}
+/* Both message bubbles: the coordinator page's and the chat view's ([data-message-bubble]). */
+:is(.project-message-user, [data-message-bubble]) .sws-thread-link {
+  --sws-thread-link-ink: color-mix(in srgb, var(--shell-link) 70%, var(--message-foreground));
+}
+/* A chosen dark theme can give its bubbles a mid-tone surface, where a blue tint
+   lifts the chip toward its light text. There the border carries the blue. */
+html.dark[data-theme-id]:not([data-theme-id=""])
+  :is(.project-message-user, [data-message-bubble])
+  .sws-thread-link {
+  --sws-thread-link-ink: color-mix(in srgb, var(--shell-link) 20%, var(--message-foreground));
+  --sws-thread-link-tint: 6%;
+  --sws-thread-link-tint-hover: 12%;
 }
 .sws-thread-link:focus-visible,
 .sws-thread-card-action:focus-visible {

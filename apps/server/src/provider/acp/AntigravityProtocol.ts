@@ -11,10 +11,16 @@ import * as Schema from "effect/Schema";
 import type * as EffectAcpSchema from "@specweave-studio/effect-acp/compat";
 import * as AcpWireSchema from "@specweave-studio/effect-acp/schema-v1";
 
-import type { AcpToolCallState } from "./AcpRuntimeModel.ts";
+import {
+  ACP_CONTENT_KEPT_TAIL_KEY,
+  ACP_RAW_OUTPUT_KEPT_TAIL_KEY,
+  type AcpToolCallState,
+  TOOL_CALL_CONTENT_TRUNCATION_MARKER,
+} from "./AcpRuntimeModel.ts";
 
 const TOOL_TEXT_LIMIT = 8_000;
-const TOOL_TEXT_TRUNCATED = "[Earlier output truncated]\n\n";
+// The runtime model's marker, so a turn item can tell its output was cut.
+const TOOL_TEXT_TRUNCATED = TOOL_CALL_CONTENT_TRUNCATION_MARKER;
 const QUESTION_LABEL_LIMIT = 512;
 
 const NativeToolFields = Schema.Struct({
@@ -185,9 +191,22 @@ function boundText(text: string, limit = TOOL_TEXT_LIMIT): string {
 interface ToolPayloadBudget {
   nodes: number;
   text: number;
+  /** The shortest tail kept per top-level key, for every string cut under it. */
+  keptTails?: Map<string, number>;
 }
 
-function sanitizeToolValue(value: unknown, budget: ToolPayloadBudget, depth: number): unknown {
+function recordKeptTail(budget: ToolPayloadBudget, root: string | undefined, kept: number) {
+  if (budget.keptTails === undefined || root === undefined) return;
+  const previous = budget.keptTails.get(root);
+  budget.keptTails.set(root, previous === undefined ? kept : Math.min(previous, kept));
+}
+
+function sanitizeToolValue(
+  value: unknown,
+  budget: ToolPayloadBudget,
+  depth: number,
+  root?: string,
+): unknown {
   if (depth > 12 || budget.nodes-- <= 0) {
     return undefined;
   }
@@ -195,7 +214,13 @@ function sanitizeToolValue(value: unknown, budget: ToolPayloadBudget, depth: num
     if (/^data:image\//i.test(value) || budget.text <= 0) {
       return undefined;
     }
-    const text = boundText(value, Math.min(TOOL_TEXT_LIMIT, budget.text));
+    const limit = Math.min(TOOL_TEXT_LIMIT, budget.text);
+    const text = boundText(value, limit);
+    if (value.length > limit) recordKeptTail(budget, root, limit);
+    // Text the session update transform already cut arrives here with its marker.
+    else if (value.startsWith(TOOL_TEXT_TRUNCATED)) {
+      recordKeptTail(budget, root, value.length - TOOL_TEXT_TRUNCATED.length);
+    }
     budget.text -= text.length;
     return text;
   }
@@ -203,7 +228,7 @@ function sanitizeToolValue(value: unknown, budget: ToolPayloadBudget, depth: num
     const result: unknown[] = [];
     for (const entry of value) {
       if (budget.nodes <= 0) break;
-      const sanitized = sanitizeToolValue(entry, budget, depth + 1);
+      const sanitized = sanitizeToolValue(entry, budget, depth + 1, root);
       if (sanitized !== undefined) result.push(sanitized);
     }
     return result;
@@ -224,7 +249,7 @@ function sanitizeToolValue(value: unknown, budget: ToolPayloadBudget, depth: num
     ) {
       continue;
     }
-    const sanitized = sanitizeToolValue(entry, budget, depth + 1);
+    const sanitized = sanitizeToolValue(entry, budget, depth + 1, root ?? key);
     if (sanitized !== undefined) entries.push([key, sanitized]);
   }
   return Object.fromEntries(entries);
@@ -316,8 +341,23 @@ export function normalizeAntigravityToolCall(toolCall: AcpToolCallState): AcpToo
   const aggregatedOutput = nativeOutput === undefined ? undefined : boundText(nativeOutput);
   const exitCode = output?.exitCode ?? output?.exit_code;
   const imagePath = localImagePath(output?.imagePath);
-  const sanitizedData = sanitizeAntigravityToolPayload(toolCall.data);
+  const keptTails = new Map<string, number>();
+  const sanitizedData = sanitizeToolValue(
+    toolCall.data,
+    { nodes: 512, text: 64_000, keptTails },
+    0,
+  );
   const data: Record<string, unknown> = Predicate.isObject(sanitizedData) ? sanitizedData : {};
+  // Record the cut where the adapter reads output from (see acpToolOutputKeptTailChars).
+  for (const [field, key] of [
+    ["rawOutput", ACP_RAW_OUTPUT_KEPT_TAIL_KEY],
+    ["content", ACP_CONTENT_KEPT_TAIL_KEY],
+  ] as const) {
+    const kept = keptTails.get(field);
+    if (kept === undefined || data[field] === undefined) continue;
+    const recorded = data[key];
+    data[key] = typeof recorded === "number" ? Math.min(recorded, kept) : kept;
+  }
   const kind = toolCall.kind ?? (command !== undefined ? "execute" : undefined);
   if (kind !== undefined) data.kind = kind;
   if (command !== undefined) data.command = command;

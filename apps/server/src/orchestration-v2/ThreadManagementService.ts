@@ -11,6 +11,7 @@ import {
   type ModelSelection,
   type OrchestrationV2Actor,
   type OrchestrationV2Command,
+  type OrchestrationV2GetTurnItemInput,
   type OrchestrationV2GetTurnItemResult,
   type OrchestrationV2ServerCommand,
   type OrchestrationV2ConversationMessage,
@@ -25,7 +26,6 @@ import {
   RunId,
   type ScheduledTaskId,
   ThreadId,
-  type TurnItemId,
 } from "@specweave-studio/contracts";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -293,12 +293,12 @@ export interface ThreadManagementServiceShape {
   readonly getMessageCount: Orchestrator.OrchestratorV2["Service"]["getMessageCount"];
   /**
    * One turn item with the input and output the thread stream withholds,
-   * bounded for the wire. Clients fetch it when a tool row is expanded.
+   * bounded for the wire, or one page of a field's full text when the input
+   * names one. Clients fetch it when a tool row is expanded.
    */
-  readonly getTurnItem: (input: {
-    readonly threadId: ThreadId;
-    readonly itemId: TurnItemId;
-  }) => Effect.Effect<OrchestrationV2GetTurnItemResult, Orchestrator.OrchestratorV2Error>;
+  readonly getTurnItem: (
+    input: OrchestrationV2GetTurnItemInput,
+  ) => Effect.Effect<OrchestrationV2GetTurnItemResult, Orchestrator.OrchestratorV2Error>;
   readonly getThreadRecords: Orchestrator.OrchestratorV2["Service"]["getThreadRecords"];
   readonly getThreadProjection: (
     threadId: ThreadId,
@@ -896,8 +896,12 @@ const make = Effect.gen(function* () {
       ),
     getTurnItem: (input) =>
       ensureProjectionTranscript(input.threadId).pipe(
-        Effect.andThen(orchestrator.getTurnItem(input)),
-        Effect.map((item) => ({ item: item === null ? null : projectTurnItemForDetail(item) })),
+        Effect.andThen(
+          orchestrator.getTurnItem({ threadId: input.threadId, itemId: input.itemId }),
+        ),
+        Effect.map((item) =>
+          item === null ? { item: null } : projectTurnItemForDetail(item, input),
+        ),
       ),
     getThreadRecords: (threadId, fields, filter) =>
       ensureProjectionTranscript(threadId).pipe(

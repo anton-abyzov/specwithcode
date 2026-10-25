@@ -1,3 +1,8 @@
+import {
+  deferredResolutionBlocked,
+  DeferredResolutionActivation,
+  invalidatesDeferredResolution,
+} from "./DeferredThreadResolution.ts";
 import { runtimeModeSessionsToDetach } from "./RuntimeModeSessions.ts";
 import * as ProjectAdmission from "../project/ProjectAdmission.ts";
 import { guardProjectCreation } from "../project/ProjectCommandAdmission.ts";
@@ -585,6 +590,8 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "thread.archive":
     case "thread.unarchive":
     case "thread.delete":
+    case "thread.deferred-resolution.request":
+    case "thread.deferred-resolution.finish":
     case "thread.settle":
     case "thread.auto-settle":
     case "thread.unsettle":
@@ -1071,6 +1078,7 @@ function lastDeliveredRunForProviderThread(
 }
 
 const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(function* () {
+  const deferredResolutionEnabled = yield* DeferredResolutionActivation;
   const checkpointService = yield* CheckpointServiceV2;
   const commandPolicy = yield* CommandPolicyV2;
   const contextHandoffService = yield* ContextHandoffServiceV2;
@@ -1220,7 +1228,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           "checkpointScopes",
           "contextTransfers",
         ],
-        { turnItemTypes: ["user_message", "error"], messageRoles: ["user"] },
+        { turnItemTypes: ["user_message", "error", "secret_request"], messageRoles: ["user"] },
       )
       .pipe(
         Effect.map((records): OrchestrationV2ThreadProjection => ({
@@ -2971,15 +2979,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     /** Fields a composite command sets in the same event (a move archives with its link). */
     extra?: Pick<OrchestrationV2AppThread, "movedTo">,
   ) {
-    const thread = yield* projectionStore.getThread(command.threadId).pipe(
-      Effect.mapError(
-        (cause) =>
-          new OrchestratorProjectionError({
-            threadId: command.threadId,
-            cause,
-          }),
-      ),
-    );
+    const thread = yield* projectionStore
+      .getThread(command.threadId)
+      .pipe(
+        Effect.mapError(
+          (cause) => new OrchestratorProjectionError({ threadId: command.threadId, cause }),
+        ),
+      );
     if (thread.deletedAt !== null) {
       return yield* new OrchestratorDispatchError({
         commandId: command.commandId,
@@ -3173,7 +3179,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const projection = yield* loadProjectionForCommand(
         command,
         ["runs", "runtimeRequests", "messages"],
-        { turnItemTypes: [], messageRoles: ["user"] },
+        {
+          turnItemTypes: [],
+          messageRoles: ["user"],
+        },
       );
       // Queued notification and delegated-completion runs only wake the agent.
       // They are not user messages and are hidden from the queue UI, so they
@@ -3436,6 +3445,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           return {
             ...thread,
             settledOverride: "settled",
+            deferredResolution: null,
             settledNote,
             settledAt:
               thread.settledOverride === "settled" && thread.settledAt !== null && !wasPinned
@@ -11751,6 +11761,85 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         );
         break;
       }
+      case "thread.deferred-resolution.request": {
+        const now = yield* DateTime.now;
+        const projection = yield* getProjectionWithPendingEvents(command.threadId, events);
+        const run = projection.runs.find((candidate) => candidate.id === command.runId);
+        if (
+          deferredResolutionBlocked(projection, command.runId) ||
+          run === undefined ||
+          !["starting", "running", "waiting"].includes(run.status) ||
+          (yield* stopReachedRun(command, command.threadId, command.runId))
+        ) {
+          return yield* new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause:
+              "This thread can't be resolved after this turn: Stop, newer or pending work, a user override, or automatic resolution policy prevents it.",
+          });
+        }
+        yield* emit(
+          events,
+          command,
+        )({
+          type: "thread.metadata-updated",
+          threadId: command.threadId,
+          occurredAt: now,
+          payload: {
+            ...projection.thread,
+            deferredResolution: {
+              runId: run.id,
+              ...(command.note === undefined ? {} : { note: command.note }),
+            },
+            updatedAt: now,
+          },
+        });
+        break;
+      }
+      case "thread.deferred-resolution.finish": {
+        if (!deferredResolutionEnabled) break;
+        const projection = yield* getProjectionWithPendingEvents(command.threadId, events);
+        const intent = projection.thread.deferredResolution;
+        if (intent == null || intent.revoked === true || intent.runId !== command.runId) break;
+        const run = projection.runs.find((candidate) => candidate.id === intent.runId);
+        if (
+          run !== undefined &&
+          ["starting", "running", "waiting", "preparing", "queued"].includes(run.status)
+        )
+          break;
+        const thread = {
+          ...projection.thread,
+          deferredResolution: { ...intent, revoked: true as const },
+        };
+        if (
+          run?.status === "completed" &&
+          !deferredResolutionBlocked(projection, intent.runId) &&
+          !(yield* stopReachedRun(command, command.threadId, intent.runId))
+        ) {
+          yield* dispatchThreadMutation(
+            {
+              type: "thread.settle",
+              commandId: command.commandId,
+              threadId: command.threadId,
+              ...(intent.note === undefined ? {} : { note: intent.note }),
+            },
+            events,
+            effects,
+          );
+        } else {
+          const now = yield* DateTime.now;
+          yield* emit(
+            events,
+            command,
+          )({
+            type: "thread.metadata-updated",
+            threadId: command.threadId,
+            occurredAt: now,
+            payload: { ...thread, updatedAt: now },
+          });
+        }
+        break;
+      }
       case "thread.delete": {
         const projection = yield* projectionStore
           .getThreadRecords(command.threadId, [
@@ -11989,6 +12078,43 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       default:
         return yield* dispatchUnsupported(command);
     }
+    // User work and explicit lifecycle changes discard the intent in their
+    // own transaction, even if that work is later cancelled or undone.
+    const threadId = commandThreadId(command);
+    const plannedEvents = (yield* Ref.get(events)).filter((event) => event.threadId === threadId);
+    const pendingThread = [...plannedEvents]
+      .reverse()
+      .find((event) => "settledOverride" in event.payload);
+    const storedThread =
+      pendingThread === undefined
+        ? yield* projectionStore.getThread(threadId).pipe(mapDispatchError(command))
+        : undefined;
+    const intent =
+      pendingThread !== undefined && "settledOverride" in pendingThread.payload
+        ? pendingThread.payload.deferredResolution
+        : storedThread?.deferredResolution;
+    if (intent != null && intent.revoked !== true) {
+      const projection = yield* getProjectionWithPendingEvents(threadId, events);
+      if (
+        plannedEvents.some((event) => invalidatesDeferredResolution(event, intent.runId)) ||
+        deferredResolutionBlocked(projection, intent.runId)
+      ) {
+        const now = yield* DateTime.now;
+        yield* emit(
+          events,
+          command,
+        )({
+          type: "thread.metadata-updated",
+          threadId,
+          occurredAt: now,
+          payload: {
+            ...projection.thread,
+            deferredResolution: { ...intent, revoked: true },
+            updatedAt: now,
+          },
+        });
+      }
+    }
     return {
       events: yield* Ref.get(events),
       effects: yield* Ref.get(effects),
@@ -12071,6 +12197,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       if (shell !== null) yield* refuseAboveDispatchModeLimit(command, threadId, shell);
     }
 
+    const expectedThreadSequence =
+      command.type === "thread.deferred-resolution.request" ||
+      command.type === "thread.deferred-resolution.finish"
+        ? yield* eventSink
+            .latestSequence({ threadId: command.threadId })
+            .pipe(mapDispatchError(command))
+        : undefined;
     const plan = yield* dispatchOnce(command).pipe(
       Effect.flatMap((planned) =>
         // A settle that finds the provider already ended everything, or a
@@ -12079,6 +12212,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         planned.events.length > 0 ||
         command.type === "queued-message.steer-settle" ||
         command.type === "thread.background-work.settle" ||
+        command.type === "thread.deferred-resolution.finish" ||
         command.type === "thread.stop" ||
         command.type === "thread.project-move.record" ||
         command.type === "thread.execution.record" ||
@@ -12170,6 +12304,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         threadId: commandThreadId(command),
         commandType: command.type,
         acceptedAt,
+        ...(expectedThreadSequence === undefined ? {} : { expectedThreadSequence }),
         events: plan.events,
         effects: plan.effects,
         ...(plan.cancelUnsettledEffects === undefined
@@ -12259,6 +12394,27 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       : dispatch;
   };
 
+  const finishDeferredResolution = (threadId: ThreadId) =>
+    Effect.gen(function* () {
+      if (!deferredResolutionEnabled) return;
+      const thread = yield* projectionStore.getThread(threadId);
+      const intent = thread.deferredResolution;
+      if (intent == null || intent.revoked === true) return;
+      const { runs } = yield* projectionStore.getThreadRecords(threadId, ["runs"]);
+      const run = runs.find((candidate) => candidate.id === intent.runId);
+      if (
+        run !== undefined &&
+        ["preparing", "queued", "starting", "running", "waiting"].includes(run.status)
+      )
+        return;
+      yield* dispatchWithReceiptEffect({
+        type: "thread.deferred-resolution.finish",
+        commandId: CommandId.make(`command:deferred-resolution:${threadId}:${intent.runId}`),
+        threadId,
+        runId: intent.runId,
+      });
+    });
+
   const handleTerminalRun = (stored: OrchestrationV2StoredEvent) =>
     Effect.gen(function* () {
       const threadId = stored.event.threadId;
@@ -12294,6 +12450,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           finalizeDelegatedCompletionDelivery(threadId, stored.event.payload.id),
         );
       }
+      yield* threadDispatch.withLock(threadId, finishDeferredResolution(threadId));
       yield* threadDispatch.withLock(
         threadId,
         startNextQueuedRun(
@@ -12343,6 +12500,28 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   // worker. Queue recovery instead holds unstarted runs until an explicit
   // queue.resume command arrives.
   const recoverDelegatedTasks = Effect.gen(function* () {
+    yield* projectionStore.getRecoveryThreadIds("deferred-resolutions").pipe(
+      Effect.flatMap((threadIds) =>
+        Effect.forEach(
+          threadIds,
+          (threadId) =>
+            threadDispatch.withLock(threadId, finishDeferredResolution(threadId)).pipe(
+              Effect.catchCause((cause) =>
+                Effect.logWarning("Failed to recover deferred thread resolution", {
+                  threadId,
+                  cause,
+                }),
+              ),
+            ),
+          { concurrency: 8, discard: true },
+        ),
+      ),
+      Effect.catchCause((cause) =>
+        Effect.logWarning("Failed to inspect deferred thread resolutions during recovery", {
+          cause,
+        }),
+      ),
+    );
     yield* projectionStore.getRecoveryThreadIds("subagent-results").pipe(
       Effect.flatMap((threadIds) =>
         Effect.forEach(

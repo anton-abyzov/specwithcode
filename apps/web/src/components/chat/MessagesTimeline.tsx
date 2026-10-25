@@ -58,6 +58,10 @@ import {
   type AssistantCitation,
   type EnvironmentId,
   type MessageId,
+  type OrchestrationV2ProjectedTurnItem,
+  type OrchestrationV2ProviderSession,
+  type OrchestrationV2Run,
+  type OrchestrationV2Subagent,
   type OrchestrationV2TurnItem,
   type ProjectId,
   type RunAttemptId,
@@ -72,6 +76,7 @@ import { parseScopedThreadKey, scopeThreadRef } from "@specweave-studio/client-r
 import { useAtomValue } from "@effect/atom-react";
 import { environmentThreadDetails } from "../../state/threads";
 import { UserMessageExecutionOrigin, UserMessageProvenance } from "./UserMessageProvenance";
+import { WorkerMessageBody } from "../studio/WorkerMessageBody";
 import { useProviderEntries } from "../studio/shell/ModelBadge";
 import { limitContinuationNote, restartContinuationNote } from "../../studio/runIdentity";
 import { modelLabel } from "../../studio/shellModel";
@@ -79,14 +84,18 @@ import { canForkProjectedAssistantItem } from "@specweave-studio/client-runtime/
 import { notificationChildThreadId } from "@specweave-studio/client-runtime/state/thread-execution";
 import { replaceComposerContextReferences } from "@specweave-studio/shared/composerContextReferences";
 import {
+  filesChangedOutsideEditItems,
   resolveWorkEntryToolPresentation,
   resolveViewedImageAsset,
+  subagentDiffTarget,
   workEntryComputerUsePermission,
   workEntryReportsChromeDisconnected,
   workEntryViewedImagePath,
 } from "@specweave-studio/client-runtime/work-log/presentation";
+import { resolveProviderInstanceDisplayName } from "@specweave-studio/client-runtime/state/provider-instance-display";
 import { resolveWorkGroupScrollAnchor } from "@specweave-studio/client-runtime/work-log/scroll-anchor";
 import {
+  streamsToolOutputForDriver,
   turnItemHasDetail,
   turnItemNeedsDetailFetch,
 } from "@specweave-studio/client-runtime/work-log/item-detail";
@@ -134,7 +143,6 @@ import {
   providerErrorPresentation,
   createMessageAttachmentPreviewProjector,
   selectMessageImageResources,
-  workEntryDisplayIndicatesToolFailure,
   workEntrySignalsSevereFailure,
   workLogEntryIsToolLike,
 } from "../../session-logic";
@@ -169,6 +177,7 @@ import {
   ChevronUpIcon,
   CircleAlertIcon,
   Clock3Icon,
+  CopyIcon,
   DownloadIcon,
   EyeIcon,
   GitForkIcon,
@@ -220,7 +229,10 @@ import {
 } from "./SnapShotAttachmentDetails";
 import { ProposedPlanCard } from "./ProposedPlanCard";
 import { HtmlRenderFrame } from "./HtmlRenderFrame";
-import { ChangedFilesCard } from "./ChangedFilesTree";
+import { ChangedFilesCard, type OpenTurnDiffHandler } from "./ChangedFilesTree";
+import { DiffStatLabel } from "./DiffStatLabel";
+import { MiddleTruncate } from "../ui/middle-truncate";
+import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
 import { useFileContextMenuHandler } from "../../fileContextMenu";
 import type { ThreadLinkTarget } from "@specweave-studio/client-runtime/state/threads";
 import { useProject, useThreadLinkTargets, useThreadShell } from "../../state/entities";
@@ -260,8 +272,13 @@ import {
   resolveWorkGroupScrollIndex,
   shouldFollowWorkGroupAppend,
   shouldPreserveAssistantLineBreaks,
+  timelineEntryFailureKind,
+  toolFailureCountLabels,
   toolGroupAction,
+  turnDiffUnavailableReason,
   workEntryDisplayLabel,
+  workEntryOutcomeChip,
+  workEntryPathLabel,
   workEntryReadOutput,
   workEntryIsActiveTurnActivity,
   workEntryIsVisibleInGroup,
@@ -272,11 +289,14 @@ import {
   type MessagesTimelineRow,
   TIMELINE_MINIMAP_MIN_ITEMS,
   type TimelineLatestRun,
+  type ToolFailureCounts,
+  type TurnSubagentReference,
   type WorkGroupScrollAnchor,
 } from "./MessagesTimeline.logic";
 import { TerminalContextInlineChip } from "./TerminalContextInlineChip";
 import {
   toolActivitySummary,
+  toolExecutionInput,
   toolPresentationBlocks,
   ToolPresentationBlocks,
 } from "./toolOutputPresentation";
@@ -424,7 +444,16 @@ interface TimelineRowSharedState {
   onUseArtifactTemplate: (template: CodexArtifactTemplate) => void;
   onImageExpand: (preview: ExpandedImagePreview) => void;
   displayThreadKey?: string;
-  onOpenTurnDiff: (runId: RunId, filePath?: string) => void;
+  onOpenTurnDiff: OpenTurnDiffHandler;
+  /** Runs still live, whose rows disable Open diff until the turn ends (AC-05). */
+  liveRuns: ReadonlyArray<{ readonly id: RunId; readonly status: string }>;
+  /** Where a provider-native subagent thread's edits open their diff (AC-19); null otherwise. */
+  subagentDiffTarget: SubagentDiffTarget | null;
+  subagentDiffUnavailableReason: string | null;
+  loadedSubagentEditItems: ReadonlyMap<ThreadId, ReadonlyArray<OrchestrationV2TurnItem>>;
+  providerSessions: ReadonlyArray<TimelineProviderSession>;
+  /** The thread's own provider, for runless items of a provider-native subagent thread. */
+  threadProviderInstanceId: OrchestrationV2Run["providerInstanceId"] | null;
   onOpenThread: (threadId: OrchestrationV2TurnItem["threadId"]) => void;
   onForkFromRun: (input: {
     readonly sourceThreadId: ThreadId;
@@ -573,6 +602,29 @@ const TIMELINE_MAINTAIN_SCROLL_AT_END_SMOOTH = {
 // Props (public API)
 // ---------------------------------------------------------------------------
 
+/** A run as the timeline reads it; its status, when given, disables Open diff while it is live. */
+export type TimelineRun = HandoffTimelineRun & Partial<Pick<OrchestrationV2Run, "status">>;
+
+export type TimelineProviderSession = Pick<
+  OrchestrationV2ProviderSession,
+  "providerInstanceId" | "driver" | "capabilities"
+>;
+
+/** A provider-native subagent thread's parent; `subagents` is null until the parent loads. */
+export interface TimelineSubagentParent {
+  readonly threadId: ThreadId;
+  readonly subagents: ReadonlyArray<OrchestrationV2Subagent> | null;
+  readonly runs: ReadonlyArray<{ readonly id: RunId; readonly status: string }>;
+}
+
+type SubagentDiffTarget = NonNullable<ReturnType<typeof subagentDiffTarget>>;
+
+const EMPTY_SUBAGENT_EDIT_ITEMS: ReadonlyMap<
+  ThreadId,
+  ReadonlyArray<OrchestrationV2TurnItem>
+> = new Map();
+const EMPTY_PROVIDER_SESSIONS: ReadonlyArray<TimelineProviderSession> = [];
+
 export interface MessagesTimelineHistoryControls {
   readonly hasMoreHistory: boolean;
   readonly loading: boolean;
@@ -623,7 +675,13 @@ interface MessagesTimelineProps {
   turnDiffSummaries: ReadonlyArray<TurnDiffSummary>;
   routeThreadKey: string;
   displayThreadKey?: string;
-  onOpenTurnDiff: (runId: RunId, filePath?: string) => void;
+  onOpenTurnDiff: OpenTurnDiffHandler;
+  /** For a provider-native subagent's thread: its parent, with the parent's subagents and runs. */
+  subagentParent?: TimelineSubagentParent | null;
+  /** Edit items of this thread's subagents whose threads are loaded, by child thread. */
+  loadedSubagentEditItems?: ReadonlyMap<ThreadId, ReadonlyArray<OrchestrationV2TurnItem>>;
+  /** The thread's provider sessions, for whether a provider streams tool output (AC-13). */
+  providerSessions?: ReadonlyArray<TimelineProviderSession>;
   onOpenThread: (threadId: OrchestrationV2TurnItem["threadId"]) => void;
   /** Delegated threads show long assistant reports as report cards. */
   collapseLongReports?: boolean;
@@ -653,7 +711,7 @@ interface MessagesTimelineProps {
   workspaceRoot: string | undefined;
   skills?: ReadonlyArray<Pick<ServerProviderSkill, "name" | "displayName">>;
   providerStatuses: ReadonlyArray<ServerProvider>;
-  runs: ReadonlyArray<HandoffTimelineRun>;
+  runs: ReadonlyArray<TimelineRun>;
   anchorMessageId: MessageId | null;
   onAnchorReady: (messageId: MessageId, anchorIndex: number) => void;
   onAnchorSizeChanged: (messageId: MessageId, size: number) => void;
@@ -745,6 +803,9 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   skills = EMPTY_TIMELINE_SKILLS,
   providerStatuses,
   runs: runsProp,
+  subagentParent = null,
+  loadedSubagentEditItems = EMPTY_SUBAGENT_EDIT_ITEMS,
+  providerSessions = EMPTY_PROVIDER_SESSIONS,
   anchorMessageId,
   onAnchorReady,
   onAnchorSizeChanged,
@@ -1044,6 +1105,23 @@ export const MessagesTimeline = memo(function MessagesTimeline({
   // Run status/timestamps churn on every stream event; the shared row context
   // must not change with them or every timeline row re-renders per event.
   const runs = useStableHandoffRuns(runsProp);
+  const liveRuns = useStableLiveRuns(runsProp);
+  const activeThreadId = citationThreadRef?.threadId ?? null;
+  const resolvedSubagentDiffTarget = useMemo(() => {
+    if (subagentParent === null || activeThreadId === null) return null;
+    const target = subagentDiffTarget({
+      childThreadId: activeThreadId,
+      parentThreadId: subagentParent.threadId,
+      parentSubagents: subagentParent.subagents,
+    });
+    // An app-owned delegate's rows open its own thread's diff (D-25).
+    return target?.origin === "provider_native" ? target : null;
+  }, [activeThreadId, subagentParent]);
+  const subagentDiffUnavailableReason =
+    resolvedSubagentDiffTarget === null
+      ? null
+      : turnDiffUnavailableReason(resolvedSubagentDiffTarget.runId, subagentParent?.runs ?? []);
+  const threadProviderInstanceId = timelineShell?.providerInstanceId ?? null;
   const minimapItems = useMemo(() => deriveTimelineMinimapItems(rows), [rows]);
   const restoreRowIndex =
     restoringThreadPosition && rememberedPosition?.atEnd === false
@@ -1428,6 +1506,12 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onFileDownload,
       openPullRequest,
       onOpenTurnDiff,
+      liveRuns,
+      subagentDiffTarget: resolvedSubagentDiffTarget,
+      subagentDiffUnavailableReason,
+      loadedSubagentEditItems,
+      providerSessions,
+      threadProviderInstanceId,
       onOpenThread,
       onForkFromRun,
       onRollbackCheckpoint,
@@ -1471,6 +1555,12 @@ export const MessagesTimeline = memo(function MessagesTimeline({
       onFileDownload,
       openPullRequest,
       onOpenTurnDiff,
+      liveRuns,
+      resolvedSubagentDiffTarget,
+      subagentDiffUnavailableReason,
+      loadedSubagentEditItems,
+      providerSessions,
+      threadProviderInstanceId,
       onOpenThread,
       onForkFromRun,
       onRollbackCheckpoint,
@@ -2482,7 +2572,10 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
           />
         </div>
       ) : (
-        <div className="relative max-w-[80%] rounded-2xl bg-message p-3 text-message-foreground">
+        <div
+          data-message-bubble=""
+          className="relative max-w-[80%] rounded-2xl bg-message p-3 text-message-foreground"
+        >
           <MessageAuthorHeading>
             {row.message.createdBy === "agent"
               ? senderThreadId === projectRouting?.coordinatorThreadId
@@ -2593,12 +2686,30 @@ function UserTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "message" 
             </div>
           ) : null}
           <div onCopyCapture={onBodyCopyCapture}>
-            <CollapsibleUserMessageBody
-              text={resolvedContext.text}
-              renderContextReference={renderContextReference}
-              skills={ctx.skills}
-              markdownCwd={ctx.markdownCwd}
-            />
+            {row.message.createdBy === "agent" && resolvedContext.text.trim().length > 0 ? (
+              // Another agent's message reads like a worker's in the coordinator:
+              // its opening, folded by the thread's detail level, with the exact original.
+              <WorkerMessageBody
+                original={row.message.text}
+                text={resolvedContext.text}
+                detail={ctx.timelineDetail}
+                renderMarkdown={(part) => (
+                  <UserMessageBody
+                    text={part}
+                    renderContextReference={renderContextReference}
+                    skills={ctx.skills}
+                    markdownCwd={ctx.markdownCwd}
+                  />
+                )}
+              />
+            ) : (
+              <CollapsibleUserMessageBody
+                text={resolvedContext.text}
+                renderContextReference={renderContextReference}
+                skills={ctx.skills}
+                markdownCwd={ctx.markdownCwd}
+              />
+            )}
           </div>
         </div>
       )}
@@ -2824,6 +2935,7 @@ function TurnFoldTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "turn-
           ) : null}
           {row.activityDetail ? <span className="sr-only">. {row.activityDetail}</span> : null}
         </span>
+        <FailureCountChips counts={row} />
         <MorphIcon className="size-3.5" icon={row.expanded ? ChevronDown : ChevronRight} />
       </button>
       <TimelineRowTimestamp
@@ -2991,6 +3103,9 @@ function AssistantTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "mess
         </AssistantCitationSource>
         <AssistantChangedFilesSection
           turnSummary={row.assistantTurnDiffSummary}
+          turnEditItems={row.turnEditItems}
+          turnSubagents={row.turnSubagents}
+          turnFailedCount={row.turnFailedCount}
           routeThreadKey={ctx.routeThreadKey}
           resolvedTheme={ctx.resolvedTheme}
           onOpenTurnDiff={ctx.onOpenTurnDiff}
@@ -3273,6 +3388,7 @@ function v2EventPresentation(item: OrchestrationV2TurnItem): {
 function V2EventTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "event" }> }) {
   const ctx = use(TimelineRowCtx);
   const { item, visibility, sourceThreadId } = row.projectedItem;
+  const diffLink = useItemDiffLink(row.projectedItem);
   if (item.type === "subagent" && (row.subagents?.length ?? 1) > 1) {
     return <V2SubagentGroup key={row.id} row={row} />;
   }
@@ -3387,9 +3503,14 @@ function V2EventTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "event"
               cwd={ctx.markdownCwd}
               workspaceRoot={ctx.workspaceRoot}
               onOpenThread={ctx.onOpenThread}
-              onOpenTurnDiff={ctx.onOpenTurnDiff}
               onRollbackCheckpoint={ctx.onRollbackCheckpoint}
               onImageExpand={ctx.onImageExpand}
+              onOpenTurnDiff={diffLink.onOpenTurnDiff}
+              subagentDiffTarget={diffLink.subagentDiffTarget}
+              diffUnavailableReason={diffLink.diffUnavailableReason}
+              providerLabel={diffLink.providerLabel}
+              streamsToolOutput={diffLink.streamsToolOutput}
+              defaultOpenFileSections={verboseOpenFileSections(ctx.timelineDetail)}
             />
           </div>
         </div>
@@ -3461,9 +3582,14 @@ function V2EventTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "event"
               cwd={ctx.markdownCwd}
               workspaceRoot={ctx.workspaceRoot}
               onOpenThread={ctx.onOpenThread}
-              onOpenTurnDiff={ctx.onOpenTurnDiff}
               onRollbackCheckpoint={ctx.onRollbackCheckpoint}
               onImageExpand={ctx.onImageExpand}
+              onOpenTurnDiff={diffLink.onOpenTurnDiff}
+              subagentDiffTarget={diffLink.subagentDiffTarget}
+              diffUnavailableReason={diffLink.diffUnavailableReason}
+              providerLabel={diffLink.providerLabel}
+              streamsToolOutput={diffLink.streamsToolOutput}
+              defaultOpenFileSections={verboseOpenFileSections(ctx.timelineDetail)}
             />
           </div>
         </div>
@@ -4416,7 +4542,8 @@ function LiveWorkEntryTimelineRow({ row }: { row: Extract<TimelineRow, { kind: "
       liveWorkEntryLabel(row.entry, ctx.workspaceRoot, row.active),
       row.active,
     );
-  const failed = workEntryDisplayIndicatesToolFailure(row.entry);
+  const failureKind = timelineEntryFailureKind(row.entry);
+  const failed = failureKind === "failed" || failureKind === "possible";
   const callCount = row.groupedEntries.filter(workLogEntryIsToolLike).length;
   // An unreachable host sends no events: nothing here may look like progress.
   const { lastActivityMs, phaseStartedMs, hostOffline } = use(LiveSignalCtx);
@@ -4553,6 +4680,7 @@ function WorkGroupToggleTimelineRow({
         }
         toolIcon={row.toolIcon}
         failed={row.hasFailure}
+        failures={row}
         expanded={row.expanded}
         toolCount={row.toolCount}
         createdAt={row.createdAt}
@@ -4573,7 +4701,7 @@ function ToolActivityTimelineRow({
   const details = [
     ...row.categories.map((category) => category.label),
     ...(row.noteCount > 0 ? [`${row.noteCount} ${row.noteCount === 1 ? "note" : "notes"}`] : []),
-    ...(row.failedCount > 0 ? [`${row.failedCount} failed`] : []),
+    ...failureCountTexts(row),
   ].join(", ");
   return (
     <WorkLogButton
@@ -4610,12 +4738,7 @@ function ToolActivityTimelineRow({
               </span>
             ) : null}
           </span>
-          {row.failedCount > 0 ? (
-            <span className="inline-flex shrink-0 items-center gap-0.5 text-tool-error-icon">
-              <XIcon aria-hidden className="size-3" />
-              {row.failedCount} failed
-            </span>
-          ) : null}
+          <FailureCountChips counts={row} />
         </span>
       }
       trailing={
@@ -4631,11 +4754,38 @@ function ToolActivityTimelineRow({
   );
 }
 
+/** "N failed" at full strength, then faint "N possible failures" and "N declined" (AC-10). */
+function FailureCountChips({ counts }: { counts: ToolFailureCounts }) {
+  const labels = toolFailureCountLabels(counts);
+  if (labels.failed === null && labels.faint.length === 0) return null;
+  return (
+    <span className="inline-flex shrink-0 items-center gap-1.5" data-failure-counts>
+      {labels.failed ? (
+        <span className="text-tool-error-icon" data-failed-count>
+          {labels.failed}
+        </span>
+      ) : null}
+      {labels.faint.map((label) => (
+        <span key={label} className="text-muted-foreground" data-faint-count>
+          {label}
+        </span>
+      ))}
+    </span>
+  );
+}
+
+function failureCountTexts(counts: ToolFailureCounts): string[] {
+  const labels = toolFailureCountLabels(counts);
+  return [...(labels.failed ? [labels.failed] : []), ...labels.faint];
+}
+
 function WorkGroupHeader(props: {
   label: string;
   iconName: WorkEntryIconName;
   toolIcon?: ToolActivityIcon | undefined;
   failed?: boolean | undefined;
+  /** Over every call in the group, not only the final one. */
+  failures?: ToolFailureCounts | undefined;
   active?: boolean | undefined;
   expanded: boolean;
   toolCount: number;
@@ -4644,10 +4794,11 @@ function WorkGroupHeader(props: {
   onToggle: () => void;
 }) {
   const action = toolGroupActionLabel(props.toolCount, props.expanded);
+  const failureTexts = props.failures ? failureCountTexts(props.failures) : [];
   return (
     <WorkLogButton
       ref={props.active && !props.failed ? observeVisibleAnimation : undefined}
-      aria-label={`${props.label}${props.failed ? ", tool call failed" : ""}, ${action}`}
+      aria-label={`${props.label}${props.failed ? ", tool call failed" : ""}${failureTexts.length > 0 ? `, ${failureTexts.join(", ")}` : ""}, ${action}`}
       data-tool-group-header="settled"
       aria-expanded={props.expanded}
       onClick={props.onToggle}
@@ -4660,12 +4811,16 @@ function WorkGroupHeader(props: {
         />
       }
       label={
-        <span className={cn("block truncate", props.active && !props.failed && "live-tool-shine")}>
+        <span
+          className={cn("block truncate", props.active && !props.failed && "live-tool-shine")}
+          title={props.label}
+        >
           {props.label}
         </span>
       }
       trailing={
         <span className="flex shrink-0 items-center gap-1">
+          {props.failures ? <FailureCountChips counts={props.failures} /> : null}
           <TimelineRowTimestamp
             createdAt={props.createdAt}
             timestampFormat={props.timestampFormat}
@@ -4689,15 +4844,21 @@ function WorkGroupHeader(props: {
  *  so toggling re-renders only this component — not the entire list. */
 const AssistantChangedFilesSection = memo(function AssistantChangedFilesSection({
   turnSummary,
+  turnEditItems,
+  turnSubagents,
+  turnFailedCount,
   routeThreadKey,
   resolvedTheme,
   onOpenTurnDiff,
 }: {
   turnSummary: TurnDiffSummary | undefined;
+  turnEditItems: ReadonlyArray<OrchestrationV2TurnItem> | undefined;
+  turnSubagents: ReadonlyArray<TurnSubagentReference> | undefined;
+  turnFailedCount: number | undefined;
   routeThreadKey: string;
   resolvedTheme: "light" | "dark";
   displayThreadKey?: string;
-  onOpenTurnDiff: (runId: RunId, filePath?: string) => void;
+  onOpenTurnDiff: OpenTurnDiffHandler;
 }) {
   if (!turnSummary) return null;
   const checkpointFiles = turnSummary.files;
@@ -4707,6 +4868,9 @@ const AssistantChangedFilesSection = memo(function AssistantChangedFilesSection(
     <AssistantChangedFilesSectionInner
       turnSummary={turnSummary}
       checkpointFiles={checkpointFiles}
+      turnEditItems={turnEditItems ?? EMPTY_TURN_EDIT_ITEMS}
+      turnSubagents={turnSubagents ?? EMPTY_TURN_SUBAGENTS}
+      turnFailedCount={turnFailedCount}
       routeThreadKey={routeThreadKey}
       resolvedTheme={resolvedTheme}
       onOpenTurnDiff={onOpenTurnDiff}
@@ -4714,23 +4878,77 @@ const AssistantChangedFilesSection = memo(function AssistantChangedFilesSection(
   );
 });
 
+const EMPTY_TURN_EDIT_ITEMS: ReadonlyArray<OrchestrationV2TurnItem> = [];
+const EMPTY_TURN_SUBAGENTS: ReadonlyArray<TurnSubagentReference> = [];
+
 /** Inner component that only mounts when there are actual changed files,
  *  so the store subscription is unconditional (no hooks after early return). */
 function AssistantChangedFilesSectionInner({
   turnSummary,
   checkpointFiles,
+  turnEditItems,
+  turnSubagents,
+  turnFailedCount,
   routeThreadKey,
   resolvedTheme,
   onOpenTurnDiff,
 }: {
   turnSummary: TurnDiffSummary;
   checkpointFiles: TurnDiffSummary["files"];
+  turnEditItems: ReadonlyArray<OrchestrationV2TurnItem>;
+  turnSubagents: ReadonlyArray<TurnSubagentReference>;
+  turnFailedCount: number | undefined;
   routeThreadKey: string;
   resolvedTheme: "light" | "dark";
   displayThreadKey?: string;
-  onOpenTurnDiff: (runId: RunId, filePath?: string) => void;
+  onOpenTurnDiff: OpenTurnDiffHandler;
 }) {
   const ctx = use(TimelineRowCtx);
+  const { loadedSubagentEditItems, workspaceRoot } = ctx;
+  // Who reported each file: this turn's edit tools, a loaded subagent, or neither (AC-07, AC-19).
+  const attribution = useMemo(
+    () =>
+      filesChangedOutsideEditItems({
+        files: checkpointFiles.map((file) => file.path),
+        editItems: turnEditItems,
+        subagents: turnSubagents.map((subagent) => {
+          const editItems =
+            subagent.childThreadId === null
+              ? undefined
+              : loadedSubagentEditItems.get(subagent.childThreadId);
+          return {
+            title: subagent.title,
+            loaded: editItems !== undefined,
+            editItems: editItems ?? EMPTY_TURN_EDIT_ITEMS,
+          };
+        }),
+        // Edit paths are relative to the folder the turn ran in, which may not be today's.
+        roots: { repoRoot: turnSummary.repoRoot, workspaceRoot: turnSummary.cwd ?? workspaceRoot },
+      }),
+    [
+      checkpointFiles,
+      loadedSubagentEditItems,
+      turnEditItems,
+      turnSubagents,
+      turnSummary.repoRoot,
+      turnSummary.cwd,
+      workspaceRoot,
+    ],
+  );
+  // Card paths are repository-relative; made absolute, the DiffPanel never reads them as
+  // relative to the checkpoint folder, which a nested folder of the same name would match.
+  const repoRoot = turnSummary.repoRoot;
+  const openCardDiff = useCallback<OpenTurnDiffHandler>(
+    (runId, filePath, options) => {
+      const linked =
+        filePath === undefined || repoRoot === undefined
+          ? filePath
+          : `${repoRoot.replace(/[\\/]+$/, "")}/${filePath}`;
+      if (options) onOpenTurnDiff(runId, linked, options);
+      else onOpenTurnDiff(runId, linked);
+    },
+    [onOpenTurnDiff, repoRoot],
+  );
   const persistedExpanded = useUiStateStore(
     (store) => store.threadChangedFilesExpandedById[routeThreadKey]?.[turnSummary.runId],
   );
@@ -4755,7 +4973,10 @@ function AssistantChangedFilesSectionInner({
       onToggleAllDirectories={() =>
         setExpanded(routeThreadKey, turnSummary.runId, !allDirectoriesExpanded)
       }
-      onOpenTurnDiff={onOpenTurnDiff}
+      onOpenTurnDiff={openCardDiff}
+      attribution={attribution}
+      sourceThreadId={ctx.threadRef?.threadId}
+      failedCount={turnFailedCount}
       onFileContextMenu={(filePath, event) =>
         onFileContextMenu(
           {
@@ -5565,6 +5786,28 @@ function useStableHandoffRuns(
   }, [runs]);
 }
 
+/** The live runs, by id and status; the reference changes only when one starts or ends. */
+function useStableLiveRuns(
+  runs: ReadonlyArray<TimelineRun>,
+): ReadonlyArray<{ readonly id: RunId; readonly status: string }> {
+  const prev = useRef<{
+    signature: string;
+    value: ReadonlyArray<{ readonly id: RunId; readonly status: string }>;
+  }>({ signature: "", value: [] });
+  return useMemo(() => {
+    const live = runs.flatMap((run) =>
+      run.status !== undefined &&
+      turnDiffUnavailableReason(run.id, [{ id: run.id, status: run.status }]) !== null
+        ? [{ id: run.id, status: run.status }]
+        : [],
+    );
+    const signature = live.map((run) => `${run.id}\0${run.status}`).join("\n");
+    if (signature === prev.current.signature) return prev.current.value;
+    prev.current = { signature, value: live };
+    return live;
+  }, [runs]);
+}
+
 /** Returns a structurally-shared copy of `rows`: for each row whose content
  *  hasn't changed since last call, the previous object reference is reused. */
 function useStableRows(rows: MessagesTimelineRow[], identity: string): MessagesTimelineRow[] {
@@ -5988,6 +6231,101 @@ function ReasoningTraceContent({ entries }: { entries: ReadonlyArray<TimelineWor
   );
 }
 
+/** Verbose opens the first 3 file sections of a multi-file edit (D-26). */
+function verboseOpenFileSections(detail: TimelineDetail): number | undefined {
+  return detail === "verbose" ? 3 : undefined;
+}
+
+/** "exit 2" and "failed" at full strength; "declined" and "stopped" quiet. Kept at every level. */
+function WorkEntryOutcomeChip({
+  chip,
+}: {
+  chip: NonNullable<ReturnType<typeof workEntryOutcomeChip>>;
+}) {
+  return (
+    <span
+      className={cn(
+        "shrink-0 rounded-sm px-1 font-mono text-3xs leading-4 tabular-nums",
+        chip.kind === "failed"
+          ? "bg-tool-error-icon/10 text-tool-error-icon"
+          : "bg-muted text-muted-foreground",
+      )}
+      data-outcome-chip={chip.kind}
+    >
+      {chip.label}
+    </span>
+  );
+}
+
+interface ItemDiffLink {
+  /** The run Open diff names: the item's own, or the parent run for a subagent's edit. */
+  readonly runId: RunId | null;
+  /** Carries the item's source thread, and the subagent attribution, unless a caller overrides it. */
+  readonly onOpenTurnDiff: OpenTurnDiffHandler;
+  readonly subagentDiffTarget: SubagentDiffTarget | undefined;
+  readonly diffUnavailableReason: string | null;
+  readonly providerLabel: string | undefined;
+  readonly streamsToolOutput: boolean;
+}
+
+/**
+ * How a row's Open diff routes (AC-04, AC-19, D-08): an inherited row names its source thread,
+ * a provider-native subagent's runless row the parent run that launched it.
+ */
+function useItemDiffLink(
+  projectedItem: OrchestrationV2ProjectedTurnItem | undefined,
+): ItemDiffLink {
+  const ctx = use(TimelineRowCtx);
+  const item = projectedItem?.item;
+  const itemRunId = item?.runId ?? null;
+  const target =
+    item !== undefined && itemRunId === null ? (ctx.subagentDiffTarget ?? undefined) : undefined;
+  const ownThread =
+    projectedItem === undefined || projectedItem.sourceThreadId === ctx.threadRef?.threadId;
+  const linkThreadId = target?.parentThreadId ?? projectedItem?.sourceThreadId;
+  const attributedTitle = target?.title;
+  const attributedRunning = target?.running ?? false;
+  const openTurnDiff = ctx.onOpenTurnDiff;
+  const onOpenTurnDiff = useCallback<OpenTurnDiffHandler>(
+    (runId, filePath, options) =>
+      openTurnDiff(runId, filePath, {
+        ...(linkThreadId === undefined ? {} : { sourceThreadId: linkThreadId }),
+        ...(attributedTitle === undefined
+          ? {}
+          : { attributedTo: { title: attributedTitle, running: attributedRunning } }),
+        ...options,
+      }),
+    [attributedRunning, attributedTitle, linkThreadId, openTurnDiff],
+  );
+  const instanceId =
+    itemRunId === null
+      ? ctx.threadProviderInstanceId
+      : ctx.runs.find((run) => run.id === itemRunId)?.providerInstanceId;
+  const provider =
+    instanceId == null
+      ? undefined
+      : ctx.providerStatuses.find((candidate) => candidate.instanceId === instanceId);
+  const session =
+    instanceId == null
+      ? undefined
+      : ctx.providerSessions.findLast((candidate) => candidate.providerInstanceId === instanceId);
+  return {
+    runId: itemRunId ?? target?.runId ?? null,
+    onOpenTurnDiff,
+    subagentDiffTarget: target,
+    diffUnavailableReason: target
+      ? ctx.subagentDiffUnavailableReason
+      : ownThread
+        ? turnDiffUnavailableReason(itemRunId, ctx.liveRuns)
+        : null,
+    providerLabel: provider ? resolveProviderInstanceDisplayName(provider) : undefined,
+    streamsToolOutput: streamsToolOutputForDriver(
+      session?.driver ?? provider?.driver,
+      session?.capabilities.streaming.streamsToolOutput,
+    ),
+  };
+}
+
 type WorkEntryRowProps = {
   workEntry: TimelineWorkEntry;
   workspaceRoot: string | undefined;
@@ -6085,6 +6423,9 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
     latestRunFailed: failureLatestRunFailed,
     threadSettled,
   } = use(TimelineRowActivityCtx);
+  const diffLink = useItemDiffLink(workEntry.projectedItem);
+  // A command or path is copied as stored: a quoted no-break space or a trailing newline is part of it.
+  const { copyToClipboard, isCopied } = useCopyToClipboard({ preserveBytes: true });
   const failureItem = workEntry.projectedItem?.item;
   if (failureItem?.type === "error" && failureItem.status === "failed") {
     const warning = failureItem.failure.class === "usage_limit";
@@ -6226,8 +6567,9 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
   }
   const iconConfig = workToneIcon(workEntry.tone);
   const showWarningIndicator = workEntry.sourceActivityKind === "runtime.warning";
+  const failureKind = timelineEntryFailureKind(workEntry);
   const showFailedIndicator =
-    !showWarningIndicator && workEntryDisplayIndicatesToolFailure(workEntry);
+    !showWarningIndicator && (failureKind === "failed" || failureKind === "possible");
   const showDestructiveRowStyle =
     !showWarningIndicator &&
     showFailedIndicator &&
@@ -6245,16 +6587,30 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
   const questionHeading = workEntry.questionAnswer
     ? getQuestionTextPreview(workEntry.questionAnswer)
     : "";
+  // A lone Read or edit row leads with its path, never a generic "Changed 1 file" (AC-01, AC-03).
+  const pathLabel = questionHeading ? null : workEntryPathLabel(workEntry, workspaceRoot);
   const previewText =
     isReasoning && expanded
       ? workEntry.toolLifecycleStatus === "inProgress"
         ? "Thinking"
         : "Thought"
       : questionHeading ||
-        toolActivitySummary(
-          workEntry,
-          displayLabel ?? workEntryDisplayLabel(workEntry, workspaceRoot),
-        );
+        (pathLabel
+          ? `${pathLabel.verb} ${pathLabel.path}${pathLabel.moreCount > 0 ? ` +${pathLabel.moreCount} more` : ""}`
+          : toolActivitySummary(
+              workEntry,
+              displayLabel ?? workEntryDisplayLabel(workEntry, workspaceRoot),
+            ));
+  const execution = pathLabel ? null : toolExecutionInput(workEntry);
+  // Copy gives the exact full path or command, whatever the row truncates (AC-01, AC-02).
+  const copyText = pathLabel ? pathLabel.fullPaths.join("\n") : (execution?.text ?? null);
+  const outcomeChip =
+    workLogEntryIsToolLike(workEntry) && !showDestructiveRowStyle
+      ? workEntryOutcomeChip(workEntry)
+      : null;
+  const fileChangeItem =
+    workEntry.projectedItem?.item.type === "file_change" ? workEntry.projectedItem.item : undefined;
+  const openDiffPath = workEntry.changedFiles?.[0] ?? fileChangeItem?.fileName;
   const answerPreview =
     workEntry.questionAnswer && hasQuestionAnswer(workEntry.questionAnswer)
       ? getQuestionAnswerPreview(workEntry.questionAnswer)
@@ -6392,9 +6748,41 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
         <div className="min-w-0 flex-1 overflow-hidden">
           <p className="flex min-w-0 w-full items-baseline gap-1.5 text-sm leading-relaxed">
             <span
-              className={cn(answerPreview ? "min-w-0" : "min-w-0 flex-1", "truncate", headingClass)}
+              className={cn(
+                answerPreview ? "min-w-0" : "min-w-0 flex-1",
+                pathLabel ? "flex items-baseline gap-1 overflow-hidden" : "truncate",
+                headingClass,
+              )}
+              title={
+                pathLabel ? pathLabel.fullPaths.join("\n") : execution ? previewText : undefined
+              }
             >
-              {isReasoning && !expanded ? (
+              {pathLabel ? (
+                <>
+                  <span className="shrink-0">{pathLabel.verb}</span>
+                  {/* The folders go first; when even the file name does not fit beside
+                      "+N more" and the counts, it truncates too, and the row's title has it.
+                      Shrink is weighted by width, so a large factor on the folders makes
+                      them give way before the file name loses any visible width. */}
+                  <MiddleTruncate
+                    value={pathLabel.path}
+                    showTitle={false}
+                    className="[&>span:first-child]:shrink-[1000000] [&>span:last-child]:min-w-0 [&>span:last-child]:shrink [&>span:last-child]:truncate"
+                    data-row-path
+                  />
+                  {pathLabel.moreCount > 0 ? (
+                    <span className="shrink-0">+{pathLabel.moreCount} more</span>
+                  ) : null}
+                  {pathLabel.additions !== undefined && pathLabel.deletions !== undefined ? (
+                    <DiffStatLabel
+                      layout="inline"
+                      additions={pathLabel.additions}
+                      deletions={pathLabel.deletions}
+                      className="shrink-0 text-xs"
+                    />
+                  ) : null}
+                </>
+              ) : isReasoning && !expanded ? (
                 <ReactMarkdown
                   remarkPlugins={[
                     CHAT_REMARK_GFM,
@@ -6455,10 +6843,60 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
               Open subagent
             </InlineButton>
           ) : null}
-          {showFailedIndicator &&
+          {failureKind === "possible" &&
           !showDestructiveRowStyle &&
           !toolIconAcceptsTint(entryIconName, entryToolIcon) ? (
             <XIcon aria-hidden className={cn("size-3 shrink-0", failedToolIconClassName)} />
+          ) : null}
+          {outcomeChip ? <WorkEntryOutcomeChip chip={outcomeChip} /> : null}
+          {copyText ? (
+            <Button
+              size="icon-micro"
+              variant="ghost"
+              className="shrink-0 text-icon-muted"
+              aria-label={
+                pathLabel
+                  ? pathLabel.fullPaths.length > 1
+                    ? "Copy paths"
+                    : "Copy path"
+                  : execution?.label === "Script"
+                    ? "Copy script"
+                    : "Copy command"
+              }
+              onClick={(event) => {
+                event.stopPropagation();
+                copyToClipboard(copyText, undefined);
+              }}
+              onKeyDown={stopRowToggle}
+            >
+              {isCopied ? <CheckIcon aria-hidden /> : <CopyIcon aria-hidden />}
+            </Button>
+          ) : null}
+          {fileChangeItem && diffLink.runId !== null ? (
+            <span
+              className="shrink-0"
+              title={diffLink.diffUnavailableReason ?? undefined}
+              data-open-diff-unavailable={diffLink.diffUnavailableReason ?? undefined}
+            >
+              <InlineButton
+                tone="muted"
+                className="text-xs"
+                disabled={diffLink.diffUnavailableReason !== null}
+                aria-label={
+                  diffLink.diffUnavailableReason === null
+                    ? "Open diff"
+                    : `Open diff. ${diffLink.diffUnavailableReason}`
+                }
+                onClick={(event) => {
+                  event.stopPropagation();
+                  if (diffLink.runId !== null)
+                    diffLink.onOpenTurnDiff(diffLink.runId, openDiffPath);
+                }}
+                onKeyDown={stopRowToggle}
+              >
+                Open diff
+              </InlineButton>
+            </span>
           ) : null}
           <TimelineRowTimestamp createdAt={workEntry.createdAt} timestampFormat={timestampFormat} />
           <span
@@ -6510,9 +6948,14 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
               cwd={ctx.markdownCwd}
               workspaceRoot={workspaceRoot}
               onOpenThread={ctx.onOpenThread}
-              onOpenTurnDiff={ctx.onOpenTurnDiff}
               onRollbackCheckpoint={ctx.onRollbackCheckpoint}
               onImageExpand={ctx.onImageExpand}
+              onOpenTurnDiff={diffLink.onOpenTurnDiff}
+              subagentDiffTarget={diffLink.subagentDiffTarget}
+              diffUnavailableReason={diffLink.diffUnavailableReason}
+              providerLabel={diffLink.providerLabel}
+              streamsToolOutput={diffLink.streamsToolOutput}
+              defaultOpenFileSections={verboseOpenFileSections(ctx.timelineDetail)}
             />
           ) : (
             <>
@@ -6524,6 +6967,7 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
                   projectedItem={workEntry.projectedItem}
                   environmentId={ctx.activeThreadEnvironmentId}
                   onImageExpand={onImageExpand}
+                  streamsToolOutput={diffLink.streamsToolOutput}
                 />
               ) : null}
             </>

@@ -25,6 +25,7 @@ import * as IdAllocator from "../IdAllocator.ts";
 import { ProviderAdapterV2RuntimePolicy, type ProviderAdapterV2Event } from "../ProviderAdapter.ts";
 import * as CodexAdapterV2 from "./CodexAdapterV2.ts";
 import { makeReplayServerConfig } from "./CodexAdapterV2.testkit.ts";
+import { projectCodexFileChanges } from "./codexFileChanges.ts";
 import { makeCodexFileChangeWirePeer } from "./codexFileChangeWire.testkit.ts";
 
 const decodeSettings = Schema.decodeSync(CodexSettings);
@@ -57,16 +58,9 @@ const changes = [
     diff: "@@\n-old\n+new\n",
   },
 ];
-const expectedChanges = [
-  { operation: "update", path: "/workspace/case.mjs", diffStr: changes[0]!.diff },
-  { operation: "add", path: "/workspace/unapproved.mjs", diffStr: changes[1]!.diff },
-  {
-    operation: "move",
-    path: "/workspace/new.mjs",
-    oldPath: "/workspace/old.mjs",
-    diffStr: changes[2]!.diff,
-  },
-];
+// The adapter stores each change as the headed patch the shared projection builds.
+const projectedChanges = projectCodexFileChanges(changes)!;
+const expectedChanges = projectedChanges.changes!;
 
 // Exercise the production adapter and JSON-RPC decoder against an in-memory peer.
 // No native process, credentials, provider session or model can be contacted.
@@ -458,7 +452,7 @@ describe("Codex adapter structured file approval evidence", () => {
         expect(result.evidenceAtApproval).toHaveLength(1);
         const evidence = result.evidenceAtApproval[0]!;
         expect(evidence.changes).toEqual(expectedChanges);
-        expect(evidence.diffStr).toBe(changes.map((change) => change.diff).join("\n"));
+        expect(evidence.diffStr).toBe(projectedChanges.diffStr);
         expect(evidence.status).toBe("running");
         const approval = result.events.find((event) => event.type === "runtime_request.updated");
         expect(approval).toMatchObject({

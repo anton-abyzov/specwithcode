@@ -7,11 +7,15 @@ import {
   type OrchestrationV2Run,
   type OrchestrationV2StoredEvent,
   type OrchestrationV2ThreadProjection,
+  type OrchestrationV2TurnItem,
   ProjectId,
   ProviderInstanceId,
   RunId,
   ThreadId,
+  TurnItemId,
 } from "@specweave-studio/contracts";
+import { TRANSPORT_TRUNCATION_MARKER } from "@specweave-studio/shared/toolOutput";
+import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
@@ -471,5 +475,92 @@ it.effect("waitForThread reads the run again only when the run updates", () =>
     expect(result).toMatchObject({ timedOut: false, run: { id: runId, status: "completed" } });
     // The first read plus one for this run's update. The other run caused none.
     expect(reads).toBe(2);
+  }),
+);
+
+it.effect("getTurnItem forwards a page request and returns the page or the cut fields", () =>
+  Effect.gen(function* () {
+    const threadId = ThreadId.make("thread:thread-management:turn-item");
+    const itemId = TurnItemId.make("item:thread-management:turn-item");
+    const updatedAt = DateTime.makeUnsafe("2026-10-24T00:00:00.000Z");
+    const output = `${"x".repeat(300_000)}tail`;
+    const item: OrchestrationV2TurnItem = {
+      id: itemId,
+      type: "command_execution",
+      threadId,
+      runId: null,
+      nodeId: null,
+      providerThreadId: null,
+      providerTurnId: null,
+      nativeItemRef: null,
+      parentItemId: null,
+      ordinal: 1,
+      status: "completed",
+      title: "Run tests",
+      input: "pnpm test",
+      output,
+      startedAt: updatedAt,
+      completedAt: updatedAt,
+      updatedAt,
+    };
+    const reads: Array<unknown> = [];
+    const layerTest = ThreadManagementService.layer.pipe(
+      Layer.provide(
+        Layer.mock(Orchestrator.OrchestratorV2)({
+          getTurnItem: (input) =>
+            Effect.sync(() => {
+              reads.push(input);
+              return input.itemId === itemId ? item : null;
+            }),
+        }),
+      ),
+    );
+    const service = yield* ThreadManagementService.ThreadManagementService.pipe(
+      Effect.provide(layerTest),
+    );
+
+    const last = yield* service.getTurnItem({ threadId, itemId, field: "output", anchor: "end" });
+    expect(last.page).toMatchObject({
+      field: "output",
+      end: output.length,
+      totalLength: output.length,
+      nextOffset: null,
+      revision: "2026-10-24T00:00:00.000Z",
+    });
+    expect(last.page?.text.endsWith("tail")).toBe(true);
+    expect(last.item).not.toHaveProperty("output");
+    expect(last).not.toHaveProperty("truncated");
+
+    const limited = yield* service.getTurnItem({
+      threadId,
+      itemId,
+      field: "output",
+      offset: 10,
+      limit: 100,
+    });
+    expect(limited.page).toMatchObject({ offset: 10, end: 110, nextOffset: 110 });
+
+    const bounded = yield* service.getTurnItem({ threadId, itemId });
+    expect(bounded).not.toHaveProperty("page");
+    expect(bounded.item).toMatchObject({ input: "pnpm test" });
+    const boundedOutput = bounded.item?.type === "command_execution" ? bounded.item.output : "";
+    expect(boundedOutput?.endsWith(TRANSPORT_TRUNCATION_MARKER)).toBe(true);
+    expect(bounded.truncated).toEqual([
+      expect.objectContaining({ field: "output", offset: 0, totalLength: output.length }),
+    ]);
+
+    const missing = yield* service.getTurnItem({
+      threadId,
+      itemId: TurnItemId.make("item:thread-management:missing"),
+      field: "output",
+    });
+    expect(missing).toEqual({ item: null });
+    // The store reads the item by identity only.
+    expect(reads).toEqual([
+      { threadId, itemId },
+      { threadId, itemId },
+      { threadId, itemId },
+      { threadId, itemId: TurnItemId.make("item:thread-management:missing") },
+    ]);
   }),
 );

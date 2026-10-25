@@ -1,3 +1,4 @@
+import { DeferredResolutionActivation } from "./DeferredThreadResolution.ts";
 import { fixtureProjectDatabase } from "../project/ProjectWorkspace.testkit.ts";
 import { assert, it } from "@effect/vitest";
 import {
@@ -17,6 +18,7 @@ import {
   RuntimeRequestId,
   ThreadId,
   TurnItemId,
+  type OrchestrationV2DomainEvent,
 } from "@specweave-studio/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -1107,3 +1109,574 @@ it.effect.each([
       }),
     ),
 );
+
+for (const scenario of [
+  "success",
+  "activation-off",
+  "success-metadata",
+  "recovery",
+  "new-message",
+  "reopen",
+  "opt-out",
+  "pin",
+  "failed",
+  "interrupted",
+  "approval-write",
+  "approval-effects",
+  "approval-run",
+  "approval-resurrect",
+  "child-owner",
+  "child-write",
+  "raced-finish",
+  "stopped-rearm",
+  "stopped-finish",
+] as const) {
+  it.effect(`deferred self-resolution: ${scenario}`, () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const projections = yield* ProjectionStore.ProjectionStoreV2;
+      const sink = yield* EventSink.EventSinkV2;
+      const threadId = ThreadId.make(`thread:deferred:${scenario}`);
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make(`deferred:${scenario}:create`),
+        threadId,
+        projectId: ProjectId.make("project:control-dispatch"),
+        title: "Resolve when done",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdBy: "user",
+        creationSource: "web",
+      });
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make(`deferred:${scenario}:start`),
+        threadId,
+        messageId: MessageId.make(`deferred:${scenario}:prompt`),
+        text: "Finish the fix",
+        attachments: [],
+        dispatchMode: { type: "defer_start" },
+        createdBy: "user",
+        creationSource: "web",
+      });
+      const projection = yield* projections.getThreadProjection(threadId);
+      const run = projection.runs[0]!;
+      const now = yield* DateTime.now;
+      const attemptId = RunAttemptId.make(`deferred:${scenario}:attempt`);
+      yield* sink.write({
+        commandId: CommandId.make(`deferred:${scenario}:running`),
+        events: [
+          {
+            id: EventId.make(`deferred:${scenario}:running`),
+            type: "run.updated",
+            threadId,
+            occurredAt: now,
+            payload: { ...run, status: "running", startedAt: now, activeAttemptId: attemptId },
+          },
+        ],
+      });
+      // Explicit resolution of an active thread still fails; only exact-run intent is accepted.
+      const explicit = yield* Effect.exit(
+        orchestrator.dispatch({
+          type: "thread.settle",
+          commandId: CommandId.make(`deferred:${scenario}:explicit`),
+          threadId,
+        }),
+      );
+      assert.equal(explicit._tag, "Failure");
+      yield* orchestrator.dispatch({
+        type: "thread.deferred-resolution.request",
+        runId: run.id,
+        note: "Fix delivered",
+        commandId: CommandId.make(`deferred:${scenario}:request`),
+        threadId,
+      });
+      // A real SQL encode/decode roundtrip retains the intent and leaves the current turn alone.
+      const persisted = yield* projections.getThreadProjection(threadId);
+      assert.deepEqual(persisted.thread.deferredResolution, {
+        runId: run.id,
+        note: "Fix delivered",
+      });
+      assert.notEqual(persisted.thread.settledOverride, "settled");
+      assert.equal(persisted.runs[0]?.status, "running");
+      assert.include(yield* projections.getRecoveryThreadIds("deferred-resolutions"), threadId);
+      if (scenario === "success-metadata") {
+        yield* orchestrator.dispatch({
+          type: "thread.metadata.update",
+          commandId: CommandId.make(`deferred:${scenario}:title`),
+          threadId,
+          title: "Renamed while finishing",
+        });
+        assert.deepEqual(
+          (yield* projections.getThread(threadId)).deferredResolution,
+          persisted.thread.deferredResolution,
+        );
+      }
+      if (scenario === "reopen" || scenario === "pin") {
+        yield* orchestrator.dispatch({
+          ...(scenario === "reopen"
+            ? { type: "thread.unsettle" as const, reason: "user" as const }
+            : { type: "thread.pin" as const }),
+          commandId: CommandId.make(`deferred:${scenario}:intervene`),
+          threadId,
+        });
+      } else if (scenario === "opt-out") {
+        yield* orchestrator.dispatch({
+          type: "thread.auto-settle.set",
+          enabled: false,
+          commandId: CommandId.make(`deferred:${scenario}:intervene`),
+          threadId,
+        });
+      } else if (scenario === "new-message") {
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          commandId: CommandId.make(`deferred:${scenario}:intervene`),
+          threadId,
+          messageId: MessageId.make(`deferred:${scenario}:new`),
+          text: "One more change",
+          attachments: [],
+          dispatchMode: { type: "queue_after_active" },
+          createdBy: "user",
+          creationSource: "web",
+        });
+      }
+      if (scenario.startsWith("approval-") || scenario.startsWith("child-")) {
+        const providerThreadId = ProviderThreadId.make(`deferred:${scenario}:provider`);
+        const providerThread = {
+          id: providerThreadId,
+          driver: adapter.driver,
+          providerInstanceId: instanceId,
+          providerSessionId: null,
+          appThreadId: threadId,
+          ownerNodeId: null,
+          nativeThreadRef: null,
+          nativeConversationHeadRef: null,
+          status: "idle" as const,
+          firstRunOrdinal: run.ordinal,
+          lastRunOrdinal: run.ordinal,
+          handoffIds: [],
+          forkedFrom: null,
+          createdAt: now,
+          updatedAt: now,
+        };
+        yield* sink.write({
+          events: [
+            {
+              id: EventId.make(`deferred:${scenario}:provider`),
+              type: "provider-thread.updated",
+              threadId,
+              occurredAt: now,
+              payload: providerThread,
+            },
+          ],
+        });
+        const request = {
+          id: RuntimeRequestId.make(`deferred:${scenario}:approval`),
+          nodeId: NodeId.make(`deferred:${scenario}:approval-node`),
+          providerTurnId: null,
+          nativeRequestRef: null,
+          kind: "command" as const,
+          status: "pending" as const,
+          responseCapability: { type: "not_resumable" as const, reason: "Fixture" },
+          createdAt: now,
+          resolvedAt: null,
+        };
+        const child = {
+          id: NodeId.make(`deferred:${scenario}:child`),
+          threadId,
+          runId: run.id,
+          parentNodeId: run.rootNodeId!,
+          origin: "provider_native" as const,
+          createdBy: "agent" as const,
+          driver: adapter.driver,
+          providerInstanceId: instanceId,
+          providerThreadId,
+          childThreadId: null,
+          nativeTaskRef: null,
+          prompt: "Child work",
+          title: null,
+          model: null,
+          status: "running" as const,
+          result: null,
+          startedAt: now,
+          completedAt: null,
+          updatedAt: now,
+        };
+        const pending: OrchestrationV2DomainEvent =
+          scenario === "child-owner"
+            ? {
+                id: EventId.make(`deferred:${scenario}:pending`),
+                type: "provider-thread.updated",
+                threadId,
+                occurredAt: now,
+                payload: {
+                  ...providerThread,
+                  pendingBackgroundTasks: [{ taskId: "child", kind: "subagent" }],
+                },
+              }
+            : scenario === "child-write"
+              ? {
+                  id: EventId.make(`deferred:${scenario}:pending`),
+                  type: "subagent.updated",
+                  threadId,
+                  occurredAt: now,
+                  payload: child,
+                }
+              : {
+                  id: EventId.make(`deferred:${scenario}:pending`),
+                  type: "runtime-request.updated",
+                  threadId,
+                  occurredAt: now,
+                  payload: request,
+                };
+        const input = { guardPendingUserInputCancellations: true, events: [pending] };
+        if (scenario === "approval-run") {
+          const refused = yield* sink.writeIfRunCurrent({
+            ...input,
+            threadId,
+            runId: run.id,
+            activeAttemptId: RunAttemptId.make("stale-attempt"),
+            expectedStatus: "running",
+          });
+          assert.isFalse(refused.committed);
+          assert.isNotNull((yield* projections.getThread(threadId)).deferredResolution);
+          const result = yield* sink.writeIfRunCurrent({
+            ...input,
+            threadId,
+            runId: run.id,
+            activeAttemptId: attemptId,
+            expectedStatus: "running",
+          });
+          assert.isTrue(result.committed);
+        } else if (scenario === "child-owner") {
+          const refused = yield* sink.writeIfProviderThreadOwner({
+            ...input,
+            providerThreadId,
+            runId: run.id,
+            activeAttemptId: RunAttemptId.make("stale-attempt"),
+            expectedLastRunOrdinal: run.ordinal,
+          });
+          assert.isFalse(refused.committed);
+          assert.isNotNull((yield* projections.getThread(threadId)).deferredResolution);
+          const result = yield* sink.writeIfProviderThreadOwner({
+            ...input,
+            providerThreadId,
+            runId: run.id,
+            activeAttemptId: attemptId,
+            expectedLastRunOrdinal: run.ordinal,
+          });
+          assert.isTrue(result.committed);
+        } else if (scenario === "approval-effects") {
+          yield* sink.writeWithEffects({ ...input, effects: [] });
+        } else {
+          yield* sink.write(input);
+        }
+        assert.isTrue((yield* projections.getThread(threadId)).deferredResolution?.revoked);
+        const cleared: OrchestrationV2DomainEvent =
+          scenario === "child-owner"
+            ? {
+                ...pending,
+                type: "provider-thread.updated",
+                payload: { ...providerThread, pendingBackgroundTasks: [] },
+              }
+            : scenario === "child-write"
+              ? {
+                  ...pending,
+                  type: "subagent.updated",
+                  payload: { ...child, status: "completed", completedAt: now, result: "Finished" },
+                }
+              : {
+                  ...pending,
+                  type: "runtime-request.updated",
+                  payload: {
+                    ...request,
+                    status: "resolved",
+                    resolvedAt: now,
+                    decision: "accept",
+                  },
+                };
+        yield* sink.write({
+          guardPendingUserInputCancellations: true,
+          events: [{ ...cleared, id: EventId.make(`deferred:${scenario}:cleared`) }],
+        });
+        if (scenario === "approval-resurrect") {
+          const stalePayload = { ...persisted.thread, title: "Updated title" };
+          yield* sink.commitCommand({
+            commandId: CommandId.make(`deferred:${scenario}:stale-metadata`),
+            threadId,
+            commandType: "thread.metadata.update",
+            acceptedAt: now,
+            effects: [],
+            events: [
+              {
+                id: EventId.make(`deferred:${scenario}:stale-metadata`),
+                type: "thread.metadata-updated",
+                threadId,
+                occurredAt: now,
+                payload: stalePayload,
+              },
+            ],
+          });
+          assert.isTrue((yield* projections.getThread(threadId)).deferredResolution?.revoked);
+          assert.equal((yield* projections.getThread(threadId)).title, "Updated title");
+          // Provider metadata writes obey the same durable tombstone rule.
+          yield* sink.write({
+            events: [
+              {
+                id: EventId.make(`deferred:${scenario}:stale-provider-metadata`),
+                type: "thread.metadata-updated",
+                threadId,
+                occurredAt: now,
+                payload: stalePayload,
+              },
+            ],
+          });
+          assert.isTrue((yield* projections.getThread(threadId)).deferredResolution?.revoked);
+        }
+      }
+      if (scenario === "stopped-rearm" || scenario === "stopped-finish") {
+        yield* sink.write({
+          guardPendingUserInputCancellations: scenario === "stopped-rearm",
+          events: [
+            {
+              id: EventId.make(`deferred:${scenario}:stop`),
+              type: "turn-item.updated",
+              threadId,
+              occurredAt: now,
+              payload: {
+                id: TurnItemId.make(`deferred:${scenario}:stop`),
+                type: "run_interrupt_request",
+                threadId,
+                runId: run.id,
+                nodeId: run.rootNodeId,
+                providerThreadId: null,
+                providerTurnId: null,
+                nativeItemRef: null,
+                parentItemId: null,
+                ordinal: 2,
+                status: "completed",
+                title: "Interrupt requested",
+                message: "Stopped",
+                startedAt: now,
+                completedAt: now,
+                updatedAt: now,
+              },
+            },
+          ],
+        });
+        if (scenario === "stopped-rearm") {
+          const late = yield* Effect.exit(
+            orchestrator.dispatch({
+              type: "thread.deferred-resolution.request",
+              runId: run.id,
+              threadId,
+              commandId: CommandId.make(`deferred:${scenario}:late-request`),
+            }),
+          );
+          assert.equal(late._tag, "Failure");
+          assert.isTrue((yield* projections.getThread(threadId)).deferredResolution?.revoked);
+        }
+      }
+      const invalidatedIntent = (yield* projections.getThread(threadId)).deferredResolution;
+      if (invalidatedIntent?.revoked === true) {
+        const rearm = yield* Effect.exit(
+          orchestrator.dispatch({
+            type: "thread.deferred-resolution.request",
+            threadId,
+            runId: run.id,
+            commandId: CommandId.make(`deferred:${scenario}:rearm`),
+          }),
+        );
+        assert.equal(rearm._tag, "Failure");
+      }
+      const beforeFinish = yield* projections.getThreadProjection(threadId);
+      const currentRun = beforeFinish.runs.find((candidate) => candidate.id === run.id)!;
+      const resolved =
+        scenario === "success"
+          ? yield* sink.stream().pipe(
+              Stream.filter(
+                (stored) =>
+                  stored.event.threadId === threadId && stored.event.type === "thread.settled",
+              ),
+              Stream.take(1),
+              Stream.runDrain,
+              Effect.forkChild,
+            )
+          : undefined;
+      yield* sink.write({
+        commandId: CommandId.make(
+          scenario === "raced-finish"
+            ? `command:runtime-reconcile:deferred:${scenario}:complete`
+            : `deferred:${scenario}:complete`,
+        ),
+        events: [
+          {
+            id: EventId.make(`deferred:${scenario}:answer`),
+            type: "message.updated",
+            threadId,
+            occurredAt: now,
+            payload: {
+              ...projection.messages[0]!,
+              id: MessageId.make(`deferred:${scenario}:answer`),
+              role: "assistant",
+              text: "The final answer is delivered.",
+              streaming: false,
+              runId: run.id,
+            },
+          },
+          {
+            id: EventId.make(`deferred:${scenario}:complete`),
+            type: "run.updated",
+            threadId,
+            occurredAt: now,
+            payload: {
+              ...currentRun,
+              status:
+                scenario === "failed"
+                  ? "failed"
+                  : scenario === "interrupted"
+                    ? "interrupted"
+                    : "completed",
+              completedAt: now,
+            },
+          },
+        ],
+      });
+      if (scenario === "raced-finish") {
+        const snapshot = yield* sink.latestSequence({ threadId });
+        const planned = (yield* projections.getThreadProjection(threadId)).thread;
+        yield* sink.write({
+          guardPendingUserInputCancellations: true,
+          events: [
+            {
+              id: EventId.make(`deferred:${scenario}:late-output`),
+              type: "message.updated",
+              threadId,
+              occurredAt: now,
+              payload: {
+                ...projection.messages[0]!,
+                role: "assistant",
+                id: MessageId.make(`deferred:${scenario}:late-output`),
+                text: "Late provider output",
+                streaming: false,
+              },
+            },
+          ],
+        });
+        yield* sink.commitCommand({
+          commandId: CommandId.make(`deferred:${scenario}:raced-commit`),
+          threadId,
+          commandType: "thread.deferred-resolution.finish",
+          expectedThreadSequence: snapshot,
+          acceptedAt: now,
+          effects: [],
+          events: [
+            {
+              id: EventId.make(`deferred:${scenario}:stale-settle`),
+              type: "thread.settled",
+              threadId,
+              occurredAt: now,
+              payload: {
+                ...planned,
+                deferredResolution: null,
+                settledOverride: "settled",
+                settledAt: now,
+              },
+            },
+          ],
+        });
+      } else if (resolved !== undefined) {
+        yield* Fiber.join(resolved);
+      } else if (scenario === "recovery") {
+        // Same persisted path startup uses after reconciliation, without replaying terminal history.
+        yield* orchestrator.recoverDelegatedTasks;
+      } else {
+        yield* orchestrator.dispatch({
+          type: "thread.deferred-resolution.finish",
+          commandId: CommandId.make(`deferred:${scenario}:finish`),
+          threadId,
+          runId: run.id,
+        });
+      }
+      const result = yield* projections.getThreadProjection(threadId);
+      const successful =
+        scenario === "success" || scenario === "success-metadata" || scenario === "recovery";
+      if (scenario === "activation-off") {
+        // No acceptance evidence exists. Neither the completion reactor, a
+        // direct finish nor startup recovery may change lifecycle state.
+        yield* orchestrator.recoverDelegatedTasks;
+        const unchanged = (yield* projections.getThreadProjection(threadId)).thread;
+        for (const key of [
+          "settledOverride",
+          "settledAt",
+          "settledNote",
+          "pinnedAt",
+          "unsettledAt",
+          "activeOrderKey",
+          "deferredResolution",
+          "pullRequests",
+        ] as const) {
+          assert.deepEqual(unchanged[key], beforeFinish.thread[key]);
+        }
+      } else if (successful) assert.isNull(result.thread.deferredResolution);
+      else assert.isTrue(result.thread.deferredResolution?.revoked);
+      if (!successful && scenario !== "activation-off")
+        assert.notInclude(
+          yield* projections.getRecoveryThreadIds("deferred-resolutions"),
+          threadId,
+        );
+      assert.equal(
+        result.thread.settledOverride === "settled",
+        scenario === "success" || scenario === "success-metadata" || scenario === "recovery",
+      );
+      if (scenario === "success" || scenario === "success-metadata" || scenario === "recovery")
+        assert.equal(result.thread.settledNote, "Fix delivered");
+      assert.equal(
+        result.messages.find((message) => message.role === "assistant")?.text,
+        "The final answer is delivered.",
+      );
+      if (scenario === "approval-write") {
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          threadId,
+          commandId: CommandId.make("deferred:next-run:start"),
+          messageId: MessageId.make("deferred:next-run:prompt"),
+          text: "A new request",
+          attachments: [],
+          dispatchMode: { type: "defer_start" },
+          createdBy: "user",
+          creationSource: "web",
+        });
+        const nextRun = (yield* projections.getThreadProjection(threadId)).runs.find(
+          (candidate) => candidate.ordinal > run.ordinal,
+        )!;
+        yield* sink.write({
+          events: [
+            {
+              id: EventId.make("deferred:next-run:running"),
+              type: "run.updated",
+              threadId,
+              occurredAt: now,
+              payload: { ...nextRun, status: "running", startedAt: now },
+            },
+          ],
+        });
+        yield* orchestrator.dispatch({
+          type: "thread.deferred-resolution.request",
+          threadId,
+          runId: nextRun.id,
+          commandId: CommandId.make("deferred:next-run:request"),
+        });
+        assert.deepEqual((yield* projections.getThread(threadId)).deferredResolution, {
+          runId: nextRun.id,
+        });
+      }
+    }).pipe(
+      Effect.provide(layerTest),
+      Effect.provideService(DeferredResolutionActivation, scenario !== "activation-off"),
+    ),
+  );
+}

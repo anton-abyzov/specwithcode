@@ -446,6 +446,290 @@ function modelState(): AcpCompat.SessionModelState {
   };
 }
 
+// STUDIO_ACP_ACTIVITY_SCENARIO=1 plays the two scripted turns of the activity-diffs
+// capture (scripts/studio-verify/activity-diffs-capture.mjs). It never calls a model and
+// works only in the session cwd, which must hold that capture's scratch repository:
+//   SCENARIO:edit      exploration, one edit tool call changing 3 files, a `sed -i` edit,
+//                      one failing command, a 340 KiB plain-string output, final message.
+//   SCENARIO:readonly  reads and read-only commands, no edits.
+// Any other prompt gets a short reply and no tools.
+const activityScenario = process.env.STUDIO_ACP_ACTIVITY_SCENARIO === "1";
+const ACTIVITY_SCRATCH_FILES = ["packages/core/src/chat/flushPolicy.ts", "logs/stream-trace.log"];
+const ACTIVITY_SKILL = ".claude/skills/streaming-flush-tuning/references/SKILL.md";
+let activityToolCount = 0;
+let activityMessageCount = 0;
+// Leave with the client: a capture server that stops hard must not leave the mock running.
+if (activityScenario) process.stdin.once("end", () => process.exit(0));
+
+type ActivityEmit = (update: AcpSchema.SessionUpdate) => Effect.Effect<void, AcpError.AcpError>;
+type ActivityToolResult = Omit<
+  Extract<AcpSchema.SessionUpdate, { readonly sessionUpdate: "tool_call_update" }>,
+  "sessionUpdate" | "toolCallId"
+>;
+
+function activityShell(cwd: string, command: string) {
+  const nodeDirectory = process.execPath.slice(0, process.execPath.lastIndexOf("/"));
+  try {
+    const stdout = NodeChildProcess.execSync(command, {
+      cwd,
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      maxBuffer: 64 * 1024 * 1024,
+      shell: "/bin/sh",
+      env: { ...process.env, PATH: `${nodeDirectory}:/usr/bin:/bin:/usr/sbin:/sbin` },
+    });
+    return { stdout, stderr: "", code: 0 };
+  } catch (error) {
+    const failure = error as { stdout?: unknown; stderr?: unknown; status?: unknown };
+    return {
+      stdout: String(failure.stdout ?? ""),
+      stderr: String(failure.stderr ?? ""),
+      code: typeof failure.status === "number" ? failure.status : 1,
+    };
+  }
+}
+
+/** A git patch with one hunk around the changed lines (both texts end in a newline). */
+function activityPatch(file: string, oldText: string, newText: string): string {
+  const before = oldText.slice(0, -1).split("\n");
+  const after = newText.slice(0, -1).split("\n");
+  let start = 0;
+  while (start < before.length && start < after.length && before[start] === after[start]) {
+    start += 1;
+  }
+  let beforeEnd = before.length;
+  let afterEnd = after.length;
+  while (beforeEnd > start && afterEnd > start && before[beforeEnd - 1] === after[afterEnd - 1]) {
+    beforeEnd -= 1;
+    afterEnd -= 1;
+  }
+  const from = Math.max(0, start - 3);
+  const trailing = Math.min(3, before.length - beforeEnd);
+  return [
+    `diff --git a/${file} b/${file}`,
+    `--- a/${file}`,
+    `+++ b/${file}`,
+    `@@ -${from + 1},${beforeEnd + trailing - from} +${from + 1},${afterEnd + trailing - from} @@`,
+    ...before.slice(from, start).map((line) => ` ${line}`),
+    ...before.slice(start, beforeEnd).map((line) => `-${line}`),
+    ...after.slice(start, afterEnd).map((line) => `+${line}`),
+    ...before.slice(beforeEnd, beforeEnd + trailing).map((line) => ` ${line}`),
+    "",
+  ].join("\n");
+}
+
+function activityText(
+  emit: ActivityEmit,
+  kind: "agent_message_chunk" | "agent_thought_chunk",
+  text: string,
+) {
+  activityMessageCount += 1;
+  return emit({
+    sessionUpdate: kind,
+    messageId: `activity-${kind === "agent_thought_chunk" ? "thought" : "message"}-${activityMessageCount}`,
+    content: { type: "text", text },
+  });
+}
+
+function activityTool(
+  emit: ActivityEmit,
+  start: Pick<ActivityToolResult, "title" | "kind" | "rawInput">,
+  run: () => ActivityToolResult,
+) {
+  return Effect.gen(function* () {
+    activityToolCount += 1;
+    const toolCallId = `activity-tool-${activityToolCount}`;
+    yield* emit({ sessionUpdate: "tool_call_update", toolCallId, ...start, status: "pending" });
+    yield* Effect.sleep("60 millis");
+    yield* emit({ sessionUpdate: "tool_call_update", toolCallId, status: "in_progress" });
+    yield* Effect.sleep("90 millis");
+    yield* emit({ sessionUpdate: "tool_call_update", toolCallId, ...run() });
+    yield* Effect.sleep("60 millis");
+  });
+}
+
+function activityCommand(emit: ActivityEmit, cwd: string, command: string, plainString = false) {
+  return activityTool(
+    emit,
+    { title: `\`${command}\``, kind: "execute", rawInput: { variant: "Bash", command } },
+    () => {
+      const result = activityShell(cwd, command);
+      const status = result.code === 0 ? "completed" : "failed";
+      return plainString
+        ? { status, rawOutput: result.stdout + result.stderr }
+        : {
+            status,
+            rawOutput: {
+              type: "bash",
+              stdout: result.stdout,
+              stderr: result.stderr,
+              exit_code: result.code,
+            },
+          };
+    },
+  );
+}
+
+/** Reads a file in the session cwd, or reports `content` without touching the disk. */
+function activityRead(emit: ActivityEmit, path: string, content?: string) {
+  return activityTool(
+    emit,
+    { title: `Read ${path.split("/").at(-1)}`, kind: "read", rawInput: { path } },
+    () => ({
+      status: "completed",
+      rawOutput: { content: content ?? NodeFS.readFileSync(path, "utf8") },
+      locations: [{ path }],
+    }),
+  );
+}
+
+function activityEditScenario(emit: ActivityEmit, cwd: string) {
+  return Effect.gen(function* () {
+    yield* activityText(
+      emit,
+      "agent_thought_chunk",
+      "The flush interval lives in packages/core/src/chat/streaming.ts. I will read the skill notes and the flush code, then raise the interval in the three places that copy it.",
+    );
+    yield* Effect.sleep("120 millis");
+    yield* activityText(
+      emit,
+      "agent_message_chunk",
+      "Reading the streaming code and the skill notes first.\n\n",
+    );
+    yield* activityRead(emit, `${cwd}/${ACTIVITY_SKILL}`);
+    yield* activityCommand(emit, cwd, "sed -n 240,500p packages/core/src/chat/streaming.ts");
+    yield* activityCommand(emit, cwd, 'grep -rn "FLUSH_INTERVAL_MS" packages docs');
+    yield* activityCommand(emit, cwd, "git status --short");
+    yield* activityText(
+      emit,
+      "agent_message_chunk",
+      "Raising the flush interval in the three files that define it.\n\n",
+    );
+    const targets = [
+      [
+        "packages/core/src/chat/flushPolicy.ts",
+        "export const FLUSH_INTERVAL_MS = 16;",
+        "export const FLUSH_INTERVAL_MS = 32;",
+      ],
+      [
+        "packages/client-runtime/src/stream/bufferedWriter.ts",
+        "const FLUSH_INTERVAL_MS = 16; // keep in sync with core",
+        "const FLUSH_INTERVAL_MS = 32; // keep in sync with core",
+      ],
+      [
+        "docs/streaming.md",
+        "The writer flushes every 16 ms.",
+        "The writer flushes every 32 ms, which halves render work on long turns.",
+      ],
+    ] as const;
+    yield* activityTool(
+      emit,
+      {
+        title: "Edit 3 files",
+        kind: "edit",
+        rawInput: { files: targets.map(([file]) => `${cwd}/${file}`) },
+      },
+      () => ({
+        status: "completed",
+        content: targets.map(([file, from, to]) => {
+          const path = `${cwd}/${file}`;
+          const oldText = NodeFS.readFileSync(path, "utf8");
+          const newText = oldText.replace(from, to);
+          NodeFS.writeFileSync(path, newText);
+          return {
+            type: "diff" as const,
+            changes: [{ operation: "modify" as const, path, fileType: "text" as const }],
+            patch: { format: "git_patch", text: activityPatch(file, oldText, newText) },
+          };
+        }),
+        locations: targets.map(([file]) => ({ path: `${cwd}/${file}` })),
+      }),
+    );
+    // GNU and BSD sed both take -i.bak; a bare -i '' is BSD only.
+    yield* activityCommand(
+      emit,
+      cwd,
+      "sed -i.bak 's/const MAX_BUFFERED_CHUNKS = 64;/const MAX_BUFFERED_CHUNKS = 128;/' packages/core/src/chat/streaming.ts && rm packages/core/src/chat/streaming.ts.bak",
+    );
+    yield* activityCommand(emit, cwd, "node --test test/streaming.test.mjs");
+    yield* activityCommand(emit, cwd, "cat logs/stream-trace.log", true);
+    yield* activityText(
+      emit,
+      "agent_message_chunk",
+      [
+        "Raised the flush interval from 16 ms to 32 ms.",
+        "",
+        "- `packages/core/src/chat/flushPolicy.ts`, `packages/client-runtime/src/stream/bufferedWriter.ts` and `docs/streaming.md` now say 32 ms (edit tool).",
+        "- `packages/core/src/chat/streaming.ts` buffers up to 128 chunks (`sed -i`).",
+        "- `node --test test/streaming.test.mjs` fails: the test still expects a 16 ms flush. I left it failing so you can decide whether the old timing is a contract.",
+        "- The stream trace is 340 KiB; nothing in it points at a dropped chunk.",
+      ].join("\n"),
+    );
+  });
+}
+
+function activityReadonlyScenario(emit: ActivityEmit, cwd: string) {
+  return Effect.gen(function* () {
+    yield* activityText(
+      emit,
+      "agent_thought_chunk",
+      "Only questions here, so no edits. I will read the brief and the skill, then look at how the flush is wired.",
+    );
+    yield* Effect.sleep("120 millis");
+    yield* activityText(
+      emit,
+      "agent_message_chunk",
+      "Looking around without changing anything.\n\n",
+    );
+    yield* activityRead(
+      emit,
+      "/tmp/sk-cost-arch/brief.md",
+      "# Cost architecture brief\n\nKeep render work proportional to visible rows.\n",
+    );
+    yield* activityRead(emit, `${cwd}/${ACTIVITY_SKILL}`);
+    yield* activityCommand(emit, cwd, "sed -n 240,500p packages/core/src/chat/streaming.ts");
+    for (const command of [
+      "git log --oneline -5",
+      "ls packages/core/src/chat",
+      "wc -l packages/core/src/chat/streaming.ts",
+      'grep -rn "MAX_BUFFERED_CHUNKS" packages',
+      'grep -rn "flush" docs',
+      "git diff --stat",
+    ]) {
+      yield* activityCommand(emit, cwd, command);
+    }
+    yield* activityText(
+      emit,
+      "agent_message_chunk",
+      "The flush interval is defined in three places and documented once. Nothing was changed in this turn.",
+    );
+  });
+}
+
+function runActivityScenario(
+  prompt: AcpSchema.PromptRequest["prompt"],
+  cwd: string,
+  emit: ActivityEmit,
+) {
+  const text = prompt.flatMap((part) => (part.type === "text" ? [part.text] : [])).join("\n");
+  const scenario = !text.includes("<user_request>")
+    ? undefined
+    : text.includes("SCENARIO:edit")
+      ? activityEditScenario
+      : text.includes("SCENARIO:readonly")
+        ? activityReadonlyScenario
+        : undefined;
+  if (scenario === undefined) return activityText(emit, "agent_message_chunk", "Mock reply.");
+  if (!ACTIVITY_SCRATCH_FILES.every((file) => NodeFS.existsSync(`${cwd}/${file}`))) {
+    return activityText(
+      emit,
+      "agent_message_chunk",
+      "The activity scenario runs only in the capture's scratch repository.",
+    );
+  }
+  return scenario(emit, cwd);
+}
+
 const program = Effect.gen(function* () {
   const agent = yield* EffectAcpAgent.AcpAgent;
   const resumeRelease = yield* Deferred.make<void>();
@@ -891,6 +1175,14 @@ const program = Effect.gen(function* () {
         request.prompt.some((part) => part.type === "text" && part.text === "crash now")
       ) {
         return yield* Effect.sync(() => process.exit(23));
+      }
+
+      if (activityScenario) {
+        // A local acpRegistry agent is spawned in the session cwd.
+        yield* runActivityScenario(request.prompt, process.cwd(), (update) =>
+          agent.client.sessionUpdate({ sessionId: requestedSessionId, update }),
+        );
+        return yield* finishPrompt(requestedSessionId, "end_turn");
       }
 
       if (clientFsProbePath !== undefined && clientFsProbeLogPath !== undefined) {

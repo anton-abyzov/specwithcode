@@ -1,5 +1,6 @@
 import { OrchestrationV2TurnItemJson } from "@specweave-studio/contracts";
 import type * as CodexSchema from "@specweave-studio/effect-codex-app-server/schema";
+import { countPatchLines, splitPatchByFile } from "@specweave-studio/shared/structuredPatch";
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -50,39 +51,146 @@ describe("Codex file change projection", () => {
     },
   );
 
-  it("preserves every operation, rename endpoint and exact per-file patch", () => {
-    const projected = projectCodexFileChanges(nativeChanges);
+  it("heads an add's plain content as an all-added new file", () => {
+    const projected = projectCodexFileChanges([
+      { path: "/workspace/extra.mjs", kind: { type: "add" }, diff: "export const a = 1;\nb();\n" },
+    ]);
+    expect(projected?.changes).toEqual([
+      {
+        operation: "add",
+        path: "/workspace/extra.mjs",
+        diffStr: [
+          "diff --git a//workspace/extra.mjs b//workspace/extra.mjs",
+          "new file mode 100644",
+          "--- /dev/null",
+          "+++ b//workspace/extra.mjs",
+          "@@ -0,0 +1,2 @@",
+          "+export const a = 1;",
+          "+b();",
+          "",
+        ].join("\n"),
+      },
+    ]);
+    expect(countPatchLines(projected!.changes![0]!.diffStr!)).toEqual({
+      additions: 2,
+      deletions: 0,
+    });
+  });
+
+  it("heads a delete's plain content as an all-deleted file", () => {
+    const projected = projectCodexFileChanges([
+      { path: "/workspace/removed.mjs", kind: { type: "delete" }, diff: "gone();\n" },
+    ]);
+    expect(projected?.changes).toEqual([
+      {
+        operation: "delete",
+        path: "/workspace/removed.mjs",
+        diffStr: [
+          "diff --git a//workspace/removed.mjs b//workspace/removed.mjs",
+          "deleted file mode 100644",
+          "--- a//workspace/removed.mjs",
+          "+++ /dev/null",
+          "@@ -1 +0,0 @@",
+          "-gone();",
+          "",
+        ].join("\n"),
+      },
+    ]);
+  });
+
+  it("heads an update and flags ranges it had to count", () => {
+    const projected = projectCodexFileChanges([nativeChanges[0]!]);
     expect(projected).toEqual({
       fileName: "/workspace/case.mjs",
-      diffStr: nativeChanges.map((change) => change.diff).join("\n"),
+      diffStr: projected!.changes![0]!.diffStr,
       changes: [
-        { operation: "update", path: "/workspace/case.mjs", diffStr: nativeChanges[0]!.diff },
-        { operation: "add", path: "/workspace/extra.mjs", diffStr: nativeChanges[1]!.diff },
-        { operation: "delete", path: "/workspace/removed.mjs", diffStr: nativeChanges[2]!.diff },
         {
-          operation: "move",
-          oldPath: "/workspace/before.mjs",
-          path: "/workspace/after.mjs",
-          diffStr: nativeChanges[3]!.diff,
+          operation: "update",
+          path: "/workspace/case.mjs",
+          diffStr: [
+            "diff --git a//workspace/case.mjs b//workspace/case.mjs",
+            "--- a//workspace/case.mjs",
+            "+++ b//workspace/case.mjs",
+            "@@ -1 +1 @@",
+            "-old case",
+            "+new case",
+            "",
+          ].join("\n"),
+          diffNote: "line_numbers_synthesized",
         },
       ],
     });
-    expect(projectCodexFileChanges([nativeChanges[3]!])?.fileName).toBe("/workspace/after.mjs");
-    expect(projectCodexFileChanges([nativeChanges[0]!])?.diffStr).toBe(nativeChanges[0]!.diff);
+    // Ranges the provider reported are kept as they are, with no note.
+    const ranged = "@@ -10,2 +10,2 @@\n context\n-old\n+new\n";
+    expect(
+      projectCodexFileChanges([
+        { path: "/workspace/case.mjs", kind: { type: "update" }, diff: ranged },
+      ])?.changes,
+    ).toEqual([
+      {
+        operation: "update",
+        path: "/workspace/case.mjs",
+        diffStr: `diff --git a//workspace/case.mjs b//workspace/case.mjs\n--- a//workspace/case.mjs\n+++ b//workspace/case.mjs\n${ranged}`,
+      },
+    ]);
+  });
+
+  it("heads a move with rename lines from the old path to the destination", () => {
+    const projected = projectCodexFileChanges([nativeChanges[3]!]);
+    expect(projected?.fileName).toBe("/workspace/after.mjs");
+    expect(projected?.changes).toEqual([
+      {
+        operation: "move",
+        oldPath: "/workspace/before.mjs",
+        path: "/workspace/after.mjs",
+        diffStr: [
+          "diff --git a//workspace/before.mjs b//workspace/after.mjs",
+          "rename from /workspace/before.mjs",
+          "rename to /workspace/after.mjs",
+          "--- a//workspace/before.mjs",
+          "+++ b//workspace/after.mjs",
+          "@@ -1 +1 @@",
+          "-before",
+          "+after",
+          "",
+        ].join("\n"),
+        diffNote: "line_numbers_synthesized",
+      },
+    ]);
+  });
+
+  it("keeps every operation and joins the headed patches into one splittable item patch", () => {
+    const projected = projectCodexFileChanges(nativeChanges);
+    expect(
+      projected?.changes?.map(({ operation, path, oldPath }) => ({ operation, path, oldPath })),
+    ).toEqual([
+      { operation: "update", path: "/workspace/case.mjs", oldPath: undefined },
+      { operation: "add", path: "/workspace/extra.mjs", oldPath: undefined },
+      { operation: "delete", path: "/workspace/removed.mjs", oldPath: undefined },
+      { operation: "move", path: "/workspace/after.mjs", oldPath: "/workspace/before.mjs" },
+    ]);
+    expect(projected?.diffStr).toBe(projected?.changes?.map((change) => change.diffStr).join(""));
+    expect(splitPatchByFile(projected!.diffStr!)).toEqual(
+      projected!.changes!.map((change) => ({
+        oldPath: change.operation === "add" ? null : (change.oldPath ?? change.path),
+        newPath: change.operation === "delete" ? null : change.path,
+        text: change.diffStr,
+      })),
+    );
   });
 
   it("does not truncate the structured list when an approval has more than 20 files", () => {
     const changes = Array.from({ length: 25 }, (_, index) => ({
       path: `/workspace/file-${index}.mjs`,
       kind: { type: "add" as const },
-      diff: `+file ${index}\n`,
+      diff: `file ${index}\n`,
     }));
     expect(projectCodexFileChanges(changes)?.changes).toHaveLength(25);
-    expect(projectCodexFileChanges(changes)?.changes?.at(-1)).toEqual({
+    expect(projectCodexFileChanges(changes)?.changes?.at(-1)).toMatchObject({
       operation: "add",
       path: "/workspace/file-24.mjs",
-      diffStr: "+file 24\n",
     });
+    expect(projectCodexFileChanges(changes)?.changes?.at(-1)?.diffStr).toContain("+file 24\n");
   });
 
   it("rejects an unknown operation instead of returning a misleading partial list", () => {
@@ -102,7 +210,7 @@ describe("Codex file change projection", () => {
     ).toThrow("Unsupported Codex file change operation");
   });
 
-  it("rejects missing scope and preserves empty patches without inventing a file", () => {
+  it("rejects missing scope and heads an empty add without inventing lines", () => {
     expect(projectCodexFileChanges([])).toBeNull();
     expect(() => projectCodexFileChanges([{ ...nativeChanges[0]!, path: " " }])).toThrow(
       "valid path",
@@ -110,10 +218,13 @@ describe("Codex file change projection", () => {
     expect(() =>
       projectCodexFileChanges([{ ...nativeChanges[0]!, kind: { type: "update", move_path: " " } }]),
     ).toThrow("destination path");
-    expect(
-      projectCodexFileChanges([{ path: "/workspace/empty.mjs", kind: { type: "add" }, diff: "" }])
-        ?.changes?.[0]?.diffStr,
-    ).toBe("");
+    const empty = projectCodexFileChanges([
+      { path: "/workspace/empty.mjs", kind: { type: "add" }, diff: "" },
+    ])?.changes?.[0]?.diffStr;
+    expect(empty).toBe(
+      "diff --git a//workspace/empty.mjs b//workspace/empty.mjs\nnew file mode 100644\n--- /dev/null\n+++ b//workspace/empty.mjs\n",
+    );
+    expect(countPatchLines(empty!)).toBeNull();
   });
 
   it("converts every legacy approval entry without losing deleted content or moved paths", () => {
@@ -130,13 +241,24 @@ describe("Codex file change projection", () => {
         }),
       )?.changes,
     ).toEqual([
-      { operation: "add", path: "/workspace/new.mjs", diffStr: "new\n" },
-      { operation: "delete", path: "/workspace/gone.mjs", diffStr: "gone\n" },
+      {
+        operation: "add",
+        path: "/workspace/new.mjs",
+        diffStr: expect.stringMatching(/\n--- \/dev\/null\n.*@@ -0,0 \+1 @@\n\+new\n$/s),
+      },
+      {
+        operation: "delete",
+        path: "/workspace/gone.mjs",
+        diffStr: expect.stringMatching(/\n\+\+\+ \/dev\/null\n@@ -1 \+0,0 @@\n-gone\n$/),
+      },
       {
         operation: "move",
         oldPath: "/workspace/old.mjs",
         path: "/workspace/moved.mjs",
-        diffStr: "@@\n-old\n+new\n",
+        diffStr: expect.stringMatching(
+          /\nrename to \/workspace\/moved\.mjs\n.*@@ -1 \+1 @@\n-old\n\+new\n$/s,
+        ),
+        diffNote: "line_numbers_synthesized",
       },
     ]);
   });

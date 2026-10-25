@@ -7,6 +7,7 @@ import {
   type RunId,
   OrchestratorMcpFailure,
   type OrchestrationV2Command,
+  type OrchestrationV2ServerCommand,
 } from "@specweave-studio/contracts";
 import * as Effect from "effect/Effect";
 import { modelSelectionCommandType } from "@specweave-studio/shared/model";
@@ -339,9 +340,9 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
   ),
   studio_thread_organize: writesThread((input) =>
     Effect.gen(function* () {
-      const { threads, projection } = yield* readThread(input.threadId);
+      const { threads, projection, scope } = yield* readThread(input.threadId, ["runs"]);
       const common = { commandId: yield* newCommandId(), threadId: projection.thread.id };
-      let command: OrchestrationV2Command;
+      let command: OrchestrationV2ServerCommand;
       switch (input.action) {
         case "snooze":
           if (input.snoozedUntil === undefined) {
@@ -359,13 +360,44 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
         case "mark_unread":
           command = { ...common, type: "thread.mark-unread" };
           break;
-        case "settle":
+        case "settle": {
+          const self = scope.thread?.threadId === projection.thread.id;
+          if (self && input.expectedRunId === undefined) {
+            return yield* new OrchestratorMcpFailure({
+              code: "invalid_request",
+              message:
+                "Resolving your own thread requires expectedRunId from studio_thread_read. A delayed call cannot adopt a newer turn.",
+            });
+          }
+          const currentRun = self
+            ? projection.runs.find(
+                (run) =>
+                  run.id === input.expectedRunId &&
+                  ["starting", "running", "waiting"].includes(run.status),
+              )
+            : undefined;
+          if (self && currentRun === undefined) {
+            return yield* new OrchestratorMcpFailure({
+              code: "orchestration_error",
+              message:
+                "The expected run is not this thread's active turn. This delayed call cannot resolve a newer or finished turn.",
+            });
+          }
+          if (!self && input.expectedRunId !== undefined) {
+            return yield* new OrchestratorMcpFailure({
+              code: "invalid_request",
+              message: "expectedRunId is only for resolving your own running thread.",
+            });
+          }
           command = {
             ...common,
-            type: "thread.settle",
+            ...(currentRun === undefined
+              ? { type: "thread.settle" as const }
+              : { type: "thread.deferred-resolution.request" as const, runId: currentRun.id }),
             ...(input.note === undefined ? {} : { note: input.note }),
           };
           break;
+        }
         default:
           command = { ...common, type: `thread.${input.action}` };
       }

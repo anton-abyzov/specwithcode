@@ -19,6 +19,22 @@ export interface VcsCaptureCheckpointInput {
   readonly checkpointRef: CheckpointRef;
 }
 
+/** Where a checkpoint was taken, read during the capture. */
+export interface VcsCheckpointCaptureReport {
+  /** The repository root of cwd, spelled as cwd spells it; null when unknown. */
+  readonly repoRoot: string | null;
+  /** The checked-out branch: null when HEAD is detached, undefined when unknown. */
+  readonly branch: string | null | undefined;
+  /** The HEAD commit the snapshot was taken at; null before the first commit. */
+  readonly headOid: string | null;
+}
+
+export interface VcsDiffCheckpointsReport {
+  readonly diff: string;
+  /** The output limit cut the diff, so later files are missing. */
+  readonly truncated: boolean;
+}
+
 export interface VcsRestoreCheckpointInput {
   readonly cwd: string;
   readonly checkpointRef: CheckpointRef;
@@ -47,6 +63,10 @@ export interface VcsDeleteCheckpointRefsInput {
 
 export interface VcsCheckpointOps {
   readonly captureCheckpoint: (input: VcsCaptureCheckpointInput) => Effect.Effect<void, VcsError>;
+  /** captureCheckpoint that also reports the repository root, branch and HEAD it was taken at. */
+  readonly captureCheckpointReport?: (
+    input: VcsCaptureCheckpointInput,
+  ) => Effect.Effect<VcsCheckpointCaptureReport, VcsError>;
   readonly hasCheckpointRef: (
     input: Omit<VcsRestoreCheckpointInput, "fallbackToHead">,
   ) => Effect.Effect<boolean, VcsError>;
@@ -54,6 +74,10 @@ export interface VcsCheckpointOps {
     input: VcsRestoreCheckpointInput,
   ) => Effect.Effect<boolean, VcsError>;
   readonly diffCheckpoints: (input: VcsDiffCheckpointsInput) => Effect.Effect<string, VcsError>;
+  /** diffCheckpoints that also says whether the output limit cut the patch. */
+  readonly diffCheckpointsReport?: (
+    input: VcsDiffCheckpointsInput,
+  ) => Effect.Effect<VcsDiffCheckpointsReport, VcsError>;
   /** Paths the diff between two checkpoints holds only because HEAD moved; see headMoveAttribution. */
   readonly headMovePaths?: (
     input: VcsCheckpointHeadMoveInput,

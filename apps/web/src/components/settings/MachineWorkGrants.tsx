@@ -21,6 +21,7 @@ import {
   workGrantAccountsSummary,
   workGrantProjectsSummary,
   workGrantStatus,
+  workGrantUnavailableNote,
 } from "./machineWorkGrants.logic";
 import { changeMachineWorkGrant, type useMachineWorkGrants } from "../../studio/fleet";
 import { FLEET_WORKER_ACCESS_CHOICES } from "../../studio/fleetWorkers";
@@ -70,34 +71,44 @@ function CheckList<Id extends string>({
   selected,
   disabled,
   onChange,
+  empty = "Nothing to choose on this machine yet.",
 }: {
   label: string;
-  items: ReadonlyArray<{ readonly id: Id; readonly title: string }>;
+  /** What shows when there is nothing to choose. */
+  empty?: string;
+  /** An item with `unavailable` is kept only while chosen: it can be cleared, never chosen. */
+  items: ReadonlyArray<{ readonly id: Id; readonly title: string; readonly unavailable?: string }>;
   selected: ReadonlyArray<Id>;
   disabled: boolean;
   onChange: (next: ReadonlyArray<Id>) => void;
 }) {
-  if (items.length === 0)
-    return <p className="text-xs text-muted-foreground">Nothing to choose on this machine yet.</p>;
+  if (items.length === 0) return <p className="text-xs text-muted-foreground">{empty}</p>;
   return (
     <fieldset className="flex min-w-0 flex-wrap gap-x-4 gap-y-1" aria-label={label}>
-      {items.map((item) => (
-        <label key={item.id} className="flex min-w-0 items-center gap-1.5 text-xs">
-          <input
-            type="checkbox"
-            checked={selected.includes(item.id)}
-            disabled={disabled}
-            onChange={(event) =>
-              onChange(
-                event.target.checked
-                  ? [...selected, item.id]
-                  : selected.filter((id) => id !== item.id),
-              )
-            }
-          />
-          <span className="truncate">{item.title}</span>
-        </label>
-      ))}
+      {items.map((item) => {
+        const checked = selected.includes(item.id);
+        return (
+          <label
+            key={item.id}
+            className={`flex min-w-0 items-center gap-1.5 text-xs ${item.unavailable ? "text-muted-foreground" : ""}`}
+          >
+            <input
+              type="checkbox"
+              checked={checked}
+              disabled={disabled || (item.unavailable !== undefined && !checked)}
+              onChange={(event) =>
+                onChange(
+                  event.target.checked
+                    ? [...selected, item.id]
+                    : selected.filter((id) => id !== item.id),
+                )
+              }
+            />
+            <span className="truncate">{item.title}</span>
+            {item.unavailable ? <span className="shrink-0">({item.unavailable})</span> : null}
+          </label>
+        );
+      })}
     </fieldset>
   );
 }
@@ -162,7 +173,17 @@ export function MachineWorkGrantRow({
   const busy = pending || !canManage || revoked;
   const update = (input: Omit<StudioWorkGrantUpdateInput, "coordinatorEnvironmentId">) =>
     onChange({ action: "update", input: { coordinatorEnvironmentId, ...input } });
-  const listedProjects = grant.projects.kind === "listed" ? grant.projects.projectIds : [];
+  // Only ids the snapshot lists: one it no longer lists (a deleted project, the assistant)
+  // has no row to clear, so the next change drops it instead of carrying it forever.
+  // When the machine could not read its projects, every id is kept.
+  const listedProjects =
+    grant.projects.kind === "listed"
+      ? grant.projects.projectIds.filter(
+          (id) =>
+            snapshot.projectsUnreadable === true ||
+            snapshot.projects.some((project) => project.id === id),
+        )
+      : [];
   const listedAccounts = grant.accounts.kind === "listed" ? grant.accounts.instanceIds : [];
   return (
     <li
@@ -242,13 +263,32 @@ export function MachineWorkGrantRow({
               }
             />
             <span className="min-w-0 truncate text-muted-foreground">
-              {workGrantProjectsSummary(grant, snapshot.projects)}
+              {workGrantProjectsSummary(
+                grant,
+                snapshot.projects,
+                snapshot.projectsUnreadable === true,
+              )}
             </span>
           </div>
           {grant.projects.kind === "listed" ? (
             <CheckList<ProjectId>
               label={`Projects ${grant.machineLabel} may use`}
-              items={snapshot.projects.map((project) => ({ id: project.id, title: project.title }))}
+              {...(snapshot.projectsUnreadable === true
+                ? { empty: "Could not read this machine's projects. The grant keeps its choices." }
+                : {})}
+              items={snapshot.projects.flatMap((project) =>
+                project.unavailable === undefined
+                  ? [{ id: project.id, title: project.title }]
+                  : listedProjects.includes(project.id)
+                    ? [
+                        {
+                          id: project.id,
+                          title: project.title,
+                          unavailable: workGrantUnavailableNote(project.unavailable),
+                        },
+                      ]
+                    : [],
+              )}
               selected={listedProjects}
               disabled={busy}
               onChange={(projectIds) => update({ projects: { kind: "listed", projectIds } })}

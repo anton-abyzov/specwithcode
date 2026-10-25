@@ -84,6 +84,7 @@ import {
   acpPostSettleWakeShouldBuffer,
   acpProjectedCommandExitCode,
   acpToolCallDiffPatch,
+  acpToolCallFileChanges,
   acpTurnStartShouldPreserveContinuation,
   makeAcpAdapterV2,
   type AcpAdapterV2ExtensionContext,
@@ -173,6 +174,177 @@ describe("acpToolCallDiffPatch", () => {
       acpToolCallDiffPatch([
         { type: "diff", path: "/repo/big.ts", oldText: lines("old"), newText: lines("new") },
       ]),
+    );
+  });
+});
+
+describe("acpToolCallFileChanges", () => {
+  const filePatch = (path: string, line: string) =>
+    [
+      `diff --git a/${path} b/${path}`,
+      `--- a/${path}`,
+      `+++ b/${path}`,
+      "@@ -1 +1 @@",
+      `-old ${line}`,
+      `+new ${line}`,
+      "",
+    ].join("\n");
+  const bigLines = (prefix: string) =>
+    Array.from({ length: 2_000 }, (_, index) => `${prefix} ${index}`).join("\n");
+
+  it("keeps every v2 block's patch with that block's own change", () => {
+    const first = filePatch("src/a.ts", "a");
+    const second = filePatch("src/b.ts", "b");
+    assert.deepEqual(
+      acpToolCallFileChanges([
+        {
+          type: "diff",
+          changes: [{ operation: "modify", path: "/repo/src/a.ts" }],
+          patch: { format: "git_patch", text: first },
+        },
+        { type: "content", content: { type: "text", text: "between" } },
+        {
+          type: "diff",
+          changes: [{ operation: "modify", path: "/repo/src/b.ts" }],
+          patch: { format: "git_patch", text: second },
+        },
+      ]),
+      {
+        changes: [
+          { operation: "modify", path: "/repo/src/a.ts", diffStr: first },
+          { operation: "modify", path: "/repo/src/b.ts", diffStr: second },
+        ],
+        diffStr: `${first}${second}`,
+      },
+    );
+  });
+
+  it("splits a multi-file v2 block by path and leaves an unmatched change without a patch", () => {
+    const added = [
+      "diff --git a/src/new.ts b/src/new.ts",
+      "new file mode 100644",
+      "--- /dev/null",
+      "+++ b/src/new.ts",
+      "@@ -0,0 +1 @@",
+      "+fresh",
+      "",
+    ].join("\n");
+    const deleted = [
+      "diff --git a/src/gone.ts b/src/gone.ts",
+      "deleted file mode 100644",
+      "--- a/src/gone.ts",
+      "+++ /dev/null",
+      "@@ -1 +0,0 @@",
+      "-stale",
+      "",
+    ].join("\n");
+    const moved = [
+      "diff --git a/src/before.ts b/src/after.ts",
+      "rename from src/before.ts",
+      "rename to src/after.ts",
+      "",
+    ].join("\n");
+    const modified = filePatch("src/a.ts", "a");
+    const text = `${modified}${added}${deleted}${moved}`;
+    const projected = acpToolCallFileChanges([
+      {
+        type: "diff",
+        changes: [
+          { operation: "move", path: "/repo/src/after.ts", oldPath: "/repo/src/before.ts" },
+          { operation: "delete", path: "/repo/src/gone.ts" },
+          { operation: "add", path: "/repo/src/new.ts" },
+          { operation: "modify", path: "src/a.ts" },
+          { operation: "modify", path: "/repo/src/unreported.ts" },
+        ],
+        patch: { format: "git_patch", text },
+      },
+    ]);
+    assert.deepEqual(projected, {
+      changes: [
+        {
+          operation: "move",
+          path: "/repo/src/after.ts",
+          oldPath: "/repo/src/before.ts",
+          diffStr: moved,
+        },
+        { operation: "delete", path: "/repo/src/gone.ts", diffStr: deleted },
+        { operation: "add", path: "/repo/src/new.ts", diffStr: added },
+        { operation: "modify", path: "src/a.ts", diffStr: modified },
+        { operation: "modify", path: "/repo/src/unreported.ts" },
+      ],
+      diffStr: text,
+    });
+  });
+
+  it("gives no change a block that two changes could name", () => {
+    const text = filePatch("a.ts", "a");
+    const changes = acpToolCallFileChanges([
+      {
+        type: "diff",
+        changes: [
+          { operation: "modify", path: "/repo/a.ts" },
+          { operation: "modify", path: "/repo/lib/a.ts" },
+        ],
+        patch: { format: "git_patch", text },
+      },
+    ]).changes;
+    assert.deepEqual(
+      changes.map((change) => change.diffStr),
+      [undefined, undefined],
+    );
+  });
+
+  it("makes each v1 diff its own change with its own patch", () => {
+    const projected = acpToolCallFileChanges([
+      { type: "diff", path: "/repo/new.txt", oldText: null, newText: "hello\n" },
+      { type: "diff", path: "/repo/a.ts", oldText: "a\nb\n", newText: "a\nB\n" },
+    ]);
+    assert.deepEqual(projected.changes, [
+      {
+        operation: "add",
+        path: "/repo/new.txt",
+        diffStr: "--- /dev/null\n+++ /repo/new.txt\n@@ -0,0 +1,1 @@\n+hello\n",
+      },
+      {
+        operation: "modify",
+        path: "/repo/a.ts",
+        diffStr: "--- /repo/a.ts\n+++ /repo/a.ts\n@@ -1,2 +1,2 @@\n a\n-b\n+B\n",
+      },
+    ]);
+    assert.equal(projected.diffStr, projected.changes.map((change) => change.diffStr).join("\n"));
+    assert.notProperty(projected, "diffNote");
+  });
+
+  it("marks a two-sided v1 diff past the edit cap as too large to compute", () => {
+    const tooLarge = {
+      type: "diff",
+      path: "/repo/big.ts",
+      oldText: bigLines("old"),
+      newText: bigLines("new"),
+    };
+    assert.deepEqual(acpToolCallFileChanges([tooLarge]), {
+      changes: [{ operation: "modify", path: "/repo/big.ts", diffNote: "too_large_to_compute" }],
+      diffNote: "too_large_to_compute",
+    });
+    // With another file's patch the item keeps that patch; only the big change carries the note.
+    const mixed = acpToolCallFileChanges([
+      tooLarge,
+      { type: "diff", path: "/repo/new.txt", newText: "hello\n" },
+    ]);
+    assert.notProperty(mixed, "diffNote");
+    assert.deepEqual(
+      mixed.changes.map((change) => [change.path, change.diffNote ?? null]),
+      [
+        ["/repo/big.ts", "too_large_to_compute"],
+        ["/repo/new.txt", null],
+      ],
+    );
+    assert.include(mixed.diffStr, "+++ /repo/new.txt");
+    // A one-sided rewrite needs no search and is never capped.
+    assert.isDefined(
+      acpToolCallFileChanges([
+        { type: "diff", path: "/repo/big.ts", oldText: null, newText: bigLines("new") },
+      ]).changes[0]?.diffStr,
     );
   });
 });
@@ -1632,6 +1804,269 @@ describe("AcpAdapterV2", () => {
         afterOmittedPatch.messages.some((message) => message.text === "late authoritative text"),
         "omitted late message content must preserve the authoritative text",
       );
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.live("projects a v1 diff of any tool kind as an edit and flags output kept to its tail", () =>
+    Effect.gen(function* () {
+      const childProcessSpawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+      const path = yield* Path.Path;
+      const mockAgentPath = yield* path.fromFileUrl(
+        new URL("../../../scripts/acp-mock-agent.ts", import.meta.url),
+      );
+      type RuntimeService = AcpSessionRuntime.AcpSessionRuntime["Service"];
+      let sessionUpdateHandler: Parameters<RuntimeService["handleSessionUpdate"]>[0] | undefined;
+      const protocolEvents = yield* Queue.unbounded<EffectAcpProtocol.AcpProtocolLogEvent>();
+      const instanceId = ProviderInstanceId.make("acp-test-v1-diff-kinds");
+      const adapter = makeAcpAdapterV2({
+        crypto: yield* Crypto.Crypto,
+        instanceId,
+        flavor: {
+          driver: ACP_TEST_DRIVER,
+          capabilities: AcpProviderCapabilitiesV2,
+          interruptPromptOnCancel: true,
+          makeRuntime: makeMockRuntime({
+            childProcessSpawner,
+            mockAgentPath,
+            environment: { STUDIO_ACP_HANG_PROMPT_FOREVER: "1" },
+            protocolEvents,
+            wrapRuntime: (runtime) => ({
+              ...runtime,
+              handleSessionUpdate: (handler) =>
+                Effect.sync(() => {
+                  sessionUpdateHandler = handler;
+                }).pipe(Effect.andThen(runtime.handleSessionUpdate(handler))),
+            }),
+          }),
+        },
+        fileSystem: yield* FileSystem.FileSystem,
+        idAllocator: yield* IdAllocator.IdAllocatorV2,
+        serverConfig: yield* ServerConfig.ServerConfig,
+        selfInvocation: yield* resolveSelfInvocation(),
+      });
+      const threadId = ThreadId.make("thread-acp-v1-diff-kinds");
+      const runtimePolicy = ProviderAdapterV2RuntimePolicy.make({
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        cwd: process.cwd(),
+      });
+      const modelSelection = { instanceId, model: "default" } as const;
+      const runtime = yield* adapter.openSession({
+        threadId,
+        providerSessionId: ProviderSessionId.make("provider-session-acp-v1-diff-kinds"),
+        modelSelection,
+        runtimePolicy,
+      });
+      const providerThread = yield* runtime.ensureThread({
+        threadId,
+        modelSelection,
+        runtimePolicy,
+      });
+      const turnFiber = yield* runtime
+        .startTurn(
+          makeTurnInput({
+            threadId,
+            providerThread,
+            instanceId,
+            runtimePolicy,
+            now: yield* DateTime.now,
+          }),
+        )
+        .pipe(Effect.forkScoped);
+      yield* Stream.fromQueue(protocolEvents).pipe(
+        Stream.filter(
+          (event) =>
+            event.direction === "outgoing" && rawProtocolMethod(event) === "session/prompt",
+        ),
+        Stream.runHead,
+      );
+      if (sessionUpdateHandler === undefined) {
+        return yield* Effect.die("ACP runtime must register a session update handler");
+      }
+      // Kind "other" used to drop the v1 patch into a generic tool.
+      yield* sessionUpdateHandler({
+        sessionId: "mock-session-1",
+        update: {
+          sessionUpdate: "tool_call",
+          toolCallId: "v1-write-other-kind",
+          title: "Write notes",
+          kind: "other",
+          status: "completed",
+          content: [{ type: "diff", path: "/workspace/notes.txt", oldText: null, newText: "hi\n" }],
+        },
+      });
+      // A failed edit keeps its proposed patch on the change and shows its error.
+      yield* sessionUpdateHandler({
+        sessionId: "mock-session-1",
+        update: {
+          sessionUpdate: "tool_call",
+          toolCallId: "v1-edit-denied",
+          title: "Edit locked",
+          kind: "edit",
+          status: "failed",
+          content: [
+            { type: "diff", path: "/workspace/locked.txt", oldText: null, newText: "no\n" },
+          ],
+          rawOutput: "Permission denied",
+        },
+      });
+      // An empty rawOutput leaves the error in a text block beside the diff.
+      yield* sessionUpdateHandler({
+        sessionId: "mock-session-1",
+        update: {
+          sessionUpdate: "tool_call",
+          toolCallId: "v1-edit-denied-in-content",
+          title: "Edit readonly",
+          kind: "edit",
+          status: "failed",
+          content: [
+            { type: "diff", path: "/workspace/readonly.txt", oldText: null, newText: "no\n" },
+            { type: "content", content: { type: "text", text: "Read-only file system" } },
+          ],
+          rawOutput: {},
+        },
+      });
+      // Edge spaces, a no-break space included, can be part of a file name.
+      yield* sessionUpdateHandler({
+        sessionId: "mock-session-1",
+        update: {
+          sessionUpdate: "tool_call",
+          toolCallId: "v1-edit-spaced-name",
+          title: "Write spaced",
+          kind: "edit",
+          status: "completed",
+          content: [
+            { type: "diff", path: "/workspace/spaced.txt\u00a0", oldText: null, newText: "s\n" },
+          ],
+        },
+      });
+      yield* sessionUpdateHandler({
+        sessionId: "mock-session-1",
+        update: {
+          sessionUpdate: "tool_call",
+          toolCallId: "edit-spaced-location",
+          title: "Delete spaced",
+          kind: "delete",
+          status: "completed",
+          locations: [{ path: " /workspace/leading.txt" }],
+        },
+      });
+      const longOutput = `${"x".repeat(9_000)}END`;
+      yield* sessionUpdateHandler({
+        sessionId: "mock-session-1",
+        update: {
+          sessionUpdate: "tool_call",
+          toolCallId: "long-command",
+          title: "Run build",
+          kind: "execute",
+          status: "completed",
+          rawInput: { command: "build" },
+          rawOutput: { stdout: longOutput, exitCode: 0 },
+        },
+      });
+      yield* sessionUpdateHandler({
+        sessionId: "mock-session-1",
+        update: {
+          sessionUpdate: "tool_call",
+          toolCallId: "short-command",
+          title: "Run echo",
+          kind: "execute",
+          status: "completed",
+          rawInput: { command: "echo ok" },
+          rawOutput: { stdout: "ok\n", exitCode: 0 },
+        },
+      });
+      const events = yield* runtime.events.pipe(
+        Stream.takeUntil(
+          (event) =>
+            event.type === "turn_item.updated" &&
+            event.turnItem.type === "command_execution" &&
+            event.turnItem.input === "echo ok" &&
+            event.turnItem.status === "completed",
+        ),
+        Stream.runCollect,
+        Effect.timeout("30 seconds"),
+      );
+      const items = Array.from(events).flatMap((event) =>
+        event.type === "turn_item.updated" ? [event.turnItem] : [],
+      );
+      const edit = items.findLast(
+        (item) => item.type === "file_change" && item.fileName === "/workspace/notes.txt",
+      );
+      assert.deepEqual(
+        edit?.type === "file_change"
+          ? { fileName: edit.fileName, changes: edit.changes, diffStr: edit.diffStr }
+          : null,
+        {
+          fileName: "/workspace/notes.txt",
+          changes: [
+            {
+              operation: "add",
+              path: "/workspace/notes.txt",
+              diffStr: "--- /dev/null\n+++ /workspace/notes.txt\n@@ -0,0 +1,1 @@\n+hi\n",
+            },
+          ],
+          diffStr: "--- /dev/null\n+++ /workspace/notes.txt\n@@ -0,0 +1,1 @@\n+hi\n",
+        },
+      );
+      const deniedInContent = items.findLast(
+        (item) => item.type === "file_change" && item.fileName === "/workspace/readonly.txt",
+      );
+      assert.equal(
+        deniedInContent?.type === "file_change" ? deniedInContent.diffStr : null,
+        "Read-only file system",
+      );
+      assert.include(
+        deniedInContent?.type === "file_change" ? deniedInContent.changes?.[0]?.diffStr : "",
+        "+++ /workspace/readonly.txt",
+      );
+      const denied = items.findLast(
+        (item) => item.type === "file_change" && item.fileName === "/workspace/locked.txt",
+      );
+      assert.deepEqual(
+        denied?.type === "file_change"
+          ? { status: denied.status, changes: denied.changes, diffStr: denied.diffStr }
+          : null,
+        {
+          status: "failed",
+          changes: [
+            {
+              operation: "add",
+              path: "/workspace/locked.txt",
+              diffStr: "--- /dev/null\n+++ /workspace/locked.txt\n@@ -0,0 +1,1 @@\n+no\n",
+            },
+          ],
+          diffStr: "Permission denied",
+        },
+      );
+      const spaced = items.findLast(
+        (item) =>
+          item.type === "file_change" && item.nativeItemRef?.nativeId === "v1-edit-spaced-name",
+      );
+      assert.deepEqual(
+        spaced?.type === "file_change"
+          ? { fileName: spaced.fileName, path: spaced.changes?.[0]?.path }
+          : null,
+        { fileName: "/workspace/spaced.txt\u00a0", path: "/workspace/spaced.txt\u00a0" },
+      );
+      const located = items.findLast(
+        (item) =>
+          item.type === "file_change" && item.nativeItemRef?.nativeId === "edit-spaced-location",
+      );
+      assert.equal(
+        located?.type === "file_change" ? located.fileName : null,
+        " /workspace/leading.txt",
+      );
+      const commands = items.filter((item) => item.type === "command_execution");
+      const long = commands.findLast((item) => item.input === "build");
+      assert.equal(long?.type === "command_execution" ? long.outputKeptTailChars : null, 8_000);
+      assert.isTrue(long?.type === "command_execution" && long.output?.endsWith("END") === true);
+      const short = commands.findLast((item) => item.input === "echo ok");
+      assert.isTrue(short?.type === "command_execution" && short.output === "ok\n");
+      assert.notProperty(short!, "outputKeptTailChars");
+
+      yield* runtime.interruptTurn({ providerThread, providerTurnId: edit!.providerTurnId! });
+      yield* Fiber.join(turnFiber);
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 

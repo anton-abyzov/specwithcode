@@ -5,6 +5,7 @@ import { Spinner } from "~/components/ui/spinner";
 import {
   ArchiveIcon,
   ArrowUpDownIcon,
+  BotIcon,
   ChevronRightIcon,
   FolderPlusIcon,
   Globe2Icon,
@@ -91,12 +92,14 @@ import { makeWorkspaceFileDropHandlers } from "./chat/workspaceFileDrop";
 import {
   readThreadShell,
   useProjects,
+  useServerConfigs,
   useThreadShells,
   useThreadShellsForProjectRefs,
 } from "../state/entities";
 import { selectThreadTerminalUiState, useTerminalUiStateStore } from "../terminalUiStateStore";
 import { useThreadRunningTerminalIds } from "../state/terminalSessions";
 import { useSidebarProjects } from "../state/projectClones";
+import { legacySidebarProjectSections, legacySidebarWaitingCount } from "./LegacySidebar.logic";
 import { useThreadDiscoveredPorts } from "../portDiscoveryState";
 import { openDiscoveredPort } from "./preview/openDiscoveredPort";
 import { useAtomCommand } from "../state/use-atom-command";
@@ -2845,6 +2848,51 @@ function SortableProjectItem({
   );
 }
 
+const LEGACY_PROJECT_FOLDS = {
+  automated: { label: "Automated", list: "Automated projects", Icon: BotIcon },
+  archived: { label: "Archived", list: "Archived projects", Icon: ArchiveIcon },
+} as const;
+
+/** A folded section of projects below the main list, closed until opened. */
+function LegacyProjectFold(props: {
+  kind: keyof typeof LEGACY_PROJECT_FOLDS;
+  projects: readonly SidebarProjectSnapshot[];
+  open: boolean;
+  /** Threads in the folded projects waiting on the person, shown while closed. */
+  waiting?: number;
+  onOpenChange: (open: boolean) => void;
+  renderProjectRow: (project: SidebarProjectSnapshot) => React.ReactNode;
+}) {
+  const { label, list, Icon } = LEGACY_PROJECT_FOLDS[props.kind];
+  const listId = `legacy-sidebar-${props.kind}-projects`;
+  if (props.projects.length === 0) return null;
+  return (
+    <>
+      <button
+        type="button"
+        aria-expanded={props.open}
+        aria-controls={listId}
+        className="mt-1 flex items-center gap-1.5 self-start rounded-md px-2 py-1 text-sidebar-muted-foreground text-xs hover:text-sidebar-foreground"
+        onClick={() => props.onOpenChange(!props.open)}
+      >
+        <Icon aria-hidden className="size-3.5" />
+        {props.open ? `Hide ${label.toLowerCase()}` : `${label} (${props.projects.length})`}
+        {!props.open && (props.waiting ?? 0) > 0 ? (
+          <span className="rounded-full bg-sidebar-accent px-1.5 font-medium text-sidebar-foreground">
+            {props.waiting}
+            <span className="sr-only"> waiting on you</span>
+          </span>
+        ) : null}
+      </button>
+      {props.open ? (
+        <SidebarMenu id={listId} aria-label={list}>
+          {props.projects.map(props.renderProjectRow)}
+        </SidebarMenu>
+      ) : null}
+    </>
+  );
+}
+
 interface SidebarProjectsContentProps {
   showArm64IntelBuildWarning: boolean;
   arm64IntelBuildWarningDescription: string | null;
@@ -2868,6 +2916,15 @@ interface SidebarProjectsContentProps {
   deleteThread: ReturnType<typeof useThreadActions>["deleteThread"];
   markThreadUnread: ReturnType<typeof useThreadActions>["markThreadUnread"];
   sortedProjects: readonly SidebarProjectSnapshot[];
+  /** Folded below the main list, as the studio sidebar folds them. */
+  automatedProjects: readonly SidebarProjectSnapshot[];
+  /** Threads in the automated projects waiting on the person. */
+  automatedWaiting: number;
+  archivedProjects: readonly SidebarProjectSnapshot[];
+  automatedOpen: boolean;
+  archivedOpen: boolean;
+  setAutomatedOpen: (open: boolean) => void;
+  setArchivedOpen: (open: boolean) => void;
   expandedThreadListsByProject: ReadonlySet<string>;
   activeRouteProjectKey: string | null;
   routeThreadKey: string | null;
@@ -2911,6 +2968,13 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
     deleteThread,
     markThreadUnread,
     sortedProjects,
+    automatedProjects,
+    automatedWaiting,
+    archivedProjects,
+    automatedOpen,
+    archivedOpen,
+    setAutomatedOpen,
+    setArchivedOpen,
     expandedThreadListsByProject,
     activeRouteProjectKey,
     routeThreadKey,
@@ -2945,6 +3009,32 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
       updateSettings({ sidebarThreadPreviewCount: count });
     },
     [updateSettings],
+  );
+
+  // Rows outside the drag-and-drop list: the main list when not sorting by hand, and
+  // the folded sections, which never take part in manual sorting.
+  const renderProjectRow = (project: SidebarProjectSnapshot) => (
+    <SidebarProjectListRow
+      key={project.projectKey}
+      project={project}
+      isThreadListExpanded={expandedThreadListsByProject.has(project.projectKey)}
+      activeRouteThreadKey={activeRouteProjectKey === project.projectKey ? routeThreadKey : null}
+      openPullRequestsInRightPanel={openPullRequestsInRightPanel}
+      newThreadShortcutLabel={newThreadShortcutLabel}
+      handleNewThread={handleNewThread}
+      archiveThread={archiveThread}
+      deleteThread={deleteThread}
+      markThreadUnread={markThreadUnread}
+      threadJumpLabelByKey={threadJumpLabelByKey}
+      attachThreadListAutoAnimateRef={attachThreadListAutoAnimateRef}
+      expandThreadListForProject={expandThreadListForProject}
+      collapseThreadListForProject={collapseThreadListForProject}
+      dragInProgressRef={dragInProgressRef}
+      suppressProjectClickAfterDragRef={suppressProjectClickAfterDragRef}
+      suppressProjectClickForContextMenuRef={suppressProjectClickForContextMenuRef}
+      isManualProjectSorting={false}
+      dragHandleProps={null}
+    />
   );
 
   return (
@@ -3071,33 +3161,24 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
           </DndContext>
         ) : (
           <SidebarMenu ref={attachProjectListAutoAnimateRef}>
-            {sortedProjects.map((project) => (
-              <SidebarProjectListRow
-                key={project.projectKey}
-                project={project}
-                isThreadListExpanded={expandedThreadListsByProject.has(project.projectKey)}
-                activeRouteThreadKey={
-                  activeRouteProjectKey === project.projectKey ? routeThreadKey : null
-                }
-                openPullRequestsInRightPanel={openPullRequestsInRightPanel}
-                newThreadShortcutLabel={newThreadShortcutLabel}
-                handleNewThread={handleNewThread}
-                archiveThread={archiveThread}
-                deleteThread={deleteThread}
-                markThreadUnread={markThreadUnread}
-                threadJumpLabelByKey={threadJumpLabelByKey}
-                attachThreadListAutoAnimateRef={attachThreadListAutoAnimateRef}
-                expandThreadListForProject={expandThreadListForProject}
-                collapseThreadListForProject={collapseThreadListForProject}
-                dragInProgressRef={dragInProgressRef}
-                suppressProjectClickAfterDragRef={suppressProjectClickAfterDragRef}
-                suppressProjectClickForContextMenuRef={suppressProjectClickForContextMenuRef}
-                isManualProjectSorting={isManualProjectSorting}
-                dragHandleProps={null}
-              />
-            ))}
+            {sortedProjects.map(renderProjectRow)}
           </SidebarMenu>
         )}
+        <LegacyProjectFold
+          kind="automated"
+          projects={automatedProjects}
+          open={automatedOpen}
+          waiting={automatedWaiting}
+          onOpenChange={setAutomatedOpen}
+          renderProjectRow={renderProjectRow}
+        />
+        <LegacyProjectFold
+          kind="archived"
+          projects={archivedProjects}
+          open={archivedOpen}
+          onOpenChange={setArchivedOpen}
+          renderProjectRow={renderProjectRow}
+        />
 
         {projectsLength === 0 && (
           <div className="px-2 pt-4 text-center text-secondary-label text-xs">No projects yet</div>
@@ -3109,6 +3190,15 @@ const SidebarProjectsContent = memo(function SidebarProjectsContent(
 
 export default function LegacySidebar() {
   const projects = useSidebarProjects(useProjects());
+  const serverConfigs = useServerConfigs();
+  const scratchRootFor = useCallback(
+    (environmentId: EnvironmentId) =>
+      serverConfigs.get(environmentId)?.scratchWorkspaceRoot ?? null,
+    [serverConfigs],
+  );
+  // Null follows the open project: a fold opens while one of its projects is open.
+  const [showAutomated, setShowAutomated] = useState<boolean | null>(null);
+  const [showArchived, setShowArchived] = useState<boolean | null>(null);
   const sidebarThreads = useThreadShells();
   const projectExpandedById = useUiStateStore((store) => store.projectExpandedById);
   const projectOrder = useUiStateStore((store) => store.projectOrder);
@@ -3427,9 +3517,22 @@ export default function LegacySidebar() {
     visibleThreads,
   ]);
   const isManualProjectSorting = sidebarProjectSortOrder === "manual";
+  // Automated and archived projects fold below the list; "No project" keeps its chats row.
+  const projectSections = useMemo(
+    () =>
+      legacySidebarProjectSections(sortedProjects, scratchRootFor, activeRouteProjectKey, {
+        automated: showAutomated,
+        archived: showArchived,
+      }),
+    [activeRouteProjectKey, scratchRootFor, showArchived, showAutomated, sortedProjects],
+  );
+  const automatedWaiting = useMemo(
+    () => legacySidebarWaitingCount(projectSections.automated, threadsByProjectKey),
+    [projectSections.automated, threadsByProjectKey],
+  );
   const visibleSidebarThreadKeys = useMemo(
     () =>
-      sortedProjects.flatMap((project) => {
+      projectSections.visible.flatMap((project) => {
         const projectThreads = sortThreads(
           (threadsByProjectKey.get(project.projectKey) ?? []).filter(
             (thread) => thread.archivedAt === null,
@@ -3470,7 +3573,7 @@ export default function LegacySidebar() {
       expandedThreadListsByProject,
       projectExpandedById,
       routeThreadKey,
-      sortedProjects,
+      projectSections,
       threadsByProjectKey,
     ],
   );
@@ -3780,7 +3883,14 @@ export default function LegacySidebar() {
         archiveThread={archiveThread}
         deleteThread={deleteThread}
         markThreadUnread={markThreadUnread}
-        sortedProjects={sortedProjects}
+        sortedProjects={projectSections.listed}
+        automatedProjects={projectSections.automated}
+        automatedWaiting={automatedWaiting}
+        archivedProjects={projectSections.archived}
+        automatedOpen={projectSections.automatedOpen}
+        archivedOpen={projectSections.archivedOpen}
+        setAutomatedOpen={setShowAutomated}
+        setArchivedOpen={setShowArchived}
         expandedThreadListsByProject={expandedThreadListsByProject}
         activeRouteProjectKey={activeRouteProjectKey}
         routeThreadKey={routeThreadKey}
@@ -3795,7 +3905,11 @@ export default function LegacySidebar() {
         suppressProjectClickAfterDragRef={suppressProjectClickAfterDragRef}
         suppressProjectClickForContextMenuRef={suppressProjectClickForContextMenuRef}
         attachProjectListAutoAnimateRef={attachProjectListAutoAnimateRef}
-        projectsLength={projects.length}
+        projectsLength={
+          projectSections.listed.length +
+          projectSections.automated.length +
+          projectSections.archived.length
+        }
       />
       <SidebarChromeFooter />
     </>

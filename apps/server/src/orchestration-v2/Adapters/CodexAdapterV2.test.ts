@@ -1527,6 +1527,31 @@ describe("CodexAdapterV2 skill mentions", () => {
   });
 });
 
+describe("CodexAdapterV2 command actions", () => {
+  it("copies each typed action's own fields and drops nulls and unknown keys", () => {
+    assert.deepEqual(
+      CodexAdapterV2.codexCommandActions([
+        { type: "read", command: "cat a.ts", name: "a.ts", path: "/repo/a.ts", extra: 1 },
+        { type: "listFiles", command: "ls", path: null },
+        { type: "search", command: "rg x", path: "src", query: null },
+        { type: "unknown", command: "make" },
+        { type: "futureKind", command: "x" },
+        { type: " ", command: "blank kind" },
+        null,
+      ]),
+      [
+        { type: "read", command: "cat a.ts", name: "a.ts", path: "/repo/a.ts" },
+        { type: "listFiles", command: "ls" },
+        { type: "search", command: "rg x", path: "src" },
+        { type: "unknown", command: "make" },
+        { type: "futureKind", command: "x" },
+      ],
+    );
+    assert.isUndefined(CodexAdapterV2.codexCommandActions([]));
+    assert.isUndefined(CodexAdapterV2.codexCommandActions(undefined));
+  });
+});
+
 describe("CodexAdapterV2 background command detail", () => {
   it("summarizes command, exit code, and output tail", () => {
     assert.equal(
@@ -3824,6 +3849,152 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             ["compaction", 1782622565000],
           ],
         );
+      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+    ),
+  );
+
+  it.effect("keeps Codex command actions and flags declined commands and file changes", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const scenario = "codex-command-actions-declined";
+        const nativeThreadId = `native-${scenario}-thread`;
+        const nativeTurnId = `native-${scenario}-turn`;
+        const command = (
+          id: string,
+          status: "inProgress" | "completed" | "declined",
+          commandActions: ReadonlyArray<Record<string, unknown>>,
+        ) => ({
+          type: "emit_inbound" as const,
+          label: `item/${status === "inProgress" ? "started" : "completed"}/${id}`,
+          frame: {
+            method: status === "inProgress" ? "item/started" : "item/completed",
+            params: {
+              threadId: nativeThreadId,
+              turnId: nativeTurnId,
+              ...(status === "inProgress"
+                ? { startedAtMs: 1782622445000 }
+                : { completedAtMs: 1782622445010 }),
+              item: {
+                type: "commandExecution",
+                id,
+                command: "sh -c 'cat a.ts; rg TODO src; ls'",
+                cwd: "/workspace",
+                processId: null,
+                source: "agent",
+                status,
+                commandActions,
+                aggregatedOutput: status === "completed" ? "ok\n" : null,
+                exitCode: status === "completed" ? 0 : null,
+                durationMs: status === "completed" ? 10 : null,
+              },
+            },
+          },
+        });
+        const exploreActions = [
+          { type: "read", command: "cat a.ts", name: "a.ts", path: "/workspace/a.ts" },
+          { type: "search", command: "rg TODO src", path: "src", query: "TODO" },
+          { type: "search", command: "rg x", path: null, query: null },
+          { type: "listFiles", command: "ls", path: null },
+          { type: "unknown", command: "true" },
+        ];
+        const transcript = makeCodexReplayTranscript({
+          scenario,
+          entries: [
+            ...codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "Explore, then edit." }),
+            command("explore-command", "inProgress", exploreActions),
+            command("explore-command", "completed", exploreActions),
+            command("declined-command", "declined", [{ type: "unknown", command: "rm -rf build" }]),
+            {
+              type: "emit_inbound",
+              label: "item/completed/declined-edit",
+              frame: {
+                method: "item/completed",
+                params: {
+                  threadId: nativeThreadId,
+                  turnId: nativeTurnId,
+                  completedAtMs: 1782622445020,
+                  item: {
+                    type: "fileChange",
+                    id: "declined-edit",
+                    status: "declined",
+                    changes: [
+                      {
+                        path: "/workspace/a.ts",
+                        kind: { type: "update" },
+                        diff: "@@ -1 +1 @@\n-a\n+b\n",
+                      },
+                    ],
+                  },
+                },
+              },
+            },
+            {
+              type: "emit_inbound",
+              label: "turn/completed",
+              frame: {
+                method: "turn/completed",
+                params: {
+                  threadId: nativeThreadId,
+                  turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
+                },
+              },
+            },
+          ],
+        });
+        const harness = yield* makeCodexReplayHarness(transcript);
+        yield* harness.runtime.startTurn(
+          makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("attempt-codex-command-actions-declined"),
+            text: "Explore, then edit.",
+          }),
+        );
+        yield* awaitUntil(() => harness.terminalEvents().length === 1, "Codex declined items");
+
+        const latest = (nativeId: string) =>
+          harness.events.findLast(
+            (event) =>
+              event.type === "turn_item.updated" &&
+              event.turnItem.nativeItemRef?.nativeId === nativeId,
+          );
+        const explore = latest("explore-command");
+        if (explore?.type !== "turn_item.updated") return yield* Effect.die("Missing command");
+        assert.deepInclude(explore.turnItem, {
+          type: "command_execution",
+          status: "completed",
+          commandActions: [
+            { type: "read", command: "cat a.ts", name: "a.ts", path: "/workspace/a.ts" },
+            { type: "search", command: "rg TODO src", path: "src", query: "TODO" },
+            { type: "search", command: "rg x" },
+            { type: "listFiles", command: "ls" },
+            { type: "unknown", command: "true" },
+          ],
+        });
+        assert.notProperty(explore.turnItem, "declined");
+
+        const declinedCommand = latest("declined-command");
+        if (declinedCommand?.type !== "turn_item.updated") {
+          return yield* Effect.die("Missing declined command");
+        }
+        assert.deepInclude(declinedCommand.turnItem, {
+          type: "command_execution",
+          status: "cancelled",
+          declined: true,
+          commandActions: [{ type: "unknown", command: "rm -rf build" }],
+        });
+
+        const declinedEdit = latest("declined-edit");
+        if (declinedEdit?.type !== "turn_item.updated") {
+          return yield* Effect.die("Missing declined edit");
+        }
+        assert.deepInclude(declinedEdit.turnItem, {
+          type: "file_change",
+          status: "cancelled",
+          declined: true,
+          fileName: "/workspace/a.ts",
+        });
       }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
     ),
   );

@@ -28,6 +28,7 @@ import { beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import type { LegendListRef } from "@legendapp/list/react";
 import { MessagesTimeline } from "./MessagesTimeline";
 import { __setClientSettingsForTests } from "../../hooks/useSettings";
+import { setConversationFindState } from "../find/conversationFindStore";
 
 const activityTestState = vi.hoisted(() => ({
   expanded: false,
@@ -2837,7 +2838,13 @@ describe("MessagesTimeline", () => {
     );
 
     expect(markup).toContain("studio/apps/web/src/session-logic.ts");
-    expect(markup).not.toContain("C:/Users/mike/dev-stuff/studio/apps/web/src/session-logic.ts");
+    // The exact full path is the row's tooltip, never its visible label.
+    expect(markup).toContain(
+      'title="C:/Users/mike/dev-stuff/studio/apps/web/src/session-logic.ts"',
+    );
+    expect(markup.replace(/ title="[^"]*"/g, "")).not.toContain(
+      "C:/Users/mike/dev-stuff/studio/apps/web/src/session-logic.ts",
+    );
   });
 
   it("renders review comment contexts as structured cards instead of raw tags", () => {
@@ -3604,5 +3611,138 @@ describe("live activity", () => {
     expect(markup).toContain('data-tool-group-header="settled"');
     expect(markup).toMatch(/aria-label="[^"]*, show these 3 tool calls"/);
     expect(markup).toContain("3 calls");
+  });
+});
+
+describe("messages another agent sent (1068)", () => {
+  // The shape of the October 25, 2026 screenshot: run-together words, long paths, a disk error.
+  const REPORT = `Exactspec /Users/fixture/Projects/atlas/.worktrees/format-clarity-20261023/console-ui/e2e/control-desk-0611.spec.ts:74. OnlyWebKit1440/light retry0failed fullpagescreenshot with exactError: ENOSPC: no space left on device, write; precedingbehavior/overflow/errors assertionsPASS.35passed/1failed. NoE2Especeditjustified. Needownercheck instead for /Users/fixture/Projects/atlas/.worktrees/format-clarity-20261023/console-ui/scripts/ci/e2e-runtime.mjs (postverifiedrestore redundant same-runarchivecleanup+freebytes/inodes evidence). Exactstorageconsumerunproven; don't claimarchivecausedit. RetainedJSON /Volumes/Work/atlas-code/1018-runtime/followup489/layout-diagnosis/playwright-report/control-desk/results.json andoriginalartifactzip. Nosourceedit, no newworkerlaunch, nofreshCI.`;
+  const agentEntry = (text: string) => {
+    const entry = buildUserTimelineEntry(text);
+    return {
+      ...entry,
+      message: {
+        ...entry.message,
+        createdBy: "agent" as const,
+        creationSource: "provider" as const,
+      },
+    };
+  };
+  const render = async (
+    timelineDetail: "concise" | "normal" | "verbose",
+    timelineEntries: Parameters<typeof MessagesTimeline>[0]["timelineEntries"],
+  ) => {
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    vi.stubGlobal("requestAnimationFrame", () => 0);
+    vi.stubGlobal("cancelAnimationFrame", () => {});
+    __setClientSettingsForTests({ ...DEFAULT_CLIENT_SETTINGS, timelineDetail });
+    let renderer: ReactTestRenderer | undefined;
+    try {
+      await act(() => {
+        renderer = create(<MessagesTimeline {...buildProps()} timelineEntries={timelineEntries} />);
+      });
+      return JSON.stringify(renderer!.toJSON());
+    } finally {
+      await act(() => renderer?.unmount());
+      __setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS);
+    }
+  };
+
+  it("folds a long one to its verbatim opening in Concise, under its provenance", async () => {
+    const markup = await render("concise", [agentEntry(REPORT)]);
+    expect(markup).toContain("Sent by another agent");
+    expect(markup).toContain('"data-worker-message":"folded"');
+    expect(markup).toContain("control-desk-0611.spec.ts:74.");
+    expect(markup).not.toContain("ENOSPC");
+    expect(markup).toContain("Show full message");
+    expect(markup).toContain("Copy original");
+    // Not the person's clamp with its fade.
+    expect(markup).not.toContain('"data-user-message-collapsed":"true"');
+  });
+
+  it("folds a long one as 1043 does in Normal and opens it in Verbose", async () => {
+    const normal = await render("normal", [agentEntry(REPORT)]);
+    expect(normal).toContain('"data-worker-message":"folded"');
+    expect(normal).not.toContain("ENOSPC");
+    const verbose = await render("verbose", [agentEntry(REPORT)]);
+    expect(verbose).toContain('"data-worker-message":"open"');
+    expect(verbose).toContain("ENOSPC: no space left on device");
+    expect(verbose).toContain("Show less");
+  });
+
+  it("shows a short one whole, with no fold controls", async () => {
+    const markup = await render("concise", [agentEntry("Done. The PR is green.")]);
+    expect(markup).toContain("Done. The PR is green.");
+    expect(markup).not.toContain("Show full message");
+    expect(markup).not.toContain("Copy original");
+  });
+
+  it("clips a long one with no opening to cut, rather than showing it whole", async () => {
+    const log = ["```text", ...Array.from({ length: 30 }, (_, i) => `ok gate-${i} 0.${i}s`), "```"];
+    const markup = await render("concise", [agentEntry(log.join("\n"))]);
+    expect(markup).toContain('"data-worker-message":"folded"');
+    expect(markup).toContain('"data-worker-message-clamp":"true"');
+    expect(markup).toContain("max-h-24");
+    expect(markup).toContain("Show full message");
+    expect(markup).not.toContain('"data-user-message-collapsed":"true"');
+  });
+
+  it("opens a folded or clipped one when Find matches its hidden text", async () => {
+    // Find scopes by DOM containment, so this one renders into the real jsdom document.
+    vi.unstubAllGlobals();
+    vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+    vi.stubGlobal("requestAnimationFrame", () => 0);
+    vi.stubGlobal("cancelAnimationFrame", () => {});
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+      },
+    );
+    __setClientSettingsForTests({ ...DEFAULT_CLIENT_SETTINGS, timelineDetail: "concise" });
+    const log = ["```text", ...Array.from({ length: 30 }, (_, i) => `ok gate-${i} 0.${i}s`), "```"];
+    log.splice(28, 0, "write failed: ENOSPC");
+    const container = document.createElement("div");
+    document.body.append(container);
+    const root = createRoot(container);
+    try {
+      await act(() =>
+        root.render(
+          <MessagesTimeline
+            {...buildProps()}
+            timelineEntries={[agentEntry(REPORT), agentEntry(log.join("\n"))]}
+          />,
+        ),
+      );
+      const scope = container.querySelector<HTMLElement>("[data-conversation-find-scope]")!;
+      const messages = () => [...scope.querySelectorAll("[data-worker-message]")];
+      expect(messages().map((m) => m.getAttribute("data-worker-message"))).toEqual([
+        "folded",
+        "folded",
+      ]);
+      expect(messages()[1]!.getAttribute("data-worker-message-clamp")).toBe("true");
+      await act(async () => setConversationFindState({ query: "ENOSPC", scope }));
+      expect(messages().map((m) => m.getAttribute("data-worker-message"))).toEqual([
+        "open",
+        "open",
+      ]);
+      expect(messages()[0]!.textContent).toContain("ENOSPC: no space left on device");
+    } finally {
+      await act(async () => setConversationFindState({ query: "", scope: null }));
+      await act(() => root.unmount());
+      container.remove();
+      __setClientSettingsForTests(DEFAULT_CLIENT_SETTINGS);
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("keeps the person's own long prompt in its clamp at every level", async () => {
+    for (const detail of ["concise", "normal", "verbose"] as const) {
+      const markup = await render(detail, [buildUserTimelineEntry(buildLongUserMessageText())]);
+      expect(markup).toContain('"data-user-message-collapsed":"true"');
+      expect(markup).not.toContain("data-worker-message");
+    }
   });
 });

@@ -1,3 +1,4 @@
+import type { TimelineDetail } from "@specweave-studio/contracts";
 import { useId, useMemo, useState, type ReactNode } from "react";
 import { CheckIcon, ChevronDownIcon, CopyIcon } from "lucide-react";
 import { useCopyToClipboard } from "../../hooks/useCopyToClipboard";
@@ -11,28 +12,47 @@ import { useConversationFindQueryWithin } from "../find/conversationFindStore";
 import { Button } from "../ui/button";
 import { collapsibleFooterClassName, revealCollapsedTop } from "../chat/CollapsibleReport";
 
+/** A clipped message fades out at its bottom edge, as a person's long prompt does. */
+const CLAMP_FADE_MASK = "linear-gradient(to bottom, black calc(100% - 2rem), transparent)";
+
 /**
- * A worker's message to its coordinator. A long one shows its opening
- * sentences and the sentence asking for a decision, cut from the text; the
- * whole message is one click away and "Copy original" copies it exactly as the
- * coordinator received it.
+ * A message one agent sent another: a worker's to its coordinator, or any
+ * agent's on a thread page. A long one shows its opening sentences and the
+ * sentence asking for a decision, cut from the text; the whole message is one
+ * click away and "Copy original" copies it exactly as it was received. One
+ * with no opening to cut (only JSON or a code fence) shows its clipped top.
+ * The timeline detail sets how soon it folds; Verbose opens it.
  */
 export function WorkerMessageBody({
   original,
   text,
+  detail = "normal",
   renderMarkdown,
 }: {
-  /** The message as stored: what the coordinator's model read. */
+  /** The message as stored: what the receiving agent's model read. */
   original: string;
   /** The same message prepared for display, with thread links. */
   text: string;
+  detail?: TimelineDetail;
   renderMarkdown: (text: string) => ReactNode;
 }) {
-  const presentation = useMemo(() => workerMessagePresentation(original, text), [original, text]);
+  const presentation = useMemo(
+    () => workerMessagePresentation(original, text, detail),
+    [detail, original, text],
+  );
   const body = useMemo(() => formatJsonBlocks(text), [text]);
   const bodyId = useId();
   const [root, setRoot] = useState<HTMLDivElement | null>(null);
-  const [expanded, setExpanded] = useState(false);
+  const [expanded, setExpanded] = useState(detail === "verbose");
+  // The reader opened it: only then do its controls follow the reader down the message.
+  const [openedByReader, setOpenedByReader] = useState(false);
+  // A new detail level sets the default again: Verbose opens, the others fold.
+  const [lastDetail, setLastDetail] = useState(detail);
+  if (detail !== lastDetail) {
+    setLastDetail(detail);
+    setExpanded(detail === "verbose");
+    setOpenedByReader(false);
+  }
   // The find query the reader folded the message under; that query no longer opens it.
   const [foldedForQuery, setFoldedForQuery] = useState<string | null>(null);
   const findQuery = useConversationFindQueryWithin(root);
@@ -46,22 +66,41 @@ export function WorkerMessageBody({
     target: "message",
     preserveBytes: true,
   });
-  const { excerpt } = presentation;
-  if (excerpt === null) return renderMarkdown(body);
+  const { excerpt, clamp } = presentation;
+  if (excerpt === null && !clamp) return renderMarkdown(body);
   // Find in the conversation reaches the folded part by opening it, whenever
-  // the hidden text holds a match the excerpt does not show.
+  // the hidden text holds a match the excerpt does not show. A clipped message
+  // opens for any match, since where the clip falls is unknown.
   const findOpens =
     findQuery.length > 0 &&
     findQuery !== foldedForQuery &&
-    (findTextOffsets(text, findQuery).length > findTextOffsets(excerpt, findQuery).length ||
-      (!textMatchesQuery(excerpt, findQuery) && textMatchesQuery(text, findQuery)));
+    (excerpt === null
+      ? textMatchesQuery(text, findQuery)
+      : findTextOffsets(text, findQuery).length > findTextOffsets(excerpt, findQuery).length ||
+        (!textMatchesQuery(excerpt, findQuery) && textMatchesQuery(text, findQuery)));
   const open = expanded || findOpens;
   const size = workerMessageSizeLabel(presentation);
+  const clipped = !open && excerpt === null;
   return (
-    <div ref={setRoot} className="min-w-0" data-worker-message={open ? "open" : "folded"}>
-      <div id={bodyId}>{renderMarkdown(open ? body : excerpt)}</div>
+    <div
+      ref={setRoot}
+      className="min-w-0"
+      data-worker-message={open ? "open" : "folded"}
+      data-worker-message-clamp={clamp ? "true" : undefined}
+    >
       <div
-        className={`mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-foreground/10 pt-1.5 ${collapsibleFooterClassName(open) ?? ""}`}
+        id={bodyId}
+        className={
+          clipped ? `overflow-hidden ${detail === "concise" ? "max-h-24" : "max-h-44"}` : undefined
+        }
+        style={
+          clipped ? { maskImage: CLAMP_FADE_MASK, WebkitMaskImage: CLAMP_FADE_MASK } : undefined
+        }
+      >
+        {renderMarkdown(open || excerpt === null ? body : excerpt)}
+      </div>
+      <div
+        className={`mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-foreground/10 pt-1.5 ${collapsibleFooterClassName(open && (openedByReader || findOpens)) ?? ""}`}
       >
         <Button
           type="button"
@@ -73,6 +112,7 @@ export function WorkerMessageBody({
           data-scroll-anchor-ignore
           onClick={() => {
             setExpanded(!open);
+            setOpenedByReader(!open);
             setFoldedForQuery(open && findOpens ? findQuery : null);
             if (open) revealCollapsedTop(root);
           }}
@@ -82,7 +122,7 @@ export function WorkerMessageBody({
           {open ? "Show less" : "Show full message"}
         </Button>
         {open ? null : (
-          <span className="text-xs text-muted-foreground" aria-hidden>
+          <span className="text-xs whitespace-nowrap text-muted-foreground" aria-hidden>
             {size}
           </span>
         )}
@@ -90,12 +130,14 @@ export function WorkerMessageBody({
           type="button"
           size="xs"
           variant={open ? "outline" : "ghost-muted"}
-          className={`ml-auto ${open ? "bg-background/95 shadow-xs" : ""}`}
+          className={`ml-auto shrink-0 ${open ? "bg-background/95 shadow-xs" : ""}`}
           aria-label={isCopied ? "Original message copied" : "Copy original message"}
+          title="Copy original"
           onClick={() => copyToClipboard(original, undefined)}
         >
           {isCopied ? <CheckIcon aria-hidden /> : <CopyIcon aria-hidden />}
-          {isCopied ? "Copied" : "Copy original"}
+          {/* A phone keeps the icon, so the footer stays two rows at most. */}
+          <span className="max-sm:hidden">{isCopied ? "Copied" : "Copy original"}</span>
         </Button>
       </div>
     </div>

@@ -10,6 +10,11 @@ import {
   formatSearchToolLabel,
 } from "@specweave-studio/shared/toolActivity";
 import { isWorkspaceImagePreviewPath } from "@specweave-studio/shared/filePreview";
+import {
+  formatStructuredPatch,
+  structuredEditResultPatch,
+} from "@specweave-studio/shared/structuredPatch";
+import { formatPatch, OMIT_HEADERS, structuredPatch, type StructuredPatchHunk } from "diff";
 import { normalizeClaudeTurnTokenUsage } from "../../provider/ClaudeTurnTokenUsage.ts";
 import { withMainThreadPromptCache } from "../../provider/ClaudePromptCache.ts";
 import {
@@ -52,6 +57,7 @@ import {
   type ModelSelection,
   type OrchestrationV2ConversationMessage,
   type OrchestrationV2ExecutionNode,
+  type OrchestrationV2FileChangeDiffNote,
   type OrchestrationV2ProviderCapabilities,
   type OrchestrationV2ProviderFailure,
   OrchestrationV2ProviderGoal,
@@ -2020,6 +2026,18 @@ function firstStringInputField(
   return undefined;
 }
 
+/** Like firstStringInputField, but returns a path exactly as sent: edge spaces can be part of a name. */
+function firstExactPathInputField(
+  input: ClaudeNativeToolInput,
+  keys: ReadonlyArray<string>,
+): string | undefined {
+  for (const key of keys) {
+    const value = inputRecordValue(input, key);
+    if (typeof value === "string" && value.trim().length > 0) return value;
+  }
+  return undefined;
+}
+
 function jsonStringifyForTool(value: unknown): string {
   if (typeof value === "string") {
     return value;
@@ -2144,11 +2162,16 @@ function parseClaudeBackgroundTaskEntry(
   });
 }
 
+const CLAUDE_EDIT_PATH_INPUT_FIELDS = [
+  "file_path",
+  "notebook_path",
+  "path",
+  "filename",
+  "fileName",
+];
+
 function fileNameFromClaudeTool(toolName: string, input: ClaudeNativeToolInput): string {
-  return (
-    firstStringInputField(input, ["file_path", "path", "filename", "fileName"]) ??
-    `${toolName} result`
-  );
+  return firstExactPathInputField(input, CLAUDE_EDIT_PATH_INPUT_FIELDS) ?? `${toolName} result`;
 }
 
 type ClaudeNativeToolOutput =
@@ -2222,6 +2245,215 @@ function claudeCommandOutputText(output: ClaudeNativeToolOutput): string {
     }
   }
   return claudeNativeToolOutputText(output);
+}
+
+/** A Bash result the user or the turn stopped carries `interrupted: true`. */
+function isClaudeInterruptedCommandOutput(output: ClaudeNativeToolOutput): boolean {
+  const value = claudeNativeToolOutputValue(output);
+  return typeof value === "object" && value !== null && Reflect.get(value, "interrupted") === true;
+}
+
+const CLAUDE_BASH_EXIT_CODE_LINE = /^Exit code (\d+)$/;
+
+/**
+ * Claude Code reports a Bash exit its command table treats as an error as an
+ * error result whose first line is exactly "Exit code N". A nonzero exit it
+ * treats as normal (`git diff` finding differences) is a plain result, and
+ * any other text names no code.
+ */
+function claudeBashExitCode(toolResult: ClaudeToolResultContentBlock): number | undefined {
+  if (!isClaudeToolResultError(toolResult)) return undefined;
+  const content = outputFromClaudeToolResult(toolResult);
+  if (content === undefined) return undefined;
+  const text = claudeSubagentResultText({ type: "content_block", value: content });
+  const match = CLAUDE_BASH_EXIT_CODE_LINE.exec(text.split("\n", 1)[0] ?? "");
+  const exitCode = match === null ? Number.NaN : Number(match[1]);
+  return Number.isSafeInteger(exitCode) ? exitCode : undefined;
+}
+
+/** The provider's own text for a result: its structured string, else the content block's text. */
+function claudeToolResultMessageText(output: ClaudeNativeToolOutput): string {
+  return output.type === "structured_tool_use_result" &&
+    typeof output.value !== "string" &&
+    output.fallbackValue !== undefined
+    ? claudeSubagentResultText({ type: "content_block", value: output.fallbackValue })
+    : claudeSubagentResultText(output);
+}
+
+interface ClaudeEditSnippet {
+  readonly oldText: string;
+  readonly newText: string;
+}
+
+interface ClaudeFileChangeBody {
+  readonly diffStr?: string;
+  readonly diffNote?: OrchestrationV2FileChangeDiffNote;
+  readonly oldStr?: string;
+  readonly newStr?: string;
+}
+
+const CLAUDE_EDIT_SNIPPET_CONTEXT_LINES = 3;
+// As for ACP v1 diffs: past this edit distance a two-sided snippet gets no
+// patch, so a large rewrite cannot stall the event loop in the diff search.
+const CLAUDE_EDIT_SNIPPET_MAX_EDITS = 1_000;
+
+// A snippet's last line is not the file's, so it ends in a newline and never
+// diffs as "No newline at end of file".
+function snippetText(text: string): string {
+  return text.length === 0 || text.endsWith("\n") ? text : `${text}\n`;
+}
+
+/**
+ * One headed patch for edit snippets taken from the tool input. Each edit's
+ * hunks follow the previous edit's, so line numbers count within the
+ * snippets, not the file.
+ */
+function claudeEditSnippetPatch(input: {
+  readonly path: string;
+  readonly create: boolean;
+  readonly edits: ReadonlyArray<ClaudeEditSnippet>;
+}): string | undefined {
+  const hunks: StructuredPatchHunk[] = [];
+  let oldOffset = 0;
+  let newOffset = 0;
+  for (const edit of input.edits) {
+    const oldText = snippetText(edit.oldText);
+    const newText = snippetText(edit.newText);
+    const patch = structuredPatch(input.path, input.path, oldText, newText, undefined, undefined, {
+      context: CLAUDE_EDIT_SNIPPET_CONTEXT_LINES,
+      maxEditLength: oldText && newText ? CLAUDE_EDIT_SNIPPET_MAX_EDITS : Number.POSITIVE_INFINITY,
+    });
+    if (patch === undefined) return undefined;
+    for (const hunk of patch.hunks) {
+      hunks.push({
+        ...hunk,
+        oldStart: hunk.oldStart + oldOffset,
+        newStart: hunk.newStart + newOffset,
+      });
+    }
+    oldOffset += oldText.split("\n").length - 1;
+    newOffset += newText.split("\n").length - 1;
+  }
+  if (hunks.length === 0) return undefined;
+  const header = formatStructuredPatch({
+    oldPath: input.create ? null : input.path,
+    newPath: input.path,
+    hunks: [],
+  });
+  const body = formatPatch(
+    {
+      oldFileName: input.path,
+      newFileName: input.path,
+      oldHeader: undefined,
+      newHeader: undefined,
+      hunks,
+    },
+    OMIT_HEADERS,
+  );
+  return `${header}${body}`;
+}
+
+function stringField(value: unknown, key: string): string | undefined {
+  const field = typeof value === "object" && value !== null ? Reflect.get(value, key) : undefined;
+  return typeof field === "string" ? field : undefined;
+}
+
+/** Each entry of an Edit input's internal `edits` list, or of an old MultiEdit input. */
+function claudeInputEditList(
+  input: ClaudeNativeToolInput,
+): ReadonlyArray<ClaudeEditSnippet> | undefined {
+  const edits = inputRecordValue(input, "edits");
+  if (!Array.isArray(edits) || edits.length === 0) return undefined;
+  const snippets: ClaudeEditSnippet[] = [];
+  for (const edit of edits) {
+    const oldText = stringField(edit, "old_string");
+    const newText = stringField(edit, "new_string");
+    if (oldText === undefined || newText === undefined) return undefined;
+    snippets.push({ oldText, newText });
+  }
+  return snippets;
+}
+
+/** An edit body built from the tool input, for a result that carries no patch. */
+function claudeFileChangeInputBody(input: {
+  readonly path: string;
+  readonly toolInput: ClaudeNativeToolInput;
+  readonly result: unknown;
+}): ClaudeFileChangeBody {
+  const snippet = (create: boolean, edits: ReadonlyArray<ClaudeEditSnippet>) => {
+    const patch = claudeEditSnippetPatch({ path: input.path, create, edits });
+    return patch === undefined ? {} : { diffStr: patch, diffNote: "input_snippet" as const };
+  };
+  const edits = claudeInputEditList(input.toolInput);
+  if (edits !== undefined) return snippet(false, edits);
+  const oldString = inputRecordValue(input.toolInput, "old_string");
+  const newString = inputRecordValue(input.toolInput, "new_string");
+  if (typeof oldString === "string" && typeof newString === "string") {
+    // An Edit with an empty old_string creates its file.
+    return {
+      ...snippet(oldString.length === 0, [{ oldText: oldString, newText: newString }]),
+      oldStr: oldString,
+      newStr: newString,
+    };
+  }
+  const content = inputRecordValue(input.toolInput, "content");
+  if (typeof content === "string") {
+    // Only the result tells a create from an overwrite.
+    return stringField(input.result, "type") === "create"
+      ? snippet(true, [{ oldText: "", newText: content }])
+      : { newStr: content };
+  }
+  const newSource = inputRecordValue(input.toolInput, "new_source");
+  if (typeof newSource === "string") {
+    // NotebookEdit: the result reports the cell's previous source for a replace or delete.
+    const editMode =
+      firstStringInputField(input.toolInput, ["edit_mode"]) ??
+      stringField(input.result, "edit_mode");
+    const oldSource = stringField(input.result, "old_source");
+    return oldSource !== undefined || editMode === "insert"
+      ? snippet(false, [
+          { oldText: oldSource ?? "", newText: editMode === "delete" ? "" : newSource },
+        ])
+      : { newStr: newSource };
+  }
+  return {};
+}
+
+/**
+ * The body of a Claude edit item. A completed edit renders from its
+ * structured result (hunks, then the labelled git patch), else from the tool
+ * input as a labelled snippet. A cancelled edit shows the snippet it proposed.
+ * A failed edit keeps the provider's text, which is never read as a patch.
+ */
+function claudeFileChangeBody(input: {
+  readonly toolInput: ClaudeNativeToolInput;
+  readonly output: ClaudeNativeToolOutput;
+  readonly status: OrchestrationV2TurnItem["status"];
+}): ClaudeFileChangeBody {
+  if (input.status === "failed") {
+    const text = claudeToolResultMessageText(input.output);
+    return text.length === 0 ? {} : { diffStr: text };
+  }
+  const path = firstExactPathInputField(input.toolInput, CLAUDE_EDIT_PATH_INPUT_FIELDS);
+  if (input.status === "cancelled") {
+    return path === undefined
+      ? {}
+      : claudeFileChangeInputBody({ path, toolInput: input.toolInput, result: undefined });
+  }
+  if (input.status !== "completed") return {};
+  const result = claudeNativeToolOutputValue(input.output);
+  const structured = structuredEditResultPatch(result, path);
+  if (structured !== null) {
+    return structured.patch === undefined
+      ? { diffNote: structured.diffNote }
+      : {
+          diffStr: structured.patch,
+          ...(structured.diffNote === undefined ? {} : { diffNote: structured.diffNote }),
+        };
+  }
+  return path === undefined
+    ? {}
+    : claudeFileChangeInputBody({ path, toolInput: input.toolInput, result });
 }
 
 function claudeSubagentResultText(output: ClaudeNativeToolOutput): string {
@@ -4213,6 +4445,7 @@ export function makeClaudeAdapterV2(
           readonly updatedAt: DateTime.Utc;
           readonly presentation: ClaudeToolPresentation | undefined;
           readonly toolNonExecutionKind?: string;
+          readonly exitCode?: number;
         }) => {
           const completedAt = input.status === "running" ? null : input.updatedAt;
           const nodeId = idAllocator.derive.nodeFromProviderItem({
@@ -4315,10 +4548,13 @@ export function makeClaudeAdapterV2(
           const webSearchResults = webSearchResultsFromClaudeOutput(input.output);
           const webFetchUrl = firstStringInputField(input.toolInput, ["url"])?.trim();
           const outputValue = claudeNativeToolOutputValue(input.output);
+          // An edit's body comes from claudeFileChangeBody, not the result text.
           const outputText =
             itemType === "command_execution"
               ? claudeCommandOutputText(input.output)
-              : claudeNativeToolOutputText(input.output);
+              : itemType === "file_change"
+                ? ""
+                : claudeNativeToolOutputText(input.output);
           const turnItem: OrchestrationV2TurnItem =
             itemType === "command_execution"
               ? {
@@ -4326,13 +4562,18 @@ export function makeClaudeAdapterV2(
                   type: "command_execution",
                   input: commandInputFromClaudeTool(input.toolName, input.toolInput),
                   ...(outputText.length === 0 ? {} : { output: outputText }),
+                  ...(input.exitCode === undefined ? {} : { exitCode: input.exitCode }),
                 }
               : itemType === "file_change"
                 ? {
                     ...itemBase,
                     type: "file_change",
                     fileName: fileNameFromClaudeTool(input.toolName, input.toolInput),
-                    ...(outputText.length === 0 ? {} : { diffStr: outputText }),
+                    ...claudeFileChangeBody({
+                      toolInput: input.toolInput,
+                      output: input.output,
+                      status: input.status,
+                    }),
                   }
                 : itemType === "web_search"
                   ? {
@@ -6719,6 +6960,18 @@ export function makeClaudeAdapterV2(
               message,
               toolResult.tool_use_id,
             );
+            const isCommand = toolCall.classification.itemType === "command_execution";
+            // An interrupted Bash result is also an error result; it stopped, not failed.
+            const status =
+              toolNonExecutionKind === "cancelled"
+                ? "cancelled"
+                : isCommand && isClaudeInterruptedCommandOutput(output)
+                  ? "interrupted"
+                  : isClaudeToolResultError(toolResult)
+                    ? "failed"
+                    : "completed";
+            const exitCode =
+              isCommand && status === "failed" ? claudeBashExitCode(toolResult) : undefined;
             const artifacts = buildToolCallArtifacts({
               context,
               nativeItemId: toolCall.nativeItemId,
@@ -6731,12 +6984,8 @@ export function makeClaudeAdapterV2(
               parentNodeId: toolCall.parentNodeId,
               ordinal: toolCall.ordinal,
               output,
-              status:
-                toolNonExecutionKind === "cancelled"
-                  ? "cancelled"
-                  : isClaudeToolResultError(toolResult)
-                    ? "failed"
-                    : "completed",
+              status,
+              ...(exitCode === undefined ? {} : { exitCode }),
               ...(toolNonExecutionKind === undefined ? {} : { toolNonExecutionKind }),
               startedAt: toolCall.startedAt,
               updatedAt: completedAt,

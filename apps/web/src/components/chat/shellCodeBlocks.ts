@@ -156,6 +156,11 @@ const ANSI_SEQUENCE_REGEX =
 // oxlint-disable-next-line no-control-regex -- strips control bytes left in terminal output
 const STRAY_CONTROL_REGEX = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g;
 
+/** Text without terminal escape sequences; line endings and every other byte stay. */
+export function withoutTerminalEscapes(raw: string): string {
+  return raw.replace(ANSI_SEQUENCE_REGEX, "");
+}
+
 /**
  * Terminal output as plain text: escape sequences removed, and a carriage
  * return keeps only what was drawn last on that line, as progress bars expect.

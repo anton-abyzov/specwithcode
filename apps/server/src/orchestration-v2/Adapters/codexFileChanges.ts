@@ -1,10 +1,25 @@
 import type { OrchestrationV2TurnItem } from "@specweave-studio/contracts";
 import type * as CodexSchema from "@specweave-studio/effect-codex-app-server/schema";
+import { headedPatch } from "@specweave-studio/shared/structuredPatch";
 
 type NativeChange = CodexSchema.V2ItemCompletedNotification__FileUpdateChange;
 type FileChangeItem = Extract<OrchestrationV2TurnItem, { type: "file_change" }>;
 
-/** Keep every native operation and its exact patch; never infer a scope from prose. */
+/** Joins per-file patches so every file block starts on its own line. */
+function joinFilePatches(patches: ReadonlyArray<string>): string {
+  let joined = "";
+  for (const patch of patches) {
+    if (joined !== "" && !joined.endsWith("\n")) joined += "\n";
+    joined += patch;
+  }
+  return joined;
+}
+
+/**
+ * Keep every native operation and its patch; never infer a scope from prose.
+ * Codex sends bare hunks (and plain content for adds and deletes), so each
+ * patch gets file headers, and counted ranges where its `@@` lines have none.
+ */
 export function projectCodexFileChanges(
   nativeChanges: ReadonlyArray<NativeChange>,
 ): Pick<FileChangeItem, "fileName" | "diffStr" | "changes"> | null {
@@ -13,24 +28,33 @@ export function projectCodexFileChanges(
     if (!change.path.trim() || typeof change.diff !== "string") {
       throw new TypeError("Codex file change has no valid path or diff.");
     }
-    const operation = change.kind.type;
-    if (operation !== "add" && operation !== "delete" && operation !== "update") {
+    const kind = change.kind.type;
+    if (kind !== "add" && kind !== "delete" && kind !== "update") {
       throw new TypeError("Unsupported Codex file change operation.");
     }
     const movePath = change.kind.type === "update" ? change.kind.move_path : undefined;
     if (movePath != null && !movePath.trim()) {
       throw new TypeError("Codex file change has an invalid destination path.");
     }
-    return {
-      operation: movePath == null ? operation : "move",
-      path: movePath ?? change.path,
+    const operation = movePath == null ? kind : "move";
+    const path = movePath ?? change.path;
+    const headed = headedPatch({
+      operation,
+      path,
       ...(movePath == null ? {} : { oldPath: change.path }),
-      diffStr: change.diff,
+      body: change.diff,
+    });
+    return {
+      operation,
+      path,
+      ...(movePath == null ? {} : { oldPath: change.path }),
+      diffStr: headed.patch,
+      ...(headed.synthesizedLineNumbers ? { diffNote: "line_numbers_synthesized" } : {}),
     };
   });
   return {
     fileName: changes[0]!.path,
-    diffStr: changes.map((change) => change.diffStr).join("\n"),
+    diffStr: joinFilePatches(changes.map((change) => change.diffStr)),
     changes,
   };
 }

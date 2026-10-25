@@ -801,6 +801,59 @@ describe("project coordinator surface", () => {
     expect(conversation.textContent).toContain("Answer line 14");
     expect(conversation.textContent).not.toContain("Copy original");
   });
+  it("folds a worker message sooner in Concise and opens it in Verbose (1068)", async () => {
+    const report = [
+      "Checked the release branch end to end today.",
+      "Every gate passed in order except the feed signature step at the end of the run, which stopped on a key mismatch.",
+      "The run log, both manifests and the key fingerprints are saved beside the receipt for the release owner to review.",
+      "Nothing was published.",
+    ].join(" ");
+    expect(report.length).toBeGreaterThan(280);
+    expect(report.length).toBeLessThan(600);
+    state.messages = [
+      {
+        id: "worker-detail",
+        role: "user",
+        createdBy: "agent",
+        senderThreadId: "worker",
+        text: report,
+        streaming: false,
+        attachments: [],
+      },
+    ];
+    const conversation = () => container.querySelector('[aria-label="Coordinator conversation"]')!;
+    const fold = () =>
+      conversation().querySelector("[data-worker-message]")?.getAttribute("data-worker-message");
+    // Normal shows it whole: it is under 600 characters and 8 lines.
+    await render();
+    expect(fold()).toBeUndefined();
+    expect(conversation().textContent).toContain("Nothing was published.");
+    // Concise folds it to its opening, still sent by the worker.
+    state.timelineDetail = "concise";
+    await render();
+    expect(fold()).toBe("folded");
+    expect(conversation().textContent).toContain("Sent by");
+    expect(conversation().textContent).toContain("Checked the release branch end to end today.");
+    expect(conversation().textContent).not.toContain("Nothing was published.");
+    // Verbose shows every word, and Show less still folds it.
+    state.timelineDetail = "verbose";
+    state.messages = [{ ...state.messages[0]!, text: `${report} ${report} ${report}` }];
+    await render();
+    expect(fold()).toBe("open");
+    expect(conversation().textContent).toContain("Nothing was published.");
+    // Opened by Verbose, not by the reader: its controls stay at its end, not over the text.
+    const footer = () =>
+      conversation().querySelector('[aria-label="Copy original message"]')!.parentElement!;
+    expect(footer().className).not.toContain("sticky");
+    // The reader folds it and opens it again: now the controls follow them down.
+    const toggle = () =>
+      conversation().querySelector<HTMLButtonElement>("[data-worker-message] [aria-expanded]")!;
+    await act(async () => toggle().click());
+    expect(fold()).toBe("folded");
+    await act(async () => toggle().click());
+    expect(fold()).toBe("open");
+    expect(footer().className).toContain("sticky");
+  });
   it("shows a short worker message whole, with no fold controls", async () => {
     state.messages = [
       {

@@ -56,7 +56,12 @@ import {
 import { formatChatTimestampTooltip, formatShortTimestamp } from "../../timestampFormat";
 import { MessageCopyButton } from "../chat/MessageCopyButton";
 import { viewerIso } from "../../viewerDate";
-import type { ChatAttachment, ScopedThreadRef, ThreadId } from "@specweave-studio/contracts";
+import type {
+  ChatAttachment,
+  ScopedThreadRef,
+  ThreadId,
+  TimelineDetail,
+} from "@specweave-studio/contracts";
 import type { TimestampFormat } from "@specweave-studio/contracts/settings";
 import type { ThreadLinkTarget } from "@specweave-studio/client-runtime/state/threads";
 import type {
@@ -563,6 +568,7 @@ export function CoordinatorConversation({
                 separatorAbove={row.decision !== null}
                 activity={view.activityByMessageId.get(row.message.id)}
                 isReport={reportIds.has(row.message.id)}
+                timelineDetail={timelineDetail}
                 timestampFormat={timestampFormat}
                 environmentId={project.environmentId}
                 projectId={project.id}
@@ -695,6 +701,7 @@ const CoordinatorMessageRow = memo(function CoordinatorMessageRow({
   separatorAbove,
   activity,
   isReport,
+  timelineDetail,
   timestampFormat,
   environmentId,
   projectId,
@@ -733,6 +740,8 @@ const CoordinatorMessageRow = memo(function CoordinatorMessageRow({
   readonly separatorAbove: boolean;
   readonly activity: RunActivity | undefined;
   readonly isReport: boolean;
+  /** How much of a worker's long message shows folded (Concise folds soonest). */
+  readonly timelineDetail: TimelineDetail;
   readonly timestampFormat: TimestampFormat;
   readonly environmentId: EnvironmentProject["environmentId"];
   readonly projectId: EnvironmentProject["id"];
@@ -927,6 +936,7 @@ const CoordinatorMessageRow = memo(function CoordinatorMessageRow({
           <WorkerMessageBody
             original={message.text}
             text={text}
+            detail={timelineDetail}
             renderMarkdown={(part) => (
               <ChatMarkdown
                 text={part}

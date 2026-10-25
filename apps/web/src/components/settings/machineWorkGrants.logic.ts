@@ -15,26 +15,60 @@ export function formatTime(value: string): string {
   });
 }
 
+type WorkGrantProjectUnavailable = NonNullable<
+  StudioWorkGrantsSnapshot["projects"][number]["unavailable"]
+>;
+
+const UNAVAILABLE_NOTES: Record<WorkGrantProjectUnavailable, string> = {
+  scratch: "folder for chats, uncheck to remove",
+  archived: "archived, uncheck to remove",
+  automated: "automated, uncheck to remove",
+};
+
+/** What a "Chosen projects" row says beside a project it keeps but no longer offers. */
+export function workGrantUnavailableNote(reason: WorkGrantProjectUnavailable): string {
+  return UNAVAILABLE_NOTES[reason];
+}
+
+/** A project's name in a grant summary, with why it is not offered when it is not. */
+function summaryTitle(project: StudioWorkGrantsSnapshot["projects"][number]): string {
+  if (project.unavailable === "scratch") return "No project folder (chats)";
+  return project.unavailable === "archived" || project.unavailable === "automated"
+    ? `${project.title} (${project.unavailable})`
+    : project.title;
+}
+
 /** One line on which projects a coordinator may run work in. */
 export function workGrantProjectsSummary(
   grant: Pick<StudioWorkGrant, "projects" | "coordinatorEnvironmentId" | "machineLabel">,
   projects: StudioWorkGrantsSnapshot["projects"],
+  /** The machine could not read its projects (`projectsUnreadable`). */
+  projectsUnreadable = false,
 ): string {
   switch (grant.projects.kind) {
     case "all":
       return "All projects";
     case "linked": {
+      if (projectsUnreadable)
+        return `Projects linked to ${grant.machineLabel} (could not read this machine's projects)`;
+      // Every project linked to it, archived or automated ones included: the grant still covers them.
       const linked = projects.filter((project) =>
         project.linkedTo.includes(grant.coordinatorEnvironmentId),
       );
       return linked.length === 0
         ? `Projects linked to ${grant.machineLabel} (none yet)`
-        : `Projects linked to ${grant.machineLabel}: ${linked.map((project) => project.title).join(", ")}`;
+        : `Projects linked to ${grant.machineLabel}: ${linked.map(summaryTitle).join(", ")}`;
     }
     case "listed": {
-      const titles = grant.projects.projectIds.map(
-        (id) => projects.find((project) => project.id === id)?.title ?? id,
-      );
+      const count = grant.projects.projectIds.length;
+      // The grant keeps its choices when the machine could not read its projects.
+      if (projectsUnreadable && count > 0)
+        return `${count} chosen ${count === 1 ? "project" : "projects"} (could not read this machine's projects)`;
+      // An id the snapshot no longer lists (a deleted project, the assistant) covers nothing.
+      const titles = grant.projects.projectIds.flatMap((id) => {
+        const project = projects.find((candidate) => candidate.id === id);
+        return project ? [summaryTitle(project)] : [];
+      });
       return titles.length === 0 ? "No projects" : titles.join(", ");
     }
   }

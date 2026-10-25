@@ -156,13 +156,20 @@ export function designMenuEntries(input: {
   ];
 }
 
-/** Projects a design can be copied into: every project but its own. */
+/**
+ * Projects a design can be copied into: every project but its own, minus the archived,
+ * automated and missing-folder ones no picker offers (the rule of `offeredProjects`).
+ */
 export function copyTargetsFor(
   summary: DesignSummary,
   projects: readonly GalleryProject[],
 ): GalleryProject[] {
   const owner = summary.ref.owner;
-  return projects.filter((project) => owner.kind !== "project" || project.id !== owner.projectId);
+  return projects.filter(
+    (project) =>
+      project.unavailable === undefined &&
+      (owner.kind !== "project" || project.id !== owner.projectId),
+  );
 }
 
 /** The owning project's workspace key, when this window can open it. */

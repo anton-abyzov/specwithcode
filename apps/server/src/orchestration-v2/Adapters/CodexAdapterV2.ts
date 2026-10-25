@@ -49,6 +49,7 @@ import { resolveSpawnCommand } from "@specweave-studio/shared/shell";
 import type {
   ChatAttachment,
   OrchestrationV2AppThread,
+  OrchestrationV2CommandAction,
   OrchestrationV2ConversationMessage,
   OrchestrationV2ExecutionNode,
   ModelSelection,
@@ -405,12 +406,45 @@ function codexItemStatus(status: "inProgress" | "completed" | "failed" | "declin
     case "failed":
       return { node: "failed", turnItem: "failed", completed: true };
     case "declined":
+      // Older clients decode a closed status list, so a decline stays
+      // `cancelled`; items that can be declined also carry `declined: true`.
       return {
         node: "cancelled",
         turnItem: "cancelled",
         completed: true,
       };
   }
+}
+
+/**
+ * Codex's own reading of what a command did (`read`, `listFiles`, `search`,
+ * `unknown`), kept so clients can count reads and searches without parsing
+ * shell text. Only the typed fields are copied; null ones are dropped.
+ */
+export function codexCommandActions(
+  actions: ReadonlyArray<unknown> | null | undefined,
+): ReadonlyArray<OrchestrationV2CommandAction> | undefined {
+  const projected = (actions ?? []).flatMap((action): OrchestrationV2CommandAction[] => {
+    if (typeof action !== "object" || action === null) return [];
+    const record = action as Record<string, unknown>;
+    const type = typeof record.type === "string" ? record.type.trim() : "";
+    if (type.length === 0) return [];
+    const text = (value: unknown) => (typeof value === "string" ? value : undefined);
+    const command = text(record.command);
+    const name = text(record.name);
+    const path = text(record.path);
+    const query = text(record.query);
+    return [
+      {
+        type,
+        ...(command === undefined ? {} : { command }),
+        ...(name === undefined ? {} : { name }),
+        ...(path === undefined ? {} : { path }),
+        ...(query === undefined ? {} : { query }),
+      },
+    ];
+  });
+  return projected.length === 0 ? undefined : projected;
 }
 
 /**
@@ -3470,6 +3504,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               startedAt,
               completedAt,
             };
+            const commandActions = codexCommandActions(item.commandActions);
             const turnItem: OrchestrationV2TurnItem = {
               id: turnItemId,
               threadId: context.projectionThreadId,
@@ -3493,6 +3528,8 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               ...(item.exitCode === null || item.exitCode === undefined
                 ? {}
                 : { exitCode: item.exitCode }),
+              ...(commandActions === undefined ? {} : { commandActions }),
+              ...(item.status === "declined" ? { declined: true } : {}),
             };
             return { node, turnItem };
           });
@@ -3564,6 +3601,7 @@ export function makeCodexAdapterV2(adapterOptions: CodexAdapterV2Options): Provi
               updatedAt,
               type: "file_change",
               ...changes,
+              ...(item.status === "declined" ? { declined: true } : {}),
             };
             return { node, turnItem };
           });

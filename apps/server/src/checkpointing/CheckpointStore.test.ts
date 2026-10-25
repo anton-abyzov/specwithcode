@@ -15,6 +15,7 @@ import { describe, expect } from "vite-plus/test";
 import { checkpointRefForThreadTurn } from "./Utils.ts";
 import { parseTurnDiffFilesFromNumstat } from "./Diffs.ts";
 import * as CheckpointStore from "./CheckpointStore.ts";
+import type { VcsCheckpointOps } from "../vcs/VcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 import * as VcsProcess from "../vcs/VcsProcess.ts";
 import * as ServerConfig from "../config.ts";
@@ -439,6 +440,96 @@ it.layer(layerTest)("CheckpointStore.layer", (it) => {
         expect(parseTurnDiffFilesFromNumstat(numstat)).toEqual([
           { path: "README.md", additions: 1, deletions: 1 },
         ]);
+      }),
+    );
+  });
+
+  describe("reports", () => {
+    it.effect("says when the diff output limit cut a patch", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        yield* initRepoWithCommit(tmp);
+        const checkpointStore = yield* CheckpointStore.CheckpointStore;
+        const threadId = ThreadId.make("checkpoint-store-diff-report");
+        const fromCheckpointRef = checkpointRefForThreadTurn(threadId, 0);
+        const toCheckpointRef = checkpointRefForThreadTurn(threadId, 1);
+        yield* checkpointStore.captureCheckpoint({ cwd: tmp, checkpointRef: fromCheckpointRef });
+        yield* writeTextFile(NodePath.join(tmp, "small.txt"), "small\n");
+        // About 11 MB of patch text, over the 10 MB limit.
+        yield* writeTextFile(
+          NodePath.join(tmp, "zz-large.txt"),
+          `${"x".repeat(100)}\n`.repeat(110_000),
+        );
+        yield* checkpointStore.captureCheckpoint({ cwd: tmp, checkpointRef: toCheckpointRef });
+        const input = { cwd: tmp, fromCheckpointRef, ignoreWhitespace: false };
+
+        const cut = yield* checkpointStore.diffCheckpointsReport!({ ...input, toCheckpointRef });
+        expect(cut.truncated).toBe(true);
+        expect(cut.diff).toContain("diff --git a/small.txt b/small.txt");
+        expect(cut.diff.length).toBeLessThanOrEqual(10_000_000);
+
+        const whole = yield* checkpointStore.diffCheckpointsReport!({
+          ...input,
+          toCheckpointRef: fromCheckpointRef,
+        });
+        expect(whole).toEqual({ diff: "", truncated: false });
+      }),
+    );
+
+    it.effect("reports the root, branch and HEAD a capture was taken at", () =>
+      Effect.gen(function* () {
+        const tmp = yield* makeTmpDir();
+        yield* initRepoWithCommit(tmp);
+        const checkpointStore = yield* CheckpointStore.CheckpointStore;
+        const checkpointRef = checkpointRefForThreadTurn(
+          ThreadId.make("checkpoint-store-capture-report"),
+          1,
+        );
+
+        const report = yield* checkpointStore.captureCheckpointReport!({ cwd: tmp, checkpointRef });
+
+        const headOid = yield* git(tmp, ["rev-parse", "HEAD"]);
+        expect(report).toEqual({
+          repoRoot: tmp,
+          branch: yield* git(tmp, ["symbolic-ref", "--short", "HEAD"]),
+          headOid,
+        });
+        expect(yield* git(tmp, ["log", "-1", "--format=%B", checkpointRef])).toContain(
+          `head=${headOid}`,
+        );
+      }),
+    );
+
+    it.effect("reports nothing it cannot know when the driver has no reports", () =>
+      Effect.gen(function* () {
+        const checkpoints: VcsCheckpointOps = {
+          captureCheckpoint: () => Effect.void,
+          hasCheckpointRef: () => Effect.succeed(true),
+          restoreCheckpoint: () => Effect.succeed(true),
+          diffCheckpoints: () => Effect.succeed("patch"),
+          deleteCheckpointRefs: () => Effect.void,
+        };
+        const handle = { kind: "git", repository: null, driver: { checkpoints } };
+        const checkpointStore = yield* CheckpointStore.make.pipe(
+          Effect.provideService(VcsDriverRegistry.VcsDriverRegistry, {
+            get: () => Effect.die("unused"),
+            detect: () => Effect.succeed(handle),
+            resolve: () => Effect.succeed(handle),
+          } as never),
+        );
+        const checkpointRef = checkpointRefForThreadTurn(ThreadId.make("no-reports"), 1);
+
+        expect(
+          yield* checkpointStore.captureCheckpointReport!({ cwd: "/repo", checkpointRef }),
+        ).toEqual({ repoRoot: null, branch: undefined, headOid: null });
+        expect(
+          yield* checkpointStore.diffCheckpointsReport!({
+            cwd: "/repo",
+            fromCheckpointRef: checkpointRef,
+            toCheckpointRef: checkpointRef,
+            ignoreWhitespace: false,
+          }),
+        ).toEqual({ diff: "patch", truncated: false });
       }),
     );
   });

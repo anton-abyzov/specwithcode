@@ -2,6 +2,7 @@ import type {
   CheckpointId,
   CheckpointRef,
   CheckpointScopeId,
+  EnvironmentId,
   MessageId,
   OrchestrationV2ThreadProjection,
   RunId,
@@ -23,6 +24,17 @@ export interface ThreadCheckpointSummary {
   }>;
   readonly assistantMessageId: MessageId | null;
   readonly completedAt: string;
+  // Provenance stamped at capture; older checkpoints carry none of these.
+  /** The folder the snapshot staged. */
+  readonly cwd?: string;
+  /** The repository root of `cwd`; patch paths are relative to it. */
+  readonly repoRoot?: string;
+  /** The checked-out branch, or null when HEAD was detached. */
+  readonly branch?: string | null;
+  readonly headOid?: string;
+  /** The machine whose server took the snapshot. */
+  readonly capturedOnEnvironmentId?: EnvironmentId;
+  readonly notGitRepository?: boolean;
 }
 
 /** Derives the checkpoint/diff rows needed by review UIs from native V2 entities. */
@@ -46,6 +58,16 @@ export function deriveThreadCheckpointSummaries(
         files: checkpoint.files,
         assistantMessageId,
         completedAt: DateTime.formatIso(checkpoint.capturedAt),
+        ...(checkpoint.cwd === undefined ? {} : { cwd: checkpoint.cwd }),
+        ...(checkpoint.repoRoot === undefined ? {} : { repoRoot: checkpoint.repoRoot }),
+        ...(checkpoint.branch === undefined ? {} : { branch: checkpoint.branch }),
+        ...(checkpoint.headOid === undefined ? {} : { headOid: checkpoint.headOid }),
+        ...(checkpoint.capturedOnEnvironmentId === undefined
+          ? {}
+          : { capturedOnEnvironmentId: checkpoint.capturedOnEnvironmentId }),
+        ...(checkpoint.notGitRepository === undefined
+          ? {}
+          : { notGitRepository: checkpoint.notGitRepository }),
       },
     ];
   });
