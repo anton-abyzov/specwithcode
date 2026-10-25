@@ -21,6 +21,7 @@ import {
   isApiCreditExhaustedMessage,
   fallbackSelectionKey,
   isClaudeApiKeyProvider,
+  isApiCreditProvider,
   isDirectClaudeApiKeyProvider,
   isPerTokenProvider,
   limitRestartRequest,
@@ -86,6 +87,7 @@ import { UnopenableHolds, UsageLimitHolds } from "./UnopenableHolds.ts";
 import { contextOverflowStop } from "./contextOverflowFallback.ts";
 import { contextRecoveryStep, isContextOverflowFailure } from "./ContextOverflowRecoveryWorker.ts";
 import { latestRootProviderFailure } from "@specweave-studio/shared/orchestrationV2ThreadError";
+import { isClaudePlanLimitStop } from "../provider/claudeLimitReset.ts";
 import {
   type FallbackThread,
   latestOpenFailure,
@@ -305,15 +307,24 @@ export function usageHoldEvidence(
  * cannot identify the account used by a historical run, so neither matching
  * icons nor homes justify holding a sibling. It may fail once before its own
  * hold is learned. Folds the threads seen now into `held` and drops expired holds.
+ *
+ * `planLimitOutlived` names threads whose stop was their instance's Claude
+ * plan limit while that instance now bills API credits (a Console sign-in
+ * reports no usage, so it would otherwise read like Copilot). Such a stop
+ * holds nothing, and releases a hold an earlier sweep took for it.
  */
 export function unreportedLimitStops(
   held: ReadonlyMap<string, number>,
   threads: ReadonlyArray<FallbackThread>,
   providers: ReadonlyArray<ServerProvider>,
   nowMs: number,
+  planLimitOutlived: ReadonlySet<string> = new Set(),
 ): ReadonlyMap<string, number> {
   const next = new Map(held);
+  for (const thread of threads)
+    if (planLimitOutlived.has(thread.id)) next.delete(thread.providerInstanceId);
   for (const thread of threads) {
+    if (planLimitOutlived.has(thread.id)) continue;
     if (!stoppedOnLimit(thread) || !limitStopIsCurrent(thread, nowMs)) continue;
     const provider = providers.find((entry) => entry.instanceId === thread.providerInstanceId);
     if (provider === undefined || !reportsNoUsage(provider)) continue;
@@ -326,6 +337,9 @@ export function unreportedLimitStops(
   for (const [instanceId, until] of next) if (until <= nowMs) next.delete(instanceId);
   return next;
 }
+
+/** The message id prefix of a `resume-api` continuation (`sameProviderContinuation` "billing"). */
+const PLAN_LIMIT_RESUME_PREFIX = "limit-billing:";
 
 /**
  * Drops the hold of an instance on which a run started and finished cleanly
@@ -368,11 +382,13 @@ export function releaseRecoveredHolds(
 
 /**
  * Continue the stopped run on the provider it stopped on, or, for `api`, on
- * the model selection the caller sets.
+ * the model selection the caller sets. `billing` is the same instance after
+ * its login moved to API credits; it never reads as an API-credit move, so
+ * no way back to the subscription follows it.
  */
 function sameProviderContinuation(
   thread: FallbackThread & { latestRunId: string },
-  kind: "reset" | "credits" | "api",
+  kind: "reset" | "credits" | "api" | "billing",
   intent?: ManualCodexCreditIntent,
 ): Extract<OrchestrationV2ServerCommand, { type: "message.dispatch" }> {
   const identity = `limit-${kind}:${thread.id}:${thread.latestRunId}`;
@@ -418,6 +434,12 @@ const POSITIVE_BALANCE = /^\d{1,24}(?:\.\d{1,24})?$/;
  *    there, since a key has no usage read.
  * 4. `switch`: the existing fallback, under the `switch` rule.
  *
+ * Before all of them, under any rule but `ask`, `resume-api`: the run stopped on a
+ * Claude plan limit (`planLimitOutlived`) and its own instance now bills API
+ * credits, since its CLI was signed in to the Claude Console after the stop.
+ * The limit no longer binds that instance, so the run continues there on the
+ * same model at once, with no switch, handoff or wait for the reset.
+ *
  * Nothing happens under `wait`, nor while the stop resets within the
  * project's wait (`providerLimitWaitUnderMinutes`): the thread waits for the
  * reset and the recovery worker resumes it. `resetAttempted` skips step 1 once this run
@@ -444,6 +466,8 @@ export function providerLimitStep(
     readonly failedTargets?: ReadonlySet<string> | undefined;
     /** The thread's latest run failed to open its provider (see `unopenableStop`). */
     readonly unopenable?: UnopenableStop | null | undefined;
+    /** The latest run stopped on its own instance's Claude plan limit. */
+    readonly planLimitOutlived?: boolean;
   },
 ):
   | {
@@ -458,6 +482,7 @@ export function providerLimitStep(
       readonly rotate: boolean;
       readonly command: OrchestrationV2ServerCommand;
     }
+  | { readonly type: "resume-api"; readonly command: OrchestrationV2ServerCommand }
   | { readonly type: "switch"; readonly command: OrchestrationV2ServerCommand }
   | null {
   if (options.unopenable != null && thread.latestRunId === options.unopenable.runId) {
@@ -470,9 +495,27 @@ export function providerLimitStep(
     });
     return command === null ? null : { type: "switch", command };
   }
+  const current = providers.find((provider) => provider.instanceId === thread.providerInstanceId);
+  if (
+    options.planLimitOutlived === true &&
+    // `ask` leaves the next step to the person, as it does for a switch.
+    rule.providerLimitAction !== "ask" &&
+    stoppedOnLimit(thread) &&
+    !simulatedStop(thread) &&
+    limitStopIsCurrent(thread, nowMs) &&
+    isApiCreditProvider(current) &&
+    current !== undefined &&
+    canTakeTurn(current) &&
+    !options.limited?.has(current.instanceId) &&
+    !recoverySnoozeBlocks(
+      { snoozedUntil: thread.snoozedUntil ?? null, limitRecovery: thread.limitRecovery ?? null },
+      nowMs,
+      rule.snoozeLimitedThreads === true,
+    )
+  )
+    return { type: "resume-api", command: sameProviderContinuation(thread, "billing") };
   if (rule.providerLimitAction === "wait" || !stoppedOnLimit(thread)) return null;
   if (waitsForReset(thread, rule, nowMs)) return null;
-  const current = providers.find((provider) => provider.instanceId === thread.providerInstanceId);
   const limits = current?.usageLimits;
   const simulated = options.simulated === true || simulatedStop(thread);
   if (
@@ -773,6 +816,42 @@ export const makeSweep = Effect.gen(function* () {
     );
   // Runs are read once per thread, latest run and instance; the rest repeats each sweep.
   const origins = yield* Ref.make(new Map<string, ApiCreditOrigin | null>());
+  // Whether a stop was its own instance's Claude plan limit, read once per stopped run.
+  const planStops = yield* Ref.make(new Map<string, boolean>());
+  const planLimitOutlived = (thread: FallbackThread, providers: ReadonlyArray<ServerProvider>) =>
+    Effect.gen(function* () {
+      if (!stoppedOnLimit(thread)) return false;
+      const current = providers.find((entry) => entry.instanceId === thread.providerInstanceId);
+      // Only an instance billed to API credits is past a plan limit.
+      if (!isApiCreditProvider(current)) return false;
+      const key = `${thread.id}:${thread.latestRunId}:${thread.providerInstanceId}`;
+      const known = (yield* Ref.get(planStops)).get(key);
+      if (known !== undefined) return known;
+      const read = yield* projections
+        .getThreadRecords(thread.id, ["runs", "turnItems"], {
+          turnItemRunIds: [thread.latestRunId],
+          turnItemTypes: ["error", "assistant_message"],
+        })
+        .pipe(
+          Effect.map(({ runs, turnItems }) => {
+            const stopped = runs.find((run) => run.id === thread.latestRunId);
+            // The stop must be this instance's own, not one a move carried
+            // here, and not the stop of a resume this step already sent: one
+            // try per stop, so a stale billing read cannot loop.
+            if (
+              stopped?.providerInstanceId !== thread.providerInstanceId ||
+              String(stopped.userMessageId).startsWith(PLAN_LIMIT_RESUME_PREFIX)
+            )
+              return false;
+            return isClaudePlanLimitStop(turnItems);
+          }),
+          Effect.option,
+        );
+      // A failed read is tried again on the next sweep, not remembered.
+      if (Option.isNone(read)) return false;
+      yield* Ref.update(planStops, (current) => new Map(current).set(key, read.value));
+      return read.value;
+    });
   const returnTries = yield* Ref.make(
     new Map<
       string,
@@ -1306,6 +1385,9 @@ export const makeSweep = Effect.gen(function* () {
       maxAgeMs: wake ? 0 : SWEEP_SHELL_SNAPSHOT_MAX_AGE_MS,
     });
     requestDetails.retain(snapshot.threads.map((thread) => thread.id));
+    const outlived = new Set<string>();
+    for (const thread of snapshot.threads)
+      if (yield* planLimitOutlived(thread, providers)) outlived.add(thread.id);
     const previousHolds = yield* Ref.get(unreportedStops);
     const holdThreads: FallbackThread[] = [];
     const retainedHoldRuns = new Set<string>();
@@ -1337,8 +1419,11 @@ export const makeSweep = Effect.gen(function* () {
       if (evidence !== null) holdThreads.push(evidence);
     }
     for (const runId of holdRuns.keys()) if (!retainedHoldRuns.has(runId)) holdRuns.delete(runId);
+    const outlivedHolds = new Set<string>();
+    for (const thread of holdThreads)
+      if (yield* planLimitOutlived(thread, providers)) outlivedHolds.add(thread.id);
     const { held, since: heldSince } = releaseRecoveredHolds(
-      unreportedLimitStops(previousHolds, holdThreads, providers, now),
+      unreportedLimitStops(previousHolds, holdThreads, providers, now, outlivedHolds),
       yield* Ref.get(unreportedStopsSince),
       holdThreads,
       now,
@@ -1439,6 +1524,7 @@ export const makeSweep = Effect.gen(function* () {
         limited,
         failedTargets: (yield* Ref.get(failedTargets)).get(stopKey),
         unopenable: failedOpen,
+        planLimitOutlived: outlived.has(thread.id),
       };
       const stepFor = (current: FallbackThread) =>
         providerLimitStep(current, providersFor(current), resolved, now, options);

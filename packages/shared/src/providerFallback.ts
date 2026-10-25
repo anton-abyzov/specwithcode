@@ -477,11 +477,13 @@ export function resolveApiCreditSelection(input: {
 }
 
 /**
- * The model to continue on instead of `currentInstanceId`: the same model on
- * another provider with room (`resolveSameModelElsewhere`), else the
- * project's fallback, else its default model (so a thread already on the
- * fallback can go back), else, with `anyReady`, the cheapest other provider
- * that can take a turn. A candidate at or past `belowPercent` is skipped so
+ * The model to continue on instead of `currentInstanceId`: the user's
+ * fallback order, else the project's default model (so a thread already on a
+ * fallback goes back), else the same model on another provider with room
+ * (`resolveSameModelElsewhere`), else, with `anyReady`, the cheapest other
+ * provider that can take a turn. A legacy single fallback keeps its old
+ * place: the same model elsewhere, then that fallback, then the default. A
+ * default billed per token comes only after verified room. A candidate at or past `belowPercent` is skipped so
  * two full providers never trade a thread back and forth. A provider that
  * reports no usage (GitHub Copilot) counts as having room unless
  * `limitedInstanceIds` names it, and comes after providers with verified
@@ -492,7 +494,7 @@ export function resolveApiCreditSelection(input: {
  * transcript is copied across instead of summarised), then any instance of
  * the same driver, then the one with the most verified headroom left, then list order. It never picks an instance billed per token
  * (`isPerTokenProvider`), since its turns cost money: one is used only when
- * the rule or the project's default model names it, or through
+ * the project's default model names it, or through
  * `resolveApiCreditSelection` when the rule allows API credits.
  */
 /** The user's fallback order: the list, else the legacy single model, else nothing. */
@@ -683,9 +685,6 @@ function resolveProviderFallbackPass(input: {
     const used = providerUsedPercent(provider, input.nowMs, model);
     return used !== null && (input.belowPercent == null || used < input.belowPercent);
   };
-  // A fallback order the user set comes first: it is the strongest statement
-  // of intent. Without one, the legacy single model keeps its old place.
-  const explicitOrder = (input.rule.providerLimitFallbackModels?.length ?? 0) > 0;
   const firstAvailable = () =>
     describeFallbackOrder({
       providers: input.providers,
@@ -717,34 +716,77 @@ function resolveProviderFallbackPass(input: {
     const back = home(true);
     if (back !== null) return back;
   }
+  // A fallback order the user set comes first: it is the strongest statement
+  // of intent. The legacy single model keeps its old place, after the same
+  // model elsewhere and ahead of the project default.
+  const explicitOrder = (input.rule.providerLimitFallbackModels?.length ?? 0) > 0;
+  const legacyOnly = !explicitOrder && fallbackModelOrder(input.rule).length > 0;
   if (explicitOrder) {
     const ordered = firstAvailable();
     if (ordered !== undefined) return ordered;
   }
-  if (input.currentModel !== undefined) {
-    const same = resolveSameModelElsewhere({
-      providers: input.providers,
-      current: {
-        instanceId: input.currentInstanceId,
-        model: input.currentModel,
-        ...(input.currentOptions === undefined ? {} : { options: input.currentOptions }),
-      },
-      order: input.rule.defaultModelProviders,
-      nowMs: input.nowMs,
-      belowPercent: input.belowPercent,
-      limitedInstanceIds: input.limitedInstanceIds,
-      excludedSelections: input.excludedSelections,
-      contextFit: input.contextFit,
-      verifiedOnly,
-    });
-    if (same !== null) return same;
+  const same =
+    input.currentModel === undefined
+      ? null
+      : resolveSameModelElsewhere({
+          providers: input.providers,
+          current: {
+            instanceId: input.currentInstanceId,
+            model: input.currentModel,
+            ...(input.currentOptions === undefined ? {} : { options: input.currentOptions }),
+          },
+          order: input.rule.defaultModelProviders,
+          nowMs: input.nowMs,
+          belowPercent: input.belowPercent,
+          limitedInstanceIds: input.limitedInstanceIds,
+          excludedSelections: input.excludedSelections,
+          contextFit: input.contextFit,
+          verifiedOnly,
+        });
+  const sameTarget =
+    same === null
+      ? undefined
+      : input.providers.find((entry) => entry.instanceId === same.instanceId);
+  // The same model on an account whose usage read shows room keeps the
+  // transcript and the model, so it goes first.
+  if (same !== null && sameTarget !== undefined && !reportsNoUsage(sameTarget)) return same;
+  // The way home: a thread on a fallback whose own fallback stopped goes back
+  // to the project's default model when that has room, before trying the
+  // same model on a provider without a usage read (a second Copilot account
+  // that may share the first one's quota).
+  if (!legacyOnly) {
+    const back = home();
+    if (back !== null) return back;
   }
-  if (!explicitOrder) {
+  // A default billed per token (a Claude CLI signed in to the Console) counts
+  // too: the user named that instance, so its spend is theirs to choose. It
+  // never shows a usage read, so free room the reads verify still comes
+  // first; it only outranks a provider that reports no usage either. Gemini
+  // and Vertex stay out here too.
+  const homeSelection = input.rule.defaultModelSelection;
+  const homeProvider =
+    homeSelection === null
+      ? undefined
+      : input.providers.find((entry) => entry.instanceId === homeSelection.instanceId);
+  const perTokenHome =
+    homeSelection !== null &&
+    homeProvider !== undefined &&
+    isPerTokenProvider(homeProvider) &&
+    !isGeminiSpendProvider(homeProvider) &&
+    homeSelection.instanceId !== input.currentInstanceId &&
+    !input.limitedInstanceIds?.has(homeSelection.instanceId) &&
+    !excluded(homeSelection.instanceId, homeSelection.model) &&
+    homeProvider.models.some((model) => model.slug === homeSelection.model && !model.isCustom) &&
+    canTakeTurn(homeProvider)
+      ? homeSelection
+      : null;
+  if (same !== null && perTokenHome === null) return same;
+  if (legacyOnly) {
     const legacy = firstAvailable();
     if (legacy !== undefined) return legacy;
+    const back = home();
+    if (back !== null) return back;
   }
-  const back = home();
-  if (back !== null) return back;
   const proven = input.proven ?? null;
   if (
     proven !== null &&
@@ -760,6 +802,7 @@ function resolveProviderFallbackPass(input: {
       canTakeTurn(provider) &&
       !isPaidModelOn(provider, proven.model) &&
       !isUnknownBillingAgent(provider) &&
+      (perTokenHome === null || !reportsNoUsage(provider)) &&
       (used === null || used < (input.belowPercent ?? 100))
     ) {
       // The same model through the same driver takes the thread's options too.
@@ -777,7 +820,7 @@ function resolveProviderFallbackPass(input: {
       };
     }
   }
-  if (!input.anyReady) return null;
+  if (!input.anyReady) return perTokenHome;
   const driver = input.providers.find(
     (provider) => provider.instanceId === input.currentInstanceId,
   )?.driver;
@@ -796,6 +839,7 @@ function resolveProviderFallbackPass(input: {
     .filter(
       (provider) =>
         usable(provider, candidateModel(provider)) &&
+        (perTokenHome === null || !reportsNoUsage(provider)) &&
         !isPaidModelOn(provider, candidateModel(provider)) &&
         !isUnknownBillingAgent(provider) &&
         !excluded(provider.instanceId, candidateModel(provider)),
@@ -814,7 +858,7 @@ function resolveProviderFallbackPass(input: {
           : {}),
       };
   }
-  return null;
+  return perTokenHome;
 }
 
 /**
@@ -1156,6 +1200,13 @@ export function resolveCoordinatorTurnSelection(input: {
    * pulls the coordinator back into the limit.
    */
   readonly savedStoppedAtMs?: number | null;
+  /**
+   * The stop behind `savedStoppedAtMs` was a subscription plan limit (Claude's
+   * "You've hit your session limit"). Once the saved instance bills API
+   * credits instead (its CLI signed in to the Claude Console), that limit no
+   * longer applies and the coordinator goes back to it.
+   */
+  readonly savedStopWasPlanLimit?: boolean;
 }): { readonly selection: ModelSelection; readonly reason: CoordinatorTurnSelectionReason } {
   const threshold = input.rule.providerLimitSwitchAtPercent ?? 100;
   const limited = input.limitedInstanceIds ?? new Set<string>();
@@ -1169,7 +1220,9 @@ export function resolveCoordinatorTurnSelection(input: {
   const savedProvider = input.providers.find(
     (provider) => provider.instanceId === input.saved.instanceId,
   );
-  const stoppedAt = input.savedStoppedAtMs ?? null;
+  const planLimitOutlived =
+    input.savedStopWasPlanLimit === true && isApiCreditProvider(savedProvider);
+  const stoppedAt = planLimitOutlived ? null : (input.savedStoppedAtMs ?? null);
   const readAt = Date.parse(savedProvider?.usageLimits?.checkedAt ?? "");
   const readSinceStop =
     savedProvider !== undefined &&

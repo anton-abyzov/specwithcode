@@ -414,6 +414,9 @@ export function buildCheckedAcpRegistrySnapshot(
           // Discovery sessions and an empty auth-method list do not prove sign-in.
           status: "unknown",
           canLogout: input.probe.probe.sessionManagement.canLogout,
+          // The configured sign-in says how turns are billed: Gemini's
+          // "vertex-ai" bills a Google Cloud project per token.
+          ...(input.settings.authMethodId ? { type: input.settings.authMethodId } : {}),
         }
       : input.probeError?.reason === "authentication_failed"
         ? {

@@ -97,6 +97,46 @@ const nativeDenials = [
   { rateLimitReachedType: "workspace_owner_credits_depleted" },
 ] as const;
 
+describe("API-billed home capacity priority", () => {
+  it("uses verified free capacity before paid home and paid home before unknown capacity", () => {
+    const paid = provider("claude-api", "claudeAgent", null, {
+      auth: { status: "authenticated", apiKeyBilling: true },
+    });
+    const copilot = provider("copilot", "acpRegistry", null);
+    const free = provider("codex", "codex", 10);
+    const home = { instanceId: paid.instanceId, model: "claudeAgent-default" };
+    const input = {
+      currentInstanceId: copilot.instanceId,
+      currentModel: "acpRegistry-default",
+      rule: { providerLimitFallbackModelSelection: null, defaultModelSelection: home },
+      nowMs: now,
+      anyReady: true,
+    };
+    expect(resolveProviderFallback({ ...input, providers: [copilot, paid, free] })).toEqual({
+      instanceId: free.instanceId,
+      model: "codex-default",
+    });
+    const unknown = provider("copilot-2", "acpRegistry", null);
+    expect(resolveProviderFallback({ ...input, providers: [copilot, paid, unknown] })).toEqual(
+      home,
+    );
+    expect(
+      resolveProviderFallback({
+        ...input,
+        providers: [copilot, paid, free],
+        limitedInstanceIds: new Set([free.instanceId]),
+      }),
+    ).toEqual(home);
+    expect(
+      resolveProviderFallback({
+        ...input,
+        providers: [copilot, paid, free],
+        rule: { ...input.rule, defaultModelSelection: null },
+      }),
+    ).toEqual({ instanceId: free.instanceId, model: "codex-default" });
+  });
+});
+
 describe("providerUsedPercent", () => {
   it("takes the fullest window that has not reset", () => {
     const withExpiredWindow = {

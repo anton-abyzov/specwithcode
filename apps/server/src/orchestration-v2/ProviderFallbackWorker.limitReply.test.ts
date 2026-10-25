@@ -320,6 +320,69 @@ describe("a Copilot quota reply in the fallback chain", () => {
     }),
   );
 
+  it.effect("keeps API billing recovery tied to the run after a manual instance selection", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(now);
+      const api: ServerProvider = {
+        ...provider(claudeId, "claudeAgent", now),
+        auth: { status: "authenticated", type: "apiKey", apiKeyBilling: true },
+        usageLimits: undefined,
+      };
+      const selected = { ...api, instanceId: ProviderInstanceId.make("claude-api-selected") };
+      for (const actual of [api, copilot]) {
+        const message =
+          actual.instanceId === api.instanceId
+            ? "You've hit your session limit · resets 5pm (America/New_York)"
+            : COPILOT_QUOTA_REPLY;
+        const original = stopped(
+          workerId,
+          actual.instanceId,
+          "run:manual-api-selection",
+          weeklyReset,
+          message,
+        );
+        const run = {
+          id: original.latestRunId,
+          providerInstanceId: actual.instanceId,
+          modelSelection: original.modelSelection,
+          status: "failed",
+          startedAt: DateTime.makeUnsafe(now - 60_000),
+          completedAt: original.latestRunCompletedAt,
+          userMessageId: "message:original",
+          ordinal: 1,
+        };
+        const { sweep, setThreads, dispatched } = yield* harness([api, selected, copilot], () => ({
+          runs: [run],
+          turnItems: [
+            {
+              type: "error",
+              runId: run.id,
+              failure: { class: "usage_limit", message, code: null, retryable: null },
+            },
+          ],
+          runtimeRequests: [],
+          nodes: [],
+          messages: [],
+          providerThreads: [],
+        }));
+        setThreads([
+          {
+            ...original,
+            providerInstanceId: selected.instanceId,
+            modelSelection: { instanceId: selected.instanceId, model },
+          },
+        ]);
+        yield* sweep();
+        expect([...(yield* usageLimitHeldInstances(now))]).toEqual(
+          actual.instanceId === api.instanceId ? [] : [copilotId],
+        );
+        expect(
+          dispatched.some((command) => String(command.commandId).startsWith("limit-billing:")),
+        ).toBe(false);
+      }
+    }),
+  );
+
   it.effect("goes home past Copilot once the provider it first stopped on has room", () =>
     Effect.gen(function* () {
       yield* TestClock.setTime(now + 60 * 60_000);

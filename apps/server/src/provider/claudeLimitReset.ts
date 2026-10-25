@@ -116,3 +116,40 @@ export function parseClaudeLimitReset(text: string, nowMs: number): string | nul
   }
   return null;
 }
+
+// Anchored: Claude's notice opens its message, while a model writing about
+// limits (this very feature) mentions them mid-text.
+const PLAN_LIMIT =
+  /^\s*(?:(?:you(?:'|\u2019)ve|you have) hit your (?:session|weekly|daily|opus|fable|sonnet|usage)(?: [a-z]+)? limit\b|claude ai usage limit reached\|\d{9,11}\b)/i;
+
+/**
+ * Whether Claude's text is a subscription plan limit notice ("You've hit
+ * your session limit · resets 11:40am", the weekly and model limits, or the
+ * older "Claude AI usage limit reached|<epoch>"), not an API rate limit, an
+ * empty credit balance or prose that merely mentions one. A plan limit binds the claude.ai login only: the same
+ * instance signed in to the Claude Console bills API credits and is past it.
+ */
+export function isClaudePlanLimitText(text: string | null | undefined): boolean {
+  return typeof text === "string" && PLAN_LIMIT.test(text);
+}
+
+/**
+ * Whether a stopped run's own notice is a Claude plan limit: its error, or
+ * its last assistant message, which is where Claude prints the notice.
+ */
+export function isClaudePlanLimitStop(
+  turnItems: ReadonlyArray<{
+    readonly type: string;
+    readonly ordinal?: number;
+    readonly text?: string;
+    readonly failure?: { readonly message?: string | null };
+  }>,
+): boolean {
+  let last: (typeof turnItems)[number] | undefined;
+  for (const item of turnItems) {
+    if (item.type === "error" && isClaudePlanLimitText(item.failure?.message)) return true;
+    if (item.type === "assistant_message" && (!last || (item.ordinal ?? 0) >= (last.ordinal ?? 0)))
+      last = item;
+  }
+  return isClaudePlanLimitText(last?.text);
+}

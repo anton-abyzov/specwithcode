@@ -52,6 +52,7 @@ import {
   ProviderFallbackEnv,
 } from "../orchestration-v2/ProviderFallbackWorker.ts";
 import { heldInstances } from "../orchestration-v2/UnopenableHolds.ts";
+import { isClaudePlanLimitStop } from "../provider/claudeLimitReset.ts";
 
 export interface ProjectCoordinatorRouteInput {
   readonly projectId: ProjectId;
@@ -282,7 +283,9 @@ const make = Effect.gen(function* () {
         // limit, which keeps it off that model until a newer usage read shows
         // room. Any other failure (a network error, an overloaded API, a crashed
         // tool) says nothing about the limit and never counts.
-        const savedStoppedAtMs =
+        // A plan limit (Claude's "You've hit your session limit") is told
+        // apart, since it stops binding once the instance bills API credits.
+        const savedStop =
           shell && shell.modelSelection.instanceId !== saved.instanceId
             ? yield* projections.getThreadRecords(threadId, ["runs"]).pipe(
                 Effect.flatMap(({ runs }) => {
@@ -298,16 +301,18 @@ const make = Effect.gen(function* () {
                   return projections
                     .getThreadRecords(threadId, ["turnItems"], {
                       turnItemRunIds: [last.id],
-                      turnItemTypes: ["error"],
+                      turnItemTypes: ["error", "assistant_message"],
                     })
                     .pipe(
-                      Effect.map(({ turnItems }) =>
-                        turnItems.some(
-                          (item) => item.type === "error" && item.failure.class === "usage_limit",
+                      Effect.map(({ turnItems }) => {
+                        if (
+                          !turnItems.some(
+                            (item) => item.type === "error" && item.failure.class === "usage_limit",
+                          )
                         )
-                          ? stoppedAt
-                          : null,
-                      ),
+                          return null;
+                        return { at: stoppedAt, planLimit: isClaudePlanLimitStop(turnItems) };
+                      }),
                     );
                 }),
                 Effect.orElseSucceed(() => null),
@@ -320,7 +325,8 @@ const make = Effect.gen(function* () {
           rule,
           nowMs,
           limitedInstanceIds: limited,
-          savedStoppedAtMs,
+          savedStoppedAtMs: savedStop?.at ?? null,
+          savedStopWasPlanLimit: savedStop?.planLimit === true,
         });
         if (decision.reason !== "saved")
           yield* Effect.logInfo("project.coordinator.turn-model", {

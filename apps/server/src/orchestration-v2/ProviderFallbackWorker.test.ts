@@ -257,6 +257,21 @@ describe("unreportedLimitStops", () => {
     ).toBeNull();
   });
 
+  it("never holds an API-billed Claude for a plan limit it is past, and releases an old hold", () => {
+    // A Console sign-in reports no usage, so its stop would read like Copilot's.
+    const claudeApi: ServerProvider = {
+      ...provider(claudeId, "claudeAgent", now),
+      auth: { status: "authenticated", type: "apiKey", apiKeyBilling: true },
+      usageLimits: undefined,
+    };
+    const onClaude = { ...stopped, providerInstanceId: claudeId };
+    const plan = new Set([onClaude.id as string]);
+    expect(unreportedLimitStops(new Map(), [onClaude], [claudeApi], now).has(claudeId)).toBe(true);
+    expect(unreportedLimitStops(new Map(), [onClaude], [claudeApi], now, plan).size).toBe(0);
+    const earlier = new Map([[claudeId as string, now + 60 * 60_000]]);
+    expect(unreportedLimitStops(earlier, [onClaude], [claudeApi], now, plan).size).toBe(0);
+  });
+
   it("ignores providers that report usage and stops that are no longer current", () => {
     const onClaude = { ...stopped, providerInstanceId: claudeId };
     expect(unreportedLimitStops(new Map(), [onClaude], [claudeFull], now).size).toBe(0);
@@ -355,6 +370,70 @@ describe("providerLimitStep", () => {
       credits: { hasCredits: true, unlimited: false, balance: "56687.25" },
     },
   };
+
+  it("continues a Claude plan-limit stop on its own instance once that bills API credits", () => {
+    // October 22, 2026: the CLI was signed in to the Claude Console after the stop.
+    const claudeApi: ServerProvider = {
+      ...provider(claudeId, "claudeAgent", now),
+      auth: { status: "authenticated", type: "apiKey", apiKeyBilling: true },
+      usageLimits: undefined,
+    };
+    const planStop = { ...limited, usageLimitResetAt: "2026-10-09T13:00:00.000Z" };
+    const options = { resetAttempted: false, planLimitOutlived: true };
+    for (const action of ["wait", "switch"] as const)
+      expect(
+        providerLimitStep(
+          planStop,
+          [claudeApi, codexFree],
+          { ...rule, providerLimitAction: action },
+          now,
+          options,
+        ),
+      ).toMatchObject({
+        type: "resume-api",
+        command: {
+          type: "message.dispatch",
+          commandId: "limit-billing:t1:r1",
+          manualContinuationOfRunId: "r1",
+          modelSelection: planStop.modelSelection,
+        },
+      });
+    // `ask` leaves the choice to the person.
+    expect(
+      providerLimitStep(
+        planStop,
+        [claudeApi, codexFree],
+        { ...rule, providerLimitAction: "ask" },
+        now,
+        options,
+      ),
+    ).toBeNull();
+    // Not a plan limit, still on the subscription, held, or snoozed: the usual steps.
+    expect(
+      providerLimitStep(planStop, [claudeApi, codexFree], rule, now, {
+        ...options,
+        planLimitOutlived: false,
+      })?.type,
+    ).not.toBe("resume-api");
+    expect(providerLimitStep(planStop, [claudeFull, codexFree], rule, now, options)?.type).not.toBe(
+      "resume-api",
+    );
+    expect(
+      providerLimitStep(planStop, [claudeApi, codexFree], rule, now, {
+        ...options,
+        limited: new Set([claudeId]),
+      })?.type,
+    ).not.toBe("resume-api");
+    expect(
+      providerLimitStep(
+        { ...planStop, snoozedUntil: DateTime.makeUnsafe("2026-10-09T13:00:00.000Z") },
+        [claudeApi, codexFree],
+        rule,
+        now,
+        options,
+      )?.type,
+    ).not.toBe("resume-api");
+  });
 
   it("redeems a banked reset before anything else, once per stopped run", () => {
     const rule2 = { ...rule, providerLimitRedeemResets: true };

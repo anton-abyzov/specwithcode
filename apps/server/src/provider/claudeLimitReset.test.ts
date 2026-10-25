@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { parseClaudeLimitReset } from "./claudeLimitReset.ts";
+import { isClaudePlanLimitText, parseClaudeLimitReset } from "./claudeLimitReset.ts";
 
 // Friday, October 16, 2026, 1:00 PM in New York (EDT, UTC-4).
 const now = Date.parse("2026-10-16T17:00:00.000Z");
@@ -62,5 +62,28 @@ describe("parseClaudeLimitReset", () => {
     "Claude AI usage limit reached|1999999999",
   ])("returns null for %s", (text) => {
     expect(parseClaudeLimitReset(text, now)).toBeNull();
+  });
+});
+
+describe("isClaudePlanLimitText", () => {
+  it.each([
+    "You've hit your session limit · resets 11:40am (America/New_York)",
+    "You've hit your weekly limit · resets Oct 17 at 9am (America/New_York)",
+    "You've hit your Opus limit · resets 5pm",
+    "You\u2019ve hit your weekly limit · resets Oct 24 at 9am",
+    "Claude AI usage limit reached|1760000000",
+  ])("reads %j as a plan limit", (text) => {
+    expect(isClaudePlanLimitText(text)).toBe(true);
+  });
+
+  it.each([
+    "Claude API rate limit reached. Try again later.",
+    "Credit balance too low · Add funds",
+    "Error: You have exceeded your monthly quota",
+    "Earlier the coordinator said You've hit your session limit · resets 11:40am",
+    "",
+    null,
+  ])("does not read %j as a plan limit", (text) => {
+    expect(isClaudePlanLimitText(text)).toBe(false);
   });
 });
