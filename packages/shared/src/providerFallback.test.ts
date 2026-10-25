@@ -1326,6 +1326,29 @@ describe("workers and their coordinator", () => {
     });
   });
 
+  it("keeps verified capacity ahead of an unread same-model account with worker effort", () => {
+    const high = [{ id: "effort", value: "high" }];
+    const unread = provider("claudeAgent-2", "claudeAgent", null);
+    expect(
+      launch({
+        preferred: { ...claudeSelection, options: high },
+        coordinator: null,
+        providers: [spentClaude, unread, codex],
+      }),
+    ).toEqual({
+      selection: { instanceId: codex.instanceId, model: "codex-default" },
+      reason: "fallback",
+    });
+    expect(
+      launch({
+        preferred: { ...claudeSelection, options: high },
+        coordinator: null,
+        providers: [spentClaude, unread],
+        limitedInstanceIds: new Set([unread.instanceId]),
+      }),
+    ).toEqual({ selection: { ...claudeSelection, options: high }, reason: "no-room" });
+  });
+
   it("offers the coordinator's model to a stopped worker without a usage read", () => {
     const pick = (proven: typeof copilotSelection | null, limited?: ReadonlySet<string>) =>
       resolveProviderFallback({
@@ -1454,8 +1477,21 @@ describe("the recommended model from another provider", () => {
     providerLimitSwitchAtPercent: 95,
   };
 
-  it("starts a worker on the same model from another provider before anything else", () => {
+  it("starts a worker on the same model from another provider with verified room first", () => {
     const codexSelection = { instanceId: codexRoomy.instanceId, model: "codex-default" };
+    expect(
+      resolveWorkerLaunchSelection({
+        preferred: opus,
+        coordinator: codexSelection,
+        providers: [spentClaude, codexRoomy, copilot, otherClaude],
+        rule: switchRule,
+        nowMs: now,
+      }),
+    ).toEqual({
+      selection: { ...opus, instanceId: otherClaude.instanceId },
+      reason: "same-model",
+    });
+    // Copilot reports no usage, so a provider with verified room wins over it.
     expect(
       resolveWorkerLaunchSelection({
         preferred: opus,
@@ -1464,9 +1500,19 @@ describe("the recommended model from another provider", () => {
         rule: switchRule,
         nowMs: now,
       }),
+    ).toEqual({ selection: codexSelection, reason: "coordinator" });
+    // With nothing verified, the same model on Copilot is still tried.
+    expect(
+      resolveWorkerLaunchSelection({
+        preferred: opus,
+        coordinator: null,
+        providers: [spentClaude, copilot],
+        rule: switchRule,
+        nowMs: now,
+      }),
     ).toEqual({
       selection: { instanceId: copilot.instanceId, model: "claude-opus-5.5" },
-      reason: "same-model",
+      reason: "fallback",
     });
     // A stop there marks it limited: then the coordinator's model.
     expect(
@@ -1503,9 +1549,21 @@ describe("the recommended model from another provider", () => {
   });
 
   it("moves a coordinator stopped on its spent subscription to the same model elsewhere", () => {
+    // Codex has verified room: it beats Opus on Copilot, which reports no usage.
     expect(
       resolveProviderFallback({
         providers: [spentClaude, codexRoomy, copilot],
+        currentInstanceId: spentClaude.instanceId,
+        currentModel: opus.model,
+        rule: switchRule,
+        nowMs: now,
+        belowPercent: 95,
+        anyReady: true,
+      }),
+    ).toEqual({ instanceId: codexRoomy.instanceId, model: "codex-default" });
+    expect(
+      resolveProviderFallback({
+        providers: [spentClaude, provider("codex", "codex", 99), copilot],
         currentInstanceId: spentClaude.instanceId,
         currentModel: opus.model,
         rule: switchRule,
@@ -1678,6 +1736,18 @@ describe("the user's fallback order", () => {
   });
 
   it("keeps the legacy single fallback after the same model elsewhere", () => {
+    const otherOpus = { ...provider("claude-2", "claudeAgent", 20), models: opus.models };
+    expect(
+      resolveProviderFallback({
+        providers: [opus, codexModels(20, 30), otherOpus],
+        currentInstanceId: opus.instanceId,
+        currentModel: "claude-opus-5-5",
+        rule: { ...rule, providerLimitFallbackModelSelection: astra },
+        nowMs: now,
+        belowPercent: 95,
+      }),
+    ).toEqual({ instanceId: otherOpus.instanceId, model: "claude-opus-5-5" });
+    // The same model on Copilot reports no usage: the verified legacy fallback wins.
     expect(
       resolveProviderFallback({
         providers: [opus, codexModels(20, 30), copilot],
@@ -1687,7 +1757,82 @@ describe("the user's fallback order", () => {
         nowMs: now,
         belowPercent: 95,
       }),
-    ).toEqual({ instanceId: copilot.instanceId, model: "claude-opus-5.5" });
+    ).toEqual(astra);
+  });
+});
+
+describe("a quota-limited coordinator (October 22, 2026 incident)", () => {
+  const sol = (id: string, driver: string, used: number | null) => {
+    const base = provider(id, driver, used);
+    return {
+      ...base,
+      models: [
+        ...base.models,
+        { slug: "gpt-6.1-sol", name: "GPT-6.1 Sol", isCustom: false, capabilities: null },
+      ],
+    } satisfies ServerProvider;
+  };
+  const fullCodex = sol("codex", "codex", 98);
+  // Both Copilot instances report no usage; the project lists them first.
+  const copilot = sol("acpRegistry_copilot", "acpRegistry", null);
+  const copilotSibling = sol("copilot-0889", "acpRegistry", null);
+  const claudeCode = {
+    ...provider("claudeAgent", "claudeAgent", 9),
+    models: [{ slug: "claude-opus-5-5", name: "Opus 5.5", isCustom: false, capabilities: null }],
+  } satisfies ServerProvider;
+  const projectRule = {
+    ...rule,
+    providerLimitAction: "switch" as const,
+    // Codex at 98% of its weekly window reads as full.
+    providerLimitSwitchAtPercent: 95,
+    providerLimitFallbackModels: [],
+    defaultModelProviders: [copilot.instanceId, copilotSibling.instanceId],
+  };
+  const saved = { instanceId: fullCodex.instanceId, model: "gpt-6.1-sol" };
+  const providers = [fullCodex, copilot, copilotSibling, claudeCode];
+  const turn = (limited?: ReadonlySet<string>, thread = saved) =>
+    resolveCoordinatorTurnSelection({
+      saved,
+      thread,
+      providers,
+      rule: projectRule as never,
+      nowMs: now,
+      ...(limited === undefined ? {} : { limitedInstanceIds: limited }),
+    });
+
+  it("moves to the provider with a fresh usage read, not Copilot's same model", () => {
+    expect(turn()).toEqual({
+      selection: { instanceId: claudeCode.instanceId, model: "claude-opus-5-5" },
+      reason: "fallback",
+    });
+  });
+
+  it("never picks a held Copilot sibling, and leaves a held Copilot it landed on", () => {
+    const held = new Set<string>([copilot.instanceId]);
+    expect(turn(held).selection.instanceId).toBe(claudeCode.instanceId);
+    expect(turn(held, { instanceId: copilot.instanceId, model: "gpt-6.1-sol" })).toEqual({
+      selection: { instanceId: claudeCode.instanceId, model: "claude-opus-5-5" },
+      reason: "fallback",
+    });
+  });
+
+  it("still tries Copilot when nothing has verified room", () => {
+    const spentClaude = {
+      ...claudeCode,
+      ...provider("claudeAgent", "claudeAgent", 100),
+      models: claudeCode.models,
+    };
+    expect(
+      resolveProviderFallback({
+        providers: [fullCodex, copilot, spentClaude],
+        currentInstanceId: fullCodex.instanceId,
+        currentModel: "gpt-6.1-sol",
+        rule: projectRule,
+        nowMs: now,
+        belowPercent: 100,
+        anyReady: true,
+      }),
+    ).toEqual({ instanceId: copilot.instanceId, model: "gpt-6.1-sol" });
   });
 });
 

@@ -277,6 +277,25 @@ function stoppedOnLimit(
   );
 }
 
+/** Capacity belongs to the run's account, even after the thread selection changes. */
+export function usageHoldEvidence(
+  thread: FallbackThread,
+  run: Pick<
+    OrchestrationV2Run,
+    "id" | "providerInstanceId" | "modelSelection" | "status" | "startedAt" | "completedAt"
+  >,
+): FallbackThread | null {
+  if (run.id !== thread.latestRunId) return null;
+  return {
+    ...thread,
+    providerInstanceId: run.providerInstanceId,
+    modelSelection: { ...run.modelSelection, instanceId: run.providerInstanceId },
+    status: run.status,
+    latestRunStartedAt: run.startedAt,
+    latestRunCompletedAt: run.completedAt,
+  };
+}
+
 /**
  * Providers that report no usage (GitHub Copilot) but have a thread stopped
  * on their limit, each held until that stop's reset, or for as long as an
@@ -306,6 +325,45 @@ export function unreportedLimitStops(
   }
   for (const [instanceId, until] of next) if (until <= nowMs) next.delete(instanceId);
   return next;
+}
+
+/**
+ * Drops the hold of an instance on which a run started and finished cleanly
+ * after the stop that set it: the provider took work again (a raised budget, an
+ * earlier reset than the notice named), so a hold that can last until the
+ * 1st of next month no longer describes it. `since` maps each held instance
+ * to its latest limit stop; both maps come back pruned to the holds kept.
+ */
+export function releaseRecoveredHolds(
+  held: ReadonlyMap<string, number>,
+  since: ReadonlyMap<string, number>,
+  threads: ReadonlyArray<FallbackThread>,
+  nowMs: number,
+): { readonly held: ReadonlyMap<string, number>; readonly since: ReadonlyMap<string, number> } {
+  const nextSince = new Map<string, number>();
+  for (const instanceId of held.keys()) {
+    let stop = since.get(instanceId) ?? Number.NEGATIVE_INFINITY;
+    for (const thread of threads) {
+      if (thread.providerInstanceId !== instanceId) continue;
+      if (thread.status !== "failed" || thread.lastErrorClass !== "usage_limit") continue;
+      const stoppedMs = epochMs(thread.latestRunCompletedAt);
+      if (Number.isFinite(stoppedMs)) stop = Math.max(stop, stoppedMs);
+    }
+    // A hold learned without a stop time counts from now: only later work clears it.
+    nextSince.set(instanceId, Number.isFinite(stop) ? stop : nowMs);
+  }
+  const nextHeld = new Map(held);
+  for (const thread of threads) {
+    if (thread.status !== "completed") continue;
+    const stop = nextSince.get(thread.providerInstanceId);
+    // A turn already running at the stop can end "completed" on the same
+    // notice after doing work; only one started after the stop shows room.
+    const startedMs = epochMs(thread.latestRunStartedAt);
+    if (stop === undefined || !Number.isFinite(startedMs) || startedMs <= stop) continue;
+    nextHeld.delete(thread.providerInstanceId);
+    nextSince.delete(thread.providerInstanceId);
+  }
+  return { held: nextHeld, since: nextSince };
 }
 
 /**
@@ -959,6 +1017,8 @@ export const makeSweep = Effect.gen(function* () {
   // lifetime, so a stop nothing can take costs one read, not one per sweep.
   const targetReads = yield* Ref.make(new Map<ProviderInstanceId, number>());
   const unreportedStops = yield* Ref.make<ReadonlyMap<string, number>>(new Map());
+  /** When each of those holds' latest limit stop happened (see `releaseRecoveredHolds`). */
+  const unreportedStopsSince = yield* Ref.make<ReadonlyMap<string, number>>(new Map());
   const refreshStaleTargets = Effect.fn("ProviderFallbackWorker.refreshStaleTargets")(function* (
     thread: FallbackThread,
     candidates: ReadonlyArray<ServerProvider>,
@@ -1222,6 +1282,7 @@ export const makeSweep = Effect.gen(function* () {
       }),
     );
   });
+  const holdRuns = new Map<string, OrchestrationV2Run>();
   const sweep = Effect.fn("ProviderFallbackWorker.sweep")(function* () {
     const now = DateTime.toEpochMillis(yield* DateTime.now);
     const wake = yield* Ref.getAndSet(woken, false);
@@ -1245,13 +1306,45 @@ export const makeSweep = Effect.gen(function* () {
       maxAgeMs: wake ? 0 : SWEEP_SHELL_SNAPSHOT_MAX_AGE_MS,
     });
     requestDetails.retain(snapshot.threads.map((thread) => thread.id));
-    const held = unreportedLimitStops(
-      yield* Ref.get(unreportedStops),
-      snapshot.threads,
-      providers,
+    const previousHolds = yield* Ref.get(unreportedStops);
+    const holdThreads: FallbackThread[] = [];
+    const retainedHoldRuns = new Set<string>();
+    const hasLimitStops = snapshot.threads.some(
+      (thread) => thread.status === "failed" && thread.lastErrorClass === "usage_limit",
+    );
+    for (const thread of snapshot.threads) {
+      if (thread.latestRunId === null) continue;
+      if (
+        !(thread.status === "failed" && thread.lastErrorClass === "usage_limit") &&
+        !(thread.status === "completed" && (previousHolds.size > 0 || hasLimitStops))
+      )
+        continue;
+      retainedHoldRuns.add(thread.latestRunId);
+      let run = holdRuns.get(thread.latestRunId);
+      // Cache terminal runs only; their identity and timestamps no longer change.
+      if (run === undefined) {
+        run = yield* projections
+          .getThreadRecords(thread.id, ["runs"], { runIds: [thread.latestRunId] })
+          .pipe(
+            Effect.map((records) => records.runs.find((entry) => entry.id === thread.latestRunId)),
+            Effect.catchCause(() => Effect.succeed(undefined)),
+          );
+        if (run !== undefined && (run.status === "completed" || run.status === "failed"))
+          holdRuns.set(run.id, run);
+      }
+      if (run === undefined) continue;
+      const evidence = usageHoldEvidence(thread, run);
+      if (evidence !== null) holdThreads.push(evidence);
+    }
+    for (const runId of holdRuns.keys()) if (!retainedHoldRuns.has(runId)) holdRuns.delete(runId);
+    const { held, since: heldSince } = releaseRecoveredHolds(
+      unreportedLimitStops(previousHolds, holdThreads, providers, now),
+      yield* Ref.get(unreportedStopsSince),
+      holdThreads,
       now,
     );
     yield* Ref.set(unreportedStops, held);
+    yield* Ref.set(unreportedStopsSince, heldSince);
     const { stops: unopenable, failures: openFailures } = yield* unopenableStops(
       snapshot.threads,
       providers,

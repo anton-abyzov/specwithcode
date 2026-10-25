@@ -4,6 +4,7 @@ import {
   providerFailureDisplayMessage,
   providerFailureDisplayTitle,
 } from "@specweave-studio/shared/orchestrationV2ThreadError";
+import { isUsageLimitReply } from "@specweave-studio/shared/usageLimitReply";
 import {
   type AssetResource,
   type OrchestrationV2ExecutionNode,
@@ -631,6 +632,20 @@ export function deriveTimelineEntriesFromVisibleTurnItems(
     return undefined;
   };
 
+  // A provider that answered with its limit notice ("Error: You have exceeded
+  // your monthly quota (Request ID: …)") failed that run on the limit; the
+  // run's "Usage limit reached" row says so in one line, so the raw reply
+  // is not shown as the assistant's answer as well.
+  const usageLimitRunIds = new Set(
+    input.visibleTurnItems.flatMap(({ item }) =>
+      item.type === "error" &&
+      item.status === "failed" &&
+      item.failure.class === "usage_limit" &&
+      item.runId !== null
+        ? [item.runId]
+        : [],
+    ),
+  );
   // A picked option lives on its decision card; a reply typed in chat stays a message.
   const foldedAnswerMessageIds = new Set(
     input.visibleTurnItems.flatMap(({ item }) =>
@@ -647,6 +662,14 @@ export function deriveTimelineEntriesFromVisibleTurnItems(
     // Task progress belongs in the composer, not between conversation entries.
     if (item.type === "todo_list" || item.type === "checkpoint") continue;
     if (item.type === "user_message" && foldedAnswerMessageIds.has(item.messageId)) continue;
+    if (
+      item.type === "assistant_message" &&
+      !item.streaming &&
+      item.runId !== null &&
+      usageLimitRunIds.has(item.runId) &&
+      isUsageLimitReply(item.text)
+    )
+      continue;
     const createdAt = projectedItemCreatedAt(row);
     const attempt = resolveAttempt(item);
     const attemptMetadata = attempt === undefined ? {} : { attempt };

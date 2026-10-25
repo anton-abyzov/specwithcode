@@ -337,6 +337,8 @@ export function resolveSameModelElsewhere(input: {
   readonly excludedSelections?: ReadonlySet<string> | undefined;
   /** Only candidates whose window holds the thread (see `contextFits`). */
   readonly contextFit?: ContextFitRequirement | undefined;
+  /** Skip providers that report no usage: only verified room counts. */
+  readonly verifiedOnly?: boolean | undefined;
 }): ModelSelection | null {
   const currentProvider = input.providers.find(
     (provider) => provider.instanceId === input.current.instanceId,
@@ -360,7 +362,7 @@ export function resolveSameModelElsewhere(input: {
       limited: input.limitedInstanceIds,
       named: order.includes(provider.instanceId),
     });
-    if (room === null) return [];
+    if (room === null || (input.verifiedOnly === true && room === "unreported")) return [];
     const rank = [
       listed(provider),
       provider.driver === currentProvider?.driver ? 0 : 1,
@@ -589,7 +591,29 @@ export function describeFallbackOrder(input: {
   });
 }
 
-export function resolveProviderFallback(input: {
+type ResolveProviderFallbackInput = Parameters<typeof resolveProviderFallbackPass>[0];
+
+/**
+ * Verified room wins over a guess: every step runs first with providers
+ * that report no usage (GitHub Copilot and the other ACP agents) left out,
+ * except where the user named them (the fallback order, the legacy fallback
+ * model, and the project default when a context overflow sends the thread
+ * home), and the coordinator's own model, which a recent turn proved (see
+ * `provenFallbackSelection`). Only when nothing with a fresh usage read below the threshold can
+ * take the thread does a no-usage provider get it. A no-usage provider has
+ * no read to show it spent, so preferring it sent a coordinator from a full
+ * Codex onto an exhausted Copilot while Claude Code had room.
+ */
+export function resolveProviderFallback(
+  input: ResolveProviderFallbackInput,
+): ModelSelection | null {
+  return (
+    resolveProviderFallbackPass({ ...input, verifiedOnly: true }) ??
+    resolveProviderFallbackPass({ ...input, verifiedOnly: false })
+  );
+}
+
+function resolveProviderFallbackPass(input: {
   readonly providers: ReadonlyArray<ServerProvider>;
   readonly currentInstanceId: ProviderInstanceId;
   /** The model the thread runs on, kept when another account of its driver lists it. */
@@ -627,7 +651,10 @@ export function resolveProviderFallback(input: {
    * which says nothing about home's usage.
    */
   readonly preferDefault?: boolean;
+  /** Internal: leave out providers that report no usage unless the user named them. */
+  readonly verifiedOnly?: boolean;
 }): ModelSelection | null {
+  const verifiedOnly = input.verifiedOnly === true;
   // Every step below skips what this stop already tried, not only the user's order,
   // and every target whose window cannot hold the thread.
   const excluded = (instanceId: ProviderInstanceId, model: string | undefined) =>
@@ -637,6 +664,7 @@ export function resolveProviderFallback(input: {
   const usable = (
     provider: ServerProvider | undefined,
     model: string | undefined,
+    allowUnreported = !verifiedOnly,
   ): provider is ServerProvider => {
     if (provider === undefined || provider.instanceId === input.currentInstanceId) return false;
     if (input.limitedInstanceIds?.has(provider.instanceId)) return false;
@@ -649,7 +677,8 @@ export function resolveProviderFallback(input: {
       isPaidModelBilling(providerModelBilling(provider, model))
     )
       return false;
-    if (reportsNoUsage(provider)) return canTakeTurn(provider) && !isPerTokenProvider(provider);
+    if (reportsNoUsage(provider))
+      return allowUnreported && canTakeTurn(provider) && !isPerTokenProvider(provider);
     if (!hasUsableFallbackCapacity(provider, input.nowMs, model)) return false;
     const used = providerUsedPercent(provider, input.nowMs, model);
     return used !== null && (input.belowPercent == null || used < input.belowPercent);
@@ -671,18 +700,21 @@ export function resolveProviderFallback(input: {
         entry.unavailable === null &&
         !input.excludedSelections?.has(fallbackSelectionKey(entry.selection)),
     )?.selection;
-  const home = () => {
+  const home = (allowUnreported = !verifiedOnly) => {
     const selection = input.rule.defaultModelSelection;
     if (selection === null) return null;
     const provider = input.providers.find((entry) => entry.instanceId === selection.instanceId);
-    return usable(provider, selection.model) &&
+    return usable(provider, selection.model, allowUnreported) &&
       !excluded(provider.instanceId, selection.model) &&
       provider.models.some((model) => model.slug === selection.model && !model.isCustom)
       ? selection
       : null;
   };
+  // Going home after a context overflow is the user's own choice, like the
+  // fallback order: a home that reports no usage is not held back for
+  // verified room elsewhere.
   if (input.preferDefault === true) {
-    const back = home();
+    const back = home(true);
     if (back !== null) return back;
   }
   if (explicitOrder) {
@@ -703,6 +735,7 @@ export function resolveProviderFallback(input: {
       limitedInstanceIds: input.limitedInstanceIds,
       excludedSelections: input.excludedSelections,
       contextFit: input.contextFit,
+      verifiedOnly,
     });
     if (same !== null) return same;
   }
@@ -874,6 +907,9 @@ export function resolveWorkerLaunchSelection(input: {
     nowMs: input.nowMs,
     belowPercent: threshold,
     limitedInstanceIds: limited,
+    // A provider that reports no usage only gets the worker once nothing
+    // with verified room does (see resolveProviderFallback).
+    verifiedOnly: true,
   });
   if (same !== null) return { selection: same, reason: "same-model" };
   const coordinator = input.coordinator;
@@ -916,9 +952,17 @@ export function resolveWorkerLaunchSelection(input: {
     anyReady: true,
     limitedInstanceIds: limited,
   });
-  return target === null
-    ? { selection: preferred, reason: "no-room" }
-    : { selection: target, reason: "fallback" };
+  if (target === null) return { selection: preferred, reason: "no-room" };
+  const targetProvider = input.providers.find(
+    (provider) => provider.instanceId === target.instanceId,
+  );
+  // The unreported-capacity pass may keep the same driver and model. Classify its final
+  // choice without moving that account ahead of verified free capacity.
+  const keepsModel =
+    targetProvider !== undefined &&
+    targetProvider.driver === preferredProvider?.driver &&
+    sameModelOn(targetProvider, describeModel(preferredProvider, preferred.model)) === target.model;
+  return { selection: target, reason: keepsModel ? "same-model" : "fallback" };
 }
 
 /** How long past a waited-for reset the thread may still be stopped before the rule acts after all. */

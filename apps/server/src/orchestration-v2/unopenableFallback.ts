@@ -52,6 +52,7 @@ export type FallbackThread = Pick<
       OrchestrationV2ThreadShell,
       | "lastError"
       | "usageLimitResetAt"
+      | "latestRunStartedAt"
       | "latestRunCompletedAt"
       | "activityRunStatus"
       | "pendingBackgroundTasks"

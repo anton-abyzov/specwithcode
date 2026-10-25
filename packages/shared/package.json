@@ -211,6 +211,10 @@
       "types": "./src/modelIdentity.ts",
       "import": "./src/modelIdentity.ts"
     },
+    "./usageLimitReply": {
+      "types": "./src/usageLimitReply.ts",
+      "import": "./src/usageLimitReply.ts"
+    },
     "./providerFallback": {
       "types": "./src/providerFallback.ts",
       "import": "./src/providerFallback.ts"

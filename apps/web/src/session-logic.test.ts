@@ -1865,3 +1865,66 @@ it("renders automatic completion as a work entry instead of a user bubble", () =
     })[0]?.kind,
   ).toBe("message");
 });
+
+describe("a provider's limit notice reply", () => {
+  it("shows the run's usage limit row instead of the raw quota reply", () => {
+    const now = DateTime.makeUnsafe("2026-10-22T12:35:30.000Z");
+    const threadId = ThreadId.make("thread-quota");
+    const runId = RunId.make("run-quota");
+    const base = {
+      threadId,
+      runId,
+      nodeId: null,
+      providerThreadId: null,
+      providerTurnId: null,
+      nativeItemRef: null,
+      parentItemId: null,
+      startedAt: now,
+      completedAt: now,
+      updatedAt: now,
+    };
+    const reply = {
+      ...base,
+      id: TurnItemId.make("item-quota-reply"),
+      ordinal: 1,
+      status: "completed" as const,
+      type: "assistant_message" as const,
+      messageId: MessageId.make("quota-reply"),
+      text: "Error: You have exceeded your monthly quota (Request ID: E4AC:14943D:5809C3F:5DC09B6:6ADA0356)",
+      streaming: false,
+    } as unknown as OrchestrationV2TurnItem;
+    const limit = {
+      ...base,
+      id: TurnItemId.make("item-quota-limit"),
+      ordinal: 2,
+      status: "failed" as const,
+      title: "Usage limit reached",
+      type: "error" as const,
+      failure: {
+        class: "usage_limit" as const,
+        message: "Monthly quota used up on this provider.",
+        code: null,
+        retryable: null,
+      },
+    } satisfies Extract<OrchestrationV2TurnItem, { readonly type: "error" }>;
+    const row = (item: OrchestrationV2TurnItem, position: number) => ({
+      item,
+      position,
+      visibility: "local" as const,
+      sourceThreadId: threadId,
+      sourceItemId: item.id,
+    });
+    const entries = deriveTimelineEntriesFromVisibleTurnItems({
+      visibleTurnItems: [row(reply, 0), row(limit, 1)],
+      optimisticMessages: [],
+    });
+    expect(entries.map((entry) => [entry.kind, entry.id])).toEqual([["work", limit.id]]);
+    // Without the limit failure the same text is an ordinary answer.
+    expect(
+      deriveTimelineEntriesFromVisibleTurnItems({
+        visibleTurnItems: [row(reply, 0)],
+        optimisticMessages: [],
+      }).map((entry) => entry.kind),
+    ).toEqual(["message"]);
+  });
+});
