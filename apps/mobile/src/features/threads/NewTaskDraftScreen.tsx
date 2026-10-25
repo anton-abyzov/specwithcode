@@ -734,7 +734,7 @@ export function NewTaskDraftScreen(props: {
     }
 
     const selection = resolveDraftProjectSelection(selectedProjectKey, projects, projectScopes);
-    if (selection.kind === "preserve") {
+    if (selection.kind === "preserve" || selection.kind === "unavailable") {
       return;
     }
     if (selection.kind === "select") {
@@ -1008,10 +1008,10 @@ export function NewTaskDraftScreen(props: {
     shareImportAttempt,
   ]);
 
-  const selectedEnvironmentLabel =
-    flow.environments.find(
-      (environment) => environment.environmentId === flow.selectedEnvironmentId,
-    )?.environmentLabel ?? "Environment";
+  const selectedEnvironmentLabel = flow.selectedEnvironmentLabel;
+  const canSwitchEnvironment = flow.environments.some(
+    (environment) => environment.environmentId !== flow.selectedEnvironmentId,
+  );
   const availableCurrentBranchName =
     flow.availableBranches.find((branch) => branch.current)?.name ??
     flow.availableBranches.find((branch) => branch.isDefault)?.name ??
@@ -1396,6 +1396,7 @@ export function NewTaskDraftScreen(props: {
     attachmentBlockReason === null &&
     !modelUnavailable &&
     Boolean(flow.selectedProject) &&
+    flow.projectUnavailableReason === null &&
     Boolean(flow.selectedModel) &&
     flow.prompt.trim().length > 0 &&
     isIncomingShareReady &&
@@ -1515,11 +1516,9 @@ export function NewTaskDraftScreen(props: {
       )}
       label={`on ${selectedEnvironmentLabel}`}
       maxWidth={flow.isScratchDraft ? 170 : 260}
-      onPress={
-        flow.environments.length > 1 ? () => openContextPicker("NewTaskEnvironment") : undefined
-      }
-      showChevron={flow.environments.length > 1}
-      static={flow.environments.length <= 1}
+      onPress={canSwitchEnvironment ? () => openContextPicker("NewTaskEnvironment") : undefined}
+      showChevron={canSwitchEnvironment}
+      static={!canSwitchEnvironment}
     />
   );
   // A thread without a project has no project to name, so it asks plainly,
@@ -1553,7 +1552,7 @@ export function NewTaskDraftScreen(props: {
           <Text className="text-2xl font-studio-medium tracking-tight text-foreground">in </Text>
           <Pressable
             accessibilityHint="Opens the project picker"
-            accessibilityLabel={selectedProject.title}
+            accessibilityLabel={`${selectedProject.title}${flow.projectUnavailableReason ? " · Unavailable" : ""}`}
             accessibilityRole="button"
             disabled={isComposerInteractionLocked}
             onPress={chooseProject}
@@ -1564,12 +1563,21 @@ export function NewTaskDraftScreen(props: {
               numberOfLines={1}
             >
               {selectedProject.title}
+              {flow.projectUnavailableReason ? " · Unavailable" : ""}
             </Text>
           </Pressable>
           <Text className="text-2xl font-studio-medium tracking-tight text-foreground">?</Text>
         </View>
       </View>
 
+      {flow.projectUnavailableReason ? (
+        <Text
+          testID="new-task-project-unavailable"
+          className="text-center text-sm text-foreground-muted"
+        >
+          {flow.projectUnavailableReason}
+        </Text>
+      ) : null}
       {environmentControl}
     </View>
   );

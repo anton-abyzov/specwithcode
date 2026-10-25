@@ -15,6 +15,10 @@ import { collapsibleFooterClassName, revealCollapsedTop } from "../chat/Collapsi
 /** A clipped message fades out at its bottom edge, as a person's long prompt does. */
 const CLAMP_FADE_MASK = "linear-gradient(to bottom, black calc(100% - 2rem), transparent)";
 
+/** An open message's controls can stick over its text, so they get the shared toggle's backing. */
+const OPEN_CONTROL =
+  "bg-background/95 shadow-xs backdrop-blur supports-backdrop-filter:bg-background/80";
+
 /**
  * A message one agent sent another: a worker's to its coordinator, or any
  * agent's on a thread page. A long one shows its opening sentences and the
@@ -116,7 +120,7 @@ export function WorkerMessageBody({
             setFoldedForQuery(open && findOpens ? findQuery : null);
             if (open) revealCollapsedTop(root);
           }}
-          className={open ? "bg-background/95 shadow-xs" : "-ml-1"}
+          className={open ? OPEN_CONTROL : "-ml-1"}
         >
           <ChevronDownIcon className={open ? "rotate-180" : undefined} aria-hidden />
           {open ? "Show less" : "Show full message"}
@@ -130,7 +134,7 @@ export function WorkerMessageBody({
           type="button"
           size="xs"
           variant={open ? "outline" : "ghost-muted"}
-          className={`ml-auto shrink-0 ${open ? "bg-background/95 shadow-xs" : ""}`}
+          className={`ml-auto shrink-0 ${open ? OPEN_CONTROL : ""}`}
           aria-label={isCopied ? "Original message copied" : "Copy original message"}
           title="Copy original"
           onClick={() => copyToClipboard(original, undefined)}

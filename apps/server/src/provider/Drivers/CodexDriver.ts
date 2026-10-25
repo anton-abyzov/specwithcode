@@ -52,6 +52,7 @@ import {
 import { resolveCodexLaunchArgs } from "../codexLaunchArgs.ts";
 import { codexLoginIdentity, watchLoginChanges } from "../loginWatch.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
+import { makeSubscriptionMemory, subscriptionKeyOf } from "../subscriptionIdentity.ts";
 import * as ModelManifest from "../ModelManifest.ts";
 import type { ProviderDriver, ProviderInstance } from "../ProviderDriver.ts";
 import { withInstanceIdentity } from "./instanceIdentity.ts";
@@ -149,6 +150,7 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
       const resetCreditCoordinator = yield* ResetCreditCoordinator.ResetCreditCoordinator;
       const fileSystem = yield* FileSystem.FileSystem;
       const pathService = yield* Path.Path;
+      const { providerStatusCacheDir } = yield* ServerConfig.ServerConfig;
       const httpClient = yield* HttpClient.HttpClient;
       const serverSettings = yield* ServerSettings.ServerSettingsService;
       const modelManifest = yield* ModelManifest.ModelManifest;
@@ -202,7 +204,15 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
           enabled,
           config,
         },
-        { onUsageLimits: (update) => snapshot.applyUsageLimits(update) },
+        {
+          onUsageLimits: (update) => snapshot.applyUsageLimits(update),
+          subscriptionKey: Effect.suspend(() => snapshot.getSnapshot).pipe(
+            Effect.map((current) => ({
+              key: subscriptionKeyOf(current.usageLimits),
+              changedAt: current.usageLimits?.accountChangedAt,
+            })),
+          ),
+        },
       ).pipe(
         Effect.mapError(
           (cause) =>
@@ -255,6 +265,12 @@ export const CodexDriver: ProviderDriver<CodexSettings, CodexDriverEnv> = {
               stampIdentity(ModelManifest.applyModelManifest(draft, manifest, DRIVER_KIND)),
           ),
         checkProvider,
+        subscriptionMemory: makeSubscriptionMemory({
+          cacheDir: providerStatusCacheDir,
+          instanceId,
+          fileSystem,
+          path: pathService,
+        }),
         enrichSnapshot: ({ settings, snapshot, publishSnapshot }) =>
           resolveMaintenance().pipe(
             Effect.flatMap((maintenanceCapabilities) =>

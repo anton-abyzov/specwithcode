@@ -1,3 +1,7 @@
+import {
+  projectChoiceIneligibleReason,
+  type ScratchRootLookup,
+} from "@specweave-studio/client-runtime/state/project-picker";
 import { buildProjectGroups } from "@specweave-studio/client-runtime/state/project-grouping";
 import type {
   EnvironmentProject,
@@ -62,6 +66,24 @@ export function buildHomeProjectScopes(input: {
       projects: group.members.map((member) => member.project),
       projectRefs: group.memberProjectRefs,
     };
+  });
+}
+
+/** Menu choices only; the home list keeps historical projects and threads. */
+export function homeProjectPickerScopes(
+  scopes: readonly HomeProjectScope[],
+  scratchRootFor: ScratchRootLookup,
+  selectedKey: string | null = null,
+): HomeProjectScope[] {
+  return scopes.flatMap((scope) => {
+    if (
+      scope.projects.some(
+        (project) => projectChoiceIneligibleReason(project, scratchRootFor) === null,
+      )
+    )
+      return [scope];
+    // Keep the current filter understandable after classification changes.
+    return scope.key === selectedKey ? [{ ...scope, title: `${scope.title} · Unavailable` }] : [];
   });
 }
 

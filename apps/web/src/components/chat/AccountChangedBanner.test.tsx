@@ -69,7 +69,7 @@ it("shows the change only for a stop before it, with a complete read of the new 
   expect(accountChangedWithRoom(undefined, 0, HOUR)).toBe(false);
 });
 
-it("says the thread continues by itself, or offers Continue now, and claims nothing more", () => {
+it("says the subscription changed in the same CLI, continues or asks to confirm, and claims nothing more", () => {
   const base = {
     runId: "run-1" as RunId,
     providerName: "Claude",
@@ -77,23 +77,23 @@ it("says the thread continues by itself, or offers Continue now, and claims noth
     onDismiss: () => {},
   };
   const auto = accountChangedBannerItem({ ...base, autoContinuing: true });
-  expect(auto.title).toBe("Claude account changed");
+  expect(auto.title).toBe("Claude subscription changed");
   expect(auto.description).toBe(
-    "The limit was on the previous account. This thread continues on the new one shortly.",
+    "We detected a sign-in to another subscription in the same Claude CLI. The limit was on the previous one, and the new one has room. This thread continues on the new subscription shortly.",
   );
   expect(auto.actions).toBeNull();
   expect(auto.priority).toBe("urgent");
-  expect(auto.dismissLabel).toBe("Dismiss account change notice");
+  expect(auto.dismissLabel).toBe("Dismiss subscription change notice");
   const manual = accountChangedBannerItem({ ...base, autoContinuing: false });
   expect(manual.description).toBe(
-    "The limit was on the previous account, and the new one has room.",
+    "We detected a sign-in to another subscription in the same Claude CLI. The limit was on the previous one, and the new one has room.",
   );
   expect(isValidElement(manual.actions)).toBe(true);
-  for (const text of [auto.description, manual.description])
-    expect(String(text)).not.toMatch(/cache|cost|billing|free/i);
+  for (const text of [auto.title, auto.description, manual.description])
+    expect(String(text)).not.toMatch(/cache|cost|billing|free|api key|model/i);
 });
 
-it("shows a failed Continue now inline, and clears it on the next try", async () => {
+it("shows a failed confirmation inline, and clears it on the next try", async () => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   let fail = true;
   const item = accountChangedBannerItem({
@@ -111,6 +111,7 @@ it("shows a failed Continue now inline, and clears it on the next try", async ()
   const alerts = () => renderer!.root.findAll((node) => node.props.role === "alert");
   expect(alerts()).toHaveLength(0);
   const button = () => renderer!.root.findByType("button");
+  expect(button().children).toEqual(["Confirm and continue"]);
   await act(async () => {
     await button().props.onClick();
   });
@@ -127,6 +128,7 @@ it("shows a failed Continue now inline, and clears it on the next try", async ()
 it("promises a continue only when the server would send one", () => {
   const armed = {
     driver: "claudeAgent",
+    autoApprove: true,
     runId: "run-1" as RunId,
     limitRecovery: { runId: "run-1" as RunId, autoResume: true },
     settledOverride: null,
@@ -136,8 +138,12 @@ it("promises a continue only when the server would send one", () => {
     nowMs: HOUR,
   };
   expect(accountChangeAutoContinues(armed)).toBe(true);
+  expect(accountChangeAutoContinues({ ...armed, driver: "codex" })).toBe(true);
   for (const blocked of [
-    { driver: "codex" },
+    { driver: "opencode" },
+    { driver: undefined },
+    // The project asks first: the person confirms the change.
+    { autoApprove: false },
     { limitRecovery: null },
     { limitRecovery: { runId: "run-0" as RunId, autoResume: true } },
     { limitRecovery: { runId: "run-1" as RunId, autoResume: false } },

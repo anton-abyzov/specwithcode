@@ -16,6 +16,11 @@ import { isBlockingRuntimeRequest } from "./blockingRuntimeRequest.ts";
 import type { ProjectionLimitRecoveryCandidate } from "./ProjectionStore.ts";
 
 export const LIMIT_CHECK_INTERVAL_MS = 5 * 60_000;
+/**
+ * How often a held thread's instance is read for a sign-in to another
+ * subscription, per instance and only while a thread there waits on a limit.
+ */
+export const SUBSCRIPTION_CHECK_INTERVAL_MS = 2 * 60_000;
 export const LIMIT_PROOF_MAX_AGE_MS = 60_000;
 
 /**

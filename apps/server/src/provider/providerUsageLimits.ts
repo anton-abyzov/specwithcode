@@ -163,6 +163,9 @@ export function applyUsageLimitsUpdate(input: {
     ...(previous?.accountChangedAt !== undefined
       ? { accountChangedAt: previous.accountChangedAt }
       : {}),
+    ...(previous?.subscriptionKey !== undefined
+      ? { subscriptionKey: previous.subscriptionKey }
+      : {}),
     ...(negative
       ? {
           nativeDenialObservedAt: input.checkedAt,

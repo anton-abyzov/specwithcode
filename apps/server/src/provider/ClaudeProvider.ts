@@ -44,6 +44,7 @@ import { makeClaudeEnvironment } from "./Drivers/ClaudeHome.ts";
 import { discoverClaudeSkills } from "./Drivers/ClaudeSkills.ts";
 import type { ProviderWorkspaceSnapshot } from "./ProviderDriver.ts";
 import { makeUnavailableUsageLimits } from "./providerUsageLimits.ts";
+import { claudeSubscriptionKey } from "./subscriptionIdentity.ts";
 import {
   type ClaudeScopedLimitNames,
   claudeUsageResponseToLimits,
@@ -290,6 +291,8 @@ function nonEmptyProbeString(value: string): string | undefined {
 type ClaudeCapabilitiesProbe = {
   readonly models?: ReadonlyArray<ModelInfo>;
   readonly email: string | undefined;
+  /** The organization the SDK names for the sign-in; part of the subscription key. */
+  readonly organization?: string | undefined;
   readonly subscriptionType: string | undefined;
   readonly tokenSource: string | undefined;
   /**
@@ -451,6 +454,7 @@ const probeClaudeCapabilities = (
         const account = init.account as
           | {
               readonly email?: string;
+              readonly organization?: string;
               readonly subscriptionType?: string;
               readonly tokenSource?: string;
               readonly apiKeySource?: string;
@@ -459,6 +463,7 @@ const probeClaudeCapabilities = (
           | undefined;
         return {
           email: account?.email,
+          ...(account?.organization ? { organization: account.organization } : {}),
           subscriptionType: account?.subscriptionType,
           tokenSource: account?.tokenSource,
           apiKeySource: account?.apiKeySource,
@@ -761,6 +766,17 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
           checkedAt,
         })
       : claudeUsageResponseToLimits({ response: capabilities.usage, checkedAt }).limits;
+  // Which subscription this read belongs to, so a sign-in to another one in
+  // the same CLI is told apart from the old one (see subscriptionIdentity.ts).
+  const subscriptionKey =
+    !usageLimits.unavailable &&
+    !consoleBilling &&
+    !billedToApiKey &&
+    capabilities.apiProvider === "firstParty" &&
+    !authUnverified
+      ? claudeSubscriptionKey(capabilities)
+      : undefined;
+  const keyedUsageLimits = subscriptionKey ? { ...usageLimits, subscriptionKey } : usageLimits;
   const resetCredits =
     resolveResetCredits &&
     capabilities.subscriptionType &&
@@ -787,7 +803,7 @@ export const checkClaudeProviderStatus = Effect.fn("checkClaudeProviderStatus")(
         ...(consoleBilling ? { apiKeyBilling: true } : {}),
       },
       ...(versionUpgradeMessage ? { message: versionUpgradeMessage } : {}),
-      usageLimits: resetCredits ? { ...usageLimits, resetCredits } : usageLimits,
+      usageLimits: resetCredits ? { ...keyedUsageLimits, resetCredits } : keyedUsageLimits,
     },
   });
 });

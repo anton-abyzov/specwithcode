@@ -563,7 +563,9 @@ function limitRecoveryResumeAllowed(
       (derivedAt === null
         ? !recovery.resetAt || Date.parse(recovery.resetAt) > nowMs
         : derivedAt > nowMs)) ||
-    (recovery.availability !== undefined && !hasFreshLimitPermission(shell, nowMs)) ||
+    // A Codex availability check binds the old account's pool; a proven
+    // change to another subscription is its own permission.
+    (recovery.availability !== undefined && !permitted) ||
     projection.thread.archivedAt !== null ||
     projection.thread.deletedAt !== null ||
     projection.thread.settledOverride === "settled" ||
@@ -5269,6 +5271,25 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             commandId: command.commandId,
             commandType: command.type,
             cause: "This thread can no longer be resumed from that run.",
+          });
+        }
+        // A person's Continue on a limit stop would start on a shared CLI
+        // process still signed in to the previous subscription (it is
+        // replaced once its other turns end), and stop on the same limit.
+        // Checked for the instance it continues on, which a "Continue with
+        // <another provider>" choice changes.
+        const continuesOn = (command.modelSelection ?? projection.thread.modelSelection).instanceId;
+        if (
+          !isLimitRecoveryResume(command) &&
+          source.status === "failed" &&
+          limited?.class === "usage_limit" &&
+          (yield* providerSessions.replacementPending?.(continuesOn) ?? Effect.succeed(false))
+        ) {
+          return yield* new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause:
+              "Another thread is still running on the previous subscription in this CLI. Continue again when its turn ends.",
           });
         }
         // Usage-limit recovery may resume a derived stop as a plain

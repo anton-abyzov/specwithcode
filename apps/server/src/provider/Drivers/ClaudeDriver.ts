@@ -46,6 +46,7 @@ import {
   probeClaudeWorkspaceSnapshot,
 } from "../ClaudeProvider.ts";
 import { makeManagedServerProvider } from "../makeManagedServerProvider.ts";
+import { makeSubscriptionMemory } from "../subscriptionIdentity.ts";
 import * as ModelManifest from "../ModelManifest.ts";
 import { resolveClaudeModelCatalog, scopeClaudeModelCatalog } from "../ClaudeModelCatalog.ts";
 import { createClaudeNativeCatalog } from "../ClaudeNativeModels.ts";
@@ -126,7 +127,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
       const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
       const fileSystem = yield* FileSystem.FileSystem;
       const path = yield* Path.Path;
-      const { cwd } = yield* ServerConfig.ServerConfig;
+      const { cwd, providerStatusCacheDir } = yield* ServerConfig.ServerConfig;
       const httpClient = yield* HttpClient.HttpClient;
       const resetCreditCoordinator = yield* ResetCreditCoordinator.ResetCreditCoordinator;
       const serverSettings = yield* ServerSettings.ServerSettingsService;
@@ -305,6 +306,12 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv> = {
             Effect.map(stampIdentity),
           ),
         checkProvider,
+        subscriptionMemory: makeSubscriptionMemory({
+          cacheDir: providerStatusCacheDir,
+          instanceId,
+          fileSystem,
+          path,
+        }),
         enrichSnapshot: ({ settings, snapshot, publishSnapshot }) =>
           resolveMaintenance().pipe(
             Effect.flatMap((maintenanceCapabilities) =>

@@ -1,3 +1,5 @@
+import { projectChoiceIneligibleReason } from "@specweave-studio/client-runtime/state/project-picker";
+export { projectChoiceIneligibleReason } from "@specweave-studio/client-runtime/state/project-picker";
 /**
  * Which projects a project list shows. A machine's scratch project ("No project")
  * holds chats started without a project; those chats are listed under Chats, so the
@@ -204,17 +206,6 @@ function fitsPurpose(member: ProjectListMember, purpose: ProjectPickerPurpose) {
  * "No project" folder, an archived project, a project a check or agent made for itself,
  * or, for a code picker, a project that is not a code project.
  */
-export function projectChoiceIneligibleReason(
-  member: ProjectListMember,
-  scratchRootFor: ScratchRootLookup,
-  purpose: ProjectPickerPurpose = "work",
-): IneligibleProjectReason | null {
-  if (isScratchMember(member, scratchRootFor)) return "scratch";
-  if (isArchivedMember(member)) return "archived";
-  if (isAutomatedMember(member)) return "automated";
-  return fitsPurpose(member, purpose) ? null : "not-code";
-}
-
 /** True when a picker offers this project: one of the person's own, fit for the purpose. */
 export function isOrdinaryProjectChoice(
   member: ProjectListMember,
@@ -230,10 +221,13 @@ export function projectGroupIneligibleReason(
   scratchRootFor: ScratchRootLookup,
   purpose: ProjectPickerPurpose = "work",
 ): IneligibleProjectReason | null {
-  if (isScratchGroup(group, scratchRootFor)) return "scratch";
-  if (isArchivedGroup(group, scratchRootFor)) return "archived";
-  if (isAutomatedGroup(group, scratchRootFor)) return "automated";
-  return groupFitsPurpose(group, scratchRootFor, purpose) ? null : "not-code";
+  const reasons = group.memberProjects.map((member) =>
+    projectChoiceIneligibleReason(member, scratchRootFor, purpose),
+  );
+  if (reasons.includes(null)) return null;
+  // A mixed archived/automated group still has no eligible checkout. Check the
+  // complete member predicate rather than independent "every archived" tests.
+  return reasons.find((reason) => reason !== "scratch") ?? "scratch";
 }
 
 function groupFitsPurpose(

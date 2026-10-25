@@ -30,49 +30,52 @@ function project(
 }
 
 describe("pull request project filter choices", () => {
-  it("collapses three checkouts on one server without dropping another server's copy", () => {
+  it("keeps distinct checkouts on each server even when their remotes match", () => {
     const projects = [
       project("main"),
       project("worktree-1"),
       project("worktree-2"),
       project("main", cups),
     ];
-
     const choices = pullRequestFilterProjects(projects, labels);
-
-    expect(choices.map(({ id, environmentId, title }) => ({ id, environmentId, title }))).toEqual([
-      { id: "main", environmentId: cups, title: "studio · cups" },
-      { id: "main", environmentId: nucbox, title: "studio · nucbox-1" },
+    expect(choices.map(({ environmentId, id }) => [environmentId, id])).toEqual([
+      [cups, "main"],
+      [nucbox, "main"],
+      [nucbox, "worktree-1"],
+      [nucbox, "worktree-2"],
     ]);
-    expect(choices[1]?.workspaceRoot).toBe("/work/main");
-    expect(choices[1]?.faviconPath).toBe("main/favicon.png");
+    expect(choices.map(({ title }) => title)).toEqual([
+      "studio · cups",
+      "studio · nucbox-1 · /work/main",
+      "studio · nucbox-1 · /work/worktree-1",
+      "studio · nucbox-1 · /work/worktree-2",
+    ]);
+    expect(choices.find((p) => p.id === "worktree-1")?.faviconPath).toBe("worktree-1/favicon.png");
   });
 
-  it("keeps a saved worktree selection as the repository's only choice", () => {
+  it("keeps a saved selection without hiding its sibling checkout", () => {
     const projects = [project("main"), project("worktree"), project("worktree", cups)];
     const selected = findScopedProject(projects, nucbox, "worktree");
-
     const choices = pullRequestFilterProjects(projects, labels, selected);
-
-    expect(choices.filter((choice) => choice.environmentId === nucbox)).toEqual([
-      { ...projects[1], title: "studio · nucbox-1" },
-    ]);
     expect(findScopedProject(choices, nucbox, "worktree")).toBeDefined();
-    expect(findScopedProject(choices, nucbox, "main")).toBeUndefined();
+    expect(findScopedProject(choices, nucbox, "main")).toBeDefined();
     expect(findScopedProject(choices, cups, "worktree")).toBeDefined();
   });
 
-  it("matches canonical repositories regardless of casing", () => {
-    const main = project("main");
-    const worktree = project("worktree", nucbox, "GitHub.com/Anton-Abyzov/Specwithcode");
-
-    expect(pullRequestFilterProjects([main, worktree], labels)).toEqual([main]);
+  it("does not use repository casing to merge identities", () => {
+    const projects = [
+      project("main"),
+      project("worktree", nucbox, "GitHub.com/Anton-Abyzov/Specwithcode"),
+    ];
+    expect(pullRequestFilterProjects(projects, labels).map((p) => p.id)).toEqual([
+      "main",
+      "worktree",
+    ]);
   });
 
-  it("does not add a server suffix after duplicate checkouts have collapsed", () => {
+  it("deduplicates only repeated environment/project identities and preserves input titles", () => {
     const main = project("main");
-
-    expect(pullRequestFilterProjects([main, project("worktree")], labels)).toEqual([main]);
+    expect(pullRequestFilterProjects([main, main], labels)).toEqual([main]);
     expect(main.title).toBe("studio");
   });
 
@@ -172,6 +175,9 @@ describe("pull request project scope choices", () => {
     scoped("old", "/work/old", { archived: true }),
     scoped("check", "/work/check", { origin: "automated" }),
     scoped("scratch", "/home/.studio/scratch"),
+    scoped("inferred", "/work/acceptance/proof"),
+    scoped("temporary", "/work/session", { temporarySessionId: "check" }),
+    scoped("personal", "/work/assistant", { kind: "personal" }),
   ];
   const scratchRootFor = () => "/home/.studio/scratch";
 
@@ -181,10 +187,33 @@ describe("pull request project scope choices", () => {
     expect(result.unavailable).toBeNull();
   });
 
+  it("labels the selected inactive checkout alongside a same-named active alternative", () => {
+    const active = project("main", nucbox);
+    const selected = { ...project("old", cups), workspaceSettings: { archived: true } };
+    const result = pullRequestScopeFilterProjects(
+      [active, selected],
+      scratchRootFor,
+      labels,
+      selected,
+    );
+    expect(result.projects.map(({ title }) => title)).toEqual([
+      "studio · nucbox-1",
+      "studio · cups",
+    ]);
+    expect(result.unavailable).toEqual({ project: result.projects[1], reason: "archived" });
+    expect(result.unavailable?.project.id).toBe("old");
+    expect(result.unavailable?.project.environmentId).toBe(cups);
+    expect(selected.title).toBe("studio");
+  });
+
   it("keeps an archived or automated scope as the last row, marked as not a choice", () => {
     for (const [id, reason] of [
       ["old", "archived"],
       ["check", "automated"],
+      ["scratch", "scratch"],
+      ["inferred", "automated"],
+      ["temporary", "automated"],
+      ["personal", "not-code"],
     ] as const) {
       const current = projects.find((entry) => entry.id === id)!;
       const result = pullRequestScopeFilterProjects(projects, scratchRootFor, labels, current);

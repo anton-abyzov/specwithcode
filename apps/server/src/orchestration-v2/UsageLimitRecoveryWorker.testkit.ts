@@ -21,6 +21,7 @@ import * as ProjectionStore from "./ProjectionStore.ts";
 import * as ThreadManagement from "./ThreadManagementService.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import * as Availability from "./UsageLimitAvailability.ts";
+import { ProviderSessionManagerV2 } from "./ProviderSessionManager.ts";
 import { MachineLimitHandoff } from "./MachineLimitHandoff.ts";
 import { makeSweep } from "./UsageLimitRecoveryWorker.ts";
 import { updateLimitRecovery } from "./usageLimitRecovery.ts";
@@ -79,6 +80,12 @@ export const claudeSweepHarness = (input: {
   refusesResume?: (command: OrchestrationV2ServerCommand) => boolean;
   /** Runs after a resume is built and before it is sent (the handoff check). */
   beforeSend?: (state: { current: ProjectionStore.ProjectionLimitRecoveryCandidate }) => void;
+  /** More server settings, such as `autoApproveSubscriptionChange`. */
+  settings?: Parameters<typeof Settings.layerTest>[0];
+  /** What the native availability check answers; the default is a provider without one. */
+  availability?: Effect.Success<
+    ReturnType<Availability.UsageLimitAvailability["Service"]["check"]>
+  >;
 }) => {
   const projectId = ProjectId.make("claude-limit-project");
   const state = {
@@ -86,9 +93,13 @@ export const claudeSweepHarness = (input: {
     commands: [] as OrchestrationV2ServerCommand[],
     /** The persisted handoff state keeps the thread from starting a turn here. */
     handoffBlocked: false,
+    /** A busy Codex process on the instance still holds the previous subscription. */
+    replacementPending: false,
     /** The registry snapshot, replaced by each refresh. */
     snapshot: undefined as ServerProvider | undefined,
     refreshes: 0,
+    /** Refreshes that asked to bypass the instance's cached probe. */
+    freshRefreshes: 0,
     /** Every dispatch attempt, refused or not. */
     attempts: [] as string[],
     rejected: new Set<string>(),
@@ -106,10 +117,11 @@ export const claudeSweepHarness = (input: {
     Settings.layerTest({
       providerLimitAction: "wait",
       autoResumeLimitedThreads: input.globalAutoResume ?? false,
+      ...input.settings,
     }),
     Layer.mock(Availability.UsageLimitAvailability)({
       // What the real service answers for a provider without a native probe.
-      check: () => Effect.succeed({ codex: false, observation: null }),
+      check: () => Effect.succeed(input.availability ?? { codex: false, observation: null }),
     }),
     Layer.mock(ProjectStore.ProjectStoreV2)({
       get: () =>
@@ -207,17 +219,21 @@ export const claudeSweepHarness = (input: {
   const registry = input.provider
     ? Layer.mock(Providers.ProviderRegistry)({
         getProviders: Effect.sync(() => (state.snapshot ? [state.snapshot] : [])),
-        refreshInstance: () =>
+        refreshInstance: (_instanceId, options) =>
           Effect.gen(function* () {
             state.refreshes += 1;
+            if (options?.fresh) state.freshRefreshes += 1;
             state.snapshot = input.provider!(yield* Clock.currentTimeMillis);
             return [state.snapshot];
           }),
       })
     : Layer.empty;
+  const sessions = Layer.mock(ProviderSessionManagerV2)({
+    replacementPending: () => Effect.sync(() => state.replacementPending),
+  });
   const provided = <A, E, R>(effect: Effect.Effect<A, E, R>) =>
     effect.pipe(
-      Effect.provide(Layer.merge(deps, registry)),
+      Effect.provide(Layer.mergeAll(deps, registry, sessions)),
       Effect.provideService(MachineLimitHandoff, {
         ...MachineLimitHandoff.defaultValue(),
         localTurnBlocked: () =>

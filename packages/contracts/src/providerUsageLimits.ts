@@ -96,6 +96,14 @@ export const ServerProviderUsageLimits = Schema.Struct({
    * it belong to the previous account.
    */
   accountChangedAt: Schema.optional(IsoDateTime),
+  /**
+   * Opaque identity of the subscription this read belongs to, such as
+   * `claude:sha256:` of the reported email, organization and plan. Never an
+   * email or token. Absent when the provider reports no subscription sign-in.
+   */
+  subscriptionKey: Schema.optional(
+    Schema.String.check(Schema.isPattern(/^[a-z][a-zA-Z0-9]*:sha256:[a-f0-9]{64}$/)),
+  ),
   /** Opaque credential identity when the provider does not report an account. */
   credentialFingerprint: Schema.optional(TrimmedNonEmptyString),
   resetCredits: Schema.optional(ServerProviderResetCredits),

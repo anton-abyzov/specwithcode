@@ -7,13 +7,12 @@ import {
 } from "@specweave-studio/contracts";
 import { scopedProjectKey, scopeProjectRef } from "@specweave-studio/client-runtime/environment";
 import { isScratchProject } from "@specweave-studio/client-runtime/state/projects";
-import { FolderPlusIcon, MessageSquareDashedIcon } from "lucide-react";
+import { FolderPlusIcon } from "lucide-react";
 import { useAtomValue } from "@effect/atom-react";
 import { useCallback, useEffect, useMemo, useRef } from "react";
 
 import { openCommandPalette } from "~/commandPaletteBus";
 import { shortcutLabelForCommand } from "~/keybindings";
-import { projectIconColorClassName } from "~/projectIconColors";
 import { primaryServerKeybindingsAtom } from "~/state/server";
 import { useScratchProject } from "~/hooks/useScratchProject";
 import { useClientSettings, useLegacySidebarEnabled } from "~/hooks/useSettings";
@@ -59,7 +58,6 @@ import {
 } from "./draftMachineSelection";
 
 // Menu value for "No project"; real entries are keyed by logical project key.
-const NO_PROJECT_VALUE = "no-project";
 
 interface DraftHeroHeadlineProps {
   readonly draftId: DraftId | null;
@@ -200,7 +198,6 @@ export function DraftHeroHeadline({
   // the menu shows it as the current context, never as a destination.
   const unavailableReason =
     activeProject !== null &&
-    !isScratchDraft &&
     !menuEntries.some(({ group }) => group.projectKey === activeProjectKey)
       ? projectChoiceIneligibleReason(activeProject, scratchWorkspaceRootFor)
       : null;
@@ -350,12 +347,8 @@ export function DraftHeroHeadline({
       </Tooltip>
       <MenuPopup align="center" className="max-h-80 overflow-y-auto">
         <MenuRadioGroup
-          value={isScratchDraft ? NO_PROJECT_VALUE : activeProjectKey}
+          value={activeProjectKey}
           onValueChange={(value) => {
-            if (value === NO_PROJECT_VALUE) {
-              void startScratch();
-              return;
-            }
             const entry = projectEntryByKey.get(value as string);
             if (
               !entry ||
@@ -367,20 +360,6 @@ export function DraftHeroHeadline({
             selectProject(entry.targetProject, entry.group.projectKey);
           }}
         >
-          {scratchWorkspaceRoot === null ? null : (
-            <MenuRadioItem value={NO_PROJECT_VALUE} closeOnClick>
-              <span className="flex min-w-0 items-center gap-2">
-                {/* Boxed like ProjectFavicon so the label lines up with project rows. */}
-                <span
-                  aria-hidden="true"
-                  className={`inline-flex size-4 shrink-0 ${projectIconColorClassName("gray")}`}
-                >
-                  <MessageSquareDashedIcon className="size-full" />
-                </span>
-                No project
-              </span>
-            </MenuRadioItem>
-          )}
           {unavailableReason && activeProjectGroup ? (
             <MenuRadioItem value={activeProjectKey} disabled>
               <span className="flex min-w-0 items-center gap-2">

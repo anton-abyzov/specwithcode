@@ -135,7 +135,7 @@ try {
             floating[i].top - floating[i - 1].bottom >= 4,
             `"${floating[i].text}" overlaps the notice above`,
           );
-        const limit = floating.findIndex((c) => /limit reached|account changed/.test(c.text));
+        const limit = floating.findIndex((c) => /limit reached|subscription changed/.test(c.text));
         const watch = floating.findIndex((c) => c.text.includes("Watching pull request"));
         if (limit !== -1 && watch !== -1) check(limit < watch, "watcher shown before the limit");
         if (kase === "watcher" || kase === "screenshot") check(watch !== -1, "watcher hidden");

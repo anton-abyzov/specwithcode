@@ -21,6 +21,7 @@ import { TestClock } from "effect/testing";
 import * as BackgroundPolicy from "../background/BackgroundPolicy.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { makeManagedServerProvider } from "./makeManagedServerProvider.ts";
+import type { RememberedSubscription, SubscriptionMemory } from "./subscriptionIdentity.ts";
 
 const emptyCapabilities = createModelCapabilities({ optionDescriptors: [] });
 const TEST_EPOCH = DateTime.makeUnsafe("1970-01-01T00:00:00.000Z");
@@ -218,7 +219,9 @@ function refreshThroughLogins(
   logins: ReadonlyArray<{
     readonly email: string | null;
     readonly usageLimits: ServerProviderUsageLimits;
+    readonly auth?: Partial<ServerProvider["auth"]>;
   }>,
+  subscriptionMemory?: SubscriptionMemory,
 ) {
   return Effect.scoped(
     Effect.gen(function* () {
@@ -239,12 +242,13 @@ function refreshThroughLogins(
               auth:
                 login.email === null
                   ? { status: "unauthenticated" as const }
-                  : { status: "authenticated" as const, email: login.email },
+                  : { status: "authenticated" as const, email: login.email, ...login.auth },
               usageLimits: login.usageLimits,
             };
           }),
         ),
         refreshInterval: 0,
+        ...(subscriptionMemory ? { subscriptionMemory } : {}),
       });
       const snapshots = [];
       for (const _login of logins) snapshots.push(yield* provider.refresh);
@@ -415,6 +419,118 @@ describe("makeManagedServerProvider", () => {
           snapshots.map((snapshot) => snapshot.usageLimits?.accountChangedAt),
           [undefined, undefined, undefined],
         ),
+      ),
+    );
+  });
+
+  describe("same-CLI subscription changes", () => {
+    const claude = ProviderDriverKind.make("claudeAgent");
+    const keyA = `claude:sha256:${"a".repeat(64)}`;
+    const keyB = `claude:sha256:${"b".repeat(64)}`;
+    const read = (checkedAt: string, subscriptionKey?: string): ServerProviderUsageLimits => ({
+      checkedAt,
+      windows: [{ id: "five_hour", kind: "session", label: "Session", usedPercent: 3 }],
+      nativeAllowanceObservedAt: checkedAt,
+      ...(subscriptionKey ? { subscriptionKey } : {}),
+    });
+    const first = refreshedSnapshot.checkedAt;
+    const second = refreshedSnapshotSecond.checkedAt;
+    const memory = (stored?: RememberedSubscription) => {
+      const saved: Array<RememberedSubscription> = [];
+      const store: SubscriptionMemory = {
+        load: Effect.succeed(stored),
+        save: (value) => Effect.sync(() => void saved.push(value)),
+      };
+      return { saved, store };
+    };
+
+    it.effect("tells two subscriptions on one email apart by their key", () =>
+      refreshThroughLogins(claude, [
+        {
+          email: "me@example.com",
+          usageLimits: { ...exhaustedClaudeLimits, subscriptionKey: keyA },
+        },
+        { email: "me@example.com", usageLimits: read(second, keyB) },
+      ]).pipe(
+        Effect.map(([, switched]) =>
+          assert.deepStrictEqual(switched?.usageLimits, {
+            ...read(second, keyB),
+            accountChangedAt: second,
+          }),
+        ),
+      ),
+    );
+
+    it.effect("counts no change for a read that cannot name the subscription", () =>
+      refreshThroughLogins(claude, [
+        { email: "me@example.com", usageLimits: read(first, keyA) },
+        { email: "me@example.com", usageLimits: read(second) },
+        { email: "me@example.com", usageLimits: read(second, keyA) },
+      ]).pipe(
+        Effect.map((snapshots) =>
+          assert.deepStrictEqual(
+            snapshots.map((snapshot) => snapshot.usageLimits?.accountChangedAt),
+            [undefined, undefined, undefined],
+          ),
+        ),
+      ),
+    );
+
+    it.effect("still sees a change past an unreadable read in between", () =>
+      refreshThroughLogins(claude, [
+        { email: "me@example.com", usageLimits: read(first, keyA) },
+        { email: "me@example.com", usageLimits: read(first) },
+        { email: "me@example.com", usageLimits: read(second, keyB) },
+      ]).pipe(
+        Effect.map(([, between, switched]) => {
+          assert.isUndefined(between?.usageLimits?.accountChangedAt);
+          assert.strictEqual(switched?.usageLimits?.accountChangedAt, second);
+        }),
+      ),
+    );
+
+    it.effect("notices a subscription changed while the server was down", () => {
+      const { saved, store } = memory({ identity: { key: keyA } });
+      return refreshThroughLogins(
+        claude,
+        [{ email: "me@example.com", usageLimits: read(second, keyB) }],
+        store,
+      ).pipe(
+        Effect.map(([afterRestart]) => {
+          assert.strictEqual(afterRestart?.usageLimits?.accountChangedAt, second);
+          assert.strictEqual(saved.at(-1)?.identity.key, keyB);
+          assert.strictEqual(saved.at(-1)?.changedAt, second);
+          // Only hashes are kept, never the email itself.
+          assert.notInclude(JSON.stringify(saved), "me@example.com");
+        }),
+      );
+    });
+
+    it.effect("keeps the remembered change time for the same subscription after a restart", () => {
+      const { saved, store } = memory({ identity: { key: keyB }, changedAt: first });
+      return refreshThroughLogins(
+        claude,
+        [{ email: "me@example.com", usageLimits: read(second, keyB) }],
+        store,
+      ).pipe(
+        Effect.map(([afterRestart]) => {
+          assert.strictEqual(afterRestart?.usageLimits?.accountChangedAt, first);
+          // The email hash is new to the memory, so it is saved; the stamp is not moved.
+          assert.isTrue(saved.every((value) => value.changedAt === first));
+        }),
+      );
+    });
+
+    it.effect("never treats a switch to API-key billing as a subscription change", () =>
+      refreshThroughLogins(claude, [
+        { email: "me@example.com", usageLimits: read(first, keyA) },
+        {
+          email: "other@example.com",
+          usageLimits: read(second),
+          auth: { apiKeyBilling: true },
+        },
+      ]).pipe(
+        Effect.map(([, apiKey]) => assert.isUndefined(apiKey?.usageLimits?.accountChangedAt)),
       ),
     );
   });

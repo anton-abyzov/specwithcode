@@ -1,3 +1,9 @@
+import {
+  projectPickerMembers,
+  type ScratchRootLookup,
+} from "@specweave-studio/client-runtime/state/project-picker";
+import type { EnvironmentProject } from "@specweave-studio/client-runtime/state/shell";
+import type { EnvironmentId } from "@specweave-studio/contracts";
 import type {
   ModelSelection,
   ServerConfig,
@@ -19,6 +25,32 @@ import {
   resolveDefaultableModelSelection,
   resolveNewTaskModelSelection,
 } from "../../lib/modelOptions";
+
+/** A scoped routine retains that context until a deliberate project replacement. */
+export function scheduledTaskProjectForScope(
+  projects: readonly EnvironmentProject[],
+  environmentId: EnvironmentId,
+  scope:
+    | {
+        readonly members: readonly {
+          readonly project: Pick<EnvironmentProject, "environmentId" | "id">;
+        }[];
+      }
+    | null
+    | undefined,
+  scratchRootFor: ScratchRootLookup,
+): EnvironmentProject | null {
+  if (scope === undefined) return null;
+  const catalog = projects.filter((project) => project.environmentId === environmentId);
+  const eligible = projectPickerMembers(catalog, scratchRootFor);
+  if (scope === null) return eligible[0] ?? null;
+  const inScope = (project: EnvironmentProject) =>
+    scope.members.some(
+      (member) =>
+        member.project.environmentId === environmentId && member.project.id === project.id,
+    );
+  return eligible.find(inScope) ?? catalog.find(inScope) ?? null;
+}
 
 export function scheduledTaskDefaultModel(
   config: ServerConfig | null,

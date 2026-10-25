@@ -181,6 +181,76 @@ it.layer(layerTest)("resume after the account changed", (it) => {
     }),
   );
 
+  it.effect("a Codex stop whose pool check saw the old account change still resumes", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const { threadId, shell, stopMs, run } = yield* limitedThread("codex-pool-changed");
+      yield* TestClock.adjust("1 hour");
+      const armed = yield* shell;
+      const checkedAt = DateTime.formatIso(yield* DateTime.now);
+      // The availability check recorded that the pool it was armed for is gone.
+      yield* orchestrator.dispatch({
+        type: "thread.metadata.update",
+        commandId: CommandId.make("account-change:pool-check"),
+        threadId,
+        limitAvailability: {
+          runId: run.id,
+          requestId: armed.limitRecovery?.requestId,
+          expectedUpdatedAt: DateTime.formatIso(armed.updatedAt),
+          observation: {
+            checkedAt,
+            retryAt: checkedAt,
+            threadUpdatedAt: DateTime.formatIso(armed.updatedAt),
+            status: "changed",
+          },
+        },
+      });
+      const checked = yield* shell;
+      assert.equal(checked.limitRecovery?.availability?.status, "changed");
+      const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
+      const command = accountResume(checked, nowMs, stopMs + 30 * 60_000);
+      yield* orchestrator.dispatch(command);
+      const runs = (yield* orchestrator.getThreadProjection(threadId)).runs;
+      assert.lengthOf(runs, 2);
+      assert.equal(runs[1]?.userMessageId, command.messageId);
+    }),
+  );
+
+  it.effect("a Codex stop whose pool changed resumes when the change is seen after the reset", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const { threadId, shell, stopMs, run } = yield* limitedThread("codex-after-reset");
+      yield* TestClock.adjust("1 hour");
+      const armed = yield* shell;
+      const checkedAt = DateTime.formatIso(yield* DateTime.now);
+      yield* orchestrator.dispatch({
+        type: "thread.metadata.update",
+        commandId: CommandId.make("account-change:pool-check-after-reset"),
+        threadId,
+        limitAvailability: {
+          runId: run.id,
+          requestId: armed.limitRecovery?.requestId,
+          expectedUpdatedAt: DateTime.formatIso(armed.updatedAt),
+          observation: {
+            checkedAt,
+            retryAt: checkedAt,
+            threadUpdatedAt: DateTime.formatIso(armed.updatedAt),
+            status: "changed",
+          },
+        },
+      });
+      // The sign-in moved just after the old reset, and the read saw it later.
+      yield* TestClock.adjust("5 hours");
+      const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
+      const command = accountResume(yield* shell, nowMs, stopMs + 5 * 60 * 60_000 + 60_000);
+      assert.include(command.commandId, ":acct:");
+      yield* orchestrator.dispatch(command);
+      const runs = (yield* orchestrator.getThreadProjection(threadId)).runs;
+      assert.lengthOf(runs, 2);
+      assert.equal(runs[1]?.userMessageId, command.messageId);
+    }),
+  );
+
   it.effect("a resume claiming a change from before the stop is refused", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;

@@ -339,6 +339,7 @@ function makeProviderAdapter(
     }) => Effect.Effect<void>;
     readonly hasPendingBackgroundWork?: Effect.Effect<boolean>;
     readonly restartRequired?: Effect.Effect<string | null>;
+    readonly replaceWhenIdle?: Effect.Effect<string | null>;
     readonly hangSessionScopeClose?: boolean;
     readonly startTurn?: Effect.Effect<void>;
     readonly onStartInvocation?: () => void;
@@ -431,6 +432,9 @@ function makeProviderAdapter(
           ...(options.restartRequired === undefined
             ? {}
             : { restartRequired: options.restartRequired }),
+          ...(options.replaceWhenIdle === undefined
+            ? {}
+            : { replaceWhenIdle: options.replaceWhenIdle }),
           ensureThread: () => unimplemented("ensureThread unused in test"),
           resumeThread: (threadInput) =>
             Ref.update(state, (current) => ({
@@ -507,6 +511,7 @@ function layerTest(input: {
   };
   readonly hasPendingBackgroundWork?: Effect.Effect<boolean>;
   readonly restartRequired?: Effect.Effect<string | null>;
+  readonly replaceWhenIdle?: Effect.Effect<string | null>;
   readonly hangSessionScopeClose?: boolean;
   readonly startTurn?: Effect.Effect<void>;
   readonly onStartInvocation?: () => void;
@@ -542,6 +547,7 @@ function layerTest(input: {
         ? {}
         : { hasPendingBackgroundWork: input.hasPendingBackgroundWork }),
       ...(input.restartRequired === undefined ? {} : { restartRequired: input.restartRequired }),
+      ...(input.replaceWhenIdle === undefined ? {} : { replaceWhenIdle: input.replaceWhenIdle }),
       ...(input.hangSessionScopeClose === undefined
         ? {}
         : { hangSessionScopeClose: input.hangSessionScopeClose }),
@@ -5477,6 +5483,88 @@ it.effect(
             state,
             idleTimeoutMs: 60_000,
             restartRequired: Ref.get(restartReason),
+            startTurn: Deferred.succeed(startTurnReached, undefined).pipe(
+              Effect.andThen(Effect.never),
+            ),
+          }),
+        ),
+      );
+    }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 keeps a busy process on the old subscription serving, then replaces it",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      const startTurnReached = yield* Deferred.make<void>();
+      const replaceReason = yield* Ref.make<string | null>(null);
+      yield* Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make("subscription-changed-busy");
+        const providerSessionId = yield* idAllocator.allocate.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+          threadId,
+        });
+        yield* eventSink.write({
+          events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+        });
+        const runtime = yield* manager.open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        const runId = idAllocator.derive.run({ threadId, ordinal: 1 });
+        const running = yield* runtime
+          .startTurn({
+            appThread: (yield* projectionStore.getThreadProjection(threadId)).thread,
+            threadId,
+            runId,
+            runOrdinal: 1,
+            providerTurnOrdinal: 1,
+            attemptId: idAllocator.derive.runAttempt({ runId, attemptOrdinal: 1 }),
+            rootNodeId: idAllocator.derive.rootNode({ runId }),
+            providerThread: makeProviderThread({ idAllocator, threadId, providerSessionId, now }),
+            message: {
+              createdBy: "user",
+              creationSource: "web",
+              messageId: yield* idAllocator.allocate.message({ threadId, ordinal: 1 }),
+              text: "a turn still running on the previous subscription",
+              attachments: [],
+            },
+            modelSelection,
+            runtimePolicy,
+          })
+          .pipe(Effect.forkChild);
+        yield* Deferred.await(startTurnReached);
+        const pending = manager.replacementPending!(modelSelection.instanceId);
+        assert.isFalse(yield* pending);
+
+        // The CLI is signed in to another subscription outside the app.
+        yield* Ref.set(replaceReason, "signed in to another subscription");
+        assert.isTrue(yield* pending);
+        // A busy process keeps serving: no refusal, no restart, no cut turn.
+        yield* manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
+        assert.equal((yield* Ref.get(state)).closeCount, 0);
+        assert.equal((yield* Ref.get(state)).interruptCount, 0);
+        assert.equal((yield* Ref.get(state)).openCount, 1);
+
+        yield* Fiber.interrupt(running);
+        assert.isFalse(yield* pending);
+        yield* manager.open({ threadId, providerSessionId, modelSelection, runtimePolicy });
+        assert.equal((yield* Ref.get(state)).closeCount, 1);
+        assert.equal((yield* Ref.get(state)).openCount, 2);
+      }).pipe(
+        Effect.provide(
+          layerTest({
+            state,
+            idleTimeoutMs: 60_000,
+            replaceWhenIdle: Ref.get(replaceReason),
             startTurn: Deferred.succeed(startTurnReached, undefined).pipe(
               Effect.andThen(Effect.never),
             ),

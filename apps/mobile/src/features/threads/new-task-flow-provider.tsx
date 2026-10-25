@@ -1,3 +1,4 @@
+import { projectPickerMembers } from "@specweave-studio/client-runtime/state/project-picker";
 import { resolveFilesystemReadAccess } from "@specweave-studio/client-runtime/state/filesystem";
 import { useEnvironmentPresentation } from "../../state/presentation";
 import { environmentSession } from "../../state/session";
@@ -19,7 +20,6 @@ import {
   DEFAULT_RUNTIME_MODE,
   DEFAULT_SERVER_SETTINGS,
   MessageId,
-  repositoryGroupingKeyOf,
   STUDIO_PROJECT_FILE_NAME,
   ThreadId,
 } from "@specweave-studio/contracts";
@@ -119,7 +119,13 @@ import {
   resolveNewTaskBranchWorktreePath,
   resolveNewTaskLocalWorkspaceSelection,
 } from "./new-task-context-presentation";
-import { resolveEnvironmentProjectMatch } from "./new-task-project-selection";
+import {
+  newTaskDestinationProjects,
+  newTaskProjectUnavailableReason,
+  resolveNewTaskEnvironment,
+  resolveEnvironmentProjectMatch,
+  retainNewTaskProjectContext,
+} from "./new-task-project-selection";
 import { resolveProjectThreadCreationBranch } from "./projectThreadCreationValidation";
 
 type WorkspaceMode = "local" | "worktree";
@@ -165,7 +171,9 @@ export function branchBadgeLabel(input: {
 type NewTaskFlowContextValue = {
   readonly projectScopes: ReadonlyArray<HomeProjectScope>;
   readonly selectedEnvironmentId: EnvironmentId | null;
+  readonly selectedEnvironmentLabel: string;
   readonly selectedProjectKey: string | null;
+  readonly projectUnavailableReason: string | null;
   readonly selectedModelKey: string | null;
   readonly workspaceMode: WorkspaceMode;
   /** False for threads without a project: their folder has no branch or worktree. */
@@ -260,6 +268,7 @@ const NewTaskFlowContext = React.createContext<NewTaskFlowContextValue | null>(n
 
 export function NewTaskFlowProvider(props: React.PropsWithChildren) {
   const projects = useProjects();
+  const serverConfigs = useServerConfigs();
   const threads = useThreadShells();
   const { savedConnectionsById } = useSavedRemoteConnections();
   const groupingSettings = useMobileProjectGroupingSettings();
@@ -270,7 +279,10 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     () =>
       sortHomeProjectScopes({
         scopes: buildHomeProjectScopes({
-          projects,
+          projects: projectPickerMembers(
+            projects,
+            (environmentId) => serverConfigs.get(environmentId)?.scratchWorkspaceRoot,
+          ),
           environmentId: null,
           projectGroupingMode: groupingSettings.sidebarProjectGroupingMode,
         }),
@@ -278,17 +290,18 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
         pendingTasks: [],
         projectSortOrder: "updated_at",
       }),
-    [groupingSettings.sidebarProjectGroupingMode, projects, threads],
+    [groupingSettings.sidebarProjectGroupingMode, projects, threads, serverConfigs],
   );
 
   const [selectedEnvironmentIdOverride, setSelectedEnvironmentId] = useState<EnvironmentId | null>(
     null,
   );
-  const selectedEnvironmentId =
-    selectedEnvironmentIdOverride !== null &&
-    projects.some((project) => project.environmentId === selectedEnvironmentIdOverride)
-      ? selectedEnvironmentIdOverride
-      : (projects[0]?.environmentId ?? null);
+  const { environmentId: selectedEnvironmentId, environmentLabel: selectedEnvironmentLabel } =
+    resolveNewTaskEnvironment(
+      projects,
+      selectedEnvironmentIdOverride,
+      (environmentId) => savedConnectionsById[environmentId]?.environmentLabel,
+    );
   const [selectedProjectKey, setSelectedProjectKey] = useState<string | null>(null);
   // The new-task draft the composer is bound to. Null until a project is
   // chosen; each New Task entry mints its own, so a project can hold several.
@@ -357,10 +370,17 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     };
   }, [editingPendingTask]);
 
+  const liveSelectedProject = projectsForEnvironment.find(
+    (project) => scopedProjectKey(project.environmentId, project.id) === selectedProjectKey,
+  );
+  const [retainedSelectedProject, setRetainedSelectedProject] = useState<EnvironmentProject | null>(
+    null,
+  );
+  useEffect(() => {
+    if (liveSelectedProject) setRetainedSelectedProject(liveSelectedProject);
+  }, [liveSelectedProject]);
   const selectedProject =
-    projectsForEnvironment.find(
-      (project) => scopedProjectKey(project.environmentId, project.id) === selectedProjectKey,
-    ) ??
+    retainNewTaskProjectContext(selectedProjectKey, liveSelectedProject, retainedSelectedProject) ??
     // While editing a queued task whose project shell is absent, keep the task
     // pinned to its own project — falling through to an arbitrary first
     // project would silently retarget it (and its reused turn identifiers).
@@ -368,7 +388,12 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     selectedProjectKey ===
       scopedProjectKey(editingPendingProject.environmentId, editingPendingProject.id)
       ? editingPendingProject
-      : (projectsForEnvironment[0] ?? null));
+      : selectedProjectKey !== null
+        ? null
+        : (projectPickerMembers(
+            projectsForEnvironment,
+            (environmentId) => serverConfigs.get(environmentId)?.scratchWorkspaceRoot,
+          )[0] ?? null));
 
   const selectedEnvironmentServerConfig = useEnvironmentServerConfig(
     selectedProject?.environmentId ?? null,
@@ -376,7 +401,6 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
   const isScratchDraft =
     selectedProject !== null &&
     isScratchProject(selectedProject, selectedEnvironmentServerConfig?.scratchWorkspaceRoot);
-  const serverConfigs = useServerConfigs();
   const { connectedEnvironments } = useRemoteConnectionStatus();
   // A thread without a project can move to any connected machine that offers
   // one; its Scratch project there is created on the switch if it is missing.
@@ -397,13 +421,23 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
   // whatever unrelated project happens to be first on the other machine. Repository
   // identity is the primary signal; projects that haven't reported one yet (still
   // indexing) fall back to workspace basename / title so a valid host isn't hidden.
-  const selectedRepositoryKey = selectedProject?.repositoryIdentity
-    ? repositoryGroupingKeyOf(selectedProject.repositoryIdentity)
-    : null;
-  // `|| null` (not `??`): a pending-task placeholder project can have an empty
-  // workspaceRoot, and an "" basename would reject every real host below.
-  const selectedWorkspaceBasename = selectedProject?.workspaceRoot.split("/").at(-1) || null;
-  const selectedProjectTitle = selectedProject?.title ?? null;
+  const projectUnavailableReason = newTaskProjectUnavailableReason(
+    selectedProject,
+    (environmentId) => serverConfigs.get(environmentId)?.scratchWorkspaceRoot,
+    selectedProject !== null &&
+      selectedProject !== editingPendingProject &&
+      selectedProjectKey !== null &&
+      liveSelectedProject === undefined,
+  );
+  const destinationProjects = useMemo(
+    () =>
+      newTaskDestinationProjects(
+        projects,
+        selectedProject,
+        (environmentId) => serverConfigs.get(environmentId)?.scratchWorkspaceRoot,
+      ),
+    [projects, selectedProject, serverConfigs],
+  );
   const environments = useMemo(() => {
     if (isScratchDraft) {
       return scratchEnvironments.map((environment) => ({
@@ -416,25 +450,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       readonly environmentId: EnvironmentId;
       readonly environmentLabel: string;
     }> = [];
-    const hostsSelectedRepository = (project: EnvironmentProject) => {
-      if (selectedRepositoryKey === null && selectedWorkspaceBasename === null) {
-        return true;
-      }
-      const projectKey = project.repositoryIdentity
-        ? repositoryGroupingKeyOf(project.repositoryIdentity)
-        : null;
-      if (selectedRepositoryKey !== null && projectKey !== null) {
-        return projectKey === selectedRepositoryKey;
-      }
-      return (
-        project.workspaceRoot.split("/").at(-1) === selectedWorkspaceBasename ||
-        (selectedProjectTitle !== null && project.title === selectedProjectTitle)
-      );
-    };
-    for (const project of projects) {
-      if (!hostsSelectedRepository(project)) {
-        continue;
-      }
+    for (const project of destinationProjects) {
       if (seen.has(project.environmentId)) {
         continue;
       }
@@ -449,15 +465,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       });
     }
     return result;
-  }, [
-    isScratchDraft,
-    projects,
-    savedConnectionsById,
-    scratchEnvironments,
-    selectedRepositoryKey,
-    selectedWorkspaceBasename,
-    selectedProjectTitle,
-  ]);
+  }, [isScratchDraft, destinationProjects, savedConnectionsById, scratchEnvironments]);
 
   // While a queued pending task is being edited its draft lives under a key
   // scoped to the queued message, so new-task drafts stay intact.
@@ -822,16 +830,16 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
   const selectEnvironment = useCallback(
     (environmentId: EnvironmentId) => {
       const match = resolveEnvironmentProjectMatch(
-        projects.filter((project) => project.environmentId === environmentId),
+        destinationProjects.filter((project) => project.environmentId === environmentId),
         selectedProject,
       );
-      if (match) {
-        carryDraftContentTo(match);
-      }
+      if (!match) return false;
+      carryDraftContentTo(match);
       setSelectedEnvironmentId(environmentId);
-      setSelectedProjectKey(match ? scopedProjectKey(match.environmentId, match.id) : null);
+      setSelectedProjectKey(scopedProjectKey(match.environmentId, match.id));
+      return true;
     },
-    [projects, selectedProject, carryDraftContentTo],
+    [destinationProjects, selectedProject, carryDraftContentTo],
   );
 
   const openScratch = useAtomCommand(projectEnvironment.openScratch, { reportFailure: false });
@@ -848,8 +856,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
         return true;
       }
       if (!isScratchDraft) {
-        selectEnvironment(environmentId);
-        return true;
+        return selectEnvironment(environmentId);
       }
       const request = {};
       latestSwitchRef.current = request;
@@ -1096,6 +1103,8 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       if (!selectedProject || !selectedProjectDraftKey) {
         return null;
       }
+      // Preserve an excluded draft's context, but never enqueue new work there.
+      if (projectUnavailableReason !== null) return null;
       const draft = getComposerDraftSnapshot(selectedProjectDraftKey);
       const text = draft.text.trim();
       // Use the displayed selection rules without substituting an unavailable
@@ -1178,6 +1187,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       selectedModel,
       selectedProject,
       selectedProjectDraftKey,
+      projectUnavailableReason,
       legacyPlanModeEnabled,
       planModePreferenceLoaded,
       startFromOrigin,
@@ -1291,6 +1301,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
     () => ({
       projectScopes,
       selectedEnvironmentId,
+      selectedEnvironmentLabel,
       selectedProjectKey,
       selectedModelKey,
       workspaceMode,
@@ -1316,6 +1327,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       expandedProvider,
       environments,
       selectedProject,
+      projectUnavailableReason,
       isScratchDraft,
       modelOptions,
       selectedModel,
@@ -1382,6 +1394,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       selectedBranchName,
       hasMoreBranches,
       selectedEnvironmentId,
+      selectedEnvironmentLabel,
       selectedModel,
       selectedModelKey,
       selectedModelOption,
@@ -1389,6 +1402,7 @@ export function NewTaskFlowProvider(props: React.PropsWithChildren) {
       selectedProviderStatus,
       setSelectedModelOptions,
       selectedProject,
+      projectUnavailableReason,
       selectedProjectKey,
       selectedWorktreePath,
       setProject,
