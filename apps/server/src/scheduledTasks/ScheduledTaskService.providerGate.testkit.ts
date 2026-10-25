@@ -284,6 +284,7 @@ export const insertRun = (input: {
   readonly status: string;
   readonly completedAt: string | null;
   readonly userMessageId: string;
+  readonly startMessageId?: string;
   readonly startedAt?: string | null;
   readonly failure?: Record<string, unknown>;
 }) =>
@@ -292,6 +293,7 @@ export const insertRun = (input: {
     const threadId = input.threadId ?? THREAD;
     const payload = stringifyJson({
       userMessageId: input.userMessageId,
+      ...(input.startMessageId === undefined ? {} : { startMessageId: input.startMessageId }),
       modelSelection: { instanceId: input.instanceId, model: input.model ?? "claude-opus-5.5" },
       startedAt: input.startedAt ?? null,
     });

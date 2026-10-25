@@ -1,8 +1,9 @@
 import { use, useMemo, type CSSProperties } from "react";
 
+import { MAX_HIGHLIGHT_CHARS } from "../../lib/outputLanguage";
 import { resolveDiffThemeName } from "../../lib/diffRendering";
 import type { EmbeddedScript } from "../../lib/embeddedScripts";
-import { getSyntaxHighlighterPromise } from "../../lib/syntaxHighlighting";
+import { getSyntaxHighlighterPromise, readableSyntaxColor } from "../../lib/syntaxHighlighting";
 
 interface SyntaxToken {
   readonly content: string;
@@ -15,10 +16,10 @@ type TokenLines = ReadonlyArray<ReadonlyArray<SyntaxToken>>;
 
 const NO_EMBEDDED_SCRIPTS: ReadonlyArray<EmbeddedScript> = [];
 
-function syntaxTokenStyle(token: SyntaxToken): CSSProperties {
+function syntaxTokenStyle(token: SyntaxToken, theme: "light" | "dark"): CSSProperties {
   const fontStyle = token.fontStyle ?? 0;
   return {
-    ...(token.color ? { color: token.color } : {}),
+    ...(token.color ? { color: readableSyntaxColor(token.color, theme) } : {}),
     ...(fontStyle & 1 ? { fontStyle: "italic" } : {}),
     ...(fontStyle & 2 ? { fontWeight: 700 } : {}),
     ...(fontStyle & 4 ? { textDecoration: "underline" } : {}),
@@ -32,7 +33,15 @@ function syntaxTokenStyle(token: SyntaxToken): CSSProperties {
  * `wordClassName` goes on each whitespace-separated word. `embedded`
  * scripts are colored with their own grammar inside `code`.
  */
-export function HighlightedTokens({
+export function HighlightedTokens(props: Parameters<typeof BoundedHighlightedTokens>[0]) {
+  return props.code.length > MAX_HIGHLIGHT_CHARS ? (
+    props.code
+  ) : (
+    <BoundedHighlightedTokens {...props} />
+  );
+}
+
+function BoundedHighlightedTokens({
   code,
   language,
   embedded = NO_EMBEDDED_SCRIPTS,
@@ -52,12 +61,19 @@ export function HighlightedTokens({
     const themeName = resolveDiffThemeName(theme);
     const tokenize = (text: string, lang: string) =>
       highlighter.codeToTokens(text, { lang, theme: themeName }).tokens;
-    return keyedLines(
-      code,
-      withEmbeddedScripts(code, tokenize(code, language), embedded, tokenize),
-    );
+    try {
+      return keyedLines(
+        code,
+        withEmbeddedScripts(code, tokenize(code, language), embedded, tokenize),
+      );
+    } catch {
+      // A recovered singleton may not contain an unsupported grammar. Keep
+      // the current bytes, including partial streams, rather than stale tokens.
+      return null;
+    }
   }, [code, embedded, highlighter, language, theme]);
 
+  if (!lines) return code;
   return lines.map(({ key, tokens, ending }) => (
     <span key={key}>
       {wordClassName
@@ -67,7 +83,7 @@ export function HighlightedTokens({
             ) : (
               <span key={part.key} className={wordClassName}>
                 {part.pieces.map((piece) => (
-                  <span key={piece.key} style={syntaxTokenStyle(piece.token)}>
+                  <span key={piece.key} style={syntaxTokenStyle(piece.token, theme)}>
                     {piece.text}
                   </span>
                 ))}
@@ -75,7 +91,7 @@ export function HighlightedTokens({
             ),
           )
         : tokens.map((token) => (
-            <span key={`${token.offset}:${token.content}`} style={syntaxTokenStyle(token)}>
+            <span key={`${token.offset}:${token.content}`} style={syntaxTokenStyle(token, theme)}>
               {token.content}
             </span>
           ))}

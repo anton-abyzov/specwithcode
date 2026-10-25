@@ -10,6 +10,11 @@ import { Suspense, use, useMemo, useState } from "react";
 import { formatWorkspaceRelativePath } from "../../filePathDisplay";
 import { useTheme } from "../../hooks/useTheme";
 import { writeTextToClipboard } from "../../hooks/useCopyToClipboard";
+import {
+  resolveOutputLanguage,
+  toolOutputContext,
+  type OutputLanguageContext,
+} from "../../lib/outputLanguage";
 import { cn } from "../../lib/utils";
 import { RenderErrorBoundary } from "../RenderErrorBoundary";
 import { HighlightedTokens } from "./HighlightedTokens";
@@ -17,7 +22,8 @@ import { HighlightedTokens } from "./HighlightedTokens";
 export interface ToolPresentationBlock {
   readonly label: string;
   readonly text: string;
-  readonly language?: "shellscript" | "powershell" | "javascript" | "json";
+  readonly language?: string;
+  readonly context?: OutputLanguageContext | undefined;
 }
 
 let scriptParser: Promise<typeof import("../../lib/embeddedScripts")> | undefined;
@@ -148,7 +154,23 @@ export function toolPresentationBlocks(
     detail.trim() !== visibleLabel.trim() &&
     detail.trim() !== execution?.text.trim()
   ) {
-    blocks.push({ label: "Output", text: detail });
+    const context = toolOutputContext(
+      entry.structuredPayload ?? {
+        type: "dynamic_tool",
+        toolName: entry.toolTitle ?? entry.label,
+        input: dynamicInput(entry),
+        output: detail,
+        status: entry.toolLifecycleStatus,
+      },
+    );
+    const command = execution?.label === "Command" ? execution.text : undefined;
+    const language = resolveOutputLanguage(detail, command ? { command } : context);
+    blocks.push({
+      label: "Output",
+      text: detail,
+      context: command ? { ...context, command } : context,
+      ...(language ? { language } : {}),
+    });
   }
   const imagePaths = new Set(
     viewedImagePath
@@ -167,10 +189,25 @@ export function toolPresentationBlocks(
 }
 
 /** Scroll belongs to the code block, never the page. Copy keeps original whitespace. */
-export function ToolCodePanel({ label, text: content, language }: ToolPresentationBlock) {
+export function ToolCodePanel({
+  label,
+  text: content,
+  language: explicitLanguage,
+  context,
+}: ToolPresentationBlock) {
   const { resolvedTheme } = useTheme();
   // Show invisible control bytes without changing whitespace or the original copied text.
-  const displayContent = withVisibleControlCharacters(content);
+  const displayContent = useMemo(() => withVisibleControlCharacters(content), [content]);
+  const language = useMemo(
+    () =>
+      resolveOutputLanguage(content, {
+        ...context,
+        ...(explicitLanguage ? { language: explicitLanguage } : {}),
+        // Only Output is eligible for inference. Input/Files are presentation text.
+        ...(!context && !explicitLanguage && label !== "Output" ? { plain: true } : {}),
+      }),
+    [content, context, explicitLanguage, label],
+  );
   const [wrapped, setWrapped] = useState(false);
   const [expanded, setExpanded] = useState(false);
   const [copyResult, setCopyResult] = useState<{
@@ -201,6 +238,7 @@ export function ToolCodePanel({ label, text: content, language }: ToolPresentati
     <section
       className="min-w-0 max-w-full overflow-hidden rounded-lg border border-border/60 bg-muted/15 font-sans"
       data-tool-code-panel={label.toLowerCase()}
+      data-language={language ?? "text"}
       onKeyDown={(event) => event.stopPropagation()}
     >
       <div className="flex flex-wrap items-center justify-between gap-x-2 border-b border-border/45 px-3 py-1.5">

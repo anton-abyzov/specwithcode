@@ -211,6 +211,7 @@ import {
 import {
   createModelSelection,
   formatModelSlugName,
+  modelSelectionsEqual,
   resolveSelectableModel,
 } from "@specweave-studio/shared/model";
 import {
@@ -9259,6 +9260,7 @@ function useChatViewActions(
           providers: providerStatuses,
           currentInstanceId: activeThreadShell.providerInstanceId,
           currentModel: activeThreadShell.modelSelection.model,
+          currentOptions: activeThreadShell.modelSelection.options,
           rule: activeProjectSettings.settings,
           nowMs: renderNowMs,
           belowPercent: 100,
@@ -10080,6 +10082,42 @@ export default function ChatView(props: ChatViewProps) {
     compactDisabledReason,
     handleNewThreadInActiveProject,
   ]);
+  // The ways out of the latest failed turn, kept on its timeline row however
+  // old it is: Continue where it stopped, or pick another model for the next
+  // message. Both reuse the composer's own resume and picker.
+  const continueBusy =
+    isSendBusy || isResuming || isConnecting || threadDetailLoading || isRevertingCheckpoint;
+  const failureRecovery = useMemo(() => {
+    if (!canOperateThread || !isServerThread || suspendChatInput || !composerMounted) {
+      return undefined;
+    }
+    // Only the failed latest run's root failure owns these actions; a failed
+    // item inside a turn that went on, or in an older run, does not.
+    const failedRun = serverProjection?.runs.find(
+      (run) => run.id === activeActivityRun?.runId && run.status === "failed",
+    );
+    const failureItemId = failedRun
+      ? (latestRootProviderFailureItem(failedRun, serverProjection!.turnItems)?.id ?? null)
+      : null;
+    return {
+      failureItemId,
+      continueRunId: resumableRunId,
+      onContinue: () => resumeForAppCommandRef.current(),
+      continueBusy,
+      onSwitchModel: () => composerRef.current?.openModelPicker(),
+    };
+  }, [
+    canOperateThread,
+    isServerThread,
+    suspendChatInput,
+    composerMounted,
+    serverProjection,
+    activeActivityRun?.runId,
+    resumableRunId,
+    resumeForAppCommandRef,
+    continueBusy,
+    composerRef,
+  ]);
   // Starts the thread over on another machine from a written handoff: when
   // this one's provider hit its limit, or this machine can't be reached. A
   // chat without a project gets a new chat folder there, never a worktree.
@@ -10370,6 +10408,7 @@ export default function ChatView(props: ChatViewProps) {
           providers: providerStatuses,
           currentInstanceId: approachingProvider.instanceId,
           currentModel: activeThreadShell?.modelSelection.model,
+          currentOptions: activeThreadShell?.modelSelection.options,
           rule: limitRule,
           nowMs: approachingNowMs,
           belowPercent: approachingThreshold,
@@ -11690,8 +11729,24 @@ export default function ChatView(props: ChatViewProps) {
   };
   const currentCreditRouteRef = useLatestRef(currentCreditRoute);
 
+  // Continue runs a failed or stopped turn on a model the person picked in the
+  // composer; without an explicit pick it keeps the thread's own model.
+  const resumeWithComposerModel = () => {
+    const explicitPick =
+      useComposerDraftStore.getState().getComposerDraft(composerDraftTarget)
+        ?.modelSelectionExplicit === true;
+    const picked = composerRef.current?.getSendContext().selectedModelSelection;
+    const current = activeThread?.modelSelection;
+    const switched =
+      explicitPick &&
+      resumableRunId !== null &&
+      picked !== undefined &&
+      current !== undefined &&
+      !modelSelectionsEqual(picked, current);
+    return onResume(switched ? picked : undefined);
+  };
   useInsertionEffect(() => {
-    resumeForAppCommandRef.current = () => void onResume();
+    resumeForAppCommandRef.current = () => void resumeWithComposerModel();
   });
   async function onSubmitPlanFollowUp({
     text,
@@ -14849,16 +14904,11 @@ export default function ChatView(props: ChatViewProps) {
                   canOperateThread &&
                   localServerError === null &&
                   visibleThreadError === serverRuntimeError
-                    ? () => void onResume()
+                    ? () => void resumeWithComposerModel()
                     : undefined
                 }
-                continueBusy={
-                  isSendBusy ||
-                  isResuming ||
-                  isConnecting ||
-                  threadDetailLoading ||
-                  isRevertingCheckpoint
-                }
+                continueBusy={continueBusy}
+                onSwitchModel={failureRecovery?.onSwitchModel}
                 onDismiss={() => {
                   setThreadError(activeThread.id, null);
                   dismissThreadErrorBannerForSession(threadErrorBannerKey);
@@ -14935,6 +14985,7 @@ export default function ChatView(props: ChatViewProps) {
                   contextLimitRecovery={
                     paintOnlyDisplayedTimeline ? undefined : contextLimitRecovery
                   }
+                  failureRecovery={paintOnlyDisplayedTimeline ? undefined : failureRecovery}
                   citationRequest={paintOnlyDisplayedTimeline ? null : citationRequest}
                   citationHistoryLoading={threadDetailLoading}
                   {...(!paintOnlyDisplayedTimeline
@@ -15333,7 +15384,7 @@ export default function ChatView(props: ChatViewProps) {
                               onSend={(event, mode, intent, credit) =>
                                 onSend(event, mode, intent, undefined, credit)
                               }
-                              onResume={() => void onResume()}
+                              onResume={() => void resumeWithComposerModel()}
                               onInterrupt={onInterrupt}
                               onImplementPlanInNewThread={onImplementPlanInNewThread}
                               onRespondToApproval={onRespondToApproval}

@@ -620,7 +620,13 @@ export function ThreadsPane({
                               <span className="sws-thread-meta-rest">
                                 {plan ? <PlanProgressChip plan={plan} /> : null}
                                 {unplannedNoticeShown && isUnplanned(thread) ? (
-                                  <UnplannedThreadChip />
+                                  <UnplannedThreadChip
+                                    canAct={
+                                      props.canChangeThread
+                                        ? props.canChangeThread(thread)
+                                        : props.canChange
+                                    }
+                                  />
                                 ) : null}
                                 {pullRequest ? (
                                   <span className="sws-thread-pr" data-state={pullRequest.state}>

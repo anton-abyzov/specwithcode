@@ -6,7 +6,7 @@ import {
   type ModelState,
 } from "../../chat/ModelStateTag";
 import { isProviderDriverKind, ProviderDriverKind } from "@specweave-studio/contracts";
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { cn } from "~/lib/utils";
 import {
   deriveProviderEntriesByEnvironment,
@@ -18,6 +18,7 @@ import {
   ProviderInstanceIcon,
   resolveProviderInstanceAcpRegistryIconUrl,
 } from "../../chat/ProviderInstanceIcon";
+import { useRowModelFit } from "./rowModelFit";
 import { Tip } from "./Tip";
 import { GitHubCopilotIcon } from "../../GitHubCopilotIcon";
 
@@ -120,12 +121,25 @@ export function ModelBadge(props: {
   state?: ModelState | null;
   tooltip?: boolean;
   focusable?: boolean;
+  /**
+   * Fit the unit to the room its line has (rowModelFit.ts): the provider word gives way,
+   * whole, before the line's other chips.
+   */
+  fit?: boolean;
 }) {
   const label = modelLabel(props.entry, props.instanceId, props.model);
+  const [element, setElement] = useState<HTMLSpanElement | null>(null);
+  useRowModelFit(element, props.fit === true);
+  const state = props.state ?? null;
+  // A fitted unit may leave the provider's word out, so a screen reader hears it from a
+  // twin that always stays; otherwise a Claude model reached through Copilot would
+  // read as native Claude Code.
+  const providerPart = props.fit ? { "data-row-part": "provider", "aria-hidden": true } : {};
   const badge = (
     <span
+      ref={setElement}
       tabIndex={props.focusable ? 0 : undefined}
-      data-model-state={props.state?.kind}
+      data-model-state={state?.kind}
       className={cn("sws-model", props.variant === "chip" && "sws-model-chip", props.className)}
     >
       <ModelBadgeMark entry={props.entry} instanceId={props.instanceId} provider={label.provider} />
@@ -134,14 +148,21 @@ export function ModelBadge(props: {
         <span className="sws-model-name">{label.model}</span>
       ) : (
         <>
-          <span className="sws-model-provider">{label.provider}</span>
-          <span className="sws-model-sep" aria-hidden>
+          {props.fit ? (
+            <span className="sr-only" data-model-provider-name>
+              {label.provider}{" "}
+            </span>
+          ) : null}
+          <span className="sws-model-provider" {...providerPart}>
+            {label.provider}
+          </span>
+          <span className="sws-model-sep" {...providerPart} aria-hidden>
             ·
           </span>
           <span className="sws-model-name">{label.model}</span>
         </>
       )}
-      {props.state ? <ModelStateTag state={props.state} /> : null}
+      {state ? <ModelStateTag state={state} /> : null}
     </span>
   );
   return props.tooltip ? (
@@ -201,6 +222,7 @@ export function ThreadModelBadge(props: {
       {...(props.variant ? { variant: props.variant } : {})}
       {...(props.focusable ? { focusable: true } : {})}
       state={state}
+      fit
       tooltip
     />
   );

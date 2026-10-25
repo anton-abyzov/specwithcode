@@ -1,3 +1,4 @@
+import { assertPersonalChatBoundary } from "./personalChatBoundary.ts";
 import {
   CommandId,
   isProjectCoordinatorThreadId,
@@ -1276,19 +1277,27 @@ const make = Effect.gen(function* () {
     parent: Pick<OrchestrationV2ThreadProjection, "thread" | "runs"> | undefined,
     target: Pick<OrchestrationV2ThreadProjection, "thread">,
   ) =>
-    parent === undefined || target.thread.id === parent.thread.id
-      ? Effect.void
-      : assertLiveCaller(scope, parent);
+    Effect.gen(function* () {
+      if (parent === undefined || target.thread.id === parent.thread.id) return;
+      yield* assertLiveCaller(scope, parent);
+      yield* assertPersonalChatBoundary(parent.thread.projectId, target.thread.projectId).pipe(
+        Effect.provideService(ProjectService.ProjectService, projects),
+      );
+    });
 
-  /** Scheduled work outside the caller's own project needs the same live run. */
+  /** Scheduled work outside the caller's project needs a live run and a writable boundary. */
   const assertLiveCallerForOtherProject = (
     scope: McpInvocationScope,
     parent: Pick<OrchestrationV2ThreadProjection, "thread" | "runs"> | undefined,
     projectId: ProjectId,
   ) =>
-    parent === undefined || projectId === parent.thread.projectId
-      ? Effect.void
-      : assertLiveCaller(scope, parent);
+    Effect.gen(function* () {
+      if (parent === undefined || projectId === parent.thread.projectId) return;
+      yield* assertLiveCaller(scope, parent);
+      yield* assertPersonalChatBoundary(parent.thread.projectId, projectId).pipe(
+        Effect.provideService(ProjectService.ProjectService, projects),
+      );
+    });
 
   const assertLiveCaller = (
     scope: McpInvocationScope,
@@ -1955,9 +1964,16 @@ const make = Effect.gen(function* () {
       // This runs after a save, so a failed lookup of the bound thread hides
       // the webhook URL instead of reporting a saved task as an error.
       const modes = yield* scheduledTaskRunModes(task).pipe(Effect.option);
+      const writable = Exit.isSuccess(
+        yield* assertPersonalChatBoundary(caller.parent?.thread.projectId, task.projectId).pipe(
+          Effect.provideService(ProjectService.ProjectService, projects),
+          Effect.exit,
+        ),
+      );
       return scheduledTaskSummary(
         task,
         live &&
+          writable &&
           Option.isSome(modes) &&
           modes.value.every((mode) => withinLimits(caller.limits, mode)),
       );
@@ -3216,6 +3232,7 @@ const make = Effect.gen(function* () {
       Effect.gen(function* () {
         const { parent, limits } = yield* loadCaller(scope);
         const projectId = yield* resolveProjectTarget(parent, input.projectId);
+        yield* assertLiveCallerForOtherProject(scope, parent, projectId);
         const shells = yield* threadManagement
           .listProjectThreads({ projectId, includeSubagents: false })
           .pipe(Effect.mapError(threadManagementFailure));
@@ -3267,6 +3284,7 @@ const make = Effect.gen(function* () {
       Effect.gen(function* () {
         const { parent, limits } = yield* loadCaller(scope);
         const projectId = yield* resolveProjectTarget(parent, input.projectId);
+        yield* assertLiveCallerForOtherProject(scope, parent, projectId);
         // An agent must not keep driving workers after the user paused or archived the project.
         const project = yield* projects
           .getById(projectId)

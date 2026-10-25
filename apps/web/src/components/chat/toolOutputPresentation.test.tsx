@@ -137,7 +137,7 @@ describe("execution summaries and structured output", () => {
     });
     expect(toolActivitySummary(work, "Exec").length).toBe(102);
     expect(toolPresentationBlocks(work, "/repo", "Exec", null).slice(1)).toEqual([
-      { label: "Output", text: "\n  value = 1\n\treturn value\n" },
+      expect.objectContaining({ label: "Output", text: "\n  value = 1\n\treturn value\n" }),
       { label: "Files", text: "repo/src/test.ts" },
     ]);
   });
@@ -359,5 +359,87 @@ describe("system notice inspector", () => {
     await act(async () => button!.click());
     expect(writeText).toHaveBeenCalledWith(message);
     vi.unstubAllGlobals();
+  });
+});
+
+describe("source output context", () => {
+  it("plumbs projected source metadata and preserves raw JSON copy", async () => {
+    const value = '{\r\n\t"ready":true\r\n}\r\n';
+    const copy = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText: copy },
+    });
+    const element = await mount(
+      <V2ItemInspector
+        environmentId={"fixture" as EnvironmentId}
+        projectedItem={
+          {
+            item: {
+              type: "dynamic_tool",
+              status: "completed",
+              toolName: "read_file",
+              input: { path: "config.json" },
+              output: [{ type: "text", text: value }],
+            },
+            sourceThreadId: "thread-1",
+            sourceItemId: "item-1",
+          } as unknown as OrchestrationV2ProjectedTurnItem
+        }
+        onOpenThread={() => undefined}
+        onOpenTurnDiff={() => undefined}
+      />,
+    );
+    expect(
+      element.querySelector('[data-tool-code-panel="output"]')?.getAttribute("data-language"),
+    ).toBe("json");
+    expect(element.querySelector('[data-tool-code-panel="output"] code')?.textContent).toBe(value);
+    await act(async () =>
+      element.querySelector<HTMLButtonElement>('[aria-label="Copy output"]')!.click(),
+    );
+    expect(copy).toHaveBeenCalledWith(value);
+  });
+
+  it("colors trusted TSX and keeps search output plain even when it looks like JSON", async () => {
+    const source = "export const View = () => <main>Hello</main>;\r\n";
+    const element = await mount(
+      <ToolCodePanel label="Output" text={source} context={{ command: "cat src/View.tsx" }} />,
+    );
+    expect(
+      element.querySelector("[data-highlight-language]")?.getAttribute("data-highlight-language"),
+    ).toBe("tsx");
+    expect(element.querySelector("code")?.textContent).toBe(source);
+    await act(async () =>
+      root!.render(
+        <ToolCodePanel label="Output" text="{}" context={{ command: "rg x file.json" }} />,
+      ),
+    );
+    expect(element.querySelector("[data-highlight-language]")).toBeNull();
+  });
+  it("uses current streamed bytes and skips tokenization beyond the bound", async () => {
+    const element = await mount(
+      <ToolCodePanel
+        label="Output"
+        text="export const View ="
+        context={{ filePath: "View.tsx", streaming: true }}
+      />,
+    );
+    const current = "export const View = () => <div />;\r\n";
+    await act(async () =>
+      root!.render(
+        <ToolCodePanel
+          label="Output"
+          text={current}
+          context={{ filePath: "View.tsx", streaming: true }}
+        />,
+      ),
+    );
+    expect(element.querySelector("code")?.textContent).toBe(current);
+    const large = "x".repeat(1024 * 1024);
+    await act(async () =>
+      root!.render(<ToolCodePanel label="Output" text={large} language="tsx" />),
+    );
+    expect(element.querySelector("[data-highlight-language]")).toBeNull();
+    expect(element.querySelector("code")?.textContent).toBe(large);
   });
 });

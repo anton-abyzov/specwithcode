@@ -30,6 +30,18 @@ function reportScratchFailure(title: string, error: unknown) {
   );
 }
 
+/** Says why a new chat did not start, instead of a click that does nothing. */
+function reportNoChatMachine() {
+  toastManager.add(
+    stackedThreadToast({
+      type: "error",
+      title: "Could not start a chat",
+      description:
+        "No connected machine can start a chat without a project. Open a folder as a project, or reconnect the machine.",
+    }),
+  );
+}
+
 /**
  * Threads without a project live in the environment's scratch project, a
  * plain folder the server owns (users see it as "No project"). The server
@@ -115,5 +127,11 @@ export function useScratchProject() {
     [handleNewThread, openScratchProject, router],
   );
 
-  return { scratchWorkspaceRootFor, scratchEnvironmentId, openScratchProject, startScratchThread };
+  return {
+    scratchWorkspaceRootFor,
+    scratchEnvironmentId,
+    openScratchProject,
+    startScratchThread,
+    reportNoChatMachine,
+  };
 }

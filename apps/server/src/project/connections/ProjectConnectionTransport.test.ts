@@ -106,7 +106,7 @@ it("returns a generic error for a missing executable or missing selected env var
   expect(await f.events()).toEqual([]);
 });
 
-it("closes the owned process when an in-flight call is cancelled", async () => {
+it("closes the owned process before cancelling an in-flight call returns", async () => {
   const f = await fixture();
   const [tool] = await run((s) => s.discover({ config: f.config, cwd: f.root }));
   await f.configure({ hang: true });
@@ -123,6 +123,16 @@ it("closes the owned process when an in-flight call is cancelled", async () => {
   );
   await f.waitForCall();
   await Effect.runPromise(Fiber.interrupt(fiber));
-  await f.stopped();
+  // On Windows a child that is still running holds its working folder open.
+  await f.exited();
   expect((await f.events()).filter((e) => e.method === "tools/call")).toHaveLength(1);
+});
+
+it("closes the owned process before a failed handshake returns", async () => {
+  const f = await fixture();
+  await f.configure({ badInit: true });
+  const failure = await run((s) => s.discover({ config: f.config, cwd: f.root }).pipe(Effect.flip));
+  expect(failure.reason).toBe("unavailable");
+  await f.exited();
+  expect((await f.events()).some((e) => e.type === "start")).toBe(true);
 });

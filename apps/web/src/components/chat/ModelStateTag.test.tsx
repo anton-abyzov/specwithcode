@@ -129,6 +129,38 @@ describe("ModelStateTag", () => {
   });
 });
 
+describe("ModelStateTag in a model chip", () => {
+  it("marks its words as chip parts so the chip's fit decides what shows", () => {
+    const markup = renderToStaticMarkup(
+      <ModelStateTag
+        state={{ kind: "next", pick: "Claude Code · Opus 5.5", pickModel: "Opus 5.5" }}
+        chip
+      />,
+    );
+    expect(markup).toContain('data-model-chip-part="state-full"');
+    expect(markup).toContain('data-model-chip-part="state-short"');
+    expect(markup).toContain(", next message uses Claude Code · Opus 5.5");
+  });
+
+  it("leaves other hosts' width tiers alone", () => {
+    const markup = renderToStaticMarkup(
+      <ModelStateTag state={{ kind: "next", pick: "Claude Code · Opus 5.5" }} />,
+    );
+    expect(markup).not.toContain("data-model-chip-part");
+  });
+
+  it("keeps a fallback to its glyph inside a chip", () => {
+    const markup = renderToStaticMarkup(
+      <ModelStateTag
+        state={{ kind: "fallback", pick: "Claude Code · Opus 5.5", pickModel: "Opus 5.5" }}
+        chip
+      />,
+    );
+    expect(markup).not.toContain("data-model-chip-part");
+    expect(markup).toContain(", fallback for Claude Code · Opus 5.5 (usage limit)");
+  });
+});
+
 describe("fallback on a model of the same name", () => {
   it("names the pick's provider, not the model twice", () => {
     const fallback = state({ shown: devinSol, thread: devinSol, fallbackFrom: sol });

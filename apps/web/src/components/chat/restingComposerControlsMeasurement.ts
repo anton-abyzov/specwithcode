@@ -1,4 +1,10 @@
 import type { RestingComposerControlsMeasurement } from "../composerFooterLayout";
+import {
+  chipGroupSiblingsWidth,
+  MODEL_CHIP_FITS,
+  measureModelChipFitWidths,
+  type ModelChipFitWidths,
+} from "./modelChipFit";
 
 function elementOuterWidth(element: HTMLElement): number {
   const width = element.getBoundingClientRect().width;
@@ -17,6 +23,22 @@ function elementInlineMarginWidth(element: HTMLElement): number {
     (Number.parseFloat(style.marginInlineStart) || 0) +
     (Number.parseFloat(style.marginInlineEnd) || 0)
   );
+}
+
+/** Padding, borders and margins of the boxes between the picker and the toolbar. */
+function pickerWrapperWidth(picker: HTMLElement, controls: HTMLElement): number {
+  let width = 0;
+  for (let node = picker.parentElement; node && node !== controls; node = node.parentElement) {
+    const style = getComputedStyle(node);
+    if (style.display === "contents") continue;
+    for (const side of ["Left", "Right"] as const) {
+      width +=
+        (Number.parseFloat(style[`padding${side}`]) || 0) +
+        (Number.parseFloat(style[`border${side}Width`]) || 0) +
+        (Number.parseFloat(style[`margin${side}`]) || 0);
+    }
+  }
+  return width;
 }
 
 function providerModelPickerNaturalWidth(picker: HTMLElement): number {
@@ -77,8 +99,9 @@ function controlBlockWidths(block: HTMLElement): { natural: number; iconOnly: nu
  * numbers, so neither decision depends on what the other one hid last render.
  *
  * Hidden blocks and the unused overflow trigger stay mounted out of flow at
- * full size. The picker is the one flexible item: its intended width is
- * recovered from the truncated label.
+ * full size. The picker is the one flexible item: a model chip reports its
+ * width at every fit, any other picker's intended width is recovered from the
+ * truncated label.
  */
 export function measureRestingComposerControls(
   controls: HTMLElement,
@@ -95,16 +118,36 @@ export function measureRestingComposerControls(
   const separatorAndGapWidth = separatorWidth > 0 ? separatorWidth + gap : 0;
   const blocks = Array.from(controls.querySelectorAll<HTMLElement>("[data-resting-block]"));
   const widths = blocks.map(controlBlockWidths);
+  // Controls that ride in the picker's own group, such as the coordinator's effort,
+  // keep their width at every fit, as does the group's own padding; the toolbar's
+  // blocks are counted on their own.
+  const groupWidth = picker
+    ? chipGroupSiblingsWidth(picker, controls, true) + pickerWrapperWidth(picker, controls)
+    : 0;
+  const chip = picker ? measureModelChipFitWidths(picker) : null;
+  const pickerFitWidths = chip
+    ? (Object.fromEntries(
+        MODEL_CHIP_FITS.map((fit) => [
+          fit,
+          chip[fit] + elementInlineMarginWidth(picker!) + groupWidth + separatorAndGapWidth,
+        ]),
+      ) as unknown as ModelChipFitWidths)
+    : null;
   return {
     gap,
     naturalFixedWidth:
+      pickerFitWidths?.full ??
       (picker ? providerModelPickerNaturalWidth(picker) : elementOuterWidth(leadingControl)) +
-      separatorAndGapWidth,
+        groupWidth +
+        separatorAndGapWidth,
     minimumFixedWidth:
+      pickerFitWidths?.icon ??
       (picker ? providerModelPickerMinimumWidth(picker) : elementOuterWidth(leadingControl)) +
-      separatorAndGapWidth,
+        groupWidth +
+        separatorAndGapWidth,
     blockWidths: widths.map((width) => width.natural),
     iconOnlyBlockWidths: widths.map((width) => width.iconOnly),
     overflowWidth: overflow ? elementOuterWidth(overflow) : 0,
+    ...(pickerFitWidths ? { pickerFitWidths } : {}),
   };
 }

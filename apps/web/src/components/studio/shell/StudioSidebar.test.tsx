@@ -14,6 +14,8 @@ import { takeProjectSettingsRequest } from "../../../studio/projectSettingsReque
 const state = vi.hoisted(() => ({
   navigate: vi.fn(),
   start: vi.fn(async () => true),
+  noChatMachine: vi.fn(),
+  scratchOffered: true,
   settle: vi.fn(),
   pathname: "/",
   params: {} as Record<string, string>,
@@ -135,8 +137,10 @@ vi.mock("../../../hooks/useSettings", () => ({
 }));
 vi.mock("../../../hooks/useScratchProject", () => ({
   useScratchProject: () => ({
-    scratchEnvironmentId: (environmentId: string | null) => environmentId,
+    scratchEnvironmentId: (environmentId: string | null) =>
+      state.scratchOffered ? environmentId : null,
     startScratchThread: state.start,
+    reportNoChatMachine: state.noChatMachine,
   }),
 }));
 vi.mock("../../../hooks/useThreadActions", () => ({
@@ -229,6 +233,8 @@ beforeEach(() => {
   localStorage.clear();
   state.navigate.mockReset();
   state.start.mockClear();
+  state.noChatMachine.mockClear();
+  state.scratchOffered = true;
   state.pathname = "/";
   state.params = {};
   state.search = {};
@@ -797,6 +803,30 @@ describe("projects and chats sidebar", () => {
     await act(async () => newChat.click());
     expect(state.start).toHaveBeenCalledTimes(2);
     window.removeEventListener("studio:open-command-palette", listen);
+  });
+  it("puts a New chat plus in the Chats heading that starts a chat like the row", async () => {
+    await render();
+    const heading = container.querySelector(
+      '[aria-labelledby="sws-side-chats"] .sws-side-heading',
+    )!;
+    const plus = heading.querySelector<HTMLButtonElement>('button[aria-label="New chat"]')!;
+    expect(plus).not.toBeNull();
+    await act(async () => plus.click());
+    expect(state.start).toHaveBeenCalledWith("host");
+  });
+  it("says why when no machine can start a chat, from the row and the Chats plus", async () => {
+    state.scratchOffered = false;
+    await render();
+    const row = [...container.querySelectorAll("button")].find((b) =>
+      b.textContent?.startsWith("New chat"),
+    )!;
+    const plus = container.querySelector<HTMLButtonElement>(
+      '[aria-labelledby="sws-side-chats"] button[aria-label="New chat"]',
+    )!;
+    await act(async () => row.click());
+    await act(async () => plus.click());
+    expect(state.start).not.toHaveBeenCalled();
+    expect(state.noChatMachine).toHaveBeenCalledTimes(2);
   });
   it("keeps independent chat attention out of the project's badge", async () => {
     state.shells = [

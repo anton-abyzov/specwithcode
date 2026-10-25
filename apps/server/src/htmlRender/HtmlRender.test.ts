@@ -341,6 +341,93 @@ describe("HtmlRender", () => {
     15_000,
   );
 
+  // A stand-in browser that answers CDP until the page is requested, then
+  // stops reading its command pipe, so the page body stays unread in it.
+  const stallingBrowser = Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const directory = yield* fileSystem.makeTempDirectoryScoped({
+      prefix: "studio-html-stall-",
+    });
+    const script = path.join(directory, "browser.mjs");
+    yield* fileSystem.writeFileString(
+      script,
+      [
+        'import * as Net from "node:net";',
+        "const input = new Net.Socket({ fd: 3, readable: true, writable: false });",
+        "const output = new Net.Socket({ fd: 4, readable: false, writable: true });",
+        'let buffered = "";',
+        'input.on("data", (chunk) => {',
+        "  buffered += chunk;",
+        '  for (let end = buffered.indexOf("\\0"); end !== -1; end = buffered.indexOf("\\0")) {',
+        "    const { id, method } = JSON.parse(buffered.slice(0, end));",
+        "    buffered = buffered.slice(end + 1);",
+        "    const result =",
+        '      method === "Target.createTarget" ? { targetId: "T" }',
+        '      : method === "Target.attachToTarget" ? { sessionId: "S" }',
+        "      : {};",
+        '    output.write(JSON.stringify({ id, result }) + "\\0");',
+        '    if (method === "Page.navigate") {',
+        "      input.pause();",
+        "      setInterval(() => {}, 1_000);",
+        "      output.write(JSON.stringify({",
+        '        method: "Fetch.requestPaused",',
+        '        sessionId: "S",',
+        '        params: { requestId: "R", request: { url: "http://studio-page.localhost/page.html" } },',
+        '      }) + "\\0");',
+        "    }",
+        "  }",
+        "});",
+      ].join("\n"),
+    );
+    const executable = path.join(directory, "chrome-headless-shell");
+    yield* fileSystem.writeFileString(
+      executable,
+      `#!/bin/sh\nexec ${JSON.stringify(process.execPath)} ${JSON.stringify(script)}\n`,
+    );
+    yield* fileSystem.chmod(executable, 0o755);
+    return executable;
+  });
+
+  withShell(
+    "handles the command pipe's error when the browser is stopped with commands unread",
+    () =>
+      Effect.gen(function* () {
+        const executable = yield* stallingBrowser;
+        const uncaught: Array<unknown> = [];
+        const onUncaught = (error: unknown) => uncaught.push(error);
+        process.on("uncaughtException", onUncaught);
+        yield* Effect.addFinalizer(() =>
+          Effect.sync(() => process.off("uncaughtException", onUncaught)),
+        );
+
+        // Far larger than the pipe's buffer, so the write is still pending when
+        // the capture gives up and stopping the browser fails it with EPIPE. On
+        // Linux the unread bytes also fail the pipe's read with ECONNRESET.
+        // Either error arrives after the capture has stopped writing.
+        const html = `<p>${"x".repeat(8 * 1024 * 1024)}</p>`;
+        const exit = yield* Effect.gen(function* () {
+          const htmlRender = yield* HtmlRender.HtmlRender;
+          return yield* htmlRender.capture({
+            html,
+            width: 100,
+            height: 100,
+            scale: 1,
+            format: "pdf",
+          });
+        }).pipe(
+          Effect.provide(layerHtmlRender(executable)),
+          Effect.timeout("1 second"),
+          Effect.exit,
+        );
+        yield* Effect.sleep("500 millis");
+
+        expect(exit._tag).toBe("Failure");
+        expect(uncaught).toEqual([]);
+      }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
+    15_000,
+  );
+
   it.live(
     "screenshots the page in headless Chrome with the requested theme and every console level",
     (ctx) =>

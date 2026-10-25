@@ -9,6 +9,7 @@ import {
   assertSemanticProjectionIntegrity,
   assertTurnItemTypes,
   assertUserMessageInputIntents,
+  assertSteerKeepsStartMessage,
   assertUserMessagesInclude,
   MESSAGE_STEERING_INITIAL_PROMPT,
   MESSAGE_STEERING_STEER_PROMPT,
@@ -46,6 +47,7 @@ export function assertGrokMessageSteeringOutput(
   );
   assert.equal(projection.runs[0]?.activeAttemptId, projection.attempts[1]?.id);
   assert.equal(projection.runs[0]?.rootNodeId, projection.attempts[1]?.rootNodeId);
+  assertSteerKeepsStartMessage(projection);
   assert.isFalse(
     projection.turnItems.some(
       (item) => item.type === "run_interrupt_request" || item.type === "run_interrupt_result",

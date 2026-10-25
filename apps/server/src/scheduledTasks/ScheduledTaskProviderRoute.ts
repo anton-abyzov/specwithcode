@@ -332,6 +332,7 @@ export function routineRoute(input: RouteInput): RoutineRoute {
       providers: input.candidates,
       currentInstanceId: provider.instanceId,
       ...(model === null ? {} : { currentModel: model }),
+      currentOptions: input.modelSelection?.options,
       rule: input.rule,
       nowMs: input.nowMs,
       belowPercent: input.rule.providerLimitSwitchAtPercent ?? 100,
@@ -403,7 +404,10 @@ export const readRouteState = Effect.fn("ScheduledTaskService.readRouteState")(f
                  json_extract(run.payload_json, '$.modelSelection.model') AS model,
                  run.status,
                  run.completed_at,
-                 json_extract(run.payload_json, '$.userMessageId') AS user_message_id,
+                 COALESCE(
+                   json_extract(run.payload_json, '$.startMessageId'),
+                   json_extract(run.payload_json, '$.userMessageId')
+                 ) AS user_message_id,
                  open_failure.code AS open_code,
                  open_failure.message AS open_message,
                  EXISTS (

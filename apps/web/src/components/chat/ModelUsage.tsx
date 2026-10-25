@@ -142,10 +142,12 @@ function MeterRing({
   percent,
   tone,
   dashed,
+  chip,
 }: {
   readonly percent: number | null;
   readonly tone: "ok" | "warn" | "full" | "muted";
   readonly dashed: boolean;
+  readonly chip?: boolean | undefined;
 }) {
   const radius = 4.75;
   const circumference = 2 * Math.PI * radius;
@@ -163,6 +165,7 @@ function MeterRing({
       )}
       viewBox="0 0 12 12"
       aria-hidden
+      {...(chip ? { "data-model-chip-part": "usage-ring" } : {})}
     >
       <circle
         cx="6"
@@ -198,11 +201,14 @@ export function ModelUsageMeter({
   state,
   text,
   hideValueClassName,
+  chip,
 }: {
   readonly state: ModelAvailability;
   readonly text: AvailabilityText;
   /** Classes that hide the number when the composer is narrow; the ring stays. */
   readonly hideValueClassName?: string;
+  /** The number is a part of an enclosing model chip, whose fit decides when it shows. */
+  readonly chip?: boolean;
 }) {
   let ring: { percent: number | null; tone: "ok" | "warn" | "full" | "muted"; dashed: boolean };
   let value: string | null;
@@ -252,7 +258,7 @@ export function ModelUsageMeter({
       data-model-usage-meter={state.kind}
       aria-hidden
     >
-      <MeterRing {...ring} />
+      <MeterRing {...ring} chip={chip} />
       {value ? (
         <span
           className={cn(
@@ -264,6 +270,7 @@ export function ModelUsageMeter({
                 : "text-muted-foreground",
             hideValueClassName,
           )}
+          {...(chip ? { "data-model-chip-part": "usage-value" } : {})}
         >
           {value}
         </span>

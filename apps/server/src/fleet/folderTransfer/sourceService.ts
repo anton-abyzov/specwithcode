@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off globalDate:off - the source serves file ranges through no-follow descriptors.
+// @effect-diagnostics nodeBuiltinImport:off globalDate:off globalTimers:off - the source serves file ranges through no-follow descriptors; close bounds shutdown with a timer.
 import * as NodeFS from "node:fs";
 import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
@@ -127,7 +127,33 @@ interface Loaded {
   saving: Promise<void>;
 }
 
+/** How long `close` lets running chunk reads and transitions finish. */
+const CLOSE_SETTLE_MS = 2_000;
+
 const TERMINAL: ReadonlySet<SourceState> = new Set(["committed", "released", "cancelled"]);
+
+/** An operation whose chunk reads or transitions were still running when `close` stopped waiting. */
+export interface PendingAtClose {
+  readonly operationId: string;
+  readonly pending: number;
+}
+
+/**
+ * Saves a restart must honour even after `close`: an end state, a failure, a
+ * revoked grant or snapshot cleanup. A cancel or release can already have
+ * returned the coordinator, so dropping its record would let a restarted source
+ * keep serving the copy. Progress, scan results and grant refreshes stay in memory.
+ */
+function persistsAfterClose(patch: Partial<SourceOperationRecord>): boolean {
+  return (
+    (patch.state !== undefined && (TERMINAL.has(patch.state) || patch.state === "failed")) ||
+    (patch.grant !== undefined && patch.grant.revokedAt !== null) ||
+    patch.snapshotCleanupPending !== undefined
+  );
+}
+
+const closedStop = (cause: unknown) =>
+  cause instanceof SourceTransferError && cause.code === "closed";
 
 function summarize(scan: FolderScan, warnings: ReadonlyArray<string> = []): SourceSummary {
   return {
@@ -170,6 +196,7 @@ async function openInside(root: string, relative: string): Promise<NodeFSP.FileH
 export class SourceTransfers {
   private readonly operations = new Map<string, Loaded>();
   private readonly now: () => number;
+  private closed = false;
 
   readonly stateRoot: string;
   readonly sentSecrets: SentSecretsLedger;
@@ -182,6 +209,45 @@ export class SourceTransfers {
     this.now = hooks.now ?? (() => Date.now());
   }
 
+  /**
+   * Stops routine record writes before the state folder goes away. `save`
+   * publishes a state in memory before its write lands, so a caller that saw
+   * "scanned" could otherwise close the service while `operation.json` was
+   * still being written.
+   *
+   * Chunk reads and transitions already running get a short bound to finish;
+   * the operations still busy when it fires are returned. A transition queued
+   * behind a running scan or build waits for it (minutes, or forever on an
+   * unresponsive folder), so it is not awaited. Afterwards queued writes drain,
+   * scans and builds stop before their next write, and only the saves in
+   * `persistsAfterClose` still reach disk.
+   */
+  async close(): Promise<ReadonlyArray<PendingAtClose>> {
+    const loaded = [...this.operations.values()];
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const bound = new Promise<"late">((resolve) => {
+      timer = setTimeout(() => resolve("late"), CLOSE_SETTLE_MS);
+    });
+    const pending = await Promise.all(
+      loaded.map(async (item): Promise<PendingAtClose | null> => {
+        const work = [...item.readers, ...(item.building ? [] : [item.terminalUpdate])];
+        const outcome = await Promise.race([Promise.all(work).then(() => "done" as const), bound]);
+        return outcome === "late"
+          ? { operationId: item.record.operationId, pending: work.length }
+          : null;
+      }),
+    );
+    clearTimeout(timer);
+    this.closed = true;
+    await Promise.all(loaded.map((item) => item.saving));
+    return pending.filter((item): item is PendingAtClose => item !== null);
+  }
+
+  /** A scan or build stops before its next write into the state folder once closed. */
+  private assertOpen() {
+    if (this.closed) throw new SourceTransferError(503, "closed", "The copy service stopped.");
+  }
+
   private directory(operationId: string) {
     if (!OPERATION_ID.test(operationId)) throw new SourceTransferError(404, "not_found");
     return NodePath.join(this.stateRoot, "folder-sources", operationId);
@@ -189,6 +255,7 @@ export class SourceTransfers {
 
   private async save(loaded: Loaded, patch: Partial<SourceOperationRecord>) {
     loaded.record = { ...loaded.record, ...patch };
+    if (this.closed && !persistsAfterClose(patch)) return;
     const record = loaded.record;
     const saved = loaded.saving.then(() =>
       writeJson(NodePath.join(this.directory(record.operationId), "operation.json"), record),
@@ -236,6 +303,7 @@ export class SourceTransfers {
     readonly destinationEnvironmentId: string;
     readonly warnings?: ReadonlyArray<string>;
   }): Promise<{ readonly token: string; readonly record: SourceOperationRecord }> {
+    this.assertOpen();
     const folder = await NodeFSP.realpath(input.folder);
     const projectRelativePath = input.projectRelativePath ?? ".";
     if (!validProjectRelativePath(projectRelativePath))
@@ -305,16 +373,16 @@ export class SourceTransfers {
 
   private async scan(loaded: Loaded): Promise<void> {
     try {
-      loaded.scan = await preparePortableGit(
-        await scanFolder(loaded.record.folder),
-        this.snapshotRoot(loaded),
-      );
+      const scanned = await scanFolder(loaded.record.folder);
+      this.assertOpen();
+      loaded.scan = await preparePortableGit(scanned, this.snapshotRoot(loaded));
       await this.save(loaded, {
         state: "scanned",
         summary: summarize(loaded.scan, loaded.record.warnings),
       });
     } catch (cause) {
-      await this.save(loaded, { state: "failed", error: errorText(cause) });
+      // Stopped by shutdown: the record keeps its state, so a restart can scan again.
+      if (!closedStop(cause)) await this.save(loaded, { state: "failed", error: errorText(cause) });
     } finally {
       loaded.building = null;
     }
@@ -397,6 +465,7 @@ export class SourceTransfers {
       if (scan.entries.some((entry) => entry.portableGit))
         scan = await scanFolder(loaded.record.folder);
       if (selection.has("rebuildable")) scan = await expandCollapsed(scan);
+      this.assertOpen();
       scan = await preparePortableGit(scan, this.snapshotRoot(loaded));
       let lastSaved = 0;
       await hashSelected(
@@ -430,12 +499,14 @@ export class SourceTransfers {
         ],
         entryCount: entries.length,
       };
+      this.assertOpen();
       await writeManifest(this.manifestFile(loaded.record.operationId), { header, entries });
       loaded.scan = scan;
       this.index(loaded, header, entries);
       await this.save(loaded, { state: "ready", summary: summarize(scan, loaded.record.warnings) });
     } catch (cause) {
-      await this.save(loaded, { state: "failed", error: errorText(cause) });
+      // Stopped by shutdown: the record keeps its state, so a restart can scan again.
+      if (!closedStop(cause)) await this.save(loaded, { state: "failed", error: errorText(cause) });
     } finally {
       loaded.building = null;
     }

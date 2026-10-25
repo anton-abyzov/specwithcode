@@ -145,6 +145,7 @@ export const EnvironmentRequestInvalidReason = Schema.Literals([
   "project_environment_active",
   "project_environment_invalid",
   "project_folder_change_refused",
+  "project_folder_missing",
   "project_name_taken",
   "project_assistant_exists",
   "project_kind_fixed",
@@ -209,6 +210,8 @@ export class EnvironmentRequestInvalidError extends Schema.TaggedError<Environme
         return "Use existing approved folders and credential-free HTTPS or SSH repository URLs.";
       case "project_active_work":
         return "Finish or stop active project work before deleting the project.";
+      case "project_folder_missing":
+        return "The project folder does not exist. Choose an existing folder or create it before importing.";
       case "project_folder_change_refused":
         return "The project folder did not change. Check the folder in project settings before trying again.";
       case "project_name_taken":

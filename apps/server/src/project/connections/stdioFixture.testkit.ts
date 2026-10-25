@@ -32,6 +32,7 @@ readline.createInterface({input:process.stdin}).on('line',line => {
   if (!('id' in request)) return;
   const settings=JSON.parse(fs.readFileSync(path.join(root,'settings.json'),'utf8'));
   const secret=process.env.STUDIO_CONNECTION_TEST_SECRET;
+  if (request.method === 'initialize' && settings.badInit) return reply(request.id,{protocolVersion:'1999-01-01',capabilities:{},serverInfo:{name:'owned-fixture',version:'1'}});
   if (request.method === 'initialize') return reply(request.id,{protocolVersion:request.params.protocolVersion,capabilities:{tools:{}},serverInfo:{name:'owned-fixture',version:'1'}});
   if (request.method === 'tools/list') return reply(request.id,{tools:[{
     name:settings.secretName ? secret : 'echo',
@@ -50,8 +51,9 @@ export async function stdioFixture() {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "studio-connection-test-"));
   const filename = path.join(root, "fixture.mjs");
   await fs.writeFile(filename, script);
-  const configure = (options: { version?: number; secretName?: boolean; hang?: boolean } = {}) =>
-    fs.writeFile(path.join(root, "settings.json"), JSON.stringify({ version: 1, ...options }));
+  const configure = (
+    options: { version?: number; secretName?: boolean; hang?: boolean; badInit?: boolean } = {},
+  ) => fs.writeFile(path.join(root, "settings.json"), JSON.stringify({ version: 1, ...options }));
   await configure();
   const events = async (): Promise<FixtureEvent[]> => {
     try {
@@ -80,6 +82,14 @@ export async function stdioFixture() {
       if (DateTime.toEpochMillis(DateTime.nowUnsafe()) >= deadline)
         throw new Error("Owned fixture did not reach expected state");
       await delay(20);
+    }
+  };
+  /** Every process this fixture started has already exited, checked once without waiting. */
+  const exited = async () => {
+    const log = await events();
+    for (const { pid } of log.filter((e) => e.type === "start")) {
+      expect(isAlive(pid)).toBe(false);
+      expect(log.some((e) => e.type === "exit" && e.pid === pid)).toBe(true);
     }
   };
   const stopped = async () => {
@@ -113,6 +123,7 @@ export async function stdioFixture() {
     config,
     configure,
     events,
+    exited,
     stopped,
     dispose,
     waitForCall: () =>

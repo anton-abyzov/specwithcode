@@ -23,6 +23,7 @@ import { threadErrorIsLive } from "@specweave-studio/shared/orchestrationV2Threa
 import { ThreadErrorBanner } from "../../src/components/chat/ThreadErrorBanner";
 import { MessagesTimeline } from "../../src/components/chat/MessagesTimeline";
 import type { ContextLimitRecoveryActions } from "../../src/components/chat/ContextLimitRecovery";
+import type { FailureRecoveryActions } from "../../src/components/chat/FailureRecovery";
 import { AnchoredToastProvider, ToastProvider } from "../../src/components/ui/toast";
 import { providerErrorPresentation, type TimelineEntry } from "../../src/session-logic";
 import "./fixture.css";
@@ -36,7 +37,12 @@ const now = Date.now();
 const history = caseName === "history";
 const recovered = caseName === "recovered";
 const running = caseName === "running";
-const occurredAt = new Date(now - (history ? 2 * 60 * 60_000 : 10_000)).toISOString();
+// October 24, 2026: a Codex relogin failed the latest run; the user came back hours later.
+const codexAuth = caseName === "codex-auth";
+const continuable = params.get("continue") !== "false";
+const occurredAt = new Date(
+  now - (history ? 2 * 60 * 60_000 : codexAuth ? 5 * 60 * 60_000 : 10_000),
+).toISOString();
 const startedAt = new Date(Date.parse(occurredAt) - 15_000).toISOString();
 const at = DateTime.makeUnsafe(occurredAt);
 const runId = RunId.make("fixture-provider-error-run");
@@ -63,15 +69,16 @@ const geminiMessage = JSON.stringify({
 
 const failure: OrchestrationV2ProviderFailure = {
   class: caseName === "quota" ? "usage_limit" : "provider_error",
-  message:
-    caseName === "plain"
+  message: codexAuth
+    ? "Your access token could not be refreshed because you have since logged out or signed in to another account. Please sign in again."
+    : caseName === "plain"
       ? "The provider could not connect. Try again."
       : caseName === "quota"
         ? "Your usage limit was reached. Try again after 2026-10-23T14:00:00.000Z."
         : caseName === "nested"
           ? JSON.stringify(JSON.stringify(geminiMessage))
           : geminiMessage,
-  code: caseName === "quota" ? "quota_exhausted" : "400",
+  code: caseName === "quota" ? "quota_exhausted" : codexAuth ? "unauthorized" : "400",
   retryable: false,
   ...(caseName === "quota" ? { resetAt: "2026-10-23T14:00:00.000Z" } : {}),
 };
@@ -147,6 +154,14 @@ function Fixture() {
   const [newThreadCount, setNewThreadCount] = useState(0);
   const [dismissCount, setDismissCount] = useState(0);
   const [dismissed, setDismissed] = useState(false);
+  const [continueCount, setContinueCount] = useState(0);
+  const [switchCount, setSwitchCount] = useState(0);
+  const failureRecovery: FailureRecoveryActions = {
+    failureItemId: item.id,
+    continueRunId: continuable ? runId : null,
+    onContinue: () => setContinueCount((count) => count + 1),
+    onSwitchModel: () => setSwitchCount((count) => count + 1),
+  };
   const recovery: ContextLimitRecoveryActions = {
     failureItemId: params.get("owner") === "other" ? "another-root-error" : item.id,
     onNewThread: () => setNewThreadCount((count) => count + 1),
@@ -178,11 +193,13 @@ function Fixture() {
         <p className="mt-1 text-sm text-muted-foreground">
           {history
             ? "Earlier failures stay in the work log."
-            : recovered
-              ? "A recovered retry stays in the work log."
-              : running
-                ? "An automatic retry keeps its progress."
-                : "The provider response appears in the banner and the work log."}
+            : codexAuth
+              ? "The latest turn failed hours ago and still offers its way out."
+              : recovered
+                ? "A recovered retry stays in the work log."
+                : running
+                  ? "An automatic retry keeps its progress."
+                  : "The provider response appears in the banner and the work log."}
         </p>
       </header>
       <section className="fixture-banner" aria-label="Thread error banner">
@@ -190,6 +207,7 @@ function Fixture() {
           error={liveFailure ? failure.message : null}
           errorClass={params.get("unclassified") === "true" ? null : failure.class}
           contextLimitRecovery={recovery}
+          onSwitchModel={failureRecovery.onSwitchModel}
           onDismiss={() => {
             setDismissed(true);
             setDismissCount((count) => count + 1);
@@ -203,7 +221,8 @@ function Fixture() {
           listRef={listRef}
           timelineEntries={entries}
           latestRun={{
-            runId,
+            // History is a failure a later run superseded.
+            runId: history ? RunId.make("fixture-provider-error-later-run") : runId,
             status: recovered ? "completed" : running ? "running" : "failed",
             startedAt,
             completedAt: running ? null : occurredAt,
@@ -213,6 +232,7 @@ function Fixture() {
           runs={[]}
           routeThreadKey="fixture-provider-error-host:fixture-provider-error-thread"
           contextLimitRecovery={recovery}
+          failureRecovery={failureRecovery}
           onOpenTurnDiff={noop}
           onOpenThread={noop}
           onForkFromRun={async () => {}}
@@ -244,6 +264,12 @@ function Fixture() {
         </span>
         <span>
           Dismiss: <output data-testid="dismiss-count">{dismissCount}</output>
+        </span>
+        <span>
+          Continue: <output data-testid="continue-count">{continueCount}</output>
+        </span>
+        <span>
+          Switch model: <output data-testid="switch-count">{switchCount}</output>
         </span>
       </footer>
     </main>

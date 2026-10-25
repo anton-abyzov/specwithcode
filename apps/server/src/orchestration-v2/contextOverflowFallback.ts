@@ -6,6 +6,7 @@ import type {
   OrchestrationV2TurnItem,
   ServerProvider,
 } from "@specweave-studio/contracts";
+import { orchestrationV2RunStartMessageId } from "@specweave-studio/contracts";
 import { latestRootProviderFailure } from "@specweave-studio/shared/orchestrationV2ThreadError";
 import type { ContextFitRequirement } from "@specweave-studio/shared/providerFallback";
 import { contextWindowTokens } from "@specweave-studio/shared/taskRouting";
@@ -121,7 +122,7 @@ export function contextOverflowStop(
     instanceId: run.providerInstanceId,
     selection: run.modelSelection,
     failedAtMs: epochMs(run.completedAt ?? thread.latestRunCompletedAt),
-    userMessageId: run.userMessageId,
+    userMessageId: orchestrationV2RunStartMessageId(run),
     failure,
     cause: "context" as const,
     contextFit,
@@ -136,7 +137,8 @@ export function contextOverflowStop(
         }),
   };
   const continued =
-    fallbackMove(thread.id, run.userMessageId) ?? fallbackMove(thread.id, answered.userMessageId);
+    fallbackMove(thread.id, orchestrationV2RunStartMessageId(run)) ??
+    fallbackMove(thread.id, orchestrationV2RunStartMessageId(answered));
   const origin =
     continued === null
       ? undefined

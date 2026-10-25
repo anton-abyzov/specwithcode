@@ -1,5 +1,16 @@
 import { describe, expect, it } from "@effect/vitest";
-import { deferUntil, fallbackOrigin, type RouteRun } from "./ScheduledTaskProviderRoute.ts";
+import {
+  DEFAULT_SERVER_SETTINGS,
+  ProviderInstanceId,
+  type ServerProvider,
+} from "@specweave-studio/contracts";
+import { provider } from "../studio/fixtures.ts";
+import {
+  deferUntil,
+  fallbackOrigin,
+  routineRoute,
+  type RouteRun,
+} from "./ScheduledTaskProviderRoute.ts";
 
 const NOW = Date.parse("2026-10-21T11:03:00.000Z");
 const MINUTE = 60_000;
@@ -91,5 +102,56 @@ describe("fallbackOrigin", () => {
         stopped,
       ]),
     ).toBeNull();
+  });
+});
+
+describe("routineRoute on a same-driver switch", () => {
+  const opus = "claude-opus-5-5";
+  const used = (id: string, usedPercent: number): ServerProvider => {
+    const base = provider(id, "claudeAgent", NOW);
+    return {
+      ...base,
+      models: [{ slug: opus, name: opus, isCustom: false, isDefault: true, capabilities: null }],
+      usageLimits: {
+        ...base.usageLimits!,
+        windows: [
+          {
+            id: "five_hour",
+            kind: "session",
+            label: "Session",
+            usedPercent,
+            resetsAt: "2026-10-21T15:00:00.000Z",
+          },
+        ],
+      },
+    };
+  };
+  it("fires on the second account with the routine's effort", () => {
+    const high = [{ id: "effort", value: "high" }];
+    const providers = [used("claudeAgent", 100), used("claudeAgent-2", 10)];
+    const route = routineRoute({
+      providers,
+      candidates: providers,
+      modelSelection: {
+        instanceId: ProviderInstanceId.make("claudeAgent"),
+        model: opus,
+        options: high,
+      },
+      thread: null,
+      threadId: null,
+      runs: [],
+      openFailures: new Map(),
+      rule: {
+        ...DEFAULT_SERVER_SETTINGS,
+        providerLimitAction: "switch",
+        providerLimitSwitchAtPercent: 90,
+      },
+      nowMs: NOW,
+    });
+    expect(route.type === "fire" ? route.modelSelection : route).toEqual({
+      instanceId: "claudeAgent-2",
+      model: opus,
+      options: high,
+    });
   });
 });

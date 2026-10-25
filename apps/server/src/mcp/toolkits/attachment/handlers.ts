@@ -1,4 +1,9 @@
-import { type ChatAttachment, MessageId, OrchestratorMcpFailure } from "@specweave-studio/contracts";
+import { assertPersonalChatBoundary } from "../../personalChatBoundary.ts";
+import {
+  type ChatAttachment,
+  MessageId,
+  OrchestratorMcpFailure,
+} from "@specweave-studio/contracts";
 import * as Effect from "effect/Effect";
 import * as Upload from "../../../assets/AttachmentUpload.ts";
 import * as Claims from "../../../orchestration-v2/AttachmentClaims.ts";
@@ -39,6 +44,7 @@ export const layer = McpToolAccess.toLayer(AttachmentToolkit, {
     (input) =>
       Effect.gen(function* () {
         const { caller, projection } = yield* readThread(input.threadId, ["messages"]);
+        yield* assertPersonalChatBoundary(caller?.projectId, projection.thread.projectId);
         if (projection.thread.archivedAt !== null)
           return yield* new OrchestratorMcpFailure({
             code: "invalid_request",

@@ -29,7 +29,10 @@ const providers = [
     ...base,
     instanceId: ProviderInstanceId.make("codex"),
     driver: ProviderDriverKind.make("codex"),
-    models: [{ slug: "gpt-6.1-sol", name: "GPT-6.1-Sol", isCustom: false, capabilities: {} }],
+    models: [
+      { slug: "gpt-6.1-sol", name: "GPT-6.1-Sol", isCustom: false, capabilities: {} },
+      { slug: "gpt-6-astra", name: "GPT-6-Astra", isCustom: false, capabilities: {} },
+    ],
   },
   {
     ...base,

@@ -268,6 +268,29 @@ export function isUnknownBillingAgent(provider: ServerProvider | undefined): boo
 }
 
 /**
+ * Whether the person named this instance anywhere in the rule: the fallback
+ * order, the legacy fallback model, the project default or its provider
+ * order. That is the consent an unknown-billing agent needs.
+ */
+function ruleNamesInstance(
+  rule: Pick<
+    ProviderFallbackRule,
+    | "providerLimitFallbackModelSelection"
+    | "providerLimitFallbackModels"
+    | "defaultModelSelection"
+    | "defaultModelProviders"
+  >,
+  instanceId: ProviderInstanceId,
+): boolean {
+  return (
+    rule.providerLimitFallbackModelSelection?.instanceId === instanceId ||
+    rule.defaultModelSelection?.instanceId === instanceId ||
+    (rule.providerLimitFallbackModels ?? []).some((entry) => entry.instanceId === instanceId) ||
+    (rule.defaultModelProviders ?? []).includes(instanceId)
+  );
+}
+
+/**
  * Whether a thread may start or continue on `provider` with `model`:
  * verified room below `belowPercent`, or a provider that reports no usage
  * and can take a turn. Null when it has neither, is in `limited`, or is
@@ -571,6 +594,8 @@ export function resolveProviderFallback(input: {
   readonly currentInstanceId: ProviderInstanceId;
   /** The model the thread runs on, kept when another account of its driver lists it. */
   readonly currentModel?: string | undefined;
+  /** The thread's options on `currentModel` (effort); kept by a same-driver same-model fallback. */
+  readonly currentOptions?: ModelSelection["options"] | undefined;
   readonly rule: Pick<
     ProviderFallbackRule,
     | "providerLimitFallbackModelSelection"
@@ -667,7 +692,11 @@ export function resolveProviderFallback(input: {
   if (input.currentModel !== undefined) {
     const same = resolveSameModelElsewhere({
       providers: input.providers,
-      current: { instanceId: input.currentInstanceId, model: input.currentModel },
+      current: {
+        instanceId: input.currentInstanceId,
+        model: input.currentModel,
+        ...(input.currentOptions === undefined ? {} : { options: input.currentOptions }),
+      },
       order: input.rule.defaultModelProviders,
       nowMs: input.nowMs,
       belowPercent: input.belowPercent,
@@ -699,8 +728,21 @@ export function resolveProviderFallback(input: {
       !isPaidModelOn(provider, proven.model) &&
       !isUnknownBillingAgent(provider) &&
       (used === null || used < (input.belowPercent ?? 100))
-    )
-      return { instanceId: proven.instanceId, model: proven.model };
+    ) {
+      // The same model through the same driver takes the thread's options too.
+      const currentDriver = input.providers.find(
+        (entry) => entry.instanceId === input.currentInstanceId,
+      )?.driver;
+      return {
+        instanceId: proven.instanceId,
+        model: proven.model,
+        ...(provider.driver === currentDriver &&
+        proven.model === input.currentModel &&
+        input.currentOptions !== undefined
+          ? { options: input.currentOptions }
+          : {}),
+      };
+    }
   }
   if (!input.anyReady) return null;
   const driver = input.providers.find(
@@ -729,7 +771,15 @@ export function resolveProviderFallback(input: {
     .sort((a, b) => a.rank[0] - b.rank[0] || a.rank[1] - b.rank[1] || a.order - b.order);
   for (const { provider } of candidates) {
     const model = candidateModel(provider);
-    if (model !== undefined) return { instanceId: provider.instanceId, model };
+    // The same model through the same driver takes the thread's options too.
+    if (model !== undefined)
+      return {
+        instanceId: provider.instanceId,
+        model,
+        ...(sameModel(provider) && input.currentOptions !== undefined
+          ? { options: input.currentOptions }
+          : {}),
+      };
   }
   return null;
 }
@@ -837,7 +887,16 @@ export function resolveWorkerLaunchSelection(input: {
       !full(provider, coordinator.model)
     )
       return {
-        selection: { instanceId: coordinator.instanceId, model: coordinator.model },
+        selection: {
+          instanceId: coordinator.instanceId,
+          model: coordinator.model,
+          // The same model through the same driver takes the worker's options too.
+          ...(provider.driver === preferredProvider?.driver &&
+          coordinator.model === preferred.model &&
+          preferred.options !== undefined
+            ? { options: preferred.options }
+            : {}),
+        },
         reason: "coordinator",
       };
   }
@@ -845,6 +904,7 @@ export function resolveWorkerLaunchSelection(input: {
     providers: input.providers,
     currentInstanceId: preferred.instanceId,
     currentModel: preferred.model,
+    currentOptions: preferred.options,
     rule: {
       providerLimitFallbackModelSelection: input.rule.providerLimitFallbackModelSelection,
       providerLimitFallbackModels: input.rule.providerLimitFallbackModels,
@@ -1097,11 +1157,13 @@ export function resolveCoordinatorTurnSelection(input: {
     const current = input.providers.find((provider) => provider.instanceId === thread.instanceId);
     // Gemini/Vertex never continue as an automatic fallback, including one
     // selected before this guard, nor does a model a paid router or API bills.
-    // API-credit consent applies to other providers.
+    // API-credit consent applies to other providers. An unknown-billing agent
+    // (Devin) stays only when the person named it, as it may only be picked.
     const paid =
       isGeminiSpendProvider(current) ||
       isPaidModelBilling(providerModelBilling(current, thread.model)) ||
-      (isPerTokenProvider(current) && input.rule.providerLimitUseApiCredits !== true);
+      (isPerTokenProvider(current) && input.rule.providerLimitUseApiCredits !== true) ||
+      (isUnknownBillingAgent(current) && !ruleNamesInstance(input.rule, thread.instanceId));
     if (current !== undefined && !paid && canTakeTurn(current) && !full(current, thread.model))
       return { selection: thread, reason: "staying-on-fallback" };
   }
@@ -1118,6 +1180,7 @@ export function resolveCoordinatorTurnSelection(input: {
     providers: input.providers,
     currentInstanceId: input.saved.instanceId,
     currentModel: input.saved.model,
+    currentOptions: input.saved.options,
     rule: input.rule,
     nowMs: input.nowMs,
     belowPercent: threshold,

@@ -206,8 +206,9 @@ export const ModelPickerContent = memo(function ModelPickerContent(props: {
   getModelDisabledReason?: (instanceId: ProviderInstanceId, model: string) => string | null;
   /**
    * Usage beside each model, for pickers that choose what a chat runs next.
-   * A model whose confirmed read says its limit is spent can't be chosen; it
-   * keeps its place and shortcut, and says why.
+   * A model whose confirmed read says its limit is spent stays selectable; it
+   * keeps its place and shortcut, and its warning says why. Only
+   * getModelDisabledReason disables a row.
    */
   usage?: ModelPickerUsage;
   /** A footer button that swaps the list for the host's second view. */

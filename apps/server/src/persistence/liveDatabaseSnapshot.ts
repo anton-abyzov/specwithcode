@@ -52,17 +52,45 @@ export function openLiveDatabaseReadOnly(dbPath: string): NodeSqlite.DatabaseSyn
   return database;
 }
 
+// macOS and Windows volumes are case-insensitive by default, and APFS ignores Unicode normalization.
+const nameKey = (path: string): string =>
+  process.platform === "darwin" || process.platform === "win32"
+    ? path.normalize("NFC").toLowerCase()
+    : path;
+
+const statOf = (path: string): NodeFS.BigIntStats | undefined => {
+  try {
+    return NodeFS.statSync(path, { bigint: true, throwIfNoEntry: false });
+  } catch {
+    return undefined;
+  }
+};
+
+const realPathOf = (path: string): string => {
+  try {
+    return NodeFS.realpathSync.native(path);
+  } catch {
+    return path;
+  }
+};
+
+/**
+ * Whether two paths name one file. File IDs are compared as bigints: NTFS IDs
+ * are 64 bits, and as Numbers files made one after another in a folder lose
+ * the low bits that tell them apart. An ID of 0 means the volume has none, so
+ * the real paths are compared instead.
+ */
 const sameFile = (left: string, right: string): boolean => {
   const resolvedLeft = NodePath.resolve(left);
   const resolvedRight = NodePath.resolve(right);
-  if (resolvedLeft === resolvedRight) return true;
-  try {
-    const a = NodeFS.statSync(resolvedLeft);
-    const b = NodeFS.statSync(resolvedRight);
-    return a.dev === b.dev && a.ino === b.ino;
-  } catch {
-    return false;
+  if (nameKey(resolvedLeft) === nameKey(resolvedRight)) return true;
+  const a = statOf(resolvedLeft);
+  const b = statOf(resolvedRight);
+  if (a === undefined || b === undefined) return false;
+  if (a.ino === 0n || b.ino === 0n) {
+    return nameKey(realPathOf(resolvedLeft)) === nameKey(realPathOf(resolvedRight));
   }
+  return a.dev === b.dev && a.ino === b.ino;
 };
 
 export interface LiveDatabaseSnapshot {

@@ -275,6 +275,7 @@ import {
 import { useEnvironmentQuery } from "~/state/query";
 import { useDebouncedValue } from "~/state/queries";
 import { ProviderModelPicker } from "./ProviderModelPicker";
+import { ModelChipFitContext, type ModelChipFit } from "./modelChipFit";
 import type { ModelStateHeader } from "./ModelPickerContent";
 import { fallbackModelState } from "./ModelStateTag";
 import { modelLabel } from "../../studio/shellModel";
@@ -1193,6 +1194,7 @@ function useRestingComposerControlsLayout(host: HTMLDivElement | null, useContro
     hiddenCount: number;
     iconOnlyCount?: number;
     visible: boolean;
+    pickerFit?: ModelChipFit;
   }>({ hiddenCount: 0, visible: true });
 
   const measure = useCallback(() => {
@@ -1215,7 +1217,8 @@ function useRestingComposerControlsLayout(host: HTMLDivElement | null, useContro
       });
       return next.hiddenCount === current.hiddenCount &&
         next.iconOnlyCount === current.iconOnlyCount &&
-        next.visible === current.visible
+        next.visible === current.visible &&
+        next.pickerFit === current.pickerFit
         ? current
         : next;
     });
@@ -1230,9 +1233,11 @@ function useRestingComposerControlsLayout(host: HTMLDivElement | null, useContro
       observer.disconnect();
       observer.observe(currentHost);
       observer.observe(controls);
+      // The picker's following siblings include controls in its own group, such as
+      // the coordinator's effort, which the fit leaves room for.
       controls
         .querySelectorAll<HTMLElement>(
-          "[data-resting-block], [data-composer-control-label], [data-chat-provider-model-picker-label]",
+          "[data-resting-block], [data-composer-control-label], [data-chat-provider-model-picker-label], [data-model-chip-part], [data-chat-provider-model-picker] ~ *",
         )
         .forEach((element) => observer.observe(element));
       measure();
@@ -1254,6 +1259,7 @@ function useRestingComposerControlsLayout(host: HTMLDivElement | null, useContro
     hiddenBlockCount: layout.hiddenCount,
     iconOnlyBlockCount: layout.iconOnlyCount ?? 0,
     controlsVisible: layout.visible,
+    pickerFit: layout.pickerFit ?? null,
   };
 }
 
@@ -3207,6 +3213,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     hiddenBlockCount: restingControlsHiddenBlockCount,
     iconOnlyBlockCount: restingControlsIconOnlyBlockCount,
     controlsVisible: restingControlsVisible,
+    pickerFit: restingControlsPickerFit,
   } = useRestingComposerControlsLayout(restingControlsHost ?? inlineRestingControlsHost);
   const expandedControlsLayout = useRestingComposerControlsLayout(null, true);
   const pendingPrimaryAction = useMemo(
@@ -5566,6 +5573,10 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
   const iconOnlyBlockCount = composerControlsCollapsed
     ? restingControlsIconOnlyBlockCount
     : expandedControlsLayout.iconOnlyBlockCount;
+  // The model chip gives up room with the toolbar's other controls, in one decision.
+  const modelChipFit = composerControlsCollapsed
+    ? restingControlsPickerFit
+    : expandedControlsLayout.pickerFit;
   const restingProviderTraitsPicker = renderProviderTraitsPicker({
     ...providerTraitsPickerInput,
     size: composerControlsCollapsed ? "xs" : "sm",
@@ -5606,6 +5617,8 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
     .map((def) => def.id);
   // Project coordinator details use the project model/options picker. A native
   // draft-only picker here would advertise a model the routed send never uses.
+  const composerModelChip =
+    !providerCatalogPending && Boolean(activeThreadModelSelection || composerModelStateValue);
   const nativeComposerControls = showProviderUnavailable ? (
     <ComposerControl
       type="button"
@@ -5686,10 +5699,15 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
         stateHeader={props.modelStateHeader ?? null}
         triggerClassName={cn(
           composerControlsCollapsed ? "shrink text-xs!" : "-ms-2.5",
-          pickerTriggerState
-            ? "min-w-[15rem] @max-[479px]/composer-surface:min-w-[11rem]"
-            : "min-w-[11rem]",
+          // A chip keeps its parts within the toolbar by its fit; a plain label, as
+          // while the catalog loads, keeps the room it had.
+          composerModelChip
+            ? "min-w-13"
+            : pickerTriggerState
+              ? "min-w-[15rem] @max-[479px]/composer-surface:min-w-[11rem]"
+              : "min-w-[11rem]",
         )}
+        fit={modelChipFit}
         terminalOpen={terminalOpen}
         open={isComposerModelPickerOpen}
         instanceIndicatorBackground={
@@ -5707,7 +5725,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
             }
           : {})}
         onOpenChange={setIsComposerModelPickerOpen}
-        {...(!providerCatalogPending && (activeThreadModelSelection || composerModelStateValue)
+        {...(composerModelChip
           ? {
               triggerParts: {
                 provider: composerModelLabel(displayedModel).provider,
@@ -5775,7 +5793,11 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       </>
     </>
   );
-  const composerControls = projectRouting?.coordinatorModelControls ?? nativeComposerControls;
+  const composerControls = (
+    <ModelChipFitContext value={modelChipFit}>
+      {projectRouting?.coordinatorModelControls ?? nativeComposerControls}
+    </ModelChipFitContext>
+  );
   const showTasksTab =
     !hasBannerItems &&
     !showComposerTopDrawer &&
@@ -7893,7 +7915,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
                   className="absolute bottom-2 inset-x-4 min-w-0"
                 >
                   <div
-                    ref={restingComposerControlsRef}
+                    ref={attachRestingComposerControls}
                     data-chat-composer-resting-controls="true"
                     aria-hidden={restingControlsVisible ? undefined : true}
                     inert={restingControlsVisible ? undefined : true}

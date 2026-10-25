@@ -6,6 +6,7 @@ import {
   isWithinFolder,
   routeRefusalMessage,
   routeStateRefusal,
+  userAskedIn,
 } from "./projectRouting.ts";
 
 const project = (id: string, workspaceRoot: string, settings: object = {}) => ({
@@ -60,5 +61,24 @@ describe("project routing access", () => {
     const message = routeRefusalMessage("outside_folders", { assistant: "Aide", target: "Vskill" });
     expect(message).toContain("The user can add that folder");
     expect(message).toContain("do not ask for or add it yourself");
+  });
+});
+
+describe("userAskedIn", () => {
+  const request =
+    "So we review and think about whether we need to update anything for my projects.";
+
+  it("finds the user's words regardless of case, quotes, spacing and punctuation", () => {
+    expect(userAskedIn("“Update anything for my projects”", [request])).toBe(true);
+    expect(userAskedIn("whether  we need\nto update", [request])).toBe(true);
+    expect(userAskedIn("yes, send it", ["No.", "Yes, send it!"])).toBe(true);
+  });
+
+  it("refuses words the user did not write, partial words and empty quotes", () => {
+    expect(userAskedIn("patch only what is clearly needed", [request])).toBe(false);
+    // Whole words only: "view" is inside "review" but was not written.
+    expect(userAskedIn("view", [request])).toBe(false);
+    expect(userAskedIn("  ...  ", [request])).toBe(false);
+    expect(userAskedIn("update anything", [])).toBe(false);
   });
 });

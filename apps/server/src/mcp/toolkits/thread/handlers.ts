@@ -1,3 +1,4 @@
+import { assertPersonalChatBoundary } from "../../personalChatBoundary.ts";
 import {
   type CommandId,
   type RuntimeRequestId,
@@ -77,27 +78,39 @@ const readQuestion = Effect.fn("mcp.readQuestion")(function* (input: {
 /** A tool that changes `threadId`, or the caller's own thread when it is omitted. */
 const writesThread = <P extends { readonly threadId?: ThreadId | undefined }, A, E, R>(
   handle: (params: P) => Effect.Effect<A, E, R>,
-) => McpToolAccess.writesThreads((params: P) => [params.threadId], handle);
+) =>
+  McpToolAccess.writesThreads(
+    (params: P) => [params.threadId],
+    (params) =>
+      Effect.gen(function* () {
+        const { caller, projection } = yield* readThread(params.threadId);
+        yield* assertPersonalChatBoundary(caller?.projectId, projection.thread.projectId);
+        return yield* handle(params);
+      }),
+  );
 
 export const layer = McpToolAccess.toLayer(ThreadToolkit, {
   run_scheduled_task_now: McpToolAccess.writesEnvironment((input) =>
     Effect.gen(function* () {
       const scheduler = yield* ScheduledTasks.ScheduledTaskService;
       const { tasks } = yield* scheduler.list().pipe(Effect.mapError(unavailable));
-      if (!tasks.some((task) => task.id === input.taskId))
+      const task = tasks.find((task) => task.id === input.taskId);
+      if (task === undefined)
         return yield* new OrchestratorMcpFailure({
           code: "invalid_request",
           message: "The scheduled task was not found.",
         });
-      const { task } = yield* scheduler
+      const { caller } = yield* readCaller();
+      yield* assertPersonalChatBoundary(caller?.projectId, task.projectId);
+      const { task: started } = yield* scheduler
         .runNow({ id: input.taskId })
         .pipe(Effect.mapError(unavailable));
       return {
-        taskId: task.id,
-        threadId: task.threadId,
-        lastRunStatus: task.lastRunStatus,
-        runCount: task.runCount,
-        nextRunAt: task.nextRunAt,
+        taskId: started.id,
+        threadId: started.threadId,
+        lastRunStatus: started.lastRunStatus,
+        runCount: started.runCount,
+        nextRunAt: started.nextRunAt,
       };
     }),
   ),
@@ -155,6 +168,14 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
       Effect.gen(function* () {
         const context = yield* readThread(input.targetThreadId);
         const source = yield* readThread(input.sourceThreadId);
+        yield* assertPersonalChatBoundary(
+          context.caller?.projectId,
+          context.projection.thread.projectId,
+        );
+        yield* assertPersonalChatBoundary(
+          context.caller?.projectId,
+          source.projection.thread.projectId,
+        );
         const result = yield* context.threads
           .dispatch({
             type: "thread.merge_back",

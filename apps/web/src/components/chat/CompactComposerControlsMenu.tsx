@@ -9,6 +9,7 @@ import {
   MenuSeparator as MenuDivider,
   MenuTrigger,
 } from "../ui/menu";
+import { cn } from "~/lib/utils";
 import { ComposerControl, ComposerControlIcon } from "./ComposerControl";
 import { useComposerMenuProps } from "./composerEventScope";
 import { useComposerMenuState } from "./useComposerMenuState";
@@ -42,7 +43,9 @@ export const CompactComposerControlsMenu = memo(function CompactComposerControls
         render={
           <ComposerControl
             size={size}
-            className="shrink-0"
+            // A square icon button, so a narrow toolbar keeps room for the model's name,
+            // that stays a 24 px target.
+            className={cn("min-w-6 shrink-0", size === "xs" ? "px-1" : "px-1.5")}
             aria-label="More composer controls"
             data-composer-shortcut={
               props.traitsMenuContent ? "composer.mode composer.effort" : "composer.mode"

@@ -1,14 +1,19 @@
+// @effect-diagnostics nodeBuiltinImport:off - Effect's spawner drops the error listener on Chrome's CDP pipes, so this spawns and holds them itself.
+import * as EffectNodeSink from "@effect/platform-node/NodeSink";
+import * as EffectNodeStream from "@effect/platform-node/NodeStream";
+import { HostProcessPlatform } from "@specweave-studio/shared/hostProcess";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
+import { identity } from "effect/Function";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Queue from "effect/Queue";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
-import * as ChildProcess from "effect/process/ChildProcess";
-import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
+import * as NodeChildProcess from "node:child_process";
+import type * as NodeStream from "node:stream";
 
 import { browserLastError } from "../preview/PreviewBrowserHost.ts";
 import { publicProxy } from "./publicProxy.ts";
@@ -219,67 +224,144 @@ interface PageEvents {
   omittedConsoleMessages: number;
 }
 
+/** How long a browser asked to stop may take before it is killed. */
+const STOP_TIMEOUT = "2 seconds";
+
+const browserExited = (child: NodeChildProcess.ChildProcess) =>
+  child.exitCode !== null || child.signalCode !== null;
+
+const awaitBrowserExit = (child: NodeChildProcess.ChildProcess) =>
+  Effect.callback<void>((resume) => {
+    const onExit = () => resume(Effect.void);
+    if (browserExited(child)) return onExit();
+    child.once("exit", onExit);
+    return Effect.sync(() => child.off("exit", onExit));
+  });
+
+// The browser leads its own process group, so this reaches its helpers too.
+const signalBrowserGroup = (child: NodeChildProcess.ChildProcess, signal: NodeJS.Signals) => {
+  try {
+    process.kill(-child.pid!, signal);
+  } catch {
+    // The group has already exited.
+  }
+};
+
+/**
+ * Starts the browser process for the life of the scope; scope close stops it
+ * and its helpers. Node opens each pipe as a socket that also reads, so a
+ * browser that dies with commands still unread fails the command pipe with
+ * ECONNRESET or EPIPE, even after nothing writes to it any more. Each pipe
+ * therefore keeps an error listener for as long as it exists, and the first
+ * error is kept as the cause of the disconnect.
+ */
+const spawnBrowser = Effect.fnUntraced(function* (executable: string, args: ReadonlyArray<string>) {
+  const platform = yield* HostProcessPlatform;
+  let pipeError: unknown;
+  const child = yield* Effect.acquireRelease(
+    Effect.callback<NodeChildProcess.ChildProcess, HtmlRenderBrowserError>((resume) => {
+      const child = NodeChildProcess.spawn(executable, args, {
+        stdio: ["ignore", "ignore", "pipe", "pipe", "pipe"],
+        detached: platform !== "win32",
+        windowsHide: true,
+      });
+      for (const pipe of child.stdio) {
+        pipe?.on("error", (error) => {
+          pipeError ??= error;
+        });
+      }
+      // Later errors, such as a failed kill, are ignored; resume only takes the first.
+      child.on("error", (cause) =>
+        resume(
+          Effect.fail(
+            new HtmlRenderBrowserError({ reason: "the browser could not be started", cause }),
+          ),
+        ),
+      );
+      child.once("spawn", () => resume(Effect.succeed(child)));
+    }),
+    (child) =>
+      Effect.gen(function* () {
+        if (platform === "win32") {
+          if (!browserExited(child)) {
+            // taskkill /T takes the helpers too; a plain kill is the fallback.
+            const fallback = () => {
+              if (!browserExited(child)) child.kill();
+            };
+            NodeChildProcess.spawn("taskkill", ["/PID", String(child.pid), "/T", "/F"], {
+              stdio: "ignore",
+              windowsHide: true,
+            })
+              .on("error", fallback)
+              .on("exit", (code) => code !== 0 && fallback());
+          }
+          yield* awaitBrowserExit(child).pipe(Effect.timeout(STOP_TIMEOUT), Effect.ignore);
+          return;
+        }
+        signalBrowserGroup(child, "SIGTERM");
+        yield* awaitBrowserExit(child).pipe(Effect.timeout(STOP_TIMEOUT), Effect.ignore);
+        signalBrowserGroup(child, "SIGKILL");
+        // The profile directory is removed next; let a killed browser finish exiting.
+        yield* awaitBrowserExit(child).pipe(Effect.timeout("1 second"), Effect.ignore);
+      }),
+  );
+  const [, , stderr, commands, replies] = child.stdio as [
+    null,
+    null,
+    NodeStream.Readable,
+    NodeStream.Writable,
+    NodeStream.Readable,
+  ];
+  return { stderr, commands, replies, pipeError: () => pipeError };
+});
+
 /**
  * Starts the headless shell for the life of the scope, speaking CDP over
- * `--remote-debugging-pipe` (fd 3 in, fd 4 out, NUL-delimited JSON). Scope
- * close kills the process group. Each page is its own target, so pages load
- * in parallel.
+ * `--remote-debugging-pipe` (fd 3 in, fd 4 out, NUL-delimited JSON). Each
+ * page is its own target, so pages load in parallel.
  */
 const launchBrowser = Effect.fnUntraced(function* (input: {
   readonly executable: string;
   readonly noSandbox: boolean;
   readonly profileDirectory: string;
 }) {
-  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const proxyPort = yield* publicProxy.pipe(
     Effect.mapError(
       (cause) => new HtmlRenderBrowserError({ reason: "the preview proxy could not start", cause }),
     ),
   );
   const outgoing = yield* Queue.unbounded<Uint8Array>();
-  const child = yield* spawner
-    .spawn(
-      ChildProcess.make(
-        input.executable,
-        [
-          "--headless=new",
-          "--remote-debugging-pipe",
-          "--no-first-run",
-          "--no-default-browser-check",
-          "--disable-gpu",
-          "--hide-scrollbars",
-          "--mute-audio",
-          "--block-new-web-contents",
-          `--proxy-server=socks5://127.0.0.1:${proxyPort}`,
-          // Loopback would otherwise skip the proxy.
-          "--proxy-bypass-list=<-loopback>",
-          // WebRTC would otherwise send UDP, which no proxy carries.
-          "--force-webrtc-ip-handling-policy=disable_non_proxied_udp",
-          ...(input.noSandbox ? ["--no-sandbox"] : []),
-          `--user-data-dir=${input.profileDirectory}`,
-          "about:blank",
-        ],
-        {
-          stdin: "ignore",
-          stdout: "ignore",
-          stderr: "pipe",
-          forceKillAfter: "2 seconds",
-          additionalFds: {
-            fd3: { type: "input", stream: Stream.fromQueue(outgoing) },
-            fd4: { type: "output" },
-          },
-        },
-      ),
-    )
-    .pipe(
-      Effect.mapError(
-        (cause) =>
-          new HtmlRenderBrowserError({ reason: "the browser could not be started", cause }),
-      ),
-    );
+  const browser = yield* spawnBrowser(input.executable, [
+    "--headless=new",
+    "--remote-debugging-pipe",
+    "--no-first-run",
+    "--no-default-browser-check",
+    "--disable-gpu",
+    "--hide-scrollbars",
+    "--mute-audio",
+    "--block-new-web-contents",
+    `--proxy-server=socks5://127.0.0.1:${proxyPort}`,
+    // Loopback would otherwise skip the proxy.
+    "--proxy-bypass-list=<-loopback>",
+    // WebRTC would otherwise send UDP, which no proxy carries.
+    "--force-webrtc-ip-handling-policy=disable_non_proxied_udp",
+    ...(input.noSandbox ? ["--no-sandbox"] : []),
+    `--user-data-dir=${input.profileDirectory}`,
+    "about:blank",
+  ]);
+  yield* Stream.fromQueue(outgoing).pipe(
+    Stream.run(
+      EffectNodeSink.fromWritable({ evaluate: () => browser.commands, onError: identity }),
+    ),
+    Effect.ignore,
+    Effect.forkScoped,
+  );
 
   let stderrTail = "";
-  const stderrReader = yield* child.stderr.pipe(
+  const stderrReader = yield* EffectNodeStream.fromReadable({
+    evaluate: () => browser.stderr,
+    onError: identity,
+  }).pipe(
     Stream.decodeText(),
     Stream.runForEach((text) =>
       Effect.sync(() => {
@@ -384,6 +466,7 @@ const launchBrowser = Effect.fnUntraced(function* (input: {
     yield* Fiber.await(stderrReader).pipe(Effect.timeout("1 second"), Effect.ignore);
     const error = new HtmlRenderBrowserError({
       reason: "the browser exited unexpectedly",
+      cause: browser.pipeError(),
       output: stderrTail,
     });
     disconnected = error;
@@ -399,7 +482,7 @@ const launchBrowser = Effect.fnUntraced(function* (input: {
 
   // Decoded text chunks may split a message anywhere, and a screenshot reply spans many.
   let partial: Array<string> = [];
-  yield* child.getOutputFd(4).pipe(
+  yield* EffectNodeStream.fromReadable({ evaluate: () => browser.replies, onError: identity }).pipe(
     Stream.decodeText(),
     Stream.runForEach((text) => {
       const complete: Array<string> = [];

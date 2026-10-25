@@ -207,7 +207,7 @@ try {
       assert.equal(await rowTag.locator("[data-unplanned-glyph]").count(), 1);
       assert.equal(
         (await rowTag.textContent())?.trim(),
-        "No increment: changed code without an increment",
+        "No increment: changed code without an increment. Open the thread to link an increment or mark it not needed.",
       );
       assert.equal(
         await rowTag.evaluate((tag) => getComputedStyle(tag).color),

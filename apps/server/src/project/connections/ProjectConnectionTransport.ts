@@ -34,43 +34,69 @@ export class ProjectConnectionTransport extends Context.Service<
 >()("specweave-studio/project/connections/ProjectConnectionTransport") {}
 
 const safeError = () => new ConnectionTransportError({ reason: "unavailable" });
-const run = <A>(target: Target, action: (client: Client, signal: AbortSignal) => Promise<A>) =>
-  Effect.tryPromise({
-    try: async (signal) => {
-      const env = getDefaultEnvironment();
-      for (const key of target.config.envKeys) {
-        const value = process.env[key];
-        if (value === undefined) throw safeError();
-        env[key] = value;
-      }
-      // Deliberately no inherited arbitrary environment and no shell. Provider auth is never copied.
-      const transport = new StdioClientTransport({
-        command: target.config.command,
-        args: [...target.config.args],
-        cwd: target.cwd,
-        env,
-        stderr: "ignore",
-      });
-      const client = new Client(
-        { name: "specweave-studio-project", version: "0.2.0" },
-        { capabilities: {} },
-      );
-      const bound = AbortSignal.any([signal, AbortSignal.timeout(30_000)]);
-      const close = () => {
-        void client.close().catch(() => undefined);
-      };
-      bound.addEventListener("abort", close, { once: true });
-      try {
-        await client.connect(transport, { signal: bound, timeout: 10_000 });
-        return await action(client, bound);
-      } finally {
-        bound.removeEventListener("abort", close);
-        await client.close().catch(() => undefined);
-        await transport.close().catch(() => undefined);
-      }
-    },
-    catch: (error) => (Schema.is(ConnectionTransportError)(error) ? error : safeError()),
+const toTransportError = (error: unknown) =>
+  Schema.is(ConnectionTransportError)(error) ? error : safeError();
+// The SDK's own close waits up to 2 s after ending stdin and 2 s after SIGTERM, then
+// sends SIGKILL; the wait for the exit after that is bounded too, about 6 s in all.
+const EXIT_WAIT_MS = 2_000;
+
+const open = (target: Target) => {
+  const env = getDefaultEnvironment();
+  for (const key of target.config.envKeys) {
+    const value = process.env[key];
+    if (value === undefined) throw safeError();
+    env[key] = value;
+  }
+  // Deliberately no inherited arbitrary environment and no shell. Provider auth is never copied.
+  const transport = new StdioClientTransport({
+    command: target.config.command,
+    args: [...target.config.args],
+    cwd: target.cwd,
+    env,
+    stderr: "ignore",
   });
+  const client = new Client(
+    { name: "specweave-studio-project", version: "0.2.0" },
+    { capabilities: {} },
+  );
+  // The SDK reports the child's `close` event here, after it has exited.
+  const exited = new Promise<void>((resolve) => {
+    client.onclose = resolve;
+  });
+  // Set before connecting: a failed handshake has the SDK close the transport, clearing its pid.
+  return { transport, client, exited, started: false };
+};
+
+/**
+ * Closes the owned process and waits for it to exit. Interruption waits for
+ * this too, so a cancelled call never leaves the process running; on Windows
+ * a running child also keeps its working folder from being removed.
+ */
+const close = ({ transport, client, exited, started }: ReturnType<typeof open>) =>
+  Effect.gen(function* () {
+    yield* Effect.promise(async () => {
+      await client.close().catch(() => undefined);
+      await transport.close().catch(() => undefined);
+    });
+    if (started) yield* Effect.promise(() => exited).pipe(Effect.timeoutOption(EXIT_WAIT_MS));
+  });
+
+const run = <A>(target: Target, action: (client: Client, signal: AbortSignal) => Promise<A>) =>
+  Effect.acquireUseRelease(
+    Effect.try({ try: () => open(target), catch: toTransportError }),
+    (session) =>
+      Effect.tryPromise({
+        try: async (signal) => {
+          const { transport, client } = session;
+          const bound = AbortSignal.any([signal, AbortSignal.timeout(30_000)]);
+          session.started = true;
+          await client.connect(transport, { signal: bound, timeout: 10_000 });
+          return await action(client, bound);
+        },
+        catch: toTransportError,
+      }),
+    close,
+  );
 
 async function discover(
   client: Client,

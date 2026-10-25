@@ -12,6 +12,7 @@ import {
 } from "./ProjectService.ts";
 import { ServerRuntimeStartupError } from "../serverRuntimeStartup.ts";
 import { failProjectMutation } from "./http.ts";
+import { WorkspaceRootNotExistsError } from "../workspace/WorkspacePaths.ts";
 
 const projectId = ProjectId.make("project:http-mutation");
 
@@ -106,5 +107,37 @@ it.effect("returns safe actionable environment validation across HTTP and RPC", 
     assert.equal(error.reason, "project_environment_invalid");
     assert.include(error.message, "approved folders");
     assert.include(projectMutationErrorMessage(cause), "approved project folder");
+  }),
+);
+
+it.effect("returns actionable missing-folder guidance across HTTP and RPC", () =>
+  Effect.gen(function* () {
+    const cause = new ProjectOperationError({
+      operation: "normalize-workspace",
+      projectId,
+      cause: new WorkspaceRootNotExistsError({
+        workspaceRoot: "/missing",
+        normalizedWorkspaceRoot: "/missing",
+      }),
+    });
+    const error = yield* failProjectMutation(cause).pipe(Effect.flip);
+    assert.equal(error._tag, "EnvironmentRequestInvalidError");
+    assert.equal(error.reason, "project_folder_missing");
+    assert.include(error.message, "folder does not exist");
+    assert.equal(projectMutationErrorMessage(cause), error.message);
+  }),
+);
+
+it.effect("does not expose arbitrary normalization failure details", () =>
+  Effect.gen(function* () {
+    const cause = new ProjectOperationError({
+      operation: "normalize-workspace",
+      projectId,
+      cause: "sensitive filesystem detail",
+    });
+    const error = yield* failProjectMutation(cause).pipe(Effect.flip);
+    assert.equal(error._tag, "EnvironmentInternalError");
+    assert.equal(error.reason, "project_mutation_failed");
+    assert.equal(projectMutationErrorMessage(cause), "Failed to mutate project.");
   }),
 );
