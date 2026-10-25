@@ -51,10 +51,10 @@ def run_work(db):
             statuses.append('queued')
     return statuses, held
 
-# Sign-in sessions, pairing credentials, provider runtime and schedules: rows here grant
-# access or run work, so a migration may create these tables only empty and may never add
-# a trigger that touches them.
-AUTHORITY_TABLES = ('auth_pairing_links', 'auth_sessions', 'provider_session_runtime',
+# Sign-in sessions, pairing credentials, principal revocations (migration 067), provider
+# runtime and schedules: rows here grant or withdraw access or run work, so a migration may
+# create these tables only empty and may never add a trigger that touches them.
+AUTHORITY_TABLES = ('auth_pairing_links', 'auth_principal_revocations', 'auth_sessions', 'provider_session_runtime',
                     'scheduled_tasks', 'scheduled_task_run_receipts')
 
 def _read_state(state, include_auth, since=None, include_database=False, widen_from=None):

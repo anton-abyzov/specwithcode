@@ -55,7 +55,7 @@ from update_read import (TERMINAL_RUNS, _queue_held, run_work, AUTHORITY_TABLES,
                          has_covering_index, log_prefixes, carried_since, AUTH_INVARIANT_KEY,
                          AUTH_HEARTBEAT_COLUMN, AUTH_APP_VERSION_COLUMN, auth_invariant_hash,
                          is_projection_table, carried_applies, log_rows_carried)
-from update_migration import (_column_definition, accepted_widenings, narrowed_rows, assert_migration_preserved,
+from update_migration import (_column_definition, accepted_widenings, narrowed_rows, principal_auth, assert_migration_preserved,
                               auth_comparison, typed_auth_rows, typed_auth_rows_hash, verify_migration_heartbeat_witness,
                               heartbeat_window_start, prove_migration_preserved, assert_migration_typed_cells,
                               assert_migration_protected_schema)
@@ -1219,8 +1219,10 @@ def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_b
             if 'databaseCapture' in before:
                 assert 'databaseCapture' in after, 'Complete database proof missing after restart'
                 widenings = accepted_widenings(before['databaseCapture'], after['databaseCapture'], before['rows'])
+            # Migration 067 widens auth_sessions; its proofs then compare the earlier columns.
             heartbeat = prove_migration_preserved(
-                before['rows'], narrowed_rows(after['rows'], widenings), original_auth, current_auth,
+                before['rows'], narrowed_rows(after['rows'], widenings), original_auth,
+                principal_auth(current_auth, after['rows'], widenings),
                 restart_started_at, after['observedAt'], identity=identity,
                 allow_existing_browser_heartbeat=allow_existing_browser_heartbeat,
                 carried=after_carried, web_session_policy=policy)
