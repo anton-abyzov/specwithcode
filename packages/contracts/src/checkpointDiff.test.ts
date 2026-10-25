@@ -73,3 +73,23 @@ it.effect("rejects thread turn diff when fromTurnCount > toTurnCount", () =>
     assert.strictEqual(result._tag, "Failure");
   }),
 );
+
+it.effect("carries the size-limit flag on a turn diff and leaves it absent otherwise", () =>
+  Effect.gen(function* () {
+    const truncated = yield* decodeThreadTurnDiff({
+      threadId: "thread-1",
+      fromTurnCount: 1,
+      toTurnCount: 2,
+      diff: "diff --git a/a b/a\n",
+      truncated: true,
+    });
+    assert.strictEqual(truncated.truncated, true);
+    const whole = yield* decodeThreadTurnDiff({
+      threadId: "thread-1",
+      fromTurnCount: 1,
+      toTurnCount: 2,
+      diff: "",
+    });
+    assert.isFalse("truncated" in whole);
+  }),
+);

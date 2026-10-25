@@ -17,10 +17,13 @@ import * as Base64Url from "effect/encoding/Base64Url";
 import * as Hex from "effect/encoding/Hex";
 import * as KeyedLock from "@specweave-studio/shared/KeyedLock";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
 import { parseTurnDiffFilesFromNumstat } from "../checkpointing/Diffs.ts";
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
+import type { VcsCheckpointCaptureReport } from "../vcs/VcsDriver.ts";
 import * as IdAllocator from "./IdAllocator.ts";
 
 const CHECKPOINT_REFS_PREFIX = "refs/studio/orchestration-v2/checkpoints";
@@ -214,6 +217,21 @@ function makeRootRunScope(input: {
   });
 }
 
+/** Where and on which machine a checkpoint was taken (D-27). */
+type CheckpointStamp = Pick<
+  OrchestrationV2Checkpoint,
+  "cwd" | "repoRoot" | "branch" | "headOid" | "capturedOnEnvironmentId" | "notGitRepository"
+>;
+
+/** The stamp fields a capture report knows; unknown values stay absent. */
+function reportStamp(report: VcsCheckpointCaptureReport): CheckpointStamp {
+  return {
+    ...(report.repoRoot === null ? {} : { repoRoot: report.repoRoot }),
+    ...(report.branch === undefined ? {} : { branch: report.branch }),
+    ...(report.headOid === null ? {} : { headOid: report.headOid }),
+  };
+}
+
 function makeCheckpoint(input: {
   readonly id: CheckpointId;
   readonly scope: OrchestrationV2CheckpointScope;
@@ -226,6 +244,7 @@ function makeCheckpoint(input: {
   readonly status: OrchestrationV2Checkpoint["status"];
   readonly files: OrchestrationV2Checkpoint["files"];
   readonly capturedAt: DateTime.Utc;
+  readonly stamp?: CheckpointStamp;
 }): OrchestrationV2Checkpoint {
   return {
     id: input.id,
@@ -240,6 +259,7 @@ function makeCheckpoint(input: {
     status: input.status,
     files: input.files,
     capturedAt: input.capturedAt,
+    ...input.stamp,
   };
 }
 
@@ -255,6 +275,11 @@ export const layer: Layer.Layer<
     const checkpointRefFor = (input: Parameters<typeof checkpointRefForScopeOrdinal>[0]) =>
       checkpointRefForScopeOrdinal(input).pipe(Effect.provideService(Crypto.Crypto, crypto));
     const idAllocator = yield* IdAllocator.IdAllocatorV2;
+    // Runtimes built without a server identity (tests) leave the machine unstamped.
+    const environment = yield* Effect.serviceOption(ServerEnvironment.ServerEnvironmentIdentity);
+    const capturedOnEnvironmentId = Option.isSome(environment)
+      ? yield* environment.value.getEnvironmentId
+      : undefined;
     const workspaceLocks = yield* KeyedLock.make<string>();
     const withWorkspaceLock = <A, E, R>(cwd: string, effect: Effect.Effect<A, E, R>) =>
       workspaceLocks.withLock(cwd, effect);
@@ -377,8 +402,16 @@ export const layer: Layer.Layer<
             scopeId: input.scope.id,
             ordinalWithinScope: Math.max(0, input.ordinalWithinScope - 1),
           });
+          // The scope's cwd follows the latest run, so each checkpoint keeps its own.
+          const stamp: CheckpointStamp = {
+            cwd: input.scope.cwd,
+            ...(capturedOnEnvironmentId === undefined ? {} : { capturedOnEnvironmentId }),
+          };
 
-          if (!(yield* isGitCheckpointable(input.scope.cwd))) {
+          const gitRepository = yield* Effect.option(
+            checkpointStore.isGitRepository(input.scope.cwd),
+          );
+          if (!Option.getOrElse(gitRepository, () => false)) {
             return makeCheckpoint({
               id: checkpointId,
               scope: input.scope,
@@ -391,26 +424,34 @@ export const layer: Layer.Layer<
               status: "missing",
               files: [],
               capturedAt: input.capturedAt,
+              // A failed check proves nothing about the folder.
+              stamp: Option.isSome(gitRepository) ? { ...stamp, notGitRepository: true } : stamp,
             });
           }
 
-          const captured = yield* checkpointStore
-            .captureCheckpoint({
-              cwd: input.scope.cwd,
-              checkpointRef,
-            })
-            .pipe(
-              Effect.as(true),
-              Effect.catch((cause) =>
-                Effect.logWarning("orchestration V2 checkpoint capture failed", {
-                  scopeId: input.scope.id,
-                  checkpointRef,
-                  cause: String(cause),
-                }).pipe(Effect.as(false)),
-              ),
-            );
+          const captureCheckpointReport = CheckpointStore.implementedMethod(
+            checkpointStore,
+            "captureCheckpointReport",
+          );
+          const captured = yield* (
+            captureCheckpointReport === undefined
+              ? checkpointStore
+                  .captureCheckpoint({ cwd: input.scope.cwd, checkpointRef })
+                  .pipe(Effect.as<CheckpointStamp>({}))
+              : captureCheckpointReport({ cwd: input.scope.cwd, checkpointRef }).pipe(
+                  Effect.map(reportStamp),
+                )
+          ).pipe(
+            Effect.catch((cause) =>
+              Effect.logWarning("orchestration V2 checkpoint capture failed", {
+                scopeId: input.scope.id,
+                checkpointRef,
+                cause: String(cause),
+              }).pipe(Effect.as(null)),
+            ),
+          );
 
-          if (!captured) {
+          if (captured === null) {
             return makeCheckpoint({
               id: checkpointId,
               scope: input.scope,
@@ -423,6 +464,7 @@ export const layer: Layer.Layer<
               status: "error",
               files: [],
               capturedAt: input.capturedAt,
+              stamp,
             });
           }
 
@@ -469,23 +511,22 @@ export const layer: Layer.Layer<
                 )
             : [];
           // A checkout or pull during the turn is not the turn's work; leave its files out.
+          const headMovePaths = CheckpointStore.implementedMethod(checkpointStore, "headMovePaths");
           const movedByHead =
-            diffFiles.length > 0 && checkpointStore.headMovePaths
-              ? yield* checkpointStore
-                  .headMovePaths({
-                    cwd: input.scope.cwd,
-                    fromCheckpointRef: previousCheckpointRef,
-                    toCheckpointRef: checkpointRef,
-                  })
-                  .pipe(
-                    Effect.catch((cause) =>
-                      Effect.logWarning("orchestration V2 checkpoint head move check failed", {
-                        scopeId: input.scope.id,
-                        checkpointRef,
-                        cause: String(cause),
-                      }).pipe(Effect.as(new Set<string>())),
-                    ),
-                  )
+            diffFiles.length > 0 && headMovePaths !== undefined
+              ? yield* headMovePaths({
+                  cwd: input.scope.cwd,
+                  fromCheckpointRef: previousCheckpointRef,
+                  toCheckpointRef: checkpointRef,
+                }).pipe(
+                  Effect.catch((cause) =>
+                    Effect.logWarning("orchestration V2 checkpoint head move check failed", {
+                      scopeId: input.scope.id,
+                      checkpointRef,
+                      cause: String(cause),
+                    }).pipe(Effect.as(new Set<string>())),
+                  ),
+                )
               : new Set<string>();
           const files = diffFiles.filter((file) => !movedByHead.has(file.path));
 
@@ -501,6 +542,7 @@ export const layer: Layer.Layer<
             status: "ready",
             files,
             capturedAt: input.capturedAt,
+            stamp: { ...stamp, ...captured },
           });
         }),
       ).pipe(

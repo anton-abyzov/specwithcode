@@ -10,6 +10,7 @@ vi.mock("../connection/runtime", () => ({ connectionAtomRuntime: null }));
 const {
   defaultKeptSide,
   departedMembers,
+  linkCandidates,
   linkCopyAsWorkers,
   highestEpoch,
   linkedCopies,
@@ -443,5 +444,54 @@ describe("unlinkUndoneCopy", () => {
       ),
     ).rejects.toThrow("offline");
     expect(unlink).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("linkCandidates", () => {
+  const here = copy("m4", "here", identity("shared", []));
+  const project = (environmentId: string, id: string, settings: Record<string, unknown> = {}) =>
+    ({
+      ...copy(environmentId, id, undefined),
+      workspaceSettings: { kind: "code", ...settings },
+    }) as unknown as EnvironmentProject;
+  const scratch = {
+    ...project("m3", "scratch"),
+    workspaceRoot: "/m3/.specweave-studio/scratch",
+  } as EnvironmentProject;
+  const scratchRootFor = (environmentId: string | null) =>
+    environmentId === "m3" ? "/m3/.specweave-studio/scratch" : null;
+  const ids = (projects: ReadonlyArray<EnvironmentProject>) =>
+    projects.map((item) => `${item.environmentId}:${item.id}`);
+  const linked = copy("m1", "joined", identity("shared", []));
+  const projects = [
+    copy("m4", "local", undefined),
+    project("m3", "own"),
+    scratch,
+    project("m3", "archived", { archived: true }),
+    project("m3", "automated", { origin: "automated" }),
+    project("m3", "design", { kind: "design" }),
+    linked,
+  ];
+
+  it("offers only the person's own code projects on other machines", () => {
+    expect(ids(linkCandidates(projects, here, scratchRootFor as never, null))).toEqual(["m3:own"]);
+  });
+
+  it("keeps the named copy even when it is already linked, archived or automated", () => {
+    const offered = (environmentId: string, projectId: string) =>
+      ids(
+        linkCandidates(
+          projects,
+          here,
+          scratchRootFor as never,
+          {
+            environmentId,
+            projectId,
+          } as never,
+        ),
+      );
+    expect(offered("m1", "joined")).toEqual(["m3:own", "m1:joined"]);
+    expect(offered("m3", "archived")).toEqual(["m3:own", "m3:archived"]);
+    expect(offered("m3", "automated")).toEqual(["m3:own", "m3:automated"]);
   });
 });

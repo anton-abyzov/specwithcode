@@ -15,7 +15,7 @@ const LAUNCH = `1040 repository registration now exists at revision20. Latest in
 /** Every excerpt piece is cut from the text, never written. */
 function expectVerbatim(excerpt: string, text: string) {
   const pieces = excerpt
-    .split(` ${ELLIPSIS} `)
+    .split(new RegExp(`\\s${ELLIPSIS} `))
     .map((piece) => piece.replace(new RegExp(`\\s?${ELLIPSIS}$`), ""));
   for (const piece of pieces) expect(text).toContain(piece);
 }
@@ -32,7 +32,8 @@ describe("workerMessagePresentation", () => {
     expect(
       excerpt.startsWith("Need exactEXISTINGbackend/canonical ownerbinding, no newworker."),
     ).toBe(true);
-    expect(excerpt.endsWith(` ${ELLIPSIS}`)).toBe(true);
+    // The ellipsis keeps to the line of the word before it.
+    expect(excerpt.endsWith(`\u00A0${ELLIPSIS}`)).toBe(true);
     expect(excerpt.length).toBeLessThanOrEqual(300);
     expect(excerpt).not.toContain("message:mcp:");
     expectVerbatim(excerpt, DENSE);
@@ -106,9 +107,15 @@ describe("workerMessagePresentation", () => {
     expect(workerMessageSizeLabel(presentation)).toBe(
       `${presentation.hidden.toLocaleString("en-US")} more characters`,
     );
-    expect(workerMessageSizeLabel({ excerpt: "x", characters: 1150, lines: 12, hidden: 1 })).toBe(
-      "1 more character",
-    );
+    expect(
+      workerMessageSizeLabel({
+        excerpt: "x",
+        clamp: false,
+        characters: 1150,
+        lines: 12,
+        hidden: 1,
+      }),
+    ).toBe("1 more character");
   });
 
   it("keeps a link whole when its label wraps onto the next line", () => {
@@ -147,5 +154,236 @@ describe("formatJsonBlocks", () => {
       "null",
     ])
       expect(formatJsonBlocks(text)).toBe(text);
+  });
+});
+
+// The shape of the October 25, 2026 coordinator screenshot: one paragraph of
+// run-together words, long absolute paths and a disk error, about 1,400 characters.
+const ENOSPC_REPORT = `Exactspec /Users/fixture/Projects/atlas/.worktrees/format-clarity-20261023/console-ui/e2e/control-desk-0611.spec.ts:74. OnlyWebKit1440/light retry0failed fullpagescreenshot with exactError: ENOSPC: no space left on device, write; precedingbehavior/overflow/errors assertionsPASS.35passed/1failed. NoE2Especeditjustified. Needownercheck instead for /Users/fixture/Projects/atlas/.worktrees/format-clarity-20261023/console-ui/scripts/ci/e2e-runtime.mjs (postverifiedrestore redundant same-runarchivecleanup+freebytes/inodes evidence) and/or /Users/fixture/Projects/atlas/.worktrees/format-clarity-20261023/console-ui/.github/workflows/e2e.yml. Exactstorageconsumerunproven; don't claimarchivecausedit. RetainedJSON /Volumes/Work/atlas-code/1018-runtime/followup489/layout-diagnosis/playwright-report/control-desk/results.json andoriginalartifactzip. Unitfailurecurrentoffsetreadcontractconfirmed; boundedSeptemberclockpinvalid/testonly, historicaleventoffsetannotation boundedonly. Nosourceedit, no newworkerlaunch, nofreshCI. Remaining: owner reviewofruntimecleanup, exactstorageconsumer, rerunafterbytesfreed. Keepreleaseholds; nopublish, nodeploy. Evidence /Users/fixture/.local/share/atlas/incident-repair-receipts/20261024T230931Z-arena-acceptance/pr373-runtime-source-contract.md and /Users/fixture/.local/share/atlas/incident-repair-receipts/20261024T230931Z-arena-acceptance/pr374-about-correction.md retained.`;
+
+describe("workerMessagePresentation by timeline detail (1068)", () => {
+  it("folds sooner in Concise: over 280 characters or 3 lines", () => {
+    const short = "Done. The PR is green and the review is clear. ".repeat(5).trim();
+    expect(Array.from(short).length).toBeLessThanOrEqual(280);
+    expect(workerMessagePresentation(short, short, "concise").excerpt).toBeNull();
+    const longer = `${short} The release waits on CI, and nothing else is pending today.`;
+    expect(workerMessagePresentation(longer, longer, "normal").excerpt).toBeNull();
+    expect(workerMessagePresentation(longer, longer, "concise").excerpt).not.toBeNull();
+    const fourLines = [
+      "Checked the release branch.",
+      "Every gate passed in order except the feed signature step at the end of the run.",
+      "The run log, both manifests and the key fingerprints are saved beside the receipt.",
+      "Nothing was published, and the release holds stay in place until the owner decides.",
+    ].join("\n");
+    expect(workerMessagePresentation(fourLines, fourLines, "concise").excerpt).not.toBeNull();
+  });
+
+  it("leads the screenshot-shaped report with under 160 characters, exactly as sent", () => {
+    const concise = workerMessagePresentation(ENOSPC_REPORT, ENOSPC_REPORT, "concise");
+    const normal = workerMessagePresentation(ENOSPC_REPORT, ENOSPC_REPORT, "normal");
+    expect(concise.excerpt).not.toBeNull();
+    expect(normal.excerpt).not.toBeNull();
+    // Its first sentence is the lead at both levels; the second would pass either budget.
+    expect(concise.excerpt!.length).toBeLessThanOrEqual(normal.excerpt!.length);
+    expect(concise.excerpt!.length).toBeLessThanOrEqual(160 + 2);
+    expect(
+      concise.excerpt!.startsWith(
+        "Exactspec /Users/fixture/Projects/atlas/.worktrees/format-clarity-20261023/console-ui/e2e/control-desk-0611.spec.ts:74.",
+      ),
+    ).toBe(true);
+    expect(concise.excerpt).not.toContain("ENOSPC");
+    expectVerbatim(concise.excerpt!, ENOSPC_REPORT);
+    expect(concise.hidden).toBeGreaterThan(concise.characters - 200);
+    expect(concise.characters).toBe(Array.from(ENOSPC_REPORT).length);
+  });
+
+  it("cuts a first sentence longer than the Concise lead at a space, never inside a word", () => {
+    const sentence = `${"Thereleaseworker checked every gate on the branch ".repeat(6)}and stopped.`;
+    const text = `${sentence} Then it waited for CI to start on the exact head.`;
+    const excerpt = workerMessagePresentation(text, text, "concise").excerpt!;
+    expect(excerpt.endsWith(ELLIPSIS)).toBe(true);
+    const shown = excerpt.slice(0, -ELLIPSIS.length);
+    expect(shown.length).toBeLessThanOrEqual(160);
+    expect(text.startsWith(shown)).toBe(true);
+    expect(text[shown.length]).toBe(" ");
+  });
+
+  it("still shows the sentence that asks for a decision in Concise", () => {
+    const text = `${ENOSPC_REPORT}\n\n**Blockers:** free 20 GB on the work volume, or move the archive? Recommended: free space first.`;
+    const excerpt = workerMessagePresentation(text, text, "concise").excerpt!;
+    expect(excerpt).toContain("**Blockers:** free 20 GB on the work volume, or move the archive?");
+    expectVerbatim(excerpt, text);
+  });
+
+  it("cuts an opening link Concise cannot cut within 160 characters where Normal would", () => {
+    const link =
+      "[pr373-runtime-source-contract.md](/Users/fixture/.local/share/atlas/incident-repair-receipts/20261024T230931Z-arena-acceptance/followup489/layout-diagnosis/pr373-runtime-source-contract.md)";
+    const text = `${link} is the frozen contract for the public About route and every cache path it names. ${ENOSPC_REPORT}`;
+    const normal = workerMessagePresentation(text, text, "normal");
+    const concise = workerMessagePresentation(text, text, "concise");
+    // The link alone passes the Concise lead, so no space within 160 characters is outside it.
+    expect(link.length).toBeGreaterThan(160);
+    expect(normal.excerpt).not.toBeNull();
+    expect(concise.excerpt).not.toBeNull();
+    expect(concise.excerpt!.startsWith(link)).toBe(true);
+    expectVerbatim(concise.excerpt!, text);
+  });
+
+  it("clips a long message with no opening to cut, and names its whole size", () => {
+    const fence = [
+      "```text",
+      ...Array.from({ length: 40 }, (_, i) => `ok    gate-${i}    unit and headless 0.${i}s`),
+      "```",
+    ].join("\n");
+    const json = JSON.stringify(
+      { status: "pass", checks: Array.from({ length: 40 }, (_, i) => `gate-${i}-passed`) },
+      null,
+      2,
+    );
+    for (const text of [fence, json])
+      for (const detail of ["concise", "normal"] as const) {
+        const presentation = workerMessagePresentation(text, text, detail);
+        expect(presentation.excerpt).toBeNull();
+        expect(presentation.clamp).toBe(true);
+        expect(workerMessageSizeLabel(presentation)).toBe(
+          `${Array.from(text).length.toLocaleString("en-US")} characters`,
+        );
+      }
+    // A short one, or one whose excerpt would be most of it, shows whole: no clip.
+    expect(workerMessagePresentation("Done. The PR is green.").clamp).toBe(false);
+    expect(workerMessagePresentation(DENSE).clamp).toBe(false);
+    // Small JSON over the line budget only stays whole: 1043's Normal, and Concise too.
+    const small = JSON.stringify({ a: 1, b: 2, c: 3, d: 4, e: 5, f: 6, g: 7 }, null, 2);
+    expect(small.split("\n").length).toBeGreaterThan(8);
+    for (const detail of ["concise", "normal"] as const)
+      expect(workerMessagePresentation(small, small, detail)).toMatchObject({
+        excerpt: null,
+        clamp: false,
+      });
+  });
+
+  it("keeps a short labeled receipt whole in Concise: blank lines do not count", () => {
+    for (const text of [
+      "**Outcome:** merged #702.\n\n**Evidence:** CI green on 57c282f4f2.\n\n**Blockers:** none.",
+      "Merged #702.\n\nCI green on f047ca4.\n\nNothing deployed.",
+      "Done.\n\nPR: https://github.com/a/b/pull/702\n\nNothing deployed; release holds stay.",
+    ])
+      expect(workerMessagePresentation(text, text, "concise").excerpt).toBeNull();
+  });
+
+  it("does not fold Concise to one word when the only early space is near the start", () => {
+    const text = `Exactspec /Users/fixture/Projects/atlas/.worktrees/format-clarity-20261023/console-ui/e2e/control-desk-0611.spec.ts:74OnlyWebKit1440/lightretry0failedfullpagescreenshotwithexactError: ENOSPC. ${"More detail follows in this report about the run and its evidence files. ".repeat(6)}`;
+    const concise = workerMessagePresentation(text, text, "concise").excerpt!;
+    expect(concise.startsWith("Exactspec /Users/fixture/")).toBe(true);
+    expect(concise.length).toBeGreaterThan(80);
+    expectVerbatim(concise, text);
+  });
+
+  it("never cuts inside bold text", () => {
+    const text = `Every gate passed in order except the feed signature step, **which stopped on a key mismatch and left the run log and both manifests beside the receipt for the owner to read before anything else**. ${ENOSPC_REPORT}`;
+    const excerpt = workerMessagePresentation(text, text, "concise").excerpt!;
+    const shown = excerpt.replace(new RegExp(`\\s?${ELLIPSIS}$`), "");
+    expect((shown.match(/\*\*/g) ?? []).length % 2).toBe(0);
+    expectVerbatim(excerpt, text);
+    // Underscores inside a word are not bold, so they do not hold the cut back.
+    const snake = `Checked the gate__runner log line by line and found that every step after the restore ran in order and passed, except the last one, which waited on the signing key from the release owner. ${ENOSPC_REPORT}`;
+    expect(workerMessagePresentation(snake, snake, "concise").excerpt!.length).toBeGreaterThan(120);
+  });
+
+  it("reads an unmatched ** or __ as literal text, so it never holds the cut back", () => {
+    const tail = ` ${"Further detail about each gate and the evidence follows here for the release owner. ".repeat(6)}`;
+    const leads = (text: string, detail: "concise" | "normal") =>
+      workerMessagePresentation(text, text, detail).excerpt;
+    // A glob in a first sentence over 280: Normal cuts at 240 characters, as 1043 does.
+    const glob = `Ran vp test over apps/web/src/**/*.test.ts with the isolated toolchain on Node 22.20 and every file passed except the clamp case, which still fades a fenced block that already fits inside its box, so the fold shows a footer over nothing at 360 px and at 1280 px in light and dark themes alike today.${tail}`;
+    expect(leads(glob, "normal")!.length).toBeGreaterThan(200);
+    expectVerbatim(leads(glob, "normal")!, glob);
+    for (const text of [
+      `Patched build_index(**kwargs) so the indexer forwards every option to the store, then reran the import over the whole fixture vault and compared each manifest against the receipts saved before the change, and all of them matched.${tail}`,
+      `Resolved the fixture root from __dirname so the runner works from any working directory, then reran the headless capture at 360 px and 1280 px in light and dark and saved every screenshot beside the receipt for the release owner.${tail}`,
+      `Retries now back off at 2 ** attempt seconds with jitter, capped at five minutes, and the queue keeps each request's original order while it waits so a slow provider no longer reorders the sends that came after it in the thread.${tail}`,
+      `build_index(**kwargs) now forwards every option to the store, then reran the import over the whole fixture vault and compared each manifest against the receipts saved before the change, and all of them matched.${tail}`,
+    ]) {
+      const concise = leads(text, "concise");
+      expect(concise).not.toBeNull();
+      expect(concise!.length).toBeGreaterThan(120);
+      expectVerbatim(concise!, text);
+    }
+  });
+
+  it("never pairs bold across list items, as CommonMark does not", () => {
+    const rest =
+      "\n\nFurther detail about each gate and the evidence follows here for the release owner. ".repeat(
+        5,
+      );
+    const bullets = `- Ran apps/web/src/**/*.test.ts on Node 22.20 with the isolated toolchain and every suite passed on this head, including the fold and clamp suites that failed on the earlier head\n- The server suites ran over the whole fixture store and every one passed except apps/server/src/**/*.test.ts, which failed on ENOSPC while writing coverage\n- Nothing deployed${rest}`;
+    for (const detail of ["normal", "concise"] as const) {
+      const excerpt = workerMessagePresentation(bullets, bullets, detail).excerpt!;
+      expect(excerpt.length).toBeGreaterThan(120);
+      expectVerbatim(excerpt, bullets);
+    }
+    // Normal shows the whole first bullet, as 1043 does.
+    expect(workerMessagePresentation(bullets, bullets, "normal").excerpt).toContain("earlier head");
+    const intoList = `Ran the focused suites over apps/web/src/**/*.test.ts on Node 22.20 and every one passed except the clamp case, which still fades a fenced block that already fits inside its box at 360 px and 1280 px, so I left it for the owner\n- apps/server/src/**/*.test.ts passed on the second run after the disk was cleared\n- packages passed${rest}`;
+    expect(workerMessagePresentation(intoList, intoList, "normal").excerpt!.length).toBeGreaterThan(
+      200,
+    );
+    // A nested item is a list item too, however deep its indent.
+    const nested = `Ran the focused suites on this head.\n- Web\n  - apps/web/src/**/*.test.ts passed on Node 22.20 with the isolated toolchain, including the fold and clamp suites that failed on the earlier head\n    - apps/web/src/**/*.browser.ts was skipped because the headless runner is not installed on this machine\n- Server\n  - apps/server/src/**/*.test.ts failed on ENOSPC while writing coverage${rest}`;
+    const lead = workerMessagePresentation(nested, nested, "normal").excerpt!;
+    expect(lead).toContain("failed on the earlier head");
+    expectVerbatim(lead, nested);
+  });
+
+  it("cuts plainly when bold leaves no room, so the Blockers line still shows", () => {
+    const filler =
+      "The build, the typecheck and the four focused suites all passed on this head without retries. ".repeat(
+        4,
+      );
+    const bold = `**Blocked: the release cannot ship until the signing key is rotated, because the feed signature step failed on a key mismatch and left the run log, both manifests and the receipt beside the owner's checklist, and the Monday release window opens at nine, so the rotation has to land before then.**`;
+    expect(bold.length).toBeGreaterThan(240);
+    const text = `${bold}\n\n${filler}\n\nBlockers: rotate the signing key or skip the feed step.\n\n${filler}`;
+    for (const detail of ["normal", "concise"] as const) {
+      const shown = workerMessagePresentation(text, text, detail);
+      expect(shown.clamp).toBe(false);
+      expect(shown.excerpt!.startsWith("**Blocked: the release cannot ship")).toBe(true);
+      expect(shown.excerpt).toContain("Blockers: rotate the signing key or skip the feed step.");
+      expectVerbatim(shown.excerpt!, text);
+    }
+    // A Blockers sentence inside that bold run shows once, after the lead, never the lead again.
+    const inside = `**Status of the release: ${"the feed step waits on the key ".repeat(9)}today. Blockers: rotate the signing key.**\n\n${filler}`;
+    for (const detail of ["normal", "concise"] as const) {
+      const excerpt = workerMessagePresentation(inside, inside, detail).excerpt!;
+      expect(excerpt.split("**Status of the release").length).toBe(2);
+      expect(excerpt).toContain(`${ELLIPSIS} Blockers: rotate the signing key.**`);
+      expectVerbatim(excerpt, inside);
+    }
+  });
+
+  it("ends a lead of whole sentences outside a bold run that spans them", () => {
+    const tail =
+      "Further detail about each gate and the evidence follows here for the release owner. ".repeat(
+        6,
+      );
+    const text = `**Blocked on the signing key. The feed signature step stopped on a key mismatch, and the release owner has to rotate the key before anything is published or deployed.**\n\n${tail}`;
+    const excerpt = workerMessagePresentation(text, text, "concise").excerpt!;
+    expect(excerpt.startsWith("**Blocked on the signing key. The feed")).toBe(true);
+    expect((excerpt.match(/\*\*/g) ?? []).length).toBe(2);
+    expectVerbatim(excerpt, text);
+    // Bold that opens after the first sentence and closes past the budget is left out whole.
+    const later = `Checked the release branch. **Blocked on the signing key. The feed signature step stopped on a key mismatch, and the owner has to rotate the key before anything ships.** ${tail}`;
+    expect(later.indexOf(".** ")).toBeGreaterThan(160);
+    expect(workerMessagePresentation(later, later, "concise").excerpt).toBe(
+      `Checked the release branch.\u00A0${ELLIPSIS}`,
+    );
+  });
+
+  it("folds Verbose as Normal does; the body opens it instead", () => {
+    expect(workerMessagePresentation(DENSE, DENSE, "verbose")).toEqual(
+      workerMessagePresentation(DENSE, DENSE, "normal"),
+    );
+    expect(workerMessagePresentation(DENSE)).toEqual(
+      workerMessagePresentation(DENSE, DENSE, "normal"),
+    );
   });
 });

@@ -34,6 +34,7 @@ import {
 } from "@specweave-studio/contracts";
 import { modelSelectionsEqual } from "@specweave-studio/shared/model";
 import { type SelfInvocation, selfInvocationArgs } from "@specweave-studio/shared/nodeRuntime";
+import { splitPatchByFile } from "@specweave-studio/shared/structuredPatch";
 import { FILE_HEADERS_ONLY, formatPatch, structuredPatch } from "diff";
 import * as Cause from "effect/Cause";
 import * as Crypto from "effect/Crypto";
@@ -74,6 +75,7 @@ import * as McpProviderSession from "../../mcp/McpProviderSession.ts";
 import {
   applyAcpAgentTerminalUpdate,
   acpContentBlockDisplayText,
+  acpToolOutputKeptTailChars,
   embeddedTerminalIdsFromSessionUpdate,
   extractMcpToolCallIdentity,
   mergeToolCallState,
@@ -997,31 +999,101 @@ export function acpProjectedCommandExitCode(
   return commandExitCode(rawOutput);
 }
 
-function structuredFileChanges(toolCall: AcpToolCallState) {
-  const content = toolCall.data.content;
-  if (!Array.isArray(content)) return [];
-  return content.flatMap((entry) => {
-    const diff = unknownRecord(entry);
-    if (diff?.type !== "diff" || !Array.isArray(diff.changes)) return [];
-    return diff.changes.flatMap((candidate) => {
-      const change = unknownRecord(candidate);
-      const operation = typeof change?.operation === "string" ? change.operation.trim() : "";
-      const path = typeof change?.path === "string" ? change.path.trim() : "";
-      if (operation.length === 0 || path.length === 0) return [];
-      const oldPath = typeof change?.oldPath === "string" ? change.oldPath.trim() : "";
-      const fileType = typeof change?.fileType === "string" ? change.fileType.trim() : "";
-      const mimeType = typeof change?.mimeType === "string" ? change.mimeType.trim() : "";
-      return [
-        {
-          operation,
-          path,
-          ...(oldPath.length === 0 ? {} : { oldPath }),
-          ...(fileType.length === 0 ? {} : { fileType }),
-          ...(mimeType.length === 0 ? {} : { mimeType }),
-        },
-      ];
-    });
+interface AcpFileChange {
+  readonly operation: string;
+  readonly path: string;
+  readonly oldPath?: string;
+  readonly diffStr?: string;
+  readonly fileType?: string;
+  readonly mimeType?: string;
+  readonly diffNote?: string;
+}
+
+/** A path exactly as the agent sent it (edge spaces can be part of a name), or "" when blank. */
+function exactPath(value: unknown): string {
+  return typeof value === "string" && value.trim().length > 0 ? value : "";
+}
+
+function v2DiffChanges(candidates: ReadonlyArray<unknown>): AcpFileChange[] {
+  return candidates.flatMap((candidate) => {
+    const change = unknownRecord(candidate);
+    const operation = typeof change?.operation === "string" ? change.operation.trim() : "";
+    const path = exactPath(change?.path);
+    if (operation.length === 0 || path.length === 0) return [];
+    const oldPath = exactPath(change?.oldPath);
+    const fileType = typeof change?.fileType === "string" ? change.fileType.trim() : "";
+    const mimeType = typeof change?.mimeType === "string" ? change.mimeType.trim() : "";
+    return [
+      {
+        operation,
+        path,
+        ...(oldPath.length === 0 ? {} : { oldPath }),
+        ...(fileType.length === 0 ? {} : { fileType }),
+        ...(mimeType.length === 0 ? {} : { mimeType }),
+      },
+    ];
   });
+}
+
+function patchPathMatch(changePath: string, patchPath: string): "exact" | "suffix" | null {
+  if (changePath === patchPath) return "exact";
+  // Changes name absolute paths; git patches usually name repository-relative ones.
+  return changePath.endsWith(`/${patchPath}`) || patchPath.endsWith(`/${changePath}`)
+    ? "suffix"
+    : null;
+}
+
+/**
+ * Give each change of one v2 diff block its own file's part of the block's
+ * patch. Exact path matches win, then suffix matches; a pairing is used only
+ * when it is unique both ways, so an ambiguous change gets no patch.
+ */
+function attachBlockPatch(
+  changes: ReadonlyArray<AcpFileChange>,
+  text: string | undefined,
+): ReadonlyArray<AcpFileChange> {
+  if (text === undefined || changes.length === 0) return changes;
+  if (changes.length === 1) return [{ ...changes[0]!, diffStr: text }];
+  const blocks = splitPatchByFile(text);
+  const blockPaths = blocks.map((block) => block.newPath ?? block.oldPath);
+  const assigned: Array<number | undefined> = changes.map(() => undefined);
+  const used = new Set<number>();
+  for (const quality of ["exact", "suffix"] as const) {
+    const candidates = changes.map((change, changeIndex) =>
+      assigned[changeIndex] !== undefined
+        ? []
+        : blockPaths.flatMap((blockPath, blockIndex) =>
+            !used.has(blockIndex) &&
+            blockPath !== null &&
+            patchPathMatch(change.path, blockPath) === quality
+              ? [blockIndex]
+              : [],
+          ),
+    );
+    candidates.forEach((blockIndexes, changeIndex) => {
+      const blockIndex = blockIndexes.length === 1 ? blockIndexes[0]! : undefined;
+      if (blockIndex === undefined) return;
+      const shared = candidates.some(
+        (other, otherIndex) => otherIndex !== changeIndex && other.includes(blockIndex),
+      );
+      if (!shared) assigned[changeIndex] = blockIndex;
+    });
+    for (const blockIndex of assigned) if (blockIndex !== undefined) used.add(blockIndex);
+  }
+  return changes.map((change, changeIndex) => {
+    const blockIndex = assigned[changeIndex];
+    return blockIndex === undefined ? change : { ...change, diffStr: blocks[blockIndex]!.text };
+  });
+}
+
+/** Joins file patches so each one starts on its own line. */
+function joinFilePatches(patches: ReadonlyArray<string>): string {
+  let joined = "";
+  for (const patch of patches) {
+    if (joined !== "" && !joined.endsWith("\n")) joined += "\n";
+    joined += patch;
+  }
+  return joined;
 }
 
 // Past this edit distance an edit keeps no patch text, so projecting a large
@@ -1029,25 +1101,44 @@ function structuredFileChanges(toolCall: AcpToolCallState) {
 // file has one empty side and needs no search, so it is never capped.
 const ACP_V1_DIFF_MAX_EDITS = 1_000;
 
+export interface AcpToolCallFileChanges {
+  /** One entry per v2 change and per v1 diff, each with its own file's patch when known. */
+  readonly changes: ReadonlyArray<AcpFileChange>;
+  /** The combined patch text of every diff block. */
+  readonly diffStr?: string;
+  /** Set when a v1 diff past the edit cap left the call without any patch. */
+  readonly diffNote?: "too_large_to_compute";
+}
+
 /**
- * Patch text for a tool call's diff content. ACP v2 diffs carry it as
- * `patch.text`. ACP v1 diffs carry `oldText`/`newText` instead (`oldText`
- * null or absent for a new file), and agents that negotiate v1 still send
- * that shape, so the patch is built from the two sides.
+ * Edit facts from a tool call's diff content. ACP v2 diffs carry `changes`
+ * and their patch as `patch.text`; every block keeps its own patch with its
+ * own changes. ACP v1 diffs carry `oldText`/`newText` instead (`oldText` null
+ * or absent for a new file), and agents that negotiate v1 still send that
+ * shape, so each v1 diff becomes one change with a patch built from its sides.
  */
-export function acpToolCallDiffPatch(content: unknown): string | undefined {
-  if (!Array.isArray(content)) return undefined;
+export function acpToolCallFileChanges(content: unknown): AcpToolCallFileChanges {
+  if (!Array.isArray(content)) return { changes: [] };
   const diffs = content.flatMap((entry) => {
     const diff = unknownRecord(entry);
     return diff?.type === "diff" ? [diff] : [];
   });
+  const changes: AcpFileChange[] = [];
+  const v2Texts: string[] = [];
+  const v1Texts: string[] = [];
+  let v1TooLarge = false;
   for (const diff of diffs) {
-    const patch = unknownRecord(diff.patch);
-    if (typeof patch?.text === "string") return patch.text;
-  }
-  const v1Patches = diffs.flatMap((diff) => {
-    if (typeof diff.path !== "string" || typeof diff.newText !== "string") return [];
+    const v2Text = unknownRecord(diff.patch)?.text;
+    const text = typeof v2Text === "string" ? v2Text : undefined;
+    if (text !== undefined) v2Texts.push(text);
+    if (Array.isArray(diff.changes)) {
+      changes.push(...attachBlockPatch(v2DiffChanges(diff.changes), text));
+      continue;
+    }
+    if (typeof diff.path !== "string" || typeof diff.newText !== "string") continue;
+    const path = exactPath(diff.path);
     const oldText = typeof diff.oldText === "string" ? diff.oldText : undefined;
+    const twoSided = Boolean(oldText && diff.newText);
     const patch = structuredPatch(
       oldText === undefined ? "/dev/null" : diff.path,
       diff.path,
@@ -1057,21 +1148,51 @@ export function acpToolCallDiffPatch(content: unknown): string | undefined {
       undefined,
       {
         context: 3,
-        maxEditLength: oldText && diff.newText ? ACP_V1_DIFF_MAX_EDITS : Number.POSITIVE_INFINITY,
+        maxEditLength: twoSided ? ACP_V1_DIFF_MAX_EDITS : Number.POSITIVE_INFINITY,
       },
     );
-    return patch === undefined || patch.hunks.length === 0 ? [] : [patch];
-  });
-  return v1Patches.length === 0 ? undefined : formatPatch(v1Patches, FILE_HEADERS_ONLY);
+    // formatPatch adjusts empty-hunk ranges in place, so each patch is formatted once.
+    const patchText =
+      patch === undefined || patch.hunks.length === 0
+        ? undefined
+        : formatPatch(patch, FILE_HEADERS_ONLY);
+    if (patchText !== undefined) v1Texts.push(patchText);
+    if (patch === undefined) v1TooLarge = true;
+    if (path.length === 0) continue;
+    changes.push({
+      operation: oldText === undefined ? "add" : "modify",
+      path,
+      ...(patchText === undefined ? {} : { diffStr: patchText }),
+      ...(patch === undefined ? { diffNote: "too_large_to_compute" } : {}),
+    });
+  }
+  // v1 keeps formatPatch's multi-file layout: one blank line between files.
+  const diffStr =
+    v2Texts.length > 0
+      ? joinFilePatches(v2Texts)
+      : v1Texts.length > 0
+        ? v1Texts.join("\n")
+        : undefined;
+  return {
+    changes,
+    ...(diffStr === undefined ? {} : { diffStr }),
+    ...(diffStr === undefined && v1TooLarge ? { diffNote: "too_large_to_compute" as const } : {}),
+  };
 }
 
-function pathFromToolCall(toolCall: AcpToolCallState): string | undefined {
+/** The combined patch text for a tool call's diff content (see acpToolCallFileChanges). */
+export function acpToolCallDiffPatch(content: unknown): string | undefined {
+  return acpToolCallFileChanges(content).diffStr;
+}
+
+/** The tool's path, URL or query; `exact` keeps an edited path's edge spaces as sent. */
+function pathFromToolCall(toolCall: AcpToolCallState, exact = false): string | undefined {
   const locations = toolCall.data.locations;
   if (Array.isArray(locations)) {
     for (const location of locations) {
       const path = unknownRecord(location)?.path;
       if (typeof path === "string" && path.trim().length > 0) {
-        return path.trim();
+        return exact ? path : path.trim();
       }
     }
   }
@@ -1079,7 +1200,7 @@ function pathFromToolCall(toolCall: AcpToolCallState): string | undefined {
   for (const key of ["path", "filePath", "file_path", "url", "query", "pattern"]) {
     const candidate = rawInput?.[key];
     if (typeof candidate === "string" && candidate.trim().length > 0) {
-      return candidate.trim();
+      return exact ? candidate : candidate.trim();
     }
   }
   return undefined;
@@ -3406,10 +3527,21 @@ export function makeAcpAdapterV2(
           } as const;
           const rawInput = toolCall.data.rawInput;
           const rawOutput = toolCall.data.rawOutput ?? toolCall.data.content;
-          const changes = structuredFileChanges(toolCall);
+          const fileChanges = acpToolCallFileChanges(toolCall.data.content);
+          const changes = fileChanges.changes;
           const path = changes[0]?.path ?? pathFromToolCall(toolCall);
+          // A diff too large to compute has no patch; output text is no stand-in
+          // for one. A failed edit's diffStr is only its error, from rawOutput or
+          // the text blocks beside its diffs; its proposed patch stays on changes[].
           const diffText =
-            acpToolCallDiffPatch(toolCall.data.content) ?? textFromUnknown(rawOutput);
+            status === "failed"
+              ? (textFromUnknown(toolCall.data.rawOutput) ?? textFromUnknown(toolCall.data.content))
+              : (fileChanges.diffStr ??
+                (fileChanges.diffNote === undefined ? textFromUnknown(rawOutput) : undefined));
+          const outputKeptTail = (output: unknown) => {
+            const kept = acpToolOutputKeptTailChars(toolCall.data, output);
+            return kept === undefined ? {} : { outputKeptTailChars: kept };
+          };
           const rawInputRecord = unknownRecord(rawInput);
           const inputVariant =
             typeof rawInputRecord?.variant === "string"
@@ -3464,6 +3596,7 @@ export function makeAcpAdapterV2(
               });
             }
           } else if (mcpIdentity !== undefined) {
+            const mcpOutput = rawOutput === undefined ? undefined : acpMcpToolCallOutput(rawOutput);
             turnItem = {
               ...base,
               title: null,
@@ -3481,7 +3614,8 @@ export function makeAcpAdapterV2(
                 unknownRecord(rawInputRecord?.arguments) ??
                 rawInputRecord ??
                 {},
-              ...(rawOutput === undefined ? {} : { output: acpMcpToolCallOutput(rawOutput) }),
+              ...(rawOutput === undefined ? {} : { output: mcpOutput }),
+              ...outputKeptTail(mcpOutput),
             };
             yield* emitProviderEvent({ type: "turn_item.updated", driver, turnItem });
             yield* rearmDeferredFinalize(context);
@@ -3493,6 +3627,7 @@ export function makeAcpAdapterV2(
               fileName: changes[0]!.path,
               changes,
               ...(diffText === undefined ? {} : { diffStr: diffText }),
+              ...(fileChanges.diffNote === undefined ? {} : { diffNote: fileChanges.diffNote }),
             };
           } else {
             switch (toolCall.kind) {
@@ -3508,6 +3643,7 @@ export function makeAcpAdapterV2(
                       ? (rawInputRecord ?? {})
                       : { ...rawInputRecord, path },
                   ...(rawOutput === undefined ? {} : { output: rawOutput }),
+                  ...outputKeptTail(rawOutput),
                 };
                 break;
               case "search": {
@@ -3568,6 +3704,7 @@ export function makeAcpAdapterV2(
                   ...(textFromUnknown(rawOutput) === undefined
                     ? {}
                     : { output: textFromUnknown(rawOutput) }),
+                  ...outputKeptTail(textFromUnknown(rawOutput)),
                   ...(exitCode === undefined ? {} : { exitCode }),
                 };
                 break;
@@ -3578,7 +3715,7 @@ export function makeAcpAdapterV2(
                 turnItem = {
                   ...base,
                   type: "file_change",
-                  fileName: path ?? toolCall.title ?? "File change",
+                  fileName: pathFromToolCall(toolCall, true) ?? toolCall.title ?? "File change",
                   ...(diffText === undefined ? {} : { diffStr: diffText }),
                 };
                 break;
@@ -3618,6 +3755,7 @@ export function makeAcpAdapterV2(
                     ...(textFromUnknown(rawOutput) === undefined
                       ? {}
                       : { output: textFromUnknown(rawOutput) }),
+                    ...outputKeptTail(textFromUnknown(rawOutput)),
                     ...(exitCode === undefined ? {} : { exitCode }),
                   };
                 } else {
@@ -3627,6 +3765,7 @@ export function makeAcpAdapterV2(
                     toolName: toolCall.title ?? toolCall.kind ?? null,
                     input: rawInput ?? {},
                     ...(rawOutput === undefined ? {} : { output: rawOutput }),
+                    ...outputKeptTail(rawOutput),
                   };
                 }
             }
@@ -4542,6 +4681,8 @@ export function makeAcpAdapterV2(
                 const startedAt = context.toolStartedAt.get(key) ?? now;
                 context.toolStartedAt.set(key, startedAt);
                 const ordinal = resolveSubagentChildOrdinal(subagent, key);
+                const childOutput = merged.data.rawOutput ?? merged.data.content ?? null;
+                const childOutputKeptTail = acpToolOutputKeptTailChars(merged.data, childOutput);
                 yield* emitProviderEvent({
                   type: "turn_item.updated",
                   driver,
@@ -4578,7 +4719,10 @@ export function makeAcpAdapterV2(
                         ? (merged.title ?? merged.kind ?? "Tool")
                         : `${mcpIdentity.server}.${mcpIdentity.tool}`,
                     input: merged.data.rawInput ?? null,
-                    output: merged.data.rawOutput ?? merged.data.content ?? null,
+                    output: childOutput,
+                    ...(childOutputKeptTail === undefined
+                      ? {}
+                      : { outputKeptTailChars: childOutputKeptTail }),
                   },
                 });
               }

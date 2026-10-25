@@ -434,6 +434,17 @@ export const OrchestrationV2AppThread = Schema.Struct({
   ),
   /** Why the thread was resolved, shown with the resolved banner. */
   settledNote: Schema.optional(Schema.NullOr(OrchestrationV2ThreadSettledNote)),
+  /** An agent's request to resolve only after this exact run succeeds. */
+  deferredResolution: Schema.optional(
+    Schema.NullOr(
+      Schema.Struct({
+        runId: RunId,
+        /** A durable tombstone: late tools cannot re-arm this run. */
+        revoked: Schema.optional(Schema.Literal(true)),
+        note: Schema.optional(OrchestrationV2ThreadSettledNote),
+      }),
+    ),
+  ),
   unsettledAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   snoozedUntil: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
   snoozedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
@@ -1332,6 +1343,18 @@ export const OrchestrationV2Checkpoint = Schema.Struct({
   status: Schema.Literals(["ready", "missing", "error", "stale"]),
   files: Schema.Array(OrchestrationV2CheckpointFileSummary),
   capturedAt: Schema.DateTimeUtc,
+  // Provenance stamped at capture. Older checkpoints carry none of these.
+  /** The folder the snapshot staged; its diff runs there. */
+  cwd: Schema.optional(TrimmedNonEmptyString),
+  /** The repository root of `cwd`. Patch paths are relative to it, not to `cwd`. */
+  repoRoot: Schema.optional(TrimmedNonEmptyString),
+  /** The checked-out branch, or null when HEAD was detached. */
+  branch: Schema.optional(Schema.NullOr(TrimmedNonEmptyString)),
+  headOid: Schema.optional(TrimmedNonEmptyString),
+  /** The machine whose server took the snapshot. */
+  capturedOnEnvironmentId: Schema.optional(EnvironmentId),
+  /** The folder was not a Git repository, so no snapshot could be taken. */
+  notGitRepository: Schema.optional(Schema.Boolean),
 });
 export type OrchestrationV2Checkpoint = typeof OrchestrationV2Checkpoint.Type;
 
@@ -1368,17 +1391,99 @@ export const OrchestrationV2TurnItemStatus = Schema.Literals([
 
 export type OrchestrationV2TurnItemStatus = typeof OrchestrationV2TurnItemStatus.Type;
 
+/**
+ * Why an edit body is not an exact provider patch, or why there is none:
+ * `input_snippet` was built from the tool input; `git_patch` is a git diff of
+ * the whole file, so it may include changes this edit did not make;
+ * `line_numbers_synthesized` got file headers and ranges the provider did not
+ * report; `too_large_to_compute` and `overwrite_without_diff` carry no patch.
+ * Carried as a string so a newer server's reason never fails an older client;
+ * read it with `fileChangeDiffNote`.
+ */
+export const FILE_CHANGE_DIFF_NOTES = [
+  "input_snippet",
+  "git_patch",
+  "line_numbers_synthesized",
+  "too_large_to_compute",
+  "overwrite_without_diff",
+] as const;
+export type OrchestrationV2FileChangeDiffNote = (typeof FILE_CHANGE_DIFF_NOTES)[number];
+
+/** A known diff note, or undefined for none or one this build does not know. */
+export function fileChangeDiffNote(
+  value: string | undefined,
+): OrchestrationV2FileChangeDiffNote | undefined {
+  return (FILE_CHANGE_DIFF_NOTES as ReadonlyArray<string>).includes(value ?? "")
+    ? (value as OrchestrationV2FileChangeDiffNote)
+    : undefined;
+}
+
+/**
+ * A file path exactly as the provider sent it. Leading and trailing spaces, including a
+ * no-break space, can be part of a valid name, so a path is never trimmed; a blank path is
+ * still refused.
+ */
+const ExactPathString = Schema.String.check(
+  Schema.makeFilter((value: string) => value.trim().length > 0, {
+    expected: "a non-blank path",
+    toJsonSchema: () => [{ minLength: 1 }, true],
+    arbitraryConstraint: { minLength: 1 },
+  }),
+);
+
 /** One structured file operation reported by a provider inside a file_change item. */
 export const OrchestrationV2FileChangeDetail = Schema.Struct({
   operation: TrimmedNonEmptyString,
-  path: TrimmedNonEmptyString,
-  oldPath: Schema.optional(TrimmedNonEmptyString),
+  path: ExactPathString,
+  oldPath: Schema.optional(ExactPathString),
   /** Exact provider patch for this operation, independent of the item's combined diff. */
   diffStr: Schema.optional(Schema.String),
   fileType: Schema.optional(TrimmedNonEmptyString),
   mimeType: Schema.optional(TrimmedNonEmptyString),
+  /** Lines added and removed, from the provider or counted from the full patch. */
+  additions: Schema.optional(NonNegativeInt),
+  deletions: Schema.optional(NonNegativeInt),
+  /** See FILE_CHANGE_DIFF_NOTES. */
+  diffNote: Schema.optional(TrimmedNonEmptyString),
 });
 export type OrchestrationV2FileChangeDetail = typeof OrchestrationV2FileChangeDetail.Type;
+
+/**
+ * What a shell command did, as Codex typed it (`read`, `listFiles`, `search`,
+ * `unknown`). The type stays a string so a newer kind decodes; clients treat
+ * any kind they do not know as a plain command.
+ */
+export const OrchestrationV2CommandAction = Schema.Struct({
+  type: TrimmedNonEmptyString,
+  command: Schema.optional(Schema.String),
+  name: Schema.optional(Schema.String),
+  path: Schema.optional(Schema.String),
+  query: Schema.optional(Schema.String),
+});
+export type OrchestrationV2CommandAction = typeof OrchestrationV2CommandAction.Type;
+
+// Optional fields shared by the runtime and JSON item schemas below.
+const OrchestrationV2FileChangeExtraFields = {
+  /** Set on the wire when an edit body was withheld or cut; read it with getTurnItem. */
+  diffOmitted: Schema.optional(Schema.Boolean),
+  /** The user declined the change. Status stays `cancelled` for older clients. */
+  declined: Schema.optional(Schema.Boolean),
+  /** See FILE_CHANGE_DIFF_NOTES. */
+  diffNote: Schema.optional(TrimmedNonEmptyString),
+};
+
+const OrchestrationV2CommandExtraFields = {
+  /** SpecWithCode's ingestion kept only this many trailing characters of the output. */
+  outputKeptTailChars: Schema.optional(NonNegativeInt),
+  commandActions: Schema.optional(Schema.Array(OrchestrationV2CommandAction)),
+  /** The user declined the command. Status stays `cancelled` for older clients. */
+  declined: Schema.optional(Schema.Boolean),
+};
+
+const OrchestrationV2DynamicToolExtraFields = {
+  /** SpecWithCode's ingestion kept only this many trailing characters of the output. */
+  outputKeptTailChars: Schema.optional(NonNegativeInt),
+};
 
 export const OrchestrationV2ProviderFailureClass = Schema.Literals([
   "usage_limit",
@@ -1596,13 +1701,14 @@ export const OrchestrationV2TurnItem = Schema.Union([
   Schema.Struct({
     ...OrchestrationV2TurnItemBaseFields,
     type: Schema.Literal("file_change"),
-    fileName: TrimmedNonEmptyString,
+    fileName: ExactPathString,
     additions: Schema.optional(NonNegativeInt),
     deletions: Schema.optional(NonNegativeInt),
     diffStr: Schema.optional(Schema.String),
     oldStr: Schema.optional(Schema.String),
     newStr: Schema.optional(Schema.String),
     changes: Schema.optional(Schema.Array(OrchestrationV2FileChangeDetail)),
+    ...OrchestrationV2FileChangeExtraFields,
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemBaseFields,
@@ -1613,6 +1719,7 @@ export const OrchestrationV2TurnItem = Schema.Union([
     outputOmitted: Schema.optional(Schema.Boolean),
     outputIndicatesFailure: Schema.optional(Schema.Boolean),
     exitCode: Schema.optional(Schema.Int),
+    ...OrchestrationV2CommandExtraFields,
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemBaseFields,
@@ -1749,6 +1856,7 @@ export const OrchestrationV2TurnItem = Schema.Union([
     output: Schema.optional(Schema.Unknown),
     /** Set on the wire when output was withheld; fetch it with getTurnItem. */
     outputOmitted: Schema.optional(Schema.Boolean),
+    ...OrchestrationV2DynamicToolExtraFields,
   }),
 ]);
 export type OrchestrationV2TurnItem = typeof OrchestrationV2TurnItem.Type;
@@ -2444,13 +2552,14 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
   Schema.Struct({
     ...OrchestrationV2TurnItemJsonBaseFields,
     type: Schema.Literal("file_change"),
-    fileName: TrimmedNonEmptyString,
+    fileName: ExactPathString,
     additions: Schema.optional(NonNegativeInt),
     deletions: Schema.optional(NonNegativeInt),
     diffStr: Schema.optional(Schema.String),
     oldStr: Schema.optional(Schema.String),
     newStr: Schema.optional(Schema.String),
     changes: Schema.optional(Schema.Array(OrchestrationV2FileChangeDetail)),
+    ...OrchestrationV2FileChangeExtraFields,
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemJsonBaseFields,
@@ -2461,6 +2570,7 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
     outputOmitted: Schema.optional(Schema.Boolean),
     outputIndicatesFailure: Schema.optional(Schema.Boolean),
     exitCode: Schema.optional(Schema.Int),
+    ...OrchestrationV2CommandExtraFields,
   }),
   Schema.Struct({
     ...OrchestrationV2TurnItemJsonBaseFields,
@@ -2592,6 +2702,7 @@ export const OrchestrationV2TurnItemJson = Schema.Union([
     output: Schema.optional(Schema.Unknown),
     /** Set on the wire when output was withheld; fetch it with getTurnItem. */
     outputOmitted: Schema.optional(Schema.Boolean),
+    ...OrchestrationV2DynamicToolExtraFields,
   }),
 ]);
 export type OrchestrationV2TurnItemJson = typeof OrchestrationV2TurnItemJson.Type;
@@ -3350,6 +3461,19 @@ export type OrchestrationV2Command = typeof OrchestrationV2Command.Type;
  * send them.
  */
 const OrchestrationV2InternalCommand = Schema.Union([
+  Schema.Struct({
+    type: Schema.Literal("thread.deferred-resolution.request"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    runId: RunId,
+    note: Schema.optional(OrchestrationV2ThreadSettledNote),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("thread.deferred-resolution.finish"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    runId: RunId,
+  }),
   /** Provider acknowledgement and removal of a promoted queue row commit together. */
   Schema.Struct({
     type: Schema.Literal("queued-message.steer-settle"),
@@ -3806,17 +3930,75 @@ export const OrchestrationV2GetWorkflowScriptResult = Schema.Struct({
 export type OrchestrationV2GetWorkflowScriptResult =
   typeof OrchestrationV2GetWorkflowScriptResult.Type;
 
+/**
+ * A text a detail read can page: a command's or tool's `output`, its `input`,
+ * or an edit's `body` (`diffStr`, or `changes[changeIndex].diffStr`).
+ * Structured values page over their compact JSON text.
+ */
+export const OrchestrationV2TurnItemDetailField = Schema.Literals(["output", "input", "body"]);
+export type OrchestrationV2TurnItemDetailField = typeof OrchestrationV2TurnItemDetailField.Type;
+
 export const OrchestrationV2GetTurnItemInput = Schema.Struct({
   threadId: ThreadId,
   itemId: TurnItemId,
   /** The item updatedAt the client last saw. Only keys the client cache. */
   revision: Schema.optional(Schema.String),
+  /** Read one page of this field instead of the whole bounded item. */
+  field: Schema.optional(OrchestrationV2TurnItemDetailField),
+  /** For `body`: the change whose patch to read. Absent reads the item's own `diffStr`. */
+  changeIndex: Schema.optional(NonNegativeInt),
+  /** UTF-16 offset the page starts at. */
+  offset: Schema.optional(NonNegativeInt),
+  /** UTF-16 offset the page ends at, to read backward. Wins over `offset`. */
+  before: Schema.optional(NonNegativeInt),
+  /** With neither offset: `end` reads the last page, `start` (default) the first. */
+  anchor: Schema.optional(Schema.Literals(["start", "end"])),
+  /** UTF-8 byte budget for the page. The server never exceeds one 256 KiB page. */
+  limit: Schema.optional(PositiveInt),
 });
 export type OrchestrationV2GetTurnItemInput = typeof OrchestrationV2GetTurnItemInput.Type;
 
-/** One persisted turn item with its full, size-bounded input and output. */
+const OrchestrationV2TurnItemPageFields = {
+  field: OrchestrationV2TurnItemDetailField,
+  changeIndex: Schema.optional(NonNegativeInt),
+  /** UTF-16 offset of the page's first character. */
+  offset: NonNegativeInt,
+  /** UTF-16 offset just past the page's last character. */
+  end: NonNegativeInt,
+  /** UTF-16 length of the whole stored text. */
+  totalLength: NonNegativeInt,
+  /** Where the next page starts, or null on the last page. */
+  nextOffset: Schema.NullOr(NonNegativeInt),
+  /** The item updatedAt the page was read at. Pages of one text join only within a revision. */
+  revision: Schema.String,
+  /** The text is the compact JSON of a structured value. */
+  structured: Schema.optional(Schema.Boolean),
+};
+
+/** Where a detail read cut a field to its first page. */
+export const OrchestrationV2TurnItemPageInfo = Schema.Struct(OrchestrationV2TurnItemPageFields);
+export type OrchestrationV2TurnItemPageInfo = typeof OrchestrationV2TurnItemPageInfo.Type;
+
+/** One page of a field, exactly as stored, with no transport marker. */
+export const OrchestrationV2TurnItemPage = Schema.Struct({
+  ...OrchestrationV2TurnItemPageFields,
+  text: Schema.String,
+});
+export type OrchestrationV2TurnItemPage = typeof OrchestrationV2TurnItemPage.Type;
+
+/**
+ * One persisted turn item with its full, size-bounded input and output. A read
+ * that names a field returns the timeline item and that field's `page`; older
+ * servers ignore the field and return the bounded item without a page.
+ */
 export const OrchestrationV2GetTurnItemResult = Schema.Struct({
   item: Schema.NullOr(OrchestrationV2TurnItem),
+  page: Schema.optional(OrchestrationV2TurnItemPage),
+  /**
+   * Fields this read cut to their first page. The item's text for each is that
+   * page followed by the transport marker, which older clients show as is.
+   */
+  truncated: Schema.optional(Schema.Array(OrchestrationV2TurnItemPageInfo)),
 });
 export type OrchestrationV2GetTurnItemResult = typeof OrchestrationV2GetTurnItemResult.Type;
 

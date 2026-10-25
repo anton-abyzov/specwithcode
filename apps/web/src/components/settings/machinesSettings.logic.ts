@@ -157,7 +157,7 @@ function workHereFor(
   return {
     status: grant.status,
     label: WORK_HERE_LABELS[grant.status],
-    detail: `${workGrantProjectsSummary(grant, grants.projects)} · ${workGrantStatus(grant)}`,
+    detail: `${workGrantProjectsSummary(grant, grants.projects, grants.projectsUnreadable === true)} · ${workGrantStatus(grant)}`,
   };
 }
 

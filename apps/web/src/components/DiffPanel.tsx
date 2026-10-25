@@ -7,6 +7,15 @@ import {
   squashAtomCommandFailure,
 } from "@specweave-studio/client-runtime/state/runtime";
 import { safeErrorLogAttributes } from "@specweave-studio/client-runtime/errors";
+import {
+  matchDiffPath,
+  repoRelativePath,
+  turnDiffState,
+  turnDiffStateMessage,
+  type DiffPathMatch,
+  type PathRoots,
+  type TurnDiffState,
+} from "@specweave-studio/client-runtime/work-log/presentation";
 import type { ScopedThreadRef, RunId } from "@specweave-studio/contracts";
 import {
   ArrowRightIcon,
@@ -27,7 +36,11 @@ import { useFilesystemReadAccess } from "~/state/filesystem";
 import { useOpenInPreferredEditor } from "../editorPreferences";
 import { useFileContextMenuHandler } from "../fileContextMenu";
 import { type DraftId } from "../composerDraftStore";
-import { openDiffFilePrimaryAction } from "../diffFileActions";
+import {
+  firstChangedNewSideLine,
+  openDiffFilePrimaryAction,
+  resolveDiffFileTarget,
+} from "../diffFileActions";
 import { useCheckpointDiff } from "~/lib/checkpointDiffState";
 import { cn } from "~/lib/utils";
 import { selectThreadDiffPanelSelection, useDiffPanelStore } from "../diffPanelStore";
@@ -47,7 +60,9 @@ import { areAllDiffFilesCollapsed, toggleAllDiffFiles } from "../lib/diffCollaps
 import { useTurnDiffSummaries } from "../hooks/useTurnDiffSummaries";
 import { useWorkspaceMutationRefresh } from "../hooks/useWorkspaceMutationRefresh";
 import { useProject, useThreadProjection, useThreadShell } from "../state/entities";
+import { useMachineNicknames } from "../studio/machineNickname";
 import { resolveThreadRouteRef } from "../threadRoutes";
+import type { TurnDiffSummary } from "../types";
 import { useClientSettings, useUpdateClientSettings } from "../hooks/useSettings";
 import { formatShortTimestamp } from "../timestampFormat";
 import { DiffPanelLoadingState, DiffPanelShell, type DiffPanelMode } from "./DiffPanelShell";
@@ -56,6 +71,8 @@ import { AnnotatableCodeView, type AnnotatableCodeViewHandle } from "./diffs/Ann
 import { DiffFileTree } from "./diffs/DiffFileTree";
 import { diffFileTreeEntries } from "./diffs/diffFileTree.logic";
 import { Button } from "./ui/button";
+import { MiddleTruncate } from "./ui/middle-truncate";
+import { toastManager } from "./ui/toast";
 import { MorphIcon } from "~/components/MorphIcon";
 import { ToggleGroup, Toggle } from "./ui/toggle-group";
 import { Switch } from "./ui/switch";
@@ -117,6 +134,152 @@ interface CollapsedDiffFilesState {
 }
 
 const EMPTY_COLLAPSED_DIFF_FILE_KEYS: ReadonlySet<string> = new Set();
+
+const ACTIVE_RUN_STATUSES: ReadonlySet<string> = new Set([
+  "preparing",
+  "queued",
+  "starting",
+  "running",
+  "waiting",
+]);
+const CURRENT_FILE_NOTICE = "Showing the current file; it may differ from this turn";
+
+/** The run's ready checkpoint, else whichever checkpoint it has. */
+function findTurnSummary(
+  summaries: ReadonlyArray<TurnDiffSummary>,
+  runId: RunId,
+): TurnDiffSummary | undefined {
+  return (
+    summaries.find((summary) => summary.runId === runId && summary.status === "ready") ??
+    summaries.find((summary) => summary.runId === runId)
+  );
+}
+
+/**
+ * The file of a patch that a link names. The exact relativizer decides first; a path that is
+ * already repository-relative, as a card row's checkpoint path is, then matches as written.
+ * A rename matches by its old name too.
+ */
+function resolveLinkedDiffFile(
+  path: string,
+  files: ReadonlyArray<{ readonly name: string; readonly prevName?: string | undefined }>,
+  roots: PathRoots,
+): DiffPathMatch | null {
+  const match = (candidates: ReadonlyArray<string>): DiffPathMatch | null => {
+    const relativized = matchDiffPath(path, candidates, roots);
+    if (relativized) return relativized;
+    const written = path
+      .trim()
+      .replaceAll("\\", "/")
+      .replace(/^(?:\.\/)+/, "");
+    return candidates.includes(written) ? { path: written, matchedBy: "exact" } : null;
+  };
+  const byName = match(files.map((file) => file.name));
+  if (byName) return byName;
+  const renamed = files.filter((file) => file.prevName && file.prevName !== file.name);
+  const byPreviousName = match(renamed.map((file) => file.prevName!));
+  const file = byPreviousName && renamed.find((entry) => entry.prevName === byPreviousName.path);
+  return file ? { path: file.name, matchedBy: byPreviousName.matchedBy } : null;
+}
+
+type MissingDiffFileReason =
+  | { readonly kind: "outside_folder"; readonly folder: string }
+  | { readonly kind: "whitespace" }
+  | { readonly kind: "size_limit" }
+  | { readonly kind: "not_in_snapshot" };
+
+function missingDiffFileReasonText(reason: MissingDiffFileReason): string {
+  switch (reason.kind) {
+    case "outside_folder":
+      return `outside the checkpoint folder ${reason.folder}`;
+    case "whitespace":
+      return "hidden by Ignore whitespace";
+    case "size_limit":
+      return "beyond the diff size limit";
+    case "not_in_snapshot":
+      return "not in this turn's snapshot (ignored path, nested repository or reverted)";
+  }
+}
+
+function pathBaseName(path: string): string {
+  return (
+    path
+      .replace(/[\\/]+$/, "")
+      .split(/[\\/]/)
+      .at(-1) || path
+  );
+}
+
+function DiffNotice({
+  children,
+  tone = "muted",
+}: {
+  children: React.ReactNode;
+  tone?: "muted" | "warning";
+}) {
+  return (
+    <div
+      className={cn(
+        "shrink-0 border-b border-border/70 px-3 py-1.5 text-2xs",
+        tone === "warning"
+          ? "bg-warning/8 text-warning-foreground"
+          : "bg-muted/40 text-muted-foreground",
+      )}
+    >
+      {children}
+    </div>
+  );
+}
+
+/** Where and on which machine a turn's snapshot was taken, from the checkpoint's stamp. */
+function TurnProvenanceHeader({
+  turn,
+  turnCount,
+  capturedOn,
+  servedBy,
+}: {
+  turn: TurnDiffSummary;
+  turnCount: number | undefined;
+  capturedOn: string | null;
+  servedBy: string | null;
+}) {
+  const shortHead = turn.headOid?.slice(0, 7);
+  const revision =
+    turn.branch && shortHead
+      ? `${turn.branch}@${shortHead}`
+      : (shortHead ?? (turn.branch === null ? null : turn.branch));
+  if (!turn.repoRoot && !turn.cwd && !revision && !capturedOn) return null;
+  return (
+    <div
+      className="flex shrink-0 flex-wrap items-center gap-x-2.5 gap-y-0.5 border-b border-border/70 px-3 py-1.5 text-2xs text-muted-foreground"
+      aria-label="Turn snapshot"
+    >
+      <span className="font-medium text-foreground">Turn {turnCount ?? "?"}</span>
+      {turn.repoRoot ? (
+        <span className="min-w-0 truncate" title={turn.repoRoot}>
+          {pathBaseName(turn.repoRoot)}
+        </span>
+      ) : null}
+      {turn.cwd ? <MiddleTruncate className="min-w-0 font-mono" value={turn.cwd} /> : null}
+      {revision ? (
+        <MiddleTruncate
+          className="min-w-0 font-mono"
+          value={revision}
+          {...(shortHead ? { tail: shortHead.length + 1 } : {})}
+        />
+      ) : null}
+      {capturedOn ? (
+        servedBy ? (
+          <span className="text-warning-foreground">
+            Captured on {capturedOn}, served by {servedBy}
+          </span>
+        ) : (
+          <span title={`Captured on ${capturedOn}`}>{capturedOn}</span>
+        )
+      ) : null}
+    </div>
+  );
+}
 
 /** Collapse control for one file header; re-renders only when its own file changes. */
 function DiffFileCollapseToggle({
@@ -269,21 +432,46 @@ export default function DiffPanel({
   const selectedFilePath = diffSelection.kind === "turn" ? diffSelection.filePath : null;
   const selectedFileRevealRequestId =
     diffSelection.kind === "turn" ? diffSelection.revealRequestId : 0;
+  // A link names one run and shows only that run's diff; the panel's own menu may fall back.
+  const isLinkedTurn = diffSelection.kind === "turn" && diffSelection.origin === "link";
+  const selectedTurnAttribution =
+    diffSelection.kind === "turn" ? (diffSelection.attributedTo ?? null) : null;
   const selectedTurn =
     selectedRunId === null
       ? undefined
-      : (orderedTurnDiffSummaries.find((summary) => summary.runId === selectedRunId) ??
-        orderedTurnDiffSummaries[0]);
+      : (findTurnSummary(orderedTurnDiffSummaries, selectedRunId) ??
+        (isLinkedTurn ? undefined : orderedTurnDiffSummaries[0]));
+  const projectionRuns = activeThreadProjection?.runs;
+  const selectedTurnState = useMemo<TurnDiffState | null>(() => {
+    const runId = selectedTurn?.runId ?? (isLinkedTurn ? selectedRunId : null);
+    if (runId === null) return null;
+    // A ready checkpoint of a run this projection does not list still shows its diff.
+    if (selectedTurn?.status === "ready" && !projectionRuns?.some((run) => run.id === runId)) {
+      return {
+        kind: "available",
+        turnCount: selectedTurn.checkpointTurnCount,
+        fromBaseline: false,
+      };
+    }
+    return turnDiffState({ runId, runs: projectionRuns ?? [], checkpoints: turnDiffSummaries });
+  }, [isLinkedTurn, projectionRuns, selectedRunId, selectedTurn, turnDiffSummaries]);
+  const turnStateMessage = selectedTurnState ? turnDiffStateMessage(selectedTurnState) : null;
   const selectedCheckpointTurnCount =
     selectedTurn &&
     (selectedTurn.checkpointTurnCount ?? inferredCheckpointTurnCountByRunId[selectedTurn.runId]);
   const latestTurn = orderedTurnDiffSummaries[0];
+  const latestCheckpointedTurn = orderedTurnDiffSummaries.find(
+    (summary) => summary.status === "ready",
+  );
+  const isRunActive = projectionRuns?.some((run) => ACTIVE_RUN_STATUSES.has(run.status)) ?? false;
+  const isLatestTurnSelected =
+    selectedTurn !== undefined && selectedTurn.runId === latestTurn?.runId;
   const selectedScopeLabel =
     selectedRunId === null
       ? selectedGitScope === "unstaged"
         ? "Uncommitted"
         : "Changes"
-      : selectedTurn?.runId === latestTurn?.runId
+      : isLatestTurnSelected
         ? "Latest turn"
         : `Turn ${selectedCheckpointTurnCount ?? "?"}`;
   const reviewSectionId = selectedTurn ? `turn:${selectedTurn.runId}` : selectedGitScope;
@@ -315,7 +503,9 @@ export default function DiffPanel({
       ignoreWhitespace: diffIgnoreWhitespace,
       cacheScope: selectedTurn ? `turn:${selectedTurn.runId}` : null,
     },
-    { enabled: isGitRepo && selectedTurn !== undefined },
+    {
+      enabled: isGitRepo && selectedTurn !== undefined && selectedTurnState?.kind === "available",
+    },
   );
   // Always read the thread's own folder. When the server refuses it, show that
   // error rather than quietly diffing another folder (such as the service home).
@@ -425,6 +615,8 @@ export default function DiffPanel({
 
   const selectedPatch = selectedTurn ? activeCheckpointDiff.data?.diff : gitDiff;
   const isSelectedPatchTruncated = !selectedTurn && selectedGitSource?.truncated === true;
+  const isTurnPatchTruncated =
+    selectedTurn !== undefined && activeCheckpointDiff.data?.truncated === true;
   const isLoadingSelectedPatch = selectedTurn
     ? activeCheckpointDiff.isPending
     : branchDiffPreview.isPending;
@@ -548,8 +740,72 @@ export default function DiffPanel({
     return getDiffLineStat(renderableFiles);
   }, [renderableFiles, selectedGitSource, selectedTurn]);
   const fileTreeEntries = useMemo(() => diffFileTreeEntries(renderableFiles), [renderableFiles]);
-  const selectedDiffFileKey = selectedFilePath
-    ? (codeViewFiles.find((candidate) => candidate.filePath === selectedFilePath)?.fileKey ?? null)
+  // Patch paths are relative to the stamped repository root; a link's path is the provider's.
+  const turnPathRoots = useMemo<PathRoots>(
+    () => ({ repoRoot: selectedTurn?.repoRoot, workspaceRoot: selectedTurn?.cwd ?? activeCwd }),
+    [activeCwd, selectedTurn?.cwd, selectedTurn?.repoRoot],
+  );
+  const linkedDiffFile = useMemo(
+    () =>
+      selectedTurn && selectedFilePath
+        ? resolveLinkedDiffFile(selectedFilePath, renderableFiles, turnPathRoots)
+        : null,
+    [renderableFiles, selectedFilePath, selectedTurn, turnPathRoots],
+  );
+  const revealFilePath = lazySource ? selectedFilePath : (linkedDiffFile?.path ?? null);
+  const missingLinkedFile = useMemo((): {
+    readonly path: string;
+    readonly reason: MissingDiffFileReason;
+  } | null => {
+    if (!selectedTurn || !selectedFilePath || linkedDiffFile) return null;
+    if (isLoadingSelectedPatch || !hasResolvedPatch || renderablePatch?.kind === "raw") return null;
+    const path = repoRelativePath(selectedFilePath, turnPathRoots) ?? selectedFilePath;
+    const folder = selectedTurn.cwd ?? activeCwd;
+    if (folder && repoRelativePath(selectedFilePath, { repoRoot: folder }) === null) {
+      return { path: selectedFilePath, reason: { kind: "outside_folder", folder } };
+    }
+    const onCard =
+      resolveLinkedDiffFile(
+        selectedFilePath,
+        selectedTurn.files.map((file) => ({ name: file.path })),
+        turnPathRoots,
+      ) !== null;
+    if (onCard && isTurnPatchTruncated) return { path, reason: { kind: "size_limit" } };
+    if (onCard && diffIgnoreWhitespace) return { path, reason: { kind: "whitespace" } };
+    return { path, reason: { kind: "not_in_snapshot" } };
+  }, [
+    activeCwd,
+    diffIgnoreWhitespace,
+    hasResolvedPatch,
+    isLoadingSelectedPatch,
+    isTurnPatchTruncated,
+    linkedDiffFile,
+    renderablePatch?.kind,
+    selectedFilePath,
+    selectedTurn,
+    turnPathRoots,
+  ]);
+  // Card files the cut patch never reached (AC-08).
+  const filesBeyondSizeLimit = useMemo(() => {
+    if (!selectedTurn || !isTurnPatchTruncated) return [];
+    const inPatch = new Set(
+      renderableFiles.flatMap((file) => (file.prevName ? [file.name, file.prevName] : [file.name])),
+    );
+    return selectedTurn.files.map((file) => file.path).filter((path) => !inPatch.has(path));
+  }, [isTurnPatchTruncated, renderableFiles, selectedTurn]);
+  const resolveMachineName = useMachineNicknames();
+  const capturedOnEnvironmentId = selectedTurn?.capturedOnEnvironmentId;
+  const capturedOnMachine = capturedOnEnvironmentId
+    ? resolveMachineName(capturedOnEnvironmentId)
+    : null;
+  const capturedElsewhere =
+    capturedOnEnvironmentId !== undefined &&
+    activeThread != null &&
+    capturedOnEnvironmentId !== activeThread.environmentId;
+  const servingMachine =
+    capturedElsewhere && activeThread ? resolveMachineName(activeThread.environmentId) : null;
+  const selectedDiffFileKey = revealFilePath
+    ? (codeViewFiles.find((candidate) => candidate.filePath === revealFilePath)?.fileKey ?? null)
     : null;
 
   useEffect(() => {
@@ -596,26 +852,61 @@ export default function DiffPanel({
     ],
   );
 
-  const externalRevealRef = useRef<{ cache: string; key: string } | null>(null);
+  // Each link reveals its file once, expanded even when the setting collapses files.
+  const externalRevealRef = useRef<{ cache: string | null; key: string } | null>(null);
+  const revealCache = lazySource ? filePatchScope : collapseScopeKey;
+  const isRevealFileRendered =
+    revealFilePath !== null &&
+    renderableFileEntries.some(
+      (candidate) => resolveFileDiffPath(candidate.fileDiff) === revealFilePath,
+    );
   useEffect(() => {
-    if (!lazySource || !selectedFilePath) return;
-    const key = `${selectedFilePath}:${selectedFileRevealRequestId}`;
-    if (
-      externalRevealRef.current?.cache === filePatchScope &&
-      externalRevealRef.current.key === key
-    )
+    if (!revealFilePath || !isRevealFileRendered) return;
+    const key = `${revealFilePath}:${selectedFileRevealRequestId}`;
+    if (externalRevealRef.current?.cache === revealCache && externalRevealRef.current.key === key)
       return;
-    externalRevealRef.current = { cache: filePatchScope, key };
-    revealDiffFile(selectedFilePath);
-  }, [lazySource, selectedFilePath, selectedFileRevealRequestId, filePatchScope, revealDiffFile]);
+    externalRevealRef.current = { cache: revealCache, key };
+    revealDiffFile(revealFilePath);
+  }, [
+    isRevealFileRendered,
+    revealCache,
+    revealDiffFile,
+    revealFilePath,
+    selectedFileRevealRequestId,
+  ]);
 
+  const selectedCheckpointFolder = useMemo(
+    () => (selectedTurn ? { cwd: selectedTurn.cwd, repoRoot: selectedTurn.repoRoot } : undefined),
+    [selectedTurn],
+  );
+  // The working tree still matches only the latest snapshot, and only while no run edits it (D-20).
+  const opensSelectedTurnVersion =
+    selectedTurn !== undefined &&
+    selectedTurn.runId === latestCheckpointedTurn?.runId &&
+    !isRunActive;
   const openDiffFile = useCallback(
     (filePath: string) => {
-      openDiffFilePrimaryAction({
+      const fileDiff = selectedCheckpointFolder
+        ? renderableFileEntries.find(
+            (candidate) => resolveFileDiffPath(candidate.fileDiff) === filePath,
+          )?.fileDiff
+        : undefined;
+      const sameFolder =
+        resolveDiffFileTarget({
+          filePath,
+          activeCwd,
+          repositoryRoot: activeRepositoryRoot,
+          checkpoint: selectedCheckpointFolder,
+        })?.otherCheckpointFolder === null;
+      const atTurnLine = opensSelectedTurnVersion && sameFolder;
+      const line = atTurnLine && fileDiff ? firstChangedNewSideLine(fileDiff) : null;
+      const opened = openDiffFilePrimaryAction({
         threadRef,
         filePath,
         activeCwd,
         repositoryRoot: activeRepositoryRoot,
+        checkpoint: selectedCheckpointFolder,
+        ...(line === null ? {} : { line }),
         openInEditor: (targetPath) => {
           void (async () => {
             const result = await openInPreferredEditor(targetPath);
@@ -634,8 +925,28 @@ export default function DiffPanel({
           })();
         },
       });
+      // The file surface keeps only a relative path, so it shows today's copy in today's folder.
+      if (selectedCheckpointFolder && opened && !atTurnLine) {
+        toastManager.add({
+          type: "info",
+          title: CURRENT_FILE_NOTICE,
+          ...(opened.otherCheckpointFolder && activeCwd
+            ? {
+                description: `This turn's snapshot was taken in ${opened.otherCheckpointFolder}; the file opened from ${activeCwd}.`,
+              }
+            : {}),
+        });
+      }
     },
-    [activeCwd, activeRepositoryRoot, openInPreferredEditor, threadRef],
+    [
+      activeCwd,
+      activeRepositoryRoot,
+      openInPreferredEditor,
+      opensSelectedTurnVersion,
+      renderableFileEntries,
+      selectedCheckpointFolder,
+      threadRef,
+    ],
   );
   const collapseDefaultsRef = useRef({ collapseScopeKey, defaultCollapsedDiffFileKeys });
   useLayoutEffect(() => {
@@ -686,11 +997,7 @@ export default function DiffPanel({
   // latest turn is also marked there.
   const selectedTurnValue = selectedTurn ? `turn:${selectedTurn.runId}` : "";
   const selectedScopeValue =
-    selectedRunId === null
-      ? selectedGitScope
-      : selectedTurn?.runId === latestTurn?.runId
-        ? "latest"
-        : selectedTurnValue;
+    selectedRunId === null ? selectedGitScope : isLatestTurnSelected ? "latest" : selectedTurnValue;
   const selectScopeValue = (value: string) => {
     if (value === "unstaged" || value === "branch") {
       selectGitScope(value);
@@ -1008,6 +1315,79 @@ export default function DiffPanel({
     </>
   );
 
+  const turnNotices =
+    selectedRunId === null ? null : (
+      <>
+        {selectedTurn ? (
+          <TurnProvenanceHeader
+            turn={selectedTurn}
+            turnCount={selectedCheckpointTurnCount}
+            capturedOn={capturedOnMachine}
+            servedBy={servingMachine}
+          />
+        ) : null}
+        {selectedTurnAttribution ? (
+          <DiffNotice>
+            Edited by subagent {selectedTurnAttribution.title} in turn{" "}
+            {selectedCheckpointTurnCount ?? "?"}
+            {selectedTurnAttribution.running
+              ? ". It was still running when this snapshot was taken, so the change may appear in a later turn."
+              : ""}
+          </DiffNotice>
+        ) : null}
+        {selectedPatchError && capturedElsewhere && capturedOnMachine ? (
+          <DiffNotice tone="warning">
+            This turn's snapshot was taken on {capturedOnMachine}
+          </DiffNotice>
+        ) : null}
+        {isTurnPatchTruncated ? (
+          <DiffNotice tone="warning">
+            <p>Diff truncated at 10 MB</p>
+            {filesBeyondSizeLimit.length > 0 ? (
+              <ul
+                className="mt-1 max-h-24 space-y-0.5 overflow-y-auto"
+                aria-label="Files beyond the diff size limit"
+              >
+                {filesBeyondSizeLimit.map((path) => (
+                  <li key={path} className="flex min-w-0">
+                    <MiddleTruncate className="min-w-0 font-mono" value={path} />
+                    <span className="shrink-0 whitespace-pre">: beyond the diff size limit</span>
+                  </li>
+                ))}
+              </ul>
+            ) : null}
+          </DiffNotice>
+        ) : null}
+        {linkedDiffFile?.matchedBy === "file_name" ? (
+          <DiffNotice>
+            <p className="min-w-0">
+              Matched by file name:{" "}
+              <MiddleTruncate className="align-bottom font-mono" value={linkedDiffFile.path} />
+            </p>
+          </DiffNotice>
+        ) : null}
+        {missingLinkedFile ? (
+          <DiffNotice tone="warning">
+            <p className="min-w-0">
+              <MiddleTruncate className="align-bottom font-mono" value={missingLinkedFile.path} />{" "}
+              is not in this diff: {missingDiffFileReasonText(missingLinkedFile.reason)}
+              {missingLinkedFile.reason.kind === "whitespace" ? (
+                <Button
+                  type="button"
+                  size="xs"
+                  variant="outline"
+                  className="ms-2"
+                  onClick={() => setDiffIgnoreWhitespace(false)}
+                >
+                  Show whitespace changes
+                </Button>
+              ) : null}
+            </p>
+          </DiffNotice>
+        ) : null}
+      </>
+    );
+
   return (
     <DiffPanelShell mode={mode} header={headerRow}>
       {!activeThread ? (
@@ -1017,6 +1397,13 @@ export default function DiffPanel({
       ) : !isGitRepo ? (
         <div className="flex flex-1 items-center justify-center px-5 text-center text-xs text-muted-foreground">
           Turn diffs are unavailable because this project is not a git repository.
+        </div>
+      ) : selectedRunId !== null && turnStateMessage !== null ? (
+        <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background">
+          {turnNotices}
+          <div className="flex flex-1 items-center justify-center px-5 text-center text-xs text-muted-foreground">
+            {turnStateMessage}
+          </div>
         </div>
       ) : selectedRunId !== null && orderedTurnDiffSummaries.length === 0 ? (
         <div className="flex flex-1 items-center justify-center px-5 text-center text-xs text-muted-foreground">
@@ -1033,6 +1420,7 @@ export default function DiffPanel({
       ) : (
         <>
           <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden bg-background">
+            {turnNotices}
             {isSelectedPatchTruncated && !lazySource && (
               <p className="shrink-0 border-b border-border/70 bg-muted/40 px-3 py-1.5 text-2xs text-muted-foreground">
                 This preview exceeds the size limit. Changes shown are incomplete.
@@ -1108,13 +1496,27 @@ export default function DiffPanel({
                     const filePath = title?.textContent?.trim();
                     if (!filePath) return;
                     event.preventDefault();
+                    // A stamped turn path is first made relative to today's workspace (D-19).
+                    const stampedTarget = selectedCheckpointFolder?.cwd
+                      ? resolveDiffFileTarget({
+                          filePath,
+                          activeCwd,
+                          checkpoint: selectedCheckpointFolder,
+                        })
+                      : null;
                     onFileContextMenu(
-                      {
-                        environmentId: activeThread?.environmentId ?? null,
-                        filePath,
-                        workspaceRoot: activeCwd,
-                        repositoryRoot: activeRepositoryRoot,
-                      },
+                      stampedTarget
+                        ? {
+                            environmentId: activeThread?.environmentId ?? null,
+                            filePath: stampedTarget.workspaceFilePath,
+                            workspaceRoot: activeCwd,
+                          }
+                        : {
+                            environmentId: activeThread?.environmentId ?? null,
+                            filePath,
+                            workspaceRoot: activeCwd,
+                            repositoryRoot: activeRepositoryRoot,
+                          },
                       event,
                     );
                   }}
@@ -1187,7 +1589,7 @@ export default function DiffPanel({
                     <DiffFileTree
                       ariaLabel={`${reviewSectionTitle} files`}
                       entries={fileTreeEntries}
-                      selectedPath={selectedFilePath}
+                      selectedPath={revealFilePath}
                       revealRequestId={selectedFileRevealRequestId}
                       onSelectFile={revealDiffFile}
                     />

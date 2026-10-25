@@ -22,6 +22,8 @@ export const ThreadTurnDiff = TurnCountRange.mapFields(
   Struct.assign({
     threadId: ThreadId,
     diff: Schema.String,
+    /** The patch hit the server's size limit and was cut; later files are missing. */
+    truncated: Schema.optionalKey(Schema.Boolean),
   }),
   { unsafePreserveChecks: true },
 );

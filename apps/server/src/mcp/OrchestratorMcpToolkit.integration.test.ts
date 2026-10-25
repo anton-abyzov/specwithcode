@@ -30,6 +30,7 @@ import {
   type ProviderOptionDescriptor,
   ProviderThreadId,
   ProviderTurnId,
+  RunId,
   type ScheduledTask,
   ScheduledTaskId,
   type ScheduledTaskUpsertInput,
@@ -791,18 +792,44 @@ describe("orchestrator MCP toolkit", () => {
             const invoke = (name: string, args: Record<string, unknown>) =>
               invokeAs(invocation, name, args);
 
-            const refusedSettle = yield* invoke("studio_thread_organize", { action: "settle" });
-            expect(refusedSettle.isError).toBe(true);
-            expect(refusedSettle.structuredContent).toBeUndefined();
-            expect(declaredFailure(refusedSettle)).toEqual({
-              _tag: "OrchestratorMcpFailure",
-              code: "orchestration_error",
+            const externalSettle = yield* invokeAs(
+              {
+                ...invocation,
+                thread: undefined,
+                client: { sessionId: "external", label: "External", access: "full-access" },
+              },
+              "studio_thread_organize",
+              { action: "settle", threadId: parentThreadId },
+            );
+            expect(externalSettle.isError).toBe(true);
+            expect(declaredFailure(externalSettle)).toMatchObject({
               message:
                 "This thread can't be resolved yet: a turn is still running. Stop it first, then resolve.",
             });
-            const afterRefusedSettle = yield* orchestrator.getThreadProjection(parentThreadId);
-            expect(afterRefusedSettle.thread.settledOverride).not.toBe("settled");
-            expect(afterRefusedSettle.runs.find((run) => run.id === parentRun?.id)?.status).toBe(
+            const missingRun = yield* invoke("studio_thread_organize", { action: "settle" });
+            expect(missingRun.isError).toBe(true);
+            const delayedOldRun = yield* invoke("studio_thread_organize", {
+              action: "settle",
+              expectedRunId: RunId.make("run:older-completed-turn"),
+            });
+            expect(delayedOldRun.isError).toBe(true);
+            expect(
+              (yield* orchestrator.getThreadProjection(parentThreadId)).thread.deferredResolution ??
+                null,
+            ).toBeNull();
+            const deferredSettle = yield* invoke("studio_thread_organize", {
+              action: "settle",
+              expectedRunId: parentRun?.id,
+              note: "Delivered",
+            });
+            expect(deferredSettle.isError).toBe(false);
+            const afterDeferredSettle = yield* orchestrator.getThreadProjection(parentThreadId);
+            expect(afterDeferredSettle.thread.settledOverride).not.toBe("settled");
+            expect(afterDeferredSettle.thread.deferredResolution).toEqual({
+              runId: parentRun?.id,
+              note: "Delivered",
+            });
+            expect(afterDeferredSettle.runs.find((run) => run.id === parentRun?.id)?.status).toBe(
               "running",
             );
 
@@ -3959,6 +3986,35 @@ describe("orchestrator MCP toolkit", () => {
                 thirdFanoutDelivery.messageId,
               ]),
             );
+            yield* orchestrator.dispatch({
+              type: "message.dispatch",
+              threadId: parentThreadId,
+              commandId: CommandId.make("command:mcp-parent:new-turn-for-stale-tool"),
+              messageId: MessageId.make("message:mcp-parent:new-turn-for-stale-tool"),
+              text: parentPrompt,
+              attachments: [],
+              modelSelection: codexSelection,
+              dispatchMode: { type: "start_immediately" },
+              createdBy: "user",
+              creationSource: "web",
+            });
+            const newerParent = yield* waitForProjection(
+              orchestrator,
+              parentThreadId,
+              (projection) =>
+                projection.runs.some((run) => run.id !== parentRun.id && run.status === "running"),
+            );
+            const newerRun = newerParent.runs.find(
+              (run) => run.id !== parentRun.id && run.status === "running",
+            )!;
+            const oldTurnSettle = yield* invoke("studio_thread_organize", {
+              action: "settle",
+              expectedRunId: parentRun.id,
+            });
+            expect(oldTurnSettle.isError).toBe(true);
+            const afterStaleTool = yield* orchestrator.getThreadProjection(parentThreadId);
+            expect(afterStaleTool.thread.deferredResolution?.runId).not.toBe(newerRun.id);
+            expect(afterStaleTool.thread.settledOverride).not.toBe("settled");
           }).pipe(Effect.provide(layerTest));
         }),
       ),

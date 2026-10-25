@@ -152,6 +152,137 @@ describe("who can run work on this Mac", () => {
     });
   });
 
+  it("lists an archived, automated or No project choice only while the grant names it", () => {
+    const withUnavailable: StudioWorkGrantsSnapshot = {
+      ...snapshot,
+      projects: [
+        ...snapshot.projects,
+        { id: ProjectId.make("p-old"), title: "old", linkedTo: [m4], unavailable: "archived" },
+        {
+          id: ProjectId.make("p-scratch"),
+          title: "No project",
+          linkedTo: [],
+          unavailable: "scratch",
+        },
+      ],
+    };
+    const listed = (projectIds: ReadonlyArray<ProjectId>) =>
+      visitElements(
+        MachineWorkGrantRow({
+          grant: { ...grant, projects: { kind: "listed", projectIds } },
+          snapshot: withUnavailable,
+          canManage: true,
+          pending: false,
+          onChange: vi.fn(),
+        }),
+        (element) =>
+          element.props.label === "Projects M4MAX may use" && Array.isArray(element.props.items),
+      )!.props.items;
+    expect(listed([])).toEqual([
+      { id: "p-web", title: "specwithcode" },
+      { id: "p-notes", title: "notes" },
+    ]);
+    expect(listed([ProjectId.make("p-old")])).toEqual([
+      { id: "p-web", title: "specwithcode" },
+      { id: "p-notes", title: "notes" },
+      { id: "p-old", title: "old", unavailable: "archived, uncheck to remove" },
+    ]);
+    expect(listed([ProjectId.make("p-scratch")])).toContainEqual({
+      id: "p-scratch",
+      title: "No project",
+      unavailable: "folder for chats, uncheck to remove",
+    });
+    // The grant still covers a linked project once archived, so the summary names it.
+    expect(workGrantProjectsSummary(grant, withUnavailable.projects)).toBe(
+      "Projects linked to M4MAX: specwithcode, old (archived)",
+    );
+    expect(
+      workGrantProjectsSummary(
+        { ...grant, projects: { kind: "listed", projectIds: [ProjectId.make("p-old")] } },
+        withUnavailable.projects,
+      ),
+    ).toBe("old (archived)");
+    // A grant naming only the chats folder must not read like "No projects".
+    expect(
+      workGrantProjectsSummary(
+        { ...grant, projects: { kind: "listed", projectIds: [ProjectId.make("p-scratch")] } },
+        withUnavailable.projects,
+      ),
+    ).toBe("No project folder (chats)");
+    // An id the snapshot no longer lists (the assistant, a deleted project) names nothing.
+    const gone = ProjectId.make("p-assistant");
+    expect(
+      workGrantProjectsSummary(
+        { ...grant, projects: { kind: "listed", projectIds: [ProjectId.make("p-old"), gone] } },
+        withUnavailable.projects,
+      ),
+    ).toBe("old (archived)");
+    expect(
+      workGrantProjectsSummary(
+        { ...grant, projects: { kind: "listed", projectIds: [gone] } },
+        withUnavailable.projects,
+      ),
+    ).toBe("No projects");
+    // The row has no checkbox for it, so the next change sends the list without it.
+    const selected = visitElements(
+      MachineWorkGrantRow({
+        grant: {
+          ...grant,
+          projects: { kind: "listed", projectIds: [ProjectId.make("p-old"), gone] },
+        },
+        snapshot: withUnavailable,
+        canManage: true,
+        pending: false,
+        onChange: vi.fn(),
+      }),
+      (element) =>
+        element.props.label === "Projects M4MAX may use" && Array.isArray(element.props.items),
+    )!.props.selected;
+    expect(selected).toEqual(["p-old"]);
+    // A machine with nothing to offer still reads "No projects" for an id it no longer lists...
+    const onlyGone = { ...grant, projects: { kind: "listed" as const, projectIds: [gone] } };
+    expect(workGrantProjectsSummary(onlyGone, [])).toBe("No projects");
+    // ...while a failed project read keeps the grant's ids rather than understating it.
+    expect(workGrantProjectsSummary(onlyGone, [], true)).toBe(
+      "1 chosen project (could not read this machine's projects)",
+    );
+    expect(workGrantProjectsSummary(grant, [], true)).toBe(
+      "Projects linked to M4MAX (could not read this machine's projects)",
+    );
+    const selectedWhen = (projectsUnreadable: boolean) =>
+      visitElements(
+        MachineWorkGrantRow({
+          grant: onlyGone,
+          snapshot: {
+            ...snapshot,
+            projects: [],
+            ...(projectsUnreadable ? { projectsUnreadable } : {}),
+          },
+          canManage: true,
+          pending: false,
+          onChange: vi.fn(),
+        }),
+        (element) =>
+          element.props.label === "Projects M4MAX may use" && Array.isArray(element.props.items),
+      )!.props.selected;
+    expect(selectedWhen(true)).toEqual([gone]);
+    const emptyWhenUnreadable = visitElements(
+      MachineWorkGrantRow({
+        grant: onlyGone,
+        snapshot: { ...snapshot, projects: [], projectsUnreadable: true },
+        canManage: true,
+        pending: false,
+        onChange: vi.fn(),
+      }),
+      (element) =>
+        element.props.label === "Projects M4MAX may use" && Array.isArray(element.props.items),
+    )!.props.empty;
+    expect(emptyWhenUnreadable).toBe(
+      "Could not read this machine's projects. The grant keeps its choices.",
+    );
+    expect(selectedWhen(false)).toEqual([]);
+  });
+
   it("explains a grant from before scopes and locks a revoked or read-only row", () => {
     const legacy = MachineWorkGrantRow({
       grant: { ...grant, legacy: true, projects: { kind: "all" } },

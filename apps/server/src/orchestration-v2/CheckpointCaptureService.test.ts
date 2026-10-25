@@ -4,6 +4,7 @@ import {
   CheckpointId,
   CheckpointRef,
   CheckpointScopeId,
+  EnvironmentId,
   EventId,
   MessageId,
   NodeId,
@@ -24,6 +25,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
+import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import { VcsProcessTimeoutError } from "@specweave-studio/contracts";
 import * as CheckpointService from "./CheckpointService.ts";
 import * as CheckpointCaptureService from "./CheckpointCaptureService.ts";
@@ -734,6 +736,252 @@ it.layer(layerProjectionStoreTest)("CheckpointCaptureServiceV2", (it) => {
       );
       assert.equal(projected.rootNode?.status, "cancelled");
       assert.deepEqual([...projected.readyCheckpointOrdinals].toSorted(), [0, 1]);
+    }),
+  );
+
+  // The runtime builds CheckpointService inside the server's layers, which
+  // provide ServerEnvironmentIdentity around it (runtimeLayer.ts, server.ts).
+  it.effect("persists where and on which machine a turn's checkpoint was taken", () =>
+    Effect.gen(function* () {
+      const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
+      const now = yield* DateTime.now;
+      const stampThreadId = ThreadId.make("thread:checkpoint-capture-stamp");
+      const stampRunId = RunId.make("run:checkpoint-capture-stamp");
+      const stampScopeId = CheckpointScopeId.make("scope:checkpoint-capture-stamp");
+      const stampRootNodeId = NodeId.make("node:checkpoint-capture-stamp-root");
+      const stampProviderThreadId = ProviderThreadId.make(
+        "provider-thread:checkpoint-capture-stamp",
+      );
+      const machine = EnvironmentId.make("environment:checkpoint-capture-stamp");
+      const headOid = "a".repeat(40);
+      const events: ReadonlyArray<OrchestrationV2DomainEvent> = [
+        {
+          id: EventId.make("event:checkpoint-capture-stamp:thread"),
+          type: "thread.created",
+          threadId: stampThreadId,
+          occurredAt: now,
+          payload: {
+            createdBy: "user",
+            creationSource: "web",
+            id: stampThreadId,
+            projectId,
+            title: "Checkpoint capture stamp",
+            providerInstanceId,
+            modelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            branch: null,
+            worktreePath: null,
+            activeProviderThreadId: null,
+            lineage: {
+              parentThreadId: null,
+              relationshipToParent: null,
+              rootThreadId: stampThreadId,
+            },
+            forkedFrom: null,
+            createdAt: now,
+            updatedAt: now,
+            archivedAt: null,
+            settledOverride: null,
+            settledAt: null,
+            lastVisitedAt: null,
+            deletedAt: null,
+          },
+        },
+        {
+          id: EventId.make("event:checkpoint-capture-stamp:provider-thread"),
+          type: "provider-thread.updated",
+          threadId: stampThreadId,
+          nodeId: stampRootNodeId,
+          driver,
+          providerInstanceId,
+          occurredAt: now,
+          payload: {
+            id: stampProviderThreadId,
+            driver,
+            providerInstanceId,
+            providerSessionId: null,
+            appThreadId: stampThreadId,
+            ownerNodeId: stampRootNodeId,
+            nativeThreadRef: null,
+            nativeConversationHeadRef: null,
+            status: "idle",
+            firstRunOrdinal: 1,
+            lastRunOrdinal: 1,
+            handoffIds: [],
+            forkedFrom: null,
+            createdAt: now,
+            updatedAt: now,
+          },
+        },
+        {
+          id: EventId.make("event:checkpoint-capture-stamp:scope"),
+          type: "checkpoint-scope.created",
+          threadId: stampThreadId,
+          runId: stampRunId,
+          nodeId: stampRootNodeId,
+          occurredAt: now,
+          payload: {
+            id: stampScopeId,
+            threadId: stampThreadId,
+            runId: stampRunId,
+            nodeId: stampRootNodeId,
+            parentScopeId: null,
+            providerThreadId: stampProviderThreadId,
+            kind: "root_run",
+            ordinalWithinParent: 0,
+            advancesAppRunCount: true,
+            cwd: "/repo/packages/app",
+            createdAt: now,
+          },
+        },
+        {
+          id: EventId.make("event:checkpoint-capture-stamp:baseline"),
+          type: "checkpoint.captured",
+          threadId: stampThreadId,
+          nodeId: stampRootNodeId,
+          driver,
+          providerInstanceId,
+          occurredAt: now,
+          payload: {
+            id: CheckpointId.make("checkpoint:stamp-baseline-0"),
+            threadId: stampThreadId,
+            scopeId: stampScopeId,
+            runId: null,
+            nodeId: stampRootNodeId,
+            parentCheckpointId: null,
+            ordinalWithinScope: 0,
+            appRunOrdinal: null,
+            ref: CheckpointRef.make("checkpoint-ref:stamp-baseline-0"),
+            status: "ready",
+            files: [],
+            capturedAt: now,
+          },
+        },
+        {
+          id: EventId.make("event:checkpoint-capture-stamp:run"),
+          type: "run.updated",
+          threadId: stampThreadId,
+          runId: stampRunId,
+          nodeId: stampRootNodeId,
+          providerInstanceId,
+          occurredAt: now,
+          payload: {
+            id: stampRunId,
+            threadId: stampThreadId,
+            ordinal: 1,
+            providerInstanceId,
+            modelSelection,
+            providerThreadId: stampProviderThreadId,
+            userMessageId: MessageId.make("message:checkpoint-capture-stamp"),
+            rootNodeId: stampRootNodeId,
+            activeAttemptId: null,
+            status: "waiting",
+            requestedAt: now,
+            startedAt: now,
+            completedAt: null,
+            checkpointId: null,
+            contextHandoffId: null,
+          },
+        },
+        {
+          id: EventId.make("event:checkpoint-capture-stamp:node"),
+          type: "node.updated",
+          threadId: stampThreadId,
+          runId: stampRunId,
+          nodeId: stampRootNodeId,
+          providerInstanceId,
+          occurredAt: now,
+          payload: {
+            id: stampRootNodeId,
+            threadId: stampThreadId,
+            runId: stampRunId,
+            parentNodeId: null,
+            rootNodeId: stampRootNodeId,
+            kind: "root_turn",
+            status: "waiting",
+            countsForRun: true,
+            providerThreadId: stampProviderThreadId,
+            providerTurnId: null,
+            nativeItemRef: null,
+            runtimeRequestId: null,
+            checkpointScopeId: stampScopeId,
+            startedAt: now,
+            completedAt: null,
+          },
+        },
+      ];
+      yield* Effect.forEach(events, (event) => projectionStore.apply(event), { discard: true });
+
+      const layerCapture = CheckpointCaptureService.layer.pipe(
+        Layer.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            CheckpointService.layer.pipe(
+              Layer.provide(
+                Layer.mergeAll(
+                  IdAllocator.layer,
+                  NodeCrypto.layer,
+                  Layer.mock(CheckpointStore.CheckpointStore)({
+                    isGitRepository: () => Effect.succeed(true),
+                    captureCheckpointReport: () =>
+                      Effect.succeed({ repoRoot: "/repo", branch: "feature", headOid }),
+                    hasCheckpointRef: () => Effect.succeed(true),
+                    diffCheckpoints: () => Effect.succeed("1\t0\tpackages/app/a.ts\0"),
+                  }),
+                ),
+              ),
+            ),
+            Layer.mock(EventSink.EventSinkV2)({
+              commitCommand: (input) =>
+                Effect.forEach(input.events, (event) => projectionStore.apply(event)).pipe(
+                  Effect.as({ committed: true } as never),
+                  Effect.orDie,
+                ),
+            }),
+          ),
+        ),
+        Layer.provide(
+          Layer.succeed(
+            ServerEnvironment.ServerEnvironmentIdentity,
+            ServerEnvironment.ServerEnvironmentIdentity.of({
+              getEnvironmentId: Effect.succeed(machine),
+            }),
+          ),
+        ),
+      );
+
+      yield* CheckpointCaptureService.CheckpointCaptureServiceV2.pipe(
+        Effect.flatMap((service) =>
+          service.execute({ threadId: stampThreadId, runId: stampRunId, scopeId: stampScopeId }),
+        ),
+        Effect.provide(layerCapture),
+      );
+
+      // Read back through the persisted projection, as a client loads it.
+      const { checkpoints } = yield* projectionStore.getThreadRecords(stampThreadId, [
+        "checkpoints",
+      ]);
+      const checkpoint = checkpoints.find((entry) => entry.appRunOrdinal === 1);
+      assert.equal(checkpoint?.status, "ready");
+      assert.deepEqual(
+        {
+          files: checkpoint?.files.map((file) => file.path),
+          cwd: checkpoint?.cwd,
+          repoRoot: checkpoint?.repoRoot,
+          branch: checkpoint?.branch,
+          headOid: checkpoint?.headOid,
+          capturedOnEnvironmentId: checkpoint?.capturedOnEnvironmentId,
+        },
+        {
+          files: ["packages/app/a.ts"],
+          cwd: "/repo/packages/app",
+          repoRoot: "/repo",
+          branch: "feature",
+          headOid,
+          capturedOnEnvironmentId: machine,
+        },
+      );
     }),
   );
 });

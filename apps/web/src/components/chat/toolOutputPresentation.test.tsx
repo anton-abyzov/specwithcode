@@ -4,10 +4,13 @@ import { createRoot, type Root } from "react-dom/client";
 import { renderToStaticMarkup } from "react-dom/server";
 import type { WorkLogPresentationEntry } from "@specweave-studio/client-runtime/work-log/presentation";
 import type { EnvironmentId, OrchestrationV2ProjectedTurnItem } from "@specweave-studio/contracts";
+import { withVisibleControlCharacters } from "@specweave-studio/client-runtime/work-log/command-label";
 import { afterEach, describe, expect, it, vi } from "vite-plus/test";
 import {
+  outputKeptTailNotice,
   ToolCodePanel,
   toolActivitySummary,
+  toolCodePagingLabel,
   toolExecutionInput,
   toolPresentationBlocks,
 } from "./toolOutputPresentation";
@@ -21,7 +24,12 @@ vi.mock("./HighlightedTokens", () => ({
 }));
 vi.mock("../../state/queries", () => ({
   useTurnItemDetail: () => ({ data: undefined, isPending: false, error: null }),
+  fetchTurnItemDetail: vi.fn(),
 }));
+vi.mock("../DiffWorkerPoolProvider", () => ({
+  DiffWorkerPoolProvider: ({ children }: { children?: ReactNode }) => children,
+}));
+vi.mock("@pierre/diffs/react", () => ({ FileDiff: () => null }));
 vi.mock("../../state/v2ItemSupport", () => ({ useV2ItemSupport: () => ({}) }));
 (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
 
@@ -129,15 +137,21 @@ describe("execution summaries and structured output", () => {
       toolActivitySummary(entry({ command: "npm test", toolLifecycleStatus: "idle" }), "Exec"),
     ).toBe("Queued · npm test");
   });
-  it("bounds very long previews and preserves output indentation and distinct files", () => {
+  it("keeps a long command's whole first line for the row, which truncates it with CSS", () => {
+    const longLine = `sed -n 240,500p ${"packages/core/src/chat/".repeat(8)}streaming.ts`;
     const work = entry({
-      command: "x".repeat(200),
+      command: `${longLine}\necho done`,
       detail: "\n  value = 1\n\treturn value\n",
       changedFiles: ["/repo/src/test.ts", "/repo/src/test.ts"],
     });
-    expect(toolActivitySummary(work, "Exec").length).toBe(102);
+    expect(toolActivitySummary(work, "Exec")).toBe(`Ran · ${longLine} · 2 lines`);
+    expect(toolActivitySummary(work, "Exec")).not.toContain("…");
     expect(toolPresentationBlocks(work, "/repo", "Exec", null).slice(1)).toEqual([
-      expect.objectContaining({ label: "Output", text: "\n  value = 1\n\treturn value\n" }),
+      expect.objectContaining({
+        label: "Output",
+        text: "\n  value = 1\n\treturn value\n",
+        terminal: true,
+      }),
       { label: "Files", text: "repo/src/test.ts" },
     ]);
   });
@@ -260,6 +274,146 @@ describe("tool output controls", () => {
       element.querySelector<HTMLButtonElement>('[aria-label="Copy output"]')!.textContent,
     ).toBe("Copy");
     expect(element.querySelector("code")?.textContent).toBe("first chunk\nsecond chunk");
+  });
+});
+
+describe("terminal output and paging", () => {
+  const stubClipboard = () => {
+    const copy = vi.fn().mockResolvedValue(undefined);
+    Object.defineProperty(navigator, "clipboard", {
+      configurable: true,
+      value: { writeText: copy },
+    });
+    return copy;
+  };
+  it("shows output as the terminal drew it, Raw shows every byte, and Copy keeps the bytes", async () => {
+    const value = "\u001b[32mPASS\u001b[0m src/app.test.ts\r\nprogress 10%\rprogress 100%\n";
+    const copy = stubClipboard();
+    const element = await mount(<ToolCodePanel label="Output" text={value} terminal />);
+    const code = () => element.querySelector("code")!.textContent;
+    expect(code()).toBe("PASS src/app.test.ts\nprogress 100%\n");
+    const raw = element.querySelector<HTMLButtonElement>('[aria-label="Show raw output"]')!;
+    await act(async () => raw.click());
+    expect(raw.getAttribute("aria-pressed")).toBe("true");
+    expect(code()).toBe(withVisibleControlCharacters(value));
+    await act(async () => {
+      element.querySelector<HTMLButtonElement>('[aria-label="Copy output"]')!.click();
+    });
+    expect(copy).toHaveBeenCalledWith(value);
+  });
+  it("strips escapes from a read file but keeps its line endings, with Raw for the bytes", async () => {
+    const value = "\u001b[32mexport const a = 1;\u001b[0m\r\nexport const b = 2;\r\n";
+    const copy = stubClipboard();
+    const element = await mount(
+      <ToolCodePanel label="Output" text={value} context={{ filePath: "src/a.ts" }} terminal />,
+    );
+    const code = () => element.querySelector("code")!.textContent;
+    expect(code()).toBe("export const a = 1;\r\nexport const b = 2;\r\n");
+    const raw = element.querySelector<HTMLButtonElement>('[aria-label="Show raw output"]')!;
+    await act(async () => raw.click());
+    expect(code()).toBe(withVisibleControlCharacters(value));
+    await act(async () => {
+      element.querySelector<HTMLButtonElement>('[aria-label="Copy output"]')!.click();
+    });
+    expect(copy).toHaveBeenCalledWith(value);
+    await act(async () =>
+      root!.render(
+        <ToolCodePanel label="Output" text={value} context={{ language: "ts" }} terminal />,
+      ),
+    );
+    expect(element.querySelector('[aria-label="Show raw output"]')).not.toBeNull();
+    await act(async () =>
+      root!.render(
+        <ToolCodePanel
+          label="Output"
+          text={"a\r\nb\r\n"}
+          context={{ filePath: "src/a.txt" }}
+          terminal
+        />,
+      ),
+    );
+    expect(element.querySelector('[aria-label="Show raw output"]')).toBeNull();
+    expect(code()).toBe("a\r\nb\r\n");
+  });
+  it("offers no Raw toggle when nothing was stripped", async () => {
+    const element = await mount(<ToolCodePanel label="Output" text={"ok\r\ndone\n"} terminal />);
+    expect(element.querySelector('[aria-label="Show raw output"]')).toBeNull();
+    expect(element.querySelector("code")!.textContent).toBe("ok\ndone\n");
+  });
+  it("labels a tail and a head window", () => {
+    expect(
+      toolCodePagingLabel({ anchor: "end", offset: 86_016, end: 348_160, totalLength: 348_160 }),
+    ).toBe("Showing last 262,144 of 348,160 characters");
+    expect(
+      toolCodePagingLabel({ anchor: "start", offset: 0, end: 262_144, totalLength: 348_160 }),
+    ).toBe("Showing 262,144 of 348,160 characters");
+    expect(outputKeptTailNotice(8_000)).toBe(
+      "SpecWithCode kept only the last 8,000 characters of this output",
+    );
+  });
+  it("opens command output at its end with Load earlier above it, and copies the full text", async () => {
+    vi.spyOn(Element.prototype, "scrollHeight", "get").mockReturnValue(900);
+    const scrolled = vi.spyOn(Element.prototype, "scrollTop", "set");
+    const copy = stubClipboard();
+    const onLoadEarlier = vi.fn();
+    const element = await mount(
+      <ToolCodePanel
+        label="Output"
+        text="last line\n"
+        terminal
+        scrollToEnd
+        paging={{ anchor: "end", offset: 290, end: 300, totalLength: 300, onLoadEarlier }}
+        copyFull={async () => `${"x".repeat(290)}last line\n`}
+      />,
+    );
+    expect(scrolled).toHaveBeenCalledWith(900);
+    const bar = element.querySelector('[data-tool-code-paging="top"]')!;
+    expect(bar.textContent).toContain("Showing last 10 of 300 characters");
+    expect(bar.textContent).not.toContain("Load more");
+    const earlier = [...bar.querySelectorAll("button")].find(
+      (b) => b.textContent === "Load earlier",
+    );
+    await act(async () => earlier!.click());
+    expect(onLoadEarlier).toHaveBeenCalledTimes(1);
+    const copyButton = element.querySelector<HTMLButtonElement>('[aria-label="Copy full output"]')!;
+    expect(copyButton.textContent).toBe("Copy full");
+    await act(async () => copyButton.click());
+    expect(copy).toHaveBeenCalledWith(`${"x".repeat(290)}last line\n`);
+  });
+  it("opens other text at its start with Load more below it", async () => {
+    const onLoadMore = vi.fn();
+    const element = await mount(
+      <ToolCodePanel
+        label="Input"
+        text="{"
+        paging={{ anchor: "start", offset: 0, end: 1, totalLength: 40, onLoadMore }}
+      />,
+    );
+    const bar = element.querySelector('[data-tool-code-paging="bottom"]')!;
+    expect(bar.textContent).toContain("Showing 1 of 40 characters");
+    await act(async () =>
+      [...bar.querySelectorAll("button")].find((b) => b.textContent === "Load more")!.click(),
+    );
+    expect(onLoadMore).toHaveBeenCalledTimes(1);
+    expect(element.querySelector('[data-tool-code-paging="top"]')).toBeNull();
+  });
+  it("shows a load failure without dropping the window", async () => {
+    const element = await mount(
+      <ToolCodePanel
+        label="Output"
+        text="tail"
+        paging={{
+          anchor: "end",
+          offset: 4,
+          end: 8,
+          totalLength: 8,
+          onLoadEarlier: () => undefined,
+          error: "The machine is not connected.",
+        }}
+      />,
+    );
+    expect(element.textContent).toContain("Couldn't load: The machine is not connected.");
+    expect(element.querySelector("code")!.textContent).toBe("tail");
   });
 });
 

@@ -16,6 +16,11 @@ const state = vi.hoisted(() => ({
   refreshes: [] as any[],
   canReadFiles: true,
   checkpointError: null as string | null,
+  checkpointDiff: { diff: "" } as { diff: string; truncated?: boolean },
+  diffFilesCollapsed: false,
+  machineNames: {} as Record<string, string>,
+  scrolls: [] as any[],
+  toast: vi.fn(),
   refresh: vi.fn(),
   command: vi.fn(),
 }));
@@ -48,7 +53,7 @@ vi.mock("../hooks/useSettings", () => ({
     diffLayout: "split",
     wordWrap: false,
     diffIgnoreWhitespace: true,
-    diffFilesCollapsed: false,
+    diffFilesCollapsed: state.diffFilesCollapsed,
     timestampFormat: "24h",
   }),
   useUpdateClientSettings: () => state.command,
@@ -70,9 +75,9 @@ vi.mock("../lib/checkpointDiffState", () => ({
   useCheckpointDiff: (input: any, options: any) => {
     state.checkpoints.push({ ...input, ...options });
     return {
-      data: state.checkpointError ? undefined : { diff: "" },
+      data: state.checkpointError || !options?.enabled ? undefined : state.checkpointDiff,
       isPending: false,
-      error: state.checkpointError,
+      error: options?.enabled ? state.checkpointError : null,
     };
   },
 }));
@@ -103,27 +108,69 @@ vi.mock("../state/query", () => ({
 vi.mock("../state/use-atom-command", () => ({ useAtomCommand: () => state.command }));
 vi.mock("../editorPreferences", () => ({ useOpenInPreferredEditor: () => state.command }));
 vi.mock("../fileContextMenu", () => ({ useFileContextMenuHandler: () => state.command }));
-vi.mock("./diffs/useCodeViewFileReveal", () => ({ useCodeViewFileReveal: () => state.command }));
-vi.mock("./diffs/useReviewFilePatches", () => ({
-  useReviewFilePatches: () => ({
-    scope: "fixture",
-    isPending: false,
-    fileStates: new Map(),
-    retry: state.command,
-    requestFile: state.command,
-    readyFilePaths: new Set(),
-    renderableFiles: [],
-    settledFileCount: 0,
-    loadNextFiles: state.command,
-  }),
+vi.mock("../studio/machineNickname", () => ({
+  useMachineNicknames: () => (environmentId: string) =>
+    state.machineNames[environmentId] ?? environmentId,
 }));
-// The component, route resolution and per-thread selection store are real. Only
-// the rendering engine and I/O hooks are substituted; no provider or server runs.
-vi.mock("./diffs/AnnotatableCodeView", () => ({ AnnotatableCodeView: () => null }));
+vi.mock("./ui/toast", () => ({ toastManager: { add: state.toast } }));
+const NO_FILES: never[] = [];
+vi.mock("./diffs/useReviewFilePatches", () => ({
+  // A turn diff renders its parsed patch as is, which is what the real hook does without a lazy source.
+  useReviewFilePatches: (input: any) => {
+    const files = input.preview?.kind === "files" ? input.preview.files : NO_FILES;
+    return {
+      scope: "fixture",
+      isPending: false,
+      fileStates: new Map(),
+      retry: state.command,
+      requestFile: state.command,
+      readyFilePaths: new Set(),
+      renderableFiles: files,
+      settledFileCount: files.length,
+      loadNextFiles: state.command,
+    };
+  },
+}));
+// The component, route resolution, file reveal, path matching and the per-thread
+// selection and right-panel stores are real. The code view is replaced by its file
+// headers (title and collapsed state) and a viewer handle that records scrolls; I/O
+// hooks are substituted, and no provider or server runs.
+vi.mock("./diffs/AnnotatableCodeView", async () => {
+  const { useEffect } = await import("react");
+  return {
+    AnnotatableCodeView: (props: any) => {
+      const { viewerRef } = props;
+      useEffect(() => {
+        if (typeof viewerRef !== "function") return;
+        viewerRef({
+          getInstance: () => ({}),
+          scrollTo: (target: unknown) => state.scrolls.push(target),
+        });
+        return () => viewerRef(null);
+      }, [viewerRef]);
+      return (
+        <div data-testid="code-view">
+          {props.files.map((file: any) => (
+            <div
+              key={file.fileKey}
+              data-diffs-header=""
+              data-file={file.filePath}
+              data-file-key={file.fileKey}
+              data-collapsed={String(file.collapsed)}
+            >
+              <span data-title="">{file.filePath}</span>
+            </div>
+          ))}
+        </div>
+      );
+    },
+  };
+});
 
 import DiffPanel from "./DiffPanel";
 import { EmbeddedThreadDiffPanel } from "./chat/EmbeddedThreadDiffPanel";
 import { selectThreadDiffPanelSelection, useDiffPanelStore } from "../diffPanelStore";
+import { selectThreadRightPanelState, useRightPanelStore } from "../rightPanelStore";
 
 let root: Root;
 let container: HTMLDivElement;
@@ -141,7 +188,16 @@ function addThread(ref: ScopedThreadRef) {
   });
   state.projections.set(scopedThreadKey(ref), {
     projection: {
-      summaries: [{ runId, checkpointTurnCount: 1, completedAt: "2026-10-14T12:00:00Z" }],
+      summaries: [
+        {
+          runId,
+          checkpointTurnCount: 1,
+          status: "ready",
+          files: [],
+          completedAt: "2026-10-14T12:00:00Z",
+        },
+      ],
+      runs: [{ id: runId, status: "completed" }],
     },
   });
 }
@@ -181,10 +237,20 @@ beforeEach(() => {
   state.projections.clear();
   state.canReadFiles = true;
   state.checkpointError = null;
+  state.checkpointDiff = { diff: "" };
+  state.diffFilesCollapsed = false;
+  state.machineNames = {};
+  state.scrolls = [];
+  state.toast.mockClear();
   state.command.mockClear();
   state.refresh.mockClear();
   clearReads();
-  useDiffPanelStore.setState({ byThreadKey: {}, branchBaseRefByThreadKey: {} });
+  useDiffPanelStore.setState({
+    byThreadKey: {},
+    branchBaseRefByThreadKey: {},
+    pendingLinkedOpenThreadKey: null,
+  });
+  useRightPanelStore.setState({ byThreadKey: {}, threadPanelVisibilityByThreadKey: {} });
   addThread(worker);
   addThread(otherEnvironment);
   addThread(routeThread);
@@ -277,5 +343,431 @@ describe("diff panel thread ownership", () => {
     await render(worker, true);
     expect(container.textContent).toContain("Read denied");
     expect(state.queries.some((query) => query.kind === "diff")).toBe(false);
+  });
+});
+
+// A thread whose folder is apps/web inside the repository at /repo. Checkpoint patch paths
+// are relative to /repo, while providers report absolute or folder-relative paths.
+const appThread = scopeThreadRef(EnvironmentId.make("m4"), ThreadId.make("app-thread"));
+const firstRun = RunId.make("run-1");
+const editRun = RunId.make("run-2");
+const laterRun = RunId.make("run-3");
+const TURN_PATCH = [
+  "diff --git a/apps/web/src/App.tsx b/apps/web/src/App.tsx",
+  "index 1111111..2222222 100644",
+  "--- a/apps/web/src/App.tsx",
+  "+++ b/apps/web/src/App.tsx",
+  "@@ -1,3 +1,4 @@",
+  ' import { a } from "./a";',
+  '+import { b } from "./b";',
+  " export const App = a;",
+  " export default App;",
+  "diff --git a/apps/web/src/main.ts b/apps/web/src/main.ts",
+  "index 3333333..4444444 100644",
+  "--- a/apps/web/src/main.ts",
+  "+++ b/apps/web/src/main.ts",
+  "@@ -5,3 +5,3 @@",
+  " start();",
+  "-render();",
+  "+render(App);",
+  " done();",
+].join("\n");
+const CARD_FILES = ["apps/web/src/App.tsx", "apps/web/src/main.ts", "apps/web/src/format.ts"];
+
+function turnCheckpoint(run: RunId, turnCount: number, overrides: Record<string, unknown> = {}) {
+  return {
+    runId: run,
+    checkpointTurnCount: turnCount,
+    status: "ready",
+    files: CARD_FILES.map((path) => ({ path, kind: "modified", additions: 1, deletions: 0 })),
+    completedAt: `2026-10-2${turnCount}T12:00:00Z`,
+    cwd: "/repo/apps/web",
+    repoRoot: "/repo",
+    branch: "main",
+    headOid: "abc1234def5678",
+    capturedOnEnvironmentId: "m4",
+    ...overrides,
+  };
+}
+
+function setAppThread(input: {
+  readonly summaries?: ReadonlyArray<unknown>;
+  readonly runs?: ReadonlyArray<{ id: RunId; status: string }>;
+  readonly worktreePath?: string;
+}) {
+  state.shells.set(scopedThreadKey(appThread), {
+    environmentId: appThread.environmentId,
+    id: appThread.threadId,
+    projectId: null,
+    worktreePath: input.worktreePath ?? "/repo/apps/web",
+  });
+  state.projections.set(scopedThreadKey(appThread), {
+    projection: {
+      summaries: input.summaries ?? [turnCheckpoint(firstRun, 1), turnCheckpoint(editRun, 2)],
+      runs: input.runs ?? [
+        { id: firstRun, status: "completed" },
+        { id: editRun, status: "completed" },
+      ],
+    },
+  });
+}
+
+async function openLink(
+  run: RunId,
+  filePath?: string,
+  options: Parameters<ReturnType<typeof useDiffPanelStore.getState>["selectTurn"]>[3] = {},
+) {
+  useDiffPanelStore.getState().selectTurn(appThread, run, filePath, options);
+  await render(appThread);
+}
+
+function fileHeader(path: string) {
+  return container.querySelector<HTMLElement>(`[data-file="${path}"]`);
+}
+
+async function clickFileTitle(path: string) {
+  await act(async () => {
+    fileHeader(path)
+      ?.querySelector("[data-title]")
+      ?.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  });
+}
+
+function openedFile() {
+  const panel = selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, appThread);
+  return panel.surfaces.find((surface) => surface.id === panel.activeSurfaceId) ?? null;
+}
+
+describe("Open diff links", () => {
+  beforeEach(() => {
+    state.checkpointDiff = { diff: TURN_PATCH };
+    setAppThread({});
+  });
+
+  it.each([
+    { label: "an absolute provider path", path: "/repo/apps/web/src/App.tsx" },
+    { label: "a path relative to the thread's subfolder", path: "src/App.tsx" },
+    { label: "a card row's repository path", path: "apps/web/src/App.tsx" },
+  ])(
+    "opens $label at that run's file, expanded although files start collapsed",
+    async ({ path }) => {
+      state.diffFilesCollapsed = true;
+      await openLink(firstRun, path);
+
+      expect(state.checkpoints.at(-1)).toMatchObject({
+        ...appThread,
+        fromTurnCount: 0,
+        toTurnCount: 1,
+        enabled: true,
+      });
+      expect(fileHeader("apps/web/src/App.tsx")?.dataset.collapsed).toBe("false");
+      expect(fileHeader("apps/web/src/main.ts")?.dataset.collapsed).toBe("true");
+      expect(state.scrolls).toContainEqual({
+        type: "item",
+        id: fileHeader("apps/web/src/App.tsx")?.dataset.fileKey,
+        align: "start",
+      });
+      expect(container.textContent).not.toContain("Matched by file name");
+      expect(container.textContent).not.toContain("is not in this diff");
+    },
+  );
+
+  it("labels a unique file-name match on a checkpoint without a stamped repository", async () => {
+    setAppThread({
+      summaries: [turnCheckpoint(editRun, 2, { cwd: undefined, repoRoot: undefined })],
+    });
+    await openLink(editRun, "/repo/apps/web/src/main.ts");
+
+    expect(fileHeader("apps/web/src/main.ts")?.dataset.collapsed).toBe("false");
+    expect(container.textContent).toContain("Matched by file name: apps/web/src/main.ts");
+  });
+
+  it("never shows another turn's diff when the linked run recorded none", async () => {
+    await openLink(RunId.make("run-unknown"), "/repo/apps/web/src/App.tsx");
+
+    expect(container.textContent).toContain("No diff recorded for this turn");
+    expect(container.querySelector('[data-testid="code-view"]')).toBeNull();
+    expect(state.checkpoints.at(-1)).toMatchObject({ enabled: false });
+    expect(
+      selectThreadDiffPanelSelection(useDiffPanelStore.getState().byThreadKey, appThread),
+    ).toMatchObject({ kind: "turn", turnId: "run-unknown", origin: "link" });
+  });
+
+  it("still falls back to the latest turn for the panel's own stale turn choice", async () => {
+    useDiffPanelStore.getState().selectTurn(appThread, RunId.make("run-unknown"));
+    await render(appThread);
+
+    expect(state.checkpoints.at(-1)).toMatchObject({ toTurnCount: 2, enabled: true });
+    expect(container.querySelector('[aria-label="Diff scope: Latest turn"]')).not.toBeNull();
+  });
+
+  it.each([
+    {
+      label: "a running turn",
+      runStatus: "running",
+      checkpoint: null,
+      message: "Diff available when the turn ends",
+    },
+    {
+      label: "a failed snapshot",
+      runStatus: "completed",
+      checkpoint: { status: "error" },
+      message: "No diff: this turn's snapshot failed",
+    },
+    {
+      label: "a missing snapshot",
+      runStatus: "completed",
+      checkpoint: { status: "missing" },
+      message: "No diff: this turn's snapshot is missing",
+    },
+    {
+      label: "an out-of-date snapshot",
+      runStatus: "completed",
+      checkpoint: { status: "stale" },
+      message: "No diff: this turn's snapshot is out of date",
+    },
+    {
+      label: "a folder outside Git",
+      runStatus: "completed",
+      checkpoint: { status: "missing", notGitRepository: true },
+      message: "No diff: this folder is not a Git repository",
+    },
+    {
+      label: "a turn that failed before its snapshot",
+      runStatus: "failed",
+      checkpoint: null,
+      message: "No diff: this turn ended with an error before a snapshot was taken",
+    },
+  ])("shows its own notice for $label", async ({ runStatus, checkpoint, message }) => {
+    setAppThread({
+      summaries: [
+        turnCheckpoint(firstRun, 1),
+        ...(checkpoint ? [turnCheckpoint(laterRun, 2, checkpoint)] : []),
+      ],
+      runs: [
+        { id: firstRun, status: "completed" },
+        { id: laterRun, status: runStatus },
+      ],
+    });
+    await openLink(laterRun, "/repo/apps/web/src/App.tsx");
+
+    expect(container.textContent).toContain(message);
+    expect(container.querySelector('[data-testid="code-view"]')).toBeNull();
+    expect(state.checkpoints.every((call) => call.enabled === false)).toBe(true);
+  });
+
+  it.each(["interrupted", "cancelled"])("opens the diff of a %s turn", async (runStatus) => {
+    setAppThread({
+      runs: [
+        { id: firstRun, status: "completed" },
+        { id: editRun, status: runStatus },
+      ],
+    });
+    await openLink(editRun, "/repo/apps/web/src/main.ts");
+
+    expect(state.checkpoints.at(-1)).toMatchObject({
+      fromTurnCount: 1,
+      toTurnCount: 2,
+      enabled: true,
+    });
+    expect(fileHeader("apps/web/src/main.ts")).not.toBeNull();
+  });
+
+  it("opens the turn after a failed turn against the snapshot before it", async () => {
+    setAppThread({
+      summaries: [turnCheckpoint(firstRun, 1), turnCheckpoint(laterRun, 3)],
+      runs: [
+        { id: firstRun, status: "completed" },
+        { id: editRun, status: "failed" },
+        { id: laterRun, status: "completed" },
+      ],
+    });
+    await openLink(laterRun, "/repo/apps/web/src/App.tsx");
+
+    expect(state.checkpoints.at(-1)).toMatchObject({
+      fromTurnCount: 2,
+      toTurnCount: 3,
+      enabled: true,
+    });
+    expect(fileHeader("apps/web/src/App.tsx")?.dataset.collapsed).toBe("false");
+  });
+});
+
+describe("a requested file missing from the turn diff", () => {
+  beforeEach(() => {
+    state.checkpointDiff = { diff: TURN_PATCH };
+    setAppThread({});
+  });
+
+  it("names a path outside the checkpoint folder", async () => {
+    await openLink(editRun, "/repo/apps/server/src/main.ts");
+
+    expect(container.textContent).toContain(
+      "/repo/apps/server/src/main.ts is not in this diff: outside the checkpoint folder /repo/apps/web",
+    );
+  });
+
+  it("offers one click to show a file that Ignore whitespace hid", async () => {
+    await openLink(editRun, "/repo/apps/web/src/format.ts");
+
+    expect(container.textContent).toContain(
+      "apps/web/src/format.ts is not in this diff: hidden by Ignore whitespace",
+    );
+    expect(state.checkpoints.at(-1)).toMatchObject({ ignoreWhitespace: true });
+    const button = [...container.querySelectorAll("button")].find(
+      (candidate) => candidate.textContent === "Show whitespace changes",
+    );
+    await act(async () => button?.click());
+    expect(state.checkpoints.at(-1)).toMatchObject({ ignoreWhitespace: false });
+  });
+
+  it("lists card files a truncated patch never reached", async () => {
+    state.checkpointDiff = { diff: TURN_PATCH, truncated: true };
+    await openLink(editRun, "/repo/apps/web/src/format.ts");
+
+    expect(container.textContent).toContain("Diff truncated at 10 MB");
+    expect(
+      container.querySelector('[aria-label="Files beyond the diff size limit"]')?.textContent,
+    ).toBe("apps/web/src/format.ts: beyond the diff size limit");
+    expect(container.textContent).toContain(
+      "apps/web/src/format.ts is not in this diff: beyond the diff size limit",
+    );
+  });
+
+  it("says a file outside the card is not in the snapshot", async () => {
+    await openLink(editRun, "/repo/apps/web/dist/bundle.js");
+
+    expect(container.textContent).toContain(
+      "apps/web/dist/bundle.js is not in this diff: not in this turn's snapshot (ignored path, nested repository or reverted)",
+    );
+  });
+});
+
+describe("turn provenance and attribution", () => {
+  beforeEach(() => {
+    state.checkpointDiff = { diff: TURN_PATCH };
+    state.machineNames = { m4: "M4", mini: "Mini" };
+  });
+
+  it("shows turn, repository, folder, branch at short HEAD and the capturing machine", async () => {
+    setAppThread({});
+    await openLink(editRun, "/repo/apps/web/src/App.tsx");
+
+    const header = container.querySelector('[aria-label="Turn snapshot"]');
+    expect(header?.textContent).toBe("Turn 2repo/repo/apps/webmain@abc1234M4");
+  });
+
+  it("omits the branch when HEAD was detached", async () => {
+    setAppThread({ summaries: [turnCheckpoint(editRun, 2, { branch: null })] });
+    await openLink(editRun);
+
+    const header = container.querySelector('[aria-label="Turn snapshot"]');
+    expect(header?.textContent).toContain("/repo/apps/webabc1234");
+    expect(header?.textContent).not.toContain("@");
+  });
+
+  it("renders a checkpoint without a stamp as before", async () => {
+    setAppThread({
+      summaries: [
+        turnCheckpoint(editRun, 2, {
+          cwd: undefined,
+          repoRoot: undefined,
+          branch: undefined,
+          headOid: undefined,
+          capturedOnEnvironmentId: undefined,
+        }),
+      ],
+    });
+    await openLink(editRun, "apps/web/src/App.tsx");
+
+    expect(container.querySelector('[aria-label="Turn snapshot"]')).toBeNull();
+    expect(fileHeader("apps/web/src/App.tsx")).not.toBeNull();
+  });
+
+  it("says when another machine took the snapshot, and why its refs are absent here", async () => {
+    setAppThread({ summaries: [turnCheckpoint(editRun, 2, { capturedOnEnvironmentId: "mini" })] });
+    state.checkpointError = "Checkpoint ref is unavailable";
+    await openLink(editRun, "/repo/apps/web/src/App.tsx");
+
+    expect(container.querySelector('[aria-label="Turn snapshot"]')?.textContent).toContain(
+      "Captured on Mini, served by M4",
+    );
+    expect(container.textContent).toContain("This turn's snapshot was taken on Mini");
+  });
+
+  it.each([
+    { running: false, notice: "Edited by subagent Refactor parser in turn 2" },
+    {
+      running: true,
+      notice:
+        "Edited by subagent Refactor parser in turn 2. It was still running when this snapshot was taken, so the change may appear in a later turn.",
+    },
+  ])("names the subagent that made the edit (running: $running)", async ({ running, notice }) => {
+    setAppThread({});
+    await openLink(editRun, "/repo/apps/web/src/App.tsx", {
+      sourceThreadId: appThread.threadId,
+      attributedTo: { title: "Refactor parser", running },
+    });
+
+    expect(container.textContent).toContain(notice);
+    expect(fileHeader("apps/web/src/App.tsx")?.dataset.collapsed).toBe("false");
+  });
+});
+
+describe("opening a turn's file in the editor", () => {
+  beforeEach(() => {
+    state.checkpointDiff = { diff: TURN_PATCH };
+  });
+
+  it("opens the latest turn's file at its first changed line while no run is active", async () => {
+    setAppThread({});
+    await openLink(editRun, "/repo/apps/web/src/main.ts");
+    await clickFileTitle("apps/web/src/main.ts");
+
+    expect(openedFile()).toMatchObject({ relativePath: "src/main.ts", revealLine: 6 });
+    expect(state.toast).not.toHaveBeenCalled();
+  });
+
+  it("opens an older turn's file at the top and says it is the current file", async () => {
+    setAppThread({});
+    await openLink(firstRun, "/repo/apps/web/src/App.tsx");
+    await clickFileTitle("apps/web/src/App.tsx");
+
+    expect(openedFile()).toMatchObject({ relativePath: "src/App.tsx", revealLine: null });
+    expect(state.toast).toHaveBeenCalledWith({
+      type: "info",
+      title: "Showing the current file; it may differ from this turn",
+    });
+  });
+
+  it("opens the latest turn at the top while another run is active", async () => {
+    setAppThread({
+      runs: [
+        { id: firstRun, status: "completed" },
+        { id: editRun, status: "completed" },
+        { id: laterRun, status: "running" },
+      ],
+    });
+    await openLink(editRun, "/repo/apps/web/src/App.tsx");
+    await clickFileTitle("apps/web/src/App.tsx");
+
+    expect(openedFile()).toMatchObject({ revealLine: null });
+    expect(state.toast).toHaveBeenCalledWith(
+      expect.objectContaining({ title: "Showing the current file; it may differ from this turn" }),
+    );
+  });
+
+  it("names both folders when the thread's worktree changed after the turn", async () => {
+    setAppThread({ worktreePath: "/worktrees/feature-b/apps/web" });
+    await openLink(editRun, "/repo/apps/web/src/App.tsx");
+    await clickFileTitle("apps/web/src/App.tsx");
+
+    expect(openedFile()).toMatchObject({ relativePath: "src/App.tsx", revealLine: null });
+    expect(state.toast).toHaveBeenCalledWith({
+      type: "info",
+      title: "Showing the current file; it may differ from this turn",
+      description:
+        "This turn's snapshot was taken in /repo/apps/web; the file opened from /worktrees/feature-b/apps/web.",
+    });
   });
 });

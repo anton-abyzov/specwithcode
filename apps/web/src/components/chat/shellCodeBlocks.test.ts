@@ -9,6 +9,7 @@ import {
   runnableShellCommand,
   shellRunNeedsConfirmation,
   terminalOutputPlainText,
+  withoutTerminalEscapes,
 } from "./shellCodeBlocks";
 
 const SCREENSHOT_COMMAND =
@@ -67,6 +68,14 @@ describe("inline run policy", () => {
     expect(shellRunNeedsConfirmation("auto-accept-edits")).toBe(true);
     expect(shellRunNeedsConfirmation("auto")).toBe(true);
     expect(shellRunNeedsConfirmation(null)).toBe(true);
+  });
+});
+
+describe("withoutTerminalEscapes", () => {
+  it("removes escape sequences and keeps line endings and carriage returns", () => {
+    expect(withoutTerminalEscapes("\u001b[1;32mok\u001b[0m\r\n10%\r100%\u0007")).toBe(
+      "ok\r\n10%\r100%\u0007",
+    );
   });
 });
 

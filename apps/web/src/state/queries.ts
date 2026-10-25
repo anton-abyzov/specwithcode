@@ -9,8 +9,12 @@ import {
   type EnvironmentThreadSearchMatch,
 } from "@specweave-studio/client-runtime/state/thread-search";
 import { type VcsRefTarget } from "@specweave-studio/client-runtime/state/vcs";
+import { executeAtomQuery } from "@specweave-studio/client-runtime/state/runtime";
 import type {
   EnvironmentId,
+  OrchestrationV2GetTurnItemInput,
+  OrchestrationV2GetTurnItemResult,
+  OrchestrationV2TurnItemDetailField,
   ProjectContentMatch,
   ProjectEntry,
   ProjectEntryKind,
@@ -29,7 +33,7 @@ import { useFilesystemReadAccess } from "./filesystem";
 import { orchestrationEnvironment } from "./orchestration";
 import { isPaginatedBranchesNextPagePending } from "./paginatedBranches";
 import { projectContentSearch, projectEnvironment } from "./projects";
-import { useEnvironmentQuery } from "./query";
+import { formatEnvironmentQueryError, useEnvironmentQuery } from "./query";
 import { vcsEnvironment } from "./vcs";
 
 const PROJECT_PATH_SEARCH_DEBOUNCE_MS = 120;
@@ -382,21 +386,73 @@ export function useCheckpointDiff(
   return fullThreadTarget === null ? turn : fullThread;
 }
 
+/** One timeline item read, optionally one page of one of its fields. */
+export interface TurnItemDetailTarget {
+  readonly environmentId: EnvironmentId;
+  readonly threadId: ThreadId;
+  readonly itemId: TurnItemId;
+  /** The cache key from `turnItemDetailRevision`. */
+  readonly revision: string;
+  readonly field?: OrchestrationV2TurnItemDetailField | undefined;
+  readonly changeIndex?: number | undefined;
+  readonly offset?: number | undefined;
+  readonly before?: number | undefined;
+  readonly anchor?: "start" | "end" | undefined;
+  readonly limit?: number | undefined;
+}
+
+/** A page read waits for its machine; a copy or Load more gives up after this. */
+const TURN_ITEM_PAGE_TIMEOUT_MS = 30_000;
+
+/** The request input with only the keys set, so equal targets share one cache entry. */
+function turnItemDetailInput(target: TurnItemDetailTarget): OrchestrationV2GetTurnItemInput {
+  return {
+    threadId: target.threadId,
+    itemId: target.itemId,
+    revision: target.revision,
+    ...(target.field === undefined ? {} : { field: target.field }),
+    ...(target.changeIndex === undefined ? {} : { changeIndex: target.changeIndex }),
+    ...(target.offset === undefined ? {} : { offset: target.offset }),
+    ...(target.before === undefined ? {} : { before: target.before }),
+    ...(target.anchor === undefined ? {} : { anchor: target.anchor }),
+    ...(target.limit === undefined ? {} : { limit: target.limit }),
+  };
+}
+
 /** Full input and output of one timeline item, fetched only while its row is open. */
-export function useTurnItemDetail(
-  target: {
-    readonly environmentId: EnvironmentId;
-    readonly threadId: ThreadId;
-    readonly itemId: TurnItemId;
-    readonly revision: string;
-  } | null,
-) {
+export function useTurnItemDetail(target: TurnItemDetailTarget | null) {
   return useEnvironmentQuery(
     target === null
       ? null
       : orchestrationEnvironment.turnItem({
           environmentId: target.environmentId,
-          input: { threadId: target.threadId, itemId: target.itemId, revision: target.revision },
+          input: turnItemDetailInput(target),
         }),
   );
+}
+
+/**
+ * One fresh read of a timeline item, for Load more and Copy full. It never
+ * answers from the cache, so the pages of one copy all come from the server.
+ */
+export async function fetchTurnItemDetail(
+  target: TurnItemDetailTarget,
+): Promise<OrchestrationV2GetTurnItemResult> {
+  const result = await executeAtomQuery(
+    appAtomRegistry,
+    orchestrationEnvironment.turnItem({
+      environmentId: target.environmentId,
+      input: turnItemDetailInput(target),
+    }),
+    {
+      refresh: true,
+      reportFailure: false,
+      reportDefect: false,
+      signal: AbortSignal.timeout(TURN_ITEM_PAGE_TIMEOUT_MS),
+    },
+  );
+  if (result._tag === "Failure") {
+    throw new Error(formatEnvironmentQueryError(result.cause) ?? "The machine is not connected.");
+  }
+  return result.value;
 }

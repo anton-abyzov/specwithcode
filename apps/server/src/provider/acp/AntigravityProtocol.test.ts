@@ -17,7 +17,13 @@ import {
   sanitizeAntigravityToolPayload,
   selectAntigravityPermissionOptionId,
 } from "./AntigravityProtocol.ts";
-import { mergeToolCallState, parseSessionUpdateEvent } from "./AcpRuntimeModel.ts";
+import {
+  ACP_CONTENT_KEPT_TAIL_KEY,
+  ACP_RAW_OUTPUT_KEPT_TAIL_KEY,
+  acpToolOutputKeptTailChars,
+  mergeToolCallState,
+  parseSessionUpdateEvent,
+} from "./AcpRuntimeModel.ts";
 
 const isSessionNotification = Schema.is(AcpWireSchema.SessionNotification);
 
@@ -388,6 +394,53 @@ describe("Antigravity tool results", () => {
     expect(JSON.stringify(toolCall).length).toBeLessThan(20_000);
     expect(JSON.stringify(event.rawPayload).length).toBeLessThan(10_000);
     expect(JSON.stringify(event.rawPayload)).not.toContain("formatted_output");
+    // The command row reads combinedOutput; the cut is recorded where it reads from.
+    const combinedOutput = (toolCall.data.rawOutput as { combinedOutput: string }).combinedOutput;
+    expect(toolCall.data[ACP_RAW_OUTPUT_KEPT_TAIL_KEY]).toBe(8_000);
+    expect(acpToolOutputKeptTailChars(toolCall.data, combinedOutput)).toBe(8_000);
+  });
+
+  it("records no cut for output that fits", () => {
+    const toolCall = normalizeAntigravityToolCall(parseToolUpdate(commandCompleted).toolCall);
+    expect(toolCall.data).not.toHaveProperty(ACP_RAW_OUTPUT_KEPT_TAIL_KEY);
+    expect(toolCall.data).not.toHaveProperty(ACP_CONTENT_KEPT_TAIL_KEY);
+    expect(acpToolOutputKeptTailChars(toolCall.data, "after\n")).toBeUndefined();
+  });
+
+  it("records the kept length of a cut content text and of a cut the budget made shorter", () => {
+    const content = normalizeAntigravityToolCall(
+      parseToolUpdate({
+        ...commandCompleted,
+        update: {
+          ...commandCompleted.update,
+          rawOutput: undefined,
+          content: [{ type: "content", content: { type: "text", text: "y".repeat(20_000) } }],
+        },
+      }).toolCall,
+    );
+    expect(content.data[ACP_CONTENT_KEPT_TAIL_KEY]).toBe(8_000);
+    expect(content.data).not.toHaveProperty(ACP_RAW_OUTPUT_KEPT_TAIL_KEY);
+
+    // Eight earlier large fields spend the 64,000-character budget, so the
+    // session update keeps a shorter tail of the output than 8,000.
+    const filler = Object.fromEntries(
+      Array.from({ length: 8 }, (_, index) => [`a${index}`, "f".repeat(7_990)]),
+    );
+    const budgeted = normalizeAntigravityToolCall(
+      parseToolUpdate({
+        ...commandCompleted,
+        update: {
+          ...commandCompleted.update,
+          rawOutput: { ...filler, combinedOutput: `${"z".repeat(20_000)}tail` },
+        },
+      }).toolCall,
+    );
+    const kept = budgeted.data[ACP_RAW_OUTPUT_KEPT_TAIL_KEY];
+    expect(typeof kept).toBe("number");
+    expect(kept).toBeLessThan(8_000);
+    const combinedOutput = (budgeted.data.rawOutput as { combinedOutput: string }).combinedOutput;
+    expect(combinedOutput.endsWith("tail")).toBe(true);
+    expect(acpToolOutputKeptTailChars(budgeted.data, combinedOutput)).toBe(kept);
   });
 
   it("removes inline images while preserving valid tool content and the local image path", () => {

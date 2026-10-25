@@ -1,15 +1,38 @@
+import type { FileDiffMetadata } from "@pierre/diffs";
 import type { ScopedThreadRef } from "@specweave-studio/contracts";
-import { isWindowsAbsolutePath, normalizeProjectPathForComparison } from "@specweave-studio/shared/path";
+import {
+  isWindowsAbsolutePath,
+  normalizeProjectPathForComparison,
+} from "@specweave-studio/shared/path";
 
 import { useRightPanelStore } from "./rightPanelStore";
 import { resolvePathLinkTarget } from "./terminal-links";
+
+/** What a turn's checkpoint stamped at capture; older checkpoints carry neither. */
+export interface DiffCheckpointFolder {
+  /** The folder the snapshot staged. */
+  readonly cwd?: string | undefined;
+  /** Its repository root; patch paths are relative to it. */
+  readonly repoRoot?: string | undefined;
+}
 
 interface OpenDiffFilePrimaryActionInput {
   readonly threadRef: ScopedThreadRef | null;
   readonly filePath: string;
   readonly activeCwd: string | undefined;
   readonly repositoryRoot?: string | undefined;
+  /** Set for a turn diff: its paths resolve against the stamped folder, not today's (D-19). */
+  readonly checkpoint?: DiffCheckpointFolder | undefined;
+  /** The line to open at; the file opens at the top without one. */
+  readonly line?: number | undefined;
   readonly openInEditor: (targetPath: string) => void;
+}
+
+export interface OpenedDiffFile {
+  /** The opened path, relative to the current workspace. */
+  readonly workspaceFilePath: string;
+  /** The stamped checkpoint folder when it is not the current workspace, else null. */
+  readonly otherCheckpointFolder: string | null;
 }
 
 function normalizedRelativePathSegments(filePath: string): ReadonlyArray<string> | null {
@@ -77,24 +100,77 @@ export function resolveDiffPathForWorkspace(input: {
   return relativeSegments.length > 0 ? relativeSegments.join("/") : null;
 }
 
+/**
+ * A diff path as a path in the current workspace. A turn diff's path is relative to the
+ * checkpoint's stamped repository root, so it is first made relative to the stamped folder;
+ * file surfaces keep only that relative path, which then opens in today's workspace.
+ */
+export function resolveDiffFileTarget(input: {
+  readonly filePath: string;
+  readonly activeCwd: string | undefined;
+  readonly repositoryRoot?: string | undefined;
+  readonly checkpoint?: DiffCheckpointFolder | undefined;
+}): OpenedDiffFile | null {
+  const stampedCwd = input.checkpoint?.cwd;
+  const workspaceFilePath = resolveDiffPathForWorkspace({
+    filePath: input.filePath,
+    workspaceRoot: stampedCwd ?? input.activeCwd,
+    repositoryRoot: stampedCwd ? input.checkpoint?.repoRoot : input.repositoryRoot,
+  });
+  if (!workspaceFilePath) return null;
+  const otherCheckpointFolder =
+    stampedCwd &&
+    input.activeCwd &&
+    normalizeProjectPathForComparison(stampedCwd) !==
+      normalizeProjectPathForComparison(input.activeCwd)
+      ? stampedCwd
+      : null;
+  return { workspaceFilePath, otherCheckpointFolder };
+}
+
+/**
+ * The first line on the new side that a file's diff changes: its first added line, or where
+ * its first deleted block was. Null for a deleted file or a diff without hunks.
+ */
+export function firstChangedNewSideLine(
+  fileDiff: Pick<FileDiffMetadata, "type" | "hunks">,
+): number | null {
+  if (fileDiff.type === "deleted") return null;
+  for (const hunk of fileDiff.hunks) {
+    // A hunk with no new-side lines (`+L,0`) sits after line L.
+    let line = hunk.additionStart + (hunk.additionCount === 0 ? 1 : 0);
+    for (const content of hunk.hunkContent) {
+      if (content.type === "context") {
+        line += content.lines;
+        continue;
+      }
+      if (content.additions > 0 || content.deletions > 0) return Math.max(1, line);
+    }
+  }
+  return null;
+}
+
 export function openDiffFilePrimaryAction({
   threadRef,
   filePath,
   activeCwd,
   repositoryRoot,
+  checkpoint,
+  line,
   openInEditor,
-}: OpenDiffFilePrimaryActionInput): void {
-  const workspaceFilePath = resolveDiffPathForWorkspace({
-    filePath,
-    workspaceRoot: activeCwd,
-    repositoryRoot,
-  });
-  if (!workspaceFilePath) return;
+}: OpenDiffFilePrimaryActionInput): OpenedDiffFile | null {
+  const target = resolveDiffFileTarget({ filePath, activeCwd, repositoryRoot, checkpoint });
+  if (!target) return null;
 
   if (threadRef) {
-    useRightPanelStore.getState().openFile(threadRef, workspaceFilePath);
-    return;
+    useRightPanelStore.getState().openFile(threadRef, target.workspaceFilePath, line);
+    return target;
   }
 
-  openInEditor(activeCwd ? resolvePathLinkTarget(workspaceFilePath, activeCwd) : workspaceFilePath);
+  openInEditor(
+    activeCwd
+      ? resolvePathLinkTarget(target.workspaceFilePath, activeCwd)
+      : target.workspaceFilePath,
+  );
+  return target;
 }

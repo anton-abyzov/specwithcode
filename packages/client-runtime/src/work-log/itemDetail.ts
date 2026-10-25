@@ -1,5 +1,15 @@
-import type { AssetResource, OrchestrationV2TurnItem } from "@specweave-studio/contracts";
-import { readToolOutputImage, toolOutputImages } from "@specweave-studio/shared/toolOutput";
+import type {
+  AssetResource,
+  OrchestrationV2TurnItem,
+  OrchestrationV2TurnItemDetailField,
+  OrchestrationV2TurnItemPage,
+  OrchestrationV2TurnItemPageInfo,
+} from "@specweave-studio/contracts";
+import {
+  readToolOutputImage,
+  toolOutputImages,
+  TRANSPORT_TRUNCATION_MARKER,
+} from "@specweave-studio/shared/toolOutput";
 import * as DateTime from "effect/DateTime";
 
 const MAX_TEXT_BLOCK_DEPTH = 4;
@@ -128,12 +138,37 @@ const LIVE_TURN_ITEM_STATUSES: ReadonlySet<OrchestrationV2TurnItem["status"]> = 
   "waiting",
 ]);
 
+/** How often an open row of a running item refetches its detail, for providers that stream output. */
+export const LIVE_DETAIL_REFRESH_MS = 2_000;
+
 /**
- * Cache key for a fetched item. A running item keeps one key, so an open row
- * fetches once while it streams and again when it finishes, not on every update.
+ * Whether a provider's running tool output grows while it runs. Codex declares
+ * the capability but handles no output deltas, so its output appears at the end.
  */
-export function turnItemDetailRevision(item: OrchestrationV2TurnItem): string {
-  return LIVE_TURN_ITEM_STATUSES.has(item.status) ? "live" : DateTime.formatIso(item.updatedAt);
+export function streamsToolOutputForDriver(
+  driver: string | null | undefined,
+  capability: boolean | undefined,
+): boolean {
+  return capability === true && driver !== "codex";
+}
+
+/**
+ * Cache key for a fetched item. A finished item is keyed by its revision. A
+ * running item of a provider that streams output is keyed by a 2-second time
+ * bucket, so an open row re-rendered by a timer whose period divides
+ * LIVE_DETAIL_REFRESH_MS (1 s works) refetches every 2 s, and never within one
+ * bucket. Other running items keep one key: one fetch while running and one
+ * when they finish, not one per update.
+ */
+export function turnItemDetailRevision(
+  item: OrchestrationV2TurnItem,
+  options?: { readonly streamsToolOutput?: boolean; readonly nowMs?: number },
+): string {
+  if (!LIVE_TURN_ITEM_STATUSES.has(item.status)) return DateTime.formatIso(item.updatedAt);
+  if (options?.streamsToolOutput !== true) return "live";
+  // @effect-diagnostics-next-line globalDate:off
+  const nowMs = options.nowMs ?? Date.now();
+  return `live:${Math.floor(nowMs / LIVE_DETAIL_REFRESH_MS)}`;
 }
 
 /** True when the timeline item withholds content that `getTurnItem` returns. */
@@ -143,9 +178,94 @@ export function turnItemNeedsDetailFetch(item: OrchestrationV2TurnItem): boolean
       return item.outputOmitted === true;
     case "dynamic_tool":
       return item.outputOmitted === true || isSummarizedValue(item.input);
+    case "file_change":
+      return item.diffOmitted === true;
     default:
       return false;
   }
+}
+
+/**
+ * The text a detail read returned for a field, without the transport marker.
+ * With the field's `truncated` entry the text is that page plus the marker, so
+ * exactly the page is kept. `undefined` means an older server, which marks a
+ * cut only in the text; `null` means the read reported no cut for this field,
+ * so the text is returned as stored.
+ */
+export function stripTransportMarker(
+  text: string,
+  info?: OrchestrationV2TurnItemPageInfo | null,
+): string {
+  if (info === null || !text.endsWith(TRANSPORT_TRUNCATION_MARKER)) return text;
+  const kept = text.slice(0, -TRANSPORT_TRUNCATION_MARKER.length);
+  return info === undefined ? kept : kept.slice(0, info.end - info.offset);
+}
+
+/** How many times a full read starts over because the item changed under it. */
+const FULL_TEXT_MAX_RESTARTS = 3;
+
+/** Joins one revision's pages, or returns null when the revision changed part way. */
+async function readPagesAtOneRevision(
+  fetchPage: Parameters<typeof readFullTurnItemText>[0],
+  target: { readonly field: OrchestrationV2TurnItemDetailField; readonly changeIndex?: number },
+): Promise<{ readonly text: string; readonly revision: string } | null> {
+  const first = (await fetchPage({ ...target, offset: 0 })).page;
+  if (!first) throw new Error("The server returned no page for this field.");
+  const pages: string[] = [];
+  let page = first;
+  for (;;) {
+    if (page.revision !== first.revision || page.totalLength !== first.totalLength) return null;
+    if (page.end - page.offset !== page.text.length) {
+      throw new Error("The server returned a page whose text does not match its bounds.");
+    }
+    pages.push(page.text);
+    if (page.nextOffset === null) break;
+    if (page.nextOffset <= page.offset) {
+      throw new Error("The server returned a page that does not advance.");
+    }
+    const offset = page.nextOffset;
+    const next = (await fetchPage({ ...target, offset })).page;
+    if (!next) throw new Error("The server returned no page for this field.");
+    if (next.offset !== offset && next.revision === first.revision) {
+      throw new Error("The server returned a page out of order.");
+    }
+    page = next;
+  }
+  const text = pages.join("");
+  if (text.length !== first.totalLength) {
+    throw new Error("The joined pages do not match the stored length.");
+  }
+  return { text, revision: first.revision };
+}
+
+/**
+ * Reads a field's whole stored text page by page from offset 0, for Copy full.
+ * Every page must come from one revision: when a page's revision differs from
+ * the first page's, the read starts over (at most 3 times, then rejects). The
+ * text is joined from pages only, so it never includes the transport marker.
+ * Rejects when the server returns no page (an older server, or a field the
+ * item does not have); the caller then falls back to the bounded text.
+ */
+export async function readFullTurnItemText(
+  fetchPage: (input: {
+    readonly offset: number;
+    readonly field: OrchestrationV2TurnItemDetailField;
+    readonly changeIndex?: number;
+  }) => Promise<{ readonly page?: OrchestrationV2TurnItemPage | undefined }>,
+  request: {
+    readonly field: OrchestrationV2TurnItemDetailField;
+    readonly changeIndex?: number | undefined;
+  },
+): Promise<{ readonly text: string; readonly revision: string }> {
+  const target = {
+    field: request.field,
+    ...(request.changeIndex === undefined ? {} : { changeIndex: request.changeIndex }),
+  };
+  for (let attempt = 0; attempt <= FULL_TEXT_MAX_RESTARTS; attempt += 1) {
+    const text = await readPagesAtOneRevision(fetchPage, target);
+    if (text !== null) return text;
+  }
+  throw new Error("The item kept changing while it was read.");
 }
 
 /** Older Claude bash rows stored the raw `{ stdout, stderr, interrupted, ... }` result. */

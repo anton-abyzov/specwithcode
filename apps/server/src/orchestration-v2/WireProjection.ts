@@ -1,19 +1,30 @@
 import type {
   OrchestrationV2DomainEvent,
   OrchestrationV2ContextHandoff,
+  OrchestrationV2FileChangeDetail,
+  OrchestrationV2GetTurnItemInput,
   OrchestrationV2ThreadProjection,
   OrchestrationV2TurnItem,
+  OrchestrationV2TurnItemDetailField,
+  OrchestrationV2TurnItemPage,
+  OrchestrationV2TurnItemPageInfo,
 } from "@specweave-studio/contracts";
+import { countPatchLines } from "@specweave-studio/shared/structuredPatch";
 import {
   compactDynamicToolOutput,
   omitToolOutputImageData,
+  sliceTextPage,
+  type TextPage,
   toolOutputImages,
   toolOutputIndicatesFailure,
+  TRANSPORT_TRUNCATION_MARKER,
 } from "@specweave-studio/shared/toolOutput";
+import * as DateTime from "effect/DateTime";
 
 const MAX_DETAIL_STRING_BYTES = 32_768;
 const MAX_DYNAMIC_VALUE_BYTES = 16_384;
-const MAX_ON_DEMAND_BYTES = 256 * 1024;
+
+type FileChangeItem = Extract<OrchestrationV2TurnItem, { type: "file_change" }>;
 
 function truncateDetail(
   value: string | undefined,
@@ -31,7 +42,46 @@ function truncateDetail(
     .subarray(0, maxBytes)
     .toString("utf8")
     .replace(/\uFFFD$/u, "");
-  return `${prefix}\n… output truncated for transport`;
+  return `${prefix}${TRANSPORT_TRUNCATION_MARKER}`;
+}
+
+function hasBody(value: string | undefined): boolean {
+  return value !== undefined && value.length > 0;
+}
+
+function sumChangeCounts(changes: ReadonlyArray<OrchestrationV2FileChangeDetail> | undefined): {
+  additions?: number;
+  deletions?: number;
+} {
+  let additions: number | undefined;
+  let deletions: number | undefined;
+  for (const change of changes ?? []) {
+    if (change.additions !== undefined) additions = (additions ?? 0) + change.additions;
+    if (change.deletions !== undefined) deletions = (deletions ?? 0) + change.deletions;
+  }
+  return {
+    ...(additions === undefined ? {} : { additions }),
+    ...(deletions === undefined ? {} : { deletions }),
+  };
+}
+
+/**
+ * Fills in +/- counts the provider did not send, from the full patches before
+ * any bounding. Text without a hunk (an error message) gives no count, so an
+ * unknown count stays absent instead of reading as 0. The count is linear;
+ * this runs on every item update, so it never computes a line diff.
+ */
+function withPatchCounts(item: FileChangeItem): FileChangeItem {
+  const changes = item.changes?.map((change) => {
+    if (change.additions !== undefined || change.deletions !== undefined) return change;
+    const counts = change.diffStr ? countPatchLines(change.diffStr) : null;
+    return counts === null ? change : { ...change, ...counts };
+  });
+  const withChanges = changes === undefined ? item : { ...item, changes };
+  if (item.additions !== undefined || item.deletions !== undefined) return withChanges;
+  // A failed edit keeps the provider's error text where the patch would be.
+  const own = item.status !== "failed" && item.diffStr ? countPatchLines(item.diffStr) : null;
+  return { ...withChanges, ...(own ?? sumChangeCounts(changes)) };
 }
 
 function summarizeDynamicValue(value: unknown): unknown {
@@ -97,11 +147,27 @@ export function projectTurnItemForWire(item: OrchestrationV2TurnItem): Orchestra
     case "file_change": {
       // File identity and counts are enough for activity. Full diffs already
       // have a dedicated read path and remain intact in persistence.
-      const { diffStr, oldStr: _old, newStr: _new, ...projected } = item;
+      const { diffStr, oldStr, newStr, changes, ...projected } = withPatchCounts(item);
       // A failed edit stores the provider's error where the diff would be.
-      return item.status === "failed" && diffStr?.trim()
-        ? { ...projected, diffStr: truncateDetail(diffStr) }
-        : projected;
+      const kept =
+        item.status === "failed" && diffStr?.trim() ? truncateDetail(diffStr) : undefined;
+      let diffOmitted =
+        (kept === undefined ? hasBody(diffStr) : kept !== diffStr) ||
+        hasBody(oldStr) ||
+        hasBody(newStr);
+      // Approval previews show each change's own patch, so it stays, bounded.
+      const boundedChanges = changes?.map((change) => {
+        const bounded = change.diffStr === undefined ? undefined : truncateDetail(change.diffStr);
+        if (bounded === undefined || bounded === change.diffStr) return change;
+        diffOmitted = true;
+        return { ...change, diffStr: bounded };
+      });
+      return {
+        ...projected,
+        ...(boundedChanges === undefined ? {} : { changes: boundedChanges }),
+        ...(kept === undefined ? {} : { diffStr: kept }),
+        ...(diffOmitted ? { diffOmitted: true } : {}),
+      };
     }
     case "subagent":
       return {
@@ -132,19 +198,63 @@ function hasDynamicValue(value: unknown): boolean {
   return typeof value !== "object" || Object.keys(value).length > 0;
 }
 
-function boundDynamicValue(value: unknown): unknown {
-  if (value === undefined) return value;
-  if (typeof value === "string") return truncateDetail(value, MAX_ON_DEMAND_BYTES);
-  let json: string;
+/** What a detail read can page, as the contract names it. */
+interface DetailTarget {
+  readonly field: OrchestrationV2TurnItemDetailField;
+  readonly changeIndex?: number | undefined;
+  readonly structured?: boolean | undefined;
+}
+
+/** The fields a no-field detail read cut, all at one item revision. */
+interface DetailCuts {
+  readonly revision: string;
+  readonly entries: Array<OrchestrationV2TurnItemPageInfo>;
+}
+
+function pageInfo(
+  page: TextPage,
+  target: DetailTarget,
+  revision: string,
+): OrchestrationV2TurnItemPageInfo {
+  return {
+    field: target.field,
+    ...(target.changeIndex === undefined ? {} : { changeIndex: target.changeIndex }),
+    offset: page.offset,
+    end: page.end,
+    totalLength: page.totalLength,
+    nextOffset: page.nextOffset,
+    revision,
+    ...(target.structured === true ? { structured: true } : {}),
+  };
+}
+
+/**
+ * A text cut to its first page plus the transport marker older clients show.
+ * A cut of a pageable field is recorded, so newer clients know its bounds.
+ */
+function firstPageText(text: string, cuts: DetailCuts, target?: DetailTarget): string {
+  const page = sliceTextPage(text);
+  if (page.nextOffset === null) return text;
+  if (target !== undefined) cuts.entries.push(pageInfo(page, target, cuts.revision));
+  return `${page.text}${TRANSPORT_TRUNCATION_MARKER}`;
+}
+
+/** A structured value's compact JSON, so measuring does not inflate it; clients indent it. */
+function compactJson(value: unknown): string | null {
   try {
-    // Compact, so measuring does not inflate the value; clients indent it.
-    json = JSON.stringify(value) ?? String(value);
+    return JSON.stringify(value) ?? String(value);
   } catch {
-    return "Unserializable tool value";
+    return null;
   }
-  return Buffer.byteLength(json, "utf8") <= MAX_ON_DEMAND_BYTES
-    ? value
-    : truncateDetail(json, MAX_ON_DEMAND_BYTES);
+}
+
+function boundDynamicValue(value: unknown, field: "input" | "output", cuts: DetailCuts): unknown {
+  if (value === undefined) return value;
+  if (typeof value === "string") return firstPageText(value, cuts, { field });
+  const json = compactJson(value);
+  if (json === null) return "Unserializable tool value";
+  const bounded = firstPageText(json, cuts, { field, structured: true });
+  return bounded === json ? value : bounded;
 }
 
 /**
@@ -152,9 +262,9 @@ function boundDynamicValue(value: unknown): unknown {
  * large to send whole, its truncated text still comes with the image markers,
  * in order, so clients can load each image by index.
  */
-function boundToolOutput(output: unknown): unknown {
+function boundToolOutput(output: unknown, cuts: DetailCuts): unknown {
   const omitted = omitToolOutputImageData(output);
-  const bounded = boundDynamicValue(omitted);
+  const bounded = boundDynamicValue(omitted, "output", cuts);
   if (typeof bounded !== "string" || typeof omitted === "string") return bounded;
   const images = toolOutputImages(omitted);
   return images.length === 0
@@ -165,39 +275,152 @@ function boundToolOutput(output: unknown): unknown {
       ];
 }
 
-/**
- * Projects one item for an on-demand detail read: keeps the input and output
- * the timeline withholds, bounded so a huge result cannot stall the socket.
- * Image bytes are left out; clients load them as `tool-output-image` assets.
- */
-export function projectTurnItemForDetail(item: OrchestrationV2TurnItem): OrchestrationV2TurnItem {
+function boundTurnItemForDetail(
+  item: OrchestrationV2TurnItem,
+  cuts: DetailCuts,
+): OrchestrationV2TurnItem {
   switch (item.type) {
     case "command_execution":
       return {
         ...item,
-        input: truncateDetail(item.input, MAX_ON_DEMAND_BYTES) ?? "",
-        output: truncateDetail(item.output, MAX_ON_DEMAND_BYTES),
+        input: firstPageText(item.input, cuts, { field: "input" }),
+        ...(item.output === undefined
+          ? {}
+          : { output: firstPageText(item.output, cuts, { field: "output" }) }),
       };
     case "dynamic_tool":
       return {
         ...item,
-        input: boundDynamicValue(item.input),
-        output: boundToolOutput(item.output),
+        input: boundDynamicValue(item.input, "input", cuts),
+        output: boundToolOutput(item.output, cuts),
       };
     case "subagent":
       return {
         ...item,
-        prompt: truncateDetail(item.prompt, MAX_ON_DEMAND_BYTES) ?? "",
-        progress: truncateDetail(item.progress, MAX_ON_DEMAND_BYTES),
-        result:
-          item.result === null ? null : (truncateDetail(item.result, MAX_ON_DEMAND_BYTES) ?? null),
+        prompt: firstPageText(item.prompt, cuts),
+        ...(item.progress === undefined ? {} : { progress: firstPageText(item.progress, cuts) }),
+        result: item.result === null ? null : firstPageText(item.result, cuts),
       };
+    case "file_change": {
+      const { diffStr, oldStr, newStr, changes, ...counted } = withPatchCounts(item);
+      return {
+        ...counted,
+        ...(diffStr === undefined
+          ? {}
+          : { diffStr: firstPageText(diffStr, cuts, { field: "body" }) }),
+        // No field names these, so they cannot be paged; the marker still says they were cut.
+        ...(oldStr === undefined ? {} : { oldStr: firstPageText(oldStr, cuts) }),
+        ...(newStr === undefined ? {} : { newStr: firstPageText(newStr, cuts) }),
+        ...(changes === undefined
+          ? {}
+          : {
+              changes: changes.map((change, changeIndex) =>
+                change.diffStr === undefined
+                  ? change
+                  : {
+                      ...change,
+                      diffStr: firstPageText(change.diffStr, cuts, {
+                        field: "body",
+                        changeIndex,
+                      }),
+                    },
+              ),
+            }),
+      };
+    }
     case "handoff":
-    case "file_change":
       return projectTurnItemForWire(item);
     default:
       return item;
   }
+}
+
+/** The full stored text a field read pages, or null when the item has no such field. */
+function detailFieldText(
+  item: OrchestrationV2TurnItem,
+  field: OrchestrationV2TurnItemDetailField,
+  changeIndex: number | undefined,
+): { readonly text: string; readonly structured: boolean } | null {
+  const dynamicValueText = (value: unknown) => {
+    if (value === undefined) return null;
+    if (typeof value === "string") return { text: value, structured: false };
+    const json = compactJson(value);
+    return json === null ? null : { text: json, structured: true };
+  };
+  switch (field) {
+    case "output":
+      if (item.type === "command_execution") {
+        return item.output === undefined ? null : { text: item.output, structured: false };
+      }
+      return item.type === "dynamic_tool" && item.output !== undefined
+        ? dynamicValueText(omitToolOutputImageData(item.output))
+        : null;
+    case "input":
+      if (item.type === "command_execution") return { text: item.input, structured: false };
+      return item.type === "dynamic_tool" ? dynamicValueText(item.input) : null;
+    case "body": {
+      if (item.type !== "file_change") return null;
+      const body = changeIndex === undefined ? item.diffStr : item.changes?.[changeIndex]?.diffStr;
+      return body === undefined ? null : { text: body, structured: false };
+    }
+  }
+}
+
+/**
+ * The item a field read returns beside its page. The timeline keeps a command's
+ * input whole, and clients show the command from there; repeating it with every
+ * page of a long output would multiply its size by the page count.
+ */
+function boundFieldReadItem(item: OrchestrationV2TurnItem): OrchestrationV2TurnItem {
+  return item.type === "command_execution"
+    ? { ...item, input: truncateDetail(item.input) ?? "" }
+    : item;
+}
+
+/** What a detail read asks for: the getTurnItem input without the item's identity. */
+export type TurnItemDetailRequest = Pick<
+  OrchestrationV2GetTurnItemInput,
+  "field" | "changeIndex" | "offset" | "before" | "anchor" | "limit"
+>;
+
+export interface TurnItemDetail {
+  readonly item: OrchestrationV2TurnItem;
+  readonly page?: OrchestrationV2TurnItemPage;
+  readonly truncated?: ReadonlyArray<OrchestrationV2TurnItemPageInfo>;
+}
+
+/**
+ * Projects one item for an on-demand detail read. Without a field it keeps the
+ * input, output and edit bodies the timeline withholds, each cut to its first
+ * page so a huge result cannot stall the socket, and lists every cut in
+ * `truncated`. With a field it returns the timeline item and one page of that
+ * field's full stored text, with no marker. Image bytes are left out; clients
+ * load them as `tool-output-image` assets.
+ */
+export function projectTurnItemForDetail(
+  item: OrchestrationV2TurnItem,
+  request: TurnItemDetailRequest = {},
+): TurnItemDetail {
+  const revision = DateTime.formatIso(item.updatedAt);
+  if (request.field !== undefined) {
+    const projected = boundFieldReadItem(projectTurnItemForWire(item));
+    const changeIndex = request.field === "body" ? request.changeIndex : undefined;
+    const source = detailFieldText(item, request.field, changeIndex);
+    if (source === null) return { item: projected };
+    const page = sliceTextPage(source.text, {
+      offset: request.offset,
+      before: request.before,
+      anchor: request.anchor,
+      maxBytes: request.limit,
+    });
+    const target = { field: request.field, changeIndex, structured: source.structured };
+    return { item: projected, page: { ...pageInfo(page, target, revision), text: page.text } };
+  }
+  const cuts: DetailCuts = { revision, entries: [] };
+  const projected = boundTurnItemForDetail(item, cuts);
+  return cuts.entries.length === 0
+    ? { item: projected }
+    : { item: projected, truncated: cuts.entries };
 }
 
 export function projectContextHandoffForWire(

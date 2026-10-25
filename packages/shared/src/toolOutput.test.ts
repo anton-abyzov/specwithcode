@@ -2,8 +2,10 @@ import { describe, expect, it } from "vite-plus/test";
 
 import {
   compactDynamicToolOutput,
+  DETAIL_PAGE_MAX_BYTES,
   MAX_TOOL_OUTPUT_IMAGES,
   omitToolOutputImageData,
+  sliceTextPage,
   toolOutputImages,
   toolOutputIndicatesFailure,
 } from "./toolOutput.ts";
@@ -225,5 +227,113 @@ describe("toolOutputImages", () => {
       { mimeType: "image/jpeg" },
       { mimeType: "image/png" },
     ]);
+  });
+});
+
+describe("sliceTextPage", () => {
+  const encoder = new TextEncoder();
+  const utf8Bytes = (text: string) => encoder.encode(text).byteLength;
+  const forwardPages = (text: string, maxBytes?: number) => {
+    const pages = [];
+    let offset: number | null = 0;
+    while (offset !== null) {
+      const page = sliceTextPage(text, { offset, maxBytes });
+      pages.push(page);
+      offset = page.nextOffset;
+    }
+    return pages;
+  };
+  const backwardPages = (text: string, maxBytes?: number) => {
+    const pages = [sliceTextPage(text, { anchor: "end", maxBytes })];
+    while (pages[0]!.offset > 0) {
+      pages.unshift(sliceTextPage(text, { before: pages[0]!.offset, maxBytes }));
+    }
+    return pages;
+  };
+
+  it("returns small text whole as one page", () => {
+    expect(sliceTextPage("hello")).toEqual({
+      text: "hello",
+      offset: 0,
+      end: 5,
+      totalLength: 5,
+      nextOffset: null,
+    });
+    expect(sliceTextPage("", { anchor: "end" })).toEqual({
+      text: "",
+      offset: 0,
+      end: 0,
+      totalLength: 0,
+      nextOffset: null,
+    });
+  });
+
+  it("joins every page back to the exact text, emoji and multibyte characters on boundaries", () => {
+    // 4-byte emoji (surrogate pairs), 3-byte CJK and 2-byte accents, so most
+    // budgets land inside a character.
+    const unit = "a😀é中🧑‍💻\n";
+    const text = unit.repeat(5_000);
+    for (const maxBytes of [4, 5, 7, 13, 64, 1000]) {
+      for (const pages of [forwardPages(text, maxBytes), backwardPages(text, maxBytes)]) {
+        const joined = pages.map((page) => page.text).join("");
+        expect(joined === text).toBe(true);
+        expect(encoder.encode(joined)).toEqual(encoder.encode(text));
+        for (const page of pages) {
+          expect(utf8Bytes(page.text)).toBeLessThanOrEqual(maxBytes);
+          expect(page.text.length).toBeGreaterThan(0);
+          expect(page.text).toBe(text.slice(page.offset, page.end));
+          // No page starts on the second half of a surrogate pair.
+          expect(/^[\uDC00-\uDFFF]/.test(page.text)).toBe(false);
+          expect(/[\uD800-\uDBFF]$/.test(page.text)).toBe(false);
+        }
+      }
+    }
+  });
+
+  it("pages a large text within the 256 KiB default budget", () => {
+    const text = "x".repeat(DETAIL_PAGE_MAX_BYTES * 2 + 17);
+    const first = sliceTextPage(text);
+    expect(first).toMatchObject({ offset: 0, end: DETAIL_PAGE_MAX_BYTES });
+    expect(first.nextOffset).toBe(DETAIL_PAGE_MAX_BYTES);
+    const last = sliceTextPage(text, { anchor: "end" });
+    expect(last).toMatchObject({ end: text.length, nextOffset: null });
+    expect(last.offset).toBe(text.length - DETAIL_PAGE_MAX_BYTES);
+    // A larger budget than one page is capped.
+    expect(sliceTextPage(text, { maxBytes: 10 * DETAIL_PAGE_MAX_BYTES }).end).toBe(
+      DETAIL_PAGE_MAX_BYTES,
+    );
+  });
+
+  it("moves an offset that splits a surrogate pair to the start of the pair", () => {
+    const text = "ab😀cd";
+    expect(sliceTextPage(text, { offset: 3, maxBytes: 4 })).toMatchObject({
+      offset: 2,
+      text: "😀",
+    });
+    expect(sliceTextPage(text, { before: 3, maxBytes: 4 })).toMatchObject({ end: 2, text: "ab" });
+  });
+
+  it("lets before win over offset and clamps offsets outside the text", () => {
+    expect(sliceTextPage("abcdef", { offset: 1, before: 3 })).toMatchObject({
+      offset: 0,
+      end: 3,
+    });
+    expect(sliceTextPage("abc", { offset: 99 })).toMatchObject({
+      offset: 3,
+      end: 3,
+      text: "",
+      nextOffset: null,
+    });
+  });
+
+  it("counts a lone surrogate as the three bytes it encodes to", () => {
+    const text = "\uD800".repeat(10);
+    const page = sliceTextPage(text, { maxBytes: 9 });
+    expect(page.end).toBe(3);
+    expect(
+      forwardPages(text, 9)
+        .map((entry) => entry.text)
+        .join(""),
+    ).toBe(text);
   });
 });

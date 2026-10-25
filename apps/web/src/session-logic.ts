@@ -376,6 +376,11 @@ function projectedWorkEntryStatus(
     case "failed":
       return "failed";
     case "cancelled":
+      // A declined item keeps status cancelled; its row says Declined, not Stopped.
+      return (item.type === "command_execution" || item.type === "file_change") &&
+        item.declined === true
+        ? "declined"
+        : "stopped";
     case "interrupted":
       return "stopped";
   }

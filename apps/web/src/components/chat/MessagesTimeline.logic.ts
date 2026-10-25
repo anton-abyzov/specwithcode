@@ -18,7 +18,11 @@ import {
   summarizeToolGroupChips,
   toolGroupAction,
   toolGroupSummaryKind,
+  turnDiffState,
+  turnDiffStateMessage,
+  workEntryFailureKind,
   type ToolGroupSummaryKind,
+  type WorkEntryFailureKind,
 } from "@specweave-studio/client-runtime/work-log/presentation";
 export {
   normalizeCompactToolLabel,
@@ -30,7 +34,6 @@ import {
   isStreamingMessageTextUpdate,
   isStreamingTurnItemTextUpdate,
   timelineEntryIsPersistentResourceCard,
-  workEntryDisplayIndicatesToolFailure,
   workEntryIndicatesToolSuccess,
   workEntryIndicatesToolNeutralStatus,
   workLogEntryIsToolLike,
@@ -42,8 +45,10 @@ import {
   type MessageId,
   type WorktreeSetupSnapshot,
   type OrchestrationV2ProjectedTurnItem,
+  type OrchestrationV2TurnItem,
   type RunAttemptId,
   RunId,
+  type ThreadId,
   type TimelineDetail,
 } from "@specweave-studio/contracts";
 import type { ThreadRunSummary } from "@specweave-studio/client-runtime/state/shell";
@@ -174,6 +179,17 @@ export function workEntryDisplayLabel(entry: WorkLogEntry, workspaceRoot: string
   return `${heading.charAt(0).toUpperCase()}${heading.slice(1)}`;
 }
 
+/** A tool's path in full: relative paths are resolved against the workspace root. */
+function workspaceAbsolutePath(path: string, workspaceRoot: string | undefined): string {
+  const trimmed = path.trim().replaceAll("\\", "/");
+  if (!workspaceRoot || trimmed.startsWith("/") || isWindowsAbsolutePath(trimmed)) {
+    return trimmed;
+  }
+  const root = workspaceRoot.replaceAll("\\", "/").replace(/\/+$/, "");
+  const relative = trimmed.replace(/^\.\//, "").replace(/^\/+/, "");
+  return `${root}/${relative}`;
+}
+
 /** Inspectable read-file output is the path when we have one, otherwise nothing. */
 export function workEntryReadOutput(
   entry: Pick<
@@ -185,15 +201,7 @@ export function workEntryReadOutput(
   const paths = [
     ...new Set(
       workEntryReadRawPaths(entry as WorkLogEntry)
-        .map((path) => {
-          const trimmed = path.trim().replaceAll("\\", "/");
-          if (!workspaceRoot || trimmed.startsWith("/") || isWindowsAbsolutePath(trimmed)) {
-            return trimmed;
-          }
-          const root = workspaceRoot.replaceAll("\\", "/").replace(/\/+$/, "");
-          const relative = trimmed.replace(/^\.\//, "").replace(/^\/+/, "");
-          return `${root}/${relative}`;
-        })
+        .map((path) => workspaceAbsolutePath(path, workspaceRoot))
         .filter((path) => path.length > 0),
     ),
   ];
@@ -201,6 +209,104 @@ export function workEntryReadOutput(
     return paths.join("\n");
   }
   return null;
+}
+
+/** A read or edit row's label: the verb, the first path, "+N more" and the edit's +/- counts. */
+export interface WorkEntryPathLabel {
+  readonly verb: string;
+  /** Workspace-relative, or absolute when the file lies outside the workspace. */
+  readonly path: string;
+  /** Every path the row names, exactly as the provider sent it (relative ones joined to the root). */
+  readonly fullPaths: ReadonlyArray<string>;
+  readonly moreCount: number;
+  /** Omitted when the provider sent no counts and none could be computed, never 0 for unknown. */
+  readonly additions?: number;
+  readonly deletions?: number;
+}
+
+/**
+ * The path as the provider sent it, joined to the root when relative. Spaces, a no-break space
+ * included, are part of a name, so a path that starts with one is relative and is never trimmed.
+ */
+function exactFullPath(path: string, workspaceRoot: string | undefined): string {
+  if (!workspaceRoot || path.startsWith("/") || isWindowsAbsolutePath(path)) return path;
+  const root = workspaceRoot.replace(/[\\/]+$/, "");
+  const separator = root.includes("\\") && !root.includes("/") ? "\\" : "/";
+  return `${root}${separator}${path.replace(/^(?:\.[\\/])+/, "").replace(/^[\\/]+/, "")}`;
+}
+
+function fileChangeVerb(
+  change: { readonly operation: string; readonly oldPath?: string | undefined } | undefined,
+  inProgress: boolean,
+): string {
+  const operation = change?.operation.toLowerCase() ?? "";
+  const [past, present] =
+    change?.oldPath !== undefined || operation === "move" || operation === "rename"
+      ? ["Moved", "Moving"]
+      : operation === "add" || operation === "create" || operation === "created"
+        ? ["Created", "Creating"]
+        : operation === "delete" || operation === "remove" || operation === "deleted"
+          ? ["Deleted", "Deleting"]
+          : ["Edited", "Editing"];
+  return inProgress ? present : past;
+}
+
+function fileChangeCounts(
+  item: Extract<OrchestrationV2TurnItem, { type: "file_change" }>,
+): Pick<WorkEntryPathLabel, "additions" | "deletions"> {
+  if (item.additions !== undefined && item.deletions !== undefined) {
+    return { additions: item.additions, deletions: item.deletions };
+  }
+  const counted = (item.changes ?? []).flatMap((change) =>
+    change.additions !== undefined && change.deletions !== undefined
+      ? [{ additions: change.additions, deletions: change.deletions }]
+      : [],
+  );
+  if (counted.length === 0) return {};
+  return {
+    additions: counted.reduce((sum, change) => sum + change.additions, 0),
+    deletions: counted.reduce((sum, change) => sum + change.deletions, 0),
+  };
+}
+
+/**
+ * The path a lone Read or edit row shows instead of a generic heading (AC-01, AC-03), or null
+ * when the row is not a plain read or edit with a path. Named tool presentations and
+ * commands keep their own labels.
+ */
+export function workEntryPathLabel(
+  entry: WorkLogEntry,
+  workspaceRoot: string | undefined,
+): WorkEntryPathLabel | null {
+  if (entry.itemType === "reasoning" || entry.command?.trim()) return null;
+  if (resolveWorkEntryToolPresentation(entry)) return null;
+  const inProgress = entry.toolLifecycleStatus === "inProgress";
+  const action = toolGroupAction(entry);
+  if (action === "read") {
+    const paths = [...new Set(workEntryReadRawPaths(entry))].filter((path) => path.trim());
+    const [first] = paths;
+    if (first === undefined) return null;
+    return {
+      verb: inProgress ? "Reading" : "Read",
+      path: formatWorkspaceRelativePath(first, workspaceRoot),
+      fullPaths: paths.map((path) => exactFullPath(path, workspaceRoot)),
+      moreCount: paths.length - 1,
+    };
+  }
+  if (action !== "edit" || entry.itemType !== "file_change") return null;
+  const item = entry.projectedItem?.item ?? entry.structuredPayload;
+  const fileChange = item?.type === "file_change" ? item : undefined;
+  const paths = [...new Set(entry.changedFiles ?? [])].filter((path) => path.trim());
+  const [first] = paths;
+  if (first === undefined) return null;
+  const changes = fileChange?.changes ?? [];
+  return {
+    verb: fileChangeVerb(changes.length === 1 ? changes[0] : undefined, inProgress),
+    path: formatWorkspaceRelativePath(first, workspaceRoot),
+    fullPaths: paths.map((path) => exactFullPath(path, workspaceRoot)),
+    moreCount: paths.length - 1,
+    ...(fileChange ? fileChangeCounts(fileChange) : {}),
+  };
 }
 
 export function liveWorkEntryLabel(
@@ -251,6 +357,108 @@ export function workEntryIsVisibleInGroup(
     !workEntryIndicatesToolNeutralStatus(entry)
   );
 }
+
+// Entries are immutable, and folds, headers and rows ask the same entry on every update.
+const failureKindByEntry = new WeakMap<WorkLogEntry, WorkEntryFailureKind | null>();
+
+/** How an entry ended, for its chip and the failure counts (AC-10). */
+export function timelineEntryFailureKind(entry: WorkLogEntry): WorkEntryFailureKind | null {
+  const cached = failureKindByEntry.get(entry);
+  if (cached !== undefined) return cached;
+  const kind = workEntryFailureKind(entry);
+  failureKindByEntry.set(entry, kind);
+  return kind;
+}
+
+/** Failed, possibly failed or declined: the entries a fold must not hide silently. */
+function workEntryShowsFailureSignal(entry: WorkLogEntry): boolean {
+  const kind = timelineEntryFailureKind(entry);
+  return kind !== null && kind !== "stopped";
+}
+
+export interface ToolFailureCounts {
+  /** Failed by status, a nonzero exit code or a provider error; shown at full strength. */
+  readonly failedCount: number;
+  /** Flagged only by the output heuristic; shown faint and never added to failedCount. */
+  readonly possibleFailureCount: number;
+  readonly declinedCount: number;
+}
+
+export const NO_TOOL_FAILURES: ToolFailureCounts = {
+  failedCount: 0,
+  possibleFailureCount: 0,
+  declinedCount: 0,
+};
+
+/** The three counts summarizeToolGroup reports, over every entry, without building its sentence. */
+export function toolFailureCounts(entries: ReadonlyArray<WorkLogEntry>): ToolFailureCounts {
+  let failedCount = 0;
+  let possibleFailureCount = 0;
+  let declinedCount = 0;
+  for (const entry of entries) {
+    if (entry.itemType === "reasoning") continue;
+    const kind = timelineEntryFailureKind(entry);
+    if (kind === "failed") failedCount += 1;
+    else if (kind === "possible") possibleFailureCount += 1;
+    else if (kind === "declined") declinedCount += 1;
+  }
+  return failedCount === 0 && possibleFailureCount === 0 && declinedCount === 0
+    ? NO_TOOL_FAILURES
+    : { failedCount, possibleFailureCount, declinedCount };
+}
+
+/** "2 failed", "1 possible failure", "3 declined", in that order; empty counts are left out. */
+export function toolFailureCountLabels(counts: ToolFailureCounts): {
+  readonly failed: string | null;
+  readonly faint: ReadonlyArray<string>;
+} {
+  const faint: string[] = [];
+  if (counts.possibleFailureCount > 0) {
+    faint.push(
+      `${counts.possibleFailureCount} possible ${counts.possibleFailureCount === 1 ? "failure" : "failures"}`,
+    );
+  }
+  if (counts.declinedCount > 0) faint.push(`${counts.declinedCount} declined`);
+  return { failed: counts.failedCount > 0 ? `${counts.failedCount} failed` : null, faint };
+}
+
+/** The chip a settled row keeps at every detail level: "exit 2", "failed", "declined" or "stopped". */
+export function workEntryOutcomeChip(
+  entry: WorkLogEntry,
+): { readonly kind: "failed" | "declined" | "stopped"; readonly label: string } | null {
+  const kind = timelineEntryFailureKind(entry);
+  if (kind === "failed") {
+    const item = entry.projectedItem?.item ?? entry.structuredPayload;
+    const exitCode = item?.type === "command_execution" ? item.exitCode : undefined;
+    return {
+      kind,
+      label: exitCode !== undefined && exitCode !== 0 ? `exit ${exitCode}` : "failed",
+    };
+  }
+  if (kind === "declined" || kind === "stopped") return { kind, label: kind };
+  return null;
+}
+
+/**
+ * Why a row's Open diff is disabled, or null when it opens the panel (AC-05). Rows disable it
+ * only while the run is live, which the run's status alone decides; every other state opens
+ * the panel, which explains itself.
+ */
+export function turnDiffUnavailableReason(
+  runId: RunId | null,
+  runs: ReadonlyArray<{ readonly id: RunId; readonly status?: string | undefined }>,
+): string | null {
+  if (runId === null) return null;
+  const run = runs.find((candidate) => candidate.id === runId);
+  if (run?.status === undefined) return null;
+  const state = turnDiffState({
+    runId,
+    runs: [{ id: run.id, status: run.status }],
+    checkpoints: [],
+  });
+  return state.kind === "running" ? turnDiffStateMessage(state) : null;
+}
+
 const TIMELINE_MINIMAP_ITEM_SPACING = 8;
 export const TIMELINE_MINIMAP_MIN_ITEMS = 2;
 const TIMELINE_MINIMAP_MAX_HEIGHT_CSS = "calc(100vh - 18rem)";
@@ -492,6 +700,12 @@ export interface ToolActivityCategory {
   label: string;
 }
 
+/** A provider-native subagent a run launched, as its parent's timeline names it. */
+export interface TurnSubagentReference {
+  readonly title: string;
+  readonly childThreadId: ThreadId | null;
+}
+
 type MessagesTimelineRowContent =
   | {
       kind: "worktree-setup";
@@ -532,7 +746,7 @@ type MessagesTimelineRowContent =
       groupCount?: number;
       expanded?: boolean;
     }
-  | {
+  | ({
       kind: "work-toggle";
       id: string;
       createdAt: string;
@@ -547,9 +761,10 @@ type MessagesTimelineRowContent =
       toolSurface?: WorkLogEntry["toolSurface"];
       toolIcon?: WorkLogEntry["toolIcon"];
       summaryToolIcon?: "browser" | "device" | "studio-code" | "pull-request";
+      /** The group's final call failed; the counts cover every call. */
       hasFailure: boolean;
-    }
-  | {
+    } & ToolFailureCounts)
+  | ({
       /** Folds a stretch of tool groups and the short narration between them. */
       kind: "tool-activity";
       id: string;
@@ -560,10 +775,9 @@ type MessagesTimelineRowContent =
       noteCount: number;
       /** Narration the closed summary hides, so a citation can open it. */
       noteMessageIds: string[];
-      failedCount: number;
       categories: ToolActivityCategory[];
-    }
-  | {
+    } & ToolFailureCounts)
+  | ({
       kind: "turn-fold";
       id: string;
       createdAt: string;
@@ -574,7 +788,7 @@ type MessagesTimelineRowContent =
       /** Concise only: the whole sentence the short label stands for, for its tooltip. */
       activityDetail?: string;
       expanded: boolean;
-    }
+    } & ToolFailureCounts)
   | {
       /** Closes an expanded "Worked for …" fold, so a long turn folds again from its end. */
       kind: "turn-fold-end";
@@ -612,6 +826,12 @@ type MessagesTimelineRowContent =
       showAssistantCopyButton: boolean;
       assistantCopyStreaming: boolean;
       assistantTurnDiffSummary?: TurnDiffSummary | undefined;
+      /** The run's edit items, so the changed-files card can tell who reported each file. */
+      turnEditItems?: ReadonlyArray<OrchestrationV2TurnItem> | undefined;
+      /** The run's provider-native subagents, whose edits the card lists under their name. */
+      turnSubagents?: ReadonlyArray<TurnSubagentReference> | undefined;
+      /** Failed entries of the run, for the Concise card line. */
+      turnFailedCount?: number | undefined;
       revertTurnCount?: number | undefined;
       /** An assistant reply to a message that asked for a report or a document. */
       reportRequested?: true;
@@ -744,6 +964,8 @@ interface TurnFold {
   label: string;
   activitySummary?: string;
   activityDetail?: string;
+  /** Over every folded entry, at every detail level, so no failure folds away unseen (AC-10). */
+  failures: ToolFailureCounts;
 }
 
 /**
@@ -1108,7 +1330,7 @@ function deriveTurnFolds(input: {
       const isFoldableTrailingActivity =
         entry.kind === "work" &&
         entry.entry.toolLifecycleStatus !== "inProgress" &&
-        !workEntryDisplayIndicatesToolFailure(entry.entry);
+        !workEntryShowsFailureSignal(entry.entry);
       if (!isCompaction && index > terminalEntryIndex && !isFoldableTrailingActivity) {
         continue;
       }
@@ -1162,6 +1384,11 @@ function deriveTurnFolds(input: {
       : duration
         ? `Worked for ${duration}`
         : "Worked";
+    const failures = toolFailureCounts(
+      group.entries.flatMap((entry) =>
+        entry.kind === "work" && hiddenEntryIds.has(entry.id) ? [entry.entry] : [],
+      ),
+    );
     const foldedTools = input.includeActivitySummary
       ? group.entries.flatMap((entry) =>
           entry.kind === "work" &&
@@ -1184,6 +1411,7 @@ function deriveTurnFolds(input: {
         : (group.terminalEntry?.id ?? null),
       createdAt: group.startBoundary ?? firstEntry.createdAt,
       hiddenEntryIds,
+      failures,
       // Concise reads "31m · 88 commands · 94 thread updates"; the sentence is its tooltip.
       ...(foldedTools.length > 0
         ? {
@@ -1295,6 +1523,63 @@ function attachTrailingToolGroupsToAssistant(
   return result;
 }
 
+interface TurnActivity {
+  readonly entries: WorkLogEntry[];
+  readonly editItems: OrchestrationV2TurnItem[];
+  readonly subagents: TurnSubagentReference[];
+}
+
+function subagentReferenceTitle(item: { readonly title: string | null; readonly prompt: string }) {
+  return (
+    item.title?.trim() ||
+    item.prompt
+      .split("\n")
+      .map((line) => line.trim())
+      .find(Boolean) ||
+    "Subagent"
+  );
+}
+
+/** Per run: its work entries, its edit items and the provider-native subagents it launched. */
+function collectTurnActivity(entries: ReadonlyArray<TimelineEntry>): Map<RunId, TurnActivity> {
+  const byRunId = new Map<RunId, TurnActivity>();
+  const subagentIds = new Set<string>();
+  const activity = (runId: RunId) => {
+    let value = byRunId.get(runId);
+    if (!value) {
+      value = { entries: [], editItems: [], subagents: [] };
+      byRunId.set(runId, value);
+    }
+    return value;
+  };
+  for (const entry of entries) {
+    if (entry.kind === "work") {
+      if (!entry.entry.runId) continue;
+      const turn = activity(entry.entry.runId);
+      turn.entries.push(entry.entry);
+      const item = entry.entry.projectedItem?.item ?? entry.entry.structuredPayload;
+      if (item?.type === "file_change") turn.editItems.push(item);
+      continue;
+    }
+    if (entry.kind !== "event") continue;
+    const { item } = entry.projectedItem;
+    if (item.runId === null) continue;
+    if (item.type === "file_change") activity(item.runId).editItems.push(item);
+    if (
+      item.type === "subagent" &&
+      item.origin === "provider_native" &&
+      !subagentIds.has(item.subagentId)
+    ) {
+      subagentIds.add(item.subagentId);
+      activity(item.runId).subagents.push({
+        title: subagentReferenceTitle(item),
+        childThreadId: item.childThreadId,
+      });
+    }
+  }
+  return byRunId;
+}
+
 // Delegation already has a durable child card. Remove its tool row only after
 // the returned task ID identifies that child; pending calls can share a prompt.
 function withoutSubagentDelegationRows(entries: ReadonlyArray<TimelineEntry>) {
@@ -1308,7 +1593,7 @@ function withoutSubagentDelegationRows(entries: ReadonlyArray<TimelineEntry>) {
     childrenByRun.set(item.runId, children);
   }
   return entries.filter((entry) => {
-    if (entry.kind !== "work" || workEntryDisplayIndicatesToolFailure(entry.entry)) return true;
+    if (entry.kind !== "work" || workEntryShowsFailureSignal(entry.entry)) return true;
     const item = entry.entry.projectedItem?.item ?? entry.entry.structuredPayload;
     if (
       item?.type !== "dynamic_tool" ||
@@ -1394,6 +1679,9 @@ export function deriveMessagesTimelineRows(input: {
       turnDiffSummaryByAssistantMessageId.set(summary.assistantMessageId, summary);
     }
   }
+  // Read before Concise filtering, so the card's attribution and counts see the whole run.
+  let turnActivity: ReadonlyMap<RunId, TurnActivity> | undefined;
+  const turnActivityByRunId = () => (turnActivity ??= collectTurnActivity(unfilteredEntries));
   const revertTurnCountByUserMessageId = input.supportsConversationRollback
     ? deriveRevertTurnCountByUserMessageId({
         timelineEntries: timelineEntries,
@@ -1492,11 +1780,15 @@ export function deriveMessagesTimelineRows(input: {
     latestRunningToolEntry !== undefined ||
     (latestVisibleToolEntry !== undefined &&
       workEntryIndicatesToolSuccess(latestVisibleToolEntry.entry));
+  const latestToolFailureKind =
+    latestVisibleToolEntry === undefined
+      ? null
+      : timelineEntryFailureKind(latestVisibleToolEntry.entry);
   const latestToolFailed =
     latestRunningToolEntry === undefined &&
     latestVisibleToolEntry !== undefined &&
     latestVisibleToolEntry.entry.toolLifecycleStatus !== "declined" &&
-    workEntryDisplayIndicatesToolFailure(latestVisibleToolEntry.entry);
+    (latestToolFailureKind === "failed" || latestToolFailureKind === "possible");
 
   const activeWorkPlacementEntryId = latestVisibleToolEntry?.id;
   const activeWorkRow =
@@ -1593,6 +1885,7 @@ export function deriveMessagesTimelineRows(input: {
           ? {}
           : { activityDetail: turnFold.activityDetail }),
         expanded: isDisclosed(input.expandedRunIds, turnFold.runId, detail),
+        ...turnFold.failures,
       });
     }
 
@@ -1780,7 +2073,8 @@ export function deriveMessagesTimelineRows(input: {
               ...(summaryToolIcon ? { summaryToolIcon } : {}),
               hasFailure:
                 latestToolEntry !== undefined &&
-                workEntryDisplayIndicatesToolFailure(latestToolEntry),
+                timelineEntryFailureKind(latestToolEntry) === "failed",
+              ...toolFailureCounts(visibleGroupedEntries),
             });
           }
           if (expanded) {
@@ -1864,6 +2158,14 @@ export function deriveMessagesTimelineRows(input: {
     if (timelineEntry.message.role === "user") {
       reportRequested = asksForReport(timelineEntry.message.text);
     }
+    const assistantTurnDiffSummary =
+      timelineEntry.message.role === "assistant"
+        ? turnDiffSummaryByAssistantMessageId.get(timelineEntry.message.id)
+        : undefined;
+    const turnActivity =
+      assistantTurnDiffSummary === undefined
+        ? undefined
+        : turnActivityByRunId().get(assistantTurnDiffSummary.runId);
     nextRows.push({
       kind: "message",
       id: timelineEntry.id,
@@ -1876,10 +2178,14 @@ export function deriveMessagesTimelineRows(input: {
       showAssistantMeta,
       showAssistantCopyButton: showAssistantMeta,
       assistantCopyStreaming: timelineEntry.message.streaming || assistantResponseStillInProgress,
-      assistantTurnDiffSummary:
-        timelineEntry.message.role === "assistant"
-          ? turnDiffSummaryByAssistantMessageId.get(timelineEntry.message.id)
-          : undefined,
+      assistantTurnDiffSummary,
+      ...(assistantTurnDiffSummary === undefined
+        ? {}
+        : {
+            turnEditItems: turnActivity?.editItems ?? [],
+            turnSubagents: turnActivity?.subagents ?? [],
+            turnFailedCount: toolFailureCounts(turnActivity?.entries ?? []).failedCount,
+          }),
       revertTurnCount:
         timelineEntry.message.role === "user"
           ? revertTurnCountByUserMessageId.get(timelineEntry.message.id)
@@ -2177,7 +2483,7 @@ function foldToolActivity(
       toolCount: tools.length,
       noteCount: notes.length,
       noteMessageIds: notes.map((row) => row.message.id),
-      failedCount: tools.filter(workEntryDisplayIndicatesToolFailure).length,
+      ...toolFailureCounts(tools),
       categories: toolActivityCategories(tools),
     });
     if (expanded) {
@@ -2381,6 +2687,28 @@ export function computeStableMessagesTimelineRows(
   return anyChanged ? { byId: next, result } : previous;
 }
 
+function sameToolFailureCounts(a: ToolFailureCounts, b: ToolFailureCounts): boolean {
+  return (
+    a.failedCount === b.failedCount &&
+    a.possibleFailureCount === b.possibleFailureCount &&
+    a.declinedCount === b.declinedCount
+  );
+}
+
+function sameSubagentReference(a: TurnSubagentReference, b: TurnSubagentReference): boolean {
+  return a.title === b.title && a.childThreadId === b.childThreadId;
+}
+
+function sameElements<T>(
+  a: ReadonlyArray<T> | undefined,
+  b: ReadonlyArray<T> | undefined,
+  same: (left: T, right: T) => boolean = Object.is,
+): boolean {
+  if (a === b) return true;
+  if (a === undefined || b === undefined || a.length !== b.length) return false;
+  return a.every((value, index) => same(value, b[index]!));
+}
+
 /** Shallow field comparison per row variant — avoids deep equality cost. */
 function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean {
   if (a.kind !== b.kind || a.id !== b.id) return false;
@@ -2419,7 +2747,8 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
         a.label === bf.label &&
         a.activitySummary === bf.activitySummary &&
         a.activityDetail === bf.activityDetail &&
-        a.expanded === bf.expanded
+        a.expanded === bf.expanded &&
+        sameToolFailureCounts(a, bf)
       );
     }
 
@@ -2431,7 +2760,7 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
         a.toolCount === bt.toolCount &&
         a.noteCount === bt.noteCount &&
         a.noteMessageIds.join() === bt.noteMessageIds.join() &&
-        a.failedCount === bt.failedCount &&
+        sameToolFailureCounts(a, bt) &&
         a.categories.length === bt.categories.length &&
         a.categories.every(
           (category, index) =>
@@ -2508,7 +2837,8 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
         a.summaryKind === bw.summaryKind &&
         a.toolSurface === bw.toolSurface &&
         Equal.equals(a.toolIcon, bw.toolIcon) &&
-        a.hasFailure === bw.hasFailure
+        a.hasFailure === bw.hasFailure &&
+        sameToolFailureCounts(a, bw)
       );
     }
 
@@ -2522,6 +2852,9 @@ function isRowUnchanged(a: MessagesTimelineRow, b: MessagesTimelineRow): boolean
         a.showAssistantCopyButton === bm.showAssistantCopyButton &&
         a.assistantCopyStreaming === bm.assistantCopyStreaming &&
         a.assistantTurnDiffSummary === bm.assistantTurnDiffSummary &&
+        sameElements(a.turnEditItems, bm.turnEditItems) &&
+        sameElements(a.turnSubagents, bm.turnSubagents, sameSubagentReference) &&
+        a.turnFailedCount === bm.turnFailedCount &&
         a.revertTurnCount === bm.revertTurnCount
       );
     }

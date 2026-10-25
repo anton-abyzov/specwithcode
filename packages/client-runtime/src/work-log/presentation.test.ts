@@ -1,12 +1,31 @@
 import { describe, expect, it } from "vite-plus/test";
 
-import { ThreadId, TurnItemId, type OrchestrationV2TurnItem } from "@specweave-studio/contracts";
+import {
+  CheckpointRef,
+  NodeId,
+  ProviderDriverKind,
+  ProviderInstanceId,
+  RunId,
+  ThreadId,
+  TurnItemId,
+  type OrchestrationV2Subagent,
+  type OrchestrationV2TurnItem,
+} from "@specweave-studio/contracts";
 import * as DateTime from "effect/DateTime";
 import { STUDIO_MCP_TOOL_NAMES } from "@specweave-studio/shared/studioMcpToolPresentation";
 
+import type { ThreadCheckpointSummary } from "../state/threadCheckpoints.ts";
 import {
   commandDetailRepeatsCommand,
   extractCommandOutputText,
+  fileChangeItemPaths,
+  filesChangedOutsideEditItems,
+  matchDiffPath,
+  repoRelativePath,
+  subagentDiffTarget,
+  turnDiffState,
+  turnDiffStateMessage,
+  workEntryFailureKind,
   resolveViewedImageAsset,
   resolveWorkEntryToolPresentation,
   summarizeToolGroup,
@@ -217,6 +236,9 @@ describe("summarizeToolGroup", () => {
     expect(summarizeToolGroup([thought, command, { ...thought, id: "thought-2" }])).toEqual({
       summary: "Ran 1 command",
       hasFailure: false,
+      failedCount: 0,
+      possibleFailureCount: 0,
+      declinedCount: 0,
     });
     expect(toolGroupSummaryKind([thought, command])).toBe("command");
     expect(summarizeToolGroup([thought]).summary).toBe("Thought");
@@ -337,7 +359,7 @@ describe("resolveWorkEntryToolPresentation", () => {
       },
     };
     const list = { ...entry, toolData: { server: "studio-code", tool: "studio_project_list" } };
-    expect(summarizeToolGroup([list, entry])).toEqual({
+    expect(summarizeToolGroup([list, entry])).toMatchObject({
       summary: "Listed projects 1 time and cloned 1 repository",
       hasFailure: false,
     });
@@ -345,9 +367,10 @@ describe("resolveWorkEntryToolPresentation", () => {
       ...entry,
       toolData: { toolName: "Studio-code.studio_project_clone", rawOutput: { isError: true } },
     };
-    expect(summarizeToolGroup([entry, failed])).toEqual({
+    expect(summarizeToolGroup([entry, failed])).toMatchObject({
       summary: "Cloned 1 repository",
       hasFailure: true,
+      failedCount: 1,
     });
   });
 
@@ -740,6 +763,24 @@ describe("workEntryViewedImagePath", () => {
 });
 
 describe("toolGroupAction", () => {
+  it("groups Codex commands by their typed actions, never by shell text", () => {
+    const command = (id: string, commandActions: ReadonlyArray<{ type: string }>) =>
+      toolGroupAction({
+        id,
+        createdAt: "2026-09-01T00:00:00Z",
+        label: "Ran command",
+        tone: "tool",
+        itemType: "command_execution",
+        command: "rg TODO apps/web",
+        toolData: { type: "command_execution", input: "rg TODO apps/web", commandActions },
+      });
+    expect(command("search", [{ type: "search" }])).toBe("code-search");
+    expect(command("list", [{ type: "listFiles" }])).toBe("code-search");
+    expect(command("read", [{ type: "read" }])).toBe("read");
+    expect(command("mixed", [{ type: "search" }, { type: "unknown" }])).toBe("command");
+    expect(command("none", [])).toBe("command");
+  });
+
   it("groups legacy Claude image reads with other reads", () => {
     expect(
       toolGroupAction({
@@ -1017,5 +1058,472 @@ describe("workEntryComputerUsePermission", () => {
       undefined,
     );
     expect(workEntryComputerUsePermission({})).toBe(undefined);
+  });
+});
+
+function fileChangeItem(
+  fields: Partial<Extract<OrchestrationV2TurnItem, { type: "file_change" }>> = {},
+): Extract<OrchestrationV2TurnItem, { type: "file_change" }> {
+  return {
+    id: TurnItemId.make("edit"),
+    threadId: ThreadId.make("thread"),
+    runId: RunId.make("run-1"),
+    nodeId: null,
+    providerThreadId: null,
+    providerTurnId: null,
+    nativeItemRef: null,
+    parentItemId: null,
+    ordinal: 1,
+    status: "completed",
+    title: null,
+    startedAt: null,
+    completedAt: null,
+    updatedAt: DateTime.makeUnsafe("2026-10-24T00:00:00.000Z"),
+    type: "file_change",
+    fileName: "/repo/apps/web/src/App.tsx",
+    ...fields,
+  };
+}
+
+describe("repoRelativePath and matchDiffPath", () => {
+  // The thread runs in a subfolder; checkpoint patch paths are relative to the repository.
+  const roots = { repoRoot: "/repo", workspaceRoot: "/repo/apps/web" };
+
+  it("relativizes against the stamped repository root, not the thread's subfolder", () => {
+    expect(repoRelativePath("/repo/apps/web/src/App.tsx", roots)).toBe("apps/web/src/App.tsx");
+    expect(repoRelativePath("src/App.tsx", roots)).toBe("apps/web/src/App.tsx");
+    expect(repoRelativePath("./src/../src/App.tsx", roots)).toBe("apps/web/src/App.tsx");
+    expect(repoRelativePath("../shared/index.ts", roots)).toBe("apps/shared/index.ts");
+    expect(repoRelativePath("/repo/README.md", roots)).toBe("README.md");
+    expect(
+      matchDiffPath("/repo/apps/web/src/App.tsx", ["README.md", "apps/web/src/App.tsx"], roots),
+    ).toEqual({ path: "apps/web/src/App.tsx", matchedBy: "exact" });
+  });
+
+  it("returns null for a path outside the root", () => {
+    expect(repoRelativePath("/elsewhere/src/App.tsx", roots)).toBeNull();
+    expect(repoRelativePath("/repo-other/src/App.tsx", roots)).toBeNull();
+    expect(repoRelativePath("/repo", roots)).toBeNull();
+    expect(repoRelativePath("../../../outside.ts", roots)).toBeNull();
+    expect(repoRelativePath("/repo/src/App.tsx", {})).toBeNull();
+    expect(matchDiffPath("/elsewhere/src/App.tsx", ["src/App.tsx"], roots)).toBeNull();
+  });
+
+  it("never reveals a namesake when the stamped path is not in the patch", () => {
+    expect(
+      matchDiffPath("/repo/apps/web/package.json", ["packages/core/package.json"], roots),
+    ).toBeNull();
+  });
+
+  it("falls back to a unique suffix for old checkpoints and labels it", () => {
+    const old = { workspaceRoot: "/repo/apps/web" };
+    expect(repoRelativePath("/repo/apps/web/src/App.tsx", old)).toBe("src/App.tsx");
+    expect(
+      matchDiffPath("/repo/apps/web/src/App.tsx", ["README.md", "apps/web/src/App.tsx"], old),
+    ).toEqual({ path: "apps/web/src/App.tsx", matchedBy: "file_name" });
+    expect(matchDiffPath("src/App.tsx", ["apps/web/src/App.tsx"], { repoRoot: "/repo" })).toEqual({
+      path: "apps/web/src/App.tsx",
+      matchedBy: "file_name",
+    });
+  });
+
+  it("returns null for an ambiguous suffix instead of picking one", () => {
+    const old = { workspaceRoot: "/repo/apps/web" };
+    expect(
+      matchDiffPath(
+        "/repo/apps/web/package.json",
+        ["apps/web/package.json", "packages/core/package.json"],
+        old,
+      ),
+    ).toBeNull();
+    expect(
+      matchDiffPath("index.ts", ["src/index.ts", "src/lib/index.ts"], { repoRoot: "/repo" }),
+    ).toBeNull();
+  });
+
+  it("compares Windows paths without case and keeps the candidate's spelling", () => {
+    const windows = { repoRoot: "C:\\Work\\Repo", workspaceRoot: "C:\\Work\\Repo\\apps\\web" };
+    expect(repoRelativePath("c:/work/repo/apps/web/src/App.tsx", windows)).toBe(
+      "apps/web/src/App.tsx",
+    );
+    expect(repoRelativePath("src\\App.tsx", windows)).toBe("apps/web/src/App.tsx");
+    expect(repoRelativePath("D:\\Work\\Repo\\src\\App.tsx", windows)).toBeNull();
+    expect(
+      matchDiffPath("C:\\WORK\\REPO\\Apps\\Web\\src\\app.tsx", ["apps/web/src/App.tsx"], windows),
+    ).toEqual({ path: "apps/web/src/App.tsx", matchedBy: "exact" });
+    // POSIX paths keep their case.
+    expect(matchDiffPath("/repo/apps/web/src/app.tsx", ["apps/web/src/App.tsx"], roots)).toBeNull();
+  });
+});
+
+describe("filesChangedOutsideEditItems", () => {
+  const roots = { repoRoot: "/repo", workspaceRoot: "/repo" };
+
+  it("names every path an edit item carries", () => {
+    expect(
+      fileChangeItemPaths(
+        fileChangeItem({
+          fileName: "/repo/a.ts",
+          changes: [
+            { operation: "update", path: "/repo/a.ts" },
+            { operation: "move", path: "/repo/c.ts", oldPath: "/repo/b.ts" },
+          ],
+        }),
+      ),
+    ).toEqual(["/repo/a.ts", "/repo/c.ts", "/repo/b.ts"]);
+    expect(fileChangeItemPaths(commandItem())).toEqual([]);
+  });
+
+  it("lists a concurrent writer's file in a read-only turn as not reported", () => {
+    // The turn only ran a command; another agent in the same checkout wrote the file.
+    expect(
+      filesChangedOutsideEditItems({
+        files: ["src/written-by-another-agent.ts"],
+        editItems: [commandItem({ input: "cat README.md" })],
+        roots,
+      }),
+    ).toEqual({
+      notReported: ["src/written-by-another-agent.ts"],
+      bySubagent: [],
+      unloadedSubagentTitles: [],
+    });
+  });
+
+  it("subtracts only successful edits", () => {
+    const result = filesChangedOutsideEditItems({
+      files: ["edited.ts", "failed.ts", "declined.ts", "cancelled.ts", "shell.ts"],
+      editItems: [
+        fileChangeItem({ fileName: "/repo/edited.ts" }),
+        fileChangeItem({ fileName: "/repo/failed.ts", status: "failed" }),
+        fileChangeItem({ fileName: "/repo/declined.ts", status: "cancelled", declined: true }),
+        fileChangeItem({ fileName: "/repo/cancelled.ts", status: "cancelled" }),
+      ],
+      roots,
+    });
+    expect(result.notReported).toEqual(["failed.ts", "declined.ts", "cancelled.ts", "shell.ts"]);
+  });
+
+  it("matches edits in a subfolder thread against repository-relative files", () => {
+    expect(
+      filesChangedOutsideEditItems({
+        files: ["apps/web/src/App.tsx", "apps/web/package.json"],
+        editItems: [fileChangeItem({ fileName: "src/App.tsx" })],
+        roots: { repoRoot: "/repo", workspaceRoot: "/repo/apps/web" },
+      }).notReported,
+    ).toEqual(["apps/web/package.json"]);
+  });
+
+  it("lists a loaded subagent's files under it and names unloaded subagents", () => {
+    const result = filesChangedOutsideEditItems({
+      files: ["main.ts", "helper.ts", "unloaded.ts"],
+      editItems: [fileChangeItem({ fileName: "/repo/main.ts" })],
+      subagents: [
+        {
+          title: "Refactor helper",
+          loaded: true,
+          editItems: [fileChangeItem({ fileName: "/repo/helper.ts" })],
+        },
+        {
+          title: "Failed helper",
+          loaded: true,
+          editItems: [fileChangeItem({ fileName: "/repo/unloaded.ts", status: "failed" })],
+        },
+        { title: "Docs pass", loaded: false, editItems: [] },
+      ],
+      roots,
+    });
+    expect(result).toEqual({
+      notReported: ["unloaded.ts"],
+      bySubagent: [{ title: "Refactor helper", files: ["helper.ts"] }],
+      unloadedSubagentTitles: ["Docs pass"],
+    });
+  });
+});
+
+describe("tool group failure counts", () => {
+  const entry = (
+    id: string,
+    overrides: Partial<WorkLogPresentationEntry>,
+  ): WorkLogPresentationEntry => ({
+    id,
+    createdAt: "2026-10-24T00:00:00Z",
+    label: "Ran command",
+    tone: "tool",
+    itemType: "command_execution",
+    toolLifecycleStatus: "completed",
+    ...overrides,
+  });
+  const command = (
+    id: string,
+    fields: Partial<Extract<OrchestrationV2TurnItem, { type: "command_execution" }>>,
+    overrides: Partial<WorkLogPresentationEntry> = {},
+  ) =>
+    entry(id, {
+      command: "git diff",
+      structuredPayload: commandItem({ input: "git diff", ...fields }),
+      ...overrides,
+    });
+
+  it.each([
+    ["Claude failed status", command("a", { status: "failed" }, { toolLifecycleStatus: "failed" })],
+    [
+      "Claude is_error exit code",
+      command("b", { status: "failed", exitCode: 1 }, { toolLifecycleStatus: "failed" }),
+    ],
+    ["Codex nonzero exit", command("c", { exitCode: 2 })],
+    ["provider error", entry("d", { tone: "error", label: "Provider error" })],
+    [
+      "SpecWithCode tool error",
+      entry("e", {
+        itemType: "dynamic_tool",
+        toolData: { toolName: "Studio-code.studio_project_clone", rawOutput: { isError: true } },
+      }),
+    ],
+  ] as const)("counts %s as failed", (_label, failed) => {
+    expect(workEntryFailureKind(failed)).toBe("failed");
+    expect(summarizeToolGroup([failed])).toMatchObject({
+      hasFailure: true,
+      failedCount: 1,
+      possibleFailureCount: 0,
+      declinedCount: 0,
+    });
+  });
+
+  it.each([
+    // `git diff` with differences exits 1 as a plain Claude result: only the flag is set.
+    [
+      "flagged output without an exit code",
+      command("a", { exitCode: undefined, outputIndicatesFailure: true }),
+    ],
+    [
+      "heuristic detail",
+      entry("b", { label: "Glob", itemType: "file_search", detail: "No files found" }),
+    ],
+    ["heuristic output", command("c", { exitCode: 0, output: "ls: no such file or directory" })],
+  ] as const)("counts %s as a possible failure, never failed", (_label, possible) => {
+    expect(workEntryFailureKind(possible)).toBe("possible");
+    expect(summarizeToolGroup([possible])).toMatchObject({
+      hasFailure: false,
+      failedCount: 0,
+      possibleFailureCount: 1,
+    });
+  });
+
+  it.each([
+    [
+      "Codex declined flag",
+      command(
+        "a",
+        { status: "cancelled", declined: true, exitCode: undefined },
+        { toolLifecycleStatus: "stopped" },
+      ),
+    ],
+    ["declined lifecycle", entry("b", { toolLifecycleStatus: "declined" })],
+  ] as const)("counts %s as declined, not failed", (_label, declined) => {
+    expect(workEntryFailureKind(declined)).toBe("declined");
+    expect(summarizeToolGroup([declined])).toMatchObject({
+      hasFailure: false,
+      failedCount: 0,
+      declinedCount: 1,
+    });
+  });
+
+  it.each([
+    [
+      "Claude interrupted flag",
+      command("a", { status: "interrupted", exitCode: 130 }, { toolLifecycleStatus: "stopped" }),
+    ],
+    [
+      "Codex stop",
+      command(
+        "b",
+        { status: "cancelled", exitCode: undefined },
+        { toolLifecycleStatus: "stopped" },
+      ),
+    ],
+  ] as const)("counts %s nowhere", (_label, stopped) => {
+    expect(workEntryFailureKind(stopped)).toBe("stopped");
+    expect(summarizeToolGroup([stopped])).toMatchObject({
+      hasFailure: false,
+      failedCount: 0,
+      possibleFailureCount: 0,
+      declinedCount: 0,
+    });
+  });
+
+  it("counts every entry, not only the latest or the summarized ones", () => {
+    const source = { key: "browser-use:chrome", name: "Chrome", kind: "integration" as const };
+    const counts = summarizeToolGroup([
+      command("failed", { exitCode: 1 }),
+      command("possible", { exitCode: undefined, outputIndicatesFailure: true }),
+      entry("declined", { toolLifecycleStatus: "declined" }),
+      entry("sourced", {
+        label: "Open page",
+        itemType: "dynamic_tool",
+        toolSource: source,
+        toolLifecycleStatus: "failed",
+      }),
+      command("ok", { exitCode: 0 }),
+    ]);
+    expect(counts).toMatchObject({
+      hasFailure: true,
+      failedCount: 2,
+      possibleFailureCount: 1,
+      declinedCount: 1,
+    });
+    expect(workEntryFailureKind(command("ok", { exitCode: 0 }))).toBeNull();
+  });
+});
+
+describe("subagentDiffTarget", () => {
+  const childThreadId = ThreadId.make("child");
+  const parentThreadId = ThreadId.make("parent");
+  const subagent = (fields: Partial<OrchestrationV2Subagent> = {}): OrchestrationV2Subagent => ({
+    id: NodeId.make("subagent"),
+    threadId: parentThreadId,
+    runId: RunId.make("launching-run"),
+    parentNodeId: NodeId.make("root"),
+    origin: "provider_native",
+    createdBy: "agent",
+    driver: ProviderDriverKind.make("claudeAgent"),
+    providerInstanceId: ProviderInstanceId.make("claude"),
+    providerThreadId: null,
+    childThreadId,
+    nativeTaskRef: null,
+    prompt: "Rename the helper\nand update callers",
+    title: "Rename helper",
+    model: null,
+    status: "completed",
+    result: null,
+    startedAt: null,
+    completedAt: null,
+    updatedAt: DateTime.makeUnsafe("2026-10-24T00:00:00.000Z"),
+    ...fields,
+  });
+
+  it("routes a provider-native subagent's edits to the parent's launching run", () => {
+    expect(
+      subagentDiffTarget({
+        childThreadId,
+        parentThreadId,
+        parentSubagents: [subagent({ childThreadId: ThreadId.make("other") }), subagent()],
+      }),
+    ).toEqual({
+      parentThreadId,
+      runId: RunId.make("launching-run"),
+      title: "Rename helper",
+      origin: "provider_native",
+      running: false,
+    });
+    expect(
+      subagentDiffTarget({
+        childThreadId,
+        parentThreadId,
+        parentSubagents: [subagent({ title: null, status: "running" })],
+      }),
+    ).toMatchObject({ title: "Rename the helper", running: true });
+  });
+
+  it("reports app-owned delegates so their rows keep their own thread's diff", () => {
+    expect(
+      subagentDiffTarget({
+        childThreadId,
+        parentThreadId,
+        parentSubagents: [subagent({ origin: "app_owned" })],
+      })?.origin,
+    ).toBe("app_owned");
+  });
+
+  it("has no run until the parent projection loads, and no target without a parent", () => {
+    expect(subagentDiffTarget({ childThreadId, parentThreadId, parentSubagents: null })).toEqual({
+      parentThreadId,
+      runId: null,
+      title: "Subagent",
+      origin: "provider_native",
+      running: false,
+    });
+    expect(
+      subagentDiffTarget({ childThreadId, parentThreadId: null, parentSubagents: [subagent()] }),
+    ).toBeNull();
+    expect(subagentDiffTarget({ childThreadId, parentThreadId, parentSubagents: [] })).toBeNull();
+  });
+});
+
+describe("turnDiffState", () => {
+  const runId = RunId.make("run-2");
+  const checkpoint = (fields: Partial<ThreadCheckpointSummary> = {}): ThreadCheckpointSummary => ({
+    runId,
+    checkpointTurnCount: 2,
+    checkpointRef: CheckpointRef.make("refs/studio/checkpoints/2"),
+    status: "ready",
+    files: [],
+    assistantMessageId: null,
+    completedAt: "2026-10-24T00:00:00.000Z",
+    ...fields,
+  });
+  const state = (status: string, checkpoints: ReadonlyArray<ThreadCheckpointSummary>) =>
+    turnDiffState({ runId, runs: [{ id: runId, status }], checkpoints });
+
+  it.each(["completed", "interrupted", "cancelled"])(
+    "opens the ready diff of a %s run",
+    (status) => {
+      const available = state(status, [
+        checkpoint({ runId: RunId.make("run-1"), checkpointTurnCount: 1 }),
+        checkpoint(),
+      ]);
+      expect(available).toEqual({ kind: "available", turnCount: 2, fromBaseline: false });
+      expect(turnDiffStateMessage(available)).toBeNull();
+    },
+  );
+
+  it.each([
+    ["running", [checkpoint()], "running", "Diff available when the turn ends"],
+    ["starting", [], "running", "Diff available when the turn ends"],
+    [
+      "completed",
+      [checkpoint({ status: "error" })],
+      "snapshot_error",
+      "No diff: this turn's snapshot failed",
+    ],
+    [
+      "completed",
+      [checkpoint({ status: "missing" })],
+      "snapshot_missing",
+      "No diff: this turn's snapshot is missing",
+    ],
+    [
+      "completed",
+      [checkpoint({ status: "stale" })],
+      "snapshot_stale",
+      "No diff: this turn's snapshot is out of date",
+    ],
+    [
+      "completed",
+      [checkpoint({ status: "missing", notGitRepository: true })],
+      "not_git",
+      "No diff: this folder is not a Git repository",
+    ],
+    [
+      "failed",
+      [checkpoint({ runId: RunId.make("run-1") })],
+      "failed_no_snapshot",
+      "No diff: this turn ended with an error before a snapshot was taken",
+    ],
+    [
+      "completed",
+      [checkpoint({ runId: RunId.make("run-1") })],
+      "unknown",
+      "No diff recorded for this turn",
+    ],
+  ] as const)("a %s run with %j is %s", (status, checkpoints, kind, message) => {
+    const result = state(status, checkpoints);
+    expect(result.kind).toBe(kind);
+    expect(turnDiffStateMessage(result)).toBe(message);
+  });
+
+  it("never shows another run's diff for an unknown run", () => {
+    expect(turnDiffState({ runId, runs: [], checkpoints: [checkpoint()] })).toEqual({
+      kind: "unknown",
+    });
   });
 });

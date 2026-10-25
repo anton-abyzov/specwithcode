@@ -24,8 +24,12 @@ import {
   TurnItemId,
 } from "./index.ts";
 import {
+  fileChangeDiffNote,
   latestProviderTurnForAttempt,
   OrchestrationV2Checkpoint,
+  OrchestrationV2CheckpointJson,
+  OrchestrationV2GetTurnItemInput,
+  OrchestrationV2GetTurnItemResult,
   OrchestrationV2CheckpointScope,
   OrchestrationV2Command,
   OrchestrationV2LimitRecoveryUpdate,
@@ -1525,5 +1529,215 @@ describe("runInterruptResultDetail", () => {
       "Stopped by the user",
     );
     expect(runInterruptResultDetail({ message: "" })).toBeNull();
+  });
+});
+
+describe("activity detail fields (1011)", () => {
+  const base = {
+    threadId: "thread-1",
+    runId: null,
+    nodeId: null,
+    providerThreadId: null,
+    providerTurnId: null,
+    nativeItemRef: null,
+    parentItemId: null,
+    ordinal: 1,
+    status: "completed",
+    title: null,
+    startedAt: null,
+    completedAt: null,
+  };
+  const both = (item: Record<string, unknown>) => ({
+    runtime: decodeOrchestrationV2TurnItem({ ...base, ...item, updatedAt: now }),
+    json: decodeOrchestrationV2TurnItemJson({
+      ...base,
+      ...item,
+      updatedAt: DateTime.formatIso(now),
+    }),
+  });
+
+  it("carries per-change counts, diff notes and the omitted and declined flags on edits", () => {
+    const fields = {
+      id: "edit-1",
+      type: "file_change",
+      fileName: "/repo/src/a.ts",
+      diffOmitted: true,
+      declined: true,
+      diffNote: "input_snippet",
+      changes: [
+        {
+          operation: "update",
+          path: "/repo/src/a.ts",
+          diffStr: "@@ -1 +1 @@\n-a\n+b\n",
+          additions: 1,
+          deletions: 1,
+          diffNote: "line_numbers_synthesized",
+        },
+      ],
+    };
+    const { runtime, json } = both(fields);
+    for (const item of [runtime, json]) {
+      expect(item).toMatchObject(fields);
+    }
+    expect(encodeOrchestrationV2TurnItemJson(json)).toMatchObject(fields);
+  });
+
+  it("keeps a diff note from a newer server as a string an older reader can ignore", () => {
+    const { runtime } = both({
+      id: "edit-2",
+      type: "file_change",
+      fileName: "a.ts",
+      diffNote: "a_reason_from_the_future",
+    });
+    expect(runtime.type === "file_change" ? runtime.diffNote : null).toBe(
+      "a_reason_from_the_future",
+    );
+    expect(fileChangeDiffNote("a_reason_from_the_future")).toBeUndefined();
+    expect(fileChangeDiffNote(undefined)).toBeUndefined();
+    expect(fileChangeDiffNote("git_patch")).toBe("git_patch");
+  });
+
+  it("carries command actions, the declined flag and the ingestion tail on commands", () => {
+    const fields = {
+      id: "command-2",
+      type: "command_execution",
+      input: "cat README.md && rg foo",
+      outputKeptTailChars: 8000,
+      declined: true,
+      commandActions: [
+        { type: "read", command: "cat README.md", name: "README.md", path: "README.md" },
+        { type: "search", command: "rg foo", query: "foo" },
+        { type: "listFiles", command: "ls" },
+        { type: "unknown", command: "make" },
+        { type: "a_kind_from_the_future", command: "x" },
+      ],
+    };
+    const { runtime, json } = both(fields);
+    expect(runtime).toMatchObject(fields);
+    expect(json).toMatchObject(fields);
+  });
+
+  it("carries the ingestion tail on dynamic tools", () => {
+    const { runtime, json } = both({
+      id: "tool-1",
+      type: "dynamic_tool",
+      toolName: "read",
+      input: {},
+      outputKeptTailChars: 8000,
+    });
+    expect(runtime).toMatchObject({ outputKeptTailChars: 8000 });
+    expect(json).toMatchObject({ outputKeptTailChars: 8000 });
+  });
+
+  it("decodes items without the new fields exactly as before", () => {
+    const { runtime } = both({ id: "edit-3", type: "file_change", fileName: "a.ts" });
+    expect(runtime).not.toHaveProperty("diffOmitted");
+    expect(runtime).not.toHaveProperty("declined");
+    expect(runtime).not.toHaveProperty("diffNote");
+  });
+
+  it("keeps an edited path's edge spaces through decode and encode, and refuses a blank path", () => {
+    const path = "/repo/notes.txt ";
+    const oldPath = " /repo/old notes.txt";
+    const fields = {
+      id: "edit-4",
+      type: "file_change",
+      fileName: path,
+      changes: [{ operation: "move", path, oldPath }],
+    };
+    const { runtime, json } = both(fields);
+    for (const item of [
+      runtime,
+      json,
+      Schema.decodeUnknownSync(OrchestrationV2TurnItem)(
+        Schema.encodeSync(OrchestrationV2TurnItem)(runtime),
+      ),
+      Schema.decodeUnknownSync(OrchestrationV2TurnItemJson)(
+        Schema.encodeSync(OrchestrationV2TurnItemJson)(json),
+      ),
+    ]) {
+      expect(item).toMatchObject({ fileName: path, changes: [{ path, oldPath }] });
+    }
+    expect(() => both({ ...fields, fileName: "  " })).toThrow();
+    expect(() => both({ ...fields, changes: [{ operation: "update", path: "  " }] })).toThrow();
+  });
+
+  const checkpoint = {
+    id: "checkpoint-1",
+    threadId: "thread-1",
+    scopeId: "scope-1",
+    runId: "run-1",
+    nodeId: "node-1",
+    parentCheckpointId: null,
+    ordinalWithinScope: 1,
+    appRunOrdinal: 1,
+    ref: "refs/specweave-studio/checkpoints/1",
+    status: "ready",
+    files: [],
+  };
+
+  it("stamps a checkpoint with its folder, repository, branch, HEAD and machine", () => {
+    const stamp = {
+      cwd: "/repo/packages/app",
+      repoRoot: "/repo",
+      branch: "feat/x",
+      headOid: "0123456789abcdef0123456789abcdef01234567",
+      capturedOnEnvironmentId: "env-m4",
+      notGitRepository: false,
+    };
+    const runtime = decodeOrchestrationV2Checkpoint({ ...checkpoint, ...stamp, capturedAt: now });
+    const json = Schema.decodeUnknownSync(OrchestrationV2CheckpointJson)({
+      ...checkpoint,
+      ...stamp,
+      capturedAt: DateTime.formatIso(now),
+    });
+    expect(runtime).toMatchObject(stamp);
+    expect(json).toMatchObject(stamp);
+    expect(
+      decodeOrchestrationV2Checkpoint({ ...checkpoint, branch: null, capturedAt: now }).branch,
+    ).toBeNull();
+    const old = decodeOrchestrationV2Checkpoint({ ...checkpoint, capturedAt: now });
+    for (const key of Object.keys(stamp)) expect(old).not.toHaveProperty(key);
+  });
+
+  it("reads one page of a field and reports where the page sits in the whole text", () => {
+    const input = Schema.decodeUnknownSync(OrchestrationV2GetTurnItemInput)({
+      threadId: "thread-1",
+      itemId: "edit-1",
+      field: "body",
+      changeIndex: 2,
+      before: 1024,
+      anchor: "end",
+      limit: 4096,
+    });
+    expect(input).toMatchObject({ field: "body", changeIndex: 2, before: 1024, limit: 4096 });
+    expect(() =>
+      Schema.decodeUnknownSync(OrchestrationV2GetTurnItemInput)({
+        threadId: "thread-1",
+        itemId: "edit-1",
+        field: "everything",
+      }),
+    ).toThrow();
+    const decodeResult = Schema.decodeUnknownSync(
+      Schema.toCodecJson(OrchestrationV2GetTurnItemResult),
+    );
+    const page = {
+      field: "output",
+      offset: 10,
+      end: 20,
+      totalLength: 30,
+      nextOffset: 20,
+      revision: "2026-04-20T00:00:00.000Z",
+      text: "0123456789",
+    };
+    const result = decodeResult({
+      item: null,
+      page,
+      truncated: [{ ...page, text: undefined, structured: true, nextOffset: null }],
+    });
+    expect(result.page).toEqual(page);
+    expect(result.truncated?.[0]).toMatchObject({ structured: true, nextOffset: null });
+    // An older server answers with the item alone.
+    expect(decodeResult({ item: null })).toEqual({ item: null });
   });
 });

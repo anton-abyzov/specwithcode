@@ -30,6 +30,8 @@ import {
   WS_METHODS,
 } from "@specweave-studio/contracts";
 import { connectionAtomRuntime } from "../connection/runtime";
+import { isProjectFolder } from "./projectMachineFolders";
+import { isOrdinaryProjectChoice, type ScratchRootLookup } from "./projectListVisibility";
 
 export const projectLink = {
   fingerprint: createEnvironmentRpcCommand(connectionAtomRuntime, {
@@ -259,6 +261,35 @@ export function rankCandidates(candidates: ReadonlyArray<LinkCandidate>): LinkCa
       a.project.title.localeCompare(b.project.title) ||
       a.project.environmentId.localeCompare(b.project.environmentId),
   );
+}
+
+/**
+ * The copies on other machines the link dialog offers: the person's own code projects,
+ * never a machine's "No project" folder, an archived or an automated project. A copy
+ * already in this project is listed in Machines, not offered again. The named copy
+ * (a half-linked copy being finished, or one just added) is always offered.
+ */
+export function linkCandidates<P extends EnvironmentProject>(
+  projects: ReadonlyArray<P>,
+  project: Pick<EnvironmentProject, "environmentId" | "workspaceSettings">,
+  scratchRootFor: ScratchRootLookup,
+  initialCandidate: { readonly environmentId: EnvironmentId; readonly projectId: ProjectId } | null,
+): P[] {
+  const ownIdentity = project.workspaceSettings?.logicalProject?.id;
+  return projects.filter((item) => {
+    if (item.environmentId === project.environmentId) return false;
+    if (!isProjectFolder(item.workspaceRoot, item.id)) return false;
+    if ((item.workspaceSettings?.kind ?? "code") !== "code") return false;
+    const named =
+      initialCandidate !== null &&
+      item.environmentId === initialCandidate.environmentId &&
+      item.id === initialCandidate.projectId;
+    if (named) return true;
+    return (
+      isOrdinaryProjectChoice(item, scratchRootFor, "code") &&
+      (ownIdentity === undefined || item.workspaceSettings?.logicalProject?.id !== ownIdentity)
+    );
+  });
 }
 
 /** The copy that keeps its coordinator by default: the one used most recently. */

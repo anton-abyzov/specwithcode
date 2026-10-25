@@ -1,9 +1,16 @@
-import { EnvironmentId, type ProviderInstanceId } from "@specweave-studio/contracts";
+import {
+  EnvironmentId,
+  type Project,
+  type ProjectId,
+  type ProviderInstanceId,
+} from "@specweave-studio/contracts";
 import {
   type StudioWorkGrant,
   type StudioWorkGrantsSnapshot,
   workGrantHopLimit,
 } from "@specweave-studio/contracts/studioFleet";
+import { isPersonalAssistantProject } from "@specweave-studio/shared/personalAssistant";
+import { isAutomatedProject } from "@specweave-studio/shared/projectOrigin";
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -16,6 +23,69 @@ import * as ProviderRegistry from "../provider/ProviderRegistry.ts";
 import { coordinatorOfPrincipal } from "./workGrantPolicy.ts";
 import * as WorkGrants from "./WorkGrants.ts";
 
+type WorkGrantProjectChoice = StudioWorkGrantsSnapshot["projects"][number];
+
+/**
+ * The projects "Chosen projects" offers: the person's own, live ones. The
+ * machine's "No project" folder, archived projects and projects a check made
+ * for itself are left out, except one a grant still covers: one a "listed"
+ * grant names, or one linked to a coordinator whose grant is "linked". Those
+ * stay, marked with why they are not offered, so access is never understated.
+ * The personal assistant is never listed: no grant can cover it.
+ */
+export const workGrantProjectChoices = (input: {
+  readonly projects: ReadonlyArray<Project>;
+  readonly ownEnvironmentId: EnvironmentId;
+  readonly scratchProjectIds: ReadonlySet<ProjectId>;
+  readonly chosenProjectIds: ReadonlySet<ProjectId>;
+  /** Coordinators whose grant covers every project linked to them. */
+  readonly linkedCoordinators?: ReadonlySet<string>;
+}): Array<WorkGrantProjectChoice> =>
+  input.projects.flatMap((project) => {
+    if (project.deletedAt !== null || isPersonalAssistantProject(project)) return [];
+    const unavailable = input.scratchProjectIds.has(project.id)
+      ? "scratch"
+      : project.workspaceSettings?.archived === true
+        ? "archived"
+        : isAutomatedProject(project)
+          ? "automated"
+          : undefined;
+    const linkedTo = [
+      ...new Set(
+        (project.workspaceSettings?.logicalProject?.members ?? [])
+          .map((member) => member.environmentId)
+          .filter((environmentId) => environmentId !== input.ownEnvironmentId),
+      ),
+    ];
+    const covered =
+      input.chosenProjectIds.has(project.id) ||
+      linkedTo.some((environmentId) => input.linkedCoordinators?.has(environmentId) === true);
+    if (unavailable !== undefined && !covered) return [];
+    return [
+      {
+        id: project.id,
+        title: project.workspaceSettings?.logicalProject?.title ?? project.title,
+        linkedTo,
+        ...(unavailable === undefined ? {} : { unavailable }),
+      },
+    ];
+  });
+
+/**
+ * The machine's projects for the grants snapshot. A failed read still answers, so the
+ * grants stay visible and revocable, and says so with `projectsUnreadable`.
+ */
+export const readGrantProjects = <E, R>(
+  snapshot: Effect.Effect<{ readonly projects: ReadonlyArray<Project> }, E, R>,
+) =>
+  snapshot.pipe(
+    Effect.map((value) => ({ projects: value.projects, flag: {} })),
+    Effect.orElseSucceed(() => ({
+      projects: [] as ReadonlyArray<Project>,
+      flag: { projectsUnreadable: true as const },
+    })),
+  );
+
 /**
  * "Who can run work on this Mac": every coordinator machine with a grant
  * here, what it may use, and the projects and sign-ins the user can choose
@@ -25,6 +95,8 @@ export const workGrantsSnapshot = (input: {
   readonly ownEnvironmentId: EnvironmentId;
   /** Names this machine's fleet list gives coordinators, by environment id. */
   readonly labels: ReadonlyMap<string, string>;
+  /** Whether a project is this machine's Scratch project ("No project"). */
+  readonly isScratch?: (projectId: ProjectId) => Effect.Effect<boolean>;
 }) =>
   Effect.gen(function* () {
     const grants = yield* WorkGrants.WorkGrants;
@@ -78,26 +150,34 @@ export const workGrantsSnapshot = (input: {
       };
     });
     const projects = yield* ProjectService.ProjectService;
-    const snapshot = yield* projects.snapshot.pipe(
-      Effect.map((value) => value.projects),
-      Effect.orElseSucceed(() => []),
-    );
+    const read = yield* readGrantProjects(projects.snapshot);
+    const snapshot = read.projects;
     const providers = yield* (yield* ProviderRegistry.ProviderRegistry).getProviders;
+    const isScratch = input.isScratch;
+    const scratch =
+      isScratch === undefined
+        ? []
+        : yield* Effect.filter(snapshot, (project) => isScratch(project.id));
     return {
       grants: rows.toSorted((left, right) => left.machineLabel.localeCompare(right.machineLabel)),
-      projects: snapshot
-        .filter((project) => project.deletedAt === null)
-        .map((project) => ({
-          id: project.id,
-          title: project.workspaceSettings?.logicalProject?.title ?? project.title,
-          linkedTo: [
-            ...new Set(
-              (project.workspaceSettings?.logicalProject?.members ?? [])
-                .map((member) => member.environmentId)
-                .filter((environmentId) => environmentId !== input.ownEnvironmentId),
-            ),
-          ],
-        })),
+      projects: workGrantProjectChoices({
+        projects: snapshot,
+        ownEnvironmentId: input.ownEnvironmentId,
+        scratchProjectIds: new Set(scratch.map((project) => project.id)),
+        chosenProjectIds: new Set(
+          policies.flatMap((policy) =>
+            !policy.legacy && policy.projects.kind === "listed" ? policy.projects.projectIds : [],
+          ),
+        ),
+        linkedCoordinators: new Set(
+          policies.flatMap((policy) =>
+            !policy.legacy && policy.projects.kind === "linked"
+              ? [policy.coordinatorEnvironmentId]
+              : [],
+          ),
+        ),
+      }),
+      ...read.flag,
       accounts: providers.map((provider) => ({
         instanceId: provider.instanceId as ProviderInstanceId,
         label: provider.displayName ?? provider.instanceId,

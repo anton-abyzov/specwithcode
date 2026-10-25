@@ -6,6 +6,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test"
 
 import { Menu, MenuPopup } from "../../ui/menu";
 import {
+  copyTargetsFor,
   DESIGN_MENU_LABELS,
   designMenuEntries,
   DesignMenuItems,
@@ -182,6 +183,37 @@ function handlers() {
     onOpenProject: vi.fn(),
   };
 }
+
+describe("copyTargetsFor", () => {
+  const offered = [
+    ...PROJECTS,
+    { id: "cobalt-docs", title: "Cobalt docs", unavailable: "Archived" },
+    { id: "nightly-bot", title: "Nightly bot", unavailable: "Automated" },
+    { id: "delta-app", title: "Delta app", unavailable: "Folder missing", missingFolder: "" },
+  ] as never as { id: never; title: string }[];
+  const titles = (owner: unknown) =>
+    copyTargetsFor(summary(owner), offered).map((target) => target.title);
+
+  it("offers every available project but the design's own", () => {
+    expect(titles(project)).toEqual(["Borealis API"]);
+    expect(titles(playground)).toEqual(["Atlas web", "Borealis API"]);
+  });
+
+  it("disables Copy to project… when only unavailable projects remain", () => {
+    const only = [PROJECTS[0], ...offered.slice(2)] as never as typeof offered;
+    const targets = copyTargetsFor(summary(project), only);
+    expect(targets).toEqual([]);
+    const entries = designMenuEntries({
+      surface: "gallery",
+      ownerKind: "project",
+      canWrite: true,
+      copyTargets: targets.length,
+      canOpenProject: true,
+      canConnect: false,
+    });
+    expect(disabled(entries)).toContain(DESIGN_MENU_LABELS["copy-to-project"]);
+  });
+});
 
 describe("DesignMenuItems", () => {
   const renderMenu = (owner: unknown, actions: DesignMenuHandlers) => {

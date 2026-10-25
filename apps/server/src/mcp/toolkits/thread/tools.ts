@@ -32,7 +32,7 @@ import * as McpInvocationContext from "../../McpInvocationContext.ts";
 
 const ThreadOrganizeTool = Tool.make("studio_thread_organize", {
   description:
-    "Pin, snooze, settle, archive, or mark a thread unread. Omit threadId for this thread. snooze requires snoozedUntil. settle accepts an optional one-line note, shown with the resolved thread, such as where the work landed. Existing thread lifecycle rules apply; this does not schedule a future action.",
+    "Pin, snooze, settle, archive, or mark a thread unread. Omit threadId for this thread. snooze requires snoozedUntil. settle accepts an optional one-line note, shown with the resolved thread, such as where the work landed. Resolving your own running thread requires expectedRunId from studio_thread_read, so a delayed call cannot adopt a newer turn. It records intent tied to that exact turn. Automatic application is disabled until the evidence-backed lifecycle policy is integrated; recording intent does not promise resolution. Deliver your final answer normally. New messages, newer runs, pending questions/approvals, child work, user reopens and auto-settle opt-out prevent deferred resolution. Other threads retain the explicit lifecycle guards.",
   parameters: Schema.Struct({
     threadId: Schema.optional(ThreadId),
     action: Schema.Literals([
@@ -48,6 +48,8 @@ const ThreadOrganizeTool = Tool.make("studio_thread_organize", {
     ]),
     snoozedUntil: Schema.optional(IsoDateTime),
     note: Schema.optional(OrchestrationV2ThreadSettledNote),
+    /** Required for self-settle; binds this call to the turn the caller observed. */
+    expectedRunId: Schema.optional(RunId),
   }),
   success: OrchestrationV2DispatchCommandResult,
   failure: OrchestratorMcpFailure,

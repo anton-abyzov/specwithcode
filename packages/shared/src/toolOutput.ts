@@ -188,6 +188,122 @@ export function toolOutputIndicatesFailure(text: string): boolean {
   );
 }
 
+/** One detail page: at most this many UTF-8 bytes. */
+export const DETAIL_PAGE_MAX_BYTES = 256 * 1024;
+
+/** What older clients see after a field a detail read cut to its first page. */
+export const TRANSPORT_TRUNCATION_MARKER = "\n… output truncated for transport";
+
+export interface TextPage {
+  readonly text: string;
+  /** UTF-16 offset of the first character. */
+  readonly offset: number;
+  /** UTF-16 offset just past the last character. */
+  readonly end: number;
+  readonly totalLength: number;
+  /** Where the next page starts, or null on the last page. */
+  readonly nextOffset: number | null;
+}
+
+function isHighSurrogate(code: number): boolean {
+  return code >= 0xd800 && code <= 0xdbff;
+}
+
+function isLowSurrogate(code: number): boolean {
+  return code >= 0xdc00 && code <= 0xdfff;
+}
+
+/** Moves a boundary that would split a surrogate pair to just before the pair. */
+function codePointBoundary(text: string, index: number): number {
+  const bounded = Math.max(0, Math.min(text.length, Math.trunc(index)));
+  return bounded > 0 &&
+    bounded < text.length &&
+    isHighSurrogate(text.charCodeAt(bounded - 1)) &&
+    isLowSurrogate(text.charCodeAt(bounded))
+    ? bounded - 1
+    : bounded;
+}
+
+/** UTF-8 bytes of the code point at `index` and how many UTF-16 units it spans. */
+function codePointAt(text: string, index: number): { bytes: number; units: number } {
+  const code = text.charCodeAt(index);
+  if (code < 0x80) return { bytes: 1, units: 1 };
+  if (code < 0x800) return { bytes: 2, units: 1 };
+  if (
+    isHighSurrogate(code) &&
+    index + 1 < text.length &&
+    isLowSurrogate(text.charCodeAt(index + 1))
+  ) {
+    return { bytes: 4, units: 2 };
+  }
+  // A lone surrogate encodes as U+FFFD, three bytes.
+  return { bytes: 3, units: 1 };
+}
+
+/** The code point that ends just before `index`, read backward. */
+function codePointBefore(text: string, index: number): { bytes: number; units: number } {
+  const code = text.charCodeAt(index - 1);
+  if (isLowSurrogate(code) && index >= 2 && isHighSurrogate(text.charCodeAt(index - 2))) {
+    return { bytes: 4, units: 2 };
+  }
+  return codePointAt(text, index - 1);
+}
+
+/**
+ * One page of `text` within a UTF-8 byte budget, on code point boundaries so a
+ * page never splits a surrogate pair. Offsets are UTF-16 indices. `offset`
+ * pages forward from there; `before` pages backward to there and wins over
+ * `offset`; with neither, `anchor: "end"` reads the last page and the default
+ * reads the first. A page always holds at least one code point, so paging
+ * always advances. Joining every page from offset 0 gives back `text` exactly.
+ */
+export function sliceTextPage(
+  text: string,
+  options: {
+    readonly offset?: number | undefined;
+    readonly before?: number | undefined;
+    readonly anchor?: "start" | "end" | undefined;
+    readonly maxBytes?: number | undefined;
+  } = {},
+): TextPage {
+  const budget = Math.max(
+    4,
+    Math.min(DETAIL_PAGE_MAX_BYTES, Math.trunc(options.maxBytes ?? DETAIL_PAGE_MAX_BYTES)),
+  );
+  const totalLength = text.length;
+  const page = (offset: number, end: number): TextPage => ({
+    text: offset === 0 && end === totalLength ? text : text.slice(offset, end),
+    offset,
+    end,
+    totalLength,
+    nextOffset: end < totalLength ? end : null,
+  });
+  const backward =
+    options.before !== undefined || (options.offset === undefined && options.anchor === "end");
+  if (backward) {
+    const end = codePointBoundary(text, options.before ?? totalLength);
+    let offset = end;
+    let bytes = 0;
+    while (offset > 0) {
+      const point = codePointBefore(text, offset);
+      if (bytes + point.bytes > budget && offset < end) break;
+      bytes += point.bytes;
+      offset -= point.units;
+    }
+    return page(offset, end);
+  }
+  const offset = codePointBoundary(text, options.offset ?? 0);
+  let end = offset;
+  let bytes = 0;
+  while (end < totalLength) {
+    const point = codePointAt(text, end);
+    if (bytes + point.bytes > budget && end > offset) break;
+    bytes += point.bytes;
+    end += point.units;
+  }
+  return page(offset, end);
+}
+
 /** An image a tool returned inline. `data` is base64; a detail read omits it. */
 export interface ToolOutputImage {
   readonly mimeType: string;

@@ -323,6 +323,13 @@ export const StudioWorkGrantsSnapshot = Schema.Struct({
       title: Schema.String,
       /** Coordinator machines this project is linked to. */
       linkedTo: Schema.Array(EnvironmentId),
+      /**
+       * Set when the project is no longer offered for remote work: the machine's
+       * "No project" folder, an archived project or one a check made for itself.
+       * Such a project is listed only while a grant still covers it: a "listed"
+       * grant names it, or it is linked to a coordinator whose grant is "linked".
+       */
+      unavailable: Schema.optionalKey(Schema.Literals(["scratch", "archived", "automated"])),
     }),
   ),
   accounts: Schema.Array(
@@ -334,6 +341,11 @@ export const StudioWorkGrantsSnapshot = Schema.Struct({
       account: Schema.NullOr(Schema.String),
     }),
   ),
+  /**
+   * Set when this machine could not read its projects, so `projects` is empty for that
+   * reason and a grant's project ids cannot be checked against it.
+   */
+  projectsUnreadable: Schema.optionalKey(Schema.Boolean),
 });
 export type StudioWorkGrantsSnapshot = typeof StudioWorkGrantsSnapshot.Type;
 

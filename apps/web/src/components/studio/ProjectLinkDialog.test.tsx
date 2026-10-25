@@ -27,6 +27,11 @@ vi.mock("../../state/use-atom-command", () => ({
     },
 }));
 vi.mock("../../state/entities", () => ({ useProjects: () => state.projects }));
+vi.mock("../../hooks/useScratchProject", () => ({
+  useScratchProject: () => ({
+    scratchWorkspaceRootFor: (id: string) => (id === "m1" ? "/Users/b/.scratch" : null),
+  }),
+}));
 vi.mock("./useLinkMachines", () => ({
   useLinkMachines: () => ({
     label: (id: string) => ({ m4: "M4", m3: "M3", m1: "M1" })[id] ?? "Machine",
@@ -230,6 +235,21 @@ it("ranks copies by fingerprint, keeps the most recent coordinator and merges no
   ]);
   expect(text()).toContain("Projects linked");
   expect(localStorage.length).toBe(0);
+});
+
+it("does not offer another machine's No project folder or an archived project", async () => {
+  state.projects.push(
+    { ...unrelated, id: "scratch", title: "Scratch", workspaceRoot: "/Users/b/.scratch" },
+    { ...there, id: "archived", workspaceSettings: { kind: "code", archived: true } },
+  );
+  await render();
+  await settle();
+  const candidates = [...document.querySelectorAll('[data-slot="link-candidate"]')];
+  expect(candidates.map((candidate) => candidate.textContent?.split(" on ")[0])).toEqual([
+    "EasyChamp",
+    "Notes",
+  ]);
+  expect(text()).not.toContain("/Users/b/.scratch");
 });
 
 it("retries a link that stopped before its last step with the same operation", async () => {

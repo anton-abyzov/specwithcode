@@ -1263,3 +1263,53 @@ it.live("checkpoint diff leaves out files a merge or checkout brought in during 
     );
   }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
 );
+
+it.effect("checkpoint capture reports the root, branch and HEAD it was taken at", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const driver = yield* GitVcsDriver.makeVcsDriverShape();
+    const root = yield* fileSystem.makeTempDirectoryScoped({ prefix: "studio-checkpoint-report-" });
+    const repo = path.join(root, "repo");
+    const git = (args: ReadonlyArray<string>) =>
+      driver
+        .execute({ operation: "checkpoint-test", cwd: repo, args })
+        .pipe(Effect.map((result) => result.stdout.trim()));
+    yield* fileSystem.makeDirectory(path.join(repo, "packages", "app"), { recursive: true });
+    yield* git(["init", "-b", "main"]);
+    yield* git(["config", "user.name", "Test"]);
+    yield* git(["config", "user.email", "test@test.com"]);
+    yield* fileSystem.writeFileString(path.join(repo, "packages", "app", "a.txt"), "a\n");
+    const report = (cwd: string, name: string) =>
+      driver.checkpoints.captureCheckpointReport!({
+        cwd,
+        checkpointRef: CheckpointRef.make(`refs/studio/checkpoints/report/${name}`),
+      });
+
+    // Before the first commit the branch exists but HEAD names no commit.
+    assert.deepEqual(yield* report(repo, "unborn"), {
+      repoRoot: repo,
+      branch: "main",
+      headOid: null,
+    });
+
+    yield* git(["add", "."]);
+    yield* git(["commit", "-m", "initial"]);
+    const headOid = yield* git(["rev-parse", "HEAD"]);
+    // A folder reached through a symlink keeps the spelling the thread uses.
+    const linked = path.join(root, "linked");
+    yield* fileSystem.symlink(repo, linked);
+    assert.deepEqual(yield* report(path.join(linked, "packages", "app"), "linked"), {
+      repoRoot: linked,
+      branch: "main",
+      headOid,
+    });
+    assert.include(
+      yield* git(["log", "-1", "--format=%B", "refs/studio/checkpoints/report/linked"]),
+      `head=${headOid}`,
+    );
+
+    yield* git(["checkout", "--detach"]);
+    assert.deepEqual(yield* report(repo, "detached"), { repoRoot: repo, branch: null, headOid });
+  }).pipe(Effect.scoped, Effect.provide(layerGitContract)),
+);

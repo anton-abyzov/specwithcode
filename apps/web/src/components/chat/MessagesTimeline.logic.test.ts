@@ -3220,6 +3220,9 @@ describe("computeStableMessagesTimelineRows", () => {
       summaryKind: "other",
       toolSurface: "browser",
       hasFailure: false,
+      failedCount: 0,
+      possibleFailureCount: 0,
+      declinedCount: 0,
     };
     const initial = computeStableMessagesTimelineRows([initialRow], {
       byId: new Map(),

@@ -19,7 +19,11 @@ import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 
 import type { CheckpointStoreError } from "./Errors.ts";
-import type { VcsCheckpointOps } from "../vcs/VcsDriver.ts";
+import type {
+  VcsCheckpointCaptureReport,
+  VcsCheckpointOps,
+  VcsDiffCheckpointsReport,
+} from "../vcs/VcsDriver.ts";
 import * as VcsDriverRegistry from "../vcs/VcsDriverRegistry.ts";
 
 export interface CaptureCheckpointInput {
@@ -63,6 +67,14 @@ export class CheckpointStore extends Context.Service<
       input: CaptureCheckpointInput,
     ) => Effect.Effect<void, CheckpointStoreError>;
 
+    /**
+     * captureCheckpoint that also reports the repository root, branch and HEAD
+     * the snapshot was taken at. Optional so test stores may omit it.
+     */
+    readonly captureCheckpointReport?: (
+      input: CaptureCheckpointInput,
+    ) => Effect.Effect<VcsCheckpointCaptureReport, CheckpointStoreError>;
+
     /** Check whether a checkpoint ref exists. */
     readonly hasCheckpointRef: (
       input: Omit<RestoreCheckpointInput, "fallbackToHead">,
@@ -88,6 +100,14 @@ export class CheckpointStore extends Context.Service<
     ) => Effect.Effect<string, CheckpointStoreError>;
 
     /**
+     * diffCheckpoints that also says whether the output limit cut the patch.
+     * Optional so test stores may omit it.
+     */
+    readonly diffCheckpointsReport?: (
+      input: DiffCheckpointsInput,
+    ) => Effect.Effect<VcsDiffCheckpointsReport, CheckpointStoreError>;
+
+    /**
      * Paths the diff between two checkpoints holds only because HEAD moved
      * (a checkout, pull or merge), not because the turn edited them. Empty
      * when the driver cannot tell. Optional so test stores may omit it.
@@ -108,6 +128,23 @@ export class CheckpointStore extends Context.Service<
     ) => Effect.Effect<void, CheckpointStoreError>;
   }
 >()("specweave-studio/checkpointing/CheckpointStore") {}
+
+type OptionalCheckpointStoreMethod =
+  | "captureCheckpointReport"
+  | "diffCheckpointsReport"
+  | "headMovePaths";
+
+/**
+ * A store's optional method, or undefined when the store does not implement
+ * it. Layer.mock answers every key with a method that dies, so only the
+ * store's own keys count.
+ */
+export function implementedMethod<K extends OptionalCheckpointStoreMethod>(
+  store: CheckpointStore["Service"],
+  key: K,
+): CheckpointStore["Service"][K] | undefined {
+  return Object.hasOwn(store, key) ? store[key] : undefined;
+}
 
 /** @public Service construction is part of the canonical Effect module API. */
 export const make = Effect.gen(function* () {
@@ -154,12 +191,37 @@ export const make = Effect.gen(function* () {
     return yield* checkpoints.restoreCheckpoint(input);
   });
 
+  const captureCheckpointReport: NonNullable<
+    CheckpointStore["Service"]["captureCheckpointReport"]
+  > = Effect.fn("captureCheckpointReport")(function* (input) {
+    const checkpoints = yield* resolveCheckpoints(
+      "CheckpointStore.captureCheckpointReport",
+      input.cwd,
+    );
+    if (checkpoints.captureCheckpointReport) {
+      return yield* checkpoints.captureCheckpointReport(input);
+    }
+    yield* checkpoints.captureCheckpoint(input);
+    return { repoRoot: null, branch: undefined, headOid: null };
+  });
+
   const diffCheckpoints: CheckpointStore["Service"]["diffCheckpoints"] = Effect.fn(
     "diffCheckpoints",
   )(function* (input) {
     const checkpoints = yield* resolveCheckpoints("CheckpointStore.diffCheckpoints", input.cwd);
     return yield* checkpoints.diffCheckpoints(input);
   });
+
+  const diffCheckpointsReport: NonNullable<CheckpointStore["Service"]["diffCheckpointsReport"]> =
+    Effect.fn("diffCheckpointsReport")(function* (input) {
+      const checkpoints = yield* resolveCheckpoints(
+        "CheckpointStore.diffCheckpointsReport",
+        input.cwd,
+      );
+      return checkpoints.diffCheckpointsReport
+        ? yield* checkpoints.diffCheckpointsReport(input)
+        : { diff: yield* checkpoints.diffCheckpoints(input), truncated: false };
+    });
 
   const headMovePaths: NonNullable<CheckpointStore["Service"]["headMovePaths"]> = Effect.fn(
     "headMovePaths",
@@ -181,9 +243,11 @@ export const make = Effect.gen(function* () {
   return CheckpointStore.of({
     isGitRepository,
     captureCheckpoint,
+    captureCheckpointReport,
     hasCheckpointRef,
     restoreCheckpoint,
     diffCheckpoints,
+    diffCheckpointsReport,
     headMovePaths,
     deleteCheckpointRefs,
   });

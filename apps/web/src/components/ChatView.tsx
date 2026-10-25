@@ -288,7 +288,7 @@ import * as Cause from "effect/Cause";
 import { AsyncResult } from "effect/reactivity";
 import { isElectron } from "../env";
 import { readLocalApi } from "../localApi";
-import { useDiffPanelStore } from "../diffPanelStore";
+import { type TurnDiffLinkOptions, useDiffPanelStore } from "../diffPanelStore";
 import { useActiveThreadRef } from "../hooks/useActiveThreadRef";
 import { useHideRightPanelOnLeave } from "../hooks/useHideRightPanelOnLeave";
 import {
@@ -589,7 +589,11 @@ import { ExpandedImageDialog } from "./chat/ExpandedImageDialog";
 import { EmbeddedThreadDiffPanel } from "./chat/EmbeddedThreadDiffPanel";
 import { PullRequestThreadDialog } from "./PullRequestThreadDialog";
 import type { AssistantCitationRequest } from "./chat/AssistantCitationSource";
-import { MessagesTimeline, type MessagesTimelineHistoryControls } from "./chat/MessagesTimeline";
+import {
+  MessagesTimeline,
+  type MessagesTimelineHistoryControls,
+  type TimelineSubagentParent,
+} from "./chat/MessagesTimeline";
 import { JumpToLatestButton } from "./chat/JumpToLatestButton";
 import { ProviderSubagentBar } from "./chat/ProviderSubagentBar";
 import { getTriggerDisplayModelName } from "./chat/providerIconUtils";
@@ -1724,6 +1728,7 @@ function chatActionErrorMessage(error: unknown): string {
 
 const ENVIRONMENT_UNAVAILABLE_SEND_TOAST_TRAIL_SIZE = 3;
 const EMPTY_HELD_TURN_DIFF_SUMMARIES: readonly never[] = [];
+const EMPTY_HELD_PROVIDER_SESSIONS: readonly never[] = [];
 const noopHeldTurnDiff = (_turnId: RunId, _filePath?: string) => {};
 const noopHeldRevert = (_targetTurnCount: number) => {};
 const noopHeldAttachment = (_attachment: ChatFileAttachment) => {};
@@ -2569,6 +2574,21 @@ function useChatViewState(props: ChatViewProps) {
     return scopeThreadRef(parentSubagentEnvironmentId, parentSubagentThreadId);
   }, [parentSubagentEnvironmentId, parentSubagentThreadId]);
   const parentSubagentThread = useThreadShell(parentSubagentThreadTarget);
+  // A provider-native subagent's edits open its parent's turn diff (AC-19), so its timeline
+  // reads the parent's subagents and runs. App-owned delegates open their own diff.
+  const subagentParentProjection =
+    useThreadProjection(isProviderSubagent ? parentSubagentThreadTarget : null)?.projection ?? null;
+  const timelineSubagentParent = useMemo<TimelineSubagentParent | null>(
+    () =>
+      !isProviderSubagent || parentSubagentThreadId === null
+        ? null
+        : {
+            threadId: parentSubagentThreadId,
+            subagents: subagentParentProjection?.subagents ?? null,
+            runs: subagentParentProjection?.runs ?? [],
+          },
+    [isProviderSubagent, parentSubagentThreadId, subagentParentProjection],
+  );
   const parentThreadLink = useMemo(
     () =>
       parentSubagentThreadTarget === null
@@ -2780,7 +2800,12 @@ function useChatViewState(props: ChatViewProps) {
     explicitDiffOpenRef.current = null;
     // Generic openings always show Changes, including tab fallbacks and thread changes.
     // A timeline click instead opens the specific turn/file the user requested.
-    if (diffOpen && activeThreadTarget && explicitThreadRef !== activeThreadTarget) {
+    if (
+      diffOpen &&
+      activeThreadTarget &&
+      explicitThreadRef !== activeThreadTarget &&
+      !useDiffPanelStore.getState().takeLinkedOpen(activeThreadTarget)
+    ) {
       useDiffPanelStore.getState().selectGitScope(activeThreadTarget, "branch");
     }
   }, [activeThreadTarget, diffOpen]);
@@ -5352,6 +5377,7 @@ function useChatViewState(props: ChatViewProps) {
     serverAcknowledgedUserMessageIds,
     serverConfig,
     serverProjection,
+    timelineSubagentParent,
     serverRuntime,
     serverRuntimeError,
     serverThread,
@@ -9767,6 +9793,7 @@ export default function ChatView(props: ChatViewProps) {
     sendInFlightRef,
     serverConfig,
     serverProjection,
+    timelineSubagentParent,
     serverRuntime,
     serverRuntimeError,
     serverThreadSettled,
@@ -14370,14 +14397,32 @@ export default function ChatView(props: ChatViewProps) {
     [setExpandedImage],
   );
   const onOpenTurnDiff = useCallback(
-    (runId: RunId, filePath?: string) => {
+    (runId: RunId, filePath?: string, options?: TurnDiffLinkOptions) => {
       if (!isServerThread || !activeThreadTarget) return;
+      const sourceThreadId = options?.sourceThreadId;
+      if (sourceThreadId && sourceThreadId !== activeThreadTarget.threadId) {
+        // An inherited or subagent row's turn belongs to another thread: open that thread with
+        // its diff at the run, and keep the link's turn across the thread switch.
+        const sourceThreadRef = scopeThreadRef(activeThreadTarget.environmentId, sourceThreadId);
+        useDiffPanelStore.getState().selectTurn(sourceThreadRef, runId, filePath, options);
+        useDiffPanelStore.getState().markLinkedOpen(sourceThreadRef);
+        useRightPanelStore.getState().open(sourceThreadRef, "diff");
+        void openThreadRoute(sourceThreadRef);
+        return;
+      }
       explicitDiffOpenRef.current = diffOpen ? null : activeThreadTarget;
-      useDiffPanelStore.getState().selectTurn(activeThreadTarget, runId, filePath);
+      useDiffPanelStore.getState().selectTurn(activeThreadTarget, runId, filePath, options ?? {});
       useRightPanelStore.getState().open(activeThreadTarget, "diff");
       onDiffPanelOpen?.();
     },
-    [activeThreadTarget, diffOpen, isServerThread, onDiffPanelOpen, explicitDiffOpenRef],
+    [
+      activeThreadTarget,
+      diffOpen,
+      isServerThread,
+      onDiffPanelOpen,
+      explicitDiffOpenRef,
+      openThreadRoute,
+    ],
   );
   // The revert handler is read from a ref at call-time so the callback
   // reference is fully stable and never busts TimelineRowCtx identity.
@@ -15066,6 +15111,12 @@ export default function ChatView(props: ChatViewProps) {
                   routeThreadKey={displayedTimelineKey}
                   displayThreadKey={displayedTimelineKey}
                   onOpenTurnDiff={paintOnlyDisplayedTimeline ? noopHeldTurnDiff : onOpenTurnDiff}
+                  subagentParent={paintOnlyDisplayedTimeline ? null : timelineSubagentParent}
+                  providerSessions={
+                    paintOnlyDisplayedTimeline
+                      ? EMPTY_HELD_PROVIDER_SESSIONS
+                      : (serverProjection?.providerSessions ?? EMPTY_HELD_PROVIDER_SESSIONS)
+                  }
                   onOpenThread={onOpenRelatedThread}
                   collapseLongReports={collapseLongReports}
                   reportProjectId={collapseLongReports ? (activeProject?.id ?? null) : null}

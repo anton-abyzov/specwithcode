@@ -1,4 +1,13 @@
-import { RuntimeRequestId } from "@specweave-studio/contracts";
+import {
+  ProviderDriverKind,
+  ProviderSessionId,
+  RuntimeRequestId,
+  type OrchestrationV2ThreadProjection,
+} from "@specweave-studio/contracts";
+import { derivePendingThreadRequests } from "@specweave-studio/client-runtime/state/thread-requests";
+import { turnItemNeedsDetailFetch } from "@specweave-studio/client-runtime/work-log/item-detail";
+import { TRANSPORT_TRUNCATION_MARKER } from "@specweave-studio/shared/toolOutput";
+import * as DateTime from "effect/DateTime";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vite-plus/test";
 
@@ -149,5 +158,101 @@ describe("file approval details", () => {
     );
     expect(markup).toContain("Changed files");
     expect(markup).toContain("Preview unavailable");
+  });
+});
+
+describe("Codex approval previews from the timeline item", () => {
+  type Projection = Parameters<typeof derivePendingThreadRequests>[0];
+  type Item = OrchestrationV2ThreadProjection["turnItems"][number];
+  const codex = ProviderDriverKind.make("codex");
+  const now = DateTime.makeUnsafe("2026-10-24T12:00:00.000Z");
+  const requestId = RuntimeRequestId.make("codex-patch-approval");
+  const base = {
+    threadId: "thread-1",
+    runId: "run-1",
+    nodeId: "node-1",
+    providerThreadId: "codex-thread",
+    providerTurnId: "codex-turn",
+    parentItemId: null,
+    ordinal: 0,
+    status: "waiting",
+    title: null,
+    startedAt: now,
+    completedAt: null,
+    updatedAt: now,
+  };
+  const largePatch = `--- a/src/large.ts\n+++ b/src/large.ts\n@@ -1,4000 +1,4000 @@\n${"-old line\n+new line\n".repeat(4_000)}`;
+  // Each change's patch stays on the wire, cut at 32 KiB with the transport marker.
+  const wireChanges = [
+    {
+      operation: "update",
+      path: "/workspace/src/small.ts",
+      diffStr: "--- a/src/small.ts\n+++ b/src/small.ts\n@@ -1 +1 @@\n-a\n+b\n",
+    },
+    {
+      operation: "update",
+      path: "/workspace/src/large.ts",
+      diffStr: `${largePatch.slice(0, 32 * 1024)}${TRANSPORT_TRUNCATION_MARKER}`,
+      additions: 4_000,
+      deletions: 4_000,
+    },
+    {
+      operation: "add",
+      path: "/workspace/src/new.ts",
+      diffStr: "--- /dev/null\n+++ b/src/new.ts\n@@ -0,0 +1 @@\n+export {};\n",
+    },
+  ];
+  const fileItem = {
+    ...base,
+    id: "codex-file",
+    type: "file_change",
+    fileName: "/workspace/src/small.ts",
+    nativeItemRef: { driver: codex, nativeId: "call-1", strength: "strong" },
+    diffOmitted: true,
+    changes: wireChanges,
+  } as unknown as Item;
+  const projection = {
+    thread: { id: base.threadId },
+    runtimeRequests: [
+      {
+        id: requestId,
+        nodeId: base.nodeId,
+        providerTurnId: base.providerTurnId,
+        nativeRequestRef: { driver: codex, nativeId: "approval-1", strength: "weak" },
+        kind: "file-change",
+        status: "pending",
+        responseCapability: {
+          type: "live",
+          providerSessionId: ProviderSessionId.make("codex-session"),
+        },
+        createdAt: now,
+        resolvedAt: null,
+      },
+    ],
+    turnItems: [
+      {
+        ...base,
+        id: "codex-approval",
+        type: "approval_request",
+        requestId,
+        requestKind: "file-change",
+        prompt: "Apply these changes?",
+        nativeItemRef: { driver: codex, nativeId: "call-1", strength: "weak" },
+      },
+      fileItem,
+    ],
+  } as unknown as Projection;
+
+  it("shows every supplied patch, with the marker on the one the wire cut", () => {
+    const approval = derivePendingThreadRequests(projection).approvals[0]!;
+    const markup = renderToStaticMarkup(
+      <ComposerPendingApprovalPanel approval={approval} pendingCount={1} />,
+    );
+    expect(markup.match(/aria-label="Supplied patch"/g)).toHaveLength(3);
+    for (const change of wireChanges) expect(markup).toContain(change.diffStr);
+    expect(markup).toContain(`${TRANSPORT_TRUNCATION_MARKER}</code>`);
+    expect(markup).not.toContain("Preview unavailable");
+    // The edit row reads the full patch, because the wire says it cut one.
+    expect(turnItemNeedsDetailFetch(fileItem)).toBe(true);
   });
 });

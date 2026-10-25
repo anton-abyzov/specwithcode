@@ -145,6 +145,8 @@ const layerProviderEventIngestorProvided = ProviderEventIngestor.layer.pipe(
   ),
 );
 
+// Checkpoints name the machine that took them from the ServerEnvironmentIdentity
+// the server provides around this runtime (server.ts, layerServerEnvironment).
 const layerCheckpointServiceProvided = CheckpointService.layer.pipe(
   Layer.provide(IdAllocator.layer),
 );

@@ -75,6 +75,10 @@ import {
 import type { ProviderContinuationRequest } from "../ProviderContinuationRequests.ts";
 import { makeProviderFailure } from "../ProviderFailure.ts";
 import * as ClaudeAdapterV2 from "./ClaudeAdapterV2.ts";
+import {
+  CLAUDE_TOOL_RESULT_FIXTURES,
+  type ClaudeToolResultFixture,
+} from "./ClaudeAdapterV2.toolResults.fixture.ts";
 import * as IdAllocator from "../IdAllocator.ts";
 
 const DEFAULT_CLAUDE_SETTINGS = Schema.decodeSync(ClaudeSettings)({});
@@ -3861,6 +3865,12 @@ describe("ClaudeAdapterV2 background wake turns", () => {
           name: "Write",
           input: { file_path: "/workspace/output.png", content: "text" },
         },
+        // A trailing no-break space can be part of a file name.
+        {
+          id: "write-spaced",
+          name: "Write",
+          input: { file_path: "/workspace/notes.txt\u00a0", content: "text\n" },
+        },
       ];
       yield* Queue.offer(
         harness.sdkMessages,
@@ -3929,6 +3939,11 @@ describe("ClaudeAdapterV2 background wake turns", () => {
       assert.equal(
         items.find((item) => item.nativeItemRef?.nativeId === "skill")?.title,
         "Skill: full-send",
+      );
+      const spaced = items.find((item) => item.nativeItemRef?.nativeId === "write-spaced");
+      assert.equal(
+        spaced?.type === "file_change" ? spaced.fileName : null,
+        "/workspace/notes.txt\u00a0",
       );
       for (const item of items.filter((item) => item.nativeItemRef?.nativeId !== "image"))
         assert.notProperty(item, "viewedImagePath");
@@ -5737,6 +5752,212 @@ describe("ClaudeAdapterV2 background wake turns", () => {
             ? bash.turnItem.output
             : undefined,
           "On branch main\nwarning: dirty",
+        );
+      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+    ),
+  );
+
+  it.effect("renders edit bodies and Bash outcomes from recorded SDK tool results", () =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const harness = yield* makeWakeHarness;
+        const now = yield* DateTime.now;
+        const F = CLAUDE_TOOL_RESULT_FIXTURES;
+        const fixtures: ReadonlyArray<ClaudeToolResultFixture> = Object.values(F);
+
+        yield* harness.runtime.startTurn(
+          makeClaudeTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now,
+            attemptId: RunAttemptId.make("attempt-claude-tool-results"),
+            text: "Edit and run.",
+            attachments: [],
+          }),
+        );
+        yield* Queue.offer(
+          harness.sdkMessages,
+          claudeSdkFrame({
+            type: "assistant",
+            message: {
+              model: "claude-sonnet-4-6",
+              id: "msg_tool_results",
+              type: "message",
+              role: "assistant",
+              content: fixtures.map((fixture) => ({
+                type: "tool_use",
+                id: fixture.id,
+                name: fixture.name,
+                input: fixture.input,
+              })),
+            },
+            parent_tool_use_id: null,
+            uuid: "00000000-0000-4000-8000-000000001100",
+            session_id: WAKE_NATIVE_SESSION,
+          }),
+        );
+        // One result per user message, as the CLI sends them, so each carries
+        // its structured result.
+        for (const [index, fixture] of fixtures.entries()) {
+          yield* Queue.offer(
+            harness.sdkMessages,
+            claudeSdkFrame({
+              type: "user",
+              message: {
+                role: "user",
+                content: [
+                  {
+                    type: "tool_result",
+                    tool_use_id: fixture.id,
+                    content: fixture.content,
+                    ...(fixture.isError === undefined ? {} : { is_error: fixture.isError }),
+                  },
+                ],
+              },
+              parent_tool_use_id: null,
+              uuid: `00000000-0000-4000-8000-${String(1101 + index).padStart(12, "0")}`,
+              session_id: WAKE_NATIVE_SESSION,
+              ...(fixture.toolUseResult === undefined
+                ? {}
+                : { tool_use_result: fixture.toolUseResult }),
+            }),
+          );
+        }
+        yield* Queue.offer(
+          harness.sdkMessages,
+          makeResultFrame({ uuid: "00000000-0000-4000-8000-000000001199", result: "Done." }),
+        );
+        yield* awaitUntil(() => harness.terminalEvents().length === 1, "turn terminal");
+
+        const latestItem = (fixture: ClaudeToolResultFixture) => {
+          const event = harness.events.findLast(
+            (candidate) =>
+              candidate.type === "turn_item.updated" &&
+              candidate.turnItem.nativeItemRef?.nativeId === fixture.id,
+          );
+          if (event?.type !== "turn_item.updated") throw new Error(`No item for ${fixture.id}.`);
+          return event.turnItem;
+        };
+        const edit = (fixture: ClaudeToolResultFixture) => {
+          const item = latestItem(fixture);
+          if (item.type !== "file_change") throw new Error(`${fixture.id} is ${item.type}.`);
+          return {
+            status: item.status,
+            diffStr: item.diffStr,
+            diffNote: item.diffNote,
+            oldStr: item.oldStr,
+            newStr: item.newStr,
+          };
+        };
+        const command = (fixture: ClaudeToolResultFixture) => {
+          const item = latestItem(fixture);
+          if (item.type !== "command_execution") throw new Error(`${fixture.id} is ${item.type}.`);
+          return { status: item.status, exitCode: item.exitCode, output: item.output };
+        };
+        const header = (path: string) =>
+          `diff --git a/${path} b/${path}\n--- a/${path}\n+++ b/${path}\n`;
+
+        assert.deepEqual(edit(F.editHunks), {
+          status: "completed",
+          diffStr:
+            `${header("/workspace/src/math.ts")}@@ -1,3 +1,3 @@\n` +
+            " export function add(a, b, c) {\n-  return a + b;\n+  return a + b + c;\n }\n",
+          diffNote: undefined,
+          oldStr: undefined,
+          newStr: undefined,
+        });
+        assert.deepEqual(edit(F.editGitPatch), {
+          status: "completed",
+          diffStr: F.editGitPatch.toolUseResult.gitDiff.patch,
+          diffNote: "git_patch",
+          oldStr: undefined,
+          newStr: undefined,
+        });
+        assert.deepEqual(edit(F.editInputOnly), {
+          status: "completed",
+          diffStr: `${header("/workspace/src/retry.ts")}@@ -1,1 +1,1 @@\n-const retries = 1;\n+const retries = 3;\n`,
+          diffNote: "input_snippet",
+          oldStr: "const retries = 1;",
+          newStr: "const retries = 3;",
+        });
+        // Both edits in one patch, the second's hunk after the first's lines.
+        assert.deepEqual(edit(F.editList), {
+          status: "completed",
+          diffStr:
+            `${header("/workspace/src/names.ts")}` +
+            "@@ -1,1 +1,1 @@\n-const first = 'a';\n+const first = 'b';\n" +
+            "@@ -2,2 +2,2 @@\n keep();\n-drop();\n+add();\n",
+          diffNote: "input_snippet",
+          oldStr: undefined,
+          newStr: undefined,
+        });
+        assert.deepEqual(edit(F.writeCreate), {
+          status: "completed",
+          diffStr:
+            "diff --git a//workspace/notes/todo.md b//workspace/notes/todo.md\n" +
+            "new file mode 100644\n--- /dev/null\n+++ b//workspace/notes/todo.md\n" +
+            "@@ -0,0 +1,2 @@\n+# Todo\n+- ship\n",
+          diffNote: undefined,
+          oldStr: undefined,
+          newStr: undefined,
+        });
+        assert.deepEqual(edit(F.writeUpdateWithoutHunks), {
+          status: "completed",
+          diffStr: undefined,
+          diffNote: "overwrite_without_diff",
+          oldStr: undefined,
+          newStr: undefined,
+        });
+        assert.deepEqual(edit(F.notebookReplace), {
+          status: "completed",
+          diffStr: `${header("/workspace/analysis.ipynb")}@@ -1,1 +1,1 @@\n-df.head()\n+df.describe()\n`,
+          diffNote: "input_snippet",
+          oldStr: undefined,
+          newStr: undefined,
+        });
+        const notebook = latestItem(F.notebookReplace);
+        assert.equal(
+          notebook.type === "file_change" ? notebook.fileName : undefined,
+          "/workspace/analysis.ipynb",
+        );
+        // The error text holds a hunk header; it is kept as text, never a patch.
+        assert.deepEqual(edit(F.editFailed), {
+          status: "failed",
+          diffStr: F.editFailed.toolUseResult,
+          diffNote: undefined,
+          oldStr: undefined,
+          newStr: undefined,
+        });
+
+        assert.deepEqual(command(F.bashErrorExit), {
+          status: "failed",
+          exitCode: 2,
+          output: F.bashErrorExit.toolUseResult,
+        });
+        // `git diff` exiting 1 is a plain result: completed, with no exit code.
+        assert.deepEqual(command(F.bashNonErrorExit), {
+          status: "completed",
+          exitCode: undefined,
+          output: F.bashNonErrorExit.toolUseResult.stdout,
+        });
+        assert.deepEqual(command(F.bashUnparsedError), {
+          status: "failed",
+          exitCode: undefined,
+          output: F.bashUnparsedError.toolUseResult,
+        });
+        assert.deepEqual(command(F.bashInterrupted), {
+          status: "interrupted",
+          exitCode: undefined,
+          output: F.bashInterrupted.content,
+        });
+        const interruptedNode = harness.events.findLast(
+          (event) =>
+            event.type === "node.updated" &&
+            event.node.nativeItemRef?.nativeId === F.bashInterrupted.id,
+        );
+        assert.equal(
+          interruptedNode?.type === "node.updated" ? interruptedNode.node.status : undefined,
+          "interrupted",
         );
       }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
     ),

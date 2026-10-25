@@ -44,7 +44,9 @@ export function createOrchestrationEnvironmentAtoms<R, E>(
       staleTimeMs: 300_000,
       idleTtlMs: 300_000,
     }),
-    // Keyed by the item revision, so a live row refetches as its output grows.
+    // Keyed by turnItemDetailRevision: a finished item by its revision; a running
+    // item by one "live" key (one fetch while running, one at completion), or by
+    // a 2-second bucket when its provider streams tool output.
     turnItem: createEnvironmentRpcQueryAtomFamily(runtime, {
       label: "environment-data:orchestration:turn-item",
       tag: ORCHESTRATION_V2_WS_METHODS.getTurnItem,

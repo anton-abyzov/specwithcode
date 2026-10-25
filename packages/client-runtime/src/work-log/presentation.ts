@@ -1,5 +1,6 @@
 import {
   computerUsePermissionFromError,
+  isOrchestrationV2WorkActive,
   isToolLifecycleItemType,
   type AssetResource,
   type ComputerUsePermission,
@@ -7,7 +8,9 @@ import {
   type ToolActivitySource,
   type ToolActivitySurface,
   type ToolActivityIcon,
+  type OrchestrationV2Subagent,
   type OrchestrationV2TurnItem,
+  type RunId,
   type ThreadId,
 } from "@specweave-studio/contracts";
 import {
@@ -17,8 +20,10 @@ import {
 } from "@specweave-studio/shared/studioMcpToolPresentation";
 import { classifyMarkdownImageSource } from "@specweave-studio/client-runtime/markdown-images";
 import { resolveMediaSource } from "@specweave-studio/client-runtime/media-source";
+import type { ThreadCheckpointSummary } from "@specweave-studio/client-runtime/state/thread-checkpoints";
 import { parseChangeRequestUrl } from "@specweave-studio/shared/changeRequestUrl";
 import { isWorkspaceImagePreviewPath } from "@specweave-studio/shared/filePreview";
+import { isWindowsAbsolutePath } from "@specweave-studio/shared/path";
 import { formatTokens } from "@specweave-studio/shared/usageFormat";
 import { classifyToolActivity } from "@specweave-studio/shared/toolActivity";
 import { toolOutputIndicatesFailure } from "@specweave-studio/shared/toolOutput";
@@ -407,6 +412,45 @@ export function workEntryDisplayIndicatesToolFailure(entry: WorkLogPresentationE
   return workEntryIndicatesToolFailureFromOutput(entry, false);
 }
 
+export type WorkEntryFailureKind = "failed" | "possible" | "declined" | "stopped";
+
+/**
+ * How a row ended, for its chip and the group counts. `failed`: failed status,
+ * a nonzero exit code or a provider error. `possible`: only the output
+ * heuristic matched, so it is never counted as failed. `declined`: the user
+ * declined it (its status stays `cancelled`). `stopped`: interrupted or
+ * cancelled, which no count includes.
+ */
+export function workEntryFailureKind(entry: WorkLogPresentationEntry): WorkEntryFailureKind | null {
+  const item = entry.structuredPayload;
+  const declined =
+    (item?.type === "command_execution" || item?.type === "file_change") && item.declined === true;
+  if (entry.toolLifecycleStatus === "declined" || declined) return "declined";
+  if (
+    entry.toolLifecycleStatus === "stopped" ||
+    item?.status === "interrupted" ||
+    item?.status === "cancelled"
+  ) {
+    return "stopped";
+  }
+  if (entry.tone === "error" || entry.toolLifecycleStatus === "failed") return "failed";
+  if (!workLogEntryIsToolLike(entry)) return null;
+  if (
+    resolveStudioMcpToolDefinition(workEntryToolName(entry)) &&
+    studioToolResultIndicatesFailure(workEntryToolOutput(entry))
+  ) {
+    return "failed";
+  }
+  if (item?.type === "command_execution") {
+    if (item.exitCode !== undefined && item.exitCode !== 0) return "failed";
+    // On the wire this flag is a nonzero exit or a heuristic match; the exit case returned above.
+    if (item.outputIndicatesFailure) return "possible";
+    if (item.output && toolOutputIndicatesFailure(item.output.slice(0, 32_768))) return "possible";
+  }
+  const detail = entry.detail ?? "";
+  return detail.length > 0 && toolOutputIndicatesFailure(detail) ? "possible" : null;
+}
+
 const CHROME_DISCONNECTED = /browser extension is not connected/i;
 
 /** True when a browser tool failed because Chrome's extension is unreachable on the run's machine. */
@@ -487,6 +531,8 @@ export function toolGroupAction(entry: WorkLogPresentationEntry): ToolGroupActio
   });
   if (classified === "read") return "read";
   if (classified === "file_change" || entry.itemType === "file_change") return "edit";
+  // A command whose typed actions are all searches or listings (Codex) searched code.
+  if (classified === "search" && entry.itemType === "command_execution") return "code-search";
   if (classified === "command" || entry.itemType === "command_execution" || entry.command) {
     return "command";
   }
@@ -681,19 +727,44 @@ export function displayToolSourceName(name: string): string {
   return /^specweave[\s_-]*studio$/i.test(name.trim()) ? "SpecWithCode" : name;
 }
 
-/** Summarizes at most two action categories; every omitted call still counts in the remainder. */
-export function summarizeToolGroup(entries: ReadonlyArray<WorkLogPresentationEntry>): {
-  summary: string;
-  hasFailure: boolean;
-} {
+export interface ToolGroupSummary {
+  readonly summary: string;
+  /** `failedCount > 0`. */
+  readonly hasFailure: boolean;
+  /** Entries that failed by status, exit code or provider error, over every entry. */
+  readonly failedCount: number;
+  /** Entries only the output heuristic flags; shown faint, never added to failedCount. */
+  readonly possibleFailureCount: number;
+  readonly declinedCount: number;
+}
+
+/**
+ * Summarizes at most two action categories; every omitted call still counts in the remainder.
+ * The failure counts cover every entry, not only the summarized ones.
+ */
+export function summarizeToolGroup(
+  entries: ReadonlyArray<WorkLogPresentationEntry>,
+): ToolGroupSummary {
   const toolEntries = entries.filter((entry) => entry.itemType !== "reasoning");
   if (entries.length > 0 && toolEntries.length === 0) {
     return {
       summary: entries.length === 1 ? "Thought" : `Thought (×${entries.length})`,
       hasFailure: false,
+      failedCount: 0,
+      possibleFailureCount: 0,
+      declinedCount: 0,
     };
   }
   entries = toolEntries;
+  let failedCount = 0;
+  let possibleFailureCount = 0;
+  let declinedCount = 0;
+  for (const entry of entries) {
+    const kind = workEntryFailureKind(entry);
+    if (kind === "failed") failedCount += 1;
+    else if (kind === "possible") possibleFailureCount += 1;
+    else if (kind === "declined") declinedCount += 1;
+  }
   const groups = new Map<
     ToolGroupAction | StudioMcpToolSummaryAction,
     {
@@ -727,7 +798,6 @@ export function summarizeToolGroup(entries: ReadonlyArray<WorkLogPresentationEnt
             group.action,
             toolGroupActionCount(group.action, group.entries),
           ),
-          failedCount: group.entries.filter(workEntryDisplayIndicatesToolFailure).length,
         }),
   }));
   const selected = [...summaries]
@@ -766,7 +836,13 @@ export function summarizeToolGroup(entries: ReadonlyArray<WorkLogPresentationEnt
     sentenceLabels.length < 3
       ? sentenceLabels.join(" and ")
       : `${sentenceLabels.slice(0, -1).join(", ")}, and ${sentenceLabels.at(-1)}`;
-  return { summary, hasFailure: summaries.some((group) => group.failedCount > 0) };
+  return {
+    summary,
+    hasFailure: failedCount > 0,
+    failedCount,
+    possibleFailureCount,
+    declinedCount,
+  };
 }
 
 /** The noun a compact chip counts for one kind of action: "88 commands", "94 thread updates". */
@@ -885,4 +961,350 @@ export function toolGroupSummaryKind(
     }),
   );
   return fallbackKinds.size === 1 ? fallbackKinds.values().next().value! : "mixed";
+}
+
+export interface PathRoots {
+  /** The checkpoint's stamped repository root. */
+  readonly repoRoot?: string | null | undefined;
+  /** The thread's current workspace root, used when repoRoot is unknown (old checkpoints). */
+  readonly workspaceRoot?: string | null | undefined;
+}
+
+interface AbsolutePath {
+  readonly windows: boolean;
+  readonly segments: ReadonlyArray<string>;
+}
+
+function isAbsoluteProviderPath(path: string): boolean {
+  return (
+    path.startsWith("/") ||
+    /^~(?:[\\/]|$)/.test(path) ||
+    isWindowsAbsolutePath(path) ||
+    /^[a-zA-Z]:/.test(path)
+  );
+}
+
+/** Applies `.` and `..`; null when `..` climbs above the first segment. */
+function resolvePathSegments(parts: ReadonlyArray<string>): string[] | null {
+  const segments: string[] = [];
+  for (const part of parts) {
+    if (part === "" || part === ".") continue;
+    if (part === "..") {
+      if (segments.length === 0) return null;
+      segments.pop();
+      continue;
+    }
+    segments.push(part);
+  }
+  return segments;
+}
+
+function absolutePath(value: string | null | undefined): AbsolutePath | null {
+  const path = value?.trim();
+  if (!path || !isAbsoluteProviderPath(path) || /^~/.test(path)) return null;
+  const windows = isWindowsAbsolutePath(path) || /^[a-zA-Z]:/.test(path);
+  const segments = resolvePathSegments(windows ? path.split(/[\\/]+/) : path.split("/"));
+  return segments ? { windows, segments } : null;
+}
+
+/** The segments of `path` below `root`, empty when they are the same folder. */
+function segmentsWithin(path: AbsolutePath, root: AbsolutePath): ReadonlyArray<string> | null {
+  if (path.windows !== root.windows || path.segments.length < root.segments.length) return null;
+  const same = root.segments.every((segment, index) => {
+    const candidate = path.segments[index]!;
+    return root.windows ? candidate.toLowerCase() === segment.toLowerCase() : candidate === segment;
+  });
+  return same ? path.segments.slice(root.segments.length) : null;
+}
+
+interface RelativizedPath {
+  readonly path: string;
+  /** Relative to the stamped repository root; otherwise only a suffix of the real path. */
+  readonly exact: boolean;
+  readonly caseInsensitive: boolean;
+}
+
+function relativizePath(path: string, roots: PathRoots): RelativizedPath | null {
+  const value = path.trim();
+  if (!value) return null;
+  const repoRoot = absolutePath(roots.repoRoot);
+  const workspaceRoot = absolutePath(roots.workspaceRoot);
+  const root = repoRoot ?? workspaceRoot;
+  const caseInsensitive = root?.windows ?? false;
+  if (isAbsoluteProviderPath(value)) {
+    const target = absolutePath(value);
+    const segments = target && root ? segmentsWithin(target, root) : null;
+    return segments && segments.length > 0
+      ? { path: segments.join("/"), exact: repoRoot !== null, caseInsensitive }
+      : null;
+  }
+  // A relative provider path is relative to the thread's folder.
+  const base = repoRoot && workspaceRoot ? segmentsWithin(workspaceRoot, repoRoot) : null;
+  const segments = resolvePathSegments([...(base ?? []), ...value.split(/[\\/]+/)]);
+  return segments && segments.length > 0
+    ? { path: segments.join("/"), exact: base !== null, caseInsensitive }
+    : null;
+}
+
+/** A provider path in repository-relative form, or null when it lies outside the root. */
+export function repoRelativePath(path: string, roots: PathRoots): string | null {
+  return relativizePath(path, roots)?.path ?? null;
+}
+
+export interface DiffPathMatch {
+  readonly path: string;
+  /** "file_name" when only a unique suffix matched; label it "Matched by file name". */
+  readonly matchedBy: "exact" | "file_name";
+}
+
+/**
+ * The candidate (repo-relative) path a link names: exact first, then a unique suffix, else null.
+ * A path relativized against the stamped repository root matches only exactly, so a file
+ * missing from the patch is reported as missing instead of revealing a namesake. The suffix
+ * step serves old checkpoints, whose paths are relative to the workspace root, which can be
+ * a subfolder of the repository. It never picks the longest of several suffix matches.
+ */
+export function matchDiffPath(
+  path: string,
+  candidates: ReadonlyArray<string>,
+  roots: PathRoots,
+): DiffPathMatch | null {
+  const target = relativizePath(path, roots);
+  if (!target) return null;
+  const key = (value: string) => (target.caseInsensitive ? value.toLowerCase() : value);
+  const wanted = key(target.path);
+  const keyed = candidates.flatMap((candidate) => {
+    const segments = resolvePathSegments(candidate.trim().split(/[\\/]+/));
+    return segments && segments.length > 0 ? [{ candidate, key: key(segments.join("/")) }] : [];
+  });
+  const exact = keyed.find((entry) => entry.key === wanted);
+  if (exact) return { path: exact.candidate, matchedBy: "exact" };
+  if (target.exact) return null;
+  const suffixMatches = keyed.filter((entry) => entry.key.endsWith(`/${wanted}`));
+  const first = suffixMatches[0];
+  return first && suffixMatches.every((entry) => entry.key === first.key)
+    ? { path: first.candidate, matchedBy: "file_name" }
+    : null;
+}
+
+/** Every path an edit item names: fileName, each change path and oldPath. */
+export function fileChangeItemPaths(item: OrchestrationV2TurnItem): ReadonlyArray<string> {
+  if (item.type !== "file_change") return [];
+  const paths = new Set([item.fileName]);
+  for (const change of item.changes ?? []) {
+    paths.add(change.path);
+    if (change.oldPath) paths.add(change.oldPath);
+  }
+  return [...paths];
+}
+
+/** Failed, declined and cancelled edits did not do their work, so they never account for a file. */
+function editItemSucceeded(item: OrchestrationV2TurnItem): boolean {
+  return (
+    item.type === "file_change" &&
+    item.status !== "failed" &&
+    item.status !== "cancelled" &&
+    item.declined !== true
+  );
+}
+
+function filesNamedByEdits(
+  files: ReadonlyArray<string>,
+  editItems: ReadonlyArray<OrchestrationV2TurnItem>,
+  roots: PathRoots,
+): ReadonlySet<string> {
+  const named = new Set<string>();
+  for (const item of editItems) {
+    if (!editItemSucceeded(item)) continue;
+    for (const path of fileChangeItemPaths(item)) {
+      const match = matchDiffPath(path, files, roots);
+      if (match) named.add(match.path);
+    }
+  }
+  return named;
+}
+
+export interface ChangedFilesAttribution {
+  /** Checkpoint files no successful edit item names (AC-07). */
+  readonly notReported: ReadonlyArray<string>;
+  /** Files named by a loaded subagent's edit items (AC-19). */
+  readonly bySubagent: ReadonlyArray<{
+    readonly title: string;
+    readonly files: ReadonlyArray<string>;
+  }>;
+  /** Titles of this run's subagents whose items are not loaded; the not-reported label names them. */
+  readonly unloadedSubagentTitles: ReadonlyArray<string>;
+}
+
+/**
+ * Splits a turn's checkpoint files by who reported them. A file no successful edit item of
+ * the turn or of a loaded subagent names stays not reported: a command, another tool, another
+ * agent in the same checkout, or a subagent whose items are not loaded changed it.
+ */
+export function filesChangedOutsideEditItems(input: {
+  readonly files: ReadonlyArray<string>;
+  readonly editItems: ReadonlyArray<OrchestrationV2TurnItem>;
+  readonly subagents?: ReadonlyArray<{
+    readonly title: string;
+    readonly loaded: boolean;
+    readonly editItems: ReadonlyArray<OrchestrationV2TurnItem>;
+  }>;
+  readonly roots: PathRoots;
+}): ChangedFilesAttribution {
+  const files = [...new Set(input.files)];
+  const attributed = new Set(filesNamedByEdits(files, input.editItems, input.roots));
+  const bySubagent: Array<{ title: string; files: ReadonlyArray<string> }> = [];
+  const unloadedSubagentTitles: string[] = [];
+  for (const subagent of input.subagents ?? []) {
+    if (!subagent.loaded) {
+      if (!unloadedSubagentTitles.includes(subagent.title)) {
+        unloadedSubagentTitles.push(subagent.title);
+      }
+      continue;
+    }
+    const named = filesNamedByEdits(files, subagent.editItems, input.roots);
+    const listed = files.filter((file) => named.has(file));
+    if (listed.length === 0) continue;
+    for (const file of listed) attributed.add(file);
+    bySubagent.push({ title: subagent.title, files: listed });
+  }
+  return {
+    notReported: files.filter((file) => !attributed.has(file)),
+    bySubagent,
+    unloadedSubagentTitles,
+  };
+}
+
+/** A subagent's title, else the first line of its prompt. */
+function subagentTitle(subagent: OrchestrationV2Subagent): string {
+  return (
+    subagent.title?.trim() ||
+    subagent.prompt
+      .split("\n")
+      .map((line) => line.trim())
+      .find(Boolean) ||
+    "Subagent"
+  );
+}
+
+/** For a provider-native subagent's child thread: where its edits' Open diff goes (AC-19). */
+export function subagentDiffTarget(input: {
+  readonly childThreadId: ThreadId;
+  readonly parentThreadId: ThreadId | null;
+  readonly parentSubagents: ReadonlyArray<OrchestrationV2Subagent> | null;
+}): {
+  readonly parentThreadId: ThreadId;
+  readonly runId: RunId | null;
+  readonly title: string;
+  readonly origin: "provider_native" | "app_owned";
+  readonly running: boolean;
+} | null {
+  if (input.parentThreadId === null) return null;
+  if (input.parentSubagents === null) {
+    // The parent projection is not loaded, so the launching run, title and origin
+    // are not known yet; load the parent before routing a link through this.
+    return {
+      parentThreadId: input.parentThreadId,
+      runId: null,
+      title: "Subagent",
+      origin: "provider_native",
+      running: false,
+    };
+  }
+  const subagent = input.parentSubagents.findLast(
+    (candidate) => candidate.childThreadId === input.childThreadId,
+  );
+  if (!subagent) return null;
+  return {
+    parentThreadId: input.parentThreadId,
+    runId: subagent.runId,
+    title: subagentTitle(subagent),
+    origin: subagent.origin,
+    running: isOrchestrationV2WorkActive(subagent.status),
+  };
+}
+
+export type TurnDiffState =
+  | { readonly kind: "available"; readonly turnCount: number; readonly fromBaseline: boolean }
+  | { readonly kind: "running" }
+  | { readonly kind: "snapshot_error" }
+  | { readonly kind: "snapshot_missing" }
+  | { readonly kind: "snapshot_stale" }
+  | { readonly kind: "not_git" }
+  | { readonly kind: "failed_no_snapshot" }
+  | { readonly kind: "unknown" };
+
+const LIVE_RUN_STATUSES: ReadonlySet<string> = new Set([
+  "preparing",
+  "queued",
+  "starting",
+  "pending",
+  "running",
+  "waiting",
+]);
+
+/** Run outcomes whose ready checkpoint the server diffs. */
+const DIFFABLE_RUN_STATUSES: ReadonlySet<string> = new Set([
+  "completed",
+  "interrupted",
+  "cancelled",
+]);
+
+/**
+ * Which diff, if any, Open diff can show for a run (AC-05). Never another run's. Rows
+ * disable Open diff only while the run is live; every other state opens the panel, which
+ * shows `turnDiffStateMessage` instead of a diff. The base of the diff (the previous run's
+ * checkpoint or the scope snapshot one ordinal earlier) is resolved by the server, so
+ * `fromBaseline` is always false here.
+ */
+export function turnDiffState(input: {
+  readonly runId: RunId;
+  readonly runs: ReadonlyArray<{ readonly id: RunId; readonly status: string }>;
+  readonly checkpoints: ReadonlyArray<ThreadCheckpointSummary>;
+}): TurnDiffState {
+  const run = input.runs.find((candidate) => candidate.id === input.runId);
+  if (!run) return { kind: "unknown" };
+  if (LIVE_RUN_STATUSES.has(run.status)) return { kind: "running" };
+  const checkpoints = input.checkpoints.filter((checkpoint) => checkpoint.runId === input.runId);
+  const ready = checkpoints.find((checkpoint) => checkpoint.status === "ready");
+  if (ready) {
+    return DIFFABLE_RUN_STATUSES.has(run.status)
+      ? { kind: "available", turnCount: ready.checkpointTurnCount, fromBaseline: false }
+      : { kind: "unknown" };
+  }
+  const checkpoint = checkpoints[0];
+  if (!checkpoint)
+    return run.status === "failed" ? { kind: "failed_no_snapshot" } : { kind: "unknown" };
+  if (checkpoint.notGitRepository === true) return { kind: "not_git" };
+  switch (checkpoint.status) {
+    case "error":
+      return { kind: "snapshot_error" };
+    case "stale":
+      return { kind: "snapshot_stale" };
+    case "missing":
+      return { kind: "snapshot_missing" };
+  }
+  return { kind: "unknown" };
+}
+
+/** The AC-05 text for a state, or null when the diff is available. */
+export function turnDiffStateMessage(state: TurnDiffState): string | null {
+  switch (state.kind) {
+    case "available":
+      return null;
+    case "running":
+      return "Diff available when the turn ends";
+    case "snapshot_error":
+      return "No diff: this turn's snapshot failed";
+    case "snapshot_missing":
+      return "No diff: this turn's snapshot is missing";
+    case "snapshot_stale":
+      return "No diff: this turn's snapshot is out of date";
+    case "not_git":
+      return "No diff: this folder is not a Git repository";
+    case "failed_no_snapshot":
+      return "No diff: this turn ended with an error before a snapshot was taken";
+    case "unknown":
+      return "No diff recorded for this turn";
+  }
 }

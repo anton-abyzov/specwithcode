@@ -3,6 +3,9 @@ import { describe, expect, it } from "vite-plus/test";
 import type * as EffectAcpSchema from "@specweave-studio/effect-acp/compat";
 
 import {
+  ACP_CONTENT_KEPT_TAIL_KEY,
+  ACP_RAW_OUTPUT_KEPT_TAIL_KEY,
+  acpToolOutputKeptTailChars,
   decideToolCallUpdateEmission,
   applyAcpAgentTerminalUpdate,
   acpContentBlockDisplayText,
@@ -861,6 +864,81 @@ describe("AcpRuntimeModel", () => {
     ).update;
     expect(rawUpdate.content[0]?.content.text).toBe("ok");
     expect(JSON.stringify(event).length).toBeLessThan(padded.length);
+    // Trimming dropped only whitespace, so no output tail was cut.
+    expect(event.toolCall.data).not.toHaveProperty(ACP_CONTENT_KEPT_TAIL_KEY);
+  });
+
+  describe("output kept to its tail", () => {
+    const toolUpdate = (update: Record<string, unknown>) => {
+      const event = parseSessionUpdateEvent({
+        sessionId: "session-1",
+        update: {
+          sessionUpdate: "tool_call_update",
+          toolCallId: "tool-1",
+          kind: "execute",
+          status: "in_progress",
+          ...update,
+        },
+      } as EffectAcpSchema.SessionNotification).events[0];
+      if (event?._tag !== "ToolCallUpdated") throw new Error("expected a ToolCallUpdated event");
+      return event.toolCall;
+    };
+    const long = `${"x".repeat(9_000)}END`;
+
+    it("records the kept length when it cuts a rawOutput text field", () => {
+      const toolCall = toolUpdate({ rawOutput: { stdout: long, output_for_prompt: "summary" } });
+      expect(toolCall.data[ACP_RAW_OUTPUT_KEPT_TAIL_KEY]).toBe(8_000);
+      expect(toolCall.data).not.toHaveProperty(ACP_CONTENT_KEPT_TAIL_KEY);
+      const stdout = (toolCall.data.rawOutput as { stdout: string }).stdout;
+      expect(acpToolOutputKeptTailChars(toolCall.data, stdout)).toBe(8_000);
+      expect(stdout.endsWith("END")).toBe(true);
+      // An output read from an uncut sibling field is not flagged.
+      expect(acpToolOutputKeptTailChars(toolCall.data, "summary")).toBeUndefined();
+      // A structured output that holds the cut field is.
+      expect(acpToolOutputKeptTailChars(toolCall.data, toolCall.data.rawOutput)).toBe(8_000);
+    });
+
+    it("records the kept length when it cuts content text", () => {
+      const toolCall = toolUpdate({
+        content: [{ type: "content", content: { type: "text", text: long } }],
+      });
+      expect(toolCall.data[ACP_CONTENT_KEPT_TAIL_KEY]).toBe(8_000);
+      expect(toolCall.data).not.toHaveProperty(ACP_RAW_OUTPUT_KEPT_TAIL_KEY);
+      const text = (
+        toolCall.data.content as ReadonlyArray<{ readonly content: { readonly text: string } }>
+      )[0]!.content.text;
+      expect(acpToolOutputKeptTailChars(toolCall.data, text)).toBe(8_000);
+    });
+
+    it("records nothing for output that fits", () => {
+      const toolCall = toolUpdate({
+        rawOutput: { stdout: "ok\n" },
+        content: [{ type: "content", content: { type: "text", text: "ok" } }],
+      });
+      expect(toolCall.data).not.toHaveProperty(ACP_RAW_OUTPUT_KEPT_TAIL_KEY);
+      expect(toolCall.data).not.toHaveProperty(ACP_CONTENT_KEPT_TAIL_KEY);
+      expect(acpToolOutputKeptTailChars(toolCall.data, "ok\n")).toBeUndefined();
+    });
+
+    it("drops a field's record when an update replaces that field, and only then", () => {
+      const cut = mergeToolCallState(
+        undefined,
+        toolUpdate({
+          rawOutput: { stdout: long },
+          content: [{ type: "content", content: { type: "text", text: long } }],
+        }),
+      );
+      const statusOnly = mergeToolCallState(cut, toolUpdate({ status: "completed" }));
+      expect(statusOnly.data[ACP_RAW_OUTPUT_KEPT_TAIL_KEY]).toBe(8_000);
+      expect(statusOnly.data[ACP_CONTENT_KEPT_TAIL_KEY]).toBe(8_000);
+      const shortOutput = mergeToolCallState(
+        statusOnly,
+        toolUpdate({ rawOutput: { stdout: "done\n" } }),
+      );
+      expect(shortOutput.data).not.toHaveProperty(ACP_RAW_OUTPUT_KEPT_TAIL_KEY);
+      expect(shortOutput.data[ACP_CONTENT_KEPT_TAIL_KEY]).toBe(8_000);
+      expect(cut.data[ACP_RAW_OUTPUT_KEPT_TAIL_KEY]).toBe(8_000);
+    });
   });
 
   describe("decideToolCallUpdateEmission", () => {

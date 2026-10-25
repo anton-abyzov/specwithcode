@@ -1,4 +1,4 @@
-import { scopeThreadRef } from "@specweave-studio/client-runtime/environment";
+import { scopeThreadRef, scopedThreadKey } from "@specweave-studio/client-runtime/environment";
 import { EnvironmentId, ThreadId, RunId } from "@specweave-studio/contracts";
 import { beforeEach, describe, expect, it } from "vite-plus/test";
 
@@ -11,6 +11,7 @@ describe("diffPanelStore", () => {
     useDiffPanelStore.setState({
       byThreadKey: {},
       branchBaseRefByThreadKey: {},
+      pendingLinkedOpenThreadKey: null,
     }),
   );
 
@@ -94,7 +95,13 @@ describe("diffPanelStore", () => {
 
     expect(
       selectThreadDiffPanelSelection(useDiffPanelStore.getState().byThreadKey, THREAD_REF),
-    ).toEqual({ kind: "turn", turnId, filePath: "src/app.ts", revealRequestId: 2 });
+    ).toEqual({
+      kind: "turn",
+      turnId,
+      filePath: "src/app.ts",
+      revealRequestId: 2,
+      origin: "menu",
+    });
   });
 
   it("restores the selected branch base after visiting another scope", () => {
@@ -120,6 +127,95 @@ describe("diffPanelStore", () => {
       turnId: latestTurnId,
       filePath: "src/app.ts",
       revealRequestId: 1,
+      origin: "menu",
     });
+  });
+
+  it("records an Open diff link with its subagent attribution", () => {
+    const turnId = RunId.make("turn-2");
+    useDiffPanelStore.getState().selectTurn(THREAD_REF, turnId, "/repo/src/app.ts", {
+      sourceThreadId: THREAD_REF.threadId,
+      attributedTo: { title: "Refactor parser", running: true },
+    });
+
+    expect(
+      selectThreadDiffPanelSelection(useDiffPanelStore.getState().byThreadKey, THREAD_REF),
+    ).toEqual({
+      kind: "turn",
+      turnId,
+      filePath: "/repo/src/app.ts",
+      revealRequestId: 1,
+      origin: "link",
+      attributedTo: { title: "Refactor parser", running: true },
+    });
+  });
+
+  it("never moves a link's turn to the latest turn when its run has no diff", () => {
+    const failedTurnId = RunId.make("turn-failed");
+    useDiffPanelStore.getState().selectTurn(THREAD_REF, failedTurnId, "src/app.ts", {});
+    useDiffPanelStore.getState().reconcileTurnSelection(THREAD_REF, [RunId.make("turn-latest")]);
+
+    expect(
+      selectThreadDiffPanelSelection(useDiffPanelStore.getState().byThreadKey, THREAD_REF),
+    ).toMatchObject({ kind: "turn", turnId: failedTurnId, origin: "link" });
+  });
+
+  it("drops the attribution of an earlier link when the turn menu picks a turn", () => {
+    const store = useDiffPanelStore.getState();
+    store.selectTurn(THREAD_REF, RunId.make("turn-1"), "src/app.ts", {
+      attributedTo: { title: "Refactor parser" },
+    });
+    store.selectTurn(THREAD_REF, RunId.make("turn-2"));
+
+    const selection = selectThreadDiffPanelSelection(
+      useDiffPanelStore.getState().byThreadKey,
+      THREAD_REF,
+    );
+    expect(selection).toMatchObject({ kind: "turn", origin: "menu" });
+    expect(selection).not.toHaveProperty("attributedTo");
+  });
+
+  it("gives turns stored before links were told apart the menu's origin", async () => {
+    const storage = useDiffPanelStore.persist.getOptions().storage!;
+    // Written after the store's own last write, as an older version left it.
+    await storage.setItem("studio:diff-panel-state:v1", {
+      version: 2,
+      state: {
+        byThreadKey: {
+          [scopedThreadKey(THREAD_REF)]: {
+            kind: "turn",
+            turnId: RunId.make("turn-old"),
+            filePath: "src/app.ts",
+            revealRequestId: 3,
+          },
+        },
+        branchBaseRefByThreadKey: {},
+      },
+    });
+
+    await useDiffPanelStore.persist.rehydrate();
+
+    expect(
+      selectThreadDiffPanelSelection(useDiffPanelStore.getState().byThreadKey, THREAD_REF),
+    ).toEqual({
+      kind: "turn",
+      turnId: RunId.make("turn-old"),
+      filePath: "src/app.ts",
+      revealRequestId: 3,
+      origin: "menu",
+    });
+  });
+
+  it("keeps a link's turn only for the one diff opening marked before navigating", () => {
+    const otherThreadRef = scopeThreadRef(
+      EnvironmentId.make("environment-1"),
+      ThreadId.make("thread-2"),
+    );
+    const store = useDiffPanelStore.getState();
+    store.markLinkedOpen(THREAD_REF);
+
+    expect(store.takeLinkedOpen(otherThreadRef)).toBe(false);
+    expect(store.takeLinkedOpen(THREAD_REF)).toBe(true);
+    expect(store.takeLinkedOpen(THREAD_REF)).toBe(false);
   });
 });

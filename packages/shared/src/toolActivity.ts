@@ -226,11 +226,32 @@ function toolNameToken(value: string | undefined): string | undefined {
   return trimmed.replace(/[_\s-]/gu, "").toLowerCase();
 }
 
+/**
+ * What a command did according to its typed actions (Codex `commandActions`),
+ * or undefined when they do not settle it: no actions, an `unknown` or
+ * unrecognized kind, or kinds that classify differently. A `listFiles`
+ * listing counts as a search, as an `ls` tool does.
+ */
+function commandActionsActivity(actions: unknown): "read" | "search" | undefined {
+  if (!Array.isArray(actions) || actions.length === 0) return undefined;
+  let activity: "read" | "search" | undefined;
+  for (const action of actions) {
+    const type = asTrimmedString(asRecord(action)?.type);
+    const next =
+      type === "read" ? "read" : type === "search" || type === "listFiles" ? "search" : undefined;
+    if (next === undefined || (activity !== undefined && activity !== next)) return undefined;
+    activity = next;
+  }
+  return activity;
+}
+
 export function classifyToolActivity(input: {
   readonly itemType?: ToolLifecycleItemType | string | null | undefined;
   readonly requestKind?: string | null | undefined;
   readonly title?: string | undefined;
   readonly data?: Record<string, unknown> | undefined;
+  /** Typed command actions; defaults to `data.commandActions` (a command item passed as data). */
+  readonly commandActions?: ReadonlyArray<unknown> | null | undefined;
 }): ToolActivityAction {
   const itemType = input.itemType ?? undefined;
   const requestKind = asTrimmedString(input.requestKind)?.toLowerCase();
@@ -239,8 +260,12 @@ export function classifyToolActivity(input: {
     asTrimmedString(input.data?.toolName) ?? asTrimmedString(asRecord(input.data?.item)?.tool),
   );
 
+  // Commands consult their typed actions first; shell text is never parsed.
+  const commandActivity = () =>
+    commandActionsActivity(input.commandActions ?? input.data?.commandActions) ?? "command";
+
   if (itemType === "command_execution") {
-    return "command";
+    return commandActivity();
   }
   if (itemType === "image_view") {
     return "read";
@@ -252,7 +277,7 @@ export function classifyToolActivity(input: {
     return "search";
   }
   if (requestKind === "command" || kind === "execute") {
-    return "command";
+    return commandActivity();
   }
   if (
     requestKind === "file-change" ||
