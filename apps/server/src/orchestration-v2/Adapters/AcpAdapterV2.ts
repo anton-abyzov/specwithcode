@@ -1349,8 +1349,12 @@ interface ActiveTextStream {
  * The failure for a turn that did no work and replied only with a usage
  * limit notice (see limitReplyTurnFailure); null for anything else.
  */
-function acpLimitReplyFailure(context: ActiveAcpTurn): OrchestrationV2ProviderFailure | null {
+function acpLimitReplyFailure(
+  context: ActiveAcpTurn,
+  nowMs: number | null,
+): OrchestrationV2ProviderFailure | null {
   return limitReplyTurnFailure({
+    ...(nowMs === null ? {} : { nowMs }),
     messageText: context.input.message.text,
     continuation: acpIsProviderContinuationMessage(context.input.message),
     didWork: context.tools.size > 0 || context.subagents.size > 0,
@@ -6713,7 +6717,14 @@ export function makeAcpAdapterV2(
           // stopped on that limit, so the limit fallback can move the thread.
           const limitReply =
             requestedStatus === "completed" && !context.interrupted
-              ? acpLimitReplyFailure(context)
+              ? acpLimitReplyFailure(
+                  context,
+                  // Only GitHub Copilot's monthly quota is known to reset on
+                  // the 1st (UTC); another agent's notice names no reset.
+                  flavor.specweaveTool === "copilot"
+                    ? DateTime.toEpochMillis(yield* DateTime.now)
+                    : null,
+                )
               : null;
           if (limitReply !== null)
             yield* Effect.logInfo("orchestration-v2.acp-limit-reply", {

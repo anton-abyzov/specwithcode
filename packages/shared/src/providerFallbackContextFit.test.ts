@@ -179,4 +179,28 @@ describe("context fit in fallback resolution", () => {
       sel("copilot", "small-model"),
     );
   });
+
+  it("goes home after an overflow even when home reports no usage", () => {
+    // Copilot is the project default and reports no usage; Claude shows
+    // verified room. An overflow says nothing about home's quota.
+    const home = sel("copilot", "small-model");
+    const input = {
+      currentInstanceId: codex.instanceId,
+      rule: { ...rule, providerLimitFallbackModels: [], defaultModelSelection: home },
+      nowMs: now,
+      anyReady: true,
+      contextFit: { requestTokens: 2_000, windowOf },
+    };
+    expect(
+      resolveProviderFallback({
+        ...input,
+        preferDefault: true,
+        providers: [claude, codex, copilot],
+      }),
+    ).toEqual(home);
+    // Without the overflow, verified room comes before a home that reports none.
+    expect(resolveProviderFallback({ ...input, providers: [claude, codex, copilot] })).toEqual(
+      sel("claudeAgent", "claude-opus-5-5"),
+    );
+  });
 });

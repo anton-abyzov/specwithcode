@@ -292,6 +292,10 @@ describe("a fallback target that cannot open", () => {
       const { state, sweep } = yield* harness(settings);
       state.threads = [onClaude];
       state.runs.set("t1", [r1]);
+      // Codex is past the threshold, so nothing has verified room: Copilot gets the try.
+      state.providers = state.providers.map((entry) =>
+        entry.instanceId === codexId ? codexAt(95) : entry,
+      );
 
       // Copilot reports no usage, so it is read again before the move; it still reads ready.
       yield* sweep();
@@ -304,6 +308,9 @@ describe("a fallback target that cannot open", () => {
         modelSelection: { instanceId: copilotId, model: opus },
       });
 
+      state.providers = state.providers.map((entry) =>
+        entry.instanceId === codexId ? codexAt(30) : entry,
+      );
       // The continuation fails to open; another thread stops on Claude meanwhile.
       const r5 = run({
         id: "r5",
@@ -419,11 +426,32 @@ describe("a fallback target that cannot open", () => {
         );
         state.threads = [onClaude];
         state.runs.set("t1", [r1]);
+        // Codex has verified room: it wins outright, and Copilot is never read.
         yield* sweep();
-        expect(state.refreshed).toEqual([copilotId]);
+        expect(state.refreshed).toEqual([]);
         expect(state.dispatched.map((command) => [command.commandId, target(command)])).toEqual([
           ["limit-fallback:t1:r1", codexId],
         ]);
+      }),
+  );
+
+  itEffect.effect(
+    "with no verified room, reads an unreported target again and skips it when not ready",
+    () =>
+      Effect.gen(function* () {
+        const { state, sweep } = yield* harness(settings, (entry) =>
+          entry.instanceId === copilotId
+            ? { ...entry, status: "error", message: "Copilot 1.0.101 is not prepared." }
+            : entry,
+        );
+        state.threads = [onClaude];
+        state.runs.set("t1", [r1]);
+        state.providers = state.providers.map((entry) =>
+          entry.instanceId === codexId ? codexAt(95) : entry,
+        );
+        yield* sweep();
+        expect(state.refreshed).toEqual([copilotId]);
+        expect(state.dispatched).toEqual([]);
       }),
   );
 

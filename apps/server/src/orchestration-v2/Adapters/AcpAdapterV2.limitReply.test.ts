@@ -74,7 +74,7 @@ const mockRuntime =
     });
 
 /** Runs one turn whose reply is `reply` and returns its terminal and its error items. */
-const runTurn = (name: string, reply: string) =>
+const runTurn = (name: string, reply: string, specweaveTool = "copilot") =>
   Effect.gen(function* () {
     const path = yield* Path.Path;
     const instanceId = ProviderInstanceId.make(`acpRegistry_${name}`);
@@ -88,6 +88,7 @@ const runTurn = (name: string, reply: string) =>
       selfInvocation: yield* resolveSelfInvocation(),
       flavor: {
         driver: ProviderDriverKind.make("acpRegistry"),
+        specweaveTool,
         capabilities: AcpProviderCapabilitiesV2,
         promptFailure: (cause) => acpRegistryPromptFailure("copilot", cause),
         makeRuntime: mockRuntime(
@@ -174,12 +175,28 @@ describe("AcpAdapterV2 limit replies", () => {
       // The agent's text stays in the conversation; the run stops on the limit.
       assert.equal(reply, COPILOT_QUOTA_REPLY);
       assert.equal(terminal.status, "failed");
-      assert.deepStrictEqual(terminal.failure, {
-        class: "usage_limit",
-        message: COPILOT_QUOTA_REPLY,
-        code: null,
-        retryable: null,
-      });
+      assert.deepStrictEqual(
+        { ...terminal.failure, resetAt: undefined },
+        {
+          class: "usage_limit",
+          message: "Monthly quota used up on this provider.",
+          code: null,
+          retryable: null,
+          resetAt: undefined,
+        },
+      );
+      // A monthly quota resets at 00:00 UTC on the 1st of next month.
+      assert.match(terminal.failure?.resetAt ?? "", /^\d{4}-\d{2}-01T00:00:00\.000Z$/);
+    }).pipe(Effect.provide(layerTest), Effect.scoped),
+  );
+
+  it.live("names no reset for another agent's monthly quota notice", () =>
+    Effect.gen(function* () {
+      const { terminal } = yield* runTurn("other-quota", COPILOT_QUOTA_REPLY, "");
+      assert.equal(terminal.status, "failed");
+      assert.equal(terminal.failure?.class, "usage_limit");
+      // Its monthly cycle need not be the calendar month: the usual hold applies.
+      assert.isNull(terminal.failure?.resetAt ?? null);
     }).pipe(Effect.provide(layerTest), Effect.scoped),
   );
 

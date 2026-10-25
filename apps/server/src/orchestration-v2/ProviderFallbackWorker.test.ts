@@ -34,7 +34,9 @@ import {
   providerFallbackCommand,
   providerLimitStep,
   reachedLimitWindow,
+  releaseRecoveredHolds,
   unreportedLimitStops,
+  usageHoldEvidence,
 } from "./ProviderFallbackWorker.ts";
 import { resolveUsageLimitsAfterProbe } from "../provider/providerUsageLimits.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
@@ -215,11 +217,93 @@ describe("unreportedLimitStops", () => {
     expect(unreportedLimitStops(held, [], [copilot], now + 61 * 60_000).size).toBe(0);
   });
 
+  it("learns and clears capacity only on the latest run's account after a selection change", () => {
+    const selectedElsewhere = {
+      ...stopped,
+      providerInstanceId: claudeId,
+      modelSelection: idle.modelSelection,
+    };
+    const run = {
+      id: stopped.latestRunId,
+      providerInstanceId: copilotId,
+      modelSelection: stopped.modelSelection,
+      status: "failed" as const,
+      startedAt: DateTime.makeUnsafe(now - 120_000),
+      completedAt: DateTime.makeUnsafe(now - 60_000),
+    };
+    const evidence = usageHoldEvidence(selectedElsewhere, run)!;
+    const held = unreportedLimitStops(new Map(), [evidence], [copilot, claudeFull], now);
+    expect([...held.keys()]).toEqual([copilotId]);
+    const first = releaseRecoveredHolds(held, new Map(), [evidence], now);
+    const completed = {
+      ...run,
+      status: "completed" as const,
+      startedAt: DateTime.makeUnsafe(now + 30_000),
+      completedAt: DateTime.makeUnsafe(now + 60_000),
+    };
+    const onOther = usageHoldEvidence(
+      { ...selectedElsewhere, status: "completed" },
+      { ...completed, providerInstanceId: claudeId },
+    )!;
+    expect(
+      releaseRecoveredHolds(first.held, first.since, [onOther], now + 90_000).held.has(copilotId),
+    ).toBe(true);
+    const recovered = usageHoldEvidence({ ...selectedElsewhere, status: "completed" }, completed)!;
+    expect(
+      releaseRecoveredHolds(first.held, first.since, [recovered], now + 90_000).held.size,
+    ).toBe(0);
+    expect(
+      usageHoldEvidence(selectedElsewhere, { ...run, id: RunId.make("different") }),
+    ).toBeNull();
+  });
+
   it("ignores providers that report usage and stops that are no longer current", () => {
     const onClaude = { ...stopped, providerInstanceId: claudeId };
     expect(unreportedLimitStops(new Map(), [onClaude], [claudeFull], now).size).toBe(0);
     const old = { ...stopped, usageLimitResetAt: "2026-10-09T11:00:00.000Z" };
     expect(unreportedLimitStops(new Map(), [old], [copilot], now).size).toBe(0);
+  });
+
+  it("drops a hold once a later run on that instance finishes cleanly", () => {
+    const monthly = Date.parse("2026-11-01T00:00:00.000Z");
+    const stop = { ...stopped, latestRunCompletedAt: DateTime.makeUnsafe(now - 60_000) };
+    const first = releaseRecoveredHolds(new Map([[copilotId, monthly]]), new Map(), [stop], now);
+    expect([...first.held]).toEqual([[copilotId, monthly]]);
+    expect([...first.since]).toEqual([[copilotId, now - 60_000]]);
+    // A run that finished before the stop says nothing about the quota now,
+    // nor does one already running at the stop that ended after it.
+    const earlier = {
+      ...idle,
+      id: ThreadId.make("t3"),
+      providerInstanceId: copilotId,
+      latestRunStartedAt: DateTime.makeUnsafe(now - 180_000),
+      latestRunCompletedAt: DateTime.makeUnsafe(now - 120_000),
+    };
+    expect(releaseRecoveredHolds(first.held, first.since, [earlier], now).held.size).toBe(1);
+    const inFlight = { ...earlier, latestRunCompletedAt: DateTime.makeUnsafe(now + 30_000) };
+    expect(releaseRecoveredHolds(first.held, first.since, [inFlight], now).held.size).toBe(1);
+    // A failed run, or a clean one elsewhere, keeps the hold.
+    const later = {
+      ...earlier,
+      latestRunStartedAt: DateTime.makeUnsafe(now + 30_000),
+      latestRunCompletedAt: DateTime.makeUnsafe(now + 60_000),
+    };
+    expect(
+      releaseRecoveredHolds(first.held, first.since, [{ ...later, status: "failed" as const }], now)
+        .held.size,
+    ).toBe(1);
+    expect(
+      releaseRecoveredHolds(
+        first.held,
+        first.since,
+        [{ ...later, providerInstanceId: claudeId }],
+        now,
+      ).held.size,
+    ).toBe(1);
+    // Copilot took work again (a raised budget): the month-long hold goes.
+    const released = releaseRecoveredHolds(first.held, first.since, [later], now + 90_000);
+    expect(released.held.size).toBe(0);
+    expect(released.since.size).toBe(0);
   });
 
   it("keeps a thread off a held provider that reports no usage", () => {

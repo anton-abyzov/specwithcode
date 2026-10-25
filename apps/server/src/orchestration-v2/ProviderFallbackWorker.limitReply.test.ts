@@ -143,7 +143,28 @@ function harness(
         Effect.sync(() => (threads.find((thread) => thread.id === threadId) ?? null) as never),
       getThreadRecords: (threadId, _fields, filter) =>
         records === undefined
-          ? Effect.fail(new ProjectionStore.ProjectionStoreThreadNotFoundError({ threadId }))
+          ? Effect.sync(
+              () =>
+                ({
+                  runs: threads
+                    .filter((thread) => thread.id === threadId)
+                    .map((thread) => ({
+                      id: thread.latestRunId,
+                      userMessageId: "message:hold",
+                      ordinal: 1,
+                      providerInstanceId: thread.providerInstanceId,
+                      modelSelection: thread.modelSelection,
+                      status: thread.status,
+                      startedAt: DateTime.makeUnsafe(now - 60_000),
+                      completedAt: thread.latestRunCompletedAt,
+                    })),
+                  turnItems: [],
+                  runtimeRequests: [],
+                  nodes: [],
+                  messages: [],
+                  providerThreads: [],
+                }) as never,
+            )
           : Effect.sync(() => records(filter) as never),
     }),
     Layer.mock(ThreadManagement.ThreadManagementService)({
@@ -169,7 +190,8 @@ describe("a Copilot quota reply in the fallback chain", () => {
       yield* TestClock.setTime(now);
       const { dispatched, sweep, setThreads } = yield* harness();
 
-      // Codex stops on its weekly limit: Copilot has the same model and no usage to read.
+      // Codex stops on its weekly limit. Copilot has the same model but no
+      // usage to read; Claude has a fresh read with room, so Claude wins.
       setThreads([
         stopped(coordinatorId, codexId, "run:565", weeklyReset, "Codex weekly limit reached."),
       ]);
@@ -179,8 +201,10 @@ describe("a Copilot quota reply in the fallback chain", () => {
         type: "message.dispatch",
         threadId: coordinatorId,
         manualContinuationOfRunId: "run:565",
-        modelSelection: { instanceId: copilotId, model },
+        modelSelection: { instanceId: claudeId },
       });
+      // A thread that was on Copilot anyway (a person picked it) stops on its quota.
+      dispatched.length = 0;
 
       // Copilot answers with its quota notice, which now fails the run as a usage limit.
       const failure = usageLimitReplyFailure(COPILOT_QUOTA_REPLY);
@@ -192,8 +216,8 @@ describe("a Copilot quota reply in the fallback chain", () => {
         stopped(workerId, codexId, "run:16", weeklyReset, "Codex weekly limit reached."),
       ]);
       yield* sweep();
-      expect(dispatched.slice(1)).toHaveLength(2);
-      expect(dispatched.slice(1)).toEqual(
+      expect(dispatched).toHaveLength(2);
+      expect(dispatched).toEqual(
         expect.arrayContaining([
           expect.objectContaining({
             type: "message.dispatch",
@@ -212,6 +236,87 @@ describe("a Copilot quota reply in the fallback chain", () => {
       // The hold is shared, so the coordinator's next turn and new workers keep off Copilot too.
       const held = yield* usageLimitHeldInstances(DateTime.toEpochMillis(yield* DateTime.now));
       expect([...held]).toEqual([copilotId]);
+    }),
+  );
+
+  it.effect("holds the stopped run's instance after the thread selected another provider", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(now);
+      const original = stopped(workerId, copilotId, "run:changed-selection", weeklyReset, "quota");
+      const { sweep, setThreads } = yield* harness([codexSpent, copilot, claudeReady], () => ({
+        runs: [
+          {
+            id: original.latestRunId,
+            providerInstanceId: copilotId,
+            modelSelection: original.modelSelection,
+            status: "failed",
+            startedAt: DateTime.makeUnsafe(now - 60_000),
+            completedAt: original.latestRunCompletedAt,
+          },
+        ],
+        turnItems: [],
+        runtimeRequests: [],
+        nodes: [],
+        messages: [],
+        providerThreads: [],
+      }));
+      setThreads([
+        {
+          ...original,
+          providerInstanceId: claudeId,
+          modelSelection: { instanceId: claudeId, model: "claude-opus-5.5" },
+        },
+      ]);
+      yield* sweep();
+      expect([...(yield* usageLimitHeldInstances(now))]).toEqual([copilotId]);
+    }),
+  );
+
+  it.effect("keeps a recovered account clear on every sweep while an older stop remains", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(now);
+      const failed = stopped(workerId, copilotId, "run:old-stop", weeklyReset, "quota");
+      const recovered = {
+        ...stopped(coordinatorId, claudeId, "run:recovered", null, ""),
+        status: "completed" as const,
+        lastErrorClass: null,
+      };
+      const runs = [
+        {
+          id: failed.latestRunId,
+          providerInstanceId: copilotId,
+          modelSelection: failed.modelSelection,
+          status: "failed",
+          startedAt: DateTime.makeUnsafe(now - 60_000),
+          completedAt: failed.latestRunCompletedAt,
+          userMessageId: "message:failed",
+          ordinal: 1,
+        },
+        {
+          id: recovered.latestRunId,
+          providerInstanceId: copilotId,
+          modelSelection: failed.modelSelection,
+          status: "completed",
+          startedAt: DateTime.makeUnsafe(now - 4_000),
+          completedAt: DateTime.makeUnsafe(now - 1_000),
+          userMessageId: "message:recovered",
+          ordinal: 2,
+        },
+      ];
+      const { sweep, setThreads } = yield* harness([codexSpent, copilot, claudeReady], () => ({
+        runs,
+        turnItems: [],
+        runtimeRequests: [],
+        nodes: [],
+        messages: [],
+        providerThreads: [],
+      }));
+      setThreads([failed, recovered]);
+      for (let i = 0; i < 3; i++) {
+        yield* sweep();
+        expect([...(yield* usageLimitHeldInstances(now + i * 60_000))]).toEqual([]);
+        yield* TestClock.adjust("1 minute");
+      }
     }),
   );
 
@@ -298,7 +403,7 @@ describe("a Copilot quota reply in the fallback chain", () => {
     }),
   );
 
-  it.effect("tries each Copilot instance independently, then continues on working Codex once", () =>
+  it.effect("moves a Copilot quota stop to verified Codex before an unchecked sibling", () =>
     Effect.gen(function* () {
       yield* TestClock.setTime(now);
       const siblingId = ProviderInstanceId.make("copilot-second-instance");
@@ -335,58 +440,39 @@ describe("a Copilot quota reply in the fallback chain", () => {
         status: "completed",
         lastErrorClass: null,
       };
-      const failure = usageLimitReplyFailure(COPILOT_QUOTA_REPLY)!;
+      const failure = usageLimitReplyFailure(COPILOT_QUOTA_REPLY, now)!;
       setThreads([
         coordinator,
         stopped(workerId, copilotId, "run:first-copilot-quota", null, failure.message),
       ]);
       yield* sweep();
+      // The sibling shares the model but reports no usage: Codex's verified room wins.
       expect(dispatched).toEqual([
         expect.objectContaining({
           type: "message.dispatch",
           threadId: workerId,
           manualContinuationOfRunId: "run:first-copilot-quota",
-          modelSelection: { instanceId: siblingId, model },
+          modelSelection: { instanceId: codexId, model },
         }),
       ]);
-      expect([...(yield* usageLimitHeldInstances(now))]).toEqual([copilotId]);
-      // Only the second instance's own quota failure permits holding it too.
-      yield* TestClock.adjust("31 seconds");
-      setThreads([
-        coordinator,
-        stopped(workerId, siblingId, "run:second-copilot-quota", null, failure.message),
-      ]);
-      yield* sweep();
-      expect(dispatched[1]).toMatchObject({
-        type: "message.dispatch",
-        commandId: `limit-fallback:${workerId}:run:second-copilot-quota`,
-        threadId: workerId,
-        manualContinuationOfRunId: "run:second-copilot-quota",
-        modelSelection: { instanceId: codexId, model },
-      });
-      const held = yield* usageLimitHeldInstances(now + 31_000);
-      expect([...held].toSorted()).toEqual([copilotId, siblingId].toSorted());
+      const held = yield* usageLimitHeldInstances(now);
+      expect([...held]).toEqual([copilotId]);
+      // With nothing verified, a sibling is still tried before giving up.
       expect(
         resolveProviderFallback({
           providers: [managed, sibling, independent],
-          currentInstanceId: siblingId,
+          currentInstanceId: copilotId,
           currentModel: model,
           rule: DEFAULT_SERVER_SETTINGS,
-          nowMs: now + 31_000,
+          nowMs: now,
           anyReady: true,
           limitedInstanceIds: held,
         }),
-      ).toEqual({ instanceId: independentId, model: "independent-model" });
+      ).toEqual({ instanceId: siblingId, model });
       yield* sweep();
       yield* TestClock.adjust("31 seconds");
       yield* sweep();
-      expect(dispatched).toHaveLength(2);
-      expect(
-        dispatched.filter(
-          (command) =>
-            command.type === "message.dispatch" && command.modelSelection?.instanceId === codexId,
-        ),
-      ).toHaveLength(1);
+      expect(dispatched).toHaveLength(1);
     }),
   );
 
@@ -399,7 +485,8 @@ describe("a Copilot quota reply in the fallback chain", () => {
       const siblingId = ProviderInstanceId.make("copilot-0889");
       const sibling: ServerProvider = { ...copilot, instanceId: siblingId };
       const codexReady = withWindow(provider(codexId, "codex", now), model, 20);
-      const { dispatched, sweep, setThreads } = yield* harness([copilot, sibling, codexReady]);
+      const providers = [copilot, sibling];
+      const { dispatched, sweep, setThreads } = yield* harness(providers);
       const failure = usageLimitReplyFailure(COPILOT_QUOTA_REPLY)!;
       const failOn = (instanceId: ProviderInstanceId, runId: string) =>
         Effect.gen(function* () {
@@ -418,6 +505,8 @@ describe("a Copilot quota reply in the fallback chain", () => {
         expect.objectContaining({ modelSelection: { instanceId: siblingId, model } }),
       ]);
 
+      // Codex becomes ready as the sibling fails; a wake must bypass the interval.
+      providers.push(codexReady);
       // The sibling fails five seconds later: without a wake the sweep waits.
       yield* TestClock.adjust("5 seconds");
       yield* failOn(siblingId, "run:sibling-quota");

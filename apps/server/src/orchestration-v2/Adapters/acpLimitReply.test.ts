@@ -11,12 +11,14 @@ const COPILOT_QUOTA_REPLY =
 
 describe("usage limit replies", () => {
   it("reads Copilot's monthly quota reply as a usage limit", () => {
-    const failure = usageLimitReplyFailure(COPILOT_QUOTA_REPLY);
+    const failure = usageLimitReplyFailure(COPILOT_QUOTA_REPLY, Date.parse("2026-10-22T12:35:30Z"));
+    // A short notice in place of the raw reply, held until the monthly reset.
     assert.deepStrictEqual(failure, {
       class: "usage_limit",
-      message: COPILOT_QUOTA_REPLY,
+      message: "Monthly quota used up on this provider.",
       code: null,
       retryable: null,
+      resetAt: "2026-11-01T00:00:00.000Z",
     });
   });
 
