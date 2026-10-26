@@ -6,13 +6,15 @@ import { createContext, useLayoutEffect, useState } from "react";
  * model name, a state suffix (`ModelStateTag`) and the usage meter. It gives up room in
  * one order on every surface, so the model name stays readable for as long as it fits:
  *
- * - `full`: `Codex · GPT-6.1-Sol ↳ next: Opus 5.5 ◔ 27%`
+ * - `full`: `Codex · GPT-6.1-Sol ↳ next: Opus 5.5 ◔ 27%`, and a spent limit's
+ *   `Limit · resets in 5d 23h`
  * - `model`: the provider's name goes (its mark stays), the state shortens to a word
- *   and the usage number goes (its ring stays)
- * - `short`: the state is its glyph alone
+ *   and a spent limit's detail goes; the ring and the number stay
+ * - `short`: the state is its glyph alone and the usage number goes (its ring stays)
  * - `name`: the usage ring goes, so a narrow toolbar still names the model; a long or
  *   custom name may end in an ellipsis here, once its first characters fit
- * - `icon`: the model name goes too; the mark, the state glyph and the ring stay
+ * - `icon`: the model name goes too; the mark and the state glyph stay, and the usage
+ *   ring wraps the mark (`ModelUsageMarkRing`) so it takes no room of its own
  *
  * The fit follows the room the chip really has, measured from its parts, never the
  * window width. The full identity stays in the accessible name and the tooltip at
@@ -29,14 +31,15 @@ export type ModelChipPart =
   | "state-full"
   | "state-short"
   | "usage-ring"
-  | "usage-value";
+  | "usage-value"
+  | "usage-detail";
 
 const PARTS_BY_FIT: Readonly<Record<ModelChipFit, ReadonlySet<ModelChipPart>>> = {
-  full: new Set(["provider", "model", "state-full", "usage-ring", "usage-value"]),
-  model: new Set(["model", "state-short", "usage-ring"]),
+  full: new Set(["provider", "model", "state-full", "usage-ring", "usage-value", "usage-detail"]),
+  model: new Set(["model", "state-short", "usage-ring", "usage-value"]),
   short: new Set(["model", "usage-ring"]),
   name: new Set(["model"]),
-  icon: new Set(["usage-ring"]),
+  icon: new Set([]),
 };
 
 export function modelChipShows(fit: ModelChipFit, part: ModelChipPart): boolean {

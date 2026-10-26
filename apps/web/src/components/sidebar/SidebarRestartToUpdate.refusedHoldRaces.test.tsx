@@ -91,6 +91,9 @@ const IDLE: ServerPrepareServiceUpdateResult = { idle: true, stoppedThreads: 0, 
 // What the agent writes for M4's refusal, and around the restart it makes for a held request.
 const DETACHED =
   "SpecWithCode cannot be updated right now: The SpecWithCode service is using a database log that was deleted from disk. Restart SpecWithCode, then update";
+// What the toast shows for it: the older agent's restart reads as what Update now does.
+const DETACHED_SHOWN =
+  "SpecWithCode cannot be updated right now: The SpecWithCode service is using a database log that was deleted from disk. Press Update now: SpecWithCode saves that log, restarts its background service and then updates";
 const RESTARTING = "Restarting SpecWithCode to recover its database";
 const RESTARTED = "Restarted SpecWithCode to recover its database; installing after a quiet moment";
 
@@ -645,7 +648,7 @@ describe("Update now on a service too old to say whether it holds", () => {
     calls.length = 0;
     await refuses();
     await advance(4_000);
-    expect(errorToasts()).toEqual([DETACHED]);
+    expect(errorToasts()).toEqual([DETACHED_SHOWN]);
     expect(label()).toBe("Retry update");
   });
 });
@@ -690,7 +693,7 @@ describe("Update now after a reload once the stop taken for the agent's release 
     await reloadAfterRefusedHold();
     await refuses();
     await advance(4_000);
-    expect(errorToasts()).toEqual([DETACHED]);
+    expect(errorToasts()).toEqual([DETACHED_SHOWN]);
     expect(label()).toBe("Retry update");
   });
 
@@ -820,7 +823,7 @@ describe("Retry update after an attempt the agent refused", () => {
     stopHolds.push(false);
     await refuses();
     await advance(4_000);
-    expect(errorToasts()).toEqual([DETACHED]);
+    expect(errorToasts()).toEqual([DETACHED_SHOWN]);
     expect(label()).toBe("Retry update");
     calls.length = 0;
     await retryRefusedThenRefusal();
@@ -838,7 +841,7 @@ describe("Retry update after an attempt the agent refused", () => {
     await advance(1_000);
     await refuses();
     await advance(2_000);
-    expect(errorToasts()).toEqual([DETACHED]);
+    expect(errorToasts()).toEqual([DETACHED_SHOWN]);
     expect(label()).toBe("Retry update");
     await advance(60_000);
     held = false;
@@ -895,7 +898,7 @@ describe("Update now when the agent's refusal under the hold says nothing of whe
     const { updatedAt: _written, ...unwritten } = agent;
     await publish({ ...unwritten, status: "error", message: DETACHED });
     await advance(4_000);
-    expect(errorToasts()).toEqual([DETACHED]);
+    expect(errorToasts()).toEqual([DETACHED_SHOWN]);
     expect(label()).toBe("Retry update");
   });
 });

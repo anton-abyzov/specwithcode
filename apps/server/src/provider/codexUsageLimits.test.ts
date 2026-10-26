@@ -1,5 +1,6 @@
 import * as CodexErrors from "@specweave-studio/effect-codex-app-server/errors";
 import { describe, expect, it } from "vite-plus/test";
+import { windowAppliesToModel } from "@specweave-studio/shared/usageWindows";
 
 import {
   codexRateLimitsFailureMessage,
@@ -101,6 +102,7 @@ describe("sparse main native credit withdrawal", () => {
           id: "codex_bengalfox:primary",
           kind: "other",
           label: "codex_bengalfox: Primary",
+          modelScope: "codex_bengalfox",
           usedPercent: 100,
         },
       ],
@@ -208,6 +210,7 @@ describe("codexRateLimitsToLimits", () => {
         id: "codex_bengalfox:primary",
         kind: "session",
         label: "codex_bengalfox: Session",
+        modelScope: "codex_bengalfox",
         usedPercent: 0,
         windowDurationMins: 300,
       },
@@ -215,6 +218,7 @@ describe("codexRateLimitsToLimits", () => {
         id: "codex_bengalfox:secondary",
         kind: "weekly",
         label: "codex_bengalfox: Weekly",
+        modelScope: "codex_bengalfox",
         usedPercent: 90,
         windowDurationMins: 10080,
       },
@@ -226,6 +230,31 @@ describe("codexRateLimitsToLimits", () => {
         windowDurationMins: 10080,
       },
     ]);
+  });
+
+  it("scopes a model bucket to the model it names, never to every Codex model", () => {
+    const spark = {
+      limitId: "codex_bengalfox",
+      limitName: "GPT-5.3-Codex-Spark",
+      secondary: { usedPercent: 100, windowDurationMins: 10080 },
+    };
+    const limits = codexRateLimitsToLimits({
+      checkedAt,
+      snapshot: { secondary: { usedPercent: 12, windowDurationMins: 10080 } },
+      rateLimitsByLimitId: {
+        codex: { secondary: { usedPercent: 12, windowDurationMins: 10080 } },
+        codex_bengalfox: spark,
+      },
+    });
+    const bucket = limits.windows.find((window) => window.id === "codex_bengalfox:secondary");
+    expect(bucket).toMatchObject({
+      label: "GPT-5.3-Codex-Spark: Weekly",
+      modelScope: "GPT-5.3-Codex-Spark",
+    });
+    expect(windowAppliesToModel(bucket!, "gpt-5.3-codex-spark")).toBe(true);
+    expect(windowAppliesToModel(bucket!, "gpt-6.1-sol")).toBe(false);
+    expect(windowAppliesToModel(bucket!, null)).toBe(false);
+    expect(limits.windows.find((window) => window.id === "secondary")?.modelScope).toBeUndefined();
   });
 
   it.each([undefined, null, {}])(
@@ -252,6 +281,7 @@ describe("codexRateLimitsToLimits", () => {
         id: "codex_bengalfox:secondary",
         kind: "other",
         label: "codex_bengalfox: Secondary",
+        modelScope: "codex_bengalfox",
         usedPercent: 90,
       },
     ]);
@@ -384,6 +414,7 @@ describe("codexRateLimitsToUpdate", () => {
             id: snapshot.limitId === "codex" ? "primary" : "codex_bengalfox:primary",
             kind: "other",
             label: snapshot.limitId === "codex" ? "Primary" : "codex_bengalfox: Primary",
+            ...(snapshot.limitId === "codex" ? {} : { modelScope: "codex_bengalfox" }),
             usedPercent: 20,
           },
         ],
@@ -423,6 +454,7 @@ describe("codexRateLimitsToUpdate", () => {
           id: "codex_bengalfox:primary",
           kind: "session",
           label: "codex_bengalfox: Session",
+          modelScope: "codex_bengalfox",
           usedPercent: 0,
           windowDurationMins: 300,
         },
@@ -430,6 +462,7 @@ describe("codexRateLimitsToUpdate", () => {
           id: "codex_bengalfox:secondary",
           kind: "weekly",
           label: "codex_bengalfox: Weekly",
+          modelScope: "codex_bengalfox",
           usedPercent: 90,
           windowDurationMins: 10080,
         },

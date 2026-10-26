@@ -63,6 +63,39 @@ describe("transfer grant", () => {
     });
   });
 
+  it("accepts a grant revoked by its commit only for a repeated commit", () => {
+    const { token, record } = minted();
+    const committed = revokeTransferGrant(record, "committed", 3_000);
+    expect(
+      verifyTransferGrant(committed, { operationId, token, now: 3_001, revokedFor: "committed" }),
+    ).toMatchObject({ ok: true });
+    expect(verifyTransferGrant(committed, { operationId, token, now: 3_001 })).toEqual({
+      ok: false,
+      reason: "revoked",
+    });
+    const released = revokeTransferGrant(record, "released", 3_000);
+    expect(
+      verifyTransferGrant(released, { operationId, token, now: 3_001, revokedFor: "committed" }),
+    ).toEqual({ ok: false, reason: "revoked" });
+    expect(
+      verifyTransferGrant(committed, {
+        operationId,
+        token: `${token}x`,
+        now: 3_001,
+        revokedFor: "committed",
+      }),
+    ).toEqual({ ok: false, reason: "invalid" });
+    // Undo may ask weeks later, past the idle and lifetime limits.
+    expect(
+      verifyTransferGrant(committed, {
+        operationId,
+        token,
+        now: 3_000 + TRANSFER_GRANT_MAX_MS * 3,
+        revokedFor: "committed",
+      }),
+    ).toMatchObject({ ok: true });
+  });
+
   it("slides with use but never past the hard limit", () => {
     const { record } = minted();
     let current = record;

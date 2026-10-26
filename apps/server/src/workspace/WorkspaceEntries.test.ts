@@ -206,7 +206,8 @@ it.layer(layerTest, { excludeTestServices: true })("WorkspaceEntries", (it) => {
             });
           }
         }),
-      60_000,
+      // Writing 26,000 files takes over a minute on a busy Windows runner.
+      180_000,
     );
 
     it.effect("returns the complete cached workspace index", () =>

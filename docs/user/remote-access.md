@@ -3,14 +3,19 @@
 Connect a phone, browser, or another desktop app to SpecWithCode running on a different
 machine. That machine must stay running and reachable while you work.
 
-A Linux VPS you rent joins your private machines the same way, over your
-tailnet; see [Linux worker](./linux-worker.md).
+SpecWithCode Connect is the default way to reach a machine from anywhere.
+Tailscale is optional: it adds a direct private route on your tailnet, which is
+often faster on the same network. A Linux VPS you rent can be reached the same
+ways; to let your main machine start work on it, see
+[Linux worker](./linux-worker.md).
 
 ## SpecWithCode Connect
 
-SpecWithCode Connect makes an environment available to your other devices without setting
-up router forwarding. In the desktop app on the host, open **Settings →
-Connections**, sign in, and enable **SpecWithCode Connect** for that environment.
+SpecWithCode Connect makes an environment available to your other devices (the
+desktop app, a browser or your iPhone) through a Cloudflare tunnel, with no
+Tailscale and no router forwarding. In the desktop app on the host, open
+**Settings → Connections**, sign in, and enable **SpecWithCode Connect** for that
+environment.
 
 For a command-line host, run:
 
@@ -135,9 +140,11 @@ on that machine. Existing threads stay where they started. If resource checks ar
 unavailable or all eligible machines are full, choose a machine manually to continue.
 Mobile keeps its manual environment selection.
 
-### Tailscale HTTPS
+### Tailscale HTTPS (optional)
 
-Join both devices to the same tailnet. In the desktop app, enable **Tailscale
+Tailscale is not needed to reach a machine; SpecWithCode Connect does that. Use
+Tailscale HTTPS when you also want a direct private route on your tailnet. Join
+both devices to the same tailnet. In the desktop app, enable **Tailscale
 HTTPS** in **Settings → Connections**. Turn it off there to remove that route.
 
 To start a command-line server with Tailscale HTTPS:
@@ -182,8 +189,8 @@ or reuses a server there and opens the port forward for you. Projects, provider
 credentials, and agent work stay on the remote machine.
 
 Do not use this path for a VPS you rent. Set the VPS up as a
-[Linux worker](./linux-worker.md) instead: it runs its own background service on
-your tailnet and joins **Your private machines**.
+[Linux worker](./linux-worker.md) instead: it runs its own background service
+and joins **Your private machines**.
 
 The remote host must be Linux or an Apple Silicon Mac with `curl` or `wget`,
 `tar`, `sha256sum` or `shasum`, and [provider setup](./install.md#providers).

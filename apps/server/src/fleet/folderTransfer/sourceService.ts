@@ -9,11 +9,14 @@ import { runGit } from "./git.ts";
 import {
   CHUNK_SIZE,
   expandCollapsed,
+  isSkippedWorktreesNotice,
   type FolderScan,
+  FolderScanError,
   hashFile,
   hashSelected,
   type ManifestEntry,
   type ManifestHeader,
+  isScanStopped,
   readManifestFile,
   scanFolder,
   selectEntries,
@@ -22,7 +25,12 @@ import {
   type RepositoryInfo,
 } from "./manifest.ts";
 import { isSafeRelativePath, linkTargetOnWire } from "./paths.ts";
-import { preparePortableGit, sourceEntryRoot } from "./portableGit.ts";
+import {
+  checkPortableGit,
+  PORTABLE_GIT_NOTICE,
+  preparePortableGit,
+  sourceEntryRoot,
+} from "./portableGit.ts";
 import {
   MAX_SECRET_FILE_BYTES,
   type SecretApproval,
@@ -73,6 +81,30 @@ export interface SourceSummary {
   readonly secretFiles: ReadonlyArray<{ readonly path: string; readonly size: number }>;
   readonly linksOutside: number;
   readonly warnings: ReadonlyArray<string>;
+  /** What measuring left out: rebuildable folders not opened, worktrees inside the folder not copied. */
+  readonly skipped?: {
+    readonly rebuildableFolders: number;
+    readonly worktrees: ReadonlyArray<string>;
+    /** Skipped worktrees with uncommitted changes, which stay on this machine. */
+    readonly dirtyWorktrees?: ReadonlyArray<string>;
+    /** Skipped worktrees whose check failed or timed out; they may hold changes. */
+    readonly uncheckedWorktrees?: ReadonlyArray<string>;
+    /** Skipped worktrees with commits on no branch (detached or mid-rebase/merge). */
+    readonly strandedWorktrees?: ReadonlyArray<string>;
+    /** True totals; the lists above are capped. */
+    readonly worktreeCount?: number;
+    readonly dirtyCount?: number;
+  };
+}
+
+/** What a scan or build is doing, with its running counts. */
+export interface SourceProgress {
+  readonly files: number;
+  readonly bytes: number;
+  readonly step?: "listing" | "checking-worktrees" | "git-snapshot" | "hashing";
+  /** While hashing: the selected files and bytes to read in all. */
+  readonly totalFiles?: number;
+  readonly totalBytes?: number;
 }
 
 export interface SourceOperationRecord {
@@ -88,7 +120,7 @@ export interface SourceOperationRecord {
   readonly state: SourceState;
   readonly selection: ReadonlyArray<FileClass> | null;
   readonly summary: SourceSummary | null;
-  readonly progress: { readonly files: number; readonly bytes: number } | null;
+  readonly progress: SourceProgress | null;
   readonly error: string | null;
   readonly releaseReason: string | null;
   /** Retried on a later terminal status read; never invalidates an applied copy. */
@@ -115,13 +147,33 @@ interface Hooks {
   readonly now?: () => number;
 }
 
+interface ChunkPlace {
+  readonly path: string;
+  readonly offset: number;
+  readonly length: number;
+}
+
+/** Where a chunk can be read; `also` holds a few other files with the same bytes. */
+interface ChunkLocation extends ChunkPlace {
+  also?: Array<ChunkPlace>;
+}
+
+/** Other places kept per chunk, so one file changing does not fail its duplicates. */
+const MAX_CHUNK_ALTERNATES = 4;
+
 interface Loaded {
   record: SourceOperationRecord;
   scan: FolderScan | null;
   entries: Map<string, ManifestEntry> | null;
-  chunks: Map<string, { path: string; offset: number; length: number }> | null;
+  chunks: Map<string, ChunkLocation> | null;
   header: ManifestHeader | null;
   building: Promise<void> | null;
+  /** Stops the running scan or build; a cancel or release aborts it. */
+  stop: AbortController | null;
+  /** A cancel or release is waiting for the running scan or build to stop. */
+  stopRequested: boolean;
+  /** When `scan` was measured, on this service's clock. */
+  scannedAt: number;
   readers: Set<Promise<void>>;
   terminalUpdate: Promise<void>;
   saving: Promise<void>;
@@ -129,6 +181,16 @@ interface Loaded {
 
 /** How long `close` lets running chunk reads and transitions finish. */
 const CLOSE_SETTLE_MS = 2_000;
+/** Scan and build progress reach `operation.json` at most this often; reads see it at once. */
+const PROGRESS_SAVE_MS = 3_000;
+/**
+ * A copy started this soon after measuring reuses the measured listing; later it
+ * lists the folder again, so the manifest and Git snapshot match when copying starts.
+ */
+const MEASURE_REUSE_MS = 30_000;
+/** Linked worktree paths kept in a summary. */
+/** Skipped worktree paths kept per list; the counts stay true. */
+const MAX_SKIPPED_WORKTREES = 200;
 
 const TERMINAL: ReadonlySet<SourceState> = new Set(["committed", "released", "cancelled"]);
 
@@ -177,9 +239,69 @@ function summarize(scan: FolderScan, warnings: ReadonlyArray<string> = []): Sour
         typeof entry.target === "string" &&
         (entry.target.startsWith("/") || /^[A-Za-z]:/.test(entry.target)),
     ).length,
-    warnings: [...new Set([...warnings, ...scan.warnings, ...(scan.notices ?? [])])].slice(0, 50),
+    // The skipped-worktree notice leads, so the cap can never drop it.
+    warnings: [
+      ...new Set([
+        ...(scan.notices ?? []).filter(isSkippedWorktreesNotice),
+        ...warnings,
+        ...scan.warnings,
+        ...(scan.notices ?? []),
+      ]),
+    ].slice(0, 50),
+    ...(scan.skipped
+      ? {
+          skipped: {
+            rebuildableFolders: scan.skipped.rebuildableFolders,
+            worktrees: scan.skipped.worktrees.slice(0, MAX_SKIPPED_WORKTREES),
+            ...(scan.skipped.dirtyWorktrees
+              ? { dirtyWorktrees: scan.skipped.dirtyWorktrees.slice(0, MAX_SKIPPED_WORKTREES) }
+              : {}),
+            ...(scan.skipped.uncheckedWorktrees
+              ? {
+                  uncheckedWorktrees: scan.skipped.uncheckedWorktrees.slice(
+                    0,
+                    MAX_SKIPPED_WORKTREES,
+                  ),
+                }
+              : {}),
+            ...(scan.skipped.strandedWorktrees
+              ? {
+                  strandedWorktrees: scan.skipped.strandedWorktrees.slice(0, MAX_SKIPPED_WORKTREES),
+                }
+              : {}),
+            ...(scan.skipped.worktrees.length > 0
+              ? { worktreeCount: scan.skipped.worktrees.length }
+              : {}),
+            ...(scan.skipped.dirtyWorktrees
+              ? { dirtyCount: scan.skipped.dirtyWorktrees.length }
+              : {}),
+          },
+        }
+      : {}),
   };
 }
+
+/** Measuring no longer snapshots Git, so the measured summary says when it happens. */
+function withGitNotice(scan: FolderScan): FolderScan {
+  return scan.repositories.length > 0
+    ? { ...scan, notices: [...(scan.notices ?? []), PORTABLE_GIT_NOTICE] }
+    : scan;
+}
+
+const newLoaded = (record: SourceOperationRecord): Loaded => ({
+  record,
+  scan: null,
+  entries: null,
+  chunks: null,
+  header: null,
+  building: null,
+  stop: null,
+  stopRequested: false,
+  scannedAt: 0,
+  readers: new Set(),
+  terminalUpdate: Promise.resolve(),
+  saving: Promise.resolve(),
+});
 
 /**
  * Opens a manifest file for reading only if no folder on its path became a link
@@ -274,18 +396,15 @@ export class SourceTransfers {
     // Another request may have populated the cache during the disk read.
     const concurrent = this.operations.get(operationId);
     if (concurrent) return concurrent;
-    const loaded: Loaded = {
-      record,
-      scan: null,
-      entries: null,
-      chunks: null,
-      header: null,
-      building: null,
-      readers: new Set(),
-      terminalUpdate: Promise.resolve(),
-      saving: Promise.resolve(),
-    };
+    const loaded = newLoaded(record);
     this.operations.set(operationId, loaded);
+    // A restart interrupted measuring or building: run it again rather than
+    // leave the dialog waiting on work that no longer runs.
+    if (!this.closed) {
+      if (record.state === "scanning") loaded.building = this.scan(loaded);
+      else if (record.state === "building" && record.selection)
+        loaded.building = this.build(loaded, new Set(record.selection));
+    }
     return loaded;
   }
 
@@ -337,54 +456,123 @@ export class SourceTransfers {
       });
       return { token: minted.token, record: existing.record };
     }
-    const loaded: Loaded = {
-      record: {
-        version: 1,
-        operationId: input.operationId,
-        projectId: input.projectId,
-        folder,
-        projectRelativePath,
-        mode: input.mode,
-        destinationEnvironmentId: input.destinationEnvironmentId,
-        createdAt: this.now(),
-        grant: minted.record,
-        state: "scanning",
-        selection: null,
-        summary: null,
-        progress: null,
-        error: null,
-        releaseReason: null,
-        warnings: input.warnings ?? [],
-      },
-      scan: null,
-      entries: null,
-      chunks: null,
-      header: null,
-      building: null,
-      readers: new Set(),
-      terminalUpdate: Promise.resolve(),
-      saving: Promise.resolve(),
-    };
+    const loaded = newLoaded({
+      version: 1,
+      operationId: input.operationId,
+      projectId: input.projectId,
+      folder,
+      projectRelativePath,
+      mode: input.mode,
+      destinationEnvironmentId: input.destinationEnvironmentId,
+      createdAt: this.now(),
+      grant: minted.record,
+      state: "scanning",
+      selection: null,
+      summary: null,
+      progress: null,
+      error: null,
+      releaseReason: null,
+      warnings: input.warnings ?? [],
+    });
     this.operations.set(input.operationId, loaded);
     await this.save(loaded, {});
     loaded.building = this.scan(loaded);
     return { token: minted.token, record: loaded.record };
   }
 
+  /**
+   * Measures the folder: a listing only. The Git snapshot is prepared by `build`
+   * when copying starts, so measuring never copies object databases.
+   */
   private async scan(loaded: Loaded): Promise<void> {
+    const stop = new AbortController();
+    loaded.stop = stop;
+    if (loaded.stopRequested) stop.abort();
     try {
-      const scanned = await scanFolder(loaded.record.folder);
+      const scanned = await scanFolder(loaded.record.folder, {
+        shouldStop: () => this.closed || stop.signal.aborted,
+        onProgress: this.progressReporter(loaded, stop, "listing"),
+      });
+      await checkPortableGit(scanned);
       this.assertOpen();
-      loaded.scan = await preparePortableGit(scanned, this.snapshotRoot(loaded));
+      // A cancel or release is about to record the end state.
+      if (stop.signal.aborted) return;
+      loaded.scan = scanned;
+      loaded.scannedAt = this.now();
       await this.save(loaded, {
         state: "scanned",
-        summary: summarize(loaded.scan, loaded.record.warnings),
+        progress: null,
+        summary: summarize(withGitNotice(scanned), loaded.record.warnings),
       });
     } catch (cause) {
       // Stopped by shutdown: the record keeps its state, so a restart can scan again.
-      if (!closedStop(cause)) await this.save(loaded, { state: "failed", error: errorText(cause) });
+      // Stopped by a cancel or release: that transition records the end state.
+      if (!this.stoppedOnPurpose(cause, stop))
+        await this.save(loaded, { state: "failed", error: errorText(cause) });
     } finally {
+      if (loaded.stop === stop) loaded.stop = null;
       loaded.building = null;
+    }
+  }
+
+  private stoppedOnPurpose(cause: unknown, stop: AbortController) {
+    return closedStop(cause) || stop.signal.aborted || (this.closed && isScanStopped(cause));
+  }
+
+  /**
+   * Keeps progress in memory for status reads and writes it now and then. A
+   * report's own step (the worktree check inside a scan) wins over `step`.
+   */
+  private progressReporter(
+    loaded: Loaded,
+    stop: AbortController,
+    step: NonNullable<SourceProgress["step"]>,
+    totals?: { readonly files: number; readonly bytes: number },
+  ) {
+    let lastSaved = this.now();
+    return (progress: {
+      readonly files: number;
+      readonly bytes: number;
+      readonly step?: SourceProgress["step"];
+    }) => {
+      // Hashing has no stop check of its own: a cancel, release or close ends it here.
+      if (stop.signal.aborted || this.closed) throw new FolderScanError("stopped");
+      loaded.record = {
+        ...loaded.record,
+        progress: {
+          files: progress.files,
+          bytes: progress.bytes,
+          step: progress.step ?? step,
+          ...(totals ? { totalFiles: totals.files, totalBytes: totals.bytes } : {}),
+        },
+      };
+      if (this.now() - lastSaved >= PROGRESS_SAVE_MS) {
+        lastSaved = this.now();
+        void this.save(loaded, {}).catch(() => undefined);
+      }
+    };
+  }
+
+  /**
+   * Runs a cancel or release: stops a running scan or build first, so the
+   * transition does not wait for it to finish. A transition that fails leaves an
+   * interrupted scan or build to start again.
+   */
+  private async stopping(
+    loaded: Loaded,
+    change: () => Promise<SourceOperationRecord>,
+  ): Promise<SourceOperationRecord> {
+    loaded.stopRequested = true;
+    loaded.stop?.abort();
+    try {
+      return await this.transition(loaded, change);
+    } finally {
+      loaded.stopRequested = false;
+      if (!this.closed && !loaded.building) {
+        if (loaded.record.state === "scanning") loaded.building = this.scan(loaded);
+        else if (loaded.record.state === "building" && loaded.record.selection)
+          loaded.building = this.build(loaded, new Set(loaded.record.selection));
+      }
     }
   }
 
@@ -398,13 +586,26 @@ export class SourceTransfers {
     return loaded?.record ?? null;
   }
 
-  /** Checks the bearer on every request; the refreshed last use is saved lazily. */
-  async authorize(operationId: string, token: string | null): Promise<Loaded> {
+  /**
+   * Checks the bearer on every request; the refreshed last use is saved lazily.
+   * A commit, a release or a hello may present the grant that commit revoked:
+   * when the commit's reply was lost, the destination's retry gets the committed
+   * answer again, and its Undo learns the copy is committed (hello answers with
+   * the state, release with 409 committed) instead of a 401.
+   */
+  async authorize(
+    operationId: string,
+    token: string | null,
+    action?: "commit" | "release" | "hello",
+  ): Promise<Loaded> {
     const loaded = OPERATION_ID.test(operationId) ? await this.load(operationId) : null;
     const verdict = verifyTransferGrant(loaded?.record.grant ?? null, {
       operationId,
       token,
       now: this.now(),
+      ...(action !== undefined && loaded?.record.state === "committed"
+        ? { revokedFor: "committed" }
+        : {}),
     });
     if (!verdict.ok || !loaded) throw new SourceTransferError(401, "unauthorized");
     if (verdict.record.lastUsedAt - loaded.record.grant.lastUsedAt > 60_000)
@@ -445,6 +646,7 @@ export class SourceTransfers {
         return loaded.record;
       }
       if (loaded.building) await loaded.building;
+      if (loaded.stopRequested) throw new SourceTransferError(409, "stopping");
       if (loaded.record.state !== "scanned" && loaded.record.state !== "scanning")
         throw new SourceTransferError(409, loaded.record.state);
       await this.save(loaded, {
@@ -458,28 +660,48 @@ export class SourceTransfers {
   }
 
   private async build(loaded: Loaded, selection: ReadonlySet<FileClass>): Promise<void> {
-    try {
-      let scan = loaded.scan ?? (await scanFolder(loaded.record.folder));
-      // Measurement may already have normalized an external worktree to kind
-      // "main". Re-read its live index/refs before making the actual manifest.
-      if (scan.entries.some((entry) => entry.portableGit))
-        scan = await scanFolder(loaded.record.folder);
-      if (selection.has("rebuildable")) scan = await expandCollapsed(scan);
+    const stop = new AbortController();
+    loaded.stop = stop;
+    if (loaded.stopRequested) stop.abort();
+    const shouldStop = () => this.closed || stop.signal.aborted;
+    const checkStop = () => {
+      if (stop.signal.aborted) throw new FolderScanError("stopped");
       this.assertOpen();
-      scan = await preparePortableGit(scan, this.snapshotRoot(loaded));
-      let lastSaved = 0;
-      await hashSelected(
-        scan,
-        selection,
-        (done) => {
-          loaded.record = { ...loaded.record, progress: done };
-          if (this.now() - lastSaved > 2_000) {
-            lastSaved = this.now();
-            void this.save(loaded, {}).catch(() => undefined);
-          }
-        },
-        (entry) => sourceEntryRoot(loaded.record.folder, this.snapshotRoot(loaded), entry),
+    };
+    try {
+      // The working tree listing is reused for a copy started soon after
+      // measuring; Git metadata is always listed again by the snapshot.
+      const measured =
+        loaded.scan && this.now() - loaded.scannedAt <= MEASURE_REUSE_MS ? loaded.scan : null;
+      const listing = () => ({
+        shouldStop,
+        onProgress: this.progressReporter(loaded, stop, "listing"),
+      });
+      let scan = measured ?? (await scanFolder(loaded.record.folder, listing()));
+      // A prepared scan carries an earlier Git snapshot. Re-read the live
+      // index/refs before making the actual manifest.
+      if (scan.entries.some((entry) => entry.portableGit))
+        scan = await scanFolder(loaded.record.folder, listing());
+      if (selection.has("rebuildable")) scan = await expandCollapsed(scan, listing());
+      checkStop();
+      scan = await preparePortableGit(scan, this.snapshotRoot(loaded), {
+        shouldStop,
+        onProgress: this.progressReporter(loaded, stop, "git-snapshot"),
+      });
+      checkStop();
+      const toHash = scan.entries.filter(
+        (entry) =>
+          entry.type === "file" && selection.has(entry.class) && entry.sha256 === undefined,
       );
+      const hashing = this.progressReporter(loaded, stop, "hashing", {
+        files: toHash.length,
+        bytes: toHash.reduce((sum, entry) => sum + entry.size, 0),
+      });
+      hashing({ files: 0, bytes: 0 });
+      await hashSelected(scan, selection, hashing, (entry) =>
+        sourceEntryRoot(loaded.record.folder, this.snapshotRoot(loaded), entry),
+      );
+      checkStop();
       const entries = selectEntries(scan.entries, selection);
       const header: ManifestHeader = {
         version: 1,
@@ -499,15 +721,18 @@ export class SourceTransfers {
         ],
         entryCount: entries.length,
       };
-      this.assertOpen();
+      checkStop();
       await writeManifest(this.manifestFile(loaded.record.operationId), { header, entries });
       loaded.scan = scan;
       this.index(loaded, header, entries);
       await this.save(loaded, { state: "ready", summary: summarize(scan, loaded.record.warnings) });
     } catch (cause) {
       // Stopped by shutdown: the record keeps its state, so a restart can scan again.
-      if (!closedStop(cause)) await this.save(loaded, { state: "failed", error: errorText(cause) });
+      // Stopped by a cancel or release: that transition records the end state.
+      if (!this.stoppedOnPurpose(cause, stop))
+        await this.save(loaded, { state: "failed", error: errorText(cause) });
     } finally {
+      if (loaded.stop === stop) loaded.stop = null;
       loaded.building = null;
     }
   }
@@ -583,12 +808,19 @@ export class SourceTransfers {
   private indexChunks(loaded: Loaded, entry: ManifestEntry) {
     if (entry.type !== "file" || !entry.chunks) return;
     entry.chunks.forEach((sha, index) => {
-      if (!loaded.chunks!.has(sha))
-        loaded.chunks!.set(sha, {
-          path: entry.path,
-          offset: index * CHUNK_SIZE,
-          length: Math.min(CHUNK_SIZE, entry.size - index * CHUNK_SIZE),
-        });
+      const place = {
+        path: entry.path,
+        offset: index * CHUNK_SIZE,
+        length: Math.min(CHUNK_SIZE, entry.size - index * CHUNK_SIZE),
+      };
+      const known = loaded.chunks!.get(sha);
+      if (!known) loaded.chunks!.set(sha, place);
+      else if (
+        known.path !== place.path &&
+        (known.also?.length ?? 0) < MAX_CHUNK_ALTERNATES &&
+        !known.also?.some((other) => other.path === place.path)
+      )
+        (known.also ??= []).push(place);
     });
   }
 
@@ -629,28 +861,34 @@ export class SourceTransfers {
           frames.push({ sha256, status: CHUNK_UNKNOWN, data: Buffer.alloc(0) });
           continue;
         }
-        let data: Buffer;
-        try {
-          const handle = await openInside(this.entryRoot(loaded, location.path), location.path);
-          try {
-            data = Buffer.alloc(location.length);
-            const { bytesRead } = await handle.read(data, 0, location.length, location.offset);
-            data = data.subarray(0, bytesRead);
-          } finally {
-            await handle.close();
+        let found: Buffer | null = null;
+        // A file that changed since hashing may share the chunk with one that did not.
+        for (const place of [location, ...(location.also ?? [])]) {
+          const data = await this.readPlace(loaded, place).catch(() => null);
+          if (data && sha256Hex(data) === sha256) {
+            found = data;
+            break;
           }
-        } catch {
-          frames.push({ sha256, status: CHUNK_CHANGED, data: Buffer.alloc(0) });
-          continue;
         }
         frames.push(
-          sha256Hex(data) === sha256
-            ? { sha256, status: CHUNK_OK, data }
+          found
+            ? { sha256, status: CHUNK_OK, data: found }
             : { sha256, status: CHUNK_CHANGED, data: Buffer.alloc(0) },
         );
       }
       return frames;
     });
+  }
+
+  private async readPlace(loaded: Loaded, place: ChunkPlace): Promise<Buffer> {
+    const handle = await openInside(this.entryRoot(loaded, place.path), place.path);
+    try {
+      const data = Buffer.alloc(place.length);
+      const { bytesRead } = await handle.read(data, 0, place.length, place.offset);
+      return data.subarray(0, bytesRead);
+    } finally {
+      await handle.close();
+    }
   }
 
   /** Current size and mtime of manifest paths, for the final consistency pass. */
@@ -883,7 +1121,7 @@ export class SourceTransfers {
 
   /** The destination failed before Apply: unfence a moving coordinator and end the grant. */
   async release(loaded: Loaded, reason: string): Promise<SourceOperationRecord> {
-    return this.transition(loaded, async () => {
+    return this.stopping(loaded, async () => {
       if (loaded.building) await loaded.building;
       if (loaded.record.state === "committed") throw new SourceTransferError(409, "committed");
       if (loaded.record.state === "released" || loaded.record.state === "cancelled") {
@@ -958,7 +1196,7 @@ export class SourceTransfers {
   async cancel(operationId: string, reason: string): Promise<SourceOperationRecord> {
     const loaded = await this.load(operationId);
     if (!loaded) throw new SourceTransferError(404, "not_found");
-    return this.transition(loaded, async () => {
+    return this.stopping(loaded, async () => {
       if (loaded.building) await loaded.building;
       if (loaded.record.state === "committed") throw new SourceTransferError(409, "committed");
       if (loaded.record.state === "cancelled" || loaded.record.state === "released") {

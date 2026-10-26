@@ -167,6 +167,21 @@ class RefusalLine(unittest.TestCase):
         with patch.object(update, 'read_processes', return_value=table):
             self.assertEqual(update.refusal_line('m4', error), 'REFUSAL descendants chrome-headless-shell=3')
 
+    def test_the_service_s_own_tunnel_is_not_named_while_something_else_is(self):
+        """It never keeps an update waiting (M1 and M3, 1.0.92: "(cloudflared)" for 30+ minutes)."""
+        (self.state / 'server-runtime.json').write_text(json.dumps({'pid': 100, 'host': '127.0.0.1', 'port': 8319}))
+        tunnel = str(self.state.parent / 'tools/cloudflared/2026.5.2/darwin-arm64/cloudflared')
+        table = {1: process(1, 0, '/sbin/launchd'), 100: process(100, 1, '/opt/node22/bin/node'),
+                 101: process(101, 100, '/usr/bin/caffeinate'), 110: process(110, 100, tunnel),
+                 113: process(113, 100, '/bin/zsh')}
+        error = AssertionError('Owned service has unexpected descendants')
+        with patch.object(update, 'read_processes', return_value=table):
+            self.assertEqual(update.refusal_line('m4', error), 'REFUSAL descendants zsh=1')
+        # A cloudflared someone runs in a terminal is named.
+        table[114] = process(114, 113, '/opt/homebrew/bin/cloudflared')
+        with patch.object(update, 'read_processes', return_value=table):
+            self.assertEqual(update.refusal_line('m4', error), 'REFUSAL descendants cloudflared=1 zsh=1')
+
     def test_timeouts_busy_and_environment_refusals(self):
         cases = [(subprocess.TimeoutExpired(['/usr/sbin/lsof', '-nP', '-t', '-iTCP:8319', '-sTCP:LISTEN'], 30),
                   'REFUSAL timeout lsof'),

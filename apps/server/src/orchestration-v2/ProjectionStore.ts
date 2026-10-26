@@ -1717,6 +1717,7 @@ export function threadShellFromProjection(
         projection.runs,
         projection.thread.modelSelection,
         projection.thread.launchFallbackFrom,
+        projection.thread.limitPreswitchFrom,
       );
       return threadModelIdentity({
         thread: projection.thread.modelSelection,
@@ -1725,6 +1726,7 @@ export function threadShellFromProjection(
           : null,
         fallbackFrom: (pairing?.original as ModelSelection | undefined) ?? null,
         launched: pairing?.launched === true,
+        preswitched: pairing?.preswitched === true,
       });
     })(),
     activeRunId: activeRun?.id ?? null,
@@ -5627,6 +5629,17 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 ORDER BY CASE WHEN r.status = 'queued' THEN 1 ELSE 0 END, r.ordinal DESC LIMIT 1
               ) AS running_model_json,
               COALESCE(
+                -- Mirrors limitFallbackPairing's pre-switch origin, which comes first: the model
+                -- the usage pre-switch moved the idle thread off, until it goes back or a pick
+                -- clears it. A pick clears it at write time, so it is newer than any continuation.
+                (
+                  SELECT json_object('original', json_extract(t.payload_json, '$.limitPreswitchFrom.modelSelection'), 'source', 'preswitch')
+                  WHERE json_type(t.payload_json, '$.limitPreswitchFrom.modelSelection') = 'object'
+                    AND NOT (
+                      json_extract(t.payload_json, '$.limitPreswitchFrom.modelSelection.instanceId') = json_extract(t.payload_json, '$.modelSelection.instanceId')
+                      AND (CASE WHEN instr(json_extract(t.payload_json, '$.limitPreswitchFrom.modelSelection.model'), '[') > 1 THEN substr(json_extract(t.payload_json, '$.limitPreswitchFrom.modelSelection.model'), 1, instr(json_extract(t.payload_json, '$.limitPreswitchFrom.modelSelection.model'), '[') - 1) ELSE json_extract(t.payload_json, '$.limitPreswitchFrom.modelSelection.model') END) = (CASE WHEN instr(json_extract(t.payload_json, '$.modelSelection.model'), '[') > 1 THEN substr(json_extract(t.payload_json, '$.modelSelection.model'), 1, instr(json_extract(t.payload_json, '$.modelSelection.model'), '[') - 1) ELSE json_extract(t.payload_json, '$.modelSelection.model') END)
+                    )
+                ),
                 (
                   SELECT json_object('original', json_extract(stopped.payload_json, '$.modelSelection'))
                   FROM orchestration_v2_projection_messages continuation
@@ -6418,13 +6431,14 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   Schema.fromJsonString(
                     Schema.Struct({
                       original: ModelSelectionSchema,
-                      source: Schema.optional(Schema.Literal("launch")),
+                      source: Schema.optional(Schema.Literals(["launch", "preswitch"])),
                     }),
                   ),
                 )(row.fallback_pairing_json).pipe(
                   Effect.map((pairing) => ({
                     fallbackFrom: pairing.original,
                     launched: pairing.source === "launch",
+                    preswitched: pairing.source === "preswitch",
                   })),
                 )),
           }),

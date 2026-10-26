@@ -63,6 +63,13 @@ export interface DesktopUpdateBridge {
    * kickstart), only on a person's click; absent on desktops without Repair.
    */
   repairServiceUpdateAgent?: () => Promise<StudioServiceUpdateState>;
+  /**
+   * "Later" on an automatic install waiting for running work: the agent pauses
+   * that work no sooner than an hour from now. Writes the agent's config only
+   * and starts nothing. Absent on desktops before automatic pauses; rejects
+   * when the postponement could not be saved.
+   */
+  postponeAutomaticServiceUpdate?: () => Promise<StudioServiceUpdateState>;
   onServiceUpdateState?: (listener: (state: StudioServiceUpdateState) => void) => () => void;
   /**
    * One Update now press as a durable run (updates/run.json): `begin` creates

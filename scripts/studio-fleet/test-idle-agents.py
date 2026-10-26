@@ -160,6 +160,21 @@ class SelectiveReap(unittest.TestCase):
             self.assertIn(pid, host.table)
         self.assertNotIn(CODEX, json.dumps(record))
 
+    def test_the_service_s_own_tunnel_beside_idle_codex_is_neither_named_nor_stopped(self):
+        table = m3_tree()
+        tunnel = HOME + '/tools/cloudflared/2026.5.2/darwin-arm64/cloudflared'
+        table[140] = process(140, 100, tunnel)
+        host = FakeHost(table, HOME)
+        host.argv[140] = [tunnel, 'tunnel', '--no-autoupdate', '--loglevel', 'info', '--output', 'default', 'run']
+        self.assertEqual(host.providers(), {'codex': 1})
+        host.reap()
+        self.assertEqual(sorted({pid for pid, _ in host.signals}), [110, 111, 112, 113, 114, 115, 116, 117, 118])
+        self.assertIn(140, host.table)
+        for pid in list(host.table):  # Only the tunnel is left: nothing for the fallback to name.
+            if pid not in (1, 100, 101, 140, 200):
+                del host.table[pid]
+        self.assertEqual(host.providers(), {})
+
     def test_a_terminal_or_anything_unnamed_keeps_every_process_running(self):
         cases = {
             'an open terminal': {130: process(130, 100, '/bin/zsh')},

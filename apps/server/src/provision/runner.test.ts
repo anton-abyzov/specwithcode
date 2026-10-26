@@ -510,3 +510,138 @@ describe("runProvision", () => {
     expect(byId(standalone.items, "server").status).toBe("planned");
   });
 });
+
+describe("optional Tailscale", () => {
+  const APP = "/Applications/Tailscale.app/Contents/MacOS/Tailscale";
+  const GUI_ERROR =
+    "The Tailscale GUI failed to start: the app cannot run without a terminal. (Tailscale.CLIError error 3.)";
+
+  function mac(): Fake {
+    const host = fakeHost("darwin");
+    host.answers.set("sw_vers -productVersion", out("15.4"));
+    host.answers.set("xcode-select -p", out("/Library/Developer/CommandLineTools"));
+    program(host, "/usr/bin/git", "2.50.1");
+    return host;
+  }
+
+  /** The app bundle's executable: the GUI error (exit 0) unless TAILSCALE_BE_CLI=1. */
+  function tailscaleApp(host: Fake, version: string | null, path = APP) {
+    host.files.set(path, { text: "", mode: 0o755 });
+    host.answers.set(path, (args, env) =>
+      env?.TAILSCALE_BE_CLI !== "1" || version === null
+        ? out(GUI_ERROR)
+        : args[0] === "version"
+          ? out(`${version}\n  tailscale commit: 0123abc\n`)
+          : out('{"BackendState": "Running"}'),
+    );
+  }
+
+  function linkConnect(host: Fake, mode: "managed" | "publish_only") {
+    const secrets = `${host.home}/.specwithcode/userdata/secrets`;
+    host.files.set(`${secrets}/cloud-cli-desired-link.bin`, { text: mode, mode: 0o600 });
+    host.files.set(`${secrets}/cloud-relay-environment-credential.bin`, {
+      text: "credential",
+      mode: 0o600,
+    });
+  }
+
+  it("reads the macOS app's version with TAILSCALE_BE_CLI=1 when no tailscale is on PATH", async () => {
+    const host = mac();
+    tailscaleApp(host, "1.102.4");
+    const readback = await runProvision(host, options({ dryRun: true }));
+    const tailscale = byId(readback.items, "tailscale");
+    expect(tailscale.found).toBe("1.102.4");
+    expect(tailscale.status).toBe("ok");
+    expect(tailscale.detail).toContain("Running");
+    expect(readback.rootStep).toBeNull();
+    expect(readback.userSteps.some((step) => step.id === "tailscale-signin")).toBe(false);
+  });
+
+  it("passes TAILSCALE_BE_CLI=1 to a tailscale on PATH that links to the app", async () => {
+    const host = mac();
+    tailscaleApp(host, "1.102.4", "/usr/bin/tailscale");
+    const readback = await runProvision(host, options({ dryRun: true }));
+    expect(byId(readback.items, "tailscale").found).toBe("1.102.4");
+    expect(readback.rootStep).toBeNull();
+  });
+
+  it("treats an installed Tailscale with no readable version as installed, never planning an install", async () => {
+    const host = mac();
+    tailscaleApp(host, null);
+    const readback = await runProvision(host, options({ dryRun: true }));
+    const tailscale = byId(readback.items, "tailscale");
+    expect(tailscale.status).toBe("ok");
+    expect(tailscale.found).toBeNull();
+    expect(tailscale.detail).toContain("could not be read");
+    expect(readback.rootStep).toBeNull();
+  });
+
+  it("never plans the macOS package over an app bundle whose executable cannot run", async () => {
+    const host = mac();
+    host.files.set("/Applications/Tailscale.app/Contents/Info.plist", { text: "", mode: 0o644 });
+    const readback = await runProvision(host, options({ dryRun: true }));
+    expect(byId(readback.items, "tailscale").status).not.toBe("planned");
+    expect(readback.rootStep).toBeNull();
+  });
+
+  it("skips a missing Tailscale on a machine Connect reaches, with no root step", async () => {
+    const host = provisionedLinux();
+    host.files.delete("/usr/bin/tailscale");
+    linkConnect(host, "managed");
+    const readback = await runProvision(host, options());
+    const tailscale = byId(readback.items, "tailscale");
+    expect(tailscale.status).toBe("skipped");
+    expect(tailscale.label).toBe("Tailscale (optional)");
+    expect(tailscale.detail).toBe(
+      "Not needed: this machine is reached through SpecWithCode Connect. Install Tailscale only if you also want a direct tailnet route.",
+    );
+    expect(readback.rootStep).toBeNull();
+    expect(readback.ok).toBe(true);
+    expect(host.calls.some((call) => call.startsWith("sudo"))).toBe(false);
+    const join = readback.userSteps.find((step) => step.id === "join")!;
+    expect(join.optional).toBe(true);
+    expect(join.title).toContain("already appears under Connections on your other devices");
+  });
+
+  it("still installs a missing Tailscale without Connect, or with only a publish link", async () => {
+    for (const link of [null, "publish_only"] as const) {
+      const host = provisionedLinux();
+      host.files.delete("/usr/bin/tailscale");
+      if (link) linkConnect(host, link);
+      const readback = await runProvision(host, options({ dryRun: true }));
+      expect(byId(readback.items, "tailscale").status).toBe("planned");
+      expect(readback.rootStep?.items).toContain("tailscale");
+      expect(readback.userSteps.find((step) => step.id === "join")?.optional).toBe(false);
+    }
+  });
+
+  it("follows --no-tailscale and --with-tailscale", async () => {
+    const host = provisionedLinux();
+    host.files.delete("/usr/bin/tailscale");
+    const skipped = await runProvision(host, options({ dryRun: true, tailscale: "skip" }));
+    expect(byId(skipped.items, "tailscale").status).toBe("skipped");
+    expect(byId(skipped.items, "tailscale").detail).toBe("Skipped by request.");
+    expect(skipped.rootStep).toBeNull();
+
+    const wanted = await runProvision(
+      host,
+      options({ dryRun: true, tailscale: "install", connectLinkMode: "managed" }),
+    );
+    expect(byId(wanted.items, "tailscale").status).toBe("planned");
+    expect(wanted.rootStep?.items).toContain("tailscale");
+  });
+
+  it("makes the Tailscale sign-in optional on a Connect-linked machine", async () => {
+    const host = provisionedLinux();
+    host.answers.set("/usr/bin/tailscale status --json", out('{"BackendState": "NeedsLogin"}'));
+    const linked = await runProvision(host, options({ connectLinkMode: "managed" }));
+    const signIn = linked.userSteps.find((step) => step.id === "tailscale-signin")!;
+    expect(signIn.optional).toBe(true);
+    expect(signIn.title).toBe(
+      "Optional: sign in to Tailscale if you also reach this machine over your tailnet.",
+    );
+
+    const direct = await runProvision(host, options({ connectLinkMode: "none" }));
+    expect(direct.userSteps.find((step) => step.id === "tailscale-signin")?.optional).toBe(false);
+  });
+});

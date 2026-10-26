@@ -10,7 +10,7 @@ struct PairWelcomeView: View {
 
   static let steps = [
     "Open SpecWithCode on your computer.",
-    "In Settings > Connections, choose Pair a phone. Your phone needs Tailscale or the same Wi-Fi to reach it.",
+    "In Settings > Connections, choose Pair a phone. Your phone reaches it on the same Wi-Fi, or over Tailscale if you use it.",
     "Scan the code with this phone, or paste the link here.",
   ]
 

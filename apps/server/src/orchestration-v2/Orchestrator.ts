@@ -106,7 +106,10 @@ import {
 import { modelSelectionsEqual } from "@specweave-studio/shared/model";
 import { resolveProjectSettings } from "@specweave-studio/shared/projectSettings";
 import { apiCreditDetourResumeRefused } from "./providerOpenFailure.ts";
-import { launchFallbackAfterMove } from "@specweave-studio/shared/threadModelIdentity";
+import {
+  launchFallbackAfterMove,
+  limitPreswitchAfterMove,
+} from "@specweave-studio/shared/threadModelIdentity";
 import {
   derivePendingBackgroundWork,
   pendingBackgroundTurnItems,
@@ -496,24 +499,52 @@ function limitStopStillHolds(projection: OrchestrationV2ThreadProjection, nowMs:
 }
 
 /**
- * The `launchFallbackFrom` a selection move writes, present only when the
- * thread stands in for a model, so other thread payloads stay as they were.
+ * The `launchFallbackFrom` and `limitPreswitchFrom` a selection move writes,
+ * each present only when the thread stands in for a model, so other thread
+ * payloads stay as they were. `commandId` names a model-selection command,
+ * which a usage pre-switch is.
  */
 function launchFallbackFields(
-  thread: Pick<OrchestrationV2AppThread, "launchFallbackFrom" | "modelSelection">,
+  thread: Pick<
+    OrchestrationV2AppThread,
+    "launchFallbackFrom" | "limitPreswitchFrom" | "modelSelection"
+  >,
   to: ModelSelection,
   byServer: boolean,
-): Pick<OrchestrationV2AppThread, "launchFallbackFrom"> {
-  return thread.launchFallbackFrom == null
-    ? {}
-    : {
-        launchFallbackFrom: launchFallbackAfterMove(
-          thread.launchFallbackFrom,
+  commandId?: string,
+): Pick<OrchestrationV2AppThread, "launchFallbackFrom" | "limitPreswitchFrom"> {
+  // Only explicit selection commands pass an id. Choosing the current fallback
+  // is still a pick; routine sends carry no id and retain their origin.
+  const preswitch =
+    commandId !== undefined && !byServer && thread.limitPreswitchFrom != null
+      ? null
+      : limitPreswitchAfterMove(
+          thread.limitPreswitchFrom,
           thread.modelSelection,
           to,
           byServer,
-        ),
-      };
+          commandId,
+        );
+  return {
+    ...(thread.launchFallbackFrom == null
+      ? {}
+      : {
+          launchFallbackFrom: launchFallbackAfterMove(
+            thread.launchFallbackFrom,
+            thread.modelSelection,
+            to,
+            byServer,
+          ),
+        }),
+    ...(preswitch == null && thread.limitPreswitchFrom == null
+      ? {}
+      : {
+          limitPreswitchFrom:
+            preswitch == null
+              ? null
+              : { ...preswitch, commandId: CommandId.make(preswitch.commandId) },
+        }),
+  };
 }
 
 /** Usage-limit recovery's own resume of a stopped run (`limit-resume:`). */
@@ -3858,6 +3889,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               thread,
               command.modelSelection,
               isServerSelectionMove(command.commandId),
+              command.commandId,
             ),
             updatedAt: now,
           };

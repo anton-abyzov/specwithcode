@@ -32,6 +32,8 @@ const STATUS_TEXT: Record<ProvisionItem["status"], string> = {
 
 function statusText(item: ProvisionItem): string {
   if (item.status === "planned" && item.found) return "Will update";
+  // Connect reaches the machine, so the optional item is not needed (vs. left out on request).
+  if (item.status === "skipped" && item.detail?.startsWith("Not needed")) return "Not needed";
   return STATUS_TEXT[item.status];
 }
 

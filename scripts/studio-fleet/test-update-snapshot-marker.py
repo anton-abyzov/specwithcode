@@ -99,7 +99,7 @@ class SnapshotMarker(unittest.TestCase):
             raise Refused('the service is not ready')
 
         with patch.object(update, 'snapshot', snapshot), \
-                patch.object(update, 'snapshot_refusal', lambda identity, error: 'refused'), \
+                patch.object(update, 'snapshot_refusal', lambda identity, error, request=None: 'refused'), \
                 patch.object(sys, 'argv', ['update.py', '--identity', 'm4', '--snapshot', str(self.home / 'report.json')]), \
                 contextlib.redirect_stdout(io.StringIO()), contextlib.redirect_stderr(io.StringIO()), \
                 self.assertRaises(SystemExit):

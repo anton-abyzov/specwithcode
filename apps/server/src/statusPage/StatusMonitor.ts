@@ -22,6 +22,7 @@ import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as Ref from "effect/Ref";
@@ -33,6 +34,8 @@ import * as SqlClient from "effect/sql/SqlClient";
 
 import packageJson from "../../package.json" with { type: "json" };
 import { writeFileStringAtomically } from "../atomicWrite.ts";
+import * as ServerSecretStore from "../auth/ServerSecretStore.ts";
+import { CLOUD_ENDPOINT_RUNTIME_CONFIG, CLOUD_LINKED_USER_ID } from "../cloud/config.ts";
 import { isProcessAlive, readPersistedServerRuntimeState } from "../serverRuntimeState.ts";
 import * as ServerConfig from "../config.ts";
 import { RpcInstrumentation } from "../observability/RpcInstrumentation.ts";
@@ -50,6 +53,8 @@ import {
   buildStatusServices,
   decodeHealthWatch,
   neededFeeds,
+  showsTailscale,
+  type ConnectState,
   type CoordinatorState,
   type FeedId,
   type ObservedThread,
@@ -132,6 +137,7 @@ export const make = Effect.gen(function* () {
   const fs = yield* FileSystem.FileSystem;
   const path = yield* Path.Path;
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  const secrets = yield* ServerSecretStore.ServerSecretStore;
   const historyPath = path.join(config.stateDir, "status-history.json");
   const healthWatchPath = path.join(config.baseDir, "health", "latest.json");
   const startedAt = yield* Clock.currentTimeMillis;
@@ -229,6 +235,24 @@ export const make = Effect.gen(function* () {
     Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
   );
 
+  // Same reading as CloudLink's link state: a linked user means linked, and a
+  // stored tunnel runtime config means the managed (tunnel) mode. The
+  // connector's live state is not exposed to this service, so it stays unknown.
+  const readConnect = Effect.all(
+    [secrets.get(CLOUD_LINKED_USER_ID), secrets.get(CLOUD_ENDPOINT_RUNTIME_CONFIG)],
+    { concurrency: "unbounded" },
+  ).pipe(
+    Effect.map(([linkedUser, runtimeConfig]): ConnectState => ({
+      mode: Option.isNone(linkedUser)
+        ? "not_linked"
+        : Option.isSome(runtimeConfig)
+          ? "managed"
+          : "publish_only",
+      tunnel: "unknown",
+    })),
+    Effect.orElseSucceed((): ConnectState | null => null),
+  );
+
   const readFeeds = (ids: ReadonlyArray<FeedId>, now: number) =>
     Effect.forEach(
       ids,
@@ -250,11 +274,12 @@ export const make = Effect.gen(function* () {
       Effect.orElseSucceed(() => false),
     );
     const threads = yield* readThreads;
-    const [coordinators, fleet, tailscale, releaseFeed, healthWatch] = yield* Effect.all(
+    const [coordinators, fleet, tailscale, connect, releaseFeed, healthWatch] = yield* Effect.all(
       [
         readCoordinators(threads),
         readFleet,
         readTailscale,
+        readConnect,
         Effect.promise(() => isReachable(RELEASE_FEED_URL)),
         readHealthWatch,
       ],
@@ -263,7 +288,7 @@ export const make = Effect.gen(function* () {
     const feeds = yield* readFeeds(
       neededFeeds({
         providers: providerList,
-        showTailscale: tailscale.state === "running" || (fleet?.machines.length ?? 0) > 0,
+        showTailscale: showsTailscale(tailscale, fleet),
       }),
       now,
     );
@@ -277,6 +302,7 @@ export const make = Effect.gen(function* () {
       coordinators,
       fleet,
       tailscale,
+      connect,
       feeds,
       releaseFeedReachable: releaseFeed,
       healthWatch,

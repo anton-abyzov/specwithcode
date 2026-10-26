@@ -8,6 +8,8 @@ import {
   usageIndicatorSummary,
   usageLeftLabel,
   usageTone,
+  usageToneOfUsed,
+  usageToneTextClassOfUsed,
 } from "./usageIndicatorModel";
 
 const now = Date.parse("2026-10-10T12:00:00.000Z");
@@ -106,13 +108,27 @@ describe("usage indicator", () => {
   });
 
   it("grades tone by what is left and names providers in the summary", () => {
-    expect([21, 20, 6, 5, 0].map(usageTone)).toEqual(["ok", "warn", "warn", "full", "full"]);
+    // Amber for low room, 5% included; red only once a window is spent.
+    expect([21, 20, 6, 5, 1, 0].map(usageTone)).toEqual([
+      "ok",
+      "warn",
+      "warn",
+      "warn",
+      "warn",
+      "full",
+    ]);
+    expect([95, 99.6, 100].map(usageToneOfUsed)).toEqual(["warn", "warn", "full"]);
+    expect([50, 99.6, 100].map(usageToneTextClassOfUsed)).toEqual([
+      "text-foreground",
+      "text-warning-foreground",
+      "text-destructive-foreground",
+    ]);
     expect([23, 99.6, 100].map(usageLeftLabel)).toEqual(["77% left", "0% left", "Limit reached"]);
     const providers = usageIndicatorProviders(
       pools([account("codex", "codex", [{ id: "primary", kind: "session", used: 96, reset: 1 }])]),
       now,
     );
-    expect(providers[0]?.tone).toBe("full");
+    expect(providers[0]?.tone).toBe("warn");
     expect(usageIndicatorSummary(providers, () => "Codex")).toBe("Codex 4% left");
     const spent = usageIndicatorProviders(
       pools([account("codex", "codex", [{ id: "primary", kind: "session", used: 100, reset: 1 }])]),

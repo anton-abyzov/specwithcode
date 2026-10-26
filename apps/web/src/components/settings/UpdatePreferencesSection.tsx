@@ -19,6 +19,8 @@ import { SettingsRow } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 import {
   describeServiceUpdate,
+  PAUSE_WORK_AFTER_OPTIONS,
+  pauseWorkAfterMinutes,
   resolveServiceUpdateAction,
 } from "./UpdatePreferencesSection.logic";
 import {
@@ -173,7 +175,7 @@ export function UpdatePreferencesSection() {
       />
       <SettingsRow
         title="Install automatically"
-        description="The app updates the next time you quit it. The service updates once no session has worked for 10 minutes. Off means you install from here."
+        description="The app updates the next time you quit it. The service updates once no session is working; running work pauses for it after the wait below and continues after the update. Off means you install from here."
         control={
           <Switch
             checked={preferences.installAutomatically}
@@ -201,6 +203,35 @@ export function UpdatePreferencesSection() {
             </SelectTrigger>
             <SelectPopup>
               {FORCE_INSTALL_AFTER_OPTIONS.map((minutes) => (
+                <SelectItem key={minutes} value={String(minutes)}>
+                  {forceInstallAfterLabel(minutes)}
+                </SelectItem>
+              ))}
+            </SelectPopup>
+          </Select>
+        }
+      />
+      <SettingsRow
+        title="Pause running work after"
+        description="How long an automatic update of the SpecWithCode service waits for running work. Then the running turns pause, the service updates, and they continue where they left off. Later in the sidebar waits another hour."
+        control={
+          <Select
+            value={String(pauseWorkAfterMinutes(preferences))}
+            disabled={
+              locked || !preferences.checkAutomatically || !preferences.installAutomatically
+            }
+            onValueChange={(value) => {
+              if (value === null) return;
+              change({ pauseWorkAfterMinutes: Number(value) });
+            }}
+          >
+            <SelectTrigger aria-label="Pause running work after" className="w-32" size="sm">
+              <SelectValue>
+                {forceInstallAfterLabel(pauseWorkAfterMinutes(preferences))}
+              </SelectValue>
+            </SelectTrigger>
+            <SelectPopup>
+              {PAUSE_WORK_AFTER_OPTIONS.map((minutes) => (
                 <SelectItem key={minutes} value={String(minutes)}>
                   {forceInstallAfterLabel(minutes)}
                 </SelectItem>

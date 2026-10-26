@@ -58,8 +58,10 @@ import threading
 import time
 
 import fleet_hosts
-import studio_paths
+import service_hold
 import update_request
+from service_hold import (CLI_PARSE_ERRORS, HOLD_TIMEOUT, PREPARE_UPDATE_SINCE, RELEASE_TIMEOUT,  # noqa: F401
+                          HoldUnavailable, HoldUnsupported)
 
 HERE = pathlib.Path(__file__).resolve().parent
 SYSTEM_PYTHON = '/usr/bin/python3'
@@ -84,9 +86,6 @@ sys.exit(sys.modules['update_request'].main(argv))
 """ % (MODULES,)
 
 
-# The CLI's own drain call allows 150 s (servicePrepareUpdate.ts STOP_WORK_TIMEOUT), plus start-up.
-HOLD_TIMEOUT = 200
-RELEASE_TIMEOUT = 60
 # ServiceUpdateHold.UPDATE_PENDING_STATUSES: agent states with a release found, downloading,
 # ready or installing.
 PENDING_STATUSES = ('available', 'downloading', 'downloaded', 'waiting-for-quiet', 'installing')
@@ -96,19 +95,6 @@ class RolloutError(Exception):
     reply = None  # The host's error answer; it names a request written before a kickstart failed.
 
 
-class HoldUnavailable(Exception):
-    """The service could not be drained and held; the rollout stops instead of asking unheld."""
-
-
-class HoldUnsupported(HoldUnavailable):
-    """The installed service CLI predates `service prepare-update` (PREPARE_UPDATE_SINCE)."""
-
-
-# The first release whose CLI has `service prepare-update ... --json` (servicePrepareUpdate.ts).
-# Older services serve the same prepareServiceUpdate call to their own Update now, not to a CLI.
-PREPARE_UPDATE_SINCE = (1, 0, 45)
-# What an older CLI prints for the command or its flags.
-CLI_PARSE_ERRORS = ('Unrecognized flag', 'Unknown subcommand', 'Invalid subcommand', 'Unknown command')
 UNSUPPORTED_PATH = (
     "Hold M4 with Update now in the SpecWithCode app on M4 instead (it drains and holds the service through "
     "the same prepareServiceUpdate call and asks for a forced install), wait until `fleet_rollout.py --version "
@@ -177,91 +163,11 @@ def fleet(home=None):
     return hosts
 
 
-class ServiceHold(object):
-    """Drains and holds this Mac's service for an install the way the desktop's Update now does:
-    its own CLI (`cliWrapper` in the identity's installation.json, which runs the installed
-    release with the service's environment) calls `service prepare-update`, which makes the
-    service's prepareServiceUpdate call over its socket with a five-minute session it leaves to
-    lapse (a revoke could land between update.py's snapshot and apply). The service then refuses new work until the update installs, fails, is released, or
-    its hold runs out, and keeps updates/hold.json for update.py --reap. Raises HoldUnavailable
-    when that CLI or its service cannot do it (an older release has no such command)."""
+class ServiceHold(service_hold.ServiceHold):
+    """M4's drain and hold (service_hold.ServiceHold, shared with the update agent's automatic pause)."""
 
     def __init__(self, identity=LOCAL, home=None, run=subprocess.run):
-        self.identity = identity
-        self.home = pathlib.Path(home or pathlib.Path.home())
-        self.run = run
-
-    def receipt(self):
-        own = studio_paths.identity_home(self.home, self.identity)
-        try:
-            receipt = json.loads((own / 'installation.json').read_text())
-        except (OSError, ValueError) as error:
-            raise HoldUnavailable('no readable installation.json in %s (%s)' % (own, type(error).__name__)) from None
-        return own, receipt
-
-    def support(self):
-        """(True, None) when the installed CLI has `service prepare-update`, else (False, reason).
-        An unreadable or unversioned receipt is left to the call itself."""
-        try:
-            _own, receipt = self.receipt()
-        except HoldUnavailable:
-            return True, None
-        version = receipt.get('version') if isinstance(receipt, dict) else None
-        installed = _tuple(version)
-        if installed is not None and installed < PREPARE_UPDATE_SINCE:
-            return False, '%s runs %s; `service prepare-update` first shipped in %s' % (
-                self.identity.upper(), version, '.'.join(map(str, PREPARE_UPDATE_SINCE)))
-        return True, None
-
-    def command(self, flags):
-        own, receipt = self.receipt()
-        wrapper = receipt.get('cliWrapper') if isinstance(receipt, dict) else None
-        studio_home = receipt.get('studioHome') if isinstance(receipt, dict) else None
-        if not isinstance(wrapper, str) or not os.path.isabs(wrapper) or not os.path.isfile(wrapper) \
-                or not os.access(wrapper, os.X_OK):
-            raise HoldUnavailable('installation.json names no runnable cliWrapper')
-        if studio_home != str(own):
-            raise HoldUnavailable('installation.json names the home %r, not %s' % (studio_home, own))
-        return [wrapper, 'service', 'prepare-update', '--base-dir', studio_home] + list(flags) + ['--json']
-
-    def _call(self, flags, timeout):
-        argv = self.command(flags)
-        try:
-            result = self.run(argv, stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=timeout)
-        except subprocess.TimeoutExpired:
-            raise HoldUnavailable('no answer within %ds' % timeout) from None
-        except OSError as error:
-            raise HoldUnavailable('could not run the service CLI (%s)' % type(error).__name__) from None
-        lines = [line for line in (result.stdout or '').splitlines() if line.strip()]
-        try:
-            value = json.loads(lines[-1]) if lines else None
-        except ValueError:
-            value = None
-        if isinstance(value, dict) and result.returncode == 0 and 'error' not in value:
-            return value
-        if isinstance(value, dict) and isinstance(value.get('error'), str):
-            reason = value['error']
-        else:  # An older CLI prints its usage for the unknown command.
-            other = [line.strip() for line in (result.stderr or '').splitlines() if line.strip()]
-            reason = 'exit %d%s' % (result.returncode, ': ' + other[-1][:200] if other else '')
-            if any(phrase in (result.stderr or '') + (result.stdout or '') for phrase in CLI_PARSE_ERRORS):
-                raise HoldUnsupported('the service CLI has no `service prepare-update --json` (%s)' % reason)
-        raise HoldUnavailable(reason)
-
-    def prepare(self):
-        """Stops the service's work and holds it for an install; returns its answer. Raises
-        HoldUnsupported, without running anything, for a release older than the command."""
-        supported, reason = self.support()
-        if not supported:
-            raise HoldUnsupported(reason)
-        return self._call(['--stop-work', '--hold', '--reason', 'install'], HOLD_TIMEOUT)
-
-    def release(self):
-        """Releases the hold, as Cancel update does, so work can start again."""
-        supported, reason = self.support()
-        if not supported:
-            raise HoldUnsupported(reason)
-        return self._call(['--release-hold'], RELEASE_TIMEOUT)
+        service_hold.ServiceHold.__init__(self, identity, home, run)
 
 
 def offers(status, version):

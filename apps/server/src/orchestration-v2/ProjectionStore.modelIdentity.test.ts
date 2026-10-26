@@ -279,6 +279,18 @@ it.layer(layerTest)("thread model identity", (it) => {
       });
       // GPT-6-Astra on the same Codex sign-in still stands in for the picked model.
       yield* check({ current: astra, preferred: modelSelection, kind: "fallback" });
+      // A recorded pre-switch comes before the continuation (1075): it is newer,
+      // since a pick after it clears the record at write time.
+      const sol = { instanceId: modelSelection.instanceId, model: "gpt-6.1-sol" };
+      const preswitchRecord = JSON.stringify({
+        modelSelection: sol,
+        commandId: "limit-preswitch:thread:same:codex:open",
+        resetAt: null,
+      });
+      yield* sql`UPDATE orchestration_v2_projection_threads SET payload_json = json_set(payload_json, '$.limitPreswitchFrom', json(${preswitchRecord})) WHERE thread_id = ${threadId}`;
+      yield* check({ current: astra, preferred: sol, kind: "fallback", preswitched: true });
+      yield* sql`UPDATE orchestration_v2_projection_threads SET payload_json = json_set(payload_json, '$.limitPreswitchFrom', json('null')) WHERE thread_id = ${threadId}`;
+      yield* check({ current: astra, preferred: modelSelection, kind: "fallback" });
       // The same model under a variant slug is home, not a fallback.
       yield* setThread(variant);
       yield* check({ current: variant, preferred: null, kind: null });
@@ -387,6 +399,49 @@ it.layer(layerTest)("thread model identity", (it) => {
       yield* check(standIn);
       yield* addRun(2, modelSelection);
       yield* check({ current: gemini, preferred: null, kind: null });
+    }),
+  );
+
+  it.effect("pairs a pre-switched thread with the model it moved off until a pick clears it", () =>
+    Effect.gen(function* () {
+      const store = yield* ProjectionStore.ProjectionStoreV2;
+      const sql = yield* SqlClient.SqlClient;
+      const threadId = yield* createThread("preswitch");
+      const fallback = { ...modelSelection, model: "gpt-5.2" };
+      const setPreswitch = (selection: ModelSelection, origin: ModelSelection | null) =>
+        Effect.gen(function* () {
+          const encoded = yield* Schema.encodeEffect(Schema.fromJsonString(ModelSelectionSchema))(
+            selection,
+          );
+          const record =
+            origin === null
+              ? "null"
+              : yield* Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown))({
+                  modelSelection: origin,
+                  commandId: "limit-preswitch:thread:preswitch:codex:open",
+                  resetAt: null,
+                });
+          yield* sql`UPDATE orchestration_v2_projection_threads SET payload_json = json_set(payload_json, '$.modelSelection', json(${encoded}), '$.limitPreswitchFrom', json(${record})) WHERE thread_id = ${threadId}`;
+        });
+      const check = (expected: unknown) =>
+        Effect.gen(function* () {
+          const detail = ProjectionStore.threadShellFromProjection(
+            yield* store.getThreadProjection(threadId),
+          );
+          const shell = (yield* store.getShellSnapshot()).threads.find((t) => t.id === threadId)!;
+          assert.deepEqual(shell.modelIdentity, expected);
+          assert.deepEqual(detail.modelIdentity, shell.modelIdentity);
+        });
+      yield* setPreswitch(fallback, modelSelection);
+      yield* check({
+        current: fallback,
+        preferred: modelSelection,
+        kind: "fallback",
+        preswitched: true,
+      });
+      // A pick clears the origin at write time: nothing stands in any more.
+      yield* setPreswitch(fallback, null);
+      yield* check({ current: fallback, preferred: null, kind: null });
     }),
   );
 });

@@ -67,6 +67,13 @@ vi.mock("../../lib/utils", async (importOriginal) => ({
 vi.mock("../../studio/machineNickname", () => ({
   useMachineNicknames: () => (_id: string, label?: string | null) => label ?? "Machine",
 }));
+const watchers = vi.hoisted(() => [] as Array<Record<string, unknown>>);
+vi.mock("./HandoffFolderCopyWatcher", () => ({
+  HandoffFolderCopyWatcher: (props: Record<string, unknown>) => {
+    watchers.push(props);
+    return null;
+  },
+}));
 vi.mock("./shell/Tip", () => ({ Tip: ({ children }: React.PropsWithChildren) => <>{children}</> }));
 vi.mock("./MachineHandoffDialog", async (importOriginal) => ({
   ...(await importOriginal<typeof import("./MachineHandoffDialog")>()),
@@ -876,4 +883,36 @@ it("resolves a full saved copy registration only by destination machine and exac
   });
   expect(resolve("another-machine", String(target.workspaceRoot))).toBeNull();
   expect(resolve(String(target.environmentId), `${target.workspaceRoot}-other`)).toBeNull();
+});
+
+it("lets a running folder copy close, keeps it, and watches it until the dialog reopens", async () => {
+  watchers.length = 0;
+  state.environments = machineEnvironments;
+  await mount();
+  expect(props().method).toBe("copy");
+  const copy = () => (props().copyFlow as { props: Record<string, any> }).props;
+  await act(async () => copy().onCloseLockChange(true));
+  expect(props().copyLocked).toBe(true);
+  await act(async () => copy().onCloseLockChange(false));
+  await act(async () => copy().onBusyChange(true));
+  expect(props().copyBusy).toBe(true);
+  expect(props().copyLocked).toBe(false);
+  const pointer = "specwithcode:folder-copy:m4:source";
+  localStorage.setItem(pointer, JSON.stringify({ operationId: "op", environmentId: "m3" }));
+  expect(watchers).toHaveLength(0);
+  await act(async () => props().onOpenChange(false));
+  expect(localStorage.getItem(pointer)).not.toBeNull();
+  expect(watchers.at(-1)).toMatchObject({
+    environmentId: "m4",
+    projectId: "source",
+    sourceLabel: "M4",
+  });
+  expect((watchers.at(-1)!.machineLabel as (id: string) => string)("m3")).toBe("M3");
+  const mounts = watchers.length;
+  await act(async () => container.querySelector("button")!.click());
+  expect(props().open).toBe(true);
+  // Reopening keeps the copy method and hands the operation back to the dialog.
+  expect(props().method).toBe("copy");
+  await act(async () => props().onOpenChange(false));
+  expect(watchers.length).toBeGreaterThan(mounts);
 });

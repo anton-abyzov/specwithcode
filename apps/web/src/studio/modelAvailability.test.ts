@@ -94,10 +94,11 @@ describe("modelAvailability", () => {
     const state = modelAvailability({ provider, model: "claude-opus-5-5", nowMs: now });
     expect(state).toMatchObject({ kind: "exhausted", binding: { scope: "account" } });
     expect(isAvailabilityBlocking(state)).toBe(true);
-    expect(text(provider, "claude-opus-5-5").short).toBe(
-      "Session limit reached · resets in 1h 30m",
+    expect(text(provider, "claude-opus-5-5").short).toBe("5-hour limit reached · resets in 1h 30m");
+    expect(text(provider, "claude-opus-5-5").label).toBe("5-hour limit reached, resets in 1h 30m");
+    expect(text(provider, "claude-opus-5-5").long).toContain(
+      "Every Claude model on the account shares it",
     );
-    expect(text(provider, "claude-opus-5-5").long).toContain("Every Claude model on this account");
   });
 
   it("blocks only the model family a scoped window caps", () => {
@@ -110,7 +111,7 @@ describe("modelAvailability", () => {
     });
     expect(opus).toMatchObject({ kind: "room", leftPercent: 70 });
     expect(text(provider, "claude-fable-5-1").short).toBe("Fable limit reached · resets in 1d 6h");
-    expect(text(provider, "claude-fable-5-1").long).toContain("Other Claude models still have");
+    expect(text(provider, "claude-fable-5-1").long).toContain("It counts only Fable models");
     // The provider as a whole (the rail) is not out because one family is.
     expect(modelAvailability({ provider, model: null, nowMs: now }).kind).toBe("room");
   });
@@ -126,7 +127,10 @@ describe("modelAvailability", () => {
     const state = modelAvailability({ provider, model: "claude-opus-5-5", nowMs: now });
     expect(state).toMatchObject({ kind: "exhausted", providerAllows: true });
     expect(isAvailabilityBlocking(state)).toBe(false);
-    expect(text(provider, "claude-opus-5-5").short).toBe("Session limit reached · still accepted");
+    expect(text(provider, "claude-opus-5-5").short).toBe("5-hour limit reached · still accepted");
+    expect(text(provider, "claude-opus-5-5").label).toBe(
+      "5-hour limit reached, extra usage allowed",
+    );
   });
 
   it("never disables on an old read, even one that showed the limit reached", () => {
@@ -318,8 +322,21 @@ describe("modelAvailability", () => {
       claude([session(100, 2 * HOUR), { ...fableWeekly(100), resetsAt: iso(now + 120 * HOUR) }]),
       "claude-fable-5-1",
     );
-    expect(words.short).toMatch(/^Session limit reached/);
-    expect(words.long).not.toContain("Other Claude models");
+    expect(words.short).toMatch(/^5-hour limit reached/);
+    expect(words.long).not.toContain("counts only Fable");
+  });
+
+  it("keeps the family window for the model row when an account-wide one binds", () => {
+    const provider = claude([session(38), weekly(82), fableWeekly(64)]);
+    const fable = modelAvailability({ provider, model: "claude-fable-5-1", nowMs: now });
+    expect(fable).toMatchObject({
+      kind: "room",
+      leftPercent: 18,
+      binding: { scope: "account" },
+      familyRoom: { leftPercent: 36, binding: { scope: "model", family: "Fable" } },
+    });
+    const opus = modelAvailability({ provider, model: "claude-opus-5-5", nowMs: now });
+    expect(opus).not.toHaveProperty("familyRoom");
   });
 
   it("never rounds a window with room down to 0% left", () => {
@@ -329,5 +346,64 @@ describe("modelAvailability", () => {
       nowMs: now,
     });
     expect(state).toMatchObject({ kind: "room", leftPercent: 1 });
+  });
+
+  it("names the window, the plan and the machine, never the email", () => {
+    const provider = claude([session(95, 55 * 60_000), weekly(40)]);
+    const state = modelAvailability({ provider, model: "claude-opus-5-5", nowMs: now });
+    const words = availabilityText(state, {
+      provider: "Claude",
+      account: "Claude Max",
+      machine: "MacBook M4MAX",
+      nowMs: now,
+    });
+    expect(state).toMatchObject({ kind: "room", leftPercent: 5, tone: "warn" });
+    expect(words.label).toBe("5% of 5-hour limit left");
+    expect(words.long).toBe(
+      "5% of the 5-hour limit is left on the Claude Max account on MacBook M4MAX; it resets in 55m. Every Claude model on the account shares it, including use from other machines and apps.",
+    );
+    expect(words.long).not.toMatch(/@/);
+    const fable = availabilityText(
+      modelAvailability({
+        provider: claude([session(10), fableWeekly(60)]),
+        model: "claude-fable-5-1",
+        nowMs: now,
+      }),
+      { provider: "Claude", nowMs: now },
+    );
+    expect(fable.label).toBe("40% of Fable weekly limit left");
+    expect(fable.long).toContain("It counts only Fable models.");
+  });
+
+  it("shows nothing of the previous account's reading after an account switch", () => {
+    const readAt = now - 60_000;
+    const provider = claude(null, {
+      usageLimits: {
+        checkedAt: iso(readAt),
+        windows: [session(30)],
+        accountChangedAt: iso(now - 30_000),
+      },
+    });
+    expect(modelAvailability({ provider, model: "claude-opus-5-5", nowMs: now }).kind).toBe(
+      "switching",
+    );
+    const fresh = claude(null, { usageLimits: { checkedAt: iso(readAt), windows: [session(30)] } });
+    expect(
+      modelAvailability({
+        provider: fresh,
+        model: "claude-opus-5-5",
+        nowMs: now,
+        previousAccountReadAt: readAt,
+      }).kind,
+    ).toBe("switching");
+    // The new account's first read shows.
+    expect(
+      modelAvailability({
+        provider: fresh,
+        model: "claude-opus-5-5",
+        nowMs: now,
+        previousAccountReadAt: readAt - 1,
+      }).kind,
+    ).toBe("room");
   });
 });

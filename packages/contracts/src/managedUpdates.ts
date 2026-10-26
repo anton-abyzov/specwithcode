@@ -114,6 +114,13 @@ export interface DesktopUpdatePreferences {
    * Absent on desktop apps from before it was added (2 minutes).
    */
   forceInstallAfterMinutes?: number;
+  /**
+   * How long an automatic install of the service waits for running work, in
+   * minutes. After it, the update agent pauses that work, installs, and the
+   * paused turns continue after the restart. Absent on desktop apps from
+   * before it was added (10 minutes).
+   */
+  pauseWorkAfterMinutes?: number;
 }
 
 export const DesktopUpdatePreferencesSchema = Schema.Struct({
@@ -122,6 +129,7 @@ export const DesktopUpdatePreferencesSchema = Schema.Struct({
   installAutomatically: Schema.Boolean,
   automaticUpdatesAllowed: Schema.optionalKey(Schema.Boolean),
   forceInstallAfterMinutes: Schema.optionalKey(Schema.Number),
+  pauseWorkAfterMinutes: Schema.optionalKey(Schema.Number),
 });
 
 export const DesktopUpdatePreferencesPatchSchema = Schema.Struct({
@@ -129,6 +137,7 @@ export const DesktopUpdatePreferencesPatchSchema = Schema.Struct({
   downloadAutomatically: Schema.optionalKey(Schema.Boolean),
   installAutomatically: Schema.optionalKey(Schema.Boolean),
   forceInstallAfterMinutes: Schema.optionalKey(Schema.Number),
+  pauseWorkAfterMinutes: Schema.optionalKey(Schema.Number),
 });
 export type DesktopUpdatePreferencesPatch = typeof DesktopUpdatePreferencesPatchSchema.Type;
 
@@ -212,5 +221,12 @@ export const StudioServiceUpdateStateSchema = Schema.Struct({
    * when there is none. Absent from desktops before runs (0988).
    */
   run: Schema.optionalKey(Schema.NullOr(StudioServiceUpdateRunSchema)),
+  /**
+   * While an automatic install waits for running work: when the agent will
+   * pause that work and install (ISO), already moved by a "Later" the agent
+   * has not read yet. Null when the install is not waiting on work; absent
+   * from agents and desktops before automatic pauses (1085).
+   */
+  automaticPauseAt: Schema.optionalKey(Schema.NullOr(Schema.String)),
 });
 export type StudioServiceUpdateState = typeof StudioServiceUpdateStateSchema.Type;

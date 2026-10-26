@@ -46,7 +46,15 @@ export type CopyErrorCode =
   | "not_a_folder"
   | "apply_refused"
   | "copy_failed"
-  | "cancelled";
+  | "cancelled"
+  | "busy";
+
+/**
+ * A record-only code: the files were applied, but a copy that moves the
+ * coordinator found repository checks failing or files changing on the source,
+ * so it neither committed nor moved. Retry moves it anyway; Undo restores.
+ */
+export type CopyRecordErrorCode = CopyErrorCode | "checks_failed";
 
 export class CopyError extends Error {
   readonly code: CopyErrorCode;
@@ -86,7 +94,7 @@ export interface DestinationRecord {
   readonly mirror: boolean;
   readonly state: CopyState;
   readonly failedStep: CopyState | null;
-  readonly error: { readonly code: CopyErrorCode; readonly message: string } | null;
+  readonly error: { readonly code: CopyRecordErrorCode; readonly message: string } | null;
   readonly progress: CopyProgress | null;
   readonly disk: { readonly needed: number; readonly free: number } | null;
   readonly checks: ReadonlyArray<RepositoryCheck>;
@@ -137,9 +145,19 @@ export interface DestinationHooks {
   readonly freeBytes?: (location: string) => Promise<number>;
   /** How long Apply backups stay for Undo; 14 days by default. */
   readonly backupRetentionMs?: number;
+  /** How often held copies call the source to keep their grant; hourly by default. */
+  readonly keepaliveMs?: number;
 }
 
 export const BACKUP_RETENTION_MS = 14 * 24 * 60 * 60 * 1000;
+/**
+ * A held copy (applied here, not committed) pulls nothing while the person
+ * decides, but its source grant ends after a day without use. An hourly call
+ * keeps it well inside that limit so Retry can still commit and Undo release.
+ */
+export const HELD_KEEPALIVE_MS = 60 * 60 * 1000;
+/** One keepalive call waits this long; the next tick tries again. */
+const KEEPALIVE_CALL_MS = 15_000;
 
 /** Undo moves edited files and undone clones here; the backup expiry never deletes them. */
 const UNDO_KEPT_FOLDERS: ReadonlySet<string> = new Set(["kept-edits", "undone-clones"]);
@@ -163,6 +181,8 @@ const BEFORE_APPLY: ReadonlySet<CopyState> = new Set([
   "transferring",
   "verifying",
 ]);
+/** States in which no transfer has begun; approving launches it. */
+const BEFORE_TRANSFER: ReadonlySet<CopyState> = new Set(["planned", "scanning", "previewed"]);
 
 /**
  * Destination half of a folder copy. Each operation is a private folder under
@@ -174,7 +194,13 @@ export class DestinationCopies {
   private readonly root: string;
   private readonly hooks: DestinationHooks;
   private readonly running = new Map<string, { abort: AbortController; done: Promise<void> }>();
+  /** Retry or Undo between its check and its work; the other one is refused meanwhile. */
+  private readonly claimed = new Set<string>();
   private readonly locks = new Map<string, Promise<unknown>>();
+  private keepalive: ReturnType<typeof setInterval> | null = null;
+  private keeping: Promise<unknown> | null = null;
+  /** Aborted by `close`, so a keepalive call to a silent source does not hold shutdown. */
+  private keepaliveAbort: AbortController | null = null;
 
   constructor(stateRoot: string, hooks: DestinationHooks = {}) {
     this.root = NodePath.join(stateRoot, "folder-copies");
@@ -255,7 +281,11 @@ export class DestinationCopies {
     });
   }
 
-  private client(record: DestinationRecord, signal?: AbortSignal) {
+  private client(
+    record: DestinationRecord,
+    signal?: AbortSignal,
+    once?: { readonly timeoutMs: number },
+  ) {
     return new SourceClient({
       baseUrl: record.sourceUrl,
       operationId: record.operationId,
@@ -264,22 +294,38 @@ export class DestinationCopies {
       ...(this.hooks.fetch ? { fetch: this.hooks.fetch } : {}),
       ...(this.hooks.sleep ? { sleep: this.hooks.sleep } : {}),
       ...(signal ? { signal } : {}),
+      ...(once ? { retry: false, timeoutMs: once.timeoutMs } : {}),
     });
   }
 
   /** Records the copy and starts the preview: manifest from the source, then the plan. */
   async start(input: StartCopyInput): Promise<DestinationRecord> {
-    const { record, created } = await this.locked(input.operationId, () => this.startLocked(input));
+    const { record, created, restart } = await this.locked(input.operationId, () =>
+      this.startLocked(input),
+    );
     // Preview updates take this same lock; launch only after creation releases it.
     if (created)
       this.background(input.operationId, "scanning", (signal) => this.preview(record, signal));
+    else if (restart) await this.restartPreview(input.operationId);
     return record;
+  }
+
+  /** Stops a running preview, which holds the revoked token, and runs it again with the record's. */
+  private async restartPreview(operationId: string) {
+    const running = this.running.get(operationId);
+    running?.abort.abort();
+    await running?.done.catch(() => undefined);
+    const current = await this.read(operationId);
+    if (current?.state !== "planned" && current?.state !== "scanning") return;
+    this.background(operationId, "scanning", (signal) =>
+      current.state === "planned" ? this.preview(current, signal) : this.replan(current, signal),
+    );
   }
 
   /** The lock owns the directory through hello, persistence, and failed-start cleanup. */
   private async startLocked(
     input: StartCopyInput,
-  ): Promise<{ record: DestinationRecord; created: boolean }> {
+  ): Promise<{ record: DestinationRecord; created: boolean; restart?: boolean }> {
     if (!NodePath.isAbsolute(input.targetFolder))
       throw new CopyError("not_a_folder", "Choose an absolute folder for the copy.");
     const target = NodePath.resolve(input.targetFolder);
@@ -299,6 +345,37 @@ export class DestinationCopies {
         (existing.projectRelativePath ?? ".") !== (input.projectRelativePath ?? ".")
       )
         throw new CopyError("refused", "This copy already exists with different details.");
+      // A re-offer replaces the source's token and revokes the old one. Before the
+      // transfer starts, keep the newer token so the preview and the transfer use it.
+      if (existing.token !== input.token && BEFORE_TRANSFER.has(existing.state)) {
+        const refreshed: DestinationRecord = {
+          ...existing,
+          token: input.token,
+          updatedAt: this.now(),
+        };
+        await writeJson(this.paths(input.operationId).record, refreshed);
+        // A comparison running on the old token would be refused: run it again.
+        return { record: refreshed, created: false, restart: existing.state !== "previewed" };
+      }
+      // A preview that failed (often on the revoked token) starts over with the new one.
+      if (
+        existing.token !== input.token &&
+        existing.state === "failed" &&
+        existing.failedStep !== null &&
+        BEFORE_TRANSFER.has(existing.failedStep)
+      ) {
+        const reset: DestinationRecord = {
+          ...existing,
+          token: input.token,
+          state: "planned",
+          failedStep: null,
+          error: null,
+          progress: null,
+          updatedAt: this.now(),
+        };
+        await writeJson(this.paths(input.operationId).record, reset);
+        return { record: reset, created: false, restart: true };
+      }
       return { record: existing, created: false };
     }
     const stat = await NodeFSP.lstat(target).catch(() => null);
@@ -440,7 +517,10 @@ export class DestinationCopies {
     running?.abort.abort();
     await running?.done.catch(() => undefined);
     const after = await this.require(operationId);
-    if (after.state === "failed" && after.failedStep === "applying")
+    if (
+      after.state === "failed" &&
+      (after.failedStep === "applying" || after.failedStep === "applied")
+    )
       throw new CopyError("refused", "Apply started; undo the copy instead.");
     await this.client(after)
       .release(reason)
@@ -454,15 +534,36 @@ export class DestinationCopies {
     const record = await this.require(operationId);
     if (record.state === "failed" && record.failedStep === "applied") {
       // Files are in place; only the source commit or the registration failed.
-      const applied = await this.update(operationId, { state: "applied", error: null });
-      this.background(operationId, "applied", () => this.finish(applied));
-      return applied;
+      this.claim(operationId);
+      try {
+        const applied = await this.update(operationId, { state: "applied", error: null });
+        this.background(operationId, "applied", () => this.finish(applied));
+        return applied;
+      } finally {
+        this.claimed.delete(operationId);
+      }
     }
     if (record.state !== "failed" || record.failedStep !== "applying")
-      throw new CopyError("refused", "Only an interrupted Apply can be retried.");
-    const next = await this.update(operationId, { state: "applying", error: null });
-    this.background(operationId, "applying", (signal) => this.apply(next, signal));
-    return next;
+      // Before Apply the source has let the copy go and nothing changed here: copy again.
+      throw new CopyError(
+        "refused",
+        "Nothing was changed on this machine. Start the copy again from the source.",
+      );
+    this.claim(operationId);
+    try {
+      const next = await this.update(operationId, { state: "applying", error: null });
+      this.background(operationId, "applying", (signal) => this.apply(next, signal));
+      return next;
+    } finally {
+      this.claimed.delete(operationId);
+    }
+  }
+
+  /** Refuses while a retry, an Undo or a background step holds the copy. */
+  private claim(operationId: string) {
+    if (this.running.has(operationId) || this.claimed.has(operationId))
+      throw new CopyError("busy", "The copy is still finishing. Wait for it, then try again.");
+    this.claimed.add(operationId);
   }
 
   async undoPreview(operationId: string): Promise<UndoPreview> {
@@ -486,8 +587,30 @@ export class DestinationCopies {
     readonly result: UndoResult | null;
     readonly preview: UndoPreview;
   }> {
+    // A Retry still committing could register the folder Undo is about to empty.
+    this.claim(operationId);
+    try {
+      return await this.undoClaimed(operationId, force);
+    } finally {
+      this.claimed.delete(operationId);
+    }
+  }
+
+  private async undoClaimed(operationId: string, force: boolean) {
     const record = await this.require(operationId);
     if (!canUndo(record)) throw new CopyError("refused", "There is nothing to undo.");
+    // A commit whose every reply was lost: the source finished, this record never heard.
+    // Ask before removing anything; a committed copy is finished here, not undone.
+    const probe = record.committed ? null : await this.sourceState(record);
+    if (probe === "committed") {
+      const applied = await this.update(operationId, {
+        state: "applied",
+        committed: true,
+        error: null,
+      });
+      this.background(operationId, "applied", () => this.finish(applied));
+      throw new CopyError("refused", alreadyCommittedMessage(record));
+    }
     const paths = this.paths(operationId);
     const preview = await previewUndo({
       targetRoot: record.targetFolder,
@@ -501,8 +624,24 @@ export class DestinationCopies {
       journalFile: paths.journal,
       force,
     });
+    // An uncommitted copy still holds the source: give it back, so a held coordinator stays there.
+    // When the source refuses or cannot be reached, the person must end it there.
+    // An unreachable source was already retried by the question above.
+    const sourceError = record.committed
+      ? null
+      : probe instanceof CopyError && probe.code === "unreachable"
+        ? probe
+        : await this.client(record)
+            .release("The copy was undone on the destination.")
+            .then(
+              () => null,
+              (cause: unknown) => toCopyError(cause),
+            );
     const next = await this.update(operationId, {
       state: "undone",
+      error: sourceError
+        ? { code: sourceError.code, message: undoneButHeldMessage(record, sourceError.code) }
+        : null,
       ...(keptSecrets.length > 0
         ? {
             warnings: [
@@ -513,6 +652,16 @@ export class DestinationCopies {
         : {}),
     });
     return { record: next, result, preview };
+  }
+
+  /** The source's state for this copy, or why it could not say. */
+  private async sourceState(record: DestinationRecord): Promise<string | CopyError> {
+    return this.client(record)
+      .hello(record.sourceEnvironmentId)
+      .then(
+        (hello) => hello.state,
+        (cause: unknown) => toCopyError(cause),
+      );
   }
 
   /**
@@ -535,8 +684,47 @@ export class DestinationCopies {
     return discarded;
   }
 
+  /**
+   * Calls the source for every held copy, which counts as use of its grant.
+   * One short attempt each; the next tick tries again. Returns how many answered.
+   */
+  async keepHeldGrantsAlive(signal?: AbortSignal): Promise<number> {
+    let answered = 0;
+    for (const record of await this.list()) {
+      if (signal?.aborted) break;
+      if (!holdsSource(record)) continue;
+      try {
+        await this.client(record, signal, { timeoutMs: KEEPALIVE_CALL_MS }).hello(
+          record.sourceEnvironmentId,
+        );
+        answered += 1;
+      } catch {
+        // An unreachable or refusing source is reported when Retry or Undo runs.
+      }
+    }
+    return answered;
+  }
+
+  private startKeepalive() {
+    if (this.keepalive !== null) return;
+    const abort = new AbortController();
+    this.keepaliveAbort = abort;
+    const tick = () => {
+      if (this.keeping || abort.signal.aborted) return;
+      this.keeping = this.keepHeldGrantsAlive(abort.signal)
+        .catch(() => 0)
+        .finally(() => {
+          this.keeping = null;
+        });
+    };
+    this.keepalive = setInterval(tick, this.hooks.keepaliveMs ?? HELD_KEEPALIVE_MS);
+    this.keepalive.unref?.();
+    tick();
+  }
+
   /** Continues every copy the last run left mid-way. */
   async resume(): Promise<void> {
+    this.startKeepalive();
     await this.discardExpiredBackups().catch(() => undefined);
     for (const record of await this.list()) {
       const op = record.operationId;
@@ -570,6 +758,11 @@ export class DestinationCopies {
   }
 
   async close(): Promise<void> {
+    this.keepaliveAbort?.abort();
+    this.keepaliveAbort = null;
+    if (this.keepalive !== null) clearInterval(this.keepalive);
+    this.keepalive = null;
+    await this.keeping;
     for (const running of this.running.values()) running.abort.abort();
     await Promise.all(
       [...this.running.values()].map((running) => running.done.catch(() => undefined)),
@@ -605,14 +798,21 @@ export class DestinationCopies {
     const record = await this.read(operationId);
     if (!record || record.state === "cancelled") return;
     const step = record.state === "failed" ? (record.failedStep ?? fallback) : record.state;
-    const error = aborted
-      ? new CopyError("cancelled", "The copy was stopped.")
-      : toCopyError(cause);
+    let error = aborted ? new CopyError("cancelled", "The copy was stopped.") : toCopyError(cause);
+    // Applied but never committed: Retry cannot finish without the source, which still holds it.
+    if (
+      error.code === "unauthorized" &&
+      !record.committed &&
+      (step === "applying" || step === "applied")
+    )
+      error = new CopyError("unauthorized", appliedButRefusedMessage(record));
     if (aborted && BEFORE_APPLY.has(step)) return;
     await this.update(operationId, {
       state: "failed",
       failedStep: step,
       error: { code: error.code, message: error.message },
+      // A stopped step's counts would read as still running.
+      progress: null,
     });
     if (BEFORE_APPLY.has(step)) {
       // The target folder is untouched; give the source back.
@@ -783,10 +983,38 @@ export class DestinationCopies {
       leftBehind: leftBehind(manifest, unstable),
       unstable,
     });
+    const warnings = [...record.warnings, ...result.warnings].slice(0, 200);
+    const differing = result.checks.filter((check) => !check.ok);
+    // Files Apply put back to the Git snapshot: the source has newer work there.
+    const restored = result.restored ?? [];
+    if (
+      record.mode === "copy-and-move" &&
+      (differing.length > 0 || unstable.size > 0 || restored.length > 0)
+    ) {
+      // The source keeps the coordinator until the person looks: no commit, no move.
+      await this.update(op, {
+        state: "failed",
+        failedStep: "applied",
+        error: {
+          code: "checks_failed",
+          // An unstable file Apply restored is named once, as restored.
+          message: checksFailedMessage(
+            differing,
+            [...unstable].filter((path) => !restored.includes(path)).length,
+            restored,
+          ),
+        },
+        checks: result.checks,
+        warnings,
+        progress: null,
+      });
+      await NodeFSP.rm(paths.staging, { recursive: true, force: true });
+      return;
+    }
     const next = await this.update(op, {
       state: "applied",
       checks: result.checks,
-      warnings: [...record.warnings, ...result.warnings].slice(0, 200),
+      warnings,
       progress: null,
     });
     await NodeFSP.rm(paths.staging, { recursive: true, force: true });
@@ -853,6 +1081,69 @@ export function leftBehind(manifest: Manifest, unstable: ReadonlySet<string>): R
     }
   }
   return result;
+}
+
+function checksFailedMessage(
+  differing: ReadonlyArray<RepositoryCheck>,
+  unstable: number,
+  restored: ReadonlyArray<string> = [],
+) {
+  const parts: Array<string> = [];
+  if (differing.length > 0)
+    parts.push(
+      `${differing.length === 1 ? "1 repository differs" : `${differing.length} repositories differ`} from the source (${differing
+        .slice(0, 5)
+        .map((check) => (check.repo === "." ? "the root" : check.repo))
+        .join(", ")}${differing.length > 5 ? ", …" : ""})`,
+    );
+  if (unstable > 0)
+    parts.push(
+      `${unstable === 1 ? "1 file" : `${unstable} files`} kept changing on the source during the copy`,
+    );
+  if (restored.length > 0)
+    parts.push(
+      `${restored.length === 1 ? "1 file was" : `${restored.length} files were`} committed or edited on the source after copying started and ${restored.length === 1 ? "is" : "are"} here as ${restored.length === 1 ? "it was" : "they were"} then (${restored
+        .slice(0, 5)
+        .join(
+          ", ",
+        )}${restored.length > 5 ? ", …" : ""}); the source has newer work there that would not travel`,
+    );
+  return restored.length > 0
+    ? `The files are in place, but ${parts.join(" and ")}, so the coordinator stayed on the source. Copy again to bring that work, or Move anyway to move without it.`
+    : `The files are in place, but ${parts.join(" and ")}, so the coordinator stayed on the source. Undo the copy, or retry to move it anyway.`;
+}
+
+/** The source machine as the person knows it, for "cancel it there" advice. */
+const sourceName = (record: DestinationRecord) => record.sourceMachine || "the source machine";
+
+function appliedButRefusedMessage(record: DestinationRecord) {
+  const name = sourceName(record);
+  return `${name} no longer accepts this copy, so it cannot be finished. The files are in place here. Undo the copy here, then cancel it on ${name}${record.mode === "copy-and-move" ? " to give the project back there" : ""}.`;
+}
+
+function alreadyCommittedMessage(record: DestinationRecord) {
+  const name = sourceName(record);
+  return record.mode === "copy-and-move"
+    ? `${name} had already finished this move, so the project now lives on this machine. Nothing was removed; the copy is being finished here.`
+    : `${name} had already finished this copy. Nothing was removed; the copy is being finished here.`;
+}
+
+function undoneButHeldMessage(record: DestinationRecord, code: CopyErrorCode) {
+  const name = sourceName(record);
+  const reason =
+    code === "unauthorized" ? `${name} no longer accepts this copy` : `${name} could not be told`;
+  return `The files here were restored, but ${reason}, so the copy is still open there. Cancel the copy on ${name}${record.mode === "copy-and-move" ? " to give the project back there" : " to end it"}.`;
+}
+
+/** Applied here (or mid-Apply) but not committed: the source still holds the copy open. */
+function holdsSource(record: DestinationRecord) {
+  if (record.committed) return false;
+  return (
+    record.state === "applied" ||
+    record.state === "applying" ||
+    (record.state === "failed" &&
+      (record.failedStep === "applying" || record.failedStep === "applied"))
+  );
 }
 
 function canUndo(record: DestinationRecord) {

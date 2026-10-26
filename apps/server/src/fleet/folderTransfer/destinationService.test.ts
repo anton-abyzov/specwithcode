@@ -143,6 +143,30 @@ describe("DestinationCopies", () => {
     expect(NodeFS.existsSync(target)).toBe(false);
   }, 60_000);
 
+  it("drops a failed preview's counts and refuses Retry before Apply with what to do", async () => {
+    let calls = 0;
+    const copies = new DestinationCopies(NodePath.join(base, "dest-state-retry"), {
+      ...fast,
+      // The source is still reading its list on the first poll; the link then drops.
+      sleep: async () => {
+        calls += 1;
+        throw new Error("Connection reset while reading the source list.");
+      },
+    });
+    const { operationId, token } = await offer();
+    const target = NodePath.join(base, "targets", "retry");
+    await copies.start(startInput(operationId, token, target));
+    const failed = await settle(copies, operationId, ["failed", "previewed"]);
+    expect(calls).toBe(1);
+    expect(failed).toMatchObject({ state: "failed", failedStep: "scanning", progress: null });
+    const error = await copies.retry(operationId).catch((cause: unknown) => cause);
+    expect(error).toMatchObject({ code: "refused" });
+    expect((error as CopyError).message).toBe(
+      "Nothing was changed on this machine. Start the copy again from the source.",
+    );
+    expect(NodeFS.existsSync(target)).toBe(false);
+  }, 60_000);
+
   it("refuses an older source that has no folder copy", async () => {
     const copies = new DestinationCopies(NodePath.join(base, "dest-state-d"), {
       ...fast,
@@ -322,5 +346,35 @@ describe("Backup expiry", () => {
     expect(NodeFS.readFileSync(keptEdit, "utf8")).toBe("mine\n");
     expect(NodeFS.readFileSync(undoneClone, "utf8")).toBe("mine\n");
     expect(NodeFS.existsSync(NodePath.join(backups, "files"))).toBe(false);
+  }, 120_000);
+});
+
+describe("A re-offered copy", () => {
+  it("keeps the newer token from a repeated start before the transfer begins", async () => {
+    const copies = new DestinationCopies(NodePath.join(base, "dest-state-reoffer"), fast);
+    const { operationId, token } = await offer();
+    const target = NodePath.join(base, "targets", "reoffer");
+    await copies.start(startInput(operationId, token, target));
+    await settle(copies, operationId, ["previewed", "failed"]);
+    // The source offers again: a new token, and the first one stops working.
+    const again = await transfers.offer({
+      operationId,
+      projectId: "project-source",
+      folder: fixture.root,
+      mode: "copy-only",
+      destinationEnvironmentId: "env-destination",
+    });
+    expect(again.token).not.toBe(token);
+    const restarted = await copies.start(startInput(operationId, again.token, target));
+    expect(restarted.token).toBe(again.token);
+    expect((await copies.read(operationId))?.token).toBe(again.token);
+    await copies.approve(operationId);
+    const applied = await settle(copies, operationId, ["applied", "failed"]);
+    expect(applied.error).toBeNull();
+    expect(applied.committed).toBe(true);
+    // Once applied, a later start with yet another token changes nothing.
+    expect((await copies.start(startInput(operationId, "stale-token", target))).token).toBe(
+      again.token,
+    );
   }, 120_000);
 });

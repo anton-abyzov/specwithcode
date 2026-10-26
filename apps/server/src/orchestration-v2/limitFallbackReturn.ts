@@ -2,6 +2,7 @@ import {
   CommandId,
   isProviderAvailable,
   MessageId,
+  type OrchestrationV2LimitPreswitchOrigin,
   type OrchestrationV2Run,
   type OrchestrationV2ServerCommand,
   type OrchestrationV2TurnItem,
@@ -9,8 +10,13 @@ import {
 } from "@specweave-studio/contracts";
 import {
   isClaudeApiKeyProvider,
+  type ProviderFallbackRule,
   providerUsedPercent,
+  usageAtThreshold,
+  usageDeniesTurn,
 } from "@specweave-studio/shared/providerFallback";
+import { preswitchReturnBlock } from "@specweave-studio/shared/preswitchReturn";
+import { LIMIT_PRESWITCH_COMMAND_PREFIX } from "@specweave-studio/shared/threadModelIdentity";
 import { windowAppliesToModel } from "@specweave-studio/shared/usageWindows";
 import { type ApiCreditOrigin, epochMs, LIMIT_STOP_MAX_AGE_MS } from "./providerOpenFailure.ts";
 import {
@@ -25,14 +31,22 @@ export {
   apiCreditOrigin,
 } from "./providerOpenFailure.ts";
 
+/** The way back from a usage pre-switch: `limit-preswitch-return:<pre-switch key>[:attempt]`. */
+export const LIMIT_PRESWITCH_RETURN_PREFIX = "limit-preswitch-return:";
+
 /**
- * The way back's own model switch: from API credits (`limit-api-return:`) and
- * from a `switch` fallback (`limit-return:`). It moves the thread with no turn
- * of its own, so the orchestrator moves the queued sends that took the
- * fallback's model along with it.
+ * The way back's own model switch: from API credits (`limit-api-return:`),
+ * from a `switch` fallback (`limit-return:`) and from a usage pre-switch
+ * (`limit-preswitch-return:`). It moves the thread with no turn of its own,
+ * so the orchestrator moves the queued sends that took the fallback's model
+ * along with it.
  */
 export function isLimitWayBack(commandId: string): boolean {
-  return commandId.startsWith("limit-api-return:") || commandId.startsWith("limit-return:");
+  return (
+    commandId.startsWith("limit-api-return:") ||
+    commandId.startsWith("limit-return:") ||
+    commandId.startsWith(LIMIT_PRESWITCH_RETURN_PREFIX)
+  );
 }
 
 /**
@@ -281,6 +295,94 @@ export function limitFallbackReturnCommand(
   return {
     type: "thread.model-selection.set",
     commandId: CommandId.make(`limit-return:${thread.id}:${origin.continuedByRunId}${suffix}`),
+    threadId: thread.id,
+    modelSelection: origin.modelSelection,
+  };
+}
+
+export {
+  PRESWITCH_RETURN_BLOCK_REASON,
+  type PreswitchReturnBlock,
+  preswitchReturnBlock,
+} from "@specweave-studio/shared/preswitchReturn";
+
+/**
+ * The way back from a usage pre-switch (`limit-preswitch:`): the server moved
+ * the idle thread off a provider that reached the switch threshold before its
+ * next turn, so no stopped run marks the move. Once the original reads below
+ * the threshold (below its limit when the rule is no longer `switch`), or the
+ * window it moved in has reset, the idle thread goes back with no turn of its
+ * own, under `limit-preswitch-return:`, and the queued sends that took the
+ * fallback's model go with it. Never while the thread works, waits on a
+ * person, hosts background work or holds a failed turn, and never to an
+ * origin `preswitchReturnBlock` rules out. A pick after the move clears the
+ * origin at write time, so it is never reversed. `attempt` numbers the
+ * command, because a rejected command id stays rejected.
+ */
+export function preswitchReturnCommand(
+  thread: FallbackThread,
+  origin: OrchestrationV2LimitPreswitchOrigin,
+  providers: ReadonlyArray<ServerProvider>,
+  rule: Pick<
+    ProviderFallbackRule,
+    | "providerLimitAction"
+    | "providerLimitSwitchAtPercent"
+    | "providerLimitWaitUnderMinutes"
+    | "providerLimitExcludedModels"
+  >,
+  nowMs: number,
+  attempt = 0,
+): Extract<OrchestrationV2ServerCommand, { type: "thread.model-selection.set" }> | null {
+  if (!threadIsFree(thread)) return null;
+  if (thread.settledOverride === "settled" || thread.status === "failed") return null;
+  if (thread.activityRunStatus != null || hostsBackgroundWork(thread)) return null;
+  if (!origin.commandId.startsWith(LIMIT_PRESWITCH_COMMAND_PREFIX)) return null;
+  if (
+    thread.modelSelection.instanceId === origin.modelSelection.instanceId &&
+    thread.modelSelection.model === origin.modelSelection.model
+  )
+    return null;
+  if (preswitchReturnBlock(origin, providers, rule) !== null) return null;
+  const home = providers.find(
+    (provider) => provider.instanceId === origin.modelSelection.instanceId,
+  );
+  if (
+    home === undefined ||
+    !home.enabled ||
+    !home.installed ||
+    !isProviderAvailable(home) ||
+    home.auth.status === "unauthenticated"
+  )
+    return null;
+  const model = origin.modelSelection.model;
+  const limits = home.usageLimits;
+  const read =
+    limits !== undefined &&
+    limits.unavailable === undefined &&
+    limits.windows.length > 0 &&
+    providerUsedPercent(home, nowMs, model) !== null;
+  // A live reading decides: below the threshold goes back, at it stays, so
+  // the next turn does not move straight off again. With no live window (the
+  // one it moved in has reset and nothing has read the account since), the
+  // reset passing is enough; a stale denial must not strand the thread.
+  if (read) {
+    if (
+      usageDeniesTurn(home) ||
+      reachedLimitWindow(home, nowMs, model) !== null ||
+      (rule.providerLimitAction === "switch" &&
+        usageAtThreshold({ provider: home, model, rule, nowMs }))
+    )
+      return null;
+  } else {
+    const resetMs = Date.parse(origin.resetAt ?? "");
+    if (!(Number.isFinite(resetMs) && resetMs <= nowMs)) return null;
+  }
+  const key = origin.commandId.slice(LIMIT_PRESWITCH_COMMAND_PREFIX.length);
+  return {
+    type: "thread.model-selection.set",
+    commandId: CommandId.make(
+      `${LIMIT_PRESWITCH_RETURN_PREFIX}${key}${attempt === 0 ? "" : `:${attempt}`}`,
+    ),
     threadId: thread.id,
     modelSelection: origin.modelSelection,
   };

@@ -578,7 +578,8 @@ function ConnectAccountOption({
               ) : null}
             </div>
             <p className="text-sm text-muted-foreground">
-              Run this on each computer you want to connect.
+              Run this on each computer you want to connect. It makes the computer reachable from
+              your other devices, with no Tailscale or port forwarding.
             </p>
             <CommandBlock command="specweave-studio connect" className="mt-3" />
             <p className="mt-3 text-xs text-muted-foreground">

@@ -119,6 +119,10 @@ export function CoordinatorModelPicker(props: {
     onSwitchBack?: (() => void) | null;
     switching?: boolean;
   } | null;
+  /** The model the host moves the next turn to while the shown one is out of room. */
+  nextOnLimit?: string | null;
+  /** The project's fallback models, best first, for the limits view. */
+  fallbackOrder?: ReadonlyArray<{ readonly instanceId: string; readonly label: string }>;
   disabled: boolean;
   saving: boolean;
   requiresFolderGrants?: boolean;
@@ -199,9 +203,17 @@ export function CoordinatorModelPicker(props: {
   // A host still connecting has no fresh read: its rows say so instead of guessing.
   const hostPhase = environment?.connection?.phase;
   const hostConnected = hostPhase !== "offline" && hostPhase !== "error";
+  const nextOnLimit = props.nextOnLimit ?? null;
   const usage = useMemo(
-    () => ({ connected: hostConnected, machineLabel: machineLabel || null, running: null }),
-    [hostConnected, machineLabel],
+    () => ({
+      connected: hostConnected,
+      environmentId: props.environmentId,
+      machineLabel: machineLabel || null,
+      running: null,
+      nextOnLimit,
+      surface: "coordinator" as const,
+    }),
+    [hostConnected, machineLabel, nextOnLimit, props.environmentId],
   );
   const openProviderSetup = (instanceId?: ProviderInstanceId) => {
     if (props.disabled || props.saving) return;
@@ -360,6 +372,7 @@ export function CoordinatorModelPicker(props: {
               className="sws-model-trigger"
               projectEnvironmentId={props.environmentId}
               coordinatorInstanceId={current.instanceId}
+              fallbackOrder={props.fallbackOrder ?? []}
               onOpenProjectUsage={props.onOpenProjectUsage}
             />
           ) : null}
@@ -390,11 +403,12 @@ export function CoordinatorModelPicker(props: {
           getModelDisabledReason={getModelDisabledReason}
           usage={usage}
           secondaryView={{
-            label: "Limits by machine",
+            label: "Limits by account",
             render: ({ back, close }) => (
               <MachineLimitsPanel
                 projectEnvironmentId={props.environmentId}
                 coordinatorInstanceId={current.instanceId}
+                fallbackOrder={props.fallbackOrder ?? []}
                 onBack={back}
                 onClose={close}
                 onOpenProjectUsage={

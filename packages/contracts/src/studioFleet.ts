@@ -66,12 +66,23 @@ export const StudioFleetMachine = Schema.Struct({
   workers: Schema.optionalKey(StudioFleetWorkers),
 });
 export type StudioFleetMachine = typeof StudioFleetMachine.Type;
+/** A machine line in the fleet file the server skipped; the other machines still load. */
+export const StudioFleetInvalidEntry = Schema.Struct({
+  kind: Schema.Literal("config"),
+  /** Zero-based position in the file's machines list. */
+  index: Schema.Number,
+  label: Schema.optionalKey(Schema.String),
+  reason: Schema.String,
+});
+export type StudioFleetInvalidEntry = typeof StudioFleetInvalidEntry.Type;
 export const StudioFleetSnapshot = Schema.Struct({
   configured: Schema.Boolean,
   connectPermission: Schema.Literals(["access:write", "orchestration:operate"]),
   observedAt: IsoDateTime,
   listener: Schema.Literals(["loopback", "network"]),
   machines: Schema.Array(StudioFleetMachine),
+  /** Absent when every line parsed, and from older servers. */
+  invalidEntries: Schema.optionalKey(Schema.Array(StudioFleetInvalidEntry)),
 });
 export type StudioFleetSnapshot = typeof StudioFleetSnapshot.Type;
 export const StudioFleetConnectInput = Schema.StructWithRest(

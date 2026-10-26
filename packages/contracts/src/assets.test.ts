@@ -1,7 +1,7 @@
 import * as Schema from "effect/Schema";
 import { describe, expect, it } from "vite-plus/test";
 
-import { AttachmentCreateUploadUrlInput } from "./assets.ts";
+import { assetResourceReadsHostFiles, AttachmentCreateUploadUrlInput } from "./assets.ts";
 import {
   PROVIDER_SEND_TURN_MAX_FILE_BYTES,
   PROVIDER_SEND_TURN_MAX_IMAGE_BYTES,
@@ -56,5 +56,31 @@ describe("AttachmentCreateUploadUrlInput", () => {
         sizeBytes: PROVIDER_SEND_TURN_MAX_FILE_BYTES + 1,
       }),
     ).toBe(false);
+  });
+});
+
+describe("assetResourceReadsHostFiles", () => {
+  it("needs a file grant for host files and design images only", () => {
+    const threadId = "thread" as never;
+    expect(
+      [
+        { _tag: "workspace-file", threadId, path: "a.png" },
+        { _tag: "media-file", threadId, path: "/a.png" },
+        { _tag: "draft-workspace-file", cwd: "/repo", path: "a.png" },
+        {
+          _tag: "design-asset",
+          owner: { kind: "playground" },
+          designId: "d_abc" as never,
+          asset: `${"a".repeat(64)}.png`,
+        },
+      ].map((resource) => assetResourceReadsHostFiles(resource as never)),
+    ).toEqual([true, true, true, true]);
+    expect(
+      [
+        { _tag: "attachment", attachmentId: "upload" },
+        { _tag: "project-favicon", cwd: "/repo" },
+        { _tag: "github-media", cwd: "/repo", url: "https://github.com/x.png" },
+      ].map((resource) => assetResourceReadsHostFiles(resource as never)),
+    ).toEqual([false, false, false]);
   });
 });

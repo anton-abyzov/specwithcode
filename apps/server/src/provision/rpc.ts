@@ -15,6 +15,7 @@ import * as Queue from "effect/Queue";
 import * as Stream from "effect/Stream";
 
 import packageJson from "../../package.json" with { type: "json" };
+import { readConnectLinkMode } from "../cloud/connectLinkMode.ts";
 import * as ServerConfig from "../config.ts";
 import { RpcInstrumentation } from "../observability/RpcInstrumentation.ts";
 import { loginShellPath, makeNodeProvisionHost } from "./host.ts";
@@ -33,7 +34,8 @@ let running = false;
 export const layerRpcHandlers = WsProvisionRpcGroup.middleware(RpcInstrumentation).toLayer(
   Effect.gen(function* () {
     const config = yield* ServerConfig.ServerConfig;
-    const options = (dryRun: boolean, resume: boolean): ProvisionOptions => ({
+    // This server's own secrets (its dev or userdata state), read fresh for each run.
+    const options = async (dryRun: boolean, resume: boolean): Promise<ProvisionOptions> => ({
       dryRun,
       resume,
       manifestVersion: packageJson.version,
@@ -41,12 +43,13 @@ export const layerRpcHandlers = WsProvisionRpcGroup.middleware(RpcInstrumentatio
       mode: "remote",
       loginShellPath,
       serverPath: process.env.PATH ?? "",
+      connectLinkMode: await readConnectLinkMode(config.secretsDir),
       runtime: { version: process.version, execPath: process.execPath },
     });
     return {
       [PROVISION_RPC_METHODS.provisionPreview]: () =>
         Effect.tryPromise({
-          try: () => runProvision(makeNodeProvisionHost(), options(true, false)),
+          try: async () => runProvision(makeNodeProvisionHost(), await options(true, false)),
           catch: toProvisionError,
         }),
       [PROVISION_RPC_METHODS.provisionRun]: (input: { readonly resume?: boolean | undefined }) =>
@@ -59,9 +62,9 @@ export const layerRpcHandlers = WsProvisionRpcGroup.middleware(RpcInstrumentatio
               });
             running = true;
             yield* Effect.tryPromise({
-              try: () =>
+              try: async () =>
                 runProvision(makeNodeProvisionHost(), {
-                  ...options(false, input.resume === true),
+                  ...(await options(false, input.resume === true)),
                   onEvent: (event) => Queue.offerUnsafe(queue, event),
                 }),
               catch: toProvisionError,

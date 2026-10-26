@@ -710,7 +710,10 @@ export function StudioOverview() {
               <LinkIcon aria-hidden="true" />
               <div>
                 <h3>Connections</h3>
-                <p>Pair machines over LAN, SSH or Tailscale.</p>
+                <p>
+                  Reach machines from anywhere with SpecWithCode Connect, or over LAN, SSH or
+                  Tailscale.
+                </p>
               </div>
               <ArrowRightIcon aria-hidden="true" />
             </Link>

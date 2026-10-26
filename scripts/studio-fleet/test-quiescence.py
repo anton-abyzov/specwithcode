@@ -568,5 +568,101 @@ class ServerBrowserQuiescence(unittest.TestCase):
         with self.assertRaisesRegex(AssertionError, 'unexpected|new process'):
             self.guard(Table(with_browser(), handle))
 
+
+TUNNEL = HOME + '/tools/cloudflared/2026.5.2/darwin-arm64/cloudflared'
+TUNNEL_ARGV = [TUNNEL, 'tunnel', '--no-autoupdate', '--loglevel', 'info', '--output', 'default', 'run']
+
+
+def with_tunnel(values=None, pid=400, started=START):
+    """M1 and M3 on October 26, 2026: the service's own SpecWithCode Connect tunnel, a direct
+    child of the service, kept 1.0.92 "waiting-for-quiet ... (cloudflared)" for 30+ minutes."""
+    values = values if values is not None else fixture()
+    values[pid] = process(pid, 100, TUNNEL, started=started)
+    return values
+
+
+class ManagedTunnelQuiescence(unittest.TestCase):
+    def argv(self, tunnel_argv=None):
+        def read(pid):
+            if pid == 101:
+                return ARGS
+            if pid in (300, 301, 302):
+                return BROWSER_ARGV
+            return TUNNEL_ARGV if tunnel_argv is None else tunnel_argv
+        return read
+
+    def capture(self, values, tunnel_argv=None, kernel=None):
+        return quiescence.capture_quiescence(100, 501, NODE, ARGS, process_reader=lambda: copy.deepcopy(values),
+                                             argv_reader=self.argv(tunnel_argv),
+                                             executable_reader=lambda pid: (kernel or {}).get(pid, values[pid]['executable']))
+
+    def guard(self, table, expected):
+        return quiescence.assert_quiescence(expected, NODE, ARGS, process_reader=table.read, argv_reader=self.argv(),
+                                            signaler=table.signal, clock=lambda: table.now, sleeper=table.sleep,
+                                            executable_reader=table.executable)
+
+    def test_the_service_s_own_tunnel_is_quiet_and_leaves_the_proof_unchanged(self):
+        plain = self.capture(fixture())
+        proof = self.capture(with_tunnel())
+        self.assertEqual(proof, plain)
+        self.assertNotIn(TUNNEL, json.dumps(proof))
+        self.assertNotIn('cloudflared', json.dumps(proof))
+
+    def test_the_tunnel_beside_the_server_browser_is_never_signalled(self):
+        expected = self.capture(with_tunnel(with_browser()))
+        table = Table(with_tunnel(with_browser()), stop_tree_on(quiescence.signal.SIGTERM))
+        record = self.guard(table, expected)
+        self.assertEqual(table.signals, [(300, quiescence.signal.SIGTERM)])
+        self.assertEqual(record['serverBrowser'], 'stopped')
+        self.assertEqual(table.values, with_tunnel())
+
+    def test_a_tunnel_that_restarted_or_stopped_after_the_snapshot_does_not_refuse_the_restart(self):
+        expected = self.capture(with_tunnel())
+        for later in (with_tunnel(pid=401, started='Thu Oct 8 14:00:00 2026'), fixture()):
+            table = Table(later)
+            with self.subTest(tunnel=sorted(later)):
+                self.assertEqual(self.guard(table, expected), {'serverBrowser': 'not-running'})
+                self.assertEqual(table.signals, [])
+
+    def test_any_other_cloudflared_still_keeps_the_update_waiting(self):
+        cases = {
+            'another identity\'s tools': (lambda v: v[400].update(executable=TUNNEL.replace('/m4/', '/m1/')), None, None),
+            'cloudflared on PATH': (lambda v: v[400].update(executable='/opt/homebrew/bin/cloudflared'), None, None),
+            'same name elsewhere': (lambda v: v[400].update(executable='/tmp/tools/cloudflared/2026.5.2/darwin-arm64/cloudflared'),
+                                    None, None),
+            'path traversal': (lambda v: v[400].update(executable=HOME + '/tools/cloudflared/2026.5.2/darwin-arm64/../../../../evil/cloudflared'),
+                               None, None),
+            'started in a terminal': (lambda v: (v.update({110: process(110, 100, '/bin/zsh')}), v[400].update(parent=110)),
+                                      None, None),
+            'a quick tunnel': (None, [TUNNEL, 'tunnel', '--url', 'http://localhost:3000'], None),
+            'extra arguments': (None, TUNNEL_ARGV + ['--metrics', '0.0.0.0:2000'], None),
+            'another program named cloudflared in argv': (None, ['/bin/sh'] + TUNNEL_ARGV[1:], None),
+            'a process beneath it': (lambda v: v.update({401: process(401, 400, '/bin/sh')}), None, None),
+            'another owner': (lambda v: v[400].update(uid=502), None, None),
+            'kernel runs something else': (None, None, {400: '/bin/sleep'}),
+            'two tunnels': (lambda v: v.update({401: process(401, 100, TUNNEL)}), None, None),
+        }
+        for name, (change, argv, kernel) in cases.items():
+            with self.subTest(case=name):
+                values = with_tunnel()
+                if change:
+                    change(values)
+                with self.assertRaisesRegex(AssertionError, 'unexpected'):
+                    self.capture(values, argv, kernel)
+
+    def test_a_reap_spares_the_tunnel_and_stops_the_stray_process(self):
+        values = with_tunnel()
+        values[110] = process(110, 100, '/bin/zsh')
+
+        def exit_on(table, pid, number):
+            table.values.pop(pid, None)
+        table = Table(values, exit_on)
+        record = quiescence.reap_descendants(100, 501, NODE, ARGS, process_reader=table.read, argv_reader=self.argv(),
+                                             executable_reader=table.executable, signaler=table.signal,
+                                             clock=lambda: table.now, sleeper=table.sleep)
+        self.assertEqual(table.signals, [(110, quiescence.signal.SIGTERM)])
+        self.assertEqual(record['processCount'], 1)
+        self.assertEqual(table.values, with_tunnel())
+
 if __name__ == '__main__':
     unittest.main()

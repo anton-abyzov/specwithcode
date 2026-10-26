@@ -186,7 +186,7 @@ describe("CoordinatorModelPicker provider recovery", () => {
         onOpenProjectUsage?: () => void;
       }>;
     };
-    expect(view.label).toBe("Limits by machine");
+    expect(view.label).toBe("Limits by account");
     const close = vi.fn();
     const panel = view.render({ back: () => {}, close });
     expect(panel.props.projectEnvironmentId).toBe("env");

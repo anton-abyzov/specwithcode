@@ -15,20 +15,27 @@ const state = vi.hoisted(() => ({
   assetAtom: {},
   mint: vi.fn(),
   assetQuery: vi.fn(),
+  assetsQuery: vi.fn(),
 }));
 
-vi.mock("react", () => ({ useCallback: <A>(callback: A) => callback }));
+vi.mock("react", () => ({
+  useCallback: <A>(callback: A) => callback,
+  useMemo: <A>(factory: () => A) => factory(),
+}));
 vi.mock("@effect/atom-react", () => ({
   useAtomValue: (atom: unknown) =>
     atom === state.assetAtom
       ? AsyncResult.success({ relativeUrl: "/api/assets/image.png", expiresAt: 1 })
-      : AsyncResult.initial(false),
+      : Array.isArray(atom)
+        ? atom
+        : AsyncResult.initial(false),
 }));
 vi.mock("~/state/session", () => ({
   usePreparedConnection: () => ({ _tag: "Some", value: { httpBaseUrl: "https://host.test" } }),
 }));
 vi.mock("~/state/filesystem", async () => {
-  const { resolveFilesystemReadAccess } = await import("@specweave-studio/client-runtime/state/filesystem");
+  const { resolveFilesystemReadAccess } =
+    await import("@specweave-studio/client-runtime/state/filesystem");
   return {
     useFilesystemReadAccess: () =>
       resolveFilesystemReadAccess({
@@ -40,39 +47,54 @@ vi.mock("~/state/filesystem", async () => {
   };
 });
 vi.mock("~/state/assets", () => ({
-  assetEnvironment: { createUrl: state.assetQuery },
+  assetEnvironment: { createUrl: state.assetQuery, createUrls: state.assetsQuery },
 }));
 vi.mock("~/state/use-atom-query-runner", () => ({ useAtomQueryRunner: () => state.mint }));
 
-import { useAssetUrlRefresh, useAssetUrlState } from "./assetUrls";
+import { useAssetUrlRefresh, useAssetUrls, useAssetUrlState } from "./assetUrls";
 
 const environmentId = EnvironmentId.make("asset-environment");
 const threadId = ThreadId.make("asset-thread");
 const resource = { _tag: "media-file", threadId, path: "/repo/image.png" } as const;
+const designAsset = {
+  _tag: "design-asset",
+  owner: { kind: "playground" },
+  designId: "d_abc",
+  asset: `${"a".repeat(64)}.png`,
+} as const;
 
 beforeEach(() => {
   state.session = null;
   state.phase = "connected";
   state.assetQuery.mockReset().mockReturnValue(state.assetAtom);
+  state.assetsQuery
+    .mockReset()
+    .mockImplementation(({ resources }: { resources: ReadonlyArray<{ _tag: string }> }) =>
+      resources.map((item) =>
+        AsyncResult.success({ relativeUrl: `/api/assets/${item._tag}`, expiresAt: 1 }),
+      ),
+    );
   state.mint
     .mockReset()
     .mockResolvedValue(AsyncResult.success({ relativeUrl: "/api/assets/image.png", expiresAt: 1 }));
 });
 
-it.each(["workspace-file", "media-file"] as const)(
-  "keeps %s loading until its file grant resolves",
-  (_tag) => {
-    expect(useAssetUrlState(environmentId, { ...resource, _tag })).toEqual({ _tag: "Loading" });
-    expect(state.assetQuery).not.toHaveBeenCalled();
+it.each([
+  { ...resource, _tag: "workspace-file" as const },
+  resource,
+  { _tag: "draft-workspace-file" as const, cwd: "/repo", path: "image.png" },
+  designAsset,
+])("keeps $_tag loading until its file grant resolves", (hostResource) => {
+  expect(useAssetUrlState(environmentId, hostResource)).toEqual({ _tag: "Loading" });
+  expect(state.assetQuery).not.toHaveBeenCalled();
 
-    state.session = { authenticated: true, scopes: [AuthFilesystemReadScope] };
-    expect(useAssetUrlState(environmentId, { ...resource, _tag })).toEqual({
-      _tag: "Success",
-      expiresAt: 1,
-      url: "https://host.test/api/assets/image.png",
-    });
-  },
-);
+  state.session = { authenticated: true, scopes: [AuthFilesystemReadScope] };
+  expect(useAssetUrlState(environmentId, hostResource)).toEqual({
+    _tag: "Success",
+    expiresAt: 1,
+    url: "https://host.test/api/assets/image.png",
+  });
+});
 
 it("hides host assets with a denied grant while preserving attachments", () => {
   state.session = { authenticated: true, scopes: [] };
@@ -103,4 +125,21 @@ it("lets the server authorize an explicit refresh before the client grant loads"
   });
   state.mint.mockResolvedValue(AsyncResult.failure(Cause.fail(denied)));
   await expect(useAssetUrlRefresh(environmentId, resource)()).rejects.toBe(denied);
+});
+
+it("does not mint host file or design image URLs in a batch without a file grant", () => {
+  const attachment = { _tag: "attachment", attachmentId: "upload" } as const;
+  state.session = { authenticated: true, scopes: [] };
+  expect(useAssetUrls(environmentId, [designAsset, attachment, resource])).toEqual([
+    null,
+    "https://host.test/api/assets/attachment",
+    null,
+  ]);
+  expect(state.assetsQuery).toHaveBeenCalledWith({ environmentId, resources: [attachment] });
+
+  state.session = { authenticated: true, scopes: [AuthFilesystemReadScope] };
+  expect(useAssetUrls(environmentId, [designAsset, attachment])).toEqual([
+    "https://host.test/api/assets/design-asset",
+    "https://host.test/api/assets/attachment",
+  ]);
 });

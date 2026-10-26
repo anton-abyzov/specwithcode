@@ -166,7 +166,8 @@ def arrived(agent, load):
 DEFAULT_SETTINGS = {'schemaVersion': 1, 'checkAutomatically': True, 'downloadInBackground': True,
                     'installAutomatically': True, 'channel': 'stable', 'quietMinutes': 10,
                     'installRequestedAt': None, 'checkRequestedAt': None, 'installMode': 'normal',
-                    'installHoldUntil': None, 'installCancelledAt': None, 'installRequest': None, 'installRunId': None}
+                    'installHoldUntil': None, 'installCancelledAt': None, 'installRequest': None, 'installRunId': None,
+                    'pauseWorkAfterMinutes': 10, 'automaticPausePostponedUntil': None}
 # update_agent.FORCE_WINDOW: one pass retries a forced request for at most this long.
 HOLD_MAX_MINUTES = 15
 _IDENTITY = re.compile(r'[a-z][a-z0-9_-]{0,31}')
@@ -367,7 +368,8 @@ def cancel_request(home, identity, request, now=None):
 # (scripts/lib/studio-service-updater.ts MAC_SERVICE_UPDATER_FILES).
 AGENT_FILES = ('update_agent.py', 'update_agent_reap.py', 'update_agent_cache.py', 'update_request.py',
                'update_agent_recovery.py', 'installation_descriptor.py', 'managed_updates.py', 'studio_paths.py',
-               'migrate_home.py', 'update_agent_run.py')
+               'migrate_home.py', 'update_agent_run.py', 'update_agent_pause.py', 'service_hold.py',
+               'service_handles.py', 'live_database.py')
 # Beside every copy of those files: the release they belong to, {schemaVersion, version}, written by
 # the runtime and desktop builds since 1.0.67. The installed copy's record also lists each file it
 # installed with its sha256.

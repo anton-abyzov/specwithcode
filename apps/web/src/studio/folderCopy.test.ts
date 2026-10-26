@@ -140,6 +140,11 @@ describe("folder copy helpers", () => {
     );
     expect(progressFraction(copying)).toBe(0.25);
     expect(progressFraction(status({ progress: null }))).toBeNull();
+    // A copy that stopped keeps its last counts; they never read as still running.
+    for (const state of ["failed", "cancelled", "undone"] as const) {
+      expect(progressText({ ...copying, state })).toBeNull();
+      expect(progressFraction({ ...copying, state })).toBeNull();
+    }
   });
 });
 

@@ -17,8 +17,13 @@ import {
   limitsNotice,
   missingLimitsNotice,
 } from "@specweave-studio/shared/usageLimits";
-import { blockingWindow, windowModelScope } from "@specweave-studio/shared/usageWindows";
-import { leftPercent, usageTone } from "./usageIndicatorModel";
+import {
+  blockingWindow,
+  windowModelScope,
+  windowTitle,
+} from "@specweave-studio/shared/usageWindows";
+import { planLabel } from "./accountSwitches";
+import { usageToneOfUsed } from "./usageIndicatorModel";
 
 export type HostStatus = "online" | "connecting" | "offline";
 
@@ -157,15 +162,16 @@ export function withBlockers(windows: readonly HostLimitWindow[], now: number): 
   });
 }
 
-/**
- * The name people use for a window: a session the provider says lasts whole
- * hours is "5-hour"; weekly, model and unreported windows keep their label.
- */
+/** The shared window name (`5-hour`, `Weekly`, `Fable weekly`), as every usage surface writes it. */
 export function windowDisplayLabel(window: HostLimitWindow): string {
   // Readings saved before the length was kept: Claude's id names it.
   const mins = window.durationMins ?? (window.id === "five_hour" ? 300 : undefined);
-  if (window.kind !== "session" || !mins || mins >= 1440 || mins % 60 !== 0) return window.label;
-  return window.label.replace(/\bSession\b/, `${mins / 60}-hour`);
+  return windowTitle({
+    id: window.id,
+    label: window.label,
+    windowDurationMins: mins,
+    ...(window.modelScope === undefined ? {} : { modelScope: window.modelScope }),
+  });
 }
 
 /**
@@ -234,7 +240,8 @@ function providerRows(
         label,
         iconUrl: provider.iconUrl,
         identity: email?.trim() || null,
-        plan: provider.auth.label?.trim() || null,
+        // A failed probe's label ("Status check did not finish") is not a plan.
+        plan: planLabel(provider.auth),
         sharedWith: [],
         windows,
         peak: peakOf(windows),
@@ -347,9 +354,9 @@ export function savableReadings(
   return saved;
 }
 
-/** Tone of a used share, judged by what is left: amber at 20% left, red at 5% left. */
+/** Tone of a used share: amber at 20% left or less, red only once it is spent. */
 export function usageToneOf(usedPercent: number | null): "ok" | "warn" | "full" {
-  return usedPercent === null ? "ok" : usageTone(leftPercent(usedPercent));
+  return usedPercent === null ? "ok" : usageToneOfUsed(usedPercent);
 }
 
 /** `just now`, `5m ago`, `3h ago`, `2d ago`. */
@@ -360,4 +367,105 @@ export function formatAgo(at: number, now: number): string {
   const hours = Math.floor(minutes / 60);
   if (hours < 48) return `${hours}h ago`;
   return `${Math.floor(hours / 24)}d ago`;
+}
+
+/** One account in the limits view: the reading shown and every machine signed in to it. */
+export interface AccountLimitGroup {
+  readonly key: string;
+  readonly row: HostProviderRow;
+  /** The machine the shown reading comes from. */
+  readonly machine: string;
+  readonly environmentId: EnvironmentId;
+  /** Every machine signed in to this account, the shown one first. */
+  readonly machines: readonly string[];
+  readonly readAt: number | null;
+}
+
+export interface AccountLimitGroups {
+  /** What the chat runs on now, read on its own machine. */
+  readonly current: AccountLimitGroup | null;
+  /** The fallback order, best first; null where the model's provider is not on any machine. */
+  readonly fallback: ReadonlyArray<{
+    readonly instanceId: string;
+    readonly label: string;
+    readonly group: AccountLimitGroup | null;
+  }>;
+  /** Every other account once, with its freshest reading. */
+  readonly others: readonly AccountLimitGroup[];
+}
+
+/**
+ * The limits view by account instead of by machine. The current account is
+ * read on the machine the chat runs on, because that machine admits its turns
+ * on its own reading. Any other account read on several machines shows once,
+ * with its freshest reading. A row with no reported identity (`instance:`)
+ * can't be matched across machines, so it stays per machine.
+ */
+export function groupLimitsByAccount(
+  blocks: readonly HostLimitBlock[],
+  input: {
+    readonly current: { readonly environmentId: EnvironmentId; readonly instanceId: string } | null;
+    readonly fallback?: ReadonlyArray<{ readonly instanceId: string; readonly label: string }>;
+  },
+): AccountLimitGroups {
+  const pairs = blocks.flatMap((block) =>
+    block.providers.map((row) => ({
+      block,
+      row,
+      // `instance:` keys name an instance id that another machine may reuse.
+      key: row.key.startsWith("instance:") ? `${row.key}@${block.environmentId}` : row.key,
+    })),
+  );
+  const machinesOf = (key: string, first: string) => [
+    first,
+    ...new Set(
+      pairs
+        .filter((pair) => pair.key === key && pair.block.label !== first)
+        .map((pair) => pair.block.label),
+    ),
+  ];
+  const groupOf = (pair: (typeof pairs)[number]): AccountLimitGroup => ({
+    key: pair.key,
+    row: pair.row,
+    machine: pair.block.label,
+    environmentId: pair.block.environmentId,
+    machines: machinesOf(pair.key, pair.block.label),
+    readAt: pair.row.checkedAt,
+  });
+  const used = new Set<string>();
+  const currentPair = input.current
+    ? pairs.find(
+        (pair) =>
+          pair.block.environmentId === input.current!.environmentId &&
+          pair.row.instanceId === input.current!.instanceId,
+      )
+    : undefined;
+  const current = currentPair ? groupOf(currentPair) : null;
+  if (current) used.add(current.key);
+  const fallback = (input.fallback ?? []).map((entry) => {
+    // The chat's own machine runs the fallback; another machine's reading only stands in.
+    const pair =
+      pairs.find(
+        (candidate) =>
+          candidate.row.instanceId === entry.instanceId &&
+          candidate.block.environmentId === input.current?.environmentId,
+      ) ?? pairs.find((candidate) => candidate.row.instanceId === entry.instanceId);
+    if (pair) used.add(pair.key);
+    return { instanceId: entry.instanceId, label: entry.label, group: pair ? groupOf(pair) : null };
+  });
+  const others: AccountLimitGroup[] = [];
+  const seen = new Set<string>();
+  for (const pair of pairs) {
+    if (used.has(pair.key) || seen.has(pair.key)) continue;
+    // Accounts that report nothing say so on the Limits page, not here.
+    if (pair.row.notice !== null) continue;
+    seen.add(pair.key);
+    const freshest = pairs
+      .filter((candidate) => candidate.key === pair.key && candidate.row.notice === null)
+      .reduce((best, candidate) =>
+        (candidate.row.checkedAt ?? 0) > (best.row.checkedAt ?? 0) ? candidate : best,
+      );
+    others.push(groupOf(freshest));
+  }
+  return { current, fallback, others };
 }

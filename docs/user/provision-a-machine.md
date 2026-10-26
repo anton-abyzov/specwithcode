@@ -13,7 +13,7 @@ It installs or checks:
 | GitHub CLI (`gh`)          | The pinned release, checked against its published SHA-256        |
 | Node.js 22                 | The pinned 22.x build, checked against its published SHA-256     |
 | Claude Code, Codex         | The pinned versions                                              |
-| Tailscale                  | Tailscale's own package; you sign in                             |
+| Tailscale (optional)       | Skipped when SpecWithCode Connect already reaches the machine    |
 | SpecWithCode server        | This release, checked against the release's `SHA256SUMS`         |
 | Background service         | systemd user service (Linux) or launch agent (Mac)               |
 | Agent commands on the PATH | The service can start `claude`, `codex`, `gh` and `git`          |
@@ -31,6 +31,23 @@ It never:
 Those stay your steps, and the readback at the end lists each with its exact
 command.
 
+## Tailscale is optional
+
+Your other devices reach a machine linked to
+[SpecWithCode Connect](./remote-access.md#specwithcode-connect) without
+Tailscale. On such a machine, provisioning skips a missing Tailscale and shows it
+as **Not needed**. On a machine without Connect, it installs Tailscale so the
+machine has a way to be reached. An installed Tailscale is always checked and
+left as it is.
+
+- `--with-tailscale` installs Tailscale even on a Connect-linked machine, for a
+  direct private route on your tailnet.
+- `--no-tailscale` never installs it.
+
+For now, letting a main machine start work on this one also needs Tailscale on
+both. If you plan to use it as a worker, keep Tailscale or pass
+`--with-tailscale`.
+
 ## Supported systems
 
 Ubuntu 22.04, 24.04 and 26.04, Debian 12 (x64 or arm64, systemd), and macOS.
@@ -41,10 +58,10 @@ nearest supported release. Windows machines cannot run workers.
 
 1. **Install the OS** yourself: Ubuntu Server 24.04 LTS is the easiest choice.
    Create a regular user with `sudo`.
-2. **Reach it.** Either join it to your tailnet (`curl -fsSL
-https://tailscale.com/install.sh | sh` then `sudo tailscale up
---operator="$(id -un)"`) and use `ssh you@its-tailscale-name`, or SSH to its
-   LAN address. Keep host-key checking on; accept its key once after comparing
+2. **Reach it.** SSH to its LAN or public address, or, if you use Tailscale,
+   join it to your tailnet (`curl -fsSL https://tailscale.com/install.sh | sh`
+   then `sudo tailscale up --operator="$(id -un)"`) and use
+   `ssh you@its-tailscale-name`. Keep host-key checking on; accept its key once after comparing
    the fingerprint shown on the machine's console.
 3. **Install SpecWithCode and join** with the one-line installer from
    [Add a machine](./add-a-machine.md#with-the-one-line-installer). It
@@ -92,6 +109,8 @@ specwithcode provision --json      # the readback as one JSON object
 | `--server-version`  | Install or verify that server version instead of this release (newer is kept)     |
 | `--standalone`      | On a Mac with the desktop app, set up a command-line server and service beside it |
 | `--restart-service` | Restart the service to apply a PATH change, only when it runs no threads          |
+| `--with-tailscale`  | Install Tailscale even when SpecWithCode Connect already reaches this machine     |
+| `--no-tailscale`    | Never install Tailscale; an installed one is still checked                        |
 
 Exit codes: `0` provisioned (your steps may remain), `1` a step failed, `3`
 waiting for the root steps.

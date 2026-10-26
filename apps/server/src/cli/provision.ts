@@ -67,15 +67,29 @@ export const provisionCommand = Command.make("provision", {
     ),
     Flag.withDefault(false),
   ),
+  withTailscale: Flag.Boolean("with-tailscale").pipe(
+    Flag.withDescription(
+      "Install Tailscale even when SpecWithCode Connect already reaches this machine, for a direct tailnet route.",
+    ),
+    Flag.withDefault(false),
+  ),
+  noTailscale: Flag.Boolean("no-tailscale").pipe(
+    Flag.withDescription("Never install Tailscale; an installed one is still checked."),
+    Flag.withDefault(false),
+  ),
 }).pipe(
   Command.withDescription(
-    "Install or verify what a fleet worker needs: git, gh, Node.js 22, Claude Code, Codex, Tailscale and this server with its service, all pinned and checked. Never signs in, grants workers or enables billing.",
+    "Install or verify what a fleet worker needs: git, gh, Node.js 22, Claude Code, Codex and this server with its service, all pinned and checked. Tailscale is optional: it is installed only when SpecWithCode Connect does not already reach this machine (see --with-tailscale and --no-tailscale). Never signs in, grants workers or enables billing.",
   ),
   Command.withHandler(
     Effect.fn("cli.provision")(function* (flags) {
       const host = makeNodeProvisionHost({
         interactive: !flags.json && Boolean(process.stdin.isTTY && process.stderr.isTTY),
       });
+      if (flags.withTailscale && flags.noTailscale)
+        return yield* new ProvisionCliError({
+          reason: "Pass either --with-tailscale or --no-tailscale, not both.",
+        });
       const serverVersion = Option.getOrUndefined(flags.serverVersion)?.replace(/^v/u, "");
       if (serverVersion !== undefined && !/^\d+\.\d+\.\d+(-[0-9A-Za-z.]+)?$/u.test(serverVersion))
         return yield* new ProvisionCliError({
@@ -92,6 +106,7 @@ export const provisionCommand = Command.make("provision", {
             mode: "cli",
             restartService: flags.restartService,
             standalone: flags.standalone,
+            tailscale: flags.withTailscale ? "install" : flags.noTailscale ? "skip" : "auto",
             loginShellPath,
             runtime: { version: process.version, execPath: process.execPath },
             onEvent: (event) => {

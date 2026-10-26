@@ -4,6 +4,7 @@ import {
   blockingWindow,
   windowAppliesToModel,
   windowModelScope,
+  windowTitle,
 } from "@specweave-studio/shared/usageWindows";
 
 export type UsageTone = "ok" | "warn" | "full";
@@ -38,14 +39,31 @@ export function leftPercent(usedPercent: number): number {
   return Math.round(100 - Math.max(0, Math.min(100, usedPercent)));
 }
 
-/** Keyed off what is left: amber at 20% left, red at 5% left. */
+/**
+ * The one tone rule for every usage surface, keyed off what is left. Room at
+ * 20% left or less, 5% included, is amber. Red is only for a spent window, a
+ * blocking read that every surface names with the word "Limit".
+ */
 export function usageTone(leftPercent: number): UsageTone {
-  return leftPercent <= 5 ? "full" : leftPercent <= 20 ? "warn" : "ok";
+  return leftPercent <= 0 ? "full" : leftPercent <= 20 ? "warn" : "ok";
 }
 
-/** Text colour for a share left: amber when low, red when nearly or fully spent. */
+/** The tone of a window by what it has used: red only at 100%, never for 99.6%. */
+export function usageToneOfUsed(usedPercent: number): UsageTone {
+  return usedPercent >= 100 ? "full" : usageTone(Math.max(1, leftPercent(usedPercent)));
+}
+
+/** Text colour for a share left: amber when low, red only once it is spent. */
 export function usageToneTextClass(leftPercent: number): string {
-  const tone = usageTone(leftPercent);
+  return usageToneClass(usageTone(leftPercent));
+}
+
+/** Text colour for a window by what it has used: red only at 100%, never for 99.6%. */
+export function usageToneTextClassOfUsed(usedPercent: number): string {
+  return usageToneClass(usageToneOfUsed(usedPercent));
+}
+
+function usageToneClass(tone: UsageTone): string {
   return tone === "full"
     ? "text-destructive-foreground"
     : tone === "warn"
@@ -84,10 +102,17 @@ export function usageIndicatorProviders(
       const scope =
         window.columns.find((column) => column.window?.modelScope)?.window?.modelScope ??
         windowModelScope(window);
+      const mins = window.columns.find((column) => column.window?.windowDurationMins)?.window
+        ?.windowDurationMins;
       return {
         id: window.id,
         kind: window.kind,
-        label: window.label,
+        label: windowTitle({
+          id: window.id,
+          label: window.label,
+          windowDurationMins: mins,
+          ...(scope ? { modelScope: scope } : {}),
+        }),
         usedPercent: window.usedPercent,
         nextResetAt: ahead?.at ?? null,
         stale: window.resets.length > 0 && ahead === undefined,
@@ -136,7 +161,7 @@ export function usageIndicatorProviders(
             }
           : null,
         bankedResets,
-        tone: usageTone(leftPercent(peak?.usedPercent ?? 0)),
+        tone: usageToneOfUsed(peak?.usedPercent ?? 0),
       },
     ];
   });

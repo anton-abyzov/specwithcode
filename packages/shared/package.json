@@ -543,6 +543,10 @@
       "types": "./src/threadModelIdentity.ts",
       "import": "./src/threadModelIdentity.ts"
     },
+    "./preswitchReturn": {
+      "types": "./src/preswitchReturn.ts",
+      "import": "./src/preswitchReturn.ts"
+    },
     "./projectAttention": {
       "types": "./src/projectAttention.ts",
       "default": "./src/projectAttention.ts"

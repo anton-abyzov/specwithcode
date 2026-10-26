@@ -5,10 +5,16 @@ import * as NodePath from "node:path";
 import { afterAll, beforeAll, describe, expect, it } from "vite-plus/test";
 
 import { isSecretLikeProjectPath } from "../../workspace/WorkspaceSensitivePaths.ts";
-import { classifyFile, DEFAULT_SELECTION, EXACT_SELECTION } from "./classify.ts";
+import {
+  classifyFile,
+  DEFAULT_SELECTION,
+  EXACT_SELECTION,
+  isRebuildableDirectoryName,
+} from "./classify.ts";
 import { makeUmbrella, type UmbrellaFixture } from "./folderFixture.testkit.ts";
 import {
   CHUNK_SIZE,
+  forEachLimited,
   readManifestFile,
   scanFolder,
   hashSelected,
@@ -40,7 +46,9 @@ describe("scanFolder", () => {
     expect(entry(".specweave/increments/0001-x/evidence/run.txt")?.class).toBe("ignoredData");
     expect(entry(".env")?.class).toBe("secret");
     expect(entry(".git/HEAD")?.class).toBe("repository");
-    expect(entry("repositories/svc-a-wt-feature/.git")?.class).toBe("repository");
+    // A worktree of a repository inside the folder is left out entirely.
+    expect(entry("repositories/svc-a-wt-feature")).toBeUndefined();
+    expect(entry("repositories/svc-a-wt-feature/.git")).toBeUndefined();
     // Files in nested repositories belong to the innermost one, even under an ignored folder.
     expect(entry("repositories/svc-b/src/b.ts")).toMatchObject({
       class: "tracked",
@@ -49,15 +57,17 @@ describe("scanFolder", () => {
     expect(entry("repositories/svc-b/scratch.txt")?.class).toBe("untracked");
   });
 
-  it("counts rebuildable folders without listing them", () => {
+  it("records rebuildable folders without opening them", () => {
     const modules = entry("node_modules");
     expect(modules).toMatchObject({
       type: "directory",
       class: "rebuildable",
-      collapsed: { files: 1 },
+      size: 0,
+      collapsed: { files: 0 },
     });
     expect(entry("node_modules/pkg/index.js")).toBeUndefined();
-    expect(scan.totals.rebuildable.files).toBe(1);
+    expect(scan.totals.rebuildable).toEqual({ files: 0, bytes: 0 });
+    expect(scan.skipped?.rebuildableFolders).toBe(1);
   });
 
   it("records links as links and never follows them", () => {
@@ -91,7 +101,6 @@ describe("scanFolder", () => {
     expect([...byPath.keys()].toSorted()).toEqual([
       ".",
       "repositories/svc-a",
-      "repositories/svc-a-wt-feature",
       "repositories/svc-b",
     ]);
     const serviceB = byPath.get("repositories/svc-b")!;
@@ -99,15 +108,18 @@ describe("scanFolder", () => {
     expect(Object.keys(serviceB.branches).toSorted()).toEqual(["local-only", "main"]);
     expect(serviceB.status).toEqual(expect.arrayContaining([" M src/b.ts", "?? scratch.txt"]));
     expect(serviceB.identity).toMatch(/^file:\/\/.*svc-b\.git$/);
+    // The worktree inside the folder is not copied; its branch travels with svc-a
+    // and svc-a no longer registers it.
     const serviceA = byPath.get("repositories/svc-a")!;
-    expect(serviceA.worktrees).toEqual([
-      { path: "repositories/svc-a-wt-feature", name: "svc-a-wt-feature" },
-    ]);
-    expect(byPath.get("repositories/svc-a-wt-feature")).toMatchObject({
-      kind: "linked",
-      branch: "feature",
-      mainRepository: "repositories/svc-a",
-    });
+    expect(serviceA.worktrees).toEqual([]);
+    expect(Object.keys(serviceA.branches).toSorted()).toEqual(["feature", "main"]);
+    expect(
+      scan.entries.some((item) => item.path.startsWith("repositories/svc-a/.git/worktrees/")),
+    ).toBe(false);
+    expect(scan.skipped?.worktrees).toEqual(["repositories/svc-a-wt-feature"]);
+    expect(scan.notices?.join(" ")).toContain(
+      "1 linked worktree(s) inside this folder are not copied: repositories/svc-a-wt-feature.",
+    );
   });
 });
 
@@ -141,7 +153,7 @@ describe("hashing and the manifest file", () => {
     if (process.platform !== "win32") expect(NodeFS.statSync(file).mode & 0o777).toBe(0o600);
     const read = await readManifestFile(file);
     expect(read.entries).toHaveLength(selected.length);
-    expect(read.header.repositories).toHaveLength(4);
+    expect(read.header.repositories).toHaveLength(3);
   });
 
   it("expands rebuildable folders for an exact copy", async () => {
@@ -211,5 +223,53 @@ describe("cross-machine Finder metadata", () => {
     expect(
       classifyFile({ relative: "nested/.DS_Store", insideGitData: false, gitState: "tracked" }),
     ).toBe("tracked");
+  });
+});
+
+describe("rebuildable build output", () => {
+  it("treats pure build and test output as rebuildable, but not local state or releases", () => {
+    const ignored = (relative: string) =>
+      classifyFile({ relative, insideGitData: false, gitState: "ignored" });
+    for (const folder of [".open-next", "dist-electron", "playwright-report", "test-results"]) {
+      expect(ignored(`app/${folder}/output.json`)).toBe("rebuildable");
+      expect(isRebuildableDirectoryName(folder)).toBe(true);
+    }
+    for (const folder of [".wrangler", "release"]) {
+      expect(ignored(`app/${folder}/state.json`)).toBe("ignoredData");
+      expect(isRebuildableDirectoryName(folder)).toBe(false);
+    }
+  });
+});
+
+describe("forEachLimited", () => {
+  it("stops taking items on the first failure and rejects only after in-flight work settled", async () => {
+    const started: Array<number> = [];
+    const settled: Array<number> = [];
+    let releaseSlow!: () => void;
+    const slow = new Promise<void>((resolve) => {
+      releaseSlow = resolve;
+    });
+    let rejected = false;
+    const run = forEachLimited(
+      Array.from({ length: 20 }, (_, index) => index),
+      3,
+      async (item) => {
+        started.push(item);
+        if (item === 1) throw new Error("boom");
+        if (item === 0) await slow;
+        settled.push(item);
+      },
+    ).catch((cause: unknown) => {
+      rejected = true;
+      throw cause;
+    });
+    for (let tick = 0; tick < 20; tick += 1) await Promise.resolve();
+    // Item 0 is still running, so the call has not rejected yet.
+    expect(rejected).toBe(false);
+    releaseSlow();
+    await expect(run).rejects.toThrow("boom");
+    expect(settled).toContain(0);
+    // No worker picked up new items after the failure.
+    expect(started.length).toBeLessThan(6);
   });
 });

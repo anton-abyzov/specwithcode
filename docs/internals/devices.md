@@ -3,7 +3,7 @@
 The environment server owns simulators and emulators the way it owns
 terminals: discovery, streaming, and agent access all run there, and every
 client reaches them through the environment connection. This is what makes the
-Device panel work over Tailscale and SpecWithCode Connect, including when an SSH host runs the devices.
+Device panel work over SpecWithCode Connect and Tailscale, including when an SSH host runs the devices.
 
 ## Two external tools, one seam
 

@@ -19,6 +19,7 @@ import {
   LINUX_SERVICE_UPDATES_MESSAGE,
   makeServiceUpdateController,
   parseServiceInstallOptions,
+  postponeAutomaticPauseChange,
   refreshThenRunAgent,
   repairServiceAgent,
   SERVICE_AGENT_DISABLED_MESSAGE,
@@ -170,8 +171,71 @@ describe("studioServiceUpdates", () => {
       installHoldUntil: null,
       installCancelledAt: null,
       installRequest: null,
+      pauseWorkAfterMinutes: 10,
+      automaticPausePostponedUntil: null,
       repository: "acme/studio",
     });
+  });
+
+  it("writes the automatic pause wait and keeps a Later until it changes", () => {
+    const later = postponeAutomaticPauseChange(Date.parse("2026-10-26T14:00:00.000Z"));
+    expect(later).toEqual({ automaticPausePostponedUntil: "2026-10-26T15:00:00.000Z" });
+    const postponed = buildServiceAgentConfig({
+      previous: { pauseWorkAfterMinutes: 30 },
+      preferences: { ...PREFERENCES, pauseWorkAfterMinutes: 5 },
+      channel: "latest",
+      ...later,
+    });
+    // The saved preference wins over the file's copy.
+    expect(postponed).toMatchObject({
+      pauseWorkAfterMinutes: 5,
+      automaticPausePostponedUntil: "2026-10-26T15:00:00.000Z",
+    });
+    // A preferences save or a request keeps the postponement; without a
+    // preference (self-update off) the file's wait stays as it was.
+    expect(
+      buildServiceAgentConfig({
+        previous: postponed,
+        preferences: PREFERENCES,
+        channel: "latest",
+        checkRequestedAt: "2026-10-26T14:01:00.000Z",
+      }),
+    ).toMatchObject({
+      pauseWorkAfterMinutes: 5,
+      automaticPausePostponedUntil: "2026-10-26T15:00:00.000Z",
+    });
+    // Junk from an older or edited file is not carried over.
+    expect(
+      buildServiceAgentConfig({
+        previous: {
+          pauseWorkAfterMinutes: 0,
+          automaticPausePostponedUntil: "soon" as never,
+        },
+        preferences: PREFERENCES,
+        channel: "latest",
+      }),
+    ).toMatchObject({ pauseWorkAfterMinutes: 10, automaticPausePostponedUntil: null });
+  });
+
+  it("writes the automatic pause wait as whole minutes from 1 to a day", () => {
+    const written = (preferred: unknown, previous?: unknown) =>
+      buildServiceAgentConfig({
+        previous: previous === undefined ? {} : { pauseWorkAfterMinutes: previous as number },
+        preferences: { ...PREFERENCES, pauseWorkAfterMinutes: preferred as number },
+        channel: "latest",
+      }).pauseWorkAfterMinutes;
+    expect(written(1)).toBe(1);
+    expect(written(1440)).toBe(1440);
+    expect(written(29.6)).toBe(30);
+    // Past a day is cut to a day: the agent refuses more than a week.
+    expect(written(99_999)).toBe(1440);
+    expect(written(Number.MAX_SAFE_INTEGER)).toBe(1440);
+    // Junk falls back to the config's copy, then the default.
+    for (const junk of [0, 0.4, -5, Number.NaN, Number.POSITIVE_INFINITY, "30", null]) {
+      expect(written(junk)).toBe(10);
+      expect(written(junk, 20)).toBe(20);
+    }
+    expect(written(undefined, 50_000)).toBe(1440);
   });
 
   it("writes a forced install with its hold, and keeps it across other writes", () => {
@@ -604,6 +668,48 @@ describe("studioServiceUpdates", () => {
       message: "Waiting for sessions to finish.",
       lastInstall: { version: "0.1.4", at: "2026-10-09T00:00:00Z", result: "updated" },
     });
+  });
+
+  it("reads when the agent pauses work, moved by a Later it has not read yet", () => {
+    const installation = { identity: "m4", studioHome: Path.join(ROOT, "m4"), version: "0.1.4" };
+    const stateText = JSON.stringify({
+      status: "waiting-for-quiet",
+      downloadedVersion: "0.2.0",
+      automaticWaitSince: "2026-10-26T14:31:00Z",
+      automaticPauseAt: "2026-10-26T14:41:00Z",
+    });
+    expect(toServiceUpdateState({ installation, stateText }).automaticPauseAt).toBe(
+      "2026-10-26T14:41:00Z",
+    );
+    const configText = (until: string) =>
+      JSON.stringify({ schemaVersion: 1, automaticPausePostponedUntil: until });
+    expect(
+      toServiceUpdateState({
+        installation,
+        stateText,
+        configText: configText("2026-10-26T15:40:00.000Z"),
+      }).automaticPauseAt,
+    ).toBe("2026-10-26T15:40:00.000Z");
+    // A postponement that already ended leaves the agent's time.
+    expect(
+      toServiceUpdateState({
+        installation,
+        stateText,
+        configText: configText("2026-10-26T14:00:00.000Z"),
+      }).automaticPauseAt,
+    ).toBe("2026-10-26T14:41:00Z");
+    // Not waiting on work: null. An agent before automatic pauses: no key.
+    expect(
+      toServiceUpdateState({
+        installation,
+        stateText: JSON.stringify({ status: "downloaded", automaticPauseAt: null }),
+        configText: configText("2026-10-26T15:40:00.000Z"),
+      }).automaticPauseAt,
+    ).toBeNull();
+    expect(
+      "automaticPauseAt" in
+        toServiceUpdateState({ installation, stateText: JSON.stringify({ status: "downloaded" }) }),
+    ).toBe(false);
   });
 
   it("reports automatic checks off when the agent config says so and has no state yet", () => {

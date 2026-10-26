@@ -8,16 +8,18 @@ import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentId } from "@specweave-studio/contracts";
 import { formatDuration } from "@specweave-studio/shared/usageLimits";
 import { LinkIcon, MonitorIcon, TicketIcon } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { type ReactNode, useEffect, useMemo, useState } from "react";
 
 import { environmentPresentations } from "../../../state/presentation";
 import {
   bindingWindowId,
   collectHostLimitBlocks,
   formatAgo,
+  groupLimitsByAccount,
   savableReadings,
   usageToneOf,
   windowDisplayLabel,
+  type AccountLimitGroup,
   type HostLimitBlock,
   type HostLimitWindow,
   type HostProviderRow,
@@ -127,7 +129,7 @@ function ProviderRow({ row, now, dim }: { row: HostProviderRow; now: number; dim
               <span className="sws-hl-window-label">
                 {windowDisplayLabel(window)}
                 {row.windows.length > 1 && `${window.kind}:${window.id}` === binding ? (
-                  <span className="sr-only">, runs out first</span>
+                  <span className="sr-only">, least left</span>
                 ) : null}
               </span>
               <span
@@ -356,7 +358,7 @@ function CompactWindowRow({
     <div className="sws-hl-compact-window" data-tone={tone} data-rank={rank ?? undefined}>
       <span className="sws-hl-compact-window-label">
         {label}
-        {rank === "binding" ? <span className="sr-only">, runs out first</span> : null}
+        {rank === "binding" ? <span className="sr-only">, least left</span> : null}
       </span>
       <span className="sws-hl-bar" data-tone={tone} aria-hidden>
         <span style={{ width: `${leftPercent(window.usedPercent)}%` }} />
@@ -398,13 +400,21 @@ function CompactProviderEntry({
   row,
   now,
   coordinator,
+  tag,
+  context,
 }: {
   row: HostProviderRow;
   now: number;
   coordinator: boolean;
+  /** A tag beside the name; `Coordinator` when the entry is the coordinator's. */
+  tag?: string | null;
+  /** Replaces the account line: the account, where it was read and when. */
+  context?: string;
 }) {
   const binding = row.windows.length > 1 ? bindingWindowId(row.windows) : null;
-  const account = [accountLine(row), coordinator ? row.plan : null].filter(Boolean).join(" · ");
+  const account =
+    context ?? [accountLine(row), coordinator ? row.plan : null].filter(Boolean).join(" · ");
+  const shownTag = tag === undefined ? (coordinator ? "Coordinator" : null) : tag;
   return (
     <li
       className="sws-hl-compact-entry"
@@ -415,7 +425,7 @@ function CompactProviderEntry({
         <ProviderIcon row={row} size="sm" />
         <span className="sws-hl-compact-provider" data-wide="">
           <span className="sws-hl-compact-name">{row.label}</span>
-          {coordinator ? <span className="sws-hl-tag">Coordinator</span> : null}
+          {shownTag ? <span className="sws-hl-tag">{shownTag}</span> : null}
           <Tip label={account} side="left">
             <span className="sws-hl-compact-account">{account}</span>
           </Tip>
@@ -532,6 +542,148 @@ export function HostLimitsCompactView({
             </li>
           );
         })}
+      </ul>
+    </section>
+  );
+}
+
+/** `admin@… · Max · M4 · read 3m ago · also on M3`: whose account, where read and when. */
+function groupContext(group: AccountLimitGroup, now: number): string {
+  return [
+    group.row.identity ?? "Account not reported",
+    group.row.plan,
+    group.machine,
+    group.readAt === null ? null : `read ${formatAgo(group.readAt, now)}`,
+    group.machines.length > 1 ? `also on ${group.machines.slice(1).join(", ")}` : null,
+  ]
+    .filter(Boolean)
+    .join(" · ");
+}
+
+/**
+ * Limits by account, for the model picker's second view: what the chat runs on
+ * now (read on its own machine, every window, the one with the least left
+ * marked), the fallback order with each entry's state, then every other
+ * account once with its freshest reading and the machines signed in to it.
+ */
+export function AccountLimits({
+  projectEnvironmentId,
+  currentInstanceId,
+  fallbackOrder = [],
+  surface = "coordinator",
+  now,
+}: {
+  projectEnvironmentId: EnvironmentId | null;
+  currentInstanceId: string | null;
+  fallbackOrder?: ReadonlyArray<{ readonly instanceId: string; readonly label: string }>;
+  surface?: "coordinator" | "thread";
+  now: number;
+}) {
+  const blocks = useHostLimitBlocks(projectEnvironmentId, now);
+  return (
+    <AccountLimitsView
+      blocks={blocks}
+      now={now}
+      current={
+        projectEnvironmentId && currentInstanceId
+          ? { environmentId: projectEnvironmentId, instanceId: currentInstanceId }
+          : null
+      }
+      fallbackOrder={fallbackOrder}
+      surface={surface}
+    />
+  );
+}
+
+export function AccountLimitsView({
+  blocks,
+  now,
+  current,
+  fallbackOrder,
+  surface,
+}: {
+  blocks: readonly HostLimitBlock[];
+  now: number;
+  current: { environmentId: EnvironmentId; instanceId: string } | null;
+  fallbackOrder: ReadonlyArray<{ readonly instanceId: string; readonly label: string }>;
+  surface: "coordinator" | "thread";
+}) {
+  const groups = groupLimitsByAccount(blocks, { current, fallback: fallbackOrder });
+  const sections: Array<{ id: string; title: string; entries: ReactNode }> = [];
+  if (groups.current) {
+    sections.push({
+      id: "current",
+      title: surface === "thread" ? "This thread now" : "Coordinator now",
+      entries: (
+        <CompactProviderEntry
+          row={groups.current.row}
+          now={now}
+          coordinator={surface === "coordinator"}
+          tag={null}
+          context={groupContext(groups.current, now)}
+        />
+      ),
+    });
+  }
+  if (groups.fallback.length > 0) {
+    sections.push({
+      id: "fallback",
+      title: "Fallback order",
+      entries: groups.fallback.map((entry, index) =>
+        entry.group ? (
+          <CompactProviderEntry
+            key={`${entry.instanceId}:${index}`}
+            row={entry.group.row}
+            now={now}
+            coordinator={false}
+            tag={`${index + 1}. ${entry.label}`}
+            context={groupContext(entry.group, now)}
+          />
+        ) : (
+          <li key={`${entry.instanceId}:${index}`} className="sws-hl-compact-entry">
+            <span className="sws-hl-compact-account">
+              {index + 1}. {entry.label}: not signed in on a connected machine
+            </span>
+          </li>
+        ),
+      ),
+    });
+  }
+  if (groups.others.length > 0) {
+    sections.push({
+      id: "others",
+      title: "Other accounts",
+      entries: groups.others.map((group) => (
+        <CompactProviderEntry
+          key={group.key}
+          row={group.row}
+          now={now}
+          coordinator={false}
+          tag={null}
+          context={groupContext(group, now)}
+        />
+      )),
+    });
+  }
+  if (sections.length === 0) return null;
+  return (
+    <section className="sws-hl-compact" aria-label="Limits by account" data-account-limits="">
+      <ul className="sws-hl-compact-grid">
+        {sections.map((section) => (
+          <li
+            key={section.id}
+            className="sws-hl-compact-host"
+            data-status="online"
+            data-account-section={section.id}
+          >
+            <div className="sws-hl-compact-head">
+              <span className="sws-hl-compact-title">
+                <strong>{section.title}</strong>
+              </span>
+            </div>
+            <ul>{section.entries}</ul>
+          </li>
+        ))}
       </ul>
     </section>
   );

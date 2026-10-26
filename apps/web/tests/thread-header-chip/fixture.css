@@ -1,0 +1,13 @@
+@import "../../src/index.css";
+@source "../../src";
+@source ".";
+body {
+  margin: 0;
+  background: var(--background);
+  color: var(--foreground);
+}
+/* The right panel the header heads; the runner sets its width with the viewport. */
+[data-panel] {
+  width: 100vw;
+  border-bottom: 1px solid var(--border);
+}

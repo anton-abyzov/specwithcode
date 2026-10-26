@@ -44,7 +44,13 @@ const browser = await chromium.launch({
     ? { executablePath: process.env.STUDIO_CHROMIUM_EXECUTABLE }
     : {}),
 });
-const WIDTHS = [320, 360, 420, 520, 640, 900];
+const WIDTHS = [320, 360, 420, 520, 600, 620, 640, 900];
+// How much of the running name each header fit shows: within one header layout (the crumb
+// folds at 420 px, the panel toggles at 600 px) a wider panel never shows less of it. The
+// provider word may still give way to a routing or PR chip that comes back.
+const layout = (width) => (width <= 420 ? 0 : width <= 600 ? 1 : 2);
+const NAME_SHOWN = { mark: 0, name: 1, model: 2, full: 2 };
+const lastHeaderFit = {};
 const FITS = ["full", "model"];
 // `twin` falls back to the same model on another provider (Devin's GPT-6.1 Sol).
 const FALLBACKS = ["matchcam", "setup", "orchestrators", "fresh", "approval", "twin"];
@@ -361,22 +367,29 @@ try {
         const shown = (chip) => getComputedStyle(chip).visibility !== "hidden";
         const onLine = following.filter((chip) => chip.getBoundingClientRect().top < box.bottom - 0.5);
         const lastRight = Math.max(box.right, ...onLine.map((chip) => chip.getBoundingClientRect().right));
-        // What the next richer fit would add: the parts it shows that this one hides.
-        const order = ["model", "full"];
-        const adds = { model: ["provider"] };
+        // What the next richer fit would add: the provider word after \`model\`, the rest of
+        // a trimmed name after \`name\`, the name's first 3 em (or all of a short one) after
+        // \`mark\` (rowModelFit.ts).
+        const order = ["mark", "name", "model", "full"];
         const fit = unit.dataset.rowFit ?? null;
-        const nextCost = (adds[fit] ?? []).reduce(
-          (sum, part) =>
-            sum +
-            [...unit.querySelectorAll(\`[data-row-part="\${part}"]\`)].reduce(
-              (width, el) => width + el.getBoundingClientRect().width,
-              0,
-            ),
-          0,
-        );
+        const em = Number.parseFloat(getComputedStyle(name).fontSize) || 12;
+        const nextCost =
+          fit === "model"
+            ? [...unit.querySelectorAll('[data-row-part="provider"]')].reduce(
+                (width, el) => width + el.getBoundingClientRect().width,
+                0,
+              )
+            : fit === "name"
+              ? Math.max(0, name.scrollWidth - name.clientWidth)
+              : fit === "mark"
+                ? (name.scrollWidth > 6 * em ? 3 * em : name.scrollWidth) + 5
+                : 0;
         return {
           chipsWidth: chipsBox.width,
           fit,
+          nameShown: getComputedStyle(name).position !== "absolute",
+          nameWidth: name.getBoundingClientRect().width,
+          em,
           nameCut: name.scrollWidth > name.clientWidth + 1,
           glyphInside: !!glyph && glyph.getBoundingClientRect().right <= box.right + 0.5,
           unitInside: box.right <= chipsBox.right + 0.5,
@@ -394,9 +407,30 @@ try {
         };
       })()`);
       receipt.header[`${theme}:${width}`] = header;
+      const narrower = lastHeaderFit[theme];
+      lastHeaderFit[theme] = { fit: header.fit, layout: layout(width) };
+      check(`${theme} ${width}px header: a wider panel shows no less of the name`, () =>
+        NodeAssert.ok(
+          narrower === undefined ||
+            narrower.layout !== layout(width) ||
+            NAME_SHOWN[header.fit] >= NAME_SHOWN[narrower.fit],
+          `${narrower?.fit} then ${header.fit}`,
+        ),
+      );
       check(`${theme} ${width}px header: the running name is whole beside the title`, () => {
-        NodeAssert.equal(header.nameCut, false, JSON.stringify(header));
+        // Alone on its line, a long name may keep only its first 3 em, or leave it whole.
+        if (header.fit === "name")
+          NodeAssert.ok(header.nameWidth >= 3 * header.em - 1, JSON.stringify(header));
+        else if (header.fit === "mark") NodeAssert.equal(header.nameShown, false);
+        else NodeAssert.equal(header.nameCut, false, JSON.stringify(header));
         NodeAssert.ok(header.glyphInside && header.unitInside, JSON.stringify(header));
+      });
+      check(`${theme} ${width}px header: the routing and PR chips leave before the name`, () => {
+        if (header.fit === "name" || header.fit === "mark")
+          NodeAssert.ok(
+            header.chips.every((chip) => !chip.onLine),
+            JSON.stringify(header),
+          );
       });
       check(`${theme} ${width}px header: a chip shows whole on the line or leaves it`, () => {
         for (const chip of header.chips) {

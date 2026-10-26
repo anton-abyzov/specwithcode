@@ -1070,8 +1070,10 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: "SpecWithCode Connect",
     to: "/settings/connections",
     targetId: "connections-environment",
-    searchTerms: ["managed tunnel cloud other devices remote"],
-    desktopOnly: true,
+    searchTerms: [
+      "managed tunnel cloud other devices remote",
+      "remote access tunnel without tailscale phone browser reach from anywhere",
+    ],
     cloudOnly: true,
   },
   {
@@ -1140,7 +1142,7 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "pair-phone",
-    title: "Pair a phone over Tailscale or your network",
+    title: "Pair a phone with a private QR code",
     to: "/settings/connections",
     searchTerms: [
       "phone iphone ios mobile app pair pairing qr code scan link tailscale network direct",

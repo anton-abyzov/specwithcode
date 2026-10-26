@@ -10,10 +10,13 @@ import {
   bindingWindowId,
   collectHostLimitBlocks,
   formatAgo,
+  groupLimitsByAccount,
   hostStatus,
   savableReadings,
   windowDisplayLabel,
+  type HostLimitBlock,
   type HostLimitPresentations,
+  type HostProviderRow,
   type SavedHostReading,
 } from "./hostLimitsModel";
 
@@ -74,7 +77,11 @@ describe("host limit blocks", () => {
       host("M3", "connected", [
         provider({
           driver: "claudeAgent",
-          auth: { status: "authenticated", email: "Anton@example.com", label: "Max" },
+          auth: {
+            status: "authenticated",
+            email: "Anton@example.com",
+            label: "Claude Max Subscription",
+          },
           usageLimits: limits(30, 2),
         }),
       ]),
@@ -85,7 +92,11 @@ describe("host limit blocks", () => {
         provider({ driver: "codex", usageLimits: limits(10, 1, -0.1) }),
         provider({
           driver: "claudeAgent",
-          auth: { status: "authenticated", email: "anton@example.com", label: "Max" },
+          auth: {
+            status: "authenticated",
+            email: "anton@example.com",
+            label: "Claude Max Subscription",
+          },
           usageLimits: limits(42, 3),
         }),
         provider({ driver: "grok" }),
@@ -144,13 +155,32 @@ describe("host limit blocks", () => {
     });
     expect(m4Block?.providers.map((row) => row.label)).toEqual(["Claude", "Codex", "Grok"]);
     const claude = m4Block?.providers[0];
-    expect(claude).toMatchObject({ identity: "anton@example.com", plan: "Max", peak: 42 });
+    expect(claude).toMatchObject({ identity: "anton@example.com", plan: "Claude Max", peak: 42 });
     expect(claude?.sharedWith).toEqual(["M3"]);
     expect(m3Block?.providers[0]?.sharedWith).toEqual(["m4"]);
     expect(m4Block?.providers[1]?.sharedWith).toEqual([]);
     expect(m4Block?.providers[2]?.notice).toBe("Does not report subscription limits.");
     expect(m4Block?.providers[1]?.notice).toBeNull();
     expect(m4Block?.readAt).toBe(now);
+  });
+
+  it("never shows a failed probe's status message as the plan", () => {
+    const [block] = collectHostLimitBlocks(
+      new Map([
+        [
+          m4,
+          host("m4", "connected", [
+            provider({
+              driver: "claudeAgent",
+              auth: { status: "unknown", label: "Status check did not finish" },
+              usageLimits: limits(30, 2),
+            }),
+          ]),
+        ],
+      ]),
+      { projectEnvironmentId: null, saved: new Map(), driverLabel: label, now },
+    );
+    expect(block?.providers[0]?.plan).toBeNull();
   });
 
   it("says why a subscription agent without limits shows none, as the account view does", () => {
@@ -300,7 +330,7 @@ describe("host limit blocks", () => {
     expect(fableSpent.peak).toBe(40);
   });
 
-  it("names a session by its reported length and keeps other labels", () => {
+  it("names a session by its reported length, never Session, and keeps other labels", () => {
     const base = { id: "w", usedPercent: 0, resetsAt: null, stale: false } as const;
     expect(
       windowDisplayLabel({ ...base, label: "Session", kind: "session", durationMins: 300 }),
@@ -308,7 +338,7 @@ describe("host limit blocks", () => {
     expect(
       windowDisplayLabel({ ...base, label: "team: Session", kind: "session", durationMins: 60 }),
     ).toBe("team: 1-hour");
-    expect(windowDisplayLabel({ ...base, label: "Session", kind: "session" })).toBe("Session");
+    expect(windowDisplayLabel({ ...base, label: "Session", kind: "session" })).toBe("Short-term");
     // A reading saved before lengths were kept still names Claude's 5-hour.
     expect(
       windowDisplayLabel({ ...base, id: "five_hour", label: "Session", kind: "session" }),
@@ -339,5 +369,94 @@ describe("host limit blocks", () => {
     ).toBe("weekly:b");
     expect(bindingWindowId([w("fable", 40, { modelScope: "Fable" })])).toBe("weekly:fable");
     expect(bindingWindowId([])).toBeNull();
+  });
+});
+
+describe("groupLimitsByAccount", () => {
+  const row = (
+    key: string,
+    instanceId: string,
+    checkedAt: number,
+    extra: Partial<HostProviderRow> = {},
+  ): HostProviderRow => ({
+    key,
+    instanceId,
+    driver: ProviderDriverKind.make("claudeAgent"),
+    label: "Claude",
+    iconUrl: undefined,
+    identity: null,
+    plan: null,
+    sharedWith: [],
+    windows: [],
+    peak: null,
+    bankedResets: 0,
+    notice: null,
+    checkedAt,
+    ...extra,
+  });
+  const block = (id: string, label: string, providers: HostProviderRow[]): HostLimitBlock => ({
+    environmentId: EnvironmentId.make(id),
+    label,
+    isProjectHost: false,
+    isThisMachine: false,
+    status: "online",
+    readAt: null,
+    fromSavedReading: false,
+    providers,
+  });
+
+  it("puts the current account first, then the fallback order, then each other account once", () => {
+    const blocks = [
+      block("m4", "M4", [
+        row("claude:a", "claudeAgent", 100),
+        row("codex:b", "codex", 100, { driver: ProviderDriverKind.make("codex"), label: "Codex" }),
+        row("instance:grok:grok", "grok", 100, {
+          driver: ProviderDriverKind.make("grok"),
+          label: "Grok",
+        }),
+      ]),
+      block("m3", "M3", [
+        row("claude:a", "claudeAgent", 300),
+        row("claude:c", "claudeWork", 50),
+        row("instance:grok:grok", "grok", 90, {
+          driver: ProviderDriverKind.make("grok"),
+          label: "Grok",
+        }),
+      ]),
+    ];
+    const groups = groupLimitsByAccount(blocks, {
+      current: { environmentId: EnvironmentId.make("m4"), instanceId: "claudeAgent" },
+      fallback: [{ instanceId: "codex", label: "Codex · GPT-6.1-Sol" }],
+    });
+    // The current account keeps its own machine's reading, though M3 read it later.
+    expect(groups.current).toMatchObject({ machine: "M4", readAt: 100, machines: ["M4", "M3"] });
+    expect(groups.fallback).toEqual([
+      expect.objectContaining({
+        instanceId: "codex",
+        group: expect.objectContaining({ machine: "M4" }),
+      }),
+    ]);
+    // Grok has no reported identity, so each machine keeps its own row.
+    expect(groups.others.map((group) => `${group.key}:${group.machine}`)).toEqual([
+      "instance:grok:grok@m4:M4",
+      "claude:c:M3",
+      "instance:grok:grok@m3:M3",
+    ]);
+  });
+
+  it("shows another account's freshest reading and names every machine", () => {
+    const blocks = [
+      block("m4", "M4", [row("claude:a", "claudeAgent", 100)]),
+      block("m3", "M3", [row("claude:a", "claudeAgent", 300)]),
+    ];
+    const groups = groupLimitsByAccount(blocks, { current: null });
+    expect(groups.others).toEqual([
+      expect.objectContaining({
+        key: "claude:a",
+        machine: "M3",
+        readAt: 300,
+        machines: ["M3", "M4"],
+      }),
+    ]);
   });
 });

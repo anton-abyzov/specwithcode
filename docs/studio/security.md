@@ -6,20 +6,23 @@ hub and Tailscale, and says what SpecWithCode enforces versus what you configure
 
 ## How machines connect, with or without Tailscale
 
-Tailscale is not required to connect machines. A machine can have several routes: LAN address, SSH,
-Tailscale, a public URL, or SpecWithCode Connect (the hosted relay, off by default in SpecWithCode). What each
-gives you:
+Tailscale is not required to connect machines. A machine can have several routes: SpecWithCode Connect,
+LAN address, SSH, Tailscale or a public URL. SpecWithCode Connect (**Settings → Connections → SpecWithCode Connect**,
+or `specwithcode connect link`) is the default way to reach a machine from anywhere. What each gives you:
 
-| Route                                                                  | Works off your home network | Notes                                                                                         |
-| ---------------------------------------------------------------------- | --------------------------- | --------------------------------------------------------------------------------------------- |
-| SSH port forward (fleet tunnels, or desktop **Add environment → SSH**) | Only if SSH is reachable    | Encrypted and pinned; today's workers use this over the LAN from the primary Mac              |
-| Plain LAN address                                                      | No                          | Needs the server bound beyond loopback; traffic is unencrypted http unless you add TLS. Avoid |
-| Tailscale Serve                                                        | Yes                         | Encrypted, private https, no open ports. Needed today for the phone and off-LAN access        |
-| Public URL                                                             | Yes                         | Exposes SpecWithCode to the internet behind pairing alone. Avoid                              |
+| Route                                                                  | Works off your home network | Notes                                                                                                                                            |
+| ---------------------------------------------------------------------- | --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| SpecWithCode Connect                                                   | Yes                         | Encrypted Cloudflare tunnel to the desktop app, a browser or the phone. No Tailscale and no port forwarding. Each client still signs in          |
+| SSH port forward (fleet tunnels, or desktop **Add environment → SSH**) | Only if SSH is reachable    | Encrypted and pinned; today's workers use this over the LAN from the primary Mac                                                                 |
+| Plain LAN address                                                      | No                          | Needs the server bound beyond loopback; traffic is unencrypted http unless you add TLS. Avoid                                                    |
+| Tailscale Serve                                                        | Yes                         | Optional. Encrypted, private https on your tailnet, often faster on the same network. Still required today for worker delegation and folder copy |
+| Public URL                                                             | Yes                         | Exposes SpecWithCode to the internet behind pairing alone. Avoid                                                                                 |
 
-Recommendation: keep Tailscale for anything off the LAN and for the phone, and SSH forwards for
-workers on the same network. Another private network (plain WireGuard, ZeroTier) can replace
-Tailscale with the same rules: bind SpecWithCode to loopback, forward into it, pair each origin.
+Recommendation: link each machine with SpecWithCode Connect to reach it from your other devices, including the phone.
+Add Tailscale when you want a direct private route. For now, letting a main machine start work on another machine,
+manage it or copy folders to it also needs Tailscale on both, because that uses the worker's tailnet (ts.net) address.
+Another private network (plain WireGuard, ZeroTier) can replace Tailscale for direct routes with the same rules: bind
+SpecWithCode to loopback, forward into it, pair each origin.
 
 ## What the CLIProxyAPI hub is for
 
@@ -36,13 +39,14 @@ SpecWithCode still shows limits for the accounts signed in on each machine.
 
 ## What each layer protects
 
-| Layer                      | Protects                                                                                        | Does not protect                                             |
-| -------------------------- | ----------------------------------------------------------------------------------------------- | ------------------------------------------------------------ |
-| SpecWithCode bind address  | The server listens on `127.0.0.1:8319`; the fleet installer and updater refuse anything else    | Anything that forwards into loopback (Serve, SSH `-L`)       |
-| SpecWithCode pairing       | Every origin needs its own one-time pairing; sessions are scoped cookies, bearer or DPoP tokens | A browser profile or device that is already paired           |
-| Tailscale Serve            | Private HTTPS inside your tailnet, encrypted by WireGuard; never Funnel                         | Who in the tailnet may connect: that is your tailnet policy  |
-| Pinned SSH forwards        | Primary-to-worker traffic over the LAN with strict host keys, bound to `127.0.0.1`              | A compromised primary Mac, which holds the worker keys       |
-| CLIProxyAPI management key | SpecWithCode stores it in its secret store and never sends it to a browser                      | Anyone who holds the key: it can act as every pooled account |
+| Layer                      | Protects                                                                                                             | Does not protect                                               |
+| -------------------------- | -------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------- |
+| SpecWithCode bind address  | The server listens on `127.0.0.1:8319`; the fleet installer and updater refuse anything else                         | Anything that forwards into loopback (Serve, SSH `-L`)         |
+| SpecWithCode pairing       | Every origin needs its own one-time pairing; sessions are scoped cookies, bearer or DPoP tokens                      | A browser profile or device that is already paired             |
+| SpecWithCode Connect       | HTTPS through a Cloudflare tunnel to a loopback origin; each client gets its own DPoP-bound session from the machine | A compromised relay signing key: the relay is a trusted broker |
+| Tailscale Serve            | Private HTTPS inside your tailnet, encrypted by WireGuard; never Funnel                                              | Who in the tailnet may connect: that is your tailnet policy    |
+| Pinned SSH forwards        | Primary-to-worker traffic over the LAN with strict host keys, bound to `127.0.0.1`                                   | A compromised primary Mac, which holds the worker keys         |
+| CLIProxyAPI management key | SpecWithCode stores it in its secret store and never sends it to a browser                                           | Anyone who holds the key: it can act as every pooled account   |
 
 SpecWithCode ignores Tailscale identity headers (`Tailscale-User-Login` and similar). Network reachability
 never authenticates a request; pairing does. Keep it that way in any new transport, including the
@@ -153,9 +157,11 @@ preparation with the device's Git login. Review findings against that branch:
 The Mac desktop app inherits these rules:
 
 - Keep the embedded server on loopback. Do not switch to the `remote-reachable` policy (`0.0.0.0`)
-  to reach other devices; use Serve, which keeps transport private and pairing separate.
+  to reach other devices; use SpecWithCode Connect or Tailscale Serve, which keep transport private and pairing
+  separate.
 - Keep the connection catalog in the desktop secure-storage bridge (Keychain), as the inherited
   desktop code does, not in web storage.
 - Treat the hub key and provider tokens as server-side secrets only; renderer code must never
   receive them.
-- Keep hosted relay, telemetry and self-update off unless updates are signed and verified.
+- SpecWithCode Connect is the supported way to reach the desktop app's machine from other devices. Keep telemetry
+  off, and keep self-update limited to signed, verified SpecWithCode releases.

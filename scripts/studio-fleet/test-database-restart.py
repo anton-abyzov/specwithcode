@@ -42,6 +42,7 @@ INSERT INTO orchestration_v2_projection_runs VALUES ('r0', 't', 'completed');
 """
 T0 = datetime.datetime(2026, 10, 19, 9, 0, tzinfo=datetime.timezone.utc)
 REQUEST = '2026-10-19T08:59:00Z'
+HOLD_UNTIL = '2026-10-19T09:14:00Z'  # update_request.HOLD_MAX_MINUTES after REQUEST.
 
 
 class RestartFallback(unittest.TestCase):
@@ -97,9 +98,14 @@ class RestartFallback(unittest.TestCase):
     def settings(self, **values):
         (self.own / 'updates/config.json').write_text(json.dumps(values))
 
-    def refuse(self, minutes=0, error=None):
+    def refuse(self, minutes=0, error=None, request=None):
+        """`request`: the explicit request the snapshot serves (update.py --request)."""
         return update.database_restart_refusal('m4', AssertionError(error or update.LOCKS_LOST),
-                                               now=T0 + datetime.timedelta(minutes=minutes))
+                                               now=T0 + datetime.timedelta(minutes=minutes), request=request)
+
+    def live_request(self, **values):
+        """An Update now request the agent is serving right now: its hold window is still ahead."""
+        self.settings(installMode='force', installRequestedAt=REQUEST, installHoldUntil=HOLD_UNTIL, **values)
 
     def records(self):
         receipts = self.own / 'updates' / 'receipts'
@@ -182,22 +188,123 @@ class RestartFallback(unittest.TestCase):
         self.assertIsNone(self.refuse(0))
         self.restart.assert_not_called()
 
-    def test_a_deleted_log_is_restarted_only_for_a_held_update_now(self):
-        detached = mock.patch.object(update, 'assert_database_attached',
-                                     mock.Mock(side_effect=AssertionError(update.DETACHED_DATABASE)))
-        detached.start()
-        self.addCleanup(detached.stop)
-        self.settings(installMode='force', installRequestedAt=REQUEST)
-        stop = mock.patch.object(update, 'stop_then_start_service', mock.Mock())
-        stopper = stop.start()
-        self.addCleanup(stop.stop)
+    def detached(self):
+        """The service runs on a deleted log; returns the mocked stop_then_start_service."""
+        for name, value in (('assert_database_attached', mock.Mock(side_effect=AssertionError(update.DETACHED_DATABASE))),
+                            ('stop_then_start_service', mock.Mock())):
+            patcher = mock.patch.object(update, name, value)
+            patcher.start()
+            self.addCleanup(patcher.stop)
+        return update.stop_then_start_service
+
+    def test_a_deleted_log_is_never_restarted_without_a_request(self):
+        stopper = self.detached()
         self.assertIsNone(self.refuse(0, update.DETACHED_DATABASE))  # Idle on disk proves nothing.
+        self.assertIsNone(self.refuse(30, update.DETACHED_DATABASE))
         stopper.assert_not_called()
-        update.assert_held.side_effect = None
-        self.assertEqual(self.refuse(0, update.DETACHED_DATABASE), 'REFUSAL restart-needed detached restarted=1')
+        self.restart.assert_not_called()
+        self.assertEqual(self.records(), [])
+        self.assertFalse((self.own / 'updates' / database_restart.MARKER).exists())
+
+    def test_a_deleted_log_is_stopped_for_update_now_without_a_hold(self):
+        # 1085, AC-04: the hold may be impossible on a deleted log, so the request alone is enough,
+        # even with work running (SIGTERM lets the service stop it and save the log).
+        stopper = self.detached()
+        self.live_request()
+        self.sql("INSERT INTO orchestration_v2_projection_runs VALUES ('r1', 't', 'running')")
+        self.assertEqual(self.refuse(0, update.DETACHED_DATABASE, REQUEST), 'REFUSAL restart-needed detached restarted=1')
         # Stopped so it can save the deleted log, never `kickstart -k`.
         stopper.assert_called_once_with('gui/501', 'com.specweave.studio.m4', 100)
         self.restart.assert_not_called()
+        [record] = self.records()
+        self.assertEqual({key: record[key] for key in ('reason', 'trigger', 'servicePid', 'newServicePid', 'result')},
+                         {'reason': 'detached', 'trigger': 'update-now', 'servicePid': 100, 'newServicePid': 200,
+                          'result': 'restarted'})
+        # RESTART_EVERY still holds the next attempt for the same service.
+        self.assertEqual(self.refuse(10, update.DETACHED_DATABASE, REQUEST), 'REFUSAL restart-needed detached retry=1200')
+        stopper.assert_called_once()
+
+    def test_a_deleted_log_is_never_stopped_for_a_request_that_is_not_live(self):
+        # installMode stays 'force' after a handled Update now: a request from days ago, one the
+        # snapshot does not serve, one whose hold window passed or a cancelled one stops nothing.
+        stopper = self.detached()
+        self.sql("INSERT INTO orchestration_v2_projection_runs VALUES ('r1', 't', 'running')")
+        cases = (('handled days ago', dict(installMode='force', installRequestedAt='2026-10-16T08:59:00Z',
+                                           installHoldUntil='2026-10-16T09:14:00Z'), '2026-10-16T08:59:00Z', 0),
+                 ('not served by this snapshot', dict(installMode='force', installRequestedAt=REQUEST,
+                                                      installHoldUntil=HOLD_UNTIL), None, 0),
+                 ('another request', dict(installMode='force', installRequestedAt=REQUEST,
+                                          installHoldUntil=HOLD_UNTIL), '2026-10-19T08:00:00Z', 0),
+                 ('hold window passed', dict(installMode='force', installRequestedAt=REQUEST,
+                                             installHoldUntil=HOLD_UNTIL), REQUEST, 15),
+                 ('no hold window', dict(installMode='force', installRequestedAt=REQUEST), REQUEST, 0),
+                 ('cancelled', dict(installMode='force', installRequestedAt=REQUEST, installHoldUntil=HOLD_UNTIL,
+                                    installCancelledAt='2026-10-19T08:59:30Z'), REQUEST, 0))
+        for name, config, serving, minutes in cases:
+            with self.subTest(name):
+                self.settings(**config)
+                self.assertIsNone(self.refuse(minutes, update.DETACHED_DATABASE, serving))
+        stopper.assert_not_called()
+        self.restart.assert_not_called()
+        self.assertEqual(self.records(), [])
+        self.assertFalse((self.own / 'updates' / database_restart.MARKER).exists())
+
+    def test_a_deleted_log_is_stopped_for_the_live_request_after_a_stale_one(self):
+        stopper = self.detached()
+        self.settings(installMode='force', installRequestedAt='2026-10-16T08:59:00Z', installHoldUntil='2026-10-16T09:14:00Z')
+        self.assertIsNone(self.refuse(0, update.DETACHED_DATABASE, '2026-10-16T08:59:00Z'))
+        stopper.assert_not_called()
+        self.live_request()  # Update now pressed again: the agent serves the new request.
+        self.assertEqual(self.refuse(1, update.DETACHED_DATABASE, REQUEST), 'REFUSAL restart-needed detached restarted=1')
+        stopper.assert_called_once_with('gui/501', 'com.specweave.studio.m4', 100)
+        self.assertEqual(self.records()[0]['trigger'], 'update-now')
+
+    def test_the_snapshot_command_passes_the_request_it_serves(self):
+        stopper = self.detached()
+        # main() takes the real clock: a hold window far ahead keeps the request live.
+        self.settings(installMode='force', installRequestedAt=REQUEST, installHoldUntil='2999-01-01T00:00:00Z')
+        err = io.StringIO()
+        for argv, line in ((['--request', REQUEST], 'REFUSAL restart-needed detached restarted=1'),
+                           ([], 'REFUSAL restart-needed detached')):
+            with mock.patch.object(update, 'snapshot', side_effect=AssertionError(update.DETACHED_DATABASE)), \
+                    mock.patch.object(update, 'idle_agent_refusal', return_value=None), \
+                    mock.patch('sys.argv', ['update.py', '--identity', 'm4', '--snapshot', str(self.home / 'snap.json')] + argv), \
+                    contextlib.redirect_stderr(err):
+                with self.assertRaises(SystemExit):
+                    update.main()
+            self.assertEqual(err.getvalue().strip().splitlines()[-1], line)
+        stopper.assert_called_once()
+
+    def test_a_held_deleted_log_is_stopped_and_recorded_as_held(self):
+        stopper = self.detached()
+        self.settings(installMode='force', installRequestedAt=REQUEST, installHoldUntil='2026-10-19T09:15:00Z')
+        update.assert_held.side_effect = None
+        self.assertEqual(self.refuse(0, update.DETACHED_DATABASE), 'REFUSAL restart-needed detached restarted=1')
+        stopper.assert_called_once_with('gui/501', 'com.specweave.studio.m4', 100)
+        self.assertEqual(self.records()[0]['trigger'], 'held')
+
+    def test_a_deleted_log_with_another_opener_is_not_stopped(self):
+        stopper = self.detached()
+        self.live_request()
+        self.openers = [100, 300]
+        self.assertEqual(self.refuse(0, update.DETACHED_DATABASE, REQUEST), 'REFUSAL restart-needed detached others=1')
+        stopper.assert_not_called()
+        self.assertEqual(self.records(), [])
+        self.assertFalse((self.own / 'updates' / database_restart.MARKER).exists())
+
+    def test_a_deleted_log_service_that_was_restarted_meanwhile_is_left_alone(self):
+        stopper = self.detached()
+        self.live_request()
+        # The fault is gone for this pid: nothing to restart.
+        update.assert_database_attached.side_effect = None
+        self.assertIsNone(self.refuse(0, update.DETACHED_DATABASE, REQUEST))
+        # A different pid runs by the time lsof returns.
+        update.assert_database_attached.side_effect = AssertionError(update.DETACHED_DATABASE)
+        replaced = dict(self.service, runtime={'pid': 101})
+        update._service.side_effect = [self.service, replaced]
+        self.assertIsNone(self.refuse(0, update.DETACHED_DATABASE, REQUEST))
+        stopper.assert_not_called()
+        self.assertEqual(self.records(), [])
 
     def test_a_deleted_log_service_that_does_not_stop_in_time_is_left_running(self):
         detached = mock.patch.object(update, 'assert_database_attached',

@@ -1,4 +1,4 @@
-// @effect-diagnostics nodeBuiltinImport:off globalTimers:off - isolated copy snapshots and bounded background waits.
+// @effect-diagnostics nodeBuiltinImport:off globalTimers:off globalDate:off - isolated copy snapshots and bounded background waits.
 import * as NodeFS from "node:fs";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
@@ -11,7 +11,10 @@ import { DEFAULT_SELECTION } from "./classify.ts";
 import * as Durable from "./durable.ts";
 import { runGit } from "./git.ts";
 import { readManifestFile } from "./manifest.ts";
+import { handleSourceRequest } from "./sourceRoutes.ts";
 import { SourceTransfers } from "./sourceService.ts";
+import { CHUNK_CHANGED, CHUNK_OK } from "./wire.ts";
+import { TRANSFER_GRANT_IDLE_MS } from "./transferGrant.ts";
 
 // Passes through; the close test holds one record write open to make its race deterministic.
 vi.mock("./durable.ts", async (importOriginal) => {
@@ -31,6 +34,7 @@ async function snapshot(
   withRepository = false,
   commit = true,
   hooks: ConstructorParameters<typeof SourceTransfers>[1] = {},
+  files: Readonly<Record<string, string>> = {},
 ) {
   const base = NodeFS.realpathSync(
     NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "swc-copy-snapshot-")),
@@ -41,6 +45,8 @@ async function snapshot(
   NodeFS.mkdirSync(folder);
   NodeFS.writeFileSync(NodePath.join(folder, "unfinished.txt"), "unfinished work\n");
   NodeFS.writeFileSync(NodePath.join(folder, ".env"), "EXAMPLE_ONLY=one\n");
+  for (const [name, text] of Object.entries(files))
+    NodeFS.writeFileSync(NodePath.join(folder, name), text);
   const repo = NodePath.join(folder, "custom", "services", "api");
   if (withRepository) {
     NodeFS.mkdirSync(repo, { recursive: true });
@@ -252,6 +258,95 @@ describe("terminal source snapshot cleanup", () => {
       });
     },
   );
+
+  it("answers a repeated commit, hello and release with its committed grant and refuses every other request", async () => {
+    const { sources, token } = await snapshot(false);
+    const send = (method: string, action: string, bearer = token) =>
+      handleSourceRequest(sources, "env-source", {
+        method,
+        path: `/${operationId}/${action}`,
+        authorization: `Bearer ${bearer}`,
+        body: async () => new TextEncoder().encode("{}"),
+      });
+    const parsed = (response: { body: Uint8Array }) =>
+      JSON.parse(new TextDecoder().decode(response.body)) as unknown;
+    // The first commit's reply was lost; the destination sends it again with the same grant.
+    const again = await send("POST", "commit");
+    expect(again.status).toBe(200);
+    expect(parsed(again)).toEqual({ state: "committed" });
+    // A destination about to Undo asks first, and learns the copy is committed.
+    const hello = await send("GET", "hello");
+    expect(hello.status).toBe(200);
+    expect(parsed(hello)).toMatchObject({ operationId, state: "committed" });
+    const release = await send("POST", "release");
+    expect(release.status).toBe(409);
+    expect(parsed(release)).toEqual({ error: "committed" });
+    for (const [method, action] of [
+      ["GET", "manifest"],
+      ["POST", "chunks"],
+      ["POST", "stat"],
+      ["GET", "secrets"],
+    ] as const)
+      expect((await send(method, action)).status).toBe(401);
+    expect((await send("GET", "hello", `${token}x`)).status).toBe(401);
+    expect((await send("POST", "release", `${token}x`)).status).toBe(401);
+    expect((await send("POST", "commit", `${token}x`)).status).toBe(401);
+    // The source stays committed: it cannot be cancelled after the destination finished.
+    await expect(sources.cancel(operationId, "late")).rejects.toMatchObject({ code: "committed" });
+  });
+
+  it("serves a chunk from an unchanged duplicate when the file it was indexed from changed", async () => {
+    const { sources, state, folder, loaded } = await snapshot(
+      false,
+      false,
+      {},
+      {
+        "a-first.txt": "same bytes\n",
+        "b-copy.txt": "same bytes\n",
+      },
+    );
+    const manifest = await readManifestFile(
+      NodePath.join(state, "folder-sources", operationId, "manifest.ndjson.gz"),
+    );
+    const hash = manifest.entries.find((entry) => entry.path === "b-copy.txt")!.chunks![0]!;
+    NodeFS.writeFileSync(NodePath.join(folder, "a-first.txt"), "changed after hashing\n");
+    const [frame] = await sources.chunks(loaded, [hash]);
+    expect(frame).toMatchObject({ sha256: hash, status: CHUNK_OK });
+    expect(frame!.data.toString()).toBe("same bytes\n");
+    // With every copy changed, the chunk is reported changed.
+    NodeFS.writeFileSync(NodePath.join(folder, "b-copy.txt"), "also changed\n");
+    expect((await sources.chunks(loaded, [hash]))[0]?.status).toBe(CHUNK_CHANGED);
+  });
+
+  it("refuses a commit with a grant revoked by a release", async () => {
+    const { sources, loaded, token } = await snapshot(false, false);
+    await sources.release(loaded, "stopped");
+    const response = await handleSourceRequest(sources, "env-source", {
+      method: "POST",
+      path: `/${operationId}/commit`,
+      authorization: `Bearer ${token}`,
+      body: async () => new TextEncoder().encode("{}"),
+    });
+    expect(response.status).toBe(401);
+    expect((await sources.read(operationId))?.state).toBe("released");
+  });
+
+  it("a cancel on the source unfences a copy-and-move whose grant expired while held", async () => {
+    let skew = 0;
+    const released: Array<string> = [];
+    const { sources, loaded, token } = await snapshot(false, false, {
+      now: () => Date.now() + skew,
+      release: async (record) => {
+        released.push(record.operationId);
+      },
+    });
+    skew = TRANSFER_GRANT_IDLE_MS + 60_000;
+    await expect(sources.authorize(operationId, token)).rejects.toMatchObject({ status: 401 });
+    expect(loaded.record.state).toBe("ready");
+    const record = await sources.cancel(operationId, "The destination could not finish.");
+    expect(record).toMatchObject({ state: "cancelled", grant: { revokedReason: "cancelled" } });
+    expect(released).toEqual([operationId]);
+  });
 
   it("serializes a yielding release hook against commit and preserves terminal replay", async () => {
     let unblock!: () => void;

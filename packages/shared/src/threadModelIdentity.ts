@@ -59,11 +59,22 @@ export function limitFallbackPairing(
   runs: readonly Run[],
   current: RunSelection,
   launchFallbackFrom?: RunSelection | null,
+  /** Where the usage pre-switch moved the idle thread from (`limitPreswitchFrom`). */
+  preswitchFrom?: { readonly modelSelection: RunSelection; readonly commandId: string } | null,
 ): {
   readonly original: RunSelection;
   readonly stoppedRunId: string;
   readonly launched?: true;
+  readonly preswitched?: true;
 } | null {
+  // A recorded pre-switch comes first: a pick after it clears the record at
+  // write time, so it is newer than any continuation the runs show (1075).
+  if (preswitchFrom != null && !sameRunModel(current, preswitchFrom.modelSelection))
+    return {
+      original: preswitchFrom.modelSelection,
+      stoppedRunId: preswitchFrom.commandId,
+      preswitched: true,
+    };
   return (
     limitContinuationPairing(messages, runs, current) ??
     launchFallbackPairing(launchFallbackFrom, runs, current)
@@ -84,6 +95,53 @@ export function launchFallbackAfterMove<T extends RunSelection>(
   byServer: boolean,
 ): T | null | undefined {
   if (launchFallbackFrom == null || byServer || sameRunModel(from, to)) return launchFallbackFrom;
+  return null;
+}
+
+/** The command id prefix of the usage pre-switch, the server's move of an idle thread. */
+export const LIMIT_PRESWITCH_COMMAND_PREFIX = "limit-preswitch:";
+
+/**
+ * When the usage window a pre-switch moved in resets: its command id ends
+ * with the window's reset time, or `open` when the provider named none.
+ */
+export function preswitchWindowResetAt(commandId: string): string | null {
+  const match = /:(\d{4}-\d{2}-\d{2}T.+)$/.exec(commandId);
+  if (match === null) return null;
+  const resetAt = match[1]!;
+  return Number.isFinite(Date.parse(resetAt)) ? resetAt : null;
+}
+
+/**
+ * What a thread keeps of its pre-switch origin (`limitPreswitchFrom`) when
+ * its model selection moves from `from` to `to` under `commandId`. The
+ * pre-switch records the model it moved off; a later pre-switch keeps the
+ * first origin, so the way back goes to the model the person picked. Any move
+ * back to that model ends it. Another server move (a limit fallback or its
+ * way back) keeps it; a pick by a person or an agent ends it for good, so the
+ * way back never reverses their pick.
+ */
+export function limitPreswitchAfterMove<
+  T extends { readonly modelSelection: RunSelection },
+  S extends RunSelection,
+>(
+  origin: T | null | undefined,
+  from: S,
+  to: RunSelection,
+  byServer: boolean,
+  commandId?: string,
+):
+  | T
+  | { readonly modelSelection: S; readonly commandId: string; readonly resetAt: string | null }
+  | null
+  | undefined {
+  if (commandId?.startsWith(LIMIT_PRESWITCH_COMMAND_PREFIX) && !sameRunModel(from, to))
+    return (
+      origin ?? { modelSelection: from, commandId, resetAt: preswitchWindowResetAt(commandId) }
+    );
+  if (origin == null) return origin;
+  if (sameRunModel(to, origin.modelSelection)) return null;
+  if (byServer || sameRunModel(from, to)) return origin;
   return null;
 }
 
@@ -147,6 +205,8 @@ export function threadModelIdentity(input: {
   fallbackFrom?: ModelSelection | null;
   /** The fallback dates from the thread's launch, not a usage-limit stop. */
   launched?: boolean;
+  /** The usage pre-switch moved the idle thread before it reached its limit. */
+  preswitched?: boolean;
 }) {
   const current = input.running ?? input.thread;
   const same = (a: RunSelection, b: RunSelection) =>
@@ -163,5 +223,6 @@ export function threadModelIdentity(input: {
     kind:
       preferred === null ? null : input.fallbackFrom ? ("fallback" as const) : ("running" as const),
     ...(preferred !== null && input.fallbackFrom && input.launched ? { launched: true } : {}),
+    ...(preferred !== null && input.fallbackFrom && input.preswitched ? { preswitched: true } : {}),
   };
 }

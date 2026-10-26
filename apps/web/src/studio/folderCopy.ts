@@ -144,8 +144,15 @@ export function copySettled(status: FolderCopyStatus): boolean {
   );
 }
 
+/** Counts only while a step runs; a stopped copy may still carry its last ones. */
+function liveProgress(status: FolderCopyStatus) {
+  return status.state === "failed" || status.state === "cancelled" || status.state === "undone"
+    ? null
+    : status.progress;
+}
+
 export function progressText(status: FolderCopyStatus): string | null {
-  const progress = status.progress;
+  const progress = liveProgress(status);
   if (!progress) return null;
   const phase = {
     manifest: "Reading the source list",
@@ -158,7 +165,7 @@ export function progressText(status: FolderCopyStatus): string | null {
 }
 
 export function progressFraction(status: FolderCopyStatus): number | null {
-  const progress = status.progress;
+  const progress = liveProgress(status);
   if (!progress || progress.phase === "manifest") return null;
   if (progress.bytesTotal > 0) return Math.min(1, progress.bytesDone / progress.bytesTotal);
   if (progress.filesTotal > 0) return Math.min(1, progress.filesDone / progress.filesTotal);

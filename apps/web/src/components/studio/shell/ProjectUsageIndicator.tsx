@@ -21,7 +21,7 @@ import {
   leftPercent,
   usageIndicatorProviders,
   usageLeftLabel,
-  usageTone,
+  usageToneOfUsed,
   type UsageIndicatorProvider,
   type UsageIndicatorWindow,
 } from "../../../studio/usageIndicatorModel";
@@ -31,7 +31,7 @@ import "./usage.css";
 import { resetCreditsSummary } from "../../usage/UsageLimits";
 import { openUsageSheet } from "../../usage/usageSheetStore";
 import type { EnvironmentId, ProviderInstanceId } from "@specweave-studio/contracts";
-import { HostLimitsCompact } from "./HostLimits";
+import { AccountLimits } from "./HostLimits";
 import { Popover, PopoverPopup, PopoverTrigger } from "../../ui/popover";
 
 const driverLabel = (driver: LimitPool["driver"]) =>
@@ -53,10 +53,10 @@ function WindowRow({ window, now }: { window: UsageIndicatorWindow; now: number 
   return (
     <div className="sws-usage-window">
       <span className="sws-usage-window-label">{window.label}</span>
-      <span className="sws-usage-bar" data-tone={usageTone(left)} aria-hidden>
+      <span className="sws-usage-bar" data-tone={usageToneOfUsed(window.usedPercent)} aria-hidden>
         <span style={{ width: `${left}%` }} />
       </span>
-      <span className="sws-usage-window-value" data-tone={usageTone(left)}>
+      <span className="sws-usage-window-value" data-tone={usageToneOfUsed(window.usedPercent)}>
         {usageLeftLabel(window.usedPercent)}
       </span>
       <span className="sws-usage-window-reset">
@@ -196,12 +196,18 @@ export function SubscriptionUsageSummary() {
 export function MachineLimitsPanel({
   projectEnvironmentId,
   coordinatorInstanceId,
+  fallbackOrder,
+  surface = "coordinator",
   onBack,
   onClose,
   onOpenProjectUsage,
 }: {
   projectEnvironmentId: EnvironmentId | null;
   coordinatorInstanceId: ProviderInstanceId | null;
+  /** The fallback models, best first, listed under the current account. */
+  fallbackOrder?: ReadonlyArray<{ readonly instanceId: string; readonly label: string }>;
+  /** Which chat the panel serves: the first section reads "This thread now" in a thread. */
+  surface?: "coordinator" | "thread";
   /** Back to the models, when the panel replaced the picker's list. */
   onBack?: (() => void) | undefined;
   /** Closes the popover holding the panel before the Usage sheet opens over the app. */
@@ -219,15 +225,17 @@ export function MachineLimitsPanel({
             Models
           </button>
         ) : null}
-        <h2 className="sws-machine-limits-title">Limits by machine</h2>
+        <h2 className="sws-machine-limits-title">Limits by account</h2>
         <p>
-          Each machine uses its own sign-ins. When a provider has several limit windows, the one
-          that runs out first is brighter.
+          A limit belongs to the account, so every model and machine on it shares it. Of several
+          windows, the one with the least left is brighter.
         </p>
       </header>
-      <HostLimitsCompact
+      <AccountLimits
         projectEnvironmentId={projectEnvironmentId}
-        coordinatorInstanceId={coordinatorInstanceId}
+        currentInstanceId={coordinatorInstanceId}
+        fallbackOrder={fallbackOrder ?? []}
+        surface={surface}
         now={now}
       />
       <footer>
@@ -263,12 +271,13 @@ export function MachineLimitsButton({
   className?: string;
   projectEnvironmentId: EnvironmentId | null;
   coordinatorInstanceId: ProviderInstanceId | null;
+  fallbackOrder?: ReadonlyArray<{ readonly instanceId: string; readonly label: string }>;
   onOpenProjectUsage?: (() => void) | undefined;
 }) {
   const [open, setOpen] = useState(false);
   return (
     <Popover open={open} onOpenChange={setOpen}>
-      <PopoverTrigger className={className}>Limits by machine</PopoverTrigger>
+      <PopoverTrigger className={className}>Limits by account</PopoverTrigger>
       <PopoverPopup side="top" align="start" width="lg" padding="compact">
         {open ? (
           <MachineLimitsPanel

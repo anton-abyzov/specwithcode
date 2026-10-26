@@ -147,7 +147,8 @@ function SidebarRestartToUpdateButton() {
   const runState = serviceState?.run ?? null;
   const liveRun = liveServiceUpdateRun(serviceState);
   // An automatic install that waits for quiet (0991): a short hint under
-  // Update now says how many open questions it waits on.
+  // Update now says how many open questions it waits on, or, while it waits
+  // for running work, when that work pauses for it (1085).
   const automaticWait =
     liveRun === null && serviceState?.status === "waiting-for-quiet" && service.progress === null;
   // What Needs you reads, live: a question answered, or a thread resolved or
@@ -163,6 +164,26 @@ function SidebarRestartToUpdateButton() {
     [lookedBlockers, liveWaiting],
   );
   const [waitHintDismissedFor, setWaitHintDismissedFor] = useState(readWaitHintDismissed);
+  // "Later" is being saved: its button waits for the desktop's answer.
+  const [postponing, setPostponing] = useState(false);
+  const postpone = useCallback(() => {
+    const bridge = window.desktopBridge;
+    if (!bridge?.postponeAutomaticServiceUpdate) return;
+    setPostponing(true);
+    // The reply carries the moved time; every window gets it in the next publish too.
+    void bridge
+      .postponeAutomaticServiceUpdate()
+      .catch((error: unknown) =>
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: "Could not postpone the update",
+            description: errorText(error, "An unexpected error occurred."),
+          }),
+        ),
+      )
+      .finally(() => setPostponing(false));
+  }, []);
   const serviceStateRef = useRef(serviceState);
   useEffect(() => {
     serviceStateRef.current = serviceState;
@@ -759,8 +780,75 @@ function SidebarRestartToUpdateButton() {
   ) : (
     button
   );
-  const automaticWaitHint = automaticWait ? describeAutomaticInstallWait(runBlockers) : null;
+  const automaticWaitHint = automaticWait
+    ? describeAutomaticInstallWait(runBlockers, {
+        pauseAt: serviceState?.automaticPauseAt ?? null,
+        nowMs: at,
+        message: serviceState?.message ?? null,
+      })
+    : null;
   const hintVersion = serviceState?.downloadedVersion ?? serviceState?.availableVersion ?? null;
+  if (automaticWaitHint?.pauseAt !== undefined) {
+    // Not dismissable: it says when running work will be paused, and Later is
+    // how the person keeps it running. Open questions, when they are what the
+    // install waits on, lead; the pause time follows them.
+    const questionLine = automaticWaitHint.pauseLine === undefined ? null : automaticWaitHint.line;
+    const canPostpone = typeof window.desktopBridge?.postponeAutomaticServiceUpdate === "function";
+    const actionClass =
+      "cursor-pointer rounded px-1 text-2xs font-medium text-foreground outline-hidden ring-ring hover:bg-sidebar-row-hover focus-visible:ring-2 disabled:cursor-progress disabled:opacity-60";
+    return (
+      <div className="flex shrink-0 flex-col gap-1 self-start">
+        {content}
+        <Tooltip>
+          <TooltipTrigger
+            render={
+              <div className="flex min-w-0 flex-col gap-0.5">
+                {questionLine === null ? null : (
+                  <p
+                    data-testid="sidebar-update-question-wait"
+                    className="min-w-0 text-2xs text-muted-foreground"
+                  >
+                    {questionLine}
+                  </p>
+                )}
+                <p
+                  data-testid="sidebar-update-pause-wait"
+                  className="min-w-0 text-2xs text-muted-foreground"
+                >
+                  {automaticWaitHint.pauseLine ?? automaticWaitHint.line}
+                </p>
+              </div>
+            }
+          />
+          <TooltipPopup side="top" align="start" className="max-w-72">
+            {automaticWaitHint.detail}
+          </TooltipPopup>
+        </Tooltip>
+        <div className="flex items-center gap-1">
+          <button
+            type="button"
+            data-testid="sidebar-update-pause-install-now"
+            disabled={busy}
+            className={actionClass}
+            onClick={() => void restart({})}
+          >
+            Install now
+          </button>
+          {canPostpone ? (
+            <button
+              type="button"
+              data-testid="sidebar-update-pause-later"
+              disabled={busy || postponing}
+              className={actionClass}
+              onClick={postpone}
+            >
+              Later
+            </button>
+          ) : null}
+        </div>
+      </div>
+    );
+  }
   if (automaticWaitHint === null || (hintVersion !== null && waitHintDismissedFor === hintVersion))
     return content;
   return (
@@ -782,6 +870,17 @@ function SidebarRestartToUpdateButton() {
             {automaticWaitHint.detail}
           </TooltipPopup>
         </Tooltip>
+        {automaticWaitHint.updateNow ? (
+          <button
+            type="button"
+            data-testid="sidebar-update-missed-pause-update-now"
+            disabled={busy}
+            className="shrink-0 cursor-pointer rounded px-1 text-2xs font-medium text-foreground outline-hidden ring-ring hover:bg-sidebar-row-hover focus-visible:ring-2 disabled:cursor-progress disabled:opacity-60"
+            onClick={() => void restart({})}
+          >
+            Update now
+          </button>
+        ) : null}
         {hintVersion === null ? null : (
           <button
             type="button"

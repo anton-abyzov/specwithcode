@@ -265,6 +265,8 @@ export function ModelStateTip(props: {
   current: string;
   /** Appended to the first line, such as ` · 27% used`. */
   currentNote?: string | null;
+  /** The provider connection that runs it, when it says more than the provider: `Codex Work`. */
+  connection?: string | null;
   state: ModelState;
 }) {
   const text = modelStateText(props.state);
@@ -275,6 +277,9 @@ export function ModelStateTip(props: {
         {props.current}
         {props.currentNote ?? ""}
       </strong>
+      {props.connection ? (
+        <span className="sws-model-state-tip-detail">Connection: {props.connection}</span>
+      ) : null}
       <span
         className="sws-model-state-tip-line"
         data-tone={kind === "fallback" ? "warning" : "muted"}

@@ -40,6 +40,15 @@ const useDesktopAdvertisedEndpoints = isElectron
     }
   : () => NO_ENDPOINTS;
 
+/** Whether the address is a Tailscale name, so only devices on the tailnet can open it. */
+function isTailnetAddress(address: string): boolean {
+  try {
+    return new URL(address).hostname.toLowerCase().endsWith(".ts.net");
+  } catch {
+    return false;
+  }
+}
+
 type Approval =
   | { readonly kind: "idle" }
   | { readonly kind: "looking" }
@@ -190,10 +199,12 @@ export function SignInAnotherDeviceDialog({
                   </Button>
                 </div>
               </div>
-              <p className="text-muted-foreground text-xs">
-                The other device must be on your tailnet. Nothing is reachable from the open
-                internet.
-              </p>
+              {isTailnetAddress(address) ? (
+                <p className="text-muted-foreground text-xs">
+                  The other device must be on your tailnet. Nothing is reachable from the open
+                  internet.
+                </p>
+              ) : null}
             </>
           ) : (
             <p className="text-sm">

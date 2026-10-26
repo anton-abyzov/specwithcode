@@ -127,6 +127,28 @@ it("previews the default set with versions, then provisions on that machine", as
   });
 });
 
+it("shows an optional Tailscale that Connect makes unnecessary as Not needed", async () => {
+  state.preview = {
+    target,
+    items: [
+      {
+        ...item("tailscale", "Tailscale (optional)", "skipped", null, ">= 1.80.0"),
+        detail:
+          "Not needed: this machine is reached through SpecWithCode Connect. Install Tailscale only if you also want a direct tailnet route.",
+      },
+      { ...item("codex", "Codex", "skipped", null, "0.1"), detail: "Skipped by request." },
+    ],
+  };
+  await mount();
+  await act(async () => button("Provision").click());
+  await settle();
+  const rows = [...container.querySelectorAll('[data-slot="provision-item"]')];
+  expect(rows[0]?.textContent).toContain("Not needed");
+  expect(rows[0]?.textContent).toContain("reached through SpecWithCode Connect");
+  expect(rows[1]?.textContent).toContain("Skipped");
+  expect(container.textContent).not.toContain("Will install");
+});
+
 it("shows the readback, the root line and the user's steps, and retries a failed run", async () => {
   state.run = {
     status: "failed",

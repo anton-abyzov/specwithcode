@@ -15,9 +15,15 @@ import {
   hasUsableFallbackCapacity,
   providerUsedPercent,
   reportsNoUsage,
+  usageAtThreshold,
   type FallbackOrderEntry,
   type FallbackOrderUnavailable,
+  type ProviderFallbackRule,
 } from "@specweave-studio/shared/providerFallback";
+import {
+  PRESWITCH_RETURN_BLOCK_REASON,
+  type PreswitchReturnBlock,
+} from "@specweave-studio/shared/preswitchReturn";
 import { ChevronDownIcon, GaugeIcon, Undo2Icon } from "lucide-react";
 import { useEffect, useState } from "react";
 import { Button } from "../ui/button";
@@ -515,6 +521,45 @@ export function limitPairingRoom(
 }
 
 /**
+ * The room the way back from a usage pre-switch waits for (1075): under the
+ * `switch` rule the server returns the thread only once the original reads
+ * below the switch threshold (preswitchReturnCommand), so a reading at the
+ * threshold, though under 100%, is no room yet.
+ */
+export function preswitchPairingRoom(
+  room: ReturnType<typeof limitPairingRoom>,
+  input: {
+    readonly provider: ServerProvider | undefined;
+    readonly model: string;
+    readonly rule: Pick<
+      ProviderFallbackRule,
+      "providerLimitAction" | "providerLimitSwitchAtPercent" | "providerLimitWaitUnderMinutes"
+    >;
+    readonly nowMs: number;
+  },
+): ReturnType<typeof limitPairingRoom> {
+  if (!room.hasRoom || input.rule.providerLimitAction !== "switch") return room;
+  return usageAtThreshold(input) ? { hasRoom: false } : room;
+}
+
+/**
+ * The fallback header's line for a thread the usage pre-switch moved before
+ * its limit (1075): it goes back by itself once the original has room, unless
+ * the original is one the server never moves a thread to, which it names.
+ */
+export function preswitchFallbackDetail(input: {
+  readonly originalModel: string;
+  readonly hasRoom: boolean;
+  readonly returnBlock: PreswitchReturnBlock | null;
+}): string {
+  if (input.returnBlock !== null)
+    return `${input.originalModel} neared its usage limit, so this thread moved before its next turn. It stays on the fallback: ${PRESWITCH_RETURN_BLOCK_REASON[input.returnBlock]}.`;
+  return input.hasRoom
+    ? `${input.originalModel} neared its usage limit and has room again. The idle thread goes back on its own.`
+    : `${input.originalModel} neared its usage limit. The idle thread goes back on its own once it has room.`;
+}
+
+/**
  * The thread runs on a limit fallback: "On Codex · GPT-6 Astra for Claude Code ·
  * Claude Opus 5.5", with the way back once the original model has room.
  */
@@ -530,6 +575,8 @@ export function limitFallbackPairingBannerItem(props: {
   roomUnknown?: LimitPairingRoomUnknown | undefined;
   /** The thread stands in from its launch: the original never had room for it, so not "again". */
   launched?: boolean | undefined;
+  /** Why the way back from a usage pre-switch will not move the thread by itself. */
+  returnBlock?: PreswitchReturnBlock | null | undefined;
   onBack: () => void;
   onDismiss: () => void;
 }): ComposerBannerStackItem | null {
@@ -540,6 +587,11 @@ export function limitFallbackPairingBannerItem(props: {
     compact: true,
     priority: "notice",
     icon: <Undo2Icon />,
+    ...(props.returnBlock == null
+      ? {}
+      : {
+          description: `It stays on the fallback until you switch back: ${PRESWITCH_RETURN_BLOCK_REASON[props.returnBlock]}.`,
+        }),
     title: props.hasRoom
       ? `${props.originalModel} has room ${props.launched ? "now" : "again"}.`
       : props.roomUnknown === "stale"

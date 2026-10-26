@@ -5,6 +5,8 @@ import {
   baseModelSlug,
   launchFallbackAfterMove,
   limitFallbackPairing,
+  limitPreswitchAfterMove,
+  preswitchWindowResetAt,
   sameRunModel,
   threadModelIdentity,
 } from "./threadModelIdentity.ts";
@@ -23,6 +25,15 @@ describe("limitFallbackPairing", () => {
     expect(limitFallbackPairing(messages, runs, astra)).toEqual({
       original: sol,
       stoppedRunId: "run:1",
+    });
+  });
+
+  it("puts a recorded pre-switch before the continuation it followed", () => {
+    const preswitchFrom = { modelSelection: opus, commandId: "limit-preswitch:thread:1:open" };
+    expect(limitFallbackPairing(messages, runs, astra, null, preswitchFrom)).toEqual({
+      original: opus,
+      stoppedRunId: preswitchFrom.commandId,
+      preswitched: true,
     });
   });
 
@@ -129,5 +140,33 @@ describe("sameRunModel", () => {
     expect(baseModelSlug("claude-opus-5-5[1m]")).toBe("claude-opus-5-5");
     expect(sameRunModel(opus, { ...opus, model: "claude-opus-5-5[1m]" })).toBe(true);
     expect(sameRunModel(sol, astra)).toBe(false);
+  });
+});
+
+describe("limitPreswitchAfterMove", () => {
+  const preswitch = "limit-preswitch:thread:1:codex:2026-10-26T15:00:00.000Z";
+  const origin = { modelSelection: sol, commandId: preswitch, resetAt: "2026-10-26T15:00:00.000Z" };
+
+  it("reads the window reset a pre-switch id ends with", () => {
+    expect(preswitchWindowResetAt(preswitch)).toBe("2026-10-26T15:00:00.000Z");
+    expect(preswitchWindowResetAt("limit-preswitch:thread:1:codex:open")).toBeNull();
+  });
+
+  it("records where the pre-switch moved the thread from", () => {
+    expect(limitPreswitchAfterMove(null, sol, astra, true, preswitch)).toEqual(origin);
+  });
+
+  it("keeps the first origin through a later pre-switch and other server moves", () => {
+    expect(limitPreswitchAfterMove(origin, astra, opus, true, "limit-preswitch:x:open")).toBe(
+      origin,
+    );
+    expect(limitPreswitchAfterMove(origin, astra, opus, true)).toBe(origin);
+  });
+
+  it("ends on a move back to the origin or on a pick", () => {
+    expect(limitPreswitchAfterMove(origin, astra, sol, true)).toBeNull();
+    expect(limitPreswitchAfterMove(origin, astra, opus, false)).toBeNull();
+    expect(limitPreswitchAfterMove(origin, astra, astra, false)).toBe(origin);
+    expect(limitPreswitchAfterMove(undefined, sol, astra, false)).toBeUndefined();
   });
 });

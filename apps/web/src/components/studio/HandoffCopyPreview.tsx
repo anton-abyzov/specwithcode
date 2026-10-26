@@ -25,6 +25,7 @@ import {
   selectedTotals,
 } from "../../studio/folderCopy";
 import { Checkbox } from "../ui/checkbox";
+import { changedRows } from "./handoffCopyAuto";
 import { Radio, RadioGroup } from "../ui/radio-group";
 
 /** Sizes per file class before anything moves; secret-like files stay out of this step. */
@@ -33,11 +34,14 @@ export function CopyClassPicker({
   selection,
   onChange,
   disabled,
+  hideNotes = false,
 }: {
   readonly summary: FolderCopySourceSummary;
   readonly selection: ReadonlyArray<FolderCopyFileClass>;
   readonly onChange: (selection: ReadonlyArray<FolderCopyFileClass>) => void;
   readonly disabled: boolean;
+  /** The caller shows links outside and warnings in its own grouped notices. */
+  readonly hideNotes?: boolean;
 }) {
   const chosen = selectedTotals(summary, selection);
   const toggle = (value: FolderCopyFileClass, on: boolean) =>
@@ -53,6 +57,12 @@ export function CopyClassPicker({
         {FILE_CLASS_ORDER.map((value) => {
           const total = summary.totals[value];
           const secret = value === "secret";
+          // Newer sources skip rebuildable folders while measuring; zero means unknown.
+          const notMeasured =
+            value === "rebuildable" &&
+            (summary.skipped?.rebuildableFolders ?? 0) > 0 &&
+            total.files === 0 &&
+            total.bytes === 0;
           return (
             <li key={value}>
               <label
@@ -74,10 +84,16 @@ export function CopyClassPicker({
                   </span>
                 </span>
                 <span className="text-right text-xs leading-5 text-muted-foreground tabular-nums">
-                  {formatBytes(total.bytes)}
-                  <span className="block">
-                    {total.files.toLocaleString()} {total.files === 1 ? "file" : "files"}
-                  </span>
+                  {notMeasured ? (
+                    "not measured"
+                  ) : (
+                    <>
+                      {formatBytes(total.bytes)}
+                      <span className="block">
+                        {total.files.toLocaleString()} {total.files === 1 ? "file" : "files"}
+                      </span>
+                    </>
+                  )}
                 </span>
               </label>
             </li>
@@ -106,17 +122,18 @@ export function CopyClassPicker({
         {summary.repositories.length > 0 &&
           ` ${summary.repositories.length} ${summary.repositories.length === 1 ? "repository" : "repositories"}.`}
       </p>
-      {summary.linksOutside > 0 && (
+      {!hideNotes && summary.linksOutside > 0 && (
         <p className="text-xs text-muted-foreground">
           {summary.linksOutside} {summary.linksOutside === 1 ? "link points" : "links point"}{" "}
           outside the folder and will arrive as links, not as the files they point to.
         </p>
       )}
-      {summary.warnings.map((warning) => (
-        <p key={warning} className="wrap-anywhere text-xs text-muted-foreground">
-          {warning}
-        </p>
-      ))}
+      {!hideNotes &&
+        summary.warnings.map((warning) => (
+          <p key={warning} className="wrap-anywhere text-xs text-muted-foreground">
+            {warning}
+          </p>
+        ))}
     </fieldset>
   );
 }
@@ -129,6 +146,8 @@ export function CopyPlanPreview({
   disabled,
   machines,
   rootLabel,
+  onlyChanges = false,
+  hideWarnings = false,
 }: {
   readonly status: FolderCopyStatus;
   readonly onDecide: (decisions: Readonly<Record<string, FolderCopyChoice>>) => void;
@@ -138,8 +157,18 @@ export function CopyPlanPreview({
   readonly machines?: ChoiceMachines;
   /** Title of the row for the folder's own root, such as the project name. */
   readonly rootLabel?: string;
+  /** Lists only rows that change something already there; new and unchanged ones are counted. */
+  readonly onlyChanges?: boolean;
+  /** The caller shows the plan's warnings in its own grouped notices. */
+  readonly hideWarnings?: boolean;
 }) {
   const totals = status.totals;
+  const rows = onlyChanges ? changedRows(status.rows) : status.rows;
+  const shown = new Set(rows);
+  const hidden = status.rows.filter((row) => !shown.has(row));
+  // Folders only on the destination are kept there, not copied.
+  const kept = hidden.filter((row) => row.status === "only-here").length;
+  const untouched = hidden.length - kept;
   return (
     <div className="space-y-3 text-sm" data-slot="copy-preview">
       {totals && (
@@ -151,7 +180,7 @@ export function CopyPlanPreview({
         </p>
       )}
       <ul className="space-y-2">
-        {status.rows.map((row) => (
+        {rows.map((row) => (
           <CopyRow
             key={row.id}
             row={row}
@@ -163,6 +192,22 @@ export function CopyPlanPreview({
           />
         ))}
       </ul>
+      {onlyChanges && (untouched > 0 || kept > 0) && (
+        <p className="text-xs text-muted-foreground" data-slot="copy-preview-untouched">
+          {[
+            untouched === 0
+              ? null
+              : untouched === 1
+                ? "1 other folder is new or unchanged and is copied as it is."
+                : `${untouched.toLocaleString()} other folders are new or unchanged and are copied as they are.`,
+            kept === 0
+              ? null
+              : `${kept.toLocaleString()} kept on ${machines?.here ?? "this machine"}: ${kept === 1 ? "that folder is" : "those folders are"} only there.`,
+          ]
+            .filter(Boolean)
+            .join(" ")}
+        </p>
+      )}
       {status.unstable.length > 0 && (
         <Note>
           {status.unstable.length === 1 ? "1 file" : `${status.unstable.length} files`} kept
@@ -171,9 +216,7 @@ export function CopyPlanPreview({
           {status.unstable.length > 5 ? "…" : ""}
         </Note>
       )}
-      {status.warnings.map((warning) => (
-        <Note key={warning}>{warning}</Note>
-      ))}
+      {!hideWarnings && status.warnings.map((warning) => <Note key={warning}>{warning}</Note>)}
       <p className="text-xs text-muted-foreground">
         Nothing on {machines?.here ?? "this machine"} is overwritten without a backup. Undo restores
         the folder for 14 days.

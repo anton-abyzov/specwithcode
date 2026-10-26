@@ -287,12 +287,16 @@ async function assemble(
         command: entry.command,
         optional: false,
       });
-  if (p.tailscale.found !== null && p.tailscale.state !== "Running")
+  // Connect already reaches a managed-linked machine; a tailnet route is then extra.
+  const viaConnect = p.connect === "managed";
+  if (p.tailscale.path !== null && p.tailscale.state !== "Running")
     userSteps.push({
       id: "tailscale-signin",
-      title: "Sign in to Tailscale with the account your main machine uses.",
+      title: viaConnect
+        ? "Optional: sign in to Tailscale if you also reach this machine over your tailnet."
+        : "Sign in to Tailscale with the account your main machine uses.",
       command: linux ? `sudo tailscale up --operator=${ctx.host.user}` : "open -a Tailscale",
-      optional: false,
+      optional: viaConnect,
     });
   const provider = (id: string) => p.providers.find((entry) => entry.id === id);
   if (provider("claude")?.found && provider("claude")?.signedIn === false)
@@ -317,13 +321,23 @@ async function assemble(
       optional: false,
     });
   if (ctx.options.mode === "cli")
-    userSteps.push({
-      id: "join",
-      title:
-        "Add this machine to your main one, if it is not listed there yet: Replace <main-machine-environment-id> with the environment ID from Settings > Connections on your main machine to approve it to manage access here. Run this, then paste the line it prints into Settings > Connections > Add a machine.",
-      command: "specwithcode fleet invite --coordinator '<main-machine-environment-id>'",
-      optional: false,
-    });
+    userSteps.push(
+      viaConnect
+        ? {
+            id: "join",
+            title:
+              "This machine is linked to SpecWithCode Connect, so it already appears under Connections on your other devices. Optional: to also add it to a main machine's fleet, replace <main-machine-environment-id> with the environment ID from Settings > Connections on your main machine, run this, then paste the line it prints into Settings > Connections > Add a machine.",
+            command: "specwithcode fleet invite --coordinator '<main-machine-environment-id>'",
+            optional: true,
+          }
+        : {
+            id: "join",
+            title:
+              "Add this machine to your main one, if it is not listed there yet: Replace <main-machine-environment-id> with the environment ID from Settings > Connections on your main machine to approve it to manage access here. Run this, then paste the line it prints into Settings > Connections > Add a machine.",
+            command: "specwithcode fleet invite --coordinator '<main-machine-environment-id>'",
+            optional: false,
+          },
+    );
   userSteps.push({
     id: "allow-workers",
     title:

@@ -57,6 +57,11 @@ const REBUILDABLE_DIRECTORIES = new Set([
   "venv",
   "bin",
   "obj",
+  // Pure build and test output; `.wrangler` (local state) and `release/` stay data.
+  ".open-next",
+  "dist-electron",
+  "playwright-report",
+  "test-results",
 ]);
 
 /** True when an ignored path sits in (or is) a rebuildable folder. */

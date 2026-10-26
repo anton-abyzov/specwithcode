@@ -30,6 +30,8 @@ interface CodexRateLimitWindow {
 /** Structural view of the generated `RateLimitSnapshot`; both messages satisfy it. */
 export interface CodexRateLimitSnapshot {
   readonly limitId?: string | null;
+  /** The model a non-main bucket limits (`GPT-5.3-Codex-Spark`). */
+  readonly limitName?: string | null;
   readonly planType?: string | null;
   readonly rateLimitReachedType?: string | null;
   readonly spendControlReached?: boolean | null;
@@ -115,6 +117,14 @@ function codexRateLimitsToWindows(
   // Model-specific windows have separate ids and never replace the main pair.
   if (!/^[a-zA-Z0-9_-]{1,64}$/.test(bucketId)) return [];
   const main = bucketId === "codex";
+  // A model bucket caps only its own model. Without a reported name it still never
+  // stands for the whole account: its id matches no model slug.
+  const reportedName = snapshot.limitName?.trim();
+  const name =
+    reportedName && reportedName.length <= 64 && !/[\u0000-\u001f:]/.test(reportedName)
+      ? reportedName
+      : null;
+  const modelScope = main ? undefined : (name ?? bucketId);
   const positions = [
     ["primary", snapshot.primary],
     ["secondary", snapshot.secondary],
@@ -135,8 +145,9 @@ function codexRateLimitsToWindows(
     windows.push({
       id: main ? position : `${bucketId}:${position}`,
       kind,
-      label: main ? label : `${bucketId}: ${label}`,
+      label: main ? label : `${name ?? bucketId}: ${label}`,
       usedPercent: clampPercent(window.usedPercent),
+      ...(modelScope ? { modelScope } : {}),
       ...(windowDurationMins !== undefined ? { windowDurationMins } : {}),
       ...(resetsAt ? { resetsAt } : {}),
     });

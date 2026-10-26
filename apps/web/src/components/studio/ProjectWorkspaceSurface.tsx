@@ -48,6 +48,7 @@ import {
   resolveCoordinatorModelSelection,
 } from "@specweave-studio/shared/coordinatorDefault";
 import { modelSelectionsEqual } from "@specweave-studio/shared/model";
+import { resolveCoordinatorTurnSelection } from "@specweave-studio/shared/providerFallback";
 import { resolveProjectSettings } from "@specweave-studio/shared/projectSettings";
 import { formatDuration } from "@specweave-studio/shared/usageLimits";
 import {
@@ -532,6 +533,20 @@ export function ProjectWorkspaceSurface({
     selection: ModelSelection;
     afterOrdinal: number;
   } | null>(null);
+  const coordinatorRule = hostSettings
+    ? resolveProjectSettings(hostSettings, project.id, project).settings
+    : null;
+  // Only a run that stopped on a real usage limit marks its provider limited: the
+  // provider of that run, which a fallback since then has already left.
+  const limitedCoordinatorInstanceIds = new Set<string>(
+    coordinator?.limitRecovery
+      ? [
+          coordinatorThread?.projection.runs.find(
+            (run) => run.id === coordinator.limitRecovery?.runId,
+          )?.providerInstanceId ?? coordinator.providerInstanceId,
+        ]
+      : [],
+  );
   const coordinatorDisplay = coordinatorModelDisplay({
     handPick,
     picked: model ?? null,
@@ -540,20 +555,52 @@ export function ProjectWorkspaceSurface({
     runs: coordinatorThread?.projection.runs,
     latestFailureClass: coordinator?.runtime?.lastErrorClass,
     providers: hostProviders,
-    rule: hostSettings ? resolveProjectSettings(hostSettings, project.id, project).settings : null,
+    rule: coordinatorRule,
     nowMs: Date.now(),
-    // Only a run that stopped on a real usage limit marks its provider limited: the
-    // provider of that run, which a fallback since then has already left.
-    limitedInstanceIds: new Set<string>(
-      coordinator?.limitRecovery
-        ? [
-            coordinatorThread?.projection.runs.find(
-              (run) => run.id === coordinator.limitRecovery?.runId,
-            )?.providerInstanceId ?? coordinator.providerInstanceId,
-          ]
-        : [],
-    ),
+    limitedInstanceIds: limitedCoordinatorInstanceIds,
   });
+  // Where the host sends the next turn, by the same rule it uses: the chip says
+  // "next on <model>" when the model it shows is out of room and that differs.
+  const nextCoordinatorTurn =
+    coordinatorRule && hostProviders && (savedCoordinatorModel ?? model)
+      ? resolveCoordinatorTurnSelection({
+          saved: (savedCoordinatorModel ?? model)!,
+          thread: coordinator?.modelSelection ?? null,
+          providers: hostProviders,
+          rule: coordinatorRule,
+          nowMs: Date.now(),
+          limitedInstanceIds: limitedCoordinatorInstanceIds,
+        }).selection
+      : null;
+  const shownCoordinatorModel = coordinatorDisplay.shown ?? model ?? null;
+  // The models a limit moves the coordinator to, best first, for the limits view.
+  const coordinatorFallbackOrder =
+    coordinatorRule?.providerLimitAction === "switch"
+      ? (coordinatorRule.providerLimitFallbackModels?.length
+          ? coordinatorRule.providerLimitFallbackModels
+          : coordinatorRule.providerLimitFallbackModelSelection
+            ? [coordinatorRule.providerLimitFallbackModelSelection]
+            : []
+        ).map((selection) => ({
+          instanceId: selection.instanceId,
+          label: modelLabel(
+            providerEntries.get(selection.instanceId) ?? null,
+            selection.instanceId,
+            selection.model,
+          ).full,
+        }))
+      : [];
+  const coordinatorNextOnLimit =
+    nextCoordinatorTurn &&
+    shownCoordinatorModel &&
+    (nextCoordinatorTurn.instanceId !== shownCoordinatorModel.instanceId ||
+      nextCoordinatorTurn.model !== shownCoordinatorModel.model)
+      ? modelLabel(
+          providerEntries.get(nextCoordinatorTurn.instanceId) ?? null,
+          nextCoordinatorTurn.instanceId,
+          nextCoordinatorTurn.model,
+        ).model
+      : null;
   const runningFallback = coordinatorDisplay.fallback;
   const coordinatorFallback = runningFallback
     ? {
@@ -665,6 +712,8 @@ export function ProjectWorkspaceSurface({
               switching: switchingBack,
             }
           : null,
+      nextOnLimit: coordinatorNextOnLimit,
+      fallbackOrder: coordinatorFallbackOrder,
       canOperate,
       connected,
       revision,

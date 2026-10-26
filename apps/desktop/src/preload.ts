@@ -437,6 +437,8 @@ contextBridge.exposeInMainWorld("desktopBridge", {
     ipcRenderer.invoke(IpcChannels.SERVICE_UPDATE_INSTALL_CHANNEL, options),
   cancelServiceUpdate: () => ipcRenderer.invoke(IpcChannels.SERVICE_UPDATE_CANCEL_CHANNEL),
   repairServiceUpdateAgent: () => ipcRenderer.invoke(IpcChannels.SERVICE_UPDATE_REPAIR_CHANNEL),
+  postponeAutomaticServiceUpdate: () =>
+    ipcRenderer.invoke(IpcChannels.SERVICE_UPDATE_POSTPONE_CHANNEL),
   serviceUpdateRun: (action) => ipcRenderer.invoke(IpcChannels.SERVICE_UPDATE_RUN_CHANNEL, action),
   requestManagedUpdateConsent: (input) =>
     ipcRenderer.invoke(IpcChannels.MANAGED_UPDATE_CONSENT_CHANNEL, input),

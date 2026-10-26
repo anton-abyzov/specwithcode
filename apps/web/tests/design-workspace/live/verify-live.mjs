@@ -330,8 +330,42 @@ try {
       await page.goto(`${origin}/design`);
       await page.getByTestId("design-gallery").waitFor();
       await until("two cards", async () => (await cards(page).count()) === 2);
-      const owners = await page.getByTestId("design-owner").allTextContents();
-      assert.deepEqual(owners.toSorted(), ["Atlas web", "Playground"]);
+      // 1046 (#667): All defaults to "Group by project": one section per owner, headed by the
+      // owner's name, and the cards in a section drop the owner badge.
+      const sections = page.getByTestId("design-section");
+      const sectionOwners = await sections.evaluateAll((nodes) =>
+        nodes.map((n) => n.dataset.owner),
+      );
+      assert.deepEqual(sectionOwners.toSorted(), ["atlas", "playground"]);
+      const headings = (await sections.locator("h2").allTextContents()).map((t) => t.trim());
+      assert.deepEqual(headings.toSorted(), ["Atlas web", "Playground"]);
+      assert.equal(
+        await page.getByTestId("design-owner").count(),
+        0,
+        "owner badges inside sections",
+      );
+      // "Recent first" lists every card with its owner badge, the pre-1046 contract.
+      await page.getByTestId("design-grouping").click();
+      await page.getByRole("menuitemradio", { name: "Recent first" }).click();
+      // The Arrange menu is a radio group and stays open after a pick (Base UI default).
+      await page.keyboard.press("Escape");
+      await page.getByRole("menuitemradio").first().waitFor({ state: "hidden" });
+      await until(
+        "owner badges",
+        async () => (await page.getByTestId("design-owner").count()) === 2,
+      );
+      // The badge leads with the project's sidebar icon (initials "AW"); compare its label span.
+      const owners = await page
+        .getByTestId("design-owner")
+        .locator("span.truncate")
+        .allTextContents();
+      assert.deepEqual(owners.map((t) => t.trim()).toSorted(), ["Atlas web", "Playground"]);
+      await shot(page, `gallery-recent-${theme}`);
+      await page.getByTestId("design-grouping").click();
+      await page.getByRole("menuitemradio", { name: "Group by project" }).click();
+      await page.keyboard.press("Escape");
+      await page.getByRole("menuitemradio").first().waitFor({ state: "hidden" });
+      await until("sections back", async () => (await sections.count()) === 2);
       const edited = await page.getByTestId("design-edited").allTextContents();
       assert.ok(
         edited.every((text) => /Edited/i.test(text)),
@@ -343,18 +377,21 @@ try {
       assert.ok(sandbox !== null && !sandbox.includes("allow-same-origin"), `sandbox: ${sandbox}`);
       await page.waitForTimeout(600);
       await shot(page, `gallery-${theme}`);
-      await page.getByTestId("design-tab").filter({ hasText: "Playground" }).click();
+      // 1046: the All / Playground / Projects tabs became scope chips (All, Playground, then
+      // one chip per project with designs).
+      const chip = (scope) => page.locator(`[data-testid=design-scope][data-scope="${scope}"]`);
+      await chip("playground").click();
       await until("playground only", async () => (await cards(page).count()) === 1);
       assert.match(await cards(page).first().innerText(), /Loose sketch/);
-      await page.getByTestId("design-tab").filter({ hasText: "Projects" }).click();
-      await until("projects only", async () => (await cards(page).count()) === 1);
+      await chip("atlas").click();
+      await until("atlas only", async () => (await cards(page).count()) === 1);
       assert.match(await cards(page).first().innerText(), /Pricing page/);
-      await page.getByTestId("design-tab").filter({ hasText: "All" }).click();
+      await chip("all").click();
       await page.getByLabel("Search designs").fill("sketch");
       await until("search", async () => (await cards(page).count()) === 1);
       await page.getByLabel("Search designs").fill("");
       await page.getByLabel("List view").click();
-      await page.getByTestId("design-list").waitFor();
+      await page.getByTestId("design-list").first().waitFor();
       await until("two rows", async () => (await page.getByTestId("design-row").count()) === 2);
       await shot(page, `gallery-list-${theme}`);
       await page.getByLabel("Grid view").click();
@@ -421,7 +458,7 @@ try {
   await check("delete asks for confirmation and removes the design", async () => {
     const page = await newPage("light");
     await page.goto(`${origin}/design`);
-    await page.getByTestId("design-tab").filter({ hasText: "Playground" }).click();
+    await page.locator('[data-testid=design-scope][data-scope="playground"]').click();
     await until("playground cards", async () => (await cards(page).count()) === 2);
     await page.getByRole("button", { name: "Actions for Loose sketch" }).click();
     await page.getByRole("menuitem", { name: "Delete" }).click();

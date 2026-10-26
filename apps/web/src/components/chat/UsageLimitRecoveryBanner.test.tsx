@@ -18,6 +18,8 @@ import {
   formatResetIn,
   limitFallbackPairingBannerItem,
   limitPairingRoom,
+  preswitchFallbackDetail,
+  preswitchPairingRoom,
   usageApproachingBannerItem,
   usageLimitRecoveryBannerItem,
 } from "./UsageLimitRecoveryBanner";
@@ -783,4 +785,111 @@ it("lists the rest of the fallback order and disables missing models", async () 
   await act(async () => items[0]!.props.onClick());
   expect(onSol).toHaveBeenCalledOnce();
   expect(onContinue).not.toHaveBeenCalled();
+});
+
+it("says why a pre-switched thread stays on the fallback, or that it goes back by itself", () => {
+  const originalModel = "Claude Opus 5.5";
+  expect(preswitchFallbackDetail({ originalModel, hasRoom: false, returnBlock: null })).toBe(
+    "Claude Opus 5.5 neared its usage limit. The idle thread goes back on its own once it has room.",
+  );
+  expect(preswitchFallbackDetail({ originalModel, hasRoom: true, returnBlock: null })).toBe(
+    "Claude Opus 5.5 neared its usage limit and has room again. The idle thread goes back on its own.",
+  );
+  expect(preswitchFallbackDetail({ originalModel, hasRoom: true, returnBlock: "excluded" })).toBe(
+    "Claude Opus 5.5 neared its usage limit, so this thread moved before its next turn. It stays on the fallback: the original model is excluded from automatic moves.",
+  );
+  expect(
+    preswitchFallbackDetail({ originalModel, hasRoom: true, returnBlock: "per-token" }),
+  ).toContain("billed per token");
+  expect(
+    preswitchFallbackDetail({ originalModel, hasRoom: true, returnBlock: "gemini" }),
+  ).toContain("Gemini and Vertex bill a Cloud project");
+});
+
+it("claims room for a pre-switched thread only below the switch threshold", () => {
+  const nowMs = Date.parse("2026-10-22T14:10:00.000Z");
+  const claude = (usedPercent: number): ServerProvider =>
+    ({
+      instanceId: ProviderInstanceId.make("claudeAgent"),
+      driver: ProviderDriverKind.make("claudeAgent"),
+      enabled: true,
+      installed: true,
+      status: "ready",
+      auth: { status: "authenticated" },
+      checkedAt: "2026-10-22T14:09:00.000Z",
+      version: null,
+      models: [
+        { slug: "claude-opus-5-5", name: "Claude Opus 5.5", isCustom: false, capabilities: null },
+      ],
+      slashCommands: [],
+      skills: [],
+      usageLimits: {
+        checkedAt: "2026-10-22T14:09:00.000Z",
+        windows: [
+          {
+            id: "five-hour",
+            kind: "session",
+            label: "5-hour",
+            usedPercent,
+            resetsAt: "2026-10-22T17:00:00.000Z",
+          },
+        ],
+      },
+    }) as ServerProvider;
+  const rule = {
+    providerLimitAction: "switch" as const,
+    providerLimitSwitchAtPercent: 90,
+    providerLimitWaitUnderMinutes: 0,
+  };
+  const shown = (usedPercent: number, action: "switch" | "ask" = "switch") => {
+    const provider = claude(usedPercent);
+    return preswitchPairingRoom(limitPairingRoom(provider, nowMs, "claude-opus-5-5"), {
+      provider,
+      model: "claude-opus-5-5",
+      rule: { ...rule, providerLimitAction: action },
+      nowMs,
+    });
+  };
+  // At 92% the server keeps the thread on the fallback: no room is claimed.
+  expect(limitPairingRoom(claude(92), nowMs, "claude-opus-5-5")).toEqual({ hasRoom: true });
+  expect(shown(92)).toEqual({ hasRoom: false });
+  expect(shown(90)).toEqual({ hasRoom: false });
+  expect(shown(40)).toEqual({ hasRoom: true });
+  // Under another rule the way back waits only for the limit.
+  expect(shown(92, "ask")).toEqual({ hasRoom: true });
+  const item = (hasRoom: boolean) =>
+    limitFallbackPairingBannerItem({
+      id: "pairing",
+      original: "Claude Code · Opus 5.5",
+      originalModel: "Claude Opus 5.5",
+      resetAt: null,
+      ...shown(hasRoom ? 40 : 92),
+      onBack: vi.fn(),
+      onDismiss: vi.fn(),
+    });
+  expect(item(false)).toBeNull();
+  expect(item(true)!.title).toBe("Claude Opus 5.5 has room again.");
+  expect(
+    preswitchFallbackDetail({ originalModel: "Claude Opus 5.5", ...shown(92), returnBlock: null }),
+  ).toBe(
+    "Claude Opus 5.5 neared its usage limit. The idle thread goes back on its own once it has room.",
+  );
+});
+
+it("says on the pairing banner why a pre-switched thread will not go back by itself", () => {
+  const item = (returnBlock: "excluded" | null) =>
+    limitFallbackPairingBannerItem({
+      id: "pairing",
+      original: "Claude Code · Opus 5.5",
+      originalModel: "Claude Opus 5.5",
+      resetAt: null,
+      hasRoom: true,
+      returnBlock,
+      onBack: vi.fn(),
+      onDismiss: vi.fn(),
+    })!;
+  expect(item("excluded").description).toBe(
+    "It stays on the fallback until you switch back: the original model is excluded from automatic moves.",
+  );
+  expect(item(null).description).toBeUndefined();
 });

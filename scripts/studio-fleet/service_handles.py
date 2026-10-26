@@ -24,9 +24,9 @@ def listeners(port):
 
 DATABASE_FILES = ('statev2.sqlite', 'statev2.sqlite-wal', 'statev2.sqlite-shm')
 DETACHED_DATABASE = ('The SpecWithCode service is using a database log that was deleted from disk. '
-                     'Restart SpecWithCode, then update')
+                     'Press Update now: SpecWithCode saves that log, restarts its background service and then updates')
 LOCKS_LOST = ('The SpecWithCode service lost its SQLite locks on its database. '
-              'Restart SpecWithCode, then update')
+              'Press Update now: SpecWithCode restarts its background service and then updates')
 
 def open_inodes(pid):
     """{path: inode} of the regular files `pid` holds open, from lsof's field output."""

@@ -162,7 +162,7 @@ try {
         for (const el of await entry.locator(".sws-hl-compact-window").all())
           out.push({
             label: (await el.locator(".sws-hl-compact-window-label").textContent()).replace(
-              ", runs out first",
+              ", least left",
               "",
             ),
             value: await el.locator(".sws-hl-compact-value").textContent(),

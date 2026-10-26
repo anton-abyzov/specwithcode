@@ -8,9 +8,9 @@ import {
   type LimitHistoryIndex,
   indexLimitHistory,
 } from "@specweave-studio/shared/usageLimitForecast";
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
-import { readEnvironmentScope } from "../../state/session";
+import { useEnvironmentsWithScope } from "../../state/session";
 import { serverEnvironment } from "../../state/server";
 import { useAtomCommand } from "../../state/use-atom-command";
 
@@ -20,6 +20,10 @@ import { useAtomCommand } from "../../state/use-atom-command";
  * the pooled view shows. Re-read when `refreshKey` changes, which the Usage
  * page advances on refresh. A server too old to record history adds nothing,
  * and the view says it is still collecting.
+ *
+ * An environment's grant is fetched only once its connection is up, so it
+ * often lands after the connection does; the grant is followed, not sampled,
+ * and the history is read again when it arrives.
  *
  * Null until the first read lands, so a loading page does not claim there is
  * no history.
@@ -33,20 +37,32 @@ export function useUsageLimitHistory(
     reportDefect: false,
   });
   const [index, setIndex] = useState<LimitHistoryIndex | null>(null);
-  const environmentsKey = [...environmentIds].sort().join("\n");
+  const requestedKey = [...environmentIds].sort().join("\n");
+  const requested = useMemo(
+    () =>
+      requestedKey === ""
+        ? []
+        : requestedKey.split("\n").map((environmentId) => ({
+            environmentId: environmentId as EnvironmentId,
+          })),
+    [requestedKey],
+  );
+  const permitted = useEnvironmentsWithScope(requested, AuthOrchestrationReadScope);
+  const environmentsKey = requested
+    .map(({ environmentId }) => environmentId)
+    .filter((environmentId) => permitted.has(environmentId))
+    .join("\n");
   useEffect(() => {
     let cancelled = false;
     const ids = environmentsKey === "" ? [] : (environmentsKey.split("\n") as EnvironmentId[]);
     void Promise.all(
-      ids
-        .filter((environmentId) => readEnvironmentScope(environmentId, AuthOrchestrationReadScope))
-        .map((environmentId): Promise<readonly UsageLimitHistorySeries[]> =>
-          Promise.resolve(
-            read({ environmentId, input: { sinceHours: LIMIT_HISTORY_LOOKBACK_HOURS } }),
-          )
-            .then((result) => (result?._tag === "Success" ? result.value.series : []))
-            .catch(() => []),
-        ),
+      ids.map((environmentId): Promise<readonly UsageLimitHistorySeries[]> =>
+        Promise.resolve(
+          read({ environmentId, input: { sinceHours: LIMIT_HISTORY_LOOKBACK_HOURS } }),
+        )
+          .then((result) => (result?._tag === "Success" ? result.value.series : []))
+          .catch(() => []),
+      ),
     ).then((histories) => {
       if (!cancelled) setIndex(indexLimitHistory(histories));
     });

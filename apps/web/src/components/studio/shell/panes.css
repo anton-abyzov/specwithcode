@@ -400,7 +400,9 @@
 .sws-thread-head-chips {
   container: headchips / inline-size;
   flex: 0 1 440px;
-  min-width: 0;
+  /* Never narrower than the model chip's leanest fit (rowModelFit.ts sets it), so the
+     clip below never cuts the provider mark or the fallback glyph. */
+  min-width: var(--sws-model-floor, 0px);
   height: 26px;
   display: flex;
   flex-wrap: wrap;

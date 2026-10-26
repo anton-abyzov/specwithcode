@@ -88,12 +88,18 @@ export function MachineHandoffDialog({
   onMethodChange,
   copyFlow,
   copyBusy = false,
+  copyLocked,
 }: {
   /** How the destination gets the files; the copy methods render `copyFlow` instead. */
   readonly method?: HandoffFolderMethod;
   readonly onMethodChange?: (method: HandoffFolderMethod) => void;
   readonly copyFlow?: ReactNode;
   readonly copyBusy?: boolean;
+  /**
+   * Whether the copy flow must keep the dialog open. Measuring, comparing and copying
+   * keep running on the machines, so only short critical steps lock it. Defaults to `copyBusy`.
+   */
+  readonly copyLocked?: boolean;
   readonly folderPicker?: ReactNode;
   readonly sourceChanges?: HandoffSourceChanges | null;
   readonly rememberMachine?: HandoffRememberMachine | null;
@@ -119,6 +125,7 @@ export function MachineHandoffDialog({
   const target = destinations.find((item) => item.key === selected);
   const copying = copyFlow !== undefined && method !== "folder";
   const busy = copying ? copyBusy : phase === "checking" || phase === "transferring";
+  const locked = copying ? (copyLocked ?? copyBusy) : busy;
   const complete = !copying && phase === "complete";
   // A reviewed preview stays editable until it is published: any change discards it.
   const frozen = busy || (preview !== null && !onBack);
@@ -136,10 +143,10 @@ export function MachineHandoffDialog({
     <Dialog
       open={open}
       onOpenChange={(value) => {
-        if (!busy) onOpenChange(value);
+        if (!locked) onOpenChange(value);
       }}
     >
-      <DialogPopup showCloseButton={!busy} className="w-full sm:max-w-xl">
+      <DialogPopup showCloseButton={!locked} className="w-full sm:max-w-xl">
         <DialogHeader>
           <DialogTitle>{complete ? "Handoff ready" : "Continue on another machine"}</DialogTitle>
           <DialogDescription className="wrap-anywhere">
@@ -335,7 +342,7 @@ export function MachineHandoffDialog({
                 className="min-w-0 flex-1"
                 data-slot="copy-actions-outlet"
               />
-              <Button variant="outline" disabled={busy} onClick={() => onOpenChange(false)}>
+              <Button variant="outline" disabled={locked} onClick={() => onOpenChange(false)}>
                 Close
               </Button>
             </>

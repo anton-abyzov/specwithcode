@@ -19,6 +19,7 @@ import {
   ProjectId,
   CommandId,
   WsRpcGroup,
+  type AuthEnvironmentScope,
 } from "@specweave-studio/contracts";
 import { describe, expect, it } from "@effect/vitest";
 import * as Effect from "effect/Effect";
@@ -363,6 +364,13 @@ it.effect("requires task permission before attaching a prepared worktree to a th
   }).pipe(Effect.scoped),
 );
 
+const designAssetResource = {
+  _tag: "design-asset",
+  owner: { kind: "playground" },
+  designId: "d_abc",
+  asset: `${"a".repeat(64)}.png`,
+} as const;
+
 it.effect("separates host file URLs from readable attachment URLs", () =>
   Effect.gen(function* () {
     const group = WsRpcGroup.omit(
@@ -394,6 +402,7 @@ it.effect("separates host file URLs from readable attachment URLs", () =>
       { _tag: "workspace-file", threadId: ThreadId.make("thread"), path: "file.txt" },
       { _tag: "media-file", threadId: ThreadId.make("thread"), path: "/repo/image.png" },
       { _tag: "draft-workspace-file", cwd: "/repo", path: "file.txt" },
+      designAssetResource,
     ] as const) {
       expect(
         yield* client[WS_METHODS.assetsCreateUrl]({ resource }).pipe(Effect.flip),
@@ -403,6 +412,40 @@ it.effect("separates host file URLs from readable attachment URLs", () =>
       });
     }
     expect(handled).toBe(1);
+  }).pipe(Effect.scoped),
+);
+
+it.effect("mints design image URLs only with filesystem:read, like design.get", () =>
+  Effect.gen(function* () {
+    const group = WsRpcGroup.omit(
+      ...[...WsRpcGroup.requests.keys()].filter(
+        (
+          tag,
+        ): tag is Exclude<keyof typeof RPC_REQUIRED_SCOPES, typeof WS_METHODS.assetsCreateUrl> =>
+          tag !== WS_METHODS.assetsCreateUrl,
+      ),
+    );
+    const makeClient = (scopes: ReadonlyArray<AuthEnvironmentScope>) =>
+      RpcTest.makeClient(group).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            group.toLayerHandler(WS_METHODS.assetsCreateUrl, () =>
+              Effect.succeed({ relativeUrl: "/api/assets/design", expiresAt: 1 }),
+            ),
+            RpcAuthorization.layer(scopes),
+          ),
+        ),
+      );
+    const denied = yield* makeClient([AuthOrchestrationReadScope]);
+    expect(
+      yield* denied[WS_METHODS.assetsCreateUrl]({ resource: designAssetResource }).pipe(
+        Effect.flip,
+      ),
+    ).toMatchObject({ requiredPermission: AuthFilesystemReadScope });
+    const allowed = yield* makeClient([AuthFilesystemReadScope]);
+    expect(
+      yield* allowed[WS_METHODS.assetsCreateUrl]({ resource: designAssetResource }),
+    ).toMatchObject({ relativeUrl: "/api/assets/design" });
   }).pipe(Effect.scoped),
 );
 

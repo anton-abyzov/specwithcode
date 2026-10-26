@@ -15,14 +15,17 @@ import {
 } from "@specweave-studio/contracts";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
 import * as SqlClient from "effect/sql/SqlClient";
 import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
+import { prepareInputFromFlags } from "../cli/servicePrepareUpdate.ts";
 import * as ServerConfig from "../config.ts";
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
 import * as McpSessionRegistryTestkit from "../mcp/McpSessionRegistry.testkit.ts";
@@ -34,6 +37,7 @@ import { resumeAfterHoldReleases } from "../serverRuntimeStartup.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import * as Cleanup from "../serviceUpdate/ServiceUpdateCleanup.ts";
 import * as ServiceUpdateHold from "../serviceUpdate/ServiceUpdateHold.ts";
+import * as Preparation from "../serviceUpdate/ServiceUpdatePreparation.ts";
 import * as ClosedQuestions from "../serviceUpdate/ServiceUpdateClosedQuestions.ts";
 import * as ReopenQuestions from "../serviceUpdate/ServiceUpdateReopenQuestions.ts";
 import * as SourceControlProviderRegistry from "../sourceControl/SourceControlProviderRegistry.ts";
@@ -47,6 +51,7 @@ import * as IdAllocator from "./IdAllocator.ts";
 import * as Orchestrator from "./Orchestrator.ts";
 import type { ProviderAdapterV2Shape } from "./ProviderAdapter.ts";
 import * as ProviderRuntimeRecoveryService from "./ProviderRuntimeRecoveryService.ts";
+import * as ProviderSessionManager from "./ProviderSessionManager.ts";
 import * as ProjectStore from "./ProjectStore.ts";
 import * as ProjectionStore from "./ProjectionStore.ts";
 import { continueRestartedRun, resumeQueueAfterRestart } from "./RestartContinuation.ts";
@@ -1085,5 +1090,144 @@ it.layer(layerTest)("update continuation through real projections", (it) => {
         ["queued", false, undefined],
       );
     }),
+  );
+  // An automatic install that waited too long for running work pauses it the
+  // way Update now does: the agent runs `service prepare-update --stop-work
+  // --hold --reason install`, which sends the very RPC input the desktop's
+  // Update now sends, and the real drain interrupts each turn for the update.
+  // After the restart that turn continues once with its update label and its
+  // cancelled message is queued again; a turn the person stopped stays stopped.
+  it.effect("continues a turn an automatic install paused through the service CLI drain", () =>
+    Effect.gen(function* () {
+      yield* TestClock.setTime(recentTime);
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const name = "automatic-pause";
+      const threadId = yield* startedThread(name);
+      const first = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!.id;
+      yield* markRunning(name, threadId, first);
+      const queuedId = yield* queueMessage(name, threadId, "After the pause.");
+      const personName = "automatic-pause-person";
+      const personThread = yield* startedThread(personName);
+      const personRun = (yield* orchestrator.getThreadProjection(personThread)).runs[0]!.id;
+      yield* markRunning(personName, personThread, personRun);
+      yield* orchestrator.dispatch({
+        type: "run.interrupt",
+        commandId: CommandId.make(`${personName}:interrupt`),
+        threadId: personThread,
+        runId: personRun,
+        reason: "Stopped by the user",
+        cause: "user",
+      });
+
+      // The CLI flags give the input Update now sends (apps/web serviceUpdateFlow.ts).
+      const input = yield* prepareInputFromFlags({
+        stopWork: true,
+        hold: true,
+        releaseHold: false,
+        reason: Option.some("install"),
+      });
+      assert.deepEqual(input, { stopWork: true, hold: true, reason: "install" });
+
+      // The agent is waiting for a quiet moment, so the drain holds the service.
+      const dir = yield* fileSystem.makeTempDirectoryScoped({ prefix: "studio-automatic-pause-" });
+      const agentStatePath = path.join(dir, "state.json");
+      yield* fileSystem.writeFileString(
+        agentStatePath,
+        JSON.stringify({ status: "waiting-for-quiet", installedVersion: "1.0.90" }),
+      );
+      const hold = yield* ServiceUpdateHold.makeWithOptions({ agentStatePath });
+      const released: Array<string> = [];
+      const preparation = yield* Preparation.makeWithTimings({
+        interruptGraceMs: 40,
+        settleMs: 40,
+        effectGraceMs: 40,
+        deadlineMs: 5_000,
+        pollMs: 5,
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            ThreadManagementService.layer,
+            Layer.succeed(ServiceUpdateHold.ServiceUpdateHold, hold),
+            Layer.mock(ProviderSessionManager.ProviderSessionManagerV2)({
+              release: (request) =>
+                Effect.sync(() => {
+                  released.push(request.providerSessionId);
+                }) as never,
+              releaseIdle: () => Effect.succeed(0),
+            }),
+          ),
+        ),
+      );
+      // The drain polls in real time, as it does in the service.
+      const result = yield* TestClock.withLive(preparation.prepare(input));
+      assert.isTrue(result.held);
+      assert.equal(result.holdReason, "install");
+      assert.isTrue(result.idle);
+
+      const causes = (projection: {
+        readonly turnItems: ReadonlyArray<{ readonly type: string; readonly cause?: unknown }>;
+      }) =>
+        projection.turnItems
+          .filter((item) => item.type === "run_interrupt_request")
+          .map((item) => item.cause);
+      const drained = yield* orchestrator.getThreadProjection(threadId);
+      assert.deepEqual(
+        drained.runs.map((run) => [run.id, run.status]),
+        [
+          [first, "interrupted"],
+          [queuedId, "cancelled"],
+        ],
+      );
+      assert.deepEqual(causes(drained), ["service_update"]);
+      const personDrained = yield* orchestrator.getThreadProjection(personThread);
+      assert.deepEqual(
+        personDrained.runs.map((run) => run.status),
+        ["interrupted"],
+      );
+      assert.deepEqual(causes(personDrained), ["user"]);
+
+      // The restart: recovery continues the update's turn once, then requeues.
+      yield* hold.release("cancelled");
+      const outbox = yield* continueAll;
+      const effects = yield* outbox.listByCommandId(
+        CommandId.make(`command:update-continue:${first}`),
+      );
+      assert.deepEqual(
+        effects.map((effect) => effect.request),
+        [{ type: "provider-runtime.continue", sourceRunId: first }],
+      );
+      yield* continueRestartedRun({ threadId, sourceRunId: first });
+      yield* continueRestartedRun({ threadId, sourceRunId: first });
+      yield* resumeQueueAfterRestart({ threadId, effectId: `${name}:1`, releaseHeld: false });
+      yield* continueRestartedRun({ threadId: personThread, sourceRunId: personRun });
+      const after = yield* orchestrator.getThreadProjection(threadId);
+      // The update label: the web names a run continued for an update by this id.
+      assert.deepEqual(
+        after.messages
+          .filter((message) => message.id === `message:update-continuation:${first}`)
+          .map((message) => message.text),
+        ["Continue where you left off."],
+      );
+      const textOf = (messageId: string) =>
+        after.messages.find((message) => message.id === messageId)?.text;
+      assert.deepEqual(
+        after.runs.map((run) => [
+          run.restartContinuationOfRunId === first ? "continuation" : textOf(run.userMessageId),
+          run.status === "queued",
+        ]),
+        [
+          ["Start work.", false],
+          ["After the pause.", false],
+          ["continuation", false],
+          ["After the pause.", true],
+        ],
+      );
+      assert.deepEqual(
+        (yield* orchestrator.getThreadProjection(personThread)).runs.map((run) => run.status),
+        ["interrupted"],
+      );
+    }).pipe(Effect.scoped, Effect.provide(NodeServices.layer)),
   );
 });

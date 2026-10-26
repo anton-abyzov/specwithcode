@@ -89,7 +89,7 @@ with sync_playwright() as p:
     page.set_viewport_size({"width": 1280, "height": 900})
     page.goto("http://127.0.0.1:4394/?folded=1")
     page.wait_for_load_state("networkidle")
-    summary = page.get_by_text("Pair over Tailscale or your network", exact=True)
+    summary = page.get_by_text("Or pair with a private QR code", exact=True)
     expect(summary).to_be_visible()
     check("Folded: pairing button hidden until opened", not page.get_by_role("button", name="Pair a phone", exact=True).is_visible())
     page.screenshot(path=str(out / "folded-closed.png"), full_page=True)

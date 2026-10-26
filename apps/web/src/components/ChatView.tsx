@@ -38,6 +38,8 @@ import {
   canSelectManualFallback,
   fallbackUnavailableReason,
   limitFallbackPairingBannerItem,
+  preswitchFallbackDetail,
+  preswitchPairingRoom,
   limitPairingRoom,
   type FallbackChoice,
   usageApproachingBannerItem,
@@ -244,9 +246,11 @@ import {
   resolveApiCreditSelections,
   describeFallbackOrder,
   resolveProviderFallback,
+  shouldSwitchBeforeTurn,
   usageAtThreshold,
   usageResetAt,
 } from "@specweave-studio/shared/providerFallback";
+import { preswitchReturnBlock } from "@specweave-studio/shared/preswitchReturn";
 import { resolveProviderInstanceDisplayName } from "@specweave-studio/client-runtime/state/provider-instance-display";
 import { isApiCreditAccountDriver } from "./settings/apiCreditAccount";
 import { sourceControlRepositorySelector } from "@specweave-studio/shared/sourceControl";
@@ -10595,6 +10599,7 @@ export default function ChatView(props: ChatViewProps) {
           original: activeThreadShell.modelIdentity.preferred,
           stoppedRunId: `model:${activeThreadShell.modelIdentity.preferred.instanceId}:${activeThreadShell.modelIdentity.preferred.model}`,
           launched: activeThreadShell.modelIdentity.launched === true,
+          preswitched: activeThreadShell.modelIdentity.preswitched === true,
         }
       : null
     : activeThreadShell && serverProjection
@@ -10603,6 +10608,7 @@ export default function ChatView(props: ChatViewProps) {
           serverProjection.runs,
           activeThreadShell.modelSelection,
           serverProjection.thread.launchFallbackFrom,
+          serverProjection.thread.limitPreswitchFrom,
         )
       : null;
   const pairingProvider =
@@ -10653,15 +10659,36 @@ export default function ChatView(props: ChatViewProps) {
               ? provenFallbackSelection(activeThreadShell, activeCoordinatorShell)
               : null,
           );
+          // A pre-switched thread goes back only below the switch threshold, so
+          // the banner and header claim room only then; a pick back stays open.
+          const shownRoom =
+            pairing.preswitched === true
+              ? preswitchPairingRoom(room, {
+                  provider: pairingProvider,
+                  model: pairing.original.model,
+                  rule: limitRule,
+                  nowMs: approachingNowMs,
+                })
+              : room;
           return {
             original: originalLabel.pick,
             originalModel: originalLabel.pickModel,
             launched: pairing.launched === true,
+            canPickBack: room.hasRoom || room.roomUnknown !== undefined,
+            // Why the way back from a usage pre-switch will not move the thread (1075).
+            returnBlock:
+              pairing.preswitched === true
+                ? preswitchReturnBlock(
+                    { modelSelection: pairing.original },
+                    providerStatuses,
+                    limitRule,
+                  )
+                : null,
             resetAt:
               pairingProvider === undefined
                 ? null
                 : usageResetAt(pairingProvider, 100, approachingNowMs, pairing.original.model),
-            ...room,
+            ...shownRoom,
             onBack: () => {
               const threadId = activeThreadShell?.id;
               if (threadId === undefined) return;
@@ -10721,22 +10748,23 @@ export default function ChatView(props: ChatViewProps) {
             : pairingStandIn.roomUnknown
               ? `${pairingStandIn.originalModel} had no room when this thread started. Its room is unknown.`
               : `${pairingStandIn.originalModel} had no room when this thread started. Switch back when it has room.`
-          : pairingStandIn.hasRoom
-            ? `${pairingStandIn.originalModel} hit its usage limit and has room again.`
-            : pairingStandIn.roomUnknown
-              ? `${pairingStandIn.originalModel} hit its usage limit. Its room is unknown.`
-              : pairingResetLabel
-                ? `${pairingStandIn.originalModel} hit its usage limit and resets at ${pairingResetLabel}. The next turn after that goes back on its own.`
-                : `${pairingStandIn.originalModel} hit its usage limit. It has no room yet.`,
+          : pairing?.preswitched === true
+            ? preswitchFallbackDetail(pairingStandIn)
+            : pairingStandIn.hasRoom
+              ? `${pairingStandIn.originalModel} hit its usage limit and has room again.`
+              : pairingStandIn.roomUnknown
+                ? `${pairingStandIn.originalModel} hit its usage limit. Its room is unknown.`
+                : pairingResetLabel
+                  ? `${pairingStandIn.originalModel} hit its usage limit and resets at ${pairingResetLabel}. The next turn after that goes back on its own.`
+                  : `${pairingStandIn.originalModel} hit its usage limit. It has no room yet.`,
         back: {
           label: `Back to ${pairingStandIn.originalModel}`,
           onClick: pairingStandIn.onBack,
-          disabledReason:
-            pairingStandIn.hasRoom || pairingStandIn.roomUnknown
-              ? null
-              : pairingResetLabel
-                ? `Available at ${pairingResetLabel}`
-                : `${pairingStandIn.originalModel} has no room yet`,
+          disabledReason: pairingStandIn.canPickBack
+            ? null
+            : pairingResetLabel
+              ? `Available at ${pairingResetLabel}`
+              : `${pairingStandIn.originalModel} has no room yet`,
         },
       }
     : null;
@@ -14939,6 +14967,66 @@ export default function ChatView(props: ChatViewProps) {
       />
     );
 
+  // Where the server moves this thread's next turn before it starts, by the
+  // same pre-turn rule (ProviderFallbackWorker): the chip says "next on <model>"
+  // only when the rule would really move it.
+  const threadLimitRule = activeProjectSettings.settings;
+  const threadNextTurn = (() => {
+    if (!activeThreadShell || !supportsProviderSwitchingViaHandoff) return null;
+    const from = activeThreadShell.modelSelection;
+    const provider = providerStatuses.find(
+      (candidate) => candidate.instanceId === activeThreadShell.providerInstanceId,
+    );
+    if (
+      !shouldSwitchBeforeTurn({
+        provider,
+        model: from.model,
+        rule: threadLimitRule,
+        nowMs: renderNowMs,
+      })
+    )
+      return null;
+    const target = resolveProviderFallback({
+      providers: providerStatuses,
+      currentInstanceId: activeThreadShell.providerInstanceId,
+      currentModel: from.model,
+      currentOptions: from.options,
+      rule: threadLimitRule,
+      nowMs: renderNowMs,
+      belowPercent: threadLimitRule.providerLimitSwitchAtPercent,
+      anyReady: true,
+      proven: provenFallbackSelection(activeThreadShell, activeCoordinatorShell),
+    });
+    if (target === null) return null;
+    if (target.instanceId === from.instanceId && target.model === from.model) return null;
+    return {
+      from: { instanceId: from.instanceId, model: from.model },
+      label: threadIdentityLabel(
+        providerInstanceEntries.find((entry) => entry.instanceId === target.instanceId) ?? null,
+        target.instanceId,
+        target.model,
+      ).model,
+    };
+  })();
+  // The models a limit moves this thread to, best first, for the limits view.
+  const threadFallbackOrder =
+    threadLimitRule.providerLimitAction === "switch"
+      ? (threadLimitRule.providerLimitFallbackModels?.length
+          ? threadLimitRule.providerLimitFallbackModels
+          : threadLimitRule.providerLimitFallbackModelSelection
+            ? [threadLimitRule.providerLimitFallbackModelSelection]
+            : []
+        ).map((selection) => ({
+          instanceId: selection.instanceId,
+          label: threadIdentityLabel(
+            providerInstanceEntries.find((entry) => entry.instanceId === selection.instanceId) ??
+              null,
+            selection.instanceId,
+            selection.model,
+          ).full,
+        }))
+      : [];
+
   return (
     <div
       ref={workspaceLayoutRef}
@@ -15433,6 +15521,8 @@ export default function ChatView(props: ChatViewProps) {
                               canOperateThread={canOperateThread}
                               reportedModelSelection={reportedModelSelection}
                               limitFallbackFrom={pairing?.original ?? null}
+                              limitNextTurn={threadNextTurn}
+                              limitFallbackOrder={threadFallbackOrder}
                               modelStateHeader={modelStateHeader}
                               multipleModelSelections={multipleModelSelections}
                               supportsMultipleModels={

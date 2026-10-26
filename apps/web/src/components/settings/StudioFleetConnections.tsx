@@ -684,6 +684,31 @@ export function StudioFleetRoster({
             : "No private machines yet. Add a second Mac or your own Linux VPS below."}
         </p>
       )}
+      {!failed && snapshot?.invalidEntries?.length ? (
+        // Skipped lines of the fleet file; every other machine above still loaded.
+        <ul className="divide-y divide-border/60 border-t border-border/60">
+          {snapshot.invalidEntries.map((entry) => (
+            <li
+              key={`invalid-${entry.index}`}
+              className="flex min-w-0 items-start gap-3 px-3 py-2.5 sm:px-4"
+            >
+              <LaptopIcon aria-hidden className="size-4 shrink-0 text-foreground/70" />
+              <div className="min-w-0 flex-1">
+                <h3 className="truncate text-sm">
+                  {entry.label ?? `Machine ${entry.index + 1} in the fleet file`}
+                </h3>
+                <p role="alert" className="text-xs break-words text-muted-foreground">
+                  <span
+                    aria-hidden
+                    className="me-1.5 inline-block size-1.5 rounded-full bg-warning align-middle"
+                  />
+                  {`Invalid entry in fleet config: ${entry.reason}`}
+                </p>
+              </div>
+            </li>
+          ))}
+        </ul>
+      ) : null}
       {snapshot?.machines.length && onAutoConnectChange ? (
         <label
           id={searchableSetting("private-machines-auto-connect").id}
@@ -718,7 +743,8 @@ export function StudioFleetRoster({
               <code className="font-mono">
                 {"specwithcode fleet invite --coordinator '<main-machine-environment-id>'"}
               </code>
-              ) and paste the line.
+              ) and paste the line. For now, letting this machine start work on another one also
+              needs Tailscale on both.
             </span>
             <span className="block text-xs text-muted-foreground">
               {
@@ -777,7 +803,9 @@ export function StudioFleetRoster({
             <span className="min-w-0">
               <span className="block text-sm">Add this machine to another one</span>
               <span className="block text-xs text-muted-foreground">
-                Make a line to paste on your main machine. Both need Tailscale.
+                Make a line to paste on your main machine so it can start work here. For now, that
+                also needs Tailscale on both. Your app and phone can reach this machine through
+                SpecWithCode Connect without Tailscale.
               </span>
             </span>
             <Button
