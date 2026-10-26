@@ -29,6 +29,10 @@ public enum FixtureScenario: String, Sendable, CaseIterable {
   /// or re-registered folder), built from shells as the live engine does;
   /// the drawer shows each unique project once.
   case duplicates
+  /// Like `default`, with simulators and an emulator open in threads on the
+  /// Office Mac and the build box, for the device viewer's chrome. Nothing
+  /// streams: the device hub address leads nowhere.
+  case devices
 
   var isFleet: Bool { self == .fleet || self == .m4Blip || self == .minisBlip }
 }
@@ -163,7 +167,15 @@ public final class FixtureEngine: AppEngine {
       }
     }
     model.threadsByProject = Dictionary(grouping: threads) { $0.projectRef ?? FixtureSample.specweave }
+    if scenario == .devices { model.devices = FixtureSample.devices }
     recompute()
+  }
+
+  public func deviceHubAccess(machineId: String, hostId: String) async throws -> DeviceHubAccess {
+    guard model?.devices[machineId] != nil else { throw SyncError.sendBlocked(MachineDevices.unsupportedMessage) }
+    try await Task.sleep(for: .milliseconds(300))
+    // Port 9 (discard) refuses, so the viewer shows its chrome and then its error state.
+    return DeviceHubAccess(httpBase: "http://127.0.0.1:9/api/device-hub", wsBase: "ws://127.0.0.1:9/api/device-hub", query: ["wsTicket": "fixture", "hostId": hostId])
   }
 
   public func setActive(_ active: Bool) {}
@@ -762,6 +774,14 @@ private enum FixtureSample {
   static let travel = "env-travel-laptop"
 
   static let specweave = ProjectRef(environmentId: studio, projectId: "specweave")
+
+  static let devices: [String: MachineDevices] = [
+    studio: MachineDevices(support: .available, sessions: [
+      DeviceSessionSummary(environmentId: studio, hostId: "local", deviceId: "439CE36F-1D2B-4F0A-9C77-2B1E5A0D6C11", isAndroid: false, name: "iPhone 17 Pro", detail: "iOS 26.0 · Office Mac", threadIds: ["t-release"]),
+      DeviceSessionSummary(environmentId: studio, hostId: "local", deviceId: "emulator-5554", isAndroid: true, name: "Pixel 9", detail: "Android 16 · Office Mac", threadIds: ["t-release", "t-ledger"]),
+    ]),
+    buildBox: MachineDevices(support: .unavailable(MachineDevices.disabledMessage)),
+  ]
   static let verified = ProjectRef(environmentId: studio, projectId: "verified-skill")
   static let recipes = ProjectRef(environmentId: buildBox, projectId: "recipe-app")
   static let docs = ProjectRef(environmentId: travel, projectId: "docs-site")

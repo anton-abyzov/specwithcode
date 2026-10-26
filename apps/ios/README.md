@@ -17,6 +17,7 @@ The design is in [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md). In short, `App/` 
 - Xcode 26.3 or later, with the iOS 26 simulator runtime
 - [XcodeGen](https://github.com/yonaskolb/XcodeGen) (`brew install xcodegen`)
 - macOS 15 or later, which `swift test` needs
+- Node 22 and the repo's `pnpm install`: `make project` bundles the device viewer's stream script (`Tools/generate-device-stream.mjs`) into `App/Generated/`
 
 The `.xcodeproj` is generated from `project.yml` and is not committed.
 
@@ -25,7 +26,7 @@ The `.xcodeproj` is generated from `project.yml` and is not committed.
 Run these from `apps/ios`:
 
 ```sh
-make project                    # xcodegen generate
+make project                    # bundle the device stream script, then xcodegen generate
 make build                      # simulator build into build/DerivedData
 make test-core                  # swift test for SWCKit (wire, transport, sync, features) on macOS
 make test-app SIM_UDID=<udid>   # unit tests of the app shell (App/Tests) on that simulator

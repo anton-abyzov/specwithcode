@@ -1070,6 +1070,23 @@ it.effect("recovery's resume of a derived stop, as a manual continuation, waits 
   }).pipe(Effect.provide(layerTest)),
 );
 
+/** The id the orchestrator gives a run's interrupt request (IdAllocator's `runSignalTurnItem`). */
+const interruptRequestId = (runId: RunId) =>
+  TurnItemId.make(`turn-item:run:${encodeURIComponent(runId)}:signal:interrupt-request`);
+
+/** The run's recorded interrupt requests, as id and cause. */
+const interruptMarkers = (threadId: ThreadId, runId: RunId) =>
+  Effect.gen(function* () {
+    const projections = yield* ProjectionStore.ProjectionStoreV2;
+    const { turnItems } = yield* projections.getThreadRecords(threadId, ["turnItems"], {
+      turnItemTypes: ["run_interrupt_request"],
+      turnItemRunIds: [runId],
+    });
+    return turnItems.flatMap((item) =>
+      item.type === "run_interrupt_request" ? [{ id: item.id, cause: item.cause ?? null }] : [],
+    );
+  });
+
 /** An interrupt request an agent, an update or the watchdog wrote on the limited run. */
 const markInterrupted = (
   threadId: ThreadId,
@@ -1087,7 +1104,7 @@ const markInterrupted = (
       runId: run.id,
       occurredAt: now,
       payload: {
-        id: TurnItemId.make(`turn-item:run:${run.id}:signal:interrupt-request`),
+        id: interruptRequestId(run.id),
         type: "run_interrupt_request",
         threadId,
         runId: run.id,
@@ -1115,11 +1132,18 @@ it.effect("a person's Stop after an agent's or update's interrupt still holds fa
     for (const cause of ["agent", "service_update"] as const) {
       const { threadId, run } = yield* limitStoppedThread(`marked-${cause}`);
       yield* markInterrupted(threadId, run, cause);
+      assert.deepEqual(yield* interruptMarkers(threadId, run.id), [
+        { id: interruptRequestId(run.id), cause },
+      ]);
       yield* orchestrator.dispatch({
         type: "thread.stop",
         commandId: CommandId.make(`stop-own-limit:marked-${cause}`),
         threadId,
       });
+      // The person's Stop replaces the marker: one marker, theirs.
+      assert.deepEqual(yield* interruptMarkers(threadId, run.id), [
+        { id: interruptRequestId(run.id), cause: null },
+      ]);
       const sent = yield* Effect.exit(
         orchestrator.dispatch(fallbackContinuation("limit-fallback", threadId, run.id)),
       );

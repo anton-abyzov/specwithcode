@@ -577,6 +577,16 @@ describe("orchestrator MCP toolkit", () => {
           const capturedTurns = yield* Ref.make<ReadonlyArray<CapturedTurn>>([]);
           const parentTerminalGates = new Map<ThreadId, Deferred.Deferred<void>>();
           const deliveryTerminalGates = new Map<ThreadId, Deferred.Deferred<void>>();
+          // A delivery turn picks its gate when the adapter starts it, which on
+          // a slow runner can be well after its run reads as running. A gate
+          // keyed by the delivery message is fixed before dispatch, so swapping
+          // a thread's gate for the next delivery cannot reach an earlier one.
+          const deliveryMessageGates = new Map<MessageId, Deferred.Deferred<void>>();
+          const terminalGate = (turn: ProviderAdapterV2TurnInput) =>
+            deliveryMessageGates.get(turn.message.messageId) ??
+            (turn.message.text.startsWith("Delegated task")
+              ? deliveryTerminalGates.get(turn.threadId)
+              : parentTerminalGates.get(turn.threadId));
           const layerRegistry = ProviderAdapterRegistry.layerFromAdapters([
             makeDeterministicAdapter({
               instanceId: codexInstanceId,
@@ -590,11 +600,7 @@ describe("orchestrator MCP toolkit", () => {
               capturedTurns,
               shouldComplete: (turn) =>
                 turn.threadId !== parentThreadId && turn.message.text !== cancellationPrompt,
-              terminalGate: (turn) =>
-                turn.message.text.startsWith("Delegated task") ||
-                turn.message.text.startsWith("Delegated tasks")
-                  ? deliveryTerminalGates.get(turn.threadId)
-                  : parentTerminalGates.get(turn.threadId),
+              terminalGate,
               response: (turn) => `Codex completed: ${turn.message.text}`,
             }),
             makeDeterministicAdapter({
@@ -603,11 +609,7 @@ describe("orchestrator MCP toolkit", () => {
               capabilities: ClaudeProviderCapabilitiesV2,
               capturedTurns,
               shouldComplete: (turn) => turn.message.text !== cancellationPrompt,
-              terminalGate: (turn) =>
-                turn.message.text.startsWith("Delegated task") ||
-                turn.message.text.startsWith("Delegated tasks")
-                  ? deliveryTerminalGates.get(turn.threadId)
-                  : parentTerminalGates.get(turn.threadId),
+              terminalGate,
               response: (turn) =>
                 turn.message.text === delegatedPrompt
                   ? delegatedResult
@@ -3723,7 +3725,6 @@ describe("orchestrator MCP toolkit", () => {
             const firstFanoutDeliveryGate = yield* Deferred.make<void>();
             const secondFanoutDeliveryGate = yield* Deferred.make<void>();
             parentTerminalGates.set(fanoutParentThreadId, fanoutParentGate);
-            deliveryTerminalGates.set(fanoutParentThreadId, firstFanoutDeliveryGate);
             yield* Ref.set(continuationOffers, []);
             yield* orchestrator.dispatch({
               type: "thread.create",
@@ -3894,6 +3895,7 @@ describe("orchestrator MCP toolkit", () => {
               return yield* Effect.die(new Error("First fan-out delivery missing."));
             }
             expect(sortedIds(firstFanoutDelivery.taskIds)).toEqual(idsOf(beforeFirstStarts));
+            deliveryMessageGates.set(firstFanoutDelivery.messageId, firstFanoutDeliveryGate);
             yield* dispatchFanoutDelivery("first", firstFanoutDelivery);
             yield* Deferred.succeed(fanoutParentGate, undefined);
             yield* waitForProjection(
@@ -3912,7 +3914,6 @@ describe("orchestrator MCP toolkit", () => {
             expect(fanoutDelivery(pendingDuringFirst)).toEqual(firstFanoutDelivery);
             expectAtMostOneOutstandingDelivery(pendingDuringFirst);
 
-            deliveryTerminalGates.set(fanoutParentThreadId, secondFanoutDeliveryGate);
             yield* Deferred.succeed(firstFanoutDeliveryGate, undefined);
             const secondReserved = yield* waitForProjection(
               orchestrator,
@@ -3947,6 +3948,7 @@ describe("orchestrator MCP toolkit", () => {
               idsOf([...duringFirst, ...beforeSecondStarts]),
             );
             expectAtMostOneOutstandingDelivery(secondJoined);
+            deliveryMessageGates.set(secondFanoutDelivery.messageId, secondFanoutDeliveryGate);
             yield* dispatchFanoutDelivery("second", secondFanoutDelivery);
             yield* waitForProjection(
               orchestrator,
@@ -3964,7 +3966,6 @@ describe("orchestrator MCP toolkit", () => {
             expectAtMostOneOutstandingDelivery(pendingDuringSecond);
 
             // Later deliveries complete as soon as they start.
-            deliveryTerminalGates.delete(fanoutParentThreadId);
             yield* Deferred.succeed(secondFanoutDeliveryGate, undefined);
             const thirdReserved = yield* waitForProjection(
               orchestrator,

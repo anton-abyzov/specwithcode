@@ -463,6 +463,10 @@ public protocol AppEngine: AnyObject {
   func connectRefresh() async
   /// Hands over the APNs device token so the relay can send notifications.
   func connectSetPushToken(_ token: Data)
+
+  /// A fresh ticket for watching a device on a machine's device hub. Each
+  /// (re)connect of the viewer asks again; a ticket lives five minutes.
+  func deviceHubAccess(machineId: String, hostId: String) async throws -> DeviceHubAccess
 }
 
 extension AppEngine {
@@ -498,6 +502,10 @@ extension AppEngine {
   public func connectDeleteAccount() async throws {}
   public func connectRefresh() async {}
   public func connectSetPushToken(_ token: Data) {}
+
+  public func deviceHubAccess(machineId: String, hostId: String) async throws -> DeviceHubAccess {
+    throw SyncError.sendBlocked(MachineDevices.unsupportedMessage)
+  }
 }
 
 /// Everything the UI shows outside an open conversation.
@@ -519,6 +527,8 @@ public final class AppModel {
   public var allShellsLoaded = true
   /// SpecWithCode Connect, nil when this build has no Connect configuration.
   public var connect: ConnectState?
+  /// Open simulators and emulators by machine; missing until a machine answers.
+  public var devices: [String: MachineDevices] = [:]
   public var appearance: AppearancePreference {
     didSet { UserDefaults.standard.set(appearance.rawValue, forKey: "appearance") }
   }
@@ -550,6 +560,11 @@ public final class AppModel {
 
   public func threads(in project: ProjectRef) -> [ThreadSummary] {
     threadsByProject[project] ?? self.project(project).flatMap { threadsByProject[$0.ref] } ?? []
+  }
+
+  /// The devices a thread has open on its machine.
+  public func deviceSessions(for thread: ThreadRef) -> [DeviceSessionSummary] {
+    devices[thread.environmentId]?.sessions(forThread: thread.threadId) ?? []
   }
 
   public func thread(_ ref: ThreadRef) -> ThreadSummary? {

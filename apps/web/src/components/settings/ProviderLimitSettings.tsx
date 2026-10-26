@@ -231,7 +231,7 @@ export function ProviderLimitSettings() {
         mixed={mixedExcluded}
         id="provider-limit-options"
         title="Where a limited thread can continue"
-        description="Every model on this machine, by family, with whether it can take a limited thread now and what access backs it. Exclude a model to keep it out of automatic fallback; to set a family's minimum, exclude the models below it."
+        description="The models on this machine a limited thread could move to, folded by family and grouped by provider, with older versions tucked away. Exclude a model to keep it out of automatic fallback; to set a family's minimum, exclude the models below it."
         status={
           excludedModels.length === 0 && !mixedExcluded
             ? "Nothing excluded"

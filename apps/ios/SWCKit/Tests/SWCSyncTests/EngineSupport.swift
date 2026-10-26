@@ -157,6 +157,8 @@ final class FakeMachine: Sendable {
       case "subscribeServerConfig":
         // As a server: the snapshot, then updates on the open stream.
         return [Self.chunk(id, #"{"version":1,"type":"snapshot","config":\#(configJSON)}"#)]
+      case "subscribeDeviceState":
+        return [Self.chunk(id, Self.deviceStateJSON)]
       case "orchestration.subscribeShell":
         return [Self.chunk(id, FixtureJSON.shellSnapshot), Self.chunk(id, #"{"kind":"synchronized"}"#)]
       case "orchestration.subscribeThread":
@@ -187,6 +189,9 @@ final class FakeMachine: Sendable {
   static func failure(_ id: Int, _ error: String) -> String {
     #"{"_tag":"Exit","requestId":\#(id),"exit":{"_tag":"Failure","cause":[{"_tag":"Fail","error":\#(error)}]}}"#
   }
+
+  /// One simulator that thread `thr_1` opened, as `subscribeDeviceState` sends it.
+  static let deviceStateJSON = #"{"hosts":[{"id":"local","kind":"local","label":"M4"}],"hostStatus":"ready","hostStatuses":{"local":{"status":"ready"}},"devices":[{"hostId":"local","id":"SIM-1","platform":"ios","name":"iPhone Duo","version":"iOS 26.0","booted":true,"physical":false}],"sessions":[{"threadId":"thr_1","hostId":"local","deviceId":"SIM-1","platform":"ios","openedAt":"2026-10-25T08:00:00.000Z"}],"onboardingCompleted":true,"agentAccessEnabled":true,"hubBasePath":"/api/device-hub","revision":3}"#
 
   static func chunk(_ id: Int, _ value: String) -> String {
     #"{"_tag":"Chunk","requestId":\#(id),"values":[\#(value)]}"#

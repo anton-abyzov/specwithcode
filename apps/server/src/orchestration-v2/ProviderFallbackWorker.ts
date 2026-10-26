@@ -1658,9 +1658,13 @@ export const makeSweep = Effect.gen(function* () {
         });
       };
       const trigger = triggerFor(thread, providersFor(thread), resolved, step?.type ?? null, now);
+      // Asked before each target. A Stop made during the fleet probe or an
+      // earlier attempt holds the move: no orchestrator check sits behind it,
+      // so it reads afresh, and an unread Stop holds too.
       const admitHandoff = withCurrentPolicy(thread, (current, rule, currentProject) =>
-        Effect.map(DateTime.now, (clock) => {
-          const at = DateTime.toEpochMillis(clock);
+        Effect.gen(function* () {
+          if (yield* stopHoldsThread(current, true)) return false;
+          const at = DateTime.toEpochMillis(yield* DateTime.now);
           const own = providersFor(current, currentProject);
           const local = providerLimitStep(current, own, rule, at, options)?.type ?? null;
           return triggerFor(current, own, rule, local, at)?.key === trigger?.key;

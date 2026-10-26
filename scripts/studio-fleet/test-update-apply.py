@@ -1052,12 +1052,22 @@ class ApplyRecoveryTests(updater_base.ApplyRecovery):
   with counting:self.execute()
   result=json.loads(self.output.read_text())
   self.assertEqual(result['phase'],'verified');self.assertEqual(self.reused,[])
-  self.assertEqual(reads,[False,False,True])
+  self.assertEqual(reads,[False,False,True]);self.assertIn('prestateReuse',result['timings'])
   self.assertEqual(result['appendedLogRows'],{'orchestration_events':1,'orchestration_command_receipts':1})
   # The receipt says why the prestate re-read went to a full read (this fixture keeps no -wal, so
   # there is no log position; test-update-read-delta.py covers the WAL reasons). The checks before
   # the stop reused that read and missed nothing.
   self.assertEqual(result['readDeltaMisses'],[{'against':'expected','reason':'no-position'}])
+ def test_a_prestate_read_measured_against_the_agent_snapshot_is_not_reused(self):
+  # A write between the agent's snapshot and the before read: the prestate re-read is measured
+  # against the agent's rows, not the before read's, so the check after the gate reads its own.
+  state=self.use_captured_waiting_state();waiting_check(state,'before-the-helper')
+  self.on_stage=lambda:waiting_check(state,'staging')
+  reads,counting=self.counted_full_reads()
+  with counting:self.execute()
+  result=json.loads(self.output.read_text())
+  self.assertEqual(result['phase'],'verified');self.assertEqual(reads,[False,False,False,True])
+  self.assertNotIn('prestateReuse',result['timings'])
  def test_a_held_write_after_the_before_read_is_read_in_full_once(self):
   # M4, 1.0.88: a write during the before read made the prestate check read the 21.5 GB database
   # in full, and the check after the gate read it in full again, past the restart budget. A held
@@ -1066,7 +1076,7 @@ class ApplyRecoveryTests(updater_base.ApplyRecovery):
   reads,counting=self.counted_full_reads()
   with counting,patch.object(update,'_service',return_value=service):self.execute()
   result=json.loads(self.output.read_text())
-  self.assertEqual(result['phase'],'verified');self.assertEqual(reads,[False,False,True])
+  self.assertEqual(result['phase'],'verified');self.assertEqual(reads,[False,False,True]);self.assertIn('prestateReuse',result['timings'])
   self.assertEqual(result['appendedLogRows'],{'orchestration_events':1,'orchestration_command_receipts':1})
  def test_a_held_write_before_the_gate_check_is_not_hidden_by_the_reused_read(self):
   # The prestate re-read is reused only while nothing committed after it: a write during the

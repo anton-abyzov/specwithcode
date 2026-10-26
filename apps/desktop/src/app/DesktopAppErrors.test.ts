@@ -3,6 +3,7 @@ import { assert, describe, it } from "@effect/vitest";
 import {
   DesktopBackendPortUnavailableError,
   DesktopDevelopmentBackendPortRequiredError,
+  DesktopInstalledServiceNotStartedError,
   DesktopLocalServiceUnresponsiveError,
 } from "./DesktopApp.ts";
 
@@ -39,6 +40,16 @@ describe("DesktopApp errors", () => {
     assert.equal(
       new DesktopLocalServiceUnresponsiveError(owner).message,
       "Another SpecWithCode process (pid 4242) owns /Users/a/userdata but does not answer at http://127.0.0.1:8319. Wait for it to finish starting or stop it, then open the app again. Starting a second server on the same data could damage it.",
+    );
+  });
+
+  it("says the projects live in a service that has not started", () => {
+    assert.equal(
+      new DesktopInstalledServiceNotStartedError({
+        stateDir: "/Users/a/.specwithcode/m4/userdata",
+        waitedMinutes: 20,
+      }).message,
+      "The SpecWithCode service that holds your projects (/Users/a/.specwithcode/m4/userdata) is installed but has not started after 20 minutes. The app did not open an empty store in its place. Check it with `specweave-studio triage` or restart the service, then open the app again.",
     );
   });
 

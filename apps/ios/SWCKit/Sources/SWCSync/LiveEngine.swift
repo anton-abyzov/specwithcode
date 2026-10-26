@@ -256,9 +256,11 @@ public final class LiveEngine: AppEngine {
     entry.configTask?.cancel()
     entry.shellTask?.cancel()
     entry.settingsTask?.cancel()
+    entry.deviceTask?.cancel()
     entry.configTask = Task { [weak self] in await self?.loadConfig(entry, socket) }
     entry.shellTask = Task { [weak self] in await self?.subscribeShell(entry, socket) }
     entry.settingsTask = Task { [weak self] in await self?.watchSettings(entry, socket) }
+    entry.deviceTask = Task { [weak self] in await self?.watchDevices(entry, socket) }
     pumpSessions(on: env)
   }
 
@@ -417,6 +419,10 @@ public final class LiveEngine: AppEngine {
     assign(model, \.projects, output.projects)
     assign(model, \.threadsByProject, output.threadsByProject)
     assign(model, \.recentThreads, output.recentThreads)
+    assign(model, \.devices, entries.reduce(into: [:]) { devices, entry in
+      // An offline machine's last state is stale, so it offers no devices.
+      if entry.record.enabled, entry.isOnline, let value = entry.devices { devices[entry.environmentId] = value }
+    })
 
     let loading = !loadingDeadlinePassed && entries.contains { $0.record.enabled && !$0.answered }
     assign(model, \.isLoading, loading)
@@ -522,6 +528,9 @@ final class MachineEntry {
   var configTask: Task<Void, Never>?
   var shellTask: Task<Void, Never>?
   var settingsTask: Task<Void, Never>?
+  var deviceTask: Task<Void, Never>?
+  /// The machine's open devices, from `subscribeDeviceState`.
+  var devices: MachineDevices?
 
   init(record: MachineRecord, connection: MachineConnection) {
     self.environmentId = record.environmentId
@@ -552,5 +561,6 @@ final class MachineEntry {
     configTask?.cancel()
     shellTask?.cancel()
     settingsTask?.cancel()
+    deviceTask?.cancel()
   }
 }

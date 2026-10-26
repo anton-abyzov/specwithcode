@@ -83,6 +83,15 @@ export class DesktopLocalServiceUnresponsiveError extends Schema.TaggedError<Des
   }
 }
 
+export class DesktopInstalledServiceNotStartedError extends Schema.TaggedError<DesktopInstalledServiceNotStartedError>()(
+  "DesktopInstalledServiceNotStartedError",
+  { stateDir: Schema.String, waitedMinutes: Schema.Int },
+) {
+  override get message(): string {
+    return `The SpecWithCode service that holds your projects (${this.stateDir}) is installed but has not started after ${this.waitedMinutes} minutes. The app did not open an empty store in its place. Check it with \`specweave-studio triage\` or restart the service, then open the app again.`;
+  }
+}
+
 export class DesktopDevelopmentBackendPortRequiredError extends Schema.TaggedError<DesktopDevelopmentBackendPortRequiredError>()(
   "DesktopDevelopmentBackendPortRequiredError",
   {},
@@ -227,10 +236,17 @@ const bootstrap = Effect.gen(function* () {
   // of starting a second backend on the same database.
   if (!environment.isDevelopment) {
     const localService = yield* DesktopLocalService.DesktopLocalService;
-    // Waiting for a service update can take minutes: show that, not nothing.
+    // Waiting for a service update or start can take minutes: show that, not nothing.
     const discovery = yield* localService.discover({
       onInstallWait: desktopWindow.showServiceUpdateSplash,
+      onServiceStartWait: desktopWindow.showServiceStartSplash,
     });
+    if (discovery._tag === "service-not-started") {
+      return yield* new DesktopInstalledServiceNotStartedError({
+        stateDir: discovery.stateDir,
+        waitedMinutes: DesktopLocalService.SERVICE_START_WAIT_LIMIT_MINUTES,
+      });
+    }
     if (discovery._tag === "unresponsive") {
       return yield* new DesktopLocalServiceUnresponsiveError({
         pid: discovery.runtime.pid,

@@ -68,6 +68,30 @@ describe("parseStudioInstallation", () => {
     });
   });
 
+  it("records the launchd job that runs the installed service", () => {
+    const receipt = (service: object) =>
+      JSON.stringify({
+        schemaVersion: 1,
+        studioHome: "/Users/a/.specweave-studio/m4",
+        stateDir: "/Users/a/.specweave-studio/m4/userdata",
+        service,
+      });
+    expect(
+      parseStudioInstallation(
+        receipt({ installed: true, domain: "gui/501", label: "com.specweave.studio.m4" }),
+        expected,
+      )?.launchdTarget,
+    ).toBe("gui/501/com.specweave.studio.m4");
+    // Only a well-formed job name reaches launchctl, and only for an installed service.
+    for (const service of [
+      { installed: true, domain: "system", label: "com.specweave.studio.m4" },
+      { installed: true, domain: "gui/501", label: "-x; rm -rf ~" },
+      { installed: false, domain: "gui/501", label: "com.specweave.studio.m4" },
+    ]) {
+      expect(parseStudioInstallation(receipt(service), expected)?.launchdTarget).toBeUndefined();
+    }
+  });
+
   it("ignores receipts that point outside their folder", () => {
     const receipt = (studioHome: string, stateDir: string) =>
       JSON.stringify({ schemaVersion: 1, studioHome, stateDir, service: { installed: true } });

@@ -55,6 +55,7 @@ struct MachineDetailView: View {
   @Environment(StackNavigator.self) private var nav
   @Environment(\.dismiss) private var dismiss
   @State private var confirmRemove = false
+  @State private var deviceViewer: DeviceViewerRoute?
 
   /// Below this many days the pairing gets a warning.
   static let expiryWarningDays = 5
@@ -79,6 +80,7 @@ struct MachineDetailView: View {
         EmptyView()
       }
     }
+    .deviceViewer($deviceViewer)
     .confirmationDialog("Remove \(machine?.displayName ?? "this machine")?", isPresented: $confirmRemove, titleVisibility: .visible) {
       Button("Remove machine", role: .destructive) {
         model.engine.removeMachine(id: machineId)
@@ -119,6 +121,7 @@ struct MachineDetailView: View {
           WeaveRow("Pairing expires", trailingText: Self.expiry(machine.tokenDaysLeft).capitalizedFirst)
         }
       }
+      devices(machine)
       GroupedCard(separatorInset: 56) {
         WeaveRow("Reconnect", symbol: "arrow.clockwise") { model.engine.reconnect(machineId: machine.id) }
         if machine.hasDirectPairing || !machine.viaConnect {
@@ -133,6 +136,35 @@ struct MachineDetailView: View {
     }
     .padding(.horizontal, WeaveSpacing.gutter)
     .padding(.bottom, WeaveSpacing.s8)
+  }
+
+  /// Simulators and emulators threads opened on this machine.
+  @ViewBuilder private func devices(_ machine: MachineSummary) -> some View {
+    if let devices = model.devices[machine.id], machine.status.isOnline {
+      if let message = devices.support.message {
+        GroupedCard(label: "Devices", separatorInset: WeaveSpacing.s4) {
+          WeaveRow("Unavailable", subtitle: message) { EmptyView() } trailing: { EmptyView() }
+        }
+      } else if devices.support == .available {
+        GroupedCard(label: "Devices", footer: devices.sessions.isEmpty ? "Agents open simulators and emulators from their threads. They show here while open." : nil) {
+          if devices.sessions.isEmpty {
+            WeaveRow("No devices open", symbol: "iphone.slash")
+          }
+          ForEach(devices.sessions) { session in
+            WeaveRow(session.name, subtitle: Self.deviceSubtitle(session, machineId: machine.id, model: model), symbol: session.isAndroid ? "candybarphone" : "iphone", showsChevron: true) {
+              deviceViewer = DeviceViewerRoute(machineId: machine.id, key: session.id)
+            }
+            .accessibilityIdentifier("machine.device")
+          }
+        }
+      }
+    }
+  }
+
+  /// "iOS 26.0 · M4 · Release checklist": the OS, host and the threads looking at it.
+  static func deviceSubtitle(_ session: DeviceSessionSummary, machineId: String, model: AppModel) -> String {
+    let threads = session.threadIds.compactMap { model.thread(ThreadRef(environmentId: machineId, threadId: $0))?.title }
+    return ([session.detail].filter { !$0.isEmpty } + threads).joined(separator: " · ")
   }
 
   private func hero(_ machine: MachineSummary) -> some View {

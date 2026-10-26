@@ -62,6 +62,7 @@ if [ -n "${ASC_KEY_ID:-}" ]; then
 fi
 [ -n "${BUILD_NUMBER:-}" ] && args+=(CURRENT_PROJECT_VERSION="$BUILD_NUMBER")
 
+node Tools/generate-device-stream.mjs
 xcodegen generate
 xcb -project SpecWithCode.xcodeproj -scheme SpecWithCode -configuration Release \
   -destination generic/platform=iOS -derivedDataPath "$DERIVED_DATA" \

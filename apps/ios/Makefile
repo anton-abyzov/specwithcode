@@ -7,7 +7,9 @@ DERIVED_DATA ?= build/DerivedData
 
 .PHONY: project build test-core test-app shots fault-shots sim sim-build sim-test sim-smoke sim-run sim-stop
 
+# The device viewer's stream script is bundled from the shared transport first.
 project:
+	node Tools/generate-device-stream.mjs
 	xcodegen generate
 
 build: project
@@ -21,6 +23,7 @@ test-app:
 	@if [ -z "$(SIM_UDID)" ]; then \
 	  echo "usage: make test-app SIM_UDID=<simulator-udid>   (list them: xcrun simctl list devices)" >&2; exit 2; \
 	fi
+	node Tools/generate-device-stream.mjs
 	xcodegen generate
 	xcodebuild -project $(PROJECT) -scheme $(SCHEME) -destination 'platform=iOS Simulator,id=$(SIM_UDID)' -derivedDataPath $(DERIVED_DATA) -only-testing:SpecWithCodeTests test
 

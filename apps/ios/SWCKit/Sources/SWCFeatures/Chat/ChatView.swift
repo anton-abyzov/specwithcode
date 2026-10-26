@@ -34,6 +34,7 @@ private struct ChatScreen: View {
   @State private var confirmDelete = false
   @State private var showingHandoff = false
   @State private var showingIncrement = false
+  @State private var deviceViewer: DeviceViewerRoute?
 
   /// A thread's thinking rows carry its provider's mark; a coordinator chat has no single provider.
   private var thinkingBrand: String? {
@@ -51,6 +52,13 @@ private struct ChatScreen: View {
         }
       }
       .sheet(isPresented: $showingIncrement) { IncrementSheet(target: target) }
+      .deviceViewer($deviceViewer)
+      .task(id: router.pendingDeviceViewer) {
+        // A launch route opens the viewer once this thread is on screen.
+        guard let pending = router.pendingDeviceViewer, pending.machineId == target.threadRef?.environmentId else { return }
+        router.pendingDeviceViewer = nil
+        deviceViewer = pending
+      }
       .onAppear { model.openSession(session) }
       .onDisappear { model.closeSession(session) }
       .task(id: router.pendingComposerFocus) {
@@ -329,6 +337,7 @@ private struct ChatScreen: View {
     let machine = model.machine(ref.environmentId)
     let status = machine?.status.weaveStatus ?? (session.machineOnline ? .online : .offline)
     return HStack(spacing: 0) {
+      deviceButton(ref)
       Button {
         nav.push(.machine(ref.environmentId))
       } label: {
@@ -355,6 +364,39 @@ private struct ChatScreen: View {
     }
     .padding(.horizontal, 2)
     .weaveGlass(in: Capsule(), interactive: true)
+  }
+
+  /// Opens the simulator or emulator this thread has open; a menu when it has several.
+  @ViewBuilder private func deviceButton(_ ref: ThreadRef) -> some View {
+    let sessions = model.deviceSessions(for: ref)
+    let label = Image(systemName: sessions.first?.isAndroid == true && sessions.count == 1 ? "candybarphone" : "iphone")
+      .font(.system(size: 17, weight: .semibold))
+      .foregroundStyle(Color.weave.ink)
+      .frame(width: WeaveSize.minTap, height: WeaveSize.minTap)
+      .contentShape(Rectangle())
+    if sessions.count == 1, let session = sessions.first {
+      Button {
+        deviceViewer = DeviceViewerRoute(machineId: ref.environmentId, key: session.id)
+      } label: { label }
+        .buttonStyle(PressableStyle())
+        .accessibilityLabel("Device, \(session.name)")
+        .accessibilityHint("Shows the device this thread opened")
+        .accessibilityIdentifier("thread.device")
+    } else if sessions.count > 1 {
+      Menu {
+        ForEach(sessions) { session in
+          Button {
+            deviceViewer = DeviceViewerRoute(machineId: ref.environmentId, key: session.id)
+          } label: {
+            Label(session.detail.isEmpty ? session.name : "\(session.name) · \(session.detail)", systemImage: session.isAndroid ? "candybarphone" : "iphone")
+          }
+        }
+      } label: { label }
+        .menuIndicator(.hidden)
+        .buttonStyle(.plain)
+        .accessibilityLabel("Devices, \(sessions.count)")
+        .accessibilityIdentifier("thread.device")
+    }
   }
 
   @ViewBuilder private func threadMenu(_ ref: ThreadRef, summary: ThreadSummary?) -> some View {

@@ -54,7 +54,12 @@ export interface StudioInstallation {
   readonly studioHome: string;
   readonly stateDir: string;
   readonly serviceInstalled: boolean;
+  /** The launchd job (`gui/501/com.specweave.studio.m4`) that runs the service, when recorded. */
+  readonly launchdTarget?: string;
 }
+
+const LAUNCHD_DOMAIN = /^(?:gui|user)\/\d+$/;
+const LAUNCHD_LABEL = /^[A-Za-z0-9][A-Za-z0-9._-]*$/;
 
 /**
  * Parses `<root>/<identity>/installation.json`, where `<root>` is `~/.specwithcode`
@@ -95,12 +100,25 @@ export function parseStudioInstallation(
   ) {
     return null;
   }
-  const service = record.service as { readonly installed?: unknown } | null | undefined;
+  const service = record.service as
+    | { readonly installed?: unknown; readonly domain?: unknown; readonly label?: unknown }
+    | null
+    | undefined;
+  const serviceInstalled = service?.installed === true;
+  const launchdTarget =
+    serviceInstalled &&
+    typeof service?.domain === "string" &&
+    LAUNCHD_DOMAIN.test(service.domain) &&
+    typeof service.label === "string" &&
+    LAUNCHD_LABEL.test(service.label)
+      ? `${service.domain}/${service.label}`
+      : undefined;
   return {
     identity: typeof record.identity === "string" ? record.identity : expected.directoryName,
     studioHome,
     stateDir,
-    serviceInstalled: service?.installed === true,
+    serviceInstalled,
+    ...(launchdTarget === undefined ? {} : { launchdTarget }),
   };
 }
 
