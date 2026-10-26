@@ -7,7 +7,9 @@ import {
   missingFolderOf,
   missingFolderProjects,
   problemIsAbout,
+  otherSystemProblems,
   problemKey,
+  problemShownBeyondItsBoard,
   problemsInScope,
   withMissingFolders,
   withoutMissingFolders,
@@ -80,6 +82,39 @@ describe("missing folders", () => {
         "Playground",
       ),
     ).toEqual([{ ownerLabel: "Playground", detail: "x" }]);
+  });
+
+  it("mentions archived and automated projects only on their own board", () => {
+    const listed = [
+      project("Gone app", { unavailable: "Folder missing" }),
+      project("Old app", { unavailable: "Archived project, not available here" }),
+      project("Web app", { unavailable: "Automated project, not available here" }),
+    ];
+    expect(problems.map((problem) => problemShownBeyondItsBoard(problem, listed))).toEqual([
+      true,
+      false,
+      false,
+    ]);
+    // A project the window does not know, and a working one, still show.
+    expect(problemShownBeyondItsBoard(problems[0]!, [])).toBe(true);
+    expect(problemShownBeyondItsBoard(problems[2]!, [project("Web app")])).toBe(true);
+  });
+
+  it("lists every system problem in Settings except archived and lost-folder lines", () => {
+    const systemProblems = [
+      ...problems,
+      { ownerLabel: "Old app", detail: "matchday: The file is not valid JSON." },
+    ];
+    const owners = [
+      project("Gone app"),
+      project("Old app", { unavailable: "Archived project, not available here" }),
+      project("Web app"),
+    ];
+    // Gone app's lost folder has its own line above the list.
+    expect(otherSystemProblems(systemProblems, owners, [project("Gone app")])).toEqual([
+      problems[2],
+      { ownerLabel: "Old app", detail: "matchday: The file is not valid JSON." },
+    ]);
   });
 
   it("says why a board makes nothing new", () => {

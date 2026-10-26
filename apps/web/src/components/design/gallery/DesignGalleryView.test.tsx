@@ -268,6 +268,37 @@ describe("DesignThumbnail", () => {
     expect(onOpenProjectPage).toHaveBeenCalledWith("key-gone");
   });
 
+  it("leaves archived projects' problems to their own board", () => {
+    const problems = [
+      { ownerLabel: "Old site", detail: "The folder /Users/me/old is missing." },
+      { ownerLabel: "Old site", detail: "d2: The file is not valid JSON." },
+      { ownerLabel: "Web app", detail: "d9: The file is not valid JSON." },
+    ];
+    const projects = [
+      { id: "web" as never, title: "Web app", projectKey: "key-web" },
+      {
+        id: "old" as never,
+        title: "Old site",
+        projectKey: "key-old",
+        unavailable: "Archived project, not available here",
+        missingFolder: "/Users/me/old",
+      },
+    ];
+    const rows = () =>
+      [...container.querySelectorAll('[data-testid="design-problem"]')].map((n) => n.textContent);
+    render({ problems, projects });
+    expect(rows()).toEqual(["Web app: d9: The file is not valid JSON."]);
+    render({ problems, projects, scope: { kind: "projects" } });
+    expect(rows()).toEqual(["Web app: d9: The file is not valid JSON."]);
+    // Its own board says the lost folder once, in the line that turns creation off, and
+    // still lists its other problems.
+    render({ problems, projects, scope: { kind: "project", projectId: "old" as never } });
+    expect(container.querySelector('[data-testid="design-creation-off"]')?.textContent).toContain(
+      "Old site: its folder /Users/me/old is missing.",
+    );
+    expect(rows()).toEqual(["Old site: d2: The file is not valid JSON."]);
+  });
+
   it("turns creation off on an archived or folder-less board and says why", () => {
     const onOpenProjectPage = vi.fn();
     render({

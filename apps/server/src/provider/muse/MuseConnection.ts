@@ -21,7 +21,7 @@ export async function connectMuse(settings: MuseSettings, env: NodeJS.ProcessEnv
         throw new Error("Muse Code handshake timed out");
       }),
     ]);
-    if (host.fingerprintWarning) {
+    if (!museProtocolSupported(host)) {
       await host.close();
       throw new Error(
         `Muse Code ${host.initializeResult.serverInfo.version} speaks a protocol this SpecWithCode build does not support. Update SpecWithCode, then refresh Providers.`,
@@ -38,6 +38,23 @@ export async function connectMuse(settings: MuseSettings, env: NodeJS.ProcessEnv
   } finally {
     timeout.abort();
   }
+}
+
+/** The MSP envelope schema version this integration speaks (SDK `SchemaInfo.version`). */
+const MUSE_ENVELOPE_SCHEMA_VERSION = 1;
+
+/**
+ * A schema fingerprint that differs from the SDK pin is a warning, not a refusal:
+ * the SDK documents it as additive-optional evolution, and the muse launcher
+ * updates itself hourly, so every Muse release moves the fingerprint. Only a
+ * different envelope schema version is a protocol this build cannot speak.
+ */
+export function museProtocolSupported(host: {
+  readonly fingerprintWarning?: unknown;
+  readonly initializeResult: { readonly schema?: { readonly version?: unknown } };
+}): boolean {
+  if (!host.fingerprintWarning) return true;
+  return Number(host.initializeResult.schema?.version) === MUSE_ENVELOPE_SCHEMA_VERSION;
 }
 
 /** Discovery/control RPCs must not leave Refresh Providers or model selection hanging. */

@@ -11,6 +11,7 @@ import {
   machineDetail,
   machineStatus,
   machineUnavailableTitle,
+  reasonNeedsPairing,
   savedMachineStatus,
 } from "./machineStatus";
 
@@ -99,10 +100,14 @@ describe("savedMachineStatus", () => {
     expect(savedMachineStatus(connection, true, true)).toEqual({
       text: "Catching up",
       tone: "muted",
+      reason: null,
+      retryable: false,
     });
     expect(savedMachineStatus(connection, true, false)).toEqual({
-      text: "Can't reach: timed out",
+      text: "Can't reach",
       tone: "error",
+      reason: "timed out",
+      retryable: true,
     });
     expect(savedMachineStatus({ phase: "offline", error: null }, true, true).text).toBe(
       "Catching up",
@@ -110,8 +115,29 @@ describe("savedMachineStatus", () => {
     expect(savedMachineStatus({ phase: "error", error: null }, true, true)).toEqual({
       text: "Connection failed",
       tone: "error",
+      reason: null,
+      retryable: true,
     });
     expect(savedMachineStatus(connection, false, true).text).toBe("Off");
+  });
+  it("keeps the status short and returns the reason apart", () => {
+    const reason =
+      "Approve this device again in SpecWithCode. Create a new pairing code on the receiving machine and sign in again.";
+    const status = savedMachineStatus({ phase: "error", error: reason }, true, false);
+    expect(status.text).toBe("Connection failed");
+    expect(status.reason).toBe(reason);
+  });
+});
+
+describe("reasonNeedsPairing", () => {
+  it("is true only when the machine wants this device paired again", () => {
+    expect(
+      reasonNeedsPairing(
+        "Approve this device again in SpecWithCode. Create a new pairing code on the receiving machine and sign in again.",
+      ),
+    ).toBe(true);
+    expect(reasonNeedsPairing("Failed to fetch environment endpoint")).toBe(false);
+    expect(reasonNeedsPairing(null)).toBe(false);
   });
 });
 

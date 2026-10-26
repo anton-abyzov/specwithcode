@@ -35,7 +35,7 @@ update = updater_base.update  # The update.py module the harness patches.
 # In the order they happen; each receipt holds those done by then.
 PHASES = ['beforeRead', 'backupSpace', 'verifyAndStage', 'prestateCheck', 'swapPointers', 'gateSettle',
           'checkBeforeRestart', 'stop', 'finalCheck', 'serviceStop', 'backupClone', 'restart', 'readinessCheap',
-          'readiness', 'guardedComparison']
+          'readiness', 'keptRelease', 'guardedComparison']
 FAILED = ['untilFailure', 'rollback', 'total']
 PREFLIGHT_KEYS = {'identity', 'phase', 'result', 'error', 'pointers'}
 
@@ -107,7 +107,7 @@ class ApplyTimings(unittest.TestCase):
         self.assertEqual(result['timings'], {
             'beforeRead': 1, 'backupSpace': 0, 'verifyAndStage': 2 + 4, 'prestateCheck': 8, 'swapPointers': 0,
             'gateSettle': settle, 'checkBeforeRestart': 16, 'stop': 32, 'finalCheck': 128, 'serviceStop': 2048,
-            'backupClone': 64, 'restart': 256, 'readinessCheap': 500 + 4096, 'readiness': 512,
+            'backupClone': 64, 'restart': 256, 'readinessCheap': 500 + 4096, 'readiness': 512, 'keptRelease': 0,
             'guardedComparison': 0, 'cleanup': 1024, 'total': round((fixture.clock[0] - start) * 1000)})
         self.assertEqual(result['timings']['total'], 8191 + settle + 500)
 
@@ -120,7 +120,7 @@ class ApplyTimings(unittest.TestCase):
         self.assertEqual((failure['result'], failure['rollback']), ('update-failed', 'restored-runtime-pointers-and-state'))
         self.assertNotIn('rollbackError', failure)
         timings = failure['timings']
-        self.assertEqual(list(timings), PHASES[:PHASES.index('readiness') + 1] + FAILED)
+        self.assertEqual(list(timings), PHASES[:PHASES.index('keptRelease') + 1] + FAILED)
         self.assert_whole_milliseconds(timings)
         self.assertEqual(timings['total'], sum(value for name, value in timings.items() if name != 'total'))
 

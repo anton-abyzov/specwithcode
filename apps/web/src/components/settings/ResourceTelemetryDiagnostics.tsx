@@ -265,7 +265,7 @@ function IconStat({
         {value}
       </div>
       {detail ? (
-        <div className="mt-1.5 truncate text-3xs text-muted-foreground">{detail}</div>
+        <div className="mt-1.5 break-words text-3xs text-muted-foreground">{detail}</div>
       ) : null}
     </div>
   );

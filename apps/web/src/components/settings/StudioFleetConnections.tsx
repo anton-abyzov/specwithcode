@@ -34,12 +34,7 @@ import {
 } from "../../studio/fleetAutoConnect";
 import { useEnvironments } from "../../state/environments";
 import { machineLastSeenAt, useMachineLastSeenVersion } from "../../lib/machineLastSeen";
-import {
-  isThisMachineCatchingUp,
-  lastSeenLabel,
-  machineDetail,
-  machineStatus,
-} from "../../lib/machineStatus";
+import { isThisMachineCatchingUp, lastSeenLabel, machineStatus } from "../../lib/machineStatus";
 import { isThisMachineTarget } from "../../connection/desktopLocal";
 import {
   useClientSettings,
@@ -54,6 +49,7 @@ import { machineHandoff } from "../../studio/machineHandoff";
 import { requestConfirmDialog } from "../../confirmDialog";
 import { FleetInviteArea } from "./FleetInvite";
 import { MachineReadinessChecklist } from "./MachineReadinessChecklist";
+import { ConnectionReason } from "./ConnectionReason";
 import { ProvisionMachineButton } from "./ProvisionMachineSheet";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
@@ -95,8 +91,14 @@ export function StudioListenerRow({
 export interface FleetMachineConnection {
   readonly text: string;
   readonly connected: boolean;
-  /** Why it failed or when it was last seen, when not connected. */
-  readonly detail: string | null;
+  /** "last seen 2h ago", when not connected. */
+  readonly lastSeen: string | null;
+  /** Why it failed and what to do, shown on its own wrapped line. */
+  readonly reason: string | null;
+  /** Retrying now can help, unlike a refused approval. */
+  readonly retryable: boolean;
+  /** "muted" when the reason is not a failure, such as a machine needing an app update. */
+  readonly tone: "error" | "muted";
 }
 const NO_REJECTED_ENVIRONMENTS: ReadonlyArray<string> = [];
 const NO_MACHINE_STATUSES: Readonly<Record<string, FleetMachineConnection>> = {};
@@ -244,16 +246,17 @@ export function StudioFleetConnections({ environmentId, savedEnvironmentIds }: P
     const isThisMachine = isThisMachineTarget(environment.entry);
     const status = machineStatus(environment.connection, true, isThisMachine);
     const connected = environment.connection.phase === "connected";
+    const quiet =
+      connected || (isThisMachine && isThisMachineCatchingUp(environment.connection.phase));
     machineStatuses[environment.environmentId] = {
       text: status.text,
       connected,
-      detail:
-        connected || (isThisMachine && isThisMachineCatchingUp(environment.connection.phase))
-          ? null
-          : machineDetail(
-              lastSeenLabel(machineLastSeenAt(environment.environmentId), Date.now()),
-              status.reason,
-            ) || null,
+      lastSeen: quiet
+        ? null
+        : lastSeenLabel(machineLastSeenAt(environment.environmentId), Date.now()),
+      reason: quiet ? null : status.reason,
+      retryable: status.retryable,
+      tone: environment.connection.phase === "unsupported" ? "muted" : "error",
     };
   }
   const saved = new Set<string>(savedEnvironmentIds);
@@ -555,8 +558,8 @@ export function StudioFleetRoster({
                   : "Unreachable";
             const ok = own ? own.connected : reachable;
             const meta = [
+              own?.lastSeen ?? null,
               current ? "This machine" : saved ? "Saved here" : null,
-              own?.detail ?? null,
               fleetMachineAddress(machine, snapshot.machines),
             ].filter(Boolean);
             return (
@@ -574,14 +577,23 @@ export function StudioFleetRoster({
                         <span className="text-muted-foreground"> · {machine.machineName}</span>
                       ) : null}
                     </h3>
-                    <p className="flex min-w-0 items-center gap-1.5 text-xs text-muted-foreground">
+                    {/* Short facts that wrap rather than cut off; the reason gets its own line below. */}
+                    <p className="text-xs break-words text-muted-foreground">
                       <span
                         aria-hidden
-                        className={`size-1.5 shrink-0 rounded-full ${ok ? "bg-success" : "bg-warning"}`}
+                        className={`me-1.5 inline-block size-1.5 rounded-full align-middle ${ok ? "bg-success" : "bg-warning"}`}
                       />
-                      <span className="shrink-0 text-foreground/80">{status}</span>
-                      <span className="truncate">{meta.map((part) => ` · ${part}`).join("")}</span>
+                      <span className="text-foreground/80">{status}</span>
+                      {meta.map((part) => ` · ${part}`).join("")}
                     </p>
+                    {own?.reason ? (
+                      <ConnectionReason
+                        environmentId={machine.environmentId}
+                        reason={own.reason}
+                        tone={own.tone}
+                        retryable={own.retryable}
+                      />
+                    ) : null}
                   </div>
                   {current || saved ? (
                     <CheckIcon

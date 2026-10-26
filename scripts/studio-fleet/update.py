@@ -1144,6 +1144,8 @@ def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_b
         while True:
             earlier, reads = reads, None  # The page proof's read stands in once; a retry reads in full.
             try:
+                if earlier is None:
+                    kept.clear()  # Lines a decided proof left: a full read needs their memory.
                 after, current_auth, after_carried = _snapshot(identity, capture_auth, before['rows'], reads=earlier) \
                     if earlier else snapshot_since(identity, before['rows'], capture_auth, **widen)
                 if after['servicePid'] != before['servicePid']: break
@@ -1155,6 +1157,8 @@ def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_b
         assert after and after['servicePid'] != before['servicePid'], \
             'Updated service did not become ready within %d s' % max(0, round(ready_by - restarted_at))
         lap('readiness')
+        kept.clear()  # The decided proof's lines, let go after readiness (after_proof.decide).
+        lap('keptRelease')
         assert after['archiveSha256'] == archive_sha and after['artifactSourceCommit'] == manifest['sourceCommit'], 'Updated service is not the intended artifact'
         for row_key, pointer_key in [('launcher', 'launch.sh'), ('wrapper', 'wrapper'), ('installation', 'installation.json')]:
             assert after['fileHashes'][row_key] == progress['expectedNewHashes'][pointer_key], 'Updated pointer differs from the intended artifact'

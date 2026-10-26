@@ -36,10 +36,9 @@ import { designSystemImport } from "~/studio/designSystemImport";
 
 import { DESIGN_FEATURES } from "../design/designFeatures";
 import {
-  missingFolderOf,
   missingFolderProjects,
   missingFolderText,
-  problemIsAbout,
+  otherSystemProblems,
   withMissingFolders,
 } from "../design/gallery/boardOwner";
 import { encodeSystemKey } from "../design/designKey";
@@ -157,7 +156,9 @@ function ConnectedDesignSystems({ environmentId }: { environmentId: EnvironmentI
   );
   const lostFolders = [...missingFolders].flatMap(([projectId, path]) => {
     const project = machineProjects.find((candidate) => candidate.id === projectId);
-    return project === undefined
+    // Archived and automated projects are not working projects; their lost folder is not news here.
+    const owner = ownerProjects.find((candidate) => candidate.id === projectId);
+    return project === undefined || owner?.unavailable !== undefined
       ? []
       : [
           {
@@ -168,11 +169,7 @@ function ConnectedDesignSystems({ environmentId }: { environmentId: EnvironmentI
           },
         ];
   });
-  const otherProblems = (listProblems ?? []).filter(
-    (problem) =>
-      missingFolderOf(problem.detail) === null ||
-      !lostFolders.some((lost) => problemIsAbout(problem, lost)),
-  );
+  const otherProblems = otherSystemProblems(listProblems ?? [], ownerProjects, lostFolders);
   const defaultProjectId =
     offeredProjects(projects).find((project) => project.id === requestedProject)?.id ?? null;
   const threads = useThreadShells();

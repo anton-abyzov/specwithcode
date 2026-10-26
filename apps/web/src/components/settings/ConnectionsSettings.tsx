@@ -105,6 +105,7 @@ import { setFleetEnvironmentSkipped } from "../../studio/fleetAutoConnect";
 import { EnvironmentIconMenu } from "./EnvironmentIconPicker";
 import { RenameMachineDialog } from "./RenameMachineDialog";
 import { useMachineNickname } from "../../studio/machineNickname";
+import { ConnectionReason } from "./ConnectionReason";
 import { EnvironmentRoutesList } from "./EnvironmentRoutesList";
 import { usePreparedConnection } from "~/state/session";
 import {
@@ -1599,9 +1600,8 @@ function SavedBackendListRow({
       environment,
       isConnected && prepared._tag === "Some" ? prepared.value.target : null,
     ),
-    // Last seen before the status: a long connection error is cut off at the end.
-    lastSeen,
     resumingServerUpdate ? "Restarting" : status.text,
+    lastSeen,
     enabled && versionMismatch ? serverVersion : null,
   ]
     .filter((value): value is string => value !== null)
@@ -1678,7 +1678,19 @@ function SavedBackendListRow({
           </button>
         </span>
       }
-      below={<ManagedConnectionUpdates environment={environment} state={serverUpdateState} />}
+      below={
+        <>
+          {status.reason && !resumingServerUpdate ? (
+            <ConnectionReason
+              environmentId={environmentId}
+              reason={status.reason}
+              tone={status.tone}
+              retryable={status.retryable}
+            />
+          ) : null}
+          <ManagedConnectionUpdates environment={environment} state={serverUpdateState} />
+        </>
+      }
       detail={
         routesOpen ? (
           <EnvironmentRoutesList

@@ -59,6 +59,24 @@ def release_manifest(release):
     return manifest
 
 
+def _listing(release):
+    """{path relative to `release`: os.DirEntry} of every file and link beneath it. Links are listed,
+    never followed, so a file reached through a linked folder is not listed at all. One scandir per
+    folder: the pathlib walk and per-file resolve() it replaces took 2.3 s a call on a 7,800-file
+    release, and the readiness check after a restart makes one (October 2026)."""
+    listed, pending = {}, ['']
+    while pending:
+        prefix = pending.pop()
+        with os.scandir(os.path.join(str(release), prefix)) as entries:
+            for entry in entries:
+                name = prefix + entry.name
+                if entry.is_dir(follow_symlinks=False):
+                    pending.append(name + '/')
+                elif entry.is_file(follow_symlinks=False) or entry.is_symlink():
+                    listed[name] = entry
+    return listed
+
+
 def release_verified(release):
     assert release.is_dir() and not release.is_symlink()
     folder = os.lstat(str(release))
@@ -72,23 +90,27 @@ def release_verified(release):
     sealed = (_sha256(manifest_bytes), None if package_bytes is None else _sha256(package_bytes))
     hashed = full = known is None or known['sealed'] != sealed
     trusted_before = time.time_ns() - RACY_NANOSECONDS
-    identities, declared = {}, set()
+    identities, declared, listed = {}, set(), _listing(release)
     for entry in manifest['files']:
-        path = release / entry['path']
-        assert release in path.resolve().parents, 'Artifact path escapes release'
         declared.add(entry['path'])
+        found = listed.get(entry['path'])
+        assert found is not None, 'Artifact path escapes release'
         if entry['type'] == 'symlink':
-            assert path.is_symlink() and os.readlink(path) == entry['target']
+            path = release / entry['path']
+            assert release in path.resolve().parents, 'Artifact path escapes release'
+            assert found.is_symlink() and os.readlink(found.path) == entry['target']
             continue
-        assert path.is_file() and not path.is_symlink()
-        info = os.lstat(str(path))  # Before the read: a write during it shows on the next call.
+        # Listed under real folders only (_listing), so it lies inside the release.
+        assert found.is_file(follow_symlinks=False)
+        info = found.stat(follow_symlinks=False)  # Before the read: a write during it shows on the next call.
         recent = max(info.st_mtime_ns, info.st_ctime_ns) >= trusted_before
         identities[entry['path']] = None if recent else _identity(info)
         recorded = None if full else known['files'].get(entry['path'])
         if recorded is None or recorded != identities[entry['path']]:
             hashed = True
-            assert _sha256(path.read_bytes()) == entry['sha256']
-    assert {str(p.relative_to(release)) for p in release.rglob('*') if p.is_file() or p.is_symlink()} == declared | {'studio-manifest.json'}
+            with open(found.path, 'rb') as handle:
+                assert _sha256(handle.read()) == entry['sha256']
+    assert set(listed) == declared | {'studio-manifest.json'}
     if hashed:
         _VERIFIED[(folder.st_dev, folder.st_ino)] = {'sealed': sealed, 'files': identities}
     return manifest

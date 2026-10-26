@@ -646,8 +646,10 @@ def decide(state, held, kept, reference, since, include_auth, progress, lap):
     """update.py's page proof between readinessCheap and readiness: (rows, auth, carried, capture)
     as update_read._read_state(state, include_auth, since, True) would return them now, or None for
     the full read. progress['afterProof'] gets the record; the 'pageProof' lap is booked when the
-    proof ran. The kept lines are let go either way."""
-    record = {'mode': 'full'}
+    proof ran. The kept lines go now when the full read follows, which needs their memory; when the
+    proof decided they stay for update.py to let go after readiness (kept.clear), since freeing
+    M4's 27 GB of lines took 7 to 9 s."""
+    record, reads = {'mode': 'full'}, None
     try:
         if not isinstance(held, dict) or 'clone' not in held:
             record['reason'] = held.get('reason', 'no-clone') if isinstance(held, dict) else 'no-clone'
@@ -667,7 +669,7 @@ def decide(state, held, kept, reference, since, include_auth, progress, lap):
         return reads
     finally:
         progress['afterProof'] = record
-        if kept is not None:
+        if kept is not None and reads is None:
             kept.clear()
         discard(held)
 
