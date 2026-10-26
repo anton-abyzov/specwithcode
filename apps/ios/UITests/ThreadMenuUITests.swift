@@ -63,7 +63,7 @@ final class ThreadMenuUITests: SWCUITestCase {
     attachScreenshot("Delete confirmation")
     confirm.tap()
 
-    waitFor(text(startingWith: "Needs you"), "Deleting should return to the overview")
+    waitFor(text(startingWith: "Waiting on you"), "Deleting should return to the overview")
     waitForGone(button(startingWith: title), "The deleted thread should leave the overview")
     waitFor(text(startingWith: "Working, 1"))
     attachScreenshot("Overview after delete")

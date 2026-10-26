@@ -251,10 +251,17 @@ struct CloseButton: View {
 }
 
 struct MenuButton: View {
+  @Environment(\.isNavigationSidebarVisible) private var sidebarVisible
   @Environment(AppRouter.self) private var router
 
   var body: some View {
-    WeaveIconButton("line.3.horizontal", label: "Menu") { router.isDrawerOpen = true }
+    // Reserve the header spacing while removing the redundant control.
+    if sidebarVisible {
+      Color.clear.frame(width: WeaveSize.minTap, height: WeaveSize.minTap)
+        .accessibilityHidden(true)
+    } else {
+      WeaveIconButton("line.3.horizontal", label: "Menu") { router.isDrawerOpen = true }
+    }
   }
 }
 

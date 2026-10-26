@@ -5,16 +5,20 @@ import { cn } from "../../lib/utils";
 
 /**
  * Archived projects stay out of Settings lists by default. This collapsed toggle
- * shows them, grayed, for the rare case someone still wants to change one.
+ * shows them, grayed, for the rare case someone still wants to change one. A list
+ * that also keeps automated projects apart names that group with `label`; those are
+ * live, so they are not grayed.
  */
 export function ArchivedDisclosure({
   count,
   children,
   className,
+  label = "archived",
 }: {
   readonly count: number;
   readonly children: ReactNode;
   readonly className?: string;
+  readonly label?: string;
 }) {
   const [open, setOpen] = useState(false);
   const id = useId();
@@ -32,10 +36,15 @@ export function ArchivedDisclosure({
           aria-hidden
           className={cn("size-3.5 transition-transform", open && "rotate-90")}
         />
-        {open ? "Hide archived" : "Show archived"} ({count})
+        {open ? "Hide" : "Show"} {label} ({count})
       </button>
       {open ? (
-        <div id={id} data-archived-projects className="opacity-60">
+        <div
+          id={id}
+          data-archived-projects={label === "archived" ? "" : undefined}
+          data-automated-projects={label === "automated" ? "" : undefined}
+          className={cn(label === "archived" && "opacity-60")}
+        >
           {children}
         </div>
       ) : null}

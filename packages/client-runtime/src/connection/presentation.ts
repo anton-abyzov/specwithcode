@@ -19,6 +19,8 @@ export interface EnvironmentConnectionPresentation {
   readonly traceId: string | null;
   /** Why a connection stopped retrying, when it did ("authentication" is a lost sign-in). */
   readonly blockedReason?: ConnectionBlockedReason;
+  /** The host no longer accepts this device's approval, such as after an update. */
+  readonly reapprovalRequired?: boolean;
 }
 
 export interface EnvironmentPresentation {
@@ -55,7 +57,12 @@ export function presentConnectionState(
         error: state.lastFailure?.message ?? null,
         traceId: state.lastFailure?.traceId ?? null,
         ...(state.lastFailure?._tag === "ConnectionBlockedError"
-          ? { blockedReason: state.lastFailure.reason }
+          ? {
+              blockedReason: state.lastFailure.reason,
+              ...(state.lastFailure.reapprovalRequired === true
+                ? { reapprovalRequired: true }
+                : {}),
+            }
           : {}),
       };
   }

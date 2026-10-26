@@ -50,6 +50,8 @@ public struct MessageBubble: View {
     .frame(maxWidth: .infinity, alignment: .trailing)
     .padding(.leading, 56)
     .accessibilityElement(children: .contain)
+    .accessibilityLabel("Your message")
+    .accessibilityIdentifier("message.user")
   }
 }
 

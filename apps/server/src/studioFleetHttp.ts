@@ -80,7 +80,10 @@ const attempt = <A>(run: () => Promise<A>) =>
       const failure = error instanceof FleetError ? error : new FleetError("config");
       return failure.kind === "forbidden"
         ? new EnvironmentHttpForbiddenError({ message: failure.message })
-        : failure.kind === "unknown-machine"
+        : // The user can act on these: a new invitation from that machine fixes both.
+          failure.kind === "unknown-machine" ||
+            failure.kind === "invitation-limited" ||
+            failure.kind === "reapproval-required"
           ? new EnvironmentHttpBadRequestError({ message: failure.message })
           : new EnvironmentHttpInternalServerError({ message: failure.message });
     },

@@ -160,6 +160,12 @@ export const VcsCreateWorktreeInput = Schema.Struct({
 });
 export type VcsCreateWorktreeInput = typeof VcsCreateWorktreeInput.Type;
 
+/** Recreates a thread's deleted worktree folder from its own branch, at its recorded path. */
+export const VcsRestoreThreadWorkspaceInput = Schema.Struct({
+  threadId: ThreadId,
+});
+export type VcsRestoreThreadWorkspaceInput = typeof VcsRestoreThreadWorkspaceInput.Type;
+
 export const GitPullRequestRefInput = Schema.Struct({
   cwd: TrimmedNonEmptyStringSchema,
   reference: GitPullRequestReference,
@@ -302,6 +308,34 @@ export const VcsCreateWorktreeResult = Schema.Struct({
   worktree: VcsWorktree,
 });
 export type VcsCreateWorktreeResult = typeof VcsCreateWorktreeResult.Type;
+
+export const VcsRestoreThreadWorkspaceStatus = Schema.Literals([
+  /** The folder was recreated from the thread's branch. */
+  "restored",
+  /** The folder is already there; nothing was changed. */
+  "already-present",
+  /**
+   * The thread has no worktree folder or no branch to recreate it from, or
+   * something other than a folder is at its path.
+   */
+  "not-restorable",
+  /** No repository that could own the folder has the thread's branch. */
+  "branch-missing",
+  /** Git refused for another reason (a lock, a checked-out branch). */
+  "failed",
+]);
+export type VcsRestoreThreadWorkspaceStatus = typeof VcsRestoreThreadWorkspaceStatus.Type;
+
+export const VcsRestoreThreadWorkspaceResult = Schema.Struct({
+  status: VcsRestoreThreadWorkspaceStatus,
+  /** The repository the folder was recreated from, or the one that refused. */
+  repository: Schema.optional(TrimmedNonEmptyStringSchema),
+  /** The thread folder's path, once the thread is known to have one. */
+  worktreePath: Schema.optional(TrimmedNonEmptyStringSchema),
+  /** A short sentence to show the user. */
+  message: Schema.String,
+});
+export type VcsRestoreThreadWorkspaceResult = typeof VcsRestoreThreadWorkspaceResult.Type;
 
 export const GitResolvePullRequestResult = Schema.Struct({
   pullRequest: GitResolvedPullRequest,

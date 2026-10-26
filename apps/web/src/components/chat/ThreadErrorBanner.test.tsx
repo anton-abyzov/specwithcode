@@ -225,4 +225,84 @@ describe("ThreadErrorBanner", () => {
       ),
     ).not.toContain("Switch model");
   });
+
+  describe("a missing thread folder", () => {
+    const error =
+      "This thread's workspace folder no longer exists or is not a directory: /w/studio/fix-design. Restore the folder at this path before retrying; switching models will fail the same way.";
+    const outcome = async () => ({ ok: true, message: null });
+    const recovery = (code: string) => ({
+      threadId: "thread-1041",
+      failureItemId: "item:1",
+      code,
+      branch: "fix/design",
+      projectFolder: "/repos/specweave",
+      onRecreate: outcome,
+      onUseProjectFolder: outcome,
+      onResolve: outcome,
+    });
+
+    it("offers recreate, the project folder and resolve, never another model", () => {
+      const markup = renderToStaticMarkup(
+        <ThreadErrorBanner
+          error={error}
+          errorClass="validation_error"
+          onContinue={() => {}}
+          onSwitchModel={() => {}}
+          workspaceMissingRecovery={recovery("workspace_missing")}
+        />,
+      );
+      expect(markup).toContain("Thread folder is missing");
+      expect(markup).not.toContain("Provider error");
+      expect(markup).toContain(">Recreate folder from fix/design</button>");
+      expect(markup).toContain(">Use the project folder</button>");
+      expect(markup).toContain("specweave (/repos/specweave)");
+      expect(markup).toContain(">Resolve thread</button>");
+      expect(markup).not.toContain("Switch model");
+      expect(markup).not.toContain(">Continue</button>");
+    });
+
+    it("offers no recreate once the branch is gone too", () => {
+      const markup = renderToStaticMarkup(
+        <ThreadErrorBanner
+          error={error}
+          errorClass="validation_error"
+          onSwitchModel={() => {}}
+          workspaceMissingRecovery={recovery("workspace_branch_missing")}
+        />,
+      );
+      expect(markup).toContain("Thread folder is missing");
+      expect(markup).not.toContain("Recreate folder");
+      expect(markup).toContain(">Use the project folder</button>");
+      expect(markup).toContain(">Resolve thread</button>");
+      expect(markup).not.toContain("Switch model");
+    });
+
+    it("names the folder and offers no other model to a viewer without actions", () => {
+      const markup = renderToStaticMarkup(
+        <ThreadErrorBanner
+          error={error}
+          errorClass="validation_error"
+          errorCode="workspace_missing"
+          onSwitchModel={() => {}}
+        />,
+      );
+      expect(markup).toContain("Thread folder is missing");
+      expect(markup).not.toContain("Provider error");
+      expect(markup).not.toContain("Switch model");
+      expect(markup).not.toContain("data-workspace-missing-recovery");
+    });
+
+    it("hides recreate without source control access", () => {
+      const { onRecreate: _hidden, ...withoutGit } = recovery("workspace_missing");
+      const markup = renderToStaticMarkup(
+        <ThreadErrorBanner
+          error={error}
+          errorClass="validation_error"
+          workspaceMissingRecovery={withoutGit}
+        />,
+      );
+      expect(markup).not.toContain("Recreate folder");
+      expect(markup).toContain(">Use the project folder</button>");
+    });
+  });
 });

@@ -1140,9 +1140,11 @@ export const SETTINGS_SEARCH_ITEMS = [
   },
   {
     id: "pair-phone",
-    title: "Pair a phone",
+    title: "Pair a phone over Tailscale or your network",
     to: "/settings/connections",
-    searchTerms: ["phone iphone ios mobile app pair pairing qr code scan link connect"],
+    searchTerms: [
+      "phone iphone ios mobile app pair pairing qr code scan link tailscale network direct",
+    ],
   },
   {
     id: "connections-environment",

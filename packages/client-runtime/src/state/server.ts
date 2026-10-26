@@ -1159,6 +1159,12 @@ export function createServerEnvironmentAtoms<R, E>(
           ]),
       },
     }),
+    /** Recorded quota per account, for burn and run-out estimates on the pooled limits view. */
+    usageLimitHistory: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:usage-limits:history",
+      tag: WS_METHODS.usageLimitsHistory,
+      concurrency: { mode: "singleFlight", key: ({ environmentId }) => environmentId },
+    }),
     /** CLIProxyAPI installs on the host's own machine; the reply never carries a key. */
     detectLocalUsageHubs: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:server:detect-local-usage-hubs",

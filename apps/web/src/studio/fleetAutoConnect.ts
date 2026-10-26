@@ -1,6 +1,7 @@
 import {
   type ConnectionCatalogEntry,
   connectionRoutes,
+  type EnvironmentConnectionPresentation,
   routeHttpBaseUrl,
 } from "@specweave-studio/client-runtime/connection";
 import type { EnvironmentId } from "@specweave-studio/contracts";
@@ -73,23 +74,52 @@ export function fleetAttemptsAwaitingRetry(
   );
 }
 
-/** The origins of each saved environment's direct routes, by environment id. */
+/**
+ * Saved machines whose server turned this browser's credential down, such as
+ * "Approve this device again" after an update that drops older approvals.
+ * Pairing again through the fleet replaces that credential.
+ */
+export function rejectedSavedEnvironments(
+  environments: ReadonlyArray<{
+    readonly environmentId: string;
+    readonly connection?: Pick<
+      EnvironmentConnectionPresentation,
+      "phase" | "reapprovalRequired"
+    > | null;
+  }>,
+): ReadonlySet<string> {
+  return new Set(
+    environments
+      .filter(
+        ({ connection }) => connection?.phase === "error" && connection.reapprovalRequired === true,
+      )
+      .map((environment) => environment.environmentId),
+  );
+}
+
+/**
+ * The origins of each saved environment's direct routes, by environment id. A
+ * rejected environment has none, so it reads as not saved and is paired again.
+ */
 export function savedRouteOrigins(
   entries: ReadonlyArray<ConnectionCatalogEntry>,
+  rejected: ReadonlySet<string> = new Set(),
 ): ReadonlyMap<string, ReadonlySet<string>> {
   return new Map(
     entries.map((entry) => [
       entry.target.environmentId,
       new Set(
-        connectionRoutes(entry).flatMap((route) => {
-          const url = routeHttpBaseUrl(route);
-          if (url === null) return [];
-          try {
-            return [new URL(url).origin];
-          } catch {
-            return [];
-          }
-        }),
+        rejected.has(entry.target.environmentId)
+          ? []
+          : connectionRoutes(entry).flatMap((route) => {
+              const url = routeHttpBaseUrl(route);
+              if (url === null) return [];
+              try {
+                return [new URL(url).origin];
+              } catch {
+                return [];
+              }
+            }),
       ),
     ]),
   );

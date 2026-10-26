@@ -26,7 +26,7 @@ skips every stage already done; `--self-test` checks the script itself with stub
    env file into `GOOGLE_OAUTH_ENV_FILE`.
 2. The fleet inventory and key (`~/.local/share/specweave/fleet/`) and the public mirror rules
    (`~/.local/share/specweave/specwithcode-public/rules.json`) must exist.
-3. The first run makes the persistent trees in `~/Projects/github/release.noindex/` (`build`,
+3. The first run makes the persistent trees in `~/.specwithcode/release.noindex/` (`build`,
    `test` and a clone of the public repository; the `.noindex` folder keeps Spotlight out of their
    `node_modules`). The trees stage gives the public clone its own commit identity, the owner's
    GitHub noreply address (`PUBLIC_GIT_NAME` and `PUBLIC_GIT_EMAIL` in release.env override it);

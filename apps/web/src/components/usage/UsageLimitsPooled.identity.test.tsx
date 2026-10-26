@@ -19,7 +19,9 @@ vi.mock("../../state/session", () => ({
   readEnvironmentScope: () => true,
 }));
 vi.mock("../../state/server", () => ({ serverEnvironment: { consumeResetCredit: "consume" } }));
-vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => vi.fn() }));
+// One function for every render, as the real hook memoizes it.
+const command = vi.hoisted(() => () => Promise.resolve(undefined));
+vi.mock("../../state/use-atom-command", () => ({ useAtomCommand: () => command }));
 vi.mock("../../state/presentation", () => ({
   environmentPresentations: { presentationsAtom: "presentations" },
 }));

@@ -1845,6 +1845,36 @@ describe("EnvironmentSupervisor routes", () => {
     }),
   );
 
+  it.effect(
+    "reports a route that needs this device approved again over another that timed out",
+    () =>
+      Effect.gen(function* () {
+        const harness = yield* makeHarness({
+          checkRoute: () => Effect.succeed("answered"),
+          prepare: (_attempt, target) =>
+            target._tag === "RelayConnectionTarget"
+              ? Effect.fail(
+                  new ConnectionBlockedError({
+                    reason: "authentication",
+                    detail: "Approve this device again in SpecWithCode.",
+                    reapprovalRequired: true,
+                  }),
+                )
+              : Effect.fail(transient("LAN socket refused.")),
+        });
+        const supervisor = yield* EnvironmentSupervisor.make(LAN_THEN_RELAY_ENTRY, {
+          initiallyDesired: true,
+        }).pipe(Effect.provide(harness.dependencies));
+
+        // Retrying cannot help; pairing again can, so the machine says so.
+        const state = yield* awaitState(supervisor.state, (value) => value.phase === "blocked");
+        expect(
+          state.lastFailure?._tag === "ConnectionBlockedError" &&
+            state.lastFailure.reapprovalRequired,
+        ).toBe(true);
+      }),
+  );
+
   it.effect("moves back to the LAN route when the network changes and it answers again", () =>
     Effect.gen(function* () {
       const lanReachable = yield* Ref.make(false);

@@ -12,7 +12,9 @@ import { TooltipProvider } from "../../src/components/ui/tooltip";
 import { ToastProvider, AnchoredToastProvider } from "../../src/components/ui/toast";
 import { applyThemePalette } from "../../src/themePalette";
 import "../question-cards/fixture.css";
-const dark = new URLSearchParams(location.search).get("theme") === "dark";
+const params = new URLSearchParams(location.search);
+const dark = params.get("theme") === "dark";
+const folded = params.get("folded") === "1";
 document.documentElement.classList.toggle("dark", dark);
 applyThemePalette("studio-chat", dark ? "dark" : "light");
 const endpoint = (host: string): AdvertisedEndpoint =>
@@ -46,6 +48,7 @@ function App() {
               hasAccessControls
               onPairingLinkCreated={() => setCreated((n) => n + 1)}
               onShowAccessSettings={() => setAccess(true)}
+              folded={folded}
             />
             <aside className="space-x-2 text-xs">
               <button onClick={() => setAddress(endpoint("other.tail.ts.net"))}>

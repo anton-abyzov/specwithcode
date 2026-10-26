@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vite-plus/test";
+import {
+  BearerConnectionProfile,
+  BearerConnectionTarget,
+} from "@specweave-studio/client-runtime/connection";
 import { EnvironmentId } from "@specweave-studio/contracts";
+import * as Option from "effect/Option";
 import type { StudioFleetSnapshot } from "@specweave-studio/contracts/studioFleet";
 import {
   FLEET_RETRY_MS,
@@ -8,6 +13,8 @@ import {
   fleetMachineSaved,
   fleetMachinesToAutoConnect,
   readSkippedFleetEnvironments,
+  rejectedSavedEnvironments,
+  savedRouteOrigins,
   setFleetEnvironmentSkipped,
 } from "./fleetAutoConnect";
 
@@ -198,5 +205,55 @@ describe("automatic private machine connection", () => {
       ),
     ).toBe(true);
     expect(fleetMachineSaved(moved.machines[0]!, saved)).toBe(true);
+  });
+
+  it("pairs a saved machine again when its server turned down this browser's credential", () => {
+    const entry = (environmentId: EnvironmentId, httpBaseUrl: string) => ({
+      target: new BearerConnectionTarget({
+        environmentId,
+        label: environmentId,
+        connectionId: environmentId,
+      }),
+      profile: Option.some(
+        new BearerConnectionProfile({
+          connectionId: environmentId,
+          environmentId,
+          label: environmentId,
+          httpBaseUrl,
+          wsBaseUrl: httpBaseUrl.replace(/^http/, "ws"),
+        }),
+      ),
+      enabled: true,
+    });
+    const rejected = rejectedSavedEnvironments([
+      { environmentId: m1, connection: { phase: "error", reapprovalRequired: true } },
+      // Failing for another reason, such as a revoked session: left to the user.
+      { environmentId: m3, connection: { phase: "error" } },
+      { environmentId: m4, connection: { phase: "connected" } },
+    ]);
+    expect([...rejected]).toEqual([m1]);
+    const origins = savedRouteOrigins(
+      [
+        entry(m1, "https://fixture.tailnet.ts.net:8443"),
+        entry(m3, "https://fixture.tailnet.ts.net:8444"),
+      ],
+      rejected,
+    );
+    expect(
+      ids(
+        fleetMachinesToAutoConnect({
+          snapshot,
+          currentEnvironmentId: m4,
+          savedEnvironmentIds: new Set<string>([m1, m3]),
+          savedRouteOrigins: origins,
+          skippedEnvironmentIds: none,
+          attemptedEnvironmentIds: none,
+        }),
+      ),
+    ).toEqual(["m1"]);
+    // Without a rejection both stay saved at their addresses.
+    expect([
+      ...(savedRouteOrigins([entry(m1, "https://fixture.tailnet.ts.net:8443")]).get(m1) ?? []),
+    ]).toEqual(["https://fixture.tailnet.ts.net:8443"]);
   });
 });

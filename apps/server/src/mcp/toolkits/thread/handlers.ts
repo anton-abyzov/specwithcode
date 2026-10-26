@@ -96,6 +96,15 @@ const writesThread = <P extends { readonly threadId?: ThreadId | undefined }, A,
       }),
   );
 
+/** Thread ids fit the receipt's identity limit; an outside client is named by its label. */
+function deliveryReporter(scope: McpInvocationContext.McpInvocationScope): string {
+  const reporter =
+    scope.thread !== undefined
+      ? `thread:${scope.thread.threadId}`
+      : `client:${scope.client?.label ?? "unknown"}`;
+  return reporter.length <= 500 ? reporter : reporter.slice(0, 500);
+}
+
 export const layer = McpToolAccess.toLayer(ThreadToolkit, {
   run_scheduled_task_now: McpToolAccess.writesEnvironment((input) =>
     Effect.gen(function* () {
@@ -349,6 +358,30 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
       queuedRunId: input.queuedRunId,
       targetRunId: input.targetRunId,
     })),
+  ),
+  studio_thread_record_delivery: writesThread((input) =>
+    Effect.gen(function* () {
+      const { threads, projection, scope } = yield* readThread(input.threadId);
+      if (scope.thread?.threadId === projection.thread.id) {
+        return yield* new OrchestratorMcpFailure({
+          code: "invalid_request",
+          message:
+            "A thread cannot vouch for its own delivery. Another thread, such as the completion owner, verifies and records it.",
+        });
+      }
+      const { threadId: _threadId, expectedRunId, ...report } = input;
+      const result = yield* threads
+        .dispatch({
+          type: "thread.lifecycle-receipt.record",
+          commandId: yield* newCommandId(),
+          threadId: projection.thread.id,
+          runId: expectedRunId,
+          reportedBy: deliveryReporter(scope),
+          report,
+        })
+        .pipe(Effect.mapError(dispatchFailure));
+      return { sequence: result.sequence };
+    }),
   ),
   studio_thread_organize: writesThread((input) =>
     Effect.gen(function* () {

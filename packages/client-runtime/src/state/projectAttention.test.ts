@@ -1,3 +1,4 @@
+import * as DateTime from "effect/DateTime";
 import { describe, expect, it } from "vite-plus/test";
 import type { EnvironmentThreadShell } from "./models.js";
 import {
@@ -69,6 +70,30 @@ describe("project conversation aggregation", () => {
     ]) {
       expect(classifyProjectActions(observeProjectThread({ ...root, ...overrides }))).toEqual([]);
     }
+  });
+  it("clears a subagent's ask when its parent is resolved, unless asked after", () => {
+    const root = thread("root", {
+      settledOverride: "settled",
+      settledAt: "2026-10-23T12:00:00Z",
+    } as Partial<EnvironmentThreadShell>);
+    const aggregate = (sub: EnvironmentThreadShell) =>
+      aggregateProjectAttention({ members: [member], roots: [root], threads: [root, sub] });
+    const stale = aggregate(child("review", "root", { reportedBlocker: "Close 0989?" }));
+    expect(stale.count).toBe(0);
+    expect(stale.roots[0]?.actions).toEqual([]);
+    const fresh = aggregate(
+      child("review", "root", {
+        hasPendingUserInput: true,
+        source: {
+          pendingRuntimeRequest: {
+            id: "ask-after",
+            kind: "user_input",
+            createdAt: DateTime.makeUnsafe("2026-10-23T13:00:00Z"),
+          },
+        },
+      } as unknown as Partial<EnvironmentThreadShell>),
+    );
+    expect(fresh.roots[0]?.actions).toMatchObject([{ threadId: "review", reason: "input" }]);
   });
   it("keeps cached report feedback stale until the host reconnects", () => {
     const root = thread("root", { reportedBlocker: "Choose a signing account?" });

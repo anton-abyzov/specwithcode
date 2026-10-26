@@ -1,7 +1,9 @@
-import type {
-  OrchestrationV2ProviderFailure,
-  OrchestrationV2Run,
-  OrchestrationV2TurnItem,
+import {
+  ORCHESTRATION_V2_WORKSPACE_BRANCH_MISSING_FAILURE_CODE,
+  ORCHESTRATION_V2_WORKSPACE_MISSING_FAILURE_CODE,
+  type OrchestrationV2ProviderFailure,
+  type OrchestrationV2Run,
+  type OrchestrationV2TurnItem,
 } from "@specweave-studio/contracts";
 import * as DateTime from "effect/DateTime";
 
@@ -398,9 +400,23 @@ export function isContextLimitError(message: string): boolean {
   );
 }
 
+/**
+ * A failure whose thread folder is gone: recovery is about the folder (recreate
+ * it, run in the project folder, or resolve), never another model.
+ */
+export function isWorkspaceMissingFailureCode(code: string | null | undefined): boolean {
+  return (
+    code === ORCHESTRATION_V2_WORKSPACE_MISSING_FAILURE_CODE ||
+    code === ORCHESTRATION_V2_WORKSPACE_BRANCH_MISSING_FAILURE_CODE
+  );
+}
+
 export function providerFailureDisplayTitle(
-  failure: Pick<OrchestrationV2ProviderFailure, "class" | "message">,
+  failure: Pick<OrchestrationV2ProviderFailure, "class" | "message"> & {
+    readonly code?: string | null | undefined;
+  },
 ): string {
+  if (isWorkspaceMissingFailureCode(failure.code)) return "Thread folder is missing";
   if (failure.class === "usage_limit") return "Usage limit reached";
   if (isContextLimitError(failure.message)) return "Context limit reached";
   return "Provider error";

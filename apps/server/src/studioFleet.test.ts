@@ -247,4 +247,28 @@ describe("private fleet boundary", () => {
       ),
     ).rejects.toThrow("cannot open sessions");
   });
+  it("says to approve the machine again when its update turned down the saved invitation", async () => {
+    const config = parseFleetConfig(source());
+    // A machine on 1.0.77 or later refuses invitations issued before approvals
+    // named the coordinator, and says so on its session endpoint.
+    const outdated = vi.fn<typeof fetch>(async (url) =>
+      String(url).endsWith("/pairing-token")
+        ? Response.json({ code: "invalid_credential" }, { status: 401 })
+        : String(url).endsWith("/api/auth/session")
+          ? Response.json({
+              authenticated: false,
+              reapprovalRequired: true,
+              message: "Approve this device again in SpecWithCode.",
+            })
+          : Response.json(descriptor("environment-m1")),
+    );
+    await expect(
+      connectFleet(
+        config,
+        "m1",
+        new Set([AuthAccessWriteScope, AuthOrchestrationReadScope]),
+        outdated,
+      ),
+    ).rejects.toThrow("Invite this machine");
+  });
 });

@@ -14,12 +14,6 @@ nonisolated struct DeviceViewerRoute: Identifiable, Hashable, Sendable {
   var id: String { machineId + "\n" + key }
 }
 
-/// Whether the app may turn to landscape. Only the device viewer allows it;
-/// the app delegate reads this for the supported orientations.
-public enum DeviceViewerOrientation {
-  public static var allowsLandscape = false
-}
-
 extension View {
   /// Presents the device viewer full screen while `route` is set.
   func deviceViewer(_ route: Binding<DeviceViewerRoute?>) -> some View {
@@ -107,13 +101,9 @@ struct DeviceViewerScreen: View {
     .persistentSystemOverlays(.hidden)
     .onAppear {
       lastSession = session
-      DeviceViewerOrientation.allowsLandscape = true
-      Self.updateOrientations(portrait: false)
     }
     .onDisappear {
       handle.stop()
-      DeviceViewerOrientation.allowsLandscape = false
-      Self.updateOrientations(portrait: true)
     }
     .onChange(of: liveSession) { _, next in if let next { lastSession = next } }
     .onChange(of: deviceClosed) { _, closed in if closed { fail(closedMessage) } }
@@ -334,16 +324,6 @@ struct DeviceViewerScreen: View {
   /// The bundled stream transport, from `Tools/generate-device-stream.mjs`.
   static let script: String? = Bundle.main.url(forResource: "device-stream", withExtension: "js")
     .flatMap { try? String(contentsOf: $0, encoding: .utf8) }
-
-  static func updateOrientations(portrait: Bool) {
-    for scene in UIApplication.shared.connectedScenes {
-      guard let scene = scene as? UIWindowScene else { continue }
-      scene.windows.first { $0.isKeyWindow }?.rootViewController?.setNeedsUpdateOfSupportedInterfaceOrientations()
-      if portrait, scene.effectiveGeometry.interfaceOrientation != .portrait {
-        scene.requestGeometryUpdate(.iOS(interfaceOrientations: .portrait))
-      }
-    }
-  }
 }
 
 /// Lets the viewer's buttons reach the page.

@@ -1,4 +1,7 @@
-import { isPersonalAssistantProject } from "@specweave-studio/shared/personalAssistant";
+import {
+  isPersonalAssistantProject,
+  PERSONAL_ASSISTANT_PRIVATE_MESSAGE,
+} from "@specweave-studio/shared/personalAssistant";
 import {
   CommandId,
   compareFingerprints,
@@ -119,6 +122,12 @@ export class ProjectLink extends Context.Service<
 
 const fail = (code: ProjectLinkError["code"], detail?: string) =>
   Effect.fail(new ProjectLinkError({ code, ...(detail ? { detail } : {}) }));
+
+/** A personal assistant is never linked, taken over, started or superseded from another machine. */
+const refusePersonal = (project: Pick<Project, "workspaceSettings">) =>
+  isPersonalAssistantProject(project)
+    ? fail("not_code_project", PERSONAL_ASSISTANT_PRIVATE_MESSAGE)
+    : Effect.void;
 
 /** The same listed copy; the folder a member records never decides a match. */
 const sameMember = (a: LogicalProjectMember, b: LogicalProjectMember) =>
@@ -372,7 +381,7 @@ const make = Effect.gen(function* () {
     Effect.gen(function* () {
       const project = yield* load(projectId);
       // Another machine never reads a personal assistant's goal, instructions or notes.
-      if (isPersonalAssistantProject(project)) return yield* fail("not_code_project");
+      yield* refusePersonal(project);
       const member = yield* selfMember(project);
       const { goal, instructions, notes, notesTruncated } = yield* readContent(projectId);
       const binding = project.workspaceSettings?.coordinatorBinding;
@@ -748,6 +757,7 @@ const make = Effect.gen(function* () {
       input.projectId,
       Effect.gen(function* () {
         const project = yield* load(input.projectId);
+        yield* refusePersonal(project);
         const identity = project.workspaceSettings?.logicalProject;
         const binding = project.workspaceSettings?.coordinatorBinding;
         const replica = yield* readReplica(project);
@@ -820,6 +830,7 @@ const make = Effect.gen(function* () {
       input.projectId,
       Effect.gen(function* () {
         const project = yield* load(input.projectId);
+        yield* refusePersonal(project);
         const self = yield* selfMember(project);
         const identity = project.workspaceSettings?.logicalProject;
         const binding: ProjectCoordinatorBinding = project.workspaceSettings
@@ -882,6 +893,7 @@ const make = Effect.gen(function* () {
       input.projectId,
       Effect.gen(function* () {
         const project = yield* load(input.projectId);
+        yield* refusePersonal(project);
         const identity = project.workspaceSettings?.logicalProject;
         const binding = project.workspaceSettings?.coordinatorBinding;
         const replica = yield* readReplica(project);

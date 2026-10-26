@@ -290,6 +290,124 @@ it.effect("binds a launched thread to the increment it names, and refuses a bad 
   }).pipe(Effect.scoped),
 );
 
+it.effect("a coordinator's launch falls back to the host's worker model like delegate_task", () =>
+  Effect.gen(function* () {
+    const root = NodeFS.mkdtempSync(NodePath.join(NodeOS.tmpdir(), "launch-host-default-"));
+    yield* Effect.addFinalizer(() =>
+      Effect.sync(() => NodeFS.rmSync(root, { recursive: true, force: true })),
+    );
+    const sourceThreadId = ThreadId.make("coordinator-thread");
+    const projectId = ProjectId.make("project");
+    const claude = ProviderInstanceId.make("claude");
+    const coordinatorModel = { instanceId: claude, model: "claude-opus" };
+    const ready = {
+      instanceId: claude,
+      driver: "claudeAgent",
+      enabled: true,
+      installed: true,
+      status: "ready",
+      auth: { status: "authenticated" },
+      models: [
+        { slug: "claude-opus", name: "Claude Opus 5.5", isCustom: false, capabilities: null },
+      ],
+    } as unknown as ServerProvider;
+    const caller = {
+      id: sourceThreadId,
+      projectId,
+      title: "Coordinator",
+      branch: null,
+      worktreePath: null,
+      providerInstanceId: claude,
+      modelSelection: coordinatorModel,
+      runtimeMode: "full-access",
+      interactionMode: "default",
+      activeRunId: "active-run",
+      archivedAt: null,
+      deletedAt: null,
+    } as unknown as OrchestrationV2ThreadShell;
+    const launched: ThreadLaunch.ThreadLaunchInput[] = [];
+    const layerDependencies = (providers: ReadonlyArray<ServerProvider>) =>
+      Layer.mergeAll(
+        NodeCrypto.layer,
+        Layer.succeed(McpInvocationContext.McpInvocationContext, {
+          environmentId: EnvironmentId.make("environment"),
+          requestNamespace: "session",
+          thread: {
+            threadId: sourceThreadId,
+            providerSessionId: "session",
+            providerInstanceId: claude,
+          },
+          client: undefined,
+          issuedAt: 0,
+          capabilities: new Set(["orchestration" as const]),
+        }),
+        Layer.mock(ThreadManagement.ThreadManagementService)({
+          getThreadShell: () => Effect.succeed(caller),
+        }),
+        Layer.mock(ThreadLaunch.ThreadLaunchService)({
+          launch: (input) => {
+            launched.push(input);
+            return Effect.succeed({
+              threadId: input.threadId,
+              projection: {
+                thread: { id: input.threadId, projectId, modelSelection: input.modelSelection },
+                runs: [],
+              },
+              resumed: false,
+            } as unknown as ThreadLaunch.ThreadLaunchResult);
+          },
+        }),
+        Layer.mock(Project.ProjectService)({
+          getById: (id) =>
+            Effect.succeed(
+              Option.some(
+                projectFixture(id, {
+                  workspaceRoot: root,
+                  defaultModelSelection: null,
+                  workspaceSettings: {
+                    ...DEFAULT_PROJECT_WORKSPACE_SETTINGS,
+                    coordinatorThreadId: sourceThreadId,
+                  },
+                }),
+              ),
+            ),
+        }),
+        Layer.mock(ManagedProjectFolders.ManagedProjectFolders)({ namedProjectsRoot: "/projects" }),
+        Layer.mock(GitVcsDriver.GitVcsDriver)({}),
+        Layer.mock(ProviderRegistry.ProviderRegistry)({ getProviders: Effect.succeed(providers) }),
+        NodeServices.layer,
+        ServerConfig.layerTest(process.cwd(), { prefix: "studio-launch-host-default-" }).pipe(
+          Layer.provide(NodeServices.layer),
+        ),
+      );
+    const launch = (providers: ReadonlyArray<ServerProvider>) =>
+      Effect.gen(function* () {
+        const dependencies = layerDependencies(providers);
+        const toolkit = yield* ProjectToolkit.pipe(
+          Effect.provide(
+            McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(
+              Layer.provide(dependencies),
+            ),
+          ),
+        );
+        return yield* toolkit
+          .handle("studio_thread_launch", { title: "Docs", message: "Update the docs." })
+          .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
+      });
+
+    // No project worker model: the host's default worker model is used, not a refusal.
+    yield* launch([ready]);
+    expect(launched[0]?.modelSelection).toMatchObject({ instanceId: claude, model: "claude-opus" });
+    // With no usable provider either, the coordinator is asked to name one.
+    const refused = yield* launch([]);
+    expect(refused.at(-1)?.result).toMatchObject({
+      code: "invalid_request",
+      message: expect.stringContaining("Pass modelSelection"),
+    });
+    expect(launched).toHaveLength(1);
+  }).pipe(Effect.scoped),
+);
+
 it.effect("launches a scratch thread into the Scratch project", () =>
   Effect.gen(function* () {
     const sourceThreadId = ThreadId.make("source-thread");

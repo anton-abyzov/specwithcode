@@ -110,6 +110,7 @@ import * as RemoteWorkers from "./fleet/RemoteWorkers.ts";
 import * as MachineLimitHandoff from "./orchestration-v2/MachineLimitHandoff.ts";
 import * as DeviceSignInHttp from "./auth/deviceSignInHttp.ts";
 import * as ProviderUsageLimitsIngestion from "./provider/ProviderUsageLimitsIngestion.ts";
+import * as UsageLimitHistory from "./usage/UsageLimitHistory.ts";
 import * as UsageLimitSources from "./usage/UsageLimitSources.ts";
 import * as ProjectFaviconResolver from "./project/ProjectFaviconResolver.ts";
 import * as StudioProjectFileLoader from "./project/StudioProjectFileLoader.ts";
@@ -729,6 +730,8 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   // Subscribes to `account.rate-limits.updated` so usage bars track live
   // telemetry instead of waiting for the next status probe.
   ProviderUsageLimitsIngestion.layer,
+  // Quota over time for burn rates and run-out estimates on the pooled limits view.
+  UsageLimitHistory.layer,
   layerProviderInstallationRefresh,
   // Turns on default-off providers whose CLI is already installed and signed in.
   ProviderDiscovery.layer,

@@ -182,6 +182,7 @@ import {
   threadWokeAt,
 } from "@specweave-studio/client-runtime/state/thread-settled";
 import { useAcknowledgeThreadWoke, useThreadActions } from "../hooks/useThreadActions";
+import { useWorkspaceMissingRecovery } from "./chat/useWorkspaceMissingRecovery";
 import {
   deriveProviderSubagentStatus,
   providerSubagentWorkActive,
@@ -643,6 +644,7 @@ import {
 import { queuedRunActionsUnavailableReason } from "./chat/queuedRunSummary";
 import { useLinkedThreadPullRequest } from "./ThreadStatusIndicators";
 import type { ComposerBannerStackItem } from "./chat/ComposerBannerStack";
+import { lifecycleDeliveryBannerItem } from "./chat/LifecycleDeliveryBanner";
 import {
   COMPUTER_USE_PERMISSION_COPY,
   ComputerUsePermissionWaitNotice,
@@ -9124,6 +9126,14 @@ function useChatViewActions(
     projectedThread,
   ]);
   const settledNote = activeThreadSettled ? (serverProjection?.thread.settledNote ?? null) : null;
+  const deliveryBannerItem = useMemo(
+    () =>
+      lifecycleDeliveryBannerItem(serverProjection, {
+        settled: activeThreadSettled,
+        nowMs: Date.parse(`${nowMinute}:00Z`),
+      }),
+    [activeThreadSettled, nowMinute, serverProjection],
+  );
   const parkedThreadBannerItem = useMemo<ComposerBannerStackItem | null>(() => {
     if (!activeThreadSnoozed && !activeThreadSettled) {
       return null;
@@ -9506,6 +9516,7 @@ function useChatViewActions(
     openChangesFromThreadPanel,
     openFileSurface,
     openProviderSetup,
+    deliveryBannerItem,
     parkedThreadBannerItem,
     threadMoveBannerItem,
     pendingTimelineAnchorRef,
@@ -10061,6 +10072,7 @@ export default function ChatView(props: ChatViewProps) {
     openChangesFromThreadPanel,
     openFileSurface,
     openProviderSetup,
+    deliveryBannerItem,
     parkedThreadBannerItem,
     threadMoveBannerItem,
     pendingTimelineAnchorRef,
@@ -10150,20 +10162,23 @@ export default function ChatView(props: ChatViewProps) {
   // message. Both reuse the composer's own resume and picker.
   const continueBusy =
     isSendBusy || isResuming || isConnecting || threadDetailLoading || isRevertingCheckpoint;
+  // Only the failed latest run's root failure owns recovery actions; a failed
+  // item inside a turn that went on, or in an older run, does not. Its code
+  // also names the banner for viewers who can't act on it.
+  const latestFailureItem = useMemo(() => {
+    const failedRun = serverProjection?.runs.find(
+      (run) => run.id === activeActivityRun?.runId && run.status === "failed",
+    );
+    return failedRun ? latestRootProviderFailureItem(failedRun, serverProjection!.turnItems) : null;
+  }, [serverProjection, activeActivityRun?.runId]);
   const failureRecovery = useMemo(() => {
     if (!canOperateThread || !isServerThread || suspendChatInput || !composerMounted) {
       return undefined;
     }
-    // Only the failed latest run's root failure owns these actions; a failed
-    // item inside a turn that went on, or in an older run, does not.
-    const failedRun = serverProjection?.runs.find(
-      (run) => run.id === activeActivityRun?.runId && run.status === "failed",
-    );
-    const failureItemId = failedRun
-      ? (latestRootProviderFailureItem(failedRun, serverProjection!.turnItems)?.id ?? null)
-      : null;
+    const failureItem = latestFailureItem;
     return {
-      failureItemId,
+      failureItemId: failureItem?.id ?? null,
+      failureCode: failureItem?.failure.code ?? null,
       continueRunId: resumableRunId,
       onContinue: () => resumeForAppCommandRef.current(),
       continueBusy,
@@ -10174,13 +10189,52 @@ export default function ChatView(props: ChatViewProps) {
     isServerThread,
     suspendChatInput,
     composerMounted,
-    serverProjection,
-    activeActivityRun?.runId,
+    latestFailureItem,
     resumableRunId,
     resumeForAppCommandRef,
     continueBusy,
     composerRef,
   ]);
+  const resolveActiveThread = useMemo(
+    () =>
+      supportsSettlement && activeThreadTarget ? () => settleThread(activeThreadTarget) : null,
+    [supportsSettlement, activeThreadTarget, settleThread],
+  );
+  // Like the composer's Resume: queued requests keep their own model.
+  const resumeHeldQueueForRecovery = useCallback(
+    (threadId: ThreadId) =>
+      resumeQueueWithProjectModel(
+        projectRouting,
+        undefined,
+        () =>
+          appAtomRegistry.get(
+            environmentThreadDetails.threadAtom(scopeThreadRef(environmentId, threadId)),
+          )?.projection.runs ?? null,
+        () => resumeThreadQueue({ environmentId, input: { threadId } }),
+      ),
+    [projectRouting, environmentId, resumeThreadQueue],
+  );
+  // A deleted thread folder replaces Continue and Switch model with its own repairs.
+  const workspaceMissingRecovery = useWorkspaceMissingRecovery({
+    environmentId,
+    threadId: activeThread?.id ?? null,
+    failureItemId: failureRecovery?.failureItemId ?? null,
+    failureCode: failureRecovery?.failureCode ?? null,
+    worktreePath: activeThread?.worktreePath ?? null,
+    branch: activeThread?.branch ?? null,
+    projectFolder: activeProject?.workspaceRoot ?? null,
+    enabled: failureRecovery !== undefined,
+    canWriteSourceControl,
+    resolveThread: resolveActiveThread,
+    resumeHeldQueue: resumeHeldQueueForRecovery,
+  });
+  const timelineFailureRecovery = useMemo(
+    () =>
+      failureRecovery && workspaceMissingRecovery
+        ? { ...failureRecovery, workspaceMissing: workspaceMissingRecovery }
+        : failureRecovery,
+    [failureRecovery, workspaceMissingRecovery],
+  );
   // Starts the thread over on another machine from a written handoff: when
   // this one's provider hit its limit, or this machine can't be reached. A
   // chat without a project gets a new chat folder there, never a worktree.
@@ -10771,9 +10825,11 @@ export default function ChatView(props: ChatViewProps) {
     const wokeThreadItems = wokeThreadBannerItem === null ? [] : [wokeThreadBannerItem];
     const computerUseItems =
       computerUsePermissionBannerItem === null ? [] : [computerUsePermissionBannerItem];
-    const parkedThreadItems = [threadMoveBannerItem, parkedThreadBannerItem].filter(
-      (item) => item !== null,
-    );
+    const parkedThreadItems = [
+      threadMoveBannerItem,
+      deliveryBannerItem,
+      parkedThreadBannerItem,
+    ].filter((item) => item !== null);
     // The user asked for this one, so it leads the notice tier instead of trailing it.
     const usageLimitsItems = usageLimitsBanner === null ? [] : [usageLimitsBanner];
     const projectCloneItems = projectCloneBannerItem === null ? [] : [projectCloneBannerItem];
@@ -10855,6 +10911,7 @@ export default function ChatView(props: ChatViewProps) {
     isRestoringThreadBranch,
     backgroundWorkBannerItem,
     computerUsePermissionBannerItem,
+    deliveryBannerItem,
     goalBannerItem,
     localCheckoutBranchMismatch,
     parkedThreadBannerItem,
@@ -15038,6 +15095,16 @@ export default function ChatView(props: ChatViewProps) {
                     ? (serverRuntime?.lastErrorClass ?? null)
                     : null
                 }
+                errorCode={
+                  localServerError === null && visibleThreadError === serverRuntimeError
+                    ? (latestFailureItem?.failure.code ?? null)
+                    : null
+                }
+                workspaceMissingRecovery={
+                  localServerError === null && visibleThreadError === serverRuntimeError
+                    ? workspaceMissingRecovery
+                    : undefined
+                }
                 onContinue={
                   resumableRunId !== null &&
                   canOperateThread &&
@@ -15125,7 +15192,7 @@ export default function ChatView(props: ChatViewProps) {
                   contextLimitRecovery={
                     paintOnlyDisplayedTimeline ? undefined : contextLimitRecovery
                   }
-                  failureRecovery={paintOnlyDisplayedTimeline ? undefined : failureRecovery}
+                  failureRecovery={paintOnlyDisplayedTimeline ? undefined : timelineFailureRecovery}
                   citationRequest={paintOnlyDisplayedTimeline ? null : citationRequest}
                   citationHistoryLoading={threadDetailLoading}
                   {...(!paintOnlyDisplayedTimeline

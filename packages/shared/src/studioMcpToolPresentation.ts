@@ -370,6 +370,10 @@ const STUDIO_MCP_TOOLS: Readonly<Record<string, StudioMcpToolDefinition>> = {
     ["Organize", "Organizing", "Organized", "a thread"],
     "thread-organize",
   ),
+  studio_thread_record_delivery: tool(
+    ["Record", "Recording", "Recorded", "delivery evidence"],
+    "thread-organize",
+  ),
   studio_thread_update: tool(
     ["Update", "Updating", "Updated", "SpecWithCode thread metadata"],
     "thread-update",

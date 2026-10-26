@@ -38,6 +38,7 @@ import * as Project from "../../../project/ProjectService.ts";
 import * as ProviderAdapterRegistry from "../../../orchestration-v2/ProviderAdapterRegistry.ts";
 import * as ProviderRegistry from "../../../provider/ProviderRegistry.ts";
 import { workerLaunchWithRoom } from "../../../project/WorkerLaunchRoom.ts";
+import { defaultWorkerModelSelection } from "@specweave-studio/shared/coordinatorDefault";
 import {
   launchIncrementFields,
   resolveLaunchIncrement,
@@ -387,20 +388,32 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
             message: incrementResolution.message,
           });
         const increment = incrementResolution.value;
-        // A coordinator's thread starts on the project's worker model, moved
+        // A coordinator's thread starts on the project's worker model, else this
+        // host's default worker model (the same pick delegate_task makes), moved
         // off a provider with no room (see workerLaunchWithRoom).
+        const coordinatorPicks = isCoordinator && input.modelSelection === undefined && project;
+        const workerProviders = coordinatorPicks
+          ? yield* (yield* ProviderRegistry.ProviderRegistry).getProviders
+          : [];
+        const preferredWorker = coordinatorPicks
+          ? (project.defaultModelSelection ??
+            defaultWorkerModelSelection(workerProviders) ??
+            undefined)
+          : undefined;
         const workerLaunch =
-          isCoordinator && input.modelSelection === undefined && project?.defaultModelSelection
+          coordinatorPicks && preferredWorker
             ? yield* workerLaunchWithRoom({
                 project,
-                preferred: project.defaultModelSelection,
+                preferred: preferredWorker,
                 coordinator: caller.modelSelection,
-                providers: yield* (yield* ProviderRegistry.ProviderRegistry).getProviders,
+                providers: workerProviders,
                 runtimePolicy: { runtimeMode, interactionMode },
               })
             : null;
         const workerSelection =
-          workerLaunch === null ? project?.defaultModelSelection : workerLaunch.selection;
+          workerLaunch === null
+            ? (preferredWorker ?? project?.defaultModelSelection)
+            : workerLaunch.selection;
         const modelSelection =
           input.modelSelection ??
           (isCoordinator
@@ -421,7 +434,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
           return yield* new OrchestratorMcpFailure({
             code: "invalid_request",
             message:
-              "Pass modelSelection: the project has no default model. orchestrator_capabilities lists providers and models.",
+              "Pass modelSelection: neither the project nor this host has a usable worker model. orchestrator_capabilities lists providers and models.",
           });
         // Auto model routing (project/TaskRouting.ts): only when no model was
         // named and the app picks it, or the caller passed a task class.

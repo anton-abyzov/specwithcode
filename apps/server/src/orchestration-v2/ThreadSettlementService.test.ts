@@ -506,6 +506,39 @@ function makeBranchPullRequest(state: "open" | "closed" | "merged") {
   } satisfies GitManager.GitBranchPullRequest;
 }
 
+// Delivery evidence an adjudicating thread recorded for the fixture's only turn.
+const ACCEPTED_RUN = {
+  id: "run:accepted",
+  ordinal: 1,
+  status: "completed",
+  userMessageId: "message:accepted",
+  requestedAt: DateTime.makeUnsafe("2026-08-01T00:00:00.000Z"),
+} as unknown as OrchestrationV2Run;
+const VERIFIED_GATE = {
+  status: "verified",
+  reference: "https://example.test/owner/repository/pull/42",
+  observedAt: "2026-08-01T00:00:30.000Z",
+  scopeRevision: "scope-1",
+} as const;
+const ACCEPTED_RECEIPT = {
+  requestId: "message:accepted",
+  runId: "run:accepted",
+  acceptanceRevision: "run:accepted",
+  requestedAt: "2026-08-01T00:00:00.000Z",
+  kind: "code",
+  scope: "Ship the fix",
+  scopeRevision: "scope-1",
+  recordedAt: "2026-08-01T00:01:00.000Z",
+  validUntil: "2100-01-01T00:00:00.000Z",
+  reportedBy: "thread:completion-owner",
+  obligations: [],
+  push: VERIFIED_GATE,
+  merge: VERIFIED_GATE,
+  deployment: VERIFIED_GATE,
+  deliverable: VERIFIED_GATE,
+  verification: VERIFIED_GATE,
+} satisfies NonNullable<OrchestrationV2AppThread["lifecycleReceipt"]>;
+
 interface HarnessOptions {
   readonly snapshot: SettlementSnapshot;
   readonly settings?: ContractServerSettings;
@@ -515,7 +548,9 @@ interface HarnessOptions {
   readonly onDispatch?: (command: AutoSettleCommand) => Effect.Effect<void>;
   /** Threads `getThread` returns when a `thread.settled` event is handled. */
   readonly currentThreads?: ReadonlyArray<OrchestrationV2AppThread>;
+  /** Defaults to one completed turn with accepted delivery evidence. */
   readonly runs?: ReadonlyArray<OrchestrationV2Run>;
+  readonly lifecycleReceipt?: OrchestrationV2AppThread["lifecycleReceipt"];
   readonly candidateSequence?: number;
 }
 
@@ -614,8 +649,12 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
     Layer.mock(ProjectionStore.ProjectionStoreV2)({
       getThreadRecords: (threadId) =>
         Effect.succeed({
-          thread: options.snapshot.threads.find((thread) => thread.id === threadId)!,
-          runs: options.runs ?? [],
+          thread: {
+            ...options.snapshot.threads.find((thread) => thread.id === threadId)!,
+            lifecycleReceipt:
+              "lifecycleReceipt" in options ? options.lifecycleReceipt : ACCEPTED_RECEIPT,
+          },
+          runs: options.runs ?? [ACCEPTED_RUN],
         }) as never,
       getSettlementCandidates: (threadId) =>
         Ref.update(candidateReads, (reads) => [...reads, threadId]).pipe(
@@ -745,6 +784,76 @@ describe("ThreadSettlementServiceV2 worker", () => {
         }).pipe(Effect.provide(fixture.layer));
       }),
     ),
+  );
+
+  it.effect.each([
+    { name: "no receipt", lifecycleReceipt: null, runs: undefined },
+    {
+      name: "a receipt for an older turn",
+      lifecycleReceipt: ACCEPTED_RECEIPT,
+      runs: [ACCEPTED_RUN, { ...ACCEPTED_RUN, id: "run:newer", ordinal: 2 } as OrchestrationV2Run],
+    },
+    {
+      name: "an outstanding obligation",
+      lifecycleReceipt: {
+        ...ACCEPTED_RECEIPT,
+        obligations: [
+          {
+            kind: "deployment",
+            reason: "Release 1.0.93 is not installed.",
+            owner: "release owner",
+            nextEvent: "installed version readback",
+            needsUserOutput: false,
+          },
+        ],
+      },
+      runs: undefined,
+    },
+  ] as const)(
+    "a merged pull request without accepted delivery evidence stays active: $name",
+    ({ lifecycleReceipt, runs }) =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          yield* TestClock.setTime(Date.parse(NOW));
+          const thread = makeThread("merged-without-evidence", {
+            pullRequests: [
+              {
+                host: "example.test",
+                repository: "owner/repository",
+                number: 42,
+                url: "https://example.test/owner/repository/pull/42",
+                source: "manual",
+                linkedAt: "2026-08-20T00:00:00.000Z",
+                snapshot: {
+                  state: "merged",
+                  title: "Pull request",
+                  headBranch: "feature",
+                  baseBranch: "main",
+                  isDraft: false,
+                  updatedAt: NOW,
+                  syncedAt: NOW,
+                  mergedAt: NOW,
+                  checksState: "passing",
+                  reviewDecision: "approved",
+                },
+                stack: null,
+              },
+            ],
+          });
+          const fixture = yield* makeHarness({
+            snapshot: makeSnapshot([thread]),
+            settings: { ...DEFAULT_SERVER_SETTINGS, sidebarAutoSettleAfterDays: null },
+            lifecycleReceipt,
+            ...(runs === undefined ? {} : { runs }),
+          });
+
+          yield* Effect.gen(function* () {
+            const service = yield* ThreadSettlementService.ThreadSettlementServiceV2;
+            yield* startHarness(service, fixture.activation, fixture.snapshotReads);
+            expect(yield* Ref.get(fixture.commands)).toEqual([]);
+          }).pipe(Effect.provide(fixture.layer));
+        }),
+      ),
   );
 
   it.effect("runs no sweep, git lookup or settlement while an install's gate is live", () =>

@@ -842,7 +842,8 @@ const layerBase: Layer.Layer<
           if (
             input.expectedThreadSequence !== undefined &&
             (input.commandType === "thread.deferred-resolution.request" ||
-              input.commandType === "thread.deferred-resolution.finish") &&
+              input.commandType === "thread.deferred-resolution.finish" ||
+              input.commandType === "thread.lifecycle-receipt.record") &&
             (yield* eventStore.latestSequence({ threadId: input.threadId })) !==
               input.expectedThreadSequence
           ) {
@@ -850,6 +851,14 @@ const layerBase: Layer.Layer<
               return yield* Effect.fail(
                 new DeferredResolutionConflict({
                   message: "The thread changed while deferred resolution was requested.",
+                }),
+              );
+            }
+            if (input.commandType === "thread.lifecycle-receipt.record") {
+              return yield* Effect.fail(
+                new DeferredResolutionConflict({
+                  message:
+                    "The thread changed while delivery evidence was recorded. Read it again.",
                 }),
               );
             }

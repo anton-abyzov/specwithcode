@@ -81,16 +81,14 @@ private struct AppScreens: View {
     @Bindable var main = router.main
     return GeometryReader { proxy in
       let insets = proxy.safeAreaInsets
-      DrawerContainer(isOpen: $router.isDrawerOpen, edgeSwipeEnabled: main.path.isEmpty && !model.machines.isEmpty) {
+      DrawerContainer(isOpen: $router.isDrawerOpen, edgeSwipeEnabled: main.path.isEmpty && !model.machines.isEmpty, sceneInsets: insets) {
         DrawerView()
-          .safeAreaPadding(EdgeInsets(top: insets.top, leading: insets.leading, bottom: insets.bottom, trailing: 0))
       } content: {
         NavigationStack(path: $main.path) {
           RootContent()
             .hiddenUnderDrawer()
             .navigationDestination(for: Route.self) { RouteDestination(route: $0).hiddenUnderDrawer() }
         }
-        .padding(insets)
         .background(Color.weave.canvas)
       }
       .ignoresSafeArea()

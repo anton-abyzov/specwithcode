@@ -114,7 +114,8 @@ export const connectOverRoutes = Effect.fn("ConnectionDriver.connectOverRoutes")
     );
     if (result._tag === "Failure") {
       if (result.failure._tag === "ConnectionTransientError") transient ??= result.failure;
-      else blocked ??= result.failure;
+      else if (blocked === undefined || result.failure.reapprovalRequired === true)
+        blocked = result.failure;
     }
     return result;
   });
@@ -135,8 +136,13 @@ export const connectOverRoutes = Effect.fn("ConnectionDriver.connectOverRoutes")
     if (result._tag === "Success") return result.success;
     if (result.failure.reason === "unsupported") return yield* result.failure;
   }
+  // A route whose host wants this device approved again says what fixes the
+  // machine, even while another saved route merely times out.
   return yield* (
-    transient ??
+    (blocked?._tag === "ConnectionBlockedError" && blocked.reapprovalRequired === true
+      ? blocked
+      : undefined) ??
+      transient ??
       blocked ??
       new ConnectionTransientError({
         reason: "endpoint-unavailable",

@@ -140,6 +140,17 @@ it("preserves the required device reapproval reason for direct and relay connect
     mapRemoteEnvironmentError(error),
     mapRemoteEnvironmentError(error, "relay"),
     mapRemoteDpopEnvironmentError(error),
-  ])
+  ]) {
     expect(mapped.message).toContain("Approve this device again");
+    // Says so as data, so a fleet machine can be paired again on its own.
+    expect(mapped._tag === "ConnectionBlockedError" && mapped.reapprovalRequired).toBe(true);
+  }
+  const invalid = mapRemoteEnvironmentError(
+    new EnvironmentAuthInvalidError({
+      code: "auth_invalid",
+      reason: "invalid_credential",
+      traceId: "trace-invalid",
+    }),
+  );
+  expect(invalid._tag === "ConnectionBlockedError" && invalid.reapprovalRequired).toBeFalsy();
 });

@@ -2,6 +2,7 @@ import { backgroundWorkHoldsCompletion } from "@specweave-studio/shared/orchestr
 import { sourceControlRepositorySelector } from "@specweave-studio/shared/sourceControl";
 import { resolveProjectSettings } from "@specweave-studio/shared/projectSettings";
 import { visibleThreadPullRequests } from "@specweave-studio/shared/threadPullRequests";
+import { evaluateLifecycleEvidence } from "@specweave-studio/shared/threadLifecycleEvidence";
 import {
   CommandId,
   type ThreadId,
@@ -282,11 +283,34 @@ export const make = Effect.gen(function* () {
         if (settledAt === null) return thread;
         // The candidate query omits queued runs, including held queues older than
         // the optimistic start grace. Read durable runs before declaring completion.
-        const { runs } = yield* projections.getThreadRecords(thread.id, ["runs"]);
+        const { thread: stored, runs } = yield* projections.getThreadRecords(thread.id, ["runs"]);
         if (
           runs.some((run) =>
             ["queued", "preparing", "starting", "running", "waiting"].includes(run.status),
           )
+        ) {
+          return thread;
+        }
+        // Merge readiness, age and a finished turn are not delivery. Only current
+        // recorded evidence reaches the orchestrator, which rechecks it under lock;
+        // dispatching without it would only record a refusal on every sweep.
+        const latest = runs.reduce<(typeof runs)[number] | undefined>(
+          (found, run) => (!found || run.ordinal > found.ordinal ? run : found),
+          undefined,
+        );
+        if (
+          latest === undefined ||
+          latest.status !== "completed" ||
+          evaluateLifecycleEvidence(
+            {
+              requestId: latest.userMessageId,
+              runId: latest.id,
+              acceptanceRevision: stored.lifecycleRevision ?? latest.id,
+              requestedAt: DateTime.formatIso(latest.requestedAt),
+            },
+            stored.lifecycleReceipt,
+            DateTime.toEpochMillis(decisionNow),
+          ) !== "accepted"
         ) {
           return thread;
         }

@@ -106,6 +106,8 @@ export * from "./logicalProject.ts";
 export * from "./projectLink.ts";
 export * from "./linkedMemory.ts";
 export * from "./limitHandoff.ts";
+export * from "./usageLimitHistory.ts";
 export * from "./managedUpdates.ts";
 export * from "./serviceUpdateRun.ts";
 export * from "./muse.ts";
+export * from "./threadLifecycleEvidence.ts";

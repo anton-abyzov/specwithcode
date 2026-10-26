@@ -125,6 +125,7 @@ export function mapRemoteEnvironmentError(
           error.reason === "device_reapproval_required"
             ? error.message
             : "The environment credential is invalid.",
+        ...(error.reason === "device_reapproval_required" ? { reapprovalRequired: true } : {}),
         traceId: error.traceId,
       });
     case "EnvironmentScopeRequiredError":

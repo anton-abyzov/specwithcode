@@ -16,6 +16,7 @@ import {
 import { linkedThreadIds } from "./projectThreadMentions";
 import { formatStudioThreadHref, formatStudioThreadLink } from "./studioThreadLinks";
 import { routeProjectComposerSend, type ProjectMessageRouting } from "./projectMessageRouting";
+import { expandAttentionProjects, projectAttentionRoots } from "./projectAttentionScope";
 
 function thread(overrides: Partial<EnvironmentThreadShell> = {}): EnvironmentThreadShell {
   return {
@@ -805,8 +806,7 @@ describe("remoteOrchestratorOfflineLabel", () => {
 });
 
 describe("attention project scope", () => {
-  it("retains explicit logical-project user roots and excludes independent chats otherwise", async () => {
-    const { projectAttentionRoots } = await import("./useProjectAttention");
+  it("retains explicit logical-project user roots and excludes independent chats otherwise", () => {
     const user = thread({ createdBy: "user" });
     const member = {
       environmentId: "host-1",
@@ -817,8 +817,7 @@ describe("attention project scope", () => {
     expect(projectAttentionRoots([user], [member])).toEqual([]);
     expect(projectAttentionRoots([user], [{ ...member, includeUserRoots: true }])).toEqual([user]);
   });
-  it("retains unloaded explicit members without joining similarly named projects", async () => {
-    const { expandAttentionProjects } = await import("./useProjectAttention");
+  it("retains unloaded explicit members without joining similarly named projects", () => {
     const project = {
       environmentId: "local",
       id: "p",

@@ -1,3 +1,4 @@
+import type { LimitHistoryIndex } from "@specweave-studio/shared/usageLimitForecast";
 import { blockingWindow } from "@specweave-studio/shared/usageWindows";
 import {
   CHATGPT_USAGE_URL,
@@ -38,6 +39,8 @@ import {
 } from "./UsageLimits";
 import { blockedLabel, usageToneTextClass } from "../../studio/usageIndicatorModel";
 import { instanceLabel, limitAccountLabel } from "./usageAccountLabel";
+import { PoolForecastPanel } from "./UsageLimitsPoolForecast";
+import { useUsageLimitHistory } from "./usageLimitHistoryState";
 
 /** `someone@example.com` → `SE`: enough to tell accounts apart, too little to identify one. */
 function accountInitials(email: string): string {
@@ -514,6 +517,7 @@ function PoolBar({
  */
 function PoolWindowCard({
   pool,
+  history,
   color,
   now,
   label,
@@ -521,6 +525,7 @@ function PoolWindowCard({
   blockedBy,
 }: {
   readonly pool: LimitPoolWindow;
+  readonly history: LimitHistoryIndex | null;
   readonly color: string;
   readonly now: number;
   readonly label?: string | undefined;
@@ -562,6 +567,7 @@ function PoolWindowCard({
         ) : null}
       </div>
       <PoolBar pool={pool} color={color} now={now} />
+      <PoolForecastPanel pool={pool} history={history} color={color} now={now} />
       {description ? (
         <p className="text-xs text-muted-foreground md:col-span-2">{description}</p>
       ) : null}
@@ -569,7 +575,15 @@ function PoolWindowCard({
   );
 }
 
-function PoolSection({ pool, now }: { readonly pool: LimitPool; readonly now: number }) {
+function PoolSection({
+  pool,
+  history,
+  now,
+}: {
+  readonly pool: LimitPool;
+  readonly history: LimitHistoryIndex | null;
+  readonly now: number;
+}) {
   const color = barColor(pool.driver);
   const label = getDriverOption(pool.driver)?.label ?? String(pool.driver);
   const windows = displayLimitWindows(pool);
@@ -612,6 +626,7 @@ function PoolSection({ pool, now }: { readonly pool: LimitPool; readonly now: nu
           <PoolWindowCard
             key={`${window.kind}:${window.id}`}
             pool={window}
+            history={history}
             color={color}
             now={now}
             label={details?.label}
@@ -639,6 +654,16 @@ export function UsageLimitsPooled({
   readonly cursorPrompt?: ReactNode;
 }) {
   const pools = collectLimitPools(collectLimitAccounts(presentations), now);
+  const history = useUsageLimitHistory(
+    // An offline machine cannot answer; its accounts' last reads still show.
+    [...presentations]
+      .filter(
+        ([, presentation]) =>
+          presentation.connection === undefined || presentation.connection.phase === "connected",
+      )
+      .map(([environmentId]) => environmentId),
+    now,
+  );
   const notices = collectLimitNotices(presentations);
   const externalLinks = collectExternalUsageLinks(presentations);
   const cursorPromptAt =
@@ -656,7 +681,7 @@ export function UsageLimitsPooled({
       {pools.map((pool, index) => (
         <Fragment key={pool.driver}>
           {index === cursorPromptAt ? cursorPrompt : null}
-          <PoolSection pool={pool} now={now} />
+          <PoolSection pool={pool} history={history} now={now} />
         </Fragment>
       ))}
       {cursorPromptAt === pools.length ? cursorPrompt : null}

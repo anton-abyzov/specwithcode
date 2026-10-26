@@ -1,3 +1,4 @@
+import { LifecycleReceipt, LifecycleReceiptReport } from "./threadLifecycleEvidence.ts";
 import { ThreadRuntimeModeSetCommand } from "./threadRuntimeModeCommand.ts";
 import { ManualCodexCreditIntent } from "./manualCodexCredits.ts";
 export {
@@ -434,6 +435,10 @@ export const OrchestrationV2AppThread = Schema.Struct({
   ),
   /** Why the thread was resolved, shown with the resolved banner. */
   settledNote: Schema.optional(Schema.NullOr(OrchestrationV2ThreadSettledNote)),
+  /** Structured adjudication; absent on legacy threads, never inferred from runtime status. */
+  lifecycleReceipt: Schema.optional(Schema.NullOr(LifecycleReceipt)),
+  /** Rotated when acceptance is reopened or superseded. */
+  lifecycleRevision: Schema.optional(Schema.String),
   /** An agent's request to resolve only after this exact run succeeds. */
   deferredResolution: Schema.optional(
     Schema.NullOr(
@@ -606,6 +611,19 @@ export type OrchestrationV2ThreadLaunchWorkspaceStrategy =
 
 /** Failure code on the error item a failed workspace preparation leaves. */
 export const ORCHESTRATION_V2_WORKSPACE_PREPARATION_FAILURE_CODE = "workspace_preparation_failed";
+
+/**
+ * Failure code on the error item of a run whose thread folder is gone (or is
+ * a file) and could not be recreated. Every provider fails the same way, so
+ * the queue is held and recovery is about the folder, not the model.
+ */
+export const ORCHESTRATION_V2_WORKSPACE_MISSING_FAILURE_CODE = "workspace_missing";
+
+/**
+ * Failure code on the error item of a run whose thread folder and branch were
+ * both deleted, so the folder cannot be recreated from the branch.
+ */
+export const ORCHESTRATION_V2_WORKSPACE_BRANCH_MISSING_FAILURE_CODE = "workspace_branch_missing";
 
 /**
  * Failure code on a `provider_error` whose provider cannot run on this machine
@@ -3473,6 +3491,18 @@ const OrchestrationV2InternalCommand = Schema.Union([
     commandId: CommandId,
     threadId: ThreadId,
     runId: RunId,
+  }),
+  /**
+   * Another thread's adjudication of this thread's latest completed turn. The
+   * server binds the request identity; accepted evidence resolves the thread.
+   */
+  Schema.Struct({
+    type: Schema.Literal("thread.lifecycle-receipt.record"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    runId: RunId,
+    reportedBy: TrimmedNonEmptyString,
+    report: LifecycleReceiptReport,
   }),
   /** Provider acknowledgement and removal of a promoted queue row commit together. */
   Schema.Struct({

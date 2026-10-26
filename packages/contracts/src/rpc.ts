@@ -13,6 +13,7 @@ import { LINKED_MEMORY_RPC_METHODS, linkedMemoryRpcs } from "./linkedMemoryRpc.t
 import { HANDOFF_MODE_RPC_METHODS, handoffModeRpcs } from "./handoffModeRpc.ts";
 import { PROJECT_PLAN_LINK_RPC_METHODS, projectPlanLinkRpcs } from "./projectPlanLinkRpc.ts";
 import { LIMIT_HANDOFF_RPC_METHODS, limitHandoffRpcs } from "./limitHandoff.ts";
+import { USAGE_LIMIT_HISTORY_RPC_METHODS, usageLimitHistoryRpcs } from "./usageLimitHistory.ts";
 import { provisionRpcs } from "./provision.ts";
 import { BROWSER_BRIDGE_RPC_METHODS, browserBridgeRpcs } from "./browserBridge.ts";
 import { BROWSER_EXTENSION_RPC_METHODS, browserExtensionRpcs } from "./browserExtension.ts";
@@ -145,6 +146,8 @@ import {
   VcsCreateRefResult,
   VcsCreateWorktreeInput,
   VcsCreateWorktreeResult,
+  VcsRestoreThreadWorkspaceInput,
+  VcsRestoreThreadWorkspaceResult,
   VcsInitInput,
   VcsListRefsInput,
   VcsListRefsResult,
@@ -420,6 +423,7 @@ export const WS_METHODS = {
   ...HANDOFF_MODE_RPC_METHODS,
   ...PROJECT_PLAN_LINK_RPC_METHODS,
   ...LIMIT_HANDOFF_RPC_METHODS,
+  ...USAGE_LIMIT_HISTORY_RPC_METHODS,
   ...MANAGED_UPDATES_RPC_METHODS,
   ...PROJECT_CONNECTION_RPC_METHODS,
   ...BROWSER_BRIDGE_RPC_METHODS,
@@ -477,6 +481,7 @@ export const WS_METHODS = {
   vcsListRefs: "vcs.listRefs",
   vcsCreateWorktree: "vcs.createWorktree",
   vcsRemoveWorktree: "vcs.removeWorktree",
+  vcsRestoreThreadWorkspace: "vcs.restoreThreadWorkspace",
   vcsCreateRef: "vcs.createRef",
   vcsSwitchRef: "vcs.switchRef",
   vcsInit: "vcs.init",
@@ -1567,6 +1572,12 @@ const WsVcsRemoveWorktreeRpc = Rpc.make(WS_METHODS.vcsRemoveWorktree, {
   error: Schema.Union([GitCommandError, EnvironmentAuthorizationError]),
 });
 
+const WsVcsRestoreThreadWorkspaceRpc = Rpc.make(WS_METHODS.vcsRestoreThreadWorkspace, {
+  payload: VcsRestoreThreadWorkspaceInput,
+  success: VcsRestoreThreadWorkspaceResult,
+  error: EnvironmentAuthorizationError,
+});
+
 const WsVcsCreateRefRpc = Rpc.make(WS_METHODS.vcsCreateRef, {
   payload: VcsCreateRefInput,
   success: VcsCreateRefResult,
@@ -2155,6 +2166,7 @@ export const WsCoreRpcGroup = RpcGroup.make(
   WsVcsListRefsRpc,
   WsVcsCreateWorktreeRpc,
   WsVcsRemoveWorktreeRpc,
+  WsVcsRestoreThreadWorkspaceRpc,
   WsVcsCreateRefRpc,
   WsVcsSwitchRefRpc,
   WsVcsInitRpc,
@@ -2264,6 +2276,11 @@ export const WsLimitHandoffRpcGroup = RpcGroup.make(...limitHandoffRpcs).middlew
   RpcScopeAuthorization,
 );
 
+/** Recorded subscription quota per account; its own group for the same depth reason. */
+export const WsUsageLimitHistoryRpcGroup = RpcGroup.make(...usageLimitHistoryRpcs).middleware(
+  RpcScopeAuthorization,
+);
+
 /** Folder copy between machines; its own group for the same depth reason. */
 export const WsFolderCopyRpcGroup = RpcGroup.make(...folderCopyRpcs).middleware(
   RpcScopeAuthorization,
@@ -2314,6 +2331,7 @@ export const WsRpcGroup = WsCoreRpcGroup.merge(WsComposerDraftsRpcGroup)
   .merge(WsProjectLinkRpcGroup)
   .merge(WsProjectPlanLinkRpcGroup)
   .merge(WsLimitHandoffRpcGroup)
+  .merge(WsUsageLimitHistoryRpcGroup)
   .merge(WsFolderCopyRpcGroup)
   .merge(WsProjectKnowledgeRpcGroup)
   .merge(WsProjectPlanningRpcGroup)

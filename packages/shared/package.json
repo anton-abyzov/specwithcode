@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./threadLifecycleEvidence": {
+      "types": "./src/threadLifecycleEvidence.ts",
+      "import": "./src/threadLifecycleEvidence.ts"
+    },
     "./threadLifecycleLabels": {
       "types": "./src/threadLifecycleLabels.ts",
       "import": "./src/threadLifecycleLabels.ts"
@@ -434,6 +438,10 @@
     "./usageLimits": {
       "types": "./src/usageLimits.ts",
       "import": "./src/usageLimits.ts"
+    },
+    "./usageLimitForecast": {
+      "types": "./src/usageLimitForecast.ts",
+      "import": "./src/usageLimitForecast.ts"
     },
     "./desktopAppControl": {
       "types": "./src/desktopAppControl.ts",

@@ -16,7 +16,7 @@ import { Button } from "../ui/button";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Switch } from "../ui/switch";
 import { ArchivedDisclosure } from "./ArchivedDisclosure";
-import { partitionHandoffModeProjects } from "./handoffModeSettings.logic";
+import { partitionHandoffModeProjects, sameTitleFolderHints } from "./handoffModeSettings.logic";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
 import { searchableSetting } from "./settingsSearch";
 
@@ -31,12 +31,15 @@ const takeoverLabel = (minutes: number) => (minutes === 0 ? "Off" : `After ${min
 interface HandoffModeProjectRow {
   readonly id: ProjectId;
   readonly title: string;
+  readonly workspaceRoot?: string | undefined;
 }
 
 export interface HandoffModeSettingsViewProps {
   snapshot: HandoffModeSnapshot;
   destinations: readonly HandoffDestination[];
   projects: ReadonlyArray<HandoffModeProjectRow>;
+  /** Folded under "Show automated": projects checks and agents made for themselves. */
+  automatedProjects?: ReadonlyArray<HandoffModeProjectRow>;
   /** Folded under "Show archived", for the rare change to an archived project. */
   archivedProjects?: ReadonlyArray<HandoffModeProjectRow>;
   pending: boolean;
@@ -50,12 +53,31 @@ export interface HandoffModeSettingsViewProps {
 export function HandoffModeSettingsView(props: HandoffModeSettingsViewProps) {
   const { config } = props.snapshot;
   const sleepTarget = props.destinations.find((item) => item.environmentId === config.sleepTarget);
+  const automatedProjects = props.automatedProjects ?? [];
   const archivedProjects = props.archivedProjects ?? [];
+  const hints = sameTitleFolderHints([
+    ...props.projects,
+    ...automatedProjects,
+    ...archivedProjects,
+  ]);
   const projectRow = (project: HandoffModeProjectRow) => {
     const mode = props.snapshot.projectModes[project.id] ?? null;
+    const hint = hints.get(project.id);
     return (
       <li key={project.id} className="flex items-center justify-between gap-3 text-sm">
-        <span className="min-w-0 truncate">{project.title}</span>
+        <span
+          className="flex min-w-0 flex-1 items-baseline gap-1.5"
+          title={
+            project.workspaceRoot ? `${project.title}\n${project.workspaceRoot}` : project.title
+          }
+        >
+          <span className="min-w-0 truncate">{project.title}</span>
+          {hint ? (
+            <span className="max-w-[50%] shrink-0 truncate text-muted-foreground text-xs">
+              {hint}
+            </span>
+          ) : null}
+        </span>
         <Select
           value={mode ?? "default"}
           disabled={props.pending}
@@ -63,7 +85,11 @@ export function HandoffModeSettingsView(props: HandoffModeSettingsViewProps) {
             props.onProjectMode(project.id, value === "on" || value === "off" ? value : null)
           }
         >
-          <SelectTrigger size="sm" aria-label={`Handoff mode for ${project.title}`}>
+          <SelectTrigger
+            size="sm"
+            className="w-36 shrink-0"
+            aria-label={`Handoff mode for ${project.title}${hint ? ` (${hint})` : ""}`}
+          >
             <SelectValue>{mode === null ? "Default" : mode === "on" ? "On" : "Off"}</SelectValue>
           </SelectTrigger>
           <SelectPopup align="end" alignItemWithTrigger={false}>
@@ -105,12 +131,15 @@ export function HandoffModeSettingsView(props: HandoffModeSettingsViewProps) {
           </Select>
         }
       />
-      {props.projects.length + archivedProjects.length > 0 ? (
+      {props.projects.length + automatedProjects.length + archivedProjects.length > 0 ? (
         <SettingsRow
           title="Projects"
           description="A project setting wins over the default; a thread's own setting wins over both."
         >
           <ul className="mt-2 flex flex-col gap-1.5">{props.projects.map(projectRow)}</ul>
+          <ArchivedDisclosure count={automatedProjects.length} label="automated" className="mt-1">
+            <ul className="flex flex-col gap-1.5">{automatedProjects.map(projectRow)}</ul>
+          </ArchivedDisclosure>
           <ArchivedDisclosure count={archivedProjects.length} className="mt-1">
             <ul className="flex flex-col gap-1.5">{archivedProjects.map(projectRow)}</ul>
           </ArchivedDisclosure>
@@ -216,12 +245,16 @@ export function HandoffModeSettings({ environmentId }: { environmentId: Environm
   const { snapshot } = useHandoffModeSnapshot(environmentId);
   const destinations = useHandoffDestinations(environmentId, false);
   const scratchRoot = useServerConfigs().get(environmentId)?.scratchWorkspaceRoot ?? null;
-  const { active, archived } = partitionHandoffModeProjects(
+  const { active, automated, archived } = partitionHandoffModeProjects(
     useProjects(),
     environmentId,
     () => scratchRoot,
   );
-  const row = (project: (typeof active)[number]) => ({ id: project.id, title: project.title });
+  const row = (project: (typeof active)[number]) => ({
+    id: project.id,
+    title: project.title,
+    workspaceRoot: project.workspaceRoot,
+  });
   const [pending, setPending] = useState(false);
   const [error, setError] = useState<string | null>(null);
   // A server without handoff mode shows nothing rather than a broken section.
@@ -237,6 +270,7 @@ export function HandoffModeSettings({ environmentId }: { environmentId: Environm
       snapshot={snapshot}
       destinations={destinations}
       projects={active.map(row)}
+      automatedProjects={automated.map(row)}
       archivedProjects={archived.map(row)}
       pending={pending}
       error={error}

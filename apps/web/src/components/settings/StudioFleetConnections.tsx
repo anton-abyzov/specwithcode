@@ -28,6 +28,7 @@ import {
 } from "../../studio/fleetWorkers";
 import {
   fleetMachineSaved,
+  rejectedSavedEnvironments,
   savedRouteOrigins,
   setFleetEnvironmentSkipped,
 } from "../../studio/fleetAutoConnect";
@@ -97,6 +98,7 @@ export interface FleetMachineConnection {
   /** Why it failed or when it was last seen, when not connected. */
   readonly detail: string | null;
 }
+const NO_REJECTED_ENVIRONMENTS: ReadonlyArray<string> = [];
 const NO_MACHINE_STATUSES: Readonly<Record<string, FleetMachineConnection>> = {};
 export interface WorkerDraft {
   readonly access: StudioFleetWorkerAccess;
@@ -226,8 +228,13 @@ export function StudioFleetConnections({ environmentId, savedEnvironmentIds }: P
   const [inviteOpen, setInviteOpen] = useState(false);
   const { environments } = useEnvironments();
   // A machine saved here only at an address it has left reads as not saved,
-  // so Connect machine adds its new address.
-  const origins = savedRouteOrigins(environments.map((environment) => environment.entry));
+  // so Connect machine adds its new address. So does one whose server turned
+  // down the saved credential: Approve again pairs it anew.
+  const rejected = rejectedSavedEnvironments(environments);
+  const origins = savedRouteOrigins(
+    environments.map((environment) => environment.entry),
+    rejected,
+  );
   useMachineLastSeenVersion();
   const machineStatuses: Record<string, FleetMachineConnection> = {};
   for (const environment of environments) {
@@ -370,6 +377,7 @@ export function StudioFleetConnections({ environmentId, savedEnvironmentIds }: P
       canPair={canPair}
       environmentId={environmentId}
       savedEnvironmentIds={savedHere}
+      rejectedEnvironmentIds={[...rejected]}
       pending={pending}
       error={error}
       autoConnect={autoConnect}
@@ -441,6 +449,7 @@ export function StudioFleetRoster({
   canPair,
   environmentId,
   savedEnvironmentIds,
+  rejectedEnvironmentIds = NO_REJECTED_ENVIRONMENTS,
   pending,
   error,
   autoConnect = false,
@@ -470,6 +479,8 @@ export function StudioFleetRoster({
   canPair: boolean;
   environmentId: EnvironmentId;
   savedEnvironmentIds: ReadonlyArray<EnvironmentId>;
+  /** Saved machines whose server turned down this browser's credential. */
+  rejectedEnvironmentIds?: ReadonlyArray<string>;
   pending: string | null;
   error: string | null;
   autoConnect?: boolean;
@@ -529,10 +540,12 @@ export function StudioFleetRoster({
           {snapshot.machines.map((machine) => {
             const current = machine.environmentId === environmentId;
             const saved = savedEnvironmentIds.includes(machine.environmentId);
+            const rejected = rejectedEnvironmentIds.includes(machine.environmentId);
             const reachable = machine.status === "reachable";
             // A machine this browser already uses reads the same as in the
             // machine picker and sidebar; others say whether their route answers.
-            const own = current || saved ? machineStatuses[machine.environmentId] : undefined;
+            const own =
+              current || saved || rejected ? machineStatuses[machine.environmentId] : undefined;
             const status = own
               ? own.text
               : machine.status === "identity-mismatch"
@@ -595,7 +608,9 @@ export function StudioFleetRoster({
                           ? "Pairing needs setup"
                           : !canPair
                             ? "Pairing permission required"
-                            : "Connect machine"}
+                            : rejected
+                              ? "Approve again"
+                              : "Connect machine"}
                     </Button>
                   )}
                 </div>

@@ -7,7 +7,11 @@ import { useEnvironments, usePrimaryEnvironmentId } from "../../state/environmen
 import { useEnvironmentScope } from "../../state/session";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { pairStudioFleet, useStudioFleet } from "../../studio/fleet";
-import { savedRouteOrigins, setFleetEnvironmentSkipped } from "../../studio/fleetAutoConnect";
+import {
+  rejectedSavedEnvironments,
+  savedRouteOrigins,
+  setFleetEnvironmentSkipped,
+} from "../../studio/fleetAutoConnect";
 import { unseenFleetMachines } from "./machinesSettings.logic";
 
 // The fleet atom needs an id; one that matches no environment reads as no fleet.
@@ -28,7 +32,11 @@ export function usePrimaryFleet() {
   );
   const { environments } = useEnvironments();
   const savedOrigins = useMemo(
-    () => savedRouteOrigins(environments.map((environment) => environment.entry)),
+    () =>
+      savedRouteOrigins(
+        environments.map((environment) => environment.entry),
+        rejectedSavedEnvironments(environments),
+      ),
     [environments],
   );
   const unseen = useMemo(

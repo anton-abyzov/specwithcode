@@ -19,3 +19,11 @@ export function SettingsRow({
     </div>
   );
 }
+export function SettingsDisclosure({ title, children }: { title: string; children: ReactNode }) {
+  return (
+    <details className="rounded-xl border">
+      <summary className="cursor-pointer px-4 py-3 text-sm font-medium">{title}</summary>
+      {children}
+    </details>
+  );
+}

@@ -1112,7 +1112,12 @@ it.effect.each([
 
 for (const scenario of [
   "success",
+  "automatic-success",
   "activation-off",
+  "missing-evidence",
+  "stale-evidence",
+  "partial-evidence",
+  "superseded-evidence",
   "success-metadata",
   "recovery",
   "new-message",
@@ -1178,6 +1183,56 @@ for (const scenario of [
           },
         ],
       });
+      // Persist a verified adjudication independently of intent and provider completion.
+      // Every readiness guard below is exercised WITH otherwise valid delivery evidence.
+      if (scenario !== "activation-off" && scenario !== "missing-evidence") {
+        const observedAt = DateTime.formatIso(now);
+        const proof = {
+          status: "verified" as const,
+          reference: "fixture://installed/verified-scope",
+          observedAt,
+          scopeRevision: "fixture-source",
+        };
+        yield* sink.write({
+          events: [
+            {
+              id: EventId.make(`deferred:${scenario}:acceptance`),
+              type: "thread.metadata-updated",
+              threadId,
+              occurredAt: now,
+              payload: {
+                ...(yield* projections.getThread(threadId)),
+                lifecycleReceipt: {
+                  requestId: run.userMessageId,
+                  runId: run.id,
+                  acceptanceRevision: scenario === "superseded-evidence" ? "old-revision" : run.id,
+                  requestedAt: DateTime.formatIso(run.requestedAt),
+                  kind: "code",
+                  scope: "Requested installed fix",
+                  scopeRevision: "fixture-source",
+                  recordedAt: observedAt,
+                  validUntil: DateTime.formatIso(
+                    DateTime.add(now, {
+                      milliseconds: scenario === "stale-evidence" ? -1 : 3600000,
+                    }),
+                  ),
+                  reportedBy: "fixture-verifier",
+                  obligations: [],
+                  push: proof,
+                  merge: proof,
+                  deployment:
+                    scenario === "partial-evidence"
+                      ? { status: "pending", reason: "Release has not installed" }
+                      : proof,
+                  deliverable: proof,
+                  verification: proof,
+                },
+              },
+            },
+          ],
+        });
+        assert.isDefined((yield* projections.getThread(threadId)).lifecycleReceipt);
+      }
       // Explicit resolution of an active thread still fails; only exact-run intent is accepted.
       const explicit = yield* Effect.exit(
         orchestrator.dispatch({
@@ -1590,6 +1645,14 @@ for (const scenario of [
         });
       } else if (resolved !== undefined) {
         yield* Fiber.join(resolved);
+      } else if (scenario === "automatic-success") {
+        yield* orchestrator.dispatch({
+          type: "thread.auto-settle",
+          commandId: CommandId.make(`deferred:${scenario}:automatic`),
+          threadId,
+          snapshotAt: (yield* projections.getThread(threadId)).updatedAt,
+          snapshotSequence: yield* sink.latestSequence({ threadId }),
+        });
       } else if (scenario === "recovery") {
         // Same persisted path startup uses after reconciliation, without replaying terminal history.
         yield* orchestrator.recoverDelegatedTasks;
@@ -1603,7 +1666,10 @@ for (const scenario of [
       }
       const result = yield* projections.getThreadProjection(threadId);
       const successful =
-        scenario === "success" || scenario === "success-metadata" || scenario === "recovery";
+        scenario === "success" ||
+        scenario === "automatic-success" ||
+        scenario === "success-metadata" ||
+        scenario === "recovery";
       if (scenario === "activation-off") {
         // No acceptance evidence exists. Neither the completion reactor, a
         // direct finish nor startup recovery may change lifecycle state.
@@ -1630,9 +1696,12 @@ for (const scenario of [
         );
       assert.equal(
         result.thread.settledOverride === "settled",
-        scenario === "success" || scenario === "success-metadata" || scenario === "recovery",
+        scenario === "success" ||
+          scenario === "automatic-success" ||
+          scenario === "success-metadata" ||
+          scenario === "recovery",
       );
-      if (scenario === "success" || scenario === "success-metadata" || scenario === "recovery")
+      if (successful && scenario !== "automatic-success")
         assert.equal(result.thread.settledNote, "Fix delivered");
       assert.equal(
         result.messages.find((message) => message.role === "assistant")?.text,
@@ -1676,7 +1745,10 @@ for (const scenario of [
       }
     }).pipe(
       Effect.provide(layerTest),
-      Effect.provideService(DeferredResolutionActivation, scenario !== "activation-off"),
+      Effect.provideService(
+        DeferredResolutionActivation,
+        scenario !== "activation-off" && scenario !== "automatic-success",
+      ),
     ),
   );
 }

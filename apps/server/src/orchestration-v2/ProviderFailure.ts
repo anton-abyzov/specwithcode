@@ -12,6 +12,8 @@ import type {
 } from "@specweave-studio/contracts";
 import {
   ORCHESTRATION_V2_PROVIDER_UNAVAILABLE_FAILURE_CODE,
+  ORCHESTRATION_V2_WORKSPACE_BRANCH_MISSING_FAILURE_CODE,
+  ORCHESTRATION_V2_WORKSPACE_MISSING_FAILURE_CODE,
   ProjectEnvironmentError,
 } from "@specweave-studio/contracts";
 import {
@@ -33,11 +35,6 @@ import { providerSetupFailure } from "./ProviderAdapter.ts";
 export const MAX_PROVIDER_FAILURE_MESSAGE_LENGTH = 4_096;
 export const MAX_PROVIDER_FAILURE_CODE_LENGTH = 128;
 
-/** A run whose thread folder and branch were deleted; every provider fails it the same way. */
-export const WORKSPACE_BRANCH_MISSING_FAILURE_CODE = "workspace_branch_missing";
-/** The thread's folder is gone (or is a file) and SpecWithCode can't recreate it. */
-export const WORKSPACE_MISSING_FAILURE_CODE = "workspace_missing";
-
 /**
  * Whether a failed run should hold the thread's queued messages. A provider
  * that just failed will likely fail the next message too, so the user decides
@@ -53,8 +50,8 @@ export function shouldHoldQueueAfterFailure(input: {
   const { failure } = input;
   if (failure === undefined) return false;
   if (
-    failure.code === WORKSPACE_BRANCH_MISSING_FAILURE_CODE ||
-    failure.code === WORKSPACE_MISSING_FAILURE_CODE
+    failure.code === ORCHESTRATION_V2_WORKSPACE_BRANCH_MISSING_FAILURE_CODE ||
+    failure.code === ORCHESTRATION_V2_WORKSPACE_MISSING_FAILURE_CODE
   )
     return true;
   return (

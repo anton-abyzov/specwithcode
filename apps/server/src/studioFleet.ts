@@ -45,6 +45,7 @@ export class FleetError extends Error {
     | "identity-mismatch"
     | "pairing-unavailable"
     | "invitation-limited"
+    | "reapproval-required"
     | "forbidden";
   constructor(kind: FleetError["kind"]) {
     super(
@@ -58,6 +59,8 @@ export class FleetError extends Error {
           "Pairing is unavailable. Ask the server owner to renew this machine's connection permission.",
         "invitation-limited":
           "This machine's invitation can manage access but cannot open sessions there, so this machine cannot connect to it. On that machine, update SpecWithCode, choose Invite this machine in Settings > Connections (or run `specwithcode fleet invite --coordinator '<main-machine-environment-id>'`), and add the new line here. Replace <main-machine-environment-id> with the environment ID from Settings > Connections on your main machine. This explicitly approves that machine to manage access here.",
+        "reapproval-required":
+          "That machine no longer accepts the invitation saved here: its update asks every machine that manages it to be approved again. On that machine, choose Invite this machine in Settings > Connections (or run `specwithcode fleet invite --coordinator '<main-machine-environment-id>'`), and add the new line here. Replace <main-machine-environment-id> with the environment ID from Settings > Connections on your main machine.",
         forbidden: "This connection cannot pair with that machine.",
       }[kind],
     );
@@ -286,6 +289,8 @@ export async function readManagementScopes(
     return null;
   }
   const body = await readBoundedJson(response).catch(() => null);
+  if (record(body) && body.authenticated !== true && body.reapprovalRequired === true)
+    throw new FleetError("reapproval-required");
   if (!record(body) || body.authenticated !== true) throw new FleetError("pairing-unavailable");
   // `scopes` is the legacy vocabulary and leaves out most of a grant, so only
   // `permissions` says what the token can hand out.

@@ -59,6 +59,7 @@ struct OverviewSpeechTests {
   }
 }
 
+@MainActor
 @Suite("Machine wake")
 struct MachineWakeTests {
   @Test func onlyDroppedConnectionsWake() {

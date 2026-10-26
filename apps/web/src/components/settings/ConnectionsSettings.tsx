@@ -113,7 +113,7 @@ import {
   formatDesktopSshTarget,
 } from "./EnvironmentRow";
 import { FoldedSettingsSection } from "./FoldedSettingsSection";
-import { PhoneConnectSettings } from "./PhoneConnectSettings";
+import { isPhoneConnectShown, PhoneConnectSettings } from "./PhoneConnectSettings";
 import { StudioFleetConnections, StudioListenerRow } from "./StudioFleetConnections";
 import { ConnectionsLibrarySettings } from "./ConnectionsLibrarySettings";
 import { PairPhoneSettings } from "./PairPhoneSettings";
@@ -4151,6 +4151,7 @@ export function ConnectionsSettings() {
           onPairingLinkCreated={handlePairingLinkCreated}
           hasAccessControls={canManageLocalBackend && desktopBridge !== undefined}
           onShowAccessSettings={() => scrollToSettingsTarget("connections-environment")}
+          folded={isPhoneConnectShown()}
         />
       ) : null}
       <ConnectionsLibrarySettings />

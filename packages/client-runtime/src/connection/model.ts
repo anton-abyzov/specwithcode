@@ -96,6 +96,8 @@ export class ConnectionBlockedError extends Schema.TaggedError<ConnectionBlocked
     traceId: Schema.optionalKey(Schema.String),
     /** The host speaks an older orchestration protocol; updating it restores the connection. */
     serverUpdateRequired: Schema.optionalKey(Schema.Boolean),
+    /** The host no longer accepts this device's approval; pairing again restores the connection. */
+    reapprovalRequired: Schema.optionalKey(Schema.Boolean),
   },
 ) {
   override get message(): string {
