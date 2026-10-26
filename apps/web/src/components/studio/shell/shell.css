@@ -2071,9 +2071,31 @@ html.dark[data-theme-id]:not([data-theme-id=""])
   letter-spacing: -0.02em;
 }
 .sws-threads-head p {
-  margin-top: 7px;
   font-size: 14px;
+  font-weight: 500;
+  color: var(--foreground);
+}
+/* Under the first-visit greeting the summary is its quiet subtitle. */
+.sws-threads-head h2 + p {
+  margin-top: 7px;
+  font-weight: 400;
   color: var(--muted-foreground);
+}
+/* A question the coordinator asks; it has no row in the list below. */
+.sws-threads-ask {
+  margin: 8px 8px 0 0;
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 12.5px;
+  font-weight: 500;
+  color: var(--shell-waiting);
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+.sws-threads-ask:hover {
+  background: var(--accent);
 }
 .sws-unplanned-notice {
   margin-top: 8px;
@@ -2326,6 +2348,12 @@ html.dark[data-theme-id]:not([data-theme-id=""])
 }
 .sws-thread-meta-lead > .sws-thread-status {
   flex: none;
+}
+/* A subagent's name can be long; it gives way before the model does. */
+.sws-thread-row[data-attention] .sws-thread-meta-lead > .sws-thread-status {
+  flex: 0 1 auto;
+  min-width: 0;
+  white-space: nowrap;
 }
 .sws-thread-meta-lead > .sws-model {
   flex: 0 1 auto;

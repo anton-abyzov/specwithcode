@@ -16,6 +16,7 @@ import {
   providerShortLabel,
   shortMachineName,
   shortModelName,
+  threadAttentionWord,
   threadsSummary,
   threadStatusWord,
   threadTone,
@@ -520,6 +521,47 @@ describe("a project's Threads pane", () => {
     // Held messages never start on their own, so the row says so and the dot asks.
     expect(threadStatusWord(thread({ heldQueuedCount: 3 }))).toBe("Queue held");
     expect(threadTone(thread({ heldQueuedCount: 3 }))).toBe("waiting");
+  });
+  it("names the subagent that puts a quiet parent under Waiting on you", () => {
+    const parent = thread({ id: "parent" });
+    const action = (threadId: string, title: string) => ({
+      key: threadId,
+      environmentId: "host-1",
+      projectId: "project-1",
+      threadId,
+      reason: "input" as const,
+      generation: "g",
+      revision: "r",
+      title,
+      freshness: "live" as const,
+    });
+    const attention = (actions: ReturnType<typeof action>[]) => ({
+      roots: [
+        {
+          key: "parent",
+          thread: parent,
+          coordinator: false,
+          freshness: "live" as const,
+          actions,
+          working: false,
+        },
+      ],
+      count: actions.length > 0 ? 1 : 0,
+      working: 0,
+      complete: true,
+      staleCount: 0,
+      label: "1 waiting on you",
+    });
+    expect(threadAttentionWord(parent, attention([action("child", "1048 fresh review")]))).toBe(
+      "Answer needed · 1048 fresh review",
+    );
+    expect(threadAttentionWord(parent, attention([action("a", "One"), action("b", "Two")]))).toBe(
+      "2 subagents waiting",
+    );
+    // The thread's own question is said by its own status word.
+    expect(threadAttentionWord(parent, attention([action("parent", "Worker")]))).toBeNull();
+    expect(threadAttentionWord(parent, attention([]))).toBeNull();
+    expect(threadAttentionWord(parent)).toBeNull();
   });
   it("gives each row one status tone", () => {
     expect(threadTone(thread({ hasPendingUserInput: true }))).toBe("waiting");

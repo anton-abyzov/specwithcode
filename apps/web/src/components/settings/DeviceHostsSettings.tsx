@@ -21,6 +21,7 @@ import { updateDeviceHosts } from "./deviceHostsSettings.logic";
 import { DeviceHostEditor } from "./DeviceHostEditor";
 import { useHostConnectionChecks } from "./useHostConnectionChecks";
 import { deviceHostConnectionKey } from "./deviceHostConnectionChecks";
+import { DeviceHostDiagnostics } from "../device/DeviceSetup";
 
 export function DeviceHostsSettings(props: { environmentId: EnvironmentId | null }) {
   const { scope, environments, connectedEnvironments } = useSettingsScope();
@@ -251,6 +252,17 @@ function DeviceHostList({
                   ))}
               </div>
               <p className="truncate text-xs text-muted-foreground">{host.target}</p>
+              {status?.status === "ready" && status.androidDiscoveryIncomplete ? (
+                <p role="status" className="mt-1 text-xs text-warning-foreground">
+                  {status.detail ??
+                    "The Android device list may be incomplete. Refresh devices to try again."}
+                </p>
+              ) : null}
+              <DeviceHostDiagnostics
+                className="mt-1"
+                hosts={[host]}
+                hostStatuses={state.hostStatuses}
+              />
               <DeviceToolVersions
                 owner={environmentLabel}
                 error={state.hosts.find((value) => value.id === host.id)?.toolInspectionError}

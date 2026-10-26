@@ -34,6 +34,9 @@ export function claudeHomesDiffer(fromKey: string, toKey: string): boolean {
 
 const SESSION_ID = /^[\w-]{1,128}$/;
 
+/** Whether `sessionId` has the shape of a Claude Code session id (safe to use as a file name). */
+export const isClaudeSessionId = (sessionId: string): boolean => SESSION_ID.test(sessionId);
+
 export interface ClaudeTranscriptLocation {
   /** The project directory name Claude Code derived from the session's cwd. */
   readonly projectSlug: string;

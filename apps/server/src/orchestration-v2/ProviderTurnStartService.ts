@@ -209,6 +209,33 @@ export function providerTurnOwnedByLiveRun(input: {
   );
 }
 
+/**
+ * Whether the provider thread's current native session already took a turn,
+ * so a resume needs that session to still exist. Attempts without a native
+ * id predate the record and count as unknown (false).
+ */
+export function nativeSessionHasAcceptedTurn(
+  projection: {
+    readonly attempts: ReadonlyArray<
+      Pick<OrchestrationV2RunAttempt, "id" | "providerThreadId" | "nativeThreadId">
+    >;
+    readonly providerTurns: ReadonlyArray<{
+      readonly runAttemptId: OrchestrationV2RunAttempt["id"] | null;
+    }>;
+  },
+  providerThread: Pick<OrchestrationV2ProviderThread, "id" | "nativeThreadRef">,
+): boolean {
+  const nativeId = providerThread.nativeThreadRef?.nativeId;
+  if (nativeId === undefined || nativeId === null) return false;
+  const acceptedAttemptIds = new Set(projection.providerTurns.map((turn) => turn.runAttemptId));
+  return projection.attempts.some(
+    (attempt) =>
+      attempt.providerThreadId === providerThread.id &&
+      attempt.nativeThreadId === nativeId &&
+      acceptedAttemptIds.has(attempt.id),
+  );
+}
+
 export const layer: Layer.Layer<
   ProviderTurnStartServiceV2,
   never,
@@ -1028,6 +1055,7 @@ export const layer: Layer.Layer<
               )
             : session.resumeThread({
                 providerThread,
+                nativeThreadHasTurns: nativeSessionHasAcceptedTurn(projection, providerThread),
                 threadId: projection.thread.id,
                 modelSelection: run.modelSelection,
                 runtimePolicy: resolvedRuntimePolicy,

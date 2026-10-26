@@ -789,6 +789,81 @@ def clear_install_gate(own, home):
     except (AssertionError, OSError):
         pass
 
+# The database snapshot marker (apps/server/src/persistence/StorageMaintenance.ts). The service
+# deletes superseded events every few hours; an earlier event deleted between a snapshot and the
+# checks after the restart reads as a changed log row and refuses the update. Every snapshot
+# writes this file first, and every apply refreshes it and removes it when it ends, so the
+# service's compaction waits for whatever runs update.py: the update agent, an install request
+# or remote_update.py, held or not. A marker no apply removed lapses after
+# SNAPSHOT_MARKER_MAX_SECONDS, which covers the longest apply. A marker that was not live
+# already is followed by SNAPSHOT_MARKER_SETTLE_SECONDS: the service reads it at most once a
+# second (StorageMaintenance GATE_CACHE_MS), so a delete it started just before is committed
+# before the snapshot reads; the service also reads it again right before each delete, which is
+# one short page. A snapshot that fails takes its marker back (release_database_snapshot).
+# Best effort: without the marker an update can only refuse.
+SNAPSHOT_MARKER_FILE = 'database-snapshot.json'
+SNAPSHOT_MARKER_MAX_SECONDS = 2 * 3600
+SNAPSHOT_MARKER_SETTLE_SECONDS = 2
+
+def snapshot_marker_path(identity, own=None, home=None):
+    if own is None or home is None:
+        owner = InstallationDescriptor(identity, require_policy=False)
+        own, home = owner.own, owner.home
+    return safe_path(own / 'updates' / SNAPSHOT_MARKER_FILE, home)
+
+def snapshot_marker_live(path, now=None):
+    try:
+        at = datetime.datetime.fromisoformat(json.loads(path.read_text())['at'].replace('Z', '+00:00'))
+    except (OSError, ValueError, AttributeError, TypeError, KeyError):
+        return False
+    if at.tzinfo is None:
+        return False
+    age = ((now or datetime.datetime.now(datetime.timezone.utc)) - at).total_seconds()
+    return -60 <= age < SNAPSHOT_MARKER_MAX_SECONDS
+
+def mark_database_snapshot(identity, settle=True, own=None, home=None):
+    """Writes the marker; waits SNAPSHOT_MARKER_SETTLE_SECONDS when it was not live already.
+
+    Returns what release_database_snapshot needs to undo this call (the marker's path and the
+    live marker it replaced, if any), or None when nothing was written."""
+    try:
+        path = snapshot_marker_path(identity, own, home)
+        live = snapshot_marker_live(path)
+        previous = path.read_bytes() if live else None
+        path.parent.mkdir(mode=0o700, exist_ok=True)
+        value = {'at': datetime.datetime.now(datetime.timezone.utc).isoformat(), 'pid': os.getpid()}
+        atomic(path, (json.dumps(value) + '\n').encode(), 0o600)
+    except Exception as error:  # Never a refusal: compaction during an update only refuses it.
+        print('database snapshot marker not written: %s' % error, file=sys.stderr, flush=True)
+        return None
+    if settle and not live:
+        time.sleep(SNAPSHOT_MARKER_SETTLE_SECONDS)
+    return (path, previous)
+
+def release_database_snapshot(written):
+    """Undoes a mark_database_snapshot whose snapshot failed. Never raises.
+
+    The agent retries a refused snapshot every few minutes, so a marker left behind would never
+    lapse and would stop compaction for good. A live marker this call refreshed (another
+    update.py's) gets its own content back; one this call created is removed."""
+    if written is None:
+        return
+    path, previous = written
+    try:
+        if previous is None:
+            path.unlink()
+        else:
+            atomic(path, previous, 0o600)
+    except Exception:
+        pass
+
+def clear_database_snapshot(identity, own=None, home=None):
+    """Never raises."""
+    try:
+        snapshot_marker_path(identity, own, home).unlink()
+    except Exception:
+        pass
+
 def publish_release(staged, destination):
     manifest = release_verified(staged)  # The installer anchored staged bytes to the verified archive.
     if destination.exists():
@@ -815,11 +890,16 @@ def apply(identity, expected, archive, archive_sha, output, *, allow_existing_br
         guard = (contextlib.nullcontext() if remote_authorization is None else
                  managed_updates.remote_apply_guard(identity, remote_authorization))
         own = studio_paths.identity_home(owner['home'], identity)
-        with guard, install_progress.ProgressWriter(safe_path(own / 'updates', owner['home']), receipt=output) as progress_file, \
-                contextlib.closing(read_watermark.Watermark.open(own / 'userdata' / 'statev2.sqlite')) as watermark:
-            return _apply(identity, expected, archive, archive_sha, output,
-                          allow_existing_browser_heartbeat=allow_existing_browser_heartbeat,
-                          allow_project_migrations=allow_project_migrations, progress_file=progress_file, watermark=watermark)
+        # The prestate was taken under the marker; keep compaction off until this apply ends.
+        mark_database_snapshot(identity, settle=False, own=own, home=owner['home'])
+        try:
+            with guard, install_progress.ProgressWriter(safe_path(own / 'updates', owner['home']), receipt=output) as progress_file, \
+                    contextlib.closing(read_watermark.Watermark.open(own / 'userdata' / 'statev2.sqlite')) as watermark:
+                return _apply(identity, expected, archive, archive_sha, output,
+                              allow_existing_browser_heartbeat=allow_existing_browser_heartbeat,
+                              allow_project_migrations=allow_project_migrations, progress_file=progress_file, watermark=watermark)
+        finally:
+            clear_database_snapshot(identity, own, owner['home'])
 
 def _apply(identity, expected, archive, archive_sha, output, *, allow_existing_browser_heartbeat=False,
           allow_project_migrations=False, progress_file=None, watermark=None):
@@ -1545,9 +1625,12 @@ def main():
                           'survivors': len(record['survivors'])}))
     elif args.snapshot:
         assert not args.snapshot.exists()
+        marker = None
         try:
+            marker = mark_database_snapshot(args.identity)
             value = snapshot(args.identity, args.request)
         except Exception as error:
+            release_database_snapshot(marker)
             traceback.print_exc()
             print(snapshot_refusal(args.identity, error), file=sys.stderr, flush=True)
             sys.exit(1)

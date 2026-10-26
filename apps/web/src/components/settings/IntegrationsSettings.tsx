@@ -50,16 +50,19 @@ import { useEnvironments, usePrimaryEnvironment } from "~/state/environments";
 import { deviceEnvironment, useDeviceState } from "~/state/device";
 import { readEnvironmentScope, useEnvironmentScope } from "~/state/session";
 import { useAtomCommand } from "~/state/use-atom-command";
+import { formatEnvironmentQueryError } from "~/state/query";
 import { previewEnvironment } from "~/state/preview";
 import { useServerConfigs } from "~/state/entities";
 import { squashAtomCommandFailure } from "@specweave-studio/client-runtime/state/runtime";
 import {
   AgentDeviceSetupStatus,
   DeviceHubSetupStatus,
+  deviceHubReadiness,
   PlatformStatus,
   platformSetupStatus,
   deviceHubDescription,
   agentDeviceDescription,
+  DeviceHostDiagnostics,
 } from "~/components/device/DeviceSetup";
 import { isElectron } from "../../env";
 
@@ -593,7 +596,7 @@ function DeviceIntegrationSettings() {
   );
 }
 
-function DeviceIntegrationControls({
+export function DeviceIntegrationControls({
   environmentId,
   enabled,
   agentAccessEnabled,
@@ -615,7 +618,7 @@ function DeviceIntegrationControls({
   const [pending, setPending] = useState<
     "hub" | "check" | "agent" | "update-hub" | "update-agent" | null
   >(null);
-  const busy = state.hostStatus === "installing" || state.hostStatus === "starting";
+  const { ready: hubReady, busy } = deviceHubReadiness(state);
   const localPlatformsUnavailable = state.hosts.some(
     (host) => host.kind === "local" && !host.platforms.some((platform) => platform.available),
   );
@@ -625,7 +628,7 @@ function DeviceIntegrationControls({
   if (
     enabled &&
     !platformsRevealed &&
-    (state.hostStatus === "ready" || localPlatformsUnavailable) &&
+    (hubReady || localPlatformsUnavailable) &&
     pending !== "hub"
   ) {
     setPlatformsRevealed(true);
@@ -692,6 +695,7 @@ function DeviceIntegrationControls({
                       setUpdateError({
                         tool,
                         message:
+                          formatEnvironmentQueryError(result.cause) ??
                           "Update failed. Check this host's network connection and try again.",
                       });
                   })
@@ -774,12 +778,23 @@ function DeviceIntegrationControls({
                 : undefined
             }
             status={
-              <div className="flex flex-wrap gap-x-5 gap-y-2">
-                <PlatformStatus compact platform="iOS" status={platformSetupStatus(state, "ios")} />
-                <PlatformStatus
-                  compact
-                  platform="Android"
-                  status={platformSetupStatus(state, "android")}
+              <div className="space-y-2">
+                <div className="flex flex-wrap gap-x-5 gap-y-2">
+                  <PlatformStatus
+                    compact
+                    platform="iOS"
+                    status={platformSetupStatus(state, "ios")}
+                  />
+                  <PlatformStatus
+                    compact
+                    platform="Android"
+                    status={platformSetupStatus(state, "android")}
+                  />
+                </div>
+                {/* Remote hosts report their own warnings in the device host list below. */}
+                <DeviceHostDiagnostics
+                  hosts={state.hosts.filter((host) => host.kind === "local")}
+                  hostStatuses={state.hostStatuses}
                 />
               </div>
             }

@@ -1256,6 +1256,15 @@ effectIt.effect(
       expect(harness.writeIfRunCurrent).not.toHaveBeenCalled();
       expect(harness.projection().runs.at(-1)?.status).toBe("starting");
       expect(harness.events).toEqual([]);
+      // A failed resume (here: the native thread is gone) is told whether the
+      // native session took a turn, then replaced by a fresh native session.
+      const resumeInput = (harness.resumeThread.mock.calls[0] as unknown[] | undefined)?.[0] as
+        | { readonly nativeThreadHasTurns?: boolean }
+        | undefined;
+      expect(typeof resumeInput?.nativeThreadHasTurns).toBe("boolean");
+      expect(
+        harness.fallbackEnsureThread.mock.calls[0]?.[0].existingProviderThread?.nativeThreadRef,
+      ).toBeNull();
     }),
 );
 
@@ -1522,3 +1531,63 @@ effectIt.effect(
       expect(yield* input.projectContext!.restore).toBe("Current project memory: MEMORY_RESTORED");
     }),
 );
+
+it("tells a resume whether the current native session already took a turn", () => {
+  const providerThreadId = ProviderThreadId.make("provider-thread-native-turns");
+  const accepted = RunAttemptId.make("attempt-native-accepted");
+  const pending = RunAttemptId.make("attempt-native-pending");
+  const providerThread = {
+    id: providerThreadId,
+    nativeThreadRef: { driver: "claudeAgent", nativeId: "native-current" },
+  } as Parameters<typeof ProviderTurnStart.nativeSessionHasAcceptedTurn>[1];
+  const projection = (
+    attempts: ReadonlyArray<{
+      id: RunAttemptId;
+      nativeThreadId?: string;
+      providerThreadId?: ProviderThreadId;
+    }>,
+  ): Parameters<typeof ProviderTurnStart.nativeSessionHasAcceptedTurn>[0] => ({
+    attempts: attempts.map((attempt) => ({ providerThreadId, ...attempt })),
+    providerTurns: [{ runAttemptId: accepted }],
+  });
+
+  expect(
+    ProviderTurnStart.nativeSessionHasAcceptedTurn(
+      projection([{ id: accepted, nativeThreadId: "native-current" }]),
+      providerThread,
+    ),
+  ).toBe(true);
+  // A turn on an earlier native session, an attempt the provider never
+  // accepted, and a legacy attempt without a native id do not count.
+  expect(
+    ProviderTurnStart.nativeSessionHasAcceptedTurn(
+      projection([
+        { id: accepted, nativeThreadId: "native-replaced" },
+        { id: pending, nativeThreadId: "native-current" },
+      ]),
+      providerThread,
+    ),
+  ).toBe(false);
+  expect(
+    ProviderTurnStart.nativeSessionHasAcceptedTurn(projection([{ id: accepted }]), providerThread),
+  ).toBe(false);
+  // Another provider thread's turn on the same native id is not this one's.
+  expect(
+    ProviderTurnStart.nativeSessionHasAcceptedTurn(
+      projection([
+        {
+          id: accepted,
+          nativeThreadId: "native-current",
+          providerThreadId: ProviderThreadId.make("provider-thread-other"),
+        },
+      ]),
+      providerThread,
+    ),
+  ).toBe(false);
+  expect(
+    ProviderTurnStart.nativeSessionHasAcceptedTurn(
+      projection([{ id: accepted, nativeThreadId: "native-current" }]),
+      { ...providerThread, nativeThreadRef: null },
+    ),
+  ).toBe(false);
+});

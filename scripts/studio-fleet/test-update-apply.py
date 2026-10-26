@@ -364,7 +364,7 @@ class ApplyRecoveryTests(updater_base.ApplyRecovery):
   alias=self.home/'.local/bin/specwithcode';alias.write_bytes(self.original[self.wrapper])
   real=update.atomic;calls=[]
   def failing(path,content,mode):
-   calls.append(path)
+   if path.name!=update.SNAPSHOT_MARKER_FILE:calls.append(path)  # The marker is not part of the release.
    if path==self.wrapper and len(calls)==2:raise OSError(28,'No space left on device')
    return real(path,content,mode)
   with patch.object(update,'atomic',side_effect=failing),self.assertRaises(OSError):self.execute()

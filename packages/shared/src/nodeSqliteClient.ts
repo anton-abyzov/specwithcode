@@ -201,6 +201,22 @@ const make = Effect.fn("makeWithDatabase")(function* (
       return value;
     };
 
+    /**
+     * A PRAGMA can emit rows without declaring a column: `incremental_vacuum(N)`
+     * frees one page per step, so `run()`, which steps once, frees one page.
+     * Such statements are stepped to completion with `all()`.
+     */
+    const pragmaCache = new WeakMap<NodeSqlite.StatementSync, boolean>();
+    const isPragma = (statement: NodeSqlite.StatementSync): boolean => {
+      const cached = pragmaCache.get(statement);
+      if (cached !== undefined) {
+        return cached;
+      }
+      const value = /^\s*PRAGMA\b/i.test(statement.sourceSQL);
+      pragmaCache.set(statement, value);
+      return value;
+    };
+
     const prepare = (sql: string) =>
       Effect.try({
         try: () => db.prepare(sql),
@@ -228,9 +244,13 @@ const make = Effect.fn("makeWithDatabase")(function* (
           statement.setReadBigInts(Boolean(Context.get(fiber.context, Client.SafeIntegers)));
           const rows = hasRows(statement)
             ? statement.all(...(sqliteBindings(params) as any))
-            : raw
-              ? (statement.run(...(sqliteBindings(params) as any)) as unknown as ReadonlyArray<any>)
-              : (statement.run(...(sqliteBindings(params) as any)), []);
+            : isPragma(statement)
+              ? (statement.all(...(sqliteBindings(params) as any)), [])
+              : raw
+                ? (statement.run(
+                    ...(sqliteBindings(params) as any),
+                  ) as unknown as ReadonlyArray<any>)
+                : (statement.run(...(sqliteBindings(params) as any)), []);
           const durationMs = performance.now() - startedAt;
           // Fast statements keep the original single-step result so fiber
           // scheduling is unchanged; only slow ones pay for the report.
@@ -277,7 +297,8 @@ const make = Effect.fn("makeWithDatabase")(function* (
                   ...(sqliteBindings(params) as any),
                 ) as unknown as ReadonlyArray<ReadonlyArray<unknown>>;
               } else {
-                statement.run(...(sqliteBindings(params) as any));
+                if (isPragma(statement)) statement.all(...(sqliteBindings(params) as any));
+                else statement.run(...(sqliteBindings(params) as any));
                 rows = [];
               }
             } catch (cause) {

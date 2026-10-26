@@ -25,6 +25,10 @@ import * as ServerConfig from "../config.ts";
 import * as DeviceHost from "./DeviceHost.ts";
 import { quoteRemoteArg, remoteDeviceEnvironment, remoteDeviceScript } from "./sshDeviceScript.ts";
 
+// Same root choice as the remote device script: a legacy home wins only while no branded one exists.
+const REMOTE_STUDIO_ROOT =
+  '$( if [ -d "$HOME/.specweave-studio" ] && [ ! -e "$HOME/.specwithcode" ]; then printf %s "$HOME/.specweave-studio"; else printf %s "$HOME/.specwithcode"; fi )';
+
 const Probe = Schema.Struct({
   nodePath: Schema.String,
   tools: Schema.optional(DeviceToolVersions),
@@ -172,7 +176,11 @@ export const make = Effect.fn("SshDeviceHost.make")(function* (
     provide(
       runSshCommand(targetFor(config), {
         preHostArgs: identityArgs(config),
-        remoteCommandArgs: commandArgs(`exec ${[command, ...args].map(quoteRemoteArg).join(" ")}`),
+        // Match the hub cwd so relative executables and PATH entries resolve identically.
+        remoteCommandArgs: commandArgs(
+          `cd "${REMOTE_STUDIO_ROOT}/device/hosts/${owner}" && exec ${[command, ...args].map(quoteRemoteArg).join(" ")}`,
+        ),
+        keepErrorOutputTail: true,
         ...(options?.stdin === undefined ? {} : { stdin: options.stdin }),
         ...(options?.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
       }),
@@ -242,19 +250,33 @@ export const make = Effect.fn("SshDeviceHost.make")(function* (
             ...identityArgs(config),
             "-o",
             "ExitOnForwardFailure=yes",
+            // A multiplexed client hands its -L forwards to the control master and exits,
+            // so the tunnel must own its own connection.
+            "-o",
+            "ControlMaster=no",
+            "-o",
+            "ControlPath=none",
+            "-o",
+            "ControlPersist=no",
             "-o",
             "ServerAliveInterval=10",
             "-o",
             "ServerAliveCountMax=3",
-            "-N",
+            "-T",
             "-L",
             `127.0.0.1:${hubPort}:127.0.0.1:${remote.hubPort}`,
             ...(remote.daemonPort === undefined
               ? []
               : ["-L", `127.0.0.1:${daemonPort}:127.0.0.1:${remote.daemonPort}`]),
             config.target,
+            // The server holds the only write end of this stdin, so when it exits for any
+            // reason the remote `cat` sees EOF and ssh exits once its forwarded connections
+            // close, instead of being orphaned.
+            "sh",
+            "-c",
+            quoteRemoteArg("exec cat >/dev/null"),
           ],
-          { stdin: "ignore", stdout: "ignore", stderr: "pipe" },
+          { stdin: "pipe", stdout: "ignore", stderr: "pipe" },
         ),
       )
       .pipe(

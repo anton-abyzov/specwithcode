@@ -3,7 +3,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } fro
 
 import { cn } from "~/lib/utils";
 import { Button } from "~/components/ui/button";
-import { refreshDeviceHubAccess, useDeviceHubAccess } from "~/state/device";
+import { refreshDeviceHubAccess, renewDeviceHubAccess, useDeviceHubAccess } from "~/state/device";
 import { createCanvasFrameSink } from "@specweave-studio/client-runtime/device/frame";
 import { resolveDeviceShape } from "@specweave-studio/client-runtime/device/shape-profile";
 import { deviceKeyboard, deviceModel } from "./deviceModels";
@@ -94,6 +94,7 @@ export function DeviceStreamView(props: {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const clientRef = useRef<DeviceStreamClient | null>(null);
   const [status, setStatus] = useState<DeviceStreamStatus>("connecting");
+  const [hasFrame, setHasFrame] = useState(false);
   const [detail, setDetail] = useState<string | undefined>(undefined);
   const [showRestartNotice, setShowRestartNotice] = useState(false);
   const [screen, setScreen] = useState<DeviceScreenSize | null>(null);
@@ -123,6 +124,7 @@ export function DeviceStreamView(props: {
         onDuoUnavailable: onPhoneUnavailable,
         onStatus: (next, nextDetail) => {
           setStatus(next);
+          if (next === "streaming") setHasFrame(true);
           setDetail(nextDetail);
           if (next !== "connecting") setShowRestartNotice(false);
         },
@@ -150,6 +152,8 @@ export function DeviceStreamView(props: {
       },
     );
     clientRef.current = client;
+    setPhoneUnavailable(false);
+    setHasFrame(false);
     setMjpegUrl(null);
     setInputState({ connected: false });
     client.start();
@@ -188,16 +192,13 @@ export function DeviceStreamView(props: {
     return w / h;
   }, [props.platform, screen]);
 
-  // Android restarts its encoder when a fold changes the framebuffer size.
-  // Keep the last decoded frame and viewer mounted while the next keyframe arrives.
-  const retainingAndroidFrame =
-    props.platform === "android" &&
-    status === "connecting" &&
-    inputState.connected &&
-    screen !== null;
+  // Encoder restarts and video reconnects retain the decoded frame and viewer
+  // while input is still connected and the next keyframe is on its way.
+  const retainingFrame =
+    status === "connecting" && hasFrame && inputState.connected && screen !== null;
   const showPhone =
     props.allowPhoneView &&
-    (status === "streaming" || retainingAndroidFrame) &&
+    (status === "streaming" || retainingFrame) &&
     props.visible &&
     presentation === "phone" &&
     !phoneUnavailable &&
@@ -205,10 +206,10 @@ export function DeviceStreamView(props: {
     !props.axOverlay &&
     (!isDuo || screen?.supportsHingeAngle === true);
   useEffect(() => {
-    if (!retainingAndroidFrame || !showPhone) return;
+    if (!retainingFrame || !showPhone) return;
     const timeout = window.setTimeout(() => setShowRestartNotice(true), 2_000);
     return () => window.clearTimeout(timeout);
-  }, [retainingAndroidFrame, showPhone]);
+  }, [retainingFrame, showPhone]);
   const controlsInset = props.renderControls && !showPhone ? CONTROLS_RAIL_WIDTH : 0;
 
   // The frame is the largest box at `aspect` that fits the container, so a
@@ -357,6 +358,7 @@ export function DeviceStreamView(props: {
                   screenWidth={screen?.width}
                   screenHeight={screen?.height}
                   onFoldAngle={setFoldAngle}
+                  renewAccess={() => renewDeviceHubAccess(props.environmentId, props.hostId)}
                 />
               ) : showPhone && isDuo && screen?.supportsHingeAngle ? (
                 <DeviceDuoControls
@@ -391,6 +393,8 @@ export function DeviceStreamView(props: {
         ref={hostRef}
         className={cn(
           "relative flex min-h-0 min-w-0 flex-1 items-center justify-center overflow-hidden outline-none",
+          // Overlay the stream; focus (including pointer-driven focus) marks keyboard capture.
+          "after:pointer-events-none after:absolute after:inset-0 after:z-10 focus:after:ring-2 focus:after:ring-inset focus:after:ring-ring",
           controlsInset && "pr-14",
         )}
         tabIndex={0}
@@ -399,8 +403,20 @@ export function DeviceStreamView(props: {
         onKeyDown={(event) => {
           if (event.target !== event.currentTarget) return;
           if (event.metaKey && !["r", "R"].includes(event.key)) return;
+          // Let browser paste chords fire the paste event.
+          if (
+            (event.ctrlKey && (event.key === "v" || event.key === "V")) ||
+            (event.shiftKey && event.key === "Insert")
+          ) {
+            return;
+          }
           event.preventDefault();
           clientRef.current?.sendKey(event.nativeEvent, "down");
+        }}
+        onPaste={(event) => {
+          if (event.target !== event.currentTarget) return;
+          event.preventDefault();
+          clientRef.current?.sendText(event.clipboardData.getData("text/plain"));
         }}
         onKeyUp={(event) => {
           if (event.target !== event.currentTarget) return;
@@ -411,6 +427,7 @@ export function DeviceStreamView(props: {
           className={cn("relative select-none", showPhone && "invisible pointer-events-none")}
           style={{ width: frame.width, height: frame.height }}
           onPointerDown={(event) => {
+            if (event.button !== 0) return;
             event.currentTarget.setPointerCapture(event.pointerId);
             (event.currentTarget.parentElement as HTMLElement | null)?.focus();
             pointerActive.current = true;
@@ -532,14 +549,14 @@ export function DeviceStreamView(props: {
             </span>
           </div>
         ) : null}
-        {retainingAndroidFrame && showPhone && showRestartNotice ? (
+        {retainingFrame && showPhone && showRestartNotice ? (
           <div className="pointer-events-none absolute inset-x-0 bottom-0 flex justify-center p-2">
             <span className="rounded-md bg-background/85 px-2 py-1 text-xs text-muted-foreground">
               Waiting for device video…
             </span>
           </div>
         ) : null}
-        {status !== "streaming" && !(retainingAndroidFrame && showPhone) ? (
+        {status !== "streaming" && !(retainingFrame && showPhone) ? (
           <div className="absolute inset-0">
             <DeviceLoadingView
               name={props.deviceName ?? "Device"}
@@ -556,6 +573,7 @@ export function DeviceStreamView(props: {
                     // An expired ticket surfaces as unauthorized on restart and
                     // refreshes access through the effect; no need to mint one here.
                     clientRef.current?.stop();
+                    setPhoneUnavailable(false);
                     clientRef.current?.start();
                   }}
                 >

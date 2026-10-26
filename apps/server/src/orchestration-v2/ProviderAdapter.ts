@@ -607,10 +607,22 @@ export interface ProviderAdapterV2SessionRuntime {
   ) => Effect.Effect<OrchestrationV2ProviderThread, ProviderAdapterV2Error>;
   readonly resumeThread: (input: {
     readonly providerThread: OrchestrationV2ProviderThread;
+    /** An accepted turn already ran on the native session, so it must still exist to be resumed. */
+    readonly nativeThreadHasTurns?: boolean;
     readonly threadId?: ThreadId;
     readonly modelSelection?: ModelSelection;
     readonly runtimePolicy?: ProviderAdapterV2RuntimePolicy;
   }) => Effect.Effect<OrchestrationV2ProviderThread, ProviderAdapterV2Error>;
+  /**
+   * Checks that a native thread already loaded in this session can still be
+   * resumed; a failure sends the turn to the fresh-session fallback like a
+   * failed `resumeThread`. Omitted when loading proves enough.
+   */
+  readonly verifyNativeThread?: (input: {
+    readonly providerThread: OrchestrationV2ProviderThread;
+    readonly nativeThreadHasTurns?: boolean;
+    readonly runtimePolicy?: ProviderAdapterV2RuntimePolicy;
+  }) => Effect.Effect<void, ProviderAdapterV2Error>;
   /** False means the native protocol explicitly does not support history injection. */
   readonly injectHistory?: (
     input: ProviderAdapterV2HistoricalContext & {
