@@ -1,4 +1,3 @@
-import { Button } from "../../ui/button";
 import type { ProjectAttention } from "@specweave-studio/client-runtime/state/projectAttention";
 /**
  * The project's Threads pane: what is waiting on the person first, then what
@@ -48,6 +47,8 @@ import {
   THREAD_SORT_LABELS,
   THREAD_SORTS,
   THREAD_TONE_LABELS,
+  attentionActionWord,
+  threadAttentionWord,
   threadsSummary,
   threadStatusWord,
   threadTone,
@@ -113,6 +114,7 @@ export function ThreadsPane({
   /** Working subagents per `environmentId:threadId`; they roll up into their thread's row. */
   runningSubagents?: ReadonlyMap<string, number>;
   attention?: ProjectAttention;
+  /** Opens where an attention action is answered, such as the coordinator's own page. */
   onOpenAction?: (id: ThreadId, environmentId: EnvironmentId) => void;
   canChange: boolean;
   findRef: RefObject<HTMLInputElement | null>;
@@ -262,6 +264,10 @@ export function ThreadsPane({
   const narrowed = searching || showUnplannedOnly;
   const offerStarters =
     allThreads.length === 0 && props.starters != null && !props.remoteWorkerCount;
+  // The coordinator is not a row here, so a question it asks is offered in the header.
+  const coordinatorAsk = props.attention?.roots.find(
+    (root) => root.coordinator && root.actions.length > 0,
+  )?.actions[0];
 
   return (
     <>
@@ -388,7 +394,8 @@ export function ThreadsPane({
         aria-labelledby="sws-pane-tab-threads"
       >
         <header className="sws-threads-head">
-          <h2>{offerStarters ? "Welcome." : "Welcome back."}</h2>
+          {/* A first visit gets a greeting; after that the summary leads on its own. */}
+          {offerStarters ? <h2>Welcome.</h2> : null}
           <p role="status">
             {offerStarters && !props.attention
               ? "No threads yet. Pick a first task, or ask the coordinator for one."
@@ -400,6 +407,22 @@ export function ThreadsPane({
                   props.attention,
                 )}
           </p>
+          {coordinatorAsk ? (
+            <button
+              type="button"
+              className="sws-threads-ask"
+              data-coordinator-ask
+              onClick={() =>
+                (props.onOpenAction ?? props.onOpen)(
+                  coordinatorAsk.threadId as ThreadId,
+                  coordinatorAsk.environmentId as EnvironmentId,
+                )
+              }
+            >
+              <span className="sws-dot" data-tone="waiting" aria-hidden />
+              Coordinator · {attentionActionWord(coordinatorAsk.reason)}
+            </button>
+          ) : null}
           {unplannedCount > 0 && !offerStarters ? (
             <UnplannedThreadsFilter
               count={unplannedCount}
@@ -412,47 +435,6 @@ export function ThreadsPane({
             />
           ) : null}
         </header>
-        {props.attention && (!props.attention.complete || props.attention.count > 0) ? (
-          <section aria-label="Project attention" className="px-4 pb-3 text-sm">
-            <h3 className="font-medium">{props.attention.label}</h3>
-            {!props.attention.complete ? (
-              <p className="text-muted-foreground">
-                Some project hosts are not current. Known actions below are a partial total.
-              </p>
-            ) : null}
-            {props.attention.roots
-              .filter((root) => root.actions.length > 0)
-              .map((root) => (
-                <div key={root.key} className="mt-2">
-                  <p>{root.coordinator ? "Coordinator" : root.thread.title}</p>
-                  {root.actions.map((action) => (
-                    <Button
-                      key={action.key}
-                      variant="ghost"
-                      size="sm"
-                      onClick={() =>
-                        (props.onOpenAction ?? props.onOpen)(
-                          action.threadId as ThreadId,
-                          action.environmentId as EnvironmentId,
-                        )
-                      }
-                    >
-                      {action.reason === "input"
-                        ? "Answer question"
-                        : action.reason === "signin"
-                          ? "Sign in"
-                          : action.reason === "held"
-                            ? "Resume or discard"
-                            : action.reason === "plan"
-                              ? "Review plan"
-                              : "Review approval"}
-                      {action.threadId !== root.thread.id ? ` · ${action.title ?? "subagent"}` : ""}
-                    </Button>
-                  ))}
-                </div>
-              ))}
-          </section>
-        ) : null}
         {props.notice}
         <div id="sws-threads-find">
           {findShown ? (
@@ -515,7 +497,7 @@ export function ThreadsPane({
                   onClick={narrowed ? undefined : () => setGroupFolded(group, !isFolded)}
                 >
                   {isFolded ? <ChevronRightIcon aria-hidden /> : <ChevronDownIcon aria-hidden />}
-                  {group === "Waiting on you" ? "Workers waiting on you" : group}
+                  {group}
                   <span className="sws-group-count">
                     {threads.length}
                     {narrowed ? " shown" : ""}
@@ -534,7 +516,13 @@ export function ThreadsPane({
                       props.runningSubagents?.get(`${thread.environmentId}:${thread.id}`) ?? 0;
                     const hostOffline = unreachable.has(thread.environmentId);
                     const ownTone = threadTone(thread, hostOffline);
-                    const tone = subagentsWorking > 0 && ownTone === "idle" ? "working" : ownTone;
+                    // A subagent's question puts its parent here; the row says which one.
+                    const attentionWord = threadAttentionWord(thread, props.attention);
+                    const tone = attentionWord
+                      ? "waiting"
+                      : subagentsWorking > 0 && ownTone === "idle"
+                        ? "working"
+                        : ownTone;
                     const entry =
                       entriesByEnvironment
                         .get(thread.environmentId)
@@ -548,10 +536,9 @@ export function ThreadsPane({
                     const action = archived || settled ? "Reopen" : "Resolve";
                     // The group heading already says "Working" or "Waiting on you"; a row
                     // names only a more specific state, such as "Answer needed".
-                    const statusWord = withRunningSubagents(
-                      threadStatusWord(thread, hostOffline),
-                      subagentsWorking,
-                    );
+                    const statusWord =
+                      attentionWord ??
+                      withRunningSubagents(threadStatusWord(thread, hostOffline), subagentsWorking);
                     const rowStatus = statusWord === group ? null : statusWord;
                     const location = threadLocation({
                       summary: thread.source,
@@ -575,6 +562,7 @@ export function ThreadsPane({
                         className="sws-thread-row project-thread-card"
                         key={`${thread.environmentId}:${thread.id}`}
                         data-tone={tone}
+                        data-attention={attentionWord ? "" : undefined}
                         data-thread-id={thread.id}
                         data-thread-environment={thread.environmentId}
                       >

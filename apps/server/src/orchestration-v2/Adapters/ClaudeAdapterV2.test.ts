@@ -33,6 +33,7 @@ import {
   ThreadId,
 } from "@specweave-studio/contracts";
 import { assert, describe, it } from "@effect/vitest";
+import * as Cause from "effect/Cause";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
@@ -2238,6 +2239,281 @@ describe("ClaudeAdapterV2 native session identity", () => {
       const openedQueries = yield* openTurnWithOrdinal(4, false);
       assert.equal(openedQueries[0]?.options.sessionId, "native-session-identity");
       assert.equal(openedQueries[0]?.options.resume, undefined);
+    }),
+  );
+
+  const MISSING_NATIVE_ID = "native-session-identity";
+
+  const resumeInClaudeHome = (input: {
+    readonly projectsFolder: boolean;
+    readonly transcriptFolder?: string;
+    readonly nativeThreadHasTurns?: boolean;
+    readonly conversationHead?: boolean;
+    /** Sets HOME instead of CLAUDE_CONFIG_DIR; "other" names a HOME the CLI would not use. */
+    readonly home?: "configDir" | "other";
+    /** Runs a turn first; "missing" ends it the way the CLI answers a resume of a gone session. */
+    readonly turn?: "ok" | "missing";
+    readonly via?: "resume" | "verify";
+    readonly unreadableProjects?: boolean;
+  }) =>
+    Effect.scoped(
+      Effect.gen(function* () {
+        const fileSystem = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const root = yield* fileSystem.makeTempDirectoryScoped({
+          prefix: "studio-claude-v2-missing-session-",
+        });
+        const home = input.home === "other" ? path.join(root, ".claude") : root;
+        if (input.projectsFolder) {
+          yield* fileSystem.makeDirectory(path.join(home, "projects", "-workspace"), {
+            recursive: true,
+          });
+        }
+        if (input.transcriptFolder !== undefined) {
+          const folder = path.join(home, "projects", input.transcriptFolder);
+          yield* fileSystem.makeDirectory(folder, { recursive: true });
+          yield* fileSystem.writeFileString(
+            path.join(folder, `${MISSING_NATIVE_ID}.jsonl`),
+            "{}\n",
+          );
+        }
+        if (input.unreadableProjects === true) {
+          const projects = path.join(home, "projects");
+          yield* fileSystem.chmod(projects, 0o000);
+          yield* Effect.addFinalizer(() => fileSystem.chmod(projects, 0o755).pipe(Effect.ignore));
+        }
+        const sdkMessages = yield* Queue.unbounded<SDKMessage, Cause.Done>();
+        const adapter = ClaudeAdapterV2.makeClaudeAdapterV2({
+          instanceId: ClaudeAdapterV2.CLAUDE_DEFAULT_INSTANCE_ID,
+          settings: DEFAULT_CLAUDE_SETTINGS,
+          environment: input.home === "other" ? { HOME: root } : { CLAUDE_CONFIG_DIR: home },
+          attachmentsDir: root,
+          fileSystem,
+          path,
+          crypto: yield* Crypto.Crypto,
+          idAllocator,
+          queryRunner: {
+            allocateSessionId: Effect.succeed(MISSING_NATIVE_ID),
+            open: () =>
+              Effect.succeed({
+                messages: Stream.fromQueue(sdkMessages),
+                offer: () => Effect.void,
+                setModel: () => Effect.void,
+                setPermissionMode: () => Effect.void,
+                interrupt: Effect.void,
+                close: Effect.void,
+              }),
+            forkSession: () => Effect.die("unused forkSession"),
+            subagentLaunchToolUseId: () => Effect.succeed(null),
+            assertComplete: Effect.void,
+          },
+        });
+        const threadId = ThreadId.make("thread-claude-missing-session");
+        const runtime = yield* adapter.openSession({
+          threadId,
+          providerSessionId: ProviderSessionId.make("provider-session-claude-missing-session"),
+          modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+          runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
+        });
+        const created = yield* runtime.ensureThread({
+          threadId,
+          modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+          runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
+        });
+        const providerThread =
+          input.conversationHead === true
+            ? {
+                ...created,
+                nativeConversationHeadRef: {
+                  driver: ClaudeAdapterV2.CLAUDE_PROVIDER,
+                  nativeId: "00000000-0000-4000-8000-000000000301",
+                  strength: "strong" as const,
+                },
+              }
+            : created;
+        const check = () => {
+          const threadInput = {
+            providerThread,
+            runtimePolicy: CLAUDE_TEST_RUNTIME_POLICY,
+            ...(input.nativeThreadHasTurns === undefined
+              ? {}
+              : { nativeThreadHasTurns: input.nativeThreadHasTurns }),
+          };
+          return Effect.result(
+            input.via === "verify"
+              ? runtime.verifyNativeThread!(threadInput).pipe(Effect.as(providerThread))
+              : runtime.resumeThread(threadInput),
+          );
+        };
+        if (input.turn !== undefined) {
+          yield* runtime.startTurn(
+            makeClaudeTestTurnInput({
+              threadId,
+              providerThread: created,
+              now: yield* DateTime.now,
+              attemptId: RunAttemptId.make("attempt-claude-missing-session"),
+              text: "Continue",
+              attachments: [],
+            }),
+          );
+        }
+        if (input.turn === "missing") {
+          yield* Queue.offer(sdkMessages, {
+            type: "result",
+            subtype: "error_during_execution",
+            duration_ms: 1,
+            duration_api_ms: 0,
+            is_error: true,
+            num_turns: 0,
+            stop_reason: null,
+            total_cost_usd: 0,
+            usage: {
+              input_tokens: 0,
+              output_tokens: 0,
+              cache_creation_input_tokens: 0,
+              cache_read_input_tokens: 0,
+            },
+            modelUsage: {},
+            permission_denials: [],
+            errors: [`No conversation found with session ID: ${MISSING_NATIVE_ID}`],
+            uuid: "00000000-0000-4000-8000-000000000302",
+            session_id: MISSING_NATIVE_ID,
+          } as unknown as SDKMessage);
+          // The process exits after its answer; output held for a prompt
+          // echo is released then.
+          yield* Queue.end(sdkMessages);
+          // The turn settles on a forked fiber; the check fails once it has.
+          for (let attempt = 0; attempt < 5000; attempt++) {
+            const result = yield* check();
+            if (result._tag === "Failure") return result;
+            yield* Effect.yieldNow;
+          }
+        }
+        return yield* check();
+      }).pipe(Effect.provide(Layer.merge(IdAllocator.layer, NodeServices.layer))),
+    );
+
+  it.effect("fails the resume of a native session whose transcript is gone", () =>
+    Effect.gen(function* () {
+      const result = yield* resumeInClaudeHome({
+        projectsFolder: true,
+        nativeThreadHasTurns: true,
+      });
+      assert.equal(result._tag, "Failure");
+      if (result._tag === "Failure") {
+        assert.equal(result.failure._tag, "ProviderAdapterResumeThreadError");
+      }
+    }),
+  );
+
+  it.effect("checks a native session with a conversation head even without known turns", () =>
+    Effect.gen(function* () {
+      const result = yield* resumeInClaudeHome({ projectsFolder: true, conversationHead: true });
+      assert.equal(result._tag, "Failure");
+    }),
+  );
+
+  it.effect("verifies a thread the session already loaded", () =>
+    Effect.gen(function* () {
+      const gone = yield* resumeInClaudeHome({
+        projectsFolder: true,
+        nativeThreadHasTurns: true,
+        via: "verify",
+      });
+      assert.equal(gone._tag, "Failure");
+      if (gone._tag === "Failure") {
+        assert.equal(gone.failure._tag, "ProviderAdapterResumeThreadError");
+      }
+      const present = yield* resumeInClaudeHome({
+        projectsFolder: true,
+        transcriptFolder: "-workspace",
+        nativeThreadHasTurns: true,
+        via: "verify",
+      });
+      assert.equal(present._tag, "Success");
+    }),
+  );
+
+  it.effect("trusts a native session this process opened", () =>
+    Effect.gen(function* () {
+      const result = yield* resumeInClaudeHome({
+        projectsFolder: true,
+        nativeThreadHasTurns: true,
+        turn: "ok",
+        via: "verify",
+      });
+      assert.equal(result._tag, "Success");
+    }),
+  );
+
+  it.effect("checks again once the CLI reports the conversation is gone", () =>
+    Effect.gen(function* () {
+      const result = yield* resumeInClaudeHome({
+        projectsFolder: true,
+        nativeThreadHasTurns: true,
+        turn: "missing",
+        via: "verify",
+      });
+      assert.equal(result._tag, "Failure");
+    }),
+  );
+
+  it.effect("resumes a native session whose transcript is under any project folder", () =>
+    Effect.gen(function* () {
+      const result = yield* resumeInClaudeHome({
+        projectsFolder: true,
+        transcriptFolder: "-Users-someone-moved-project",
+        nativeThreadHasTurns: true,
+      });
+      assert.equal(result._tag, "Success");
+    }),
+  );
+
+  it.effect("resumes a native session that has not taken a turn yet", () =>
+    Effect.gen(function* () {
+      const noTurn = yield* resumeInClaudeHome({
+        projectsFolder: true,
+        nativeThreadHasTurns: false,
+      });
+      assert.equal(noTurn._tag, "Success");
+      const unknown = yield* resumeInClaudeHome({ projectsFolder: true });
+      assert.equal(unknown._tag, "Success");
+    }),
+  );
+
+  it.effect("resumes when the Claude home is not one the CLI reads", () =>
+    Effect.gen(function* () {
+      const result = yield* resumeInClaudeHome({
+        projectsFolder: true,
+        nativeThreadHasTurns: true,
+        home: "other",
+      });
+      assert.equal(result._tag, "Success");
+    }),
+  );
+
+  // chmod cannot take read access away from a folder on Windows.
+  it.effect.skipIf(process.platform === "win32")(
+    "resumes when the projects folder cannot be listed",
+    () =>
+      Effect.gen(function* () {
+        const result = yield* resumeInClaudeHome({
+          projectsFolder: true,
+          nativeThreadHasTurns: true,
+          unreadableProjects: true,
+        });
+        assert.equal(result._tag, "Success");
+      }),
+  );
+
+  it.effect("resumes when the Claude home has no projects folder to check", () =>
+    Effect.gen(function* () {
+      const result = yield* resumeInClaudeHome({
+        projectsFolder: false,
+        nativeThreadHasTurns: true,
+      });
+      assert.equal(result._tag, "Success");
     }),
   );
 });

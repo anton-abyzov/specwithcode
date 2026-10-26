@@ -31,6 +31,7 @@ import * as NodeSocket from "@effect/platform-node/NodeSocket";
 import * as EnvironmentAuth from "../auth/EnvironmentAuth.ts";
 import { authenticateMediaRequest, serveSocketUntilSessionEnds } from "../auth/http.ts";
 import * as DeviceService from "./DeviceService.ts";
+import { repeatStillFrame } from "./mjpegStillFrame.ts";
 
 const ALLOWED_PATHS: ReadonlyArray<RegExp> = [
   /^\/api\/devices$/,
@@ -77,6 +78,9 @@ const DROPPED_REQUEST_HEADERS = new Set([
   "dpop",
   "content-length",
   "accept-encoding",
+  // Describes the client's HTTPS hop to the app. The hub builds its own origin from it and then
+  // rejects the loopback Origin set below, so every mutation fails over SpecWithCode Connect.
+  "x-forwarded-proto",
 ]);
 
 const isWebSocketUpgrade = (request: HttpServerRequest.HttpServerRequest) =>
@@ -159,8 +163,10 @@ const proxyHttp = Effect.fn("DeviceHubProxy.proxyHttp")(function* (
   }
   // Long-lived MJPEG and AVCC responses must not be buffered by compression.
   headers["cache-control"] = "no-store, no-transform";
-  const body =
-    ended === undefined ? response.stream : response.stream.pipe(Stream.interruptWhen(ended));
+  const frames = headers["content-type"]?.startsWith("multipart/x-mixed-replace")
+    ? repeatStillFrame(response.stream)
+    : response.stream;
+  const body = ended === undefined ? frames : frames.pipe(Stream.interruptWhen(ended));
   return HttpServerResponse.stream(body, {
     status: response.status,
     headers,

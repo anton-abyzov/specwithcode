@@ -3,6 +3,7 @@ import * as Clock from "effect/Clock";
 import * as Random from "effect/Random";
 import * as Semaphore from "effect/Semaphore";
 import * as StorageCleanup from "./storageCleanup.ts";
+import * as StorageMaintenance from "./persistence/StorageMaintenance.ts";
 import * as PullRequestSyncReactor from "./orchestration-v2/PullRequestSyncReactor.ts";
 import * as PullRequestWatchReactor from "./orchestration-v2/PullRequestWatchReactor.ts";
 import * as ClaudeIdleCompactionReactor from "./orchestration-v2/ClaudeIdleCompactionReactor.ts";
@@ -670,6 +671,8 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   Layer.effectDiscard(StorageCleanup.make.pipe(Effect.flatMap((service) => service.start()))).pipe(
     Layer.provide(ProjectionStoreV2.layer),
   ),
+  // Deletes superseded event history every six hours, never during an update.
+  StorageMaintenance.layerStart,
   // Unsent drafts of deleted threads and projects.
   ComposerDrafts.layerCleanup.pipe(Layer.provide(ProjectionStoreV2.layer)),
   layerThreadPullRequestWorker,

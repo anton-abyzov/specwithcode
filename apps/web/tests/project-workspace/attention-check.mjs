@@ -6,13 +6,16 @@ export function checkAttention(expected) {
   const summary = document.querySelector(".sws-threads-head")?.textContent ?? "";
   const badge =
     document.querySelector('[aria-label="Project sidebar"] .sws-count')?.textContent ?? "";
-  const actionView = document.querySelector('[aria-label="Project attention"]');
   const working = Number(
     document
       .querySelector('[data-group="Working"] .sws-group-count')
       ?.textContent?.match(/\d+/)?.[0] ?? 0,
   );
-  const actions = actionView?.querySelectorAll("button").length ?? 0;
+  // Each waiting thread is one row (a subagent's question marks its parent's row), and
+  // the coordinator, which has no row, asks from the header.
+  const actions =
+    document.querySelectorAll('[data-group="Waiting on you"] .sws-thread-row').length +
+    document.querySelectorAll("[data-coordinator-ask]").length;
   if (!summary.includes(expected.summary)) throw new Error(`Summary mismatch: ${summary}`);
   if (expected.badge === null ? badge !== "" : !badge.includes(expected.badge))
     throw new Error(`Badge mismatch: ${badge}`);

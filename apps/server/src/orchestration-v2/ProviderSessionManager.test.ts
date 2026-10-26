@@ -185,6 +185,7 @@ interface TestProviderRuntimeState {
   readonly closeCount: number;
   readonly interruptCount: number;
   readonly resumeCount: number;
+  readonly verifyCount: number;
   readonly unloadedNativeThreadIds: ReadonlyArray<string>;
   readonly eventQueues: ReadonlyMap<string, Queue.Queue<ProviderAdapterV2Event, Cause.Done>>;
 }
@@ -194,6 +195,7 @@ const emptyState: TestProviderRuntimeState = {
   closeCount: 0,
   interruptCount: 0,
   resumeCount: 0,
+  verifyCount: 0,
   unloadedNativeThreadIds: [],
   eventQueues: new Map(),
 };
@@ -441,6 +443,11 @@ function makeProviderAdapter(
               ...current,
               resumeCount: current.resumeCount + 1,
             })).pipe(Effect.as(threadInput.providerThread)),
+          verifyNativeThread: () =>
+            Ref.update(state, (current) => ({
+              ...current,
+              verifyCount: current.verifyCount + 1,
+            })),
           startTurn: () => {
             options.onStartInvocation?.();
             return options.startTurn ?? Effect.void;
@@ -2453,6 +2460,59 @@ it.effect(
           layerTest({ state, idleTimeoutMs: 60_000, pauseResolve: { armed, paused } }),
         ),
       );
+    }),
+);
+
+it.effect(
+  "ProviderSessionManagerV2 checks a loaded native thread that already took a turn before reusing it",
+  () =>
+    Effect.gen(function* () {
+      const state = yield* Ref.make(emptyState);
+      yield* Effect.gen(function* () {
+        const eventSink = yield* EventSink.EventSinkV2;
+        const idAllocator = yield* IdAllocator.IdAllocatorV2;
+        const manager = yield* ProviderSessionManager.ProviderSessionManagerV2;
+        const now = yield* DateTime.now;
+        const threadId = ThreadId.make("thread-provider-session-manager-verify-loaded");
+        const providerSessionId = idAllocator.derive.providerSession({
+          providerInstanceId: modelSelection.instanceId,
+        });
+        yield* eventSink.write({
+          events: [yield* makeThreadCreatedEvent({ idAllocator, threadId, now })],
+        });
+        const runtime = yield* manager.open({
+          threadId,
+          providerSessionId,
+          modelSelection,
+          runtimePolicy,
+        });
+        const providerThread = makeProviderThread({
+          idAllocator,
+          threadId,
+          providerSessionId,
+          now,
+          nativeThreadId: "native-verify-loaded",
+        });
+        const resume = (nativeThreadHasTurns?: boolean) =>
+          runtime.resumeThread({
+            threadId,
+            providerThread,
+            modelSelection,
+            runtimePolicy,
+            ...(nativeThreadHasTurns === undefined ? {} : { nativeThreadHasTurns }),
+          });
+
+        // The first load resumes; the adapter checks the session itself then.
+        yield* resume(true);
+        assert.include(yield* Ref.get(state), { resumeCount: 1, verifyCount: 0 });
+        // Loaded since: a native thread that took a turn is checked again.
+        yield* resume(true);
+        assert.include(yield* Ref.get(state), { resumeCount: 1, verifyCount: 1 });
+        // One without an accepted turn has nothing to lose, so it is reused as is.
+        yield* resume(false);
+        yield* resume();
+        assert.include(yield* Ref.get(state), { resumeCount: 1, verifyCount: 1 });
+      }).pipe(Effect.provide(layerTest({ state, idleTimeoutMs: 60_000 })));
     }),
 );
 

@@ -941,8 +941,12 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
       `;
 
       const summary = yield* maintenance.compactEventStore;
-      // Superseded state spans several discovery pages. Both turn-item updates stay.
-      assert.isAtLeast(summary.deletedEventCount, 507);
+      // Superseded state spans several discovery pages: at least this thread's
+      // 502 read-state events and the imported thread's 2 v1 events (the
+      // layer's other tests add their own). Both turn-item updates stay, as do
+      // the oldest and newest message and node snapshot.
+      assert.isAtLeast(summary.deletedEventCount, 504);
+      assert.isAtLeast(summary.deletedByType["thread.visited"] ?? 0, 502);
       assert.isAtLeast(summary.deletedReceiptCount, 1);
 
       const remaining = yield* sql<{ readonly event_id: string }>`
@@ -956,6 +960,10 @@ it.layer(layerTest)("orchestration V2 foundation persistence", (it) => {
         remaining.map((row) => row.event_id),
         [
           "event:foundation-compact:create",
+          // The newest activity event: read-state events never supersede it.
+          "event:foundation-compact:meta",
+          "event:foundation-compact:message-1",
+          "event:foundation-compact:node-1",
           "event:foundation-compact:item-1",
           "event:foundation-compact:visit-2",
           "event:foundation-compact:message-2",

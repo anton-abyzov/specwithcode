@@ -102,6 +102,8 @@ import * as Stream from "effect/Stream";
 
 import { resolveAttachmentPath } from "../../attachmentStore.ts";
 import { resolveClaudeSdkExecutablePath } from "../../provider/Drivers/ClaudeExecutable.ts";
+import { isClaudeSessionId } from "../../provider/Drivers/ClaudeTranscriptTransfer.ts";
+import { encodeClaudeProjectDir } from "../../usage/projectFolderSessions.ts";
 import { planClaudeSkillDispatch } from "../../provider/Drivers/ClaudeSkillDispatch.ts";
 import { discoverClaudeSkills } from "../../provider/Drivers/ClaudeSkills.ts";
 import { compileClaudeModelSelection } from "../../claudeModelOptions.ts";
@@ -1398,6 +1400,9 @@ const getNativeThreadId = Effect.fnUntraced(function* (
   }
   return nativeThreadId;
 });
+
+/** The CLI's answer to a resume of a session it has no transcript for. */
+const CLAUDE_MISSING_CONVERSATION = /No conversation found with session ID/i;
 
 const isSyntheticClaudeTurnId = (nativeTurnId: string): boolean => nativeTurnId.startsWith("turn:");
 
@@ -3666,6 +3671,87 @@ export function makeClaudeAdapterV2(
         // fail): what most likely ended a process that later turns find gone.
         const lastTurnFailureClass = yield* Ref.make<string | null>(null);
         const openedNativeThreads = yield* Ref.make(new Set<string>());
+        // A resume of a native session whose transcript is gone fails every
+        // turn with "No conversation found with session ID" (Claude Code
+        // prunes transcripts, a person can delete them, and a wake can bind a
+        // native id the CLI never created). The resume fails here instead, so
+        // the turn starts a fresh native session and carries the thread's
+        // history over as a handoff. The home follows the CLI's own rule, and
+        // anything this check cannot read lets the resume go ahead.
+        const claudeHomeForTranscripts = (): string | null => {
+          const configDir = adapterOptions.environment.CLAUDE_CONFIG_DIR?.trim();
+          if (configDir !== undefined && configDir.length > 0) {
+            return path.isAbsolute(configDir) ? configDir : null;
+          }
+          const userHome = adapterOptions.environment.HOME?.trim();
+          if (userHome === undefined || userHome.length === 0) return null;
+          // The CLI reads os.homedir(); a HOME that differs (a Windows dev
+          // shell) is not the CLI's home, so it is not checked.
+          return path.resolve(userHome) === path.resolve(expandHomePath("~"))
+            ? path.join(userHome, ".claude")
+            : null;
+        };
+        /** Whether the transcript exists; "unknown" when the home cannot be read. */
+        const nativeTranscriptExists = Effect.fnUntraced(function* (
+          home: string,
+          nativeId: string,
+          cwd: string | undefined,
+        ) {
+          const projects = path.join(home, "projects");
+          const projectsStat = yield* fileSystem
+            .stat(projects)
+            .pipe(Effect.orElseSucceed(() => null));
+          if (projectsStat?.type !== "Directory") return "unknown" as const;
+          const fileName = `${nativeId}.jsonl`;
+          if (
+            cwd !== undefined &&
+            (yield* fileSystem
+              .exists(path.join(projects, encodeClaudeProjectDir(cwd), fileName))
+              .pipe(Effect.orElseSucceed(() => false)))
+          ) {
+            return true;
+          }
+          // A moved project folder keeps its transcript under the old name.
+          return yield* fileSystem.readDirectory(projects).pipe(
+            Effect.flatMap((entries) =>
+              Effect.forEach(
+                entries,
+                (entry) => fileSystem.exists(path.join(projects, entry, fileName)),
+                { concurrency: 16 },
+              ),
+            ),
+            Effect.map((found) => found.includes(true)),
+            Effect.orElseSucceed(() => "unknown" as const),
+          );
+        });
+        const requireNativeTranscript = Effect.fnUntraced(function* (threadInput: {
+          readonly providerThread: OrchestrationV2ProviderThread;
+          readonly nativeThreadHasTurns?: boolean;
+          readonly runtimePolicy?: ProviderAdapter.ProviderAdapterV2RuntimePolicy;
+        }) {
+          const nativeId = threadInput.providerThread.nativeThreadRef?.nativeId;
+          if (nativeId === undefined || nativeId === null || !isClaudeSessionId(nativeId)) return;
+          const resumes =
+            threadInput.nativeThreadHasTurns === true ||
+            threadInput.providerThread.nativeConversationHeadRef !== null;
+          if (!resumes || (yield* Ref.get(openedNativeThreads)).has(nativeId)) return;
+          const home = claudeHomeForTranscripts();
+          if (home === null) return;
+          const exists = yield* nativeTranscriptExists(
+            home,
+            nativeId,
+            threadInput.runtimePolicy?.cwd ?? undefined,
+          );
+          if (exists !== false) return;
+          yield* Effect.logWarning("claude.native-session.missing", {
+            providerThreadId: threadInput.providerThread.id,
+            nativeThreadId: nativeId,
+          });
+          return yield* new ProviderAdapter.ProviderAdapterProtocolError({
+            driver: CLAUDE_PROVIDER,
+            detail: `Claude native session ${nativeId} has no transcript under ${home}.`,
+          });
+        });
         const latestPlanByKind = yield* Ref.make(new Map<string, OrchestrationV2PlanArtifact>());
         const planIdsByNativeItem = yield* Ref.make(
           new Map<string, OrchestrationV2PlanArtifact["id"]>(),
@@ -5527,6 +5613,17 @@ export function makeClaudeAdapterV2(
             }),
         });
 
+        // The CLI could not find the session it was told to resume. Forget
+        // that this process opened it, so the next turn's check sees the
+        // transcript is gone and starts a fresh session.
+        const forgetMissingNativeThread = (context: ActiveClaudeTurnContext) =>
+          Ref.update(openedNativeThreads, (current) => {
+            const nativeId = context.input.providerThread.nativeThreadRef?.nativeId;
+            if (nativeId == null || !current.has(nativeId)) return current;
+            const updated = new Set(current);
+            updated.delete(nativeId);
+            return updated;
+          });
         const finalizeActiveTurn = Effect.fnUntraced(function* (input: {
           readonly context: ActiveClaudeTurnContext;
           readonly status: Extract<
@@ -5542,6 +5639,15 @@ export function makeClaudeAdapterV2(
             return;
           }
           input.context.finalizing = true;
+          if (
+            input.status === "failed" &&
+            [
+              input.failure?.message,
+              ...(input.result?.subtype === "success" ? [] : (input.result?.errors ?? [])),
+            ].some((text) => text !== undefined && CLAUDE_MISSING_CONVERSATION.test(text))
+          ) {
+            yield* forgetMissingNativeThread(input.context);
+          }
           yield* Ref.set(
             lastTurnFailureClass,
             input.status === "failed" ? (input.failure?.class ?? null) : null,
@@ -5835,6 +5941,9 @@ export function makeClaudeAdapterV2(
           const context = yield* Ref.get(activeTurn);
           if (context === null) {
             return;
+          }
+          if (cause !== undefined && CLAUDE_MISSING_CONVERSATION.test(Cause.pretty(cause))) {
+            yield* forgetMissingNativeThread(context);
           }
           const completedAt = yield* DateTime.now;
           const interrupted = (yield* Ref.get(interruptedTurns)).has(context.providerTurnId);
@@ -8852,7 +8961,12 @@ export function makeClaudeAdapterV2(
               ),
           ),
           resumeThread: Effect.fn("ClaudeAdapterV2.resumeThread")(
-            function* (threadInput: { readonly providerThread: OrchestrationV2ProviderThread }) {
+            function* (threadInput: {
+              readonly providerThread: OrchestrationV2ProviderThread;
+              readonly nativeThreadHasTurns?: boolean;
+              readonly runtimePolicy?: ProviderAdapter.ProviderAdapterV2RuntimePolicy;
+            }) {
+              yield* requireNativeTranscript(threadInput);
               const updatedAt = yield* DateTime.now;
               return {
                 ...threadInput.providerThread,
@@ -8874,6 +8988,18 @@ export function makeClaudeAdapterV2(
                 ),
               ),
           ),
+          verifyNativeThread: (threadInput) =>
+            requireNativeTranscript(threadInput).pipe(
+              Effect.mapError(
+                (cause) =>
+                  new ProviderAdapter.ProviderAdapterResumeThreadError({
+                    driver: CLAUDE_PROVIDER,
+                    providerSessionId: input.providerSessionId,
+                    providerThreadId: threadInput.providerThread.id,
+                    cause,
+                  }),
+              ),
+            ),
           prepareTurn: (input) =>
             prepareTurn(input).pipe(
               Effect.mapError(

@@ -23,6 +23,7 @@ import {
   HostProcessEnvironment,
   HostProcessPlatform,
   HostProcessUserId,
+  HostProcessWorkingDirectory,
 } from "@specweave-studio/shared/hostProcess";
 import {
   resolveNodeExecutable,
@@ -91,6 +92,19 @@ const AgentDeviceDaemonFile = Schema.Struct({
 });
 const decodeDaemonFile = Schema.decodeUnknownEffect(Schema.fromJsonString(AgentDeviceDaemonFile));
 
+const decodeAgentDeviceFailure = Schema.decodeUnknownOption(
+  Schema.fromJsonString(
+    Schema.Struct({
+      error: Schema.Struct({
+        details: Schema.Struct({
+          reason: Schema.String,
+          inspection: Schema.optional(Schema.Struct({ reason: Schema.String })),
+        }),
+      }),
+    }),
+  ),
+);
+
 interface HubProcess {
   readonly nodePath: string;
   readonly child: ChildProcessSpawner.ChildProcessHandle;
@@ -135,8 +149,25 @@ const androidSdk = Effect.gen(function* () {
   const path = yield* Path.Path;
   const environment = yield* HostProcessEnvironment;
   const platform = yield* HostProcessPlatform;
+  const windows = platform === "win32";
   const home = environment.HOME ?? environment.USERPROFILE ?? "";
   const explicit = environment.ANDROID_HOME?.trim() || environment.ANDROID_SDK_ROOT?.trim();
+  const exists = (file: string) => fs.exists(file).pipe(Effect.orElseSucceed(() => false));
+  const adbBinary = windows ? "adb.exe" : "adb";
+  const avdmanagerBinary = windows ? "avdmanager.bat" : "avdmanager";
+  const inspect = Effect.fnUntraced(function* (root: string) {
+    const adb = yield* exists(path.join(root, "platform-tools", adbBinary));
+    const emulator = yield* exists(
+      path.join(root, "emulator", windows ? "emulator.exe" : "emulator"),
+    );
+    if (!explicit && !adb && !emulator) return null;
+    const avdmanager = yield* exists(
+      path.join(root, "cmdline-tools", "latest", "bin", avdmanagerBinary),
+    );
+    const legacyAvdmanager =
+      !avdmanager && (yield* exists(path.join(root, "tools", "bin", avdmanagerBinary)));
+    return { root, adb, emulator, avdmanager, legacyAvdmanager };
+  });
   const candidates = explicit
     ? [explicit]
     : [
@@ -148,39 +179,20 @@ const androidSdk = Effect.gen(function* () {
           "Sdk",
         ),
       ];
-  if (!explicit) {
-    for (const directory of (environment.PATH ?? "").split(platform === "win32" ? ";" : ":")) {
-      if (!directory) continue;
-      const resolved = yield* fs
-        .realPath(path.join(directory, platform === "win32" ? "adb.exe" : "adb"))
-        .pipe(Effect.option);
-      if (resolved._tag === "Some") candidates.push(path.dirname(path.dirname(resolved.value)));
-    }
-  }
-  const exists = (file: string) => fs.exists(file).pipe(Effect.orElseSucceed(() => false));
   for (const root of candidates) {
-    const adb = yield* exists(
-      path.join(root, "platform-tools", platform === "win32" ? "adb.exe" : "adb"),
-    );
-    const emulator = yield* exists(
-      path.join(root, "emulator", platform === "win32" ? "emulator.exe" : "emulator"),
-    );
-    if (explicit || adb || emulator) {
-      const avdmanager = yield* exists(
-        path.join(
-          root,
-          "cmdline-tools",
-          "latest",
-          "bin",
-          platform === "win32" ? "avdmanager.bat" : "avdmanager",
-        ),
-      );
-      const legacyAvdmanager =
-        !avdmanager &&
-        (yield* exists(
-          path.join(root, "tools", "bin", platform === "win32" ? "avdmanager.bat" : "avdmanager"),
-        ));
-      return { root, adb, emulator, avdmanager, legacyAvdmanager };
+    const sdk = yield* inspect(root);
+    if (sdk) return sdk;
+  }
+  // PATH entries can be slow to stat (network shares), so only consult them after the standard locations miss.
+  if (!explicit) {
+    const searchPath = environment.PATH ?? environment.Path ?? "";
+    for (const directory of searchPath.split(windows ? ";" : ":")) {
+      if (!directory) continue;
+      const adb = path.join(directory, adbBinary);
+      if (!(yield* exists(adb))) continue;
+      const resolved = yield* fs.realPath(adb).pipe(Effect.orElseSucceed(() => adb));
+      const sdk = yield* inspect(path.dirname(path.dirname(resolved)));
+      if (sdk) return sdk;
     }
   }
   return { root: null, adb: false, emulator: false, avdmanager: false, legacyAvdmanager: false };
@@ -211,6 +223,40 @@ const hubEnvironment = Effect.fn("LocalDeviceHost.hubEnvironment")(function* (
   const env: NodeJS.ProcessEnv = { ...environment, FORCE_COLOR: "0", NO_COLOR: "1" };
   const platform = yield* HostProcessPlatform;
   const uid = yield* HostProcessUserId;
+  if (env.ANDROID_HOME) {
+    const path = yield* Path.Path;
+    const runner = yield* ProcessRunner.ProcessRunner;
+    const emulator = path.join(
+      env.ANDROID_HOME,
+      "emulator",
+      platform === "win32" ? "emulator.exe" : "emulator",
+    );
+    const cameraArgs = yield* Effect.forEach(["front", "back"], (facing) =>
+      runner
+        .run({
+          command: emulator,
+          args: [`-help-camera-${facing}`],
+          env,
+          timeout: Duration.seconds(5),
+        })
+        .pipe(
+          Effect.map((result) => {
+            const help = `${result.stdout}\n${result.stderr}`;
+            // The hub wires imagefile cameras unconditionally; older SDK emulators reject that mode.
+            return result.code === 0 && /\bemulated\b/.test(help) && !/\bimagefile\b/.test(help)
+              ? `-camera-${facing} emulated`
+              : "";
+          }),
+          Effect.orElseSucceed(() => ""),
+        ),
+    );
+    const overrides = cameraArgs.filter(Boolean).join(" ");
+    if (overrides) {
+      env.EXPO_DEVICE_HUB_EMULATOR_EXTRA_ARGS = [overrides, env.EXPO_DEVICE_HUB_EMULATOR_EXTRA_ARGS]
+        .filter(Boolean)
+        .join(" ");
+    }
+  }
   if (platform === "linux" && env.XDG_RUNTIME_DIR === undefined && uid !== undefined) {
     // SSH sessions may omit the directory where the emulator publishes its gRPC token.
     const runtimeDir = `/run/user/${uid}`;
@@ -227,6 +273,10 @@ const hubEnvironment = Effect.fn("LocalDeviceHost.hubEnvironment")(function* (
   return env;
 });
 
+/** Only a Mac can list Apple simulators; elsewhere the hub's attempt surfaces as an error. */
+const hubPlatformArguments = (hostPlatform: NodeJS.Platform) =>
+  hostPlatform === "darwin" ? [] : ["--platform", "android"];
+
 export const make = Effect.fn("LocalDeviceHost.make")(function* () {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
   const config = yield* ServerConfig.ServerConfig;
@@ -236,6 +286,7 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
   const runner = yield* ProcessRunner.ProcessRunner;
   const httpClient = yield* HttpClient.HttpClient;
   const environment = yield* HostProcessEnvironment;
+  const workingDirectory = yield* HostProcessWorkingDirectory;
   const hostPlatform = yield* HostProcessPlatform;
   const updateHold = yield* ServiceUpdateHold.optional;
   const hostScope = yield* Effect.scope;
@@ -413,6 +464,8 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
     return yield* Effect.gen(function* () {
       const env = yield* hubEnvironment(hostEnvironment).pipe(
         Effect.provideService(FileSystem.FileSystem, fs),
+        Effect.provideService(Path.Path, path),
+        Effect.provideService(ProcessRunner.ProcessRunner, runner),
         Effect.provideService(HostProcessPlatform, hostPlatform),
       );
       // Port reservation and environment discovery can yield to a newly acquired hold.
@@ -429,8 +482,10 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
               "127.0.0.1",
               "--hide-sidebar",
               "--hide-boot-device",
+              ...hubPlatformArguments(hostPlatform),
             ],
             {
+              cwd: workingDirectory,
               detached: false,
               shell: false,
               stdout: "pipe",
@@ -549,7 +604,10 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
     nodePath: string,
   ): Effect.fn.Return<
     DeviceHost.AgentDeviceEndpoint,
-    DeviceHost.DeviceHostTimeoutError | ServiceUpdateHold.ServiceUpdateInProgressError
+    | DeviceHost.DeviceHostError
+    | DeviceHost.DeviceHostTimeoutError
+    | DeviceHost.AgentDeviceStartError
+    | ServiceUpdateHold.ServiceUpdateInProgressError
   > {
     yield* refuseStart;
     const stateDir = agentDeviceStateDir(path, config.stateDir);
@@ -590,7 +648,7 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
     // There is no `daemon start`; the first command in a state dir spawns the
     // daemon and blocks until it answers. `devices` is the cheapest one.
     yield* refuseStart;
-    yield* runner
+    const runResult = yield* runner
       .run({
         command: nodePath,
         args: [agentTool.entryPath, "devices", "--json"],
@@ -598,7 +656,44 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
         timeout: Duration.millis(DAEMON_READY_TIMEOUT_MS),
         timeoutBehavior: "timedOutResult",
       })
-      .pipe(Effect.ignore);
+      .pipe(Effect.result);
+    // Discovery can fail after the daemon starts. A published endpoint still
+    // lets agents connect; absent one, preserve the CLI failure instead of polling.
+    const started = yield* readDaemonFile().pipe(Effect.option);
+    if (started._tag === "Some") return toEndpoint(started.value);
+    if (runResult._tag === "Failure") {
+      return yield* new DeviceHost.DeviceHostError({
+        hostId,
+        step: "starting agent tools",
+        cause: runResult.failure,
+      });
+    }
+    const result = runResult.success;
+    if (result.timedOut) {
+      return yield* new DeviceHost.DeviceHostTimeoutError({
+        hostId,
+        timeoutMs: DAEMON_READY_TIMEOUT_MS,
+      });
+    }
+    if (result.code !== 0) {
+      const failure = decodeAgentDeviceFailure(result.stdout);
+      const details = Option.isSome(failure) ? failure.value.error.details : undefined;
+      const reason =
+        details?.reason === "daemon_registration_unproven"
+          ? details.inspection?.reason === "non-directory"
+            ? "daemon_lock_not_directory"
+            : "daemon_registration_unproven"
+          : details?.reason === "daemon_retirement_unconfirmed"
+            ? "daemon_retirement_unconfirmed"
+            : "command_failed";
+      return yield* new DeviceHost.AgentDeviceStartError({
+        hostId,
+        stateDir,
+        exitCode: result.code === null ? null : Number(result.code),
+        reason,
+        cause: result,
+      });
+    }
     const deadline = (yield* Clock.currentTimeMillis) + DAEMON_READY_TIMEOUT_MS;
     while (true) {
       const file = yield* readDaemonFile().pipe(Effect.option);
@@ -732,6 +827,7 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
           unknown,
           | DeviceHost.DeviceHostError
           | DeviceHost.DeviceHostTimeoutError
+          | DeviceHost.AgentDeviceStartError
           | NodeRuntimeUnavailableError
           | ServiceUpdateHold.ServiceUpdateInProgressError
         >,
@@ -815,6 +911,7 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
               )
             : command,
         args,
+        cwd: workingDirectory,
         env: hostEnvironment,
         timeout: Duration.millis(options?.timeoutMs ?? 20_000),
         timeoutBehavior: "timedOutResult",
@@ -824,7 +921,7 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
         Effect.map((result) => ({
           stdout: result.stdout,
           stderr: result.stderr,
-          code: Number(result.code),
+          code: result.timedOut ? 124 : Number(result.code ?? 127),
         })),
         Effect.catch((cause) => Effect.succeed({ stdout: "", stderr: String(cause), code: 127 })),
       );

@@ -199,17 +199,26 @@ const make = Effect.gen(function* () {
     const metadataEvent = dispatched.storedEvents.find(
       (stored) => stored.event.type === "thread.metadata-updated",
     );
-    if (metadataEvent === undefined || metadataEvent.event.type !== "thread.metadata-updated") {
-      return yield* failure(
-        "orchestration_error",
-        `Thread ${threadId} metadata update completed without a resultant state.`,
-      );
+    if (metadataEvent !== undefined && metadataEvent.event.type === "thread.metadata-updated") {
+      return resultFromThread({
+        action: input.action,
+        commandId: updateCommandId,
+        sequence: dispatched.sequence,
+        thread: metadataEvent.event.payload,
+      });
     }
+    // A retry of a command already accepted: its receipt stays, but scheduled
+    // compaction (StorageMaintenance) deletes a metadata snapshot once a newer
+    // one supersedes it, so the replay returns no event. The update was applied;
+    // answer with the receipt's sequence and the thread as it is now.
+    const current = yield* threadManagement
+      .getProjectThreadRecords({ projectId: shell.projectId, threadId }, [])
+      .pipe(Effect.mapError(threadLookupFailure));
     return resultFromThread({
       action: input.action,
       commandId: updateCommandId,
       sequence: dispatched.sequence,
-      thread: metadataEvent.event.payload,
+      thread: current.thread,
     });
   });
 

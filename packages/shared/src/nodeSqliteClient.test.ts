@@ -170,6 +170,34 @@ const makeTempDatabase = Effect.gen(function* () {
   return { filename, other };
 });
 
+it.effect("steps a pragma that emits undeclared rows to completion on every query path", () =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    yield* sql`PRAGMA auto_vacuum = INCREMENTAL`;
+    yield* sql`CREATE TABLE pages(id INTEGER PRIMARY KEY, body BLOB NOT NULL)`;
+    yield* sql`INSERT INTO pages(body) SELECT zeroblob(4096) FROM (WITH RECURSIVE n(i) AS (SELECT 1 UNION ALL SELECT i + 1 FROM n WHERE i < 400) SELECT i FROM n)`;
+    yield* sql`DELETE FROM pages`;
+    const free = Effect.map(
+      sql<{ readonly freelist_count: number }>`PRAGMA freelist_count`,
+      (rows) => rows[0]?.freelist_count ?? 0,
+    );
+    // incremental_vacuum declares no column yet steps once per freed page.
+    const paths = [
+      sql.unsafe("PRAGMA incremental_vacuum(64)"),
+      sql.unsafe("PRAGMA incremental_vacuum(64)").raw,
+      sql.unsafe("PRAGMA incremental_vacuum(64)").values,
+      sql.unsafe("PRAGMA incremental_vacuum(64)").unprepared,
+      sql.unsafe("PRAGMA incremental_vacuum(64)").valuesUnprepared,
+    ];
+    for (const path of paths) {
+      const before = yield* free;
+      assert.isAtLeast(before, 64);
+      yield* path;
+      assert.equal(before - (yield* free), 64);
+    }
+  }).pipe(Effect.provide(SqliteClient.layer({ filename: ":memory:" }))),
+);
+
 it.effect("keeps another connection from committing between a transaction's read and write", () =>
   Effect.gen(function* () {
     const { filename, other } = yield* makeTempDatabase;

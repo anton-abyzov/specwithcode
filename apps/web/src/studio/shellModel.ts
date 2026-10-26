@@ -479,7 +479,7 @@ export function waitingCount(
   ).length;
 }
 
-/** The header line under "Welcome back": what needs the person, then what is moving. */
+/** The Threads pane's header line: what needs the person, then what is moving. */
 export function threadsSummary(
   threads: readonly EnvironmentThreadShell[],
   /** Workers this project runs on other machines, which are not threads here. */
@@ -512,6 +512,37 @@ export function threadsSummary(
     working === 0 ? null : `${working} working`,
   ].filter((part): part is string => part !== null);
   return `${parts.join(" · ")}.`;
+}
+
+const ATTENTION_WORDS = {
+  input: "Answer needed",
+  signin: "Sign-in needed",
+  held: "Queue held",
+  plan: "Plan ready",
+  approval: "Approval requested",
+} as const;
+
+/** What an attention action asks of the person, in the rows' own words. */
+export const attentionActionWord = (reason: keyof typeof ATTENTION_WORDS): string =>
+  ATTENTION_WORDS[reason];
+
+/**
+ * What a row says when the project's attention, not the thread itself, puts it
+ * under Waiting on you: a subagent asks something, so the row names that one, or
+ * counts them. Null when the thread's own status word already says it.
+ */
+export function threadAttentionWord(
+  thread: EnvironmentThreadShell,
+  attention?: ProjectAttention,
+): string | null {
+  const root = attention?.roots.find(
+    (r) => r.thread.environmentId === thread.environmentId && r.thread.id === thread.id,
+  );
+  if (!root || root.actions.some((action) => action.threadId === thread.id)) return null;
+  const [first, ...rest] = root.actions;
+  if (!first) return null;
+  if (rest.length > 0) return `${root.actions.length} subagents waiting`;
+  return `${attentionActionWord(first.reason)} · ${first.title || "subagent"}`;
 }
 
 /** Groups a person has dealt with stay folded until they ask for them. */
