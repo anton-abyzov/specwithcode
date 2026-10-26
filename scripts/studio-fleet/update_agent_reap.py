@@ -8,7 +8,11 @@ agent asks the verified helper (`update.py --reap`) to stop the processes it can
 to the service (quiescence.reap_descendants), at most REAP_LIMIT times a request, REAP_AFTER
 apart: each pass, and each newer request a pass takes on, starts a fresh count. Only refusals
 a process can cause count: leftover processes, or running tasks and active sessions; open
-questions and finishing steps do not. A request cancelled meanwhile is
+questions and finishing steps do not. Leftover processes alone are reaped early, before any full
+reap, STALE_REAP_LIMIT times a request, REAP_STALE_AFTER apart (`update.py --reap --stale`): only
+what started before the hold began with nothing started since beneath it, such as a command left
+under a terminal the hold closed. Anything newer, such as a git the held service started, waits
+for the full reap; early reaps do not count toward REAP_LIMIT. A request cancelled meanwhile is
 never reaped for, and the helper itself refuses unless the running service is still held for
 this very request (update.py assert_held). The agent itself still signals nothing, and
 update.py's checks are unchanged: the next snapshot decides as before. A helper without `--reap` (an older release) fails the call,
@@ -27,6 +31,9 @@ import sys
 import uuid
 
 REAP_AFTER = datetime.timedelta(minutes=2)
+REAP_STALE_AFTER = datetime.timedelta(seconds=20)
+# A second early reap catches a leftover a short-lived newer process (a git) sat beneath at the first.
+STALE_REAP_LIMIT = 2
 REAP_LIMIT = 2
 REAP_TIMEOUT = 120
 REAPING = 'Stopping agent processes that did not finish, so the update can install'
@@ -69,39 +76,55 @@ def reset(agent, request, since=None):
     the start of every pass, since one Agent serves a second pass for a request that arrived
     while the first held the lock."""
     agent.reap_count, agent.reaped_at, agent.reap_request, agent.reap_since = 0, None, request, since
+    agent.stale_count, agent.stale_at = 0, None
 
 
 def _due(agent, host, refused, started, window):
+    """'all' for a full reap, 'stale' for an early one (leftover processes only, before any full
+    reap), else None."""
     if agent.config.get('installMode') != 'force' or refused[0] != 'waiting-for-quiet':
-        return False
+        return None
     if not agent.config.get('installRequestedAt') or not _process_refusal(host, refused[1]):
-        return False
+        return None
     since = getattr(agent, 'reaped_at', None) or getattr(agent, 'reap_since', None) or started
-    now = host.utcnow()
+    now, count = host.utcnow(), getattr(agent, 'reap_count', 0)
+    if count < REAP_LIMIT and now - since >= REAP_AFTER:
+        due = 'all'
+    elif (not count and getattr(agent, 'stale_count', 0) < STALE_REAP_LIMIT
+          and now - (getattr(agent, 'stale_at', None) or since) >= REAP_STALE_AFTER
+          and refused[1].startswith(host.WAITING_REASONS[1][1])):
+        due = 'stale'
+    else:
+        return None
     # A reap never runs past the retry window the pass is snapshotting in (that of the request it
     # serves, from its take-on or its last refused apply), which the service's hold is sized by.
-    return (getattr(agent, 'reap_count', 0) < REAP_LIMIT and now - since >= REAP_AFTER
-            and now + datetime.timedelta(seconds=REAP_TIMEOUT) < agent.retry_deadline(window))
+    return due if now + datetime.timedelta(seconds=REAP_TIMEOUT) < agent.retry_deadline(window) else None
 
 
 def before_retry(agent, helper_dir, refused, started, window=None):
     """Runs before the next snapshot of a pending install request; returns how long to wait
     first. In a forced request that kept refusing for REAP_AFTER, it first has the verified
-    helper stop the leftover processes; the helper's record is kept with the update receipts.
+    helper stop the leftover processes (those from before the hold already after
+    REAP_STALE_AFTER); the helper's record is kept with the update receipts.
     `window` is the start of the current retry window (agents up to 1.0.62 pass only `started`)."""
     host = _agent_module(agent)
     # The caller has already ended the pass for a cancel written while the last snapshot ran.
     request = agent.config.get('installRequestedAt')
     if getattr(agent, 'reap_request', request) != request:  # A newer request this pass took on.
         reset(agent, request, host.utcnow())
-    if _due(agent, host, refused, started, window or started):
+    due = _due(agent, host, refused, started, window or started)
+    if due == 'stale':
+        agent.stale_count, agent.stale_at = getattr(agent, 'stale_count', 0) + 1, host.utcnow()
+    elif due:
         agent.reap_count = getattr(agent, 'reap_count', 0) + 1
         agent.reaped_at = host.utcnow()
+    if due:
         agent.set_status('waiting-for-quiet', REAPING)
         receipts = host.ensure_dir(agent.updates / 'receipts', agent.home)
         record = receipts / ('reap-%s-%s.json' % (host.stamp(), uuid.uuid4().hex[:8]))
-        host.run_helper_process(agent.helper_command(helper_dir, ['--identity', agent.identity, '--reap', record,
-                                                                    '--request', agent.config['installRequestedAt']]),
+        stale = ['--stale'] if due == 'stale' else []
+        host.run_helper_process(agent.helper_command(helper_dir, ['--identity', agent.identity, '--reap', record] + stale
+                                                     + ['--request', agent.config['installRequestedAt']]),
                                 str(helper_dir), agent.helper_env(), REAP_TIMEOUT,
                                 log_path=record.with_suffix('.log'), home=agent.home)
     return host.RETRY_SECONDS

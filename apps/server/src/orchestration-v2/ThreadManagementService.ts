@@ -42,6 +42,7 @@ import {
 } from "@specweave-studio/shared/orchestrationV2ThreadError";
 
 import * as Orchestrator from "./Orchestrator.ts";
+import { limitResumeDisarm } from "./usageLimitRecovery.ts";
 import { projectTurnItemForDetail } from "./WireProjection.ts";
 import * as LegacyV1ThreadImporter from "./legacy/LegacyV1ThreadImporter.ts";
 
@@ -819,21 +820,15 @@ const make = Effect.gen(function* () {
         { turnItemTypes: ["error"] },
       );
       const run = usageLimitBlockedRun(runs, turnItems, null);
-      const failure = latestRootProviderFailure(run, turnItems);
-      if (run === null || failure?.class !== "usage_limit") return;
-      const resetAt = failure.resetAt ?? null;
-      const recovery = thread.limitRecovery;
-      if (
-        recovery?.runId !== run.id ||
-        recovery.resetAt !== resetAt ||
-        recovery.autoResume !== false ||
-        recovery.snooze === true
-      ) {
+      if (latestRootProviderFailure(run, turnItems)?.class !== "usage_limit") return;
+      // The task's own Stop already turned it off; this covers one stopped before that.
+      const disarm = limitResumeDisarm(thread, runs, turnItems);
+      if (disarm !== null) {
         yield* dispatch({
           type: "thread.metadata.update",
           commandId: CommandId.make(`${input.commandId}:limit-disarm:${input.threadId}`),
           threadId: input.threadId,
-          limitRecovery: { runId: run.id, resetAt, autoResume: false, snooze: false },
+          limitRecovery: disarm,
         });
       }
       // Provider fallback reads no recovery choice, so settle the task too: a

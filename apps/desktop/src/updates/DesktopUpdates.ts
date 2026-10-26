@@ -35,6 +35,7 @@ import * as ElectronUpdater from "../electron/ElectronUpdater.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as IpcChannels from "../ipc/channels.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
+import * as DesktopWindow from "../window/DesktopWindow.ts";
 import { type LocalServiceProbe, makeAppActivationControl } from "./appActivationControl.ts";
 import { APP_INSTALL_APPLY_MS } from "./appFollowUp.ts";
 import {
@@ -352,6 +353,7 @@ export const make = Effect.gen(function* () {
   const environment = yield* DesktopEnvironment.DesktopEnvironment;
   const fileSystem = yield* FileSystem.FileSystem;
   const desktopSettings = yield* DesktopAppSettings.DesktopAppSettings;
+  const desktopWindow = yield* DesktopWindow.DesktopWindow;
   const postUpdateNotice = yield* DesktopUpdateNotifier;
   // One notification per version and kind, kept across launches so a restart
   // does not announce the same version again.
@@ -987,6 +989,9 @@ export const make = Effect.gen(function* () {
         yield* Ref.set(desktopState.quitting, true);
 
         const result = yield* Effect.gen(function* () {
+          // The updater quit destroys windows without a close event, so the
+          // last move, monitor and full-screen state are saved here first.
+          yield* desktopWindow.flushMainWindowBounds;
           yield* writeUpdateRestartMarker;
           // Stop every backend in the pool, not just the primary. With
           // parallel WSL + Windows backends, leaving the WSL instance up

@@ -259,6 +259,12 @@ export class EnvironmentSupervisor extends Context.Service<
   EnvironmentSupervisor,
   {
     readonly target: ConnectionTarget;
+    /**
+     * The target is the server on this machine (the loopback primary). It is
+     * busy, never gone, while it has no session. Optional so test doubles can
+     * leave it out; absent means another machine.
+     */
+    readonly thisMachine?: boolean;
     readonly state: SubscriptionRef.SubscriptionRef<SupervisorConnectionState>;
     readonly session: SubscriptionRef.SubscriptionRef<Option.Option<RpcSession.RpcSession>>;
     readonly prepared: SubscriptionRef.SubscriptionRef<Option.Option<PreparedConnection>>;
@@ -1133,6 +1139,7 @@ export const make = Effect.fn("EnvironmentSupervisor.make")(function* (
 
   return EnvironmentSupervisor.of({
     target,
+    thisMachine: initiallyLoopback,
     state,
     session,
     prepared,

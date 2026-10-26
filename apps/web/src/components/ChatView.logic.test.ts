@@ -4,6 +4,9 @@ import {
   resolveVisibleWorktreeSetup,
 } from "./ChatView.logic";
 import { environmentUnavailableBanner, environmentWaitsForReconnectGrace } from "./ChatView.logic";
+import { switchThreadBackToPick } from "./ChatView.logic";
+import { threadModelIdentity } from "@specweave-studio/shared/threadModelIdentity";
+import * as Cause from "effect/Cause";
 import {
   recallCheckoutIsRepo,
   rememberCheckoutIsRepo,
@@ -11,6 +14,7 @@ import {
 } from "./ChatView.logic";
 import {
   ANTIGRAVITY_DEFAULT_MODEL,
+  type ModelSelection,
   ProviderDriverKind,
   type ServerProvider,
 } from "@specweave-studio/contracts";
@@ -2331,5 +2335,55 @@ describe("environmentWaitsForReconnectGrace", () => {
     for (const phase of ["offline", "available", "error", "unsupported", "connected"] as const) {
       expect(environmentWaitsForReconnectGrace(phase, false)).toBe(false);
     }
+  });
+});
+
+describe("switchThreadBackToPick", () => {
+  const opus = {
+    instanceId: ProviderInstanceId.make("claude"),
+    model: "claude-opus-5-5",
+  } as ModelSelection;
+  const astra = {
+    instanceId: ProviderInstanceId.make("codex"),
+    model: "gpt-6-astra",
+  } as ModelSelection;
+
+  it("moves the thread itself back, not only the composer's next send", async () => {
+    let saved = astra;
+    const selectInComposer = vi.fn();
+    const outcome = await switchThreadBackToPick({
+      selection: opus,
+      selectInComposer,
+      setThreadModel: async (selection) => {
+        saved = selection;
+        return AsyncResult.success({ sequence: 1 });
+      },
+    });
+    expect(outcome).toEqual({ ok: true });
+    expect(selectInComposer).toHaveBeenCalledWith(opus);
+    expect(saved).toEqual(opus);
+    // With the thread set on its pick again, it no longer reads as a fallback.
+    const identity = threadModelIdentity({ thread: saved, running: null, fallbackFrom: null });
+    expect(identity.kind).toBeNull();
+    expect(identity.current).toEqual(opus);
+  });
+
+  it("reports a refused switch instead of doing nothing", async () => {
+    const outcome = await switchThreadBackToPick({
+      selection: opus,
+      selectInComposer: () => {},
+      setThreadModel: async () => AsyncResult.failure(Cause.fail(new Error("Server restarting"))),
+    });
+    expect(outcome.ok).toBe(false);
+    expect(outcome.ok ? null : outcome.error).toEqual(new Error("Server restarting"));
+  });
+
+  it("stays quiet when the request was interrupted", async () => {
+    const outcome = await switchThreadBackToPick({
+      selection: opus,
+      selectInComposer: () => {},
+      setThreadModel: async () => AsyncResult.failure(Cause.interrupt()),
+    });
+    expect(outcome).toEqual({ ok: true });
   });
 });

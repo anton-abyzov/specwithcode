@@ -16,6 +16,7 @@ import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopState from "../app/DesktopState.ts";
 import * as DesktopUpdates from "./DesktopUpdates.ts";
+import * as DesktopWindow from "../window/DesktopWindow.ts";
 
 /** Shared DesktopUpdates test harness: a fully stubbed updater layer whose
     electron-updater events are driven by hand via `emit`. Used by
@@ -53,6 +54,8 @@ export interface UpdatesHarnessOptions {
   readonly squirrel?: boolean;
   /** How long Squirrel.Mac unpacks after electron-updater hands it the download. */
   readonly squirrelUnpack?: Duration.Duration;
+  /** Record the window bounds flush in installSteps. */
+  readonly windows?: boolean;
 }
 
 export function makeHarness(options: UpdatesHarnessOptions = {}) {
@@ -330,8 +333,15 @@ export function makeHarness(options: UpdatesHarnessOptions = {}) {
     notices.push({ notice, click });
   });
 
+  const layerDesktopWindow = Layer.mock(DesktopWindow.DesktopWindow)({
+    flushMainWindowBounds: Effect.sync(() => {
+      if (options.windows) installSteps.push("flushWindowBounds");
+    }),
+  });
+
   const layer = DesktopUpdates.layer.pipe(
     Layer.provide(layerFileSystem),
+    Layer.provide(layerDesktopWindow),
     Layer.provide(layerNotifier),
     Layer.provideMerge(layerUpdater),
     Layer.provideMerge(layerWindow),

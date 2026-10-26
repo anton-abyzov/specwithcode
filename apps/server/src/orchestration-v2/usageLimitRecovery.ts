@@ -2,9 +2,15 @@ import type {
   OrchestrationV2AppThread,
   OrchestrationV2LimitRecovery,
   OrchestrationV2LimitRecoveryUpdate,
+  OrchestrationV2Run,
   OrchestrationV2ServerCommand,
+  OrchestrationV2TurnItem,
   ServerProvider,
 } from "@specweave-studio/contracts";
+import {
+  latestRootProviderFailure,
+  usageLimitBlockedRun,
+} from "@specweave-studio/shared/orchestrationV2ThreadError";
 import {
   canTakeTurn,
   providerUsedPercent,
@@ -13,6 +19,7 @@ import {
 import * as DateTime from "effect/DateTime";
 import { nativeQuotaDenied } from "../studio/capacitySnapshot.ts";
 import { isBlockingRuntimeRequest } from "./blockingRuntimeRequest.ts";
+import { isPersonStopRequest } from "./systemInterruptReasons.ts";
 import type { ProjectionLimitRecoveryCandidate } from "./ProjectionStore.ts";
 
 export const LIMIT_CHECK_INTERVAL_MS = 5 * 60_000;
@@ -316,9 +323,115 @@ export function updateLimitRecovery(
       : same?.armedAffinity
         ? { armedAffinity: same.armedAffinity }
         : {}),
-    explicitArm: update.autoResume === true ? !policyArm : (same?.explicitArm ?? false),
+    // Turning the resume off ends the person's arm with it.
+    explicitArm:
+      update.autoResume === true
+        ? !policyArm
+        : update.autoResume === false
+          ? false
+          : (same?.explicitArm ?? false),
     requestId: commandId,
   };
+}
+
+/**
+ * The thread with a recovery choice applied, as `thread.metadata.update`
+ * applies it: a snooze holds the thread until its reset, and turning the
+ * recovery's own snooze off releases that hold.
+ */
+export function threadWithLimitRecovery<
+  T extends Pick<OrchestrationV2AppThread, "limitRecovery" | "snoozedUntil" | "snoozedAt">,
+>(
+  thread: T,
+  update: OrchestrationV2LimitRecoveryUpdate | null,
+  commandId: OrchestrationV2ServerCommand["commandId"],
+  now: DateTime.Utc,
+  policyArm = false,
+  affinity?: NonNullable<OrchestrationV2LimitRecovery["armedAffinity"]>,
+): T {
+  const limitRecovery = updateLimitRecovery(
+    thread.limitRecovery,
+    update,
+    commandId,
+    policyArm,
+    affinity,
+  );
+  return {
+    ...thread,
+    limitRecovery,
+    ...(limitRecovery?.snooze === true &&
+    Date.parse(limitRecovery.resetAt ?? "") > DateTime.toEpochMillis(now)
+      ? {
+          snoozedUntil: DateTime.makeUnsafe(limitRecovery.resetAt!),
+          // Recovery changes acknowledge the same stopped run; keep its
+          // metadata timestamp from appearing as a fresh failure wake.
+          snoozedAt: now,
+        }
+      : thread.limitRecovery?.snooze &&
+          thread.snoozedUntil != null &&
+          DateTime.toEpochMillis(thread.snoozedUntil) ===
+            Date.parse(thread.limitRecovery.resetAt ?? "")
+        ? { snoozedUntil: null, snoozedAt: null }
+        : {}),
+  };
+}
+
+/**
+ * The choice that turns off a usage-limit stop's automatic resume once someone
+ * stopped the thread, or null when no limit holds it or nothing is left to
+ * turn off. It keeps the stop's run and reset, so no policy arms it again.
+ */
+export function limitResumeDisarm(
+  thread: Pick<OrchestrationV2AppThread, "limitRecovery">,
+  runs: ReadonlyArray<OrchestrationV2Run>,
+  turnItems: ReadonlyArray<OrchestrationV2TurnItem>,
+): OrchestrationV2LimitRecoveryUpdate | null {
+  const run = usageLimitBlockedRun(runs, turnItems, null);
+  const failure = latestRootProviderFailure(run, turnItems);
+  if (run === null || failure?.class !== "usage_limit") return null;
+  const resetAt = failure.resetAt ?? null;
+  const recovery = thread.limitRecovery;
+  // A person's own snooze stays: it only hides the thread until the reset.
+  return recovery?.runId === run.id && recovery.resetAt === resetAt && recovery.autoResume === false
+    ? null
+    : { runId: run.id, resetAt, autoResume: false };
+}
+
+/**
+ * Whether a person's Stop keeps `runId` from being continued by itself: a
+ * person's Stop reached it (see `isPersonStopRequest`), and the person has not
+ * armed the resume of that run since. Stop clears the resume and its explicit
+ * mark (see the orchestrator's holdStoppedThread), and turning the resume off
+ * clears the mark too, so a live explicit arm is one made after the Stop.
+ */
+export function personStopHoldsRun(
+  limitRecovery: OrchestrationV2LimitRecovery | null | undefined,
+  runId: string,
+  interrupts: ReadonlyArray<OrchestrationV2TurnItem>,
+): boolean {
+  if (
+    limitRecovery?.runId === runId &&
+    limitRecovery.autoResume === true &&
+    limitRecovery.explicitArm === true
+  )
+    return false;
+  return interrupts.some(
+    (item) =>
+      item.type === "run_interrupt_request" && item.runId === runId && isPersonStopRequest(item),
+  );
+}
+
+/** The orchestrator's refusal of an automatic continuation after a person's Stop. */
+export const STOPPED_THREAD_REFUSAL = "This thread was stopped. Continue it to resume.";
+
+/** Whether a dispatch failed on `STOPPED_THREAD_REFUSAL`: a Stop, not a target that cannot run. */
+export function isStoppedThreadRefusal(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "cause" in error &&
+    error.cause === STOPPED_THREAD_REFUSAL
+  );
 }
 
 /** Compare-and-set makes a delayed account check harmless after any user/thread change. */

@@ -24,3 +24,20 @@ export const SYSTEM_INTERRUPT_REASONS: ReadonlySet<string> = new Set([
   LIVE_SILENT_RUN_REASON,
   PROVIDER_TURN_START_TIMEOUT_MESSAGE,
 ]);
+
+/**
+ * Whether a recorded interrupt request is a person's Stop, which is final. A
+ * service update resumes on its own, an agent's interrupt (a handoff,
+ * studio_thread_interrupt) expects the run to go on, and the server's own
+ * interrupts (watchdog, start timeout) are no Stop.
+ */
+export function isPersonStopRequest(item: {
+  readonly cause?: string | undefined;
+  readonly message: string;
+}): boolean {
+  return (
+    item.cause !== "service_update" &&
+    item.cause !== "agent" &&
+    !(item.cause === undefined && SYSTEM_INTERRUPT_REASONS.has(item.message))
+  );
+}

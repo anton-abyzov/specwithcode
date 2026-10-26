@@ -23,6 +23,8 @@ const state = vi.hoisted(() => ({
   updateToast: vi.fn(),
   closeToast: vi.fn(),
   prepare: vi.fn(),
+  /** Needs you's live threads waiting on the person; null while the shell is not live. */
+  live: null as ReadonlyMap<string, string> | null,
 }));
 
 vi.mock("../../env", () => ({ isElectron: true }));
@@ -36,6 +38,7 @@ vi.mock("../ui/toast", () => ({
   hiddenToastActionProps: { children: null },
 }));
 vi.mock("../../state/environments", () => ({ usePrimaryEnvironmentId: () => "env-1" }));
+vi.mock("./useLiveWaitingThreads", () => ({ useLiveWaitingThreads: () => state.live }));
 vi.mock("@tanstack/react-router", () => ({ useNavigate: () => vi.fn() }));
 vi.mock("../../state/entities", () => ({ useProjects: () => [] }));
 vi.mock("../ProjectFavicon", () => ({ ProjectFavicon: () => null }));
@@ -55,7 +58,7 @@ import { resetServiceUpdateRunFlowForTests } from "../serviceUpdateRunFlow";
 import { RUN_NO_PROGRESS_LINE, RUN_SERVICE_BACK_LINE } from "../serviceUpdateRunView";
 import { requestRestartToUpdate } from "./restartToUpdateRequests";
 import { SidebarRestartToUpdate } from "./SidebarRestartToUpdate";
-import { AUTOMATIC_WAIT_POLL_MS } from "./useServiceQuestionBlockers";
+import { AUTOMATIC_WAIT_POLL_MS, LIVE_CHANGE_LOOK_MS } from "./useServiceQuestionBlockers";
 
 const T0 = Date.parse("2026-10-21T12:00:00.000Z");
 
@@ -205,6 +208,7 @@ beforeEach(() => {
   supported = true;
   looked = checked;
   storage.clear();
+  state.live = null;
   state.app = downloaded;
   state.service = serviceWaiting;
   state.addToast.mockClear();
@@ -346,7 +350,7 @@ describe("Update now as one run", () => {
     expect(calls).toEqual(["prepare:false", "prepare:false"]);
   });
 
-  it("says an automatic install waits for unanswered questions, beside Update now (0991)", async () => {
+  it("says in a short hint that an automatic install waits on open questions (0991)", async () => {
     const waitingOn = {
       idle: false,
       stoppedThreads: 0,
@@ -376,9 +380,7 @@ describe("Update now as one run", () => {
     await act(async () => {
       await vi.advanceTimersByTimeAsync(AUTOMATIC_WAIT_POLL_MS);
     });
-    expect(line()[0]?.children).toEqual([
-      'Update ready: waiting for 2 questions you haven\'t answered, in "Fix login".',
-    ]);
+    expect(line()[0]?.children).toEqual(["Update waits on 2 questions."]);
     expect(label()).toBe("Update now");
     expect(button()?.props.disabled).toBe(false);
     // Once the question is answered the line goes on the next look.
@@ -390,6 +392,110 @@ describe("Update now as one run", () => {
     // Only looked: an automatic install never stops work or closes a question.
     expect(calls.length).toBeGreaterThan(0);
     expect(calls.every((call) => call === "prepare:false")).toBe(true);
+  });
+
+  it("drops an answered question at once, as Needs you does, and asks the service again", async () => {
+    looked = {
+      idle: false,
+      stoppedThreads: 0,
+      blockers: [
+        {
+          kind: "request",
+          count: 1,
+          threadId: "thread-1",
+          threadTitle: "Fix login",
+          projectId: "project-1",
+          projectTitle: "EasyChamp",
+          questions: 1,
+          approvals: 0,
+        } as unknown as ServiceUpdateBlocker,
+        {
+          kind: "request",
+          count: 1,
+          threadId: "thread-2",
+          threadTitle: "Docs",
+          projectId: "project-1",
+          projectTitle: "EasyChamp",
+          questions: 1,
+          approvals: 0,
+        } as unknown as ServiceUpdateBlocker,
+      ],
+    };
+    state.app = null;
+    state.live = new Map([
+      ["thread-1", "q1"],
+      ["thread-2", "q2"],
+    ]);
+    render();
+    await settle();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(AUTOMATIC_WAIT_POLL_MS);
+    });
+    const line = () =>
+      renderer?.root.findAllByProps({ "data-testid": "sidebar-update-question-wait" }) ?? [];
+    expect(line()[0]?.children).toEqual(["Update waits on 2 questions."]);
+    calls.length = 0;
+    // The person answers in "Docs": the live shell says so before the service is asked.
+    state.live = new Map([["thread-1", "q1"]]);
+    rerender();
+    expect(line()[0]?.children).toEqual(["Update waits on 1 question."]);
+    // A thread that waits on nothing the person can see (resolved, archived) is never counted.
+    state.live = new Map();
+    rerender();
+    expect(line()).toEqual([]);
+    // Each change asks the service again soon after, not at the next 2-minute look.
+    looked = checked;
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(LIVE_CHANGE_LOOK_MS);
+    });
+    expect(calls).toEqual(["prepare:false"]);
+  });
+
+  it("can dismiss the hint for this version", async () => {
+    looked = {
+      idle: false,
+      stoppedThreads: 0,
+      blockers: [
+        {
+          kind: "request",
+          count: 1,
+          threadId: "thread-1",
+          threadTitle: "Fix login",
+          projectId: "project-1",
+          projectTitle: "EasyChamp",
+        } as unknown as ServiceUpdateBlocker,
+      ],
+    };
+    state.app = null;
+    render();
+    await settle();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(AUTOMATIC_WAIT_POLL_MS);
+    });
+    const line = () =>
+      renderer?.root.findAllByProps({ "data-testid": "sidebar-update-question-wait" }) ?? [];
+    expect(line()).toHaveLength(1);
+    act(() => {
+      renderer?.root
+        .findByProps({ "data-testid": "sidebar-update-question-wait-dismiss" })
+        .props.onClick();
+    });
+    expect(line()).toEqual([]);
+    expect(label()).toBe("Update now");
+    // It stays dismissed after a reload, until a newer version waits.
+    act(() => renderer?.unmount());
+    render();
+    await settle();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(AUTOMATIC_WAIT_POLL_MS);
+    });
+    expect(line()).toEqual([]);
+    state.service = { ...serviceWaiting, availableVersion: "1.0.71", downloadedVersion: "1.0.71" };
+    rerender();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(AUTOMATIC_WAIT_POLL_MS);
+    });
+    expect(line()).toHaveLength(1);
   });
 
   it("asks during an automatic wait only while the window is shown (0991)", async () => {

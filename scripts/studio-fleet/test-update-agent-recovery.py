@@ -604,6 +604,96 @@ class AutomaticRecovery(RecoveryCase):
                 self.assertIsNone(agent.state['automaticRetry'])
 
 
+class AutomaticSuperseded(RecoveryCase):
+    """Settings that already end an automatic pass (a newer request, a cancellation, installs off,
+    another repository) end it before its snapshot, a full read of minutes on M4: in 1.0.86 the
+    stale automatic snapshot held an Update now press for 4.5 minutes before its attempt 1."""
+
+    CHANGES = ({'installRequestedAt': '2026-10-25T23:01:42Z'}, {'installCancelledAt': '2026-10-25T23:01:42Z'},
+               {'installAutomatically': False}, {'repository': 'someone/else'})
+
+    def downloaded(self):
+        self.fake.add_release()
+        self.config(installAutomatically=False)
+        self.run_agent()  # Downloads and verifies 0.2.0, then stops: automatic installs are off.
+        self.assertEqual((self.state()['downloadedVersion'], self.snapshot_calls()), ('0.2.0', []))
+        self.config(quietMinutes=0)
+        agent = self.agent()
+        return agent, agent.load_verified(agent.load_release('0.2.0'))
+
+    def test_the_predicate_compares_the_settings_on_disk_and_changes_nothing(self):
+        agent, _ = self.downloaded()
+        agent.state['automaticRetry'] = {'attempts': 1}
+        loaded = dict(agent.config)
+        self.assertFalse(recovery.automatic_superseded(agent))
+        for change in self.CHANGES:
+            with self.subTest(change=change):
+                self.config(quietMinutes=0, **change)
+                self.assertTrue(recovery.automatic_superseded(agent))
+                self.assertEqual((agent.config, agent.state['automaticRetry']), (loaded, {'attempts': 1}))
+        (self.updates / 'config.json').write_text('{')
+        self.assertFalse(recovery.automatic_superseded(agent))  # Left to automatic_withdrawn, as before.
+
+    def test_superseded_settings_take_no_automatic_snapshot(self):
+        agent, verified = self.downloaded()
+        loaded = dict(agent.config)
+        for change in self.CHANGES:
+            with self.subTest(change=change):
+                agent.config, agent.state['automaticRetry'] = dict(loaded), {'attempts': 1}
+                self.config(quietMinutes=0, **change)
+                agent.quiet_then_install(verified, None)
+                self.assertEqual((self.snapshot_calls(), self.apply_calls()), ([], []))
+                self.assertEqual((agent.state['status'], agent.state['message']), ('downloaded', recovery.SETTINGS_CHANGED))
+                self.assertIsNone(agent.state['automaticRetry'])
+        agent.config = dict(loaded)
+        self.config(quietMinutes=0)
+        agent.quiet_then_install(verified, None)  # Unchanged settings: the automatic snapshot runs.
+        self.assertEqual(len(self.snapshot_calls()), 1)
+
+    def test_a_request_written_during_an_automatic_pass_is_served_without_the_stale_snapshot(self):
+        self.downloaded()
+        self.config(quietMinutes=0)
+        real = update_agent.Agent.verify_helpers
+        def request_meanwhile(agent, verified):
+            if agent.config['installRequestedAt'] is None:  # The press lands as the automatic pass starts installing.
+                self.config(quietMinutes=0, installRequestedAt=update_agent.iso(update_agent.utcnow()))
+            return real(agent, verified)
+        with mock.patch.object(update_agent.Agent, 'verify_helpers', request_meanwhile):
+            self.run_agent()
+        self.assertEqual((len(self.snapshot_calls()), len(self.apply_calls())), (1, 1))  # The request's own.
+        self.assertEqual(self.state()['status'], 'installed')
+
+
+class HelperDiskPriority(RecoveryCase):
+    """Only the helpers a person waits for leave the agent's LowPriorityIO disk throttle: the apply
+    and a held (--request) snapshot. An automatic pass's snapshots stay throttled."""
+
+    def test_an_automatic_install_snapshots_throttled_and_applies_at_the_default_policy(self):
+        self.fake.add_release()
+        self.config(quietMinutes=0)
+        self.pointers()
+        seen, real = [], update_agent.run_helper_process
+        def run(command, *args, **kwargs):
+            seen.append(('apply' if '--prestate' in command else 'snapshot', kwargs.get('normal_io', False)))
+            return real(command, *args, **kwargs)
+        with mock.patch.object(update_agent, 'run_helper_process', run):
+            self.run_agent()
+            self.run_agent()
+        self.assertEqual(self.state()['status'], 'installed')
+        self.assertEqual(set(seen), {('snapshot', False), ('apply', True)})
+
+    def test_a_held_snapshot_runs_at_the_default_policy(self):
+        agent, seen = self.agent(), []
+        snapshots = update_agent.ensure_dir(self.updates / 'snapshots', self.home)
+        def run(command, *args, **kwargs):
+            seen.append(('--request' in command, kwargs.get('normal_io', False)))
+            return 'failed'
+        with mock.patch.object(update_agent, 'run_helper_process', run):
+            for request in ('2026-10-25T23:01:42Z', None):
+                agent.take_snapshot(self.home / 'helpers', snapshots, request)
+        self.assertEqual(seen, [(True, True), (False, False)])
+
+
 class NewerReleaseRecovery(RecoveryCase):
     """A post-restart failure that was fully rolled back holds its own version, while a newer
     release (with newer helpers) gets one automatic attempt (M1/M3 stuck on 1.0.29 after 1.0.30)."""

@@ -249,3 +249,28 @@ def assert_clone_headroom(own, home):
     needed = clone_headroom(own)
     free = _free(home)[1]
     assert free >= needed, NO_CLONE_HEADROOM % (needed / 1e9, free / 1e9)
+
+
+def _clonefile():
+    """libc clonefile(2) (macOS), or None where there is none."""
+    try:
+        function = ctypes.CDLL(None, use_errno=True).clonefile
+    except (OSError, AttributeError, TypeError):
+        return None
+    function.argtypes = (ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint32)
+    function.restype = ctypes.c_int
+    return function
+
+def clone_file(source, target):
+    """Copies `source` to the new file `target` as an APFS clone (clonefile(2)): no data is
+    written, so a multi-GB database is back in well under a second while the service is
+    stopped. clonefile never copies: where it cannot clone (ENOTSUP on another file system,
+    EXDEV across volumes) it fails at once. Any failure, or no clonefile at all (not macOS),
+    falls back to a plain byte copy, which replaces anything a failed clone left at `target`."""
+    clonefile = _clonefile()
+    try:
+        cloned = clonefile is not None and clonefile(os.fsencode(source), os.fsencode(target), 0) == 0
+    except (OSError, ctypes.ArgumentError):
+        cloned = False
+    if not cloned:
+        shutil.copyfile(source, target)

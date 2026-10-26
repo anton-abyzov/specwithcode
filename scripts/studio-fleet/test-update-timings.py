@@ -10,6 +10,7 @@ import json
 import os
 import pathlib
 import pwd
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -185,6 +186,22 @@ class ApplyTimings(unittest.TestCase):
                 self.assertRaises(AssertionError):
             fixture.execute()
         self.assertEqual(json.loads(progress_path(fixture).read_text())['agentTimings'], handed)  # Visible on a refusal too.
+
+    def test_the_helpers_disk_policy_reaches_every_receipt_but_the_preflight_one(self):
+        """`diskIoPolicy`: 0 when the agent lifted its LowPriorityIO throttle for the apply, 3 under it."""
+        for policy, scenario in ((0, None), (3, None), (None, None), (0, 'pre-restart-active')):
+            with self.subTest(policy=policy, scenario=scenario):
+                fixture = self.harness()
+                fixture.scenario = scenario or fixture.scenario
+                with patch.object(install_progress, 'disk_io_policy', return_value=policy):
+                    if scenario:
+                        with self.assertRaises(AssertionError):
+                            fixture.execute()
+                    else:
+                        fixture.execute()
+                self.assertEqual(json.loads(fixture.output.read_text())['diskIoPolicy'], policy)
+        if sys.platform == 'darwin':
+            self.assertIn(install_progress.disk_io_policy(), range(0, 6))  # This process's own, read for real.
 
 
 # The installation a reader binds a receipt to (test-update-agent.py's write_installation).

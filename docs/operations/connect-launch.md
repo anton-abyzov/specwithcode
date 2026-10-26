@@ -32,11 +32,16 @@ them and `RELAY_TUNNEL_BASE_DOMAIN` stays unset.
 3. **API token.** My Profile > API Tokens > Create Token > Custom token, named
    `specwithcode-relay-deploy`, with these permissions:
    - Account: Workers Scripts Edit, Workers KV Storage Edit, Workers R2 Storage Edit,
-     Cloudflare Tunnel Edit, D1 Edit, Queues Edit, Account Settings Read
+     Cloudflare Tunnel Edit, D1 Edit, Queues Edit, Account Settings Read, Secrets Store Edit,
+     API Tokens Edit
    - Zone: Zone Edit, DNS Edit, Workers Routes Edit, SSL and Certificates Read
    - Account resources: your account. Zone resources: Specific zone, `spec-weave.com`.
 
-   Save the token as `CLOUDFLARE_API_TOKEN`. If the first deploy fails with a 403 that names a
+   Alchemy keeps its state store's keys in the account Secrets Store, and the stack mints the
+   Worker's own tunnel-only token, so without the last two the deploy stops with
+   `Unauthorized` (code 10000) before any relay resource exists.
+
+   Save the token as `CLOUDFLARE_API_TOKEN`. If a later deploy fails with a 403 that names a
    permission, add that permission to the token and rerun step 6.
 
 ## 2. Apple (15 minutes)

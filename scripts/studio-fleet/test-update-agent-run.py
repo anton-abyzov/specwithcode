@@ -13,6 +13,7 @@ import json
 import os
 import pathlib
 import re
+import subprocess
 import sys
 import unittest
 from unittest import mock
@@ -279,6 +280,36 @@ class StampedLog(RunCase):
         (self.own / 'installation.json').write_text('{}')
         self.run_agent()
         self.assertTrue(re.search(r'^\d{4}-\d\d-\d\dT\S+Z update-agent m4: error: ', self.log, re.M), self.log)
+
+
+class HelperDiskIo(unittest.TestCase):
+    """The apply and a held snapshot leave the agent's LowPriorityIO disk throttle (normal_disk_io).
+    Beside BackgroundPriorityTests in test-update-agent.py, which is over the file-size cap."""
+
+    def test_apply_and_held_snapshot_children_leave_the_disk_throttle(self):
+        """launchd's LowPriorityIO runs the agent at IOPOL_THROTTLE (3), which children inherit; an apply
+        and a held snapshot, which a person waits for, run at IOPOL_DEFAULT (0), every other child keeps it."""
+        probe = 'import ctypes,sys;sys.stdout.write(str(ctypes.CDLL(None).getiopolicy_np(0,0)))'
+        script = ('import ctypes,subprocess,sys;sys.path.insert(0,%r);assert ctypes.CDLL(None).setiopolicy_np(0,0,3)==0;'
+                  'import update_agent;'
+                  'run=lambda fn:subprocess.run([sys.executable,"-c",%r],capture_output=True,text=True,preexec_fn=fn).stdout;'
+                  'sys.stdout.write(run(update_agent.leave_background)+" "+run(update_agent.leave_background_io))'
+                  ) % (str(pathlib.Path(update_agent.__file__).parent), probe)
+        result = subprocess.run([sys.executable, '-c', script], capture_output=True, text=True, timeout=300)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout, '3 0')
+
+    def test_only_normal_io_children_leave_the_disk_throttle(self):
+        calls = []
+        def record(*args, **kwargs):
+            calls.append(kwargs.get('preexec_fn'))
+            raise OSError('stop')
+        with mock.patch.object(update_agent.subprocess, 'run', side_effect=record), \
+                mock.patch.object(update_agent.subprocess, 'Popen', side_effect=record):
+            for wait_detached in (False, True):
+                update_agent.run_helper_process(['/usr/bin/true'], '/', {}, 5, wait_detached=wait_detached, normal_io=True)
+                update_agent.run_helper_process(['/usr/bin/true'], '/', {}, 5, wait_detached=wait_detached)
+        self.assertEqual(calls, [update_agent.leave_background_io, update_agent.leave_background] * 2)
 
 
 if __name__ == '__main__':

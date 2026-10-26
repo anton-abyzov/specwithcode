@@ -125,10 +125,16 @@ class StateBackupRetention(unittest.TestCase):
    root.unlink();root.mkdir();(root/target.name).symlink_to(target)
    self.assertEqual(release_retention.prune_state_backups(home,keep_newest=0),[])
    self.assertTrue((target/'statev2.sqlite').is_file())
- def test_an_update_prunes_state_backups_before_copying_the_database(self):
-  source=pathlib.Path(update.__file__).read_text()
-  self.assertIn("prune_state_backups(home, keep=held_state_backups(own), keep_newest=1)",source)
-  self.assertLess(source.index("prune_state_backups(home, keep=held_state_backups(own), keep_newest=1)"),source.index("state_backup, progress['stateBackupMethod'] = backup_state_clone(own, before['artifactSourceCommit'])"))
+ def test_an_update_prunes_state_backups_only_on_a_shortfall_before_copying_the_database(self):
+  # The usual prune runs after a verified update (test-state-backup-prune.py).
+  source=pathlib.Path(update.__file__).read_text();copy_at=source.index("state_backup, progress['stateBackupMethod'] = backup_state_clone(own, before['artifactSourceCommit'])")
+  self.assertEqual(source.count('prune_state_backups('),2)
+  # Before the copy: the bound that removes nothing after verified updates, then the shortfall's.
+  self.assertLess(source.index('keep_newest=state_backup_prune.KEPT_AFTER_INSTALL if agent_run else 1'),source.index('for keep_newest in (1, 0):'))
+  self.assertIn('for keep_newest in (1, 0):',source)
+  self.assertIn('prune_state_backups(home, keep=held_state_backups(own), keep_newest=keep_newest, only_if_frees=needed - free)',source)
+  self.assertLess(source.index('only_if_frees=needed - free'),copy_at)
+  self.assertGreater(source.index('state_backup_prune.spawn(identity, home, output'),copy_at)
  def test_a_copy_cut_short_is_removed(self):
   with tempfile.TemporaryDirectory() as tmp:
    home=pathlib.Path(tmp).resolve();own=home/'.specwithcode/m4';(own/'userdata').mkdir(parents=True)
@@ -1084,6 +1090,12 @@ class OldAgentContract(unittest.TestCase):
   self.assertEqual(set(json.loads(path.read_text())),PREFLIGHT_KEYS)
   for agent in self.agents():
    with self.subTest(agent=str(agent)):self.assertTrue(self.read_with(agent,case.home,'preflight',path))
+ def test_a_busy_installation_lock_is_a_refusal_this_agent_retries(self):
+  # The prune after the last verified install holds the lock for its deletes (state_backup_prune).
+  case=self.fixture();self.installed(case)
+  path=case.own/'updates/receipts/update-locked.json'
+  update.write_preflight_failure(path,'m4',AssertionError(update.state_backup_prune.LOCK_BUSY))
+  self.assertTrue(self.read_with(pathlib.Path(__file__).resolve().parent,case.home,'retry',path))
  def test_a_verified_receipt_keeps_what_old_agents_read_and_they_accept_it(self):
   case=self.fixture();case.incoming_version='0.2.0';case.incoming_source='a'*40
   case.before.update(schemaVersion=1,artifactSourceCommit='b'*40)
@@ -1126,6 +1138,61 @@ class OldAgentContract(unittest.TestCase):
    with self.subTest(agent=str(agent)):
     self.assertFalse(self.read_with(agent,case.home,'verified',case.output))
     self.assertTrue(self.read_with(agent,case.home,'retry',case.output))
+class EarlyDescendantRefusal(unittest.TestCase):
+ """A stray process beneath the service refuses the snapshot before the full read (minutes on
+ M4), with the same refusal; a quiet tree is still captured again after the read for the proof."""
+ def service(self):
+  import types
+  case=ApplyRecovery('runTest');case.setUp();self.addCleanup(case.tearDown)
+  state=case.own/'userdata';waiting_fixture(state)
+  (state/'settings.json').write_text('{}');(state/'environment-id').write_text('environment')
+  return {'home':case.home,'own':case.own,'installation':case.own/'installation.json','label':'com.specweave.studio.m4','plist':case.plist,
+          'wrapper':case.wrapper,'launcher':case.own/'launch.sh','content':{'ProgramArguments':['/usr/bin/caffeinate','-s',str(case.own/'launch.sh')]},
+          'node':pathlib.Path('/verified/node22'),'runtime':{'pid':100},'owner':types.SimpleNamespace(uid=501,policy='browser-cookie'),
+          'receipt':{'port':8319,'archiveSha256':'d'*64,'sourceCommit':'a'*40,'cookieName':'studio-session'}}
+ def tree(self,*extra):
+  rows=[(1,0,'/sbin/launchd',0),(100,1,'/verified/node22',501),(101,100,'/usr/bin/caffeinate',501),*extra]
+  return {pid:{'pid':pid,'parent':parent,'uid':uid,'startedAt':'Thu Oct 8 13:26:00 2026','executable':executable}
+          for pid,parent,executable,uid in rows}
+ def run_snapshot(self,service,tree,events,request=None):
+  import quiescence
+  real=update._read_state
+  def processes():events.append('ps');return copy.deepcopy(tree)
+  def read(*args):events.append('read');return real(*args)
+  with patch.object(update,'_service',return_value=service),patch.object(update,'assert_database_attached'),\
+    patch.object(update,'assert_database_locked'),patch.object(update,'listeners',return_value=[]),\
+    patch.object(quiescence,'read_processes',side_effect=processes),patch.object(update,'read_processes',side_effect=processes),\
+    patch.object(quiescence,'read_argv',return_value=service['content']['ProgramArguments']),\
+    patch.object(update,'_read_state',side_effect=read):
+   return update.snapshot('m4',request)
+ def test_a_stray_descendant_refuses_before_any_row_is_read(self):
+  service=self.service()
+  for parent,executable in ((100,'/usr/bin/git'),(101,'/bin/sh'),(100,'/verified/node22'),(100,'/usr/bin/caffeinate')):
+   with self.subTest(parent=parent,executable=executable):
+    events=[]
+    with self.assertRaisesRegex(AssertionError,'^Owned service has unexpected (or missing )?descendants$'):
+     self.run_snapshot(service,self.tree((102,parent,executable,501)),events)
+    self.assertNotIn('read',events)
+    self.assertIn('ps',events)
+ def test_a_quiet_tree_is_checked_before_the_read_and_captured_again_after_it(self):
+  service=self.service();events=[]
+  value=self.run_snapshot(service,self.tree(),events)
+  self.assertEqual(value['processQuiescence']['root']['pid'],100)
+  self.assertEqual(events.count('read'),1)
+  first=events.index('read')
+  self.assertIn('ps',events[:first]);self.assertIn('ps',events[first+1:])
+ def test_a_held_snapshot_reads_no_rows_and_captures_once(self):
+  service=self.service();now=datetime.datetime.now(datetime.timezone.utc)
+  request=now.isoformat();service['runtime']['startedAt']=(now-datetime.timedelta(minutes=5)).isoformat()
+  updates=service['own']/'updates';updates.mkdir(exist_ok=True)
+  (updates/'hold.json').write_text(json.dumps({'schemaVersion':1,'pid':100,'startedAt':(now-datetime.timedelta(seconds=1)).isoformat(),
+                                               'expiresAt':(now+datetime.timedelta(minutes=5)).isoformat()}))
+  (updates/'config.json').write_text(json.dumps({'installMode':'force','installRequestedAt':request}))
+  events=[]
+  with patch.object(update,'capture_quiescence',side_effect=lambda *args:events.append('capture') or {'root':{'pid':100,'uid':501}}):
+   value=self.run_snapshot(service,self.tree(),events,request)
+  self.assertEqual(value['snapshotMode'],'held-service')
+  self.assertEqual((events.count('read'),events.count('capture')),(0,1))
 class AuthHeartbeatPrestate(unittest.TestCase):
  def fixture(self, state):
   db=sqlite3.connect(state/'statev2.sqlite')

@@ -7,6 +7,7 @@ import {
   isRpcTransportError,
   isTransportConnectionErrorMessage,
   sanitizeThreadErrorMessage,
+  THIS_MACHINE_RPC_UNAVAILABLE_MESSAGE,
 } from "./transport.ts";
 
 describe("isTransportConnectionErrorMessage", () => {
@@ -46,6 +47,9 @@ describe("isTransportConnectionErrorMessage", () => {
       ),
     ).toBe(true);
     expect(isTransportConnectionErrorMessage("Test environment is not connected.")).toBe(true);
+    // This machine's server without a session reads as busy, and stays as transient.
+    expect(isTransportConnectionErrorMessage(THIS_MACHINE_RPC_UNAVAILABLE_MESSAGE)).toBe(true);
+    expect(sanitizeThreadErrorMessage(THIS_MACHINE_RPC_UNAVAILABLE_MESSAGE)).toBeNull();
     expect(isTransportConnectionErrorMessage("ClientProtocolError: socket closed")).toBe(true);
   });
 

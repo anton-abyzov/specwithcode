@@ -301,6 +301,81 @@ class ReapDescendants(unittest.TestCase):
         self.assertIsNone(quiescence.read_process(child.pid))
 
 
+# The hold began between START (13:26) and LATER (14:00), local time as ps prints it.
+HOLD_BEGAN = 'Thu Oct 8 13:30:00 2026'
+
+
+class StaleReap(unittest.TestCase):
+    """quiescence.started_before: Update now's early reap stops only what started before the
+    hold, and nothing above a process that started since."""
+
+    def setUp(self):
+        environment = mock.patch.dict(os.environ)
+        environment.start()
+        self.addCleanup(environment.stop)
+        os.environ.pop('TZ', None)  # ps and this process both read the system zone.
+        self.cutoff = quiescence.latest_start(HOLD_BEGAN) - 1
+
+    def stale_tree(self):
+        """tree(), plus a git (113) the held service started beneath the old provider (110) after
+        the hold began, and a dev server (114) started after it under the service itself."""
+        table = tree()
+        table[113] = process(113, 110, '/usr/bin/git', started=LATER)
+        table[114] = process(114, 100, '/usr/local/bin/node', started=LATER)
+        return table
+
+    def test_only_what_started_before_the_hold_with_nothing_newer_beneath_it_is_stopped(self):
+        host = FakeHost(self.stale_tree())
+        record = host.reap(select=quiescence.started_before(self.cutoff))
+        # The terminal's shell and its leftover dev server; not the provider above the new git.
+        self.assertEqual(host.signals, [(111, 'SIGTERM'), (112, 'SIGTERM')])
+        self.assertEqual([item['name'] for item in record['processes']], ['zsh', 'node'])
+        for pid in (110, 113, 114, 120, 130, 200, 201):
+            self.assertIn(pid, host.table)
+        # The full reap, later, still stops everything it can prove.
+        host = FakeHost(self.stale_tree())
+        host.reap()
+        self.assertEqual(host.signalled(), [110, 111, 112, 113, 114])
+
+    def test_a_process_started_in_the_hold_s_own_second_or_later_waits(self):
+        table = self.stale_tree()
+        table[112]['startedAt'] = HOLD_BEGAN  # ps shows whole seconds: it may have started after.
+        host = FakeHost(table)
+        host.reap(select=quiescence.started_before(self.cutoff))
+        self.assertEqual(host.signals, [])
+        # A second earlier is before the hold.
+        table[112]['startedAt'] = 'Thu Oct 8 13:29:59 2026'
+        host = FakeHost(table)
+        host.reap(select=quiescence.started_before(self.cutoff))
+        self.assertEqual(host.signals, [(111, 'SIGTERM'), (112, 'SIGTERM')])
+
+    def test_a_start_time_that_cannot_be_placed_waits_for_the_full_reap(self):
+        table = self.stale_tree()
+        table[112]['startedAt'] = 'Xyz Oct 8 13:26:00 2026'
+        host = FakeHost(table)
+        host.reap(select=quiescence.started_before(self.cutoff))
+        self.assertEqual(host.signals, [])
+
+    def test_nothing_is_chosen_when_this_process_could_read_another_zone(self):
+        host = FakeHost(self.stale_tree())
+        with mock.patch.dict(os.environ, {'TZ': 'UTC'}):
+            record = host.reap(select=quiescence.started_before(self.cutoff))
+        self.assertEqual((host.signals, record['processCount']), ([], 0))
+
+    def test_ps_start_times_are_read_as_their_latest_instant_in_the_system_zone(self):
+        stamp = 1792955806  # 2026-10-25T19:16:46Z
+        local = time.strftime('%a %b %d %H:%M:%S %Y', time.localtime(stamp))
+        self.assertEqual(quiescence.latest_start(local), stamp + 1)
+        self.assertIsNone(quiescence.latest_start('not a time'))
+        # In a zone with DST: a repeated hour takes its later reading, a skipped one is None.
+        code = ('import sys; sys.path.insert(0, sys.argv[1]); import json, quiescence; print(json.dumps('
+                '[quiescence.latest_start(value) for value in sys.argv[2:]]))')
+        values = ['Sun Oct 25 15:16:46 2026', 'Sun Nov 1 01:30:00 2026', 'Sun Mar 8 02:30:00 2026']
+        result = subprocess.run([sys.executable, '-B', '-c', code, str(HERE)] + values, capture_output=True, text=True,
+                                timeout=30, env={'PATH': '/usr/bin:/bin', 'TZ': 'America/New_York'}, check=True)
+        self.assertEqual(json.loads(result.stdout), [stamp + 1, 1793514600 + 1, None])  # 06:30Z, EST.
+
+
 @unittest.skipUnless(sys.platform == 'darwin', 'reads the macOS process table and kernel executables')
 class ReapRealProcesses(unittest.TestCase):
     """Real processes this test starts: a stand-in service with a provider that ignores
@@ -429,8 +504,9 @@ class UpdateReapMode(unittest.TestCase):
     def test_reap_checks_the_service_and_its_hold_then_stops_its_descendants(self):
         calls = []
 
-        def reap_descendants(*args, report, guard):
+        def reap_descendants(*args, report, guard, select):
             calls.append(args)
+            self.assertIsNone(select)  # A full reap: everything it can prove.
             guard()
             report.update(processCount=1, signals=[{'pid': 7, 'startedAt': START, 'signal': 'SIGTERM'}],
                           survivors=[])
@@ -455,6 +531,76 @@ class UpdateReapMode(unittest.TestCase):
                 reap_descendants.assert_not_called()
                 self.assertEqual(report['result'], 'refused')
 
+    def stale_reap(self, work=None, stale=True, before_signal=None):
+        """update.reap with the real quiescence.reap_descendants on a FakeHost: an old provider
+        (110), a git (113) the held service started beneath it, an old terminal (111) with a
+        leftover dev server (112), and a dev server (114) started after the hold."""
+        began = datetime.datetime(2026, 10, 12, 20, 0, tzinfo=datetime.timezone.utc).timestamp()
+        old, new = (time.strftime('%a %b %d %H:%M:%S %Y', time.localtime(began + offset)) for offset in (-3600, 60))
+        table = {1: process(1, 0, '/sbin/launchd', 0), 100: process(100, 1, NODE, started=old),
+                 101: process(101, 100, '/usr/bin/caffeinate', started=old),
+                 110: process(110, 100, '/verified/codex', started=old), 113: process(113, 110, '/usr/bin/git', started=new),
+                 111: process(111, 100, '/bin/zsh', started=old), 112: process(112, 111, '/usr/local/bin/node', started=old),
+                 114: process(114, 100, '/usr/local/bin/node', started=new)}
+        host = self.host = FakeHost(table)
+        host.before_signal = before_signal
+        self.work = dict(work or {})
+        service = dict(self.service, runtime={'pid': 100, 'startedAt': '2026-10-12T19:00:00.000Z'})
+        self.hold(pid=100, startedAt='2026-10-12T20:00:00.000Z', expiresAt='2026-10-12T20:15:00.000Z')
+        held, counts = update.assert_held, []
+
+        def native_work_counts(state):
+            counts.append(state)
+            return dict({'runs': 0, 'queued': 0, 'requests': 0, 'effects': 0, 'sessions': 0, 'held': 0}, **self.work)
+
+        def reap_descendants(*args, **values):
+            return quiescence.reap_descendants(*args, process_reader=host.processes, argv_reader=lambda pid: ARGS,
+                                               executable_reader=host.executable, signaler=host.kill,
+                                               clock=lambda: host.now, sleeper=host.sleep, **values)
+        report = {}
+        with mock.patch.dict(os.environ), mock.patch.object(update, '_service', return_value=service), \
+                mock.patch.object(update, 'assert_held', lambda *args: held(*args, now=self.now)), \
+                mock.patch.object(update, 'native_work_counts', native_work_counts), \
+                mock.patch.object(update, 'reap_descendants', reap_descendants):
+            os.environ.pop('TZ', None)
+            try:
+                update.reap('m4', REQUEST, report, stale=stale)
+            finally:
+                self.counts = counts
+        return host, report
+
+    def test_a_stale_reap_stops_only_what_started_before_the_hold(self):
+        host, record = self.stale_reap()
+        self.assertEqual(host.signals, [(111, 'SIGTERM'), (112, 'SIGTERM')])
+        self.assertEqual((record['result'], record['stale'], record['processCount']), ('reaped', True, 2))
+        self.assertEqual(self.counts, [self.own / 'userdata'] * 3)  # First, then before each signal.
+        # Without --stale the same service loses everything it can prove, with no database read.
+        host, record = self.stale_reap(stale=False)
+        self.assertEqual(host.signalled(), [110, 111, 112, 113, 114])
+        self.assertEqual((record['stale'], self.counts), (False, []))
+
+    def test_a_stale_reap_never_runs_while_the_database_shows_work(self):
+        for key in ('runs', 'queued', 'requests', 'effects', 'sessions'):
+            with self.subTest(key=key), self.assertRaisesRegex(AssertionError, 'Native work is not idle'):
+                self.stale_reap(work={key: 1})
+            self.assertEqual(self.host.signals, [])
+
+        def started_work(pid, number):  # A run starts while it signals: no further signal.
+            self.work['runs'] = 1
+        with self.assertRaisesRegex(AssertionError, 'Native work is not idle'):
+            self.stale_reap(before_signal=started_work)
+        self.assertEqual(self.host.signals, [(111, 'SIGTERM')])
+
+    def test_command_line_passes_stale_through(self):
+        for extra, stale in (([], False), (['--stale'], True)):
+            with self.subTest(extra=extra), mock.patch.object(update, 'reap') as called:
+                called.side_effect = lambda identity, request, report, stale=False: report.update(
+                    signals=[], survivors=[], result='reaped')
+                target = self.home / ('reap-%d.json' % stale)
+                self.main(target, '--request', REQUEST, *extra)
+                self.assertEqual(called.call_args, mock.call('m4', REQUEST, mock.ANY, stale=stale))
+                self.assertEqual(json.loads(target.read_text())['result'], 'reaped')
+
     def main(self, path, *extra):
         out = io.StringIO()
         with mock.patch.object(sys, 'argv', ['update.py', '--identity', 'm4', '--reap', str(path)] + list(extra)), \
@@ -465,7 +611,7 @@ class UpdateReapMode(unittest.TestCase):
     def test_command_line_writes_the_record_and_never_overwrites_one(self):
         path = self.home / 'reap.json'
 
-        def reap(identity, request, report):
+        def reap(identity, request, report, stale=False):
             report.update(signals=[], survivors=[], result='reaped')
             return dict(report)
         with mock.patch.object(update, 'reap', side_effect=reap) as called:
@@ -483,7 +629,7 @@ class UpdateReapMode(unittest.TestCase):
     def test_a_reap_that_stops_part_way_still_records_what_it_sent(self):
         path = self.home / 'reap.json'
 
-        def reap(identity, request, report):
+        def reap(identity, request, report, stale=False):
             report.update(result='refused', signals=[{'pid': 7, 'startedAt': START, 'signal': 'SIGTERM'}],
                           survivors=[])
             raise AssertionError(update.HOLD_REFUSAL)
@@ -509,10 +655,14 @@ class UpdateReapMode(unittest.TestCase):
 
 
 # The fake helper of test-update-agent.py, taught `--reap`: with reapClears, snapshots refuse
-# until a reap ran (the leftover processes were what kept the service busy). With cancelAt, the
-# person cancels while that snapshot runs.
+# until a full reap ran (the leftover processes were what kept the service busy); an early
+# `--reap --stale` clears them only with staleClears (they started before the hold). With
+# cancelAt, the person cancels while that snapshot runs.
 REAP_HELPER = agent_tests.FAKE_HELPER
 for old, new in (("for flag in ['--identity', '--snapshot',", "for flag in ['--identity', '--snapshot', '--reap',"),
+                 ("parser.add_argument('--allow-project-migrations', action='store_true')\n",
+                  "parser.add_argument('--allow-project-migrations', action='store_true')\n"
+                  "parser.add_argument('--stale', action='store_true')\n"),
                  ("if args.snapshot:\n",
                   "if args.snapshot and control.get('cancelAt') == snapshots:\n"
                   "    settings = json.loads(pathlib.Path(control['configPath']).read_text())\n"
@@ -521,7 +671,7 @@ for old, new in (("for flag in ['--identity', '--snapshot',", "for flag in ['--i
                   "if args.snapshot:\n"),
                  ("applies = len([argv for argv in calls if '--prestate' in argv])\n",
                   "applies = len([argv for argv in calls if '--prestate' in argv])\n"
-                  "reaps = len([argv for argv in calls if '--reap' in argv])\n"
+                  "reaps = len([argv for argv in calls if '--reap' in argv and ('--stale' not in argv or control.get('staleClears'))])\n"
                   "if args.reap:\n"
                   "    assert not os.path.exists(args.reap)\n"
                   "    pathlib.Path(args.reap).write_text(json.dumps({'result': 'reaped', 'signals': []}))\n"
@@ -531,6 +681,10 @@ for old, new in (("for flag in ['--identity', '--snapshot',", "for flag in ['--i
     REAP_HELPER = REAP_HELPER.replace(old, new)
 
 TERMINALS = 'REFUSAL descendants codex=1 node=1'
+
+
+def full_reap(call):
+    return '--reap' in call['argv'] and '--stale' not in call['argv']
 
 
 class AgentReap(agent_tests.AgentCase):
@@ -554,7 +708,12 @@ class AgentReap(agent_tests.AgentCase):
         return seen
 
     def reap_calls(self):
-        return [call for call in self.calls() if '--reap' in call['argv']]
+        """The full reaps."""
+        return [call for call in self.calls() if full_reap(call)]
+
+    def stale_calls(self):
+        """The early reaps, of what started before the hold."""
+        return [call for call in self.calls() if '--reap' in call['argv'] and '--stale' in call['argv']]
 
     def test_a_forced_request_stuck_on_leftover_processes_reaps_once_then_installs(self):
         self.fake.add_release()
@@ -571,11 +730,73 @@ class AgentReap(agent_tests.AgentCase):
         record = pathlib.Path(argv[3])
         self.assertEqual(record.parent, self.updates / 'receipts')
         self.assertEqual(json.loads(record.read_text())['result'], 'reaped')
-        # The drain had REAP_AFTER (two minutes) before anything was stopped.
+        # The drain had REAP_AFTER (two minutes) before everything was stopped: the early reap, of
+        # what started before the hold, cleared nothing here.
         before = [call for call in self.calls()[:self.calls().index(reaps[0])] if '--snapshot' in call['argv']]
         self.assertEqual(len(before), 13)
+        stale = [self.calls().index(call) for call in self.stale_calls()]
+        self.assertEqual(len(stale), update_agent_reap.STALE_REAP_LIMIT)
+        self.assertEqual([len([call for call in self.calls()[start:end] if '--snapshot' in call['argv']])
+                          for start, end in zip([0] + stale, stale)], [3, 2])  # At 20 and 40 seconds.
         self.assertIn(update_agent_reap.REAPING, seen)
         self.assertEqual(len(self.apply_calls()), 1)
+
+    def test_leftovers_from_before_the_hold_are_reaped_after_twenty_seconds(self):
+        self.fake.add_release()
+        self.request()
+        self.control(snapshotFail=True, snapshotError=TERMINALS, reapClears=True, staleClears=True)
+        seen = self.messages()
+        self.assertEqual(self.run_agent(), 0)
+        self.assertEqual(self.state()['status'], 'installed')
+        stale = self.stale_calls()
+        self.assertEqual((len(stale), self.reap_calls()), (1, []))
+        argv = stale[0]['argv']
+        self.assertEqual(argv[:3], ['--identity', 'm4', '--reap'])
+        self.assertEqual(argv[4:], ['--stale', '--request', '2026-10-12T20:00:00+00:00'])
+        self.assertEqual(json.loads(pathlib.Path(argv[3]).read_text())['result'], 'reaped')
+        # Refused at 0, 10 and 20 seconds (REAP_STALE_AFTER), not for two minutes.
+        before = [call for call in self.calls()[:self.calls().index(stale[0])] if '--snapshot' in call['argv']]
+        self.assertEqual(len(before), 3)
+        self.assertIn(update_agent_reap.REAPING, seen)
+        self.assertEqual(len(self.apply_calls()), 1)
+
+    def test_no_early_reap_for_running_work(self):
+        """A provider still in a turn gets the full REAP_AFTER to answer its interrupt."""
+        self.fake.add_release()
+        self.request(hold_minutes=10)
+        self.control(snapshotFail=True, snapshotError='REFUSAL native-work runs=1 requests=0 effects=0 sessions=1',
+                     reapClears=False, staleClears=True)
+        self.run_agent()
+        self.assertEqual(self.stale_calls(), [])
+        self.assertEqual(len(self.reap_calls()), update_agent_reap.REAP_LIMIT)
+
+    def test_no_early_reap_that_would_outlast_the_hold(self):
+        self.fake.add_release()
+        self.request(hold_minutes=2)  # At 20 seconds a reap could still run past the hold's end.
+        self.control(snapshotFail=True, snapshotError=TERMINALS, reapClears=True, staleClears=True)
+        self.run_agent()
+        self.assertEqual((self.stale_calls(), self.reap_calls()), ([], []))
+        self.assertEqual(self.state()['status'], 'waiting-for-quiet')
+
+    def test_a_newer_request_gets_its_own_early_reap(self):
+        self.fake.add_release()
+        self.request(hold_minutes=15)
+        self.control(snapshotFail=True, snapshotError=TERMINALS, reapClears=False)
+        newer = '2026-10-12T20:30:00+00:00'
+
+        def pressed_again():
+            config = json.loads((self.updates / 'config.json').read_text())
+            if len(self.reap_calls()) == 2 and config['installRequestedAt'] != newer:
+                self.request(hold_minutes=15, requested=newer)
+        self.on_sleep = pressed_again
+        self.run_agent()
+        limit = update_agent_reap.STALE_REAP_LIMIT
+        self.assertEqual([call['argv'][-1] for call in self.stale_calls()], ['2026-10-12T20:00:00+00:00'] * limit + [newer] * limit)
+        # Each request's early reaps came before its first full reap.
+        calls = self.calls()
+        for request in ('2026-10-12T20:00:00+00:00', newer):
+            mine = [index for index, call in enumerate(calls) if '--reap' in call['argv'] and call['argv'][-1] == request]
+            self.assertEqual([index for index in mine if '--stale' in calls[index]['argv']], mine[:limit])
 
     def test_a_hung_service_is_reaped_at_most_twice_two_minutes_apart(self):
         self.fake.add_release()
@@ -585,7 +806,7 @@ class AgentReap(agent_tests.AgentCase):
         self.run_agent()
         self.assertEqual(self.state()['status'], 'waiting-for-quiet')
         calls = self.calls()
-        positions = [index for index, call in enumerate(calls) if '--reap' in call['argv']]
+        positions = [index for index, call in enumerate(calls) if full_reap(call)]
         self.assertEqual(len(positions), update_agent_reap.REAP_LIMIT)
         between = [call for call in calls[positions[0]:positions[1]] if '--snapshot' in call['argv']]
         self.assertEqual(len(between), 12)
@@ -624,7 +845,7 @@ class AgentReap(agent_tests.AgentCase):
         self.assertEqual(requests, ['2026-10-12T20:00:00+00:00'] * 2 + [newer] * 2)
         # The newer request also drained REAP_AFTER (two minutes) before its first reap.
         calls = self.calls()
-        positions = [index for index, call in enumerate(calls) if '--reap' in call['argv']]
+        positions = [index for index, call in enumerate(calls) if full_reap(call)]
         between = [call for call in calls[positions[1]:positions[2]] if '--snapshot' in call['argv']]
         self.assertGreaterEqual(len(between), 12)
 
@@ -713,6 +934,7 @@ class AgentReap(agent_tests.AgentCase):
             self.assertEqual(self.run_agent(), 0)
         self.assertEqual(self.state()['status'], 'waiting-for-quiet')
         self.assertEqual(len(self.reap_calls()), update_agent_reap.REAP_LIMIT)  # Called, failed, ignored.
+        self.assertEqual(len(self.stale_calls()), update_agent_reap.STALE_REAP_LIMIT)  # So were the early ones.
 
 
 class InstalledAgent(agent_tests.AgentCase):

@@ -26,6 +26,7 @@ import * as ExternalBrowsers from "../preview/ExternalBrowsers.ts";
 import * as ElectronTheme from "../electron/ElectronTheme.ts";
 import * as ElectronWindow from "../electron/ElectronWindow.ts";
 import { isDesktopOffscreenTest } from "../electron/DesktopOffscreen.ts";
+import * as WindowPlacement from "./windowPlacement.ts";
 import {
   MENU_ACTION_CHANNEL,
   QUIT_SHORTCUT_CHANNEL,
@@ -121,12 +122,15 @@ interface AppWindowSpec {
   readonly persisted: {
     readonly bounds: DesktopAppSettings.DesktopWindowBounds | null;
     readonly maximized: boolean;
+    readonly fullScreen: boolean;
+    readonly display: DesktopAppSettings.DesktopWindowDisplay | null;
   };
   // Where a window with no restorable saved bounds opens; null centers it.
   readonly fallbackBounds: DesktopAppSettings.DesktopWindowBounds | null;
   readonly persistBounds: (
     bounds: DesktopAppSettings.DesktopWindowBounds,
     isMaximized: boolean,
+    extras: DesktopAppSettings.DesktopWindowPlacementExtras,
   ) => Effect.Effect<unknown, DesktopAppSettings.DesktopSettingsWriteError>;
 }
 
@@ -212,17 +216,12 @@ function getInitialWindowBackgroundColor(shouldUseDarkColors: boolean): string {
 
 type DisplayBounds = Pick<Electron.Rectangle, "x" | "y" | "width" | "height">;
 
-function windowFitsWithinDisplay(
-  windowBounds: DesktopAppSettings.DesktopWindowBounds,
-  displayBounds: DisplayBounds,
-): boolean {
-  return (
-    windowBounds.x >= displayBounds.x &&
-    windowBounds.y >= displayBounds.y &&
-    windowBounds.x + windowBounds.width <= displayBounds.x + displayBounds.width &&
-    windowBounds.y + windowBounds.height <= displayBounds.y + displayBounds.height
-  );
-}
+const windowFitsWithinDisplay = WindowPlacement.windowFitsWithinDisplay;
+
+// How long a window that opened away from its saved monitor waits for that
+// monitor to appear. After an update restart an external display can take a
+// few seconds to report itself again.
+const SAVED_DISPLAY_WAIT_MS = 2 * 60 * 1000;
 
 function windowBoundsEqual(
   left: DesktopAppSettings.DesktopWindowBounds,
@@ -234,19 +233,6 @@ function windowBoundsEqual(
     left.width === right.width &&
     left.height === right.height
   );
-}
-
-export function resolveInitialMainWindowBounds(
-  persistedBounds: DesktopAppSettings.DesktopWindowBounds | null,
-  displays: readonly DisplayBounds[],
-): DesktopAppSettings.DesktopWindowBounds | typeof DesktopAppSettings.DEFAULT_MAIN_WINDOW_SIZE {
-  if (
-    persistedBounds !== null &&
-    displays.some((display) => windowFitsWithinDisplay(persistedBounds, display))
-  ) {
-    return persistedBounds;
-  }
-  return DesktopAppSettings.DEFAULT_MAIN_WINDOW_SIZE;
 }
 
 const CONNECTING_TO_WSL_LABEL = "Connecting to WSL…";
@@ -472,23 +458,25 @@ export const make = Effect.gen(function* () {
   const currentMainWindow = electronWindow.currentMainOrFirst.pipe(Effect.flatMap(withoutSplash));
   const focusedMainWindow = electronWindow.focusedMainOrFirst.pipe(Effect.flatMap(withoutSplash));
 
-  const readDisplayBounds = Effect.gen(function* () {
-    const displayBoundsResult = yield* Effect.sync(() => {
+  const readConnectedDisplaysSync = (): readonly WindowPlacement.ConnectedDisplay[] =>
+    Electron.screen.getAllDisplays().map(WindowPlacement.toConnectedDisplay);
+  const readConnectedDisplays = Effect.gen(function* () {
+    const displaysResult = yield* Effect.sync(() => {
       try {
-        return {
-          _tag: "Success" as const,
-          bounds: Electron.screen.getAllDisplays().map((display) => display.bounds),
-        };
+        return { _tag: "Success" as const, displays: readConnectedDisplaysSync() };
       } catch (cause) {
         return { _tag: "Failure" as const, cause };
       }
     });
-    return displayBoundsResult._tag === "Success"
-      ? displayBoundsResult.bounds
+    return displaysResult._tag === "Success"
+      ? displaysResult.displays
       : yield* logWindowWarning("failed to read connected displays; using defaults", {
-          cause: displayBoundsResult.cause,
-        }).pipe(Effect.as<readonly Electron.Rectangle[]>([]));
+          cause: displaysResult.cause,
+        }).pipe(Effect.as<readonly WindowPlacement.ConnectedDisplay[]>([]));
   });
+  const readDisplayBounds = readConnectedDisplays.pipe(
+    Effect.map((displays) => displays.map((display) => display.bounds)),
+  );
 
   const createWindow = Effect.fn("desktop.window.createWindow")(function* (
     spec: AppWindowSpec,
@@ -500,19 +488,35 @@ export const make = Effect.gen(function* () {
     const iconOption = getIconOption(iconPaths, environment.platform);
     const shouldUseDarkColors = yield* electronTheme.shouldUseDarkColors;
     const persistedBounds = spec.persisted.bounds;
-    const displayBounds = yield* readDisplayBounds;
-    const resolvedBounds = resolveInitialMainWindowBounds(persistedBounds, displayBounds);
-    const restoredPersistedBounds = persistedBounds !== null && resolvedBounds === persistedBounds;
-    if (
-      persistedBounds !== null &&
-      resolvedBounds === DesktopAppSettings.DEFAULT_MAIN_WINDOW_SIZE
-    ) {
-      yield* logWindowWarning(`saved ${windowLabel} bounds could not be restored; using defaults`);
+    const connectedDisplays = yield* readConnectedDisplays;
+    const placement = WindowPlacement.resolveWindowPlacement(spec.persisted, connectedDisplays);
+    const restoredPersistedBounds = persistedBounds !== null && placement.kind === "saved";
+    if (persistedBounds !== null && placement.kind !== "saved") {
+      // The numbers say why: a monitor that is missing, moved or smaller.
+      const details = {
+        saved: persistedBounds,
+        savedDisplayId: spec.persisted.display?.id ?? null,
+        savedDisplayMissing: placement.savedDisplayMissing,
+        displays: connectedDisplays.map((display) => ({ id: display.id, ...display.bounds })),
+      };
+      yield* placement.kind === "default"
+        ? logWindowWarning(
+            `saved ${windowLabel} bounds could not be restored; using defaults`,
+            details,
+          )
+        : logWindowInfo(`saved ${windowLabel} bounds adjusted to a connected display`, {
+            ...details,
+            adjusted: placement.bounds,
+          });
     }
     const initialBounds =
-      resolvedBounds === DesktopAppSettings.DEFAULT_MAIN_WINDOW_SIZE && spec.fallbackBounds !== null
-        ? spec.fallbackBounds
-        : resolvedBounds;
+      placement.kind === "default"
+        ? (spec.fallbackBounds ?? DesktopAppSettings.DEFAULT_MAIN_WINDOW_SIZE)
+        : placement.bounds;
+    // Full screen is put back only on the monitor it was on, or wherever the
+    // window lands when no monitor was recorded.
+    const restoreFullScreen =
+      spec.persisted.fullScreen && placement.kind !== "default" && !placement.savedDisplayMissing;
     const window = yield* electronWindow.create({
       ...initialBounds,
       minWidth: 840,
@@ -569,8 +573,37 @@ export const make = Effect.gen(function* () {
     };
     const fallbackWindowBounds = boundsPersistenceEnabled ? null : readPersistableBounds();
     const fallbackWindowMaximized = spec.persisted.maximized;
+    // Full screen as restored; leaving or entering it is the user's change.
+    const fallbackWindowFullScreen = restoreFullScreen;
+    // Whether the first reveal puts the window into full screen. A saved
+    // monitor that appears before the reveal sets it too.
+    let fullScreenOnReveal = restoreFullScreen;
+    // The monitor a full-screen window is on. Its normal bounds can sit on
+    // another monitor, so it is read when full screen starts.
+    let fullScreenDisplay: DesktopAppSettings.DesktopWindowDisplay | null = null;
+    // Set once a quit hides the window, so leaving full screen on the way out
+    // is not saved as the user's choice.
+    let placementFrozen = false;
+    const readPlacementExtras = (
+      bounds: DesktopAppSettings.DesktopWindowBounds,
+    ): DesktopAppSettings.DesktopWindowPlacementExtras => {
+      const fullScreen = window.isFullScreen();
+      let display: DesktopAppSettings.DesktopWindowDisplay | null = null;
+      try {
+        // In full screen the frame is the monitor itself, so a full-screen
+        // Space moved to another display in Mission Control is followed.
+        const frame = fullScreen ? window.getBounds() : bounds;
+        display =
+          WindowPlacement.toSavedDisplay(
+            WindowPlacement.displayForBounds(frame, readConnectedDisplaysSync()),
+          ) ?? (fullScreen ? fullScreenDisplay : null);
+      } catch {
+        display = null;
+      }
+      return { fullScreen, display };
+    };
     const persistCurrentBounds = (): Fiber.Fiber<void, never> | undefined => {
-      if (!boundsPersistenceEnabled) {
+      if (!boundsPersistenceEnabled || placementFrozen) {
         return pendingBoundsPersistFiber;
       }
       const bounds = readPersistableBounds();
@@ -578,7 +611,7 @@ export const make = Effect.gen(function* () {
         return pendingBoundsPersistFiber;
       }
       pendingBoundsPersistFiber = runFork(
-        spec.persistBounds(bounds, window.isMaximized()).pipe(
+        spec.persistBounds(bounds, window.isMaximized(), readPlacementExtras(bounds)).pipe(
           Effect.asVoid,
           Effect.catch((error) =>
             logWindowWarning(`failed to persist ${windowLabel} bounds`, {
@@ -590,13 +623,17 @@ export const make = Effect.gen(function* () {
       return pendingBoundsPersistFiber;
     };
     const scheduleBoundsPersist = () => {
+      if (placementFrozen) {
+        return;
+      }
       if (!boundsPersistenceEnabled) {
         const currentBounds = readPersistableBounds();
         if (
           currentBounds === null ||
           (fallbackWindowBounds !== null &&
             windowBoundsEqual(currentBounds, fallbackWindowBounds) &&
-            window.isMaximized() === fallbackWindowMaximized)
+            window.isMaximized() === fallbackWindowMaximized &&
+            window.isFullScreen() === fallbackWindowFullScreen)
         ) {
           return;
         }
@@ -788,7 +825,13 @@ export const make = Effect.gen(function* () {
       },
       // Keep the transparent window focused until the physical shortcut is
       // released so its remaining repeats cannot reach the next app.
-      concealWindow: () => concealPendingQuitWindow(window),
+      concealWindow: () => {
+        // Save full screen and the monitor before concealing leaves full screen.
+        clearBoundsPersist();
+        void persistCurrentBounds();
+        placementFrozen = true;
+        concealPendingQuitWindow(window);
+      },
       quit: () => {
         void runPromise(electronApp.quit);
       },
@@ -816,15 +859,83 @@ export const make = Effect.gen(function* () {
     window.on("close", () => {
       runFork(flushBoundsPersist);
     });
-
-    if (environment.platform === "darwin") {
-      window.on("enter-full-screen", () => {
+    window.on("enter-full-screen", () => {
+      try {
+        fullScreenDisplay = WindowPlacement.toSavedDisplay(
+          WindowPlacement.displayForBounds(window.getBounds(), readConnectedDisplaysSync()),
+        );
+      } catch {
+        fullScreenDisplay = null;
+      }
+      scheduleBoundsPersist();
+      if (environment.platform === "darwin") {
         window.webContents.send(WINDOW_FULLSCREEN_STATE_CHANNEL, true);
-      });
-      window.on("leave-full-screen", () => {
+      }
+    });
+    window.on("leave-full-screen", () => {
+      fullScreenDisplay = null;
+      scheduleBoundsPersist();
+      if (environment.platform === "darwin") {
         syncMacosWindowButtons(window);
         window.webContents.send(WINDOW_FULLSCREEN_STATE_CHANNEL, false);
-      });
+      }
+    });
+
+    // A window that opened away from its saved monitor moves there when the
+    // monitor reports itself, unless the user has moved it in the meantime.
+    if (placement.savedDisplayMissing) {
+      const screen = Electron.screen as Partial<Pick<Electron.Screen, "on" | "removeListener">>;
+      if (typeof screen.on === "function" && typeof screen.removeListener === "function") {
+        let waitFiber: Fiber.Fiber<void, never> | undefined;
+        const stopWaiting = () => {
+          screen.removeListener?.("display-added", onDisplayAdded);
+          if (waitFiber !== undefined) {
+            const fiber = waitFiber;
+            waitFiber = undefined;
+            runFork(Fiber.interrupt(fiber));
+          }
+        };
+        const onDisplayAdded = () => {
+          // The user moved, resized or toggled full screen in the meantime.
+          if (window.isDestroyed() || boundsPersistenceEnabled || window.isFullScreen()) {
+            stopWaiting();
+            return;
+          }
+          let next: WindowPlacement.WindowPlacement;
+          try {
+            next = WindowPlacement.resolveWindowPlacement(
+              spec.persisted,
+              readConnectedDisplaysSync(),
+            );
+          } catch {
+            return;
+          }
+          if (next.kind === "default" || next.savedDisplayMissing) return;
+          stopWaiting();
+          const maximized = window.isMaximized();
+          if (maximized) window.unmaximize();
+          window.setBounds(next.bounds);
+          if (maximized) window.maximize();
+          boundsPersistenceEnabled = true;
+          if (spec.persisted.fullScreen) {
+            if (revealedWindows.has(window)) window.setFullScreen(true);
+            else fullScreenOnReveal = true;
+          }
+          runFork(logWindowInfo(`${windowLabel} moved to its saved display`));
+        };
+        screen.on("display-added", onDisplayAdded);
+        waitFiber = runFork(
+          Effect.sleep(SAVED_DISPLAY_WAIT_MS).pipe(
+            Effect.andThen(
+              Effect.sync(() => {
+                waitFiber = undefined;
+                stopWaiting();
+              }),
+            ),
+          ),
+        );
+        window.once("closed", stopWaiting);
+      }
     }
 
     let developmentLoadRetryIndex = 0;
@@ -965,10 +1076,19 @@ export const make = Effect.gen(function* () {
       if (spec.persisted.maximized) {
         window.maximize();
       }
+      // Full screen only once the window is on screen: macOS ignores or
+      // half-applies it on a window that is not ordered in yet.
+      const enterSavedFullScreen = Effect.sync(() => {
+        if (fullScreenOnReveal && !window.isDestroyed() && !window.isFullScreen()) {
+          window.setFullScreen(true);
+        }
+      });
       void runPromise(
         spec.role === "main"
-          ? Effect.andThen(electronWindow.reveal(window), dismissConnectingSplash)
-          : electronWindow.reveal(window),
+          ? electronWindow
+              .reveal(window)
+              .pipe(Effect.andThen(enterSavedFullScreen), Effect.andThen(dismissConnectingSplash))
+          : electronWindow.reveal(window).pipe(Effect.andThen(enterSavedFullScreen)),
       );
     });
 
@@ -1017,6 +1137,8 @@ export const make = Effect.gen(function* () {
       persisted: {
         bounds: persistedSettings.mainWindowBounds,
         maximized: persistedSettings.mainWindowMaximized,
+        fullScreen: persistedSettings.mainWindowFullScreen === true,
+        display: persistedSettings.mainWindowDisplay ?? null,
       },
       fallbackBounds: null,
       persistBounds: desktopSettings.setMainWindowBounds,
@@ -1077,6 +1199,8 @@ export const make = Effect.gen(function* () {
       persisted: {
         bounds: saved?.bounds ?? null,
         maximized: saved?.maximized ?? false,
+        fullScreen: saved?.fullScreen === true,
+        display: saved?.display ?? null,
       },
       // Only used when there is no saved position or it is off every display.
       fallbackBounds: resolveProjectWindowFallbackBounds(
@@ -1084,8 +1208,8 @@ export const make = Effect.gen(function* () {
         yield* readDisplayBounds,
         openProjectWindowCount + 1,
       ),
-      persistBounds: (bounds, isMaximized) =>
-        desktopSettings.setProjectWindowBounds(projectKey, bounds, isMaximized),
+      persistBounds: (bounds, isMaximized, extras) =>
+        desktopSettings.setProjectWindowBounds(projectKey, bounds, isMaximized, extras),
     });
     projectWindows.set(projectKey, window);
     window.once("closed", () => {

@@ -558,6 +558,51 @@ def idle_providers(pid, uid, executable, supervisor_argv, *, process_reader=None
     return names
 
 
+def server_browser_pids(processes, root_pid, home, descendants):
+    """Pids of the service's own server browser among `descendants` (processes beneath
+    `root_pid`), which an update stops itself: a refusal names what else keeps it waiting."""
+    return _spared_browsers(processes, root_pid, processes[root_pid]['uid'], home, descendants)
+
+
+def latest_start(started):
+    """The latest instant, in epoch seconds, a ps start time can name; None for one it cannot
+    place. ps prints lstart to the whole second in the system zone (its environment sets no TZ),
+    so the second's end is taken, and in a repeated hour (DST ending) the later reading. A time
+    that does not exist there (DST starting) or reads back differently is None."""
+    try:
+        parsed = time.strptime(started, '%a %b %d %H:%M:%S %Y')
+        readings = []
+        for dst in (0, 1):
+            moment = time.mktime(parsed[:8] + (dst,))
+            local = time.localtime(moment)
+            if local[:6] == parsed[:6] and local.tm_isdst == dst:
+                readings.append(moment)
+    except (ValueError, OverflowError):
+        return None
+    return max(readings) + 1 if readings else None
+
+
+def started_before(cutoff):
+    """A reap_descendants `select` for Update now's early reap (update.py --reap --stale): only
+    the processes that started before `cutoff` (the hold's start, epoch seconds), and only when
+    nothing beneath them started since. A process that started at or after it, one whose start
+    cannot be placed, and every process above either are never chosen: they wait for the full
+    reap. With TZ set, this process could read ps's local times in another zone: nothing is chosen."""
+    def select(processes, root_pid, uid, others, spared, argv_reader, executable_reader):
+        if 'TZ' in os.environ:
+            return set()
+        later = set()
+        for item in others:
+            ends = latest_start(item['startedAt'])
+            if _exited(item) or (ends is not None and ends <= cutoff):
+                continue
+            while item['pid'] != root_pid and item['pid'] not in later:
+                later.add(item['pid'])
+                item = processes[item['parent']]
+        return {item['pid'] for item in others} - later
+    return select
+
+
 def reap_descendants(pid, uid, executable, supervisor_argv, *, process_reader=None, argv_reader=None,
                      executable_reader=None, single_reader=None, signaler=None, clock=None, sleeper=None,
                      report=None, guard=None, select=None):
@@ -576,9 +621,9 @@ def reap_descendants(pid, uid, executable, supervisor_argv, *, process_reader=No
     by raising. The service, its parent and supervisor, and every process outside its tree are
     never signalled. The whole reap ends within REAP_BUDGET_SECONDS. `report` (optional) holds
     the record as it is built, so a failed reap still records what it sent. `select` (a normal
-    update: idle_provider_trees) narrows the targets to the pids it returns, from the same
-    inventory, and stops the reap by raising. Returns the record: identities (no argv), signals
-    sent and survivors."""
+    update: idle_provider_trees; Update now's early reap: started_before) narrows the targets
+    to the pids it returns, from the same inventory, and stops the reap by raising. Returns the
+    record: identities (no argv), signals sent and survivors."""
     process_reader = process_reader or read_processes
     argv_reader = argv_reader or read_argv
     executable_reader = executable_reader or read_executable

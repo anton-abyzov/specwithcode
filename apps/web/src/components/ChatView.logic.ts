@@ -35,6 +35,7 @@ import * as DateTime from "effect/DateTime";
 import { parseScopedThreadKey } from "@specweave-studio/client-runtime/environment";
 import { resolveAssetUrl } from "@specweave-studio/client-runtime/state/assets";
 import {
+  isAtomCommandInterrupted,
   squashAtomCommandFailure,
   type AtomCommandResult,
 } from "@specweave-studio/client-runtime/state/runtime";
@@ -1497,4 +1498,26 @@ export function formatOutgoingPrompt(params: {
   const caps = getProviderModelCapabilities(params.models, params.model, params.provider);
   const promptEffort = resolvePromptInjectedEffort(caps, params.effort);
   return applyClaudePromptEffortPrefix(params.text, promptEffort);
+}
+
+/**
+ * "Back to <pick>" after a limit fallback. The thread's own saved model goes
+ * back on the server, which ends the fallback at once (the pairing holds only
+ * while the thread is set elsewhere), and the composer's next send follows.
+ * Picking the model in the composer alone changed nothing the thread showed
+ * until the next message, so the button looked dead.
+ */
+export async function switchThreadBackToPick(input: {
+  readonly selection: ModelSelection;
+  readonly setThreadModel: (
+    selection: ModelSelection,
+  ) => Promise<AtomCommandResult<unknown, unknown>>;
+  readonly selectInComposer: (selection: ModelSelection) => void;
+}): Promise<{ readonly ok: true } | { readonly ok: false; readonly error: unknown }> {
+  input.selectInComposer(input.selection);
+  const result = await input.setThreadModel(input.selection);
+  // An interrupted request (the view went away) is no failure to report.
+  return result._tag === "Failure" && !isAtomCommandInterrupted(result)
+    ? { ok: false, error: squashAtomCommandFailure(result) }
+    : { ok: true };
 }
