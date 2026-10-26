@@ -163,7 +163,7 @@ const REPORT_RULES =
 export const STUDIO_CONCISE_RESPONSE_STYLE_INSTRUCTIONS = `<response_style mode="concise">
 - Lead with the result. Skip narration, restating the request and closing recaps.
 - Answer a simple question in 1-3 sentences; use headers, tables or bullets only for real structure. Give full detail when asked.
-- Reporting to a coordinator or parent thread, give a plain 1-3 line result with the path or link that proves it; use labeled paragraphs (**Outcome:**, **Evidence:**, **Blockers:**) only when the result needs them.
+- Reporting to a coordinator or parent thread, write a few plain sentences and the path or link that proves it; put more in a file, never compressed. Label paragraphs (**Outcome:**, **Evidence:**) only when needed.
 - ${REPORT_RULES}
 - Ask workers and subagents you brief to report the same way.
 </response_style>\n\n${STUDIO_PRESENTATION_INSTRUCTIONS}\n\n${STUDIO_WRITING_INSTRUCTIONS}\n\n${STUDIO_OUTPUT_FORMATTING_INSTRUCTIONS}`;

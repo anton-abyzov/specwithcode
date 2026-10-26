@@ -359,6 +359,21 @@ it.effect("never sends a personal assistant's words to another machine", () => {
   });
 });
 
+it.effect("refuses to send run-together words to another machine", () => {
+  const { call, proxied } = setup();
+  return Effect.gen(function* () {
+    const refused = yield* call("studio_thread_send", {
+      machine: "m1",
+      threadId: "b-thread",
+      message:
+        "Owneranswersresolvedidentity; no renewedquestion. Neednormalreviewedmerge/deploythenactualall7livePASS; notclaimingcomplete yet.",
+    });
+    expect(refused).toMatchObject({ code: "invalid_request" });
+    expect(String(refused.message)).toContain("a space between every word");
+    expect(proxied).toEqual([]);
+  });
+});
+
 it.effect("never sends to a remote thread running with broader modes than the caller", () => {
   const { call, proxied } = setup({ callerMode: "approval-required" });
   return Effect.gen(function* () {

@@ -151,7 +151,10 @@ describe("Claude workflow policy", () => {
   it("gives leads and workflow workers the chosen response style", () => {
     const concise = compileClaudeWorkflowPolicy({ environment: {} });
     assert.include(concise.instructions, '<response_style mode="concise">');
-    assert.include(concise.extraArgs["append-subagent-system-prompt"], "a plain 1-3 line result");
+    assert.include(
+      concise.extraArgs["append-subagent-system-prompt"],
+      "a few plain sentences and the path or link that proves it",
+    );
     const detailed = compileClaudeWorkflowPolicy({ responseStyle: "detailed", environment: {} });
     assert.include(detailed.instructions, '<response_style mode="detailed">');
     assert.notInclude(detailed.instructions, '<response_style mode="concise">');

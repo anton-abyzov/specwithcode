@@ -107,6 +107,17 @@ describe("shelfEntries", () => {
     expect(entries[0]!.artifact.messageId).toBe("new");
   });
 
+  it("names a pull request linked by a subpage like any other link to it", () => {
+    const entries = shelfEntries(
+      input([
+        link("https://github.com/acme/app/pull/1149/files", "1149/files", "new"),
+        link("https://github.com/acme/app/pull/1149", "pull/1149", "old"),
+        link("https://github.com/acme/app/pull/7/checks", "the checks run"),
+      ]),
+    );
+    expect(entries.map((entry) => entry.label)).toEqual(["app #1149", "the checks run"]);
+  });
+
   it("names a pull request by its tracked title and folds it once merged or closed", () => {
     const merged = "https://github.com/acme/app/pull/1";
     const open = "https://github.com/acme/app/pull/2";

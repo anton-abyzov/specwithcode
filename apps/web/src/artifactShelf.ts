@@ -207,10 +207,19 @@ export function folderHint(filePath: string, root?: string | null): FolderHint |
   return { head: shown.slice(0, split + 1), tail, full };
 }
 
-/** A link named only by its path tail (`pull/230`) or its own URL says little. */
+/**
+ * A link named only by its own URL or a tail of its path (`pull/230`,
+ * `1149/files`) says little; a title the message gave it says more.
+ */
 function hasGenericName(artifact: Extract<ThreadArtifact, { kind: "link" }>): boolean {
   const name = artifact.name.trim();
-  return /^(?:pull|pulls|merge_requests)\/\d+$/.test(name) || /^https?:\/\//i.test(name);
+  if (/^https?:\/\//i.test(name) || /^(?:pull|pulls|merge_requests)\/\d+$/.test(name)) return true;
+  try {
+    const path = new URL(artifact.url).pathname.replace(/\/+$/, "");
+    return name.length > 0 && path.endsWith(`/${name}`);
+  } catch {
+    return false;
+  }
 }
 
 function entryLabel(artifact: ThreadArtifact, pullRequest: ShelfPullRequest | null): string {
