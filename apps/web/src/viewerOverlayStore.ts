@@ -37,7 +37,10 @@ export type ViewerOverlayDetails = Omit<ViewerOverlayEntry, "key" | "threadRef">
 
 /** A file a link inside the overlay points at, as the link resolved it. */
 export interface ViewerFileTarget {
-  readonly threadRef: ScopedThreadRef;
+  /** The server that reads it. */
+  readonly environmentId: EnvironmentId;
+  /** The thread it was opened from; null for a document no thread owns, such as a Library file. */
+  readonly threadRef: ScopedThreadRef | null;
   /** The workspace the path is relative to; an absolute host path ignores it. */
   readonly cwd: string;
   readonly path: string;

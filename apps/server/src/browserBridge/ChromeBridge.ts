@@ -91,13 +91,15 @@ const status = Effect.gen(function* () {
     specWithCodeBrowserPaired(stateDir);
   const paths = defaultChromeBridgePaths(configDir);
   const claude = claudeChromeFacts(paths.claudeFile);
-  const running = yield* Effect.promise(() => chromeRunning());
+  const liveConnections = liveExtensionConnections(paths.tmpDirs);
+  // A live native host means Chrome started it; `ps` can time out on a busy machine.
+  const running = liveConnections > 0 || (yield* Effect.promise(() => chromeRunning()));
   return {
     platform: yield* HostProcessPlatform,
     chrome: { installed: chromeInstalled(paths.home), running },
     extension: {
       nativeHostInstalled: nativeHostInstalled(paths.home),
-      liveConnections: liveExtensionConnections(paths.tmpDirs),
+      liveConnections,
       pairedBrowserName: claude.pairedBrowserName,
     },
     claudeAccount: claude.account,

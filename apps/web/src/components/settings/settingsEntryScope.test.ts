@@ -18,6 +18,8 @@ import {
   rememberSettingsOriginProject,
   resolveSettingsOriginProjectKey,
   settingsEntrySearch,
+  settingsOriginFromPathname,
+  trackSettingsOriginNavigation,
 } from "./settingsEntryScope";
 import { resolveSettingsScope } from "./settingsScope";
 import { selectSingleEnvironmentScope } from "./settingsScopeAxis";
@@ -145,6 +147,38 @@ describe("settings entry scope", () => {
     await go(router, { to: "/settings" });
     expect(router.state.location.pathname).toBe("/settings/general");
     expect(router.state.location.search).toEqual({ project: projectKey });
+  });
+
+  it("selects the project when Settings opens before the page's origin effect ran", async () => {
+    // A fresh project page can be left for Settings before the layout records its origin.
+    const router = createAppRouter(`/projects/${encodeURIComponent(projectKey)}`);
+    trackSettingsOriginNavigation(router);
+    await router.load();
+    rememberSettingsOriginProject(null);
+    await go(router, { to: "/settings/agents" });
+    expect(router.state.location.search).toEqual({ project: projectKey });
+  });
+
+  it("selects the newer project on each later Settings entry", async () => {
+    const router = createAppRouter(`/projects/${encodeURIComponent(projectKey)}`);
+    trackSettingsOriginNavigation(router);
+    await router.load();
+    rememberSettingsOriginProject(null);
+    await go(router, { to: "/settings/agents" });
+    expect(router.state.location.search).toEqual({ project: projectKey });
+    await go(router, { to: `/projects/${encodeURIComponent(other.projectKey)}` });
+    rememberSettingsOriginProject(null);
+    await go(router, { to: "/settings/general" });
+    expect(router.state.location.search).toEqual({ project: other.projectKey });
+  });
+
+  it("reads a project key only from a project page path", () => {
+    expect(settingsOriginFromPathname(`/projects/${encodeURIComponent(projectKey)}`)).toBe(
+      projectKey,
+    );
+    expect(settingsOriginFromPathname("/projects/a/b")).toBeNull();
+    expect(settingsOriginFromPathname("/settings/general")).toBeNull();
+    expect(settingsOriginFromPathname("/projects/%E0%A4%A")).toBeNull();
   });
 
   it.each(SECTIONS)("scopes %s to the current project", async (section) => {

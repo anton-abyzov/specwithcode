@@ -144,14 +144,21 @@ const NOT_CONNECTED = /extension is not connected|not connected to chrome|no bro
 const CHOOSE_BROWSER =
   /several browsers|multiple browsers|more than one browser|select_browser|which browser/i;
 
-/** Browsers from `list_connected_browsers`, whose text is a JSON array; unknown shapes yield none. */
-export function parseConnectedBrowsers(text: string): BrowserBridgeBrowser[] {
-  let data: unknown;
-  try {
-    data = JSON.parse(text);
-  } catch {
-    return [];
+/** The whole text as JSON, or else its first line: Claude Code follows the array with guidance. */
+function parseLeadingJson(text: string): unknown {
+  for (const candidate of [text, text.trimStart().split("\n", 1)[0] ?? ""]) {
+    try {
+      return JSON.parse(candidate);
+    } catch {
+      // Try the next candidate.
+    }
   }
+  return undefined;
+}
+
+/** Browsers from `list_connected_browsers`, a JSON array; unknown shapes yield none. */
+export function parseConnectedBrowsers(text: string): BrowserBridgeBrowser[] {
+  const data = parseLeadingJson(text);
   const list = Array.isArray(data)
     ? data
     : Array.isArray((data as { browsers?: unknown } | null)?.browsers)
@@ -171,10 +178,16 @@ export function parseConnectedBrowsers(text: string): BrowserBridgeBrowser[] {
       {
         name,
         ...(typeof value.deviceId === "string" ? { deviceId: value.deviceId } : {}),
-        ...(typeof value.platform === "string" ? { platform: value.platform } : {}),
+        ...(typeof value.platform === "string"
+          ? { platform: value.platform }
+          : typeof value.osPlatform === "string"
+            ? { platform: value.osPlatform }
+            : {}),
         ...(typeof value.onThisComputer === "boolean"
           ? { onThisComputer: value.onThisComputer }
-          : {}),
+          : typeof value.isLocal === "boolean"
+            ? { onThisComputer: value.isLocal }
+            : {}),
         ...(typeof value.inUse === "boolean" ? { inUse: value.inUse } : {}),
       },
     ];

@@ -36,6 +36,7 @@ import type { ProviderAdapterV2TurnInput } from "./ProviderAdapter.ts";
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ProjectContextDelivery from "../project/ProjectContextDelivery.ts";
+import { ProviderWorkspaceMissingError } from "../provider/Errors.ts";
 import * as ProviderAuthService from "../provider/ProviderAuthService.ts";
 import { AcpRegistryError } from "../provider/acp/AcpRegistrySupport.ts";
 import * as ContextHandoffService from "./ContextHandoffService.ts";
@@ -1064,6 +1065,35 @@ effectIt.effect("keeps internal session ids out of a generic session-open failur
     // The innermost cause says why; the wrappers' session ids stay out.
     expect(failure?.message).toBe("registry index request timed out");
     expect(failure?.message).not.toContain("provider-session:");
+  }),
+);
+
+effectIt.effect("settles on the first attempt when the thread's folder is missing", () =>
+  Effect.gen(function* () {
+    const cwd = "/tmp/scratch/2026-10-19-lane-b-implement-increment-0949-3e0776cd";
+    const harness = makeLocalCommandHarness({
+      text: "Continue",
+      openFailure: new ProviderWorkspaceMissingError({ threadId: "thread-missing", cwd }),
+    });
+
+    // A retry cannot recreate the folder, so even an attempt that would be
+    // retried settles now instead of failing back to the worker.
+    yield* harness.startWithRetry;
+
+    expect(harness.open).toHaveBeenCalledOnce();
+    expect(harness.startRootRun).not.toHaveBeenCalled();
+    expect(harness.projection().runs.at(-1)?.status).toBe("failed");
+    const [item] = harness.projection().turnItems;
+    expect(item).toMatchObject({
+      type: "error",
+      title: "Thread folder is missing",
+      failure: {
+        class: "validation_error",
+        code: "workspace_missing",
+        retryable: false,
+        message: new ProviderWorkspaceMissingError({ threadId: "thread-missing", cwd }).message,
+      },
+    });
   }),
 );
 

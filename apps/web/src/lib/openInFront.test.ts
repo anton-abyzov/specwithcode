@@ -5,17 +5,22 @@ vi.mock("../rightPanelStore", () => ({
   useRightPanelStore: { getState: () => panel },
 }));
 
-import type { ScopedThreadRef } from "@specweave-studio/contracts";
+import type { EnvironmentId, ScopedThreadRef } from "@specweave-studio/contracts";
 import { useViewerOverlayStore } from "../viewerOverlayStore";
 import {
+  hostFocusedFiles,
   openFileInFront,
   openPullRequestInFront,
   openPullRequestInPanel,
   stepOutOfViewerOverlay,
+  useFocusedFileStore,
 } from "./openInFront";
 
 const threadRef = { environmentId: "host-1", threadId: "thread-1" } as unknown as ScopedThreadRef;
-const file = { threadRef, cwd: "/repo", path: "/repo/notes.md", line: 4 };
+const environmentId = "host-1" as EnvironmentId;
+const file = { environmentId, threadRef, cwd: "/repo", path: "/repo/notes.md", line: 4 };
+// A link in a Library document, which no thread owns.
+const libraryFile = { ...file, threadRef: null };
 const pullRequest = {
   environmentId: "host-1" as never,
   threadRef,
@@ -62,6 +67,26 @@ describe("openFileInFront", () => {
     expect(useViewerOverlayStore.getState().linked).toEqual({ kind: "file", file });
     // The viewer is still the overlay's: Back returns to it.
     expect(useViewerOverlayStore.getState().active?.key).toBe("report");
+  });
+
+  it("opens a file no thread owns in the overlay", () => {
+    openOverlay();
+    openFileInFront(libraryFile);
+    expect(useViewerOverlayStore.getState().linked).toEqual({ kind: "file", file: libraryFile });
+    expect(panel.openFile).not.toHaveBeenCalled();
+  });
+
+  it("opens a file no thread owns nowhere when the overlay is closed", () => {
+    // The focused viewer is there to take a file, but it shows one beside a thread.
+    const release = hostFocusedFiles();
+    try {
+      expect(() => openFileInFront(libraryFile)).not.toThrow();
+      expect(panel.openFile).not.toHaveBeenCalled();
+      expect(useViewerOverlayStore.getState().linked).toBeNull();
+      expect(useFocusedFileStore.getState().file).toBeNull();
+    } finally {
+      release();
+    }
   });
 });
 

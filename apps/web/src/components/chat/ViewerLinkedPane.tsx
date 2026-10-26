@@ -105,7 +105,7 @@ function LinkedFile(props: {
     target.tried.length > 0 &&
     !(target.tried.length === 1 && target.tried[0]!.startsWith("/"));
   const file = useProjectFileQuery(
-    target.threadRef.environmentId,
+    target.environmentId,
     target.cwd,
     unresolved ? null : target.path,
   );
@@ -124,10 +124,11 @@ function LinkedFile(props: {
         text={markdown}
         cwd={target.cwd || undefined}
         imageBaseDir={baseDir}
-        threadRef={target.threadRef}
+        threadRef={target.threadRef ?? undefined}
+        environmentId={target.environmentId}
       />
     ),
-    [baseDir, target.cwd, target.threadRef],
+    [baseDir, target.cwd, target.environmentId, target.threadRef],
   );
   const actions = (
     <>
@@ -148,22 +149,26 @@ function LinkedFile(props: {
   const missing = file.error !== null && contents === null && mayBeMissing(file.readError);
   // One full path the host lacks: say so plainly, with what is beside it.
   const missingPath = missing ? absolutePath : null;
+  // Only a thread has a panel to move the file into.
+  const { threadRef } = target;
   const headerActions =
     unresolved || missing ? null : (
       <>
         {actions}
-        <Button
-          type="button"
-          size="xs"
-          variant="ghost"
-          onClick={() => {
-            stepOutOfViewerOverlay();
-            useRightPanelStore.getState().openFile(target.threadRef, target.path, target.line);
-          }}
-        >
-          <PanelRightOpenIcon aria-hidden />
-          Open in panel
-        </Button>
+        {threadRef ? (
+          <Button
+            type="button"
+            size="xs"
+            variant="ghost"
+            onClick={() => {
+              stepOutOfViewerOverlay();
+              useRightPanelStore.getState().openFile(threadRef, target.path, target.line);
+            }}
+          >
+            <PanelRightOpenIcon aria-hidden />
+            Open in panel
+          </Button>
+        ) : null}
       </>
     );
   return (
@@ -172,12 +177,13 @@ function LinkedFile(props: {
       <div className="flex min-h-0 flex-1 flex-col overflow-auto" data-report-file-pane="true">
         {missingPath !== null ? (
           <MissingFileNotice
-            environmentId={target.threadRef.environmentId}
+            environmentId={target.environmentId}
             path={missingPath}
             error={file.error}
             actions={actions}
             onOpen={(path) =>
               openFileInFront({
+                environmentId: target.environmentId,
                 threadRef: target.threadRef,
                 cwd: target.cwd,
                 path,
@@ -211,7 +217,9 @@ function LinkedFile(props: {
           </div>
         ) : file.isNotFile ? (
           <p className="p-4 text-muted-foreground text-sm">
-            This is a folder. Open it in the panel to browse it.
+            {threadRef
+              ? "This is a folder. Open it in the panel to browse it."
+              : "This is a folder, so there is nothing to read here."}
           </p>
         ) : file.error !== null && contents === null ? (
           <div className="flex flex-col items-start gap-2 p-4 text-sm" role="alert">

@@ -102,6 +102,21 @@ describe("browser MCP check", () => {
     const hung = await callBrowserMcp(await fakeServer({}, { hang: true }), CHECK_CALLS, 300);
     expect(classifyBrowserCheck(hung, "t", 1).state).toBe("timeout");
   });
+  it("reads Claude Code's answer when two browsers wait for a choice", () => {
+    // Shape captured from Claude Code on October 25, 2026, with neutral ids.
+    const browsers = `${JSON.stringify([
+      { deviceId: "device-1", name: "Browser 1", osPlatform: "macOS", isLocal: true },
+      { deviceId: "device-2", name: "Browser 2", osPlatform: "macOS", isLocal: false },
+    ])}\n2 browsers are connected and none is selected for this session. Before any browser action, you MUST call the AskUserQuestion tool.`;
+    const tabs =
+      "Multiple Chrome browsers are connected to this account and none has been selected for this session. If the user picks a specific browser, call select_browser with that browser's deviceId.";
+    const check = classifyBrowserCheck({ ok: true, texts: [browsers, tabs] }, "t", 1);
+    expect(check.state).toBe("choose_browser");
+    expect(check.browsers).toEqual([
+      { name: "Browser 1", deviceId: "device-1", platform: "macOS", onThisComputer: true },
+      { name: "Browser 2", deviceId: "device-2", platform: "macOS", onThisComputer: false },
+    ]);
+  });
   it("ignores browser lists it does not understand", () => {
     expect(parseConnectedBrowsers("not json")).toEqual([]);
     expect(parseConnectedBrowsers(JSON.stringify({ browsers: [{ displayName: "A" }, 3] }))).toEqual(

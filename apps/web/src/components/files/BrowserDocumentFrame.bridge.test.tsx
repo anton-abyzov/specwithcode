@@ -78,6 +78,7 @@ describe("HtmlRenderDocument evidence links", () => {
     await mount();
     post(open("/Users/someone/work/app/shots/login.png", { line: 12 }));
     expect(openFileInFront).toHaveBeenCalledWith({
+      environmentId: "env-A",
       threadRef,
       cwd: trusted.cwd,
       path: "/Users/someone/work/app/shots/login.png",
@@ -98,6 +99,7 @@ describe("HtmlRenderDocument evidence links", () => {
     );
     expect(openFileInFront).toHaveBeenCalledTimes(1);
     expect(openFileInFront.mock.calls[0]![0]).toEqual({
+      environmentId: "env-A",
       threadRef,
       cwd: trusted.cwd,
       path: "/Users/someone/x.png",

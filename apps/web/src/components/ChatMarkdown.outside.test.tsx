@@ -126,6 +126,7 @@ vi.mock("~/lib/openPullRequestLink", () => ({
   useOpenChangeRequestLink: () => vi.fn(),
 }));
 
+import { InViewerOverlay, useViewerOverlayStore } from "~/viewerOverlayStore";
 import ChatMarkdown from "./ChatMarkdown";
 
 // The thread's workspace is the main checkout; the worker built in a sibling
@@ -433,4 +434,88 @@ it("never drops shorthand for folders the host cannot list", async () => {
     `${AUDIT}/logs`,
     `${AUDIT}/cache`,
   ]);
+});
+
+// A Library document in the viewer overlay belongs to no thread. Its file links
+// open in the overlay's file pane, read by the Library's server.
+async function renderLibrary(
+  inOverlay: boolean,
+  text = "The page is `docs-site/src/pages/code.tsx:42`.",
+) {
+  await act(async () => {
+    renderer = create(
+      <InViewerOverlay value={inOverlay}>
+        <ChatMarkdown cwd={WORKTREE} environmentId={threadRef.environmentId} text={text} />
+      </InViewerOverlay>,
+    );
+  });
+}
+
+it("opens a file link in a Library document in the overlay, with no thread", async () => {
+  useViewerOverlayStore.getState().open({
+    key: "library",
+    title: "report.md",
+    kind: "File",
+    badge: "MD",
+    detail: null,
+    threadRef: null,
+    origin: "Library",
+    trail: [],
+    onBack: null,
+  });
+  try {
+    await renderLibrary(true);
+    await click("code.tsx · L42");
+    expect(useViewerOverlayStore.getState().linked).toEqual({
+      kind: "file",
+      file: {
+        environmentId: threadRef.environmentId,
+        threadRef: null,
+        cwd: WORKTREE,
+        path: "docs-site/src/pages/code.tsx",
+        line: 42,
+      },
+    });
+    expect(state.openFile).not.toHaveBeenCalled();
+  } finally {
+    useViewerOverlayStore.getState().close("library");
+  }
+});
+
+it("offers only the file menu for a thread-less link outside the overlay", async () => {
+  await renderLibrary(false);
+  expect(renderer!.root.findAllByType("a")).toHaveLength(0);
+  expect(
+    renderer!.root.findAll(
+      (node) =>
+        node.type === "button" && node.props["aria-label"] === "File options for code.tsx · L42",
+    ),
+  ).toHaveLength(1);
+});
+
+it("leaves a media link in a Library document to the file menu, not the text pane", async () => {
+  useViewerOverlayStore.getState().open({
+    key: "library",
+    title: "report.md",
+    kind: "File",
+    badge: "MD",
+    detail: null,
+    threadRef: null,
+    origin: "Library",
+    trail: [],
+    onBack: null,
+  });
+  try {
+    await renderLibrary(true, "The hero is `docs-site/static/img/studio/hero.png`.");
+    expect(renderer!.root.findAllByType("a")).toHaveLength(0);
+    expect(
+      renderer!.root.findAll(
+        (node) =>
+          node.type === "button" && node.props["aria-label"] === "File options for hero.png",
+      ),
+    ).toHaveLength(1);
+    expect(useViewerOverlayStore.getState().linked).toBeNull();
+  } finally {
+    useViewerOverlayStore.getState().close("library");
+  }
 });

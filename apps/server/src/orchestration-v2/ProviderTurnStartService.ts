@@ -44,6 +44,7 @@ import * as Schema from "effect/Schema";
 
 import * as GitWorkflowService from "../git/GitWorkflowService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
+import { ProviderWorkspaceMissingError } from "../provider/Errors.ts";
 import * as ProviderAuthService from "../provider/ProviderAuthService.ts";
 import * as EventSink from "./EventSink.ts";
 import * as ContextHandoffService from "./ContextHandoffService.ts";
@@ -80,6 +81,7 @@ import {
   makeProviderFailure,
   simulatedUsageLimitFailure,
   WORKSPACE_BRANCH_MISSING_FAILURE_CODE,
+  WORKSPACE_MISSING_FAILURE_CODE,
 } from "./ProviderFailure.ts";
 import { makeSettleRunBeforeStart as makeSettleRunBeforeStartWith } from "./settleRunBeforeStart.ts";
 import { readSpecweaveCheckpointPreface } from "./SpecweaveCheckpoint.ts";
@@ -112,6 +114,17 @@ function startFailureMessage(error: Error): string | undefined {
 }
 
 const isGitCommandError = Schema.is(GitCommandError);
+const isWorkspaceMissingError = Schema.is(ProviderWorkspaceMissingError);
+/** The session manager's missing-folder refusal, directly or as a wrapped cause. */
+function workspaceMissingCause(error: unknown): ProviderWorkspaceMissingError | undefined {
+  let current: unknown = error;
+  for (let depth = 0; depth < 5 && current != null; depth += 1) {
+    if (isWorkspaceMissingError(current)) return current;
+    current =
+      typeof current === "object" ? (current as { readonly cause?: unknown }).cause : undefined;
+  }
+  return undefined;
+}
 const isInvalidReference = (error: unknown): boolean =>
   isGitCommandError(error) && error.reason === "invalid_reference";
 
@@ -554,6 +567,9 @@ export const layer: Layer.Layer<
         }
       }
       const { worktreePath, branch } = projection.thread;
+      // A failed recreate may be transient (a git lock, a concurrent
+      // worktree add), so a folder still missing after one keeps its retries.
+      let recreateAttempted = false;
       if (worktreePath !== null && branch !== null) {
         const exists = yield* fileSystem
           .exists(worktreePath)
@@ -564,6 +580,7 @@ export const layer: Layer.Layer<
             Effect.orElseSucceed(() => undefined),
           );
           if (project !== undefined) {
+            recreateAttempted = true;
             yield* Effect.logWarning("provider turn start recreating missing worktree", {
               threadId: projection.thread.id,
               worktreePath,
@@ -755,6 +772,46 @@ export const layer: Layer.Layer<
             },
           });
         });
+      const workspaceMissing =
+        sessionResult._tag === "Failure" ? workspaceMissingCause(sessionResult.failure) : undefined;
+      if (
+        sessionResult._tag === "Failure" &&
+        workspaceMissing !== undefined &&
+        recreateAttempted &&
+        input.willRetry === true
+      )
+        return yield* sessionResult.failure;
+      if (workspaceMissing !== undefined) {
+        // The folder the provider runs in is gone and nothing here recreates
+        // it (a scratch thread has no branch to rebuild from), or every
+        // recreate attempt failed. Every other provider fails the same way
+        // before it opens, so settle with a code that skips the provider retry
+        // and holds the queue, instead of resending "Continue".
+        const now = yield* DateTime.now;
+        yield* settleRunBeforeStart({
+          signal: "workspace-missing",
+          status: "failed",
+          now,
+          providerInstanceId: run.providerInstanceId,
+          itemProviderThreadId: providerThread.id,
+          item: {
+            type: "error",
+            title: "Thread folder is missing",
+            failure: makeProviderFailure({
+              class: "validation_error",
+              code: WORKSPACE_MISSING_FAILURE_CODE,
+              retryable: false,
+              message: workspaceMissing.message,
+            }),
+          },
+          providerThreadUpdate: {
+            ...providerThread,
+            status: providerThread.nativeThreadRef === null ? "not_loaded" : "idle",
+            updatedAt: now,
+          },
+        });
+        return;
+      }
       if (sessionResult._tag === "Failure") {
         // Admission already refreshed once. A real quota denial, or a provider
         // that cannot run here until its setup is fixed, cannot be repaired by

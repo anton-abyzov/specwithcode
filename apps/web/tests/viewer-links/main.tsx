@@ -77,6 +77,7 @@ function FileLink() {
       onClick={(event) => {
         event.preventDefault();
         openFileInFront({
+          environmentId: threadRef.environmentId,
           threadRef,
           cwd: "/repo",
           path: "/repo/apps/web/src/permissionWatcher.ts",

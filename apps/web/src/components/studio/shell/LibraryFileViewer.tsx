@@ -153,7 +153,11 @@ function LibraryFileBody(props: {
             <MarkdownDocumentView
               text={file.data.contents}
               renderMarkdown={(markdown) => (
-                <ChatMarkdown text={markdown} cwd={props.workspaceRoot} />
+                <ChatMarkdown
+                  text={markdown}
+                  cwd={props.workspaceRoot}
+                  environmentId={props.environmentId}
+                />
               )}
             />
           </article>

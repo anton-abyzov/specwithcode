@@ -451,7 +451,8 @@ export function workEntryFailureKind(entry: WorkLogPresentationEntry): WorkEntry
   return detail.length > 0 && toolOutputIndicatesFailure(detail) ? "possible" : null;
 }
 
-const CHROME_DISCONNECTED = /browser extension is not connected/i;
+/** Claude in Chrome's message, and the SpecWithCode Browser extension's (`noProfileHint`). */
+const CHROME_DISCONNECTED = /browser extension is not connected|no chrome profile is connected/i;
 
 /** True when a browser tool failed because Chrome's extension is unreachable on the run's machine. */
 export function workEntryReportsChromeDisconnected(

@@ -15025,6 +15025,7 @@ export default function ChatView(props: ChatViewProps) {
                         onOpenDocument={(path) =>
                           // An absolute host path: the viewer ignores cwd for it.
                           openFileInFront({
+                            environmentId: activeThread.environmentId,
                             threadRef: scopeThreadRef(activeThread.environmentId, activeThread.id),
                             cwd: "",
                             path,

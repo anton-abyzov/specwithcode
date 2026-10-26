@@ -20,6 +20,43 @@ export function readSettingsOriginProject(): string | null {
   return originProjectKey;
 }
 
+/** The project key a project page's path names, if it is one. */
+export function settingsOriginFromPathname(pathname: string): string | null {
+  const match = /^\/projects\/([^/]+)\/?$/.exec(pathname);
+  if (!match) return null;
+  try {
+    return decodeURIComponent(match[1]!);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Settings opened from a project page selects that project even when the
+ * page's first load has not reached the layout's origin effect yet: the
+ * navigation itself names where it came from.
+ */
+export function trackSettingsOriginNavigation(router: {
+  subscribe: (
+    event: "onBeforeLoad",
+    listener: (event: { toLocation: { pathname: string } }) => void,
+  ) => () => void;
+}): () => void {
+  // The router's own `fromLocation` is unset until a page resolves, so the
+  // previous navigation's destination stands for the page being left.
+  let current: string | null = null;
+  // onBeforeLoad, not onBeforeNavigate: the router stops emitting the latter
+  // after any redirect, and every Settings entry redirects.
+  return router.subscribe("onBeforeLoad", ({ toLocation }) => {
+    const previous = current;
+    current = toLocation.pathname;
+    const entering =
+      toLocation.pathname === "/settings" || toLocation.pathname.startsWith("/settings/");
+    const project = previous === null ? null : settingsOriginFromPathname(previous);
+    if (entering && project !== null) rememberSettingsOriginProject(project);
+  });
+}
+
 /** The project page names its project; a thread or draft names one of its checkouts. */
 export function resolveSettingsOriginProjectKey(input: {
   routeProjectKey: string | null;

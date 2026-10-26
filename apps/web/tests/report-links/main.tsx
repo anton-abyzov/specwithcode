@@ -57,6 +57,7 @@ function Root() {
               className="mt-6 text-sm underline"
               onClick={() =>
                 openFileInFront({
+                  environmentId: threadRef.environmentId,
                   threadRef,
                   cwd: CWD,
                   path: `${AUDIT}/findings-{B,C,D,E}.md`,

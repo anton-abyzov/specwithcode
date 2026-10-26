@@ -1019,6 +1019,17 @@ describe("workEntryReportsChromeDisconnected", () => {
     ).toBe(true);
   });
 
+  it("reads the SpecWithCode Browser extension's message", () => {
+    expect(
+      workEntryReportsChromeDisconnected({
+        toolData: {
+          output:
+            'No Chrome profile is connected. "m4-specwithcode" disconnected 3 min ago (2026-10-25T09:00:00.000Z): socket closed. Its extension reconnects on its own; try again in a minute.',
+        },
+      }),
+    ).toBe(true);
+  });
+
   it("ignores other failures", () => {
     expect(workEntryReportsChromeDisconnected({ detail: "Navigation timed out" })).toBe(false);
     expect(workEntryReportsChromeDisconnected({})).toBe(false);
