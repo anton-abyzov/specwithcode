@@ -23,7 +23,7 @@ vi.mock("../../ui/popover", () => ({
   PopoverPopup: ({ children }: { children: ReactNode }) => <div>{children}</div>,
 }));
 
-import { RoutingDecisionChip, routingChipText } from "./RoutingDecisionChip";
+import { feedbackPreference, RoutingDecisionChip, routingChipText } from "./RoutingDecisionChip";
 
 const claude = ProviderInstanceId.make("claudeAgent");
 const decision: TaskRoutingDecision = {
@@ -140,5 +140,14 @@ describe("RoutingDecisionChip", () => {
     } finally {
       mocks.writeMode = "per-key";
     }
+  });
+
+  it("records Prefer this model as the person's own rule", () => {
+    const now = new Date("2026-10-25T00:00:00.000Z");
+    expect(feedbackPreference(decision, "prefer", now)).toMatchObject({
+      action: { kind: "prefer", model: decision.selection },
+      recordedBy: "person",
+      createdAt: "2026-10-25T00:00:00.000Z",
+    });
   });
 });

@@ -1555,9 +1555,54 @@ describe("MessagesTimeline", () => {
       <MessagesTimeline {...buildProps()} timelineEntries={[entry]} />,
     );
 
-    expect(agentMarkup).toContain('data-user-message-attribution="agent"');
-    expect(agentMarkup).toContain("Sent by another agent");
-    expect(userMarkup).not.toContain("Sent by another agent");
+    // Another agent's message is a quiet relayed note, not the person's bubble.
+    expect(agentMarkup).toContain('data-relayed-message="agent"');
+    expect(agentMarkup).toContain("Message from another agent");
+    expect(agentMarkup).not.toContain("data-message-bubble");
+    expect(userMarkup).not.toContain("data-relayed-message");
+    expect(userMarkup).toContain("data-message-bubble");
+  });
+
+  it("shows the coordinator's message as a relayed note that links back to it", async () => {
+    const { MessagesTimeline } = await import("./MessagesTimeline");
+    const { ProjectMessageRoutingContext } = await import("../../studio/projectMessageRouting");
+    const entry = buildUserTimelineEntry("Reminder: the release thread owns 1.0.89.");
+    const relayed = (senderThreadId: string) => ({
+      ...entry,
+      message: {
+        ...entry.message,
+        createdBy: "agent" as const,
+        creationSource: "mcp" as const,
+        senderThreadId: ThreadId.make(senderThreadId),
+      },
+    });
+    const render = (senderThreadId: string) =>
+      renderToStaticMarkup(
+        <ProjectMessageRoutingContext
+          value={{
+            coordinatorThreadId: ThreadId.make("thread-coordinator"),
+            send: async () => {},
+            openCoordinator: () => {},
+            openThread: () => false,
+          }}
+        >
+          <MessagesTimeline {...buildProps()} timelineEntries={[relayed(senderThreadId)]} />
+        </ProjectMessageRoutingContext>,
+      );
+
+    const fromCoordinator = render("thread-coordinator");
+    expect(fromCoordinator).toContain('data-relayed-message="coordinator"');
+    expect(fromCoordinator).toContain("Message from coordinator");
+    expect(fromCoordinator).toContain("View coordinator");
+    expect(fromCoordinator).toContain("Reminder: the release thread owns 1.0.89.");
+    expect(fromCoordinator).toContain("<time");
+    expect(fromCoordinator).not.toContain("data-message-bubble");
+    expect(fromCoordinator).not.toContain("Show full message");
+
+    const fromThread = render("thread-other");
+    expect(fromThread).toContain('data-relayed-message="thread"');
+    expect(fromThread).toContain("Message from another thread");
+    expect(fromThread).toContain("View thread");
   });
 
   it("shows the user's own words routed from another thread as theirs", async () => {
@@ -3711,11 +3756,12 @@ describe("messages another agent sent (1068)", () => {
 
   it("folds a long one to its verbatim opening in Concise, under its provenance", async () => {
     const markup = await render("concise", [agentEntry(REPORT)]);
-    expect(markup).toContain("Sent by another agent");
+    expect(markup).toContain("Message from another agent");
     expect(markup).toContain('"data-worker-message":"folded"');
     expect(markup).toContain("control-desk-0611.spec.ts:74.");
     expect(markup).not.toContain("ENOSPC");
-    expect(markup).toContain("Show full message");
+    // The disclosure is the only fold control: no button row under the text.
+    expect(markup).toContain("Message from another agent. Show full message, ");
     expect(markup).toContain("Copy original");
     // Not the person's clamp with its fade.
     expect(markup).not.toContain('"data-user-message-collapsed":"true"');
@@ -3731,11 +3777,12 @@ describe("messages another agent sent (1068)", () => {
     expect(verbose).toContain("Show less");
   });
 
-  it("shows a short one whole, with no fold controls", async () => {
+  it("shows a short one whole and open, with no fold controls", async () => {
     const markup = await render("concise", [agentEntry("Done. The PR is green.")]);
     expect(markup).toContain("Done. The PR is green.");
+    expect(markup).toContain('"data-relayed-message-state":"open"');
     expect(markup).not.toContain("Show full message");
-    expect(markup).not.toContain("Copy original");
+    expect(markup).not.toContain("data-worker-message");
   });
 
   it("clips a long one with no opening to cut, rather than showing it whole", async () => {

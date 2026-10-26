@@ -25,7 +25,13 @@ import * as ThreadSearch from "../../../orchestration-v2/ThreadSearch.ts";
 import * as ScheduledTasks from "../../../scheduledTasks/ScheduledTaskService.ts";
 import { queuedRunsInDeliveryOrder } from "../../../orchestration-v2/QueuedRunOrder.ts";
 import { isProjectActionRequestId } from "../../../project/projectActionRequestId.ts";
-import { refuseMachinePrivate, workGrantOf } from "../../workGrantAccess.ts";
+import {
+  assertAccountInGrant,
+  assertProjectReadable,
+  projectReachable,
+  refuseGrantRoutineChange,
+  workGrantOf,
+} from "../../workGrantAccess.ts";
 import { ThreadToolkit } from "./tools.ts";
 
 function queueEntry(
@@ -93,6 +99,8 @@ const writesThread = <P extends { readonly threadId?: ThreadId | undefined }, A,
 export const layer = McpToolAccess.toLayer(ThreadToolkit, {
   run_scheduled_task_now: McpToolAccess.writesEnvironment((input) =>
     Effect.gen(function* () {
+      // Another machine's work does not run this machine's routines.
+      yield* refuseGrantRoutineChange(yield* readCaller());
       const scheduler = yield* ScheduledTasks.ScheduledTaskService;
       const { tasks } = yield* scheduler.list().pipe(Effect.mapError(unavailable));
       const task = tasks.find((task) => task.id === input.taskId);
@@ -122,23 +130,22 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
       // Like the other project tools, an omitted project means the caller's own; a client
       // outside a thread searches every project.
       const projectId = requested ?? context.caller?.projectId;
-      if (projectId !== undefined) yield* refuseMachinePrivate(context, projectId);
+      const work =
+        projectId === undefined
+          ? yield* workGrantOf(context)
+          : yield* assertProjectReadable(context, projectId);
       const threadSearch = yield* ThreadSearch.ThreadSearch;
       const result = yield* threadSearch.search(query).pipe(Effect.mapError(unavailable));
       const matches =
         projectId === undefined
           ? result.matches
           : result.matches.filter((match) => match.projectId === projectId);
-      // Another machine's work never sees a personal assistant's threads.
-      if (projectId !== undefined || (yield* workGrantOf(context)) === undefined)
-        return { matches };
+      // Another machine's work sees only the projects its grant covers, never a
+      // personal assistant's.
+      if (work === undefined) return { matches };
       const reachable = new Set<string>();
       for (const id of new Set(matches.map((match) => match.projectId))) {
-        const refused = yield* refuseMachinePrivate(context, id).pipe(
-          Effect.as(false),
-          Effect.catch(() => Effect.succeed(true)),
-        );
-        if (!refused) reachable.add(id);
+        if (yield* projectReachable(work, id)) reachable.add(id);
       }
       return { matches: matches.filter((match) => reachable.has(match.projectId)) };
     }),
@@ -225,6 +232,11 @@ export const layer = McpToolAccess.toLayer(ThreadToolkit, {
         threads,
         projection: { thread },
       } = yield* readThread(input.threadId);
+      // Another machine's work moves a thread only onto a sign-in its grant allows.
+      yield* assertAccountInGrant(
+        yield* workGrantOf(yield* readCaller()),
+        input.modelSelection.instanceId,
+      );
       const type = modelSelectionCommandType(thread.providerInstanceId, input.modelSelection);
       const result = yield* threads
         .dispatch({

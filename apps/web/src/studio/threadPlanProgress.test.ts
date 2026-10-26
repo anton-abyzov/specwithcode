@@ -184,6 +184,7 @@ describe("compactThreadPlan", () => {
     });
     expect(describeThreadPlan(compact)).toBe("Increment 0996-connect-launches: no tasks yet.");
     expect(incrementNumber(compact.label!)).toBe("0996");
+    expect(incrementNumber("0657E-dark-theme-followup")).toBe("0657E");
   });
 });
 

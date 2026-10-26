@@ -23,6 +23,8 @@ enum FixtureDuplicates {
       ShellSummaries.Machine(environmentId: "env-m1", label: "M1", online: true, snapshot: shell([
         project("m1-a", "EasyChamp", "/Users/anton/Projects/sw-easychamp", easychamp),
         project("m1-b", "EasyChamp", "/Users/anton/Projects/sw-easychamp/", easychamp),
+        project("archived-check", "Archived check", "/tmp/archive-check", nil, archived: true),
+        project("active-check", "Active check", "/tmp/active-check", nil),
         project("m1-sw", "SpecWeave", "/Users/anton/Projects/specweave", specweave, logicalId: specweaveLogical),
       ], [
         thread("t-scores", "m1-a", "Fix match scores", now.addingTimeInterval(-3600)),
@@ -38,7 +40,7 @@ enum FixtureDuplicates {
     ])
   }
 
-  private static func project(_ id: String, _ title: String, _ root: String, _ repository: String?, logicalId: String? = nil) -> ProjectShell {
+  private static func project(_ id: String, _ title: String, _ root: String, _ repository: String?, logicalId: String? = nil, archived: Bool = false) -> ProjectShell {
     let logicalSnippet = logicalId.map { ",\"logicalProject\":{\"id\":\"\($0)\",\"title\":\"\(title)\",\"coordinatorId\":\"coordinator:\($0)\",\"members\":[]}" } ?? ""
     let json = """
     {"id":"\(id)","title":"\(title)","workspaceRoot":"\(root)","defaultModelSelection":null,
@@ -48,6 +50,7 @@ enum FixtureDuplicates {
      "scripts":[],"createdAt":"2026-10-01T00:00:00.000Z","updatedAt":"2026-10-01T00:00:00.000Z"}
     """
     var project = try! WireCoding.decoder.decode(ProjectShell.self, from: Data(json.utf8))
+    project.workspaceSettings?.archived = archived
     project.repositoryIdentity = repository.map { RepositoryIdentity(canonicalKey: $0) }
     return project
   }

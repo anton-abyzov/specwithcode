@@ -52,7 +52,7 @@ import {
 import { INCREMENTS_DIR, resolveReportIncrement } from "./ThreadReports.ts";
 
 const SPEC_BYTES = 262_144;
-const INCREMENT_FOLDER = /^\d{4,}-[a-z0-9]+(?:-[a-z0-9]+)*$/i;
+const INCREMENT_FOLDER = /^\d{4,}[A-Z]?-[a-z0-9]+(?:-[a-z0-9]+)*$/i;
 const LEDGER_BYTES = 1_048_576;
 const SMALL_BYTES = 524_288;
 const CLOSED_TASK_STATES = new Set(["done", "skipped"]);
@@ -405,7 +405,7 @@ async function claimedBinding(
   };
 }
 
-const INCREMENT_BRANCH = /^inc\/(\d{4,})-/u;
+const INCREMENT_BRANCH = /^inc\/(\d{4,}[A-Za-z]?)-/u;
 /** Newest increment ledgers searched for a `by` naming the branch. */
 const BRANCH_LEDGERS_SCANNED = 40;
 

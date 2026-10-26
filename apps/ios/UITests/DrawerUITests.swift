@@ -2,6 +2,25 @@ import XCTest
 
 @MainActor
 final class DrawerUITests: SWCUITestCase {
+  func testArchivedAndAutomatedAreSeparateProjectGroups() throws {
+    launch(fixture: "duplicates")
+    waitForHome()
+    tap(button("Menu"))
+    waitFor(button("Close menu"))
+    waitFor(button("Automated (1)"))
+    waitFor(button("Archived (1)"))
+    attachScreenshot("Project partitions folded")
+    button("Archived (1)").tap()
+    waitForHittable(button(startingWith: "Archived check"))
+    XCTAssertFalse(button(startingWith: "Active check").exists)
+    attachScreenshot("Archived project group")
+    button("Hide archived").tap()
+    button("Automated (1)").tap()
+    waitForHittable(button(startingWith: "Active check"))
+    XCTAssertFalse(button(startingWith: "Archived check").exists)
+    attachScreenshot("Automated project group")
+  }
+
   func testDrawerListsAideProjectsRecentsAndMachines() throws {
     launch()
     waitForHome()

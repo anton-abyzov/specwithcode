@@ -12,7 +12,10 @@ import {
   type ThreadId,
   type ThreadPullRequestLink,
 } from "@specweave-studio/contracts";
-import { changeRequestUrlFor, parseChangeRequestUrl } from "@specweave-studio/shared/changeRequestUrl";
+import {
+  changeRequestUrlFor,
+  parseChangeRequestUrl,
+} from "@specweave-studio/shared/changeRequestUrl";
 import {
   normalizeThreadPullRequestKey,
   resolveThreadPullRequestChains,
@@ -28,6 +31,8 @@ import * as Orchestrator from "../../../orchestration-v2/Orchestrator.ts";
 import * as ProjectService from "../../../project/ProjectService.ts";
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
 import * as McpToolAccess from "../../McpToolAccess.ts";
+import { loadCaller } from "../../threadAccess.ts";
+import { assertThreadReadable } from "../../workGrantAccess.ts";
 import {
   type ListThreadPullRequestsResult,
   PullRequestLinkFailedError,
@@ -186,6 +191,8 @@ const make = Effect.gen(function* () {
     if (Option.isNone(thread) || thread.value.deletedAt !== null) {
       return yield* new PullRequestThreadNotFoundError({ threadId });
     }
+    // Another machine's work reaches only threads in the projects its grant covers.
+    yield* assertThreadReadable(yield* loadCaller(), thread.value);
     return thread.value;
   });
 

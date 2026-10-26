@@ -14,6 +14,8 @@ import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
 
 import * as RemoteWorkers from "../../../fleet/RemoteWorkers.ts";
+import * as WorkGrants from "../../../fleet/WorkGrants.ts";
+import { unscopedGrant } from "../../../fleet/workGrantPolicy.ts";
 import * as HandoffMode from "../../../handoff/HandoffMode.ts";
 import * as ThreadManagement from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../../../project/ProjectService.ts";
@@ -30,6 +32,7 @@ const projectId = ProjectId.make("project");
 const coordinatorId = ThreadId.make("project-coordinator:project");
 const providerInstanceId = ProviderInstanceId.make("codex");
 const MINI = { id: "mini", label: "Mac mini", environmentId: EnvironmentId.make("env-mini") };
+const M1 = EnvironmentId.make("env-m1");
 const LATER = "Handing a machine off arrives in a later SpecWithCode update.";
 
 const shell = (id: string, overrides: Record<string, unknown> = {}) =>
@@ -76,6 +79,8 @@ const setup = (
     readonly callerId?: ThreadId;
     /** The project is this machine's personal assistant. */
     readonly personal?: boolean;
+    /** The calling coordinator runs M1's work, under a grant kept from before scopes or not. */
+    readonly grant?: "legacy" | "scoped";
   } = {},
 ) => {
   const calls: Array<{ readonly method: string; readonly input: unknown }> = [];
@@ -177,6 +182,22 @@ const setup = (
     }),
     Layer.mock(OrchestratorMcpService.OrchestratorMcpService)({}),
     Layer.mock(ThreadMetadataMcpService.ThreadMetadataMcpService)({}),
+    Layer.succeed(WorkGrants.WorkGrants, {
+      ...(WorkGrants.WorkGrants.defaultValue() as WorkGrants.WorkGrantsShape),
+      enabled: options.grant !== undefined,
+      // The caller and the workers it started run M1's work; "off" is this machine's own.
+      originOf: (thread) =>
+        Effect.succeed(
+          [self.id as string, "w1", "w2"].includes(thread.id)
+            ? { coordinatorEnvironmentId: M1, path: [M1], hops: 1 }
+            : undefined,
+        ),
+      forCoordinator: (id) =>
+        Effect.succeed(
+          // Even a scoped grant covering every project and sign-in may not migrate.
+          options.grant === "legacy" ? { ...unscopedGrant(id), legacy: true } : unscopedGrant(id),
+        ),
+    }),
   );
   const call = (params: Record<string, unknown>) =>
     OrchestratorToolkit.pipe(
@@ -353,3 +374,31 @@ it("summarizes each outcome and an empty run", () => {
   ).toBe("Mac mini: 2 moved, 1 skipped.");
   expect(migrateSummary("Mac mini", [])).toBe("Mac mini: no running handoff-mode threads to move.");
 });
+
+// Review round 4: a moved thread runs on the other machine as this one's own
+// work, past the grant's path, hop limit and revocation.
+it.effect(
+  "refuses a scoped grant's work outright and lets a legacy grant migrate as before",
+  () => {
+    const scoped = setup({ grant: "scoped" });
+    const legacy = setup({ grant: "legacy" });
+    return Effect.gen(function* () {
+      for (const params of [
+        { machine: "mini", threadIds: ["w1"] },
+        { machine: "mini", threadIds: ["w1", "w2"] },
+        { machine: "mini" },
+      ]) {
+        expect(yield* scoped.call(params), JSON.stringify(params)).toMatchObject({
+          code: "outside_grant_scope",
+          message: expect.stringContaining("move threads to other machines"),
+        });
+      }
+      expect(scoped.calls).toEqual([]);
+      // The owner's own machine still moves this machine's threads in a project that is not linked.
+      expect(yield* legacy.call({ machine: "mini", threadIds: ["off"] })).toMatchObject({
+        results: [{ threadId: "off", outcome: "moved" }],
+      });
+      expect(legacy.handoffCalls()).toHaveLength(1);
+    });
+  },
+);

@@ -36,6 +36,15 @@ export function observeProjectThread(
     });
   if (thread.hasActionableProposedPlan)
     requests.push({ reason: "plan", id: `plan:${thread.updatedAt}`, createdAt: null });
+  // Final reports can ask for a decision after the native request has closed.
+  // Use the same quiet-thread blocker that rows display, so those rows, project
+  // counts and descendant attention all agree. A resumed turn supersedes it.
+  if (thread.reportedBlocker?.trim() && !threadRuntimeIsActive(thread.runtime) && !person)
+    requests.push({
+      reason: "input",
+      id: `blocker:${thread.reportedBlocker}`,
+      createdAt: null,
+    });
   if ((thread.heldQueuedCount ?? 0) > 0)
     requests.push({ reason: "held", id: `held:${thread.updatedAt}`, createdAt: null });
   return {

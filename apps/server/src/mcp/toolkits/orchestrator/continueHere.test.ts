@@ -15,6 +15,7 @@ import * as Stream from "effect/Stream";
 import * as TestClock from "effect/testing/TestClock";
 
 import * as RemoteWorkers from "../../../fleet/RemoteWorkers.ts";
+import * as WorkGrants from "../../../fleet/WorkGrants.ts";
 import * as HandoffMode from "../../../handoff/HandoffMode.ts";
 import * as ThreadManagement from "../../../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../../../project/ProjectService.ts";
@@ -93,11 +94,20 @@ const snapshot = {
 } as unknown as HandoffModeSnapshot;
 
 const setup = (
-  options: { readonly callerId?: ThreadId; readonly error?: HandoffModeError } = {},
+  options: {
+    readonly callerId?: ThreadId;
+    readonly error?: HandoffModeError;
+    readonly runtimeMode?: "auto" | "full-access";
+    readonly grants?: WorkGrants.WorkGrantsShape;
+  } = {},
 ) => {
   const continued: Array<unknown> = [];
-  const self = shell(options.callerId ?? coordinatorId, { activeRunId: "active-run" });
+  const self = shell(options.callerId ?? coordinatorId, {
+    activeRunId: "active-run",
+    ...(options.runtimeMode === undefined ? {} : { runtimeMode: options.runtimeMode }),
+  });
   const dependencies = Layer.mergeAll(
+    Layer.succeed(WorkGrants.WorkGrants, options.grants ?? WorkGrants.WorkGrants.defaultValue()),
     Layer.succeed(RemoteWorkers.RemoteWorkers, {
       ...RemoteWorkers.RemoteWorkers.defaultValue(),
       enabled: true,
@@ -248,5 +258,41 @@ it.effect("returns the handoff service's refusal verbatim, such as a live lease"
       code: "orchestration_error",
       message: expect.stringContaining("Handoff failed (busy): M4 renewed"),
     });
+  });
+});
+
+it.effect("refuses continuing a handoff to a thread another machine's grant started", () => {
+  // M1's work started this full-access worker here under M1's grant. The
+  // continued thread would be this machine's own, outside that grant.
+  const M1 = EnvironmentId.make("env-m1");
+  const worker = ThreadId.make("m1-worker");
+  const grant = {
+    coordinatorEnvironmentId: M1,
+    projects: { kind: "all" },
+    accounts: { kind: "all" },
+    owner: "self",
+    hopLimit: 2,
+    revoked: false,
+  } as const;
+  const grants: WorkGrants.WorkGrantsShape = {
+    ...WorkGrants.WorkGrants.defaultValue(),
+    enabled: true,
+    forClient: () => Effect.succeed(undefined),
+    forCoordinator: () => Effect.succeed(grant),
+    originOf: (thread) =>
+      Effect.succeed(
+        thread.id === worker ? { coordinatorEnvironmentId: M1, path: [M1], hops: 1 } : undefined,
+      ),
+  };
+  const underGrant = setup({ callerId: worker, runtimeMode: "full-access", grants });
+  const ownWorker = setup({ callerId: worker, runtimeMode: "full-access" });
+  return Effect.gen(function* () {
+    expect(
+      yield* underGrant.call("studio_thread_continue_here", { sourceThreadId: "t-new" }),
+    ).toMatchObject({ code: "outside_grant_scope" });
+    expect(underGrant.continued).toEqual([]);
+    // The same worker as this machine's own work still continues it.
+    yield* ownWorker.call("studio_thread_continue_here", { sourceThreadId: "t-new" });
+    expect(ownWorker.continued).toEqual([{ sourceEnvironmentId: M4, sourceThreadId: "t-new" }]);
   });
 });

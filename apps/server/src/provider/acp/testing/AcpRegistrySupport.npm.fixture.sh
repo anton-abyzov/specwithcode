@@ -10,6 +10,11 @@ if [ "$1" = "prefix" ] && [ "$2" = "--global" ]; then
   exit 0
 fi
 if [ "$1" = "install" ] && [ "$2" = "--global" ]; then
+  printf 'registry=%s\n' "${npm_config_registry:-default}" >> "$FAKE_NPM_LOG"
+  if [ -n "$FAKE_NPM_DEFAULT_REGISTRY_REFUSES" ] && [ "$npm_config_registry" != "https://registry.npmjs.org/" ]; then
+    printf 'npm error code E401\nnpm error Incorrect or missing password.\n' >&2
+    exit 1
+  fi
   package_root="$prefix/lib/node_modules/${FAKE_NPM_PACKAGE:-@example/acp}"
   executable="$prefix/bin/${FAKE_NPM_EXECUTABLE_NAME:-example-agent}"
   mkdir -p "$package_root" "$prefix/bin"

@@ -384,6 +384,46 @@ describe("device setup consent", () => {
     }).pipe(Effect.scoped),
   );
 
+  it.effect("boots a simulator only below the per-host limit, ignoring physical devices", () =>
+    Effect.gen(function* () {
+      const { service, requests, settings, devices } = yield* fixture();
+      yield* service.configure({ enabled: true });
+      devices.push(
+        {
+          id: DeviceId.make("SIM-1"),
+          name: "iPhone 17",
+          platform: "ios",
+          version: "iOS 26.0",
+          booted: true,
+          physical: false,
+        },
+        {
+          id: DeviceId.make("PHONE-1"),
+          name: "Pixel 9",
+          platform: "android",
+          version: "Android 16",
+          booted: true,
+          physical: true,
+        },
+      );
+      yield* Ref.update(settings, (current) => ({ ...current, maxBootedDevices: 1 }));
+      const openAvd = service.open({
+        threadId: ThreadId.make("thread-1"),
+        deviceId: "Pixel_API_35",
+        platform: "android",
+      });
+      const error = yield* openAvd.pipe(Effect.flip);
+      expect(error._tag === "DeviceBootError" && error.reason).toBe("limit_reached");
+      expect(error.message).toContain("Running: iPhone 17.");
+      expect(requests.filter((url) => url.endsWith("/boot"))).toEqual([]);
+      expect((yield* service.state).bootingDevices ?? []).toEqual([]);
+
+      yield* Ref.update(settings, (current) => ({ ...current, maxBootedDevices: 2 }));
+      expect((yield* openAvd).deviceId).toBe("emulator-5554");
+      expect(requests.filter((url) => url.endsWith("/boot"))).toHaveLength(1);
+    }).pipe(Effect.scoped),
+  );
+
   it.effect("blocks only emulator video until ffmpeg is usable, then allows retry", () =>
     Effect.gen(function* () {
       const { service, requests, devices, encoderResult } = yield* fixture();

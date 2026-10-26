@@ -32,6 +32,13 @@ public enum TranscriptMapper {
       }
   }
 
+  /// Whole seconds a settled thought took; nil while streaming or unmeasured (replayed items).
+  static func thoughtSeconds(_ item: TurnItem) -> Int? {
+    guard let startedAt = item.startedAt, let completedAt = item.completedAt else { return nil }
+    let seconds = Int(completedAt.timeIntervalSince(startedAt).rounded())
+    return seconds >= 1 ? seconds : nil
+  }
+
   public static func kind(for item: TurnItem, requests: [String: RuntimeRequest] = [:], environmentId: String) -> TranscriptRow.Kind? {
     switch item.content {
     case let .userMessage(message):
@@ -42,7 +49,7 @@ public enum TranscriptMapper {
 
     case let .reasoning(reasoning):
       if reasoning.text.isEmpty, !reasoning.streaming { return nil }
-      return .reasoning(text: reasoning.text, streaming: reasoning.streaming)
+      return .reasoning(text: reasoning.text, streaming: reasoning.streaming, seconds: thoughtSeconds(item))
 
     case let .commandExecution(command):
       let failed = command.outputIndicatesFailure == true || (command.exitCode.map { $0 != 0 } ?? false)

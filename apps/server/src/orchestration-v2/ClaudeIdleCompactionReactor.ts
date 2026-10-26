@@ -73,20 +73,30 @@ export function isIdleCompactionCandidate(
     | "settledAt"
     | "settledOverride"
     | "lineage"
+    | "creationSource"
+    | "heldQueuedCount"
   >,
   now: number,
 ): boolean {
   if (
     thread.archivedAt !== null ||
-    thread.status !== "idle" ||
+    // A shell reads its latest run's status: a thread waiting after a finished
+    // turn is "completed", and "idle" only before its first run. An
+    // interrupted, failed or cancelled turn is left for the person.
+    (thread.status !== "idle" && thread.status !== "completed") ||
     thread.activeRunId !== null ||
     thread.pendingRuntimeRequest !== null ||
+    // A held queue waits for the person; a /compact would run right after
+    // their next message instead of before it.
+    (thread.heldQueuedCount ?? 0) > 0 ||
     thread.activeProviderThreadId === null ||
     thread.latestRunCompletedAt === null ||
     thread.latestRunCompletedAt === undefined ||
-    // Finished work and delegated subagents are rarely written to again.
+    // Settled work and the provider's own subagents (Agent tool children)
+    // are rarely written to again. Delegated workers are: their coordinator
+    // sends follow-ups, so they compact like any other thread.
     (thread.settledAt !== null && thread.settledOverride !== "active") ||
-    thread.lineage.relationshipToParent === "subagent"
+    (thread.lineage.relationshipToParent === "subagent" && thread.creationSource === "provider")
   ) {
     return false;
   }

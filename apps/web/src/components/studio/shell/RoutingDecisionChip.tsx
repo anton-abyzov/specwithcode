@@ -54,6 +54,30 @@ export function routingChipText(decision: TaskRoutingDecision): string {
   return "Auto · " + TASK_CLASS_LABELS[decision.taskClass];
 }
 
+/**
+ * The rule a feedback button records. It is the person's own choice, so
+ * routing honours a Prefer rule whatever the model's billing.
+ */
+export function feedbackPreference(
+  decision: TaskRoutingDecision,
+  kind: "prefer" | "avoid" | "complex" | "routine",
+  now: Date,
+): LearnedModelPreference {
+  return {
+    id: "pref-" + now.getTime().toString(36),
+    keywords: decision.signals?.slice(0, 4) ?? [],
+    ...(decision.taskClass !== "general" ? { taskClass: decision.taskClass } : {}),
+    action:
+      kind === "prefer"
+        ? { kind: "prefer", model: decision.selection }
+        : kind === "avoid"
+          ? { kind: "avoid", model: decision.selection }
+          : { kind: "lane", lane: kind },
+    recordedBy: "person",
+    createdAt: now.toISOString(),
+  };
+}
+
 export function RoutingDecisionChip(props: {
   routing: TaskRoutingDecision | null | undefined;
   entries: Entries;
@@ -81,18 +105,7 @@ export function RoutingDecisionChip(props: {
     try {
       const overrides = settings.projectSettingsOverrides[props.projectId] ?? {};
       const currentPrefs = overrides.learnedModelPreferences ?? [];
-      const newPref: LearnedModelPreference = {
-        id: "pref-" + Date.now().toString(36),
-        keywords: decision.signals?.slice(0, 4) ?? [],
-        ...(decision.taskClass !== "general" ? { taskClass: decision.taskClass } : {}),
-        action:
-          kind === "prefer"
-            ? { kind: "prefer", model: decision.selection }
-            : kind === "avoid"
-              ? { kind: "avoid", model: decision.selection }
-              : { kind: "lane", lane: kind },
-        createdAt: new Date().toISOString(),
-      };
+      const newPref = feedbackPreference(decision, kind, new Date());
       const updated = withLearnedPreference(currentPrefs, newPref);
       await save({
         environmentId: targetEnvironmentId,

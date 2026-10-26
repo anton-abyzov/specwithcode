@@ -126,7 +126,7 @@ async function incrementIds(root: string): Promise<Set<string>> {
   }).catch(() => []);
   return new Set(
     entries
-      .filter((entry) => entry.isDirectory() && /^\d{4,}-/u.test(entry.name))
+      .filter((entry) => entry.isDirectory() && /^\d{4,}[A-Za-z]?-/u.test(entry.name))
       .map((entry) => entry.name),
   );
 }

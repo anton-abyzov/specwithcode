@@ -3077,7 +3077,7 @@ export const createBuildConfig = Effect.fn("createBuildConfig")(function* (
       // AppStream consumers associate this metadata with our specweave-studio-desktop.desktop entry.
       fpm: [
         `${path.join(repoRoot, "apps/desktop/resources/linux/com.specweave.studio.metainfo.xml")}=/usr/share/metainfo/com.specweave.studio.metainfo.xml`,
-        `${path.join(repoRoot, "LICENSE")}=/usr/share/doc/specweave-studio/copyright`,
+        `${path.join(repoRoot, "THIRD_PARTY_NOTICES.md")}=/usr/share/doc/specweave-studio/copyright`,
       ],
       // Electron's runtime libraries. Debian 13 and Ubuntu 24.04 renamed some
       // for 64-bit time; the old name is the fallback for older releases.
@@ -4054,8 +4054,8 @@ const buildDesktopArtifact = Effect.fn("buildDesktopArtifact")(function* (
     private: true,
     packageManager: rootPackageJson.packageManager,
     description:
-      "SpecWithCode is an open-source desktop app for coding agents. Work with your existing agent subscriptions, review code changes, and run commands in your projects. Connect from desktop, web, or mobile to continue working remotely.",
-    license: "MIT",
+      "SpecWithCode is a desktop app for coding agents. Work with your existing agent subscriptions, review code changes, and run commands in your projects. Connect from desktop, web, or mobile to continue working remotely.",
+    license: "UNLICENSED",
     // Required by the .deb control file.
     homepage: "https://studio.invalid",
     author: "Studio Tools",

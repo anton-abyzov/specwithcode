@@ -23,7 +23,7 @@ import {
   lastTurnWasStopped,
 } from "./McpCallerLiveness.ts";
 import * as McpInvocationContext from "./McpInvocationContext.ts";
-import { refuseMachinePrivate } from "./workGrantAccess.ts";
+import { assertThreadReadable } from "./workGrantAccess.ts";
 
 export const unavailable = () =>
   new OrchestratorMcpFailure({
@@ -221,7 +221,8 @@ export const readThread = Effect.fn("mcp.readThread")(function* <
       message: "The thread was not found.",
     });
   }
-  yield* refuseMachinePrivate(context, shell.projectId);
+  // Another machine's work reads only threads in the projects its grant covers.
+  yield* assertThreadReadable(context, shell);
   const projection = yield* context.threads
     .getProjectThreadRecords({ projectId: shell.projectId, threadId: targetId }, fields, {
       turnItemTypes: ["user_input_request"],

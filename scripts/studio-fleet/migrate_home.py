@@ -326,8 +326,20 @@ class Migration:
         return repaired
 
     def require_current(self, identities):
+        # Every receipt is read before anything stops, so a broken one refuses the move. Only the
+        # version is skipped for a receipt that runs nothing against the moved data: no launch agent,
+        # no installed service and no CLI (a leftover staging install such as 'stage').
+        services = {plist.stem for plist in self.studio_plists()}
         for identity in identities:
-            receipt = json.loads((self.legacy / identity / 'installation.json').read_text())
+            try:
+                receipt = json.loads((self.legacy / identity / 'installation.json').read_text())
+            except (OSError, ValueError):
+                receipt = None
+            require(isinstance(receipt, dict), '%s has an unreadable installation.json' % identity)
+            service = receipt.get('service')
+            if LABEL_PREFIX + identity not in services and not receipt.get('cliWrapper') and \
+                    not (isinstance(service, dict) and service.get('installed')):
+                continue
             try:
                 version = tuple(int(part) for part in str(receipt.get('version')).split('-')[0].split('.'))
             except ValueError:

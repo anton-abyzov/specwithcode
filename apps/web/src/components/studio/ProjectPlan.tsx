@@ -429,7 +429,7 @@ export function ProjectPlan({
                           disabled={
                             disabled ||
                             !root.trim() ||
-                            !/^\d{4,}-[a-z0-9]+(?:-[a-z0-9]+)*$/.test(increment)
+                            !/^\d{4,}[A-Za-z]?-[a-z0-9]+(?:-[a-z0-9]+)*$/.test(increment)
                           }
                           onClick={() =>
                             void operation(

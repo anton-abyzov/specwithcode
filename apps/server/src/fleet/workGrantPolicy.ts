@@ -46,6 +46,12 @@ export interface EffectiveWorkGrant {
   readonly owner: StudioWorkGrantOwner;
   readonly hopLimit: number;
   readonly revoked: boolean;
+  /**
+   * A grant this machine kept for a coordinator already allowed before grants
+   * existed (the owner's own machines): its work keeps steering this
+   * machine's threads as it did then.
+   */
+  readonly legacy?: boolean;
 }
 
 /** A grant from before scopes existed, and the fallback when no policy is kept. */

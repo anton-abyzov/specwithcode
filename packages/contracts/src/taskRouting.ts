@@ -145,6 +145,9 @@ export const LearnedModelPreferenceAction = Schema.Union([
 ]);
 export type LearnedModelPreferenceAction = typeof LearnedModelPreferenceAction.Type;
 
+export const LearnedPreferenceAuthor = Schema.Literals(["person", "coordinator"]);
+export type LearnedPreferenceAuthor = typeof LearnedPreferenceAuthor.Type;
+
 /**
  * One thing a project learned from its user about which model suits which
  * work ("translations go to Sonnet", "never use Astra for design"). A rule
@@ -162,6 +165,12 @@ export const LearnedModelPreference = Schema.Struct({
   action: LearnedModelPreferenceAction,
   /** The user's words, kept so the rule can be read back. */
   note: Schema.optionalKey(TrimmedNonEmptyString.check(Schema.isMaxLength(300))),
+  /**
+   * Who made the rule: the person (from the routing chip) or the
+   * coordinator. A rule without it is treated as the coordinator's, so a
+   * paid model it names still needs the person's consent.
+   */
+  recordedBy: Schema.optionalKey(LearnedPreferenceAuthor),
   createdAt: IsoDateTime,
 });
 export type LearnedModelPreference = typeof LearnedModelPreference.Type;

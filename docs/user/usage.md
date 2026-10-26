@@ -184,6 +184,13 @@ A provider that reports no usage (Copilot and the other agents set up under
 turn on it stops on a limit; SpecWithCode then leaves it alone until that limit resets, or for five
 hours when the stop named no reset time.
 
+An ACP agent whose billing SpecWithCode cannot tell takes over only when you named it: in the
+fallback order, as the project's recommended model or under **Also served by**. Advertising
+the same model is not enough, and a coordinator running on such an agent does not approve it for
+its workers. A verified GitHub Copilot instance keeps its subscription fallback. To keep a provider
+out of every fallback, disable that provider instance in Settings; that holds even when an older
+fallback order or project default still names it.
+
 **Switch before the limit** (default 95%) is the share of the provider's fullest usage window at
 which the thread moves on. With **Switch automatically**, an idle thread moves to the fallback
 before its next turn. It never switches mid-turn, moves a thread once per usage window, and only to

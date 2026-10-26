@@ -181,6 +181,8 @@ try {
         projectId: projects[side],
         title: titles[side],
         workspaceRoot: workspaces[side],
+        // Temporary folders read as automated, and pickers offer only the person's own projects.
+        origin: "user",
       },
       headers: { Origin: origin },
     });

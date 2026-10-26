@@ -45,7 +45,12 @@ import { collectUint8StreamText } from "../../stream/collectUint8StreamText.ts";
 import * as ServerSettings from "../../serverSettings.ts";
 import type { AcpSpawnInput } from "./AcpSessionRuntime.ts";
 import { requiresExplicitAcpPreparation } from "./AcpExplicitPreparation.ts";
-import { acpRegistryInstallEnvironment, acpRegistryLaunchArgs } from "./AcpRegistryLaunchPolicy.ts";
+import {
+  acpRegistryInstallEnvironment,
+  acpRegistryLaunchArgs,
+  PUBLIC_NPM_REGISTRY,
+  shouldRetryOnPublicNpmRegistry,
+} from "./AcpRegistryLaunchPolicy.ts";
 
 const ACP_REGISTRY_URL = "https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json";
 
@@ -1293,15 +1298,38 @@ export const makeAcpRegistryCatalog = Effect.fn("AcpRegistryCatalog.make")(funct
     const managerDirectory = yield* managerBinDirectory(managerPath);
     const installEnvironment = withPreferredPath(packageEnvironment, managerDirectory, platform);
     if (distribution === "npx") {
-      yield* runCommand(managerPath, ["install", "--global", packageSpec], {
-        env: acpRegistryInstallEnvironment(
-          packageSpec,
-          installEnvironment,
-          path.join(packageRoot, ".grok-install"),
+      const npmEnvironment = acpRegistryInstallEnvironment(
+        packageSpec,
+        installEnvironment,
+        path.join(packageRoot, ".grok-install"),
+      );
+      const npmInstall = (env: NodeJS.ProcessEnv) =>
+        runCommand(managerPath, ["install", "--global", packageSpec], {
+          env,
+          timeout: PACKAGE_INSTALL_TIMEOUT,
+          truncatedOutputReason: "install_failed",
+        });
+      yield* npmInstall(npmEnvironment).pipe(
+        Effect.catchIf(
+          (error) => shouldRetryOnPublicNpmRegistry(error.detail, npmEnvironment),
+          (refused) =>
+            Effect.logWarning("ACP Registry npm install refused; retrying on npmjs", {
+              packageSpec,
+              detail: refused.detail,
+            }).pipe(
+              Effect.andThen(
+                npmInstall({ ...npmEnvironment, npm_config_registry: PUBLIC_NPM_REGISTRY }),
+              ),
+              Effect.mapError(
+                (retry) =>
+                  new AcpRegistryError({
+                    reason: retry.reason,
+                    detail: `${retry.detail}\nYour default npm registry refused first: ${refused.detail}`,
+                  }),
+              ),
+            ),
         ),
-        timeout: PACKAGE_INSTALL_TIMEOUT,
-        truncatedOutputReason: "install_failed",
-      });
+      );
     } else {
       yield* runCommand(managerPath, ["tool", "install", "--force", packageSpec], {
         env: installEnvironment,

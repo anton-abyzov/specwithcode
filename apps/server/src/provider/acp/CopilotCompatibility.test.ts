@@ -15,7 +15,12 @@ import {
   normalizeAcpRegistryAuthMethods,
   normalizeAcpRegistryLiveConfiguration,
 } from "./AcpRegistryProbe.ts";
-import { acpRegistryLaunchArgs, acpRegistryInstallEnvironment } from "./AcpRegistryLaunchPolicy.ts";
+import {
+  acpRegistryLaunchArgs,
+  acpRegistryInstallEnvironment,
+  PUBLIC_NPM_REGISTRY,
+  shouldRetryOnPublicNpmRegistry,
+} from "./AcpRegistryLaunchPolicy.ts";
 import { acpTerminalAuthInvocation } from "./AcpTerminalAuthentication.ts";
 import { prepareCopilotStartupModel, resetCopilotStartupModel } from "./CopilotStartupModel.ts";
 
@@ -570,6 +575,27 @@ describe("Copilot ACP compatibility", () => {
     );
     expect(result.models).toEqual([]);
     expect(result.currentModelId).toBeNull();
+  });
+
+  it("retries a refused npm install on the public registry only once and only for refusals", () => {
+    const privateFeed =
+      "npm error code E401\nnpm error Unable to authenticate https://pkgs.dev.azure.com/org/_packaging/feed/npm/registry/";
+    expect(shouldRetryOnPublicNpmRegistry(privateFeed, {})).toBe(true);
+    expect(shouldRetryOnPublicNpmRegistry("npm ERR! code ENEEDAUTH", {})).toBe(true);
+    // A mirror's package block is the user's policy, not a stale sign-in.
+    expect(shouldRetryOnPublicNpmRegistry("npm error code E403\nnpm error 403 Forbidden", {})).toBe(
+      false,
+    );
+    expect(
+      shouldRetryOnPublicNpmRegistry(privateFeed, { npm_config_registry: PUBLIC_NPM_REGISTRY }),
+    ).toBe(false);
+    expect(
+      shouldRetryOnPublicNpmRegistry(
+        "npm error code E401\nnpm error 401 Unauthorized - GET https://registry.npmjs.org/@x%2fy",
+        {},
+      ),
+    ).toBe(false);
+    expect(shouldRetryOnPublicNpmRegistry("npm error code ENOSPC", {})).toBe(false);
   });
 
   it("pins only verified official package launches and keeps installer auth homes separate", () => {

@@ -48,7 +48,7 @@ const LEASE_MS = 2 * 3_600_000;
 /** Closed increments stay listed this long, so a standup can say what finished. */
 export const RECENTLY_CLOSED_MS = 7 * 24 * 3_600_000;
 const CLOSED_STATUSES = new Set(["completed", "abandoned", "archived", "cancelled", "closed"]);
-const INCREMENT_DIRECTORY = /^\d{4,}-[a-z0-9]+(?:-[a-z0-9]+)*$/u;
+const INCREMENT_DIRECTORY = /^\d{4,}[A-Za-z]?-[a-z0-9]+(?:-[a-z0-9]+)*$/u;
 /** The contract carries increment ids up to this length; longer folders are skipped. */
 const MAX_INCREMENT_ID = 160;
 const MAX_LEDGER_LINES = 10_000;

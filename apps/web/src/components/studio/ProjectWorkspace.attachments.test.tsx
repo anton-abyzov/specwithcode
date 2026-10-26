@@ -531,7 +531,7 @@ it("shows the original worker follow-up with clickable provenance and preserved 
   expect(state.send).not.toHaveBeenCalled();
 });
 
-it("keeps agent-origin messages and their sending-thread control unchanged", async () => {
+it("keeps agent-origin messages as relayed notes that open their sending thread", async () => {
   const text =
     "User follow-up from selected worker worker. Review that thread and decide whether to reuse it or route elsewhere.\n\nAgent update";
   state.messages = [
@@ -547,17 +547,12 @@ it("keeps agent-origin messages and their sending-thread control unchanged", asy
   ];
   await render();
   const conversation = container.querySelector('[aria-label="Coordinator conversation"]')!;
-  expect(conversation.textContent).toContain("Message from a worker");
+  const relay = conversation.querySelector('[data-relayed-message="thread"]')!;
+  expect(relay.querySelector("h3")!.textContent).toBe("Message from Thread worker");
   expect(conversation.textContent).toContain(text);
-  const sender = conversation.querySelector<HTMLButtonElement>('[data-thread-chip="worker"]')!;
-  expect(sender.closest(".project-message-source")!.textContent).toMatch(/^Sent by /);
-  // "Sent by" is one unit the narrow-bubble rule keeps on one line (see threadCards.css).
-  expect(
-    sender.closest(".project-message-source")!.querySelector(".project-message-source-prefix")!
-      .textContent,
-  ).toBe("Sent by");
-  expect(sender.querySelector(".sws-dot")).not.toBeNull();
-  await act(async () => sender.click());
+  expect(conversation.textContent).not.toContain("Sent by");
+  const view = [...relay.querySelectorAll("button")].find((b) => b.textContent === "View thread")!;
+  await act(async () => view.click());
   expect(container.querySelector('[data-native-thread="worker"]')).not.toBeNull();
 });
 

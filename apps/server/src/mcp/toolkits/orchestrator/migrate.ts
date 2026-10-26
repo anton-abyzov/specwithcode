@@ -221,6 +221,15 @@ export const migrateThreads = (input: OrchestratorMcpThreadMigrateInput) =>
     const caller = context.caller;
     if (caller === undefined) return yield* unavailable();
     yield* assertMayMigrate(context, caller);
+    // A moved thread runs on the other machine as this machine's own work, past
+    // the grant's path, hop limit and revocation, so only a legacy grant (the
+    // owner's own machines, from before grants) may migrate.
+    const work = yield* workGrantOf(context);
+    if (work !== undefined && work.grant.legacy !== true)
+      return yield* failure(
+        "outside_grant_scope",
+        `This machine does not let ${work.coordinatorLabel}'s work move threads to other machines. Ask this machine's coordinator to migrate them.`,
+      );
     // A personal assistant's threads never move, named or not; every thread
     // moved belongs to the caller's project.
     const project = yield* ProjectService.ProjectService.pipe(

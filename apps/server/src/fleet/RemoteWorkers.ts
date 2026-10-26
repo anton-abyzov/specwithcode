@@ -189,6 +189,12 @@ export interface RemoteWorkersShape {
     readonly runId: string | null;
     readonly status: string;
   }) => Effect.Effect<void>;
+  /** Whether `callerThreadId` launched `remoteThreadId` on that machine, for steering it there. */
+  readonly launchedBy: (input: {
+    readonly callerThreadId: ThreadId;
+    readonly machineId: string;
+    readonly remoteThreadId: string;
+  }) => Effect.Effect<boolean>;
   /** The machine the user chose for this project's workers, when the caller is its coordinator. */
   readonly coordinatorWorkerMachine: (input: {
     readonly projectId: ProjectId;
@@ -248,6 +254,7 @@ const disabled: RemoteWorkersShape = {
   remoteProjectFor: (input) => Effect.fail(noMachines(input.machine.id)),
   noteRun: () => Effect.void,
   noteFinished: () => Effect.void,
+  launchedBy: () => Effect.succeed(false),
   coordinatorWorkerMachine: () => Effect.succeed(null),
   workersForProject: () => Effect.succeed([]),
   machineLabels: Effect.succeed(new Map()),
@@ -1081,6 +1088,21 @@ const make = Effect.gen(function* () {
       yield* follower.follow(row.id);
     });
 
+  const launchedBy: RemoteWorkersShape["launchedBy"] = (input) =>
+    store.list.pipe(
+      Effect.map((rows) =>
+        rows.some(
+          (row) =>
+            row.callerThreadId === input.callerThreadId &&
+            row.machineId === input.machineId &&
+            row.remoteThreadId === input.remoteThreadId &&
+            row.state !== "disposed",
+        ),
+      ),
+      // A store this machine cannot read names no thread.
+      Effect.orElseSucceed(() => false),
+    );
+
   const noteFinished: RemoteWorkersShape["noteFinished"] = (input) =>
     Effect.gen(function* () {
       const rows = yield* store.list.pipe(Effect.orElseSucceed(() => []));
@@ -1171,6 +1193,7 @@ const make = Effect.gen(function* () {
     remoteProjectFor,
     noteRun,
     noteFinished,
+    launchedBy,
     coordinatorWorkerMachine,
     workersForProject,
   } satisfies RemoteWorkersShape;

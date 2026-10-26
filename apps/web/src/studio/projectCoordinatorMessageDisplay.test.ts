@@ -297,6 +297,131 @@ describe("follow-ups passed back to their own worker", () => {
     expect(returnedFollowUpIds(messages, project, [worker]).size).toBe(0);
   });
 
+  // The shape the installed 1.0.76 coordinator produced on October 25: reasoning
+  // text with no link, then a sentence linking the same worker, around a forward.
+  const sameWorkerTurn = [
+    followUp("same"),
+    reply("r1", "The question is about the Chrome extension release, so it stays here."),
+    reply("r2", "Your question is in [Calendar work](studio://thread/worker)."),
+  ];
+  const forward = (
+    forwardMessageId: string,
+    threadId: string,
+    extra: { status?: string; output?: unknown; toolName?: string } = {},
+  ) => ({
+    type: "dynamic_tool",
+    status: "completed",
+    toolName: "mcp__studio-code__studio_thread_send",
+    input: { threadId, forwardMessageId, clientRequestId: `forward-${threadId}` },
+    ...extra,
+  });
+
+  it("leaves out a follow-up the coordinator forwarded home, whatever it said around the call", () => {
+    expect([
+      ...returnedFollowUpIds(
+        sameWorkerTurn,
+        project,
+        [worker],
+        [
+          { type: "dynamic_tool", toolName: "mcp__studio-code__studio_thread_read", input: {} },
+          forward("coordinator-send:project:same", "worker"),
+        ],
+      ),
+    ]).toEqual(["coordinator-send:project:same", "r1", "r2"]);
+  });
+
+  it("leaves out a commentary-first reply that links only the source worker", () => {
+    expect(returnedFollowUpIds(sameWorkerTurn, project, [worker]).size).toBe(3);
+  });
+
+  it("keeps a follow-up the coordinator forwarded to another thread", () => {
+    const messages = [followUp("moved"), reply("r1", "Moved to the memory thread.")];
+    expect(
+      returnedFollowUpIds(
+        messages,
+        project,
+        [worker],
+        [forward("coordinator-send:project:moved", "memory")],
+      ).size,
+    ).toBe(0);
+  });
+
+  it("keeps a follow-up forwarded home whose reply links another thread", () => {
+    const messages = [
+      followUp("both"),
+      reply("r1", "Sent back, and see [Release](studio://thread/other)."),
+    ];
+    expect(
+      returnedFollowUpIds(
+        messages,
+        project,
+        [worker],
+        [forward("coordinator-send:project:both", "worker")],
+      ).size,
+    ).toBe(0);
+  });
+
+  it("keeps a follow-up whose forward failed, is still running, or is held", () => {
+    for (const extra of [
+      { status: "failed" },
+      { status: "inProgress" },
+      { output: { isError: true, content: [{ type: "text", text: "not found" }] } },
+      { output: { content: [{ type: "text", text: '{"queueHeld":true}' }] } },
+    ])
+      expect(
+        returnedFollowUpIds(
+          sameWorkerTurn,
+          project,
+          [worker],
+          [forward("coordinator-send:project:same", "worker", extra)],
+        ).size,
+      ).toBe(0);
+  });
+
+  it("matches a Codex coordinator's spelling of the forward tool", () => {
+    const silent = [followUp("same")];
+    expect(
+      returnedFollowUpIds(
+        silent,
+        project,
+        [worker],
+        [
+          forward("coordinator-send:project:same", "worker", {
+            toolName: "studio-code.studio_thread_send",
+          }),
+        ],
+      ).size,
+    ).toBe(1);
+  });
+
+  it("hides only the follow-up's own turn when it was steered into a running one", () => {
+    const messages = [
+      { ...followUp("same"), runId: "run-2" },
+      { ...reply("earlier", "Here is the plan you asked for."), runId: "run-1" },
+      { ...reply("r2", ""), runId: "run-2" },
+    ];
+    expect([
+      ...returnedFollowUpIds(
+        messages,
+        project,
+        [worker],
+        [forward("coordinator-send:project:same", "worker")],
+      ),
+    ]).toEqual(["coordinator-send:project:same", "r2"]);
+  });
+
+  it("decides nothing while a reply is still streaming", () => {
+    const messages = [followUp("same"), { ...reply("r1", "Moved to"), streaming: true }];
+    expect(
+      returnedFollowUpIds(
+        messages,
+        project,
+        [worker],
+        [forward("coordinator-send:project:same", "worker")],
+      ).size,
+    ).toBe(0);
+  });
+
   it("leaves the user's own coordinator messages alone", () => {
     const messages = [
       { ...message, senderThreadId: undefined, text: "Start a worker" },

@@ -91,11 +91,37 @@ function shellLines(code: string): string[] {
     .filter((line) => line.length > 0 && !line.startsWith("#"));
 }
 
+// A lone path runs only when it names a program: no extension, or a script's.
+const RUNNABLE_PATH_EXTENSIONS = new Set([
+  "sh",
+  "bash",
+  "zsh",
+  "fish",
+  "command",
+  "py",
+  "rb",
+  "pl",
+  "js",
+  "mjs",
+  "cjs",
+  "ts",
+]);
+
 function isCommandLine(line: string): boolean {
-  const first = line.replace(/^\$\s+/, "").split(/\s+/, 1)[0] ?? "";
+  const words = line.replace(/^\$\s+/, "").split(/\s+/);
+  const first = words[0] ?? "";
   // `FOO=1 cmd` and paths like `./run.sh` or `~/bin/tool` are commands too.
   if (/^[A-Za-z_][A-Za-z0-9_]*=\S*$/.test(first)) return true;
-  if (/^(?:\.{1,2}|~)?\/[\w./-]+$/.test(first)) return true;
+  if (/^(?:\.{1,2}|~)?\/[\w./-]+$/.test(first)) {
+    // `/Users/me/cws/icon-128.png` on its own line is a file to pick, not a
+    // program; a list of them renders as files (see `pathListLines`).
+    const extension = /\.([A-Za-z0-9]+)$/.exec(first.split("/").at(-1) ?? "")?.[1];
+    return (
+      words.length > 1 ||
+      extension === undefined ||
+      RUNNABLE_PATH_EXTENSIONS.has(extension.toLowerCase())
+    );
+  }
   return SHELL_COMMAND_WORDS.has(first);
 }
 

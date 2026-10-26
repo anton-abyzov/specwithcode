@@ -291,7 +291,8 @@ public struct TranscriptRow: Identifiable, Hashable, Sendable {
   public enum Kind: Hashable, Sendable {
     case user(text: String, state: UserMessageState = .sent)
     case assistant(markdown: String, streaming: Bool)
-    case reasoning(text: String, streaming: Bool)
+    /// `seconds` is how long a settled thought took; nil when it was not measured.
+    case reasoning(text: String, streaming: Bool, seconds: Int? = nil)
     /// A command, file change, search or other tool call.
     case tool(title: String, detail: String?, symbol: String, status: ToolStatus)
     case plan(steps: [TodoStep])
@@ -536,6 +537,8 @@ public final class AppModel {
   public var otherProjects: [ProjectSummary] { projects.filter { !$0.isPinned && !$0.archived && !$0.isAutomated } }
   /// Projects checks and agents made for themselves, listed apart under "Automated".
   public var automatedProjects: [ProjectSummary] { projects.filter { $0.isAutomated && !$0.archived } }
+
+  public var archivedProjects: [ProjectSummary] { projects.filter(\.archived) }
 
   public func machine(_ id: String) -> MachineSummary? { machines.first { $0.id == id } }
 

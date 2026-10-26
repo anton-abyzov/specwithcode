@@ -278,7 +278,7 @@ export function LinkIncrementDialog({
               option(
                 { type: "increment", incrementId: increment.incrementId },
                 increment.title
-                  ? `${increment.incrementId.replace(/^(\d+)-.*/u, "$1")} ${increment.title}`
+                  ? `${increment.incrementId.replace(/^(\d+[A-Za-z]?)-.*/u, "$1")} ${increment.title}`
                   : increment.incrementId,
                 increment.status,
               ),

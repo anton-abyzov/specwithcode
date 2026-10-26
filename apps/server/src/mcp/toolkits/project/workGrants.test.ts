@@ -591,6 +591,10 @@ describe("a personal assistant here, seen by another machine's work", () => {
     world.addThread(errands, householdProject, codex);
     world.addThread(fix, otherProject, codex);
     return Effect.gen(function* () {
+      // M4MAX's own work started the code project's thread, so it may steer it.
+      yield* world.workGrants((service) =>
+        service.recordOrigin(fix, { coordinatorEnvironmentId: M4, path: [M4], hops: 1 }),
+      );
       for (const [tool, params] of [
         ["studio_thread_read", {}],
         ["studio_thread_send", { message: "hello" }],

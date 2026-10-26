@@ -184,3 +184,17 @@ it("keeps a fence with a command in it as code", async () => {
   });
   expect(renderer!.root.findAllByProps({ "data-path-list": "" })).toHaveLength(0);
 });
+
+it("shows a fenced list of absolute paths as files, not a runnable shell block", async () => {
+  await act(async () => {
+    renderer = create(
+      <ChatMarkdown cwd={CWD} threadRef={threadRef} text={["```", ...SHOTS, "```"].join("\n")} />,
+    );
+  });
+  await act(async () => {});
+  expect(renderer!.root.findAllByProps({ "data-path-list": "" })).toHaveLength(1);
+  const paths = renderer!.root
+    .findAll((node) => node.type === "code" && node.props["data-path-list-path"] === "")
+    .map((node) => node.children.join(""));
+  expect(paths).toEqual(SHOTS);
+});

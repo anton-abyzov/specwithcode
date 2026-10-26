@@ -281,6 +281,30 @@ class RereadEqualsFullRead(LiveDatabase):
         writer.checkpoint('PASSIVE')
         self.assertIsNone(read_delta.reread(self.state, base, since))
 
+    def test_a_reread_that_reads_in_full_says_why(self):
+        # Receipt diagnostics only: why each re-read before the restart went to a full read.
+        writer = self.start()
+        since = self.full(None)[0]
+        base = self.base(since)
+        writer.commit(("UPDATE scheduled_tasks SET cron='* * * * *'",))
+        why = {}
+        self.assertIsNone(read_delta.reread(self.state, base, since, why=why))
+        self.assertEqual(why['reason'], 'pages-outside-auth')
+        self.assertGreater(why['pagesOutsideAuth'], 0)
+        self.assertLessEqual(len(why['samplePages']), 8)
+        moved = dict(base, position=dict(base['position'], walInode=base['position']['walInode'] + 1))
+        why = {}
+        self.assertIsNone(read_delta.reread(self.state, moved, since, why=why))
+        self.assertEqual(why, {'reason': 'wal-replaced'})
+        writer.checkpoint('PASSIVE')
+        writer.heartbeat()
+        why = {}
+        self.assertIsNone(read_delta.reread(self.state, base, since, why=why))
+        self.assertEqual(why, {'reason': 'main-file-changed'})
+        why = {}
+        self.assertIsNone(read_delta.reread(self.state, dict(base, position=None), since, why=why))
+        self.assertEqual(why, {'reason': 'no-position'})
+
     def test_appended_rows_measured_against_other_log_positions_read_in_full(self):
         writer = self.start()
         since = self.full(None)[0]
@@ -427,8 +451,8 @@ class ApplyWithALiveService(unittest.TestCase):
         reads, counting = self.fixture.counted_full_reads()
         deltas = []
         real = read_delta.reread
-        def counted(*args):
-            value = real(*args)
+        def counted(*args, **kwargs):
+            value = real(*args, **kwargs)
             deltas.append(value is not None)
             return value
         with counting, self.gate, patch.object(read_delta, 'reread', side_effect=counted):
@@ -518,6 +542,76 @@ class ApplyWithALiveService(unittest.TestCase):
         self.assertEqual(json.loads(self.fixture.output.read_text())['phase'], 'verified')
         self.assertEqual(reads, [False, False, True])  # The check after the gate, then the stop's re-read chains on it.
         self.assertEqual(deltas, [True, False, True])
+
+
+    def held(self, at_stop=()):
+        """The live harness as a held admission: the helper takes its own baseline. The held
+        service appends an event while the release stages (the tail of a turn it interrupted),
+        then only what `at_stop` commits while the server browser stops. Returns the full reads,
+        the receipt, the after-proof mark as confirmed, and every -wal position taken and every
+        base re-read against, in order."""
+        fixture = self.harness()
+        now = datetime.datetime.now(datetime.timezone.utc)
+        updates = fixture.own / 'updates'
+        updates.mkdir(exist_ok=True)
+        (updates / 'hold.json').write_text(json.dumps({'schemaVersion': 1, 'pid': 100, 'startedAt': iso(now - datetime.timedelta(seconds=1)),
+                                                       'expiresAt': iso(now + datetime.timedelta(minutes=5))}))
+        (updates / 'config.json').write_text(json.dumps({'installMode': 'force', 'installRequestedAt': iso(now)}))
+        fixture.before.update(snapshotMode='held-service', installRequestedAt=iso(now), rows={'nativeWorkIdle': True, 'counts': {}})
+        fixture.before.pop('databaseCapture')
+        def tail():
+            self.writer.commit(("INSERT INTO orchestration_events(event_id,stream_id,event_type,payload_json) "
+                                "VALUES ('turn-tail','t-wait','x','{}')",))
+            self.writer.heartbeat()  # The last commit before a read is never taken as published.
+        fixture.on_stage = tail
+        self.at_gate[:], self.at_stop[:] = [], list(at_stop)
+        service = {'own': fixture.own, 'home': fixture.home,
+                   'runtime': {'pid': 100, 'startedAt': iso(now - datetime.timedelta(minutes=5))}}
+        marks, confirm = [], update.after_proof.confirm
+        def confirming(marked, *args):
+            confirm(marked, *args)
+            marks.append(dict(marked) if isinstance(marked, dict) else marked)
+        events, position, reread = [], read_delta.position, read_delta.reread
+        def positioned(*args):
+            value = position(*args)
+            events.append(('position', value))
+            return value
+        def rereading(state, base, since, **kwargs):
+            events.append(('reread', base['position']))
+            return reread(state, base, since, **kwargs)
+        with patch.object(update, '_service', return_value=service), patch.object(update.after_proof, 'confirm', side_effect=confirming), \
+                patch.object(read_delta, 'position', side_effect=positioned), patch.object(read_delta, 'reread', side_effect=rereading):
+            reads, _ = self.run_apply(allow_existing_browser_heartbeat=True)
+        result = json.loads(self.fixture.output.read_text())
+        self.assertEqual(result['phase'], 'verified')
+        self.assertEqual(len(marks), 1)
+        self.assertIn('reader', marks[0])  # A mark the proof after the restart may start from.
+        return reads, result, marks[0], events
+
+    def test_a_held_commit_while_staging_is_reused_and_confirms_the_mark(self):
+        # #777 reuses the prestate read after the gate; #763's mark is confirmed against it.
+        reads, result, marked, events = self.held()
+        self.assertEqual(reads, [False, False, True])  # The before-read, the prestate check, after the restart.
+        self.assertEqual([kind for kind, _ in events], ['position', 'position', 'reread'])  # Before, prestate.
+        self.assertTrue(marked['confirmed'])
+
+    def test_a_held_commit_after_the_reused_read_is_read_against_it_and_unconfirmed(self):
+        # passed[0] and base['before'] advance together on the reused read: the last check before
+        # the stop re-reads against the prestate read's -wal position, and the mark is not confirmed.
+        def commit():
+            self.writer.commit(("INSERT INTO orchestration_events(event_id,stream_id,event_type,payload_json) "
+                                "VALUES ('after-prestate','t-wait','x','{}')",))
+            self.writer.heartbeat()
+        reads, result, marked, events = self.held(at_stop=[commit])
+        self.assertEqual(reads, [False, False, False, True])  # The last check before the stop reads again.
+        positions = [value for kind, value in events if kind == 'position']
+        rereads = [value for kind, value in events if kind == 'reread']
+        self.assertEqual(len(positions), 3)
+        self.assertIsNotNone(positions[1])
+        self.assertIs(rereads[-1], positions[1])  # The prestate read's position, not the before-read's.
+        self.assertIsNot(positions[1], positions[0])
+        self.assertFalse(marked['confirmed'])
+        self.assertEqual([miss['against'] for miss in result['readDeltaMisses']], ['expected', 'before'])
 
 
 if __name__ == '__main__':

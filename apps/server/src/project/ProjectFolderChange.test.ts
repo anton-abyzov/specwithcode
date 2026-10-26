@@ -16,11 +16,13 @@ import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Path from "effect/Path";
+import * as SqlClient from "effect/sql/SqlClient";
 
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
 import * as ProviderSessionManager from "../orchestration-v2/ProviderSessionManager.ts";
 import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.ts";
+import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import { encodeClaudeProjectDir } from "../usage/projectFolderSessions.ts";
 import * as WorkspacePaths from "../workspace/WorkspacePaths.ts";
 import * as ProjectFolderChange from "./ProjectFolderChange.ts";
@@ -541,6 +543,60 @@ it.layer(NodeServices.layer)("ProjectFolderService", (it) => {
         expect(scenario.updates).toHaveLength(1);
       }),
     ),
+  );
+
+  it.effect(
+    "counts manual increment links through SQLite provided from outside, as the server does",
+    () =>
+      Effect.scoped(
+        Effect.gen(function* () {
+          const fs = yield* FileSystem.FileSystem;
+          const path = yield* Path.Path;
+          const { scenario, parent, stub } = yield* makeScenario;
+          yield* fs.writeFileString(`${parent}/.specweave/config.json`, "{}");
+          yield* fs.makeDirectory(`${parent}/.specweave/increments/0001-start`, {
+            recursive: true,
+          });
+          yield* fs.makeDirectory(`${parent}/.specweave/increments/0657E-followup`, {
+            recursive: true,
+          });
+          const ownCheckout = path.join(scenario.root, "own-checkout");
+          yield* fs.makeDirectory(`${ownCheckout}/.specweave/increments/0002-own`, {
+            recursive: true,
+          });
+          scenario.threads.push(shell("isolated", { worktreePath: ownCheckout }));
+          const elsewhere = path.join(scenario.root, "elsewhere");
+          yield* fs.makeDirectory(`${elsewhere}/.git`, { recursive: true });
+          scenario.repositories.set(elsewhere, "github.com/easychamp/easychamp");
+          scenario.repositories.set(stub, "github.com/easychamp/easychamp");
+          // The folder layer itself is built without SQLite; the client arrives from
+          // an outer layer, like Sqlite.layerConfig in server.ts.
+          const check = yield* Effect.gen(function* () {
+            const sql = yield* SqlClient.SqlClient;
+            for (const [threadId, incrementId] of [
+              ["worker", "0657E-followup"],
+              ["coordinator", "0001-start"],
+              ["isolated", "0002-own"],
+              ["someone-elses", "0001-start"],
+            ])
+              yield* sql`INSERT INTO thread_increment_links (thread_id, project_id, increment_id, linked_at) VALUES (${threadId}, ${projectId}, ${incrementId}, '2026-10-25T00:00:00.000Z')`;
+            const folders = yield* ProjectFolderChange.ProjectFolderService;
+            return yield* folders.check({ projectId, workspaceRoot: elsewhere });
+          }).pipe(
+            Effect.provide(
+              layerFor(scenario).pipe(Layer.provideMerge(SqlitePersistence.layerMemory)),
+            ),
+          );
+          // A thread with its own increments keeps reading them, and other projects' links don't count.
+          expect(check.planning).toMatchObject({
+            currentRoot: parent,
+            currentIncrements: 2,
+            targetRoot: null,
+            brokenLinks: ["0001-start", "0657E-followup"],
+            changes: true,
+          });
+        }),
+      ),
   );
 
   it.effect("changes a folder without SpecWeave exactly as before", () =>

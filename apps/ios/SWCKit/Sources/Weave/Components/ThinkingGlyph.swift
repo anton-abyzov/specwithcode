@@ -34,7 +34,7 @@ public struct ThinkingGlyph: View {
   }
 
   /// Between 0.45 and 1 on a 1.6 second breath.
-  static func pulseOpacity(at time: TimeInterval) -> Double {
+  public static func pulseOpacity(at time: TimeInterval) -> Double {
     0.725 + 0.275 * cos(time / 1.6 * 2 * .pi)
   }
 

@@ -303,6 +303,16 @@ describe("model chip", () => {
   );
   const button = (markup: string) => markup.match(/<button[^>]*>/)![0];
 
+  it("names a draft with no provider yet without a dangling separator", () => {
+    const markup = renderToStaticMarkup(
+      chip({ triggerParts: { provider: "", model: "Choose a model" } }),
+    );
+    expect(button(markup)).toContain('aria-label="Model: Choose a model. Change model"');
+    expect(markup).not.toContain('data-model-chip-part="provider"');
+    expect(markup).not.toContain("·");
+    expect(markup).toMatch(/data-model-chip-part="model"[^>]*>Choose a model/);
+  });
+
   it("keeps the provider, the model and the state in the accessible name at every fit", () => {
     for (const fit of MODEL_CHIP_FITS) {
       const markup = renderToStaticMarkup(

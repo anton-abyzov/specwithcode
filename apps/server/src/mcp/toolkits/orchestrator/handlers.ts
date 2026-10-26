@@ -29,6 +29,7 @@ import {
   assertAccountInGrant,
   assertProjectInGrant,
   assertThreadInGrant,
+  assertThreadSignInInGrant,
   assertThreadWritable,
   refusePrivateCallerRemote,
   workGrantOf,
@@ -38,7 +39,7 @@ import {
  * Work another machine started here reaches only threads in the projects
  * its grant covers. A thread that does not exist is the handler's to report.
  */
-const guardThread = (threadId: string, access: "read" | "write" = "read") =>
+const guardThread = (threadId: string, access: "read" | "write" | "send" = "read") =>
   Effect.gen(function* () {
     const caller = yield* loadCaller();
     const work = yield* workGrantOf(caller);
@@ -48,7 +49,10 @@ const guardThread = (threadId: string, access: "read" | "write" = "read") =>
       .pipe(Effect.mapError(unavailable));
     if (shell === null) return;
     yield* assertThreadInGrant(work, shell);
-    if (access === "write") yield* assertThreadWritable(work, shell);
+    if (access === "read") return;
+    yield* assertThreadWritable(work, shell);
+    // A message runs the thread on its own sign-in.
+    if (access === "send") yield* assertThreadSignInInGrant(work, shell);
   });
 
 /** ...and starts its subagents and threads only on the sign-ins that grant allows. */
@@ -234,7 +238,7 @@ const handlers = {
         input,
         (local) =>
           Effect.gen(function* () {
-            yield* guardThread(local.threadId, "write");
+            yield* guardThread(local.threadId, "send");
             const scope = yield* McpInvocationContext.McpInvocationContext;
             const service = yield* OrchestratorMcpService.OrchestratorMcpService;
             return yield* service.sendToThread(scope, local);

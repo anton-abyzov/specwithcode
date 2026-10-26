@@ -78,6 +78,23 @@ describe("FallbackOptionsPanel", () => {
     const sol = groups.find((group) => group.family === "openai")!.options[0]!;
     expect(fallbackOptionStatusLabel(sol)).toBe("Can take a limited thread");
     expect(fallbackOptionAccessLabel(sol)).toBe("Plan usage 40% used");
+    const stale = { ...sol, status: "unverified" as const };
+    expect(fallbackOptionStatusLabel(stale)).toBe("Signed in, no recent usage reading");
+    expect(fallbackOptionAccessLabel(stale)).toBe("Last read 40% used");
+    expect(fallbackOptionAccessLabel({ ...stale, usedPercent: null })).toBe("Plan usage not read");
+  });
+
+  it("calls a reading older than the freshness window the last one, not current room", () => {
+    const [stale] = describeFallbackOptions({
+      providers: [provider("codex", "codex", "Codex", 22, [["gpt-6.1-sol", "GPT-6.1 Sol"]])],
+      rule: { providerLimitFallbackModelSelection: null },
+      nowMs: now + 60 * 60_000,
+      belowPercent: 95,
+    })[0]!.options;
+    expect(stale!.status).toBe("unverified");
+    expect(`${fallbackOptionStatusLabel(stale!)} · ${fallbackOptionAccessLabel(stale!)}`).toBe(
+      "Signed in, no recent usage reading · Last read 22% used",
+    );
     const grok = groups.find((group) => group.family === "xai")!.options[0]!;
     expect(fallbackOptionStatusLabel(grok)).toBe("Excluded from automatic fallback");
   });

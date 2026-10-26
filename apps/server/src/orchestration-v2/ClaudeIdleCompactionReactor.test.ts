@@ -19,7 +19,8 @@ import * as ThreadManagementService from "./ThreadManagementService.ts";
 const completedAt = Date.parse("2026-10-15T10:00:00.000Z");
 const idleThread = {
   archivedAt: null,
-  status: "idle" as const,
+  creationSource: "mcp" as const,
+  status: "completed" as const,
   activeRunId: null,
   pendingRuntimeRequest: null,
   activeProviderThreadId: "provider-thread-1" as never,
@@ -39,6 +40,26 @@ describe("isIdleCompactionCandidate", () => {
     expect(isIdleCompactionCandidate(idleThread, minutes(120))).toBe(false);
   });
 
+  it("takes a thread whose last turn completed, never one that has not run", () => {
+    const at = minutes(55);
+    expect(
+      isIdleCompactionCandidate({ ...idleThread, status: "idle", latestRunCompletedAt: null }, at),
+    ).toBe(false);
+    for (const status of ["interrupted", "failed", "cancelled", "waiting"] as const) {
+      expect(isIdleCompactionCandidate({ ...idleThread, status }, at)).toBe(false);
+    }
+  });
+
+  it("compacts delegated workers but not the provider's own subagents", () => {
+    const at = minutes(55);
+    const worker = {
+      ...idleThread,
+      lineage: { ...idleThread.lineage, relationshipToParent: "subagent" as const },
+    };
+    expect(isIdleCompactionCandidate(worker, at)).toBe(true);
+    expect(isIdleCompactionCandidate({ ...worker, creationSource: "provider" }, at)).toBe(false);
+  });
+
   it("leaves busy, archived, settled and subagent threads alone", () => {
     const at = minutes(55);
     expect(isIdleCompactionCandidate({ ...idleThread, status: "running" }, at)).toBe(false);
@@ -48,6 +69,7 @@ describe("isIdleCompactionCandidate", () => {
     expect(
       isIdleCompactionCandidate({ ...idleThread, pendingRuntimeRequest: {} as never }, at),
     ).toBe(false);
+    expect(isIdleCompactionCandidate({ ...idleThread, heldQueuedCount: 2 }, at)).toBe(false);
     expect(
       isIdleCompactionCandidate({ ...idleThread, archivedAt: DateTime.makeUnsafe(at) }, at),
     ).toBe(false);
@@ -65,6 +87,7 @@ describe("isIdleCompactionCandidate", () => {
         {
           ...idleThread,
           lineage: { ...idleThread.lineage, relationshipToParent: "subagent" },
+          creationSource: "provider",
         },
         at,
       ),

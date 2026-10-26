@@ -10,6 +10,9 @@
  *
  * Lane entries are the user's explicit choices, so an instance billed per
  * token may be picked from a lane (the decision records `billing: "api"`).
+ * A learned "prefer" rule is not: the coordinator can record one, so it moves
+ * a worker onto a paid or unknown-billing model only within Auto's paid-API
+ * setting, or when the model is in one of the user's lanes too.
  * Gemini and Vertex spend is never picked automatically, as everywhere else.
  *
  * @module modelLanes
@@ -19,6 +22,7 @@ import {
   type ModelLane,
   type ModelLanes,
   type ModelSelection,
+  type ModelTier,
   type ServerProvider,
   MAX_LEARNED_MODEL_PREFERENCES,
   taskRoutingBilling,
@@ -250,9 +254,13 @@ export interface ResolveLaneRoutingInput {
   readonly baseline: ModelSelection;
   readonly providers: ReadonlyArray<ServerProvider>;
   readonly nowMs: number;
-  /** Exclusions and the escalation switch come from the Auto policy. */
+  /**
+   * Exclusions and the escalation switch come from the Auto policy, and the
+   * paid-API cap a learned preference keeps to. The cap counts only while
+   * Auto is on (`mode: "auto"`); otherwise, or when absent, it reads as `never`.
+   */
   readonly policy: Pick<TaskRoutingSettings, "excludedProviders" | "escalate"> &
-    Partial<Pick<TaskRoutingSettings, "minimumTier">>;
+    Partial<Pick<TaskRoutingSettings, "minimumTier" | "paidApi" | "mode">>;
   readonly switchAtPercent?: number | null | undefined;
   readonly limitedInstanceIds?: ReadonlySet<string> | undefined;
   readonly runnableInstanceIds?: ReadonlySet<string> | undefined;
@@ -308,9 +316,44 @@ export function laneEntryUnavailable(
   return null;
 }
 
+const PAID_API_TIER: Record<TaskRoutingSettings["paidApi"], ModelTier | null> = {
+  never: null,
+  economy: "economy",
+  standard: "standard",
+};
+
+/**
+ * Why a learned "prefer" rule the coordinator recorded may not move a worker
+ * onto `selection`, or null when it may. Such a rule is not the person's
+ * choice, so a model billed per token, by a paid router or with unknown
+ * billing needs their consent: the model is in one of their lanes, or Auto is
+ * on and its paid-API setting covers its tier, as Auto checks. With Auto off
+ * that setting is hidden and has no effect, so it grants nothing. A rule the person made
+ * from the routing chip (`recordedBy: "person"`) is never checked here.
+ */
+export function learnedPreferenceBillingBlock(
+  selection: ModelSelection,
+  input: Pick<ResolveLaneRoutingInput, "providers" | "lanes" | "policy">,
+): string | null {
+  const key = selectionKey(selection);
+  if ([...input.lanes.complex, ...input.lanes.routine].some((entry) => selectionKey(entry) === key))
+    return null;
+  const provider = input.providers.find((entry) => entry.instanceId === selection.instanceId);
+  const model = findModel(provider, selection.model);
+  const billing = billingOf(provider, model);
+  if (billing === "subscription" || billing === "local") return null;
+  const cap = input.policy.mode === "auto" ? PAID_API_TIER[input.policy.paidApi ?? "never"] : null;
+  const tier = model ? modelTier(model) : modelTier({ slug: selection.model });
+  if (cap !== null && tier !== null && tierRank(tier) <= tierRank(cap)) return null;
+  return billing === "unknown"
+    ? "billing unknown; a learned preference never picks it"
+    : "billed per token; a learned preference never picks it";
+}
+
 /**
  * The lane decision for one worker, or null when lanes have nothing to say
- * (the lane's list is empty and no learned preference names a model). A
+ * (the lane's list is empty and no usable learned preference names a model;
+ * a coordinator's rule refused for billing counts as absent). A
  * matching "prefer" preference is tried before the list; an "avoid"
  * preference removes its model. The first entry that can run now wins, and
  * the next one that can is the escalation target. When none can, the
@@ -331,8 +374,20 @@ export function resolveLaneRouting(input: ResolveLaneRoutingInput): LaneRoutingR
     classification: input.classification,
     preferences: input.preferences,
   });
+  // A coordinator's rule naming a paid model without the person's consent
+  // counts as absent, so it never shadows another matching rule; the next
+  // best rule, the lane list, or Auto when both are empty, decides.
+  const refused: Array<{ readonly model: ModelSelection; readonly reason: string }> = [];
+  const candidates = input.preferences.filter((preference) => {
+    if (preference.action.kind !== "prefer" || preference.recordedBy === "person") return true;
+    const reason = learnedPreferenceBillingBlock(preference.action.model, input);
+    if (reason === null) return true;
+    if (preferenceMatch(preference, input.task, input.classification, lane.lane) !== null)
+      refused.push({ model: preference.action.model, reason });
+    return false;
+  });
   const preferred = bestPreference(
-    input.preferences,
+    candidates,
     "prefer",
     input.task,
     input.classification,
@@ -349,10 +404,11 @@ export function resolveLaneRouting(input: ResolveLaneRoutingInput): LaneRoutingR
         preference.action.kind === "avoid" ? [selectionKey(preference.action.model)] : [],
       ),
   );
+  const preferredModel = preferred?.action.kind === "prefer" ? preferred.action.model : undefined;
   const ordered: ModelSelection[] = [];
   const seen = new Set<string>();
   for (const selection of [
-    ...(preferred?.action.kind === "prefer" ? [preferred.action.model] : []),
+    ...(preferredModel !== undefined ? [preferredModel] : []),
     ...input.lanes[lane.lane],
   ]) {
     const key = selectionKey(selection);
@@ -363,7 +419,14 @@ export function resolveLaneRouting(input: ResolveLaneRoutingInput): LaneRoutingR
   if (ordered.length === 0 && avoided.size === 0) return null;
 
   const decidedAt = DateTime.formatIso(DateTime.makeUnsafe(input.nowMs));
-  const skipped: string[] = [];
+  const skipped: string[] = [
+    ...new Map(
+      refused.map((entry) => [
+        selectionKey(entry.model),
+        `${laneEntryLabel(input.providers, entry.model)}: ${entry.reason}`,
+      ]),
+    ).values(),
+  ];
   const eligible: ModelSelection[] = [];
   for (const selection of ordered) {
     const label = laneEntryLabel(input.providers, selection);
@@ -406,7 +469,10 @@ export function resolveLaneRouting(input: ResolveLaneRoutingInput): LaneRoutingR
     const baselineProvider = input.providers.find(
       (provider) => provider.instanceId === input.baseline.instanceId,
     );
-    const baselineDetail = billingOf(baselineProvider);
+    const baselineDetail = billingOf(
+      baselineProvider,
+      findModel(baselineProvider, input.baseline.model),
+    );
     const decision: TaskRoutingDecision = {
       ...common,
       moved: false,
@@ -435,7 +501,7 @@ export function resolveLaneRouting(input: ResolveLaneRoutingInput): LaneRoutingR
           : "no sign of complex work";
   const via = usedPreference !== undefined ? " (learned preference)" : "";
   const passed = skipped.length > 0 ? ` after skipping ${skipped.length}` : "";
-  const detail = billingOf(provider);
+  const detail = billingOf(provider, model);
   const decision: TaskRoutingDecision = {
     ...common,
     moved,

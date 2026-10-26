@@ -185,6 +185,28 @@ export function makeSessionDoctor(sinceMs = -Infinity) {
   return { addLine, finish };
 }
 
+/**
+ * Load from other processes slows every span, so recent timings mean little on a
+ * busy machine. `fiveMinute` is undefined where the OS does not report load (Windows).
+ */
+export function checkMachineLoad(load: {
+  readonly fiveMinute: number | undefined;
+  readonly cpuCount: number;
+}): DoctorCheck {
+  const { fiveMinute, cpuCount } = load;
+  if (fiveMinute === undefined)
+    return { level: "ok", title: "Machine load: not reported on this system", details: [] };
+  const title = `Machine load: ${fiveMinute.toFixed(1)} on ${cpuCount} cores`;
+  if (fiveMinute <= cpuCount) return { level: "ok", title, details: [] };
+  return {
+    level: "warn",
+    title,
+    details: [
+      "This computer is busy with other processes, so timings from the last few minutes are slower than SpecWithCode alone would be. Run doctor again once it is quiet.",
+    ],
+  };
+}
+
 /** The write-ahead log is folded back into the database at checkpoints; a large one means they stall. */
 export function checkDatabaseFiles(sizes: {
   readonly databaseBytes: number | undefined;

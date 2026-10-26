@@ -216,11 +216,11 @@ export function reportWordCount(text: string): number {
     .filter((word) => /[\p{L}\p{N}]/u.test(word)).length;
 }
 
-/** An increment folder name such as `0973-budget-vs-actuals`, or past 9999 `10001-export`. */
-const INCREMENT_SLUG = /(?<![\w-])(\d{4,}-[a-z0-9]+(?:-[a-z0-9]+)*)(?![\w-])/gi;
+/** An increment folder name such as `0973-budget-vs-actuals`, `0657E-followup`, or past 9999 `10001-export`. */
+const INCREMENT_SLUG = /(?<![\w-])(\d{4,}[A-Z]?-[a-z0-9]+(?:-[a-z0-9]+)*)(?![\w-])/gi;
 /** A bare increment number, like "0973" in "Review cycle 2 of 0973", or "10001". */
 const INCREMENT_NUMBER = /(?<![\w.-])(\d{4,})(?![\w.-])/g;
-const INCREMENT_PATH = /\.specweave\/increments\/(\d{4,}-[a-z0-9]+(?:-[a-z0-9]+)*)/gi;
+const INCREMENT_PATH = /\.specweave\/increments\/(\d{4,}[A-Z]?-[a-z0-9]+(?:-[a-z0-9]+)*)/gi;
 
 export interface ReportIncrementCandidate {
   /** A full folder name, or a number of 4 or more digits that must match one folder. */

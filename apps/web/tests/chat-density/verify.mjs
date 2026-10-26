@@ -67,9 +67,9 @@ try {
         `header chips on one line at ${width}px`,
       );
       NodeAssert.equal(await page.locator("[data-plan-empty]").textContent(), "No plan");
-      // An agent's request carries one sender line; where it ran waits in the hover row.
+      // An agent's request is a quiet relayed note; where it ran waits in its hover row.
       const request = page.locator('[data-message-role="user"]').first();
-      NodeAssert.equal(await request.getByText("Sent by another agent").count(), 1);
+      NodeAssert.equal(await request.getByText("Message from another agent").count(), 1);
       const origins = request.locator("[data-request-execution-origin]");
       NodeAssert.equal(await origins.count(), 1);
       NodeAssert.equal(

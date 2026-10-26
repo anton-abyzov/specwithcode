@@ -2,6 +2,7 @@ import {
   isSettledRunStatus,
   worktreeSetupAgentStarted,
 } from "@specweave-studio/client-runtime/worktree-setup";
+import { thoughtLabel } from "@specweave-studio/shared/orchestrationTiming";
 export { worktreeSetupAgentStarted } from "@specweave-studio/client-runtime/worktree-setup";
 import * as Equal from "effect/Equal";
 import { shallow } from "zustand/vanilla/shallow";
@@ -93,7 +94,8 @@ export function workEntryIsActiveTurnActivity(entry: WorkLogEntry): boolean {
 }
 
 function singleToolCallLabel(entry: WorkLogEntry): string {
-  if (entry.itemType === "reasoning") return entry.detail?.trim().replace(/\s+/g, " ") || "Thought";
+  if (entry.itemType === "reasoning")
+    return entry.detail?.trim().replace(/\s+/g, " ") || thoughtLabel(entry.structuredPayload);
   const toolPresentation = resolveWorkEntryToolPresentation(entry, "completed");
   if (toolPresentation) return toolPresentation.displayName;
   const item = entry.structuredPayload;
@@ -318,7 +320,7 @@ export function liveWorkEntryLabel(
   if (entry.itemType === "reasoning") {
     return (
       entry.detail?.trim().replace(/\s+/g, " ") ||
-      (status === "inProgress" ? "Thinking" : "Thought")
+      (status === "inProgress" ? "Thinking" : thoughtLabel(entry.structuredPayload))
     );
   }
   const toolPresentation = resolveWorkEntryToolPresentation({

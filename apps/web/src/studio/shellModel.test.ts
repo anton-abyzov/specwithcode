@@ -109,6 +109,12 @@ describe("model and provider names", () => {
     });
     expect(modelLabel(null, "grok", "grok-code-fast-2").model).toBe("Code Fast 2");
     expect(modelLabel(null, "codex", "gpt-6-astra").full).toBe("Codex · GPT-6 Astra");
+    // A draft with no provider yet never shows the placeholder id.
+    expect(modelLabel(null, "studio_no_provider", "")).toEqual({
+      provider: "",
+      model: "Choose a model",
+      full: "Choose a model",
+    });
     // A model named only for its provider keeps its name.
     expect(modelLabel(null, "grok", "grok").model).toBe("Grok");
     expect(modelLabel(null, "grok", "grok-5")).toEqual({
@@ -603,7 +609,7 @@ describe("blocked threads", () => {
 
   it("names a quiet thread whose report has a blocker Blocked, waiting on you", () => {
     expect(threadStatusWord(blocked)).toBe("Blocked");
-    expect(threadTone(blocked)).toBe("idle");
+    expect(threadTone(blocked)).toBe("waiting");
   });
 
   it("drops the blocker while the thread runs again or once it is resolved", () => {
@@ -635,8 +641,8 @@ describe("threads on this machine while its server catches up", () => {
     expect([...unreachable]).toEqual(["m1"]);
     const hostOffline = unreachable.has(blocked.environmentId);
     expect(threadStatusWord(blocked, hostOffline)).toBe("Blocked");
-    expect(threadTone(blocked, hostOffline)).toBe("idle");
-    expect(waitingCount([blocked], unreachable)).toBe(0);
+    expect(threadTone(blocked, hostOffline)).toBe("waiting");
+    expect(waitingCount([blocked], unreachable)).toBe(1);
   });
 });
 
@@ -676,6 +682,6 @@ describe("threads on an unreachable host", () => {
     expect(threadTone({ ...blocked, settledOverride: "settled" }, true)).toBe("resolved");
     expect(threadStatusWord({ ...blocked, settledOverride: "settled" }, true)).toBeNull();
     expect(threadStatusWord(blocked, false)).toBe("Blocked");
-    expect(waitingCount([blocked], new Set())).toBe(0);
+    expect(waitingCount([blocked], new Set())).toBe(1);
   });
 });

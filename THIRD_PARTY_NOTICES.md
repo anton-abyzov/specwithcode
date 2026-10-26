@@ -1,3 +1,11 @@
+# Third-party notices
+
+SpecWithCode is an independently maintained product. No new project-wide license is granted for original SpecWithCode material. Previously distributed material retains the rights granted with those versions. Third-party code and assets retain their own licenses; these notices do not extend those licenses to unrelated original material.
+
+## MIT-licensed code
+
+Portions of this software carry the following notice.
+
 MIT License
 
 Copyright (c) 2026 T3 Tools Inc.

@@ -273,7 +273,11 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
   );
   const parts =
     props.triggerLabel === undefined && !selectedEntries ? props.triggerParts : undefined;
-  const currentLabel = parts ? `${parts.provider} · ${parts.model}` : (activeText ?? triggerLabel);
+  const currentLabel = parts
+    ? parts.provider
+      ? `${parts.provider} · ${parts.model}`
+      : parts.model
+    : (activeText ?? triggerLabel);
   const tooltipName = parts ? currentLabel : triggerName;
   const triggerTooltipContent = shortcutLabel ? `${tooltipName} · ${shortcutLabel}` : tooltipName;
   // A chip follows its host's fit; on its own it measures the room its host gives it.
@@ -402,15 +406,17 @@ export const ProviderModelPicker = memo(function ProviderModelPicker(props: {
                 {parts ? (
                   <>
                     {/* The provider's name and its separator sit one gap from the model. */}
-                    <span
-                      className="-me-0.5 font-normal text-muted-foreground"
-                      data-model-chip-part="provider"
-                      data-picker-provider
-                      aria-hidden
-                    >
-                      {parts.provider}
-                      <span> ·</span>
-                    </span>
+                    {parts.provider ? (
+                      <span
+                        className="-me-0.5 font-normal text-muted-foreground"
+                        data-model-chip-part="provider"
+                        data-picker-provider
+                        aria-hidden
+                      >
+                        {parts.provider}
+                        <span> ·</span>
+                      </span>
+                    ) : null}
                     <span
                       className="min-w-0 shrink! truncate font-medium text-foreground"
                       data-model-chip-part="model"

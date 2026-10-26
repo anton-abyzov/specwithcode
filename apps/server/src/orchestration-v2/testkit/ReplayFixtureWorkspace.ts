@@ -88,6 +88,21 @@ export const checkpointWorkspace = (fixtureName: string, files?: ReplayWorkspace
     removeCheckpointWorkspaceEffect(cwd).pipe(Effect.orDie),
   ).pipe(Effect.provide(NodeServices.layer));
 
+/**
+ * A workspace that is not a Git repository, so runs in it skip checkpoint
+ * capture. Checkpoints in one workspace run one at a time, about a dozen Git
+ * commands each, so a scenario with many concurrent runs that does not assert
+ * on checkpoints uses this to keep that queue off its timing.
+ */
+export const uncheckpointedWorkspace = (fixtureName: string) =>
+  Effect.acquireRelease(
+    Effect.gen(function* () {
+      const fs = yield* FileSystem.FileSystem;
+      return yield* fs.makeTempDirectory({ prefix: `studio-orchestrator-v2-${fixtureName}-` });
+    }),
+    (cwd) => removeCheckpointWorkspaceEffect(cwd).pipe(Effect.orDie),
+  ).pipe(Effect.provide(NodeServices.layer));
+
 export async function makeCheckpointWorkspace(
   fixtureName: string,
   files?: ReplayWorkspaceFiles,

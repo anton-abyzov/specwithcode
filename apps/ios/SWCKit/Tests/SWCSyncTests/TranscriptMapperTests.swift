@@ -44,7 +44,18 @@ import SWCWire
   @Test func messagesAndReasoning() throws {
     #expect(try kind("ti_user") == .user(text: "Fix the login bug"))
     #expect(try kind("ti_asst") == .assistant(markdown: "Looking at **auth.ts** now.", streaming: true))
-    #expect(try kind("ti_reason") == .reasoning(text: "The token check runs before refresh.", streaming: false))
+    #expect(try kind("ti_reason") == .reasoning(text: "The token check runs before refresh.", streaming: false, seconds: 2))
+  }
+
+  @Test func settledThoughtCarriesItsDuration() throws {
+    var item = try TestData.turnItem("ti_reason")
+    let start = Date(timeIntervalSince1970: 1_800_000_000)
+    item.startedAt = start
+    item.completedAt = start.addingTimeInterval(12.4)
+    #expect(TranscriptMapper.kind(for: item, environmentId: "env") == .reasoning(text: "The token check runs before refresh.", streaming: false, seconds: 12))
+    // A replayed item settles in the instant it starts: no duration to show.
+    item.completedAt = start.addingTimeInterval(0.2)
+    #expect(TranscriptMapper.kind(for: item, environmentId: "env") == .reasoning(text: "The token check runs before refresh.", streaming: false))
   }
 
   @Test func plans() throws {

@@ -170,13 +170,15 @@ class ProgressWriter:
             self._write(**fields)
 
     def lap(self, ended, timings):
-        """The phase `ended` is done: the next one in PHASES begins (update._apply's lap)."""
+        """The phase `ended` is done: the next one in PHASES begins (update._apply's lap). A lap
+        outside PHASES (watermarkSkip, deltaRead) keeps the step but moves
+        `phaseStartedAt` too, so `phaseStartedAt` minus the sum of `timings` stays the apply's start."""
         if self.finished:
             return
         index = PHASES.index(ended) + 1 if ended in PHASES else None
-        fields = {'timings': dict(timings)}
+        fields = {'timings': dict(timings), 'phaseStartedAt': now()}
         if index is not None and index < len(PHASES):
-            fields.update(phase=PHASES[index], step=index + 1, phaseStartedAt=now())
+            fields.update(phase=PHASES[index], step=index + 1)
         self._write(**fields)
 
     def rollback(self):
