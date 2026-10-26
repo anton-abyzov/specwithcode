@@ -55,6 +55,8 @@ export function DeviceStreamView(props: {
   readonly platform: DevicePlatform;
   readonly deviceId: string;
   readonly deviceName?: string;
+  /** Hardware name for the 3D frame and shape, which a renamed simulator keeps. */
+  readonly deviceModel?: string | undefined;
   readonly deviceDescription?: string;
   readonly visible: boolean;
   readonly hostId: string;
@@ -71,7 +73,7 @@ export function DeviceStreamView(props: {
     requested: null,
     error: null,
   });
-  const model = deviceModel(props.platform, props.deviceName ?? "");
+  const model = deviceModel(props.platform, props.deviceModel ?? props.deviceName ?? "");
   const isDuo = model?.id === "iphone-duo";
   const [presentation, setPresentation] = useState<"phone" | "flat">("phone");
   const [keyboardAttached, setKeyboardAttached] = useState(false);
@@ -140,6 +142,7 @@ export function DeviceStreamView(props: {
           setMjpegUrl(url);
           setMjpegGeneration((generation) => generation + 1);
         },
+        onCanvasVideo: () => setMjpegUrl(null),
         onInputConnected: (connected, detail) => {
           setInputState({ connected, ...(detail ? { detail } : {}) });
           if (!connected) setShowRestartNotice(false);
@@ -319,7 +322,10 @@ export function DeviceStreamView(props: {
             ? "Turn off accessibility frames to use 3D"
             : null;
 
-  const keyboardSource = deviceKeyboard(props.platform, props.deviceName ?? "");
+  const keyboardSource = deviceKeyboard(
+    props.platform,
+    props.deviceModel ?? props.deviceName ?? "",
+  );
   const resetView = useCallback(() => {
     if (!isDuo) {
       const orientation = keyboardAttached ? "landscape_right" : "portrait";
@@ -329,7 +335,7 @@ export function DeviceStreamView(props: {
   }, [isDuo, keyboardAttached, screen?.orientation]);
   const profile = resolveDeviceShape({
     platform: props.platform,
-    name: props.deviceName ?? "",
+    name: props.deviceModel ?? props.deviceName ?? "",
     portraitAspect: Math.min(aspect, 1 / aspect),
   });
 
@@ -508,7 +514,7 @@ export function DeviceStreamView(props: {
         ) : showPhone ? (
           <DevicePhoneViewport
             profile={profile}
-            model={deviceModel(props.platform, props.deviceName ?? "")}
+            model={deviceModel(props.platform, props.deviceModel ?? props.deviceName ?? "")}
             accessory={keyboardAttached ? keyboardSource : null}
             source={canvasRef}
             onFrameListener={onFrameListener}

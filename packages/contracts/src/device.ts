@@ -65,6 +65,8 @@ export const DeviceSummary = Schema.Struct({
   version: Schema.String,
   booted: Schema.Boolean,
   physical: Schema.Boolean,
+  /** Hardware name such as "iPhone 18 Pro"; unlike `name`, renaming the simulator keeps it. */
+  model: Schema.optional(TrimmedNonEmptyString),
 });
 export type DeviceSummary = typeof DeviceSummary.Type;
 

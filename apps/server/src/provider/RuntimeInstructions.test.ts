@@ -185,8 +185,11 @@ describe("buildRuntimeInstructions", () => {
     expect(concise).toContain("1-3 sentences");
     expect(concise).toContain("Give full detail when asked");
     // Worker report shape, not a replay.
-    expect(concise).toContain("a plain 1-3 line result with the path or link that proves it");
-    expect(concise).toContain("only when the result needs them");
+    expect(concise).toContain("a few plain sentences and the path or link that proves it");
+    // A line cap pushed long reports into run-together words (October 25, 2026).
+    expect(concise).toContain("put more in a file, never compressed");
+    expect(concise).not.toContain("1-3 line");
+    expect(concise).toContain("only when needed");
     // reportDocument.ts reads this label to mark the thread Blocked.
     expect(concise).toContain("end with a paragraph opening **Blockers:**");
     // Only the user's own decisions count, so agent-settleable work never reads as Blocked.

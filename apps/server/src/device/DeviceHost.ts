@@ -10,10 +10,13 @@
  * them here.
  */
 import type {
+  DeviceBootError,
   DeviceHostId,
   DeviceHostSummary,
+  DeviceOperationError,
   DevicePlatform,
   DevicePlatformAvailability,
+  DeviceSummary,
 } from "@specweave-studio/contracts";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -84,9 +87,39 @@ export interface AgentDeviceEndpoint {
   readonly entryPath: string;
 }
 
+export type HostDevice = Omit<DeviceSummary, "hostId">;
+
+/** Discovery and lifecycle for the devices a ready host can run. */
+export interface DeviceOperations {
+  readonly list: Effect.Effect<
+    {
+      readonly devices: ReadonlyArray<HostDevice>;
+      readonly detail: string | undefined;
+      /** Some Android virtual devices could not be listed; the rest are. */
+      readonly androidDiscoveryIncomplete?: boolean;
+    },
+    DeviceOperationError
+  >;
+  /**
+   * Boots the device and prepares its stream. Android AVDs change id when they
+   * boot (AVD name to emulator serial), so the returned id is authoritative.
+   */
+  readonly boot: (
+    device: HostDevice,
+  ) => Effect.Effect<string, DeviceOperationError | DeviceBootError>;
+  /** Prepares the stream of a device that is already booted. */
+  readonly attach: (device: HostDevice) => Effect.Effect<void, DeviceOperationError>;
+  readonly shutdown: (device: {
+    readonly id: string;
+    readonly platform: DevicePlatform;
+  }) => Effect.Effect<void, DeviceOperationError>;
+  readonly screenshot: (device: HostDevice) => Effect.Effect<Uint8Array, DeviceOperationError>;
+}
+
 export interface DeviceHostReady {
   readonly nodePath: string;
   readonly hub: DeviceHubEndpoint;
+  readonly devices: DeviceOperations;
   /**
    * Runs a host command (`xcrun`, `adb`, or a helper bundled with the hub)
    * where the devices live. On the local host this is a plain spawn; a

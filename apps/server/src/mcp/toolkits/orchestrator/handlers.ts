@@ -4,6 +4,7 @@ import { migrateThreads } from "./migrate.ts";
 import { OrchestratorToolkit } from "./tools.ts";
 import * as Effect from "effect/Effect";
 import { OrchestratorMcpFailure } from "@specweave-studio/contracts";
+import { findSquashedText, squashedTextMessage } from "@specweave-studio/shared/threadReport";
 import * as Option from "effect/Option";
 
 import * as McpInvocationContext from "../../McpInvocationContext.ts";
@@ -247,7 +248,17 @@ const handlers = {
         (machine, remote) =>
           Effect.gen(function* () {
             yield* refusePrivateCallerRemote(yield* loadCaller());
-            if (remote.forwardMessageId === undefined) return yield* sendRemote(machine, remote);
+            if (remote.forwardMessageId === undefined) {
+              const squashed = findSquashedText(remote.message ?? "");
+              if (squashed !== null)
+                return yield* Effect.fail(
+                  new OrchestratorMcpFailure({
+                    code: "invalid_request",
+                    message: squashedTextMessage(squashed),
+                  }),
+                );
+              return yield* sendRemote(machine, remote);
+            }
             if (remote.message !== undefined)
               return yield* Effect.fail(
                 new OrchestratorMcpFailure({

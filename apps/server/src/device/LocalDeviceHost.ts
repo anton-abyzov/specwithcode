@@ -53,6 +53,7 @@ import * as ServerConfig from "../config.ts";
 import * as ProcessRunner from "../processRunner.ts";
 import * as ServiceUpdateHold from "../serviceUpdate/ServiceUpdateHold.ts";
 import * as DeviceHost from "./DeviceHost.ts";
+import { makeDeviceHubOperations } from "./DeviceHubOperations.ts";
 import {
   agentDeviceStateDir,
   type DeviceToolPaths,
@@ -928,6 +929,15 @@ export const make = Effect.fn("LocalDeviceHost.make")(function* () {
 
   const toReady = (running: RunningHost): DeviceHost.DeviceHostReady => ({
     hub: { origin: running.hub.origin } satisfies DeviceHost.DeviceHubEndpoint,
+    devices: makeDeviceHubOperations({
+      hostId,
+      origin: running.hub.origin,
+      http: httpClient,
+      run,
+      androidAvailable: platformAvailability("android").pipe(
+        Effect.map((availability) => availability.available),
+      ),
+    }),
     nodePath: running.hub.nodePath,
     run,
     helpers: running.helpers,

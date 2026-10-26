@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vite-plus/test";
 
 import {
+  findSquashedText,
   reportFileName,
   reportIncrementCandidates,
   reportKey,
@@ -9,6 +10,7 @@ import {
   reportThreadKey,
   reportTitle,
   reportWordCount,
+  squashedTextMessage,
 } from "./threadReport.ts";
 
 describe("thread report helpers", () => {
@@ -112,5 +114,65 @@ describe("reportTitle for labeled reports", () => {
     ).toBe("Harness");
     expect(reportTitle("Outcome: Rows show the harness.", "Harness")).toBe("Harness");
     expect(reportTitle("Rows show the harness.", "Harness")).toBe("Rows show the harness");
+  });
+});
+
+// A worker's report to the EasyChamp coordinator, October 25, 2026.
+const REPORT =
+  "Owneranswersresolvedidentity; no renewedquestion. Actualdashboardheadlesssignin+directMongo worked,all7executed(6PASS,1FAIL) exposed realUTCdaybug UI20vsMongo11 acrossmidnight. Ownread-onlySSHtunnelstopped,ephemeralstateprivate600thenretired,no sessionvalueslogs/Git/receipts. SourcePR21 https://github.com/anton-abyzov/ec-scrapers-dashboard/pull/21 exact09d2a75df492b63413cf2e2327e97ef5c5f8800e fixesauth/sessionStorage/failclosedmissinginputs/no-skippedgreen andUTCdayKPI, preservesall7assertions;72worker+20UI+13boundarytests/buildPASS. Neednormalreviewedmerge/deploythenactualall7livePASS; notclaimingcomplete yet.";
+
+describe("findSquashedText", () => {
+  it("finds a report whose words run together", () => {
+    expect(findSquashedText(REPORT)?.samples).toEqual([
+      "Owneranswersresolvedidentity",
+      "Actualdashboardheadlesssignin+directMong…",
+      "Ownread-onlySSHtunnelstopped,ephemeralst…",
+    ]);
+  });
+
+  it("finds a run-together paragraph after a readable one", () => {
+    const text = `The audit is done and the pull request is open for review.\n\n${REPORT}`;
+    expect(findSquashedText(text)).not.toBeNull();
+  });
+
+  it("counts words joined by invisible characters as run together", () => {
+    const words = REPORT.replaceAll(" ", "​");
+    expect(findSquashedText(words)).not.toBeNull();
+  });
+
+  it("passes a technical report with hashes, paths, links and identifiers", () => {
+    const text = [
+      "Fixed the worker messages. `studio_thread_send` passed the text through unchanged, so the model wrote it that way.",
+      "PR [#812](https://github.com/anton-abyzov/specwithcode/pull/812) at 09d2a75df492b63413cf2e2327e97ef5c5f8800e passes 72 worker, 20 UI and 13 boundary tests in apps/server/src/mcp/toolkits/orchestrator/handlers.ts.",
+      "OrchestratorMcpThreadSendInput, ProjectCoordinatorService and WorkerMessagePresentation are unchanged.",
+      "Report: /Users/you/.local/share/easychamp/dashboard-auth-20261025/iac-contract-review.md, also https://example.com/averyveryverylongpathsegmentwithoutspaces.",
+      "Long words such as internationalization, characteristically and counterrevolutionary are fine.",
+    ].join("\n\n");
+    expect(findSquashedText(text)).toBeNull();
+  });
+
+  it("passes dense German compounds", () => {
+    const text =
+      "Die Datenschutzgrundverordnung verlangt eine Auftragsverarbeitungsvereinbarung mit jedem Dienstleister. Ich habe die Softwareentwicklung im Projekt geprüft und die Geschwindigkeitsbegrenzung der Schnittstelle dokumentiert.";
+    expect(findSquashedText(text)).toBeNull();
+  });
+
+  it("leaves code blocks, code spans and short messages alone", () => {
+    const code =
+      "```\nconstaverylongidentifierwithoutanycapitals = anotherverylongidentifierwithoutcapitals;\n```";
+    expect(findSquashedText(`Here is the change:\n\n${code}`)).toBeNull();
+    expect(
+      findSquashedText(
+        "Set `averylongidentifierwithoutanycapitals` and `anotherverylongidentifierhere` in the config file.",
+      ),
+    ).toBeNull();
+    expect(findSquashedText("Doneallteststpassed")).toBeNull();
+  });
+
+  it("tells the sender what to fix, quoting what it wrote", () => {
+    const message = squashedTextMessage(findSquashedText(REPORT)!);
+    expect(message).toContain('"Owneranswersresolvedidentity"');
+    expect(message).toContain("a space between every word");
+    expect(message).toContain("put it in a file and send its path");
   });
 });

@@ -512,6 +512,19 @@ it("readThread and sendToThread reach threads in other projects", async () => {
     });
     expect(sent.threadId).toBe(foreignThreadId);
 
+    // A report whose words run together is refused so the agent rewrites it, and nothing is sent.
+    const squashed = yield* service
+      .sendToThread(makeScope(), {
+        threadId: foreignThreadId,
+        message:
+          "Owneranswersresolvedidentity; no renewedquestion. Actualdashboardheadlesssignin+directMongo worked,all7executed(6PASS,1FAIL) exposed realUTCdaybug acrossmidnight.",
+      })
+      .pipe(Effect.flip);
+    expect(squashed.code).toBe("invalid_request");
+    expect(squashed.message).toContain('"Owneranswersresolvedidentity"');
+    expect(squashed.message).toContain("a space between every word");
+    expect(sends).toBe(1);
+
     // Neither a project worker nor coordinator can push unsolicited text into Aide.
     targetPersonal = true;
     for (const input of [

@@ -78,6 +78,7 @@ import {
   runRanAfter,
 } from "@specweave-studio/shared/orchestrationV2ThreadError";
 import { formatStudioThreadLink } from "@specweave-studio/shared/studioThreadLinks";
+import { findSquashedText, squashedTextMessage } from "@specweave-studio/shared/threadReport";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as Crypto from "effect/Crypto";
@@ -3178,6 +3179,10 @@ const make = Effect.gen(function* () {
             "invalid_request",
             "Pass either message or forwardMessageId to studio_thread_send.",
           );
+        // An agent's own words must be readable; the user's forwarded words stay as written.
+        const squashed = forwarded === undefined ? findSquashedText(text) : null;
+        if (squashed !== null)
+          return yield* failure("invalid_request", squashedTextMessage(squashed));
 
         const mode = input.mode ?? "auto";
         // A forwarded message has one delivery per target, however often it is retried.

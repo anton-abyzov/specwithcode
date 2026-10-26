@@ -286,3 +286,82 @@ export function reportFileName(input: {
 export function reportKeyFromFileName(fileName: string): string | null {
   return /-([0-9a-f]{6}-[0-9a-f]{6})\.md$/.exec(fileName)?.[1] ?? null;
 }
+
+/**
+ * Prose whose words run together ("Owneranswersresolvedidentity; no
+ * renewedquestion"). Models under length pressure sometimes write a report
+ * this way, and no reader can follow it. Nothing in the app strips spaces, and
+ * the spaces cannot be put back reliably, so the text is refused where an agent
+ * sends it and the agent rewrites it.
+ *
+ * A paragraph counts as run together when its words average at least
+ * `LETTERS_PER_WORD` letters and it holds at least `RUNS` lowercase runs of
+ * `RUN_LETTERS` or more. English averages about 5 letters a word and dense
+ * German under 9; the run test keeps identifiers (`ProjectCoordinatorService`)
+ * and file paths, whose lowercase runs are short, from counting. Code, URLs,
+ * link targets and absolute paths are left out before measuring.
+ */
+
+const RUN_LETTERS = 16;
+const RUNS = 2;
+const LETTERS_PER_WORD = 10;
+/** Too little prose to judge. */
+const MIN_LETTERS = 40;
+const MAX_SAMPLES = 3;
+const SAMPLE_CHARACTERS = 40;
+
+const FENCED = /^ {0,3}(`{3,}|~{3,})[^\n]*\n[\s\S]*?(?:^ {0,3}\1[^\n]*$|(?![\s\S]))/gm;
+const CODE_SPAN = /`[^`\n]*`/g;
+const LINK_TARGET = /\]\([^)\s]*\)/g;
+/** `[label]: target`, a Markdown reference definition. */
+const LINK_DEFINITION = /^ {0,3}\[[^\n]+\]:[ \t][^\n]*$/gm;
+const URL = /\b[a-z][a-z0-9+.-]*:\/\/\S+/gi;
+/** `/Users/…`, `~/…`, `./…`, `../…`, `C:\…` and `#anchor`. */
+const ABSOLUTE_PATH = /^(?:(?:~|\.{1,2}|[A-Za-z]:)?[/\\]|#)/;
+const LETTER = /[A-Za-z]/g;
+const RUN = new RegExp(`[a-z]{${RUN_LETTERS},}`, "g");
+
+export interface SquashedText {
+  /** Run-together words as written, at most three, to quote back to the sender. */
+  readonly samples: readonly string[];
+}
+
+/** Null when the text reads as separate words. */
+export function findSquashedText(text: string): SquashedText | null {
+  const prose = text
+    .replace(FENCED, "\n\n")
+    .replace(LINK_DEFINITION, " ")
+    .replace(CODE_SPAN, " ")
+    .replace(LINK_TARGET, "]")
+    .replace(URL, " ");
+  const samples: string[] = [];
+  for (const paragraph of prose.split(/\n[ \t]*\n/)) {
+    const words = paragraph
+      .split(/\s+/)
+      .filter((word) => word !== "" && !ABSOLUTE_PATH.test(word) && /[A-Za-z]/.test(word));
+    let letters = 0;
+    let runs = 0;
+    const glued: string[] = [];
+    for (const word of words) {
+      letters += word.match(LETTER)?.length ?? 0;
+      // Words use many letters; hex (0xfffffffcn) and filler (aaaaaaaa) use few.
+      const found = word.match(RUN)?.filter((run) => new Set(run).size >= 6).length ?? 0;
+      runs += found;
+      if (found > 0) glued.push(word);
+    }
+    if (letters < MIN_LETTERS || runs < RUNS) continue;
+    if (letters / words.length < LETTERS_PER_WORD) continue;
+    for (const word of glued) {
+      if (samples.length === MAX_SAMPLES) break;
+      const bare = word.replace(/^\W+|\W+$/g, "");
+      samples.push(bare.length > SAMPLE_CHARACTERS ? `${bare.slice(0, SAMPLE_CHARACTERS)}…` : bare);
+    }
+  }
+  return samples.length === 0 ? null : { samples };
+}
+
+/** What an agent is told when its message is refused, so it can rewrite it. */
+export function squashedTextMessage(found: SquashedText): string {
+  const quoted = found.samples.map((sample) => `"${sample}"`).join(", ");
+  return `Not sent: the message runs words together without spaces (${quoted}). Rewrite it as plain sentences with a space between every word and full words instead of abbreviations, then send it again. If the detail does not fit a few sentences, put it in a file and send its path.`;
+}
