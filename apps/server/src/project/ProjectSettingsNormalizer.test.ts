@@ -161,7 +161,11 @@ const seedLegacyProjects = Effect.gen(function* () {
     commandId: CommandId.make("assistant:goal"),
     workspaceSettings: { expectedRevision: 1, goal: "Help at home" },
   });
-  yield* projects.delete({ projectId: ids.deleted, commandId: CommandId.make("deleted:delete") });
+  yield* projects.delete({
+    projectId: ids.deleted,
+    commandId: CommandId.make("deleted:delete"),
+    confirmationTitle: ids.deleted,
+  });
 });
 
 const readSettings = (projectId: ProjectId) =>

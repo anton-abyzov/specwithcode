@@ -306,6 +306,7 @@ it.layer(layerTest)("ProjectService", (it) => {
       const deleted = yield* service.delete({
         commandId: CommandId.make("command:project:delete"),
         projectId,
+        confirmationTitle: "Renamed",
       });
       assert.isNotNull(deleted.deletedAt);
       assert.isTrue(Option.isNone(yield* service.getById(projectId)));
@@ -586,6 +587,7 @@ it.layer(layerTest)("ProjectService", (it) => {
       yield* service.delete({
         commandId: CommandId.make("command:freed:delete"),
         projectId: holderId,
+        confirmationTitle: "Holder",
       });
       // A fresh plan would now succeed; the recorded conflict still answers.
       const replayed = yield* service.create(claim).pipe(Effect.flip);
@@ -608,7 +610,11 @@ it.layer(layerTest)("ProjectService", (it) => {
         title: "Delete retry",
         workspaceRoot: "/work/delete-retry",
       });
-      const input = { commandId: CommandId.make("command:delete-retry:delete"), projectId };
+      const input = {
+        commandId: CommandId.make("command:delete-retry:delete"),
+        projectId,
+        confirmationTitle: "Delete retry",
+      };
       const deleted = yield* service.delete(input);
       assert.deepEqual(yield* service.delete(input), deleted);
       const events = yield* sql<{ readonly command_id: string }>`
@@ -633,6 +639,7 @@ it.layer(layerTest)("ProjectService", (it) => {
       yield* service.delete({
         commandId: CommandId.make("command:deleted-target:delete"),
         projectId,
+        confirmationTitle: "Deleted target",
       });
       const again = yield* service
         .delete({ commandId: CommandId.make("command:deleted-target:delete-again"), projectId })
@@ -756,7 +763,11 @@ it.layer(layerTest)("ProjectService", (it) => {
         title: "Deleted Project Name",
         workspaceRoot: "/work/names-gone",
       });
-      yield* service.delete({ commandId: CommandId.make("names:delete:gone"), projectId: gone });
+      yield* service.delete({
+        commandId: CommandId.make("names:delete:gone"),
+        projectId: gone,
+        confirmationTitle: "Deleted Project Name",
+      });
       const reused = yield* service.update({
         commandId: CommandId.make("names:rename:reuse"),
         projectId: first,
@@ -1075,7 +1086,11 @@ it.effect("rejects an update that waited on the lock while its project was delet
       workspaceRoot: "/work/update-race",
     });
     const deletion = yield* service
-      .delete({ commandId: CommandId.make("command:update-race:delete"), projectId })
+      .delete({
+        commandId: CommandId.make("command:update-race:delete"),
+        projectId,
+        confirmationTitle: "Update race",
+      })
       .pipe(Effect.forkChild({ startImmediately: true }));
     yield* Deferred.await(deleteReachedCommit);
     const updateCommandId = CommandId.make("command:update-race:update");
@@ -1145,7 +1160,11 @@ it.effect(
           workspaceRoot: "/work/late",
         });
         yield* Deferred.await(started);
-        const command = { commandId: CommandId.make("late-delete"), projectId };
+        const command = {
+          commandId: CommandId.make("late-delete"),
+          projectId,
+          confirmationTitle: "Late",
+        };
         const deleted = yield* service.delete(command);
         yield* Deferred.succeed(release, undefined);
         for (let i = 0; i < 100; i++) {

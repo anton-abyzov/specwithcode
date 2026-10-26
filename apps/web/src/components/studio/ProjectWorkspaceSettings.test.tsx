@@ -4,6 +4,10 @@ import { createRoot, type Root } from "react-dom/client";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 import type { EnvironmentProject } from "@specweave-studio/client-runtime/state/shell";
 import { ProviderInstanceId, type ProjectWorkspaceReadResult } from "@specweave-studio/contracts";
+import {
+  findProjectSettingsAnchor,
+  PROJECT_SETTINGS_SEARCH_ROWS,
+} from "./projectSettingsSearch.logic";
 const state = vi.hoisted(() => ({
   update: vi.fn(),
   remove: vi.fn(),
@@ -107,9 +111,11 @@ vi.mock("@tanstack/react-router", () => ({
 }));
 vi.mock("./ProjectModels", () => ({
   ProjectModels: ({ label, value }: { label: string; value: { model: string } | null }) => (
-    <p>
-      {label}: {value?.model ?? "Not selected"}
-    </p>
+    <fieldset>
+      <legend>
+        {label}: {value?.model ?? "Not selected"}
+      </legend>
+    </fieldset>
   ),
 }));
 vi.mock("./ProjectUsage", () => ({ ProjectUsage: () => <p>Recorded usage</p> }));
@@ -140,15 +146,35 @@ vi.mock("../settings/ProviderLimitSettings", () => ({
   ProviderLimitSettings: () => <p>When a provider runs out</p>,
 }));
 vi.mock("../settings/RecommendedModelProviders", () => ({
-  RecommendedModelProviders: () => <p>Also served by</p>,
+  RecommendedModelProviders: () => <h3>Also served by</h3>,
 }));
 vi.mock("../settings/ProjectOverrides", () => ({
   ProjectOverrides: ({ checkouts }: { checkouts: readonly { id: string }[] }) => (
-    <p data-project-overrides={checkouts.map((checkout) => checkout.id).join(",")} />
+    <div data-project-overrides={checkouts.map((checkout) => checkout.id).join(",")}>
+      <h3>Overrides</h3>
+    </div>
   ),
 }));
 vi.mock("./ProjectRoutines", () => ({ ProjectRoutines: () => <p>Project routines</p> }));
-vi.mock("./ProjectFolderChange", () => ({ ProjectFolderChange: () => <p>Project folder</p> }));
+vi.mock("./ProjectFolderChange", () => ({
+  ProjectFolderChange: ({
+    disabled,
+    blockedReason,
+  }: {
+    disabled: boolean;
+    blockedReason?: string | null;
+  }) => (
+    <section
+      className="project-setting-row"
+      data-folder-disabled={String(disabled)}
+      data-folder-blocked={blockedReason ?? ""}
+    >
+      <div>
+        <h3>Project folder</h3>
+      </div>
+    </section>
+  ),
+}));
 vi.mock("../computerUse/ComputerUsePermissions", () => ({
   ComputerUsePermissionSetup: () => <p>Computer use permissions</p>,
 }));
@@ -289,6 +315,92 @@ async function setLabel(label: string, value: string) {
     el.dispatchEvent(new Event("input", { bubbles: true }));
   });
 }
+/** M1 accepts this project's workers, M3 does not: enough for the Worker machine choice. */
+function twoMachineFleet() {
+  const workers = {
+    status: "allowed",
+    access: "auto",
+    expiresAt: null,
+    renewable: true,
+    problem: null,
+  };
+  return {
+    configured: true,
+    connectPermission: "access:write",
+    observedAt: "2026-10-12T00:00:00Z",
+    listener: "loopback",
+    machines: [
+      {
+        id: "m1",
+        label: "M1",
+        environmentId: "env-m1",
+        url: "https://m1.fixture.ts.net",
+        status: "reachable",
+        pairingConfigured: true,
+        workers,
+      },
+      {
+        id: "m3",
+        label: "M3",
+        environmentId: "env-m3",
+        url: "https://m3.fixture.ts.net",
+        status: "reachable",
+        pairingConfigured: true,
+        workers: { ...workers, status: "not_allowed", access: null },
+      },
+    ],
+  };
+}
+describe("project folder placement", () => {
+  it("puts Project folder right under Name and icon, before Goal and Worker machine", async () => {
+    state.fleet = twoMachineFleet();
+    await render("general", true, { kind: "code" });
+    const text = container.textContent ?? "";
+    const at = (label: string) => {
+      const index = text.indexOf(label);
+      expect(index, label).toBeGreaterThanOrEqual(0);
+      return index;
+    };
+    expect(at("Name and icon")).toBeLessThan(at("Project folder"));
+    expect(at("Project folder")).toBeLessThan(at("Goal"));
+    expect(at("Project folder")).toBeLessThan(at("Worker machine"));
+  });
+  it("has no Project folder for a personal project", async () => {
+    await render("general", true, { kind: "personal" });
+    expect(container.textContent).toContain("Name and icon");
+    expect(container.textContent).not.toContain("Project folder");
+  });
+  it("lists the General search rows in the order the tab renders them", async () => {
+    state.fleet = twoMachineFleet();
+    await render("general", true, { kind: "code" });
+    const rows = PROJECT_SETTINGS_SEARCH_ROWS.filter((row) => row.tab === "general");
+    const anchors = rows.map((row) => {
+      const anchor = findProjectSettingsAnchor(container, row);
+      expect(anchor, row.id).not.toBeNull();
+      return anchor!;
+    });
+    const rendered = [...rows.keys()].toSorted((a, b) =>
+      anchors[a] === anchors[b]
+        ? 0
+        : anchors[a]!.compareDocumentPosition(anchors[b]!) & Node.DOCUMENT_POSITION_FOLLOWING
+          ? -1
+          : 1,
+    );
+    expect(rendered.map((index) => rows[index]!.id)).toEqual(rows.map((row) => row.id));
+  });
+  it("names the unsaved edits that block a folder change", async () => {
+    await render("general", true, { kind: "code" });
+    const folder = () => container.querySelector<HTMLElement>("[data-folder-blocked]")!;
+    expect(folder().dataset.folderBlocked).toBe("");
+    await input("#project-settings-name", "Atlas revised");
+    expect(folder().dataset.folderBlocked).toBe(
+      "Save or discard your unsaved changes to change the folder.",
+    );
+    expect(folder().dataset.folderDisabled).toBe("false");
+    await click("Discard");
+    expect(folder().dataset.folderBlocked).toBe("");
+  });
+});
 describe("project settings and memory", () => {
   it("searches its own sections and rows, sections first, and opens the picked one", async () => {
     await render("general");
@@ -379,39 +491,7 @@ describe("project settings and memory", () => {
     expect(state.saved).not.toHaveBeenCalled();
   });
   it("sends this project's workers to a machine that allows them, and back here", async () => {
-    const workers = {
-      status: "allowed",
-      access: "auto",
-      expiresAt: null,
-      renewable: true,
-      problem: null,
-    };
-    state.fleet = {
-      configured: true,
-      connectPermission: "access:write",
-      observedAt: "2026-10-12T00:00:00Z",
-      listener: "loopback",
-      machines: [
-        {
-          id: "m1",
-          label: "M1",
-          environmentId: "env-m1",
-          url: "https://m1.fixture.ts.net",
-          status: "reachable",
-          pairingConfigured: true,
-          workers,
-        },
-        {
-          id: "m3",
-          label: "M3",
-          environmentId: "env-m3",
-          url: "https://m3.fixture.ts.net",
-          status: "reachable",
-          pairingConfigured: true,
-          workers: { ...workers, status: "not_allowed", access: null },
-        },
-      ],
-    };
+    state.fleet = twoMachineFleet();
     await render();
     const select = [...container.querySelectorAll("label")]
       .find((node) => node.textContent?.startsWith("Worker machine"))!

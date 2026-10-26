@@ -225,6 +225,10 @@ export function ProjectWorkspaceSurface({
   const machineName = useMachineNickname(project.environmentId, environment?.label);
   const primaryEnvironmentId = usePrimaryEnvironmentId();
   const canOperate = useEnvironmentScope(project.environmentId, AuthOrchestrationOperateScope);
+  const headerProject = useMemo(
+    () => ({ environmentId: project.environmentId, projectId: project.id }),
+    [project.environmentId, project.id],
+  );
   // "Create PR" runs the thread's source control action, a grant of its own.
   const canWriteSourceControl = useEnvironmentScope(
     project.environmentId,
@@ -1373,6 +1377,7 @@ export function ProjectWorkspaceSurface({
                 <TimelineDetailMenu
                   appearance="project"
                   threadKey={coordinatorRef ? scopedThreadKey(coordinatorRef) : null}
+                  project={headerProject}
                 />
                 <Tip label="Project settings">
                   <button

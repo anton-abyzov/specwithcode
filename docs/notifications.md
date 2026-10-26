@@ -10,6 +10,17 @@ Clicking a thread notification opens its original environment, project and threa
 
 Browser permission is refreshed when settings regain focus and when supported permission-change events arrive. Denied permission requires changing browser/site settings. Native OS permission is managed in system settings; Electron's delivery callback cannot establish that a banner was visible or a person saw it. Focus modes may suppress banners. Send test reports a submission result, not physical receipt.
 
+## Per-project levels
+
+Each project's row menu in the sidebar has a Notifications item with four levels. The level is saved on the project on every machine that has it, so desktop alerts, browser alerts and phone pushes all follow it; the device settings above still decide whether a device alerts at all.
+
+- All new messages: every thread's alerts, including the workers a coordinator delegated to.
+- Coordinator and requests (the default): the coordinator and any thread the person started or forked, plus any request from a worker. A request is an approval, a question, a plan to review, a sign-in or a held queue, the same things the row's waiting count counts. A worker finishing, failing or going quiet does not alert; the coordinator reports it.
+- Only requests: requests from any thread, nothing else.
+- Nothing: no alerts from the project, and its row hides the waiting count and shows a muted bell. Threads inside still read "Waiting on you".
+
+Phones receive only main threads (workers project no activity), so on the phone the first two levels are the same. The server marks a state its project's level keeps quiet, and the relay skips the alert while still updating Live Activities and widgets. A relay that predates the flag ignores it and alerts as before. A temporary agent token cannot change a project's level.
+
 ## Claude Code research
 
 The installed Claude Code 2.1.302 artifact was inspected with REA 6.4.0, SHA-256 `5262ce9de86243fed0d21edc39b271555d56780d0112e2b194439fe1c6662d37`. REA evidence `ev_b5977e1b0ee1f834ce284b426563ab71efef321bf8a9f647af3119cc7814f0f6`, `ev_f118ca45da6a0fa2922494731122582ede2edc0ecf15e00d5a94d05c15e994b4`, and `ev_585f321a9a9374f94e2b4aa1dd2dde91b3a528c9404b06eb63a7fa6d58cd6ba8` distinguish terminal escape/bell delivery and Notification hooks from a separate authenticated mobile push path. Static analysis does not establish Anthropic's server delivery guarantees or a reusable browser push service. No proprietary code was copied.

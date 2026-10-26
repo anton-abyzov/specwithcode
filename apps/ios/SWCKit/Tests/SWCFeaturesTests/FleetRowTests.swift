@@ -93,6 +93,22 @@ struct OrchestratorSwitcherChoiceTests {
     #expect(choices.map(\.ref) == [current, ProjectRef(environmentId: "m1", projectId: "app"), ProjectRef(environmentId: "m3", projectId: "app")])
   }
 
+  @Test func separateCheckoutsOnOneMachineEachStayOpenable() {
+    let current = ProjectRef(environmentId: "m4", projectId: "main")
+    func member(_ env: String, _ id: String, _ folder: String) -> ProjectMember {
+      ProjectMember(ref: ProjectRef(environmentId: env, projectId: id), machineLabel: env.uppercased(), machineOnline: true, isLinked: false, folder: folder)
+    }
+    let members = [
+      member("m4", "main", "/Users/a/Projects/sw-easychamp"),
+      member("m1", "m1-main", "/Users/b/Projects/sw-easychamp"),
+      member("m1", "m1-dup", "/Users/b/Projects/sw-easychamp"),
+      member("m1", "m1-copy", "/Users/b/work/easychamp-copy"),
+    ]
+    let choices = OrchestratorSwitcher.choices(members, current: current)
+    #expect(choices.map(\.ref.projectId) == ["main", "m1-main", "m1-copy"])
+    #expect(choices.map { OrchestratorSwitcher.title($0, among: choices) } == ["M4", "M1 · sw-easychamp", "M1 · easychamp-copy"])
+  }
+
   @Test func sameFolderTwiceOnOneMachineHasNoSwitcher() {
     let current = ProjectRef(environmentId: "m4", projectId: "notes")
     let members = [

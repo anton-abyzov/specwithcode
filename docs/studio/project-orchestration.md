@@ -18,7 +18,7 @@ An unconfirmed retry retains its request identity across navigation and reloads.
 
 The usage indicator is scoped to the selected execution machine/profile. A low percentage alone does not prove that an account can start work: native spend, workspace or account limits can still deny admission. Recovery estimates include every exhausted usage window and stay unknown when the provider does not supply enough information. Automatic recovery follows the configured policy and does not select paid API capacity automatically.
 
-**Settings → Agents → Response style → Concise** is the default for short generated answers. It applies through the host/project settings, rather than a separate per-thread verbosity switch. **Appearance → Timeline detail** changes how messages are displayed, not what the agent writes.
+**Settings → Agents → Response style → Concise** is the default for short generated answers. It applies through the host/project settings, rather than a separate per-thread verbosity switch; the reply button in the project header sets it for the project. **Show** in the same menu, like **Appearance → Timeline detail**, changes how messages are displayed, not what the agent writes.
 
 ### Plans and task routing
 

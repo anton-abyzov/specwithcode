@@ -84,6 +84,14 @@ import { HANDOFF_APP_VERSION, HANDOFF_PROTOCOL_VERSION, versionFailure } from ".
 const SETTLE_TIMEOUT = Duration.seconds(45);
 const SETTLE_POLL = Duration.millis(500);
 const REFUSED_RETRY_MS = 10 * 60_000;
+/** A failing replication waits 30s, then twice as long each time, up to 10 minutes. */
+export const REPLICATE_RETRY_BASE_MS = 30_000;
+export const REPLICATE_RETRY_MAX_MS = 10 * 60_000;
+
+export function replicateRetryDelay(failures: number): number {
+  const doublings = Math.max(0, Math.min(failures - 1, 20));
+  return Math.min(REPLICATE_RETRY_BASE_MS * 2 ** doublings, REPLICATE_RETRY_MAX_MS);
+}
 
 const failed = (code: HandoffModeErrorCode, message: string) =>
   new HandoffModeError({ code, message: message.slice(0, 1000) });
@@ -117,6 +125,10 @@ export const make = Effect.gen(function* () {
   const selfCaller: ReceiverCaller = { sourceEnvironmentId: self, grant: null };
   /** When each replica machine last answered this machine, for self-fencing. */
   const lastAnswer = new Map<string, number>();
+  /** Per thread and destination: failed replications in a row and when to try again. */
+  const replicateBackoff = new Map<string, { failures: number; retryAt: number }>();
+  const backoffKey = (threadId: ThreadId, destination: EnvironmentId) =>
+    `${threadId}\u0000${destination}`;
 
   const shellOf = (threadId: ThreadId) =>
     projections.getThreadShell(threadId).pipe(
@@ -266,7 +278,17 @@ export const make = Effect.gen(function* () {
               );
               return yield* peers.replicate(destination, meta, new Uint8Array(bundle));
             });
+      const key = backoffKey(shell.id, destination);
       return yield* shipped.pipe(
+        Effect.tap(() => Effect.sync(() => replicateBackoff.delete(key))),
+        Effect.tapError(() =>
+          Clock.currentTimeMillis.pipe(
+            Effect.map((at) => {
+              const failures = (replicateBackoff.get(key)?.failures ?? 0) + 1;
+              replicateBackoff.set(key, { failures, retryAt: at + replicateRetryDelay(failures) });
+            }),
+          ),
+        ),
         Effect.tap((answer) =>
           noteReplica(shell.id, {
             environmentId: destination,
@@ -358,7 +380,10 @@ export const make = Effect.gen(function* () {
       return { shell, checkpoint } as const;
     });
 
-  /** Waits (bounded) for the interrupted run to end, so the next checkpoint holds its last work. */
+  /**
+   * Waits (bounded) for the interrupted run to end, so the next checkpoint holds
+   * its last work. True when it ended; false (logged) when it still runs.
+   */
   const waitForRunToEnd = (threadId: ThreadId) =>
     Effect.gen(function* () {
       const attempts = Math.ceil(
@@ -368,14 +393,19 @@ export const make = Effect.gen(function* () {
         const shell = yield* projections
           .getThreadShell(threadId)
           .pipe(Effect.orElseSucceed(() => null));
-        if (shell === null || shell.activeRunId === null) return;
+        if (shell === null || shell.activeRunId === null) return true;
         yield* Effect.sleep(SETTLE_POLL);
       }
+      yield* Effect.logWarning("Handoff interrupted a turn that did not end in time", {
+        threadId,
+        timeoutMs: Duration.toMillis(SETTLE_TIMEOUT),
+      });
+      return false;
     });
 
   const interruptRun = (shell: OrchestrationV2ThreadShell, reason: string) =>
     shell.activeRunId === null
-      ? Effect.void
+      ? Effect.succeed(true)
       : orchestrator
           .dispatch({
             type: "run.interrupt",
@@ -420,6 +450,27 @@ export const make = Effect.gen(function* () {
         lastError: null,
         pendingTakeover: null,
       })).pipe(Effect.ignore);
+      // The destination runs the thread now. A turn still running here (an interrupt
+      // that did not land, or one that outlived the wait) is stopped again.
+      const latest = yield* projections
+        .getThreadShell(shell.id)
+        .pipe(Effect.orElseSucceed(() => null));
+      if (latest !== null && latest.activeRunId !== null) {
+        yield* orchestrator
+          .dispatch({
+            type: "run.interrupt",
+            commandId: CommandId.make(`handoff-fenced-interrupt:${latest.activeRunId}:${epoch}`),
+            threadId: shell.id,
+            runId: latest.activeRunId,
+            reason: `This thread continues on ${response.machineLabel}.`,
+            cause: "agent",
+          })
+          .pipe(
+            Effect.catchCause((cause) =>
+              Effect.logWarning("Handoff could not interrupt the fenced copy's turn", { cause }),
+            ),
+          );
+      }
       yield* orchestrator
         .dispatch({
           type: "thread.project-move.record",
@@ -501,9 +552,19 @@ export const make = Effect.gen(function* () {
     })).pipe(Effect.ignore);
 
   /**
+   * Did the destination itself refuse? A failure on this machine (no route, no
+   * credential, identity check) or a lost answer says nothing about the earlier
+   * takeover, which may have gone through.
+   */
+  const destinationRefused = (error: HandoffPeerError | HandoffRefusal) =>
+    error._tag === "HandoffRefusal" ||
+    (!error.uncertain && error.local !== true && error.code !== "unreachable");
+
+  /**
    * Re-sends a takeover that got no answer, at the same epoch: the destination
-   * either continued already (and repeats its answer) or continues now. A
-   * definite refusal gives the thread back; an in-doubt one keeps it paused.
+   * either continued already (and repeats its answer) or continues now. Only a
+   * refusal the destination sent gives the thread back; anything else keeps it
+   * paused.
    */
   const resendPending = (threadId: ThreadId) =>
     Effect.gen(function* () {
@@ -516,7 +577,7 @@ export const make = Effect.gen(function* () {
       const shell = yield* shellOf(threadId);
       const response = yield* sendTakeover(destination, pending.request).pipe(
         Effect.tapError((error) =>
-          error._tag === "HandoffPeerError" && error.uncertain
+          !destinationRefused(error)
             ? inDoubt(threadId, error.message)
             : error.code === "fenced"
               ? // The destination saw a newer epoch; a heartbeat settles who runs it.
@@ -903,11 +964,12 @@ export const make = Effect.gen(function* () {
 
   /**
    * Every lease tick: heartbeat the machines holding replicas (they answer
-   * which threads they continued, which fences the copy here), replicate a
-   * checkpoint a replica lacks, and fence this machine's running copies when
-   * no replica machine has answered for longer than a stale lease.
+   * which threads they continued, which fences the copy here) and fence this
+   * machine's running copies when no replica machine has answered for longer
+   * than a stale lease. It never ships a checkpoint, so a slow replication
+   * cannot delay it.
    */
-  const tick = Effect.gen(function* () {
+  const heartbeat = Effect.gen(function* () {
     const document = yield* handoff.document;
     const now = yield* Clock.currentTimeMillis;
     const byPeer = new Map<EnvironmentId, Array<{ sourceThreadId: ThreadId; epoch: number }>>();
@@ -921,14 +983,23 @@ export const make = Effect.gen(function* () {
         byPeer.set(replica.environmentId, list);
       }
     }
-    for (const [peer, leases] of byPeer) {
-      const answer = yield* peers
-        .heartbeat(peer, {
-          sourceEnvironmentId: self,
-          sourceLabel: selfLabel.slice(0, 120),
-          leases: leases.slice(0, 500),
-        })
-        .pipe(Effect.option);
+    // One silent peer must not hold up the others' heartbeats.
+    const answers = yield* Effect.forEach(
+      [...byPeer],
+      ([peer, leases]) =>
+        peers
+          .heartbeat(peer, {
+            sourceEnvironmentId: self,
+            sourceLabel: selfLabel.slice(0, 120),
+            leases: leases.slice(0, 500),
+          })
+          .pipe(
+            Effect.option,
+            Effect.map((answer) => ({ peer, leases, answer })),
+          ),
+      { concurrency: "unbounded" },
+    );
+    for (const { peer, leases, answer } of answers) {
       if (Option.isNone(answer)) continue;
       lastAnswer.set(peer, now);
       const continuedIds = new Set(answer.value.continued.map((entry) => entry.sourceThreadId));
@@ -1016,7 +1087,23 @@ export const make = Effect.gen(function* () {
         "No other machine answered for this thread's lease; it paused here.",
       );
     }
-    // Each checkpoint goes to every paired machine in the thread's logical project.
+    // Replicas whose source went silent read "unknown" here.
+    yield* handoff.updateDocument((current) => {
+      const next = markUnreachable(current, now);
+      return [undefined, next] as const;
+    });
+  }).pipe(
+    Effect.catchCause((cause) => Effect.logWarning("Handoff moves heartbeat failed", { cause })),
+  );
+
+  /**
+   * Ships each thread's newest checkpoint to every paired machine in its
+   * logical project that lacks it. A destination that keeps failing is retried
+   * with a growing wait (30s up to 10 minutes), not on every tick.
+   */
+  const replicate = Effect.gen(function* () {
+    const document = yield* handoff.document;
+    const now = yield* Clock.currentTimeMillis;
     const paired = new Set((yield* peers.targets).map((target) => target.environmentId));
     for (const [id, record] of Object.entries(document.threads)) {
       const checkpoint = record.checkpoint;
@@ -1035,8 +1122,10 @@ export const make = Effect.gen(function* () {
       const destinations = [...members].filter((environmentId) => {
         if (environmentId === self || !paired.has(environmentId)) return false;
         const replica = record.replicas.find((entry) => entry.environmentId === environmentId);
+        if (replica !== undefined && (replica.sequence ?? -1) >= checkpoint.sequence) return false;
+        const backoff = replicateBackoff.get(backoffKey(id as ThreadId, environmentId));
+        if (backoff !== undefined && now < backoff.retryAt) return false;
         if (replica === undefined) return true;
-        if ((replica.sequence ?? -1) >= checkpoint.sequence) return false;
         // A refusal that needs the user (a grant, the size cap) is retried every 10 minutes.
         const waiting = replica.state === "needs-grant" || replica.state === "too-large";
         return !waiting || now - Date.parse(replica.updatedAt) > REFUSED_RETRY_MS;
@@ -1050,12 +1139,11 @@ export const make = Effect.gen(function* () {
         yield* replicateTo(shell, checkpoint, destination).pipe(Effect.ignore);
       }
     }
-    // Replicas whose source went silent read "unknown" here.
-    yield* handoff.updateDocument((current) => {
-      const next = markUnreachable(current, now);
-      return [undefined, next] as const;
-    });
-  }).pipe(Effect.catchCause((cause) => Effect.logWarning("Handoff moves tick failed", { cause })));
+  }).pipe(
+    Effect.catchCause((cause) => Effect.logWarning("Handoff moves replication failed", { cause })),
+  );
+
+  const tick = heartbeat.pipe(Effect.andThen(replicate));
 
   return {
     handOff: (input: HandOffInput) => handOffAs(input, "handoff"),
@@ -1063,6 +1151,8 @@ export const make = Effect.gen(function* () {
     continueHere,
     resumeFenced,
     preflight,
+    heartbeat,
+    replicate,
     tick,
   };
 });

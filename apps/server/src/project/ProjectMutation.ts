@@ -1,13 +1,27 @@
 import { type ProjectMutation } from "@specweave-studio/contracts";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 
 import type { ProjectFolderService } from "./ProjectFolderChange.ts";
 import { ProjectFolderChangeError, type ProjectService } from "./ProjectService.ts";
 
-type ProjectMutations = Pick<ProjectService["Service"], "create" | "delete" | "update"> & {
+type ProjectMutations = Pick<
+  ProjectService["Service"],
+  "create" | "delete" | "update" | "getById"
+> & {
   /** Absent where the folder service cannot run, such as the offline CLI. */
   readonly changeFolder?: ProjectFolderService["Service"]["change"];
 };
+
+/** The same folder, ignoring surrounding spaces and trailing separators. */
+function sameRoot(left: string, right: string): boolean {
+  const trim = (root: string) => {
+    const trimmed = root.trim();
+    const stripped = trimmed.replace(/[\\/]+$/, "");
+    return stripped === "" ? trimmed : stripped;
+  };
+  return trim(left) === trim(right);
+}
 
 export const projectMutationOperation = Effect.fn("projectMutationOperation")(function* (
   projects: ProjectMutations,
@@ -35,18 +49,36 @@ export const projectMutationOperation = Effect.fn("projectMutationOperation")(fu
       });
 
     case "project.update": {
-      // Which list a project sits in is the person's choice; a temporary agent token
-      // cannot move a project between their projects and Automated.
+      // Which list a project sits in and how loudly it alerts are the person's
+      // choices; a temporary agent token cannot change either.
       const workspaceSettings =
         temporarySessionId === undefined || mutation.workspaceSettings === undefined
           ? mutation.workspaceSettings
-          : (({ origin: _origin, ...rest }) => rest)(mutation.workspaceSettings);
+          : (({ origin: _origin, notifications: _notifications, ...rest }) => rest)(
+              mutation.workspaceSettings,
+            );
+      // Moving the folder keeps threads in place, confirms a different repository or
+      // planning root, and relocates sessions; a plain update would skip all of that.
+      // The same folder is a no-op and stays allowed for older clients that send it, so
+      // the root is never passed on; an unknown project still fails as not found below.
+      if (mutation.workspaceRoot !== undefined) {
+        const current = yield* projects.getById(mutation.projectId);
+        if (
+          Option.isSome(current) &&
+          !sameRoot(current.value.workspaceRoot, mutation.workspaceRoot)
+        )
+          return yield* new ProjectFolderChangeError({
+            projectId: mutation.projectId,
+            reason: "use_folder_change",
+            detail:
+              "Nothing changed: a project update cannot move the project folder. Use Project settings > General > Project folder, or `project move` in the CLI. It checks the folder first and keeps running threads where they are.",
+          });
+      }
       return yield* projects.update({
         commandId: mutation.commandId,
         projectId: mutation.projectId,
         ...(workspaceSettings === undefined ? {} : { workspaceSettings }),
         ...(mutation.title === undefined ? {} : { title: mutation.title }),
-        ...(mutation.workspaceRoot === undefined ? {} : { workspaceRoot: mutation.workspaceRoot }),
         ...(mutation.defaultModelSelection === undefined
           ? {}
           : { defaultModelSelection: mutation.defaultModelSelection }),

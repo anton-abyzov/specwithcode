@@ -23,6 +23,11 @@ function plural(count: number, noun: string) {
   return `${count} ${noun}${count === 1 ? "" : "s"}`;
 }
 
+/** "1 thread keeps", "2 threads keep". */
+function pluralVerb(count: number, noun: string, verb: string) {
+  return `${plural(count, noun)} ${count === 1 ? `${verb}s` : verb}`;
+}
+
 /** The home folder as "~", so the part that differs between projects stays readable. */
 function displayFolder(path: string) {
   return path.replace(/^\/(?:Users|home)\/[^/]+(?=\/|$)/, "~");
@@ -93,22 +98,117 @@ export function planningSummary(check: Pick<ProjectFolderCheck, "planning" | "cu
   };
 }
 
+const REFUSAL_TEXT = {
+  folder_not_directory: "This path is a file, not a folder.",
+  folder_protected: "This folder is protected and cannot be a project folder.",
+  repository_unreadable: "The folder's Git repository could not be read.",
+  environment_invalid: "The project's approved folders do not fit this folder.",
+} as const;
+
+/** Why the folder cannot be used at all, or null. Exported for tests. */
+export function refusalSummary(check: Pick<ProjectFolderCheck, "refusal">): string | null {
+  const refusal = check.refusal;
+  if (refusal === undefined) return null;
+  return refusal.detail.trim() || REFUSAL_TEXT[refusal.reason];
+}
+
+const NESTED_SHOWN = 5;
+
+const RELATION_LABEL = {
+  inside: "inside the new folder",
+  contains: "contains it",
+  same: "used this folder",
+} as const;
+
+/** Other projects inside the new folder or around it, or null. Exported for tests. */
+export function nestedProjectsSummary(
+  check: Pick<ProjectFolderCheck, "nestedProjects">,
+): string | null {
+  const nested = check.nestedProjects ?? [];
+  if (nested.length === 0) return null;
+  const shown = nested
+    .slice(0, NESTED_SHOWN)
+    .map(
+      (other) =>
+        `"${other.title}" (${RELATION_LABEL[other.relation]}${other.deleted ? ", deleted" : ""})`,
+    )
+    .join(", ");
+  const more = nested.length > NESTED_SHOWN ? ` and ${nested.length - NESTED_SHOWN} more` : "";
+  const deleted = nested.some((other) => other.deleted)
+    ? " A deleted project's threads, memory and routines do not come back with this change."
+    : "";
+  return `Other projects overlap this folder: ${shown}${more}. They keep their own folders and threads.${deleted}`;
+}
+
+/**
+ * For a folder holding nested repositories that is not the current repository:
+ * a worktree launch without a chosen repository runs git in the project folder
+ * itself (ThreadLaunchService), so it never holds the nested repositories' code.
+ * Exported for tests.
+ */
+export function worktreeSourceSummary(
+  check: Pick<ProjectFolderCheck, "layout" | "sameRepository">,
+): string | null {
+  const layout = check.layout;
+  if (layout === undefined || check.sameRepository) return null;
+  if (layout.kind !== "umbrella" && layout.kind !== "nested") return null;
+  return layout.rootIsRepository
+    ? "New worktree threads and routines are cut from this folder's own repository, so they do not contain the nested repositories' code unless a repository is chosen for them."
+    : "This folder is not a Git repository itself, so new worktree threads and routines need a repository chosen for them.";
+}
+
+/** The line shown once the folder changed, built from the check the change was applied with. */
+export function changedSummary(
+  check: Pick<
+    ProjectFolderCheck,
+    "currentRoot" | "targetRoot" | "threadCount" | "keptInPlaceCount" | "reboundWorktreeCount"
+  >,
+): string {
+  const parts = [`The project now uses ${check.targetRoot}.`];
+  if (check.keptInPlaceCount > 0) {
+    parts.push(
+      `${pluralVerb(check.keptInPlaceCount, "thread", "keep")} running in ${check.currentRoot}; the coordinator and new threads use ${check.targetRoot}.`,
+    );
+  } else {
+    parts.push(
+      check.threadCount > 0
+        ? "Its threads run there from their next turn."
+        : "New threads run there.",
+    );
+  }
+  if (check.reboundWorktreeCount > 0) {
+    parts.push(
+      `${plural(check.reboundWorktreeCount, "thread checkout")} inside the old folder now ${check.reboundWorktreeCount === 1 ? "points" : "point"} at the same place in the new one.`,
+    );
+  }
+  parts.push(`To undo, change the folder back to ${check.currentRoot}.`);
+  if (check.keptInPlaceCount > 0) parts.push("Changing it back does not move the kept threads.");
+  return parts.join(" ");
+}
+
 /**
  * Moves a project to another folder. The server checks the folder first: it must
- * exist, belong to no other project, and nothing may be running; a folder from a
- * different repository needs an explicit confirmation, and so does a folder
- * whose SpecWeave planning root differs (plan cards would read other
- * increments). The check also shows what the folder holds. Threads, worktree
- * bindings and memory move with the project; leaving a checkout of another
- * repository keeps its threads running there.
+ * exist, be usable as a project folder, belong to no other project, and nothing
+ * may be running; a folder from a different repository needs an explicit
+ * confirmation, and so does a folder whose SpecWeave planning root differs
+ * (plan cards would read other increments). The check also shows what the
+ * folder holds and which other projects overlap it. Memory and history stay
+ * with the project, the coordinator and new threads use the new folder, and
+ * thread checkouts inside the old folder are rebound to the same place in the
+ * new one. When the old folder stays a checkout of another repository (a
+ * repository project moving up to its umbrella), the threads that ran in it
+ * are kept there instead of moving.
  */
 export function ProjectFolderChange({
   project,
   disabled,
+  blockedReason = null,
   onChanged,
 }: {
   project: EnvironmentProject;
   disabled: boolean;
+  /** Shown under the controls, which stay disabled, while set (unsaved edits elsewhere). */
+  blockedReason?: string | null;
   onChanged: () => void;
 }) {
   const [folder, setFolder] = useState("");
@@ -126,7 +226,7 @@ export function ProjectFolderChange({
     typeof window !== "undefined" && window.desktopBridge !== undefined
       ? readLocalApi()?.dialogs.pickFolder
       : undefined;
-  const locked = disabled || busy;
+  const locked = disabled || blockedReason !== null || busy;
 
   function failed(result: Parameters<typeof squashAtomCommandFailure>[0], fallback: string) {
     const cause = squashAtomCommandFailure(result);
@@ -179,7 +279,7 @@ export function ProjectFolderChange({
 
   async function apply() {
     if (locked || !check) return;
-    const previousRoot = check.currentRoot;
+    const applied = check;
     setBusy(true);
     setError(null);
     const result = await changeFolder({
@@ -196,17 +296,19 @@ export function ProjectFolderChange({
       failed(result, "The folder did not change. Check it again and retry.");
       return;
     }
-    setDone(
-      `The project now uses ${check.targetRoot}. Its threads run there from their next turn. To undo, change the folder back to ${previousRoot}.`,
-    );
+    setDone(changedSummary(applied));
     setCheck(null);
     setFolder("");
     onChanged();
   }
 
   const planning = check === null ? null : planningSummary(check);
+  const refusal = check === null ? null : refusalSummary(check);
+  const nested = check === null ? null : nestedProjectsSummary(check);
+  const worktreeSource = check === null ? null : worktreeSourceSummary(check);
   const blocked =
     check === null ||
+    refusal !== null ||
     (planning !== null && !confirmPlanning) ||
     check.unchanged ||
     !check.targetExists ||
@@ -269,12 +371,21 @@ export function ProjectFolderChange({
             Check
           </button>
         </div>
+        {blockedReason ? (
+          <p className="project-muted" data-folder-blocked>
+            {blockedReason}
+          </p>
+        ) : null}
         {error ? <CheckLine tone="error">{error}</CheckLine> : null}
         {done ? <CheckLine tone="ok">{done}</CheckLine> : null}
         {check ? (
           <div aria-label="Folder check">
             {check.unchanged ? (
               <CheckLine tone="info">The project already uses this folder.</CheckLine>
+            ) : refusal ? (
+              <CheckLine tone="error">
+                <span data-folder-refusal={check.refusal?.reason}>{refusal}</span>
+              </CheckLine>
             ) : !check.targetExists ? (
               <CheckLine tone="error">
                 {check.targetRoot} does not exist. Create or clone it first.
@@ -293,7 +404,7 @@ export function ProjectFolderChange({
                     ? `Same repository: ${repositoryLabel(check.targetRepository)}.`
                     : `Different repository: the new folder has ${repositoryLabel(check.targetRepository)}, the current one ${repositoryLabel(check.currentRepository)}.`}{" "}
                   {check.keptInPlaceCount > 0
-                    ? `${plural(check.threadCount, "thread")} stay in the project. ${plural(check.keptInPlaceCount, "thread")} keep running in ${check.currentRoot}, so their files and sessions do not change; new threads and the coordinator use the new folder`
+                    ? `${plural(check.threadCount, "thread")} stay in the project. ${pluralVerb(check.keptInPlaceCount, "thread", "keep")} running in ${check.currentRoot}, so their files and sessions do not change; new threads and the coordinator use the new folder`
                     : `${plural(check.threadCount, "thread")} move with the project`}
                   {check.reboundWorktreeCount > 0
                     ? `; ${plural(check.reboundWorktreeCount, "thread checkout")} inside the old folder will point at the same place in the new one`
@@ -316,6 +427,16 @@ export function ProjectFolderChange({
                     <span data-folder-layout={check.layout.kind}>
                       {layoutSummary(check.layout)}
                     </span>
+                  </CheckLine>
+                ) : null}
+                {worktreeSource ? (
+                  <CheckLine tone="warn">
+                    <span data-folder-worktree-source>{worktreeSource}</span>
+                  </CheckLine>
+                ) : null}
+                {nested ? (
+                  <CheckLine tone="warn">
+                    <span data-folder-nested-projects>{nested}</span>
                   </CheckLine>
                 ) : null}
                 {planning ? (

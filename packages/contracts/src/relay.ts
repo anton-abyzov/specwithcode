@@ -130,6 +130,11 @@ export const RelayAgentActivityState = Schema.Struct({
   modelTitle: TrimmedNonEmptyString,
   updatedAt: TrimmedNonEmptyString,
   deepLink: TrimmedNonEmptyString,
+  /**
+   * True when the project's notification level keeps this state from alerting
+   * the phone. Live Activities and widgets still show it.
+   */
+  quiet: Schema.optional(Schema.Boolean),
 });
 export type RelayAgentActivityState = typeof RelayAgentActivityState.Type;
 
@@ -143,6 +148,8 @@ export const RelayAgentActivityAggregateRow = Schema.Struct({
   status: TrimmedNonEmptyString,
   updatedAt: TrimmedNonEmptyString,
   deepLink: TrimmedNonEmptyString,
+  /** Carried from the thread's state; see RelayAgentActivityState.quiet. */
+  quiet: Schema.optional(Schema.Boolean),
 });
 export type RelayAgentActivityAggregateRow = typeof RelayAgentActivityAggregateRow.Type;
 

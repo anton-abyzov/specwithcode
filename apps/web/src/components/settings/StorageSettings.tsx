@@ -276,7 +276,7 @@ export function StorageSettingsPanel() {
             <SettingsRow
               title="Delete inactive worktrees"
               status={ruleStatus("worktreeAfterDays")}
-              description="Remove worktrees after their threads have been inactive for this many days. Branches and thread history are kept."
+              description="Remove worktrees after their threads have been inactive for this many days. Folders of open threads are always kept. Branches and thread history are kept."
               serverScoped={!isProjectScope}
               control={
                 <RetentionControl
@@ -289,7 +289,7 @@ export function StorageSettingsPanel() {
             <SettingsRow
               title="Delete merged worktrees"
               status={ruleStatus("worktreeOnMerge")}
-              description="Remove worktrees whose pull request is merged and whose commits are included in the default branch."
+              description="Remove worktrees whose pull request is merged and whose commits are included in the default branch. Also removes clean, pushed worktrees agents made without a thread once their pull request is merged or closed and they have been idle for a day. Folders of open threads are always kept."
               serverScoped={!isProjectScope}
               control={
                 <Switch
@@ -302,7 +302,7 @@ export function StorageSettingsPanel() {
             <SettingsRow
               title="Delete unchanged worktrees"
               status={ruleStatus("worktreeUnchanged")}
-              description="Remove worktrees with no commits beyond the default branch."
+              description="Remove worktrees with no commits beyond the default branch. Folders of open threads are always kept."
               serverScoped={!isProjectScope}
               control={
                 <Switch

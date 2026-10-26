@@ -162,6 +162,12 @@ export interface ServiceUpdateHoldShape {
   /** Ends the hold; false when none was held. */
   readonly release: (reason: string) => Effect.Effect<boolean>;
   /**
+   * How many holds ended in this process. A restart that installs the update
+   * ends the process instead, so this only counts holds released, expired or
+   * given up while the service kept running.
+   */
+  readonly releaseCount: Effect.Effect<number>;
+  /**
    * Counts a command refused while held. The first refusal of each hold is
    * logged; the release logs how many followed.
    */
@@ -452,6 +458,7 @@ export const makeWithOptions = (options: ServiceUpdateHoldOptions) =>
       >
     >(Option.none());
     let holds = 0;
+    const releases = yield* Ref.make(0);
     // Commands refused under the current hold: the first is logged, the rest counted.
     let refusals = { holdId: "", count: 0 };
 
@@ -499,6 +506,7 @@ export const makeWithOptions = (options: ServiceUpdateHoldOptions) =>
         if (Option.isNone(previous)) return false;
         yield* removeMarker;
         yield* Deferred.succeed(previous.value.released, undefined);
+        yield* Ref.update(releases, (count) => count + 1);
         const now = yield* Clock.currentTimeMillis;
         // At Warn: the fleet logs nothing quieter, and a hold refuses everyone's work.
         yield* Effect.logWarning(
@@ -712,6 +720,7 @@ export const makeWithOptions = (options: ServiceUpdateHoldOptions) =>
     return ServiceUpdateHold.of({
       acquire,
       release,
+      releaseCount: Ref.get(releases),
       recordRefusal,
       current,
       installGated,

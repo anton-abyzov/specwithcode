@@ -27,14 +27,23 @@ const LIVE_NOTE = "Reading the changelog before I hand this to a worker.";
 const errors = [];
 const checks = [];
 
-async function choose(page, name) {
+const LEVEL_NAMES = { concise: "Results only", normal: "Folded steps", verbose: "Everything" };
+
+async function choose(page, level) {
   await page.locator("[data-timeline-detail]").click();
-  await page.getByRole("menuitemradio", { name: new RegExp(`^${name}`) }).click();
+  // The default group, the menu's last radio of that name.
+  await page
+    .getByRole("menuitemradio", { name: new RegExp(`^${LEVEL_NAMES[level]}`) })
+    .last()
+    .click();
   await page.waitForFunction(
-    (level) => document.querySelector("[data-timeline-detail]")?.dataset.timelineDetail === level,
-    name.toLowerCase(),
+    (value) => document.querySelector("[data-timeline-detail]")?.dataset.timelineDetail === value,
+    level,
   );
 }
+
+/** The trigger names the project's reply style first, then what the timeline shows. */
+const shows = (label, level) => label?.endsWith(`Show: ${LEVEL_NAMES[level]}`) ?? false;
 
 try {
   for (const [width, height] of [
@@ -72,7 +81,7 @@ try {
       };
 
       // Normal: the conversation as it always was, no activity blocks.
-      NodeAssert.equal(await trigger.getAttribute("aria-label"), "Timeline detail: Normal", label);
+      NodeAssert.ok(shows(await trigger.getAttribute("aria-label"), "normal"), label);
       NodeAssert.equal(await text(COMMENTARY).count(), 1, `${label}: normal keeps commentary`);
       NodeAssert.equal(
         await conversation.locator(".sws-run-activity").count(),
@@ -83,8 +92,8 @@ try {
       await page.screenshot({ path: shot("normal") });
 
       // Verbose: each finished turn's steps under its answer, the running turn's above progress.
-      await choose(page, "Verbose");
-      NodeAssert.equal(await trigger.getAttribute("aria-label"), "Timeline detail: Verbose", label);
+      await choose(page, "verbose");
+      NodeAssert.ok(shows(await trigger.getAttribute("aria-label"), "verbose"), label);
       const finished = conversation.locator("details.sws-run-activity[open]:not([data-live])");
       const live = conversation.locator("details.sws-run-activity[open][data-live]");
       NodeAssert.equal(await finished.count(), 1, `${label}: one finished turn's activity`);
@@ -147,8 +156,8 @@ try {
       NodeAssert.equal(await block.locator("li").first().isVisible(), true, `${label}: reopen`);
 
       // Concise: one reply per turn; the person's messages stay.
-      await choose(page, "Concise");
-      NodeAssert.equal(await trigger.getAttribute("aria-label"), "Timeline detail: Concise", label);
+      await choose(page, "concise");
+      NodeAssert.ok(shows(await trigger.getAttribute("aria-label"), "concise"), label);
       NodeAssert.equal(await text(COMMENTARY).count(), 0, `${label}: concise hides commentary`);
       NodeAssert.equal(await text(ANSWER).count(), 1, `${label}: concise keeps the answer`);
       NodeAssert.equal(await text(LIVE_NOTE).count(), 1, `${label}: concise keeps the live reply`);
@@ -176,7 +185,7 @@ try {
 
       // The project header's trigger is marked while a level other than Normal is on.
       NodeAssert.match((await trigger.getAttribute("class")) ?? "", /sws-icon-button-on/, label);
-      await choose(page, "Normal");
+      await choose(page, "normal");
       NodeAssert.doesNotMatch(
         (await trigger.getAttribute("class")) ?? "",
         /sws-icon-button-on/,

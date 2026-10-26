@@ -269,6 +269,17 @@ export interface EffectOutboxV2Shape {
   readonly cancelAllUnsettled: (input: {
     readonly reason: string;
   }) => Effect.Effect<ReadonlyArray<CancelledEffect>, EffectOutboxError>;
+  /**
+   * Makes a cancelled or failed effect pending again, from its first attempt,
+   * when `shouldRearm` accepts its status and last error. True when it did.
+   */
+  readonly rearm: (input: {
+    readonly effectId: string;
+    readonly shouldRearm: (effect: {
+      readonly status: OrchestrationEffectStatusV2;
+      readonly lastError: string | null;
+    }) => boolean;
+  }) => Effect.Effect<boolean, EffectOutboxError>;
   readonly signalCancellations: (effectIds: ReadonlyArray<string>) => Effect.Effect<void>;
   readonly awaitCancellation: (effectId: string) => Effect.Effect<void>;
   readonly clearCancellation: (effectId: string) => Effect.Effect<void>;
@@ -696,6 +707,52 @@ export const layer: Layer.Layer<EffectOutboxV2, never, SqlClient.SqlClient> = La
         }).pipe(
           Effect.mapError(
             (cause) => new EffectOutboxError({ operation: "succeed", effectId, cause }),
+          ),
+        ),
+      rearm: ({ effectId, shouldRearm }) =>
+        Effect.gen(function* () {
+          const current = yield* sql<{
+            readonly status: OrchestrationEffectStatusV2;
+            readonly last_error: string | null;
+            readonly updated_at: string;
+          }>`
+            SELECT status, last_error, updated_at
+            FROM orchestration_v2_effect_outbox
+            WHERE effect_id = ${effectId}
+          `;
+          const row = current[0];
+          if (
+            row === undefined ||
+            (row.status !== "cancelled" && row.status !== "failed") ||
+            !shouldRearm({ status: row.status, lastError: row.last_error })
+          )
+            return false;
+          const nowIso = DateTime.formatIso(yield* DateTime.now);
+          // Only the row that was read: a concurrent change wins.
+          const rows = yield* sql<{ readonly effect_id: string }>`
+            UPDATE orchestration_v2_effect_outbox
+            SET
+              status = 'pending',
+              attempt_count = 0,
+              available_at = ${nowIso},
+              lease_owner = NULL,
+              lease_expires_at = NULL,
+              completed_at = NULL,
+              updated_at = ${nowIso},
+              last_error = NULL
+            WHERE effect_id = ${effectId}
+              AND status = ${row.status}
+              AND updated_at = ${row.updated_at}
+            RETURNING effect_id
+          `;
+          if (rows.length === 1) {
+            cancellationSignals.delete(effectId);
+            yield* notifyAvailable();
+          }
+          return rows.length === 1;
+        }).pipe(
+          Effect.mapError(
+            (cause) => new EffectOutboxError({ operation: "rearm", effectId, cause }),
           ),
         ),
       retry: ({ effectId, workerId, error, delayMs }) =>

@@ -25,11 +25,11 @@ In anything a person reads (UI copy, docs, reports, commit and PR text), call th
 
 ## Browser verification
 
-All automated browser tests, E2E, screenshots, recordings and scrapers explicitly use headless: true (Python: headless=True). Set PWDEBUG=0 and PLAYWRIGHT_HTML_OPEN=never; reporter open: never. Save evidence to files. No visible automation, Inspector, DevTools windows or personal browser. A failure never authorizes a headed retry.
+All automated browser tests, E2E, screenshots, recordings and scrapers explicitly use headless: true (Python: headless=True). Set PWDEBUG=0 and PLAYWRIGHT_HTML_OPEN=never; reporter open: never. Save evidence to files in the increment's reports/ or ~/.specwithcode/m4/evidence/<topic>/, never directly in ~/Projects/github. No visible automation, Inspector, DevTools windows or personal browser. A failure never authorizes a headed retry.
 
 ## Focused checks
 
-- Read the canonical SpecWeave increment, claim only the assigned task under your own identity and edit its files. One branch/worktree per lane.
+- Read the canonical SpecWeave increment, claim only the assigned task under your own identity and edit its files. One branch/worktree per lane, under SpecWithCode's configured worktree root (never a sibling of the checkout in ~/Projects/github). Before removing a worktree, check no SpecWithCode thread still uses it.
 - Run the smallest focused behavior/contract test and relevant production web/server build. No repo-wide tests, lint or typecheck unless requested.
 - Physical-phone availability, restored native continuity and authenticated subscription capacity require actual outcome evidence; viewport fixtures, a fresh session and prepared slots do not prove them.
 

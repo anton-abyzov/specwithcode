@@ -60,6 +60,7 @@ it.effect.each([
   ["settings_conflict", "project_settings_conflict", "Reload before saving"],
   ["confirmation_required", "project_confirmation_required", "Type the project name exactly"],
   ["active_work", "project_active_work", "Finish or stop active project work"],
+  ["too_many_deletes", "project_delete_rate_limited", "Wait a minute, then delete the rest"],
   [
     "environment_active",
     "project_environment_active",

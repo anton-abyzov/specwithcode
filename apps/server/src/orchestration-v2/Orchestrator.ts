@@ -5640,6 +5640,13 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           }
         }
       }
+      // An idle handoff continuation carries its note and transcript into its first turn.
+      const handoffContext =
+        delegatedCompletion === undefined &&
+        projection.runs.length === 0 &&
+        handoffGate.pendingSeed !== undefined
+          ? yield* handoffGate.pendingSeed(command.threadId)
+          : null;
       // A server continuation of a run whose question to the person is still
       // open repeats the question: the open question does not hold the thread,
       // and "continue" alone would leave the provider past it.
@@ -5669,7 +5676,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             );
       const dispatchText =
         delegatedCompletion === undefined
-          ? `${command.text}${questionReminder}`
+          ? `${handoffContext === null ? "" : `${handoffContext}\n\n---\n\n`}${command.text}${questionReminder}`
           : delegatedCompletionWakeDetail(delegatedCompletion.taskIds);
       const sourcePlanProjection =
         command.sourcePlanRef === undefined
@@ -9928,7 +9935,24 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     Effect.gen(function* () {
       const emitEvent = emit(input.events, input.command);
       const { thread, runs, subagents } = input.projection;
+      const personStop = isPersonStopRequest({
+        cause: input.command.cause,
+        message: input.command.reason ?? "Interrupt requested",
+      });
       for (const run of runs) {
+        // A person's Stop is final for the messages an update's drain cancelled
+        // before it: no later restart or hold end may queue them again.
+        if (personStop && cancelledForUpdate(run)) {
+          const { cancelledForUpdate: _drained, ...settled } = run;
+          yield* emitEvent({
+            type: "run.updated",
+            threadId: thread.id,
+            runId: run.id,
+            providerInstanceId: run.providerInstanceId,
+            occurredAt: input.now,
+            payload: settled,
+          });
+        }
         // A resumed queue can have a lower ordinal than a pending continuation source.
         // Stop must reach those sources even when interrupting the resumed run succeeds.
         if (

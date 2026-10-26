@@ -1,7 +1,9 @@
 import {
+  AuthFilesystemReadScope,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   EnvironmentHttpApi,
+  EnvironmentRequestInvalidError,
   type ProjectFolderCheckError,
 } from "@specweave-studio/contracts";
 import * as Effect from "effect/Effect";
@@ -37,13 +39,27 @@ export const failProjectMutation = Effect.fn("environment.projects.failMutation"
       name_taken: "project_name_taken",
       assistant_exists: "project_assistant_exists",
       kind_fixed: "project_kind_fixed",
+      too_many_deletes: "project_delete_rate_limited",
     } as const;
     return yield* failEnvironmentInvalidRequest(reason[cause.reason]);
   }
   if (cause._tag === "ProjectEnvironmentError")
     return yield* failEnvironmentInvalidRequest("project_environment_invalid");
-  if (cause._tag === "ProjectFolderChangeError" || cause._tag === "ProjectFolderCheckError")
-    return yield* failEnvironmentInvalidRequest("project_folder_change_refused");
+  // The code stays stable; the detail says why, so the CLI and the app can show it.
+  if (cause._tag === "ProjectFolderChangeError" || cause._tag === "ProjectFolderCheckError") {
+    const detail = cause._tag === "ProjectFolderChangeError" ? cause.detail : cause.message;
+    return yield* failEnvironmentInvalidRequest("project_folder_change_refused").pipe(
+      Effect.mapError(
+        (error) =>
+          new EnvironmentRequestInvalidError({
+            code: error.code,
+            reason: error.reason,
+            traceId: error.traceId,
+            ...(detail.length > 0 ? { detail } : {}),
+          }),
+      ),
+    );
+  }
   if (
     cause._tag === "ProjectNotFoundError" ||
     cause._tag === "ProjectConflictError" ||
@@ -84,12 +100,24 @@ export const layer = HttpApiBuilder.group(
             args.payload,
             args.payload.type === "project.create" ||
               (args.payload.type === "project.update" &&
-                args.payload.workspaceSettings?.origin !== undefined)
+                (args.payload.workspaceSettings?.origin !== undefined ||
+                  args.payload.workspaceSettings?.notifications !== undefined))
               ? yield* temporarySessionIdFor(session.sessionId)
               : undefined,
           );
           return yield* startup
             .enqueueCommand(operation)
+            .pipe(traceLocalHandlerWork, Effect.catch(failProjectMutation));
+        }),
+      )
+      .handle(
+        "folderCheck",
+        Effect.fn("environment.projects.folderCheck")(function* (args) {
+          yield* annotateEnvironmentRequest(args.endpoint.name);
+          // The same scope as the projects.folderCheck RPC: it reads folders, changes nothing.
+          yield* requireEnvironmentScope(AuthFilesystemReadScope);
+          return yield* folders
+            .check(args.payload)
             .pipe(traceLocalHandlerWork, Effect.catch(failProjectMutation));
         }),
       );

@@ -12,6 +12,10 @@ import {
   type RelayAgentActivityState,
 } from "@specweave-studio/contracts/relay";
 import { projectThreadAwarenessV2 } from "@specweave-studio/shared/agentAwareness";
+import {
+  projectAlertAllowed,
+  projectNotificationLevel,
+} from "@specweave-studio/shared/projectNotifications";
 import { turnItemUpdateCanEndBackgroundWork } from "@specweave-studio/shared/orchestrationV2PendingBackgroundWork";
 import { makeDrainableWorker } from "@specweave-studio/shared/DrainableWorker";
 import { withRelayClientTracing } from "@specweave-studio/shared/relayTracing";
@@ -195,6 +199,24 @@ function sanitizeRelayAgentActivityState(
   return detail ? { ...rest, detail } : rest;
 }
 
+/**
+ * Marks a state the project's notification level keeps off the phone's alerts.
+ * The relay still updates Live Activities and widgets with it; only the
+ * buzzing notification is skipped. Published threads are never delegated
+ * workers (they project no activity), so only "needs you" matters here.
+ */
+export function applyProjectNotificationLevel(
+  state: RelayAgentActivityState | null,
+  project: Pick<Project, "workspaceSettings">,
+): RelayAgentActivityState | null {
+  if (state === null) return null;
+  const allowed = projectAlertAllowed(projectNotificationLevel(project), {
+    delegated: false,
+    needsYou: state.phase === "waiting_for_approval" || state.phase === "waiting_for_input",
+  });
+  return allowed ? state : { ...state, quiet: true };
+}
+
 function relayEnvironmentClient(token: string) {
   return HttpClient.mapRequest(HttpClientRequest.setHeader("authorization", `Bearer ${token}`));
 }
@@ -318,12 +340,15 @@ function resolveAgentAwarenessRelayPublishSnapshot(input: {
   }
   return {
     projectId: input.thread.value.projectId,
-    state: sanitizeRelayAgentActivityState(
-      projectThreadAwarenessV2({
-        environmentId: input.environmentId,
-        project: input.project.value,
-        thread: input.thread.value,
-      }),
+    state: applyProjectNotificationLevel(
+      sanitizeRelayAgentActivityState(
+        projectThreadAwarenessV2({
+          environmentId: input.environmentId,
+          project: input.project.value,
+          thread: input.thread.value,
+        }),
+      ),
+      input.project.value,
     ),
     reason: "snapshot",
   };

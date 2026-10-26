@@ -281,6 +281,48 @@ describe("HandoffMode", () => {
     },
   );
 
+  it.effect("refuses side effects mid-transfer but lets the handoff checkpoint and journal", () => {
+    const fixture: Fixture = { runStatus: "running", activeRunId: "run-1", latestRunId: "run-1" };
+    return Effect.gen(function* () {
+      const handoff = yield* HandoffMode.HandoffMode;
+      const store = yield* HandoffModeStore.HandoffModeStore;
+      yield* handoff.updateConfig({ pushToOrigin: false });
+      yield* handoff.setProjectMode({ projectId, mode: "on" });
+      yield* handoff.observeRun(run("run-1", "running"));
+      const setLeaseState = (state: "active" | "handing-off") =>
+        store.update((document) => {
+          const current = document.threads[threadId]!;
+          const next = {
+            ...document,
+            threads: {
+              ...document.threads,
+              [threadId]: { ...current, lease: { ...current.lease!, state } },
+            },
+          };
+          return [null, next] as const;
+        });
+      yield* setLeaseState("handing-off");
+
+      const fence = yield* handoff.fence(threadId, "run-1");
+      expect(fence).toMatchObject({ kind: "fenced" });
+      expect(fence.kind === "fenced" && fence.message).toContain("being handed off");
+      expect(yield* handoff.guardSideEffect(sideEffect("run-1"))).toMatchObject({
+        kind: "refuse",
+      });
+      // The handoff's own steps still run: what already happened is journaled and the
+      // checkpoint the destination takes over is written.
+      yield* handoff.recordSideEffect({ ...sideEffect("run-1"), result: "#12" });
+      fixture.runStatus = "interrupted";
+      fixture.activeRunId = null;
+      const checkpoint = yield* handoff.checkpoint(threadId, "handoff");
+      expect(checkpoint?.sideEffects).toHaveLength(1);
+
+      // A move that definitely did not happen gives the thread back.
+      yield* setLeaseState("active");
+      expect(yield* handoff.fence(threadId, "run-1")).toEqual({ kind: "ok", epoch: 1 });
+    }).pipe(Effect.provide(layerFor(repository(), fixture)));
+  });
+
   it.effect("keeps a handoff-stopped run's ending but clears it for a later run", () => {
     const fixture: Fixture = { runStatus: "running", activeRunId: "run-1", latestRunId: "run-1" };
     return Effect.gen(function* () {

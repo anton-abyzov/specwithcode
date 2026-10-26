@@ -54,11 +54,11 @@ export interface CreateProjectInput extends CommandMetadata {
   readonly scripts?: ReadonlyArray<ProjectScript>;
 }
 
+/** The folder is not here: `changeProjectFolder` moves it safely, and the server refuses a move by update. */
 export interface UpdateProjectInput extends CommandMetadata {
   readonly workspaceSettings?: ProjectWorkspacePatch;
   readonly projectId: ProjectId;
   readonly title?: string;
-  readonly workspaceRoot?: string;
   readonly defaultModelSelection?: ModelSelection | null;
   readonly autoPull?: boolean;
   readonly projectIcon?: ProjectIconOverride | null;
@@ -355,7 +355,6 @@ const mutateProject = Effect.fn("EnvironmentCommands.mutateProject")(function* (
         readonly commandId: CommandId;
         readonly projectId: ProjectId;
         readonly title?: string;
-        readonly workspaceRoot?: string;
         readonly defaultModelSelection?: ModelSelection | null;
         readonly scripts?: ReadonlyArray<ProjectScript>;
       }
@@ -407,7 +406,6 @@ export const updateProject = Effect.fn("EnvironmentCommands.updateProject")(func
     commandId: yield* allocateCommandId(input),
     projectId: input.projectId,
     ...(input.title === undefined ? {} : { title: input.title }),
-    ...(input.workspaceRoot === undefined ? {} : { workspaceRoot: input.workspaceRoot }),
     ...(input.defaultModelSelection === undefined
       ? {}
       : { defaultModelSelection: input.defaultModelSelection }),

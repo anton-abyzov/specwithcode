@@ -409,6 +409,17 @@ export function ProjectWorkspaceSettings({
                     </div>
                     {icon.blocked ? <p className="project-muted">{icon.blocked}</p> : null}
                   </div>
+                  {/* The folder decides where every thread runs, so it sits right under the name. */}
+                  {snapshot.settings.kind !== "personal" ? (
+                    <ProjectFolderChange
+                      project={project}
+                      disabled={disabled}
+                      blockedReason={
+                        dirty ? "Save or discard your unsaved changes to change the folder." : null
+                      }
+                      onChanged={onSaved}
+                    />
+                  ) : null}
                   <label>
                     Goal
                     <textarea
@@ -511,13 +522,6 @@ export function ProjectWorkspaceSettings({
                       VPS, add it under Settings &gt; Connections &gt; Your private machines.
                     </p>
                   )}
-                  {snapshot.settings.kind !== "personal" ? (
-                    <ProjectFolderChange
-                      project={project}
-                      disabled={disabled || dirty}
-                      onChanged={onSaved}
-                    />
-                  ) : null}
                   <div className="project-setting-row">
                     <div>
                       <h3>{snapshot.settings.paused ? "Resume project" : "Pause new work"}</h3>

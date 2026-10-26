@@ -14,6 +14,7 @@ import {
   type OrchestrationV2Command,
   type OrchestrationV2UserInputQuestion,
   type Project,
+  type ProjectFolderCheck,
   ProjectFolderCheckError,
   type ProjectId,
   RuntimeRequestId,
@@ -123,6 +124,69 @@ export class ProjectActionRequests extends Context.Service<
 
 function plural(count: number, noun: string): string {
   return `${count} ${noun}${count === 1 ? "" : "s"}`;
+}
+
+/**
+ * What a folder change does to the project's threads, from the check's counts
+ * (`done: false`, said before it happens) or the change's (`done: true`). Threads
+ * on their own checkout elsewhere are never moved.
+ */
+export function folderThreadsText(input: {
+  readonly from: string;
+  readonly to: string;
+  readonly keptInPlace: number;
+  readonly reboundWorktrees: number;
+  /** All the project's threads, when known: the rest keep their own checkouts. */
+  readonly threadCount?: number;
+  readonly done: boolean;
+}): string {
+  const { from, to, keptInPlace, reboundWorktrees, done } = input;
+  if (keptInPlace > 0) {
+    // threadCount includes the coordinator, which follows the project.
+    const others = input.threadCount === undefined ? 0 : input.threadCount - keptInPlace - 1;
+    return [
+      `${plural(keptInPlace, "thread")} ${done ? (keptInPlace === 1 ? "keeps" : "keep") : "will keep"} running in ${from}, which stays a checkout of its own repository.`,
+      `The coordinator and new threads ${done ? "use" : "will use"} ${to}.`,
+      ...(others > 0
+        ? [`Threads on their own checkouts ${done ? "keep" : "will keep"} them.`]
+        : []),
+    ].join(" ");
+  }
+  return [
+    `Threads that run in the project folder ${done ? "use" : "will use"} ${to} from their next turn.`,
+    ...(reboundWorktrees > 0
+      ? [
+          `${plural(reboundWorktrees, "thread")} on a checkout inside ${from} ${done ? (reboundWorktrees === 1 ? "now uses" : "now use") : "will use"} the same checkout inside ${to}.`,
+        ]
+      : []),
+  ].join(" ");
+}
+
+/** The other projects found in or around the new folder, or null when there are none. */
+export function nestedProjectsText(
+  check: Pick<ProjectFolderCheck, "nestedProjects" | "targetRoot">,
+): string | null {
+  const nested = check.nestedProjects ?? [];
+  if (nested.length === 0) return null;
+  const names = (entries: typeof nested) =>
+    `${entries
+      .slice(0, 5)
+      .map((entry) => `"${entry.title}" (${entry.workspaceRoot})`)
+      .join(", ")}${entries.length > 5 ? ` and ${entries.length - 5} more` : ""}`;
+  const active = nested.filter((entry) => !entry.deleted);
+  const deleted = nested.filter((entry) => entry.deleted);
+  return [
+    ...(active.length > 0
+      ? [
+          `Other projects sit inside or around ${check.targetRoot}: ${names(active)}. They keep their own folders and threads.`,
+        ]
+      : []),
+    ...(deleted.length > 0
+      ? [
+          `Deleted projects used folders there: ${names(deleted)}. Their threads, memory and routines do not come back.`,
+        ]
+      : []),
+  ].join(" ");
 }
 
 export const make = Effect.gen(function* () {
@@ -282,6 +346,8 @@ export const make = Effect.gen(function* () {
           .check({ projectId: project.id, workspaceRoot: input.workspaceRoot })
           .pipe(Effect.mapError((error) => failure(error.message)));
         if (check.unchanged) return yield* failure(`The project already uses ${check.targetRoot}.`);
+        // A folder the check refuses outright cannot be approved into use.
+        if (check.refusal !== undefined) return yield* failure(check.refusal.detail);
         // The asking thread is running now; work still running when the user approves is refused then.
         const hardRefusal = folderChangeRefusal({ ...check, activeThreads: [] }, true, true);
         if (hardRefusal !== null) return yield* failure(hardRefusal.detail);
@@ -289,8 +355,17 @@ export const make = Effect.gen(function* () {
           ? `Both folders are checkouts of ${check.targetRepository}.`
           : `The new folder ${check.targetRepository === null ? "has no Git remote" : `is a checkout of ${check.targetRepository}`}, and the current one ${check.currentRepository === null ? "has none" : `is ${check.currentRepository}`}. Approving confirms it is the right folder.`;
         const planning = planningImpactText(check);
+        const threadsText = folderThreadsText({
+          from: check.currentRoot,
+          to: check.targetRoot,
+          keptInPlace: check.keptInPlaceCount,
+          reboundWorktrees: check.reboundWorktreeCount,
+          threadCount: check.threadCount,
+          done: false,
+        });
+        const nested = nestedProjectsText(check);
         return {
-          question: `Change the folder of the project ${name} from ${check.currentRoot} to ${check.targetRoot}?\n\n${repository}${planning === null ? "" : ` ${planning}`} Its ${plural(check.threadCount, "thread")}, memory and history stay with the project and run in the new folder from their next turn.\n\n${why}`,
+          question: `Change the folder of the project ${name} from ${check.currentRoot} to ${check.targetRoot}?\n\n${repository}${planning === null ? "" : ` ${planning}`}\n\n${threadsText} Memory and history stay with the project.${nested === null ? "" : ` ${nested}`}\n\n${why}`,
         };
       }
     }
@@ -445,7 +520,15 @@ export const make = Effect.gen(function* () {
           confirmPlanningImpact: true,
           approvalRequestId,
         });
-        return `Changed the folder of ${name} from ${changed.previousRoot} to ${changed.project.workspaceRoot}. Threads run there from their next turn.`;
+        return `Changed the folder of ${name} from ${changed.previousRoot} to ${changed.project.workspaceRoot}. ${folderThreadsText(
+          {
+            from: changed.previousRoot,
+            to: changed.project.workspaceRoot,
+            keptInPlace: changed.keptInPlace,
+            reboundWorktrees: changed.reboundWorktrees,
+            done: true,
+          },
+        )}`;
       }
     }
   });

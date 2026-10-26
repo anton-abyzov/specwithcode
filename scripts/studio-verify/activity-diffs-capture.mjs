@@ -1164,14 +1164,16 @@ async function activitySteps({
       for (const key of ["edit", "readonly"]) {
         await open(page, key);
         const label = await page
-          .getByRole("button", { name: /^Timeline detail:/ })
+          .getByRole("button", { name: /Show: / })
           .first()
           .getAttribute("aria-label")
           .catch(() => null);
         const file = await shot(page, `${detail}-dark-1280-${key}`);
         check(
           `${detail} detail is active (${key})`,
-          label === `Timeline detail: ${detail[0].toUpperCase()}${detail.slice(1)}`,
+          label?.endsWith(
+            `Show: ${{ concise: "Results only", normal: "Folded steps", verbose: "Everything" }[detail]}`,
+          ),
           `control="${label}"`,
           { screenshot: file, ac: "AC-15" },
         );

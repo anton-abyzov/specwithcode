@@ -1548,7 +1548,44 @@ stage_desktop() {
   x desktop-open -- open "$APP"
 }
 
+# True when version $1 sorts before version $2 (both X.Y.Z).
+version_before() {
+  local a b i
+  IFS=. read -r -a a <<< "$1"
+  IFS=. read -r -a b <<< "$2"
+  for i in 0 1 2; do
+    if [ "$((10#${a[$i]}))" -lt "$((10#${b[$i]}))" ]; then return 0; fi
+    if [ "$((10#${a[$i]}))" -gt "$((10#${b[$i]}))" ]; then return 1; fi
+  done
+  return 1
+}
+
+# Once merged, staging folders older than the previous release go: the next release reads only
+# this one's and $PREV's (timings, stage-1 history), and each holds 2-4 GB of runtimes and assets.
+# Only releases this script made that merged or went public go (a published one a newer release
+# superseded is never resumed): a folder that is not a version, a link, locked (a release
+# running), without release.json (not made here) or neither merged nor public (a failed release
+# waiting for --resume) stays.
+prune_old_staging() {
+  local dir name
+  if ! [[ ${PREV:-} =~ $VERSION_RE ]]; then return 0; fi
+  for dir in "$STAGING_ROOT"/*; do
+    name="${dir##*/}"
+    if [ ! -d "$dir" ] || [ -L "$dir" ] || [ -e "$dir/lock" ]; then continue; fi
+    if [ ! -f "$dir/release.json" ]; then continue; fi
+    if [ ! -f "$dir/markers/merge" ] && [ ! -f "$dir/markers/publish-public" ]; then continue; fi
+    if ! [[ $name =~ $VERSION_RE ]] || ! version_before "$name" "$PREV"; then continue; fi
+    x staging-prune -- rm -rf "$dir" || say "(could not remove $dir)"
+  done
+}
+
+# A plain call: on the left of || bash would turn off set -e inside merge_release_pr.
 stage_merge() {
+  merge_release_pr
+  prune_old_staging
+}
+
+merge_release_pr() {
   local open merged
   open="$(q pr-open --may-fail -- gh pr list -R "$PRIVATE_REPO" --head "release/$VERSION" --state open --json number -q '.[0].number')"
   if [ -z "$open" ]; then

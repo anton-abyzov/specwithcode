@@ -126,6 +126,22 @@ describe("checkEpoch", () => {
     expect(fenced.fencedBy).toBe("handoff");
     expect(checkEpoch(fenced, m4, 3).kind).toBe("fenced");
   });
+
+  it("refuses the holder while its handoff is in flight, and accepts it once released", () => {
+    const record = leased(m4, 3);
+    const handingOff: HandoffThreadRecord = {
+      ...record,
+      lease: { ...record.lease!, state: "handing-off" },
+    };
+    const verdict = checkEpoch(handingOff, m4, 3);
+    expect(verdict).toEqual({
+      kind: "fenced",
+      message:
+        "This thread is being handed off; it performs no side effects until the handoff finishes.",
+    });
+    expect(checkEpoch(handingOff, m4).kind).toBe("fenced");
+    expect(checkEpoch(record, m4, 3)).toEqual({ kind: "ok", epoch: 3 });
+  });
 });
 
 describe("guardSideEffect", () => {
@@ -179,6 +195,19 @@ describe("guardSideEffect", () => {
     const record = recordSideEffect(leased(m4, 3), effect());
     expect(guardSideEffect({ ...input(record), epoch: 2 }).kind).toBe("refuse");
     expect(guardSideEffect({ ...input(record), environmentId: minis }).kind).toBe("refuse");
+  });
+
+  it("refuses every side effect while the thread is being handed off", () => {
+    const record = leased(m4, 3);
+    const handingOff: HandoffThreadRecord = {
+      ...record,
+      lease: { ...record.lease!, state: "handing-off" },
+    };
+    const verdict = guardSideEffect({ ...input(handingOff), epoch: 3 });
+    expect(verdict.kind).toBe("refuse");
+    expect(verdict.kind === "refuse" && verdict.message).toContain("being handed off");
+    // Journaling what already happened is never blocked by the hold.
+    expect(recordSideEffect(handingOff, effect()).sideEffects).toHaveLength(1);
   });
 });
 

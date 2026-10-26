@@ -339,6 +339,41 @@ export const ProjectFolderCheck = Schema.Struct({
       changes: Schema.Boolean,
     }),
   ),
+  /**
+   * A reason the folder cannot be used at all, found by the check: it is a file,
+   * a protected folder (home, filesystem root, credential folders), its Git
+   * identity could not be read, or the project's approved folders clash with it.
+   * Optional: older servers do not send it.
+   */
+  refusal: Schema.optional(
+    Schema.Struct({
+      reason: Schema.Literals([
+        "folder_not_directory",
+        "folder_protected",
+        "repository_unreadable",
+        "environment_invalid",
+      ]),
+      detail: Schema.String,
+    }),
+  ),
+  /**
+   * Other projects whose folders sit inside the new folder or contain it,
+   * including deleted ones. They keep their own folders and threads; a deleted
+   * project's threads, memory and routines are not brought back by this change.
+   * Optional: older servers do not send it.
+   */
+  nestedProjects: Schema.optional(
+    Schema.Array(
+      Schema.Struct({
+        id: ProjectId,
+        title: Schema.String,
+        workspaceRoot: Schema.String,
+        /** "same": a deleted project used exactly this folder. */
+        relation: Schema.Literals(["inside", "contains", "same"]),
+        deleted: Schema.Boolean,
+      }),
+    ),
+  ),
 });
 export type ProjectFolderCheck = typeof ProjectFolderCheck.Type;
 

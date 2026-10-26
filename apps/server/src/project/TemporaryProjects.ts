@@ -122,6 +122,8 @@ export const make = Effect.gen(function* () {
           projectId: project.id,
           force: true,
           confirmationTitle: project.title,
+          // The app's own cleanup: exempt from the client delete burst limit.
+          initiator: "server",
         })
         .pipe(
           Effect.as(true),

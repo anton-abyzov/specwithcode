@@ -62,6 +62,7 @@ import {
   ProviderThreadId,
   ProviderTurnId,
   RunId,
+  SERVICE_UPDATE_STOP_REASON,
   ServerPrepareServiceUpdateError,
   ThreadId,
   type ServerPrepareServiceUpdateInput,
@@ -119,7 +120,7 @@ export const TERMINAL_EFFECT_STATUSES = ["succeeded", "failed", "cancelled"] as 
 /** Provider session statuses update.py counts as working. */
 export const WORKING_SESSION_STATUSES = ServiceUpdateCleanup.WORKING_SESSION_STATUSES;
 
-export const STOP_REASON = "Stopped to install the SpecWithCode update";
+export const STOP_REASON = SERVICE_UPDATE_STOP_REASON;
 export const ROLLBACK_CANCELLED_MESSAGE =
   "The rollback was cancelled to install the SpecWithCode update. Run it again.";
 const RELEASE_DETAIL = "Closed to install the SpecWithCode update.";

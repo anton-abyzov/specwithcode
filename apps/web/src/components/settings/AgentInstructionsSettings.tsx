@@ -6,6 +6,7 @@ import {
   ResponseStyle,
 } from "@specweave-studio/contracts";
 
+import { RESPONSE_STYLE_LABELS } from "../../responseStyle";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { CharacterCount } from "../ui/character-count";
 import { Textarea } from "../ui/textarea";
@@ -36,11 +37,6 @@ const WORKFLOW_MODES = {
   automatic: "Automatic",
 } satisfies Record<ClaudeWorkflowMode, string>;
 
-const RESPONSE_STYLES = {
-  concise: "Concise",
-  detailed: "Detailed",
-} satisfies Record<ResponseStyle, string>;
-
 function ResponseStyleSettings() {
   const settings = useScopedSettings();
   const update = useUpdateScopedSettings();
@@ -51,7 +47,7 @@ function ResponseStyleSettings() {
         serverScoped
         settingKeys={["responseStyle"]}
         {...searchableSetting("response-style")}
-        description="Concise agents lead with the result, keep replies to a few lines and send coordinators a short outcome, evidence and blockers instead of a replay of their steps. Detailed agents explain their steps. Errors, failing tests and security warnings stay complete either way."
+        description="Concise agents lead with the result in a few plain sentences and send coordinators the outcome and the path or link that proves it instead of a replay of their steps. Detailed agents explain their steps. Errors, failing tests and security warnings stay complete either way."
         resetAction={
           mixed || settings.responseStyle !== DEFAULT_SERVER_SETTINGS.responseStyle ? (
             <SettingResetButton
@@ -71,14 +67,14 @@ function ResponseStyleSettings() {
             <SelectTrigger size="sm" aria-label="Response style">
               <SelectValue>
                 {(value: ResponseStyle | null) =>
-                  value === null ? "Mixed" : RESPONSE_STYLES[value]
+                  value === null ? "Mixed" : RESPONSE_STYLE_LABELS[value]
                 }
               </SelectValue>
             </SelectTrigger>
             <SelectPopup align="end" alignItemWithTrigger={false}>
               {ResponseStyle.literals.map((style) => (
                 <SelectItem key={style} value={style}>
-                  {RESPONSE_STYLES[style]}
+                  {RESPONSE_STYLE_LABELS[style]}
                 </SelectItem>
               ))}
             </SelectPopup>
@@ -86,8 +82,9 @@ function ResponseStyleSettings() {
         }
       />
       <p className="px-3 pb-3 text-sm text-muted-foreground sm:px-4">
-        Changes what coordinators, workers and threads write, for every provider. Timeline detail
-        only changes how much of their work is shown. New turns use the saved style.
+        Changes what coordinators, workers and threads write, for every provider. The reply button
+        in a thread or project header sets it for that project. Timeline detail only changes how
+        much of their work is shown. New turns use the saved style.
       </p>
     </SettingsSection>
   );

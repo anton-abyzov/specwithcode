@@ -1,9 +1,10 @@
 /**
- * Feeds run updates to handoff mode and runs its timers: leases renew every
- * 30 seconds and running threads checkpoint every 5 minutes. Work boundaries
- * inside a turn checkpoint too: a child about to launch (where the provider
- * has a pre-launch hook), a child starting, a child's result arriving and a
- * provider session retiring.
+ * Feeds run updates to handoff mode and runs its timers: leases renew and
+ * peers are heartbeaten every 30 seconds, and on a separate loop running
+ * threads checkpoint every 5 minutes and checkpoints replicate. Work
+ * boundaries inside a turn checkpoint too: a child about to launch (where the
+ * provider has a pre-launch hook), a child starting, a child's result
+ * arriving and a provider session retiring.
  */
 import {
   HANDOFF_LEASE_RENEW_MS,
@@ -95,11 +96,19 @@ export const start = Effect.gen(function* () {
     ),
   );
 
-  let tickCount = 0;
+  const every = Schedule.spaced(Duration.millis(HANDOFF_LEASE_RENEW_MS));
+
+  // Leases and heartbeats run on their own loop, so a slow checkpoint, negotiation or
+  // replication never delays a renewal past the stale window (AC-03).
+  yield* forkParked(handoff.heartbeat.pipe(Effect.repeat(every), Effect.asVoid));
+
+  let replicateCount = 0;
   yield* forkParked(
     Effect.suspend(() => {
-      tickCount += 1;
-      return handoff.tick({ checkpointRunning: tickCount % TICKS_PER_CHECKPOINT === 0 });
-    }).pipe(Effect.repeat(Schedule.spaced(Duration.millis(HANDOFF_LEASE_RENEW_MS))), Effect.asVoid),
+      replicateCount += 1;
+      return handoff.replicate({
+        checkpointRunning: replicateCount % TICKS_PER_CHECKPOINT === 0,
+      });
+    }).pipe(Effect.repeat(every), Effect.asVoid),
   );
 });

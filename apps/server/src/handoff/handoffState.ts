@@ -74,6 +74,14 @@ export const HandoffThreadRecord = Schema.Struct({
       }),
     ),
   ).pipe(Schema.withDecodingDefaultKey(Effect.succeed(null))),
+  /**
+   * The handoff note and recent transcript for a continuation that arrived idle
+   * (nothing to resume). Its first turn carries it ahead of the user's message;
+   * cleared once a run starts. Added later, so older files decode to null.
+   */
+  pendingSeed: Schema.optionalKey(Schema.NullOr(Schema.String)).pipe(
+    Schema.withDecodingDefaultKey(Effect.succeed(null)),
+  ),
 });
 export type HandoffThreadRecord = typeof HandoffThreadRecord.Type;
 
@@ -136,6 +144,7 @@ export function emptyThreadRecord(projectId: ProjectId): HandoffThreadRecord {
     resumeTurnKey: null,
     runEpochs: {},
     pendingTakeover: null,
+    pendingSeed: null,
   };
 }
 
@@ -242,6 +251,15 @@ export function checkEpoch(
     return {
       kind: "fenced",
       message: `Another machine (${lease.holderLabel}) runs this thread now; this copy is read-only.`,
+    };
+  }
+  // Mid-transfer the destination may already act, so the source does nothing outward.
+  // The handoff machinery itself never asks this question.
+  if (lease.state === "handing-off") {
+    return {
+      kind: "fenced",
+      message:
+        "This thread is being handed off; it performs no side effects until the handoff finishes.",
     };
   }
   if (epoch !== undefined && epoch !== lease.epoch) {

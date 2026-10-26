@@ -377,16 +377,20 @@ describe("resolveWorktreeCleanup", () => {
       storageCleanup: { worktreeAfterDays: 8, worktreeOnDelete: true },
     });
     const custom = applyServerSettingsPatch(initial, {
-      worktreeCleanup: { mode: "custom", rules: { worktreeOnMerge: true } },
+      worktreeCleanup: {
+        mode: "custom",
+        rules: { worktreeOnMerge: false, worktreeUnchanged: true },
+      },
     });
     const edited = applyServerSettingsPatch(custom, {
       worktreeCleanup: { mode: "custom", rules: { worktreeAfterDays: 15 } },
     });
+    // Values that differ from the defaults, so keeping them is visible.
     expect(resolveWorktreeCleanup(edited, null)).toEqual({
       worktreeAfterDays: 15,
       worktreeOnDelete: true,
-      worktreeOnMerge: true,
-      worktreeUnchanged: false,
+      worktreeOnMerge: false,
+      worktreeUnchanged: true,
     });
     expect(
       resolveWorktreeCleanup(applyServerSettingsPatch(edited, { worktreeCleanup: null }), null)

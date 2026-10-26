@@ -8,11 +8,7 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 
 const output = resolve(
-  process.argv[2] ??
-    join(
-      homedir(),
-      "Projects/github/studio-research-notes/design-workspace-2026-10-20/design-systems",
-    ),
+  process.argv[2] ?? join(homedir(), ".specwithcode/m4/evidence/design-systems"),
 );
 const env = {
   ...process.env,

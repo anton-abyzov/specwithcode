@@ -5,6 +5,8 @@ import { NonNegativeInt, ProjectId, ThreadId } from "./baseSchemas.ts";
 /** Shown for work refused while the service is held for an update. */
 export const SERVICE_UPDATE_IN_PROGRESS_MESSAGE =
   "SpecWithCode is installing an update. Send this again after it restarts.";
+/** Recorded on the turns, requests and effects an update's drain stops or cancels. */
+export const SERVICE_UPDATE_STOP_REASON = "Stopped to install the SpecWithCode update";
 /** Shown after the restart, while the update helper still checks the new release. */
 export const SERVICE_UPDATE_VERIFYING_MESSAGE =
   "SpecWithCode is finishing an update. Send this again in a minute.";

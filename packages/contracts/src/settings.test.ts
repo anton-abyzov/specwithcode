@@ -75,11 +75,11 @@ describe("ServerSettings excluded fallback models", () => {
 });
 
 describe("storage cleanup settings", () => {
-  it("keeps cleanup disabled for existing installations, except rotated logs", () => {
+  it("removes only merged worktrees and rotated logs unless the user opts in", () => {
     expect(decodeServerSettings({}).worktreeCleanup).toBeNull();
     expect(decodeServerSettings({}).storageCleanup).toEqual({
       worktreeAfterDays: null,
-      worktreeOnMerge: false,
+      worktreeOnMerge: true,
       worktreeOnDelete: false,
       worktreeUnchanged: false,
       browserArtifactsAfterDays: null,

@@ -449,23 +449,27 @@ vi.mock("../../hooks/useSettings", async () => {
   const { DEFAULT_SERVER_SETTINGS } = await import("@specweave-studio/contracts");
   return {
     useEnvironmentSettings: () => DEFAULT_SERVER_SETTINGS,
+    mergeEnvironmentSettings: (server: object, client: object) => ({ ...client, ...server }),
+    persistClientSettingsPatch: async () => {},
     useProjectOverrideWriteMode: () => "per-key" as const,
     usePrimarySettings: (select?: (settings: typeof DEFAULT_SERVER_SETTINGS) => unknown) =>
       select ? select(DEFAULT_SERVER_SETTINGS) : DEFAULT_SERVER_SETTINGS,
     useClientSettings: (
-      select: (settings: {
+      select?: (settings: {
         sendShortcut: string;
         projectCoordinatorMachines: Record<string, string>;
         timelineDetail: "concise" | "normal" | "verbose";
         threadTimelineDetail: Record<string, never>;
       }) => unknown,
-    ) =>
-      select({
+    ) => {
+      const settings = {
         sendShortcut: state.sendShortcut,
         projectCoordinatorMachines: state.savedMachines,
         timelineDetail: state.timelineDetail,
         threadTimelineDetail: {},
-      }),
+      };
+      return select ? select(settings) : settings;
+    },
     useClientSettingsHydrationStatus: () => "ready",
     useUpdateClientSettings:
       () => (patch: { projectCoordinatorMachines?: Record<string, string> }) => {

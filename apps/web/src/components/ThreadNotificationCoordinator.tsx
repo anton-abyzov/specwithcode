@@ -26,6 +26,13 @@ import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react
 import { useOpenChat } from "../hooks/useOpenChat";
 import { getClientSettings, useClientSettings } from "../hooks/useSettings";
 import { useEnvironmentIds } from "../state/environments";
+import { useProjects } from "../state/entities";
+import {
+  isDelegatedThread,
+  projectAlertAllowed,
+  projectNotificationLevel,
+  type ProjectNotificationLevel,
+} from "@specweave-studio/shared/projectNotifications";
 import { environmentShell } from "../state/shell";
 import {
   hasDesktopNotifications,
@@ -187,6 +194,17 @@ function EnvironmentNotifications({
   const inputNeededAlertsEnabled = useClientSettings(
     (settings) => settings.inputNeededAlertsEnabled === true,
   );
+  // Each project's notification level, read when an event is seen and again
+  // when it is delivered, so a change in the project menu applies at once.
+  const projects = useProjects();
+  const levels = useRef(new Map<ProjectId, ProjectNotificationLevel>());
+  useLayoutEffect(() => {
+    levels.current = new Map(
+      projects
+        .filter((project) => project.environmentId === environmentId)
+        .map((project) => [project.id, projectNotificationLevel(project)]),
+    );
+  }, [projects, environmentId]);
   const latest = useRef({ threads, mode, inAppNotificationsEnabled, inputNeededAlertsEnabled });
   useLayoutEffect(() => {
     latest.current = { threads, mode, inAppNotificationsEnabled, inputNeededAlertsEnabled };
@@ -355,7 +373,18 @@ function EnvironmentNotifications({
           candidates.push({ kind: "stalled", identity: stalled, soundChanged: true });
       }
       if (!isNotificationOwner()) continue;
+      // The project's notification level: a request (kind "action") reaches the
+      // person at every level but "none"; news from a delegated worker only at "all".
+      const allowedByLevel = (kind: (typeof candidates)[number]["kind"]) =>
+        projectAlertAllowed(
+          levels.current.get(thread.projectId) ?? projectNotificationLevel(null),
+          {
+            delegated: isDelegatedThread(rawThread),
+            needsYou: kind === "action",
+          },
+        );
       for (const { kind, action, identity, soundChanged } of candidates) {
+        if (!allowedByLevel(kind)) continue;
         const dispatch = async () => {
           const deliveryIdentity = episodeIds.has(String(identity))
             ? await episodeIds.get(String(identity))
@@ -380,6 +409,7 @@ function EnvironmentNotifications({
             const currentRaw = currentThreads?.find((candidate) => candidate.id === rawThread.id);
             if (!currentRaw || currentRaw.archivedAt !== null || currentRaw.deletedAt != null)
               return false;
+            if (!allowedByLevel(kind)) return false;
             const currentThread = presentThreadShell(environmentId, currentRaw);
             let currentStatus = resolveSidebarThreadStatus(currentThread);
             if (currentStatus === "ready" && currentThread.latestRun?.status === "failed")

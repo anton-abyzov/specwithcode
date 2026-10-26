@@ -149,9 +149,11 @@ manually. Custom applies separate worktree rules to the selected project or chec
 captures and log retention remain machine-wide.
 
 Worktrees can be removed after a chosen number of inactive days, after merging, or when they
-have no commits beyond the default branch. Only SpecWithCode-managed worktrees are eligible. Active
-sessions, shared worktrees, uncommitted changes, and ignored files other than `node_modules`
-prevent removal. Branches and thread history stay; starting another turn recreates the checkout.
+have no commits beyond the default branch. These rules only remove worktrees of resolved or
+archived threads. A folder that an open thread uses, contains or sits inside is always kept. Only
+SpecWithCode-managed worktrees are eligible. Active sessions, shared worktrees, uncommitted
+changes, and ignored files other than `node_modules` prevent removal. Branches and thread
+history stay; starting another turn recreates the checkout.
 Merge cleanup requires the commits to be included in the remote default branch, so squash merges
 may need the inactivity rule instead.
 

@@ -4700,7 +4700,7 @@ export default function Sidebar() {
                 projectByKey.get(`${thread.environmentId}:${thread.projectId}`),
               )
                 ? undefined
-                : threadHandoffMenuState(handoffSnapshot, thread.id),
+                : threadHandoffMenuState(handoffSnapshot, thread.id, thread.projectId),
               supports: {
                 settlement: supportsSettlement,
                 autoSettleOptOut: supportsAutoSettleOptOut,

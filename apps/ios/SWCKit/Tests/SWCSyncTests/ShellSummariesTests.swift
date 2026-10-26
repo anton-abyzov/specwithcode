@@ -189,10 +189,9 @@ import SWCWire
     #expect(output.projects.first?.isAutomated == false)
   }
 
-  @Test func sharedRemoteWithDifferentRootsStaySeparate() throws {
-    // Canonical workspace policy: never merge distinct checkouts solely because remotes match.
-    // Two independent roots/worktrees with the same GitHub remote must remain separate projects
-    // and not aggregate unrelated threads.
+  @Test func sameRepositoryOnSeveralMachinesIsOneRow() throws {
+    // The October 21 drawer: EasyChamp four times on the M1, once on the M4, once on the M3.
+    // The desktop sidebar groups by repository by default; the phone matches it.
     let repo = RepositoryIdentity(canonicalKey: "github.com/anton-abyzov/sw-easychamp")
     func easychamp(_ id: String, _ root: String) throws -> ProjectShell {
       try TestData.project(id: id, title: "EasyChamp", root: root, identity: repo)
@@ -203,9 +202,6 @@ import SWCWire
       easychamp("m1-worktree", "/Users/anton/Projects/sw-easychamp-worktree"),
       easychamp("m1-copy", "/Users/anton/work/sw-easychamp"),
     ]
-    let m4 = try [
-      easychamp("m4-main", "/Users/you/Projects/sw-easychamp"),
-    ]
     let output = ShellSummaries.build([
       machine("m1", threads: [
         try TestData.thread(id: "t-main", projectId: "m1-main", updatedAt: "2026-10-21T10:00:00.000Z"),
@@ -213,24 +209,108 @@ import SWCWire
       ], projects: m1),
       machine("m4", threads: [
         try TestData.thread(id: "t-m4", projectId: "m4-main", updatedAt: "2026-10-21T12:00:00.000Z"),
-      ], projects: m4),
+      ], projects: [try easychamp("m4-main", "/Users/you/Projects/sw-easychamp")]),
+      machine("m3", threads: [], projects: [try easychamp("m3-main", "/Users/you/Projects/sw-easychamp")]),
     ])
+    #expect(output.projects.count == 1)
+    let row = try #require(output.projects.first)
+    // The copy worked in most recently opens; every record stays reachable from the row.
+    #expect(row.ref == ProjectRef(environmentId: "m4", projectId: "m4-main"))
+    #expect(Set(row.members.map(\.ref.projectId)) == ["m1-main", "m1-main-dup", "m1-worktree", "m1-copy", "m4-main", "m3-main"])
+    // None is linked, so the phone never offers a live move between them.
+    #expect(row.members.allSatisfy { !$0.isLinked })
+    #expect(Set(output.threadsByProject[row.ref]?.map(\.ref.threadId) ?? []) == ["t-main", "t-worktree", "t-m4"])
+  }
 
-    // m1-main and m1-main-dup merge (exact same folder on same machine)
-    // m1-worktree stays separate (distinct root)
-    // m1-copy stays separate (distinct root)
-    // m4-main stays separate (distinct machine, unlinked)
-    #expect(output.projects.count == 4)
+  @Test func forkStaysApartFromTheRepositoryItForked() throws {
+    // The server's shape: canonicalKey follows `upstream`, origin is the checkout's own remote.
+    var fork = RepositoryIdentity(canonicalKey: "github.com/team/app")
+    fork.origin = .init(canonicalKey: "github.com/me/app")
+    var forkElsewhere = RepositoryIdentity(canonicalKey: "github.com/me/app")
+    forkElsewhere.origin = nil
+    let upstream = RepositoryIdentity(canonicalKey: "github.com/team/app")
+    let a = try TestData.project(id: "fork", title: "App", root: "/Users/x/app", identity: fork)
+    let b = try TestData.project(id: "fork-no-upstream", title: "App", root: "/Users/y/app", identity: forkElsewhere)
+    let c = try TestData.project(id: "clone", title: "App", root: "/Users/z/app", identity: upstream)
+    let output = ShellSummaries.build([machine("e1", threads: [], projects: [a, c]), machine("e2", threads: [], projects: [b])])
+    // Both checkouts of the fork group, with or without an upstream remote; the plain clone stays apart.
+    #expect(output.projects.count == 2)
+    let forkRow = try #require(output.projects.first { $0.members.count == 2 })
+    #expect(Set(forkRow.members.map(\.ref.projectId)) == ["fork", "fork-no-upstream"])
+  }
 
-    let mainProject = try #require(output.projects.first { $0.ref.projectId == "m1-main" })
-    #expect(mainProject.members.map(\.ref.projectId).sorted() == ["m1-main", "m1-main-dup"])
-    #expect(output.threadsByProject[mainProject.ref]?.map(\.ref.threadId) == ["t-main"])
+  @Test func repositoryOriginDecodes() throws {
+    let json = #"{"canonicalKey":"github.com/team/app","locator":{"source":"git-remote","remoteName":"upstream","remoteUrl":"git@github.com:team/app.git"},"origin":{"canonicalKey":"github.com/me/app","displayName":"me/app"}}"#
+    let identity = try TestData.decode(RepositoryIdentity.self, json)
+    #expect(identity.groupingKey == "github.com/me/app")
+    #expect(identity.groupingDisplayName == "me/app")
+    let plain = try TestData.decode(RepositoryIdentity.self, #"{"canonicalKey":"github.com/team/app","displayName":"team/app","origin":null}"#)
+    #expect(plain.groupingKey == "github.com/team/app")
+    #expect(plain.groupingDisplayName == "team/app")
+  }
 
-    let worktreeProject = try #require(output.projects.first { $0.ref.projectId == "m1-worktree" })
-    #expect(output.threadsByProject[worktreeProject.ref]?.map(\.ref.threadId) == ["t-worktree"])
+  @Test func archivedCopyNeverLeadsALiveRow() throws {
+    let repo = RepositoryIdentity(canonicalKey: "github.com/x/app")
+    var old = try TestData.project(id: "old", title: "App", root: "/Users/x/old-app", identity: repo)
+    old.workspaceSettings?.archived = true
+    let live = try TestData.project(id: "live", title: "App", root: "/Users/y/app", identity: repo)
+    let output = ShellSummaries.build([
+      machine("e1", threads: [try TestData.thread(id: "late", projectId: "old", updatedAt: "2026-10-21T12:00:00.000Z")], projects: [old]),
+      machine("e2", threads: [try TestData.thread(id: "early", projectId: "live", updatedAt: "2026-10-21T10:00:00.000Z")], projects: [live]),
+    ])
+    let row = try #require(output.projects.first)
+    #expect(output.projects.count == 1)
+    #expect(row.ref.projectId == "live")
+    #expect(row.archived == false)
 
-    let m4Project = try #require(output.projects.first { $0.ref.projectId == "m4-main" })
-    #expect(output.threadsByProject[m4Project.ref]?.map(\.ref.threadId) == ["t-m4"])
+    var gone = live
+    gone.workspaceSettings?.archived = true
+    let allArchived = ShellSummaries.build([machine("e1", threads: [], projects: [old]), machine("e2", threads: [], projects: [gone])])
+    #expect(allArchived.projects.first?.archived == true)
+  }
+
+  @Test func mergedRowIsNamedAsOnDesktop() throws {
+    var repo = RepositoryIdentity(canonicalKey: "github.com/x/mono", displayName: "x/mono", name: "mono")
+    repo.rootPath = "/Users/x/mono"
+    let web = try TestData.project(id: "web", title: "Web", root: "/Users/x/mono/apps/web", identity: repo)
+    let api = try TestData.project(id: "api", title: "API", root: "/Users/x/mono/apps/api", identity: repo)
+    // Two custom names: the repository's name, whichever copy was used last.
+    for latest in ["web", "api"] {
+      let output = ShellSummaries.build([machine("env", threads: [try TestData.thread(id: "t", projectId: latest)], projects: [web, api])])
+      #expect(output.projects.map(\.title) == ["x/mono"])
+    }
+    // One renamed copy beside one with its folder's name keeps the custom name.
+    let named = try TestData.project(id: "a", title: "EasyChamp", root: "/Users/a/sw-easychamp", identity: repo)
+    let folderNamed = try TestData.project(id: "b", title: "sw-easychamp", root: "/Users/b/sw-easychamp", identity: repo)
+    let output = ShellSummaries.build([machine("e1", threads: [], projects: [folderNamed]), machine("e2", threads: [], projects: [named])])
+    #expect(output.projects.map(\.title) == ["EasyChamp"])
+  }
+
+  @Test func secondRegistrationOfALinkedFolderDoesNotPullInTheRepository() throws {
+    let repo = RepositoryIdentity(canonicalKey: "github.com/x/app")
+    let logical = LogicalProject(id: "logical:app", title: "App", coordinatorId: "coordinator:logical:app")
+    var l1 = try TestData.project(id: "l1", title: "App", root: "/Users/x/app", identity: repo)
+    l1.workspaceSettings?.logicalProject = logical
+    var l2 = try TestData.project(id: "l2", title: "App", root: "/Users/y/app", identity: repo)
+    l2.workspaceSettings?.logicalProject = logical
+    let dup = try TestData.project(id: "dup", title: "App", root: "/Users/x/app/", identity: repo)
+    let other = try TestData.project(id: "other", title: "App", root: "/Users/x/other-app", identity: repo)
+    let far = try TestData.project(id: "far", title: "App", root: "/Users/z/app", identity: repo)
+    let output = ShellSummaries.build([
+      machine("e1", threads: [], projects: [l1, dup, other]),
+      machine("e2", threads: [], projects: [l2]),
+      machine("e3", threads: [], projects: [far]),
+    ])
+    let rows = output.projects.map { Set($0.members.map(\.ref.projectId)) }
+    #expect(Set(rows) == [["l1", "l2", "dup"], ["other", "far"]])
+  }
+
+  @Test func differentRepositoriesWithOneNameStaySeparate() throws {
+    let a = try TestData.project(id: "a", title: "App", root: "/Users/x/app", identity: TestData.identity)
+    let b = try TestData.project(id: "b", title: "App", root: "/Users/y/app", identity: TestData.otherIdentity)
+    let c = try TestData.project(id: "c", title: "App", root: "/Users/z/app")
+    let output = ShellSummaries.build([machine("env", threads: [], projects: [a, b, c])])
+    #expect(output.projects.count == 3)
   }
 
   @Test func duplicatesFixtureListsEachProjectOnce() {
@@ -242,22 +322,22 @@ import SWCWire
   }
 
   @Test func sameFolderTwiceOnOneMachineIsOneRow() throws {
-    let repo = RepositoryIdentity(canonicalKey: "github.com/example/notes")
-    let a = try TestData.project(id: "a", title: "Notes", root: "/Users/x/notes", identity: repo)
-    let b = try TestData.project(id: "b", title: "notes", root: "/Users/x/notes/", identity: repo)
-    let other = try TestData.project(id: "c", title: "Notes", root: "/Users/x/other-notes", identity: repo)
+    let a = try TestData.project(id: "a", title: "Notes", root: "/Users/x/notes")
+    let b = try TestData.project(id: "b", title: "notes", root: "/Users/x/notes/")
+    let other = try TestData.project(id: "c", title: "Notes", root: "/Users/x/other-notes")
     let output = ShellSummaries.build([machine("env", threads: [], projects: [a, b, other])])
-    // Duplicate normalized folder merges, while distinct root stays separate even with same repository.
+    // Without a repository, only the same folder merges; the same name elsewhere stays its own project.
     #expect(output.projects.count == 2)
   }
 
-  @Test func differentFoldersOfOneRepositoryStaySeparate() throws {
+  @Test func foldersOfOneRepositoryShareARowAsOnDesktop() throws {
     var repo = RepositoryIdentity(canonicalKey: "github.com/x/mono")
     repo.rootPath = "/Users/x/mono"
     let web = try TestData.project(id: "web", title: "Web", root: "/Users/x/mono/apps/web", identity: repo)
     let api = try TestData.project(id: "api", title: "API", root: "/Users/x/mono/apps/api", identity: repo)
     let output = ShellSummaries.build([machine("env", threads: [], projects: [web, api])])
-    #expect(output.projects.count == 2)
+    #expect(output.projects.count == 1)
+    #expect(output.projects.first?.members.count == 2)
   }
 
   @Test func linkedCopyStaysLinkedBesideAnUnlinkedCopy() throws {
@@ -273,7 +353,7 @@ import SWCWire
       machine("e2", threads: [], projects: [b]),
       machine("e3", threads: [], projects: [stray]),
     ])
-    // a and b merge through explicit logicalProject; stray is unlinked with a distinct root so stays separate.
+    // a and b merge through their linked project; the unlinked stray stays its own row, as on the desktop.
     #expect(output.projects.count == 2)
     let linkedProject = try #require(output.projects.first { $0.title == "App" && $0.members.count == 2 })
     let linked = Set(linkedProject.members.filter(\.isLinked).map(\.ref.environmentId))

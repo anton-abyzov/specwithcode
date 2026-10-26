@@ -85,9 +85,16 @@ import {
   membersToToggle,
   partitionProjectGroups,
   membersToMark,
+  membersToNotify,
+  notificationsWorkspacePatch,
   originWorkspacePatch,
   sameNameHints,
 } from "../../../studio/projectListVisibility";
+import {
+  projectNotificationLevel,
+  projectShowsWaitingCount,
+  type ProjectNotificationLevel,
+} from "@specweave-studio/shared/projectNotifications";
 import { chooseCoordinatorView } from "../../../studio/projectCoordinatorMachine";
 import { useMachineNicknames } from "../../../studio/machineNickname";
 import {
@@ -561,6 +568,37 @@ export default function StudioSidebar() {
       }
     }
   };
+  // Sets how loudly the project alerts on every machine that has it.
+  const setGroupNotifications = async (
+    group: SidebarProjectSnapshot,
+    level: ProjectNotificationLevel,
+  ) => {
+    for (const member of membersToNotify(group, level, scratchRootFor)) {
+      const result = await updateProject({
+        environmentId: member.environmentId,
+        input: {
+          projectId: member.id,
+          workspaceSettings: notificationsWorkspacePatch(member, level),
+        },
+      });
+      if (result._tag === "Failure" && !isAtomCommandInterrupted(result)) {
+        const cause = squashAtomCommandFailure(result);
+        toastManager.add(
+          stackedThreadToast({
+            type: "error",
+            title: `Could not change notifications for ${displayedCheckouts.get(group.projectKey)?.title ?? group.displayName}`,
+            description: cause instanceof Error ? cause.message : "Try again in a moment.",
+          }),
+        );
+        return;
+      }
+    }
+  };
+  // The level the row shows: the one saved on the checkout the project page opens.
+  const notificationsFor = (group: SidebarProjectSnapshot) =>
+    projectNotificationLevel(
+      displayedCheckouts.get(group.projectKey) ?? group.memberProjects[0] ?? null,
+    );
   // Renames a project wherever it lives; the first machine that refuses says why.
   const renameGroup = async (group: SidebarProjectSnapshot, name: string) => {
     const plan = renameTargets(group.memberProjects, name);
@@ -700,7 +738,10 @@ export default function StudioSidebar() {
   };
   const hasAssistant = projectGroups.some(isPersonalGroup);
   const automatedWaiting = automatedProjects.reduce(
-    (sum, group) => sum + (waitingByProject.get(group.projectKey) ?? 0),
+    (sum, group) =>
+      projectShowsWaitingCount(notificationsFor(group))
+        ? sum + (waitingByProject.get(group.projectKey) ?? 0)
+        : sum,
     0,
   );
   const newChatShortcut = shortcutLabelForCommand(keybindings, "chat.new");
@@ -753,6 +794,8 @@ export default function StudioSidebar() {
                     hint={assistantHint(group)}
                     onOpen={closeMobile}
                     onArchive={(archived) => void setGroupArchived(group, archived)}
+                    notifications={notificationsFor(group)}
+                    onNotificationsChange={(level) => void setGroupNotifications(group, level)}
                     rename={renameFor(group)}
                     designsProjectId={designsFor(group)}
                   />
@@ -823,6 +866,7 @@ export default function StudioSidebar() {
                   hint: nameHints.get(group.projectKey),
                   rename: renameFor(group),
                   designsProjectId: designsFor(group),
+                  notifications: notificationsFor(group),
                 })}
                 onOpen={closeMobile}
                 onMove={moveProjectTo}
@@ -838,6 +882,7 @@ export default function StudioSidebar() {
                 }
                 onArchive={(group, archived) => void setGroupArchived(group, archived)}
                 onOriginChange={(group, origin) => void setGroupOrigin(group, origin)}
+                onNotificationsChange={(group, level) => void setGroupNotifications(group, level)}
               />
             )}
             {hiddenProjects > 0 || (showAllProjects && codeProjects.length > PROJECT_PAGE + 1) ? (
@@ -893,6 +938,8 @@ export default function StudioSidebar() {
                         onOpen={closeMobile}
                         onArchive={(archived) => void setGroupArchived(group, archived)}
                         onOriginChange={(origin) => void setGroupOrigin(group, origin)}
+                        notifications={notificationsFor(group)}
+                        onNotificationsChange={(level) => void setGroupNotifications(group, level)}
                         rename={renameFor(group)}
                         designsProjectId={designsFor(group)}
                       />

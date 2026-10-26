@@ -111,6 +111,10 @@ export interface HandoffMovesPort {
     input: HandoffPreflightInput,
   ) => Effect.Effect<ReadonlyArray<HandoffPreflightResult>, HandoffModeError>;
   /** Heartbeats leases to the machines that hold replicas; marks silent sources unknown. */
+  readonly heartbeat: Effect.Effect<void>;
+  /** Ships checkpoints the replica machines lack, backing off a failing destination. */
+  readonly replicate: Effect.Effect<void>;
+  /** Both of the above, in order. */
   readonly tick: Effect.Effect<void>;
 }
 
@@ -171,6 +175,13 @@ export class HandoffMode extends Context.Service<
     readonly observeRun: (run: OrchestrationV2Run) => Effect.Effect<void>;
     /** Renews leases held here and checkpoints threads still running (interval reason). */
     readonly tick: (input: { readonly checkpointRunning: boolean }) => Effect.Effect<void>;
+    /**
+     * The lease half of `tick`: renews leases and heartbeats peers. Never waits on
+     * a checkpoint or a replication, so a slow one cannot delay a renewal.
+     */
+    readonly heartbeat: Effect.Effect<void>;
+    /** The checkpoint half of `tick`: interval checkpoints, then replication. */
+    readonly replicate: (input: { readonly checkpointRunning: boolean }) => Effect.Effect<void>;
   }
 >()("specweave-studio/handoff/HandoffMode") {}
 
@@ -694,6 +705,8 @@ export const make = Effect.gen(function* () {
           ...current,
           lease,
           runEpochs: noteRunEpoch(current.runEpochs, run.id, lease.epoch),
+          // The first run carried the idle continuation's seed; later turns do not repeat it.
+          pendingSeed: null,
           // A run that starts after a handoff gave the thread back is not the one the
           // handoff interrupted, so its ending is its own.
           fencedBy:
@@ -718,33 +731,61 @@ export const make = Effect.gen(function* () {
         ),
       );
 
-  const tick = (input: { readonly checkpointRunning: boolean }) =>
-    Effect.gen(function* () {
-      const document = yield* store.read;
-      const now = yield* nowIso;
-      for (const [id, current] of Object.entries(document.threads)) {
-        const threadId = id as ThreadId;
-        if (current.continuedOn !== null || current.lease === null) continue;
-        if (current.lease.holderEnvironmentId !== environmentId) continue;
-        const shell = yield* projections
-          .getThreadShell(threadId)
-          .pipe(Effect.orElseSucceed(() => null));
-        if (shell === null || shell.activeRunId === null) continue;
-        yield* locks.withLock(
-          threadId,
-          updateThread(threadId, current.projectId, (latest) => ({
-            ...latest,
-            lease: renewLease(latest.lease, environmentId, now),
-          })).pipe(Effect.ignore),
-        );
-        if (input.checkpointRunning) {
-          yield* checkpoint(threadId, "interval").pipe(Effect.ignore);
-        }
+  /** Threads this machine holds the lease of whose turn is still running. */
+  const runningHeld = Effect.gen(function* () {
+    const document = yield* store.read;
+    const out: Array<{ readonly threadId: ThreadId; readonly projectId: ProjectId }> = [];
+    for (const [id, current] of Object.entries(document.threads)) {
+      const threadId = id as ThreadId;
+      if (current.continuedOn !== null || current.lease === null) continue;
+      if (current.lease.holderEnvironmentId !== environmentId) continue;
+      const shell = yield* projections
+        .getThreadShell(threadId)
+        .pipe(Effect.orElseSucceed(() => null));
+      if (shell === null || shell.activeRunId === null) continue;
+      out.push({ threadId, projectId: current.projectId });
+    }
+    return out;
+  });
+
+  const renewLeases = Effect.gen(function* () {
+    const now = yield* nowIso;
+    const held = yield* runningHeld;
+    if (held.length === 0) return;
+    // One store write for every thread; it skips the per-thread lock, so a checkpoint
+    // holding that lock (Git, a note) never delays a renewal.
+    yield* store.update((document) => {
+      const threads = { ...document.threads };
+      for (const { threadId } of held) {
+        const latest = threads[threadId];
+        if (latest === undefined) continue;
+        threads[threadId] = { ...latest, lease: renewLease(latest.lease, environmentId, now) };
       }
-    }).pipe(
-      Effect.catchCause((cause) => Effect.logWarning("Handoff mode tick failed", { cause })),
-      Effect.andThen(Effect.suspend(() => moves?.tick ?? Effect.void)),
+      return [undefined, { ...document, threads }] as const;
+    });
+  }).pipe(Effect.catchCause((cause) => Effect.logWarning("Handoff mode tick failed", { cause })));
+
+  const checkpointRunning = Effect.gen(function* () {
+    for (const { threadId } of yield* runningHeld) {
+      yield* checkpoint(threadId, "interval").pipe(Effect.ignore);
+    }
+  }).pipe(
+    Effect.catchCause((cause) =>
+      Effect.logWarning("Handoff mode interval checkpoint failed", { cause }),
+    ),
+  );
+
+  const heartbeat = renewLeases.pipe(
+    Effect.andThen(Effect.suspend(() => moves?.heartbeat ?? Effect.void)),
+  );
+
+  const replicate = (input: { readonly checkpointRunning: boolean }) =>
+    (input.checkpointRunning ? checkpointRunning : Effect.void).pipe(
+      Effect.andThen(Effect.suspend(() => moves?.replicate ?? Effect.void)),
     );
+
+  const tick = (input: { readonly checkpointRunning: boolean }) =>
+    heartbeat.pipe(Effect.andThen(replicate(input)));
 
   const viaMoves = <A>(use: (port: HandoffMovesPort) => Effect.Effect<A, HandoffModeError>) =>
     Effect.suspend(() => (moves === null ? Effect.fail(notStarted) : use(moves)));
@@ -774,6 +815,8 @@ export const make = Effect.gen(function* () {
     recordSideEffect: record,
     observeRun,
     tick,
+    heartbeat,
+    replicate,
   });
 });
 

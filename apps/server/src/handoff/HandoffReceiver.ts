@@ -60,6 +60,7 @@ import {
 import { refComponent } from "./checkpointGit.ts";
 import { HandoffMode } from "./HandoffMode.ts";
 import {
+  HANDOFF_CONTINUE_TEXT,
   handoffSeed,
   HANDOFF_SEED_MAX_CHARS,
   type PreflightProvider,
@@ -111,6 +112,18 @@ const refuse = (
   message: string,
   check?: HandoffPreflightCheck,
 ) => new HandoffRefusal({ status, code, message, ...(check === undefined ? {} : { check }) });
+
+/**
+ * The seed an idle continuation keeps for its first turn: the same note and
+ * transcript, framed as context for the user's message rather than an order
+ * to resume.
+ */
+export const idleSeed = (seed: string) =>
+  `Context from the handoff (the user's message follows):${
+    seed.startsWith(HANDOFF_CONTINUE_TEXT)
+      ? seed.slice(HANDOFF_CONTINUE_TEXT.length)
+      : `\n\n${seed}`
+  }`;
 
 const describe = (cause: unknown) =>
   (cause instanceof Error ? cause.message : String(cause)).slice(0, 500);
@@ -566,6 +579,8 @@ export const make = Effect.gen(function* () {
           },
           sideEffects: [...checkpoint.sideEffects],
           resumeTurnKey: checkpoint.turnKey,
+          // An idle continuation starts no run; its first turn carries the note and transcript.
+          pendingSeed: resume ? null : idleSeed(seed),
         };
         return [next, { ...current, threads: { ...current.threads, [threadId]: next } }] as const;
       });
@@ -579,14 +594,7 @@ export const make = Effect.gen(function* () {
           runtimeMode: detail.runtimeMode,
           interactionMode: detail.interactionMode,
           workspaceStrategy: { type: "existing_worktree", worktreePath, branch },
-          ...(resume
-            ? {
-                initialMessage: {
-                  text: seed,
-                  attachments: [],
-                },
-              }
-            : {}),
+          ...(resume ? { initialMessage: { text: seed, attachments: [] } } : {}),
           createdBy: "system",
           creationSource: "server",
         })

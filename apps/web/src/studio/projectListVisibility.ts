@@ -16,6 +16,10 @@ import type {
   ProjectWorkspacePatch,
 } from "@specweave-studio/contracts";
 import { projectOrigin } from "@specweave-studio/shared/projectOrigin";
+import {
+  projectNotificationLevel,
+  type ProjectNotificationLevel,
+} from "@specweave-studio/shared/projectNotifications";
 
 export interface ProjectListMember {
   readonly environmentId: EnvironmentId;
@@ -28,6 +32,7 @@ export interface ProjectListMember {
         readonly origin?: string | undefined;
         readonly temporarySessionId?: string | undefined;
         readonly kind?: string | undefined;
+        readonly notifications?: string | undefined;
       }
     | null
     | undefined;
@@ -355,6 +360,30 @@ export function membersToMark<M extends ProjectListMember>(
   return group.memberProjects.filter(
     (member) =>
       !isScratchMember(member, scratchRootFor) && member.workspaceSettings?.origin !== origin,
+  );
+}
+
+/** The workspace-settings patch that sets one project's notification level. */
+export function notificationsWorkspacePatch(
+  member: ProjectListMember,
+  notifications: ProjectNotificationLevel,
+): Pick<ProjectWorkspacePatch, "expectedRevision" | "notifications"> {
+  return { expectedRevision: member.workspaceSettings?.revision ?? 0, notifications };
+}
+
+/**
+ * The members a new notification level for the whole group has to change: every
+ * machine's copy, so each one's alerts follow the same choice.
+ */
+export function membersToNotify<M extends ProjectListMember>(
+  group: { readonly memberProjects: ReadonlyArray<M> },
+  notifications: ProjectNotificationLevel,
+  scratchRootFor: ScratchRootLookup,
+): M[] {
+  return group.memberProjects.filter(
+    (member) =>
+      !isScratchMember(member, scratchRootFor) &&
+      projectNotificationLevel(member) !== notifications,
   );
 }
 

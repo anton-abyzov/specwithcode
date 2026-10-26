@@ -19,6 +19,7 @@ import {
   threadTurnKey,
 } from "@specweave-studio/contracts";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as TestClock from "effect/testing/TestClock";
@@ -125,6 +126,8 @@ const scenario = (
       activeRunId: null as string | null,
       runEnding: "usage-limit" as HandoffRunEnding,
       sequence: 0,
+      /** A turn that keeps running through an interrupt. */
+      ignoreInterrupt: false,
     };
 
     const handoffFor = (target: Machine) =>
@@ -263,7 +266,9 @@ const scenario = (
           dispatch: (command: { type: string }) =>
             Effect.sync(() => {
               target.dispatched.push(command);
-              if (command.type === "run.interrupt") fixture.activeRunId = null;
+              if (command.type === "run.interrupt" && !fixture.ignoreInterrupt) {
+                fixture.activeRunId = null;
+              }
               return {};
             }),
         } as never),
@@ -291,6 +296,10 @@ const scenario = (
       dropTakeoverAnswer: false,
       dropTakeoverRequest: false,
       refuseTakeover: null as "fenced" | "busy" | null,
+      /** A takeover failure that never came from the destination. */
+      failTakeover: null as HandoffPeerError | null,
+      /** Checkpoint shipments started to the destination (each negotiates first). */
+      shipments: 0,
       olderDestination: false,
       newerDestination: false,
     };
@@ -317,7 +326,10 @@ const scenario = (
     const peers = HandoffPeers.of({
       target: () => Effect.succeed({ machineId: "minis", environmentId: minis, label: "Minis" }),
       targets: Effect.succeed([{ machineId: "minis", environmentId: minis, label: "Minis" }]),
-      negotiate: (_, request) => viaNetwork(destinationReceiver.negotiate(asSource, request)),
+      negotiate: (_, request) => {
+        network.shipments += 1;
+        return viaNetwork(destinationReceiver.negotiate(asSource, request));
+      },
       replicate: (_, meta, bundle) =>
         viaNetwork(destinationReceiver.replicate(asSource, meta, bundle)),
       preflight: (_, request) =>
@@ -348,23 +360,25 @@ const scenario = (
           ),
         ),
       takeover: (_, request) =>
-        (network.refuseTakeover !== null
-          ? Effect.fail(
-              new HandoffPeerError({
-                code: network.refuseTakeover,
-                message: `Minis refused the takeover (${network.refuseTakeover}).`,
-                uncertain: false,
-              }),
-            )
-          : network.dropTakeoverRequest
+        (network.failTakeover !== null
+          ? Effect.fail(network.failTakeover)
+          : network.refuseTakeover !== null
             ? Effect.fail(
                 new HandoffPeerError({
-                  code: "unreachable",
-                  message: "Minis did not answer.",
-                  uncertain: true,
+                  code: network.refuseTakeover,
+                  message: `Minis refused the takeover (${network.refuseTakeover}).`,
+                  uncertain: false,
                 }),
               )
-            : viaNetwork(destinationReceiver.takeover(asSource, request))
+            : network.dropTakeoverRequest
+              ? Effect.fail(
+                  new HandoffPeerError({
+                    code: "unreachable",
+                    message: "Minis did not answer.",
+                    uncertain: true,
+                  }),
+                )
+              : viaNetwork(destinationReceiver.takeover(asSource, request))
         ).pipe(
           Effect.flatMap((answer) =>
             network.dropTakeoverAnswer
@@ -631,6 +645,24 @@ describe("handoff between two machines", () => {
       );
       expect(destination.launches[0]?.initialMessage).toBeDefined();
       expect(result.threadId).toBe(destination.launches[0]?.threadId);
+    }),
+  );
+
+  it.effect("keeps the note and transcript for an idle continuation's first turn", () =>
+    Effect.gen(function* () {
+      const { destination, moves, fixture, destinationRoot } = yield* scenario();
+      NodeFS.writeFileSync(NodePath.join(destinationRoot, ".env.local"), "TOKEN=minis\n");
+      fixture.runEnding = "completed";
+      const result = yield* handOff(moves);
+      // Nothing to resume: the thread launches without a run.
+      expect(destination.launches).toHaveLength(1);
+      expect(destination.launches[0]?.initialMessage).toBeUndefined();
+      // Its first turn carries the note and the recent transcript instead.
+      const seed = destination.document.threads[result.threadId]?.pendingSeed ?? "";
+      expect(seed).toContain("Context from the handoff");
+      expect(seed).not.toContain("Continue where you left off.");
+      expect(seed).toContain("Next: Run the build");
+      expect(seed).toContain("User: Fix the build");
     }),
   );
 
@@ -906,6 +938,137 @@ describe("handoff between two machines", () => {
       ).toMatchObject({ state: "current", sequence: 2 });
     }),
   );
+
+  it.effect(
+    "keeps a re-sent takeover in doubt when the failure never came from the destination",
+    () =>
+      Effect.gen(function* () {
+        const { source, destination, moves, network, destinationRoot } = yield* scenario();
+        NodeFS.writeFileSync(NodePath.join(destinationRoot, ".env.local"), "TOKEN=minis\n");
+        network.dropTakeoverRequest = true;
+        yield* handOff(moves).pipe(Effect.flip);
+        network.dropTakeoverRequest = false;
+
+        // Unreachable, though not marked uncertain: the first takeover may still have landed.
+        network.failTakeover = new HandoffPeerError({
+          code: "unreachable",
+          message: "Minis did not answer.",
+          uncertain: false,
+        });
+        yield* moves.tick;
+        expect(source.document.threads[threadId]?.lease?.state).toBe("handing-off");
+        expect(source.document.threads[threadId]?.pendingTakeover).not.toBeNull();
+        expect(source.document.threads[threadId]?.lastError).toContain("stays paused");
+
+        // A credential or identity failure on this machine is no refusal either.
+        network.failTakeover = new HandoffPeerError({
+          code: "needs_grant",
+          message: "Minis: this machine has no work grant there",
+          uncertain: false,
+          local: true,
+        });
+        yield* moves.tick;
+        expect(source.document.threads[threadId]?.lease?.state).toBe("handing-off");
+        expect(source.document.threads[threadId]?.pendingTakeover).not.toBeNull();
+
+        network.failTakeover = null;
+        yield* moves.tick;
+        expect(destination.launches).toHaveLength(1);
+        expect(source.document.threads[threadId]?.continuedOn?.threadId).toBe(
+          destination.launches[0]?.threadId,
+        );
+      }),
+  );
+
+  it.effect("interrupts a turn still running on the source once the destination took over", () =>
+    Effect.gen(function* () {
+      const { source, destination, moves, network, fixture, destinationRoot } = yield* scenario();
+      NodeFS.writeFileSync(NodePath.join(destinationRoot, ".env.local"), "TOKEN=minis\n");
+      network.dropTakeoverRequest = true;
+      yield* handOff(moves).pipe(Effect.flip);
+      network.dropTakeoverRequest = false;
+      // A turn runs on the held copy anyway (an interrupt that never landed).
+      fixture.activeRunId = "run-late";
+      yield* moves.tick;
+      expect(destination.launches).toHaveLength(1);
+      expect(source.document.threads[threadId]?.continuedOn).not.toBeNull();
+      expect(source.dispatched.filter((command) => command.type === "run.interrupt")).toEqual([
+        expect.objectContaining({ runId: "run-late", threadId, cause: "agent" }),
+      ]);
+      expect(fixture.activeRunId).toBeNull();
+    }),
+  );
+
+  it.effect(
+    "interrupts again after the takeover when the first interrupt did not stop the turn",
+    () =>
+      Effect.gen(function* () {
+        const { source, destination, moves, fixture, destinationRoot } = yield* scenario();
+        NodeFS.writeFileSync(NodePath.join(destinationRoot, ".env.local"), "TOKEN=minis\n");
+        fixture.activeRunId = "run-1";
+        fixture.ignoreInterrupt = true;
+        let done = false;
+        const fiber = yield* handOff(moves).pipe(
+          Effect.ensuring(
+            Effect.sync(() => {
+              done = true;
+            }),
+          ),
+          Effect.forkChild,
+        );
+        // The bounded wait for the turn to end runs out. Git work in between is real I/O,
+        // so the test clock moves in small steps while the handoff runs.
+        for (let step = 0; step < 2_000 && !done; step += 1) {
+          yield* TestClock.withLive(Effect.sleep("5 millis"));
+          yield* TestClock.adjust("1 second");
+        }
+        const result = yield* Fiber.join(fiber);
+        expect(result.threadId).toBe(destination.launches[0]?.threadId);
+        const interrupts = source.dispatched.filter((command) => command.type === "run.interrupt");
+        expect(interrupts).toHaveLength(2);
+        expect(interrupts[1]).toMatchObject({ runId: "run-1", cause: "agent" });
+        expect(String(interrupts[1]?.commandId)).toContain("handoff-fenced-interrupt:run-1");
+      }),
+  );
+
+  it.effect("backs off a failing replication instead of retrying it on every tick", () =>
+    Effect.gen(function* () {
+      const { moves, network, source, destinationRoot } = yield* scenario({ sourceMembers: true });
+      NodeFS.writeFileSync(NodePath.join(destinationRoot, ".env.local"), "TOKEN=minis\n");
+      // A turn end wrote checkpoint 1, which Minis lacks; Minis does not answer.
+      yield* moves
+        .preflight({ destinationEnvironmentId: m4, threadIds: [threadId] })
+        .pipe(Effect.ignore);
+      network.down = true;
+      yield* moves.tick;
+      expect(network.shipments).toBe(1);
+      yield* moves.tick;
+      yield* TestClock.adjust("29 seconds");
+      yield* moves.tick;
+      expect(network.shipments).toBe(1);
+      // 30 seconds after the first failure, then 60 after the second.
+      yield* TestClock.adjust("1 second");
+      yield* moves.tick;
+      expect(network.shipments).toBe(2);
+      yield* TestClock.adjust("30 seconds");
+      yield* moves.tick;
+      expect(network.shipments).toBe(2);
+      yield* TestClock.adjust("30 seconds");
+      yield* moves.tick;
+      expect(network.shipments).toBe(3);
+      // Once it answers, the next try ships it and the wait resets.
+      network.down = false;
+      yield* TestClock.adjust("120 seconds");
+      yield* moves.tick;
+      expect(network.shipments).toBe(4);
+      expect(
+        source.document.threads[threadId]?.replicas.find(
+          (replica) => replica.environmentId === minis,
+        ),
+      ).toMatchObject({ state: "current", sequence: 1 });
+    }),
+  );
+
   it.effect.each(["leased", "settled", "unknown"] as const)(
     "carries child dispositions across two hosts: %s",
     (disposition) =>

@@ -120,7 +120,13 @@ export function handoffRunEnding(run: {
   readonly failureClass?: OrchestrationV2ProviderFailureClass | null;
   readonly fencedBy?: "handoff" | "sleep" | null;
 }): HandoffRunEnding {
-  if (run.fencedBy != null && (run.status === "interrupted" || isActiveStatus(run.status))) {
+  // The user's own Stop stays final even on a thread handoff mode fenced.
+  const userStopped = run.status === "interrupted" && run.interruptCause === "user";
+  if (
+    run.fencedBy != null &&
+    !userStopped &&
+    (run.status === "interrupted" || isActiveStatus(run.status))
+  ) {
     return run.fencedBy;
   }
   switch (run.status) {
