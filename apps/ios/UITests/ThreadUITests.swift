@@ -39,7 +39,9 @@ final class ThreadUITests: SWCUITestCase {
     XCTAssertTrue(send.isEnabled, "Send should enable once there is text")
     send.tap()
 
-    waitFor(element(containing: "You: \(message)"), "The sent message should appear")
+    let sent = app.descendants(matching: .any).matching(identifier: "message.user")
+      .containing(.staticText, identifier: message).firstMatch
+    waitFor(sent, "The sent text should appear inside a user message")
     waitFor(element(containing: "fold that into the current work"), "A reply should stream in")
     XCTAssertEqual(composer.value as? String ?? "", composer.placeholderValue ?? "", "The composer should be empty after sending")
     attachScreenshot("Message sent")

@@ -15,8 +15,10 @@ import {
   LOCAL_STORAGE_FAILURE_MESSAGE,
   PREVIOUS_TURN_ACTIVE_FAILURE_CODE,
   PREVIOUS_TURN_ACTIVE_FAILURE_MESSAGE,
+  isWorkspaceMissingFailureCode,
   resumableRunId,
   providerFailureDisplayMessage,
+  providerFailureDisplayTitle,
   providerFailureFallbackMessage,
   threadErrorIsLive,
   threadErrorSummary,
@@ -252,5 +254,31 @@ describe("resumableRunId", () => {
     expect(
       resumableRunId({ runs: [run("running")], turnItems: [], lastErrorClass: null }),
     ).toBeNull();
+  });
+});
+
+describe("providerFailureDisplayTitle", () => {
+  it("names a missing thread folder instead of a provider error", () => {
+    for (const code of ["workspace_missing", "workspace_branch_missing"]) {
+      expect(isWorkspaceMissingFailureCode(code)).toBe(true);
+      expect(
+        providerFailureDisplayTitle({
+          class: "validation_error",
+          code,
+          message: "This thread's workspace folder no longer exists or is not a directory: /x.",
+        }),
+      ).toBe("Thread folder is missing");
+    }
+  });
+
+  it("keeps the other titles", () => {
+    expect(isWorkspaceMissingFailureCode("workspace_preparation_failed")).toBe(false);
+    expect(isWorkspaceMissingFailureCode(null)).toBe(false);
+    expect(providerFailureDisplayTitle({ class: "provider_error", message: "Boom." })).toBe(
+      "Provider error",
+    );
+    expect(
+      providerFailureDisplayTitle({ class: "usage_limit", code: null, message: "Limit reached." }),
+    ).toBe("Usage limit reached");
   });
 });

@@ -315,6 +315,12 @@ export function createVcsEnvironmentAtoms<R, E>(
       concurrency: vcsCommandConcurrency,
       onSettled: invalidateRefs,
     }),
+    // Recreates a thread's deleted folder from its branch; the server reads the
+    // path and branch from the thread, so it never writes anywhere else.
+    restoreThreadWorkspace: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:vcs:restore-thread-workspace",
+      tag: WS_METHODS.vcsRestoreThreadWorkspace,
+    }),
     // Live stages of a bootstrap worktree setup. Null until the server begins
     // tracking, then a snapshot per change, then null again after the setup
     // is dropped. Short TTL so a closed thread releases its subscription.

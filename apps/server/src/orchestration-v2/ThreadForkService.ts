@@ -107,6 +107,8 @@ export const layer: Layer.Layer<ThreadForkServiceV2> = Layer.succeed(
           createdAt: input.createdAt,
           updatedAt: input.createdAt,
           archivedAt: null,
+          // The source's delivery evidence names the source's turns, not the fork's.
+          lifecycleReceipt: null,
           settledOverride: null,
           settledAt: null,
           snoozedUntil: null,

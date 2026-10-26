@@ -17,9 +17,10 @@ import { modelSelectionsEqual } from "@specweave-studio/shared/model";
 import { projectComposerContextForProvider } from "@specweave-studio/shared/composerContextReferences";
 import {
   CommandId,
-  GitCommandError,
   latestProviderTurnForAttempt,
   ORCHESTRATION_V2_PROVIDER_OPEN_FAILED_FAILURE_CODE,
+  ORCHESTRATION_V2_WORKSPACE_BRANCH_MISSING_FAILURE_CODE,
+  ORCHESTRATION_V2_WORKSPACE_MISSING_FAILURE_CODE,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2ExecutionNode,
   type OrchestrationV2ProviderThread,
@@ -80,14 +81,13 @@ import {
   isPreviousTurnActiveFailure,
   makeProviderFailure,
   simulatedUsageLimitFailure,
-  WORKSPACE_BRANCH_MISSING_FAILURE_CODE,
-  WORKSPACE_MISSING_FAILURE_CODE,
 } from "./ProviderFailure.ts";
 import { makeSettleRunBeforeStart as makeSettleRunBeforeStartWith } from "./settleRunBeforeStart.ts";
 import { readSpecweaveCheckpointPreface } from "./SpecweaveCheckpoint.ts";
 import { withAskedQuestions } from "./questionAnswerText.ts";
 import * as RunExecutionService from "./RunExecutionService.ts";
 import * as RuntimePolicy from "./RuntimePolicy.ts";
+import * as ThreadWorkspaceRestore from "./ThreadWorkspaceRestore.ts";
 import {
   isRestartNoteContinuation,
   pendingRestartCancelledBackgroundWork,
@@ -113,7 +113,6 @@ function startFailureMessage(error: Error): string | undefined {
   return providerSetupFailureDetail(error) ?? innermostCauseMessage(error);
 }
 
-const isGitCommandError = Schema.is(GitCommandError);
 const isWorkspaceMissingError = Schema.is(ProviderWorkspaceMissingError);
 /** The session manager's missing-folder refusal, directly or as a wrapped cause. */
 function workspaceMissingCause(error: unknown): ProviderWorkspaceMissingError | undefined {
@@ -125,8 +124,6 @@ function workspaceMissingCause(error: unknown): ProviderWorkspaceMissingError | 
   }
   return undefined;
 }
-const isInvalidReference = (error: unknown): boolean =>
-  isGitCommandError(error) && error.reason === "invalid_reference";
 
 /**
  * Says what was lost and what recovers it. The folder is never recreated from
@@ -259,9 +256,10 @@ export const layer: Layer.Layer<
     const idAllocator = yield* IdAllocator.IdAllocatorV2;
     const environmentRuntime = yield* makeEnvironmentRuntime;
     const fileSystem = yield* FileSystem.FileSystem;
-    const pathService = yield* Path.Path;
-    const gitWorkflow = yield* GitWorkflowService.GitWorkflowService;
     const projects = yield* ProjectService.ProjectService;
+    const worktreeRestoreContext = yield* Effect.context<
+      FileSystem.FileSystem | Path.Path | GitWorkflowService.GitWorkflowService
+    >();
     const providerAuth = yield* ProviderAuthService.ProviderAuthService;
     const projectionStore = yield* ProjectionStore.ProjectionStoreV2;
     const providerSessions = yield* ProviderSessionManager.ProviderSessionManagerV2;
@@ -613,39 +611,20 @@ export const layer: Layer.Layer<
               worktreePath,
               branch,
             });
-            const branchMissing = yield* gitWorkflow
-              .pruneWorktrees({ cwd: project.workspaceRoot })
-              .pipe(
-                Effect.andThen(
-                  gitWorkflow.createWorktree({
-                    cwd: project.workspaceRoot,
-                    refName: branch,
-                    path: worktreePath,
-                  }),
-                ),
-                Effect.as(false),
-                Effect.catchCause((cause) =>
-                  Cause.hasInterruptsOnly(cause)
-                    ? Effect.failCause(cause)
-                    : Effect.logWarning("provider turn start failed to recreate worktree", {
-                        threadId: projection.thread.id,
-                        worktreePath,
-                        cause: Cause.pretty(cause),
-                      }).pipe(Effect.as(isInvalidReference(Cause.squash(cause)))),
-                ),
-              );
+            const restored = yield* ThreadWorkspaceRestore.restoreMissingWorktree({
+              threadId: projection.thread.id,
+              worktreePath,
+              branch,
+              workspaceRoot: project.workspaceRoot,
+            }).pipe(Effect.provide(worktreeRestoreContext));
             // Git has neither the local branch nor a single remote branch of
-            // that name, so every retry and every other provider fails the
-            // same way before it opens. Settle now with what happened and how
-            // to recover instead of retrying a start that cannot succeed.
-            // Only for the project repository's own worktree folder
-            // (<worktrees>/<repo>/<branch>): a thread launched in a nested
-            // repository has its branch there, not in workspaceRoot.
-            const ownedByProjectRepo =
-              pathService.basename(pathService.dirname(worktreePath)) ===
-                pathService.basename(project.workspaceRoot) &&
-              pathService.basename(worktreePath) === branch.replace(/\//g, "-");
-            if (branchMissing && ownedByProjectRepo) {
+            // that name in any repository that could own the folder, so every
+            // retry and every other provider fails the same way before it
+            // opens. Settle now with what happened and how to recover instead
+            // of retrying a start that cannot succeed. Only for a folder laid
+            // out as one of those repositories' own (<worktrees>/<repo>/<branch>):
+            // a folder elsewhere may belong to a repository not found here.
+            if (restored._tag === "BranchMissing" && restored.ownedFolder) {
               const now = yield* DateTime.now;
               yield* settleRunBeforeStart({
                 signal: "workspace-branch-missing",
@@ -658,7 +637,7 @@ export const layer: Layer.Layer<
                   title: "Thread folder was deleted",
                   failure: makeProviderFailure({
                     class: "validation_error",
-                    code: WORKSPACE_BRANCH_MISSING_FAILURE_CODE,
+                    code: ORCHESTRATION_V2_WORKSPACE_BRANCH_MISSING_FAILURE_CODE,
                     retryable: false,
                     message: missingWorktreeBranchMessage({ worktreePath, branch }),
                   }),
@@ -826,7 +805,7 @@ export const layer: Layer.Layer<
             title: "Thread folder is missing",
             failure: makeProviderFailure({
               class: "validation_error",
-              code: WORKSPACE_MISSING_FAILURE_CODE,
+              code: ORCHESTRATION_V2_WORKSPACE_MISSING_FAILURE_CODE,
               retryable: false,
               message: workspaceMissing.message,
             }),

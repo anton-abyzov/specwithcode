@@ -2451,7 +2451,7 @@ export function GeneralSettingsPanel() {
               serverScoped
               settingKeys={["sidebarAutoSettleOnMerge"]}
               {...searchableSetting("auto-settle-merged-threads")}
-              description="Resolve only when every relevant pull request is merged and current checks and review readiness are verified. Unknown evidence keeps the thread active."
+              description="Resolve only when every relevant pull request is merged and the latest turn has recorded delivery evidence: push, merge, deployment and verification. A merge alone or unknown evidence keeps the thread active."
               resetAction={
                 settings.sidebarAutoSettleOnMerge !==
                 DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleOnMerge ? (

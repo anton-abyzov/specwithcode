@@ -65,5 +65,6 @@ source alone does not explain. Most code changes do not need an internal documen
 - [Observability](./operations/observability.md)
 - [The live database](./operations/live-database.md)
 - [Worktree cleanup](./operations/worktree-cleanup.md)
+- [A missing thread folder](./operations/missing-thread-folder.md)
 - [Relay observability](./operations/relay-observability.md)
 - [Mobile app store screenshots](./operations/mobile-app-store-screenshots.md)

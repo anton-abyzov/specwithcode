@@ -665,28 +665,34 @@ html.dark[data-theme-id=""] [data-app-sidebar] {
   margin: 0;
   color: var(--sidebar-muted-foreground);
 }
-/* Project rows end in a fixed slot for the count. The row menu covers that
-   slot on hover instead of pushing the name, hint and pin to the left. */
+/* Reserve independent badge and menu space: hover never hides a live count. */
 .sws-side-row-end {
+  position: relative;
   flex: none;
-  width: 24px;
+  width: 36px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
 }
-@media (hover: hover) {
-  .sws-project-row .sws-side-row,
-  .sws-project-row:is(:hover, :has(.sws-chat-menu:is(:focus-visible, [data-popup-open])))
-    .sws-side-row {
-    padding-right: 4px;
-  }
-  .sws-project-row .sws-chat-menu {
-    right: 4px;
-  }
-  .sws-project-row:is(:hover, :has(.sws-chat-menu:is(:focus-visible, [data-popup-open])))
-    .sws-side-row-end {
-    visibility: hidden;
-  }
+.sws-project-coverage {
+  position: absolute;
+  right: 0;
+  width: 4px;
+  height: 4px;
+  border-radius: 50%;
+  background: var(--sidebar-muted-foreground);
+}
+.sws-project-row .sws-count {
+  max-width: 30px;
+  padding-inline: 3px;
+}
+.sws-project-row .sws-side-row,
+.sws-project-row:is(:hover, :has(.sws-chat-menu:is(:focus-visible, [data-popup-open])))
+  .sws-side-row {
+  padding-right: 28px;
+}
+.sws-project-row .sws-chat-menu {
+  right: 2px;
 }
 /* The Archived toggle's icon sits in the rows' icon column, so its label
    lines up with the project names. */

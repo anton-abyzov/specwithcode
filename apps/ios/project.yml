@@ -48,7 +48,6 @@ targets:
         GENERATE_INFOPLIST_FILE: YES
         INFOPLIST_KEY_CFBundleDisplayName: SpecWithCode
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
-        # Landscape is for the device viewer only; AppDelegate keeps everything else portrait.
         INFOPLIST_KEY_UISupportedInterfaceOrientations: UIInterfaceOrientationPortrait UIInterfaceOrientationLandscapeLeft UIInterfaceOrientationLandscapeRight
         INFOPLIST_KEY_NSCameraUsageDescription: Scan the pairing QR code shown by SpecWithCode on your computer.
         INFOPLIST_KEY_NSLocalNetworkUsageDescription: Connect to SpecWithCode on computers in your home or office network.

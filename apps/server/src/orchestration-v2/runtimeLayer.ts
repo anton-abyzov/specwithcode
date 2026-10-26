@@ -77,6 +77,7 @@ import * as RuntimeRequestService from "./RuntimeRequestService.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
 import * as ThreadLaunchService from "./ThreadLaunchService.ts";
 import * as ThreadMoveService from "./ThreadMoveService.ts";
+import * as ThreadWorkspaceRestore from "./ThreadWorkspaceRestore.ts";
 import * as ThreadLifecycleService from "./ThreadLifecycleService.ts";
 import * as ThreadForkService from "./ThreadForkService.ts";
 import * as TurnItemPositionStore from "./TurnItemPositionStore.ts";
@@ -512,6 +513,9 @@ export const layerProduction = Layer.mergeAll(
   layerManagedProjectFoldersProvided,
   layerThreadLaunchProvided,
   layerThreadMoveProvided,
+  ThreadWorkspaceRestore.layer.pipe(
+    Layer.provide(Layer.merge(ProjectionStore.layer, layerProjectService)),
+  ),
   layerThreadLifecycleProvided,
   layerScheduledTaskProvided,
   layerSecretRequestsProvided,

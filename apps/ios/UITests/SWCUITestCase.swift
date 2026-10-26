@@ -124,7 +124,9 @@ class SWCUITestCase: XCTestCase {
   /// Waits for a tap target, then taps it.
   func tap(_ element: XCUIElement, file: StaticString = #filePath, line: UInt = #line) {
     waitForHittable(element, file: file, line: line)
-    element.tap()
+    // SDK 27.1 element activation can miss a custom bar on Duo. A public
+    // coordinate tap exercises the visible hit target on its current panel.
+    element.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
   }
 
   // MARK: Navigation
@@ -136,7 +138,16 @@ class SWCUITestCase: XCTestCase {
 
   /// Opens the drawer from the menu button of the root chat.
   func openDrawer(file: StaticString = #filePath, line: UInt = #line) {
-    tap(button("Menu"), file: file, line: line)
+    let menu = button("Menu")
+    waitFor(menu, file: file, line: line)
+    // On SDK 27.1 Duo, isHittable can be false at accessibility XXXL even
+    // though a native coordinate tap opens the drawer. Check the real target
+    // and its resulting state instead of relying on that metadata alone.
+    XCTAssertTrue(menu.isEnabled, file: file, line: line)
+    XCTAssertGreaterThanOrEqual(menu.frame.width, 44, file: file, line: line)
+    XCTAssertGreaterThanOrEqual(menu.frame.height, 44, file: file, line: line)
+    XCTAssertTrue(app.frame.contains(menu.frame), "Menu target is outside the scene", file: file, line: line)
+    menu.coordinate(withNormalizedOffset: CGVector(dx: 0.5, dy: 0.5)).tap()
     waitFor(button("Close menu"), "The drawer did not open", file: file, line: line)
     _ = hittableButton(titled("Aide"), file: file, line: line)
     settle(0.4)

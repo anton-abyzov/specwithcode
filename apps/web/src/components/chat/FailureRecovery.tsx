@@ -1,5 +1,6 @@
 import { RotateCcwIcon } from "lucide-react";
 import { Button } from "../ui/button";
+import type { WorkspaceMissingRecoveryActions } from "./WorkspaceMissingRecovery";
 
 export interface FailureRecoveryActions {
   /** The failed latest run's root failure; only its row offers recovery. */
@@ -10,6 +11,10 @@ export interface FailureRecoveryActions {
   continueBusy?: boolean;
   /** Opens the composer's model picker, so the next message runs elsewhere. */
   onSwitchModel?: (() => void) | undefined;
+  /** The code on that failure, when it has one. */
+  failureCode?: string | null;
+  /** Set when that failure is a missing thread folder; it replaces these actions. */
+  workspaceMissing?: WorkspaceMissingRecoveryActions | undefined;
 }
 
 /**

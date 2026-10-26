@@ -11,8 +11,10 @@ import { formatDisplayDates } from "../../lib/displayDates";
 import { FailureDetail } from "./FailureDetail";
 import { ContextLimitRecovery, type ContextLimitRecoveryActions } from "./ContextLimitRecovery";
 import { FailureRecovery, type FailureRecoveryActions } from "./FailureRecovery";
+import { WorkspaceMissingRecovery } from "./WorkspaceMissingRecovery";
 import {
   isContextLimitError,
+  isWorkspaceMissingFailureCode,
   providerFailureDisplayMessage,
   timelineFailureIsHistory,
 } from "@specweave-studio/shared/orchestrationV2ThreadError";
@@ -6703,9 +6705,18 @@ function WorkEntryLogRow(props: WorkEntryRowProps) {
             <ContextLimitRecovery recovery={contextLimitRecovery} />
           </div>
         ) : null}
+        {/* A missing thread folder has its own repairs; another model fails the same way. */}
+        {!warning &&
+        isWorkspaceMissingFailureCode(failureItem.failure.code) &&
+        failureRecovery?.failureItemId === failureItem.id ? (
+          <div className="ms-7 pb-1 empty:hidden">
+            <WorkspaceMissingRecovery recovery={failureRecovery.workspaceMissing} />
+          </div>
+        ) : null}
         {/* A worktree failure has its own Retry; another model cannot fix it. */}
         {!warning &&
-        failureItem.failure.code !== ORCHESTRATION_V2_WORKSPACE_PREPARATION_FAILURE_CODE ? (
+        failureItem.failure.code !== ORCHESTRATION_V2_WORKSPACE_PREPARATION_FAILURE_CODE &&
+        !isWorkspaceMissingFailureCode(failureItem.failure.code) ? (
           <div className="ms-7 pb-1 empty:hidden">
             <FailureRecovery
               recovery={failureRecovery}

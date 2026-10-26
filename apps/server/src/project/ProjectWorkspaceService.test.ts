@@ -66,7 +66,7 @@ it.layer(layer)("ProjectWorkspaceService", (it) => {
         // The setup and permission details live in the studio_google_status description.
         assert.include(context, "for Gmail, Calendar or Drive call studio_google_status first");
         assert.include(context, "web lookups and Gmail, Calendar or Drive reads");
-        assert.include(context, "For requests that need a worker, route them at once");
+        assert.include(context, "Route at once");
         assert.include(context, "check the run before saying whether Google was reached");
         assert.isAtMost(context.length, PROJECT_CONTEXT_CHARACTER_LIMIT);
       }),
@@ -441,7 +441,7 @@ it("preserves maximum instructions and goal while bounding memory and link inven
   assert.isAtMost(text.length, PROJECT_CONTEXT_CHARACTER_LIMIT);
   assert.include(text, "LAST RULE");
   assert.include(text, "threadLink");
-  assert.include(text, "Never build a studio://thread link by hand");
+  assert.include(text, "copied verbatim");
   assert.include(text, "truncated");
 });
 it("asks workers for short reports and the coordinator to relay only their outcome", () => {
@@ -460,7 +460,7 @@ it("asks workers for short reports and the coordinator to relay only their outco
   });
   // Report length and the **Blockers:** paragraph come from the runtime response style.
   assert.include(worker, "Your final message is your report");
-  assert.include(worker, "Write every file or folder path in full from the root");
+  assert.include(worker, "Give each path in full");
   // A worker that works an increment closes it once its last task is done.
   assert.include(worker, 'ends with "Verify and close NNNN"');
   assert.include(worker, "close it in this thread without asking");
@@ -478,34 +478,32 @@ it("asks workers for short reports and the coordinator to relay only their outco
   });
   assert.notInclude(coordinator, 'never "Studio"');
   assert.include(coordinator, "You coordinate this project's work and do none of it yourself");
-  assert.include(coordinator, "do not relay, summarize or repeat its result here");
+  assert.include(coordinator, "do not relay, summarize or repeat it here");
   assert.include(coordinator, "otherwise end the turn without a reply");
   assert.include(coordinator, "start a worker to verify, review and close it");
   assert.notInclude(coordinator, "relay its outcome");
   assert.include(worker, "the user reads it in this thread");
   assert.notInclude(coordinator, "not a replay of your steps");
 });
-it("asks a coordinator for an increment per worker only in a SpecWeave project", () => {
+it("keeps the coordinator role to what tools and code do not already say", () => {
   const settings = {
     ...DEFAULT_PROJECT_WORKSPACE_SETTINGS,
     coordinatorThreadId: ThreadId.make("c"),
   };
-  const text = (specweave: boolean | undefined, threadId = "c") =>
-    Workspace.projectContextText({
-      projectId: "p",
-      threadId,
-      settings,
-      files: [],
-      index: "",
-      specweave,
-    });
-  const line = "This project plans its work in SpecWeave: start each worker with increment";
-  assert.include(text(true), line);
-  assert.include(text(true), "[NNNN](<specPath>)");
-  assert.notInclude(text(false), line);
-  assert.notInclude(text(undefined), line);
-  // Workers get no coordinator line.
-  assert.notInclude(text(true, "w"), line);
+  const coordinator = Workspace.projectContextText({
+    projectId: "p",
+    threadId: "c",
+    settings,
+    files: [],
+    index: "",
+  }).split("\nGoal:\n")[0]!;
+  // studio_thread_list, the orchestration block and the launch code carry these.
+  assert.notInclude(coordinator, "logical project");
+  assert.notInclude(coordinator, "has no host fallback");
+  assert.notInclude(coordinator, "This project plans its work in SpecWeave");
+  assert.notInclude(coordinator, "expectedRevision");
+  // About 1,100 tokens; it was about 1,850 before the role moved into tools and code.
+  assert.isAtMost(coordinator.length, 4_500);
 });
 it("tells a coordinator how to run workers on another machine and where this project's go", () => {
   const settings = {

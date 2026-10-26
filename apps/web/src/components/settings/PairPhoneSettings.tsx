@@ -22,7 +22,7 @@ import {
   resolvePhonePairingAddress,
 } from "./PairPhone.logic";
 import { PhoneSetupDialog, type PhoneSetupCode } from "./PhoneSetupDialog";
-import { SettingsRow, SettingsSection } from "./settingsLayout";
+import { SettingsDisclosure, SettingsRow, SettingsSection } from "./settingsLayout";
 import { searchableSetting, type SettingsSearchItemId } from "./settingsSearch";
 
 const PHONE_LINK_LABEL = "iPhone";
@@ -57,6 +57,8 @@ type PairPhoneSettingsProps = {
   readonly hasAccessControls: boolean;
   /** Scrolls to the section with Network access and Tailscale HTTPS. */
   readonly onShowAccessSettings: () => void;
+  /** Connect is the main way to reach the phone here, so fold direct pairing away. */
+  readonly folded?: boolean;
 };
 
 /**
@@ -70,6 +72,7 @@ export const PairPhoneSettings = memo(function PairPhoneSettings({
   onPairingLinkCreated,
   hasAccessControls,
   onShowAccessSettings,
+  folded = false,
 }: PairPhoneSettingsProps) {
   const address = useMemo(
     () =>
@@ -173,17 +176,18 @@ export const PairPhoneSettings = memo(function PairPhoneSettings({
         : "Your phone needs an address to reach this computer. Set up Tailscale Serve for it with `specweave-studio pair --tailscale`, or open these settings in the SpecWithCode desktop app."
       : `Scan a code with the SpecWithCode app on your iPhone. It connects to ${address.httpBaseUrl.replace(/\/$/u, "")}.`;
 
-  return (
-    <SettingsSection
-      {...searchableSetting(PAIR_PHONE_SETTING)}
-      title="Phone"
-      icon={<SmartphoneIcon aria-hidden className="size-4" />}
-    >
+  const content = (
+    <>
       <SettingsRow
         title="Pair a phone"
         description={description}
         control={
-          <Button size="sm" variant="default" disabled={!canPair} onClick={() => changeOpen(true)}>
+          <Button
+            size="sm"
+            variant={folded ? "outline" : "default"}
+            disabled={!canPair}
+            onClick={() => changeOpen(true)}
+          >
             Pair a phone
           </Button>
         }
@@ -223,6 +227,27 @@ export const PairPhoneSettings = memo(function PairPhoneSettings({
           }
         }}
       />
+    </>
+  );
+
+  if (folded) {
+    return (
+      <SettingsDisclosure
+        {...searchableSetting(PAIR_PHONE_SETTING)}
+        title="Pair over Tailscale or your network"
+      >
+        {content}
+      </SettingsDisclosure>
+    );
+  }
+
+  return (
+    <SettingsSection
+      {...searchableSetting(PAIR_PHONE_SETTING)}
+      title="Phone"
+      icon={<SmartphoneIcon aria-hidden className="size-4" />}
+    >
+      {content}
     </SettingsSection>
   );
 });

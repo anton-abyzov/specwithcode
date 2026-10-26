@@ -34,13 +34,18 @@ function writePending(pending: boolean): void {
   }
 }
 
+/** Whether this window shows the Connect card (a build with Connect, in the desktop app). */
+export function isPhoneConnectShown(): boolean {
+  return hasCloudPublicConfig() && window.desktopBridge !== undefined;
+}
+
 /**
  * The one-click way to reach this Mac from the iPhone: sign in, and the Mac
  * links itself to SpecWithCode Connect with its own tunnel. Direct pairing
- * (Tailscale or the same network) stays below in "Pair a phone".
+ * (Tailscale or the same network) stays below as a folded advanced option.
  */
 export function PhoneConnectSettings() {
-  if (!hasCloudPublicConfig() || !window.desktopBridge) return null;
+  if (!isPhoneConnectShown()) return null;
   return <ConfiguredPhoneConnectSettings />;
 }
 

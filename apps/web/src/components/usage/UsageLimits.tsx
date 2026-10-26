@@ -421,7 +421,7 @@ export function UsageLimitsSection({
         <p className="text-xs text-muted-foreground" data-limits-view-caption="">
           {view === "machines"
             ? "Each machine runs its own sign-ins: what is signed in where, and what is left."
-            : "Each account counted once, added up across every machine signed in to it."}
+            : "Each account counted once across every machine signed in to it, with burn and run-out estimates."}
         </p>
       </div>
       <UsageChatSetupNotice environments={needingSetup} />

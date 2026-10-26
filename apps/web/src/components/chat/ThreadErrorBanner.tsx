@@ -1,6 +1,7 @@
 import type { OrchestrationV2ProviderFailureClass } from "@specweave-studio/contracts";
 import {
   isContextLimitError,
+  isWorkspaceMissingFailureCode,
   providerFailureDisplayMessage,
   providerFailureDisplayTitle,
 } from "@specweave-studio/shared/orchestrationV2ThreadError";
@@ -14,6 +15,10 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { OpenAI } from "../Icons";
 import { ChatGptUsageButton } from "../settings/ChatGptUsageButton";
 import { ContextLimitRecovery, type ContextLimitRecoveryActions } from "./ContextLimitRecovery";
+import {
+  WorkspaceMissingRecovery,
+  type WorkspaceMissingRecoveryActions,
+} from "./WorkspaceMissingRecovery";
 
 export function getThreadErrorBannerKey(threadKey: string, error: string | null): string | null {
   return error === null ? null : `${threadKey}\u0000${error}`;
@@ -51,11 +56,15 @@ export const ThreadErrorBanner = memo(function ThreadErrorBanner({
   continueBusy = false,
   onSwitchModel,
   errorClass,
+  errorCode,
   chatGptUsageLimit = false,
   contextLimitRecovery,
+  workspaceMissingRecovery,
 }: {
   error: string | null;
   errorClass?: OrchestrationV2ProviderFailureClass | null;
+  /** The failure's code, for its title; known even when no action is offered. */
+  errorCode?: string | null;
   onDismiss?: () => void;
   /**
    * Continues the failed run in its native session ("Continue where you left
@@ -67,20 +76,38 @@ export const ThreadErrorBanner = memo(function ThreadErrorBanner({
   onSwitchModel?: (() => void) | undefined;
   chatGptUsageLimit?: boolean;
   contextLimitRecovery?: ContextLimitRecoveryActions | undefined;
+  /**
+   * Set when the failure is a missing thread folder: its repairs replace
+   * Continue and Switch model, which would fail the same way.
+   */
+  workspaceMissingRecovery?: WorkspaceMissingRecoveryActions | undefined;
 }) {
   const timestampFormat = useClientSettings((settings) => settings.timestampFormat);
   if (!error) return null;
-  const failure = { class: errorClass ?? "unknown", message: error } as const;
+  const failure = {
+    class: errorClass ?? "unknown",
+    message: error,
+    code: errorCode ?? workspaceMissingRecovery?.code ?? null,
+  } as const;
+  const workspaceMissing =
+    workspaceMissingRecovery !== undefined || isWorkspaceMissingFailureCode(failure.code);
   const cleanError = providerFailureDisplayMessage(failure);
   const displayError = formatDisplayDates(cleanError, timestampFormat);
   const contextLimit = errorClass !== "usage_limit" && isContextLimitError(error);
   const variant = errorClass === "usage_limit" || contextLimit ? "warning" : "error";
   // Limits and full contexts have their own recovery; Continue would fail again.
   const showContinue =
-    onContinue !== undefined && !chatGptUsageLimit && errorClass !== "usage_limit" && !contextLimit;
+    onContinue !== undefined &&
+    !chatGptUsageLimit &&
+    errorClass !== "usage_limit" &&
+    !contextLimit &&
+    !workspaceMissing;
   // Limits have their own way home; every other failure can move to another model.
   const showSwitchModel =
-    onSwitchModel !== undefined && !chatGptUsageLimit && errorClass !== "usage_limit";
+    onSwitchModel !== undefined &&
+    !chatGptUsageLimit &&
+    errorClass !== "usage_limit" &&
+    !workspaceMissing;
   return (
     <div className="pointer-events-auto mx-auto w-fit max-w-[min(48rem,calc(100%-2rem))] pt-3">
       <Alert variant={variant} surface="lane" controlAlignment="first-line" data-variant={variant}>
@@ -119,6 +146,11 @@ export const ThreadErrorBanner = memo(function ThreadErrorBanner({
             </Tooltip>
           )}
           {contextLimit ? <ContextLimitRecovery recovery={contextLimitRecovery} /> : null}
+          {workspaceMissingRecovery ? (
+            <div className="pt-2">
+              <WorkspaceMissingRecovery recovery={workspaceMissingRecovery} />
+            </div>
+          ) : null}
         </AlertDescription>
         {(chatGptUsageLimit || showContinue || showSwitchModel || onDismiss) && (
           <AlertAction>

@@ -15,6 +15,7 @@ import {
   OrchestratorMcpFailure,
   OrchestrationV2DispatchCommandResult,
   OrchestrationV2ThreadSettledNote,
+  LifecycleReceiptReport,
   ThreadId,
   RunId,
   NonNegativeInt,
@@ -32,7 +33,7 @@ import * as McpInvocationContext from "../../McpInvocationContext.ts";
 
 const ThreadOrganizeTool = Tool.make("studio_thread_organize", {
   description:
-    "Pin, snooze, settle, archive, or mark a thread unread. Omit threadId for this thread. snooze requires snoozedUntil. settle accepts an optional one-line note, shown with the resolved thread, such as where the work landed. Resolving your own running thread requires expectedRunId from studio_thread_read, so a delayed call cannot adopt a newer turn. It records intent tied to that exact turn. Automatic application is disabled until the evidence-backed lifecycle policy is integrated; recording intent does not promise resolution. Deliver your final answer normally. New messages, newer runs, pending questions/approvals, child work, user reopens and auto-settle opt-out prevent deferred resolution. Other threads retain the explicit lifecycle guards.",
+    "Pin, snooze, settle, archive, or mark a thread unread. Omit threadId for this thread. snooze requires snoozedUntil. settle accepts an optional one-line note, shown with the resolved thread, such as where the work landed. Resolving your own running thread requires expectedRunId from studio_thread_read, so a delayed call cannot adopt a newer turn. It records intent tied to that exact turn. Recording intent does not resolve anything by itself: resolution needs delivery evidence that another thread records with studio_thread_record_delivery. Deliver your final answer normally. New messages, newer runs, pending questions/approvals, child work, user reopens and auto-settle opt-out prevent deferred resolution. Other threads retain the explicit lifecycle guards.",
   parameters: Schema.Struct({
     threadId: Schema.optional(ThreadId),
     action: Schema.Literals([
@@ -62,6 +63,28 @@ const ThreadOrganizeTool = Tool.make("studio_thread_organize", {
   ],
 })
   .annotate(Tool.Title, "Organize a thread")
+  .annotate(Tool.Destructive, true);
+
+const ThreadRecordDeliveryTool = Tool.make("studio_thread_record_delivery", {
+  description:
+    "Record delivery evidence for another thread's latest completed turn after you verified it. The target thread itself cannot report it; verify the delivery independently before recording. The service binds the request, turn and acceptance revision and records you as the reporter. kind=code needs push, merge and deployment verified with a reference, observedAt and the same scopeRevision; kind=no_code marks those three not_applicable with a rationale. deliverable and verification are always verified. obligations lists what is still open (operational waits, deployment, review, user actions with needsUserOutput, nested work), each with owner and nextEvent; the thread stays unresolved and shows them. Complete evidence with no obligations resolves the thread with the scope as its note, unless it is pinned, reopened by the user, opted out of auto-resolve, stopped, or has pending work. A newer message or a reopen invalidates the evidence. Terminal status, CI, a merged PR or a claim of done is not evidence.",
+  parameters: Schema.Struct({
+    threadId: ThreadId,
+    /** The target's latest completed turn, from studio_thread_read; a newer turn refuses. */
+    expectedRunId: RunId,
+    ...LifecycleReceiptReport.fields,
+  }),
+  success: OrchestrationV2DispatchCommandResult,
+  failure: OrchestratorMcpFailure,
+  failureMode: "return" as const,
+  dependencies: [
+    McpInvocationContext.McpInvocationContext,
+    ThreadManagementService.ThreadManagementService,
+    ProjectService.ProjectService,
+    Crypto.Crypto,
+  ],
+})
+  .annotate(Tool.Title, "Record delivery evidence")
   .annotate(Tool.Destructive, true);
 
 const queueTarget = { threadId: Schema.optional(ThreadId), queuedRunId: RunId };
@@ -296,6 +319,7 @@ export const ThreadToolkit = Toolkit.make(
   PendingRequestReadTool,
   PendingRequestRespondTool,
   ThreadOrganizeTool,
+  ThreadRecordDeliveryTool,
   QueueListTool,
   QueueReadTool,
   QueueEditTool,

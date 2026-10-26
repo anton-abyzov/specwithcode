@@ -2,7 +2,7 @@
  * Where the server starts a process that runs an agent or a model, and how
  * each provider adapter reaches one. Paths are relative to apps/server/src.
  *
- * providerSpawnSites.test.ts reads these
+ * providerSpawnSites.test.ts and scripts/studio-brand-audit.mjs read these
  * lists: every spawn site must apply HEADLESS_BROWSER_ENVIRONMENT through one
  * of HEADLESS_ENVIRONMENT_HELPERS, and a new spawn in a provider directory
  * fails the test until it is listed here.

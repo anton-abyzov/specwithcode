@@ -1850,7 +1850,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       assert.equal((yield* orchestrator.getThreadProjection(threadId)).thread.activeOrderKey, "a0");
 
       // Automatic settlement (#8600): a stale snapshot loses to any change
-      // made after it, and a fresh one settles like a user settle would.
+      // made after it. A fresh snapshot still needs affirmative delivery evidence.
       const preAutoProjection = yield* orchestrator.getThreadProjection(threadId);
       const staleAutoSettle = yield* orchestrator
         .dispatch({
@@ -1901,12 +1901,24 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         })
         .pipe(Effect.flip);
       assert.instanceOf(versionRace, Orchestrator.OrchestratorDispatchError);
+      const missingAcceptance = yield* orchestrator
+        .dispatch({
+          type: "thread.auto-settle",
+          snapshotSequence: yield* orchestrator.getThreadEventSequence(threadId),
+          commandId: CommandId.make("runtime-layer-lifecycle-auto-settle"),
+          threadId,
+          snapshotAt: preAutoProjection.thread.updatedAt,
+        })
+        .pipe(Effect.flip);
+      assert.instanceOf(missingAcceptance, Orchestrator.OrchestratorDispatchError);
+      assert.notEqual(
+        (yield* orchestrator.getThreadProjection(threadId)).thread.settledOverride,
+        "settled",
+      );
       yield* orchestrator.dispatch({
-        type: "thread.auto-settle",
-        snapshotSequence: yield* orchestrator.getThreadEventSequence(threadId),
-        commandId: CommandId.make("runtime-layer-lifecycle-auto-settle"),
+        type: "thread.settle",
+        commandId: CommandId.make("runtime-layer-lifecycle-explicit-settle"),
         threadId,
-        snapshotAt: preAutoProjection.thread.updatedAt,
       });
       const autoSettledProjection = yield* orchestrator.getThreadProjection(threadId);
       assert.equal(autoSettledProjection.thread.settledOverride, "settled");
@@ -2428,7 +2440,7 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
       const started = before?.pullRequests?.[0]?.watch;
       assert.isDefined(started);
       if (started === undefined || before === null) return;
-      yield* orchestrator.dispatch({
+      const settlement = orchestrator.dispatch({
         ...(mode === "manual"
           ? { type: "thread.settle" as const }
           : {
@@ -2439,6 +2451,22 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         commandId: CommandId.make(`pr-watch-settle-${mode}`),
         threadId,
       });
+      if (mode === "manual") yield* settlement;
+      else {
+        assert.instanceOf(
+          yield* settlement.pipe(Effect.flip),
+          Orchestrator.OrchestratorDispatchError,
+        );
+        assert.deepEqual(
+          (yield* orchestrator.getThreadShell(threadId))?.pullRequests,
+          before.pullRequests,
+        );
+        yield* orchestrator.dispatch({
+          type: "thread.settle",
+          commandId: CommandId.make(`pr-watch-explicit-settle-${mode}`),
+          threadId,
+        });
+      }
       const expected = before.pullRequests?.map(({ watch: _watch, ...link }) => link);
       assert.deepEqual((yield* orchestrator.getThreadShell(threadId))?.pullRequests, expected);
       assert.isTrue((yield* maintenance.rebuild).valid);

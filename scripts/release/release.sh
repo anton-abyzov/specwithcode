@@ -49,7 +49,7 @@
 #
 # Environment: RELEASE_ENV (default ~/.config/skill-studio-release/release.env, see
 # release.env.example), RELEASE_STAGING_ROOT, RELEASE_TREES (persistent trees, default
-# ~/Projects/github/release.noindex), RELEASE_PRIVATE_REPO, RELEASE_PUBLIC_REPO, RELEASE_JOBS,
+# ~/.specwithcode/release.noindex), RELEASE_PRIVATE_REPO, RELEASE_PUBLIC_REPO, RELEASE_JOBS,
 # RELEASE_NODE_BIN (the Node $NODE_VERSION bin folder, default nvm's), RELEASE_SERVER_SHARDS
 # (default 4), RELEASE_RETRY_MAX_JOBS (2), RELEASE_RETRY_MAX_FILES (5).
 # RELEASE_STUB=1 (with RELEASE_STAGING_ROOT and RELEASE_TREES) records commands instead of
@@ -66,7 +66,7 @@ PUBLIC_REPO="${RELEASE_PUBLIC_REPO:-anton-abyzov/specwithcode}"
 PRIVATE_URL="https://github.com/$PRIVATE_REPO.git"
 RELEASE_ENV="${RELEASE_ENV:-$HOME/.config/skill-studio-release/release.env}"
 STAGING_ROOT="${RELEASE_STAGING_ROOT:-$HOME/.specwithcode/release-staging}"
-TREES="${RELEASE_TREES:-$HOME/Projects/github/release.noindex}"
+TREES="${RELEASE_TREES:-$HOME/.specwithcode/release.noindex}"
 APP="${RELEASE_DESKTOP_APP:-/Applications/SpecWithCode.app}"
 STAGE_NAMES="preflight trees prev bump candidate stage1 build bundle sign helpers plan drafts server-wait quit-desktop publish-private publish-public fleet-m4 desktop fleet-workers merge"
 VERSION_RE='^(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)\.(0|[1-9][0-9]*)$'

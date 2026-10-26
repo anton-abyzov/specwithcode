@@ -45,6 +45,11 @@ import {
   requestWorkGrants,
 } from "./fleetRequest";
 import { environmentConnectedAtom } from "./connected";
+import {
+  fleetRetainsWorkers,
+  fleetWorkerCapability,
+  remoteAttentionObservation,
+} from "./remoteAttentionObservation";
 
 const fleetAtom = Atom.family((environmentId: EnvironmentId) =>
   connectionAtomRuntime
@@ -70,6 +75,15 @@ const fleetAtom = Atom.family((environmentId: EnvironmentId) =>
       Atom.setIdleTTL(30_000),
       Atom.withLabel(`studio-fleet:${environmentId}`),
     ),
+);
+// Polling transport state must not invalidate every project's worker request.
+// A primitive capability changes only when support or availability changes.
+const fleetWorkerCapabilityAtom = Atom.family((environmentId: EnvironmentId) =>
+  Atom.make((get) => fleetWorkerCapability(get(fleetAtom(environmentId)))),
+);
+// The request follows the retained snapshot, so a failed poll keeps known workers.
+const fleetRetainsWorkersAtom = Atom.family((environmentId: EnvironmentId) =>
+  Atom.make((get) => fleetRetainsWorkers(get(fleetAtom(environmentId)))),
 );
 // Null stands for "no primary machine yet", so pages can call the hook unconditionally.
 const workGrantsAtom = Atom.family((environmentId: EnvironmentId | null) =>
@@ -113,7 +127,7 @@ const remoteWorkersAtom = Atom.family((key: string) => {
         !grant ||
         !sessionGrantsScope(grant, AuthOrchestrationReadScope) ||
         !prepared ||
-        !fleetRunsWorkers(Option.getOrNull(AsyncResult.value(get(fleetAtom(environmentId)))))
+        !get(fleetRetainsWorkersAtom(environmentId))
       )
         return Effect.succeed(null);
       return requestRemoteWorkers(prepared, projectId);
@@ -159,6 +173,19 @@ export function useStudioFleet(environmentId: EnvironmentId) {
     refresh: () => appAtomRegistry.refresh(fleetAtom(environmentId)),
   };
 }
+/** The message of a bad-request failure, which the server words for the user. */
+function badRequestMessage(cause: Cause.Cause<unknown>): string | null {
+  const failure = Cause.squash(cause);
+  return typeof failure === "object" &&
+    failure !== null &&
+    "_tag" in failure &&
+    failure._tag === "EnvironmentHttpBadRequestError" &&
+    "message" in failure &&
+    typeof failure.message === "string"
+    ? failure.message
+    : null;
+}
+
 export async function pairStudioFleet(environmentId: EnvironmentId, id: string) {
   const prepared = readPreparedConnection(environmentId);
   const observation = appAtomRegistry.get(fleetAtom(environmentId));
@@ -178,8 +205,10 @@ export async function pairStudioFleet(environmentId: EnvironmentId, id: string) 
     reportDefect: false,
   });
   if (result._tag === "Failure")
+    // The server words what the user can fix, such as a machine to approve again.
     throw new Error(
-      "Could not pair this machine. Check its private connection and pairing permission, then retry.",
+      badRequestMessage(result.cause) ??
+        "Could not pair this machine. Check its private connection and pairing permission, then retry.",
     );
   return result.value;
 }
@@ -262,16 +291,8 @@ export async function addStudioFleetMachine(
   appAtomRegistry.refresh(fleetAtom(environmentId));
   if (result._tag === "Failure") {
     // The server words what the user can fix: a bad line, an offline machine.
-    const failure = Cause.squash(result.cause);
     throw new Error(
-      typeof failure === "object" &&
-        failure !== null &&
-        "_tag" in failure &&
-        failure._tag === "EnvironmentHttpBadRequestError" &&
-        "message" in failure &&
-        typeof failure.message === "string"
-        ? failure.message
-        : "Could not add this machine. Refresh, then retry.",
+      badRequestMessage(result.cause) ?? "Could not add this machine. Refresh, then retry.",
     );
   }
   return result.value;
@@ -527,15 +548,8 @@ export async function removeStudioFleetMachine(
 export const projectRemoteAttentionAtom = Atom.family((key: string) =>
   Atom.make((get) => {
     const { environmentId } = JSON.parse(key) as { environmentId: EnvironmentId };
-    const fleet = get(fleetAtom(environmentId));
-    const snapshot = Option.getOrNull(AsyncResult.value(fleet));
-    if (snapshot && fleet._tag !== "Failure" && !fleet.waiting && !fleetRunsWorkers(snapshot))
-      return { workers: [], complete: true };
-    const remote = get(remoteWorkersAtom(key));
-    const result = Option.getOrNull(AsyncResult.value(remote));
-    return {
-      workers: result?.workers ?? [],
-      complete: result !== null && remote._tag !== "Failure" && !remote.waiting,
-    };
+    const capability = get(fleetWorkerCapabilityAtom(environmentId));
+    if (capability === false) return { workers: [], complete: true };
+    return remoteAttentionObservation(capability, get(remoteWorkersAtom(key)));
   }),
 );

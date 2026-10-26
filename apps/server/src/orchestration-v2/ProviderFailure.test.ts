@@ -7,6 +7,8 @@ import {
   ProjectId,
   ProviderDriverKind,
   ORCHESTRATION_V2_PROVIDER_UNAVAILABLE_FAILURE_CODE,
+  ORCHESTRATION_V2_WORKSPACE_BRANCH_MISSING_FAILURE_CODE,
+  ORCHESTRATION_V2_WORKSPACE_MISSING_FAILURE_CODE,
   ProviderInstanceId,
   ProviderSessionId,
   ProviderSetupError,
@@ -61,8 +63,6 @@ import {
   MAX_PROVIDER_FAILURE_MESSAGE_LENGTH,
   shouldHoldQueueAfterFailure,
   simulatedUsageLimitFailure,
-  WORKSPACE_BRANCH_MISSING_FAILURE_CODE,
-  WORKSPACE_MISSING_FAILURE_CODE,
 } from "./ProviderFailure.ts";
 import * as IdAllocator from "./IdAllocator.ts";
 import { ContextHandoffBudgetError } from "./ContextHandoffDelivery.ts";
@@ -622,13 +622,13 @@ it("holds the queue after a failure the next message would repeat", () => {
   // A deleted thread folder fails the next message on any provider.
   const workspaceGone = {
     class: "validation_error" as const,
-    code: WORKSPACE_BRANCH_MISSING_FAILURE_CODE,
+    code: ORCHESTRATION_V2_WORKSPACE_BRANCH_MISSING_FAILURE_CODE,
   };
   assert.isTrue(hold(workspaceGone));
   assert.isTrue(hold(workspaceGone, "claudeAgent"));
   const folderMissing = {
     class: "validation_error" as const,
-    code: WORKSPACE_MISSING_FAILURE_CODE,
+    code: ORCHESTRATION_V2_WORKSPACE_MISSING_FAILURE_CODE,
   };
   assert.isTrue(hold(folderMissing));
   assert.isTrue(hold(folderMissing, "claudeAgent"));

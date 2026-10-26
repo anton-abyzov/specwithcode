@@ -79,7 +79,7 @@ pnpm dev            # server and web app
 pnpm dev:desktop    # desktop app
 ```
 
-Contributor notes, architecture and focused checks are in [AGENTS.md](AGENTS.md).
+Contributor notes, architecture and focused checks are in [AGENTS.md](AGENTS.md). Run `node scripts/studio-brand-audit.mjs` before sending a change that touches names or licenses.
 
 ## Status
 

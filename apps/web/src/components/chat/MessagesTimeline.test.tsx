@@ -2644,6 +2644,46 @@ describe("MessagesTimeline", () => {
       expect(markup).not.toContain(">Continue<");
     });
 
+    it("replaces Switch model with folder repairs when the thread folder is missing", () => {
+      activityTestState.expanded = false;
+      const createdAt = new Date().toISOString();
+      const outcome = async () => ({ ok: true, message: null });
+      const workspaceMissing = (code: string) => ({
+        threadId: "thread-1",
+        failureItemId: "workspace-failure",
+        code,
+        branch: "fix/design",
+        projectFolder: "/repos/specweave",
+        onRecreate: outcome,
+        onUseProjectFolder: outcome,
+        onResolve: outcome,
+      });
+      const render = (code: string) =>
+        renderToStaticMarkup(
+          <MessagesTimeline
+            {...buildProps()}
+            latestRun={failedRun(createdAt)}
+            failureRecovery={recovery({ workspaceMissing: workspaceMissing(code) })}
+            timelineEntries={failureEntries(
+              createdAt,
+              "This thread's workspace folder no longer exists or is not a directory: /w/fix-design.",
+              { class: "validation_error", code, retryable: false },
+            )}
+          />,
+        );
+      const missing = render("workspace_missing");
+      expect(missing).toContain("data-workspace-missing-recovery");
+      expect(missing).toContain(">Recreate folder from fix/design</button>");
+      expect(missing).toContain(">Use the project folder</button>");
+      expect(missing).toContain(">Resolve thread</button>");
+      expect(missing).not.toContain("Switch model");
+      expect(missing).not.toContain(">Continue<");
+      const branchMissing = render("workspace_branch_missing");
+      expect(branchMissing).not.toContain("Recreate folder");
+      expect(branchMissing).toContain(">Use the project folder</button>");
+      expect(branchMissing).not.toContain("Switch model");
+    });
+
     it("offers Switch model but not Continue for a full context", () => {
       activityTestState.expanded = false;
       const createdAt = new Date().toISOString();

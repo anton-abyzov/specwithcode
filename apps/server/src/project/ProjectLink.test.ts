@@ -16,6 +16,7 @@ import {
   ThreadId,
 } from "@specweave-studio/contracts";
 import { afterEach, describe, expect, it } from "@effect/vitest";
+import { PERSONAL_ASSISTANT_PRIVATE_MESSAGE } from "@specweave-studio/shared/personalAssistant";
 import * as Cause from "effect/Cause";
 import * as DateTime from "effect/DateTime";
 import * as Exit from "effect/Exit";
@@ -1050,6 +1051,65 @@ describe("ProjectLink", () => {
       );
       expect(preview.ranWhileDisconnected).toHaveLength(1);
       expect(preview.keepRefusal).toBe("not_coordinator");
+    });
+
+    it("never takes over, starts or supersedes a linked copy that became a personal assistant", async () => {
+      const { pair, replica } = await linkedWithReplica();
+      await pair.m3.run((service) =>
+        service.replicate({ projectId: pair.joining.projectId, replica }),
+      );
+      // Before the kind was fixed at creation, a linked copy could be switched to personal.
+      for (const [machine, projectId] of [
+        [pair.m3, pair.joining.projectId],
+        [pair.m4, pair.kept.projectId],
+      ] as const) {
+        const project = machine.projects.get(projectId)!;
+        machine.projects.set(projectId, {
+          ...project,
+          workspaceSettings: { ...project.workspaceSettings!, kind: "personal" },
+        });
+      }
+      const before = pair.m3.projects.get(pair.joining.projectId);
+      const m3Modes = [...pair.m3.ownershipModes];
+      const m4Modes = [...pair.m4.ownershipModes];
+      const refusals = [
+        await pair.m3.fails(
+          pair.m3.run((service) =>
+            service.takeover({ operationId: takeoverId, projectId: pair.joining.projectId }),
+          ),
+        ),
+        await pair.m3.fails(
+          pair.m3.run((service) =>
+            service.startCoordinator({
+              operationId: takeoverId,
+              projectId: pair.joining.projectId,
+            }),
+          ),
+        ),
+        await pair.m4.fails(
+          pair.m4.run((service) =>
+            service.supersede({
+              projectId: pair.kept.projectId,
+              logicalProjectId: replica.logicalProjectId,
+              successor: pair.joining,
+              coordinatorBinding: {
+                epoch: 1,
+                state: "active",
+                operationId: takeoverId,
+                predecessor: pair.kept,
+              },
+            }),
+          ),
+        ),
+      ];
+      for (const refused of refusals) {
+        expect(refused.code).toBe("not_code_project");
+        expect(refused.message).toContain(PERSONAL_ASSISTANT_PRIVATE_MESSAGE);
+      }
+      expect(pair.m3.projects.get(pair.joining.projectId)).toBe(before);
+      expect(pair.m3.notes(pair.joining.projectId).get("decisions.md")).toBeUndefined();
+      expect(pair.m3.ownershipModes).toEqual(m3Modes);
+      expect(pair.m4.ownershipModes).toEqual(m4Modes);
     });
 
     it("refuses takeovers and demotions that do not follow from the link", async () => {

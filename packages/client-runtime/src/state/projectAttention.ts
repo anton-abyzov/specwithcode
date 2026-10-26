@@ -62,6 +62,25 @@ export function observeProjectThread(
     requests,
   };
 }
+/**
+ * Resolving a conversation settles the asks of the subagents folded into it:
+ * only a request made after the root was resolved can reopen it.
+ */
+function inheritRootSettlement(
+  observation: AttentionObservation,
+  root: EnvironmentThreadShell,
+): AttentionObservation {
+  if (root.id === observation.threadId || root.settledOverride !== "settled") return observation;
+  const rootSettledAt = millis(root.settledAt);
+  return {
+    ...observation,
+    settled: true,
+    settledAt:
+      observation.settled && observation.settledAt !== null && rootSettledAt !== null
+        ? Math.max(observation.settledAt, rootSettledAt)
+        : rootSettledAt,
+  };
+}
 export interface AttentionMember {
   readonly environmentId: string;
   readonly projectId: string;
@@ -170,7 +189,10 @@ export function aggregateProjectAttention(input: {
       continue;
     representedThreads.add(JSON.stringify([thread.environmentId, thread.id]));
     const member = members.get(memberKey(root.thread.environmentId, root.thread.projectId))!;
-    const observation = observeProjectThread(thread, member.freshness);
+    const observation = inheritRootSettlement(
+      observeProjectThread(thread, member.freshness),
+      root.thread,
+    );
     const actions = classifyProjectActions(observation);
     if (member.freshness === "live") {
       root.actions.push(...actions);

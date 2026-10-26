@@ -6,7 +6,7 @@ from playwright.sync_api import sync_playwright, expect
 
 os.environ["PWDEBUG"] = "0"
 os.environ["PLAYWRIGHT_HTML_OPEN"] = "never"
-out = Path(os.environ.get("PHONE_SETUP_EVIDENCE", "/Users/you/.specwithcode/m4/evidence/phone-setup-1014"))
+out = Path(os.environ.get("PHONE_SETUP_EVIDENCE", "/Users/you/.specwithcode/m4/evidence/t3-connect-1014"))
 out.mkdir(parents=True, exist_ok=True)
 checks = []
 
@@ -85,6 +85,19 @@ with sync_playwright() as p:
     page.set_viewport_size({"width": 390, "height": 844})
     page.screenshot(path=str(out / "setup-narrow.png"), full_page=True)
     check("Narrow setup has no horizontal overflow", page.evaluate("document.documentElement.scrollWidth <= innerWidth"))
+    # With Connect shown, direct pairing is folded away under its own heading.
+    page.set_viewport_size({"width": 1280, "height": 900})
+    page.goto("http://127.0.0.1:4394/?folded=1")
+    page.wait_for_load_state("networkidle")
+    summary = page.get_by_text("Pair over Tailscale or your network", exact=True)
+    expect(summary).to_be_visible()
+    check("Folded: pairing button hidden until opened", not page.get_by_role("button", name="Pair a phone", exact=True).is_visible())
+    page.screenshot(path=str(out / "folded-closed.png"), full_page=True)
+    summary.click()
+    expect(page.get_by_role("button", name="Pair a phone", exact=True)).to_be_visible()
+    open_setup()
+    check("Folded: opening still mints nothing", page.evaluate("phoneFixture.calls === 0"))
+    page.screenshot(path=str(out / "folded-open.png"), full_page=True)
     check("No browser page errors", not errors)
     browser.close()
 (out / "browser-results.json").write_text(json.dumps({"headless": True, "checks": checks, "count": len(checks), "pageErrors": errors}, indent=2))

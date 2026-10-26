@@ -141,6 +141,7 @@ import * as ThreadManagementService from "./orchestration-v2/ThreadManagementSer
 import * as ProviderSessionManager from "./orchestration-v2/ProviderSessionManager.ts";
 import * as ThreadLaunchService from "./orchestration-v2/ThreadLaunchService.ts";
 import * as ThreadMoveService from "./orchestration-v2/ThreadMoveService.ts";
+import * as ThreadWorkspaceRestore from "./orchestration-v2/ThreadWorkspaceRestore.ts";
 import * as ThreadMessageIntake from "./orchestration-v2/ThreadMessageIntake.ts";
 import * as IdAllocator from "./orchestration-v2/IdAllocator.ts";
 import * as ScheduledTaskRpc from "./scheduledTasks/ScheduledTaskRpc.ts";
@@ -278,6 +279,7 @@ import {
 } from "@specweave-studio/shared/usageLimits";
 import * as AgentSessionScanner from "./project/AgentSessionScanner.ts";
 import * as AgentSessionImporter from "./project/AgentSessionImporter.ts";
+import * as UsageLimitHistory from "./usage/UsageLimitHistory.ts";
 import * as UsageLimitSources from "./usage/UsageLimitSources.ts";
 
 const CONFIG_DISCOVERY_TIMEOUT = Duration.seconds(5);
@@ -1296,6 +1298,7 @@ const layerWsRpc = (
       };
       const threadLaunch = yield* ThreadLaunchService.ThreadLaunchService;
       const threadMove = yield* ThreadMoveService.ThreadMoveService;
+      const threadWorkspaceRestore = yield* ThreadWorkspaceRestore.ThreadWorkspaceRestore;
       const providerSessionManager = yield* ProviderSessionManager.ProviderSessionManagerV2;
       const secretRequests = yield* SecretRequests.SecretRequests;
       const pullRequests = yield* PullRequestService.PullRequestService;
@@ -2938,6 +2941,16 @@ const layerWsRpc = (
           gitWorkflow.createWorktree(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
         [WS_METHODS.vcsRemoveWorktree]: (input) =>
           gitWorkflow.removeWorktree(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
+        [WS_METHODS.vcsRestoreThreadWorkspace]: (input) =>
+          threadWorkspaceRestore
+            .restore(input)
+            .pipe(
+              Effect.tap((result) =>
+                result.status === "restored" && result.worktreePath !== undefined
+                  ? refreshGitStatus(result.worktreePath)
+                  : Effect.void,
+              ),
+            ),
         [WS_METHODS.vcsCreateRef]: (input) =>
           gitWorkflow.createRef(input).pipe(Effect.tap(() => refreshGitStatus(input.cwd))),
         [WS_METHODS.vcsSwitchRef]: (input) =>
@@ -3360,11 +3373,12 @@ const inferredWebSocketLayer = Layer.unwrap(
               Layer.merge(MachineHandoff.layerRpcHandlers),
               Layer.merge(HandoffMode.layerRpcHandlers),
               Layer.merge(ProjectWorkspaceRpc.layerKnowledgeRpcHandlers),
-              // pipe takes at most 20 steps, so these two share one.
+              // pipe takes at most 20 steps, so these share one.
               Layer.merge(
-                Layer.merge(
+                Layer.mergeAll(
                   ProjectWorkspaceRpc.layerPlanningRpcHandlers,
                   designLayers.layerRpcHandlers(session),
+                  UsageLimitHistory.layerRpcHandlers,
                 ),
               ),
               Layer.merge(

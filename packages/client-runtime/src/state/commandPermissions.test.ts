@@ -182,6 +182,10 @@ it.effect(
           }),
         );
         yield* git.authorize(registry, env);
+        // Recreating a thread's missing folder is a git write, like vcs.createWorktree.
+        const restore = createCommandPermissions(runtime, WS_METHODS.vcsRestoreThreadWorkspace);
+        expect(registry.get(restore.permissionAtom(env))).toBe(true);
+        yield* restore.authorize(registry, env);
         const prepare = createCommandPermissions(runtime, WS_METHODS.gitPreparePullRequestThread);
         const input = {
           cwd: "/repo",

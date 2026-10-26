@@ -219,7 +219,7 @@ describe("third-party license generation", () => {
 
     expect(config).toContain(revision.trim());
     expect(config).toContain(
-      "https://github.com/Yash-Singh1/ghostty/tree/cf8edc23f3a6a87a96e41a90013e89e987d34980",
+      "https://github.com/Yash-Singh1/ghostty/tree/t3code/custom-io-ordered-feed",
     );
   });
 

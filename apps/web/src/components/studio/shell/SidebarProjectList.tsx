@@ -587,25 +587,26 @@ export function ProjectRow(props: {
             {pinned ? (
               <PinIcon className="sws-side-row-pin" aria-label="Pinned" role="img" />
             ) : null}
-            {/* A fixed slot, so a count never shifts the name or hint, and the row
-              menu takes its place on hover. */}
+            {/* Count and availability stay visible while the adjacent menu opens. */}
             <span className="sws-side-row-end">
-              {waiting > 0 || (!quiet && props.attentionComplete === false) ? (
+              {waiting > 0 ? (
                 <span
                   className="sws-count sws-count-waiting"
                   title={props.attentionLabel ?? `${waiting} waiting on you`}
                 >
-                  <span aria-hidden="true">
-                    {props.attentionComplete === false
-                      ? waiting > 0
-                        ? `${waiting}+`
-                        : "?"
-                      : waiting}
-                  </span>
+                  <span aria-hidden="true">{waiting}</span>
                   <span className="sr-only">
                     {props.attentionLabel ?? `${waiting} waiting on you`}
                   </span>
                 </span>
+              ) : null}
+              {!quiet && props.attentionComplete === false ? (
+                <span
+                  className="sws-project-coverage"
+                  role="img"
+                  aria-label={props.attentionLabel ?? "Attention unavailable"}
+                  title={props.attentionLabel ?? "Attention unavailable"}
+                />
               ) : null}
             </span>
           </Link>

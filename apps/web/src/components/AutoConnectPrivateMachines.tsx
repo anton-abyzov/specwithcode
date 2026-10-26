@@ -13,6 +13,7 @@ import {
   fleetMachinesAwaitingReach,
   fleetMachinesToAutoConnect,
   readSkippedFleetEnvironments,
+  rejectedSavedEnvironments,
   savedRouteOrigins,
 } from "../studio/fleetAutoConnect";
 
@@ -43,6 +44,10 @@ function AutoConnectFleet({ environmentId }: { readonly environmentId: Environme
   // When each machine was last tried. A failure, such as the server restarting
   // for an update, is tried again after a minute instead of waiting for a reload.
   const attempted = useRef(new Map<string, number>());
+  // Saved machines that turned this browser down and could not be paired
+  // again: retrying would mint a pairing there every minute to no effect, so
+  // Approve again in Settings > Connections is left to the user.
+  const reapprovalFailed = useRef(new Set<string>());
   const running = useRef(false);
   const [failedAt, setFailedAt] = useState(0);
 
@@ -50,9 +55,16 @@ function AutoConnectFleet({ environmentId }: { readonly environmentId: Environme
     () => new Set<string>(environments.map((environment) => environment.environmentId)),
     [environments],
   );
+  // A machine whose server turned down this browser's credential is paired
+  // again, which replaces the credential it rejected.
+  const rejected = useMemo(() => rejectedSavedEnvironments(environments), [environments]);
   const routeOrigins = useMemo(
-    () => savedRouteOrigins(environments.map((environment) => environment.entry)),
-    [environments],
+    () =>
+      savedRouteOrigins(
+        environments.map((environment) => environment.entry),
+        rejected,
+      ),
+    [environments, rejected],
   );
 
   useEffect(() => {
@@ -63,7 +75,10 @@ function AutoConnectFleet({ environmentId }: { readonly environmentId: Environme
       savedEnvironmentIds,
       savedRouteOrigins: routeOrigins,
       skippedEnvironmentIds: readSkippedFleetEnvironments(),
-      attemptedEnvironmentIds: fleetAttemptsAwaitingRetry(attempted.current, Date.now()),
+      attemptedEnvironmentIds: new Set([
+        ...fleetAttemptsAwaitingRetry(attempted.current, Date.now()),
+        ...reapprovalFailed.current,
+      ]),
     });
     if (machines.length === 0) return;
     running.current = true;
@@ -84,6 +99,8 @@ function AutoConnectFleet({ environmentId }: { readonly environmentId: Environme
           } catch {
             // Connect machine stays available in Settings > Connections meanwhile.
             attempted.current.set(machine.environmentId, Date.now());
+            if (rejected.has(machine.environmentId))
+              reapprovalFailed.current.add(machine.environmentId);
             failed = true;
           }
         }
@@ -92,7 +109,16 @@ function AutoConnectFleet({ environmentId }: { readonly environmentId: Environme
         if (failed) setFailedAt(Date.now());
       }
     })();
-  }, [canPair, connect, environmentId, isReady, routeOrigins, savedEnvironmentIds, snapshot]);
+  }, [
+    canPair,
+    connect,
+    environmentId,
+    isReady,
+    rejected,
+    routeOrigins,
+    savedEnvironmentIds,
+    snapshot,
+  ]);
 
   const unsaved = {
     snapshot,
@@ -106,7 +132,10 @@ function AutoConnectFleet({ environmentId }: { readonly environmentId: Environme
     canPair &&
     (fleetMachinesAwaitingReach(unsaved).length > 0 ||
       (failedAt > 0 &&
-        fleetMachinesToAutoConnect({ ...unsaved, attemptedEnvironmentIds: new Set() }).length > 0));
+        fleetMachinesToAutoConnect({
+          ...unsaved,
+          attemptedEnvironmentIds: reapprovalFailed.current,
+        }).length > 0));
 
   const refreshRef = useRef(refresh);
   useEffect(() => {

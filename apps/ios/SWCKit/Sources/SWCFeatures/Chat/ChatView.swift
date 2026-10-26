@@ -440,13 +440,21 @@ private struct ChatScreen: View {
   private var composerArea: some View {
     VStack(spacing: WeaveSpacing.s2) {
       HStack {
-        Button("SpecWeave increment") { showingIncrement = true }
-          .font(.weave(.caption, weight: .medium))
+        Button { showingIncrement = true } label: {
+          Text("SpecWeave increment")
+            .font(.weave(.caption, weight: .medium))
+            .frame(minHeight: WeaveSize.minTap)
+            .contentShape(Rectangle())
+        }
           .accessibilityIdentifier("chat.increment")
         Spacer()
         if let plan = session.plan {
-          Button("Provider checklist · \(plan.completed)/\(plan.total)") { scrollToPlan() }
-            .font(.weave(.caption))
+          Button { scrollToPlan() } label: {
+            Text("Provider checklist · \(plan.completed)/\(plan.total)")
+              .font(.weave(.caption))
+              .frame(minHeight: WeaveSize.minTap)
+              .contentShape(Rectangle())
+          }
             .transition(.opacity.combined(with: .scale(scale: 0.9)))
         }
       }

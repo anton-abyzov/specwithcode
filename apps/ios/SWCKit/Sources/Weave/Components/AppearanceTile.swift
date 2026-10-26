@@ -110,7 +110,7 @@ private struct MiniWindow: View {
 }
 
 /// The lower-right triangle of a rectangle.
-private struct DiagonalHalf: Shape {
+private nonisolated struct DiagonalHalf: Shape {
   func path(in rect: CGRect) -> Path {
     var p = Path()
     p.move(to: CGPoint(x: rect.maxX, y: rect.minY))

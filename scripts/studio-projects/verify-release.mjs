@@ -179,6 +179,11 @@ try {
     join(root, "scripts/studio-projects/tutorial-capture.test.mjs"),
     join(root, "scripts/studio-projects/tutorial-personal.test.mjs"),
   ]);
+  await runNode("fixture-preservation-guards", [
+    "--test",
+    join(root, "scripts/studio-toolchain/fixture-preservation-audit.test.mjs"),
+    join(root, "scripts/studio-toolchain/preservation-audit.test.mjs"),
+  ]);
   // Each runner bounds its own jobs (900s a fleet test, 600s a package typecheck) and stops
   // them all when this step's timeout sends it TERM.
   await run(
@@ -298,6 +303,7 @@ try {
     join(root, "apps/server"),
     900000,
   );
+  await runNode("brand-audit", ["scripts/studio-brand-audit.mjs"]);
   const versionStdout = await runNode("cli-version", ["apps/server/dist/bin.mjs", "--version"]);
   assert.equal(versionStdout.trim(), `specweave-studio v${receipt.version}`);
   assert.ok(

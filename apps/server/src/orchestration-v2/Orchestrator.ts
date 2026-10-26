@@ -1,4 +1,9 @@
 import {
+  hasCurrentLifecycleAcceptance,
+  lifecycleAcceptanceDecision,
+  settledNoteFromScope,
+} from "./ThreadLifecycleAcceptance.ts";
+import {
   deferredResolutionBlocked,
   DeferredResolutionActivation,
   invalidatesDeferredResolution,
@@ -95,6 +100,7 @@ import {
   ThreadExecutionRecord,
   ThreadLinkedPullRequest,
   ThreadId,
+  type LifecycleReceipt,
   type TurnItemId,
 } from "@specweave-studio/contracts";
 import { modelSelectionsEqual } from "@specweave-studio/shared/model";
@@ -626,6 +632,7 @@ function commandThreadId(command: OrchestrationV2ServerCommand): ThreadId {
     case "thread.delete":
     case "thread.deferred-resolution.request":
     case "thread.deferred-resolution.finish":
+    case "thread.lifecycle-receipt.record":
     case "thread.settle":
     case "thread.auto-settle":
     case "thread.unsettle":
@@ -3011,7 +3018,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
     effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
     /** Fields a composite command sets in the same event (a move archives with its link). */
-    extra?: Pick<OrchestrationV2AppThread, "movedTo">,
+    extra?: Partial<Pick<OrchestrationV2AppThread, "movedTo" | "lifecycleReceipt">>,
   ) {
     const thread = yield* projectionStore
       .getThread(command.threadId)
@@ -3498,6 +3505,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           return {
             ...thread,
             settledOverride: "active",
+            lifecycleReceipt: null,
+            lifecycleRevision: command.commandId,
             settledAt: null,
             settledNote: null,
             unsettledAt: alreadyPinnedActive ? (thread.unsettledAt ?? null) : now,
@@ -11918,6 +11927,26 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             cause: `Thread ${command.threadId} changed before automatic settlement.`,
           });
         }
+        const currentProjection = yield* getProjectionWithPendingEvents(command.threadId, events);
+        const acceptanceNow = yield* DateTime.now;
+        const acceptedRunId = currentProjection.thread.lifecycleReceipt?.runId;
+        const acceptedRun = currentProjection.runs.find((run) => run.id === acceptedRunId);
+        if (
+          !hasCurrentLifecycleAcceptance(
+            currentProjection,
+            DateTime.toEpochMillis(acceptanceNow),
+          ) ||
+          acceptedRun === undefined ||
+          deferredResolutionBlocked(currentProjection, acceptedRun.id) ||
+          (yield* stopReachedRun(command, command.threadId, acceptedRun.id))
+        ) {
+          return yield* new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause:
+              "Automatic resolution requires verified delivery evidence for the current request and acceptance revision.",
+          });
+        }
         yield* dispatchThreadMutation(
           {
             type: "thread.settle",
@@ -11965,6 +11994,84 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         });
         break;
       }
+      case "thread.lifecycle-receipt.record": {
+        const now = yield* DateTime.now;
+        const nowMs = DateTime.toEpochMillis(now);
+        const projection = yield* getProjectionWithPendingEvents(command.threadId, events);
+        const latest = projection.runs.reduce<(typeof projection.runs)[number] | undefined>(
+          (found, candidate) => (!found || candidate.ordinal > found.ordinal ? candidate : found),
+          undefined,
+        );
+        const refuse = (cause: string) =>
+          new OrchestratorDispatchError({
+            commandId: command.commandId,
+            commandType: command.type,
+            cause,
+          });
+        if (projection.thread.deletedAt !== null) {
+          return yield* refuse(`Thread ${command.threadId} is deleted.`);
+        }
+        if (latest === undefined || latest.id !== command.runId || latest.status !== "completed") {
+          return yield* refuse(
+            latest !== undefined && latest.status === "cancelled" && latest.startedAt === null
+              ? "A newer turn was cancelled before it started, so the named turn is no longer the latest. Record evidence after the next turn completes, or resolve the thread explicitly."
+              : "Delivery evidence must name this thread's latest completed turn. A running, newer or unfinished turn supersedes it.",
+          );
+        }
+        const receipt: LifecycleReceipt = {
+          requestId: latest.userMessageId,
+          runId: latest.id,
+          acceptanceRevision: projection.thread.lifecycleRevision ?? latest.id,
+          requestedAt: DateTime.formatIso(latest.requestedAt),
+          ...command.report,
+          recordedAt: DateTime.formatIso(now),
+          reportedBy: command.reportedBy,
+        };
+        // Evidence resolves on its own: an agent's earlier self-resolution intent,
+        // pending or revoked, neither enables nor blocks it.
+        const withReceipt = {
+          ...projection,
+          thread: { ...projection.thread, lifecycleReceipt: receipt, deferredResolution: null },
+        };
+        const decision = lifecycleAcceptanceDecision(withReceipt, nowMs);
+        // The current request has moved on (a newer message): this evidence is for old work.
+        if (decision === "superseded_request" || decision === "stale_evidence") {
+          return yield* refuse(
+            decision === "stale_evidence"
+              ? "Delivery evidence must expire after it is recorded (validUntil in the future)."
+              : "A newer request supersedes this turn; adjudicate the current request instead.",
+          );
+        }
+        if (
+          decision === "accepted" &&
+          !deferredResolutionBlocked(withReceipt, latest.id) &&
+          !(yield* stopReachedRun(command, command.threadId, latest.id))
+        ) {
+          // One event: settling from the stored thread would drop the receipt.
+          yield* dispatchThreadMutation(
+            {
+              type: "thread.settle",
+              commandId: command.commandId,
+              threadId: command.threadId,
+              note: settledNoteFromScope(receipt.scope),
+            },
+            events,
+            effects,
+            { lifecycleReceipt: receipt },
+          );
+          break;
+        }
+        yield* emit(
+          events,
+          command,
+        )({
+          type: "thread.metadata-updated",
+          threadId: command.threadId,
+          occurredAt: now,
+          payload: { ...projection.thread, lifecycleReceipt: receipt, updatedAt: now },
+        });
+        break;
+      }
       case "thread.deferred-resolution.finish": {
         if (!deferredResolutionEnabled) break;
         const projection = yield* getProjectionWithPendingEvents(command.threadId, events);
@@ -11980,7 +12087,9 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           ...projection.thread,
           deferredResolution: { ...intent, revoked: true as const },
         };
+        const acceptanceNow = yield* DateTime.now;
         if (
+          hasCurrentLifecycleAcceptance(projection, DateTime.toEpochMillis(acceptanceNow)) &&
           run?.status === "completed" &&
           !deferredResolutionBlocked(projection, intent.runId) &&
           !(yield* stopReachedRun(command, command.threadId, intent.runId))
@@ -12368,7 +12477,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
 
     const expectedThreadSequence =
       command.type === "thread.deferred-resolution.request" ||
-      command.type === "thread.deferred-resolution.finish"
+      command.type === "thread.deferred-resolution.finish" ||
+      command.type === "thread.lifecycle-receipt.record"
         ? yield* eventSink
             .latestSequence({ threadId: command.threadId })
             .pipe(mapDispatchError(command))

@@ -20,6 +20,8 @@ vi.mock("@effect/atom-react", async () => {
   };
   function get(key: unknown): unknown {
     if (typeof key === "object" && key !== null && "evaluate" in key) return read(key as Evaluated);
+    if (typeof key === "object" && key !== null && "read" in key)
+      return (key as { read: (get: unknown) => unknown }).read(get);
     // A reactive read of the whole presentation restarts the request on every rebuild.
     if (key === "presentation") throw new Error("read the connected atom instead");
     return state.values[key as string];

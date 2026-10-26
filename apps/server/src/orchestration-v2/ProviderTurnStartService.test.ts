@@ -25,6 +25,7 @@ import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
+import * as PlatformError from "effect/PlatformError";
 import * as Stream from "effect/Stream";
 import * as Schema from "effect/Schema";
 import * as EffectAcpErrors from "@specweave-studio/effect-acp/errors";
@@ -169,7 +170,17 @@ it("does not commit running state when inherited background routing cannot be re
   }).pipe(Effect.provide(layer), Effect.runPromise);
 });
 
-function deletedBranchHarness(worktreePath: string) {
+function deletedBranchHarness(
+  worktreePath: string,
+  options: {
+    /** Extra FileSystem methods; `exists` defaults to false for every path. */
+    readonly fileSystem?: Record<string, unknown>;
+    /** Repositories that have the branch; every other one reports invalid_reference. */
+    readonly branchIn?: ReadonlyArray<string>;
+    /** Git's refusal in every repository instead of invalid_reference. */
+    readonly createFailure?: GitCommandError;
+  } = {},
+) {
   const threadId = ThreadId.make("thread_provider_turn_start_branch_missing");
   const runId = RunId.make("run_provider_turn_start_branch_missing");
   const attemptId = RunAttemptId.make("attempt_provider_turn_start_branch_missing");
@@ -210,29 +221,34 @@ function deletedBranchHarness(worktreePath: string) {
   );
   const startRootRun = vi.fn(() => Effect.void);
   const open = vi.fn(() => Effect.die("a provider session must not open"));
-  const createWorktree = vi.fn(() =>
-    Effect.fail(
-      new GitCommandError({
-        operation: "GitVcsDriver.createWorktree",
-        command: "git",
-        cwd: "/tmp/provider-turn-start-project",
-        reason: "invalid_reference",
-        detail: "git worktree add failed: fatal: invalid reference: ops/nr-repair-20261019",
-      }),
-    ),
+  const createWorktree = vi.fn((input: { readonly cwd: string }) =>
+    options.branchIn?.includes(input.cwd)
+      ? Effect.succeed({} as never)
+      : Effect.fail(
+          options.createFailure ??
+            new GitCommandError({
+              operation: "GitVcsDriver.createWorktree",
+              command: "git",
+              cwd: input.cwd,
+              reason: "invalid_reference",
+              detail: "git worktree add failed: fatal: invalid reference: ops/nr-repair-20261019",
+            }),
+        ),
   );
+  const pruneWorktrees = vi.fn((_input: { readonly cwd: string }) => Effect.void);
   const layer = ProviderTurnStart.layer.pipe(
-    Layer.provide(NodePath.layer),
+    // The fixture paths are POSIX; Windows path rules would rewrite them.
+    Layer.provide(NodePath.layerPosix),
     Layer.provide(
       Layer.mergeAll(
         Layer.mock(ContextHandoffService.ContextHandoffServiceV2)({}),
         Layer.mock(EventSink.EventSinkV2)({ writeIfRunCurrent }),
         IdAllocator.layer,
-        Layer.succeed(FileSystem.FileSystem, { exists: () => Effect.succeed(false) } as never),
-        Layer.mock(GitWorkflow.GitWorkflowService)({
-          pruneWorktrees: () => Effect.void,
-          createWorktree,
-        }),
+        Layer.succeed(FileSystem.FileSystem, {
+          exists: () => Effect.succeed(false),
+          ...options.fileSystem,
+        } as never),
+        Layer.mock(GitWorkflow.GitWorkflowService)({ pruneWorktrees, createWorktree }),
         Layer.mock(ProjectService.ProjectService)({
           getById: () =>
             Effect.succeed(
@@ -264,8 +280,111 @@ function deletedBranchHarness(worktreePath: string) {
     Effect.flatMap((service) => service.start({ threadId, runId, willRetry: true })),
     Effect.provide(layer),
   );
-  return { start, createWorktree, open, startRootRun, writeIfRunCurrent };
+  return { start, createWorktree, pruneWorktrees, open, startRootRun, writeIfRunCurrent };
 }
+
+const notFound = (method: string, target: string) =>
+  PlatformError.systemError({
+    _tag: "NotFound",
+    module: "FileSystem",
+    method,
+    pathOrDescriptor: target,
+  });
+
+/** Folders next to the missing one: `<worktrees>/studio/other` belongs to /tmp/repos/studio. */
+const siblingCheckoutFileSystem = {
+  exists: (target: string) => Effect.succeed(target === "/tmp/repos/studio/.git"),
+  readDirectory: (directory: string) =>
+    Effect.succeed(directory === "/tmp/worktrees/studio" ? ["other"] : []),
+  stat: (target: string) =>
+    target === "/tmp/worktrees/studio/other/.git"
+      ? Effect.succeed({ type: "File" })
+      : Effect.fail(notFound("stat", target)),
+  readFileString: (target: string) =>
+    target === "/tmp/worktrees/studio/other/.git"
+      ? Effect.succeed("gitdir: /tmp/repos/studio/.git/worktrees/other\n")
+      : Effect.fail(notFound("readFileString", target)),
+};
+
+it("recreates a folder that belongs to the repository of the checkouts next to it", async () => {
+  const worktreePath = "/tmp/worktrees/studio/ops-nr-repair-20261019";
+  const { start, createWorktree, pruneWorktrees, writeIfRunCurrent } = deletedBranchHarness(
+    worktreePath,
+    { fileSystem: siblingCheckoutFileSystem, branchIn: ["/tmp/repos/studio"] },
+  );
+  // The harness fails the start right after the worktree step, before a session opens.
+  const error = await Effect.runPromise(Effect.flip(start));
+
+  expect(error._tag).toBe("ProviderTurnStartError");
+  expect(pruneWorktrees).toHaveBeenCalledWith({ cwd: "/tmp/repos/studio" });
+  expect(createWorktree).toHaveBeenCalledTimes(1);
+  expect(createWorktree).toHaveBeenCalledWith({
+    cwd: "/tmp/repos/studio",
+    refName: "ops/nr-repair-20261019",
+    path: worktreePath,
+  });
+  expect(writeIfRunCurrent).not.toHaveBeenCalled();
+});
+
+it("tries the next repository when the project repository lacks the branch", async () => {
+  const worktreePath = "/tmp/worktrees/x/ops-nr-repair-20261019";
+  // The project's sibling named like the folder's parent: /tmp/x.
+  const { start, createWorktree, writeIfRunCurrent } = deletedBranchHarness(worktreePath, {
+    fileSystem: { exists: (target: string) => Effect.succeed(target === "/tmp/x") },
+    branchIn: ["/tmp/x"],
+  });
+  const error = await Effect.runPromise(Effect.flip(start));
+
+  expect(error._tag).toBe("ProviderTurnStartError");
+  expect(createWorktree.mock.calls.map(([input]) => input.cwd)).toEqual([
+    "/tmp/provider-turn-start-project",
+    "/tmp/x",
+  ]);
+  expect(writeIfRunCurrent).not.toHaveBeenCalled();
+});
+
+it("settles a deleted branch in the sibling repository that owns the folder", async () => {
+  const worktreePath = "/tmp/worktrees/studio/ops-nr-repair-20261019";
+  const { start, createWorktree, open, writeIfRunCurrent } = deletedBranchHarness(worktreePath, {
+    fileSystem: siblingCheckoutFileSystem,
+  });
+  await Effect.runPromise(start);
+
+  expect(createWorktree.mock.calls.map(([input]) => input.cwd)).toEqual([
+    "/tmp/repos/studio",
+    "/tmp/provider-turn-start-project",
+  ]);
+  expect(open).not.toHaveBeenCalled();
+  expect(writeIfRunCurrent).toHaveBeenCalledTimes(1);
+  const events = writeIfRunCurrent.mock.calls[0]![0].events as ReadonlyArray<{
+    readonly type: string;
+    readonly payload: Record<string, unknown>;
+  }>;
+  expect(events.find((event) => event.type === "turn-item.updated")!.payload).toMatchObject({
+    type: "error",
+    failure: { code: "workspace_branch_missing", retryable: false },
+  });
+});
+
+it("keeps the retries when git refuses for another reason, without trying further", async () => {
+  const worktreePath = "/tmp/worktrees/studio/ops-nr-repair-20261019";
+  const { start, createWorktree, open, writeIfRunCurrent } = deletedBranchHarness(worktreePath, {
+    fileSystem: siblingCheckoutFileSystem,
+    createFailure: new GitCommandError({
+      operation: "GitVcsDriver.createWorktree",
+      command: "git",
+      cwd: "/tmp/repos/studio",
+      detail: "git worktree add failed: fatal: Unable to create index.lock: File exists.",
+    }),
+  });
+  const error = await Effect.runPromise(Effect.flip(start));
+
+  // A lock may clear: no settle, so the caller retries the start.
+  expect(error._tag).toBe("ProviderTurnStartError");
+  expect(createWorktree.mock.calls.map(([input]) => input.cwd)).toEqual(["/tmp/repos/studio"]);
+  expect(writeIfRunCurrent).not.toHaveBeenCalled();
+  expect(open).not.toHaveBeenCalled();
+});
 
 it("settles once without opening a provider when the thread's branch was deleted", async () => {
   const worktreePath = "/tmp/worktrees/provider-turn-start-project/ops-nr-repair-20261019";

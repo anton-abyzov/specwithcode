@@ -230,6 +230,28 @@ describe("private machine roster", () => {
     }
     expect(connectButton(render({ pending: "m1" }))).toBeNull();
   });
+  it("offers Approve again for a saved machine whose server turned down this browser", () => {
+    const onPair = vi.fn();
+    const tree = render({
+      onPair,
+      rejectedEnvironmentIds: [m1],
+      machineStatuses: {
+        [m1]: {
+          text: "Connection failed",
+          connected: false,
+          detail: "Approve this device again in SpecWithCode.",
+        },
+      },
+    });
+    const button = visitElements(tree, (element) => element.props.children === "Approve again");
+    expect(button?.props.disabled).toBe(false);
+    (button?.props.onClick as () => void)();
+    expect(onPair).toHaveBeenCalledExactlyOnceWith(snapshot.machines[1]);
+    // Its row says what failed rather than "Reachable".
+    expect(
+      visitElements(tree, (element) => element.props.children === "Connection failed"),
+    ).not.toBeNull();
+  });
   it("shows a saved machine's status as this browser sees it, like the picker and sidebar", () => {
     const tree = render({
       savedEnvironmentIds: [m1],
